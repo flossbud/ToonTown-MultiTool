@@ -1,6 +1,6 @@
 # 🎮 ToonTown MultiTool
 
-A polished multitoon input controller for **Toontown Rewritten** on Linux, designed to work beautifully on modern systems using **Wayland** or **X11**.
+A multitoon input controller for **Toontown Rewritten** on Linux, designed to work on systems using **Wayland** or **X11**.
 
 Built in Python + PySide6.
 
@@ -14,7 +14,7 @@ Built in Python + PySide6.
 - 💾 Save & load presets (Ctrl+1–5 hotkeys)
 - 🖌️ Light & Dark themes with auto-updating styles
 - 🪟 Auto-detects valid TTR windows only
-- 🚀 Launch Toontown Rewritten directly from the UI
+- 🚀 Open Toontown Rewritten Launcher(s) directly from the UI
 
 
 ---
@@ -56,7 +56,7 @@ Output will be in: `./dist/ToonTownMultiTool`
 
 ## 🐧 Linux Notes
 
-- Works on KDE Plasma, GNOME, XFCE, i3, etc.
+- Works on KDE Plasma, GNOME
 - Compatible with **Wayland** and **X11**
 - Requires `xdotool` installed:
   - Arch: `sudo pacman -S xdotool`
@@ -66,7 +66,7 @@ Output will be in: `./dist/ToonTownMultiTool`
 
 ## 🧠 Limitations
 
-- No support for Windows or macOS (coming soon...)
+- No support for Windows or macOS (Windows support coming soon)
 - Flatpak input passthrough depends on environment
 
 ---
