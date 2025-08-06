@@ -16,7 +16,6 @@ Built in Python + PySide6.
 - 🪟 Auto-detects valid TTR windows only
 - 🚀 Open Toontown Rewritten Launcher(s) directly from the UI
 
-
 ---
 
 ## ⚙️ Installation
@@ -24,7 +23,7 @@ Built in Python + PySide6.
 1. 🔧 Developer (Python)
 
 ```
-git clone https://github.com/yourusername/toontown-multitool.git
+git clone https://github.com/flossbud/toontown-multitool.git
 cd toontown-multitool
 pip install -r requirements.txt
 python main.py
@@ -44,6 +43,7 @@ pyinstaller --noconfirm --clean --onefile --windowed --name "ToonTownMultiTool" 
 Output will be in: `./dist/ToonTownMultiTool`
 
 ---
+
 3. 📋 Dependencies
 
 - Python 3.9+
@@ -56,11 +56,19 @@ Output will be in: `./dist/ToonTownMultiTool`
 
 ## 🐧 Linux Notes
 
-- Works on KDE Plasma, GNOME
+- Works on **KDE Plasma** (e.g. Fedora KDE)
+- Works on **GNOME** (e.g. Ubuntu Desktop)
 - Compatible with **Wayland** and **X11**
 - Requires `xdotool` installed:
   - Arch: `sudo pacman -S xdotool`
-  - Debian/Ubuntu: `sudo apt install xdotool`
+  - Ubuntu/Debian: `sudo apt install xdotool`
+  - Fedora: `sudo dnf install xdotool`
+
+For Wayland users, force X11 compatibility with:
+
+```
+QT_QPA_PLATFORM=xcb ./ToonTownMultiTool-x86_64.AppImage
+```
 
 ---
 
