@@ -76,6 +76,8 @@ QT_QPA_PLATFORM=xcb ./ToonTownMultiTool-x86_64.AppImage
 
 - No support for Windows or macOS (Windows support coming soon)
 - Flatpak input passthrough depends on environment
+- This application assumes that you have your movement keybinds set to WASD for each TTR instance.
+- The ability to manually adjust key assignments is planned for the next release.
 
 ---
 
