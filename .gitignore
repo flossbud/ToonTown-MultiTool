@@ -12,3 +12,5 @@ dist/
 
 # === macOS system file (ignore if present) ===
 .DS_Store
+AppDir/
+AppDir/
