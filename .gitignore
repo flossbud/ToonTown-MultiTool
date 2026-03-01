@@ -1,0 +1,14 @@
+# === Python bytecode ===
+__pycache__/
+*.py[cod]
+
+# === Build artifacts (PyInstaller, dist, etc.) ===
+build/
+dist/
+*.spec
+
+# === AppImages or binary blobs ===
+*.AppImage
+
+# === macOS system file (ignore if present) ===
+.DS_Store
