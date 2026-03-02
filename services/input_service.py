@@ -98,45 +98,59 @@ class InputService(QObject):
     BACKSPACE_REPEAT_DELAY    = 0.4
     BACKSPACE_REPEAT_INTERVAL = 0.05
 
-    def __init__(self, get_enabled_toons, get_movement_modes, get_event_queue_func, settings_manager=None):
+    def __init__(self, get_enabled_toons, get_movement_modes, get_event_queue_func, get_chat_enabled=None, settings_manager=None):
         super().__init__()
         self.get_enabled_toons = get_enabled_toons
         self.get_movement_modes = get_movement_modes
         self.get_event_queue = get_event_queue_func
+        self.get_chat_enabled = get_chat_enabled
         self.settings_manager = settings_manager
         self.running = False
         self.thread = None
         self.window_ids = []
 
-        # Keys currently held for movement/backspace — need real hold semantics
         self.keys_held = set()
-
-        # Typing keys currently held on background windows.
-        # Used ONLY to suppress X11 auto-repeat (which fires keyup+keydown pairs).
-        # The focused window is never sent xdotool typing events — real keyboard
-        # handles it perfectly and needs no intervention from us.
         self.bg_typing_held = set()
-
-        # Modifiers currently held: key -> True
-        # Cleared on keyup. Used to build combos for background windows.
         self.modifiers_held = set()
-
-        # Toon indices (ARROWS mode) that currently have chat box open
         self.chat_active = set()
 
         self._window_cache = ActiveWindowCache()
+        self._xlib = None
 
     def start(self):
+        self._apply_backend_setting()
         self.running = True
         self._window_cache.start()
         self.assign_windows()
         self.thread = threading.Thread(target=self.run, daemon=True)
         self.thread.start()
 
+    def _apply_backend_setting(self):
+        """Connect or disconnect Xlib based on current settings."""
+        use_xlib = (self.settings_manager.get("input_backend", "xlib") == "xlib") if self.settings_manager else True
+        if use_xlib and self._xlib is None:
+            try:
+                from utils.xlib_backend import XlibBackend
+                self._xlib = XlibBackend()
+                self._xlib.connect()
+            except Exception as e:
+                print(f"[InputService] Xlib backend unavailable, falling back to xdotool: {e}")
+                self._xlib = None
+        elif not use_xlib and self._xlib is not None:
+            self._xlib.disconnect()
+            self._xlib = None
+
     def stop(self):
         self.running = False
         self._window_cache.stop()
         self.release_all_keys()
+
+    def shutdown(self):
+        """Call once on app exit to clean up the Xlib connection."""
+        self.stop()
+        if self._xlib:
+            self._xlib.disconnect()
+            self._xlib = None
 
     def assign_windows(self):
         try:
@@ -157,18 +171,18 @@ class InputService(QObject):
                 except subprocess.CalledProcessError:
                     continue
 
-            if self.settings_manager and self.settings_manager.get("left_to_right_assignment", False):
-                def get_x(win_id):
-                    try:
-                        for line in subprocess.check_output(
-                            ["xdotool", "getwindowgeometry", win_id],
-                            stderr=subprocess.DEVNULL
-                        ).decode().splitlines():
-                            if "Position:" in line:
-                                return int(line.split()[1].split(",")[0])
-                    except Exception:
-                        return 99999
-                visible_ids.sort(key=get_x)
+            # Always sort left to right by window X position
+            def get_x(win_id):
+                try:
+                    for line in subprocess.check_output(
+                        ["xdotool", "getwindowgeometry", win_id],
+                        stderr=subprocess.DEVNULL
+                    ).decode().splitlines():
+                        if "Position:" in line:
+                            return int(line.split()[1].split(",")[0])
+                except Exception:
+                    return 99999
+            visible_ids.sort(key=get_x)
 
             self.window_ids = list(dict.fromkeys(visible_ids))[:4]
 
@@ -228,9 +242,6 @@ class InputService(QObject):
                         if key not in self.keys_held:
                             self.keys_held.add(key)
                             self._send_movement_key("keydown", key, enabled, modes)
-                            # If this is a WASD key and any ARROWS toon has chat open,
-                            # also send it as a typing tap to those toons so letters
-                            # reach the chat box instead of being filtered as movement.
                             if key in WASD_KEYS and self.chat_active:
                                 self._send_typing_to_bg(key, enabled, modes)
 
@@ -240,16 +251,15 @@ class InputService(QObject):
                             bs_press_time  = now
                             bs_last_repeat = 0.0
                             self._send_movement_key("keydown", key, enabled, modes)
-                        # X11 auto-repeat keydowns swallowed — timer handles bg repeat
 
                     elif key == "Return":
-                        # Toggle chat state for ARROWS toons.
-                        # Only fire once per physical press (skip X11 auto-repeat).
                         if key not in self.bg_typing_held:
                             self.bg_typing_held.add(key)
                             for i, mode in enumerate(modes):
                                 if mode == "ARROWS" and i < len(self.window_ids) and enabled[i]:
-                                    if i in self.chat_active:
+                                    if not self._is_chat_allowed(i):
+                                        pass
+                                    elif i in self.chat_active:
                                         self.chat_active.discard(i)
                                     else:
                                         self.chat_active.add(i)
@@ -264,10 +274,6 @@ class InputService(QObject):
                             self._send_typing_to_bg(key, enabled, modes)
 
                     else:
-                        # Regular typing key.
-                        # Focused window: do NOTHING — the real keyboard already
-                        # delivers the keystroke perfectly with correct modifier state.
-                        # Background windows: send one atomic tap, skip X11 repeats.
                         if key not in self.bg_typing_held:
                             self.bg_typing_held.add(key)
                             self._send_typing_to_bg(key, enabled, modes)
@@ -286,11 +292,8 @@ class InputService(QObject):
                         self._release_movement_key(key, enabled, modes)
 
                     else:
-                        # Typing keyup: clear bg_typing_held so the next real
-                        # press fires a new tap to background windows
                         self.bg_typing_held.discard(key)
 
-            # Backspace repeat for background windows only
             if bs_press_time is not None and "BackSpace" in self.keys_held:
                 held_for = now - bs_press_time
                 if held_for >= self.BACKSPACE_REPEAT_DELAY:
@@ -319,11 +322,16 @@ class InputService(QObject):
                 mods.append(prefix)
         return mods
 
+    def _is_chat_allowed(self, toon_index):
+        if self.get_chat_enabled is None:
+            return True
+        chat_enabled = self.get_chat_enabled()
+        return toon_index < len(chat_enabled) and chat_enabled[toon_index]
+
     def _is_chat_active(self, toon_index):
         return toon_index in self.chat_active
 
     def _send_modifier_to_bg(self, action, key, enabled, modes):
-        """Send modifier keydown/keyup to background windows only."""
         active_window = self._window_cache.get()
         keysym = self._resolve_keysym(key)
         if not keysym:
@@ -333,12 +341,9 @@ class InputService(QObject):
                 continue
             win = self.window_ids[i]
             if win != active_window:
-                self._safe_run(["xdotool", action, "--window", win, keysym])
+                self._send_via_backend(action, win, keysym)
 
     def _send_typing_to_bg(self, key, enabled, modes):
-        """Send one atomic tap to background windows only.
-        The focused window is deliberately skipped — the real keyboard already
-        delivered the keystroke. We only need to mirror it to background windows."""
         active_window = self._window_cache.get()
 
         for i, (is_enabled, mode) in enumerate(zip(enabled, modes)):
@@ -348,24 +353,21 @@ class InputService(QObject):
                 continue
             if mode == "WASD" and key in ARROW_KEYS:
                 continue
+            if key in ("Return", "Escape") and not self._is_chat_allowed(i):
+                continue
 
             win = self.window_ids[i]
             if win == active_window:
-                continue  # real keyboard handles the focused window
+                continue
 
             keysym = self._resolve_keysym(key)
             if not keysym:
                 continue
 
             mods = self._active_modifiers()
-            if mods:
-                combo = '+'.join(mods + [keysym])
-                self._safe_run(["xdotool", "key", "--window", win, combo])
-            else:
-                self._safe_run(["xdotool", "key", "--window", win, keysym])
+            self._send_via_backend("key", win, keysym, mods if mods else None)
 
     def _send_movement_key(self, action, key, enabled, modes):
-        """Send movement key keydown to all enabled windows."""
         active_window = self._window_cache.get()
 
         for i, (is_enabled, mode) in enumerate(zip(enabled, modes)):
@@ -373,8 +375,6 @@ class InputService(QObject):
                 continue
             if mode == "WASD" and key in ARROW_KEYS:
                 continue
-            # Skip WASD keys on ARROWS toons — but also skip if chat is open
-            # (those toons receive WASD as typing letters via _send_typing_to_bg)
             if mode == "ARROWS" and key in WASD_KEYS:
                 continue
 
@@ -384,14 +384,14 @@ class InputService(QObject):
                 continue
 
             win = self.window_ids[i]
-            self._safe_run(["xdotool", action, "--window", win, keysym])
+            if self._xlib and win == active_window:
+                continue  # real keyboard handles the focused window
+            self._send_via_backend(action, win, keysym)
 
     def _release_movement_key(self, key, enabled, modes):
-        """Send keyup for a movement key to all enabled windows."""
         self._send_movement_key("keyup", key, enabled, modes)
 
     def _send_backspace_to_background(self, enabled, modes):
-        """Controlled backspace repeat tap to background windows."""
         active_window = self._window_cache.get()
         for i, (is_enabled, mode) in enumerate(zip(enabled, modes)):
             if not is_enabled or i >= len(self.window_ids):
@@ -399,7 +399,7 @@ class InputService(QObject):
             win = self.window_ids[i]
             if win == active_window:
                 continue
-            self._safe_run(["xdotool", "key", "--window", win, "BackSpace"])
+            self._send_via_backend("key", win, "BackSpace")
 
     def _resolve_keysym(self, key):
         if key in NAMED_KEYSYMS:
@@ -409,6 +409,27 @@ class InputService(QObject):
             return CHAR_TO_PHYSICAL_KEYSYM[lookup]
         return None
 
+    def _send_via_backend(self, action: str, win_id: str, keysym: str, modifiers: list = None):
+        """Route input through Xlib or xdotool depending on USE_XLIB_BACKEND."""
+        if self._xlib:
+            if action == "keydown":
+                self._xlib.send_keydown(win_id, keysym)
+            elif action == "keyup":
+                self._xlib.send_keyup(win_id, keysym)
+            elif action == "key":
+                self._xlib.send_key(win_id, keysym, modifiers)
+        else:
+            if action == "keydown":
+                self._safe_run(["xdotool", "keydown", "--window", win_id, keysym])
+            elif action == "keyup":
+                self._safe_run(["xdotool", "keyup", "--window", win_id, keysym])
+            elif action == "key":
+                if modifiers:
+                    combo = '+'.join(modifiers + [keysym])
+                    self._safe_run(["xdotool", "key", "--window", win_id, combo])
+                else:
+                    self._safe_run(["xdotool", "key", "--window", win_id, keysym])
+
     def _safe_run(self, cmd):
         try:
             subprocess.run(cmd, check=True, stderr=subprocess.DEVNULL)
@@ -417,7 +438,6 @@ class InputService(QObject):
             return False
 
     def release_all_keys(self):
-        """Send keyup for every tracked key to all enabled background windows."""
         modes = self.get_movement_modes()
         enabled = self.get_enabled_toons()
         active_window = self._window_cache.get()
@@ -427,16 +447,14 @@ class InputService(QObject):
                     mapped = ARROW_TO_WASD.get(key, key) if modes[i] == "ARROWS" else key
                     keysym = self._resolve_keysym(mapped)
                     if keysym:
-                        self._safe_run(["xdotool", "keyup", "--window",
-                                        self.window_ids[i], keysym])
+                        self._send_via_backend("keyup", self.window_ids[i], keysym)
         for key in list(self.modifiers_held):
             keysym = self._resolve_keysym(key)
             if keysym:
                 for i, is_enabled in enumerate(enabled):
                     if is_enabled and i < len(self.window_ids):
                         if self.window_ids[i] != active_window:
-                            self._safe_run(["xdotool", "keyup", "--window",
-                                            self.window_ids[i], keysym])
+                            self._send_via_backend("keyup", self.window_ids[i], keysym)
         self.keys_held.clear()
         self.modifiers_held.clear()
         self.bg_typing_held.clear()
@@ -445,6 +463,6 @@ class InputService(QObject):
     def send_keep_alive_key(self, key):
         keysym = self._resolve_keysym(key) or key
         for win_id in self.window_ids:
-            if self._safe_run(["xdotool", "keydown", "--window", win_id, keysym]):
-                time.sleep(0.05)
-                self._safe_run(["xdotool", "keyup", "--window", win_id, keysym])
+            self._send_via_backend("keydown", win_id, keysym)
+            time.sleep(0.05)
+            self._send_via_backend("keyup", win_id, keysym)

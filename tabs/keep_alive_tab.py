@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QKeyEvent
 from utils.theme_manager import resolve_theme, get_theme_colors
+from utils.symbols import S
 
 SPECIAL_KEYS = {
     Qt.Key_Space: "space", Qt.Key_Return: "Return", Qt.Key_Enter: "Return",
@@ -99,7 +100,7 @@ class KeepAliveTab(QWidget):
         self.enable_checkbox = NonToggleableCheckBox("Enable Keep-Alive")
         layout.addWidget(self.enable_checkbox, alignment=Qt.AlignLeft)
 
-        self.status_label = QLabel("⏸️ Keep-Alive: Disabled")
+        self.status_label = QLabel(f"{S('⏸️', '◼')} Keep-Alive: Disabled")
         layout.addWidget(self.status_label)
 
         self.card = QFrame()
@@ -142,7 +143,7 @@ class KeepAliveTab(QWidget):
         self.countdown_label = QLabel("")
         layout.addWidget(self.countdown_label)
 
-        self.launch_button = QPushButton("🚀 Launch TTR")
+        self.launch_button = QPushButton(f"{S('🚀', '▶')} Launch TTR")
         self.launch_button.setFixedWidth(160)
         self.launch_button.clicked.connect(self.launch_ttr)
         layout.addWidget(self.launch_button, alignment=Qt.AlignHCenter)
@@ -233,7 +234,7 @@ class KeepAliveTab(QWidget):
     def clear_keep_alive_key(self):
         self.internal_toggle_block = True
         self.stop_keep_alive()
-        self._apply_status_style("⏸️ Keep-Alive: Disabled", "idle")
+        self._apply_status_style(f"{S('⏸️', '◼')} Keep-Alive: Disabled", "idle")
         self.countdown_label.setText("")
         self.key_input.set_default_state()
         self.enable_checkbox.setChecked(False)
@@ -266,7 +267,7 @@ class KeepAliveTab(QWidget):
         if self.settings_manager:
             self.settings_manager.set("keep_alive_key", key)
         self.enable_checkbox.setEnabled(True)
-        self._apply_status_style("⏸️ Keep-Alive: Disabled", "idle")
+        self._apply_status_style(f"{S('⏸️', '◼')} Keep-Alive: Disabled", "idle")
         self.countdown_label.setText("")
 
     def log_delay_changed(self, i):
@@ -280,18 +281,18 @@ class KeepAliveTab(QWidget):
         if self.internal_toggle_block:
             return
         if state != 0 and self.key_input.key_set:
-            self._apply_status_style("✅ Keep-Alive: Active", "active")
+            self._apply_status_style(f"{S('✅', '✔')} Keep-Alive: Active", "active")
             self.start_keep_alive()
             if self.parent_window:
                 self.parent_window.log("[KeepAlive] Keep-Alive enabled.")
         elif state != 0:
-            self._apply_status_style("⚠️ Set key before enabling!", "warning")
+            self._apply_status_style(f"{S('⚠️', '⚠')} Set key before enabling!", "warning")
             self.countdown_label.setText("")
             self.internal_toggle_block = True
             self.enable_checkbox.setChecked(False)
             self.internal_toggle_block = False
         else:
-            self._apply_status_style("⏸️ Keep-Alive: Disabled", "idle")
+            self._apply_status_style(f"{S('⏸️', '◼')} Keep-Alive: Disabled", "idle")
             self.countdown_label.setText("")
             self.stop_keep_alive()
             if self.parent_window:

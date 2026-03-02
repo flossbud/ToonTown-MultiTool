@@ -1,5 +1,83 @@
-from PySide6.QtGui import QPalette
+from PySide6.QtGui import QPalette, QFont, QPixmap, QPainter, QColor, QIcon
 from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import Qt
+
+
+def make_chat_icon(size: int = 18) -> QIcon:
+    """Draw a chat bubble icon using Qt primitives."""
+    from PySide6.QtGui import QPainterPath
+    pixmap = QPixmap(size, size)
+    pixmap.fill(QColor(0, 0, 0, 0))
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing)
+
+    # Bubble body
+    painter.setBrush(QColor(255, 255, 255, 220))
+    painter.setPen(Qt.NoPen)
+    bubble_rect = pixmap.rect().adjusted(1, 1, -1, -4)
+    painter.drawRoundedRect(bubble_rect, 3, 3)
+
+    # Tail (small triangle at bottom-left)
+    path = QPainterPath()
+    path.moveTo(3, size - 4)
+    path.lineTo(1, size - 1)
+    path.lineTo(7, size - 4)
+    path.closeSubpath()
+    painter.drawPath(path)
+
+    # Three dots inside bubble
+    painter.setBrush(QColor(80, 80, 80, 200))
+    dot_y = size // 2 - 1
+    for dx in [4, size // 2, size - 5]:
+        painter.drawEllipse(dx - 1, dot_y, 2, 2)
+
+    painter.end()
+    return QIcon(pixmap)
+
+
+def make_refresh_icon(size: int = 14) -> QIcon:
+    """Draw a circular refresh arrow using Qt primitives — font independent."""
+    from PySide6.QtGui import QPainterPath, QPen
+    from PySide6.QtCore import QRectF
+    import math
+
+    pixmap = QPixmap(size, size)
+    pixmap.fill(QColor(0, 0, 0, 0))
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing)
+
+    pen_color = QColor(200, 200, 200)
+    pen = QPen(pen_color, max(1.5, size / 10))
+    pen.setCapStyle(Qt.RoundCap)
+    painter.setPen(pen)
+    painter.setBrush(Qt.NoBrush)
+
+    margin = size * 0.15
+    arc_rect = QRectF(margin, margin, size - margin * 2, size - margin * 2)
+
+    # Draw ~300 degree arc (leaving a gap for the arrowhead)
+    painter.drawArc(arc_rect, 60 * 16, 300 * 16)
+
+    # Arrowhead at the end of the arc (~60 degrees position)
+    angle_rad = math.radians(60)
+    cx = size / 2
+    cy = size / 2
+    r = (size - margin * 2) / 2
+    tip_x = cx + r * math.cos(angle_rad)
+    tip_y = cy - r * math.sin(angle_rad)
+
+    arrow_size = size * 0.28
+    path = QPainterPath()
+    path.moveTo(tip_x, tip_y)
+    path.lineTo(tip_x - arrow_size, tip_y - arrow_size * 0.3)
+    path.lineTo(tip_x - arrow_size * 0.3, tip_y + arrow_size)
+    path.closeSubpath()
+    painter.setPen(Qt.NoPen)
+    painter.setBrush(pen_color)
+    painter.drawPath(path)
+
+    painter.end()
+    return QIcon(pixmap)
 
 
 def get_theme_colors(is_dark: bool) -> dict:
@@ -37,6 +115,9 @@ def get_theme_colors(is_dark: bool) -> dict:
 
             # Accent — blue (hover highlight)
             "accent_blue": "#88c0d0",
+            "accent_blue_btn":        "#3a7abf",
+            "accent_blue_btn_border": "#5599dd",
+            "accent_blue_btn_hover":  "#4a8fd4",
 
             # Accent — red (destructive / stop)
             "accent_red":        "#b34848",
@@ -111,6 +192,9 @@ def get_theme_colors(is_dark: bool) -> dict:
 
             # Accent — blue (hover highlight, same as green in light mode)
             "accent_blue": "#66aa66",
+            "accent_blue_btn":        "#3a7abf",
+            "accent_blue_btn_border": "#5599dd",
+            "accent_blue_btn_hover":  "#4a8fd4",
 
             # Accent — red
             "accent_red":        "#b34848",

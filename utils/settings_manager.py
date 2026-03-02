@@ -8,12 +8,13 @@ class SettingsManager:
         os.makedirs(config_dir, exist_ok=True)
         self.settings_path = os.path.join(config_dir, "settings.json")
         self.settings = {
-            "left_to_right_assignment": False,
-            "show_debug_tab": False,
-            "show_extras_tab": False,  # ✅ New extras tab toggle
-            "keep_alive_key": "",
-            "keep_alive_delay": "30 sec",
-            "theme": "system"
+            "show_debug_tab":        False,
+            "show_diagnostics_tab":  False,
+            "keep_alive_key":        "",
+            "keep_alive_delay":      "30 sec",
+            "theme":                 "system",
+            "enable_companion_app":  True,
+            "input_backend":         "xlib",
         }
         self._load()
 
@@ -41,7 +42,6 @@ class SettingsManager:
         self.save()
 
 
-# Safe wrapper for use in theme_manager.py or elsewhere
 def safe_get_theme(settings_manager):
     if settings_manager is None:
         return "dark"
