@@ -8,10 +8,11 @@ from PySide6.QtCore import Qt, Signal, Slot, QTimer
 from services.input_service import InputService
 from utils.theme_manager import resolve_theme, get_theme_colors, make_chat_icon, make_refresh_icon
 from utils.symbols import S
-from utils.ttr_api import get_toon_names_threaded
+from utils.ttr_api import get_toon_names_threaded, invalidate_port_to_wid_cache
 
 
 class MultitoonTab(QWidget):
+    _toon_names_ready = Signal(list)
     def __init__(self, logger=None, settings_manager=None):
         super().__init__()
         self.logger = logger
@@ -24,7 +25,9 @@ class MultitoonTab(QWidget):
         self.toon_cards = []
         self.enabled_toons = [False] * 4
         self.chat_enabled  = [True]  * 4
-        self.toon_names    = [None]  * 4
+        self.toon_names       = [None] * 4
+        self._refresh_gen     = 0
+        self._last_window_ids = []
 
         self.key_event_queue = queue.Queue()
 
@@ -38,6 +41,7 @@ class MultitoonTab(QWidget):
             settings_manager=settings_manager
         )
         self.input_service.window_ids_updated.connect(self.update_toon_controls)
+        self._toon_names_ready.connect(self._apply_toon_names)
 
         self.refresh_timer = QTimer(self)
         self.refresh_timer.setInterval(5000)
@@ -373,10 +377,16 @@ class MultitoonTab(QWidget):
 
     def _fetch_names_if_enabled(self, num_slots: int):
         if self.settings_manager and self.settings_manager.get("enable_companion_app", True):
-            get_toon_names_threaded(num_slots, self._on_toon_names_received,
+            self._refresh_gen += 1
+            gen = self._refresh_gen
+            def _callback(names):
+                if gen == self._refresh_gen:
+                    self._on_toon_names_received(names)
+            get_toon_names_threaded(num_slots, _callback,
                                     list(self.input_service.window_ids))
 
     def manual_refresh(self):
+        invalidate_port_to_wid_cache()
         self.input_service.assign_windows()
         self._fetch_names_if_enabled(4)
         self.log("[Service] Manual refresh triggered.")
@@ -450,6 +460,12 @@ class MultitoonTab(QWidget):
         self.update_status_label()
 
     def update_toon_controls(self, window_ids):
+        ids_changed = window_ids != self._last_window_ids
+        self._last_window_ids = list(window_ids)
+
+        if ids_changed:
+            invalidate_port_to_wid_cache()
+
         for i in range(4):
             # Only reset toons that are no longer connected
             if i >= len(window_ids):
@@ -466,11 +482,15 @@ class MultitoonTab(QWidget):
         self._fetch_names_if_enabled(len(window_ids))
 
     def _on_toon_names_received(self, names: list):
-        """Called from background thread — update labels safely via queued signal."""
-        from PySide6.QtCore import QMetaObject
+        """Called from background thread — deliver names to main thread via signal."""
+        self._toon_names_ready.emit(list(names))
+
+    @Slot(list)
+    def _apply_toon_names(self, names: list):
+        """Apply names and refresh labels — always runs on the main thread."""
         for i, name in enumerate(names):
             self.toon_names[i] = name
-        QMetaObject.invokeMethod(self, "_refresh_toon_name_labels", Qt.QueuedConnection)
+        self._refresh_toon_name_labels()
 
     @Slot()
     def _refresh_toon_name_labels(self):

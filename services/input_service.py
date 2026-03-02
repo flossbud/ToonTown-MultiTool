@@ -159,7 +159,8 @@ class InputService(QObject):
                 stderr=subprocess.DEVNULL
             ).decode().strip().split("\n")
 
-            visible_ids = []
+            # Read geometry once per window — store (wid, x) together
+            visible = []
             for wid in (w.strip() for w in raw_ids if w.strip()):
                 try:
                     geo = subprocess.check_output(
@@ -167,29 +168,27 @@ class InputService(QObject):
                         stderr=subprocess.DEVNULL
                     ).decode()
                     if "Position:" in geo and "Geometry:" in geo:
-                        visible_ids.append(wid)
+                        x = 99999
+                        for line in geo.splitlines():
+                            if "Position:" in line:
+                                x = int(line.split()[1].split(",")[0])
+                                break
+                        visible.append((wid, x))
                 except subprocess.CalledProcessError:
                     continue
 
-            # Always sort left to right by window X position
-            def get_x(win_id):
-                try:
-                    for line in subprocess.check_output(
-                        ["xdotool", "getwindowgeometry", win_id],
-                        stderr=subprocess.DEVNULL
-                    ).decode().splitlines():
-                        if "Position:" in line:
-                            return int(line.split()[1].split(",")[0])
-                except Exception:
-                    return 99999
-            visible_ids.sort(key=get_x)
+            # Sort left-to-right; use window ID as tiebreaker for determinism
+            visible.sort(key=lambda item: (item[1], item[0]))
 
-            self.window_ids = list(dict.fromkeys(visible_ids))[:4]
+            new_ids = list(dict.fromkeys(w for w, _ in visible))[:4]
 
         except subprocess.CalledProcessError:
-            self.window_ids = []
+            new_ids = []
 
-        self.window_ids_updated.emit(self.window_ids)
+        # Only emit if the list actually changed — prevents spurious cache invalidation
+        if new_ids != self.window_ids:
+            self.window_ids = new_ids
+            self.window_ids_updated.emit(self.window_ids)
 
     def run(self):
         event_queue    = self.get_event_queue()
