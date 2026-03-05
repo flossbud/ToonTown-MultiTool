@@ -834,8 +834,8 @@ class MultitoonTab(QWidget):
         profile = self.profile_manager.get_profile(index)
         self._active_profile = index
 
-        enabled = profile.get("enabled_toons", [False] * 4)
-        modes = profile.get("movement_modes", ["Default"] * 4)
+        enabled = profile.enabled_toons
+        modes = profile.movement_modes
 
         for i in range(4):
             state = enabled[i] if i < len(enabled) else False

@@ -1,6 +1,8 @@
 import os
 import json
 
+from utils.models import ToonProfile
+
 NUM_PROFILES = 5
 DEFAULT_NAMES = [f"Profile {i+1}" for i in range(NUM_PROFILES)]
 
@@ -65,11 +67,11 @@ class ProfileManager:
 
     # ── Read API ───────────────────────────────────────────────────────────
 
-    def get_profile(self, index: int) -> dict:
-        """Return a copy of the profile at index (0-based)."""
+    def get_profile(self, index: int) -> ToonProfile:
+        """Return a copy of the profile at index (0-based) as ToonProfile."""
         if 0 <= index < NUM_PROFILES:
-            return dict(self._profiles[index])
-        return self._default_profile(index)
+            return ToonProfile.from_dict(self._profiles[index])
+        return ToonProfile.from_dict(self._default_profile(index))
 
     def get_name(self, index: int) -> str:
         return self._profiles[index].get("name", DEFAULT_NAMES[index])

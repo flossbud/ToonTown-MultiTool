@@ -152,7 +152,7 @@ class LaunchTab(QWidget):
 
         self._layout.addStretch()
 
-    def _make_card(self, index: int, acct: dict) -> dict:
+    def _make_card(self, index: int, acct) -> dict:
         """Build an account card. Returns dict of widgets for later reference."""
         frame = QFrame()
         frame.setObjectName("account_card")
@@ -175,7 +175,7 @@ class LaunchTab(QWidget):
         name_col = QVBoxLayout()
         name_col.setSpacing(0)
 
-        display_name = acct.get("label") or acct.get("username") or f"Account {index + 1}"
+        display_name = acct.label or acct.username or f"Account {index + 1}"
         label_display = QLabel(display_name)
         label_display.setObjectName("acct_label")
         label_display.setMaximumWidth(200)
@@ -183,7 +183,7 @@ class LaunchTab(QWidget):
         label_display.setTextInteractionFlags(Qt.NoTextInteraction)
         name_col.addWidget(label_display)
 
-        username = acct.get("username", "")
+        username = acct.username
         # Only show username subtitle if there's a label and they differ
         username_lbl = QLabel(username if username and username != display_name else "")
         username_lbl.setObjectName("acct_username")
@@ -238,19 +238,19 @@ class LaunchTab(QWidget):
         edit_lay.setContentsMargins(8, 8, 8, 8)
         edit_lay.setSpacing(6)
 
-        label_edit = QLineEdit(acct.get("label", ""))
+        label_edit = QLineEdit(acct.label)
         label_edit.setObjectName("label_edit")
         label_edit.setPlaceholderText("Friendly name (optional)")
         label_edit.setFixedHeight(28)
         edit_lay.addWidget(label_edit)
 
-        user_edit = QLineEdit(acct.get("username", ""))
+        user_edit = QLineEdit(acct.username)
         user_edit.setObjectName("user_edit")
         user_edit.setPlaceholderText("TTR username")
         user_edit.setFixedHeight(28)
         edit_lay.addWidget(user_edit)
 
-        pass_edit = QLineEdit(acct.get("password", ""))
+        pass_edit = QLineEdit(acct.password)
         pass_edit.setObjectName("pass_edit")
         pass_edit.setPlaceholderText("TTR password")
         pass_edit.setEchoMode(QLineEdit.Password)
@@ -384,9 +384,9 @@ class LaunchTab(QWidget):
         # Restore original values
         acct = self.cred_manager.get_account(index)
         if acct:
-            card["label_edit"].setText(acct.get("label", ""))
-            card["user_edit"].setText(acct.get("username", ""))
-            card["pass_edit"].setText(acct.get("password", ""))
+            card["label_edit"].setText(acct.label)
+            card["user_edit"].setText(acct.username)
+            card["pass_edit"].setText(acct.password)
         card["edit_frame"].setVisible(False)
         card["edit_btn"].setText("Edit")
 
@@ -421,7 +421,7 @@ class LaunchTab(QWidget):
             return
 
         acct = self.cred_manager.get_account(index)
-        if not acct or not acct.get("username") or not acct.get("password"):
+        if not acct or not acct.username or not acct.password:
             self._update_status(index, LoginState.FAILED, "Missing username or password — click Edit")
             return
 
@@ -456,7 +456,7 @@ class LaunchTab(QWidget):
         launcher.launch_failed.connect(lambda msg, idx=index: self._update_status(idx, LoginState.FAILED, msg))
 
         # Start login
-        worker.login(acct["username"], acct["password"])
+        worker.login(acct.username, acct.password)
         self.log(f"[Launch] Logging in account {index + 1}…")
 
     def _on_login_success(self, index, gameserver, cookie):

@@ -10,7 +10,7 @@ Window discovery still uses xdotool (search, getwindowpid) as those don't
 trigger the portal. Geometry lookups use Xlib directly (fix #6).
 """
 
-from Xlib import display as xdisplay, X, XK
+from Xlib import display as xdisplay, X, XK, error
 from Xlib.protocol import event as xevent
 
 
@@ -107,29 +107,35 @@ class XlibBackend:
             detail=keycode
         )
 
-    def _send(self, win_id_str: str, event_type: int, keysym_str: str, state: int = 0):
+    def _send(self, win_id_str: str, event_type: int, keysym_str: str, state: int = 0) -> bool:
+        if not self._display:
+            return False
         try:
             kc = self._keycode_for(keysym_str)
             if not kc:
-                return
+                return False
             win = self._display.create_resource_object("window", int(win_id_str))
             ev = self._make_event(win, event_type, kc, state)
             win.send_event(ev, propagate=True)
             self._display.flush()
+            return True
+        except error.BadWindow:
+            return False
         except Exception:
-            pass
+            return False
 
-    def send_keydown(self, win_id_str: str, keysym_str: str, state: int = 0):
-        self._send(win_id_str, X.KeyPress, keysym_str, state)
+    def send_keydown(self, win_id_str: str, keysym_str: str, state: int = 0) -> bool:
+        return self._send(win_id_str, X.KeyPress, keysym_str, state)
 
-    def send_keyup(self, win_id_str: str, keysym_str: str, state: int = 0):
-        self._send(win_id_str, X.KeyRelease, keysym_str, state)
+    def send_keyup(self, win_id_str: str, keysym_str: str, state: int = 0) -> bool:
+        return self._send(win_id_str, X.KeyRelease, keysym_str, state)
 
-    def send_key(self, win_id_str: str, keysym_str: str, modifiers: list = None):
+    def send_key(self, win_id_str: str, keysym_str: str, modifiers: list = None) -> bool:
         state = self._modifier_mask(modifiers) if modifiers else 0
-        self._send(win_id_str, X.KeyPress, keysym_str, state)
+        success1 = self._send(win_id_str, X.KeyPress, keysym_str, state)
         self._display.flush()
-        self._send(win_id_str, X.KeyRelease, keysym_str, state)
+        success2 = self._send(win_id_str, X.KeyRelease, keysym_str, state)
+        return success1 and success2
 
     def sync(self):
         if self._display:

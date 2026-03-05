@@ -13,6 +13,8 @@ import json
 import uuid
 import keyring
 
+from utils.models import AccountCredential
+
 MAX_ACCOUNTS = 8
 SERVICE_NAME = "toontown_multitool"
 
@@ -78,7 +80,6 @@ class CredentialsManager:
             decrypted = fernet.decrypt(encrypted)
             old_accounts = json.loads(decrypted.decode())
             
-            self._accounts = []
             for acc in old_accounts:
                 account_id = str(uuid.uuid4())
                 password = acc.get("password", "")
@@ -121,8 +122,8 @@ class CredentialsManager:
 
     # ── Read API ───────────────────────────────────────────────────────────
 
-    def get_accounts(self) -> list[dict]:
-        """Return list of accounts. Each: {label, username, password}"""
+    def get_accounts(self) -> list[AccountCredential]:
+        """Return list of accounts as AccountCredential objects."""
         result = []
         for a in self._accounts:
             account_id = a.get("id")
@@ -133,14 +134,10 @@ class CredentialsManager:
                 except Exception as e:
                     print(f"[CredentialsManager] Failed to get password for {account_id}: {e}")
             
-            result.append({
-                "label": a.get("label", ""),
-                "username": a.get("username", ""),
-                "password": password
-            })
+            result.append(AccountCredential.from_dict(a, password))
         return result
 
-    def get_account(self, index: int) -> dict | None:
+    def get_account(self, index: int) -> AccountCredential | None:
         if 0 <= index < len(self._accounts):
             a = self._accounts[index]
             account_id = a.get("id")
@@ -150,11 +147,7 @@ class CredentialsManager:
                     password = keyring.get_password(SERVICE_NAME, account_id) or ""
                 except Exception:
                     pass
-            return {
-                "label": a.get("label", ""),
-                "username": a.get("username", ""),
-                "password": password
-            }
+            return AccountCredential.from_dict(a, password)
         return None
 
     def count(self) -> int:

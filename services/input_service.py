@@ -448,24 +448,28 @@ class InputService(QObject):
 
     def _send_via_backend(self, action: str, win_id: str, keysym: str, modifiers: list = None):
         """Route input through Xlib or xdotool depending on USE_XLIB_BACKEND."""
+        success = True
         if self._xlib:
             if action == "keydown":
-                self._xlib.send_keydown(win_id, keysym)
+                success = self._xlib.send_keydown(win_id, keysym)
             elif action == "keyup":
-                self._xlib.send_keyup(win_id, keysym)
+                success = self._xlib.send_keyup(win_id, keysym)
             elif action == "key":
-                self._xlib.send_key(win_id, keysym, modifiers)
+                success = self._xlib.send_key(win_id, keysym, modifiers)
         else:
             if action == "keydown":
-                self._safe_run(["xdotool", "keydown", "--window", win_id, keysym])
+                success = self._safe_run(["xdotool", "keydown", "--window", win_id, keysym])
             elif action == "keyup":
-                self._safe_run(["xdotool", "keyup", "--window", win_id, keysym])
+                success = self._safe_run(["xdotool", "keyup", "--window", win_id, keysym])
             elif action == "key":
                 if modifiers:
                     combo = '+'.join(modifiers + [keysym])
-                    self._safe_run(["xdotool", "key", "--window", win_id, combo])
+                    success = self._safe_run(["xdotool", "key", "--window", win_id, combo])
                 else:
-                    self._safe_run(["xdotool", "key", "--window", win_id, keysym])
+                    success = self._safe_run(["xdotool", "key", "--window", win_id, keysym])
+                    
+        if not success:
+            self.window_manager.assign_windows()
 
     def _safe_run(self, cmd):
         try:
