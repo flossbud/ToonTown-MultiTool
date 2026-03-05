@@ -6,8 +6,8 @@ from within the Python process. Since the process is already authorized
 through the GNOME RemoteDesktop portal, no per-subprocess auth dialogs
 appear.
 
-Window discovery still uses xdotool (search, getwindowgeometry, getwindowpid)
-as those don't trigger the portal.
+Window discovery still uses xdotool (search, getwindowpid) as those don't
+trigger the portal. Geometry lookups use Xlib directly (fix #6).
 """
 
 from Xlib import display as xdisplay, X, XK
@@ -36,6 +36,46 @@ class XlibBackend:
             except Exception:
                 pass
             self._display = None
+
+    def get_window_x(self, win_id_str: str) -> int | None:
+        """Get window X position via Xlib — no subprocess needed.
+
+        Returns the raw translate_coords value. On XWayland compositors this
+        may be negated; the caller (assign_windows) corrects for that by
+        looking at all positions as a batch.
+        """
+        if not self._display:
+            return None
+        try:
+            win = self._display.create_resource_object("window", int(win_id_str))
+            coords = win.translate_coords(self._display.screen().root, 0, 0)
+            return coords.x
+        except Exception:
+            return None
+
+    def get_window_pid(self, win_id_str: str) -> int | None:
+        """Get the host PID for a window using the XRes extension.
+
+        Returns the real host-namespace PID even for Flatpak/containerized
+        clients, since the X server always sees the true PID.
+        Returns None if XRes is unavailable or the query fails.
+        """
+        if not self._display:
+            return None
+        try:
+            if not self._display.has_extension("X-Resource"):
+                return None
+            from Xlib.ext import res as xres
+            wid = int(win_id_str)
+            resp = self._display.res_query_client_ids(
+                [{"client": wid, "mask": xres.LocalClientPIDMask}]
+            )
+            for cid in resp.ids:
+                if cid.value:
+                    return cid.value[0]
+        except Exception:
+            pass
+        return None
 
     def _keycode_for(self, keysym_str: str):
         """Convert an xdotool-style keysym string to an X keycode."""

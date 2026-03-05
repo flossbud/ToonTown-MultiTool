@@ -2,6 +2,7 @@ import queue
 import subprocess
 import threading
 import time
+from functools import lru_cache
 from PySide6.QtCore import QObject, Signal
 
 WASD_KEYS     = frozenset({'w', 'a', 's', 'd'})
@@ -54,41 +55,16 @@ CHAR_TO_PHYSICAL_KEYSYM = {
     '~': 'grave',
 }
 
+# Fix #8: Pre-built combined lookup dict for O(1) keysym resolution
+_KEYSYM_LOOKUP = {}
+_KEYSYM_LOOKUP.update(NAMED_KEYSYMS)
+_KEYSYM_LOOKUP.update(CHAR_TO_PHYSICAL_KEYSYM)
+# Add lowercase alpha mappings (handles the .lower() case)
+for c in 'abcdefghijklmnopqrstuvwxyz':
+    _KEYSYM_LOOKUP[c] = CHAR_TO_PHYSICAL_KEYSYM[c]
 
-class ActiveWindowCache:
-    POLL_INTERVAL = 0.1
 
-    def __init__(self):
-        self._active_id = None
-        self._lock = threading.Lock()
-        self._running = False
-        self._thread = None
 
-    def start(self):
-        self._running = True
-        self._thread = threading.Thread(target=self._poll_loop, daemon=True)
-        self._thread.start()
-
-    def stop(self):
-        self._running = False
-
-    def _poll_loop(self):
-        while self._running:
-            try:
-                result = subprocess.check_output(
-                    ["xdotool", "getactivewindow"],
-                    stderr=subprocess.DEVNULL
-                ).decode().strip()
-                with self._lock:
-                    self._active_id = result
-            except Exception:
-                with self._lock:
-                    self._active_id = None
-            time.sleep(self.POLL_INTERVAL)
-
-    def get(self):
-        with self._lock:
-            return self._active_id
 
 
 class InputService(QObject):
@@ -98,30 +74,31 @@ class InputService(QObject):
     BACKSPACE_REPEAT_DELAY    = 0.4
     BACKSPACE_REPEAT_INTERVAL = 0.05
 
-    def __init__(self, get_enabled_toons, get_movement_modes, get_event_queue_func, get_chat_enabled=None, settings_manager=None):
+    def __init__(self, window_manager, get_enabled_toons, get_movement_modes, get_event_queue_func,
+                 get_chat_enabled=None, settings_manager=None,
+                 get_keymap_assignments=None, keymap_manager=None):
         super().__init__()
+        self.window_manager = window_manager
         self.get_enabled_toons = get_enabled_toons
         self.get_movement_modes = get_movement_modes
         self.get_event_queue = get_event_queue_func
         self.get_chat_enabled = get_chat_enabled
         self.settings_manager = settings_manager
+        self.get_keymap_assignments = get_keymap_assignments
+        self.keymap_manager = keymap_manager
         self.running = False
         self.thread = None
-        self.window_ids = []
 
         self.keys_held = set()
         self.bg_typing_held = set()
         self.modifiers_held = set()
         self.chat_active = set()
 
-        self._window_cache = ActiveWindowCache()
         self._xlib = None
 
     def start(self):
         self._apply_backend_setting()
         self.running = True
-        self._window_cache.start()
-        self.assign_windows()
         self.thread = threading.Thread(target=self.run, daemon=True)
         self.thread.start()
 
@@ -142,7 +119,6 @@ class InputService(QObject):
 
     def stop(self):
         self.running = False
-        self._window_cache.stop()
         self.release_all_keys()
 
     def shutdown(self):
@@ -152,43 +128,160 @@ class InputService(QObject):
             self._xlib.disconnect()
             self._xlib = None
 
-    def assign_windows(self):
-        try:
-            raw_ids = subprocess.check_output(
-                ["xdotool", "search", "--class", "Toontown Rewritten"],
-                stderr=subprocess.DEVNULL
-            ).decode().strip().split("\n")
 
-            # Read geometry once per window — store (wid, x) together
-            visible = []
-            for wid in (w.strip() for w in raw_ids if w.strip()):
-                try:
-                    geo = subprocess.check_output(
-                        ["xdotool", "getwindowgeometry", wid],
-                        stderr=subprocess.DEVNULL
-                    ).decode()
-                    if "Position:" in geo and "Geometry:" in geo:
-                        x = 99999
-                        for line in geo.splitlines():
-                            if "Position:" in line:
-                                x = int(line.split()[1].split(",")[0])
-                                break
-                        visible.append((wid, x))
-                except subprocess.CalledProcessError:
+
+    # ── Keymap helpers ─────────────────────────────────────────────────────
+
+    def _movement_keys(self) -> frozenset:
+        """Return ALL movement keys across ALL sets so any set's keys enter the movement branch."""
+        if self.keymap_manager:
+            return self.keymap_manager.get_all_keys()
+        return MOVEMENT_KEYS
+
+    def _get_assignments(self, enabled) -> list:
+        """Return per-toon set indices. Falls back to legacy WASD/ARROWS mapping."""
+        if self.get_keymap_assignments:
+            return self.get_keymap_assignments()
+        # Legacy: ARROWS mode → index 1, WASD → index 0
+        modes = self.get_movement_modes()
+        return [1 if m == "ARROWS" else 0 for m in modes]
+
+    # ── Keymap-aware send methods ──────────────────────────────────────────
+
+    def _send_movement_key_km(self, action, key, enabled, assignments):
+        """Send a movement key to background toons, translating through keymap.
+
+        Each toon responds only to keys from its assigned set.
+        Keys are translated TO Set 1 before sending, since all TTR clients
+        use Set 1's movement config.
+        """
+        active_window = self.window_manager.get_active_window()
+
+        for i, is_enabled in enumerate(enabled):
+            if not is_enabled or i >= len(self.window_manager.ttr_window_ids):
+                continue
+
+            win = self.window_manager.ttr_window_ids[i]
+            # Always skip focused window — real keyboard handles it
+            if win == active_window:
+                continue
+
+            assignment = assignments[i] if i < len(assignments) else 0
+
+            if self.keymap_manager:
+                # Check if this key belongs to the toon's assigned set
+                direction = self.keymap_manager.get_direction_in_set(assignment, key)
+                if direction is None:
+                    # Key doesn't belong to this toon's set — skip
                     continue
 
-            # Sort left-to-right; use window ID as tiebreaker for determinism
-            visible.sort(key=lambda item: (item[1], item[0]))
+                # Translate to Set 1's key for this direction
+                set1_key = self.keymap_manager.get_key_for_direction(0, direction)
+                if set1_key is None:
+                    continue
 
-            new_ids = list(dict.fromkeys(w for w, _ in visible))[:4]
+                keysym = self._resolve_keysym(set1_key)
+                if keysym:
+                    self._send_via_backend(action, win, keysym)
+            else:
+                # Legacy fallback (no keymap_manager)
+                mode = self.get_movement_modes()[i] if i < len(self.get_movement_modes()) else "WASD"
+                if mode == "WASD" and key in ARROW_KEYS:
+                    continue
+                if mode == "ARROWS" and key in WASD_KEYS:
+                    continue
+                mapped = ARROW_TO_WASD.get(key, key) if mode == "ARROWS" else key
+                keysym = self._resolve_keysym(mapped)
+                if keysym:
+                    self._send_via_backend(action, win, keysym)
 
-        except subprocess.CalledProcessError:
-            new_ids = []
+    def _send_modifier_to_bg(self, action, key, enabled, assignments):
+        active_window = self.window_manager.get_active_window()
+        keysym = self._resolve_keysym(key)
+        if not keysym:
+            return
+        for i, is_enabled in enumerate(enabled):
+            if not is_enabled or i >= len(self.window_manager.ttr_window_ids):
+                continue
+            win = self.window_manager.ttr_window_ids[i]
+            if win != active_window:
+                self._send_via_backend(action, win, keysym)
 
-        # Only emit if the list actually changed — prevents spurious cache invalidation
-        if new_ids != self.window_ids:
-            self.window_ids = new_ids
-            self.window_ids_updated.emit(self.window_ids)
+    def _send_typing_to_bg(self, key, enabled, assignments, movement_keys=None):
+        active_window = self.window_manager.get_active_window()
+        if movement_keys is None:
+            movement_keys = self._movement_keys()
+
+        for i, is_enabled in enumerate(enabled):
+            if not is_enabled or i >= len(self.window_manager.ttr_window_ids):
+                continue
+
+            assignment = assignments[i] if i < len(assignments) else 0
+
+            if self.keymap_manager:
+                # Check if this key belongs to THIS toon's assigned set
+                is_toon_movement_key = (
+                    self.keymap_manager.get_direction_in_set(assignment, key) is not None
+                )
+                # Skip the toon's own movement keys (movement routing handles them)
+                # unless chat is active for this toon
+                if is_toon_movement_key and not self._is_chat_active(i):
+                    continue
+            else:
+                # Legacy logic
+                if assignment == 0 and key in movement_keys:
+                    continue
+                if assignment != 0 and key in movement_keys and not self._is_chat_active(i):
+                    continue
+
+            if key in ("Return", "Escape") and not self._is_chat_allowed(i):
+                continue
+
+            win = self.window_manager.ttr_window_ids[i]
+            if win == active_window:
+                continue
+
+            keysym = self._resolve_keysym(key)
+            if not keysym:
+                continue
+
+            mods = self._active_modifiers()
+            self._send_via_backend("key", win, keysym, mods if mods else None)
+
+    def _send_backspace_to_background(self, enabled, assignments):
+        active_window = self.window_manager.get_active_window()
+        for i, is_enabled in enumerate(enabled):
+            if not is_enabled or i >= len(self.window_manager.ttr_window_ids):
+                continue
+            win = self.window_manager.ttr_window_ids[i]
+            if win == active_window:
+                continue
+            self._send_via_backend("key", win, "BackSpace")
+
+    # ── Legacy methods (kept for backward compat, unused with keymap) ──────
+
+    def _send_movement_key(self, action, key, enabled, modes):
+        active_window = self.window_manager.get_active_window()
+        for i, (is_enabled, mode) in enumerate(zip(enabled, modes)):
+            if not is_enabled or i >= len(self.window_manager.ttr_window_ids):
+                continue
+            if mode == "WASD" and key in ARROW_KEYS:
+                continue
+            if mode == "ARROWS" and key in WASD_KEYS:
+                continue
+            mapped = ARROW_TO_WASD.get(key, key) if mode == "ARROWS" else key
+            keysym = self._resolve_keysym(mapped)
+            if not keysym:
+                continue
+            win = self.window_manager.ttr_window_ids[i]
+            if win == active_window:
+                continue
+            self._send_via_backend(action, win, keysym)
+
+    def _release_movement_key(self, key, enabled, modes):
+        self._send_movement_key("keyup", key, enabled, modes)
+
+    # ── Run loop ───────────────────────────────────────────────────────────
 
     def run(self):
         event_queue    = self.get_event_queue()
@@ -203,12 +296,12 @@ class InputService(QObject):
                     except queue.Empty:
                         break
                 if self.keys_held or self.modifiers_held:
-                    enabled = self.get_enabled_toons()
-                    modes   = self.get_movement_modes()
+                    enabled     = self.get_enabled_toons()
+                    assignments = self._get_assignments(enabled)
                     for key in list(self.keys_held):
-                        self._release_movement_key(key, enabled, modes)
+                        self._send_movement_key_km("keyup", key, enabled, assignments)
                     for key in list(self.modifiers_held):
-                        self._send_modifier_to_bg("keyup", key, enabled, modes)
+                        self._send_modifier_to_bg("keyup", key, enabled, assignments)
                     self.keys_held.clear()
                     self.modifiers_held.clear()
                 self.bg_typing_held.clear()
@@ -217,11 +310,12 @@ class InputService(QObject):
                 time.sleep(0.01)
                 continue
 
-            now     = time.monotonic()
-            enabled = self.get_enabled_toons()
-            modes   = self.get_movement_modes()
+            now            = time.monotonic()
+            enabled        = self.get_enabled_toons()
+            assignments    = self._get_assignments(enabled)
+            movement_keys  = self._movement_keys()
 
-            if not self.window_ids:
+            if not self.window_manager.ttr_window_ids:
                 self.assign_windows()
 
             while not event_queue.empty():
@@ -232,63 +326,76 @@ class InputService(QObject):
 
                 if action == "keydown":
 
-                    if key in MODIFIER_KEYS:
+                    # When keymap is active, movement keys take priority over
+                    # modifiers — e.g. Control_L as jump, Alt_L as book
+                    is_movement = key in movement_keys
+                    is_modifier = key in MODIFIER_KEYS and not is_movement
+
+                    if is_modifier:
                         if key not in self.modifiers_held:
                             self.modifiers_held.add(key)
-                            self._send_modifier_to_bg("keydown", key, enabled, modes)
+                            self._send_modifier_to_bg("keydown", key, enabled, assignments)
 
-                    elif key in MOVEMENT_KEYS:
+                    elif is_movement:
                         if key not in self.keys_held:
                             self.keys_held.add(key)
-                            self._send_movement_key("keydown", key, enabled, modes)
-                            if key in WASD_KEYS and self.chat_active:
-                                self._send_typing_to_bg(key, enabled, modes)
+                            self._send_movement_key_km("keydown", key, enabled, assignments)
+                            # Send movement keys as typing only for non-space keys
+                            # (space is a jump key — sending it as typing causes double spaces)
+                            if self.chat_active and key != "space":
+                                self._send_typing_to_bg(key, enabled, assignments, movement_keys)
 
                     elif key == "BackSpace":
                         if key not in self.keys_held:
                             self.keys_held.add(key)
                             bs_press_time  = now
                             bs_last_repeat = 0.0
-                            self._send_movement_key("keydown", key, enabled, modes)
+                            # BackSpace is a typing key, not a movement key —
+                            # send directly to background toons, not via movement handler
+                            self._send_backspace_to_background(enabled, assignments)
 
                     elif key == "Return":
                         if key not in self.bg_typing_held:
                             self.bg_typing_held.add(key)
-                            for i, mode in enumerate(modes):
-                                if mode == "ARROWS" and i < len(self.window_ids) and enabled[i]:
+                            for i in range(len(assignments)):
+                                assignment = assignments[i] if i < len(assignments) else 0
+                                if assignment != 0 and i < len(self.window_manager.ttr_window_ids) and enabled[i]:
                                     if not self._is_chat_allowed(i):
                                         pass
                                     elif i in self.chat_active:
                                         self.chat_active.discard(i)
                                     else:
                                         self.chat_active.add(i)
-                            self._send_typing_to_bg(key, enabled, modes)
+                            self._send_typing_to_bg(key, enabled, assignments, movement_keys)
 
                     elif key == "Escape":
                         if key not in self.bg_typing_held:
                             self.bg_typing_held.add(key)
-                            for i, mode in enumerate(modes):
-                                if mode == "ARROWS" and i < len(self.window_ids) and enabled[i]:
+                            for i in range(len(assignments)):
+                                assignment = assignments[i] if i < len(assignments) else 0
+                                if assignment != 0 and i < len(self.window_manager.ttr_window_ids) and enabled[i]:
                                     self.chat_active.discard(i)
-                            self._send_typing_to_bg(key, enabled, modes)
+                            self._send_typing_to_bg(key, enabled, assignments, movement_keys)
 
                     else:
                         if key not in self.bg_typing_held:
                             self.bg_typing_held.add(key)
-                            self._send_typing_to_bg(key, enabled, modes)
+                            self._send_typing_to_bg(key, enabled, assignments, movement_keys)
 
                 elif action == "keyup":
 
-                    if key in MODIFIER_KEYS:
+                    is_modifier = key in MODIFIER_KEYS and key not in movement_keys
+
+                    if is_modifier:
                         self.modifiers_held.discard(key)
-                        self._send_modifier_to_bg("keyup", key, enabled, modes)
+                        self._send_modifier_to_bg("keyup", key, enabled, assignments)
 
                     elif key in self.keys_held:
                         self.keys_held.discard(key)
                         if key == "BackSpace":
                             bs_press_time  = None
                             bs_last_repeat = 0.0
-                        self._release_movement_key(key, enabled, modes)
+                        self._send_movement_key_km("keyup", key, enabled, assignments)
 
                     else:
                         self.bg_typing_held.discard(key)
@@ -298,15 +405,15 @@ class InputService(QObject):
                 if held_for >= self.BACKSPACE_REPEAT_DELAY:
                     if now - bs_last_repeat >= self.BACKSPACE_REPEAT_INTERVAL:
                         bs_last_repeat = now
-                        self._send_backspace_to_background(enabled, modes)
+                        self._send_backspace_to_background(enabled, assignments)
 
             time.sleep(0.005)
 
     def should_send_input(self):
-        active = self._window_cache.get()
+        active = self.window_manager.get_active_window()
         if not active:
             return False
-        if active in self.window_ids:
+        if active in self.window_manager.ttr_window_ids:
             return True
         multitool_id = self.settings_manager.get("multitool_window_id") if self.settings_manager else None
         return bool(multitool_id and active == str(multitool_id))
@@ -330,82 +437,13 @@ class InputService(QObject):
     def _is_chat_active(self, toon_index):
         return toon_index in self.chat_active
 
-    def _send_modifier_to_bg(self, action, key, enabled, modes):
-        active_window = self._window_cache.get()
-        keysym = self._resolve_keysym(key)
-        if not keysym:
-            return
-        for i, (is_enabled, mode) in enumerate(zip(enabled, modes)):
-            if not is_enabled or i >= len(self.window_ids):
-                continue
-            win = self.window_ids[i]
-            if win != active_window:
-                self._send_via_backend(action, win, keysym)
-
-    def _send_typing_to_bg(self, key, enabled, modes):
-        active_window = self._window_cache.get()
-
-        for i, (is_enabled, mode) in enumerate(zip(enabled, modes)):
-            if not is_enabled or i >= len(self.window_ids):
-                continue
-            if mode == "ARROWS" and key in WASD_KEYS and not self._is_chat_active(i):
-                continue
-            if mode == "WASD" and key in ARROW_KEYS:
-                continue
-            if key in ("Return", "Escape") and not self._is_chat_allowed(i):
-                continue
-
-            win = self.window_ids[i]
-            if win == active_window:
-                continue
-
-            keysym = self._resolve_keysym(key)
-            if not keysym:
-                continue
-
-            mods = self._active_modifiers()
-            self._send_via_backend("key", win, keysym, mods if mods else None)
-
-    def _send_movement_key(self, action, key, enabled, modes):
-        active_window = self._window_cache.get()
-
-        for i, (is_enabled, mode) in enumerate(zip(enabled, modes)):
-            if not is_enabled or i >= len(self.window_ids):
-                continue
-            if mode == "WASD" and key in ARROW_KEYS:
-                continue
-            if mode == "ARROWS" and key in WASD_KEYS:
-                continue
-
-            mapped = ARROW_TO_WASD.get(key, key) if mode == "ARROWS" else key
-            keysym = self._resolve_keysym(mapped)
-            if not keysym:
-                continue
-
-            win = self.window_ids[i]
-            if self._xlib and win == active_window:
-                continue  # real keyboard handles the focused window
-            self._send_via_backend(action, win, keysym)
-
-    def _release_movement_key(self, key, enabled, modes):
-        self._send_movement_key("keyup", key, enabled, modes)
-
-    def _send_backspace_to_background(self, enabled, modes):
-        active_window = self._window_cache.get()
-        for i, (is_enabled, mode) in enumerate(zip(enabled, modes)):
-            if not is_enabled or i >= len(self.window_ids):
-                continue
-            win = self.window_ids[i]
-            if win == active_window:
-                continue
-            self._send_via_backend("key", win, "BackSpace")
-
     def _resolve_keysym(self, key):
-        if key in NAMED_KEYSYMS:
-            return NAMED_KEYSYMS[key]
-        lookup = key.lower() if len(key) == 1 and key.isalpha() else key
-        if lookup in CHAR_TO_PHYSICAL_KEYSYM:
-            return CHAR_TO_PHYSICAL_KEYSYM[lookup]
+        """Fix #8: O(1) lookup from pre-built dict instead of repeated branching."""
+        result = _KEYSYM_LOOKUP.get(key)
+        if result:
+            return result
+        if len(key) == 1 and key.isalpha():
+            return _KEYSYM_LOOKUP.get(key.lower())
         return None
 
     def _send_via_backend(self, action: str, win_id: str, keysym: str, modifiers: list = None):
@@ -437,23 +475,41 @@ class InputService(QObject):
             return False
 
     def release_all_keys(self):
-        modes = self.get_movement_modes()
+        assignments = self._get_assignments(self.get_enabled_toons())
         enabled = self.get_enabled_toons()
-        active_window = self._window_cache.get()
+        active_window = self.window_manager.get_active_window()
+
         for key in list(self.keys_held):
             for i, is_enabled in enumerate(enabled):
-                if is_enabled and i < len(self.window_ids):
-                    mapped = ARROW_TO_WASD.get(key, key) if modes[i] == "ARROWS" else key
-                    keysym = self._resolve_keysym(mapped)
+                if is_enabled and i < len(self.window_manager.ttr_window_ids):
+                    win = self.window_manager.ttr_window_ids[i]
+                    if win == active_window:
+                        continue
+                    assignment = assignments[i] if i < len(assignments) else 0
+                    if self.keymap_manager:
+                        # Same logic as _send_movement_key_km: find direction
+                        # in the toon's set, translate to Set 1
+                        direction = self.keymap_manager.get_direction_in_set(assignment, key)
+                        if direction is None:
+                            continue
+                        set1_key = self.keymap_manager.get_key_for_direction(0, direction)
+                        keysym = self._resolve_keysym(set1_key) if set1_key else None
+                    else:
+                        modes = self.get_movement_modes()
+                        mode = modes[i] if i < len(modes) else "WASD"
+                        mapped = ARROW_TO_WASD.get(key, key) if mode == "ARROWS" else key
+                        keysym = self._resolve_keysym(mapped)
                     if keysym:
-                        self._send_via_backend("keyup", self.window_ids[i], keysym)
+                        self._send_via_backend("keyup", win, keysym)
+
         for key in list(self.modifiers_held):
             keysym = self._resolve_keysym(key)
             if keysym:
                 for i, is_enabled in enumerate(enabled):
-                    if is_enabled and i < len(self.window_ids):
-                        if self.window_ids[i] != active_window:
-                            self._send_via_backend("keyup", self.window_ids[i], keysym)
+                    if is_enabled and i < len(self.window_manager.ttr_window_ids):
+                        if self.window_manager.ttr_window_ids[i] != active_window:
+                            self._send_via_backend("keyup", self.window_manager.ttr_window_ids[i], keysym)
+
         self.keys_held.clear()
         self.modifiers_held.clear()
         self.bg_typing_held.clear()
@@ -461,7 +517,14 @@ class InputService(QObject):
 
     def send_keep_alive_key(self, key):
         keysym = self._resolve_keysym(key) or key
-        for win_id in self.window_ids:
+        for win_id in self.window_manager.ttr_window_ids:
             self._send_via_backend("keydown", win_id, keysym)
             time.sleep(0.05)
             self._send_via_backend("keyup", win_id, keysym)
+
+    def send_keep_alive_to_window(self, win_id, key):
+        """Send a single keep-alive keypress to a specific window."""
+        keysym = self._resolve_keysym(key) or key
+        self._send_via_backend("keydown", win_id, keysym)
+        time.sleep(0.05)
+        self._send_via_backend("keyup", win_id, keysym)

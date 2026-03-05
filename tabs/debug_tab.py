@@ -1,4 +1,5 @@
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QPlainTextEdit, QLabel
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QPlainTextEdit, QLabel, QGraphicsDropShadowEffect
+from PySide6.QtGui import QColor
 from datetime import datetime
 
 
@@ -16,9 +17,16 @@ class DebugTab(QWidget):
             background-color: #1e1e1e;
             color: #ccc;
             border: 1px solid #444;
+            border-radius: 6px;
         """)
+        shadow = QGraphicsDropShadowEffect(self.log_output)
+        shadow.setColor(QColor(0, 0, 0, 70))
+        shadow.setBlurRadius(14)
+        shadow.setOffset(0, 2)
+        self.log_output.setGraphicsEffect(shadow)
         layout.addWidget(self.log_output)
 
     def append_log(self, message: str):
-        self.log_output.appendPlainText(f"{datetime.now():[%H:%M:%S]} {message}")
+        # Fix #9: Clearer timestamp format — brackets outside the format spec
+        self.log_output.appendPlainText(f"[{datetime.now():%H:%M:%S}] {message}")
         self.log_output.verticalScrollBar().setValue(self.log_output.verticalScrollBar().maximum())

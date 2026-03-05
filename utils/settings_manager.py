@@ -10,12 +10,14 @@ class SettingsManager:
         self.settings = {
             "show_debug_tab":        False,
             "show_diagnostics_tab":  False,
-            "keep_alive_key":        "",
+            "keep_alive_action":     "jump",
             "keep_alive_delay":      "30 sec",
             "theme":                 "system",
             "enable_companion_app":  True,
             "input_backend":         "xlib",
+            "active_profile":        -1,
         }
+        self._callbacks = []
         self._load()
 
     def _load(self):
@@ -40,6 +42,15 @@ class SettingsManager:
     def set(self, key, value):
         self.settings[key] = value
         self.save()
+        for cb in self._callbacks:
+            try:
+                cb(key, value)
+            except Exception:
+                pass
+
+    def on_change(self, callback):
+        """Register callback(key, value) to be called when any setting changes."""
+        self._callbacks.append(callback)
 
 
 def safe_get_theme(settings_manager):
