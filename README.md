@@ -1,6 +1,6 @@
 # 🎮 ToonTown MultiTool
 
-A multiboxing controller for **Toontown Rewritten** and **Corporate Clash** on Linux and Windows.
+A multitoon controller for **Toontown Rewritten** and **Corporate Clash** on Linux and Windows.
 
 Built with Python + PySide6.
 
