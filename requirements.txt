@@ -1,0 +1,15 @@
+# ToonTown MultiTool v2.0 — Python dependencies
+# Install with: pip install -r requirements.txt
+
+# Core — required on all platforms
+PySide6>=6.5.0
+pynput>=1.7.6
+requests>=2.28.0
+keyring>=24.0.0
+cryptography>=41.0.0
+
+# Linux only — Xlib input backend and XRes PID resolution
+python-xlib>=0.33; sys_platform == "linux"
+
+# Windows only — Win32 input backend and window management
+pywin32>=306; sys_platform == "win32"
