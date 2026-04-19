@@ -6,10 +6,13 @@ __pycache__/
 build/
 dist/
 *.spec
+!ToonTownMultiTool.spec
 
 # === AppImages or binary blobs ===
 *.AppImage
 
 # === macOS system file (ignore if present) ===
 .DS_Store
-AppDir/
+
+# === AppDir — ignore the binary, keep metadata ===
+AppDir/usr/
