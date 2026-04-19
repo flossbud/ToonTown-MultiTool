@@ -1,4 +1,0 @@
-#!/bin/bash
-HERE="$(dirname "$(readlink -f "${0}")")"
-export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}"
-exec "$HERE/usr/bin/ToonTownMultiTool" "$@"
