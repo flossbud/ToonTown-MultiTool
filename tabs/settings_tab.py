@@ -1,11 +1,14 @@
+import os
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QComboBox, QApplication, QMessageBox, QFrame,
-    QPushButton, QScrollArea, QSizePolicy, QCheckBox
+    QPushButton, QScrollArea, QSizePolicy, QCheckBox, QFileDialog
 )
 from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve, QRect, QPoint, QSize, Property
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QFont, QCursor, QMouseEvent
 from utils.theme_manager import apply_theme, resolve_theme, get_theme_colors
+from services.ttr_login_service import find_engine_path, get_engine_executable_name
+from services.cc_login_service import find_cc_engine_path, get_cc_engine_executable_name
 
 SPECIAL_KEYS = {
     Qt.Key_Space: "space", Qt.Key_Return: "Return", Qt.Key_Enter: "Return",
@@ -72,18 +75,24 @@ class IOSToggle(QWidget):
         self._anim.start()
         self.toggled.emit(self._checked)
 
+    def set_theme_colors(self, off_color: str):
+        """Set the off-track color from theme."""
+        self._off_color = off_color
+        self.update()
+
     def paintEvent(self, e):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
 
         # Track
         r = self.TRACK_H / 2.0
-        track_color = QColor("#34C759") if self._checked else QColor("#3a3a3a")
+        off_hex = getattr(self, '_off_color', '#3a3a3a')
+        track_color = QColor("#34C759") if self._checked else QColor(off_hex)
         # Interpolate color during animation
         if self._thumb_x != self.PADDING and self._thumb_x != (self.TRACK_W - self.THUMB_D - self.PADDING):
             t = (self._thumb_x - self.PADDING) / (self.TRACK_W - self.THUMB_D - 2 * self.PADDING)
             t = max(0.0, min(1.0, t))
-            off = QColor("#3a3a3a")
+            off = QColor(off_hex)
             on  = QColor("#34C759")
             track_color = QColor(
                 int(off.red()   + t * (on.red()   - off.red())),
@@ -119,10 +128,19 @@ class IOSSegmentedControl(QWidget):
         self.setFixedHeight(32)
         self.setCursor(Qt.PointingHandCursor)
 
+        self._anim_x_val = 0.0
         self._anim = QPropertyAnimation(self, b"_anim_x")
         self._anim.setDuration(150)
         self._anim.setEasingCurve(QEasingCurve.OutCubic)
-        self._anim_x_val = 0.0
+
+    @Property(float)
+    def _anim_x(self):
+        return self._anim_x_val
+
+    @_anim_x.setter
+    def _anim_x(self, val):
+        self._anim_x_val = val
+        self.update()
 
     def currentIndex(self):
         return self._index
@@ -140,6 +158,14 @@ class IOSSegmentedControl(QWidget):
             self.index_changed.emit(idx)
             self.update()
 
+    def set_theme_colors(self, track_color: str, pill_color: str, active_text: str, inactive_text: str):
+        """Set colors from theme."""
+        self._track_color = track_color
+        self._pill_color = pill_color
+        self._active_text = active_text
+        self._inactive_text = inactive_text
+        self.update()
+
     def paintEvent(self, e):
         from PySide6.QtCore import QRectF
         p = QPainter(self)
@@ -152,12 +178,12 @@ class IOSSegmentedControl(QWidget):
 
         # Track background
         p.setPen(Qt.NoPen)
-        p.setBrush(QColor("#3a3a3a"))
+        p.setBrush(QColor(getattr(self, '_track_color', '#3a3a3a')))
         p.drawRoundedRect(QRectF(0, 0, w, h), r, r)
 
         # Selected pill
         sx = self._index * seg_w + 2
-        p.setBrush(QColor("#636366"))
+        p.setBrush(QColor(getattr(self, '_pill_color', '#636366')))
         p.drawRoundedRect(QRectF(sx, 2, seg_w - 4, h - 4), r - 2, r - 2)
 
         # Labels
@@ -168,7 +194,7 @@ class IOSSegmentedControl(QWidget):
 
         for i, opt in enumerate(self._options):
             x = i * seg_w
-            color = QColor("#ffffff") if i == self._index else QColor("#888888")
+            color = QColor(getattr(self, '_active_text', '#ffffff')) if i == self._index else QColor(getattr(self, '_inactive_text', '#888888'))
             p.setPen(color)
             p.drawText(QRectF(x, 0, seg_w, h), Qt.AlignCenter, opt)
 
@@ -201,15 +227,17 @@ class SettingsRow(QFrame):
 
         self.label_widget = QLabel(label)
         self.label_widget.setStyleSheet("background: transparent; border: none;")
+        self.label_widget.setMinimumWidth(1)
         text_col.addWidget(self.label_widget)
 
         if sublabel:
             self.sub_widget = QLabel(sublabel)
             self.sub_widget.setStyleSheet("background: transparent; border: none;")
+            self.sub_widget.setMinimumWidth(1)
             text_col.addWidget(self.sub_widget)
 
-        self._layout.addLayout(text_col)
-        self._layout.addStretch()
+        self._layout.addLayout(text_col, 1)
+
 
     def add_control(self, widget):
         self._layout.addWidget(widget)
@@ -248,7 +276,7 @@ class SettingsRow(QFrame):
         w, h = self.width(), self.height()
         r = 12.0
 
-        bg = QColor("#3a3a3a") if self._is_dark else QColor("#ffffff")
+        bg = QColor(self._c.get('bg_card_inner', '#3a3a3a'))
         if self._hovered:
             bg = bg.lighter(115) if self._is_dark else bg.darker(103)
 
@@ -284,7 +312,7 @@ class SettingsRow(QFrame):
 
         # Separator (not on last row)
         if not self._is_last:
-            sep_color = QColor("#555555") if self._is_dark else QColor("#dddddd")
+            sep_color = QColor(self._c.get('border_light', '#555555'))
             p.setPen(sep_color)
             p.drawLine(16, h - 1, w, h - 1)
 
@@ -328,18 +356,18 @@ class DropdownRow(SettingsRow):
         super().apply_theme(c, is_dark)
         self.combo.setStyleSheet(f"""
             QComboBox {{
-                background: {'#4a4a4a' if is_dark else '#f0f0f0'};
+                background: {c['btn_bg']};
                 color: {c['text_primary']};
-                border: none;
+                border: 1px solid {c['border_muted']};
                 border-radius: 8px;
                 padding: 5px 10px;
                 font-size: 13px;
             }}
             QComboBox::drop-down {{ border: none; width: 20px; }}
             QComboBox QAbstractItemView {{
-                background: {'#3a3a3a' if is_dark else '#ffffff'};
+                background: {c['bg_card_inner']};
                 color: {c['text_primary']};
-                selection-background-color: {'#555' if is_dark else '#e0e0e0'};
+                selection-background-color: {c['btn_bg']};
                 border-radius: 8px;
             }}
         """)
@@ -352,6 +380,102 @@ class DropdownRow(SettingsRow):
 
     def findText(self, text):
         return self.combo.findText(text)
+
+
+class GamePathRow(SettingsRow):
+    """Reusable game path row — parameterized for TTR, CC, or any future game."""
+
+    def __init__(self, settings_manager, settings_key: str,
+                 exe_name_fn, find_path_fn, parent=None):
+        super().__init__("Game Path", "Not configured", parent)
+        self.settings_manager = settings_manager
+        self._settings_key = settings_key
+        self._approval_key = f"{settings_key}_approved_custom_dir"
+        self._exe_name_fn = exe_name_fn
+        self._find_path_fn = find_path_fn
+
+        btn_lay = QHBoxLayout()
+        btn_lay.setContentsMargins(0, 0, 0, 0)
+        btn_lay.setSpacing(6)
+
+        self.browse_btn = QPushButton("Browse")
+        self.browse_btn.setCursor(Qt.PointingHandCursor)
+        self.browse_btn.setFixedHeight(28)
+        self.browse_btn.clicked.connect(self._browse)
+        btn_lay.addWidget(self.browse_btn)
+
+        self.detect_btn = QPushButton("Auto-detect")
+        self.detect_btn.setCursor(Qt.PointingHandCursor)
+        self.detect_btn.setFixedHeight(28)
+        self.detect_btn.clicked.connect(self._auto_detect)
+        btn_lay.addWidget(self.detect_btn)
+
+        btn_container = QWidget()
+        btn_container.setStyleSheet("background: transparent;")
+        btn_container.setLayout(btn_lay)
+        self.add_control(btn_container)
+
+        current_path = self.settings_manager.get(self._settings_key, "")
+        if not current_path:
+            self._auto_detect()
+        else:
+            self._refresh_display(current_path)
+
+    def apply_theme(self, c, is_dark):
+        super().apply_theme(c, is_dark)
+        btn_style = f"""
+            QPushButton {{
+                background-color: {c['btn_bg']};
+                color: {c['text_secondary']};
+                border: 1px solid {c['border_muted']};
+                border-radius: 6px; padding: 0 12px;
+            }}
+            QPushButton:hover {{
+                background-color: {c['accent_blue']};
+                color: white;
+                border: 1px solid {c['accent_blue']};
+            }}
+        """
+        self.browse_btn.setStyleSheet(btn_style)
+        self.detect_btn.setStyleSheet(btn_style)
+
+    def _refresh_display(self, path: str, error: bool = False):
+        if not path:
+            self.sub_widget.setText("Not found — click Browse or Auto-detect")
+            self.sub_widget.setStyleSheet("font-size: 12px; color: #E05252; background: transparent; border: none;")
+        elif error:
+            self.sub_widget.setText(path)
+            self.sub_widget.setStyleSheet("font-size: 12px; color: #E05252; background: transparent; border: none;")
+        else:
+            home = os.path.expanduser("~")
+            display = path.replace(home, "~") if path.startswith(home) else path
+            self.sub_widget.setText(display)
+            self.sub_widget.setStyleSheet("font-size: 12px; color: #56c856; background: transparent; border: none;")
+
+    def _browse(self):
+        exe_name = self._exe_name_fn()
+        dir_path = QFileDialog.getExistingDirectory(
+            self, f"Select {exe_name} Folder",
+            os.path.expanduser("~"),
+            QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks
+        )
+        if dir_path:
+            engine = os.path.join(dir_path, exe_name)
+            if os.path.isfile(engine):
+                self.settings_manager.set(self._settings_key, dir_path)
+                self.settings_manager.set(self._approval_key, os.path.realpath(dir_path))
+                self._refresh_display(dir_path)
+            else:
+                self._refresh_display(f"{exe_name} not found in that folder", error=True)
+
+    def _auto_detect(self):
+        path = self._find_path_fn()
+        if path:
+            self.settings_manager.set(self._settings_key, path)
+            self.settings_manager.set(self._approval_key, "")
+            self._refresh_display(path)
+        else:
+            self._refresh_display("Could not auto-detect — click Browse", error=True)
 
 
 # ── Section Group ──────────────────────────────────────────────────────────────
@@ -405,6 +529,7 @@ class SettingsTab(QWidget):
     theme_changed = Signal()
     input_backend_changed = Signal()
     clear_credentials_requested = Signal()
+    max_accounts_changed = Signal(int)
 
     def __init__(self, settings_manager):
         super().__init__()
@@ -430,6 +555,8 @@ class SettingsTab(QWidget):
         self._main_layout.setAlignment(Qt.AlignTop)
 
         self._build_general_group()
+        self._build_ttr_path_group()
+        self._build_cc_path_group()
         self._build_keepalive_group()
         self._build_advanced_group()
 
@@ -452,6 +579,19 @@ class SettingsTab(QWidget):
         self.theme_row.index_changed.connect(self.change_theme)
         group.add_row(self.theme_row)
 
+        # Max accounts per game
+        saved_max = self.settings_manager.get("max_accounts_per_game", 4)
+        max_options = ["4", "5", "6", "7", "8"]
+        max_idx = max(0, min(saved_max - 4, len(max_options) - 1))
+        self.max_accounts_row = DropdownRow(
+            "Max Accounts Per Game",
+            max_options,
+            max_idx,
+            sublabel="How many account slots per game (TTR / CC)"
+        )
+        self.max_accounts_row.index_changed.connect(self._on_max_accounts_changed)
+        group.add_row(self.max_accounts_row)
+
         # Show advanced row
         self.advanced_row = ToggleRow(
             "Advanced Settings",
@@ -460,6 +600,34 @@ class SettingsTab(QWidget):
         )
         self.advanced_row.toggled.connect(self.toggle_advanced_visibility)
         group.add_row(self.advanced_row)
+
+        self._main_layout.addWidget(group)
+
+    def _build_ttr_path_group(self):
+        group = SettingsGroup("Toontown Rewritten")
+        self._groups.append(group)
+
+        self.ttr_path_row = GamePathRow(
+            self.settings_manager,
+            settings_key="ttr_engine_dir",
+            exe_name_fn=get_engine_executable_name,
+            find_path_fn=find_engine_path,
+        )
+        group.add_row(self.ttr_path_row)
+
+        self._main_layout.addWidget(group)
+
+    def _build_cc_path_group(self):
+        group = SettingsGroup("Corporate Clash")
+        self._groups.append(group)
+
+        self.cc_path_row = GamePathRow(
+            self.settings_manager,
+            settings_key="cc_engine_dir",
+            exe_name_fn=get_cc_engine_executable_name,
+            find_path_fn=find_cc_engine_path,
+        )
+        group.add_row(self.cc_path_row)
 
         self._main_layout.addWidget(group)
 
@@ -500,35 +668,47 @@ class SettingsTab(QWidget):
         self._groups.append(self.advanced_group)
 
         self.companion_row = ToggleRow(
-            "Companion App",
+            "TTR Companion App",
             self.settings_manager.get("enable_companion_app", True),
-            sublabel="Show toon names and portraits"
+            sublabel="Show toon names and portraits (TTR only)"
         )
         self.companion_row.toggled.connect(self.toggle_companion_app)
         self.advanced_group.add_row(self.companion_row)
 
         self.debug_row = ToggleRow(
-            "Show Logs Tab",
+            "Enable Logging",
             self.settings_manager.get("show_debug_tab", False),
         )
         self.debug_row.toggled.connect(self.toggle_debug_tab)
         self.advanced_group.add_row(self.debug_row)
 
-        backend_options = ["Xlib (recommended)", "xdotool"]
-        current_backend = self.settings_manager.get("input_backend", "xlib")
-        backend_idx = 0 if current_backend == "xlib" else 1
+        import sys
+        if sys.platform == "win32":
+            backend_options = ["Windows API (recommended)"]
+            self.settings_manager.set("input_backend", "win32")
+            backend_idx = 0
+            sublabel = "Native Windows Input"
+        else:
+            backend_options = ["Xlib (recommended)", "xdotool"]
+            current_backend = self.settings_manager.get("input_backend", "xlib")
+            if current_backend not in ("xlib", "xdotool"):
+                current_backend = "xlib"
+                self.settings_manager.set("input_backend", "xlib")
+            backend_idx = 0 if current_backend == "xlib" else 1
+            sublabel = "Restart required on change"
+
         self.backend_row = DropdownRow(
             "Input Backend",
             backend_options,
             backend_idx,
-            sublabel="Restart required on change"
+            sublabel=sublabel
         )
         self.backend_row.index_changed.connect(self.change_input_backend)
         self.advanced_group.add_row(self.backend_row)
         
         self.clear_credentials_row = SettingsRow(
             "Clear Stored Credentials",
-            sublabel="Delete all saved account passwords from Keyring"
+            sublabel="Delete all saved TTR and CC passwords from Keyring and session memory"
         )
         self.clear_credentials_btn = QPushButton("Clear")
         self.clear_credentials_btn.setFixedWidth(80)
@@ -585,6 +765,12 @@ class SettingsTab(QWidget):
         self.settings_manager.set("enable_companion_app", val)
 
     def change_input_backend(self, index):
+        import sys
+        if sys.platform == "win32":
+            self.settings_manager.set("input_backend", "win32")
+            self.input_backend_changed.emit()
+            return
+
         backend = "xlib" if index == 0 else "xdotool"
         if backend == "xdotool" and self._is_gnome_wayland():
             dlg = QMessageBox(self)
@@ -615,13 +801,18 @@ class SettingsTab(QWidget):
         self.settings_manager.set("show_debug_tab", val)
         self.debug_visibility_changed.emit(val)
 
+    def _on_max_accounts_changed(self, i):
+        value = i + 4  # dropdown index 0 = "4", index 4 = "8"
+        self.settings_manager.set("max_accounts_per_game", value)
+        self.max_accounts_changed.emit(value)
+
     def _on_clear_credentials_clicked(self):
         dlg = QMessageBox(self)
         dlg.setWindowTitle("Clear Stored Credentials")
         dlg.setIcon(QMessageBox.Warning)
         dlg.setText(
-            "Are you sure you want to clear all stored TTR account credentials? "
-            "This will delete them from your system keyring permanently."
+            "Are you sure you want to clear all stored TTR and Corporate Clash "
+            "account credentials? This will delete them from your system keyring permanently."
         )
         dlg.setStandardButtons(QMessageBox.Yes | QMessageBox.Cancel)
         dlg.setDefaultButton(QMessageBox.Cancel)
@@ -631,14 +822,24 @@ class SettingsTab(QWidget):
     def refresh_theme(self):
         is_dark = resolve_theme(self.settings_manager) == "dark"
         c = get_theme_colors(is_dark)
-        bg = "#1c1c1e" if is_dark else "#f2f2f7"
-        self.setStyleSheet(f"background: {bg};")
+        self.setStyleSheet(f"background: {c['bg_app']}; color: {c['text_primary']};")
 
         # Scroll area background
         for child in self.findChildren(QScrollArea):
-            child.setStyleSheet(f"QScrollArea {{ background: {bg}; border: none; }}")
+            child.setStyleSheet(f"QScrollArea {{ background: {c['bg_app']}; border: none; }}")
             if child.widget():
-                child.widget().setStyleSheet(f"background: {bg};")
+                child.widget().setStyleSheet(f"background: {c['bg_app']};")
 
         for group in self._groups:
             group.apply_theme(c, is_dark)
+
+        # Theme custom-painted widgets
+        toggle_off = c['bg_input'] if is_dark else '#d1d1d6'
+        for toggle in self.findChildren(IOSToggle):
+            toggle.set_theme_colors(toggle_off)
+
+        for seg in self.findChildren(IOSSegmentedControl):
+            seg.set_theme_colors(
+                c['bg_input'], c['btn_bg'],
+                c['text_primary'], c['text_muted']
+            )

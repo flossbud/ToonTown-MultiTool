@@ -132,10 +132,9 @@ class XlibBackend:
 
     def send_key(self, win_id_str: str, keysym_str: str, modifiers: list = None) -> bool:
         state = self._modifier_mask(modifiers) if modifiers else 0
-        success1 = self._send(win_id_str, X.KeyPress, keysym_str, state)
+        if not self._send(win_id_str, X.KeyPress, keysym_str, state): return False
         self._display.flush()
-        success2 = self._send(win_id_str, X.KeyRelease, keysym_str, state)
-        return success1 and success2
+        return self._send(win_id_str, X.KeyRelease, keysym_str, state)
 
     def sync(self):
         if self._display:

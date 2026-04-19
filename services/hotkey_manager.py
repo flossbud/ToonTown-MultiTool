@@ -4,17 +4,37 @@ It respects the WindowManager's active window to prevent keylogging
 when the user is focused on a different application.
 """
 
+import sys
+import queue
 from PySide6.QtCore import QObject, Signal, Qt, QMetaObject, Q_ARG
 from pynput import keyboard
+
+# Build the VK→keysym map at module level so the platform check runs once.
+_PYNPUT_VK_MAP = {
+    65437: "KP_5",         # KP_Begin (numpad 5 without numlock)
+    65421: "KP_Enter",     # KP_Enter
+
+    # X11 Numpad Keysyms (with numlock on)
+    65456: "KP_0", 65457: "KP_1", 65458: "KP_2", 65459: "KP_3", 65460: "KP_4",
+    65461: "KP_5", 65462: "KP_6", 65463: "KP_7", 65464: "KP_8", 65465: "KP_9",
+    65450: "KP_Multiply", 65451: "KP_Add", 65453: "KP_Subtract",
+    65454: "KP_Decimal", 65455: "KP_Divide",
+}
+if sys.platform == "win32":
+    # Windows VK codes for numpad — these collide with X11 keysyms for
+    # lowercase letters (a=97 … i=105) so they must ONLY be included on Windows.
+    _PYNPUT_VK_MAP.update({
+        96: "KP_0", 97: "KP_1", 98: "KP_2", 99: "KP_3", 100: "KP_4",
+        101: "KP_5", 102: "KP_6", 103: "KP_7", 104: "KP_8", 105: "KP_9",
+        106: "KP_Multiply", 107: "KP_Add", 109: "KP_Subtract",
+        110: "KP_Decimal", 111: "KP_Divide",
+    })
+
 
 class HotkeyManager(QObject):
     profile_load_requested = Signal(int)
 
-    # Numpad keysyms that pynput doesn't resolve to a char
-    PYNPUT_VK_MAP = {
-        65437: "5",       # KP_Begin (numpad 5)
-        65421: "Return",  # KP_Enter
-    }
+    PYNPUT_VK_MAP = _PYNPUT_VK_MAP
     
     PYNPUT_NAME_MAP = {
         "space": "space", "enter": "Return", "esc": "Escape",
@@ -39,6 +59,8 @@ class HotkeyManager(QObject):
 
     def start(self):
         """Start listening if the current window is an allowed target."""
+        if self.is_listening:
+            return
         # Trigger an initial check
         self._on_active_window_changed("")
 
@@ -63,20 +85,28 @@ class HotkeyManager(QObject):
     def _stop_listener(self):
         if self.is_listening and self.listener:
             self.listener.stop()
+            try:
+                self.listener.join(timeout=2.0)
+            except Exception:
+                pass
             self.listener = None
             self.is_listening = False
             self.pressed_keys.clear()
 
     def normalize_key(self, key):
+        # Check vk FIRST for numpad keys: on X11 a numpad key may have both
+        # key.char (e.g. '.') and key.vk (e.g. 65454 = KP_Decimal) set.
+        # The vk table takes priority so KP_Decimal is not confused with period.
+        vk = getattr(key, 'vk', None) or (key if isinstance(key, int) else None)
+        if vk is not None:
+            mapped = self.PYNPUT_VK_MAP.get(int(vk))
+            if mapped is not None:
+                return mapped
         if hasattr(key, 'char') and key.char:
             return key.char.lower() if key.char.isalpha() else key.char
         name = getattr(key, 'name', None)
         if name:
             return self.PYNPUT_NAME_MAP.get(name.lower(), None)
-        # Fallback: check raw vk for unresolved numpad keys
-        vk = getattr(key, 'vk', None) or (key if isinstance(key, int) else None)
-        if vk is not None:
-            return self.PYNPUT_VK_MAP.get(int(vk), None)
         return None
 
     def on_global_key_press(self, key):
@@ -96,9 +126,11 @@ class HotkeyManager(QObject):
                     
             normalized = self.normalize_key(key)
             if normalized:
-                self.key_event_queue.put(("keydown", normalized))
-        except Exception:
-            pass
+                self.key_event_queue.put_nowait(("keydown", normalized))
+        except queue.Full:
+            print("[HotkeyManager] Warning: key event queue full, dropping keydown event.")
+        except Exception as e:
+            print(f"[HotkeyManager] Keydown handler error: {e}")
 
     def on_global_key_release(self, key):
         try:
@@ -109,6 +141,8 @@ class HotkeyManager(QObject):
                 
             normalized = self.normalize_key(key)
             if normalized:
-                self.key_event_queue.put(("keyup", normalized))
-        except Exception:
-            pass
+                self.key_event_queue.put_nowait(("keyup", normalized))
+        except queue.Full:
+            print("[HotkeyManager] Warning: key event queue full, dropping keyup event.")
+        except Exception as e:
+            print(f"[HotkeyManager] Keyup handler error: {e}")

@@ -7,57 +7,23 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QFrame, QGraphicsDropShadowEffect
 )
-from PySide6.QtCore import Qt, Signal, Slot, QTimer, QVariantAnimation, QEasingCurve, QRectF
+from PySide6.QtCore import Qt, Signal, Slot, QTimer, QVariantAnimation, QEasingCurve, QRectF, QPointF
 from PySide6.QtGui import QColor, QFont, QPainter, QPen, QPainterPath, QPixmap
 from services.input_service import InputService
 from utils.theme_manager import (
     resolve_theme, get_theme_colors, apply_card_shadow,
     make_chat_icon, make_refresh_icon, make_mouse_icon,
-    get_set_color,
+    make_heart_icon, make_jellybean_icon,
+    get_set_color, SmoothProgressBar, make_section_label,
 )
 from utils.symbols import S
 from utils.ttr_api import get_toon_names_threaded, invalidate_port_to_wid_cache, clear_stale_names
+from utils import cc_api
+from utils.game_registry import GameRegistry
 
 
 # ── Custom Widgets ─────────────────────────────────────────────────────────
 
-
-class SmoothProgressBar(QWidget):
-    """Keep-alive progress bar painted with sub-pixel precision."""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._progress = 0.0  # 0.0 to 1.0
-        self._bg_color = QColor("#1a1a1a")
-        self._fill_color = QColor("#DC8C28")
-        self.setFixedHeight(6)
-        self.setMinimumWidth(40)
-
-    def set_progress(self, value: float):
-        self._progress = max(0.0, min(1.0, value))
-        self.update()
-
-    def paintEvent(self, event):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
-        w = self.width()
-        h = self.height()
-        r = h / 2.0
-
-        # Track background
-        p.setPen(Qt.NoPen)
-        p.setBrush(self._bg_color)
-        p.drawRoundedRect(QRectF(0, 0, w, h), r, r)
-
-        # Fill
-        if self._progress > 0.001:
-            fill_w = self._progress * w
-            # Clamp minimum to pill shape diameter so it stays rounded
-            fill_w = max(fill_w, h)
-            p.setBrush(self._fill_color)
-            p.drawRoundedRect(QRectF(0, 0, fill_w, h), r, r)
-
-        p.end()
 
 
 
@@ -108,25 +74,47 @@ class ToonPortraitWidget(QWidget):
 
     # Emitted from bg thread with (dna, raw_bytes_or_None) — QPixmap built on main thread
     _image_ready = Signal(str, object)
+    clicked = Signal()
 
     def __init__(self, slot: int, parent=None):
         super().__init__(parent)
         self._slot    = slot
         self._bg      = QColor("#4a4a4a")
         self._text    = QColor("#ffffff")
+        self._border_color = None
         self._pixmap  = None
         self._loading = False
         self._dna     = None
-        self.setFixedSize(30, 30)
+        self._fetch_token = 0
+        self._cancelled = False
+        self.setFixedSize(38, 38)
+        self.setCursor(Qt.PointingHandCursor)
         self._image_ready.connect(self._on_image_ready)
+
+    def mousePressEvent(self, event):
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit()
+        super().mouseReleaseEvent(event)
 
     def set_colors(self, bg: str, text: str):
         self._bg   = QColor(bg)
         self._text = QColor(text)
         self.update()
 
+    def set_border_color(self, color: str):
+        if color:
+            self._border_color = QColor(color)
+        else:
+            self._border_color = None
+        self.update()
+
     def set_dna(self, dna):
         """Load portrait from Rendition. Pass None to revert to fallback circle."""
+        self._fetch_token += 1
+        self._cancelled = False
         if dna == self._dna:
             return
         self._dna = dna
@@ -137,9 +125,15 @@ class ToonPortraitWidget(QWidget):
             return
         self._loading = True
         self.update()
-        threading.Thread(target=self._fetch, args=(dna,), daemon=True).start()
+        token = self._fetch_token
+        threading.Thread(target=self._fetch, args=(dna, token), daemon=True).start()
 
-    def _fetch(self, dna: str):
+    def cancel(self):
+        self._cancelled = True
+        self._fetch_token += 1
+        self._loading = False
+
+    def _fetch(self, dna: str, token: int):
         """Background thread — network I/O only, no Qt objects constructed here."""
         try:
             import urllib.request
@@ -147,21 +141,32 @@ class ToonPortraitWidget(QWidget):
             req = urllib.request.Request(url, headers={"User-Agent": "ToonTown MultiTool"})
             with urllib.request.urlopen(req, timeout=10) as resp:
                 data = resp.read()
-            self._image_ready.emit(dna, data)
+            if not self._cancelled:
+                self._image_ready.emit(f"{dna}|{token}", data)
         except Exception as e:
             print(f"[Portrait] Slot {self._slot}: fetch error — {e}")
-            self._image_ready.emit(dna, None)
+            if not self._cancelled:
+                self._image_ready.emit(f"{dna}|{token}", None)
 
     @Slot(str, object)
-    def _on_image_ready(self, dna: str, data):
+    def _on_image_ready(self, payload: str, data):
         """Main thread — safe to construct QPixmap here."""
+        if "|" not in payload:
+            return
+        dna, token_str = payload.rsplit("|", 1)
+        try:
+            token = int(token_str)
+        except ValueError:
+            return
+        if self._cancelled or token != self._fetch_token:
+            return
         if dna != self._dna:
             return
         self._loading = False
         if data:
             pm = QPixmap()
             if pm.loadFromData(data):
-                self._pixmap = pm.scaled(30, 30, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                self._pixmap = pm.scaled(38, 38, Qt.KeepAspectRatio, Qt.SmoothTransformation)
                 print(f"[Portrait] Slot {self._slot}: loaded OK")
             else:
                 self._pixmap = None
@@ -174,26 +179,30 @@ class ToonPortraitWidget(QWidget):
         p.setRenderHint(QPainter.Antialiasing)
         cx = self.width() / 2.0
         cy = self.height() / 2.0
-        r  = min(cx, cy) - 0.5
+        r  = min(cx, cy) - 2.0  # leave room for a 2px border
 
         # Always draw colored circle background first
-        p.setPen(Qt.NoPen)
+        if self._border_color:
+            p.setPen(QPen(self._border_color, 2.0))
+        else:
+            p.setPen(Qt.NoPen)
         p.setBrush(self._bg)
-        p.drawEllipse(QRectF(cx - r, cy - r, r * 2, r * 2))
+        p.drawEllipse(QPointF(cx, cy), r, r)
 
         if self._pixmap and not self._pixmap.isNull():
             path = QPainterPath()
-            path.addEllipse(QRectF(cx - r, cy - r, r * 2, r * 2))
+            path.addEllipse(QPointF(cx, cy), r, r)
             p.setClipPath(path)
-            p.drawPixmap(0, 0, self._pixmap)
+            ph, pw = self._pixmap.height(), self._pixmap.width()
+            p.drawPixmap(int(cx - pw / 2), int(cy - ph / 2), self._pixmap)
             p.setClipping(False)
         else:
             font = QFont()
-            font.setPixelSize(12)
+            font.setPixelSize(14)
             font.setBold(True)
             if self._loading:
                 p.setPen(QColor(180, 180, 180))
-                font.setPixelSize(10)
+                font.setPixelSize(12)
                 p.setFont(font)
                 p.drawText(self.rect(), Qt.AlignCenter, "…")
             else:
@@ -222,20 +231,28 @@ class PulsingDot(QWidget):
         self._anim.setEasingCurve(QEasingCurve.Linear)
         self._anim.valueChanged.connect(self._on_pulse)
 
-    def set_state(self, state: str, tooltip: str = ""):
-        self.setToolTip(tooltip)
-        if state == "active":
-            self._color = QColor("#56c856")
+    def set_color(self, hex_color: str, pulse: bool = False):
+        self._color = QColor(hex_color)
+        if pulse:
             if not self._pulsing:
                 self._pulsing = True
                 self._anim.start()
-        elif state == "found":
-            self._color = QColor("#888888")
-            self._stop_pulse()
         else:
-            self._color = QColor("#555555")
             self._stop_pulse()
         self.update()
+
+    def set_state(self, state: str, tooltip: str = ""):
+        self.setToolTip(tooltip)
+        if state == "active":
+            self.set_color("#56c856", pulse=True)
+        elif state == "keep_alive":
+            self.set_color("#ff9900", pulse=True)
+        elif state == "disabled":
+            self.set_color("#e84141", pulse=False)
+        elif state == "found":
+            self.set_color("#888888", pulse=False)
+        else:
+            self.set_color("#555555", pulse=False)
 
     def _stop_pulse(self):
         if self._pulsing:
@@ -283,18 +300,19 @@ class PulsingDot(QWidget):
         p.end()
 
 
-class StatusSegmentBar(QWidget):
-    """Thin segmented bar — each segment represents a toon slot."""
+class StatusDots(QWidget):
+    """Compact 4-dot row: 0=off, 1=found, 2=active."""
 
-    # States: 0 = off (no window), 1 = found, 2 = active
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedHeight(6)
+        self.setFixedSize(66, 24)
         self._states = [0, 0, 0, 0]
         self._colors = {0: QColor("#333"), 1: QColor("#555"), 2: QColor("#56c856")}
 
     def set_states(self, states: list):
-        self._states = states[:4]
+        self._states = (states or [0, 0, 0, 0])[:4]
+        while len(self._states) < 4:
+            self._states.append(0)
         self.update()
 
     def set_colors(self, off: str, found: str, active: str):
@@ -305,66 +323,144 @@ class StatusSegmentBar(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         p.setPen(Qt.NoPen)
-
-        w = self.width()
-        h = self.height()
-        gap = 4
-        seg_w = (w - gap * 3) / 4.0
-
+        diameter = 11
+        gap = 6
+        total_w = diameter * 4 + gap * 3
+        x0 = (self.width() - total_w) / 2.0
+        y = (self.height() - diameter) / 2.0
         for i in range(4):
-            x = i * (seg_w + gap)
-            color = self._colors.get(self._states[i], self._colors[0])
-            p.setBrush(color)
-            p.drawRoundedRect(QRectF(x, 0, seg_w, h), 2, 2)
-
+            x = x0 + i * (diameter + gap)
+            p.setBrush(self._colors.get(self._states[i], self._colors[0]))
+            p.drawEllipse(QRectF(x, y, diameter, diameter))
         p.end()
 
 
-class KeepAliveBtn(QPushButton):
-    """QPushButton that paints a progress-ring border tracing the rounded rect."""
+class StatusBar(QFrame):
+    """Service status bar with slot dots and status text."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._progress = 0.0
-        self._ring_color = QColor(220, 140, 40, 200)
+        self.setObjectName("ServiceStatusBar")
+        self.setFixedHeight(34)
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(12, 8, 12, 8)
+        lay.setSpacing(8)
+        self.dots = StatusDots(self)
+        lay.addWidget(self.dots)
+        self.label = QLabel("Service idle")
+        self.label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+        lay.addWidget(self.label, 1)
+
+    def set_dot_states(self, states: list):
+        self.dots.set_states(states)
+
+    def set_dot_colors(self, off: str, found: str, active: str):
+        self.dots.set_colors(off, found, active)
+
+    def set_status_text(self, text: str):
+        self.label.setText(text)
+
+    def set_text_color(self, color: str):
+        self.label.setStyleSheet(
+            f"font-size: 13px; font-weight: 500; color: {color}; background: transparent; border: none;"
+        )
+
+
+class KeepAliveBtn(QPushButton):
+    """Keep-alive toggle button with a progress ring.
+
+    Short click  → toggle keep-alive on/off.
+    Hold 3 s     → toggle rapid-fire for this toon only (independent of the
+                   global delay setting). A red charging arc grows clockwise
+                   around the button during the hold; releasing early cancels.
+    """
+    rapid_fire_toggled = Signal(bool)
+
+    _CHARGE_MS = 3000  # hold duration in milliseconds
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.is_rapid_fire = False
+        self._progress = 0.0        # cycle ring progress (0–1), set by _tick_glow
+        self._charge_progress = 0.0  # hold-charge arc progress (0–1)
+        self._charging = False
+        self._long_press_fired = False
+        self._charge_start = 0.0
+
+        self._press_timer = QTimer(self)
+        self._press_timer.setSingleShot(True)
+        self._press_timer.setInterval(self._CHARGE_MS)
+        self._press_timer.timeout.connect(self._on_long_press)
+
+        self._charge_tick = QTimer(self)
+        self._charge_tick.setInterval(16)  # ~60 fps
+        self._charge_tick.timeout.connect(self._tick_charge)
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            self._long_press_fired = False
+            self._charge_start = time.monotonic()
+            self._charging = True
+            self._charge_progress = 0.0
+            self._press_timer.start()
+            self._charge_tick.start()
+        super().mousePressEvent(e)
+
+    def mouseReleaseEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            was_long = self._long_press_fired
+            self._long_press_fired = False
+            self._press_timer.stop()
+            if self._charging:
+                self._charging = False
+                self._charge_tick.stop()
+                self._charge_progress = 0.0
+                self.update()
+            if was_long:
+                # Block clicked signal so toggle_keep_alive doesn't fire
+                self.blockSignals(True)
+                super().mouseReleaseEvent(e)
+                self.blockSignals(False)
+                return
+        super().mouseReleaseEvent(e)
+
+    def _tick_charge(self):
+        elapsed_ms = (time.monotonic() - self._charge_start) * 1000
+        self._charge_progress = min(1.0, elapsed_ms / self._CHARGE_MS)
+        self.update()
+
+    def _on_long_press(self):
+        self._charging = False
+        self._charge_tick.stop()
+        self._charge_progress = 0.0
+        self._long_press_fired = True
+        self.is_rapid_fire = not self.is_rapid_fire
+        self.rapid_fire_toggled.emit(self.is_rapid_fire)
+        self.update()
 
     def set_progress(self, val: float):
         self._progress = max(0.0, min(1.0, val))
         self.update()
 
-    def set_ring_color(self, color: QColor):
-        self._ring_color = color
-        self.update()
-
     def paintEvent(self, event):
-        # Let the stylesheet render the normal button first
         super().paintEvent(event)
-        if self._progress < 0.005:
+
+        # Only draw during an active hold-charge; the horizontal bar handles cycle progress
+        if not (self._charging and self._charge_progress > 0.001):
             return
 
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
 
-        pen_w = 2.5
-        inset = pen_w / 2
-        rect = QRectF(inset, inset, self.width() - pen_w, self.height() - pen_w)
-        radius = 6.0
+        margin = 3
+        rect = QRectF(margin, margin,
+                      self.width() - 2 * margin,
+                      self.height() - 2 * margin)
 
-        path = QPainterPath()
-        path.addRoundedRect(rect, radius, radius)
-
-        total_len = path.length()
-        draw_len = self._progress * total_len
-        skip_len = total_len - draw_len
-
-        pen = QPen(self._ring_color, pen_w)
-        pen.setCapStyle(Qt.RoundCap)
-        if skip_len > 0.01:
-            pen.setDashPattern([draw_len / pen_w, skip_len / pen_w])
-
+        pen = QPen(QColor("#E05252"), 3, Qt.SolidLine, Qt.RoundCap)
         p.setPen(pen)
         p.setBrush(Qt.NoBrush)
-        p.drawPath(path)
+        p.drawArc(rect, 90 * 16, int(-self._charge_progress * 360 * 16))
         p.end()
 
 
@@ -599,6 +695,12 @@ class MultitoonTab(QWidget):
     _toon_names_ready  = Signal(list)
     _toon_styles_ready = Signal(list)
     _toon_colors_ready = Signal(list)
+    _toon_laffs_ready  = Signal(list)
+    _toon_max_laffs_ready = Signal(list)
+    _toon_beans_ready  = Signal(list)
+    _toon_data_merge_ready = Signal(list, list, list, list, list, list, list)
+    keep_alive_updated = Signal()
+    dot_state_changed = Signal(int, str)
 
     def __init__(self, logger=None, settings_manager=None, keymap_manager=None, profile_manager=None, window_manager=None):
         super().__init__()
@@ -609,20 +711,28 @@ class MultitoonTab(QWidget):
         self.window_manager = window_manager
         self.service_running = False
         self.toon_labels = []       # list of (name_label, status_dot)
+        self.laff_labels = []       # list of QLabels showing laff
+        self.bean_labels = []       # list of QLabels showing beans
         self.slot_badges = []       # list of QLabel badges
+        self.game_badges = []       # list of QLabel game badges
         self.toon_buttons = []
         self.chat_buttons = []
         self.keep_alive_buttons = []
         self.ka_progress_bars = []
+        self.ka_groups = []
         self.set_selectors = []     # replaces movement_dropdowns
         self.toon_cards = []
         self.profile_pills = []     # list of QPushButton pills
         self.enabled_toons = [False] * 4
         self.chat_enabled  = [True]  * 4
         self.keep_alive_enabled = [False] * 4
+        self.rapid_fire_enabled = [False] * 4
         self.toon_names       = [None] * 4
         self.toon_styles      = [None] * 4
         self.toon_colors      = [None] * 4
+        self.toon_laffs       = [None] * 4
+        self.toon_max_laffs   = [None] * 4
+        self.toon_beans       = [None] * 4
         self._refresh_gen     = 0
         self._active_profile  = -1  # no profile active initially
         self._last_window_ids = []
@@ -633,7 +743,7 @@ class MultitoonTab(QWidget):
         self._ka_cycle_event = threading.Event()
         self._inhibitor_fd = None
 
-        self.key_event_queue = queue.Queue()
+        self.key_event_queue = queue.Queue(maxsize=200)
 
         self.build_ui()
 
@@ -647,10 +757,17 @@ class MultitoonTab(QWidget):
             get_keymap_assignments=self.get_keymap_assignments,
             keymap_manager=self.keymap_manager,
         )
-        self.input_service.window_ids_updated.connect(self.update_toon_controls)
+        self.input_service.chat_state_changed.connect(self._on_chat_state_changed)
+        self.input_service.input_log.connect(self._on_input_log)
+        self._chat_glow_active = False
+        self.window_manager.window_ids_updated.connect(self.update_toon_controls)
         self._toon_names_ready.connect(self._apply_toon_names)
         self._toon_styles_ready.connect(self._apply_toon_styles)
         self._toon_colors_ready.connect(self._apply_toon_colors)
+        self._toon_laffs_ready.connect(self._apply_toon_laffs)
+        self._toon_max_laffs_ready.connect(self._apply_toon_max_laffs)
+        self._toon_beans_ready.connect(self._apply_toon_beans)
+        self._toon_data_merge_ready.connect(self._apply_merged_toon_data)
 
         self.refresh_timer = QTimer(self)
         self.refresh_timer.setInterval(5000)
@@ -691,28 +808,33 @@ class MultitoonTab(QWidget):
         outer_card_layout.setSpacing(10)
 
         # -- Service controls section --
-        self.service_label = QLabel("Service Controls")
-        outer_card_layout.addWidget(self.service_label)
+        service_layout = QVBoxLayout()
+        service_layout.setContentsMargins(0, 0, 0, 0)
+        service_layout.setSpacing(6)
 
         self.toggle_service_button = QPushButton(f"{S(chr(9654), chr(9654))} Start Service")
         self.toggle_service_button.setCheckable(True)
         self.toggle_service_button.clicked.connect(self.toggle_service)
-        self.toggle_service_button.setFixedHeight(38)
-        outer_card_layout.addWidget(self.toggle_service_button)
+        self.toggle_service_button.setFixedHeight(48)
+        service_layout.addWidget(self.toggle_service_button)
 
-        # Segment status bar
-        self.segment_bar = StatusSegmentBar()
-        outer_card_layout.addWidget(self.segment_bar)
+        self.status_bar = StatusBar()
+        service_layout.addWidget(self.status_bar)
+        outer_card_layout.addLayout(service_layout)
 
-        # Text status (compact, below the bar)
-        self.status_label = QLabel("Service idle")
-        self.status_label.setAlignment(Qt.AlignLeft)
-        outer_card_layout.addWidget(self.status_label)
+        # Section divider (two-tone inset line for depth)
+        self._section_divider = QFrame()
+        self._section_divider.setFixedHeight(2)
+        self._section_divider.setMaximumWidth(320)
+        self._section_divider.setObjectName("section_divider")
+        outer_card_layout.addSpacing(6)
+        outer_card_layout.addWidget(self._section_divider, alignment=Qt.AlignHCenter)
+        outer_card_layout.addSpacing(6)
 
         # -- Toon config header (label | stretch | pills | refresh) --
         config_row = QHBoxLayout()
         config_row.setSpacing(6)
-        self.config_label = QLabel("Toon Configuration")
+        self.config_label = QLabel("TOON CONFIGURATION")
         config_row.addWidget(self.config_label)
         config_row.addStretch()
 
@@ -741,11 +863,12 @@ class MultitoonTab(QWidget):
             card_layout.setContentsMargins(12, 10, 12, 10)
             card_layout.setSpacing(8)
 
-            # === Top row: badge + name + pulsing dot ===
+        # === Top row: badge + name + pulsing dot ===
             top_row = QHBoxLayout()
             top_row.setSpacing(10)
 
             badge = ToonPortraitWidget(i + 1)
+            badge.clicked.connect(lambda idx=i: self._on_portrait_clicked(idx))
             self.slot_badges.append(badge)
             top_row.addWidget(badge)
 
@@ -756,7 +879,39 @@ class MultitoonTab(QWidget):
             top_row.addWidget(name_label)
             top_row.addWidget(status_dot)
 
+            game_badge = QLabel()
+            game_badge.setObjectName("game_badge")
+            game_badge.hide()
+            self.game_badges.append(game_badge)
+            top_row.addWidget(game_badge)
+
             top_row.addStretch()
+
+            # Laff + beans grouped tightly on the right
+            stats_row = QHBoxLayout()
+            stats_row.setSpacing(4)
+            stats_row.setContentsMargins(0, 0, 0, 0)
+
+            laff_lbl = QPushButton(" ---")
+            laff_lbl.setIcon(make_heart_icon(16))
+            laff_lbl.setObjectName("laff_lbl")
+            laff_lbl.setAttribute(Qt.WA_TransparentForMouseEvents)
+            laff_lbl.setToolTip("Laff")
+            laff_lbl.hide()
+            self.laff_labels.append(laff_lbl)
+            stats_row.addWidget(laff_lbl)
+
+            bean_lbl = QPushButton(" ---")
+            bean_lbl.setIcon(make_jellybean_icon(16))
+            bean_lbl.setObjectName("bean_lbl")
+            bean_lbl.setAttribute(Qt.WA_TransparentForMouseEvents)
+            bean_lbl.setToolTip("Bank Jellybeans")
+            bean_lbl.hide()
+            self.bean_labels.append(bean_lbl)
+            stats_row.addWidget(bean_lbl)
+
+            top_row.addLayout(stats_row)
+
             card_layout.addLayout(top_row)
 
             # === Bottom row: controls ===
@@ -780,6 +935,7 @@ class MultitoonTab(QWidget):
             ka_btn.setIcon(make_mouse_icon(14))
             ka_btn.setToolTip("Toggle keep-alive for this toon")
             ka_btn.clicked.connect(lambda checked, idx=i: self.toggle_keep_alive(idx))
+            ka_btn.rapid_fire_toggled.connect(lambda state, idx=i: self.toggle_rapid_fire(idx, state))
             self.keep_alive_buttons.append(ka_btn)
 
             chat_btn = QPushButton()
@@ -792,14 +948,21 @@ class MultitoonTab(QWidget):
             chat_btn.clicked.connect(lambda checked, idx=i: self.toggle_chat(idx))
             self.chat_buttons.append(chat_btn)
 
-            # Order: Enable | Chat | KeepAlive | progress bar | stretch | selector
-            ctrl_row.addWidget(chat_btn)
-            ctrl_row.addWidget(ka_btn)
+            # Keep-alive group (chat + ka + progress bar in an inset frame)
+            ka_group = QFrame()
+            ka_group.setObjectName("ka_group")
+            ka_group_layout = QHBoxLayout(ka_group)
+            ka_group_layout.setContentsMargins(4, 4, 6, 4)
+            ka_group_layout.setSpacing(4)
+            ka_group_layout.addWidget(chat_btn)
+            ka_group_layout.addWidget(ka_btn)
 
-            # Keep-alive progress bar (sub-pixel smooth painting)
             ka_bar = SmoothProgressBar()
             self.ka_progress_bars.append(ka_bar)
-            ctrl_row.addWidget(ka_bar, 1)  # stretch factor so it fills available space
+            ka_group_layout.addWidget(ka_bar, 1)
+
+            self.ka_groups.append(ka_group)
+            ctrl_row.addWidget(ka_group, 1)
 
             # Movement set selector (horizontal color-coded widget)
             selector = SetSelectorWidget(self.keymap_manager)
@@ -879,14 +1042,20 @@ class MultitoonTab(QWidget):
         if not hasattr(self, 'profile_pills'):
             return
         c = self._c()
+        pill_colors = ["#4A8FE7", "#E05252", "#E8A838", "#56c856", "#C87EE8"]
         for i, pill in enumerate(self.profile_pills):
             active = i == self._active_profile
+            color = pill_colors[i] if i < len(pill_colors) else c['accent_blue_btn']
+            
             if active:
+                base_color = QColor(color)
+                border_color = base_color.lighter(120).name()
+                hover_color = base_color.lighter(110).name()
                 pill.setStyleSheet(f"""
                     QPushButton {{
-                        background-color: {c['accent_blue_btn']};
+                        background-color: {color};
                         color: white;
-                        border: 2px solid {c['accent_blue_btn_border']};
+                        border: 2px solid {border_color};
                         border-radius: 14px;
                         font-size: 11px;
                         font-weight: bold;
@@ -895,7 +1064,7 @@ class MultitoonTab(QWidget):
                         text-align: center;
                     }}
                     QPushButton:hover {{
-                        background-color: {c['accent_blue_btn_hover']};
+                        background-color: {hover_color};
                     }}
                 """)
             else:
@@ -913,7 +1082,7 @@ class MultitoonTab(QWidget):
                     QPushButton:hover {{
                         background-color: {c['toon_btn_inactive_hover']};
                         color: {c['text_primary']};
-                        border: 1px solid {c['accent_blue']};
+                        border: 1px solid {color};
                     }}
                 """)
 
@@ -937,12 +1106,23 @@ class MultitoonTab(QWidget):
         is_dark = resolve_theme(self.settings_manager) == "dark"
 
         self.outer_card.setStyleSheet("QFrame { background: transparent; border: none; }")
+        if is_dark:
+            # Etched look: darker groove on top, lighter highlight below
+            self._section_divider.setStyleSheet(
+                "border: none; border-radius: 2px; "
+                "background: qlineargradient(x1:0,y1:0,x2:0,y2:1, "
+                "stop:0 #333333, stop:0.49 #333333, stop:0.51 #555555, stop:1 #555555);"
+            )
+        else:
+            self._section_divider.setStyleSheet(
+                "border: none; border-radius: 2px; "
+                "background: qlineargradient(x1:0,y1:0,x2:0,y2:1, "
+                "stop:0 #c0c0c0, stop:0.49 #c0c0c0, stop:0.51 #ffffff, stop:1 #ffffff);"
+            )
 
-        self.service_label.setStyleSheet(
-            f"font-size: 12px; font-weight: bold; color: {c['text_secondary']}; background: none; border: none;"
-        )
         self.config_label.setStyleSheet(
-            f"font-size: 12px; font-weight: bold; color: {c['text_secondary']}; background: none; border: none; margin-top: 4px;"
+            f"font-size: 10px; font-weight: 600; color: {c['text_muted']}; "
+            f"background: transparent; border: none; letter-spacing: 0.8px; margin-top: 4px;"
         )
         self._update_pill_styles()
         self.refresh_button.setStyleSheet(f"""
@@ -959,8 +1139,15 @@ class MultitoonTab(QWidget):
             }}
         """)
 
-        # Segment bar colors
-        self.segment_bar.set_colors(c['segment_off'], c['segment_found'], c['segment_active'])
+        self.status_bar.set_dot_colors(c['segment_off'], c['segment_found'], c['segment_active'])
+        self.status_bar.setStyleSheet(f"""
+            QFrame#ServiceStatusBar {{
+                background-color: {c['bg_card_inner']};
+                border-radius: 8px;
+                border: 1px solid {c['border_muted']};
+            }}
+        """)
+        self.update_service_button_style()
 
         # Toon cards
         for i, card in enumerate(self.toon_cards):
@@ -975,6 +1162,24 @@ class MultitoonTab(QWidget):
             name_label.setStyleSheet(
                 f"font-size: 14px; font-weight: bold; color: {c['text_primary']}; background: none; border: none;"
             )
+            stat_style = (
+                f"border: none; background: transparent; font-weight: bold; "
+                f"font-size: 13px; color: {c['text_primary']};"
+            )
+            self.laff_labels[i].setStyleSheet(stat_style)
+            self.bean_labels[i].setStyleSheet(stat_style)
+
+        # Keep-alive inset groups + progress bar track color
+        for ka_group in self.ka_groups:
+            ka_group.setStyleSheet(f"""
+                QFrame#ka_group {{
+                    background: {c['bg_input']};
+                    border: 1px solid {c['border_muted']};
+                    border-radius: 8px;
+                }}
+            """)
+        for ka_bar in self.ka_progress_bars:
+            ka_bar.set_bg_color(c['border_muted'])
 
         self.apply_all_visual_states()
         self.update_status_label()
@@ -993,15 +1198,40 @@ class MultitoonTab(QWidget):
 
         slot_colors = self._slot_colors(c)
         active = window_available and self.enabled_toons[index] and self.service_running
+        state_str = "off"
+        tooltip_str = "Not Found"
+
         if active:
-            status_dot.set_state("active", "Connected")
+            state_str = "active"
+            tooltip_str = "Connected"
         elif window_available:
-            status_dot.set_state("found", "Found — not enabled")
+            if self.keep_alive_enabled[index]:
+                state_str = "keep_alive"
+                tooltip_str = "Keep-Alive Active (Input Disabled)"
+            else:
+                state_str = "disabled"
+                tooltip_str = "Input Disabled"
+
+        status_dot.set_state(state_str, tooltip_str)
+        self.dot_state_changed.emit(index, state_str)
+
+        if window_available:
+            game_tag = GameRegistry.instance().get_game_for_window(str(wids[index]))
+            if game_tag == "cc":
+                self.game_badges[index].setText("CC")
+                self.game_badges[index].setStyleSheet(f"background-color: #F26D21; color: white; border-radius: 4px; padding: 2px 6px; font-weight: bold; font-size: 10px; border: 1px solid {c['border_muted']};")
+                self.game_badges[index].show()
+            elif game_tag == "ttr":
+                self.game_badges[index].setText("TTR")
+                self.game_badges[index].setStyleSheet(f"background-color: #4A8FE7; color: white; border-radius: 4px; padding: 2px 6px; font-weight: bold; font-size: 10px; border: 1px solid {c['border_muted']};")
+                self.game_badges[index].show()
+            else:
+                self.game_badges[index].hide()
         else:
-            status_dot.set_state("off", "Not Found")
+            self.game_badges[index].hide()
 
         # -- Slot badge --
-        if window_available:
+        if window_available and self.service_running:
             badge.set_colors(slot_colors[index], "white")
         else:
             badge.set_colors(c['slot_dim'], c['text_muted'])
@@ -1115,22 +1345,59 @@ class MultitoonTab(QWidget):
                 }}
             """)
 
+    @Slot(bool)
+    def _on_chat_state_changed(self, active):
+        """Called from InputService when global chat state changes."""
+        self._chat_glow_active = active
+        if not active:
+            # Remove glow effects and restore proper visual state
+            for i in range(4):
+                if i < len(self.chat_buttons):
+                    self.chat_buttons[i].setGraphicsEffect(None)
+            for i in range(4):
+                self.apply_visual_state(i)
+        self._update_glow_timer()
+
+    @Slot(str)
+    def _on_input_log(self, msg):
+        self.log(msg)
+
     def _apply_keep_alive_btn_style(self, index, c):
         ka_btn = self.keep_alive_buttons[index]
         ka_btn.setEnabled(True)
+        is_rf = getattr(self, 'rapid_fire_enabled', [False]*4)[index]
+        bar = self.ka_progress_bars[index] if index < len(self.ka_progress_bars) else None
         if self.keep_alive_enabled[index]:
-            ka_btn.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {c['accent_orange']};
-                    color: white;
-                    border: 2px solid {c['accent_orange_border']};
-                    border-radius: 6px;
-                }}
-                QPushButton:hover {{
-                    background-color: {c['accent_orange_hover']};
-                    border: 2px solid {c['accent_orange_border']};
-                }}
-            """)
+            if is_rf:
+                ka_btn.setStyleSheet(f"""
+                    QPushButton {{
+                        background-color: {c['accent_red']};
+                        color: white;
+                        border: 2px solid {c['accent_red_border']};
+                        border-radius: 6px;
+                    }}
+                    QPushButton:hover {{
+                        background-color: {c['accent_red_hover']};
+                        border: 2px solid {c['accent_red_border']};
+                    }}
+                """)
+                if bar:
+                    bar.set_fill_color("#E05252")  # red for rapid fire
+            else:
+                ka_btn.setStyleSheet(f"""
+                    QPushButton {{
+                        background-color: {c['accent_orange']};
+                        color: white;
+                        border: 2px solid {c['accent_orange_border']};
+                        border-radius: 6px;
+                    }}
+                    QPushButton:hover {{
+                        background-color: {c['accent_orange_hover']};
+                        border: 2px solid {c['accent_orange_border']};
+                    }}
+                """)
+                if bar:
+                    bar.set_fill_color("#e0943a")  # orange to match keep-alive button
         else:
             ka_btn.setStyleSheet(f"""
                 QPushButton {{
@@ -1149,40 +1416,58 @@ class MultitoonTab(QWidget):
 
     def _tick_glow(self):
         self._glow_phase += 0.05
-        val = (math.sin(self._glow_phase * math.pi * 2 / 3.0) + 1.0) / 2.0
 
-        # Keep-alive button glow (warm orange) + progress ring
-        ka_alpha = int(30 + 50 * val)
         delay = self._get_keep_alive_delay()
         elapsed = time.monotonic() - self._ka_cycle_start if self._ka_cycle_start else 0
-        ring_progress = min(1.0, elapsed / delay) if delay > 0 else 0.0
+        normal_progress = min(1.0, elapsed / delay) if delay > 0 else 0.0
+        # Rapid-fire ring cycles once per second using modulo
+        rf_progress = (elapsed % 1.0) if elapsed > 0 else 0.0
 
         for i in range(4):
             ka_btn = self.keep_alive_buttons[i]
             if self.keep_alive_enabled[i]:
-                shadow = QGraphicsDropShadowEffect(ka_btn)
-                shadow.setColor(QColor(220, 140, 40, ka_alpha))
-                shadow.setBlurRadius(12 + 6 * val)
-                shadow.setOffset(0, 0)
-                ka_btn.setGraphicsEffect(shadow)
-                ka_btn.set_progress(ring_progress)
+                is_rf = getattr(self, 'rapid_fire_enabled', [False] * 4)[i]
+                ka_btn.set_progress(rf_progress if is_rf else normal_progress)
             else:
                 ka_btn.setGraphicsEffect(None)
                 ka_btn.set_progress(0.0)
 
-        # Service button glow (red pulse when running)
-        if self.service_running:
-            svc_alpha = int(20 + 40 * val)
-            shadow = QGraphicsDropShadowEffect(self.toggle_service_button)
-            shadow.setColor(QColor(200, 60, 60, svc_alpha))
-            shadow.setBlurRadius(14 + 8 * val)
-            shadow.setOffset(0, 0)
-            self.toggle_service_button.setGraphicsEffect(shadow)
-        else:
-            self.toggle_service_button.setGraphicsEffect(None)
+        # Chat button glow pulse when chat broadcast is active
+        if self._chat_glow_active:
+            pulse = (math.sin(self._glow_phase * 2.0) + 1.0) / 2.0  # 0..1
+            blur = 8 + pulse * 14  # 8..22
+            alpha = int(140 + pulse * 115)  # 140..255
+            c = self._c()
+            # Diagonal gradient: base #0077ff ↔ bright #0384fc
+            # Shift the gradient stop position to animate the bright spot
+            stop = 0.3 + pulse * 0.4  # bright spot travels 30%..70%
+            wids = self.window_manager.ttr_window_ids
+            for i in range(4):
+                has_window = i < len(wids)
+                if i < len(self.chat_buttons) and self.chat_enabled[i] and has_window:
+                    btn = self.chat_buttons[i]
+                    btn.setStyleSheet(f"""
+                        QPushButton {{
+                            background: qlineargradient(
+                                x1:0, y1:0, x2:1, y2:1,
+                                stop:0 #0077ff,
+                                stop:{stop:.2f} #0384fc,
+                                stop:1 #0077ff
+                            );
+                            color: white;
+                            border: 2px solid {c['accent_blue_btn_border']};
+                            border-radius: 6px;
+                        }}
+                    """)
+                    glow = QGraphicsDropShadowEffect(btn)
+                    glow.setOffset(0, 0)
+                    glow.setBlurRadius(blur)
+                    glow.setColor(QColor(0, 119, 255, alpha))
+                    btn.setGraphicsEffect(glow)
+
 
     def _update_glow_timer(self):
-        needs_glow = any(self.keep_alive_enabled) or self.service_running
+        needs_glow = any(self.keep_alive_enabled) or self.service_running or self._chat_glow_active
         needs_bars = any(self.keep_alive_enabled)
 
         if needs_glow and not self._glow_timer.isActive():
@@ -1193,7 +1478,6 @@ class MultitoonTab(QWidget):
             for i in range(4):
                 self.keep_alive_buttons[i].setGraphicsEffect(None)
                 self.keep_alive_buttons[i].set_progress(0.0)
-            self.toggle_service_button.setGraphicsEffect(None)
 
         if needs_bars and not self._bar_timer.isActive():
             self._bar_timer.start()
@@ -1206,50 +1490,65 @@ class MultitoonTab(QWidget):
     def _tick_progress_bars(self):
         delay = self._get_keep_alive_delay()
         elapsed = time.monotonic() - self._ka_cycle_start if self._ka_cycle_start else 0
-        progress = min(1.0, elapsed / delay) if delay > 0 else 0.0
+        normal_progress = min(1.0, elapsed / delay) if delay > 0 else 0.0
+        rf_progress = (elapsed % 1.0) if elapsed > 0 else 0.0
 
         for i in range(4):
             if i < len(self.ka_progress_bars):
                 bar = self.ka_progress_bars[i]
                 if self.keep_alive_enabled[i]:
-                    bar.set_progress(progress)
+                    is_rf = getattr(self, 'rapid_fire_enabled', [False] * 4)[i]
+                    bar.set_progress(rf_progress if is_rf else normal_progress)
                 else:
                     bar.set_progress(0.0)
 
     # ── Service button style ───────────────────────────────────────────────
 
     def update_service_button_style(self):
-        c = self._c()
         if self.service_running:
             self.toggle_service_button.setText(f"{S(chr(9632), chr(9632))} Stop Service")
             self.toggle_service_button.setToolTip("Stop the multitoon input service")
-            self.toggle_service_button.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {c['accent_red']};
-                    color: white; font-weight: bold;
-                    border: 2px solid {c['accent_red_border']};
-                    border-radius: 6px;
-                }}
-                QPushButton:hover {{
-                    background-color: {c['accent_red_hover']};
-                    border: 2px solid {c['accent_red_hover_border']};
-                }}
+            self.toggle_service_button.setStyleSheet("""
+                QPushButton {
+                    background-color: #b34848;
+                    color: white;
+                    font-size: 14px;
+                    font-weight: bold;
+                    border: 2px solid #d95757;
+                    border-radius: 8px;
+                }
+                QPushButton:hover {
+                    background-color: #cc5e5e;
+                    border-color: #e06a6a;
+                }
+                QPushButton:pressed {
+                    background-color: #993d3d;
+                    border-color: #c04e4e;
+                }
             """)
         else:
             self.toggle_service_button.setText(f"{S(chr(9654), chr(9654))} Start Service")
             self.toggle_service_button.setToolTip("Start the multitoon input service")
-            self.toggle_service_button.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {c['accent_blue_btn']};
-                    color: white; font-weight: bold;
-                    border: 2px solid {c['accent_blue_btn_border']};
-                    border-radius: 6px;
-                }}
-                QPushButton:hover {{
-                    background-color: {c['accent_blue_btn_hover']};
-                    border: 2px solid {c['accent_blue_btn_border']};
-                }}
+            self.toggle_service_button.setStyleSheet("""
+                QPushButton {
+                    background-color: #0077ff;
+                    color: white;
+                    font-size: 14px;
+                    font-weight: bold;
+                    border: 2px solid #3399ff;
+                    border-radius: 8px;
+                }
+                QPushButton:hover {
+                    background-color: #1a88ff;
+                    border-color: #55aaff;
+                }
+                QPushButton:pressed {
+                    background-color: #0066dd;
+                    border-color: #2288ee;
+                }
             """)
+        self.toggle_service_button.setGraphicsEffect(None)
+        self.toggle_service_button.update()
 
     def apply_all_visual_states(self):
         for i in range(4):
@@ -1261,62 +1560,109 @@ class MultitoonTab(QWidget):
         c = self._c()
         count = sum(self.enabled_toons)
 
-        # Update segment bar states
         segments = []
         wids = self.window_manager.ttr_window_ids if hasattr(self, 'input_service') else []
         for i in range(4):
             window_available = i < len(wids)
             if window_available and self.enabled_toons[i] and self.service_running:
-                segments.append(2)  # active
+                segments.append(2)
             elif window_available:
-                segments.append(1)  # found
+                segments.append(1)
             else:
-                segments.append(0)  # off
-        self.segment_bar.set_states(segments)
+                segments.append(0)
+        self.status_bar.set_dot_states(segments)
 
-        # Update text status (compact style)
-        base = "QLabel { font-size: 11px; font-weight: 500; border-radius: 4px; padding: 4px 10px; "
         if self.service_running and count > 0:
-            self.status_label.setText(f"{S('✅', '✔')} Sending input to {count} toon{'s' if count != 1 else ''}")
-            self.status_label.setStyleSheet(base + f"background-color: {c['status_success_bg']}; color: {c['status_success_text']}; border-left: 4px solid {c['status_success_border']}; }}")
+            text = f"Sending input to {count} toon{'s' if count != 1 else ''}"
+            self.status_bar.set_status_text(text)
+            self.status_bar.set_text_color(c['text_primary'])
         elif self.service_running:
-            self.status_label.setText(f"{S('⚠️', '⚠')} Service running — no toons enabled")
-            self.status_label.setStyleSheet(base + f"background-color: {c['status_warning_bg']}; color: {c['status_warning_text']}; border-left: 4px solid {c['status_warning_border']}; }}")
+            ka_count = sum(self.keep_alive_enabled)
+            if ka_count > 0:
+                text = f"Keep-alive sending to {ka_count} toon{'s' if ka_count != 1 else ''}"
+            else:
+                text = "No toons enabled"
+            self.status_bar.set_status_text(text)
+            self.status_bar.set_text_color(c['status_warning_text'])
         else:
-            self.status_label.setText(f"{S('⏸️', '◼')} Service idle")
-            self.status_label.setStyleSheet(base + f"background-color: {c['status_idle_bg']}; color: {c['status_idle_text']}; border-left: 4px solid {c['status_idle_border']}; }}")
+            self.status_bar.set_status_text("Service idle")
+            self.status_bar.set_text_color(c['text_muted'])
 
     # ── Name fetching ──────────────────────────────────────────────────────
 
     def _fetch_names_if_enabled(self, num_slots: int):
-        if self.settings_manager and self.settings_manager.get("enable_companion_app", True):
-            self._refresh_gen += 1
-            gen = self._refresh_gen
-            def _callback(names, styles, colors):
+        self._refresh_gen += 1
+        gen = self._refresh_gen
+        
+        # Split windows by game type
+        wids = list(self.window_manager.ttr_window_ids) if hasattr(self, 'window_manager') and self.window_manager else []
+        ttr_wids = [wid for wid in wids if GameRegistry.instance().get_game_for_window(wid) == "ttr"]
+        cc_wids = [wid for wid in wids if GameRegistry.instance().get_game_for_window(wid) == "cc"]
+        
+        # TTR Dispatch
+        if ttr_wids and self.settings_manager and self.settings_manager.get("enable_companion_app", True):
+            def _ttr_callback(names, styles, colors, laffs, max_laffs, beans):
                 if gen == self._refresh_gen:
-                    self._on_toon_names_received(names, styles, colors)
-            get_toon_names_threaded(num_slots, _callback,
-                                    list(self.window_manager.ttr_window_ids))
+                    self._toon_data_merge_ready.emit(list(ttr_wids), list(names), list(styles), list(colors), list(laffs), list(max_laffs), list(beans))
+            get_toon_names_threaded(len(ttr_wids), _ttr_callback, ttr_wids)
+            
+        # CC Dispatch
+        if cc_wids and self.settings_manager and self.settings_manager.get("enable_cc_companion_app", True):
+            def _cc_callback(names, styles, colors, laffs, max_laffs, beans):
+                if gen == self._refresh_gen:
+                    self._toon_data_merge_ready.emit(list(cc_wids), list(names), list(styles), list(colors), list(laffs), list(max_laffs), list(beans))
+            cc_api.get_toon_names_threaded(len(cc_wids), _cc_callback, cc_wids)
 
     def manual_refresh(self):
-        invalidate_port_to_wid_cache()
-        self.input_service.window_manager.assign_windows()
-        self._fetch_names_if_enabled(4)
         self.log("[Service] Manual refresh triggered.")
+        invalidate_port_to_wid_cache()
+        clear_stale_names([])
+        self.toon_names = [None] * 4
+        self.toon_styles = [None] * 4
+        self.toon_colors = [None] * 4
+        self.toon_laffs = [None] * 4
+        self.toon_max_laffs = [None] * 4
+        self.toon_beans = [None] * 4
+        for i in range(4):
+            if i < len(self.slot_badges):
+                self.slot_badges[i].set_dna(None)
+        self._last_window_ids = []
+        self._refresh_toon_name_labels()
+        self._refresh_toon_stats_labels()
+        
+        while not self.key_event_queue.empty():
+            try:
+                self.key_event_queue.get_nowait()
+            except Exception:
+                pass
+                
+        if self.service_running:
+            self.input_service.stop()
+            self.input_service.release_all_keys()
+            self.window_manager.clear_window_ids()
+            self.window_manager.assign_windows()
+            self.input_service.start()
+            self._fetch_names_if_enabled(len(self.window_manager.ttr_window_ids))
+        else:
+            self.window_manager.disable_detection()
+            self.update_toon_controls([])
 
     def _auto_refresh(self):
         self.input_service.window_manager.assign_windows()
-        self._fetch_names_if_enabled(4)
+        self._fetch_names_if_enabled(len(self.window_manager.ttr_window_ids))
 
     # ── Service lifecycle ──────────────────────────────────────────────────
 
     def toggle_service(self):
         self.service_running = not self.service_running
         if self.service_running:
+            self.input_service.window_manager.assign_windows()
+            self.input_service.window_manager.enable_detection()
             self._start_service_internal()
         else:
             self.input_service.stop()
             self.refresh_timer.stop()
+            self.input_service.window_manager.disable_detection()
             self.disable_all_toon_controls()
             self.log("[Service] Multitoon service stopped.")
         self.update_service_button_style()
@@ -1325,13 +1671,17 @@ class MultitoonTab(QWidget):
     def _start_service_internal(self):
         self.input_service.start()
         self.log("[Service] Multitoon service started.")
+        wids = self.window_manager.ttr_window_ids
         for i in range(4):
-            if i < len(self.window_manager.ttr_window_ids):
+            if i < len(wids):
                 self.enabled_toons[i] = True
                 self.chat_enabled[i]  = True
                 self.toon_buttons[i].setChecked(True)
                 self.chat_buttons[i].setChecked(True)
                 self.apply_visual_state(i)
+        count = len(wids)
+        if count:
+            self.log(f"[Input] {count} toon window{'s' if count != 1 else ''} detected — input + chat enabled")
         self.update_status_label()
         self.refresh_timer.start()
         self._fetch_names_if_enabled(len(self.window_manager.ttr_window_ids))
@@ -1354,9 +1704,11 @@ class MultitoonTab(QWidget):
             self.toon_buttons[i].setChecked(False)
             self.chat_buttons[i].setChecked(True)
             self.keep_alive_buttons[i].setChecked(False)
+            self.keep_alive_buttons[i].is_rapid_fire = False
             self.enabled_toons[i] = False
             self.chat_enabled[i]  = True
             self.keep_alive_enabled[i] = False
+            self.rapid_fire_enabled[i] = False
             self.toon_names[i]    = None
             self.toon_styles[i]   = None
             self.toon_colors[i]   = None
@@ -1366,6 +1718,13 @@ class MultitoonTab(QWidget):
         self._update_glow_timer()
         self._refresh_toon_name_labels()
         self.update_status_label()
+
+    def _on_portrait_clicked(self, index: int):
+        if index < len(self.window_manager.ttr_window_ids):
+            wid = self.window_manager.ttr_window_ids[index]
+            if wid:
+                self.input_service.send_keep_alive_to_window(wid, "f1", modifiers=["shift"])
+                self.log(f"[EasterEgg] Sent shift+f1 to Toon {index + 1} (WID {wid})")
 
     # ── Toon toggles ───────────────────────────────────────────────────────
 
@@ -1378,6 +1737,9 @@ class MultitoonTab(QWidget):
         else:
             self.chat_enabled[index] = False
             self.chat_buttons[index].setChecked(False)
+        state = "enabled" if self.enabled_toons[index] else "disabled"
+        name = self.toon_names[index] or f"Toon {index + 1}"
+        self.log(f"[Input] {name} (slot {index + 1}): input {state}")
         self.apply_visual_state(index)
         self.update_status_label()
         self._autosave_active_profile()
@@ -1385,18 +1747,39 @@ class MultitoonTab(QWidget):
     def toggle_chat(self, index):
         self.chat_enabled[index] = not self.chat_enabled[index]
         self.chat_buttons[index].setChecked(self.chat_enabled[index])
+        state = "enabled" if self.chat_enabled[index] else "disabled"
+        name = self.toon_names[index] or f"Toon {index + 1}"
+        self.log(f"[Input] {name} (slot {index + 1}): chat {state}")
         self.apply_visual_state(index)
+
+    def toggle_rapid_fire(self, index, state):
+        self.rapid_fire_enabled[index] = state
+        self._apply_keep_alive_btn_style(index, self._c())
+        if state and not self.keep_alive_enabled[index]:
+            self.toggle_keep_alive(index)
+        if self._keep_alive_running:
+            self._ka_cycle_event.set()
 
     def toggle_keep_alive(self, index):
         self.keep_alive_enabled[index] = not self.keep_alive_enabled[index]
         self.keep_alive_buttons[index].setChecked(self.keep_alive_enabled[index])
-        self.apply_visual_state(index)
-        self._update_glow_timer()
-        if any(self.keep_alive_enabled):
+
+        # Turning off: always clear rapid fire so the next click-on starts fresh
+        if not self.keep_alive_enabled[index]:
+            self.rapid_fire_enabled[index] = False
+            self.keep_alive_buttons[index].is_rapid_fire = False
+        else:
             self._reset_ka_cycle()
+
+        self._apply_keep_alive_btn_style(index, self._c())
+        self.update_service_button_style()
+
+        if any(self.keep_alive_enabled):
+            # Ensure the keep-alive loop is running
             self._start_keep_alive()
         else:
             self._stop_keep_alive()
+        self._update_glow_timer()
 
     def set_toon_enabled(self, index, enabled: bool):
         self.enabled_toons[index] = enabled
@@ -1408,22 +1791,75 @@ class MultitoonTab(QWidget):
 
     def update_toon_controls(self, window_ids):
         ids_changed = window_ids != self._last_window_ids
-        self._last_window_ids = list(window_ids)
 
         if ids_changed:
+            if self._last_window_ids:
+                old_enabled = list(self.enabled_toons)
+                old_chat    = list(self.chat_enabled)
+                old_ka      = list(self.keep_alive_enabled)
+                old_rf      = list(self.rapid_fire_enabled)
+                old_sels    = [s.currentIndex() for s in self.set_selectors]
+                
+                old_names   = list(self.toon_names)
+                old_styles  = list(self.toon_styles)
+                old_colors  = list(self.toon_colors)
+                old_laffs   = list(self.toon_laffs)
+                old_maxlaffs= list(self.toon_max_laffs)
+                old_beans   = list(self.toon_beans)
+
+                for new_idx, wid in enumerate(window_ids):
+                    if new_idx >= 4: break
+                    if wid in self._last_window_ids:
+                        old_idx = self._last_window_ids.index(wid)
+                        self.enabled_toons[new_idx]      = old_enabled[old_idx]
+                        self.chat_enabled[new_idx]        = old_chat[old_idx]
+                        self.keep_alive_enabled[new_idx]  = old_ka[old_idx]
+                        self.rapid_fire_enabled[new_idx]  = old_rf[old_idx]
+                        self.keep_alive_buttons[new_idx].is_rapid_fire = old_rf[old_idx]
+                        self.set_selectors[new_idx].setCurrentIndex(old_sels[old_idx])
+                        
+                        self.toon_names[new_idx] = old_names[old_idx]
+                        self.toon_styles[new_idx] = old_styles[old_idx]
+                        self.toon_colors[new_idx] = old_colors[old_idx]
+                        self.toon_laffs[new_idx] = old_laffs[old_idx]
+                        self.toon_max_laffs[new_idx] = old_maxlaffs[old_idx]
+                        self.toon_beans[new_idx] = old_beans[old_idx]
+                        
+                        if new_idx < len(self.slot_badges):
+                            self.slot_badges[new_idx].set_dna(old_styles[old_idx])
+
+                for i in range(4):
+                    self.toon_buttons[i].setChecked(self.enabled_toons[i])
+                    self.chat_buttons[i].setChecked(self.chat_enabled[i])
+                    self.keep_alive_buttons[i].setChecked(self.keep_alive_enabled[i])
+
+            self._last_window_ids = list(window_ids)
             invalidate_port_to_wid_cache()
             clear_stale_names(window_ids)
-            self.toon_names = [None] * 4
+            # Do not completely blow away toon_names, they are now correctly shifted above.
             self._refresh_toon_name_labels()
 
         for i in range(4):
             if i >= len(window_ids):
                 self.enabled_toons[i] = False
                 self.chat_enabled[i]  = True
-                self.keep_alive_enabled[i] = False
                 self.toon_buttons[i].setChecked(False)
                 self.chat_buttons[i].setChecked(True)
-                self.keep_alive_buttons[i].setChecked(False)
+                
+                # Clear all cached data for this slot
+                self.toon_names[i] = None
+                self.toon_styles[i] = None
+                if i < len(self.slot_badges):
+                    self.slot_badges[i].set_dna(None)
+                self.toon_colors[i] = None
+                self.toon_laffs[i] = None
+                self.toon_max_laffs[i] = None
+                self.toon_beans[i] = None
+                
+                if getattr(self, 'rapid_fire_enabled', None) is not None:
+                    self.rapid_fire_enabled[i] = False
+                if self.keep_alive_enabled[i]:
+                    self.toggle_keep_alive(i)
             elif self.service_running and not self.enabled_toons[i]:
                 self.enabled_toons[i] = True
                 self.toon_buttons[i].setChecked(True)
@@ -1431,37 +1867,111 @@ class MultitoonTab(QWidget):
         self.update_status_label()
         self._fetch_names_if_enabled(len(window_ids))
         self._update_glow_timer()
+        self._refresh_toon_stats_labels()
         if not any(self.keep_alive_enabled):
             self._stop_keep_alive()
 
     # ── Name handling ──────────────────────────────────────────────────────
 
-    def _on_toon_names_received(self, names: list, styles: list, colors: list):
+    @Slot(list, list, list, list, list, list, list)
+    def _apply_merged_toon_data(self, target_wids, names, styles, colors, laffs, max_laffs, beans):
+        wids = list(self.window_manager.ttr_window_ids) if hasattr(self, 'window_manager') and self.window_manager else []
+        for source_idx, wid in enumerate(target_wids):
+            if wid in wids:
+                global_idx = wids.index(wid)
+                if global_idx < 4:
+                    if source_idx < len(names):
+                        self.toon_names[global_idx] = names[source_idx]
+                        self.toon_styles[global_idx] = styles[source_idx]
+                        self.toon_colors[global_idx] = colors[source_idx]
+                        self.toon_laffs[global_idx] = laffs[source_idx]
+                        self.toon_max_laffs[global_idx] = max_laffs[source_idx]
+                        self.toon_beans[global_idx] = beans[source_idx]
+                        
+                        if global_idx < len(self.slot_badges):
+                            self.slot_badges[global_idx].set_dna(styles[source_idx] if styles and source_idx < len(styles) else None)
+        self._refresh_toon_name_labels()
+        self._refresh_toon_stats_labels()
+
+    def _on_toon_names_received(self, names, styles, colors, laffs, max_laffs, beans):
         self._toon_names_ready.emit(list(names))
         self._toon_styles_ready.emit(list(styles))
         self._toon_colors_ready.emit(list(colors))
+        self._toon_laffs_ready.emit(list(laffs))
+        self._toon_max_laffs_ready.emit(list(max_laffs))
+        self._toon_beans_ready.emit(list(beans))
 
     @Slot(list)
     def _apply_toon_names(self, names: list):
         for i, name in enumerate(names):
-            self.toon_names[i] = name
+            if i < len(self.toon_names):
+                self.toon_names[i] = name
         self._refresh_toon_name_labels()
 
     @Slot(list)
     def _apply_toon_styles(self, styles: list):
         for i, style in enumerate(styles):
-            if style is not None and style != self.toon_styles[i]:
+            if style != self.toon_styles[i]:
                 self.toon_styles[i] = style
                 if i < len(self.slot_badges):
                     self.slot_badges[i].set_dna(style)
+                    self.apply_visual_state(i)
 
     @Slot(list)
     def _apply_toon_colors(self, colors: list):
         for i, color in enumerate(colors):
-            if color is not None and i < len(self.slot_badges):
-                hex_color = f"#{color}" if not color.startswith("#") else color
-                lightened = _lighten_hex(hex_color, 0.25)
-                self.slot_badges[i].set_colors(lightened, "#ffffff")
+            if color != self.toon_colors[i]:
+                self.toon_colors[i] = color
+                self.apply_visual_state(i)
+
+    @Slot(list)
+    def _apply_toon_laffs(self, laffs: list):
+        for i, laff in enumerate(laffs):
+            self.toon_laffs[i] = laff
+        self._refresh_toon_stats_labels()
+
+    @Slot(list)
+    def _apply_toon_max_laffs(self, max_laffs: list):
+        for i, max_laff in enumerate(max_laffs):
+            self.toon_max_laffs[i] = max_laff
+        self._refresh_toon_stats_labels()
+
+    @Slot(list)
+    def _apply_toon_beans(self, beans: list):
+        for i, bean in enumerate(beans):
+            self.toon_beans[i] = bean
+        self._refresh_toon_stats_labels()
+
+    @Slot()
+    def _refresh_toon_stats_labels(self):
+        for i in range(len(self.laff_labels)):
+            laff_lbl = self.laff_labels[i]
+            bean_lbl = self.bean_labels[i]
+
+            # Only show if we have data for the toon
+            window_available = i < len(self._last_window_ids)
+            has_data =  self.toon_names[i] is not None
+
+            if window_available and has_data:
+                # Update Laff
+                claff = self.toon_laffs[i]
+                mlaff = self.toon_max_laffs[i]
+                if claff is not None and mlaff is not None:
+                    laff_lbl.setText(f" {claff}/{mlaff}")
+                    laff_lbl.show()
+                else:
+                    laff_lbl.hide()
+                
+                # Update Beans
+                cbeans = self.toon_beans[i]
+                if cbeans is not None:
+                    bean_lbl.setText(f" {cbeans:,}")
+                    bean_lbl.show()
+                else:
+                    bean_lbl.hide()
+            else:
+                laff_lbl.hide()
+                bean_lbl.hide()
 
     @Slot()
     def _refresh_toon_name_labels(self):
@@ -1516,6 +2026,19 @@ class MultitoonTab(QWidget):
         The fd is owned by this process — released automatically on crash too."""
         if self._inhibitor_fd is not None:
             return
+        import sys
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                # ES_CONTINUOUS | ES_SYSTEM_REQUIRED
+                ctypes.windll.kernel32.SetThreadExecutionState(0x80000000 | 0x00000001)
+                self._inhibitor_fd = "win32"
+                self.log("[KeepAlive] Sleep/idle inhibitor acquired (Windows).")
+            except Exception as e:
+                self.log(f"[KeepAlive] Could not acquire sleep inhibitor on Windows: {e}")
+                self._inhibitor_fd = None
+            return
+
         try:
             import dbus
             bus = dbus.SystemBus()
@@ -1537,6 +2060,19 @@ class MultitoonTab(QWidget):
         """Release the inhibitor lock, allowing sleep/idle again."""
         if self._inhibitor_fd is None:
             return
+        import sys
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                # ES_CONTINUOUS to clear the state
+                ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)
+                self.log("[KeepAlive] Sleep/idle inhibitor released (Windows).")
+            except Exception:
+                pass
+            finally:
+                self._inhibitor_fd = None
+            return
+
         try:
             import os
             os.close(self._inhibitor_fd)
@@ -1561,6 +2097,8 @@ class MultitoonTab(QWidget):
         self._keep_alive_running = False
         self._ka_cycle_start = 0.0
         self._ka_cycle_event.set()  # wake thread so it exits
+        if self._keep_alive_thread is not None and self._keep_alive_thread.is_alive():
+            self._keep_alive_thread.join(timeout=2.0)
         self._release_sleep_inhibitor()
         for i in range(4):
             self.keep_alive_buttons[i].set_progress(0.0)
@@ -1578,39 +2116,61 @@ class MultitoonTab(QWidget):
 
     def _run_keep_alive_loop(self):
         try:
+            last_normal_fire = 0.0
+            last_rapid_fire = 0.0
             while self._keep_alive_running:
-                delay = self._get_keep_alive_delay()
-                # Wait for the delay, but wake early if cycle is reset
-                self._ka_cycle_event.wait(timeout=delay)
+                # Run the loop every 1 second max if there is a rapid fire, else delay
+                if any(getattr(self, 'rapid_fire_enabled', [False]*4)):
+                    timeout_val = 1.0
+                else:
+                    timeout_val = self._get_keep_alive_delay()
+                
+                self._ka_cycle_event.wait(timeout=timeout_val)
                 if self._ka_cycle_event.is_set():
-                    # Cycle was reset or stop requested — clear and re-loop
                     self._ka_cycle_event.clear()
                     if not self._keep_alive_running:
                         break
-                    continue
+                        
                 if not self._keep_alive_running:
                     break
 
-                # Resolve the action to Set 1's raw key
+                now = time.monotonic()
+                normal_delay = self._get_keep_alive_delay()
+                
+                fire_toons = []
+                if now - last_rapid_fire >= 1.0:
+                    rapid_toons = [i for i, state in enumerate(getattr(self, 'rapid_fire_enabled', [False]*4)) if state and self.keep_alive_enabled[i]]
+                    fire_toons.extend(rapid_toons)
+                    if rapid_toons:
+                        last_rapid_fire = now
+                        
+                if now - last_normal_fire >= normal_delay or last_normal_fire == 0.0:
+                    normal_toons = [i for i, state in enumerate(self.keep_alive_enabled) if state and not getattr(self, 'rapid_fire_enabled', [False]*4)[i]]
+                    fire_toons.extend(normal_toons)
+                    if normal_toons:
+                        last_normal_fire = now
+                        self._ka_cycle_start = now
+                
+                fire_toons = list(set(fire_toons))
+                if not fire_toons:
+                    continue
+
                 action = self.settings_manager.get("keep_alive_action", "jump") if self.settings_manager else "jump"
                 key = None
                 if self.keymap_manager:
                     key = self.keymap_manager.get_key_for_direction(0, action)
                 if not key:
-                    self._ka_cycle_start = time.monotonic()
                     continue
 
-                for i in range(4):
-                    if (self.keep_alive_enabled[i]
-                            and i < len(self.window_manager.ttr_window_ids)):
+                for i in fire_toons:
+                    if i < len(self.window_manager.ttr_window_ids):
                         self.input_service.send_keep_alive_to_window(
                             self.window_manager.ttr_window_ids[i], key
                         )
 
                 action_labels = {"jump": "Jump", "book": "Book", "up": "Move Forward"}
                 label = action_labels.get(action, action)
-                self.log(f"[KeepAlive] Sent '{label}' ({key}) to {sum(self.keep_alive_enabled)} toon(s)")
-                self._ka_cycle_start = time.monotonic()
+                self.log(f"[KeepAlive] Sent '{label}' ({key}) to {len(fire_toons)} toon(s)")
         except Exception as e:
             self.log(f"[KeepAlive] Error: {e}")
 
@@ -1619,3 +2179,15 @@ class MultitoonTab(QWidget):
             self.logger.append_log(msg)
         else:
             print(msg)
+
+    def shutdown(self):
+        self._stop_keep_alive()
+        self.refresh_timer.stop()
+        self._glow_timer.stop()
+        self._bar_timer.stop()
+        for badge in self.slot_badges:
+            try:
+                badge.cancel()
+            except Exception:
+                pass
+        self.input_service.shutdown()

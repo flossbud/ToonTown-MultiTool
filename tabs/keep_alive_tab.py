@@ -2,6 +2,7 @@ import subprocess
 
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QPushButton, QFrame
 from PySide6.QtCore import Qt
+from services.launcher_env import build_launcher_env
 from utils.theme_manager import resolve_theme, get_theme_colors, apply_card_shadow
 from utils.symbols import S
 
@@ -83,12 +84,11 @@ class KeepAliveTab(QWidget):
 
     def launch_ttr(self):
         try:
-            import os
-            env = os.environ.copy()
-            env["QT_QPA_PLATFORM"] = "xcb"
             subprocess.Popen(
                 ["flatpak", "run", "com.toontownrewritten.Launcher"],
-                env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                env=build_launcher_env({"QT_QPA_PLATFORM": "xcb"}),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
             )
             if self.parent_window:
                 self.parent_window.log("[Extras] Toontown Rewritten launcher started silently (X11).")
