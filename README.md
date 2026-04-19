@@ -6,13 +6,52 @@ Built with Python + PySide6.
 
 ---
 
+## What's New in v2.0
+
+**Corporate Clash Support**
+- Launch, log in to, and multibox CC alongside TTR
+- The app automatically identifies which game each window belongs to
+
+**Account Manager**
+- Store up to 16 TTR and CC accounts with one-click launch
+- Passwords stored exclusively in the OS keyring — never written to disk
+- Handles TTR login queues and 2FA automatically
+
+**TTR Companion App Integration**
+- Live toon name, laff, and jellybean count per slot in the Multitoon tab
+- Toon portrait images fetched and cached from the Rendition API
+
+**Custom Movement Key Sets**
+- v1.5.1 assumed all toons used WASD — v2.0 lets each slot use a different key set
+- Up to 8 named key sets, fully customisable in the new Keymap tab
+
+**Invasion Tracker**
+- Live cog invasion display, updated every 60 seconds
+
+**Session Profiles**
+- 5 named profiles storing which toon slots are active
+- Load via Ctrl+1–5 hotkeys — replaces the old Preset system
+
+**Windows Support**
+- v1.5.1 was Linux-only — v2.0 adds full Windows support
+
+**Input Backend**
+- Keystrokes now sent via Xlib `send_event` directly — no more `xdotool` subprocess per keypress, fixing GNOME Wayland portal auth prompts
+
+---
+
 ## Features
 
 **Multitoon Control**
 - Broadcast keyboard input to up to 4 background toons simultaneously
 - Per-toon movement key mapping — each toon can use a different key set (WASD, Arrows, or fully custom)
-- Up to 8 custom key sets with named presets
+- Up to 8 custom key sets
 - Per-toon keep-alive timer with configurable key and interval
+
+**Account Management**
+- Store up to 16 TTR and CC accounts with secure OS keyring storage (Secret Service on Linux, Credential Locker on Windows)
+- Passwords never written to disk — keyring only
+- One-click launch with automatic credential injection
 
 **Companion App Integration (TTR)**
 - Displays toon names, laff points, and jellybean counts live from the TTR Local API
@@ -20,13 +59,8 @@ Built with Python + PySide6.
 - Works correctly with multiple Flatpak TTR instances using XRes PID resolution
 
 **Session Profiles**
-- 5 named profiles storing which toons are enabled and their movement modes
+- 5 named profiles storing which toons are enabled
 - Load profiles via hotkeys (Ctrl+1 through Ctrl+5)
-
-**Account Management**
-- Store up to 16 TTR and CC accounts with secure OS keyring storage (Secret Service on Linux, Credential Locker on Windows)
-- Passwords never written to disk — keyring only
-- One-click launch with automatic credential injection
 
 **Game Support**
 - Toontown Rewritten — form-based login, queue polling, Flatpak Launcher
@@ -43,18 +77,13 @@ Built with Python + PySide6.
 
 **Linux:**
 - Python 3.10+
-- PySide6
-- pynput
-- python-xlib
+- PySide6, pynput, python-xlib
 - `xdotool` (window detection only — not required for input)
-- `ss` (iproute2, for TTR Companion App port detection)
 - Secret Service-compatible keyring (GNOME Keyring or KWallet)
 
 **Windows:**
 - Python 3.10+
-- PySide6
-- pynput
-- pywin32
+- PySide6, pynput, pywin32
 
 ---
 
@@ -69,47 +98,37 @@ pip install -r requirements.txt
 python main.py
 ```
 
-### Linux — Force X11 mode (Wayland)
-
-If running on a Wayland session, launch with:
+### Linux — Wayland sessions
 
 ```bash
 QT_QPA_PLATFORM=xcb python main.py
 ```
-
-This is required because the Xlib input backend needs an X11 connection. The app works on GNOME and KDE Wayland sessions via XWayland.
 
 ---
 
 ## Platform Notes
 
 ### Linux
-
 - Tested on Fedora (KDE Plasma, GNOME) with Wayland and X11
-- Flatpak TTR instances are fully supported — PID resolution uses the XRes X11 extension to correctly identify each instance even when namespace PIDs collide
-- Input is sent via direct Xlib `send_event` calls (no xdotool subprocess per keypress, avoiding GNOME portal auth prompts)
-- KWallet and GNOME Keyring are both supported for credential storage
+- Flatpak TTR instances fully supported via XRes PID resolution
+- KWallet and GNOME Keyring both supported
 
 ### Windows
-
-- Input sent via Win32 `PostMessage` — no focus stealing
-- Windows Credential Locker used for keyring storage
+- Input via Win32 `PostMessage` — no focus stealing
 - Corporate Clash supported alongside TTR
 
 ---
 
 ## Configuration
 
-All config files are stored in `~/.config/toontown_multitool/` (Linux) or the equivalent user config directory:
+Config files at `~/.config/toontown_multitool/`:
 
 | File | Contents |
 |------|----------|
-| `settings.json` | App preferences (theme, backend, keep-alive settings) |
+| `settings.json` | App preferences |
 | `accounts.json` | Account metadata (no passwords) |
 | `keymaps.json` | Custom movement key sets |
 | `profiles.json` | Named session profiles |
-
-Passwords are stored exclusively in the OS keyring — never in these files.
 
 ---
 
