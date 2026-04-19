@@ -54,6 +54,7 @@ jobs:
 
       - name: Prepare AppDir
         run: |
+          mkdir -p AppDir/usr/bin
           cp dist/ToonTownMultiTool AppDir/usr/bin/ToonTownMultiTool
           chmod +x AppDir/usr/bin/ToonTownMultiTool
 
