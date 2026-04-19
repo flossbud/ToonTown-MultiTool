@@ -1,5 +1,5 @@
 from PySide6.QtGui import QPalette, QFont, QPixmap, QPainter, QColor, QIcon, QPen, QPainterPath
-from PySide6.QtWidgets import QApplication, QGraphicsDropShadowEffect
+from PySide6.QtWidgets import QApplication, QGraphicsDropShadowEffect, QWidget, QLabel
 from PySide6.QtCore import Qt, QRectF
 import math
 
@@ -114,6 +114,64 @@ def _draw_nav_icon(size: int, color: QColor, draw_func) -> QIcon:
     draw_func(painter, size, color)
     painter.end()
     return QIcon(pixmap)
+
+
+def make_heart_icon(size: int = 16, color: QColor = None) -> QIcon:
+    """Draw a heart icon using Qt primitives."""
+    color = color or QColor("#E05252")
+    def draw(p, s, c):
+        p.setPen(Qt.NoPen)
+        p.setBrush(c)
+        path = QPainterPath()
+        # Scale parameters
+        w = s * 0.8
+        h = s * 0.8
+        dx = (s - w) / 2
+        dy = (s - h) / 2
+        
+        # Start at top center cleft
+        path.moveTo(dx + w/2, dy + h*0.25)
+        # Left curve
+        path.cubicTo(dx, dy - h*0.1,  # Control 1
+                     dx - w*0.1, dy + h*0.6, # Control 2
+                     dx + w/2, dy + h) # Bottom point
+        # Right curve
+        path.cubicTo(dx + w*1.1, dy + h*0.6,
+                     dx + w, dy - h*0.1,
+                     dx + w/2, dy + h*0.25)
+        path.closeSubpath()
+        p.drawPath(path)
+    return _draw_nav_icon(size, color, draw)
+
+
+def make_jellybean_icon(size: int = 16, color: QColor = None) -> QIcon:
+    """Draw a jellybean icon using Qt primitives."""
+    color = color or QColor("#E8A838")
+    def draw(p, s, c):
+        p.setPen(Qt.NoPen)
+        p.setBrush(c)
+        
+        p.translate(s/2, s/2)
+        p.rotate(30) # Tilt it like a jellybean
+        
+        # Draw a rounded rect (pill shape) slightly curved if possible, 
+        # but a simple pill is fine for 16x16
+        pill_w = s * 0.5
+        pill_h = s * 0.8
+        rect = QRectF(-pill_w/2, -pill_h/2, pill_w, pill_h)
+        path = QPainterPath()
+        path.addRoundedRect(rect, pill_w/2, pill_w/2)
+        p.drawPath(path)
+        
+        # Add a little white highlight to make it look like a bean
+        hl_w = pill_w * 0.3
+        hl_h = pill_h * 0.3
+        p.setBrush(QColor(255, 255, 255, 100))
+        p.drawEllipse(QRectF(-pill_w*0.2, -pill_h*0.25, hl_w, hl_h))
+        
+        p.rotate(-30)
+        p.translate(-s/2, -s/2)
+    return _draw_nav_icon(size, color, draw)
 
 
 def make_nav_gamepad(size: int = 22, color: QColor = None) -> QIcon:
@@ -319,10 +377,54 @@ def make_nav_terminal(size: int = 22, color: QColor = None) -> QIcon:
 
 
 def make_hint_icon(size: int = 18, color: QColor = None, active: bool = True) -> QIcon:
-    """Info 'i' icon in a circle for the hint toggle button."""
+    """Hint '?' icon in a circle for the hint toggle button."""
     color = color or QColor(200, 200, 200)
     if not active:
         color = QColor(color.red(), color.green(), color.blue(), 80)
+    def draw(p, s, c):
+        pen = QPen(c, max(1.4, s / 12))
+        pen.setCapStyle(Qt.RoundCap)
+        p.setPen(pen)
+        p.setBrush(Qt.NoBrush)
+        margin = s * 0.12
+        p.drawEllipse(QRectF(margin, margin, s - 2 * margin, s - 2 * margin))
+
+        p.setPen(c)
+        font = p.font()
+        font.setPixelSize(int(s * 0.55))
+        font.setBold(True)
+        p.setFont(font)
+        p.drawText(QRectF(0, 0, s, s), Qt.AlignCenter, "?")
+    return _draw_nav_icon(size, color, draw)
+
+def make_edit_icon(size: int = 18, color: QColor = None) -> QIcon:
+    """Pencil / edit icon using Qt primitives."""
+    color = color or QColor(200, 200, 200)
+    def draw(p, s, c):
+        pen = QPen(c, max(1.4, s / 12))
+        pen.setCapStyle(Qt.RoundCap)
+        pen.setJoinStyle(Qt.RoundJoin)
+        p.setPen(pen)
+        p.setBrush(Qt.NoBrush)
+        # Pencil body (angled rectangle)
+        path = QPainterPath()
+        path.moveTo(s * 0.65, s * 0.12)
+        path.lineTo(s * 0.88, s * 0.35)
+        path.lineTo(s * 0.35, s * 0.88)
+        path.lineTo(s * 0.12, s * 0.65)
+        path.closeSubpath()
+        p.drawPath(path)
+        # Tip
+        p.drawLine(int(s * 0.12), int(s * 0.65), int(s * 0.08), int(s * 0.92))
+        p.drawLine(int(s * 0.08), int(s * 0.92), int(s * 0.35), int(s * 0.88))
+        # Eraser line
+        p.drawLine(int(s * 0.56), int(s * 0.21), int(s * 0.79), int(s * 0.44))
+    return _draw_nav_icon(size, color, draw)
+
+
+def make_info_icon(size: int = 18, color: QColor = None) -> QIcon:
+    """Info 'i' icon in a circle for the about dialog button."""
+    color = color or QColor(200, 200, 200)
     def draw(p, s, c):
         pen = QPen(c, max(1.4, s / 12))
         pen.setCapStyle(Qt.RoundCap)
@@ -356,6 +458,67 @@ def apply_card_shadow(widget, is_dark: bool, blur: float = 18, offset_y: float =
     widget.setGraphicsEffect(shadow)
 
 
+# ── Section Label Helper ──────────────────────────────────────────────────
+
+def make_section_label(text: str, c: dict) -> QLabel:
+    """Return a styled section header QLabel (uppercase, small, muted)."""
+    lbl = QLabel(text.upper())
+    lbl.setStyleSheet(
+        f"font-size: 10px; font-weight: 600; color: {c['text_muted']}; "
+        f"background: transparent; border: none; letter-spacing: 0.8px;"
+    )
+    lbl.setContentsMargins(0, 4, 0, 2)
+    return lbl
+
+
+# ── Smooth Progress Bar ────────────────────────────────────────────────────
+
+class SmoothProgressBar(QWidget):
+    """Progress bar painted with sub-pixel precision and rounded pill shape."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._progress = 0.0  # 0.0 to 1.0
+        self._bg_color = QColor("#141414")
+        self._fill_color = QColor("#e0943a")
+        self.setFixedHeight(7)
+        self.setMinimumWidth(40)
+
+    def set_progress(self, value: float):
+        self._progress = max(0.0, min(1.0, value))
+        self.update()
+
+    def set_fill_color(self, hex_color: str):
+        self._fill_color = QColor(hex_color)
+        self.update()
+
+    def set_bg_color(self, hex_color: str):
+        self._bg_color = QColor(hex_color)
+        self.update()
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        w = self.width()
+        h = self.height()
+        r = h / 2.0
+
+        # Track background
+        p.setPen(Qt.NoPen)
+        p.setBrush(self._bg_color)
+        p.drawRoundedRect(QRectF(0, 0, w, h), r, r)
+
+        # Fill
+        if self._progress > 0.001:
+            fill_w = self._progress * w
+            # Clamp minimum to pill shape diameter so it stays rounded
+            fill_w = max(fill_w, h)
+            p.setBrush(self._fill_color)
+            p.drawRoundedRect(QRectF(0, 0, fill_w, h), r, r)
+
+        p.end()
+
+
 # ── Movement Set Identity Colors ───────────────────────────────────────────
 # Fixed palette — consistent across light/dark themes.
 # Each entry: (background, text_color)
@@ -385,39 +548,39 @@ def get_theme_colors(is_dark: bool) -> dict:
     """Return a dict of semantic color tokens for the current theme."""
     if is_dark:
         return {
-            # Backgrounds
-            "bg_app":        "#2c2c2c",
-            "bg_card":       "#444444",
-            "bg_card_inner": "#3a3a3a",
-            "bg_input":      "#3a3a3a",
-            "bg_input_dark": "#2a2a2a",
-            "bg_status":     "#2f2f2f",
+            # Backgrounds  (elevation: sidebar < app < card < card_inner)
+            "bg_app":        "#1a1a1a",
+            "bg_card":       "#252525",
+            "bg_card_inner": "#2e2e2e",
+            "bg_input":      "#1e1e1e",
+            "bg_input_dark": "#141414",
+            "bg_status":     "#1e1e1e",
 
             # Sidebar
-            "sidebar_bg":       "#1e1e1e",
+            "sidebar_bg":       "#111111",
             "sidebar_btn":      "transparent",
-            "sidebar_btn_sel":  "#3a3a3a",
-            "sidebar_text":     "#777777",
+            "sidebar_btn_sel":  "rgba(255,255,255,0.09)",
+            "sidebar_text":     "#aaaaaa",
             "sidebar_text_sel": "#ffffff",
-            "sidebar_border":   "#333333",
+            "sidebar_border":   "#2a2a2a",
 
             # Header
-            "header_bg":     "#252525",
+            "header_bg":     "#1a1a1a",
             "header_text":   "#ffffff",
             "header_sub":    "#888888",
             "header_accent": "#0077ff",
 
             # Borders
-            "border_card":  "#555555",
-            "border_input": "#666666",
-            "border_muted": "#444444",
-            "border_light": "#777777",
+            "border_card":  "#363636",
+            "border_input": "#3a3a3a",
+            "border_muted": "#2e2e2e",
+            "border_light": "#555555",
 
             # Text
             "text_primary":   "#ffffff",
             "text_secondary": "#bbbbbb",
             "text_muted":     "#888888",
-            "text_disabled":  "#999999",
+            "text_disabled":  "#666666",
 
             # Accent — green
             "accent_green":        "#3da343",
@@ -459,59 +622,59 @@ def get_theme_colors(is_dark: bool) -> dict:
             "status_idle_border": "#555555",
 
             # Buttons
-            "btn_bg":       "#4a4a4a",
-            "btn_border":   "#666666",
-            "btn_hover":    "#5a5a5a",
-            "btn_disabled": "#555555",
+            "btn_bg":       "#333333",
+            "btn_border":   "#444444",
+            "btn_hover":    "#3e3e3e",
+            "btn_disabled": "#2a2a2a",
             "btn_text":     "#ffffff",
 
             # Dropdowns
-            "dropdown_bg":          "#3a3a3a",
+            "dropdown_bg":          "#2e2e2e",
             "dropdown_text":        "#ffffff",
-            "dropdown_border":      "#666666",
-            "dropdown_list_bg":     "#2a2a2a",
-            "dropdown_sel_bg":      "#555555",
+            "dropdown_border":      "#3a3a3a",
+            "dropdown_list_bg":     "#1e1e1e",
+            "dropdown_sel_bg":      "#3a3a3a",
             "dropdown_sel_text":    "#ffffff",
 
             # Toon enable button — inactive
-            "toon_btn_inactive_bg":     "#666666",
-            "toon_btn_inactive_border": "#777777",
-            "toon_btn_inactive_hover":  "#777777",
-            "toon_btn_inactive_hover_border": "#999999",
+            "toon_btn_inactive_bg":     "#3a3a3a",
+            "toon_btn_inactive_border": "#4a4a4a",
+            "toon_btn_inactive_hover":  "#444444",
+            "toon_btn_inactive_hover_border": "#5a5a5a",
 
             # Slot accent colors (badge circles)
             "slot_1": "#5b9bf5",
             "slot_2": "#4ade80",
             "slot_3": "#f59e42",
             "slot_4": "#b07cf5",
-            "slot_dim": "#444444",
+            "slot_dim": "#2e2e2e",
 
             # Toon cards (floating on gradient)
-            "card_toon_bg":        "#333333",
-            "card_toon_border":    "#4a4a4a",
-            "card_toon_active_bg": "#2e3d2e",
+            "card_toon_bg":        "#252525",
+            "card_toon_border":    "#363636",
+            "card_toon_active_bg": "#1e2e1e",
 
             # Segment status bar
-            "segment_off":    "#333333",
-            "segment_found":  "#555555",
+            "segment_off":    "#1e1e1e",
+            "segment_found":  "#363636",
             "segment_active": "#56c856",
         }
     else:
         return {
-            # Backgrounds
-            "bg_app":        "#f5f5f5",
+            # Backgrounds  (elevation: sidebar < app < card < card_inner)
+            "bg_app":        "#f0f0f0",
             "bg_card":       "#ffffff",
-            "bg_card_inner": "#f0f0f0",
+            "bg_card_inner": "#f7f7f7",
             "bg_input":      "#ffffff",
-            "bg_input_dark": "#eeeeee",
+            "bg_input_dark": "#e8e8e8",
             "bg_status":     "#f0f0f0",
 
             # Sidebar
-            "sidebar_bg":       "#e8e8e8",
+            "sidebar_bg":       "#e2e2e2",
             "sidebar_btn":      "transparent",
-            "sidebar_btn_sel":  "#ffffff",
-            "sidebar_text":     "#888888",
-            "sidebar_text_sel": "#222222",
+            "sidebar_btn_sel":  "rgba(0,0,0,0.07)",
+            "sidebar_text":     "#777777",
+            "sidebar_text_sel": "#111111",
             "sidebar_border":   "#d0d0d0",
 
             # Header
@@ -521,10 +684,10 @@ def get_theme_colors(is_dark: bool) -> dict:
             "header_accent": "#0077ff",
 
             # Borders
-            "border_card":  "#cccccc",
-            "border_input": "#999999",
-            "border_muted": "#aaaaaa",
-            "border_light": "#aaaaaa",
+            "border_card":  "#d4d4d4",
+            "border_input": "#bbbbbb",
+            "border_muted": "#d0d0d0",
+            "border_light": "#bbbbbb",
 
             # Text
             "text_primary":   "#000000",
@@ -540,7 +703,7 @@ def get_theme_colors(is_dark: bool) -> dict:
             "accent_green_subtle": "#66aa66",
 
             # Accent — blue
-            "accent_blue": "#66aa66",
+            "accent_blue": "#5ba8c8",
             "accent_blue_btn":        "#0077ff",
             "accent_blue_btn_border": "#3399ff",
             "accent_blue_btn_hover":  "#1a88ff",
@@ -572,41 +735,41 @@ def get_theme_colors(is_dark: bool) -> dict:
             "status_idle_border": "#bbbbbb",
 
             # Buttons
-            "btn_bg":       "#eeeeee",
-            "btn_border":   "#aaaaaa",
-            "btn_hover":    "#dddddd",
-            "btn_disabled": "#e0e0e0",
+            "btn_bg":       "#e8e8e8",
+            "btn_border":   "#c0c0c0",
+            "btn_hover":    "#dcdcdc",
+            "btn_disabled": "#eeeeee",
             "btn_text":     "#111111",
 
             # Dropdowns
             "dropdown_bg":          "#ffffff",
             "dropdown_text":        "#111111",
-            "dropdown_border":      "#aaaaaa",
+            "dropdown_border":      "#c0c0c0",
             "dropdown_list_bg":     "#f8f8f8",
             "dropdown_sel_bg":      "#e0e0e0",
             "dropdown_sel_text":    "#000000",
 
             # Toon enable button — inactive
-            "toon_btn_inactive_bg":     "#f0f0f0",
-            "toon_btn_inactive_border": "#aaaaaa",
-            "toon_btn_inactive_hover":  "#e8e8e8",
-            "toon_btn_inactive_hover_border": "#888888",
+            "toon_btn_inactive_bg":     "#e8e8e8",
+            "toon_btn_inactive_border": "#c0c0c0",
+            "toon_btn_inactive_hover":  "#dcdcdc",
+            "toon_btn_inactive_hover_border": "#aaaaaa",
 
             # Slot accent colors (badge circles)
             "slot_1": "#4a8be0",
             "slot_2": "#3bc46a",
             "slot_3": "#e08a30",
             "slot_4": "#9b6be0",
-            "slot_dim": "#d0d0d0",
+            "slot_dim": "#d8d8d8",
 
             # Toon cards (floating on gradient)
             "card_toon_bg":        "#ffffff",
-            "card_toon_border":    "#cccccc",
+            "card_toon_border":    "#d4d4d4",
             "card_toon_active_bg": "#eaf5ea",
 
             # Segment status bar
-            "segment_off":    "#dddddd",
-            "segment_found":  "#bbbbbb",
+            "segment_off":    "#e0e0e0",
+            "segment_found":  "#c0c0c0",
             "segment_active": "#4caf50",
         }
 
@@ -615,60 +778,82 @@ def get_theme_colors(is_dark: bool) -> dict:
 
 DARK_THEME = """
     QWidget {
-        font-family: 'Segoe UI', 'Inter', sans-serif;
-        font-size: 11.5pt;
-        background-color: #2c2c2c;
+        font-family: 'Inter', 'Segoe UI', 'Noto Sans', 'DejaVu Sans', sans-serif;
+        font-size: 12pt;
+        background-color: #1a1a1a;
         color: #e0e0e0;
     }
     QPushButton {
-        background-color: #4a4a4a;
+        background-color: #333333;
         color: white;
-        border-radius: 6px;
-        padding: 6px 12px;
-        border: 1px solid #666;
+        border-radius: 8px;
+        padding: 6px 14px;
+        border: 1px solid #444444;
     }
     QPushButton:hover {
-        background-color: #5a5a5a;
-        border: 1px solid #80c080;
+        background-color: #3e3e3e;
+        border: 1px solid #555555;
+    }
+    QPushButton:pressed {
+        background-color: #282828;
+        border: 1px solid #3a3a3a;
+        padding-top: 7px;
+        padding-bottom: 5px;
+    }
+    QPushButton:disabled {
+        background-color: #2a2a2a;
+        color: #666666;
+        border: 1px solid #333333;
     }
     QComboBox {
-        background-color: #4a4a4a;
+        background-color: #2e2e2e;
         color: white;
-        border-radius: 6px;
+        border-radius: 8px;
         padding: 4px 8px;
-        border: 1px solid #666;
+        border: 1px solid #3a3a3a;
     }
     QComboBox QAbstractItemView {
-        background-color: #3a3a3a;
-        selection-background-color: #5a5a5a;
+        background-color: #1e1e1e;
+        selection-background-color: #3a3a3a;
         color: white;
     }
 """
 
 LIGHT_THEME = """
     QWidget {
-        font-family: 'Segoe UI', 'Inter', sans-serif;
-        font-size: 11.5pt;
-        background-color: #f5f5f5;
+        font-family: 'Inter', 'Segoe UI', 'Noto Sans', 'DejaVu Sans', sans-serif;
+        font-size: 12pt;
+        background-color: #f0f0f0;
         color: #202020;
     }
     QPushButton {
-        background-color: #eeeeee;
+        background-color: #e8e8e8;
         color: #111;
-        border-radius: 6px;
-        padding: 6px 12px;
-        border: 1px solid #aaa;
+        border-radius: 8px;
+        padding: 6px 14px;
+        border: 1px solid #c0c0c0;
     }
     QPushButton:hover {
-        background-color: #dddddd;
-        border: 1px solid #66aa66;
+        background-color: #dcdcdc;
+        border: 1px solid #aaaaaa;
+    }
+    QPushButton:pressed {
+        background-color: #d0d0d0;
+        border: 1px solid #999999;
+        padding-top: 7px;
+        padding-bottom: 5px;
+    }
+    QPushButton:disabled {
+        background-color: #eeeeee;
+        color: #aaaaaa;
+        border: 1px solid #d0d0d0;
     }
     QComboBox {
         background-color: #ffffff;
         color: #111;
-        border-radius: 6px;
+        border-radius: 8px;
         padding: 4px 8px;
-        border: 1px solid #aaa;
+        border: 1px solid #c0c0c0;
     }
     QComboBox QAbstractItemView {
         background-color: #f8f8f8;

@@ -7,6 +7,7 @@ class AccountCredential:
     label: str = ""
     username: str = ""
     password: str = field(default="", repr=False)
+    game: str = "ttr"
 
     @classmethod
     def from_dict(cls, data: dict, password: str = "") -> 'AccountCredential':
@@ -14,14 +15,16 @@ class AccountCredential:
             id=data.get("id", ""),
             label=data.get("label", ""),
             username=data.get("username", ""),
-            password=password
+            password=password,
+            game=data.get("game", "ttr"),
         )
-        
+
     def to_dict(self) -> dict:
         return {
             "id": self.id,
             "label": self.label,
-            "username": self.username
+            "username": self.username,
+            "game": self.game,
         }
 
 @dataclass

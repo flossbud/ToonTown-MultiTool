@@ -8,17 +8,19 @@ Each set is two sibling widgets in the scroll layout:
 The header never moves, resizes, or changes shape.  Only the body animates.
 """
 
+import sys
+
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QFrame, QScrollArea, QLineEdit, QSizePolicy, QSpacerItem,
+    QFrame, QScrollArea, QLineEdit, QSizePolicy,
 )
 from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve
 from PySide6.QtGui import QColor, QPainter
 from utils.theme_manager import resolve_theme, get_theme_colors, apply_card_shadow, get_set_color, make_trash_icon
 from utils.symbols import S
 
-DIRECTIONS = ("up", "left", "down", "right", "jump", "book")
-DIRECTION_LABELS = {"up": "Up", "left": "Left", "down": "Down", "right": "Right", "jump": "Jump", "book": "Book"}
+DIRECTIONS = ("up", "left", "down", "right", "jump", "book", "gags", "tasks", "map")
+DIRECTION_LABELS = {"up": "Up", "left": "Left", "down": "Down", "right": "Right", "jump": "Jump", "book": "Book", "gags": "Gags", "tasks": "Tasks", "map": "Map"}
 
 DISPLAY_NAMES = {
     "space": "Space", "Control_L": "L Ctrl", "Control_R": "R Ctrl",
@@ -27,13 +29,19 @@ DISPLAY_NAMES = {
     "Up": "Up Arrow", "Down": "Down Arrow", "Left": "Left Arrow", "Right": "Right Arrow",
     "Return": "Enter", "BackSpace": "Backspace", "Tab": "Tab",
     "Escape": "Esc", "Delete": "Delete",
+    # Numpad keys
+    "KP_0": "NP 0", "KP_1": "NP 1", "KP_2": "NP 2", "KP_3": "NP 3",
+    "KP_4": "NP 4", "KP_5": "NP 5", "KP_6": "NP 6", "KP_7": "NP 7",
+    "KP_8": "NP 8", "KP_9": "NP 9",
+    "KP_Decimal": "NP .", "KP_Enter": "NP Enter",
+    "KP_Add": "NP +", "KP_Subtract": "NP -",
+    "KP_Multiply": "NP *", "KP_Divide": "NP /",
 }
 
 SPECIAL_KEYS = {
     Qt.Key_Space: "space", Qt.Key_Return: "Return", Qt.Key_Enter: "Return",
     Qt.Key_Tab: "Tab", Qt.Key_Backspace: "BackSpace", Qt.Key_Escape: "Escape",
-    Qt.Key_Shift: "Shift_L", Qt.Key_Control: "Control_L",
-    Qt.Key_Alt: "Alt_L", Qt.Key_Delete: "Delete",
+    Qt.Key_Delete: "Delete",
     Qt.Key_Up: "Up", Qt.Key_Down: "Down", Qt.Key_Left: "Left", Qt.Key_Right: "Right",
 }
 
@@ -56,13 +64,16 @@ class MovementKeyField(QLineEdit):
         self._awaiting = False
         self.setReadOnly(True)
         self.setFocusPolicy(Qt.ClickFocus)
-        self.setFixedHeight(32)
-        self.setFixedWidth(110)
+        self.setFixedHeight(30)
+        self.setFixedWidth(88)
         self.setAlignment(Qt.AlignCenter)
         self._update_display()
 
     def _update_display(self):
         self.setText("Press a key…" if self._awaiting else _display(self._key))
+        self.setProperty("awaiting", self._awaiting)
+        self.style().unpolish(self)
+        self.style().polish(self)
 
     def set_key(self, key: str):
         self._key = key
@@ -77,10 +88,103 @@ class MovementKeyField(QLineEdit):
         self._awaiting = True
         self._update_display()
 
+    # Map Qt key codes to KP_* keysym names when numpad modifier is active
+    _NUMPAD_KEYS = {
+        Qt.Key_0: "KP_0", Qt.Key_1: "KP_1", Qt.Key_2: "KP_2",
+        Qt.Key_3: "KP_3", Qt.Key_4: "KP_4", Qt.Key_5: "KP_5",
+        Qt.Key_6: "KP_6", Qt.Key_7: "KP_7", Qt.Key_8: "KP_8",
+        Qt.Key_9: "KP_9",
+        Qt.Key_Period: "KP_Decimal",
+        Qt.Key_Enter: "KP_Enter",
+        Qt.Key_Plus: "KP_Add", Qt.Key_Minus: "KP_Subtract",
+        Qt.Key_Asterisk: "KP_Multiply", Qt.Key_Slash: "KP_Divide",
+    }
+
+    @staticmethod
+    def _vk_is_down(vk: int) -> bool:
+        """Windows-only helper: check if a virtual key is currently pressed."""
+        if sys.platform != "win32":
+            return False
+        try:
+            import ctypes
+            return bool(ctypes.windll.user32.GetAsyncKeyState(vk) & 0x8000)
+        except Exception:
+            return False
+
+    @staticmethod
+    def _side_aware_modifier_key(event) -> str | None:
+        """Return side-specific modifier names when available (e.g. Control_R)."""
+        k = event.key()
+        if k not in (Qt.Key_Control, Qt.Key_Shift, Qt.Key_Alt):
+            return None
+
+        if sys.platform == "win32":
+            vk = int(event.nativeVirtualKey()) if hasattr(event, "nativeVirtualKey") else 0
+            sc = int(event.nativeScanCode()) if hasattr(event, "nativeScanCode") else 0
+
+            # Prefer explicit right/left virtual keys when present.
+            if k == Qt.Key_Control:
+                # Most reliable on Windows: query actual key state.
+                if MovementKeyField._vk_is_down(0xA3):  # VK_RCONTROL
+                    return "Control_R"
+                if MovementKeyField._vk_is_down(0xA2):  # VK_LCONTROL
+                    return "Control_L"
+                if vk == 0xA3:
+                    return "Control_R"
+                if vk == 0xA2:
+                    return "Control_L"
+                # Fallback via scancode (extended right ctrl often reports 0x11D / 285).
+                if sc in (0x11D, 285):
+                    return "Control_R"
+                return "Control_L"
+
+            if k == Qt.Key_Shift:
+                if MovementKeyField._vk_is_down(0xA1):  # VK_RSHIFT
+                    return "Shift_R"
+                if MovementKeyField._vk_is_down(0xA0):  # VK_LSHIFT
+                    return "Shift_L"
+                if vk == 0xA1:
+                    return "Shift_R"
+                if vk == 0xA0:
+                    return "Shift_L"
+                # Typical shift scancodes: left=42, right=54
+                if sc == 54:
+                    return "Shift_R"
+                return "Shift_L"
+
+            if k == Qt.Key_Alt:
+                if MovementKeyField._vk_is_down(0xA5):  # VK_RMENU
+                    return "Alt_R"
+                if MovementKeyField._vk_is_down(0xA4):  # VK_LMENU
+                    return "Alt_L"
+                if vk == 0xA5:
+                    return "Alt_R"
+                if vk == 0xA4:
+                    return "Alt_L"
+                # Extended right alt often reports 0x138 / 312.
+                if sc in (0x138, 312):
+                    return "Alt_R"
+                return "Alt_L"
+
+        # Cross-platform fallback when side info is unavailable.
+        if k == Qt.Key_Control:
+            return "Control_L"
+        if k == Qt.Key_Shift:
+            return "Shift_L"
+        if k == Qt.Key_Alt:
+            return "Alt_L"
+        return None
+
     def keyPressEvent(self, e):
         if not self._awaiting:
             return e.ignore()
-        key = SPECIAL_KEYS.get(e.key())
+        is_numpad = bool(e.modifiers() & Qt.KeypadModifier)
+        if is_numpad:
+            key = self._NUMPAD_KEYS.get(e.key())
+        else:
+            key = self._side_aware_modifier_key(e)
+            if key is None:
+                key = SPECIAL_KEYS.get(e.key())
         if key is None:
             text = e.text()
             if text and text.isprintable():
@@ -199,7 +303,7 @@ class KeymapTab(QWidget):
         self._scroll = QScrollArea()
         self._scroll.setWidgetResizable(True)
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self._scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
+        self._scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self._scroll.setFrameShape(QFrame.NoFrame)
 
         # Overlay scrollbar so it doesn't shrink content width
@@ -240,10 +344,12 @@ class KeymapTab(QWidget):
     # ── Build ──────────────────────────────────────────────────────────────
 
     def _build_cards(self):
-        # Save expanded states before teardown (keyed by index)
-        prev_states = {}
-        for entry in self._entries:
-            prev_states[entry["index"]] = entry["expanded"]
+        if not hasattr(self, "_initialized_expansion"):
+            self._initialized_expansion = True
+            expanded_list = self.settings_manager.get("keymap_expanded_states", [0]) if self.settings_manager else [0]
+            prev_states = {i: (i in expanded_list) for i in range(16)}
+        else:
+            prev_states = {entry["index"]: entry["expanded"] for entry in self._entries}
 
         # Tear down old widgets
         for entry in self._entries:
@@ -263,12 +369,7 @@ class KeymapTab(QWidget):
             if idx > 0:
                 self._scroll_layout.addSpacing(12)
 
-            # Restore previous state, or default to collapsed for new sets
-            # Set 0 (Default) starts expanded on first build
-            if prev_states:
-                expanded = prev_states.get(idx, False)
-            else:
-                expanded = (idx == 0)
+            expanded = prev_states.get(idx, False)
 
             header, body, chevron = self._make_pair(idx, s)
             self._scroll_layout.addWidget(header)
@@ -402,7 +503,7 @@ class KeymapTab(QWidget):
         body = AnimatedBody()
         body.setObjectName("card_body")
         bl = QVBoxLayout(body)
-        bl.setContentsMargins(16, 12, 16, 12)
+        bl.setContentsMargins(12, 12, 12, 12)
         bl.setSpacing(8)
 
         if index == 0:
@@ -412,14 +513,16 @@ class KeymapTab(QWidget):
             hint.setStyleSheet("font-size: 11px; color: rgba(255,255,255,0.45); background: none; border: none; padding: 0 0 4px 0;")
             bl.addWidget(hint)
 
-        for direction in DIRECTIONS:
+        two_col = QHBoxLayout()
+        two_col.setSpacing(20)
+
+        def _make_key_row(direction):
             row = QHBoxLayout()
-            row.setSpacing(10)
+            row.setSpacing(8)
             lbl = QLabel(DIRECTION_LABELS[direction])
             lbl.setObjectName("direction_label")
-            lbl.setFixedWidth(50)
+            lbl.setFixedWidth(40)
             row.addWidget(lbl)
-
             field = MovementKeyField(set_data.get(direction, ""))
             field.setObjectName(f"key_field_{direction}")
             field.key_captured.connect(
@@ -427,7 +530,36 @@ class KeymapTab(QWidget):
             )
             row.addWidget(field)
             row.addStretch()
-            bl.addLayout(row)
+            return row
+
+        move_col = QVBoxLayout()
+        move_col.setSpacing(6)
+        for direction in ("up", "left", "down", "right", "jump"):
+            move_col.addLayout(_make_key_row(direction))
+
+        aux_col = QVBoxLayout()
+        aux_col.setSpacing(6)
+        for direction in ("book", "gags", "tasks", "map"):
+            aux_col.addLayout(_make_key_row(direction))
+        aux_col.addStretch()
+
+        two_col.addLayout(move_col)
+        two_col.addLayout(aux_col)
+        two_col.addStretch()
+        bl.addLayout(two_col)
+
+        if index == 0:
+            detect_btn = QPushButton(f"{S('🔍 ', '')}Detect Game Settings")
+            detect_btn.setFixedHeight(30)
+            detect_btn.setCursor(Qt.PointingHandCursor)
+            detect_btn.setToolTip("Read current settings from Toontown Rewritten configuration")
+            detect_btn.setObjectName("detect_btn")
+            detect_btn.clicked.connect(self._on_detect_settings)
+            
+            btn_row = QHBoxLayout()
+            btn_row.addStretch()
+            btn_row.addWidget(detect_btn)
+            bl.addLayout(btn_row)
 
         # Connect header to toggle this entry
         header.clicked.connect(lambda idx=index: self._toggle(idx))
@@ -448,6 +580,10 @@ class KeymapTab(QWidget):
         else:
             entry["body"].collapse()
 
+        if self.settings_manager:
+            expanded_list = [e["index"] for e in self._entries if e["expanded"]]
+            self.settings_manager.set("keymap_expanded_states", expanded_list)
+
     # ── Callbacks ──────────────────────────────────────────────────────────
 
     def _on_name_changed(self, index, name):
@@ -465,6 +601,74 @@ class KeymapTab(QWidget):
         self.keymap_manager.delete_set(index)
         self._build_cards()
         self.refresh_theme()
+
+    def _on_detect_settings(self):
+        import os, json
+        from services.ttr_login_service import find_engine_path
+        
+        engine_path = None
+        if self.settings_manager:
+            engine_path = self.settings_manager.get("ttr_engine_dir", "")
+        if not engine_path or not os.path.exists(engine_path):
+            engine_path = find_engine_path()
+            
+        settings_file = None
+        if engine_path and os.path.exists(os.path.join(engine_path, "settings.json")):
+            settings_file = os.path.join(engine_path, "settings.json")
+        elif os.path.exists(os.path.expanduser("~/.var/app/com.toontownrewritten.Launcher/data/settings.json")):
+            settings_file = os.path.expanduser("~/.var/app/com.toontownrewritten.Launcher/data/settings.json")
+            
+        if not settings_file:
+            print("[KeymapTab] Could not find settings.json")
+            return
+            
+        try:
+            with open(settings_file, "r") as f:
+                data = json.load(f)
+                
+            controls = data.get("controls", {})
+            mapping = {
+                "forward": "up",
+                "reverse": "down",
+                "left": "left",
+                "right": "right",
+                "jump": "jump",
+                "stickerBook": "book",
+                "showGags": "gags",
+                "showTasks": "tasks",
+                "showMap": "map"
+            }
+            
+            ttr_to_keymap = {
+                "shift": "Shift_L",
+                "control": "Control_L",
+                "alt": "Alt_L",
+                "space": "space",
+                "escape": "Escape",
+                "enter": "Return",
+                "tab": "Tab",
+                "backspace": "BackSpace",
+                "delete": "Delete",
+                "up": "Up",
+                "down": "Down",
+                "left": "Left",
+                "right": "Right"
+            }
+            
+            updates = 0
+            for ttr_key, my_dir in mapping.items():
+                if ttr_key in controls:
+                    val = controls[ttr_key]
+                    parsed_val = ttr_to_keymap.get(val, val)
+                    self.keymap_manager.update_set_key(0, my_dir, parsed_val)
+                    updates += 1
+                    
+            if updates > 0:
+                self._build_cards()
+                self.refresh_theme()
+                print(f"[KeymapTab] Detected {updates} settings from {settings_file}")
+        except Exception as e:
+            print(f"[KeymapTab] Failed to parse settings.json: {e}")
 
     # ── Theme ──────────────────────────────────────────────────────────────
 
@@ -515,15 +719,36 @@ class KeymapTab(QWidget):
                     QLineEdit:focus {{
                         border: 1px solid {set_bg};
                     }}
+                    QLineEdit[awaiting="true"] {{
+                        background: {set_bg}18;
+                        border: 1px solid {set_bg};
+                        color: {c['text_muted']};
+                    }}
                 """)
 
         if hasattr(self, "_add_btn"):
             self._add_btn.setStyleSheet(f"""
                 QPushButton {{
+                    background: transparent;
+                    color: {c['text_muted']};
+                    border: 2px dashed {c['border_muted']};
+                    border-radius: 10px; font-weight: 600; font-size: 12px;
+                }}
+                QPushButton:hover {{
+                    color: {c['text_primary']};
+                    border-color: {c['text_secondary']};
+                    background: {c['bg_card_inner']};
+                }}
+            """)
+
+        for btn in self.findChildren(QPushButton, "detect_btn"):
+            btn.setStyleSheet(f"""
+                QPushButton {{
                     background: {c['btn_bg']};
                     color: {c['text_primary']};
                     border: 1px solid {c['btn_border']};
-                    border-radius: 8px; font-weight: bold; font-size: 13px;
+                    border-radius: 6px; font-weight: bold; font-size: 11px;
+                    padding: 0 12px;
                 }}
                 QPushButton:hover {{
                     background: {c['accent_blue_btn']};

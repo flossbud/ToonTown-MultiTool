@@ -1,14 +1,16 @@
 import os
-os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
-
 import sys
+if sys.platform != "win32":
+    os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
+
 import subprocess
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget,
     QVBoxLayout, QHBoxLayout, QStackedWidget,
-    QLabel, QPushButton, QProxyStyle, QStyle, QFrame
+    QLabel, QPushButton, QProxyStyle, QStyle, QFrame, QMessageBox,
+    QGraphicsOpacityEffect,
 )
-from PySide6.QtCore import QRect, Qt, QMetaObject, Q_ARG, QSize, QEvent, Slot
+from PySide6.QtCore import QRect, Qt, QMetaObject, Q_ARG, QSize, QEvent, Signal, Slot, QPropertyAnimation, QEasingCurve, QAbstractAnimation, QTimer
 from PySide6.QtGui import QColor
 
 # === Internal Imports ===
@@ -16,17 +18,21 @@ from tabs.multitoon_tab import MultitoonTab
 from tabs.launch_tab import LaunchTab
 from tabs.keymap_tab import KeymapTab
 from tabs.settings_tab import SettingsTab
+from tabs.credits_tab import CreditsTab
+from tabs.invasions_tab import InvasionsTab
 from tabs.debug_tab import DebugTab
 from utils.settings_manager import SettingsManager
+import utils.ttr_api as ttr_api
 from utils.keymap_manager import KeymapManager
 from utils.profile_manager import ProfileManager
 from services.window_manager import WindowManager
 from services.hotkey_manager import HotkeyManager
+from utils.game_registry import GameRegistry
 from utils.theme_manager import (
     apply_theme, resolve_theme, get_theme_colors, apply_card_shadow,
     make_nav_gamepad, make_nav_power,
-    make_nav_keyboard, make_nav_gear, make_nav_terminal,
-    make_hint_icon,
+    make_nav_keyboard, make_nav_gear, make_nav_terminal, make_nav_bookmark,
+    make_hint_icon, make_info_icon
 )
 
 
@@ -37,8 +43,34 @@ class NoFocusProxyStyle(QProxyStyle):
         super().drawPrimitive(element, option, painter, widget)
 
 
+class AnimatedNavButton(QPushButton):
+    """Sidebar button that dynamically scales its icon size on mouse hover."""
+    def __init__(self, base_size: int = 28, hover_size: int = 32, parent=None):
+        super().__init__(parent)
+        self._start = QSize(base_size, base_size)
+        self._end = QSize(hover_size, hover_size)
+        self.setIconSize(self._start)
+
+        self._anim = QPropertyAnimation(self, b"iconSize")
+        self._anim.setDuration(150)
+        self._anim.setStartValue(self._start)
+        self._anim.setEndValue(self._end)
+        self._anim.setEasingCurve(QEasingCurve.OutCubic)
+        
+    def enterEvent(self, event):
+        super().enterEvent(event)
+        self._anim.setDirection(QAbstractAnimation.Forward)
+        self._anim.start()
+        
+    def leaveEvent(self, event):
+        super().leaveEvent(event)
+        self._anim.setDirection(QAbstractAnimation.Backward)
+        self._anim.start()
+
+
 class MultiToonTool(QMainWindow):
     APP_VERSION = "2.0"
+    _api_log = Signal(str)
 
     def __init__(self):
         super().__init__()
@@ -48,19 +80,13 @@ class MultiToonTool(QMainWindow):
         self.setMinimumWidth(520)
 
         self.pressed_keys = set()
+        GameRegistry.instance()  # warm up before any launchers
         self.settings_manager = SettingsManager()
         self.keymap_manager = KeymapManager()
         self.profile_manager = ProfileManager()
 
         self.setObjectName("MultiToonToolMainWindow")
-        try:
-            win_id = subprocess.check_output(
-                ["xdotool", "search", "--name", "ToonTown MultiTool"],
-                stderr=subprocess.DEVNULL
-            ).decode().strip().split("\n")[0]
-            self.settings_manager.set("multitool_window_id", win_id)
-        except Exception:
-            print("[Main] Warning: Failed to get MultiTool window ID.")
+        QTimer.singleShot(0, self._capture_multitool_window_id)
 
         self.window_manager = WindowManager(self.settings_manager)
         self.window_manager.start()
@@ -78,9 +104,17 @@ class MultiToonTool(QMainWindow):
         self.launch_tab = LaunchTab(settings_manager=self.settings_manager, logger=self.logger)
         self.keymap_tab = KeymapTab(self.keymap_manager, self.settings_manager)
         self.settings_tab = SettingsTab(self.settings_manager)
+        self.credits_tab = CreditsTab(self.settings_manager)
+        self.invasions_tab = InvasionsTab(self.settings_manager)
 
         self.settings_tab.debug_visibility_changed.connect(self.toggle_debug_tab_visibility)
         self.settings_tab.theme_changed.connect(self.on_theme_changed)
+        logging_on = self.settings_manager.get("show_debug_tab", False)
+        self.debug_tab.logging_enabled = logging_on
+        self.multitoon_tab.input_service.logging_enabled = logging_on
+        ttr_api.set_debug(logging_on)
+        self._api_log.connect(self.debug_tab.append_log)
+        ttr_api.set_log_callback(self._api_log.emit)
         self.settings_tab.input_backend_changed.connect(self.on_input_backend_changed)
         self.settings_tab.clear_credentials_requested.connect(self.on_clear_credentials_requested)
 
@@ -106,7 +140,9 @@ class MultiToonTool(QMainWindow):
         self.stack.addWidget(self.launch_tab)       # 1
         self.stack.addWidget(self.keymap_tab)       # 2
         self.stack.addWidget(self.settings_tab)     # 3
-        self.stack.addWidget(self.debug_tab)        # 4
+        self.stack.addWidget(self.invasions_tab)    # 4
+        self.stack.addWidget(self.debug_tab)        # 5
+        self.stack.addWidget(self.credits_tab)      # 6
         body.addWidget(self.stack, 1)
 
         body_widget = QWidget()
@@ -128,7 +164,37 @@ class MultiToonTool(QMainWindow):
         self.hotkey_manager.profile_load_requested.connect(self.load_profile_slot)
         self.hotkey_manager.start()
 
+        self.multitoon_tab.dot_state_changed.connect(self.launch_tab.update_dot_state)
+
         self.log("[Debug] ToonTown MultiTool launched.")
+        self._animate_launch()
+
+    def _capture_multitool_window_id(self):
+        try:
+            win_id = subprocess.check_output(
+                ["xdotool", "search", "--name", "ToonTown MultiTool"],
+                stderr=subprocess.DEVNULL,
+                timeout=0.5,
+            ).decode().strip().split("\n")[0]
+            self.settings_manager.set("multitool_window_id", win_id)
+        except Exception:
+            print("[Main] Warning: Failed to get MultiTool window ID.")
+
+    def _animate_launch(self):
+        # Prevent word filtering from causing layout jumps while width is small
+        self.title_label.setWordWrap(False)
+        self.title_label.setMaximumWidth(0)
+
+        self._launch_anim = QPropertyAnimation(self.title_label, b"maximumWidth")
+        self._launch_anim.setDuration(800)
+        self._launch_anim.setStartValue(0)
+        # 300 is a safe width to reveal the whole title + version string
+        self._launch_anim.setEndValue(300)
+        self._launch_anim.setEasingCurve(QEasingCurve.OutCubic)
+        
+        # After animation, remove the maximum width constraint
+        self._launch_anim.finished.connect(lambda: self.title_label.setMaximumWidth(16777215))
+        self._launch_anim.start()
 
     # ── Hint Toggle ──────────────────────────────────────────────────────
 
@@ -140,10 +206,9 @@ class MultiToonTool(QMainWindow):
     def _update_hint_icon(self):
         c = self._theme_colors()
         color = QColor(c['sidebar_text'])
-        self.hint_btn.setIcon(make_hint_icon(20, color, active=self._hints_enabled))
-        self.hint_btn.setIconSize(QSize(20, 20))
-
-        # The hint button itself always has a tooltip regardless of global state
+        
+        # We don't want to reset iconSize dynamically to maintain AnimatedNavButton capability.
+        self.hint_btn.setIcon(make_hint_icon(40, color, active=self._hints_enabled))
         state = "on" if self._hints_enabled else "off"
         self.hint_btn.setProperty("_always_tooltip", True)
         self.hint_btn.setToolTip(f"Hover hints are {state} — click to toggle")
@@ -156,7 +221,6 @@ class MultiToonTool(QMainWindow):
             }}
             QPushButton:hover {{
                 background: rgba(255,255,255,0.12);
-                border: 1px solid rgba(255,255,255,0.2);
             }}
         """
         self.hint_btn.setStyleSheet(style)
@@ -205,11 +269,11 @@ class MultiToonTool(QMainWindow):
 
     def _build_sidebar(self) -> QFrame:
         sidebar = QFrame()
-        sidebar.setFixedWidth(56)
+        sidebar.setFixedWidth(64)
         sidebar.setObjectName("app_sidebar")
 
         layout = QVBoxLayout(sidebar)
-        layout.setContentsMargins(6, 10, 6, 10)
+        layout.setContentsMargins(8, 10, 8, 10)
         layout.setSpacing(4)
 
         self.nav_buttons = []
@@ -218,10 +282,11 @@ class MultiToonTool(QMainWindow):
             ("Launch",    1),
             ("Keymap",    2),
             ("Settings",  3),
+            ("Invasions", 4),
         ]
         for label, idx in nav_items:
-            btn = QPushButton()
-            btn.setFixedSize(44, 44)
+            btn = AnimatedNavButton(30, 36)
+            btn.setFixedSize(48, 48)
             btn.setCheckable(True)
             btn.setToolTip(label)
             btn.setObjectName(f"nav_{label.lower()}")
@@ -232,20 +297,31 @@ class MultiToonTool(QMainWindow):
         layout.addStretch()
 
         # Logs button at bottom
-        self.logs_nav_btn = QPushButton()
-        self.logs_nav_btn.setFixedSize(44, 44)
+        self.logs_nav_btn = AnimatedNavButton(30, 36)
+        self.logs_nav_btn.setFixedSize(48, 48)
         self.logs_nav_btn.setCheckable(True)
         self.logs_nav_btn.setToolTip("Logs")
         self.logs_nav_btn.setObjectName("nav_logs")
-        self.logs_nav_btn.clicked.connect(lambda: self.nav_select(4))
+        self.logs_nav_btn.clicked.connect(lambda: self.nav_select(5))
         self.logs_nav_btn.setVisible(self.settings_manager.get("show_debug_tab", False))
         layout.addWidget(self.logs_nav_btn, alignment=Qt.AlignHCenter)
         self.nav_buttons.append(self.logs_nav_btn)
 
-        # Hint toggle button (info icon, always at very bottom)
+        # Credits button
+        self.credits_btn = AnimatedNavButton(30, 36)
+        self.credits_btn.setFixedSize(48, 48)
+        self.credits_btn.setCheckable(True)
+        self.credits_btn.setCursor(Qt.PointingHandCursor)
+        self.credits_btn.setObjectName("nav_credits")
+        self.credits_btn.setToolTip("Credits")
+        self.credits_btn.clicked.connect(lambda: self.nav_select(6))
+        layout.addWidget(self.credits_btn, alignment=Qt.AlignHCenter)
+        self.nav_buttons.append(self.credits_btn)
+
+        # Hint toggle button (always at very bottom)
         self._hints_enabled = self.settings_manager.get("hints_enabled", True)
-        self.hint_btn = QPushButton()
-        self.hint_btn.setFixedSize(36, 36)
+        self.hint_btn = AnimatedNavButton(30, 36)
+        self.hint_btn.setFixedSize(48, 48)
         self.hint_btn.setCursor(Qt.PointingHandCursor)
         self.hint_btn.setObjectName("hint_toggle")
         self.hint_btn.clicked.connect(self._toggle_hints)
@@ -254,10 +330,27 @@ class MultiToonTool(QMainWindow):
         return sidebar
 
     def nav_select(self, index: int):
+        if self.stack.currentIndex() == index and getattr(self, "_initialized_nav", False):
+            return
+        self._initialized_nav = True
+
         self.stack.setCurrentIndex(index)
         for i, btn in enumerate(self.nav_buttons):
             btn.setChecked(i == index)
         self._apply_nav_styles()
+
+        # Fade-in the incoming page
+        w = self.stack.currentWidget()
+        effect = QGraphicsOpacityEffect(w)
+        w.setGraphicsEffect(effect)
+        self._page_anim = QPropertyAnimation(effect, b"opacity")
+        self._page_anim.setDuration(160)
+        self._page_anim.setStartValue(0.0)
+        self._page_anim.setEndValue(1.0)
+        self._page_anim.setEasingCurve(QEasingCurve.OutCubic)
+        # Remove the effect after animation so it doesn't interfere with rendering
+        self._page_anim.finished.connect(lambda: w.setGraphicsEffect(None))
+        self._page_anim.start()
 
     def _apply_nav_icons(self):
         c = self._theme_colors()
@@ -266,10 +359,10 @@ class MultiToonTool(QMainWindow):
             is_sel = btn.isChecked()
             color = QColor(c['sidebar_text_sel'] if is_sel else c['sidebar_text'])
             icons = [make_nav_gamepad, make_nav_power,
-                     make_nav_keyboard, make_nav_gear, make_nav_terminal]
+                     make_nav_keyboard, make_nav_gear, make_nav_bookmark, make_nav_terminal, make_info_icon]
             if i < len(icons):
-                btn.setIcon(icons[i](icon_size, color))
-                btn.setIconSize(QSize(icon_size, icon_size))
+                # Render high-res so it doesn't blur on scaling
+                btn.setIcon(icons[i](40, color))
 
     def _apply_nav_styles(self):
         """Update both sidebar button backgrounds/accents and icon colors."""
@@ -281,8 +374,8 @@ class MultiToonTool(QMainWindow):
                     QPushButton {{
                         background: {c['sidebar_btn_sel']};
                         border: none;
-                        border-left: 3px solid {c['header_accent']};
-                        border-radius: 8px;
+                        border-left: 4px solid {c['header_accent']};
+                        border-radius: 10px;
                         padding: 8px;
                     }}
                 """)
@@ -291,7 +384,7 @@ class MultiToonTool(QMainWindow):
                     QPushButton {{
                         background: {c['sidebar_btn']};
                         border: none;
-                        border-radius: 8px;
+                        border-radius: 10px;
                         padding: 8px;
                     }}
                     QPushButton:hover {{
@@ -311,8 +404,7 @@ class MultiToonTool(QMainWindow):
         is_dark = theme == "dark"
 
         # Container background
-        bg = "#1b1b1b" if is_dark else "#e8e8e8"
-        self.container.setStyleSheet(f"QWidget {{ background: {bg}; }}")
+        self.container.setStyleSheet(f"QWidget {{ background: {c['bg_app']}; }}")
 
         # Header
         self.header.setStyleSheet(f"""
@@ -369,13 +461,16 @@ class MultiToonTool(QMainWindow):
             self.log("[Service] Restarted due to input backend change.")
 
     def toggle_debug_tab_visibility(self, show: bool):
+        self.debug_tab.logging_enabled = show
+        self.multitoon_tab.input_service.logging_enabled = show
         self.logs_nav_btn.setVisible(show)
-        if not show and self.stack.currentIndex() == 4:
+        ttr_api.set_debug(show)
+        if not show and self.stack.currentIndex() == 5:
             self.nav_select(0)
 
     def on_clear_credentials_requested(self):
         self.launch_tab.clear_all_credentials()
-        self.log("[Credentials] All stored credentials have been cleared from Keyring.")
+        self.log("[Credentials] All stored credentials have been cleared from Keyring and session memory.")
 
     # ── Profiles ────────────────────────────────────────────────────────────
 
@@ -390,14 +485,16 @@ class MultiToonTool(QMainWindow):
     def closeEvent(self, event):
         try:
             self.hotkey_manager.stop()
+            self.launch_tab.shutdown()
+            self.multitoon_tab.shutdown()
             self.window_manager.stop()
-            self.multitoon_tab._stop_keep_alive()
-            self.multitoon_tab.input_service.shutdown()
         except Exception as e:
             print(f"[CloseEvent] Error during shutdown: {e}")
         super().closeEvent(event)
 
     def log(self, message: str):
+        if not self.debug_tab.logging_enabled:
+            return
         print(message)
         self.debug_tab.append_log(message)
 

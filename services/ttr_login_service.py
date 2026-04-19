@@ -18,7 +18,10 @@ from PySide6.QtCore import QObject, Signal
 
 
 API_URL = "https://www.toontownrewritten.com/api/login?format=json"
-HEADERS = {"Content-type": "application/x-www-form-urlencoded"}
+HEADERS = {
+    "Content-type": "application/x-www-form-urlencoded",
+    "User-Agent": "ToontownMultiTool/2.0.1"
+}
 
 # Common locations to search for TTREngine
 ENGINE_SEARCH_PATHS = [
@@ -33,30 +36,23 @@ ENGINE_SEARCH_PATHS = [
     os.path.expanduser("~/Games/Toontown Rewritten"),
     os.path.expanduser("~/Games/toontown-rewritten"),
     os.path.expanduser("~/.local/share/toontown-rewritten"),
+    os.path.join(os.environ.get("PROGRAMFILES(X86)", "C:\\Program Files (x86)"), "Toontown Rewritten"),
+    os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~\\AppData\\Local")), "Toontown Rewritten"),
 ]
 
 
+def get_engine_executable_name() -> str:
+    """Return the platform-specific name of the TTREngine binary."""
+    import sys
+    return "TTREngine64.exe" if sys.platform == "win32" else "TTREngine"
+
 def find_engine_path() -> str | None:
     """Auto-detect TTREngine binary. Returns path to directory containing it, or None."""
-    # Check all flatpak data dirs first (covers unknown app IDs)
-    flatpak_data = os.path.expanduser("~/.var/app")
-    if os.path.isdir(flatpak_data):
-        for app_dir in os.listdir(flatpak_data):
-            full = os.path.join(flatpak_data, app_dir)
-            if not os.path.isdir(full):
-                continue
-            # Check data/ directly
-            candidate = os.path.join(full, "data")
-            if os.path.isfile(os.path.join(candidate, "TTREngine")):
-                return candidate
-            # Check data/toontown-rewritten/
-            candidate2 = os.path.join(candidate, "toontown-rewritten")
-            if os.path.isfile(os.path.join(candidate2, "TTREngine")):
-                return candidate2
+    binary_name = get_engine_executable_name()
 
     # Check standard paths
     for path in ENGINE_SEARCH_PATHS:
-        if os.path.isfile(os.path.join(path, "TTREngine")):
+        if os.path.isfile(os.path.join(path, binary_name)):
             return path
 
     return None
@@ -89,9 +85,10 @@ class TTRLoginWorker(QObject):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._state = LoginState.IDLE
+        self._token_lock = threading.Lock()
         self._queue_token = None
         self._response_token = None  # for 2FA
-        self._polling = False
+        self._stop_event = threading.Event()
 
     @property
     def state(self):
@@ -101,19 +98,36 @@ class TTRLoginWorker(QObject):
         self._state = state
         self.state_changed.emit(state, msg)
 
+    def _parse_queue_int(self, value, default: int) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
+    def _decode_json_response(self, resp, failure_message: str) -> dict | None:
+        try:
+            return resp.json()
+        except ValueError:
+            msg = f"{failure_message} (HTTP {resp.status_code})"
+            self._set_state(LoginState.FAILED, msg)
+            self.login_failed.emit(msg)
+            return None
+
     # ── Login Flow ─────────────────────────────────────────────────────────
 
     def login(self, username: str, password: str):
         """Start login. Call from main thread."""
         self._set_state(LoginState.LOGGING_IN, "Authenticating…")
-        self._polling = True
+        self._stop_event.clear()
 
         def _do():
             try:
                 resp = requests.post(API_URL, data={
                     "username": username, "password": password,
-                }, headers=HEADERS, timeout=15)
-                data = resp.json()
+                }, headers=HEADERS, timeout=15, verify=True)
+                data = self._decode_json_response(resp, "Invalid response from login server.")
+                if data is None:
+                    return
                 self._handle_response(data)
             except requests.RequestException as e:
                 self._set_state(LoginState.FAILED, f"Network error: {e}")
@@ -123,20 +137,22 @@ class TTRLoginWorker(QObject):
 
     def submit_2fa(self, token: str):
         """Submit a 2FA token."""
-        if not self._response_token:
-            self.login_failed.emit("No pending 2FA session.")
-            return
+        with self._token_lock:
+            if not self._response_token:
+                self.login_failed.emit("No pending 2FA session.")
+                return
+            auth_token = self._response_token
+            self._response_token = None
         self._set_state(LoginState.LOGGING_IN, "Verifying token…")
-
-        auth_token = self._response_token
-        self._response_token = None
 
         def _do():
             try:
                 resp = requests.post(API_URL, data={
                     "appToken": token, "authToken": auth_token,
-                }, headers=HEADERS, timeout=15)
-                data = resp.json()
+                }, headers=HEADERS, timeout=15, verify=True)
+                data = self._decode_json_response(resp, "Invalid response from login server.")
+                if data is None:
+                    return
                 self._handle_response(data)
             except requests.RequestException as e:
                 self._set_state(LoginState.FAILED, f"Network error: {e}")
@@ -154,16 +170,18 @@ class TTRLoginWorker(QObject):
 
         elif success == "partial":
             # Two-factor authentication needed
-            self._response_token = data.get("responseToken", "")
+            with self._token_lock:
+                self._response_token = data.get("responseToken", "")
             banner = data.get("banner", "Please enter your authenticator token.")
             self._set_state(LoginState.NEED_2FA, banner)
             self.need_2fa.emit(banner)
 
         elif success == "delayed":
             # Queued — need to poll
-            self._queue_token = data.get("queueToken", "")
-            position = int(data.get("position", 0))
-            eta = int(data.get("eta", 60))
+            with self._token_lock:
+                self._queue_token = data.get("queueToken", "")
+            position = self._parse_queue_int(data.get("position", 0), 0)
+            eta = self._parse_queue_int(data.get("eta", 60), 60)
             self._set_state(LoginState.QUEUED, f"In queue — position {position}, ~{eta}s")
             self.queue_update.emit(position, eta)
             self._start_queue_polling()
@@ -176,29 +194,53 @@ class TTRLoginWorker(QObject):
 
     # ── Queue Polling ──────────────────────────────────────────────────────
 
+    _MAX_QUEUE_POLLS = 60  # 60 × 10s = 10 minutes max queue wait
+
     def _start_queue_polling(self):
         def _poll():
-            while self._polling and self._state == LoginState.QUEUED:
+            polls = 0
+            retry_delay = 1.0
+            consecutive_failures = 0
+            while not self._stop_event.is_set() and self._state == LoginState.QUEUED:
                 time.sleep(10)  # Poll every 10 seconds (well within 30s limit)
-                if not self._polling:
+                if self._stop_event.is_set():
                     break
+                polls += 1
+                if polls > self._MAX_QUEUE_POLLS:
+                    self._set_state(LoginState.FAILED, "Queue timed out after 10 minutes.")
+                    self.login_failed.emit("Queue timed out after 10 minutes.")
+                    break
+                with self._token_lock:
+                    queue_token = self._queue_token
                 try:
                     resp = requests.post(API_URL, data={
-                        "queueToken": self._queue_token,
-                    }, headers=HEADERS, timeout=15)
-                    data = resp.json()
+                        "queueToken": queue_token,
+                    }, headers=HEADERS, timeout=15, verify=True)
+                    data = self._decode_json_response(resp, "Invalid response while polling queue.")
+                    if data is None:
+                        break
                     success = data.get("success", "false")
+                    consecutive_failures = 0
+                    retry_delay = 1.0
 
                     if success == "delayed":
-                        position = int(data.get("position", 0))
-                        eta = int(data.get("eta", 60))
+                        position = self._parse_queue_int(data.get("position", 0), 0)
+                        eta = self._parse_queue_int(data.get("eta", 60), 60)
                         self._set_state(LoginState.QUEUED, f"In queue — position {position}, ~{eta}s")
                         self.queue_update.emit(position, eta)
                     else:
                         self._handle_response(data)
                         break
-                except requests.RequestException:
-                    continue  # Retry on network errors
+                except requests.RequestException as e:
+                    consecutive_failures += 1
+                    print(f"[TTRLoginWorker] Queue poll failed ({consecutive_failures}): {e}. Retrying in {retry_delay:.1f}s.")
+                    if consecutive_failures >= 10:
+                        self._set_state(LoginState.FAILED, "Network error while polling queue.")
+                        self.login_failed.emit("Network error while polling queue.")
+                        break
+                    time.sleep(retry_delay)
+                    retry_delay = min(5.0, retry_delay * 2.0)
+                    continue
 
         threading.Thread(target=_poll, daemon=True).start()
 
@@ -206,8 +248,9 @@ class TTRLoginWorker(QObject):
 
     def cancel(self):
         """Cancel any ongoing login/queue."""
-        self._polling = False
-        self._queue_token = None
-        self._response_token = None
+        self._stop_event.set()
+        with self._token_lock:
+            self._queue_token = None
+            self._response_token = None
         if self._state != LoginState.RUNNING:
             self._set_state(LoginState.IDLE, "Cancelled.")

@@ -20,6 +20,7 @@ class ProfileManager:
     def __init__(self):
         config_dir = os.path.expanduser("~/.config/toontown_multitool")
         os.makedirs(config_dir, exist_ok=True)
+        os.chmod(config_dir, 0o700)
         self._path = os.path.join(config_dir, "profiles.json")
         self._profiles = []
         self._load()

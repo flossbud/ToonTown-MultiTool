@@ -6,6 +6,7 @@ class SettingsManager:
     def __init__(self):
         config_dir = os.path.expanduser("~/.config/toontown_multitool")
         os.makedirs(config_dir, exist_ok=True)
+        os.chmod(config_dir, 0o700)
         self.settings_path = os.path.join(config_dir, "settings.json")
         self.settings = {
             "show_debug_tab":        False,
@@ -33,6 +34,8 @@ class SettingsManager:
         try:
             with open(self.settings_path, "w") as f:
                 json.dump(self.settings, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
         except Exception as e:
             print(f"[SettingsManager] Failed to save settings: {e}")
 

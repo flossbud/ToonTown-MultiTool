@@ -14,7 +14,7 @@ import os
 import json
 import threading
 
-DIRECTIONS = ("up", "left", "down", "right", "jump", "book")
+DIRECTIONS = ("up", "left", "down", "right", "jump", "book", "gags", "tasks", "map")
 
 DEFAULT_SETS = [
     {
@@ -25,6 +25,9 @@ DEFAULT_SETS = [
         "right": "d",
         "jump": "space",
         "book": "Alt_L",
+        "gags": "g",
+        "tasks": "t",
+        "map": "Shift_L",
     },
     {
         "name": "Arrows",
@@ -34,6 +37,9 @@ DEFAULT_SETS = [
         "right": "Right",
         "jump": "Control_L",
         "book": "Alt_R",
+        "gags": "g",
+        "tasks": "t",
+        "map": "Shift_R",
     },
 ]
 
@@ -42,6 +48,7 @@ class KeymapManager:
     def __init__(self):
         config_dir = os.path.expanduser("~/.config/toontown_multitool")
         os.makedirs(config_dir, exist_ok=True)
+        os.chmod(config_dir, 0o700)
         self._path = os.path.join(config_dir, "keymaps.json")
         self._lock = threading.Lock()
         self._listeners = []
@@ -57,6 +64,16 @@ class KeymapManager:
                     data = json.load(f)
                 if isinstance(data, list) and len(data) >= 1:
                     self._sets = data
+                    # Backfill any direction keys added after this file was saved
+                    migrated = False
+                    for i, s in enumerate(self._sets):
+                        for d in DIRECTIONS:
+                            if d not in s:
+                                default = DEFAULT_SETS[i] if i < len(DEFAULT_SETS) else DEFAULT_SETS[-1]
+                                s[d] = default.get(d, "")
+                                migrated = True
+                    if migrated:
+                        self._save()
                     return
             except Exception as e:
                 print(f"[KeymapManager] Failed to load keymaps: {e}")
@@ -111,7 +128,7 @@ class KeymapManager:
         """Return the frozenset of physical keys the user presses (Set 1)."""
         with self._lock:
             s = self._sets[0]
-            return frozenset(s[d] for d in DIRECTIONS)
+            return frozenset(v for d in DIRECTIONS if (v := s.get(d)))
 
     def get_all_keys(self) -> frozenset:
         """Return frozenset of ALL keys across ALL movement sets."""
@@ -129,7 +146,7 @@ class KeymapManager:
         with self._lock:
             s = self._sets[0]
             for d in DIRECTIONS:
-                if s[d] == key:
+                if s.get(d) == key:
                     return d
             return None
 
@@ -139,7 +156,7 @@ class KeymapManager:
             if 0 <= set_index < len(self._sets):
                 s = self._sets[set_index]
                 for d in DIRECTIONS:
-                    if s[d] == key:
+                    if s.get(d) == key:
                         return d
             return None
 
@@ -192,6 +209,7 @@ class KeymapManager:
             new_set.update({
                 "up": "Up", "left": "Left", "down": "Down",
                 "right": "Right", "jump": "Control_L", "book": "Alt_R",
+                "gags": "g", "tasks": "t", "map": "Shift_R",
             })
         with self._lock:
             if len(self._sets) >= self.MAX_SETS:
