@@ -27,7 +27,7 @@ Built with Python + PySide6.
 - Load via Ctrl+1–5 hotkeys or change via icons on the main tab, replacing the old Preset system
 
 **⚡ Input Backend**
-- Keystrokes now sent via Xlib `send_event` directly — no more `xdotool` subprocess per keypress, fixing GNOME Wayland portal auth prompts
+- Keystrokes now sent via Xlib `send_event` directly; no more `xdotool` subprocess per keypress, fixing GNOME Wayland portal auth prompts
 
 **🔐 Account Manager**
 - Store up to 16 TTR and CC accounts with one-click launch
