@@ -1,4 +1,4 @@
-# ToonTown MultiTool
+# 🎮 ToonTown MultiTool
 
 A multiboxing controller for **Toontown Rewritten** and **Corporate Clash** on Linux and Windows.
 
@@ -6,41 +6,41 @@ Built with Python + PySide6.
 
 ---
 
-## What's New in v2.0
+## ✨ What's New in v2.0
 
-**Corporate Clash Support**
+**🎮 Corporate Clash Support**
 - Launch, log in to, and multibox CC alongside TTR
 - The app automatically identifies which game each window belongs to
 
-**Account Manager**
+**🔐 Account Manager**
 - Store up to 16 TTR and CC accounts with one-click launch
 - Passwords stored exclusively in the OS keyring — never written to disk
 - Handles TTR login queues and 2FA automatically
 
-**TTR Companion App Integration**
+**🐾 TTR Companion App Integration**
 - Live toon name, laff, and jellybean count per slot in the Multitoon tab
 - Toon portrait images fetched and cached from the Rendition API
 
-**Custom Movement Key Sets**
+**⌨️ Custom Movement Key Sets**
 - v1.5.1 assumed all toons used WASD — v2.0 lets each slot use a different key set
 - Up to 8 named key sets, fully customisable in the new Keymap tab
 
-**Invasion Tracker**
+**🚨 Invasion Tracker**
 - Live cog invasion display, updated every 60 seconds
 
-**Session Profiles**
+**💾 Session Profiles**
 - 5 named profiles storing which toon slots are active
 - Load via Ctrl+1–5 hotkeys — replaces the old Preset system
 
-**Windows Support**
+**🪟 Windows Support**
 - v1.5.1 was Linux-only — v2.0 adds full Windows support
 
-**Input Backend**
+**⚡ Input Backend**
 - Keystrokes now sent via Xlib `send_event` directly — no more `xdotool` subprocess per keypress, fixing GNOME Wayland portal auth prompts
 
 ---
 
-## Features
+## 🕹️ Features
 
 **Multitoon Control**
 - Broadcast keyboard input to up to 4 background toons simultaneously
@@ -73,15 +73,15 @@ Built with Python + PySide6.
 
 ---
 
-## Requirements
+## ⚙️ Requirements
 
-**Linux:**
+**🐧 Linux:**
 - Python 3.10+
 - PySide6, pynput, python-xlib
 - `xdotool` (window detection only — not required for input)
 - Secret Service-compatible keyring (GNOME Keyring or KWallet)
 
-**Windows:**
+**🪟 Windows:**
 - Python 3.10+
 - PySide6, pynput, pywin32
 
