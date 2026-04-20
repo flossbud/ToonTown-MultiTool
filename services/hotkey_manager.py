@@ -126,9 +126,10 @@ class HotkeyManager(QObject):
                     
             normalized = self.normalize_key(key)
             if normalized:
-                self.key_event_queue.put_nowait(("keydown", normalized))
-        except queue.Full:
-            print("[HotkeyManager] Warning: key event queue full, dropping keydown event.")
+                try:
+                    self.key_event_queue.put(("keydown", normalized), timeout=0.05)
+                except queue.Full:
+                    print("[HotkeyManager] Warning: key event queue full after timeout, dropping keydown event.")
         except Exception as e:
             print(f"[HotkeyManager] Keydown handler error: {e}")
 
@@ -141,8 +142,9 @@ class HotkeyManager(QObject):
                 
             normalized = self.normalize_key(key)
             if normalized:
-                self.key_event_queue.put_nowait(("keyup", normalized))
-        except queue.Full:
-            print("[HotkeyManager] Warning: key event queue full, dropping keyup event.")
+                try:
+                    self.key_event_queue.put(("keyup", normalized), timeout=0.05)
+                except queue.Full:
+                    print("[HotkeyManager] Warning: key event queue full after timeout, dropping keyup event.")
         except Exception as e:
             print(f"[HotkeyManager] Keyup handler error: {e}")

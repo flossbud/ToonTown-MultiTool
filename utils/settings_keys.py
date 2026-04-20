@@ -1,0 +1,11 @@
+"""Centralized settings key definitions for type-safe access."""
+
+THEME = "theme"
+SHOW_DEBUG_TAB = "show_debug_tab"
+KEEP_ALIVE_ACTION = "keep_alive_action"
+KEEP_ALIVE_DELAY = "keep_alive_delay"
+ACTIVE_PROFILE = "active_profile"
+INPUT_BACKEND = "input_backend"
+TTR_ENGINE_DIR = "ttr_engine_dir"
+CC_ENGINE_DIR = "cc_engine_dir"
+SHOW_HINTS = "show_hints"

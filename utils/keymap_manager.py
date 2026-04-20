@@ -93,10 +93,13 @@ class KeymapManager:
 
     def on_change(self, callback):
         """Register a callback to be called when sets are added/deleted/modified."""
-        self._listeners.append(callback)
+        with self._lock:
+            self._listeners.append(callback)
 
     def _notify(self):
-        for cb in self._listeners:
+        with self._lock:
+            listeners = list(self._listeners)
+        for cb in listeners:
             try:
                 cb()
             except Exception as e:

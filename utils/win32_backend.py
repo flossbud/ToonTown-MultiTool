@@ -119,7 +119,8 @@ class Win32Backend:
                 lparam |= (1 << 31)
             win32gui.PostMessage(hwnd, msg, vk, lparam)
             return True
-        except Exception:
+        except (ValueError, OSError) as e:
+            print(f"[Win32Backend] PostMessage failed: {e}")
             return False
 
     def send_keydown(self, win_id_str: str, keysym_str: str, state: int = 0) -> bool:

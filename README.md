@@ -49,8 +49,8 @@ Built with Python + PySide6.
 - Per-toon keep-alive timer with configurable key and interval
 
 **Game Support**
-- Toontown Rewritten: form-based login, queue polling, Flatpak Launcher
-- Corporate Clash: JSON API login, CLI credential injection
+- Toontown Rewritten — form-based login, queue polling, Flatpak Launcher
+- Corporate Clash — JSON API login, CLI credential injection
   
 **Account Management**
 - Store up to 16 TTR and CC accounts with secure OS keyring storage (Secret Service on Linux, Credential Locker on Windows)
@@ -137,3 +137,7 @@ Config files at `~/.config/toontown_multitool/`:
 MIT License — free to use, share, and modify.
 
 ---
+
+## Author
+
+Made by **flossbud**

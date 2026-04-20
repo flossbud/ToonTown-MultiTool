@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
     QLabel, QPushButton, QProxyStyle, QStyle, QFrame, QMessageBox,
     QGraphicsOpacityEffect,
 )
-from PySide6.QtCore import QRect, Qt, QMetaObject, Q_ARG, QSize, QEvent, Signal, Slot, QPropertyAnimation, QEasingCurve, QAbstractAnimation, QTimer
+from PySide6.QtCore import QRect, Qt, QMetaObject, QSize, QEvent, Signal, Slot, QPropertyAnimation, QEasingCurve, QAbstractAnimation, QTimer
 from PySide6.QtGui import QColor
 
 # === Internal Imports ===
@@ -34,6 +34,10 @@ from utils.theme_manager import (
     make_nav_keyboard, make_nav_gear, make_nav_terminal, make_nav_bookmark,
     make_hint_icon, make_info_icon
 )
+
+
+TITLE_ANIM_DURATION_MS = 800
+TITLE_ANIM_MAX_WIDTH = 300
 
 
 class NoFocusProxyStyle(QProxyStyle):
@@ -186,12 +190,16 @@ class MultiToonTool(QMainWindow):
         self.title_label.setMaximumWidth(0)
 
         self._launch_anim = QPropertyAnimation(self.title_label, b"maximumWidth")
-        self._launch_anim.setDuration(800)
+        self._launch_anim.setDuration(TITLE_ANIM_DURATION_MS)
         self._launch_anim.setStartValue(0)
-        # 300 is a safe width to reveal the whole title + version string
-        self._launch_anim.setEndValue(300)
+        self._launch_anim.setEndValue(TITLE_ANIM_MAX_WIDTH)
         self._launch_anim.setEasingCurve(QEasingCurve.OutCubic)
-        
+
+        # Disconnect any previous signal to prevent accumulation
+        try:
+            self._launch_anim.finished.disconnect()
+        except RuntimeError:
+            pass
         # After animation, remove the maximum width constraint
         self._launch_anim.finished.connect(lambda: self.title_label.setMaximumWidth(16777215))
         self._launch_anim.start()
@@ -237,7 +245,7 @@ class MultiToonTool(QMainWindow):
 
     def _build_header(self) -> QFrame:
         header = QFrame()
-        header.setFixedHeight(52)
+        header.setMinimumHeight(48)
         header.setObjectName("app_header")
 
         layout = QHBoxLayout(header)
@@ -246,7 +254,8 @@ class MultiToonTool(QMainWindow):
 
         # Accent stripe (thin vertical bar)
         accent = QFrame()
-        accent.setFixedSize(4, 28)
+        accent.setFixedWidth(4)
+        accent.setMinimumHeight(24)
         accent.setObjectName("header_accent")
         layout.addWidget(accent)
 

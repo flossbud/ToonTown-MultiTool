@@ -3,7 +3,7 @@ Corporate Clash Launcher Service — handles launching the CorporateClash proces
 and monitoring its lifecycle (PID, exit code).
 
 Key differences from TTRLauncher:
-  - Uses CLI args (-g gameserver -t osst_token) instead of environment variables
+  - Uses CLI arg (-g gameserver) and env var (CC_OSST_TOKEN) for credentials
   - Different trusted install roots
   - Different binary name
 """
@@ -50,7 +50,7 @@ class CCLauncher(QObject):
         self.settings_manager = settings_manager
 
     def launch(self, gameserver: str, osst_token: str, engine_dir: str):
-        """Launch CorporateClash with credentials via CLI args in a background thread."""
+        """Launch CorporateClash with credentials in a background thread."""
         binary_name = get_cc_engine_executable_name()
         engine_path = os.path.join(engine_dir, binary_name)
 
@@ -79,17 +79,19 @@ class CCLauncher(QObject):
                 if sys.platform == "win32":
                     kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
 
-                # CC uses CLI args instead of environment variables
                 cmd = [engine_path]
                 if gameserver:
                     cmd.extend(["-g", gameserver])
+
+                # Pass token via env var to avoid exposure in ps / /proc/[pid]/cmdline
+                extra_env = {}
                 if osst_token:
-                    cmd.extend(["-t", osst_token])
+                    extra_env["CC_OSST_TOKEN"] = osst_token
 
                 self._game_process = subprocess.Popen(
                     cmd,
                     cwd=engine_dir,
-                    env=build_launcher_env(),
+                    env=build_launcher_env(extra_env),
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     **kwargs

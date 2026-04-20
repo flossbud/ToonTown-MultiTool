@@ -18,6 +18,7 @@ from PySide6.QtCore import QObject, Signal
 
 
 API_URL = "https://www.toontownrewritten.com/api/login?format=json"
+assert API_URL.startswith("https://"), "API_URL must use HTTPS"
 HEADERS = {
     "Content-type": "application/x-www-form-urlencoded",
     "User-Agent": "ToontownMultiTool/2.0.1"
@@ -130,8 +131,9 @@ class TTRLoginWorker(QObject):
                     return
                 self._handle_response(data)
             except requests.RequestException as e:
-                self._set_state(LoginState.FAILED, f"Network error: {e}")
-                self.login_failed.emit(f"Network error: {e}")
+                print(f"[TTRLoginWorker] Network error: {type(e).__name__}: {e}")
+                self._set_state(LoginState.FAILED, "Network connection failed. Please check your connection and try again.")
+                self.login_failed.emit("Network connection failed. Please check your connection and try again.")
 
         threading.Thread(target=_do, daemon=True).start()
 
@@ -155,8 +157,9 @@ class TTRLoginWorker(QObject):
                     return
                 self._handle_response(data)
             except requests.RequestException as e:
-                self._set_state(LoginState.FAILED, f"Network error: {e}")
-                self.login_failed.emit(f"Network error: {e}")
+                print(f"[TTRLoginWorker] Network error: {type(e).__name__}: {e}")
+                self._set_state(LoginState.FAILED, "Network connection failed. Please check your connection and try again.")
+                self.login_failed.emit("Network connection failed. Please check your connection and try again.")
 
         threading.Thread(target=_do, daemon=True).start()
 

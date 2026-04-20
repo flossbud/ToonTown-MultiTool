@@ -93,6 +93,8 @@ class WindowManager(QObject):
                         timeout=0.5
                     ).decode().strip()
                     current_active = result
+                except subprocess.TimeoutExpired:
+                    pass  # keep previous current_active
                 except Exception:
                     current_active = None
                 

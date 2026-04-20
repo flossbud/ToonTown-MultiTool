@@ -2,7 +2,7 @@ from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPlainTextEdit,
 from PySide6.QtGui import QColor
 from PySide6.QtCore import Qt
 from datetime import datetime
-from tabs.settings_tab import IOSSegmentedControl
+from utils.shared_widgets import IOSSegmentedControl
 
 
 class DebugTab(QWidget):

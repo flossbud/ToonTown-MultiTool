@@ -33,8 +33,8 @@ class XlibBackend:
         if self._display:
             try:
                 self._display.close()
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[XlibBackend] Failed to close display: {e}")
             self._display = None
 
     def get_window_x(self, win_id_str: str) -> int | None:
@@ -73,8 +73,8 @@ class XlibBackend:
             for cid in resp.ids:
                 if cid.value:
                     return cid.value[0]
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[XlibBackend] XRes PID query failed for window {win_id_str}: {e}")
         return None
 
     def _keycode_for(self, keysym_str: str):
