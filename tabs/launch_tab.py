@@ -24,7 +24,7 @@ from services.ttr_login_service import TTRLoginWorker, LoginState, find_engine_p
 from services.ttr_launcher import TTRLauncher
 from services.cc_login_service import CCLoginWorker, find_cc_engine_path, get_cc_engine_executable_name
 from services.cc_launcher import CCLauncher
-from tabs.multitoon_tab import PulsingDot
+from utils.shared_widgets import PulsingDot
 
 
 # ── Status colors ──────────────────────────────────────────────────────────
@@ -325,6 +325,7 @@ class LaunchTab(QWidget):
         self._keyring_banner = None
         self._probe_thread = None
         self._probe_worker = None
+        self._pending_2fa: set = set()
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -733,6 +734,11 @@ class LaunchTab(QWidget):
 
         label = card["label_edit"].text().strip()
         username = card["user_edit"].text().strip()
+
+        if not username:
+            card["user_edit"].setPlaceholderText("Username is required")
+            return
+
         new_password = card["pass_edit"].text()
         password = new_password if new_password else None
 
@@ -782,9 +788,11 @@ class LaunchTab(QWidget):
         if worker:
             self._disconnect_worker_signals(worker)
             worker.cancel()
+            self._workers[game][section_index] = None
         launcher = self._launchers[game][section_index]
         if launcher:
             self._disconnect_launcher_signals(launcher)
+            self._launchers[game][section_index] = None
 
         # Create game-specific worker and launcher
         if game == "ttr":
@@ -836,6 +844,11 @@ class LaunchTab(QWidget):
 
     def _prompt_2fa(self, game, section_index, banner):
         """Show 2FA input dialog."""
+        key = (game, section_index)
+        if key in self._pending_2fa:
+            return
+        self._pending_2fa.add(key)
+
         game_label = "TTR" if game == "ttr" else "CC"
         self.log(f"[Launch] {game_label} account {section_index + 1} requires 2FA.")
         token, ok = QInputDialog.getText(
@@ -843,6 +856,7 @@ class LaunchTab(QWidget):
             f"{banner}\n\nEnter your authenticator code:",
             QLineEdit.Password,
         )
+        self._pending_2fa.discard(key)
         if ok and token.strip():
             worker = self._workers[game][section_index]
             if worker:

@@ -100,6 +100,7 @@ class InputService(QObject):
         self.keymap_manager = keymap_manager
         self.running = False
         self.thread = None
+        self._stop_event = threading.Event()
         self.logging_enabled = False
 
         self.keys_held = set()
@@ -120,8 +121,9 @@ class InputService(QObject):
         if self.running and self.thread is not None and self.thread.is_alive():
             return
         self._apply_backend_setting()
+        self._stop_event.clear()
         self.running = True
-        self.thread = threading.Thread(target=self.run, daemon=True)
+        self.thread = threading.Thread(target=self.run, daemon=False)
         self.thread.start()
 
     def _apply_backend_setting(self):
@@ -153,6 +155,7 @@ class InputService(QObject):
 
     def stop(self):
         self.running = False
+        self._stop_event.set()
         self.release_all_keys()
         if self.thread is not None and self.thread.is_alive():
             self.thread.join(timeout=2.0)
@@ -229,7 +232,8 @@ class InputService(QObject):
                         )
             else:
                 # Legacy fallback (no keymap_manager)
-                mode = self.get_movement_modes()[i] if i < len(self.get_movement_modes()) else "WASD"
+                modes = self.get_movement_modes()
+                mode = modes[i] if i < len(modes) else "WASD"
                 if mode == "WASD" and key in ARROW_KEYS:
                     continue
                 if mode == "ARROWS" and key in WASD_KEYS:
@@ -363,9 +367,12 @@ class InputService(QObject):
                     self.modifiers_held.clear()
                 self.bg_typing_held.clear()
                 self._phantom_reset()
+                if self.global_chat_active:
+                    self._set_chat_active(False)
+                    self.chat_active.clear()
                 bs_press_time  = None
                 bs_last_repeat = 0.0
-                time.sleep(0.01)
+                self._stop_event.wait(0.01)
                 continue
 
             now            = time.monotonic()
@@ -451,7 +458,7 @@ class InputService(QObject):
                             else:
                                 self._set_chat_active(not self.global_chat_active)
                                 self._chat_last_activity = now if self.global_chat_active else 0.0
-                                for i in range(len(assignments)):
+                                for i in range(min(len(assignments), len(enabled))):
                                     if i < len(window_ids) and enabled[i]:
                                         if not self._is_chat_allowed(i):
                                             pass

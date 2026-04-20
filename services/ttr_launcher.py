@@ -27,6 +27,9 @@ def _approved_custom_engine_dir(settings_manager) -> str | None:
 
 def _is_trusted_engine_path(engine_path: str, settings_manager=None) -> bool:
     """Return True if the engine path is explicitly trusted or user-approved."""
+    real_path = os.path.realpath(engine_path)
+    if not os.path.isfile(real_path):
+        return False
     engine_dir = os.path.realpath(os.path.dirname(engine_path))
     if engine_dir in _TRUSTED_ENGINE_DIRS:
         return True

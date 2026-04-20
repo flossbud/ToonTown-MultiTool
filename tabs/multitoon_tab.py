@@ -16,6 +16,7 @@ from utils.theme_manager import (
     make_heart_icon, make_jellybean_icon,
     get_set_color, SmoothProgressBar, make_section_label,
 )
+from utils.shared_widgets import PulsingDot
 from utils.symbols import S
 from utils.ttr_api import get_toon_names_threaded, invalidate_port_to_wid_cache, clear_stale_names
 from utils import cc_api
@@ -87,7 +88,8 @@ class ToonPortraitWidget(QWidget):
         self._dna     = None
         self._fetch_token = 0
         self._cancelled = False
-        self.setFixedSize(38, 38)
+        self.setMinimumSize(38, 38)
+        self.setMaximumSize(64, 64)
         self.setCursor(Qt.PointingHandCursor)
         self._image_ready.connect(self._on_image_ready)
 
@@ -210,95 +212,6 @@ class ToonPortraitWidget(QWidget):
                 p.setPen(self._text)
                 p.drawText(self.rect(), Qt.AlignCenter, str(self._slot))
         p.end()
-
-class PulsingDot(QWidget):
-    """Animated status dot — breathes with a soft glow when in 'active' state."""
-
-    def __init__(self, size=10, parent=None):
-        super().__init__(parent)
-        self._dot_size = size
-        # Extra space around the dot for the glow halo
-        self.setFixedSize(size + 8, size + 8)
-        self._color = QColor("#555555")
-        self._pulse_val = 0.0
-        self._pulsing = False
-
-        self._anim = QVariantAnimation()
-        self._anim.setStartValue(0.0)
-        self._anim.setEndValue(1.0)
-        self._anim.setDuration(2800)
-        self._anim.setLoopCount(-1)
-        self._anim.setEasingCurve(QEasingCurve.Linear)
-        self._anim.valueChanged.connect(self._on_pulse)
-
-    def set_color(self, hex_color: str, pulse: bool = False):
-        self._color = QColor(hex_color)
-        if pulse:
-            if not self._pulsing:
-                self._pulsing = True
-                self._anim.start()
-        else:
-            self._stop_pulse()
-        self.update()
-
-    def set_state(self, state: str, tooltip: str = ""):
-        self.setToolTip(tooltip)
-        if state == "active":
-            self.set_color("#56c856", pulse=True)
-        elif state == "keep_alive":
-            self.set_color("#ff9900", pulse=True)
-        elif state == "disabled":
-            self.set_color("#e84141", pulse=False)
-        elif state == "found":
-            self.set_color("#888888", pulse=False)
-        else:
-            self.set_color("#555555", pulse=False)
-
-    def _stop_pulse(self):
-        if self._pulsing:
-            self._pulsing = False
-            self._anim.stop()
-            self._pulse_val = 0.0
-
-    def _on_pulse(self, val):
-        # Map linear 0→1 through sin(π*val) to get smooth 0→1→0 per cycle
-        import math
-        self._pulse_val = math.sin(val * math.pi)
-        self.update()
-
-    def paintEvent(self, event):
-        from PySide6.QtGui import QRadialGradient
-
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
-        p.setPen(Qt.NoPen)
-
-        cx = self.width() / 2.0
-        cy = self.height() / 2.0
-        r = self._dot_size / 2.0
-
-        if self._pulsing:
-            # Soft outer glow — fades in/out with the pulse
-            glow_alpha = int(60 * self._pulse_val)
-            glow_r = r + 3 + 2 * self._pulse_val
-            grad = QRadialGradient(cx, cy, glow_r)
-            glow_color = QColor(self._color)
-            glow_color.setAlpha(glow_alpha)
-            grad.setColorAt(0.0, glow_color)
-            glow_color.setAlpha(0)
-            grad.setColorAt(1.0, glow_color)
-            p.setBrush(grad)
-            p.drawEllipse(QRectF(cx - glow_r, cy - glow_r, glow_r * 2, glow_r * 2))
-
-            # Core dot — gentle brightness shift (only ~18% lighter at peak)
-            core = QColor(self._color).lighter(100 + int(18 * self._pulse_val))
-            p.setBrush(core)
-        else:
-            p.setBrush(QColor(self._color))
-
-        p.drawEllipse(QRectF(cx - r, cy - r, r * 2, r * 2))
-        p.end()
-
 
 class StatusDots(QWidget):
     """Compact 4-dot row: 0=off, 1=found, 2=active."""
@@ -1013,6 +926,20 @@ class MultitoonTab(QWidget):
             if idx >= 0:
                 selector.setCurrentIndex(idx)
 
+        ka_states = profile.keep_alive or [False] * 4
+        rf_states = profile.rapid_fire or [False] * 4
+        for i in range(4):
+            self.keep_alive_enabled[i] = ka_states[i] if i < len(ka_states) else False
+            self.rapid_fire_enabled[i] = rf_states[i] if i < len(rf_states) else False
+            self.keep_alive_buttons[i].setChecked(self.keep_alive_enabled[i])
+            self.keep_alive_buttons[i].is_rapid_fire = self.rapid_fire_enabled[i]
+            self._apply_keep_alive_btn_style(i, self._c())
+
+        if any(self.keep_alive_enabled):
+            self._start_keep_alive()
+        else:
+            self._stop_keep_alive()
+
         self.apply_all_visual_states()
         self.update_status_label()
         self._update_pill_styles()
@@ -1026,6 +953,8 @@ class MultitoonTab(QWidget):
             self._active_profile,
             list(self.enabled_toons),
             self.get_movement_modes(),
+            keep_alive=list(self.keep_alive_enabled),
+            rapid_fire=list(self.rapid_fire_enabled),
         )
 
     def refresh_profile_pills(self):

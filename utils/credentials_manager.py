@@ -11,6 +11,7 @@ while the sensitive part (passwords) is stored in the keyring keyed by a UUID.
 import os
 import json
 import stat
+import time
 import uuid
 import threading
 import keyring
@@ -32,7 +33,8 @@ class CredentialsManager:
         self._path = os.path.join(config_dir, "accounts.json")
         self._fallback_path = os.path.join(config_dir, "passwords_fallback.json")
         self._accounts: list[dict] = []
-        self._fallback_passwords: dict[str, str] = {}
+        self._fallback_passwords: dict[str, tuple[str, float]] = {}  # id -> (password, timestamp)
+        self._fallback_max_age = 3600  # 1 hour max in-memory retention
         self._fallback_lock = threading.Lock()
         self._use_keyring = True
         self._probe_complete = False
@@ -57,8 +59,8 @@ class CredentialsManager:
             # v1 was Linux-only, so just clean up if file exists
             try:
                 os.remove(old_path)
-            except Exception:
-                pass
+            except OSError as e:
+                print(f"[CredentialsManager] Failed to remove legacy v1 file: {e}")
             return
 
         if not self.keyring_available:
@@ -126,8 +128,15 @@ class CredentialsManager:
                 })
             
             self._save()
-            print("[CredentialsManager] Migration successful. Deleting old credentials.enc")
-            os.remove(old_path)
+
+            backup_path = old_path + ".migrated"
+            try:
+                import shutil
+                shutil.move(old_path, backup_path)
+                print("[CredentialsManager] Migration successful. Old file archived as .migrated")
+            except Exception as e:
+                print(f"[CredentialsManager] Warning: could not archive old credentials: {e}")
+
             self._deferred_v1_migration = False
             
         except Exception as e:
@@ -140,7 +149,7 @@ class CredentialsManager:
         try:
             with open(self._path, "r") as f:
                 self._accounts = json.load(f)
-        except (json.JSONDecodeError, Exception) as e:
+        except (json.JSONDecodeError, OSError) as e:
             print(f"[CredentialsManager] Failed to load accounts: {e}")
             self._accounts = []
 
@@ -206,6 +215,8 @@ class CredentialsManager:
         self._use_keyring = True
         self._probe_complete = True
         self._primary_backend_name = self._detect_primary_backend_name()
+        if self._deferred_v1_migration:
+            self.run_deferred_v1_migration()
         return True
 
     def run_deferred_v1_migration(self):
@@ -387,10 +398,16 @@ class CredentialsManager:
             return
 
     def _recover_password_from_compatible_backends(self, account_id: str) -> str:
+        cumulative_timeout = 5.0
+        start = time.monotonic()
         for backend in self._available_explicit_backends():
+            if time.monotonic() - start > cumulative_timeout:
+                print(f"[Credentials] Backend recovery timed out after {cumulative_timeout}s.")
+                break
             backend_name = self._backend_name(backend)
+            remaining = max(0.5, cumulative_timeout - (time.monotonic() - start))
             ok, value = self._call_backend_method(
-                backend, "get_password", SERVICE_NAME, account_id, timeout=1.5
+                backend, "get_password", SERVICE_NAME, account_id, timeout=min(1.5, remaining)
             )
             if ok and value:
                 self._migrate_password_to_primary_backend(account_id, value, backend_name)
@@ -415,7 +432,15 @@ class CredentialsManager:
             if recovered:
                 return recovered
         with self._fallback_lock:
-            return self._fallback_passwords.get(account_id, "")
+            entry = self._fallback_passwords.get(account_id)
+            if entry:
+                password, timestamp = entry
+                if time.monotonic() - timestamp > self._fallback_max_age:
+                    del self._fallback_passwords[account_id]
+                    print(f"[Credentials] In-memory password expired.")
+                    return ""
+                return password
+        return ""
 
     def _set_password(self, account_id: str, password: str) -> bool:
         if not account_id:
@@ -426,7 +451,9 @@ class CredentialsManager:
                 self._fallback_passwords.pop(account_id, None)
             return True
         with self._fallback_lock:
-            self._fallback_passwords[account_id] = password or ""
+            self._fallback_passwords[account_id] = (password or "", time.monotonic())
+        print(f"[Credentials] WARNING: Password stored in volatile memory (keyring unavailable). "
+              f"It will be cleared after {self._fallback_max_age // 60} minutes or on restart.")
         return True
 
     def _delete_password(self, account_id: str):
@@ -542,7 +569,10 @@ class CredentialsManager:
             if game is not None and a.get("game", "ttr") != game:
                 continue
             account_id = a.get("id")
-            password = self._get_password(account_id) if account_id else ""
+            if not account_id:
+                print(f"[CredentialsManager] Warning: skipping account with missing ID: {a.get('label', '?')}")
+                continue
+            password = self._get_password(account_id)
 
             result.append(AccountCredential.from_dict(a, password))
         return result

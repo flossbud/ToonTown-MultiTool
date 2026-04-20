@@ -64,7 +64,7 @@ class MovementKeyField(QLineEdit):
         self._awaiting = False
         self.setReadOnly(True)
         self.setFocusPolicy(Qt.ClickFocus)
-        self.setFixedHeight(30)
+        self.setMinimumHeight(28)
         self.setFixedWidth(88)
         self.setAlignment(Qt.AlignCenter)
         self._update_display()
@@ -387,7 +387,7 @@ class KeymapTab(QWidget):
 
         self._scroll_layout.addSpacing(16)
         self._add_btn = QPushButton(f"{S('➕', '+')} Add Movement Set")
-        self._add_btn.setFixedHeight(38)
+        self._add_btn.setMinimumHeight(28)
         self._add_btn.setMaximumWidth(260)
         self._add_btn.setCursor(Qt.PointingHandCursor)
         self._add_btn.clicked.connect(self._on_add_set)
@@ -402,7 +402,7 @@ class KeymapTab(QWidget):
         # ── Header ─────────────────────────────────────────────────────
         header = ClickableHeader()
         header.setObjectName("card_header_bar")
-        header.setFixedHeight(40)
+        header.setMinimumHeight(28)
         header.setCursor(Qt.PointingHandCursor)
         hl = QHBoxLayout(header)
         hl.setContentsMargins(14, 0, 14, 0)

@@ -32,6 +32,8 @@ _DEBUG = False
 _log_callback = None
 _last_logged = {}  # port -> log string (only log when values change)
 _last_debug_logged = {}  # key -> log string (only log when values change)
+_last_logged_lock = threading.Lock()
+_last_debug_logged_lock = threading.Lock()
 
 
 def set_debug(enabled: bool) -> None:
@@ -50,9 +52,10 @@ def _debug_log(key: str, msg: str) -> None:
     """Emit debug log lines only when content changes."""
     if not (_DEBUG and _log_callback):
         return
-    if _last_debug_logged.get(key) == msg:
-        return
-    _last_debug_logged[key] = msg
+    with _last_debug_logged_lock:
+        if _last_debug_logged.get(key) == msg:
+            return
+        _last_debug_logged[key] = msg
     _log_callback(msg)
 
 
@@ -73,7 +76,8 @@ def _fetch_toon(port: int, timeout: float = 5.0) -> dict | None:
             resp = conn.getresponse()
             if resp.status == 200:
                 return json.loads(resp.read().decode())
-        except Exception:
+        except (OSError, ValueError, KeyError) as e:
+            print(f"[TTR API] Fetch failed on port {port}: {e}")
             continue
         finally:
             try:
@@ -282,11 +286,12 @@ def _build_port_to_window_id(current_window_ids: list, active_ports: set | None 
 
 def invalidate_port_to_wid_cache():
     """Force port->window_id to be rebuilt on next fetch."""
-    global _port_to_wid, _port_to_wid_fingerprint, _last_debug_logged
+    global _port_to_wid, _port_to_wid_fingerprint
     with _port_to_wid_lock:
         _port_to_wid = {}
         _port_to_wid_fingerprint = None
-        _last_debug_logged = {}
+    with _last_debug_logged_lock:
+        _last_debug_logged.clear()
 
 
 # ── window_id → name + style + color cache ────────────────────────────────────
@@ -296,6 +301,7 @@ _wid_to_color: dict = {}   # window_id -> headColor hex string
 _wid_to_laff: dict = {}
 _wid_to_max_laff: dict = {}
 _wid_to_beans: dict = {}
+_wid_to_timestamp: dict = {}
 _wid_to_name_lock = threading.Lock()
 
 
@@ -311,6 +317,7 @@ def clear_stale_names(current_window_ids: list):
             _wid_to_laff.pop(wid, None)
             _wid_to_max_laff.pop(wid, None)
             _wid_to_beans.pop(wid, None)
+            _wid_to_timestamp.pop(wid, None)
 
 
 # ── Smart port scanning state (fix #7) ────────────────────────────────────────
@@ -379,9 +386,10 @@ def get_toon_names_by_slot(num_slots: int, current_window_ids: list = None):
 
             if _DEBUG and _log_callback:
                 msg = f"[TTR API] Port {port}: name={name!r}, laff={current_laff}/{max_laff}, bank={bank_beans}"
-                if _last_logged.get(port) != msg:
-                    _last_logged[port] = msg
-                    _log_callback(msg)
+                with _last_logged_lock:
+                    if _last_logged.get(port) != msg:
+                        _last_logged[port] = msg
+                        _log_callback(msg)
             with found_lock:
                 found[port] = (name, style, headColor, current_laff, max_laff, bank_beans)
 
@@ -410,9 +418,10 @@ def get_toon_names_by_slot(num_slots: int, current_window_ids: list = None):
         with _approved_ports_lock:
             _approved_ports.intersection_update(found.keys())
         # Clean stale log cache entries
-        for p in list(_last_logged):
-            if p not in found:
-                _last_logged.pop(p, None)
+        with _last_logged_lock:
+            for p in list(_last_logged):
+                if p not in found:
+                    _last_logged.pop(p, None)
 
     if not found:
         return [None]*num_slots, [None]*num_slots, [None]*num_slots, [None]*num_slots, [None]*num_slots, [None]*num_slots
@@ -447,6 +456,7 @@ def get_toon_names_by_slot(num_slots: int, current_window_ids: list = None):
             if wid:
                 active_wids_with_data.add(wid)
                 _wid_to_name[wid] = name
+                _wid_to_timestamp[wid] = time.monotonic()
                 style = found_styles.get(port)
                 if style:
                     _wid_to_style[wid] = style
@@ -472,6 +482,7 @@ def get_toon_names_by_slot(num_slots: int, current_window_ids: list = None):
                 _wid_to_laff.pop(wid, None)
                 _wid_to_max_laff.pop(wid, None)
                 _wid_to_beans.pop(wid, None)
+                _wid_to_timestamp.pop(wid, None)
 
         name_snapshot  = dict(_wid_to_name)
         style_snapshot = dict(_wid_to_style)

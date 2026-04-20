@@ -106,6 +106,10 @@ class InvasionsTab(QWidget):
         self.refresh_timer.start()
         self.fetch_invasions()
 
+    def shutdown(self):
+        """Stop refresh timer and background threads."""
+        self.refresh_timer.stop()
+
     def _on_setting_changed(self, key, value):
         if key == "theme":
             self.refresh_theme()

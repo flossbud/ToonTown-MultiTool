@@ -8,6 +8,7 @@ For windows launched outside of TTMT, a process-name fallback table is used
 to identify the game from the executable name.
 """
 
+import os
 import sys
 import threading
 
@@ -163,14 +164,14 @@ class GameRegistry:
                 )
                 try:
                     exe = win32process.GetModuleFileNameEx(handle, 0)
-                except Exception:
+                except (OSError, AttributeError) as e:
+                    print(f"[GameRegistry] Win32 process query failed for PID {pid}: {e}")
                     return None
                 finally:
                     win32api.CloseHandle(handle)
             else:
-                import os
                 exe = os.readlink(f"/proc/{pid}/exe")
-        except Exception:
+        except (OSError, FileNotFoundError) as e:
+            print(f"[GameRegistry] Process name lookup failed for PID {pid}: {e}")
             return None
-        import os
         return os.path.basename(exe).lower()

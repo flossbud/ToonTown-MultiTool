@@ -36,6 +36,7 @@ class SettingsManager:
                 json.dump(self.settings, f, indent=2)
                 f.flush()
                 os.fsync(f.fileno())
+            os.chmod(self.settings_path, 0o600)
         except Exception as e:
             print(f"[SettingsManager] Failed to save settings: {e}")
 

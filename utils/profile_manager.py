@@ -32,6 +32,8 @@ class ProfileManager:
             "name": DEFAULT_NAMES[index],
             "enabled_toons": [False, False, False, False],
             "movement_modes": ["Default", "Default", "Default", "Default"],
+            "keep_alive": [False, False, False, False],
+            "rapid_fire": [False, False, False, False],
         }
 
     def _load(self):
@@ -57,6 +59,10 @@ class ProfileManager:
                 p["enabled_toons"] = [False, False, False, False]
             if "movement_modes" not in p:
                 p["movement_modes"] = ["Default", "Default", "Default", "Default"]
+            if "keep_alive" not in p:
+                p["keep_alive"] = [False, False, False, False]
+            if "rapid_fire" not in p:
+                p["rapid_fire"] = [False, False, False, False]
 
     def _save(self):
         try:
@@ -82,11 +88,16 @@ class ProfileManager:
 
     # ── Write API ──────────────────────────────────────────────────────────
 
-    def save_profile(self, index: int, enabled_toons: list, movement_modes: list):
+    def save_profile(self, index: int, enabled_toons: list, movement_modes: list,
+                     keep_alive: list = None, rapid_fire: list = None):
         """Overwrite the data portion of a profile. Preserves its name."""
         if 0 <= index < NUM_PROFILES:
             self._profiles[index]["enabled_toons"] = list(enabled_toons)
             self._profiles[index]["movement_modes"] = list(movement_modes)
+            if keep_alive is not None:
+                self._profiles[index]["keep_alive"] = list(keep_alive)
+            if rapid_fire is not None:
+                self._profiles[index]["rapid_fire"] = list(rapid_fire)
             self._save()
 
     def rename_profile(self, index: int, name: str):

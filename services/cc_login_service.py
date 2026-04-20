@@ -22,6 +22,7 @@ from services.ttr_login_service import LoginState
 
 
 CC_API_URL = "https://corporateclash.net/api/v1/login"
+assert CC_API_URL.startswith("https://"), "CC_API_URL must use HTTPS"
 CC_HEADERS = {
     "Content-Type": "application/json",
     "User-Agent": "ToontownMultiTool/2.0.1"
@@ -111,8 +112,9 @@ class CCLoginWorker(QObject):
                     return
                 self._handle_response(data)
             except requests.RequestException as e:
-                self._set_state(LoginState.FAILED, f"Network error: {e}")
-                self.login_failed.emit(f"Network error: {e}")
+                print(f"[CCLoginWorker] Network error: {type(e).__name__}: {e}")
+                self._set_state(LoginState.FAILED, "Network connection failed. Please check your connection and try again.")
+                self.login_failed.emit("Network connection failed. Please check your connection and try again.")
 
         threading.Thread(target=_do, daemon=True).start()
 
@@ -137,8 +139,9 @@ class CCLoginWorker(QObject):
                     return
                 self._handle_response(data)
             except requests.RequestException as e:
-                self._set_state(LoginState.FAILED, f"Network error: {e}")
-                self.login_failed.emit(f"Network error: {e}")
+                print(f"[CCLoginWorker] Network error: {type(e).__name__}: {e}")
+                self._set_state(LoginState.FAILED, "Network connection failed. Please check your connection and try again.")
+                self.login_failed.emit("Network connection failed. Please check your connection and try again.")
 
         threading.Thread(target=_do, daemon=True).start()
 
