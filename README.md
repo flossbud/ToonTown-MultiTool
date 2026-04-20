@@ -137,7 +137,3 @@ Config files at `~/.config/toontown_multitool/`:
 MIT License — free to use, share, and modify.
 
 ---
-
-## Author
-
-Made by **flossbud**
