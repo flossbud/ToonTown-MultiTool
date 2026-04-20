@@ -16,3 +16,7 @@ dist/
 
 # === AppDir — ignore the binary, keep metadata ===
 AppDir/usr/
+
+# === Tests (keep local, don't track changes) ===
+tests/
+pytest.ini
