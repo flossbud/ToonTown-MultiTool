@@ -44,7 +44,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libfuse2 xdotool libxcb-xinerama0 libxcb-cursor0
+          sudo apt-get install -y libfuse2 xdotool libxcb-xinerama0 libxcb-cursor0 libxcb-record0 libxcb-xtest0
 
       - name: Install Python dependencies
         run: pip install -r requirements.txt pyinstaller
