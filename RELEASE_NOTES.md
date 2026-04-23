@@ -1,59 +1,34 @@
-## 🎮 ToonTown MultiTool v2.0.0
+## ToonTown MultiTool v2.0.1
 
-v2.0 is a complete rewrite. Same concept -- multiboxing input control for Toontown -- rebuilt from the ground up.
-
----
-
-### 🆕 What's New
-
-**🎮 Corporate Clash Support**
-Launch, log in to, and multibox CC alongside TTR. The app automatically identifies which game each window belongs to.
-
-**🔐 Account Manager**
-Store up to 16 TTR and CC accounts with one-click launch. Passwords are stored in your OS keyring (GNOME Keyring / KWallet on Linux, Credential Locker on Windows) and never written to disk. Handles TTR login queues and 2FA automatically.
-
-**🐾 TTR Companion App Integration**
-Live toon name, laff, and jellybean count displayed per slot in the Multitoon tab. Toon portrait images fetched and cached from the Rendition API. Works correctly with multiple Flatpak TTR instances.
-
-**⌨️ Custom Movement Key Sets**
-v1.5.1 assumed all toons used WASD -- v2.0 lets each slot use a different key set. Up to 8 named key sets, fully customizable in the new Keymap tab.
-
-**🚨 Invasion Tracker**
-Live cog invasion display, updated every 60 seconds from the TTR public API.
-
-**💾 Session Profiles**
-5 named profiles storing which toon slots are active, plus keep-alive and rapid-fire state. Load instantly via Ctrl+1 through Ctrl+5 hotkeys.
-
-**🪟 Windows Support**
-v1.5.1 was Linux-only -- v2.0 adds full Windows support. Win32 input backend sends keystrokes to background windows without stealing focus.
+Patch release with stability and compatibility fixes for packaged builds.
 
 ---
 
-### 🔧 Changes & Improvements
+### Bug Fixes
 
-- Input backend rewritten -- keystrokes sent directly via Xlib instead of spawning an `xdotool` subprocess per keypress, fixing GNOME Wayland portal auth prompts
-- `xdotool` is still used for window detection only
-- Flat tab bar replaced with an animated sidebar
-- Keep-alive moved from the Extras tab into per-toon controls in the Multitoon tab
-- Presets renamed to Profiles with hotkey support
-- Credential handling hardened throughout
-- Improved error handling and thread safety across the board
-- Various stability and reliability fixes
+- Fixed AppImage crash (SIGSEGV) on Wayland when typing or pressing certain keys
+- Fixed toon portraits not loading in packaged builds (Windows EXE and Linux AppImage)
+- Fixed credential storage not detecting all available keyring backends in the AppImage
+- Fixed Windows EXE opening a visible console window alongside the app
+
+### Improvements
+
+- Native Wayland support for Linux -- the app now uses the Wayland display backend automatically
+- Wayland users no longer need the `QT_QPA_PLATFORM=xcb` workaround from v2.0.0
+- Added missing keyring dependencies to support GNOME, Cinnamon, and other desktop environments in AppImage builds
 
 ---
 
-### 📦 Downloads
+### Downloads
 
 | File | Platform |
 |------|----------|
-| `ToonTownMultiTool-v2.0.0-Windows-x86_64.exe` | Windows 10/11 |
-| `TTMultiTool-v2.0.0-Linux-x86_64.AppImage` | Linux (X11 / Wayland via XWayland) |
-
-> **Wayland users:** launch with `QT_QPA_PLATFORM=xcb ./TTMultiTool-v2.0.0-Linux-x86_64.AppImage`
+| `ToonTownMultiTool-v2.0.1-Windows-x86_64.exe` | Windows 10/11 |
+| `TTMultiTool-v2.0.1-Linux-x86_64.AppImage` | Linux (X11 / Wayland) |
 
 ---
 
-### 🛠️ Running from Source
+### Running from Source
 
 ```bash
 git clone https://github.com/flossbud/ToonTown-MultiTool.git

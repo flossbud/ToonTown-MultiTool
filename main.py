@@ -1,7 +1,13 @@
 import os
 import sys
+# Environment must be configured before any Qt module is imported,
+# because PySide6 reads QT_QPA_PLATFORM at first import time.
 if sys.platform != "win32":
-    os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
+    os.environ.setdefault("QT_QPA_PLATFORM",
+        "wayland" if os.getenv("XDG_SESSION_TYPE") == "wayland" else "xcb")
+if getattr(sys, "frozen", False):
+    import certifi
+    os.environ.setdefault("SSL_CERT_FILE", certifi.where())
 
 import subprocess
 from PySide6.QtWidgets import (
