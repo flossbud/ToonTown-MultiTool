@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=ToonTown MultiTool
+Comment=Multiboxing input control for Toontown
+Exec=toontown-multitool
+Icon=toontown-multitool
+Type=Application
+Categories=Game;
