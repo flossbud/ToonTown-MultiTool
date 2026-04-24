@@ -1,4 +1,13 @@
 #!/bin/bash
 HERE="$(dirname "$(readlink -f "${0}")")"
-export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}"
+# Auto-detect session type. Forcing xcb on Wayland causes SIGSEGV crashes
+# and keyring-probe instability (especially when another Qt AppImage is
+# already running). Users can still override with QT_QPA_PLATFORM=...
+if [ -z "$QT_QPA_PLATFORM" ]; then
+    if [ "$XDG_SESSION_TYPE" = "wayland" ]; then
+        export QT_QPA_PLATFORM=wayland
+    else
+        export QT_QPA_PLATFORM=xcb
+    fi
+fi
 exec "$HERE/usr/bin/ToonTownMultiTool" "$@"
