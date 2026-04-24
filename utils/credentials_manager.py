@@ -14,6 +14,7 @@ import stat
 import time
 import uuid
 import threading
+from datetime import datetime
 import keyring
 import keyring.backend
 
@@ -22,11 +23,59 @@ from utils.models import AccountCredential
 MAX_ACCOUNTS = 16
 SERVICE_NAME = "toontown_multitool"
 
+# Always-on diagnostic log. Writes to a file independent of stdout/console
+# state, so issues inside PyInstaller --noconsole builds (e.g. AppImage) can
+# still be diagnosed after-the-fact.
+_DEBUG_LOG_PATH = os.path.expanduser("~/.config/toontown_multitool/keyring-debug.log")
+_DEBUG_LOG_LOCK = threading.Lock()
+_DEBUG_LOG_MAX_BYTES = 256 * 1024  # rotate past 256 KiB
+_DEBUG_LOG_CALLBACK = None
+
+
+def set_debug_log_callback(cb):
+    """Register an optional tee for credential diagnostics (e.g. in-app logger)."""
+    global _DEBUG_LOG_CALLBACK
+    _DEBUG_LOG_CALLBACK = cb
+
+
+def _dbg(msg: str):
+    """Write a diagnostic message to stdout (if available), the debug file,
+    and any registered tee callback. Never raises."""
+    try:
+        print(msg)
+    except Exception:
+        pass
+    try:
+        with _DEBUG_LOG_LOCK:
+            os.makedirs(os.path.dirname(_DEBUG_LOG_PATH), exist_ok=True)
+            if os.path.exists(_DEBUG_LOG_PATH):
+                try:
+                    if os.path.getsize(_DEBUG_LOG_PATH) > _DEBUG_LOG_MAX_BYTES:
+                        os.replace(_DEBUG_LOG_PATH, _DEBUG_LOG_PATH + ".1")
+                except OSError:
+                    pass
+            with open(_DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
+                f.write(f"[{datetime.now():%Y-%m-%d %H:%M:%S.%f}] {msg}\n")
+    except Exception:
+        pass
+    cb = _DEBUG_LOG_CALLBACK
+    if cb is not None:
+        try:
+            cb(msg)
+        except Exception:
+            pass
+
 
 class CredentialsManager:
     """Manages up to 8 TTR account credentials using the system keyring."""
 
     def __init__(self):
+        import sys
+        _dbg(f"[CredentialsManager] Init. frozen={getattr(sys, 'frozen', False)} "
+             f"meipass={getattr(sys, '_MEIPASS', None)} python={sys.version.split()[0]} "
+             f"platform={sys.platform} session={os.getenv('XDG_SESSION_TYPE', '')} "
+             f"desktop={os.getenv('XDG_CURRENT_DESKTOP', '')} "
+             f"dbus={'set' if os.getenv('DBUS_SESSION_BUS_ADDRESS') else 'unset'}")
         config_dir = os.path.expanduser("~/.config/toontown_multitool")
         os.makedirs(config_dir, exist_ok=True)
         os.chmod(config_dir, 0o700)
@@ -43,9 +92,10 @@ class CredentialsManager:
         self._primary_backend_name = None
 
         self._cleanup_legacy_fallback_file()
-        
+
         self._migrate_from_v1(config_dir)
         self._load()
+        _dbg(f"[CredentialsManager] Loaded {len(self._accounts)} accounts from {self._path}")
 
     # ── Persistence ────────────────────────────────────────────────────────
 
@@ -60,15 +110,15 @@ class CredentialsManager:
             try:
                 os.remove(old_path)
             except OSError as e:
-                print(f"[CredentialsManager] Failed to remove legacy v1 file: {e}")
+                _dbg(f"[CredentialsManager] Failed to remove legacy v1 file: {e}")
             return
 
         if not self.keyring_available:
             self._deferred_v1_migration = True
-            print("[CredentialsManager] Keyring unavailable or probe pending; deferring v1 credential migration.")
+            _dbg("[CredentialsManager] Keyring unavailable or probe pending; deferring v1 credential migration.")
             return
 
-        print("[CredentialsManager] Migrating credentials from v1 to keyring...")
+        _dbg("[CredentialsManager] Migrating credentials from v1 to keyring...")
         
         try:
             import base64
@@ -133,14 +183,14 @@ class CredentialsManager:
             try:
                 import shutil
                 shutil.move(old_path, backup_path)
-                print("[CredentialsManager] Migration successful. Old file archived as .migrated")
+                _dbg("[CredentialsManager] Migration successful. Old file archived as .migrated")
             except Exception as e:
-                print(f"[CredentialsManager] Warning: could not archive old credentials: {e}")
+                _dbg(f"[CredentialsManager] Warning: could not archive old credentials: {e}")
 
             self._deferred_v1_migration = False
             
         except Exception as e:
-            print(f"[CredentialsManager] Failed to migrate v1 credentials: {type(e).__name__}")
+            _dbg(f"[CredentialsManager] Failed to migrate v1 credentials: {type(e).__name__}")
 
     def _load(self):
         if not os.path.exists(self._path):
@@ -150,7 +200,7 @@ class CredentialsManager:
             with open(self._path, "r") as f:
                 self._accounts = json.load(f)
         except (json.JSONDecodeError, OSError) as e:
-            print(f"[CredentialsManager] Failed to load accounts: {e}")
+            _dbg(f"[CredentialsManager] Failed to load accounts: {e}")
             self._accounts = []
 
     def _save(self):
@@ -160,7 +210,7 @@ class CredentialsManager:
             # Restrict file permissions
             os.chmod(self._path, 0o600)
         except Exception as e:
-            print(f"[CredentialsManager] Failed to save accounts: {e}")
+            _dbg(f"[CredentialsManager] Failed to save accounts: {e}")
 
     def _cleanup_legacy_fallback_file(self):
         if os.path.exists(self._fallback_path):
@@ -172,7 +222,7 @@ class CredentialsManager:
                 os.remove(self._fallback_path)
                 self._legacy_fallback_deleted = True
             except Exception as e:
-                print(f"[CredentialsManager] Failed to delete legacy fallback password store: {type(e).__name__}")
+                _dbg(f"[CredentialsManager] Failed to delete legacy fallback password store: {type(e).__name__}")
                 self._legacy_fallback_deleted = False
         else:
             self._legacy_fallback_deleted = False
@@ -187,14 +237,17 @@ class CredentialsManager:
         open it stays open for the session, so subsequent _get_password calls
         (which use a short 1.5s timeout) succeed without re-prompting.
         """
+        _dbg(f"[Credentials] Probe start: selected={type(keyring.get_keyring()).__module__}."
+             f"{type(keyring.get_keyring()).__name__} timeout={timeout}")
         # Step 1: read the probe key. Forces wallet unlock if key exists.
         ok, value = self._try_keyring_call(
             keyring.get_password, SERVICE_NAME, "__ttmt_probe__", timeout=timeout
         )
+        _dbg(f"[Credentials] Probe step1 (get): ok={ok} value={'present' if value else 'none/empty'}")
         if not ok:
             self._use_keyring = False
             self._probe_complete = True
-            print("[CredentialsManager] Keyring unavailable/unresponsive; passwords will not be saved between sessions.")
+            _dbg("[CredentialsManager] Keyring unavailable/unresponsive; passwords will not be saved between sessions.")
             return False
 
         if value is None:
@@ -204,17 +257,19 @@ class CredentialsManager:
             ok, _ = self._try_keyring_call(
                 keyring.set_password, SERVICE_NAME, "__ttmt_probe__", "1", timeout=timeout
             )
+            _dbg(f"[Credentials] Probe step2 (set): ok={ok}")
             if not ok:
                 # Write failed — user likely dismissed the unlock dialog.
                 self._use_keyring = False
                 self._probe_complete = True
-                print("[CredentialsManager] Keyring write failed (wallet dismissed?); passwords will not be saved between sessions.")
+                _dbg("[CredentialsManager] Keyring write failed (wallet dismissed?); passwords will not be saved between sessions.")
                 return False
 
         self._wake_kwallet_if_relevant(timeout)
         self._use_keyring = True
         self._probe_complete = True
         self._primary_backend_name = self._detect_primary_backend_name()
+        _dbg(f"[Credentials] Probe complete: primary_backend={self._primary_backend_name}")
         if self._deferred_v1_migration:
             self.run_deferred_v1_migration()
         return True
@@ -256,7 +311,8 @@ class CredentialsManager:
             if not done.wait(timeout):
                 self._use_keyring = False
                 self._probe_complete = True
-                print("[CredentialsManager] Keyring call timed out; passwords will not be saved between sessions.")
+                _dbg(f"[CredentialsManager] Keyring call timed out ({getattr(func, '__name__', 'func')}, timeout={timeout}s); "
+                     "passwords will not be saved between sessions.")
                 return False, None
             if result["error"] is not None:
                 # Some backends (notably kwallet.DBusKeyring) raise an exception
@@ -271,9 +327,11 @@ class CredentialsManager:
                 raise result["error"]
             return True, result["value"]
         except Exception as e:
+            _dbg(f"[CredentialsManager] Keyring {getattr(func, '__name__', 'func')} raised "
+                 f"{type(e).__name__}: {e}")
             self._use_keyring = False
             self._probe_complete = True
-            print(
+            _dbg(
                 "[CredentialsManager] Keyring call failed "
                 f"({type(e).__name__}); passwords will not be saved between sessions."
             )
@@ -372,9 +430,9 @@ class CredentialsManager:
             )
             if ok:
                 state = "value-present" if value else "value-empty-or-none"
-                print(f"[Credentials] Direct KWallet probe succeeded [{state}].")
+                _dbg(f"[Credentials] Direct KWallet probe succeeded [{state}].")
             else:
-                print("[Credentials] Direct KWallet probe failed or timed out.")
+                _dbg("[Credentials] Direct KWallet probe failed or timed out.")
             return
 
     def _migrate_password_to_primary_backend(self, account_id: str, password: str, source_backend_name: str):
@@ -391,7 +449,7 @@ class CredentialsManager:
                 backend, "set_password", SERVICE_NAME, account_id, password, timeout=2.0
             )
             if ok:
-                print(
+                _dbg(
                     f"[Credentials] Recovered password from {source_backend_name} "
                     f"and migrated it to {target_name}."
                 )
@@ -402,7 +460,7 @@ class CredentialsManager:
         start = time.monotonic()
         for backend in self._available_explicit_backends():
             if time.monotonic() - start > cumulative_timeout:
-                print(f"[Credentials] Backend recovery timed out after {cumulative_timeout}s.")
+                _dbg(f"[Credentials] Backend recovery timed out after {cumulative_timeout}s.")
                 break
             backend_name = self._backend_name(backend)
             remaining = max(0.5, cumulative_timeout - (time.monotonic() - start))
@@ -411,24 +469,29 @@ class CredentialsManager:
             )
             if ok and value:
                 self._migrate_password_to_primary_backend(account_id, value, backend_name)
-                print(f"[Credentials] Recovered password via {backend_name}.")
+                _dbg(f"[Credentials] Recovered password via {backend_name}.")
                 return value
         return ""
 
     def _get_password(self, account_id: str) -> str:
         if not account_id:
+            _dbg("[Credentials] _get_password called with empty account_id")
             return ""
+        short_id = account_id[:8]
         ok, value = self._try_keyring_call(keyring.get_password, SERVICE_NAME, account_id, timeout=1.5)
+        _dbg(f"[Credentials] _get_password({short_id}): ok={ok} value={'present' if value else 'empty'}")
         if ok:
             if value:
                 return value
             if self._probe_complete:
                 recovered = self._recover_password_from_compatible_backends(account_id)
+                _dbg(f"[Credentials] _get_password({short_id}): recovered={'present' if recovered else 'empty'}")
                 if recovered:
                     return recovered
             return ""
         if self._probe_complete:
             recovered = self._recover_password_from_compatible_backends(account_id)
+            _dbg(f"[Credentials] _get_password({short_id}) fallback-path: recovered={'present' if recovered else 'empty'}")
             if recovered:
                 return recovered
         with self._fallback_lock:
@@ -437,9 +500,11 @@ class CredentialsManager:
                 password, timestamp = entry
                 if time.monotonic() - timestamp > self._fallback_max_age:
                     del self._fallback_passwords[account_id]
-                    print(f"[Credentials] In-memory password expired.")
+                    _dbg(f"[Credentials] In-memory password expired.")
                     return ""
+                _dbg(f"[Credentials] _get_password({short_id}): using in-memory fallback")
                 return password
+        _dbg(f"[Credentials] _get_password({short_id}): returning empty")
         return ""
 
     def _set_password(self, account_id: str, password: str) -> bool:
@@ -452,7 +517,7 @@ class CredentialsManager:
             return True
         with self._fallback_lock:
             self._fallback_passwords[account_id] = (password or "", time.monotonic())
-        print(f"[Credentials] WARNING: Password stored in volatile memory (keyring unavailable). "
+        _dbg(f"[Credentials] WARNING: Password stored in volatile memory (keyring unavailable). "
               f"It will be cleared after {self._fallback_max_age // 60} minutes or on restart.")
         return True
 
@@ -570,7 +635,7 @@ class CredentialsManager:
                 continue
             account_id = a.get("id")
             if not account_id:
-                print(f"[CredentialsManager] Warning: skipping account with missing ID: {a.get('label', '?')}")
+                _dbg(f"[CredentialsManager] Warning: skipping account with missing ID: {a.get('label', '?')}")
                 continue
             password = self._get_password(account_id)
 

@@ -19,7 +19,7 @@ from utils.theme_manager import (
     resolve_theme, get_theme_colors, apply_card_shadow, make_trash_icon,
     make_edit_icon, make_section_label,
 )
-from utils.credentials_manager import CredentialsManager
+from utils.credentials_manager import CredentialsManager, set_debug_log_callback
 from services.ttr_login_service import TTRLoginWorker, LoginState, find_engine_path, get_engine_executable_name
 from services.ttr_launcher import TTRLauncher
 from services.cc_login_service import CCLoginWorker, find_cc_engine_path, get_cc_engine_executable_name
@@ -314,6 +314,14 @@ class LaunchTab(QWidget):
         super().__init__(parent)
         self.settings_manager = settings_manager
         self.logger = logger
+        # Tee credential diagnostics into the in-app log via the debug tab.
+        # This uses a QTimer trampoline so the callback is safe to fire from
+        # the keyring probe thread.
+        if self.logger is not None:
+            from PySide6.QtCore import QTimer
+            def _tee(msg, _log=self.logger.append_log):
+                QTimer.singleShot(0, lambda m=msg: _log(m))
+            set_debug_log_callback(_tee)
         self.cred_manager = CredentialsManager()
 
         # Per-game workers and launchers
@@ -423,12 +431,11 @@ class LaunchTab(QWidget):
         self._probe_thread.start()
 
     def _log_keyring_backend_state(self, stage: str):
+        from utils.credentials_manager import _dbg
         lines = [f"[Credentials] Keyring diagnostics ({stage})"]
         lines.extend(self.cred_manager.format_backend_diagnostics())
         for line in lines:
-            print(line)
-            if self.logger:
-                self.logger.append_log(line)
+            _dbg(line)
 
     def _on_probe_thread_finished(self):
         if self._probe_thread is not None:
@@ -757,8 +764,13 @@ class LaunchTab(QWidget):
     # ── Launch flow ────────────────────────────────────────────────────────
 
     def _on_launch(self, game: str, section_index: int):
+        from utils.credentials_manager import _dbg
+        _dbg(f"[Credentials] _on_launch click: game={game} slot={section_index} "
+             f"probe_pending={self.cred_manager.keyring_probe_pending} "
+             f"available={self.cred_manager.keyring_available}")
         cards = self._cards[game]
         if section_index >= len(cards):
+            _dbg(f"[Credentials] _on_launch: section_index {section_index} out of range ({len(cards)})")
             return
         card = cards[section_index]
         global_idx = card["global_index"]
@@ -766,11 +778,20 @@ class LaunchTab(QWidget):
         # Check engine path
         engine_dir = self._get_engine_dir(game)
         exe_fn = get_engine_executable_name if game == "ttr" else get_cc_engine_executable_name
-        if not engine_dir or not os.path.isfile(os.path.join(engine_dir, exe_fn())):
+        engine_bin = os.path.join(engine_dir, exe_fn()) if engine_dir else ""
+        if not engine_dir or not os.path.isfile(engine_bin):
+            _dbg(f"[Credentials] _on_launch: engine not found (dir='{engine_dir}' bin='{engine_bin}')")
             self._update_status(game, section_index, LoginState.FAILED, "Game path not set — configure in Settings")
             return
 
         acct = self.cred_manager.get_account(global_idx)
+        acct_desc = (
+            f"acct_exists={acct is not None} "
+            f"username={'present' if (acct and acct.username) else 'empty'} "
+            f"password={'present' if (acct and acct.password) else 'empty'}"
+            if acct is not None else "acct_exists=False"
+        )
+        _dbg(f"[Credentials] _on_launch slot={section_index} {acct_desc}")
         if not acct or not acct.username or not acct.password:
             self._update_status(game, section_index, LoginState.FAILED, "Missing username or password — click Edit")
             return
@@ -874,9 +895,8 @@ class LaunchTab(QWidget):
         self._build_ui()
         self.refresh_theme()
         self._set_launch_buttons_enabled(True)
-        print(f"[Credentials] Keyring probe completed: available={available}")
-        if self.logger:
-            self.logger.append_log(f"[Credentials] Keyring probe completed: available={available}")
+        from utils.credentials_manager import _dbg
+        _dbg(f"[Credentials] Keyring probe completed: available={available}")
         self._log_keyring_backend_state("post-probe")
 
     # ── Status updates ─────────────────────────────────────────────────────
