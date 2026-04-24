@@ -52,12 +52,16 @@ class DebugTab(QWidget):
         self.stack.setCurrentIndex(idx)
 
     def append_log(self, message: str):
-        if not self.logging_enabled:
+        # Credential/keyring diagnostics always pass through so AppImage users
+        # can inspect keyring behavior even when the debug tab is otherwise
+        # hidden at startup.
+        is_credentials = any(tag in message for tag in ("[Credentials]", "[CredentialsManager]"))
+        if not self.logging_enabled and not is_credentials:
             return
         # Fix #9: Clearer timestamp format — brackets outside the format spec
         ts = f"[{datetime.now():%H:%M:%S}] "
         full_msg = ts + message
-        
+
         # Route to Input Service Subtab (excluded from Raw Terminal)
         if any(tag in message for tag in ("[Input]", "[KeepAlive]", "[Hotkey]", "[Service]")):
             self.logs_input.appendPlainText(full_msg)
