@@ -17,8 +17,8 @@ import threading
 from datetime import datetime
 import keyring
 import keyring.backend
-import sys as _sys
-if _sys.platform == "linux":
+import sys
+if sys.platform == "linux":
     try:
         from utils import kwallet_jeepney as _kwallet_jeepney  # noqa: F401  (registers subclass)
     except Exception:
