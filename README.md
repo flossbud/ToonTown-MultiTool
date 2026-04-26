@@ -49,8 +49,8 @@ Built with Python + PySide6.
 - Per-toon keep-alive timer with configurable key and interval
 
 **Game Support**
-- Toontown Rewritten — form-based login, queue polling, Flatpak Launcher
-- Corporate Clash — JSON API login, CLI credential injection
+- Toontown Rewritten: form-based login, queue polling, Flatpak Launcher
+- Corporate Clash: JSON API login, CLI credential injection
   
 **Account Management**
 - Store up to 16 TTR and CC accounts with secure OS keyring storage (Secret Service on Linux, Credential Locker on Windows)
@@ -89,6 +89,29 @@ Built with Python + PySide6.
 
 ## Installation
 
+### Arch Linux (AUR)
+
+The package is published as [`toontown-multitool`](https://aur.archlinux.org/packages/toontown-multitool) on the AUR.
+
+Using `yay`:
+```bash
+yay -S toontown-multitool
+```
+
+Using `paru`:
+```bash
+paru -S toontown-multitool
+```
+
+Manual build with `makepkg`:
+```bash
+git clone https://aur.archlinux.org/toontown-multitool.git
+cd toontown-multitool
+makepkg -si
+```
+
+After installation, launch from your application menu, or from a terminal with `toontown-multitool` (or the short alias `ttmt`).
+
 ### Run from source
 
 ```bash
@@ -98,7 +121,9 @@ pip install -r requirements.txt
 python main.py
 ```
 
-### Linux — Wayland sessions
+### Linux: Wayland sessions
+
+Wayland is auto-detected in v2.0.2 and later. If you are running an older release on Wayland and hit input issues, force xcb:
 
 ```bash
 QT_QPA_PLATFORM=xcb python main.py
@@ -134,7 +159,7 @@ Config files at `~/.config/toontown_multitool/`:
 
 ## License
 
-MIT License — free to use, share, and modify.
+MIT License. Free to use, share, and modify.
 
 ---
 
