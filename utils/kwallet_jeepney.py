@@ -128,18 +128,18 @@ class _KWalletSession:
         self._addr = DBusAddress(object_path, bus_name=bus_name,
                                  interface=_KWALLET_INTERFACE)
         self._conn = open_dbus_connection(bus="SESSION")
-
-        wallet = self._call("networkWallet", "", ())
-        if not wallet:
+        try:
+            wallet = self._call("networkWallet", "", ())
+            if not wallet:
+                raise KeyringLocked("KWallet returned no network wallet")
+            handle = self._call("open", "sxs", (wallet, 0, self._backend.appid))
+            if not isinstance(handle, int) or handle < 0:
+                raise KeyringLocked(f"KWallet open() returned handle={handle!r}")
+            self._handle = handle
+            return self
+        except Exception:
             self._conn.close()
-            raise KeyringLocked("KWallet returned no network wallet")
-
-        handle = self._call("open", "sxs", (wallet, 0, self._backend.appid))
-        if not isinstance(handle, int) or handle < 0:
-            self._conn.close()
-            raise KeyringLocked(f"KWallet open() returned handle={handle!r}")
-        self._handle = handle
-        return self
+            raise
 
     def __exit__(self, exc_type, exc, tb):
         try:
@@ -155,11 +155,10 @@ class _KWalletSession:
                 pass
 
     def _call(self, method: str, signature: str, args: tuple):
-        from jeepney import new_method_call
+        from jeepney import MessageType, new_method_call
         msg = new_method_call(self._addr, method, signature, args)
         reply = self._conn.send_and_get_reply(msg, timeout=5.0)
-        # method_return == 2 (jeepney.MessageType.method_return); error == 3
-        if reply.header.message_type.value == 3:
+        if reply.header.message_type == MessageType.error:
             err_name = reply.header.fields.get(4, "<unknown>")
             err_msg = reply.body[0] if reply.body else ""
             raise KeyringLocked(f"KWallet {method} returned error {err_name}: {err_msg}")
