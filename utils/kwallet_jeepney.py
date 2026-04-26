@@ -63,3 +63,24 @@ def detect_kwallet_variant() -> tuple[str, str] | None:
         if _session_bus_owns(bus_name):
             return bus_name, object_path
     return None
+
+
+class JeepneyKWalletBackend(KeyringBackend):
+    """KDE KWallet 5/6 over jeepney (no native dbus-python required)."""
+
+    appid = _id_from_argv() or "ToonTownMultiTool"
+
+    @properties.classproperty
+    def priority(cls) -> float:
+        if detect_kwallet_variant() is None:
+            raise RuntimeError("KWallet daemon not running on the session bus")
+        if "KDE" in os.getenv("XDG_CURRENT_DESKTOP", "").split(":"):
+            # Slightly higher than keyring's native dbus-python kwallet (5.1)
+            # so we preempt it when both are usable. They share storage so
+            # there is no data divergence.
+            return 5.2
+        return 4.7
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._cached_address = None
