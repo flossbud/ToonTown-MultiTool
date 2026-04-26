@@ -1,19 +1,16 @@
-## ToonTown MultiTool v2.0.2
+## ToonTown MultiTool v2.0.3
 
-Patch release with stability and UI polish fixes.
+Patch release fixing credential storage on KDE Plasma.
 
 ---
 
 ### Bug Fixes
 
-- Fixed an issue where saved account credentials could fail to load on Linux after a reboot.
-- Fixed status indicator dots being vertically misaligned with the "Sending input to X toons" label.
-- Fixed long toon names causing the jellybean count to be cut off in the toon card.
+- Fixed AppImage builds being unable to read passwords stored in KDE Wallet, which caused accounts to fail to launch with no error message after a system reboot.
 
 ### Improvements
 
-- Added a system-wide desktop entry so the app appears in application menus when installed.
-- Added an always-on credentials diagnostic log to make future credential issues easier to investigate.
+- Added a portable, pure-Python KWallet backend so packaged builds work on KDE without needing system Python bindings installed.
 
 ---
 
@@ -21,8 +18,8 @@ Patch release with stability and UI polish fixes.
 
 | File | Platform |
 |------|----------|
-| `ToonTownMultiTool-v2.0.2-Windows-x86_64.exe` | Windows 10/11 |
-| `TTMultiTool-v2.0.2-Linux-x86_64.AppImage` | Linux (X11 / Wayland) |
+| `ToonTownMultiTool-v2.0.3-Windows-x86_64.exe` | Windows 10/11 |
+| `TTMultiTool-v2.0.3-Linux-x86_64.AppImage` | Linux (X11 / Wayland) |
 
 ---
 
