@@ -208,3 +208,87 @@ done
   > <list every match: file:line: text>
 
   Do not attempt to clean the matches automatically. Past autofix attempts are how `Co-Authored-By: Claude` slipped through originally.
+
+---
+
+## Phase 7: Ready-to-ship summary
+
+Print a single block (substitute the variables):
+
+```
+▸ Ready to ship v${NEW_VERSION}
+
+  Commit:  chore: release v${NEW_VERSION}
+  Tag:     v${NEW_VERSION}
+  Files:
+    - main.py (APP_VERSION: ${OLD_VERSION} -> ${NEW_VERSION})
+    - services/cc_login_service.py (User-Agent)
+    - services/ttr_login_service.py (User-Agent)
+    - RELEASE_NOTES.md (rewritten)
+  Contributor scan: PASSED
+  AUR bump: /home/jaret/Projects/aur-toontown-multitool from ${OLD_VERSION} to ${NEW_VERSION}
+
+  Push targets:
+    - origin main
+    - origin v${NEW_VERSION}  (triggers CI release workflow)
+    - aur master
+```
+
+Then ask: `Ready to ship? [y/N]`
+
+Match `y`, `Y`, `yes`, or `YES` to proceed. Anything else aborts. The bumps and `RELEASE_NOTES.md` stay on disk for retry.
+
+---
+
+## Phase 8: Commit, tag, push, AUR
+
+Execute these in order. **If any step fails, stop immediately and report which step failed.** Do not skip past failures.
+
+```bash
+# 1. Commit the source bumps
+git add main.py services/cc_login_service.py services/ttr_login_service.py RELEASE_NOTES.md
+git commit -m "chore: release v${NEW_VERSION}"
+
+# 2. Tag
+git tag -a "v${NEW_VERSION}" -m "v${NEW_VERSION}"
+
+# 3. Push main and tag (triggers CI)
+git push origin main
+git push origin "v${NEW_VERSION}"
+
+# 4. Bump AUR PKGBUILD and .SRCINFO
+cd /home/jaret/Projects/aur-toontown-multitool
+sed -i "s/^pkgver=.*/pkgver=${NEW_VERSION}/" PKGBUILD
+sed -i "s/${OLD_VERSION}/${NEW_VERSION}/g" .SRCINFO
+
+# 5. Commit and push AUR
+git add PKGBUILD .SRCINFO
+git commit -m "Update to v${NEW_VERSION}"
+git push aur master
+
+# 6. Return to project
+cd -
+```
+
+**No `Co-Authored-By:` trailers in any commit message.** The contributor scan in Phase 6 already verified the working tree is clean of LLM attribution. Don't add it back here.
+
+If a push fails (auth, network, conflict), stop and report which one. The local commit and tag persist; the user can retry the failed push manually.
+
+---
+
+## Phase 9: Final summary
+
+Print:
+
+```
+✓ v${NEW_VERSION} released
+
+  CI:       https://github.com/flossbud/ToonTown-MultiTool/actions
+  Release:  https://github.com/flossbud/ToonTown-MultiTool/releases/tag/v${NEW_VERSION}
+  AUR:      https://aur.archlinux.org/packages/toontown-multitool
+
+  Watch CI for the build. Once it finishes, the release page will have
+  the Windows EXE, Linux AppImage, and Flatpak attached.
+```
+
+End of skill.
