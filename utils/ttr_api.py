@@ -205,7 +205,8 @@ def _build_port_to_window_id(current_window_ids: list, active_ports: set | None 
                             except ValueError:
                                 continue
             else:
-                out = subprocess.check_output(["ss", "-tlnp"], stderr=subprocess.DEVNULL, timeout=5).decode()
+                from utils.host_spawn import host_check_output
+                out = host_check_output(["ss", "-tlnp"], stderr=subprocess.DEVNULL, timeout=5).decode()
                 for line in out.splitlines():
                     m = re.search(r":(\d+)\s+.*TTREngine.*pid=(\d+)", line)
                     if m:

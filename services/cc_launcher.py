@@ -15,6 +15,7 @@ from PySide6.QtCore import QObject, Signal
 from services.cc_login_service import CC_ENGINE_SEARCH_PATHS, get_cc_engine_executable_name
 from services.launcher_env import build_launcher_env
 from utils.game_registry import GameRegistry
+from utils.host_spawn import host_popen
 
 _CUSTOM_APPROVAL_KEY = "cc_engine_dir_approved_custom_dir"
 _TRUSTED_CC_ENGINE_DIRS = {
@@ -88,7 +89,7 @@ class CCLauncher(QObject):
                 if osst_token:
                     extra_env["CC_OSST_TOKEN"] = osst_token
 
-                self._game_process = subprocess.Popen(
+                self._game_process = host_popen(
                     cmd,
                     cwd=engine_dir,
                     env=build_launcher_env(extra_env),
