@@ -14,7 +14,9 @@ from __future__ import annotations
 import contextlib
 import os
 import sys
-from typing import Optional, Tuple
+
+if sys.platform != "linux":
+    raise ImportError("utils.kwallet_jeepney is Linux-only")
 
 from keyring.backend import KeyringBackend
 from keyring.compat import properties
@@ -31,6 +33,7 @@ _DBUS_IFACE = "org.freedesktop.DBus"
 
 
 def _id_from_argv() -> str:
+    """Return the running executable name, used as the KWallet application ID."""
     allowed = (AttributeError, IndexError, TypeError)
     with contextlib.suppress(*allowed):
         return sys.argv[0] or "ToonTownMultiTool"
@@ -54,7 +57,7 @@ def _session_bus_owns(name: str) -> bool:
         return False
 
 
-def detect_kwallet_variant() -> Optional[Tuple[str, str]]:
+def detect_kwallet_variant() -> tuple[str, str] | None:
     """Return ``(bus_name, object_path)`` for the live KWallet daemon, or None."""
     for bus_name, object_path in _VARIANTS:
         if _session_bus_owns(bus_name):
