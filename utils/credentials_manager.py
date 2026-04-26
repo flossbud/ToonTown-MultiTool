@@ -17,6 +17,14 @@ import threading
 from datetime import datetime
 import keyring
 import keyring.backend
+import sys as _sys
+if _sys.platform == "linux":
+    try:
+        from utils import kwallet_jeepney as _kwallet_jeepney  # noqa: F401  (registers subclass)
+    except Exception:
+        _kwallet_jeepney = None
+else:
+    _kwallet_jeepney = None
 
 from utils.models import AccountCredential
 
@@ -365,6 +373,11 @@ class CredentialsManager:
             manual_candidates.append(kwallet.DBusKeyring())
         except Exception:
             pass
+        try:
+            if _kwallet_jeepney is not None:
+                manual_candidates.append(_kwallet_jeepney.JeepneyKWalletBackend())
+        except Exception:
+            pass
         backends.extend(manual_candidates)
         backends.sort(key=_priority, reverse=True)
         for backend in backends:
@@ -423,7 +436,10 @@ class CredentialsManager:
             return
         for backend in self._available_explicit_backends():
             backend_name = self._backend_name(backend)
-            if backend_name != "keyring.backends.kwallet.DBusKeyring":
+            if backend_name not in (
+                "keyring.backends.kwallet.DBusKeyring",
+                "utils.kwallet_jeepney.JeepneyKWalletBackend",
+            ):
                 continue
             ok, value = self._call_backend_method(
                 backend, "get_password", SERVICE_NAME, "__ttmt_probe__", timeout=timeout
