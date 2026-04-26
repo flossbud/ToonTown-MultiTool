@@ -105,3 +105,51 @@ git diff --stat main.py services/cc_login_service.py services/ttr_login_service.
 ```
 
 Each file should show `1 +1 -1`. If anything else changed, abort and let the user investigate.
+
+---
+
+## Phase 4: Draft release notes
+
+Read commit subjects since the last tag:
+
+```bash
+git log "${LATEST_TAG}..HEAD" --pretty=format:"%s"
+```
+
+For each line, classify by conventional-commit prefix (anchored at the start, optional scope in parens):
+
+- `^fix(\(.+?\))?:` → **Bug Fixes**
+- `^feat(\(.+?\))?:` → **Improvements**
+- `^(docs|chore|refactor|build|ci|test|style)(\(.+?\))?:` → **skip** (internal-only, not user-facing)
+- Anything else (no recognized prefix) → **Improvements** (fallback)
+
+For each kept line:
+- Strip the prefix and optional scope.
+- Trim leading/trailing whitespace.
+- Capitalize the first character.
+- Strip trailing periods.
+- Replace any em dash (`—`) with `:` or rewrite the sentence to remove it. NO em dashes in the final output.
+
+Render into the project's release notes template (header, a one-sentence summary, Bug Fixes section, Improvements section, downloads table for the new version, and a "Running from Source" code block matching the format used in previous `RELEASE_NOTES.md` files). Use the existing `RELEASE_NOTES.md` from any prior release as the structural reference.
+
+Rules for the template:
+
+- If a section (Bug Fixes or Improvements) has zero bullets, omit the section header entirely.
+- The summary sentence at the top is concise (one sentence, under ~15 words). It describes the release theme, not specifics. Examples: "Patch release fixing credential storage on KDE Plasma." / "Adds Wayland auto-detection and cleans up minor UI alignment issues."
+- The summary contains NO em dashes.
+
+**Show the rendered draft to the user. Do NOT write to `RELEASE_NOTES.md` yet.**
+
+---
+
+## Phase 5: Iterate notes inline
+
+Ask the user verbatim:
+
+> Does this look right? Reply `good` / `ship it` to accept, or describe what to change.
+
+Loop:
+- If the response matches `good`, `ship it`, `approved`, `lgtm`, `looks good`, or `accept` (case-insensitive), proceed.
+- Otherwise, apply the user's edits and re-render the full draft. Show it again. Repeat.
+
+Once approved, write the final draft to `RELEASE_NOTES.md`, overwriting the previous version's notes.
