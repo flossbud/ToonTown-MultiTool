@@ -31,6 +31,8 @@ a = Analysis(
         'jeepney.io',
         'jeepney.io.blocking',
         'jeepney.bus_messages',
+        'jeepney.wrappers',
+        'utils.kwallet_jeepney',
     ],
     hookspath=[],
     hooksconfig={},
