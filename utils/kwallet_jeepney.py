@@ -68,7 +68,7 @@ def detect_kwallet_variant() -> tuple[str, str] | None:
 class JeepneyKWalletBackend(KeyringBackend):
     """KDE KWallet 5/6 over jeepney (no native dbus-python required)."""
 
-    appid = _id_from_argv() or "ToonTownMultiTool"
+    appid = _id_from_argv()
 
     @properties.classproperty
     def priority(cls) -> float:
@@ -81,6 +81,8 @@ class JeepneyKWalletBackend(KeyringBackend):
             return 5.2
         return 4.7
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._cached_address = None
+    def get_password(self, service: str, username: str) -> str | None:
+        raise NotImplementedError("Implemented in Task 3")
+
+    def set_password(self, service: str, username: str, password: str) -> None:
+        raise NotImplementedError("Implemented in Task 3")
