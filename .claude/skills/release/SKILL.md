@@ -153,3 +153,58 @@ Loop:
 - Otherwise, apply the user's edits and re-render the full draft. Show it again. Repeat.
 
 Once approved, write the final draft to `RELEASE_NOTES.md`, overwriting the previous version's notes.
+
+---
+
+## Phase 6: Contributor scan
+
+This phase has a corresponding shell test at
+`.claude/skills/release/tests/test_contributor_scan.sh`. If you change
+`PATTERNS` here, change it there too and re-run the test.
+
+```bash
+PATTERNS='claude|anthropic|noreply@anthropic\.com|\bgpt[-0-9]?\b|\bllm\b|\bcodex\b|co-authored-by:'
+```
+
+Run all three checks below. Collect every match (file, line number, matching text). If ANY check produces output, abort the release and print the matches.
+
+### A. Commit metadata + bodies since the last tag
+
+```bash
+git log "${LATEST_TAG}..HEAD" --pretty="%H %an %ae %s%n%b" \
+    | grep -inE "$PATTERNS" || true
+```
+
+### B. Every file in the diff range
+
+```bash
+git diff --name-only "${LATEST_TAG}..HEAD" | while read -r f; do
+    [ -f "$f" ] && grep -inHE "$PATTERNS" "$f" || true
+done
+```
+
+### C. Always-checked release artifacts
+
+```bash
+ALWAYS_CHECK=(
+    RELEASE_NOTES.md
+    README.md
+    AppDir/AppRun
+    /home/jaret/Projects/aur-toontown-multitool/PKGBUILD
+    /home/jaret/Projects/aur-toontown-multitool/.SRCINFO
+)
+for f in "${ALWAYS_CHECK[@]}" flatpak/*.metainfo.xml; do
+    [ -f "$f" ] && grep -inHE "$PATTERNS" "$f" || true
+done
+```
+
+### Verdict
+
+- If A, B, and C all produce zero output, the scan PASSED. Continue to Phase 7.
+- If any of them produces output, abort with:
+
+  > Contributor scan FAILED. Fix the source of these matches and re-run /release. No autofix.
+  >
+  > <list every match: file:line: text>
+
+  Do not attempt to clean the matches automatically. Past autofix attempts are how `Co-Authored-By: Claude` slipped through originally.
