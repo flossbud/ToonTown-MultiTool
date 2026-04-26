@@ -1,6 +1,6 @@
 app-id: io.github.flossbud.ToonTownMultiTool
 runtime: org.kde.Platform
-runtime-version: '6.7'
+runtime-version: '6.9'
 sdk: org.kde.Sdk
 command: toontown-multitool
 
@@ -34,6 +34,8 @@ modules:
   - name: python-deps
     buildsystem: simple
     build-options:
+      build-args:
+        - --share=network
       env:
         PIP_DISABLE_PIP_VERSION_CHECK: '1'
     build-commands:
