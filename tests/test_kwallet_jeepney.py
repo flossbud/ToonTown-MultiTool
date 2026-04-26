@@ -54,3 +54,23 @@ def test_priority_returns_lower_outside_kde(monkeypatch):
                         lambda: ("org.kde.kwalletd6", "/modules/kwalletd6"))
     monkeypatch.setenv("XDG_CURRENT_DESKTOP", "GNOME")
     assert kj.JeepneyKWalletBackend.priority == 4.7
+
+
+def test_roundtrip_set_get_delete():
+    """End-to-end write -> read -> delete against a live kwalletd."""
+    from utils.kwallet_jeepney import JeepneyKWalletBackend, detect_kwallet_variant
+    if detect_kwallet_variant() is None:
+        pytest.skip("kwalletd not reachable on this session bus")
+
+    backend = JeepneyKWalletBackend()
+    service = "toontown_multitool_pytest"
+    username = "roundtrip_user"
+    secret = "s3cret-value-xyz"
+
+    backend.set_password(service, username, secret)
+    try:
+        assert backend.get_password(service, username) == secret
+    finally:
+        backend.delete_password(service, username)
+
+    assert backend.get_password(service, username) is None

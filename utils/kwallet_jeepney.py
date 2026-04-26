@@ -82,7 +82,89 @@ class JeepneyKWalletBackend(KeyringBackend):
         return 4.7
 
     def get_password(self, service: str, username: str) -> str | None:
-        raise NotImplementedError("Implemented in Task 3")
+        with _KWalletSession(self) as s:
+            if not s._call("hasEntry", "isss",
+                           (s.handle, service, username, self.appid)):
+                return None
+            value = s._call("readPassword", "isss",
+                            (s.handle, service, username, self.appid))
+            return None if value is None else str(value)
 
     def set_password(self, service: str, username: str, password: str) -> None:
-        raise NotImplementedError("Implemented in Task 3")
+        with _KWalletSession(self) as s:
+            rc = s._call("writePassword", "issss",
+                         (s.handle, service, username, password, self.appid))
+            if rc != 0:
+                raise PasswordSetError(f"KWallet writePassword returned {rc}")
+
+    def delete_password(self, service: str, username: str) -> None:
+        with _KWalletSession(self) as s:
+            if not s._call("hasEntry", "isss",
+                           (s.handle, service, username, self.appid)):
+                raise PasswordDeleteError("Password not found")
+            rc = s._call("removeEntry", "isss",
+                         (s.handle, service, username, self.appid))
+            if rc != 0:
+                raise PasswordDeleteError(f"KWallet removeEntry returned {rc}")
+
+
+class _KWalletSession:
+    """Short-lived RAII wrapper around a kwalletd handle."""
+
+    def __init__(self, backend: "JeepneyKWalletBackend"):
+        self._backend = backend
+        self._conn = None
+        self._addr = None
+        self._handle: int = -1
+
+    def __enter__(self):
+        from jeepney import DBusAddress
+        from jeepney.io.blocking import open_dbus_connection
+
+        variant = detect_kwallet_variant()
+        if variant is None:
+            raise KeyringLocked("KWallet daemon not running")
+        bus_name, object_path = variant
+        self._addr = DBusAddress(object_path, bus_name=bus_name,
+                                 interface=_KWALLET_INTERFACE)
+        self._conn = open_dbus_connection(bus="SESSION")
+
+        wallet = self._call("networkWallet", "", ())
+        if not wallet:
+            self._conn.close()
+            raise KeyringLocked("KWallet returned no network wallet")
+
+        handle = self._call("open", "sxs", (wallet, 0, self._backend.appid))
+        if not isinstance(handle, int) or handle < 0:
+            self._conn.close()
+            raise KeyringLocked(f"KWallet open() returned handle={handle!r}")
+        self._handle = handle
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        try:
+            if self._handle >= 0:
+                self._call("close", "ibs", (self._handle, False, self._backend.appid))
+        except Exception:
+            pass
+        finally:
+            try:
+                if self._conn is not None:
+                    self._conn.close()
+            except Exception:
+                pass
+
+    def _call(self, method: str, signature: str, args: tuple):
+        from jeepney import new_method_call
+        msg = new_method_call(self._addr, method, signature, args)
+        reply = self._conn.send_and_get_reply(msg, timeout=5.0)
+        # method_return == 2 (jeepney.MessageType.method_return); error == 3
+        if reply.header.message_type.value == 3:
+            err_name = reply.header.fields.get(4, "<unknown>")
+            err_msg = reply.body[0] if reply.body else ""
+            raise KeyringLocked(f"KWallet {method} returned error {err_name}: {err_msg}")
+        return reply.body[0] if reply.body else None
+
+    @property
+    def handle(self) -> int:
+        return self._handle
