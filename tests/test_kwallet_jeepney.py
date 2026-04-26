@@ -28,3 +28,29 @@ def test_detect_falls_back_to_kwalletd5(monkeypatch):
     owners = {"org.kde.kwalletd6": False, "org.kde.kwalletd5": True}
     monkeypatch.setattr(kj, "_session_bus_owns", owners.get)
     assert detect_kwallet_variant() == ("org.kde.kwalletd5", "/modules/kwalletd5")
+
+
+def test_priority_raises_when_no_daemon(monkeypatch):
+    """No live daemon means the backend is not viable."""
+    import utils.kwallet_jeepney as kj
+    monkeypatch.setattr(kj, "detect_kwallet_variant", lambda: None)
+    with pytest.raises(RuntimeError):
+        kj.JeepneyKWalletBackend.priority
+
+
+def test_priority_returns_high_when_kde_and_daemon(monkeypatch):
+    """KDE session with a daemon should give priority 5.2."""
+    import utils.kwallet_jeepney as kj
+    monkeypatch.setattr(kj, "detect_kwallet_variant",
+                        lambda: ("org.kde.kwalletd6", "/modules/kwalletd6"))
+    monkeypatch.setenv("XDG_CURRENT_DESKTOP", "KDE")
+    assert kj.JeepneyKWalletBackend.priority == 5.2
+
+
+def test_priority_returns_lower_outside_kde(monkeypatch):
+    """Daemon present but not a KDE session: still usable, but lower than native."""
+    import utils.kwallet_jeepney as kj
+    monkeypatch.setattr(kj, "detect_kwallet_variant",
+                        lambda: ("org.kde.kwalletd6", "/modules/kwalletd6"))
+    monkeypatch.setenv("XDG_CURRENT_DESKTOP", "GNOME")
+    assert kj.JeepneyKWalletBackend.priority == 4.7
