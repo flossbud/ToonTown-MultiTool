@@ -5,16 +5,17 @@ IOSToggle           — Animated iOS-style toggle switch
 IOSSegmentedControl — iOS-style segmented control for small option sets
 PulsingDot          — Animated status dot with optional breathing glow
 SmoothProgressBar   — Sub-pixel precision progress bar with rounded pill shape
+ElidingLabel        — QLabel that truncates long text with an ellipsis
 """
 
 import math
 
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QWidget, QLabel, QSizePolicy
 from PySide6.QtCore import (
     Qt, Signal, QPropertyAnimation, QEasingCurve, QVariantAnimation,
-    Property, QRectF,
+    Property, QRectF, QSize,
 )
-from PySide6.QtGui import QColor, QPainter, QFont, QRadialGradient
+from PySide6.QtGui import QColor, QPainter, QFont, QRadialGradient, QFontMetrics
 
 
 # ── iOS Toggle Switch ────────────────────────────────────────────────────────
@@ -332,3 +333,54 @@ class SmoothProgressBar(QWidget):
             p.drawRoundedRect(QRectF(0, 0, fill_w, h), r, r)
 
         p.end()
+
+
+# ── Eliding Label ────────────────────────────────────────────────────────────
+
+class ElidingLabel(QLabel):
+    """QLabel that truncates overly long text with an ellipsis.
+
+    Unlike a plain QLabel — whose natural sizeHint is the full text width,
+    which pushes sibling widgets off the end of the row — this label reports
+    a small minimumSizeHint so the surrounding QBoxLayout will shrink it
+    preferentially over adjacent fixed/minimum-policy widgets like buttons.
+    """
+
+    def __init__(self, text: str = "", mode: Qt.TextElideMode = Qt.ElideRight,
+                 min_visible_chars: int = 4, parent=None):
+        super().__init__(parent)
+        self._full_text = text
+        self._elide_mode = mode
+        self._min_visible_chars = max(1, min_visible_chars)
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
+        self._apply_elision()
+
+    def setText(self, text: str) -> None:
+        self._full_text = text or ""
+        self._apply_elision()
+
+    def fullText(self) -> str:
+        return self._full_text
+
+    def sizeHint(self) -> QSize:
+        fm = QFontMetrics(self.font())
+        return QSize(fm.horizontalAdvance(self._full_text), fm.height())
+
+    def minimumSizeHint(self) -> QSize:
+        fm = QFontMetrics(self.font())
+        return QSize(fm.averageCharWidth() * self._min_visible_chars + fm.horizontalAdvance("…"),
+                     fm.height())
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._apply_elision()
+
+    def _apply_elision(self) -> None:
+        fm = QFontMetrics(self.font())
+        # contentsRect() accounts for stylesheet padding; fall back to width().
+        available = max(0, self.contentsRect().width()) or self.width()
+        if available <= 0 or fm.horizontalAdvance(self._full_text) <= available:
+            super().setText(self._full_text)
+        else:
+            super().setText(fm.elidedText(self._full_text, self._elide_mode, available))
+        self.setToolTip(self._full_text if self.text() != self._full_text else "")

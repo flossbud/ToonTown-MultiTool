@@ -16,7 +16,7 @@ from utils.theme_manager import (
     make_heart_icon, make_jellybean_icon,
     get_set_color, SmoothProgressBar, make_section_label,
 )
-from utils.shared_widgets import PulsingDot
+from utils.shared_widgets import PulsingDot, ElidingLabel
 from utils.symbols import S
 from utils.ttr_api import get_toon_names_threaded, invalidate_port_to_wid_cache, clear_stale_names
 from utils import cc_api
@@ -218,7 +218,10 @@ class StatusDots(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedSize(66, 24)
+        # Height matches the StatusBar layout cell (34px bar - 2px borders -
+        # 16px top/bottom margins = 16px). Anything taller overflows and Qt
+        # clamps the widget to the cell top, pushing dots below the text.
+        self.setFixedSize(66, 16)
         self._states = [0, 0, 0, 0]
         self._colors = {0: QColor("#333"), 1: QColor("#555"), 2: QColor("#56c856")}
 
@@ -785,7 +788,7 @@ class MultitoonTab(QWidget):
             self.slot_badges.append(badge)
             top_row.addWidget(badge)
 
-            name_label = QLabel(f"Toon {i + 1}")
+            name_label = ElidingLabel(f"Toon {i + 1}")
             status_dot = PulsingDot(10)
             status_dot.setToolTip("Not Found")
             self.toon_labels.append((name_label, status_dot))
