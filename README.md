@@ -112,6 +112,17 @@ makepkg -si
 
 After installation, launch from your application menu, or from a terminal with `toontown-multitool` (or the short alias `ttmt`).
 
+### Linux (Flatpak)
+
+A `.flatpak` bundle is attached to each release on the [Releases page](https://github.com/flossbud/ToonTown-MultiTool/releases). Download the file ending in `.flatpak` and install it:
+
+```bash
+flatpak install --user ./TTMultiTool-vX.Y.Z-Linux-x86_64.flatpak
+flatpak run io.github.flossbud.ToonTownMultiTool
+```
+
+The Flatpak runs the app in a sandbox and uses `flatpak-spawn` to launch the host TTR and Corporate Clash engines, so you must already have those games installed on the host.
+
 ### Run from source
 
 ```bash

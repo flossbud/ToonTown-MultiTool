@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.flossbud.ToonTownMultiTool</id>
+  <name>ToonTown MultiTool</name>
+  <summary>Multitoon controller for Toontown Rewritten and Corporate Clash</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <developer_name>flossbud</developer_name>
+  <description>
+    <p>
+      ToonTown MultiTool lets you launch and control multiple Toontown Rewritten
+      and Corporate Clash accounts at the same time. Broadcast input to up to
+      four background toons, customize per-slot key sets, manage stored
+      accounts via the OS keyring, and track toon stats and invasions live.
+    </p>
+  </description>
+  <launchable type="desktop-id">io.github.flossbud.ToonTownMultiTool.desktop</launchable>
+  <url type="homepage">https://github.com/flossbud/ToonTown-MultiTool</url>
+  <url type="bugtracker">https://github.com/flossbud/ToonTown-MultiTool/issues</url>
+  <categories>
+    <category>Game</category>
+  </categories>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="2.0.2" date="2026-04-26"/>
+  </releases>
+</component>

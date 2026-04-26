@@ -10,6 +10,7 @@ from PySide6.QtCore import QObject, Signal
 from services.launcher_env import build_launcher_env
 from services.ttr_login_service import ENGINE_SEARCH_PATHS, get_engine_executable_name
 from utils.game_registry import GameRegistry
+from utils.host_spawn import host_popen
 
 _CUSTOM_APPROVAL_KEY = "ttr_engine_dir_approved_custom_dir"
 _TRUSTED_ENGINE_DIRS = {
@@ -81,7 +82,7 @@ class TTRLauncher(QObject):
                 if sys.platform == "win32":
                     kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
 
-                self._game_process = subprocess.Popen(
+                self._game_process = host_popen(
                     [engine_path],
                     cwd=engine_dir,
                     env=env,
