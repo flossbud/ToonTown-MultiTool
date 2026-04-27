@@ -89,61 +89,61 @@ def get_theme_colors(is_dark: bool) -> dict:
     if is_dark:
         return {
             # Backgrounds  (elevation: sidebar < app < card < card_inner)
-            "bg_app":        "#1a1a1a",
-            "bg_card":       "#252525",
-            "bg_card_inner": "#2e2e2e",
-            "bg_input":      "#1e1e1e",
-            "bg_input_dark": "#141414",
-            "bg_status":     "#1e1e1e",
+            "bg_app":        "#1a1a1f",
+            "bg_card":       "#2a2a30",
+            "bg_card_inner": "#2f2f36",
+            "bg_input":      "#1e1e23",
+            "bg_input_dark": "#141418",
+            "bg_status":     "#1e1e23",
 
             # Sidebar
-            "sidebar_bg":       "#111111",
+            "sidebar_bg":       "#131316",
             "sidebar_btn":      "transparent",
             "sidebar_btn_sel":  "rgba(255,255,255,0.09)",
-            "sidebar_text":     "#aaaaaa",
+            "sidebar_text":     "#a8a8b0",
             "sidebar_text_sel": "#ffffff",
-            "sidebar_border":   "#2a2a2a",
+            "sidebar_border":   "#2c2c33",
 
             # Header
-            "header_bg":     "#1a1a1a",
-            "header_text":   "#ffffff",
-            "header_accent": "#0077ff",
+            "header_bg":     "#1a1a1f",
+            "header_text":   "#e8e8ed",
+            "header_accent": "#3a6dd8",
 
             # Borders
-            "border_card":  "#363636",
-            "border_input": "#3a3a3a",
-            "border_muted": "#2e2e2e",
-            "border_light": "#555555",
+            "border_card":  "#35353c",
+            "border_input": "#3a3a42",
+            "border_muted": "#2c2c33",
+            "border_light": "#55555c",
 
             # Text
-            "text_primary":   "#ffffff",
-            "text_secondary": "#bbbbbb",
-            "text_muted":     "#888888",
-            "text_disabled":  "#666666",
+            "text_primary":   "#e8e8ed",
+            "text_secondary": "#c8c8d0",
+            "text_muted":     "#888890",
+            "text_disabled":  "#5c5c64",
 
             # Accent — green
-            "accent_green":        "#3da343",
+            "accent_green":        "#3aaa5e",
             "accent_green_border": "#56d66a",
-            "accent_green_hover":  "#4fc95c",
+            "accent_green_hover":  "#4fc06a",
             "accent_green_hover_border": "#6ae87d",
             "accent_green_subtle": "#80c080",
 
             # Accent — blue
             "accent_blue": "#88c0d0",
-            "accent_blue_btn":        "#0077ff",
-            "accent_blue_btn_border": "#3399ff",
-            "accent_blue_btn_hover":  "#1a88ff",
+            "accent_blue_btn":        "#3a6dd8",
+            "accent_blue_btn_border": "#5a8de8",
+            "accent_blue_btn_hover":  "#4a7de0",
 
             # Accent — red
-            "accent_red":        "#b34848",
+            "accent_red":        "#c44848",
             "accent_red_border": "#d95757",
             "accent_red_hover":  "#cc5e5e",
             "accent_red_hover_border": "#f06868",
 
             # Accent — orange (keep-alive active)
-            "accent_orange":        "#c47a2a",
-            "accent_orange_border": "#e0943a",
-            "accent_orange_hover":  "#d48a34",
+            "accent_orange":        "#c66d2e",
+            "accent_orange_border": "#e0843a",
+            "accent_orange_hover":  "#d47a34",
 
             # Status strip — success
             "status_success_bg":     "#2c3f2c",
@@ -156,47 +156,53 @@ def get_theme_colors(is_dark: bool) -> dict:
             "status_warning_border": "#ffaa00",
 
             # Status strip — idle
-            "status_idle_bg":     "#2f2f2f",
-            "status_idle_text":   "#cccccc",
-            "status_idle_border": "#555555",
+            "status_idle_bg":     "#2f2f36",
+            "status_idle_text":   "#c8c8d0",
+            "status_idle_border": "#55555c",
 
             # Buttons
-            "btn_bg":       "#333333",
-            "btn_border":   "#444444",
-            "btn_hover":    "#3e3e3e",
-            "btn_disabled": "#2a2a2a",
-            "btn_text":     "#ffffff",
+            "btn_bg":       "#35353c",
+            "btn_border":   "#45454c",
+            "btn_hover":    "#3e3e45",
+            "btn_disabled": "#2a2a30",
+            "btn_text":     "#e8e8ed",
 
             # Dropdowns
-            "dropdown_bg":          "#2e2e2e",
-            "dropdown_text":        "#ffffff",
-            "dropdown_border":      "#3a3a3a",
-            "dropdown_list_bg":     "#1e1e1e",
-            "dropdown_sel_bg":      "#3a3a3a",
+            "dropdown_bg":          "#2f2f36",
+            "dropdown_text":        "#e8e8ed",
+            "dropdown_border":      "#3a3a42",
+            "dropdown_list_bg":     "#1e1e23",
+            "dropdown_sel_bg":      "#3a3a42",
             "dropdown_sel_text":    "#ffffff",
 
             # Toon enable button — inactive
-            "toon_btn_inactive_bg":     "#3a3a3a",
-            "toon_btn_inactive_border": "#4a4a4a",
-            "toon_btn_inactive_hover":  "#444444",
-            "toon_btn_inactive_hover_border": "#5a5a5a",
+            "toon_btn_inactive_bg":     "#3a3a42",
+            "toon_btn_inactive_border": "#4a4a52",
+            "toon_btn_inactive_hover":  "#444450",
+            "toon_btn_inactive_hover_border": "#5a5a62",
 
             # Slot accent colors (badge circles)
             "slot_1": "#5b9bf5",
             "slot_2": "#4ade80",
             "slot_3": "#f59e42",
             "slot_4": "#b07cf5",
-            "slot_dim": "#2e2e2e",
+            "slot_dim": "#2f2f36",
 
             # Toon cards (floating on gradient)
-            "card_toon_bg":        "#252525",
-            "card_toon_border":    "#363636",
-            "card_toon_active_bg": "#1e2e1e",
+            "card_toon_bg":        "#2a2a30",
+            "card_toon_border":    "#35353c",
+            "card_toon_active_bg": "#1f2e22",
 
             # Segment status bar
-            "segment_off":    "#1e1e1e",
-            "segment_found":  "#363636",
-            "segment_active": "#56c856",
+            "segment_off":    "#1e1e23",
+            "segment_found":  "#35353c",
+            "segment_active": "#3aaa5e",
+
+            # Full UI tokens
+            "status_dot_active": "#3aaa5e",
+            "status_dot_idle":   "#45454c",
+            "game_pill_ttr":     "#7e57c2",
+            "game_pill_cc":      "#3a6dd8",
         }
     else:
         return {
