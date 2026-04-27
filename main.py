@@ -45,6 +45,28 @@ from utils.theme_manager import (
 TITLE_ANIM_DURATION_MS = 800
 TITLE_ANIM_MAX_WIDTH = 300
 
+# Layout-mode breakpoint and hysteresis. Window must be >= W_FULL x H_FULL
+# (plus deadband on the way up) to enter Full UI; Compact resumes once either
+# dimension drops below (breakpoint - deadband) on the way down.
+W_FULL = 1280
+H_FULL = 800
+DEADBAND_W = 80
+DEADBAND_H = 60
+
+
+def _decide_layout_mode(current: str, width: int, height: int) -> str:
+    """Pure state-machine: return the layout mode for the given size, given the
+    current mode. Implements deadband hysteresis so a window dragged across the
+    breakpoint does not flicker."""
+    if current == "compact":
+        if width >= W_FULL + DEADBAND_W and height >= H_FULL + DEADBAND_H:
+            return "full"
+        return "compact"
+    # current == "full"
+    if width <= W_FULL - DEADBAND_W or height <= H_FULL - DEADBAND_H:
+        return "compact"
+    return "full"
+
 
 class NoFocusProxyStyle(QProxyStyle):
     def drawPrimitive(self, element, option, painter, widget=None):
@@ -88,6 +110,7 @@ class MultiToonTool(QMainWindow):
         self.setWindowTitle("ToonTown MultiTool")
         self.setGeometry(QRect(100, 100, 560, 650))
         self.setMinimumWidth(520)
+        self._layout_mode = "compact"
 
         self.pressed_keys = set()
         GameRegistry.instance()  # warm up before any launchers
@@ -356,6 +379,22 @@ class MultiToonTool(QMainWindow):
         # Remove the effect after animation so it doesn't interfere with rendering
         self._page_anim.finished.connect(lambda: w.setGraphicsEffect(None))
         self._page_anim.start()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        size = self.size()
+        target = _decide_layout_mode(self._layout_mode, size.width(), size.height())
+        if target != self._layout_mode:
+            try:
+                self._set_layout_mode(target)
+            except Exception as e:
+                if hasattr(self, "logger") and self.logger:
+                    self.logger.append_log(f"[Layout] swap failed: {e}")
+
+    def _set_layout_mode(self, target: str) -> None:
+        # Default: instant swap. Cross-fade is added in Task 12.
+        self.multitoon_tab.set_layout_mode(target)
+        self._layout_mode = target
 
     def _apply_nav_icons(self):
         c = self._theme_colors()
