@@ -118,6 +118,14 @@ class _FullToonCard(QFrame):
     # ── Active view structure ──────────────────────────────────────────────
     def _build_active_structure(self):
         self._active_root = QWidget(self)
+        # Mockup v9 sets `align-content: start` on the card grid so content
+        # packs at the top with empty space pushed below. Qt's QGridLayout
+        # otherwise distributes excess vertical space across content rows,
+        # which strands name/stats in the middle and pins controls to the
+        # bottom of the card. `Maximum` vertical size policy makes the grid
+        # widget render at its content height so the parent QVBoxLayout
+        # leaves the rest of the card as empty space below.
+        self._active_root.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
         grid = QGridLayout(self._active_root)
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setHorizontalSpacing(18)
@@ -174,9 +182,9 @@ class _FullToonCard(QFrame):
         self._active_grid.addWidget(self._tab.laff_labels[self._slot], 1, 1, alignment=Qt.AlignLeft)
         self._active_grid.addWidget(self._tab.bean_labels[self._slot], 2, 1, alignment=Qt.AlignLeft)
 
-        # TTR/CC pill (top-right absolute via overlay — re-parents to active_root)
+        # TTR/CC pill (top-right absolute via overlay — parented to card frame)
         self._game_pill = self._tab.game_badges[self._slot]
-        self._game_pill.setParent(self._active_root)
+        self._game_pill.setParent(self)
         self._game_pill.move(0, 0)  # repositioned in resizeEvent
 
         # Controls row
@@ -240,6 +248,8 @@ class _FullToonCard(QFrame):
         self._is_active = active
         self._active_root.setVisible(active)
         self._inactive_root.setVisible(not active)
+        if self._game_pill is not None:
+            self._game_pill.setVisible(active)
         if active:
             self._status_indicator.set_active(True)
             self._start_pulse()
