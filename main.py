@@ -392,9 +392,42 @@ class MultiToonTool(QMainWindow):
                     self.logger.append_log(f"[Layout] swap failed: {e}")
 
     def _set_layout_mode(self, target: str) -> None:
-        # Default: instant swap. Cross-fade is added in Task 12.
-        self.multitoon_tab.set_layout_mode(target)
-        self._layout_mode = target
+        # Honor disable_animations: instant swap, no fade.
+        if self.settings_manager.get("disable_animations", False):
+            self.multitoon_tab.set_layout_mode(target)
+            self._layout_mode = target
+            return
+
+        # Cross-fade: 80ms fade-out -> swap -> 80ms fade-in (160ms total).
+        widget = self.multitoon_tab
+        effect = QGraphicsOpacityEffect(widget)
+        widget.setGraphicsEffect(effect)
+
+        fade_out = QPropertyAnimation(effect, b"opacity")
+        fade_out.setDuration(80)
+        fade_out.setStartValue(1.0)
+        fade_out.setEndValue(0.0)
+        fade_out.setEasingCurve(QEasingCurve.OutCubic)
+
+        fade_in = QPropertyAnimation(effect, b"opacity")
+        fade_in.setDuration(80)
+        fade_in.setStartValue(0.0)
+        fade_in.setEndValue(1.0)
+        fade_in.setEasingCurve(QEasingCurve.OutCubic)
+
+        def _on_fade_out_done():
+            self.multitoon_tab.set_layout_mode(target)
+            self._layout_mode = target
+            fade_in.start()
+
+        fade_out.finished.connect(_on_fade_out_done)
+        fade_in.finished.connect(lambda: widget.setGraphicsEffect(None))
+
+        # Keep references so they don't get GC'd mid-animation.
+        self._layout_fade_out = fade_out
+        self._layout_fade_in = fade_in
+
+        fade_out.start()
 
     def _apply_nav_icons(self):
         c = self._theme_colors()
