@@ -392,10 +392,13 @@ class MultiToonTool(QMainWindow):
                     self.logger.append_log(f"[Layout] swap failed: {e}")
 
     def _set_layout_mode(self, target: str) -> None:
+        # Commit to the new mode synchronously so concurrent resizeEvent ticks
+        # during the fade don't restart the animation.
+        self._layout_mode = target
+
         # Honor disable_animations: instant swap, no fade.
         if self.settings_manager.get("disable_animations", False):
             self.multitoon_tab.set_layout_mode(target)
-            self._layout_mode = target
             return
 
         # Cross-fade: 80ms fade-out -> swap -> 80ms fade-in (160ms total).
@@ -417,7 +420,6 @@ class MultiToonTool(QMainWindow):
 
         def _on_fade_out_done():
             self.multitoon_tab.set_layout_mode(target)
-            self._layout_mode = target
             fade_in.start()
 
         fade_out.finished.connect(_on_fade_out_done)
