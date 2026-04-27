@@ -301,16 +301,21 @@ class _FullToonCard(QFrame):
             )
         # Re-apply Full UI's name-label styling. refresh_theme runs first and
         # sets a Compact-style 14px stylesheet; this call then overrides for
-        # Full's 16pt DemiBold + 60px right padding (room for the game pill).
+        # Full's 20pt DemiBold + 60px right padding (room for the game pill).
         name_label, _ = self._tab.toon_labels[self._slot]
         name_label.setStyleSheet(
-            f"font-size: 16px; font-weight: 600; color: {c['text_primary']}; "
+            f"font-size: 20px; font-weight: 600; color: {c['text_primary']}; "
             f"background: transparent; border: none; padding-right: 60px;"
         )
         f = name_label.font()
-        f.setPointSize(16)
+        f.setPointSize(20)
         f.setWeight(QFont.DemiBold)
         name_label.setFont(f)
+        for lbl in (self._tab.laff_labels[self._slot], self._tab.bean_labels[self._slot]):
+            lbl.setStyleSheet(
+                f"border: none; background: transparent; font-weight: 600; "
+                f"font-size: 15px; color: {c['text_primary']};"
+            )
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
