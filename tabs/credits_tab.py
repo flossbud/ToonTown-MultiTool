@@ -57,7 +57,8 @@ class CreditsTab(QWidget):
         card_layout.addStretch()
         card_layout.addWidget(byline)
         
-        layout.addWidget(self.card)
+        from utils.layout import clamp_centered
+        clamp_centered(layout, self.card, 720)
         
     def refresh_theme(self):
         c = get_theme_colors(resolve_theme(self.settings_manager) == "dark")
