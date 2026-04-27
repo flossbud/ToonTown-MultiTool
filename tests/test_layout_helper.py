@@ -56,3 +56,25 @@ def test_status_indicator_constructs_and_renders(qapp):
     assert not pixmap.isNull()
     assert pixmap.size().width() == 32
     assert pixmap.size().height() == 32
+
+
+def test_full_layout_helper_imports_resolve(qapp):
+    """Sanity: the new symbols added in Task 9 are importable."""
+    from tabs.multitoon._full_layout import (
+        _StatusIndicator, _FullToonCard, _make_ctrl_32
+    )
+    assert _StatusIndicator is not None
+    assert _FullToonCard is not None
+    assert callable(_make_ctrl_32)
+
+
+def test_make_ctrl_32_sets_fixed_height_and_radius(qapp):
+    """`_make_ctrl_32` is the shared baseliner for the controls row."""
+    from PySide6.QtWidgets import QPushButton
+    from tabs.multitoon._full_layout import _make_ctrl_32
+
+    btn = QPushButton("Test")
+    _make_ctrl_32(btn)
+    assert btn.minimumHeight() == 32
+    assert btn.maximumHeight() == 32
+    assert "border-radius: 6px" in btn.styleSheet()
