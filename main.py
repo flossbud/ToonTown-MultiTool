@@ -38,7 +38,7 @@ from utils.theme_manager import (
     apply_theme, resolve_theme, get_theme_colors, apply_card_shadow,
     make_nav_gamepad, make_nav_power,
     make_nav_keyboard, make_nav_gear, make_nav_terminal, make_nav_bookmark,
-    make_hint_icon, make_info_icon
+    make_hint_icon, make_info_icon, font_role,
 )
 
 
@@ -431,13 +431,16 @@ class MultiToonTool(QMainWindow):
         apply_card_shadow(self.header, is_dark, blur=10, offset_y=2)
         tc = c['header_text']
         vc = c['header_accent']
-        self.title_label.setStyleSheet("font-size: 17px; font-weight: bold; background: transparent;")
+        self.title_label.setStyleSheet(
+            f"font-size: {font_role('title')}px; font-weight: bold; background: transparent;"
+        )
         self.title_label.setText(
             f'<span style="color:{tc}">ToonTown MultiTool</span>'
-            f' <span style="color:{vc}; font-size:11px; font-weight:bold;">v{self.APP_VERSION}</span>'
+            f' <span style="color:{vc}; font-size:{font_role("label")}px; font-weight:bold;">'
+            f'v{self.APP_VERSION}</span>'
         )
         self.byline_label.setStyleSheet(f"""
-            font-size: 11px; color: {c['header_sub']}; background: transparent;
+            font-size: {font_role('label')}px; color: {c['header_sub']}; background: transparent;
         """)
         # Accent stripe
         accent = self.header.findChild(QFrame, "header_accent")

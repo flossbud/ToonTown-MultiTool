@@ -10,6 +10,28 @@ from utils.icon_factory import *  # noqa: F401,F403
 from utils.shared_widgets import SmoothProgressBar  # noqa: F401
 
 
+# ── Typography Scale ──────────────────────────────────────────────────────
+# Semantic font-size roles. Use font_role(name) instead of inline px values.
+# Sizes chosen to match the existing visual hierarchy used in the header,
+# tab content, and small badges; tweak here to rescale globally.
+
+TYPOGRAPHY = {
+    "display": 22,   # large, attention-grabbing (e.g. empty-state headlines)
+    "title":   17,   # section titles, the app header title
+    "body":    13,   # default content text
+    "label":   11,   # small labels, version badge, byline
+    "caption": 10,   # micro labels, status pills, footnotes
+}
+
+
+def font_role(role: str) -> int:
+    """Return the px size for a semantic typography role.
+
+    Unknown roles fall back to "body" so a typo never produces 0px text.
+    """
+    return TYPOGRAPHY.get(role, TYPOGRAPHY["body"])
+
+
 # ── Shadow Helper ──────────────────────────────────────────────────────────
 
 def apply_card_shadow(widget, is_dark: bool, blur: float = 18, offset_y: float = 3):
