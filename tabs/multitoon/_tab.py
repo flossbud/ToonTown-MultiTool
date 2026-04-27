@@ -822,12 +822,13 @@ class MultitoonTab(QWidget):
 
         self._build_shared_widgets()
 
+        # Build both layouts. Each runs populate() in its __init__, so whichever
+        # is built second steals widget ownership. We then call _compact.populate()
+        # one more time so Compact wins for the initial view.
         self._stack = QStackedWidget(self)
-        # Build Full first so Compact's _build runs last and owns the shared
-        # widgets — Compact is the initial view. set_layout_mode triggers
-        # _FullLayout.populate() to reattach when swapping to Full.
-        self._full = _FullLayout(self)
         self._compact = _CompactLayout(self)
+        self._full = _FullLayout(self)
+        self._compact.populate()  # re-claim ownership for the default view
         self._stack.addWidget(self._compact)
         self._stack.addWidget(self._full)
         self._stack.setCurrentWidget(self._compact)
@@ -845,12 +846,11 @@ class MultitoonTab(QWidget):
         if mode == self._mode:
             return
         target = self._full if mode == "full" else self._compact
-        # Re-parent shared widgets back into the target via populate
-        if hasattr(target, "populate"):
-            target.populate()
+        # Re-attach all shared widgets to the target's slots
+        target.populate()
         self._stack.setCurrentWidget(target)
         self._mode = mode
-        # Re-apply theme so the new layout picks up colors
+        # Re-apply theme so the new layout picks up colors (incl. game_pill etc.)
         self.refresh_theme()
 
     # ── Set selector rebuild ───────────────────────────────────────────────

@@ -1,0 +1,138 @@
+"""Regression test for the multitoon-full-ui shared-widget reparenting bug.
+
+The Compact and Full layouts both consume the same per-slot widget instances
+(portrait, name label, enable button, etc.). When set_layout_mode swaps between
+them, each layout's populate() must re-add the widgets so they end up parented
+under the visible layout. If populate is broken, Full UI renders empty.
+
+Run via pytest with QT_QPA_PLATFORM=offscreen (set in fixture if needed)."""
+
+import os
+import pytest
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+from PySide6.QtCore import QObject, Signal
+from PySide6.QtWidgets import QApplication
+
+
+@pytest.fixture(scope="module")
+def qapp():
+    app = QApplication.instance() or QApplication([])
+    yield app
+
+
+class _FakeSettingsManager:
+    """Minimal stand-in for SettingsManager — supports .get() and .on_change()
+    enough for MultitoonTab.build_ui to succeed in tests."""
+
+    def __init__(self):
+        self._data = {}
+
+    def get(self, key, default=None):
+        return self._data.get(key, default)
+
+    def set(self, key, value):
+        self._data[key] = value
+
+    def on_change(self, callback):
+        # We don't need to actually invoke the callback in tests.
+        pass
+
+
+class _FakeWindowManager(QObject):
+    """Minimal stand-in for WindowManager — provides the signals and attributes
+    that MultitoonTab.__init__ and visual-state methods access."""
+
+    window_ids_updated = Signal(list)
+
+    def __init__(self):
+        super().__init__()
+        self.ttr_window_ids = []
+
+    def get_window_ids(self):
+        return []
+
+    def clear_window_ids(self):
+        pass
+
+    def assign_windows(self):
+        pass
+
+    def enable_detection(self):
+        pass
+
+    def disable_detection(self):
+        pass
+
+
+@pytest.fixture
+def tab(qapp):
+    """A fully-built MultitoonTab with fake managers — safe for offscreen."""
+    from tabs.multitoon_tab import MultitoonTab
+    return MultitoonTab(
+        settings_manager=_FakeSettingsManager(),
+        window_manager=_FakeWindowManager(),
+    )
+
+
+def _is_descendant_of(widget, ancestor) -> bool:
+    """True if ancestor is somewhere in widget's parent chain."""
+    cur = widget.parent() if widget is not None else None
+    while cur is not None:
+        if cur is ancestor:
+            return True
+        cur = cur.parent()
+    return False
+
+
+def test_compact_owns_shared_widgets_at_startup(tab):
+    assert tab._mode == "compact"
+
+    # Toggle service button should be parented somewhere under _compact
+    assert _is_descendant_of(tab.toggle_service_button, tab._compact)
+    # And NOT under _full (Full's items, if any, must be stale)
+    assert not _is_descendant_of(tab.toggle_service_button, tab._full)
+
+    # Each per-slot shared widget should also live under _compact
+    for i in range(4):
+        assert _is_descendant_of(tab.toon_buttons[i], tab._compact), (
+            f"slot {i} toon_button should be under _compact"
+        )
+        assert _is_descendant_of(tab.set_selectors[i], tab._compact)
+
+
+def test_swap_to_full_reparents_shared_widgets(tab):
+    tab.set_layout_mode("full")
+    assert tab._mode == "full"
+
+    # toggle_service_button must move under _full (the service-bar row)
+    assert _is_descendant_of(tab.toggle_service_button, tab._full)
+    # And no longer under _compact
+    assert not _is_descendant_of(tab.toggle_service_button, tab._compact)
+
+    # Per-slot widgets should now live under _full
+    for i in range(4):
+        assert _is_descendant_of(tab.toon_buttons[i], tab._full), (
+            f"slot {i} toon_button should be under _full after swap"
+        )
+        assert _is_descendant_of(tab.slot_badges[i], tab._full)
+
+
+def test_swap_back_to_compact_reparents_again(tab):
+    tab.set_layout_mode("full")
+    tab.set_layout_mode("compact")
+    assert tab._mode == "compact"
+
+    # Widgets should now live under _compact again
+    assert _is_descendant_of(tab.toggle_service_button, tab._compact)
+    assert not _is_descendant_of(tab.toggle_service_button, tab._full)
+    for i in range(4):
+        assert _is_descendant_of(tab.toon_buttons[i], tab._compact)
+
+
+def test_set_layout_mode_idempotent(tab):
+    """Calling set_layout_mode with the current mode should be a no-op."""
+    tab.set_layout_mode("compact")  # already compact
+    assert tab._mode == "compact"
+    assert _is_descendant_of(tab.toggle_service_button, tab._compact)
