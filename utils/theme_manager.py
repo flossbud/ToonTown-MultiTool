@@ -19,7 +19,7 @@ TYPOGRAPHY = {
     "display": 22,   # large, attention-grabbing (e.g. empty-state headlines)
     "title":   17,   # section titles, the app header title
     "body":    13,   # default content text
-    "label":   11,   # small labels, version badge, byline
+    "label":   11,   # small labels, version badge, status chips
     "caption": 10,   # micro labels, status pills, footnotes
 }
 
@@ -363,7 +363,8 @@ LIGHT_THEME = """
     QWidget {
         font-family: 'Inter', 'Segoe UI', 'Noto Sans', 'DejaVu Sans', sans-serif;
         font-size: 12pt;
-        background-color: #f0f0f0;
+        background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+            stop:0 #f6f6f6, stop:1 #ebebeb);
         color: #202020;
     }
     QPushButton {
