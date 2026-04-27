@@ -131,12 +131,12 @@ class _FullToonCard(QFrame):
         grid.setVerticalSpacing(4)
         self._active_grid = grid
 
-        # Portrait wrapper (120x120) — static container; the portrait widget itself
+        # Portrait wrapper (156x156) — static container; the portrait widget itself
         # is a shared widget reattached in populate_active.
         self._portrait_wrap = QWidget()
-        self._portrait_wrap.setFixedSize(120, 120)
+        self._portrait_wrap.setFixedSize(156, 156)
         self._status_indicator = _StatusIndicator(self._portrait_wrap)
-        self._status_indicator.move(90, 90)
+        self._status_indicator.move(126, 126)
 
         # Empty ctrl_row sub-layout — re-filled by populate_active()
         self._ctrl_row = QHBoxLayout()
@@ -156,12 +156,12 @@ class _FullToonCard(QFrame):
         # Portrait + status indicator (column 0, rows 0-2)
         portrait = self._tab.slot_badges[self._slot]
         portrait.setParent(self._portrait_wrap)
-        portrait.setFixedSize(120, 120)
+        portrait.setFixedSize(156, 156)
         portrait.move(0, 0)
         # Re-parent status_indicator too (it's a child of portrait_wrap, which
         # was re-parented to None when clear_layout ran on the grid).
         self._status_indicator.setParent(self._portrait_wrap)
-        self._status_indicator.move(90, 90)
+        self._status_indicator.move(126, 126)
         self._active_grid.addWidget(self._portrait_wrap, 0, 0, 3, 1, alignment=Qt.AlignTop)
 
         # Name label (col 1, row 0). Font + padding are now applied in
@@ -188,27 +188,27 @@ class _FullToonCard(QFrame):
 
         # Controls row
         btn = self._tab.toon_buttons[self._slot]
-        _style_ctrl(btn, 40)
-        btn.setFixedWidth(100)
+        _style_ctrl(btn, 44)
+        btn.setFixedWidth(110)
         self._ctrl_row.addWidget(btn)
 
         chat = self._tab.chat_buttons[self._slot]
-        _style_ctrl(chat, 40)
-        chat.setFixedWidth(40)
+        _style_ctrl(chat, 44)
+        chat.setFixedWidth(44)
         self._ctrl_row.addWidget(chat)
 
         ka = self._tab.keep_alive_buttons[self._slot]
-        _style_ctrl(ka, 40)
-        ka.setFixedWidth(40)
+        _style_ctrl(ka, 44)
+        ka.setFixedWidth(44)
         self._ctrl_row.addWidget(ka)
 
         ka_bar = self._tab.ka_progress_bars[self._slot]
-        ka_bar.setFixedSize(120, 10)
+        ka_bar.setFixedSize(140, 12)
         self._ctrl_row.addWidget(ka_bar)
         self._ctrl_row.addStretch(1)
 
         selector = self._tab.set_selectors[self._slot]
-        _style_ctrl(selector, 40)
+        _style_ctrl(selector, 44)
         self._ctrl_row.addWidget(selector)
 
         self._active_grid.addLayout(self._ctrl_row, 3, 0, 1, 2)
@@ -305,20 +305,20 @@ class _FullToonCard(QFrame):
             )
         # Re-apply Full UI's name-label styling. refresh_theme runs first and
         # sets a Compact-style 14px stylesheet; this call then overrides for
-        # Full's 20pt DemiBold + 60px right padding (room for the game pill).
+        # Full's 26pt DemiBold + 60px right padding (room for the game pill).
         name_label, _ = self._tab.toon_labels[self._slot]
         name_label.setStyleSheet(
-            f"font-size: 20px; font-weight: 600; color: {c['text_primary']}; "
+            f"font-size: 26px; font-weight: 600; color: {c['text_primary']}; "
             f"background: transparent; border: none; padding-right: 60px;"
         )
         f = name_label.font()
-        f.setPointSize(20)
+        f.setPointSize(26)
         f.setWeight(QFont.DemiBold)
         name_label.setFont(f)
         for lbl in (self._tab.laff_labels[self._slot], self._tab.bean_labels[self._slot]):
             lbl.setStyleSheet(
                 f"border: none; background: transparent; font-weight: 600; "
-                f"font-size: 15px; color: {c['text_primary']};"
+                f"font-size: 17px; color: {c['text_primary']};"
             )
 
     def resizeEvent(self, event):
