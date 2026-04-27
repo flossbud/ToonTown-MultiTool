@@ -176,7 +176,7 @@ class _CompactLayout(QWidget):
         if "padding-right" in sheet:
             name_label.setStyleSheet(sheet.replace("padding-right: 60px;", "").strip())
 
-        # Buttons: Full sets 100×40 enable, 40×40 chat/KA; constructor defaults
+        # Buttons: Full sets 110×44 enable, 44×44 chat/KA; constructor defaults
         # are 88×32 enable, 32×32 chat/KA.
         self._tab.toon_buttons[i].setFixedHeight(32)
         self._tab.toon_buttons[i].setFixedWidth(88)
