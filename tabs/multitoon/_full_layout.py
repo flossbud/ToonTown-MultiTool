@@ -81,7 +81,12 @@ def _make_ctrl_32(widget: QWidget) -> None:
 
 class _FullToonCard(QFrame):
     """One toon's card in the Full UI. Active and inactive states share the
-    outer frame; the inner content swaps based on whether a window was found."""
+    outer frame; the inner content swaps based on whether a window was found.
+
+    Two-phase construction (active view): `_build_active_structure` creates the
+    grid + ctrl_row shells; `populate_active` re-attaches shared widgets so we
+    can rebuild after a layout-mode swap stole them.
+    """
 
     def __init__(self, slot_index: int, tab, parent=None):
         super().__init__(parent)
@@ -97,28 +102,59 @@ class _FullToonCard(QFrame):
         self._stack_layout.setContentsMargins(18, 18, 18, 18)
         self._stack_layout.setSpacing(0)
 
-        self._build_active_view()
+        # Cached refs for populate_active()
+        self._active_grid = None
+        self._ctrl_row = None
+        self._portrait_wrap = None
+        self._status_indicator = None
+        self._game_pill = None  # set on first populate_active
+
+        self._build_active_structure()
         self._build_inactive_view()
+        self.populate_active()
         self.set_active(False)
 
-    # ── Active view ────────────────────────────────────────────────────────
-    def _build_active_view(self):
+    # ── Active view structure ──────────────────────────────────────────────
+    def _build_active_structure(self):
         self._active_root = QWidget(self)
         grid = QGridLayout(self._active_root)
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setHorizontalSpacing(18)
         grid.setVerticalSpacing(4)
+        self._active_grid = grid
+
+        # Portrait wrapper (104x104) — static container; the portrait widget itself
+        # is a shared widget reattached in populate_active.
+        self._portrait_wrap = QWidget()
+        self._portrait_wrap.setFixedSize(104, 104)
+        self._status_indicator = _StatusIndicator(self._portrait_wrap)
+        self._status_indicator.move(74, 74)  # bottom-right inset
+
+        # Empty ctrl_row sub-layout — re-filled by populate_active()
+        self._ctrl_row = QHBoxLayout()
+        self._ctrl_row.setSpacing(8)
+
+        self._stack_layout.addWidget(self._active_root)
+
+    # ── Active view populate ───────────────────────────────────────────────
+    def populate_active(self):
+        """(Re-)attach the shared widgets into the active grid. Idempotent."""
+        from tabs.multitoon._layout_utils import clear_layout
+
+        # Clear the grid and ctrl_row of any prior shared widgets
+        clear_layout(self._active_grid)
+        clear_layout(self._ctrl_row)
 
         # Portrait + status indicator (column 0, rows 0-2)
-        portrait_wrap = QWidget()
-        portrait_wrap.setFixedSize(104, 104)
         portrait = self._tab.slot_badges[self._slot]
-        portrait.setParent(portrait_wrap)
+        portrait.setParent(self._portrait_wrap)
         portrait.setFixedSize(104, 104)
         portrait.move(0, 0)
-        self._status_indicator = _StatusIndicator(portrait_wrap)
-        self._status_indicator.move(74, 74)  # bottom-right, -2/-2 visual offset
-        grid.addWidget(portrait_wrap, 0, 0, 3, 1, alignment=Qt.AlignTop)
+        # Re-parent status_indicator too (it's a child of portrait_wrap, which
+        # was re-parented to None when clear_layout ran on the grid).
+        self._status_indicator.setParent(self._portrait_wrap)
+        self._status_indicator.move(74, 74)
+        self._active_grid.addWidget(self._portrait_wrap, 0, 0, 3, 1, alignment=Qt.AlignTop)
 
         # Name label (col 1, row 0)
         name_label, _status_dot_compact = self._tab.toon_labels[self._slot]
@@ -127,9 +163,9 @@ class _FullToonCard(QFrame):
         name_font.setWeight(QFont.DemiBold)
         name_label.setFont(name_font)
         name_label.setStyleSheet(name_label.styleSheet() + "padding-right: 60px;")
-        grid.addWidget(name_label, 0, 1, alignment=Qt.AlignBottom)
+        self._active_grid.addWidget(name_label, 0, 1, alignment=Qt.AlignBottom)
 
-        # Stats (col 1, rows 1 & 2). Reuse the existing labels but apply tabular nums.
+        # Stats with tabular nums (col 1, rows 1 & 2)
         for lbl in (self._tab.laff_labels[self._slot], self._tab.bean_labels[self._slot]):
             f = lbl.font()
             try:
@@ -137,40 +173,35 @@ class _FullToonCard(QFrame):
             except Exception:
                 f.setStyleHint(QFont.TypeWriter, QFont.PreferDefault)
             lbl.setFont(f)
-        grid.addWidget(self._tab.laff_labels[self._slot], 1, 1, alignment=Qt.AlignLeft)
-        grid.addWidget(self._tab.bean_labels[self._slot], 2, 1, alignment=Qt.AlignLeft)
+        self._active_grid.addWidget(self._tab.laff_labels[self._slot], 1, 1, alignment=Qt.AlignLeft)
+        self._active_grid.addWidget(self._tab.bean_labels[self._slot], 2, 1, alignment=Qt.AlignLeft)
 
-        # TTR/CC pill (top-right absolute via overlay)
+        # TTR/CC pill (top-right absolute via overlay — re-parents to active_root)
         self._game_pill = self._tab.game_badges[self._slot]
         self._game_pill.setParent(self._active_root)
-        self._game_pill.move(0, 0)  # repositioned in resizeEvent of card
+        self._game_pill.move(0, 0)  # repositioned in resizeEvent
 
-        # Controls row (spans both columns)
-        ctrl_row = QHBoxLayout()
-        ctrl_row.setSpacing(8)
-
+        # Controls row
         for w in (
             self._tab.toon_buttons[self._slot],
             self._tab.chat_buttons[self._slot],
             self._tab.keep_alive_buttons[self._slot],
         ):
             _make_ctrl_32(w)
-        ctrl_row.addWidget(self._tab.toon_buttons[self._slot])
-        ctrl_row.addWidget(self._tab.chat_buttons[self._slot])
-        ctrl_row.addWidget(self._tab.keep_alive_buttons[self._slot])
+        self._ctrl_row.addWidget(self._tab.toon_buttons[self._slot])
+        self._ctrl_row.addWidget(self._tab.chat_buttons[self._slot])
+        self._ctrl_row.addWidget(self._tab.keep_alive_buttons[self._slot])
 
         ka_bar = self._tab.ka_progress_bars[self._slot]
         ka_bar.setFixedSize(90, 8)
-        ctrl_row.addWidget(ka_bar)
-        ctrl_row.addStretch(1)
+        self._ctrl_row.addWidget(ka_bar)
+        self._ctrl_row.addStretch(1)
 
         selector = self._tab.set_selectors[self._slot]
         _make_ctrl_32(selector)
-        ctrl_row.addWidget(selector)
+        self._ctrl_row.addWidget(selector)
 
-        grid.addLayout(ctrl_row, 3, 0, 1, 2)
-
-        self._stack_layout.addWidget(self._active_root)
+        self._active_grid.addLayout(self._ctrl_row, 3, 0, 1, 2)
 
     # ── Inactive view ──────────────────────────────────────────────────────
     def _build_inactive_view(self):
@@ -248,19 +279,17 @@ class _FullToonCard(QFrame):
         self._status_indicator.apply_theme(
             c["bg_card"], c["status_dot_active"], c["status_dot_idle"]
         )
-        # Use text_on_accent (Material 3 onPrimary pattern) — light mode = white,
-        # dark mode = slate-900. The plan's hardcoded "white" would have failed AA
-        # in dark mode where game_pill_ttr is now a brighter violet-400.
-        self._game_pill.setStyleSheet(
-            f"background: {c['game_pill_ttr']}; color: {c['text_on_accent']}; "
-            f"border-radius: 10px; padding: 3px 10px; "
-            f"font-size: 10px; font-weight: 700; letter-spacing: 0.5px;"
-        )
+        # text_on_accent (Material 3 onPrimary): white on light, slate-900 on dark
+        if self._game_pill is not None:
+            self._game_pill.setStyleSheet(
+                f"background: {c['game_pill_ttr']}; color: {c['text_on_accent']}; "
+                f"border-radius: 10px; padding: 3px 10px; "
+                f"font-size: 10px; font-weight: 700; letter-spacing: 0.5px;"
+            )
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        # Keep the game pill anchored top-right at (-14, -14) inset
-        if self._is_active:
+        if self._is_active and self._game_pill is not None:
             pw = self._game_pill.sizeHint().width()
             self._game_pill.move(self.width() - pw - 14, 14)
 
