@@ -127,15 +127,29 @@ class _CompactLayout(QWidget):
             self._populate_card(i, slot)
 
     def _populate_card(self, i: int, slot: dict):
-        # Reset shared-widget sizes/styles that _FullLayout.populate_active mutated.
-        # Defaults come from _build_shared_widgets in the parent tab.
-        self._tab.set_selectors[i].setFixedHeight(28)  # Full sets 32; reset to 28
+        # Reset shared-widget sizes/styles that _FullLayout.populate_active
+        # mutated. Restore the *original* constraints from each widget's
+        # __init__, not just zero them out — Compact relies on the natural
+        # size constraints to keep the cards compact.
+        self._tab.set_selectors[i].setFixedHeight(28)  # Full sets 32; SetSelectorWidget defaults to 28
 
-        # ka_bar: Full uses setFixedSize(90, 8); Compact wants elastic with stretch=1.
-        # Clear all size constraints so the layout governs.
+        # slot_badge: Full sets setFixedSize(104, 104); ToonPortraitWidget's
+        # constructor defaults are setMinimumSize(38, 38) + setMaximumSize(64, 64).
+        # Without this reset the badge stays at 104x104 in Compact, which makes
+        # the cards ~45px taller than designed.
+        badge = self._tab.slot_badges[i]
+        badge.setMinimumSize(38, 38)
+        badge.setMaximumSize(64, 64)
+
+        # ka_bar: Full sets setFixedSize(90, 8); SmoothProgressBar's constructor
+        # defaults are setFixedHeight(7) + setMinimumWidth(40), elastic max width.
+        # Without this reset the bar fills the row's 32px height (drawing only
+        # in a 7px stripe so the rest reads as transparent) AND has no minimum
+        # width (so the layout can collapse it to 0 wide — invisible).
         ka_bar = self._tab.ka_progress_bars[i]
-        ka_bar.setMinimumSize(0, 0)
-        ka_bar.setMaximumSize(16777215, 16777215)  # QWIDGETSIZE_MAX
+        ka_bar.setMinimumWidth(40)
+        ka_bar.setMaximumWidth(16777215)  # QWIDGETSIZE_MAX
+        ka_bar.setFixedHeight(7)
 
         # name_label: Full sets 16pt DemiBold + appends "padding-right: 60px;".
         # Reset to default font and clear the padding stanza. refresh_theme()
