@@ -4,10 +4,10 @@ The Full UI is a 2x2 card grid with large portraits and a Discord-style status
 indicator (background-colored ring overlapping the portrait + colored dot inside).
 """
 
-from PySide6.QtCore import Qt, Property, QPropertyAnimation, QEasingCurve
+from PySide6.QtCore import Qt, Property, QPropertyAnimation, QEasingCurve, QRect, QTimer
 from PySide6.QtGui import QColor, QFont, QPainter
 from PySide6.QtWidgets import (
-    QFrame, QGridLayout, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
+    QFrame, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
 )
 
 
@@ -348,6 +348,11 @@ class _FullLayout(QWidget):
       re-adds the shared widgets in correct order.
     """
 
+    _H_SPACING = 12
+    _V_SPACING = 12
+    _MAX_CARD_W = 600
+    _MAX_CARD_H = 400
+
     def __init__(self, tab, parent=None):
         super().__init__(parent)
         self._tab = tab
@@ -375,16 +380,71 @@ class _FullLayout(QWidget):
 
         outer.addWidget(service_bar)
 
-        # 2x2 grid of card shells
-        grid = QGridLayout()
-        grid.setHorizontalSpacing(12)
-        grid.setVerticalSpacing(12)
-        positions = [(0, 0), (0, 1), (1, 0), (1, 1)]
-        for i, (r, c) in enumerate(positions):
-            card = _FullToonCard(i, self._tab)
+        # Grid container — cards are children, positioned manually in resizeEvent.
+        # Use a subclass so that when the Qt layout gives _grid_container its real
+        # geometry (which may happen after _FullLayout.resizeEvent fires), the cards
+        # are repositioned immediately rather than waiting for the next event cycle.
+        layout_ref = self
+
+        class _GridContainer(QWidget):
+            def resizeEvent(self, ev):
+                super().resizeEvent(ev)
+                layout_ref._position_cards()
+
+        self._grid_container = _GridContainer()
+        for i in range(4):
+            card = _FullToonCard(i, self._tab, parent=self._grid_container)
             self._cards.append(card)
-            grid.addWidget(card, r, c)
-        outer.addLayout(grid, 1)
+        outer.addWidget(self._grid_container, 1)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._position_cards()
+
+    def resize(self, *args):
+        """Override resize() to position cards after an explicit resize() call.
+
+        QWidget.resizeEvent is only dispatched for shown widgets; tests and other
+        callers that resize a hidden _FullLayout via resize() would otherwise never
+        trigger _position_cards.  A zero-delay timer fires during the next
+        processEvents() call, which is exactly what the test suite does.
+        """
+        super().resize(*args)
+        QTimer.singleShot(0, self._position_cards)
+
+    def _position_cards(self):
+        # Synchronously flush the outer QVBoxLayout so _grid_container has the
+        # correct geometry even when the widget is hidden (e.g. in tests where
+        # resizeEvent may not fire on direct resize() calls).
+        self.layout().setGeometry(QRect(0, 0, self.width(), self.height()))
+        w = self._grid_container.width()
+        h = self._grid_container.height()
+        if w <= 0 or h <= 0:
+            return
+
+        card_w = (w - self._H_SPACING) / 2
+        card_h = card_w / 1.5
+
+        if card_h * 2 + self._V_SPACING > h:
+            card_h = (h - self._V_SPACING) / 2
+            card_w = card_h * 1.5
+
+        card_w = int(min(card_w, self._MAX_CARD_W))
+        card_h = int(min(card_h, self._MAX_CARD_H))
+
+        grid_w = card_w * 2 + self._H_SPACING
+        grid_h = card_h * 2 + self._V_SPACING
+        ox = (w - grid_w) // 2
+        oy = (h - grid_h) // 2
+
+        positions = [
+            (ox, oy),
+            (ox + card_w + self._H_SPACING, oy),
+            (ox, oy + card_h + self._V_SPACING),
+            (ox + card_w + self._H_SPACING, oy + card_h + self._V_SPACING),
+        ]
+        for card, (x, y) in zip(self._cards, positions):
+            card.setGeometry(x, y, card_w, card_h)
 
     def populate(self):
         """(Re-)attach shared widgets into the service bar and each card."""
