@@ -177,10 +177,16 @@ git log "${LATEST_TAG}..HEAD" --pretty="%H %an %ae %s%n%b" \
 
 ### B. Every file in the diff range
 
+The release skill itself (`.claude/skills/release/`) defines and tests the
+PATTERNS regex, so its files contain the strings by design. Excluded so the
+scan doesn't false-positive on its own self-references.
+
 ```bash
-git diff --name-only "${LATEST_TAG}..HEAD" | while read -r f; do
-    [ -f "$f" ] && grep -inHE "$PATTERNS" "$f" || true
-done
+git diff --name-only "${LATEST_TAG}..HEAD" \
+    | grep -v '^\.claude/skills/release/' \
+    | while read -r f; do
+        [ -f "$f" ] && grep -inHE "$PATTERNS" "$f" || true
+    done
 ```
 
 ### C. Always-checked release artifacts
