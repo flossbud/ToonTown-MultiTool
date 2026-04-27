@@ -237,3 +237,67 @@ class _FullToonCard(QFrame):
         if self._is_active:
             pw = self._game_pill.sizeHint().width()
             self._game_pill.move(self.width() - pw - 14, 14)
+
+
+class _FullLayout(QWidget):
+    """Top-level Full UI: service bar above a 2x2 toon card grid."""
+
+    def __init__(self, tab, parent=None):
+        super().__init__(parent)
+        self._tab = tab
+        self._cards = []
+        self._build()
+
+    def _build(self):
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(20, 16, 20, 16)
+        outer.setSpacing(14)
+
+        # Service bar
+        service_bar = QFrame()
+        service_bar.setObjectName("full_service_bar")
+        sb_layout = QVBoxLayout(service_bar)
+        sb_layout.setContentsMargins(24, 18, 24, 18)
+        sb_layout.setSpacing(10)
+
+        row = QHBoxLayout()
+        row.setSpacing(16)
+        # Restyle the toggle button for the wider layout
+        self._tab.toggle_service_button.setMinimumWidth(180)
+        row.addWidget(self._tab.toggle_service_button)
+        row.addStretch()
+        for pill in self._tab.profile_pills:
+            row.addWidget(pill)
+        row.addSpacing(8)
+        row.addWidget(self._tab.refresh_button)
+        sb_layout.addLayout(row)
+        sb_layout.addWidget(self._tab.status_bar)
+
+        outer.addWidget(service_bar)
+
+        # 2x2 grid
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(12)
+        grid.setVerticalSpacing(12)
+        positions = [(0, 0), (0, 1), (1, 0), (1, 1)]
+        for i, (r, c) in enumerate(positions):
+            card = _FullToonCard(i, self._tab)
+            self._cards.append(card)
+            grid.addWidget(card, r, c)
+        outer.addLayout(grid, 1)
+
+    def populate(self):
+        """Re-attach shared widgets if they got reparented elsewhere. Called when
+        we swap *back* from Compact to Full — the parent reassignment in the
+        active card's __init__ would otherwise stay pointing to the previous
+        layout's containers."""
+        for card in self._cards:
+            # Force re-parent on the per-slot widgets used by the active view.
+            # The card already owns them via setParent in _build_active_view; we
+            # call set_active(state) so visuals update.
+            card.set_active(card._is_active)
+
+    def apply_theme(self, c: dict) -> None:
+        self.setStyleSheet(f"QWidget {{ background: {c['bg_app']}; }}")
+        for card in self._cards:
+            card.apply_theme(c)

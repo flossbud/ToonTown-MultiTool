@@ -818,12 +818,19 @@ class MultitoonTab(QWidget):
 
     def build_ui(self):
         from tabs.multitoon._compact_layout import _CompactLayout
+        from tabs.multitoon._full_layout import _FullLayout
 
         self._build_shared_widgets()
 
         self._stack = QStackedWidget(self)
+        # Build Full first so Compact's _build runs last and owns the shared
+        # widgets — Compact is the initial view. set_layout_mode triggers
+        # _FullLayout.populate() to reattach when swapping to Full.
+        self._full = _FullLayout(self)
         self._compact = _CompactLayout(self)
         self._stack.addWidget(self._compact)
+        self._stack.addWidget(self._full)
+        self._stack.setCurrentWidget(self._compact)
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -835,9 +842,16 @@ class MultitoonTab(QWidget):
         self.update_status_label()
 
     def set_layout_mode(self, mode: str) -> None:
-        """No-op until the Full layout lands in a later task."""
-        if mode != "compact":
+        if mode == self._mode:
             return
+        target = self._full if mode == "full" else self._compact
+        # Re-parent shared widgets back into the target via populate
+        if hasattr(target, "populate"):
+            target.populate()
+        self._stack.setCurrentWidget(target)
+        self._mode = mode
+        # Re-apply theme so the new layout picks up colors
+        self.refresh_theme()
 
     # ── Set selector rebuild ───────────────────────────────────────────────
 
