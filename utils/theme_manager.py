@@ -40,7 +40,8 @@ def apply_card_shadow(widget, is_dark: bool, blur: float = 18, offset_y: float =
     if is_dark:
         shadow.setColor(QColor(0, 0, 0, 90))
     else:
-        shadow.setColor(QColor(0, 0, 0, 40))
+        # Slate-900 at low alpha — less muddy than pure black on a cool-slate base
+        shadow.setColor(QColor(15, 23, 42, 32))
     shadow.setBlurRadius(blur)
     shadow.setOffset(0, offset_y)
     widget.setGraphicsEffect(shadow)
@@ -349,42 +350,42 @@ DARK_THEME = """
     QWidget {
         font-family: 'Inter', 'Segoe UI', 'Noto Sans', 'DejaVu Sans', sans-serif;
         font-size: 12pt;
-        background-color: #1a1a1a;
-        color: #e0e0e0;
+        background-color: #1a1a1f;
+        color: #e8e8ed;
     }
     QPushButton {
-        background-color: #333333;
-        color: white;
+        background-color: #35353c;
+        color: #e8e8ed;
         border-radius: 8px;
         padding: 6px 14px;
-        border: 1px solid #444444;
+        border: 1px solid #45454c;
     }
     QPushButton:hover {
-        background-color: #3e3e3e;
-        border: 1px solid #555555;
+        background-color: #3e3e45;
+        border: 1px solid #55555c;
     }
     QPushButton:pressed {
-        background-color: #282828;
-        border: 1px solid #3a3a3a;
+        background-color: #28282d;
+        border: 1px solid #3a3a42;
         padding-top: 7px;
         padding-bottom: 5px;
     }
     QPushButton:disabled {
-        background-color: #2a2a2a;
-        color: #666666;
-        border: 1px solid #333333;
+        background-color: #2a2a30;
+        color: #5c5c64;
+        border: 1px solid #35353c;
     }
     QComboBox {
-        background-color: #2e2e2e;
-        color: white;
+        background-color: #2f2f36;
+        color: #e8e8ed;
         border-radius: 8px;
         padding: 4px 8px;
-        border: 1px solid #3a3a3a;
+        border: 1px solid #3a3a42;
     }
     QComboBox QAbstractItemView {
-        background-color: #1e1e1e;
-        selection-background-color: #3a3a3a;
-        color: white;
+        background-color: #1e1e23;
+        selection-background-color: #3a3a42;
+        color: #e8e8ed;
     }
 """
 
@@ -393,42 +394,42 @@ LIGHT_THEME = """
         font-family: 'Inter', 'Segoe UI', 'Noto Sans', 'DejaVu Sans', sans-serif;
         font-size: 12pt;
         background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-            stop:0 #f6f6f6, stop:1 #ebebeb);
-        color: #202020;
+            stop:0 #f8fafc, stop:1 #eef2f7);
+        color: #0f172a;
     }
     QPushButton {
-        background-color: #e8e8e8;
-        color: #111;
+        background-color: #e8ecf1;
+        color: #0f172a;
         border-radius: 8px;
         padding: 6px 14px;
-        border: 1px solid #c0c0c0;
+        border: 1px solid #cbd5e1;
     }
     QPushButton:hover {
-        background-color: #dcdcdc;
-        border: 1px solid #aaaaaa;
+        background-color: #dbe2ea;
+        border: 1px solid #94a3b8;
     }
     QPushButton:pressed {
-        background-color: #d0d0d0;
-        border: 1px solid #999999;
+        background-color: #cbd5e1;
+        border: 1px solid #94a3b8;
         padding-top: 7px;
         padding-bottom: 5px;
     }
     QPushButton:disabled {
-        background-color: #eeeeee;
-        color: #aaaaaa;
-        border: 1px solid #d0d0d0;
+        background-color: #f1f5f9;
+        color: #94a3b8;
+        border: 1px solid #e2e8f0;
     }
     QComboBox {
         background-color: #ffffff;
-        color: #111;
+        color: #0f172a;
         border-radius: 8px;
         padding: 4px 8px;
-        border: 1px solid #c0c0c0;
+        border: 1px solid #cbd5e1;
     }
     QComboBox QAbstractItemView {
-        background-color: #f8f8f8;
-        selection-background-color: #e0e0e0;
-        color: #111;
+        background-color: #f8fafc;
+        selection-background-color: #e2e8f0;
+        color: #0f172a;
     }
 """
 
