@@ -115,7 +115,7 @@ class MultiToonTool(QMainWindow):
         # works through the QStackedWidget that hosts Compact + Full layouts,
         # so we set the default high enough to fit content directly.
         self.setGeometry(QRect(100, 100, 560, 740))
-        self.setMinimumWidth(520)
+        self.setMinimumWidth(575)
         self._layout_mode = "compact"
 
         self.pressed_keys = set()
