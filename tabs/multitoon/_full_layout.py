@@ -4,7 +4,7 @@ The Full UI is a 2x2 card grid with large portraits and a Discord-style status
 indicator (background-colored ring overlapping the portrait + colored dot inside).
 """
 
-from PySide6.QtCore import Qt, Property
+from PySide6.QtCore import Qt, Property, QPropertyAnimation, QEasingCurve
 from PySide6.QtGui import QColor, QFont, QPainter
 from PySide6.QtWidgets import (
     QFrame, QGridLayout, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
@@ -213,6 +213,32 @@ class _FullToonCard(QFrame):
         self._inactive_root.setVisible(not active)
         if active:
             self._status_indicator.set_active(True)
+            self._start_pulse()
+        else:
+            self._stop_pulse()
+
+    def _start_pulse(self) -> None:
+        if getattr(self, "_pulse_anim", None) is not None:
+            return
+        # Respect the user's reduced-motion / disable_animations setting
+        sm = getattr(self._tab, "settings_manager", None)
+        if sm and sm.get("disable_animations", False):
+            return
+        self._pulse_anim = QPropertyAnimation(self._status_indicator, b"glow")
+        self._pulse_anim.setDuration(1500)
+        self._pulse_anim.setStartValue(0.0)
+        self._pulse_anim.setKeyValueAt(0.5, 1.0)
+        self._pulse_anim.setEndValue(0.0)
+        self._pulse_anim.setEasingCurve(QEasingCurve.InOutSine)
+        self._pulse_anim.setLoopCount(-1)
+        self._pulse_anim.start()
+
+    def _stop_pulse(self) -> None:
+        anim = getattr(self, "_pulse_anim", None)
+        if anim is not None:
+            anim.stop()
+            self._pulse_anim = None
+        self._status_indicator._set_glow(0.0)
 
     def apply_theme(self, c: dict) -> None:
         self.setStyleSheet(
