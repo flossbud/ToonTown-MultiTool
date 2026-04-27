@@ -39,10 +39,41 @@ def host_check_output(argv, **kwargs):
     return subprocess.check_output(host_argv(argv), **kwargs)
 
 
+# Env vars whose values are meaningful only inside the Flatpak sandbox.
+# Forwarding these to a host process via flatpak-spawn breaks the host process
+# (e.g. XAUTHORITY=/run/flatpak/Xauthority makes X11 auth fail because that
+# path does not exist on the host). When omitted, flatpak-portal fills in the
+# correct host values.
+_SANDBOX_ONLY_ENV = frozenset({
+    "XAUTHORITY",
+    "DBUS_SESSION_BUS_ADDRESS",
+    "XDG_DATA_HOME",
+    "XDG_CONFIG_HOME",
+    "XDG_CACHE_HOME",
+    "XDG_STATE_HOME",
+    "XDG_DATA_DIRS",
+    "XDG_CONFIG_DIRS",
+    "PATH",
+    "QT_PLUGIN_PATH",
+    "ALSA_CONFIG_PATH",
+    "ALSA_CONFIG_DIR",
+    "GTK_RC_FILES",
+    "LD_LIBRARY_PATH",
+    "LD_PRELOAD",
+})
+
+
+def _is_sandbox_path(value: str) -> bool:
+    return value.startswith(("/app/", "/run/flatpak/", "/usr/share/runtime/"))
+
+
 def host_popen(argv, **kwargs):
     """Popen variant. When sandboxed, pass env via --env=KEY=VAL flags so the
     host process sees the variables (Popen's env= alone only changes the
     sandbox-side environment, which flatpak-spawn does not forward by default).
+
+    Strips env vars whose values are sandbox-internal so the host process
+    inherits the correct host defaults from flatpak-portal.
     """
     if not in_flatpak():
         return subprocess.Popen(argv, **kwargs)
@@ -52,6 +83,10 @@ def host_popen(argv, **kwargs):
     if env is not None:
         for k, v in env.items():
             if v is None:
+                continue
+            if k in _SANDBOX_ONLY_ENV:
+                continue
+            if _is_sandbox_path(str(v)):
                 continue
             env_flags.append(f"--env={k}={v}")
     cwd = kwargs.pop("cwd", None)
