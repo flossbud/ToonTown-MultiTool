@@ -9,7 +9,6 @@ finish-args:
   - --share=ipc
   - --socket=x11
   - --socket=fallback-x11
-  - --socket=wayland
   - --socket=session-bus
   - --device=dri
   - --talk-name=org.freedesktop.secrets
@@ -18,7 +17,10 @@ finish-args:
   - --talk-name=org.freedesktop.Flatpak
   - --filesystem=home
   - --filesystem=xdg-config/toontown_multitool:create
+  - --filesystem=~/.var/app/com.toontownrewritten.Launcher:ro
+  - --filesystem=~/.var/app/xyz.xytime.Toontown:ro
   - --env=PYTHONPATH=/app/lib/toontown-multitool
+  - --env=QT_QPA_PLATFORM=xcb
 
 modules:
   - name: xdotool
