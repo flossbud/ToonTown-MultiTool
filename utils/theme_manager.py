@@ -390,13 +390,22 @@ def resolve_theme(settings_manager) -> str:
     return "dark" if base_color.value() < 128 else "light"
 
 
-def is_dark_palette() -> bool:
-    """Detect dark mode from the current QApplication palette.
+_APPLIED_THEME: str | None = None  # set by apply_theme(); used by is_dark_palette()
 
-    Use when a widget needs theme-derived colors but cannot reach the
-    settings_manager (e.g. shared widgets, sub-widgets without a parent
-    reference). Falls back to light mode if no QApplication exists yet.
+
+def is_dark_palette() -> bool:
+    """Return True if the currently applied app theme is dark.
+
+    Tracks the theme apply_theme() last set, because apply_theme only changes
+    the Qt stylesheet -- it does NOT touch QApplication.palette(), so reading
+    the palette gives the OS default (e.g. KDE Plasma dark) rather than the
+    in-app theme. Falls back to inspecting the palette when no theme has been
+    applied yet (early startup).
     """
+    if _APPLIED_THEME == "dark":
+        return True
+    if _APPLIED_THEME == "light":
+        return False
     app = QApplication.instance()
     if app is None:
         return False
@@ -404,6 +413,8 @@ def is_dark_palette() -> bool:
 
 
 def apply_theme(app, theme: str):
+    global _APPLIED_THEME
+    _APPLIED_THEME = theme if theme in ("dark", "light") else None
     if theme == "dark":
         app.setStyleSheet(DARK_THEME)
     elif theme == "light":
