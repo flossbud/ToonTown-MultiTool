@@ -250,7 +250,7 @@ class GamePathRow(SettingsRow):
             }}
             QPushButton:hover {{
                 background-color: {c['accent_blue']};
-                color: white;
+                color: {c['text_on_accent']};
                 border: 1px solid {c['accent_blue']};
             }}
         """

@@ -336,7 +336,7 @@ class InvasionsTab(QWidget):
                 }}
                 QPushButton:hover {{
                     background: {c['accent_blue_btn']};
-                    color: white;
+                    color: {c['text_on_accent']};
                     border: 1px solid {c['accent_blue_btn_border']};
                 }}
             """)

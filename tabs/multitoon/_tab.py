@@ -1167,7 +1167,7 @@ class MultitoonTab(QWidget):
             btn.setStyleSheet(f"""
                 QPushButton {{
                     background-color: {c['accent_green']};
-                    color: white; font-size: 12px; font-weight: bold;
+                    color: {c['text_on_accent']}; font-size: 12px; font-weight: bold;
                     border: 2px solid {c['accent_green_border']};
                     border-radius: 6px;
                 }}
@@ -1214,7 +1214,7 @@ class MultitoonTab(QWidget):
             chat_btn.setStyleSheet(f"""
                 QPushButton {{
                     background-color: {c['accent_blue_btn']};
-                    color: white;
+                    color: {c['text_on_accent']};
                     border: 2px solid {c['accent_blue_btn_border']};
                     border-radius: 6px;
                 }}
@@ -1264,7 +1264,7 @@ class MultitoonTab(QWidget):
                 ka_btn.setStyleSheet(f"""
                     QPushButton {{
                         background-color: {c['accent_red']};
-                        color: white;
+                        color: {c['text_on_accent']};
                         border: 2px solid {c['accent_red_border']};
                         border-radius: 6px;
                     }}
@@ -1279,7 +1279,7 @@ class MultitoonTab(QWidget):
                 ka_btn.setStyleSheet(f"""
                     QPushButton {{
                         background-color: {c['accent_orange']};
-                        color: white;
+                        color: {c['text_on_accent']};
                         border: 2px solid {c['accent_orange_border']};
                         border-radius: 6px;
                     }}
