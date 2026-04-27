@@ -273,11 +273,6 @@ class MultiToonTool(QMainWindow):
 
         layout.addStretch()
 
-        # Byline
-        self.byline_label = QLabel("by flossbud")
-        self.byline_label.setObjectName("header_byline")
-        layout.addWidget(self.byline_label)
-
         return header
 
     # ── Sidebar ────────────────────────────────────────────────────────────
@@ -439,9 +434,6 @@ class MultiToonTool(QMainWindow):
             f' <span style="color:{vc}; font-size:{font_role("label")}px; font-weight:bold;">'
             f'v{self.APP_VERSION}</span>'
         )
-        self.byline_label.setStyleSheet(f"""
-            font-size: {font_role('label')}px; color: {c['header_sub']}; background: transparent;
-        """)
         # Accent stripe
         accent = self.header.findChild(QFrame, "header_accent")
         if accent:
