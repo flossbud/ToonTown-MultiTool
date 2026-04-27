@@ -324,6 +324,38 @@ def test_full_portrait_and_controls_scaled(tab):
     )
 
 
+def test_full_to_compact_roundtrip_restores_button_sizes(tab):
+    """After Full → Compact, buttons must reset to Compact's creation defaults."""
+    tab.set_layout_mode("full")
+    assert tab.toon_buttons[0].maximumHeight() == 40
+
+    tab.set_layout_mode("compact")
+
+    btn = tab.toon_buttons[0]
+    assert btn.maximumHeight() == 32, (
+        f"enable button height should reset to 32; got {btn.maximumHeight()}"
+    )
+    assert btn.maximumWidth() == 88, (
+        f"enable button width should reset to 88; got {btn.maximumWidth()}"
+    )
+
+    chat = tab.chat_buttons[0]
+    assert chat.maximumHeight() == 32, (
+        f"chat button height should reset to 32; got {chat.maximumHeight()}"
+    )
+    assert chat.maximumWidth() == 32, (
+        f"chat button width should reset to 32; got {chat.maximumWidth()}"
+    )
+
+    ka = tab.keep_alive_buttons[0]
+    assert ka.maximumHeight() == 32, (
+        f"KA button height should reset to 32; got {ka.maximumHeight()}"
+    )
+    assert ka.maximumWidth() == 32, (
+        f"KA button width should reset to 32; got {ka.maximumWidth()}"
+    )
+
+
 def test_pulse_anim_stops_when_leaving_full(tab):
     """Important bug regression: pulse animations must not keep running in Compact."""
     # Activate slot 0 so its pulse starts in Full
