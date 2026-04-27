@@ -591,9 +591,11 @@ class SetSelectorWidget(QWidget):
         bg, text = get_set_color(self._index)
 
         if not self._enabled:
-            bg = "#555555"
-            text = "#999999"
-            border_color = "#666666"
+            from utils.theme_manager import is_dark_palette, get_theme_colors
+            c = theme_colors or get_theme_colors(is_dark_palette())
+            bg = c["btn_bg"]
+            text = c["text_disabled"]
+            border_color = c["btn_border"]
         else:
             base = QColor(bg)
             border_color = base.lighter(135).name()

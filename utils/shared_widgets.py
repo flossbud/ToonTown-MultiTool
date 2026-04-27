@@ -242,7 +242,8 @@ class PulsingDot(QWidget):
         elif state == "found":
             self.set_color("#888888", pulse=False)
         else:
-            self.set_color("#555555", pulse=False)
+            from utils.theme_manager import is_dark_palette
+            self.set_color("#555555" if is_dark_palette() else "#bbbbbb", pulse=False)
 
     def _stop_pulse(self):
         if self._pulsing:

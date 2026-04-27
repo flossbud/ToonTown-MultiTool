@@ -390,6 +390,19 @@ def resolve_theme(settings_manager) -> str:
     return "dark" if base_color.value() < 128 else "light"
 
 
+def is_dark_palette() -> bool:
+    """Detect dark mode from the current QApplication palette.
+
+    Use when a widget needs theme-derived colors but cannot reach the
+    settings_manager (e.g. shared widgets, sub-widgets without a parent
+    reference). Falls back to light mode if no QApplication exists yet.
+    """
+    app = QApplication.instance()
+    if app is None:
+        return False
+    return app.palette().color(QPalette.Base).value() < 128
+
+
 def apply_theme(app, theme: str):
     if theme == "dark":
         app.setStyleSheet(DARK_THEME)
