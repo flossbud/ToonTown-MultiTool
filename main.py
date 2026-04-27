@@ -108,7 +108,12 @@ class MultiToonTool(QMainWindow):
         super().__init__()
 
         self.setWindowTitle("ToonTown MultiTool")
-        self.setGeometry(QRect(100, 100, 560, 650))
+        # Default height 720 fits the multitoon tab's natural sizeHint (~686)
+        # with a small buffer. v2.0.3 used 650 but its content also overflowed
+        # at that height — the bottom card's controls pill rendered slightly
+        # clipped. Bumping the default avoids the issue without forcing a
+        # minimum that would constrain users who want a smaller window.
+        self.setGeometry(QRect(100, 100, 560, 720))
         self.setMinimumWidth(520)
         self._layout_mode = "compact"
 
