@@ -845,6 +845,9 @@ class MultitoonTab(QWidget):
     def set_layout_mode(self, mode: str) -> None:
         if mode == self._mode:
             return
+        # Leaving Full — stop card-level animations.
+        if self._mode == "full" and hasattr(self, "_full") and self._full is not None:
+            self._full.deactivate()
         target = self._full if mode == "full" else self._compact
         # Re-attach all shared widgets to the target's slots
         target.populate()
@@ -1068,10 +1071,13 @@ class MultitoonTab(QWidget):
 
         self.apply_all_visual_states()
 
-        # Apply theme to the active layout (Compact's per-card logic ran above;
-        # Full has its own apply_theme entry point that styles the bespoke card
-        # frames, status indicators, and game pills).
-        if hasattr(self, "_full") and self._full is not None:
+        # Apply theme to the *active* layout only. Compact's per-card colors
+        # ran above (the toon_cards loop). Full has its own apply_theme entry
+        # point that re-applies card frames, status indicators, game pills,
+        # and Full-specific name-label styling. We skip _full.apply_theme()
+        # while Compact is showing so its styling doesn't bleed into hidden
+        # widgets that Compact expects to look different.
+        if self._mode == "full" and hasattr(self, "_full") and self._full is not None:
             self._full.apply_theme(c)
 
         self.update_status_label()
@@ -1087,6 +1093,11 @@ class MultitoonTab(QWidget):
         selector = self.set_selectors[index]
         wids = self.window_manager.ttr_window_ids if hasattr(self, 'input_service') else []
         window_available = index < len(wids)
+
+        # Mirror window availability into the Full UI card's active/inactive view.
+        # Compact uses status_dot for this; Full uses _FullToonCard.set_active.
+        if hasattr(self, "_full") and index < len(self._full._cards):
+            self._full._cards[index].set_active(window_available)
 
         slot_colors = self._slot_colors(c)
         active = window_available and self.enabled_toons[index] and self.service_running
