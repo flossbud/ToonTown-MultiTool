@@ -5,7 +5,7 @@ import time
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
-    QFrame, QGraphicsDropShadowEffect
+    QFrame, QGraphicsDropShadowEffect, QStackedWidget
 )
 from PySide6.QtCore import Qt, Signal, Slot, QTimer, QVariantAnimation, QEasingCurve, QRectF, QPointF
 from PySide6.QtGui import QColor, QFont, QPainter, QPen, QPainterPath, QPixmap
@@ -817,92 +817,27 @@ class MultitoonTab(QWidget):
             self.set_selectors.append(selector)
 
     def build_ui(self):
+        from tabs.multitoon._compact_layout import _CompactLayout
+
         self._build_shared_widgets()
 
-        outer_layout = QVBoxLayout(self)
-        outer_layout.setContentsMargins(16, 12, 16, 12)
-        outer_layout.setSpacing(0)
+        self._stack = QStackedWidget(self)
+        self._compact = _CompactLayout(self)
+        self._stack.addWidget(self._compact)
 
-        self.outer_card = QFrame()
-        outer_card_layout = QVBoxLayout(self.outer_card)
-        outer_card_layout.setContentsMargins(16, 16, 16, 16)
-        outer_card_layout.setSpacing(10)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        outer.addWidget(self._stack)
 
-        # Service controls
-        service_layout = QVBoxLayout()
-        service_layout.setContentsMargins(0, 0, 0, 0)
-        service_layout.setSpacing(6)
-        service_layout.addWidget(self.toggle_service_button)
-        service_layout.addWidget(self.status_bar)
-        outer_card_layout.addLayout(service_layout)
-
-        # Section divider
-        outer_card_layout.addSpacing(6)
-        outer_card_layout.addWidget(self._section_divider, alignment=Qt.AlignHCenter)
-        outer_card_layout.addSpacing(6)
-
-        # Toon config row
-        config_row = QHBoxLayout()
-        config_row.setSpacing(6)
-        config_row.addWidget(self.config_label)
-        config_row.addStretch()
-        for pill in self.profile_pills:
-            config_row.addWidget(pill)
-        config_row.addSpacing(4)
-        config_row.addWidget(self.refresh_button)
-        outer_card_layout.addLayout(config_row)
-
-        # Toon cards
-        for i in range(4):
-            card = QFrame()
-            card_layout = QVBoxLayout(card)
-            card_layout.setContentsMargins(12, 10, 12, 10)
-            card_layout.setSpacing(8)
-
-            top_row = QHBoxLayout()
-            top_row.setSpacing(10)
-            top_row.addWidget(self.slot_badges[i])
-            name_label, status_dot = self.toon_labels[i]
-            top_row.addWidget(name_label)
-            top_row.addWidget(status_dot)
-            top_row.addWidget(self.game_badges[i])
-            top_row.addStretch()
-
-            stats_row = QHBoxLayout()
-            stats_row.setSpacing(4)
-            stats_row.setContentsMargins(0, 0, 0, 0)
-            stats_row.addWidget(self.laff_labels[i])
-            stats_row.addWidget(self.bean_labels[i])
-            top_row.addLayout(stats_row)
-            card_layout.addLayout(top_row)
-
-            ctrl_row = QHBoxLayout()
-            ctrl_row.setSpacing(8)
-            ctrl_row.addWidget(self.toon_buttons[i])
-
-            ka_group = QFrame()
-            ka_group.setObjectName("ka_group")
-            ka_group_layout = QHBoxLayout(ka_group)
-            ka_group_layout.setContentsMargins(4, 4, 6, 4)
-            ka_group_layout.setSpacing(4)
-            ka_group_layout.addWidget(self.chat_buttons[i])
-            ka_group_layout.addWidget(self.keep_alive_buttons[i])
-            ka_group_layout.addWidget(self.ka_progress_bars[i], 1)
-            self.ka_groups.append(ka_group)
-
-            ctrl_row.addWidget(ka_group, 1)
-            ctrl_row.addWidget(self.set_selectors[i])
-            card_layout.addLayout(ctrl_row)
-
-            self.toon_cards.append(card)
-            outer_card_layout.addWidget(card)
-
-        outer_card_layout.addStretch()
-        outer_layout.addWidget(self.outer_card)
-        outer_layout.addStretch()
-
+        self._mode = "compact"
         self.update_service_button_style()
         self.update_status_label()
+
+    def set_layout_mode(self, mode: str) -> None:
+        """No-op until the Full layout lands in a later task."""
+        if mode != "compact":
+            return
 
     # ── Set selector rebuild ───────────────────────────────────────────────
 
