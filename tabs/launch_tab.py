@@ -523,6 +523,11 @@ class LaunchTab(QWidget):
         frame = QFrame()
         frame.setObjectName("account_row")
         frame.setMaximumWidth(480)
+        # Layout-only container; the inner row_inner owns the visible card
+        # shape (rounded). Without this, the outer frame inherits the global
+        # QWidget gradient and paints a mini-gradient that bleeds through at
+        # the inner widget's rounded corners.
+        frame.setStyleSheet("QFrame#account_row { background: transparent; }")
         frame_lay = QVBoxLayout(frame)
         frame_lay.setContentsMargins(0, 0, 0, 0)
         frame_lay.setSpacing(0)
