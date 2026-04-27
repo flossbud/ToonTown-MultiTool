@@ -344,15 +344,54 @@ def test_pulse_anim_stops_when_leaving_full(tab):
         )
 
 
-def test_full_card_content_block_bounded(qapp, tab):
-    """_active_root must have max size of 500x240 and be centered."""
+def test_full_grid_enforces_aspect_ratio(qapp, tab):
+    """Cards in the Full UI grid must maintain a 3:2 aspect ratio."""
     tab.set_layout_mode("full")
-    tab._full._cards[0].set_active(True)
+    tab._full.resize(1200, 800)
+    qapp.processEvents()
 
-    root = tab._full._cards[0]._active_root
-    assert root.maximumWidth() == 500, (
-        f"content block max width should be 500; got {root.maximumWidth()}"
+    card = tab._full._cards[0]
+    assert card.width() > 0 and card.height() > 0, "card must have real geometry"
+    ratio = card.width() / card.height()
+    assert abs(ratio - 1.5) < 0.1, (
+        f"card aspect ratio should be ~1.5 (3:2); got {ratio:.2f}"
     )
-    assert root.maximumHeight() == 240, (
-        f"content block max height should be 240; got {root.maximumHeight()}"
+
+
+def test_full_grid_caps_at_max_size(qapp, tab):
+    """Cards must not exceed 600x400 even on very large windows."""
+    tab.set_layout_mode("full")
+    tab._full.resize(2400, 1400)
+    qapp.processEvents()
+
+    card = tab._full._cards[0]
+    assert card.width() <= 600, (
+        f"card width should cap at 600; got {card.width()}"
+    )
+    assert card.height() <= 400, (
+        f"card height should cap at 400; got {card.height()}"
+    )
+
+
+def test_full_content_scales_with_card_size(qapp, tab):
+    """Content must scale proportionally when the card shrinks."""
+    tab.set_layout_mode("full")
+    card = tab._full._cards[0]
+    card.set_active(True)
+
+    card.resize(600, 400)
+    qapp.processEvents()
+    portrait_full = tab.slot_badges[0].maximumHeight()
+    assert portrait_full == 130, (
+        f"portrait at scale 1.0 should be 130; got {portrait_full}"
+    )
+
+    card.resize(375, 250)
+    qapp.processEvents()
+    portrait_small = tab.slot_badges[0].maximumHeight()
+    assert portrait_small < 130, (
+        f"portrait should shrink below 130 at smaller card size; got {portrait_small}"
+    )
+    assert portrait_small >= 78, (
+        f"portrait should not go below min scale (0.6 * 130 = 78); got {portrait_small}"
     )
