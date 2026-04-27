@@ -9,7 +9,14 @@ class DebugTab(QWidget):
     def __init__(self):
         super().__init__()
         self.logging_enabled = False
-        layout = QVBoxLayout(self)
+        from PySide6.QtWidgets import QFrame
+        from utils.layout import clamp_centered
+
+        outer = QHBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+
+        content = QFrame()
+        layout = QVBoxLayout(content)
 
         header_lay = QHBoxLayout()
         header_lay.addWidget(QLabel("Logs", styleSheet="font-weight: bold; font-size: 14px;"))
@@ -25,11 +32,13 @@ class DebugTab(QWidget):
         self.logs_raw = self._create_log_widget()
         self.logs_input = self._create_log_widget()
         self.logs_api = self._create_log_widget()
-        
+
         self.stack.addWidget(self.logs_raw)
         self.stack.addWidget(self.logs_input)
         self.stack.addWidget(self.logs_api)
         layout.addWidget(self.stack)
+
+        clamp_centered(outer, content, 720)
 
     def _create_log_widget(self):
         w = QPlainTextEdit(readOnly=True)

@@ -364,8 +364,15 @@ class SettingsTab(QWidget):
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         outer.addWidget(scroll)
 
+        from utils.layout import clamp_centered
+
+        scroll_inner = QWidget()
+        scroll_inner_layout = QHBoxLayout(scroll_inner)
+        scroll_inner_layout.setContentsMargins(0, 0, 0, 0)
+
         content = QWidget()
-        scroll.setWidget(content)
+        clamp_centered(scroll_inner_layout, content, 720)
+        scroll.setWidget(scroll_inner)
 
         self._main_layout = QVBoxLayout(content)
         self._main_layout.setContentsMargins(20, 24, 20, 24)

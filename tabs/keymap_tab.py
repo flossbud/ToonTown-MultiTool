@@ -329,13 +329,21 @@ class KeymapTab(QWidget):
             }
         """)
 
+        from utils.layout import clamp_centered
+
+        scroll_inner = QWidget()
+        scroll_inner_layout = QHBoxLayout(scroll_inner)
+        scroll_inner_layout.setContentsMargins(0, 0, 0, 0)
+
         self._scroll_widget = QWidget()
         self._scroll_layout = QVBoxLayout(self._scroll_widget)
         self._scroll_layout.setContentsMargins(24, 20, 30, 20)  # extra right margin for scrollbar overlay
         self._scroll_layout.setSpacing(0)
         self._scroll_layout.setAlignment(Qt.AlignTop)
 
-        self._scroll.setWidget(self._scroll_widget)
+        clamp_centered(scroll_inner_layout, self._scroll_widget, 720)
+
+        self._scroll.setWidget(scroll_inner)
         outer.addWidget(self._scroll)
 
         self._build_cards()

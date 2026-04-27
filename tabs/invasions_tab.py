@@ -271,7 +271,8 @@ class InvasionsTab(QWidget):
         self.refresh_btn.clicked.connect(self.fetch_invasions)
         h_lay.addWidget(self.refresh_btn)
 
-        outer.addWidget(header)
+        from utils.layout import clamp_centered
+        clamp_centered(outer, header, 720)
 
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
@@ -290,11 +291,18 @@ class InvasionsTab(QWidget):
             QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }
         """)
 
+        scroll_inner = QWidget()
+        scroll_inner_layout = QHBoxLayout(scroll_inner)
+        scroll_inner_layout.setContentsMargins(0, 0, 0, 0)
+
         self.scroll_widget = QWidget()
         self.cards_layout = QVBoxLayout(self.scroll_widget)
         self.cards_layout.setContentsMargins(16, 12, 16, 16)
         self.cards_layout.setSpacing(8)
-        self.scroll.setWidget(self.scroll_widget)
+
+        clamp_centered(scroll_inner_layout, self.scroll_widget, 720)
+
+        self.scroll.setWidget(scroll_inner)
         outer.addWidget(self.scroll)
 
         self._cards = []
