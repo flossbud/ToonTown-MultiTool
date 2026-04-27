@@ -70,10 +70,9 @@ class _StatusIndicator(QWidget):
         p.drawEllipse(4, 4, 24, 24)
 
 
-def _make_ctrl_32(widget: QWidget) -> None:
-    """Force a control to 32px tall + 6px corner radius — applied to every
-    interactive item in the controls row so they share a baseline."""
-    widget.setFixedHeight(32)
+def _style_ctrl(widget: QWidget, height: int = 32) -> None:
+    """Force a control to the given height + 6px corner radius."""
+    widget.setFixedHeight(height)
     sheet = widget.styleSheet()
     if "border-radius" not in sheet:
         widget.setStyleSheet(sheet + "border-radius: 6px;")
@@ -132,12 +131,12 @@ class _FullToonCard(QFrame):
         grid.setVerticalSpacing(4)
         self._active_grid = grid
 
-        # Portrait wrapper (104x104) — static container; the portrait widget itself
+        # Portrait wrapper (120x120) — static container; the portrait widget itself
         # is a shared widget reattached in populate_active.
         self._portrait_wrap = QWidget()
-        self._portrait_wrap.setFixedSize(104, 104)
+        self._portrait_wrap.setFixedSize(120, 120)
         self._status_indicator = _StatusIndicator(self._portrait_wrap)
-        self._status_indicator.move(74, 74)  # bottom-right inset
+        self._status_indicator.move(90, 90)
 
         # Empty ctrl_row sub-layout — re-filled by populate_active()
         self._ctrl_row = QHBoxLayout()
@@ -157,12 +156,12 @@ class _FullToonCard(QFrame):
         # Portrait + status indicator (column 0, rows 0-2)
         portrait = self._tab.slot_badges[self._slot]
         portrait.setParent(self._portrait_wrap)
-        portrait.setFixedSize(104, 104)
+        portrait.setFixedSize(120, 120)
         portrait.move(0, 0)
         # Re-parent status_indicator too (it's a child of portrait_wrap, which
         # was re-parented to None when clear_layout ran on the grid).
         self._status_indicator.setParent(self._portrait_wrap)
-        self._status_indicator.move(74, 74)
+        self._status_indicator.move(90, 90)
         self._active_grid.addWidget(self._portrait_wrap, 0, 0, 3, 1, alignment=Qt.AlignTop)
 
         # Name label (col 1, row 0). Font + padding are now applied in
@@ -188,23 +187,28 @@ class _FullToonCard(QFrame):
         self._game_pill.move(0, 0)  # repositioned in resizeEvent
 
         # Controls row
-        for w in (
-            self._tab.toon_buttons[self._slot],
-            self._tab.chat_buttons[self._slot],
-            self._tab.keep_alive_buttons[self._slot],
-        ):
-            _make_ctrl_32(w)
-        self._ctrl_row.addWidget(self._tab.toon_buttons[self._slot])
-        self._ctrl_row.addWidget(self._tab.chat_buttons[self._slot])
-        self._ctrl_row.addWidget(self._tab.keep_alive_buttons[self._slot])
+        btn = self._tab.toon_buttons[self._slot]
+        _style_ctrl(btn, 40)
+        btn.setFixedWidth(100)
+        self._ctrl_row.addWidget(btn)
+
+        chat = self._tab.chat_buttons[self._slot]
+        _style_ctrl(chat, 40)
+        chat.setFixedWidth(40)
+        self._ctrl_row.addWidget(chat)
+
+        ka = self._tab.keep_alive_buttons[self._slot]
+        _style_ctrl(ka, 40)
+        ka.setFixedWidth(40)
+        self._ctrl_row.addWidget(ka)
 
         ka_bar = self._tab.ka_progress_bars[self._slot]
-        ka_bar.setFixedSize(90, 8)
+        ka_bar.setFixedSize(120, 10)
         self._ctrl_row.addWidget(ka_bar)
         self._ctrl_row.addStretch(1)
 
         selector = self._tab.set_selectors[self._slot]
-        _make_ctrl_32(selector)
+        _style_ctrl(selector, 40)
         self._ctrl_row.addWidget(selector)
 
         self._active_grid.addLayout(self._ctrl_row, 3, 0, 1, 2)
