@@ -3,6 +3,7 @@ window size. Below the Full UI breakpoint, the outer card clamps to 720 px and
 centers horizontally so wider windows do not stretch it."""
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFrame
 
 from tabs.multitoon._layout_utils import clear_layout
@@ -126,6 +127,26 @@ class _CompactLayout(QWidget):
             self._populate_card(i, slot)
 
     def _populate_card(self, i: int, slot: dict):
+        # Reset shared-widget sizes/styles that _FullLayout.populate_active mutated.
+        # Defaults come from _build_shared_widgets in the parent tab.
+        self._tab.set_selectors[i].setFixedHeight(28)  # Full sets 32; reset to 28
+
+        # ka_bar: Full uses setFixedSize(90, 8); Compact wants elastic with stretch=1.
+        # Clear all size constraints so the layout governs.
+        ka_bar = self._tab.ka_progress_bars[i]
+        ka_bar.setMinimumSize(0, 0)
+        ka_bar.setMaximumSize(16777215, 16777215)  # QWIDGETSIZE_MAX
+
+        # name_label: Full sets 16pt DemiBold + appends "padding-right: 60px;".
+        # Reset to default font and clear the padding stanza. refresh_theme()
+        # later sets its own stylesheet that determines the visible font-size.
+        name_label, _ = self._tab.toon_labels[i]
+        name_label.setFont(QFont())  # application default
+        sheet = name_label.styleSheet()
+        if "padding-right" in sheet:
+            name_label.setStyleSheet(sheet.replace("padding-right: 60px;", "").strip())
+
+        # ── existing populate logic continues below ──
         # top_row: badge | name | status_dot | game_badge | <stretch> | stats_row(laff bean)
         clear_layout(slot["top_row"])
         clear_layout(slot["stats_row"])

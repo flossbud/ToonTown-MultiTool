@@ -136,3 +136,30 @@ def test_set_layout_mode_idempotent(tab):
     tab.set_layout_mode("compact")  # already compact
     assert tab._mode == "compact"
     assert _is_descendant_of(tab.toggle_service_button, tab._compact)
+
+
+def test_full_to_compact_roundtrip_restores_shared_widget_sizes(tab):
+    """After Full → Compact, shared widgets must be back to Compact's defaults
+    (selector 28px tall, ka_bar elastic, no leftover padding-right on name)."""
+    # Initial state: Compact defaults
+    assert tab.set_selectors[0].height() <= 28 or tab.set_selectors[0].maximumHeight() == 28
+
+    tab.set_layout_mode("full")
+    # Full mutates: selector becomes 32, ka_bar fixed-size, name padding-right
+    assert tab.set_selectors[0].maximumHeight() == 32
+
+    tab.set_layout_mode("compact")
+    # Compact must restore defaults
+    assert tab.set_selectors[0].maximumHeight() == 28, (
+        f"selector height should reset to 28 after roundtrip; got {tab.set_selectors[0].maximumHeight()}"
+    )
+    # ka_bar: maximumWidth should be unconstrained (16777215 is QWIDGETSIZE_MAX)
+    assert tab.ka_progress_bars[0].maximumWidth() >= 16777215, (
+        f"ka_bar width should be elastic after roundtrip; got max width {tab.ka_progress_bars[0].maximumWidth()}"
+    )
+    # name_label stylesheet should not contain accumulated padding stanzas
+    name_label, _ = tab.toon_labels[0]
+    sheet = name_label.styleSheet()
+    assert sheet.count("padding-right") <= 1, (
+        f"padding-right should not accumulate; sheet={sheet!r}"
+    )
