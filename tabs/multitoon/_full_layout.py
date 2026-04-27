@@ -87,12 +87,16 @@ class _FullToonCard(QFrame):
     can rebuild after a layout-mode swap stole them.
     """
 
+    _MAX_CARD_H = 400
+
     def __init__(self, slot_index: int, tab, parent=None):
         super().__init__(parent)
         self._slot = slot_index
         self._tab = tab
         self._is_active = False
         self._pulse_anim = None
+        self._scale = 1.0
+        self._theme_colors = None
 
         self.setObjectName("full_toon_card")
         self.setMinimumHeight(200)
@@ -116,15 +120,11 @@ class _FullToonCard(QFrame):
 
     # ── Active view structure ──────────────────────────────────────────────
     def _build_active_structure(self):
-        # _active_root is NOT added to _stack_layout — it's manually
-        # positioned in resizeEvent so it stays centered and bounded.
         self._active_root = QWidget(self)
-        self._active_root.setMaximumSize(500, 240)
         root_vbox = QVBoxLayout(self._active_root)
         root_vbox.setContentsMargins(0, 0, 0, 0)
         root_vbox.setSpacing(10)
 
-        # Content area: portrait (left) + info column (right)
         self._content_row = QHBoxLayout()
         self._content_row.setSpacing(16)
 
@@ -139,12 +139,13 @@ class _FullToonCard(QFrame):
         self._content_row.addWidget(self._portrait_wrap)
         self._content_row.addLayout(self._info_col, 1)
 
-        # Controls row
         self._ctrl_row = QHBoxLayout()
         self._ctrl_row.setSpacing(8)
 
         root_vbox.addLayout(self._content_row, 1)
         root_vbox.addLayout(self._ctrl_row, 0)
+
+        self._stack_layout.addWidget(self._active_root)
 
     # ── Active view populate ───────────────────────────────────────────────
     def populate_active(self):
@@ -284,6 +285,7 @@ class _FullToonCard(QFrame):
         self._status_indicator._set_glow(0.0)
 
     def apply_theme(self, c: dict) -> None:
+        self._theme_colors = c
         self.setStyleSheet(
             f"#full_toon_card {{ background: {c['bg_card']}; "
             f"border: 1px solid {c['border_card']}; border-radius: 12px; }}"
@@ -291,51 +293,83 @@ class _FullToonCard(QFrame):
         self._status_indicator.apply_theme(
             c["bg_card"], c["status_dot_active"], c["status_dot_idle"]
         )
-        # text_on_accent (Material 3 onPrimary): white on light, slate-900 on dark
         if self._game_pill is not None:
             self._game_pill.setStyleSheet(
                 f"background: {c['game_pill_ttr']}; color: {c['text_on_accent']}; "
                 f"border-radius: 10px; padding: 3px 10px; "
                 f"font-size: 10px; font-weight: 700; letter-spacing: 0.5px;"
             )
-        # Re-apply Full UI's name-label styling. refresh_theme runs first and
-        # sets a Compact-style 14px stylesheet; this call then overrides for
-        # Full's 22pt DemiBold + 60px right padding (room for the game pill).
+        self._apply_scaled_styles()
+
+    def resize(self, *args):
+        """Override so _scale_content fires even on hidden widgets (e.g. tests)."""
+        super().resize(*args)
+        if self._is_active:
+            QTimer.singleShot(0, self._scale_content)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self._is_active:
+            self._scale_content()
+        if self._is_active and self._game_pill is not None:
+            pw = self._game_pill.sizeHint().width()
+            self._game_pill.move(self.width() - pw - 14, 14)
+
+    def _scale_content(self):
+        m = self._stack_layout.contentsMargins()
+        content_h = self.height() - m.top() - m.bottom()
+        if content_h <= 0:
+            return
+        ref_h = self._MAX_CARD_H - m.top() - m.bottom()
+        scale = max(0.6, min(1.0, content_h / ref_h))
+        if abs(scale - self._scale) < 0.01:
+            return
+        self._scale = scale
+
+        ps = int(130 * scale)
+        self._portrait_wrap.setFixedSize(ps, ps)
+        self._tab.slot_badges[self._slot].setFixedSize(ps, ps)
+        ind_offset = ps - 30
+        self._status_indicator.move(ind_offset, ind_offset)
+
+        bh = int(40 * scale)
+        self._tab.toon_buttons[self._slot].setFixedHeight(bh)
+        self._tab.toon_buttons[self._slot].setFixedWidth(int(100 * scale))
+        self._tab.chat_buttons[self._slot].setFixedHeight(bh)
+        self._tab.chat_buttons[self._slot].setFixedWidth(bh)
+        self._tab.keep_alive_buttons[self._slot].setFixedHeight(bh)
+        self._tab.keep_alive_buttons[self._slot].setFixedWidth(bh)
+
+        self._tab.ka_progress_bars[self._slot].setFixedSize(
+            int(120 * scale), max(4, int(10 * scale))
+        )
+        self._tab.set_selectors[self._slot].setFixedHeight(bh)
+
+        self._active_root.layout().setSpacing(int(10 * scale))
+        self._content_row.setSpacing(int(16 * scale))
+        self._ctrl_row.setSpacing(int(8 * scale))
+
+        self._apply_scaled_styles()
+
+    def _apply_scaled_styles(self):
+        if self._theme_colors is None:
+            return
+        c = self._theme_colors
+        s = self._scale
         name_label, _ = self._tab.toon_labels[self._slot]
         name_label.setStyleSheet(
-            f"font-size: 22px; font-weight: 600; color: {c['text_primary']}; "
+            f"font-size: {int(22 * s)}px; font-weight: 600; color: {c['text_primary']}; "
             f"background: transparent; border: none; padding-right: 60px;"
         )
         f = name_label.font()
-        f.setPointSize(22)
+        f.setPointSize(int(22 * s))
         f.setWeight(QFont.DemiBold)
         name_label.setFont(f)
         for lbl in (self._tab.laff_labels[self._slot], self._tab.bean_labels[self._slot]):
             lbl.setStyleSheet(
                 f"border: none; background: transparent; font-weight: 600; "
-                f"font-size: 15px; color: {c['text_primary']};"
+                f"font-size: {int(15 * s)}px; color: {c['text_primary']};"
             )
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self._position_content()
-        if self._is_active and self._game_pill is not None:
-            root = self._active_root
-            pill_w = self._game_pill.sizeHint().width()
-            pill_x = root.x() + root.width() - pill_w
-            pill_y = root.y()
-            self._game_pill.move(pill_x, pill_y)
-
-    def _position_content(self):
-        """Center _active_root within the card's content area."""
-        m = self._stack_layout.contentsMargins()
-        avail_w = self.width() - m.left() - m.right()
-        avail_h = self.height() - m.top() - m.bottom()
-        block_w = min(500, avail_w)
-        block_h = min(240, avail_h)
-        x = m.left() + (avail_w - block_w) // 2
-        y = m.top() + (avail_h - block_h) // 2
-        self._active_root.setGeometry(x, y, block_w, block_h)
 
 
 class _FullLayout(QWidget):
