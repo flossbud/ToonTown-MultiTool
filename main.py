@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
     QGraphicsOpacityEffect,
 )
 from PySide6.QtCore import QRect, Qt, QMetaObject, QSize, QEvent, Signal, Slot, QPropertyAnimation, QEasingCurve, QAbstractAnimation, QTimer
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QGuiApplication, QIcon
 
 # === Internal Imports ===
 from tabs.multitoon_tab import MultitoonTab
@@ -515,7 +515,16 @@ class MultiToonTool(QMainWindow):
 
 
 if __name__ == "__main__":
+    # Identity must be set BEFORE QApplication is constructed; Qt reads these
+    # at construction time to populate X11 WM_CLASS and Wayland app_id.
+    # Without them Qt falls back to argv[0] ("python3" inside the Flatpak)
+    # and KDE/GNOME show an orphan taskbar entry with a generic icon.
+    QApplication.setApplicationName("ToonTown MultiTool")
+    QApplication.setApplicationDisplayName("ToonTown MultiTool")
+    QApplication.setOrganizationName("flossbud")
+    QGuiApplication.setDesktopFileName("io.github.flossbud.ToonTownMultiTool")
     app = QApplication(sys.argv)
+    app.setWindowIcon(QIcon.fromTheme("io.github.flossbud.ToonTownMultiTool"))
     app.setStyle(NoFocusProxyStyle(app.style()))
     from PySide6.QtGui import QFont, QFontDatabase
     QFontDatabase.addApplicationFont("/usr/share/fonts/google-noto-color-emoji-fonts/Noto-COLRv1.ttf")
