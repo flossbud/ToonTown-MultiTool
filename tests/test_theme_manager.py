@@ -22,3 +22,10 @@ def test_font_role_unknown_falls_back_to_body():
 
 def test_typography_dict_has_canonical_roles():
     assert {"display", "title", "body", "label", "caption"} <= set(TYPOGRAPHY.keys())
+
+
+def test_light_theme_uses_gradient_background():
+    """The flat #f0f0f0 background was replaced with a subtle gradient."""
+    assert "qlineargradient" in LIGHT_THEME, (
+        "LIGHT_THEME should use qlineargradient for app background depth"
+    )
