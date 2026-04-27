@@ -1067,6 +1067,13 @@ class MultitoonTab(QWidget):
             ka_bar.set_bg_color(c['border_muted'])
 
         self.apply_all_visual_states()
+
+        # Apply theme to the active layout (Compact's per-card logic ran above;
+        # Full has its own apply_theme entry point that styles the bespoke card
+        # frames, status indicators, and game pills).
+        if hasattr(self, "_full") and self._full is not None:
+            self._full.apply_theme(c)
+
         self.update_status_label()
 
     # ── Visual state per toon ──────────────────────────────────────────────
