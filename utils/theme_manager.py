@@ -90,68 +90,65 @@ def get_theme_colors(is_dark: bool) -> dict:
     if is_dark:
         return {
             # Backgrounds  (elevation: sidebar < app < card < card_inner)
-            "bg_app":        "#1a1a1f",
-            "bg_card":       "#2a2a30",
-            "bg_card_inner": "#2f2f36",
-            "bg_input":      "#1e1e23",
-            "bg_input_dark": "#141418",
-            "bg_status":     "#1e1e23",
+            "bg_app":        "#1a1a1a",
+            "bg_card":       "#252525",
+            "bg_card_inner": "#2e2e2e",
+            "bg_input":      "#1e1e1e",
+            "bg_input_dark": "#141414",
+            "bg_status":     "#1e1e1e",
 
             # Sidebar
-            "sidebar_bg":       "#131316",
+            "sidebar_bg":       "#111111",
             "sidebar_btn":      "transparent",
             "sidebar_btn_sel":  "rgba(255,255,255,0.09)",
-            "sidebar_text":     "#a8a8b0",
+            "sidebar_text":     "#aaaaaa",
             "sidebar_text_sel": "#ffffff",
-            "sidebar_border":   "#2c2c33",
+            "sidebar_border":   "#2a2a2a",
 
             # Header
-            "header_bg":     "#1a1a1f",
-            "header_text":   "#e8e8ed",
-            "header_accent": "#3a6dd8",
+            "header_bg":     "#1a1a1a",
+            "header_text":   "#ffffff",
+            "header_accent": "#0077ff",
 
             # Borders
-            "border_card":  "#35353c",
-            "border_input": "#3a3a42",
-            "border_muted": "#2c2c33",
-            "border_light": "#55555c",
+            "border_card":  "#363636",
+            "border_input": "#3a3a3a",
+            "border_muted": "#2e2e2e",
+            "border_light": "#555555",
 
             # Text
-            "text_primary":   "#e8e8ed",
-            "text_secondary": "#c8c8d0",
-            "text_muted":     "#888890",
-            "text_disabled":  "#5c5c64",
+            "text_primary":   "#ffffff",
+            "text_secondary": "#bbbbbb",
+            "text_muted":     "#888888",
+            "text_disabled":  "#666666",
 
-            # On-accent text/icon — universal pair for every bright accent surface
-            # below. Slate-900 clears AA against green-400/blue-400/red-400/violet-400.
-            "text_on_accent": "#0f172a",
+            # Text/icon paired with accent surfaces. White on saturated accents
+            # is what the v2.0.3 dark theme used; matches the Compact button look.
+            "text_on_accent": "#ffffff",
 
-            # Accent — green (text-bearing surface, e.g. Enable button)
-            # Pairs with text_on_accent. green-400 / 9.7:1 vs text_on_accent (AAA).
-            "accent_green":        "#4ade80",
-            "accent_green_border": "#86efac",
-            "accent_green_hover":  "#22c55e",
-            "accent_green_hover_border": "#4ade80",
+            # Accent — green
+            "accent_green":        "#3da343",
+            "accent_green_border": "#56d66a",
+            "accent_green_hover":  "#4fc95c",
+            "accent_green_hover_border": "#6ae87d",
             "accent_green_subtle": "#80c080",
 
-            # Accent — blue (text-bearing surface, e.g. Set selector)
-            # Pairs with text_on_accent. blue-400 / 6.7:1 (AA, near-AAA).
+            # Accent — blue
             "accent_blue": "#88c0d0",
-            "accent_blue_btn":        "#60a5fa",
-            "accent_blue_btn_border": "#93c5fd",
-            "accent_blue_btn_hover":  "#3b82f6",
+            "accent_blue_btn":        "#0077ff",
+            "accent_blue_btn_border": "#3399ff",
+            "accent_blue_btn_hover":  "#1a88ff",
 
-            # Accent — red (text-bearing surface, e.g. Stop Service)
-            # Pairs with text_on_accent. red-400 / 6.3:1 (AA).
-            "accent_red":        "#f87171",
-            "accent_red_border": "#fca5a5",
-            "accent_red_hover":  "#ef4444",
-            "accent_red_hover_border": "#f87171",
+            # Accent — red
+            "accent_red":        "#b34848",
+            "accent_red_border": "#d95757",
+            "accent_red_hover":  "#cc5e5e",
+            "accent_red_hover_border": "#f06868",
 
-            # Accent — orange (keep-alive active — icon-only button, 3:1 UI minimum)
-            "accent_orange":        "#c66d2e",
-            "accent_orange_border": "#e0843a",
-            "accent_orange_hover":  "#d47a34",
+            # Accent — orange (keep-alive active)
+            "accent_orange":        "#c47a2a",
+            "accent_orange_border": "#e0943a",
+            "accent_orange_hover":  "#d48a34",
 
             # Status strip — success
             "status_success_bg":     "#2c3f2c",
@@ -164,56 +161,54 @@ def get_theme_colors(is_dark: bool) -> dict:
             "status_warning_border": "#ffaa00",
 
             # Status strip — idle
-            "status_idle_bg":     "#2f2f36",
-            "status_idle_text":   "#c8c8d0",
-            "status_idle_border": "#55555c",
+            "status_idle_bg":     "#2f2f2f",
+            "status_idle_text":   "#cccccc",
+            "status_idle_border": "#555555",
 
             # Buttons
-            "btn_bg":       "#35353c",
-            "btn_border":   "#45454c",
-            "btn_hover":    "#3e3e45",
-            "btn_disabled": "#2a2a30",
-            "btn_text":     "#e8e8ed",
+            "btn_bg":       "#333333",
+            "btn_border":   "#444444",
+            "btn_hover":    "#3e3e3e",
+            "btn_disabled": "#2a2a2a",
+            "btn_text":     "#ffffff",
 
             # Dropdowns
-            "dropdown_bg":          "#2f2f36",
-            "dropdown_text":        "#e8e8ed",
-            "dropdown_border":      "#3a3a42",
-            "dropdown_list_bg":     "#1e1e23",
-            "dropdown_sel_bg":      "#3a3a42",
+            "dropdown_bg":          "#2e2e2e",
+            "dropdown_text":        "#ffffff",
+            "dropdown_border":      "#3a3a3a",
+            "dropdown_list_bg":     "#1e1e1e",
+            "dropdown_sel_bg":      "#3a3a3a",
             "dropdown_sel_text":    "#ffffff",
 
             # Toon enable button — inactive
-            "toon_btn_inactive_bg":     "#3a3a42",
-            "toon_btn_inactive_border": "#4a4a52",
-            "toon_btn_inactive_hover":  "#444450",
-            "toon_btn_inactive_hover_border": "#5a5a62",
+            "toon_btn_inactive_bg":     "#3a3a3a",
+            "toon_btn_inactive_border": "#4a4a4a",
+            "toon_btn_inactive_hover":  "#444444",
+            "toon_btn_inactive_hover_border": "#5a5a5a",
 
             # Slot accent colors (badge circles)
             "slot_1": "#5b9bf5",
             "slot_2": "#4ade80",
             "slot_3": "#f59e42",
             "slot_4": "#b07cf5",
-            "slot_dim": "#2f2f36",
+            "slot_dim": "#2e2e2e",
 
             # Toon cards (floating on gradient)
-            "card_toon_bg":        "#2a2a30",
-            "card_toon_border":    "#35353c",
-            "card_toon_active_bg": "#1f2e22",
+            "card_toon_bg":        "#252525",
+            "card_toon_border":    "#363636",
+            "card_toon_active_bg": "#1e2e1e",
 
             # Segment status bar
-            "segment_off":    "#1e1e23",
-            "segment_found":  "#35353c",
-            "segment_active": "#3aaa5e",
+            "segment_off":    "#1e1e1e",
+            "segment_found":  "#363636",
+            "segment_active": "#56c856",
 
-            # Full UI tokens
-            # status_dot_active/segment_active are decorative (no text on them) —
-            # kept saturated for visual punch. Game pills are text-bearing and pair
-            # with text_on_accent above; violet-400 / 6.2:1, blue-400 / 6.7:1.
-            "status_dot_active": "#3aaa5e",
-            "status_dot_idle":   "#45454c",
-            "game_pill_ttr":     "#a78bfa",
-            "game_pill_cc":      "#60a5fa",
+            # Full UI tokens (no v2.0.3 equivalent; chosen for dark mode visual
+            # consistency and AA contrast with text_on_accent = white).
+            "status_dot_active": "#56c856",   # matches segment_active green
+            "status_dot_idle":   "#555555",   # matches border_light
+            "game_pill_ttr":     "#7e57c2",   # deeper violet, ~4.6:1 with white (AA)
+            "game_pill_cc":      "#0077ff",   # matches accent_blue_btn for consistency
         }
     else:
         return {
@@ -350,42 +345,42 @@ DARK_THEME = """
     QWidget {
         font-family: 'Inter', 'Segoe UI', 'Noto Sans', 'DejaVu Sans', sans-serif;
         font-size: 12pt;
-        background-color: #1a1a1f;
-        color: #e8e8ed;
+        background-color: #1a1a1a;
+        color: #e0e0e0;
     }
     QPushButton {
-        background-color: #35353c;
-        color: #e8e8ed;
+        background-color: #333333;
+        color: white;
         border-radius: 8px;
         padding: 6px 14px;
-        border: 1px solid #45454c;
+        border: 1px solid #444444;
     }
     QPushButton:hover {
-        background-color: #3e3e45;
-        border: 1px solid #55555c;
+        background-color: #3e3e3e;
+        border: 1px solid #555555;
     }
     QPushButton:pressed {
-        background-color: #28282d;
-        border: 1px solid #3a3a42;
+        background-color: #282828;
+        border: 1px solid #3a3a3a;
         padding-top: 7px;
         padding-bottom: 5px;
     }
     QPushButton:disabled {
-        background-color: #2a2a30;
-        color: #5c5c64;
-        border: 1px solid #35353c;
+        background-color: #2a2a2a;
+        color: #666666;
+        border: 1px solid #333333;
     }
     QComboBox {
-        background-color: #2f2f36;
-        color: #e8e8ed;
+        background-color: #2e2e2e;
+        color: white;
         border-radius: 8px;
         padding: 4px 8px;
-        border: 1px solid #3a3a42;
+        border: 1px solid #3a3a3a;
     }
     QComboBox QAbstractItemView {
-        background-color: #1e1e23;
-        selection-background-color: #3a3a42;
-        color: #e8e8ed;
+        background-color: #1e1e1e;
+        selection-background-color: #3a3a3a;
+        color: white;
     }
 """
 

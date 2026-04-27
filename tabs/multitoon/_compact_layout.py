@@ -4,7 +4,7 @@ centers horizontally so wider windows do not stretch it."""
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFrame
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFrame, QSizePolicy
 
 from tabs.multitoon._layout_utils import clear_layout
 
@@ -34,6 +34,11 @@ class _CompactLayout(QWidget):
 
         outer_card = QFrame()
         outer_card.setMaximumWidth(720)
+        # Expand-to-fill horizontally up to maxWidth. Combined with the
+        # addStretch() pair below, this gives "fill when narrow, center
+        # when wider than 720" — what the v2.0.3 layout did naturally
+        # before the maxWidth clamp was introduced.
+        outer_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self._tab.outer_card = outer_card
         card_layout = QVBoxLayout(outer_card)
         card_layout.setContentsMargins(16, 16, 16, 16)
@@ -60,7 +65,18 @@ class _CompactLayout(QWidget):
             card_layout.addWidget(self._build_card_structure(i))
 
         card_layout.addStretch()
-        outer_layout.addWidget(outer_card, alignment=Qt.AlignHCenter)
+        # Layout pattern: stretches with factor 1 on each side, card with
+        # large factor (100). Qt distributes layout width by stretch factor
+        # — card gets ~98% (100/102), each stretch ~1%. When window is
+        # narrow the card fills nearly the full available width (matches
+        # v2.0.3); when window > 720 the card hits its maxWidth and the
+        # stretches absorb the leftover, centering the card.
+        center_row = QHBoxLayout()
+        center_row.setContentsMargins(0, 0, 0, 0)
+        center_row.addStretch(1)
+        center_row.addWidget(outer_card, 100)
+        center_row.addStretch(1)
+        outer_layout.addLayout(center_row)
         outer_layout.addStretch()
 
     def _build_card_structure(self, i: int) -> QFrame:
