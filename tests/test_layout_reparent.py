@@ -145,8 +145,8 @@ def test_full_to_compact_roundtrip_restores_shared_widget_sizes(tab):
     assert tab.set_selectors[0].height() <= 28 or tab.set_selectors[0].maximumHeight() == 28
 
     tab.set_layout_mode("full")
-    # Full mutates: selector becomes 32, ka_bar fixed-size, name padding-right
-    assert tab.set_selectors[0].maximumHeight() == 32
+    # Full mutates: selector becomes 40, ka_bar fixed-size, name padding-right
+    assert tab.set_selectors[0].maximumHeight() == 40
 
     tab.set_layout_mode("compact")
     # Compact must restore defaults
@@ -284,6 +284,43 @@ def test_game_pill_parented_to_card_not_active_root(tab):
     assert pill is not None, "game_pill should be set after populate_active"
     assert pill.parent() is card, (
         f"game_pill should be parented to card, not {pill.parent().__class__.__name__}"
+    )
+
+
+def test_full_portrait_and_controls_scaled(tab):
+    """Full UI portrait must be 120x120 and controls 40px tall."""
+    tab.set_layout_mode("full")
+    card = tab._full._cards[0]
+
+    assert card._portrait_wrap.width() == 120, (
+        f"portrait wrapper should be 120px wide; got {card._portrait_wrap.width()}"
+    )
+    assert card._portrait_wrap.height() == 120, (
+        f"portrait wrapper should be 120px tall; got {card._portrait_wrap.height()}"
+    )
+
+    btn = tab.toon_buttons[0]
+    assert btn.maximumHeight() == 40, (
+        f"enable button should be 40px tall; got max height {btn.maximumHeight()}"
+    )
+    assert btn.maximumWidth() == 100, (
+        f"enable button should be 100px wide; got max width {btn.maximumWidth()}"
+    )
+
+    chat = tab.chat_buttons[0]
+    assert chat.maximumHeight() == 40, (
+        f"chat button should be 40px tall; got {chat.maximumHeight()}"
+    )
+    assert chat.maximumWidth() == 40, (
+        f"chat button should be 40px wide; got {chat.maximumWidth()}"
+    )
+
+    ka_bar = tab.ka_progress_bars[0]
+    assert ka_bar.maximumWidth() == 120, (
+        f"ka progress bar should be 120px wide; got {ka_bar.maximumWidth()}"
+    )
+    assert ka_bar.maximumHeight() == 10, (
+        f"ka progress bar should be 10px tall; got {ka_bar.maximumHeight()}"
     )
 
 
