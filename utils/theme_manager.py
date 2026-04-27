@@ -107,7 +107,6 @@ def get_theme_colors(is_dark: bool) -> dict:
             # Header
             "header_bg":     "#1a1a1a",
             "header_text":   "#ffffff",
-            "header_sub":    "#888888",
             "header_accent": "#0077ff",
 
             # Borders
@@ -220,7 +219,6 @@ def get_theme_colors(is_dark: bool) -> dict:
             # Header
             "header_bg":     "#f0f0f0",
             "header_text":   "#222222",
-            "header_sub":    "#888888",
             "header_accent": "#0077ff",
 
             # Borders
