@@ -40,3 +40,19 @@ def test_clamp_centered_returns_widget_for_chaining(qapp):
     child = QWidget()
     result = clamp_centered(layout, child, 480)
     assert result is child
+
+
+def test_status_indicator_constructs_and_renders(qapp):
+    from tabs.multitoon._full_layout import _StatusIndicator
+    from PySide6.QtGui import QPixmap
+
+    w = _StatusIndicator()
+    w.apply_theme("#2a2a30", "#3aaa5e", "#45454c")
+    w.set_active(True)
+    # Render to a pixmap to force a paintEvent
+    pixmap = QPixmap(w.size())
+    pixmap.fill(Qt.transparent)
+    w.render(pixmap)
+    assert not pixmap.isNull()
+    assert pixmap.size().width() == 32
+    assert pixmap.size().height() == 32
