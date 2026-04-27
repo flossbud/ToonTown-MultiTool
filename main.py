@@ -79,7 +79,7 @@ class AnimatedNavButton(QPushButton):
 
 
 class MultiToonTool(QMainWindow):
-    APP_VERSION = "2.0.3"
+    APP_VERSION = "2.0.4"
     _api_log = Signal(str)
 
     def __init__(self):

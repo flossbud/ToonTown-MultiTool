@@ -1,16 +1,14 @@
-## ToonTown MultiTool v2.0.3
+## ToonTown MultiTool v2.0.4
 
-Patch release fixing credential storage on KDE Plasma.
+Patch release fixing the Flatpak launch flow on Wayland desktops.
 
 ---
 
 ### Bug Fixes
 
-- Fixed AppImage builds being unable to read passwords stored in KDE Wallet, which caused accounts to fail to launch with no error message after a system reboot.
-
-### Improvements
-
-- Added a portable, pure-Python KWallet backend so packaged builds work on KDE without needing system Python bindings installed.
+- Fixed the Flatpak crashing on startup on Wayland desktops (KDE Plasma, GNOME).
+- Fixed the Flatpak being unable to find Toontown Rewritten when installed via the official TTR launcher Flatpak.
+- Fixed the Flatpak silently failing to launch the game after a successful login.
 
 ---
 
@@ -18,8 +16,9 @@ Patch release fixing credential storage on KDE Plasma.
 
 | File | Platform |
 |------|----------|
-| `ToonTownMultiTool-v2.0.3-Windows-x86_64.exe` | Windows 10/11 |
-| `TTMultiTool-v2.0.3-Linux-x86_64.AppImage` | Linux (X11 / Wayland) |
+| `ToonTownMultiTool-v2.0.4-Windows-x86_64.exe` | Windows 10/11 |
+| `TTMultiTool-v2.0.4-Linux-x86_64.AppImage` | Linux (X11 / Wayland) |
+| `TTMultiTool-v2.0.4-Linux-x86_64.flatpak` | Linux Flatpak |
 
 ---
 
