@@ -197,6 +197,29 @@ def test_full_name_label_styling_survives_refresh_theme(tab):
     )
 
 
+def test_compact_startup_uses_original_widget_sizes(tab):
+    """Regression: at startup, shared widgets must keep their constructor-time
+    constraints in Compact mode. _FullLayout.populate_active runs during init
+    and mutates badge → 104x104 and ka_bar → 90x8; Compact's populate must
+    restore the original 38-64 badge bounds and 7px-tall ka_bar."""
+    # Badge: ToonPortraitWidget defaults are setMinimumSize(38, 38) + setMaximumSize(64, 64)
+    badge = tab.slot_badges[0]
+    assert badge.minimumSize().width() == 38 and badge.minimumSize().height() == 38, (
+        f"badge min should be (38, 38); got {badge.minimumSize()}"
+    )
+    assert badge.maximumSize().width() == 64 and badge.maximumSize().height() == 64, (
+        f"badge max should be (64, 64); got {badge.maximumSize()}"
+    )
+    # ka_bar: SmoothProgressBar defaults are setFixedHeight(7) + setMinimumWidth(40)
+    ka_bar = tab.ka_progress_bars[0]
+    assert ka_bar.minimumWidth() == 40, (
+        f"ka_bar min width should be 40; got {ka_bar.minimumWidth()}"
+    )
+    assert ka_bar.maximumHeight() == 7, (
+        f"ka_bar should be fixed at 7px tall; got max height {ka_bar.maximumHeight()}"
+    )
+
+
 def test_pulse_anim_stops_when_leaving_full(tab):
     """Important bug regression: pulse animations must not keep running in Compact."""
     # Activate slot 0 so its pulse starts in Full
