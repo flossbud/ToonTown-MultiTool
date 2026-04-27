@@ -121,26 +121,33 @@ def get_theme_colors(is_dark: bool) -> dict:
             "text_muted":     "#888890",
             "text_disabled":  "#5c5c64",
 
-            # Accent — green
-            "accent_green":        "#3aaa5e",
-            "accent_green_border": "#56d66a",
-            "accent_green_hover":  "#4fc06a",
-            "accent_green_hover_border": "#6ae87d",
+            # On-accent text/icon — universal pair for every bright accent surface
+            # below. Slate-900 clears AA against green-400/blue-400/red-400/violet-400.
+            "text_on_accent": "#0f172a",
+
+            # Accent — green (text-bearing surface, e.g. Enable button)
+            # Pairs with text_on_accent. green-400 / 9.7:1 vs text_on_accent (AAA).
+            "accent_green":        "#4ade80",
+            "accent_green_border": "#86efac",
+            "accent_green_hover":  "#22c55e",
+            "accent_green_hover_border": "#4ade80",
             "accent_green_subtle": "#80c080",
 
-            # Accent — blue
+            # Accent — blue (text-bearing surface, e.g. Set selector)
+            # Pairs with text_on_accent. blue-400 / 6.7:1 (AA, near-AAA).
             "accent_blue": "#88c0d0",
-            "accent_blue_btn":        "#3a6dd8",
-            "accent_blue_btn_border": "#5a8de8",
-            "accent_blue_btn_hover":  "#4a7de0",
+            "accent_blue_btn":        "#60a5fa",
+            "accent_blue_btn_border": "#93c5fd",
+            "accent_blue_btn_hover":  "#3b82f6",
 
-            # Accent — red
-            "accent_red":        "#c44848",
-            "accent_red_border": "#d95757",
-            "accent_red_hover":  "#cc5e5e",
-            "accent_red_hover_border": "#f06868",
+            # Accent — red (text-bearing surface, e.g. Stop Service)
+            # Pairs with text_on_accent. red-400 / 6.3:1 (AA).
+            "accent_red":        "#f87171",
+            "accent_red_border": "#fca5a5",
+            "accent_red_hover":  "#ef4444",
+            "accent_red_hover_border": "#f87171",
 
-            # Accent — orange (keep-alive active)
+            # Accent — orange (keep-alive active — icon-only button, 3:1 UI minimum)
             "accent_orange":        "#c66d2e",
             "accent_orange_border": "#e0843a",
             "accent_orange_hover":  "#d47a34",
@@ -199,10 +206,13 @@ def get_theme_colors(is_dark: bool) -> dict:
             "segment_active": "#3aaa5e",
 
             # Full UI tokens
+            # status_dot_active/segment_active are decorative (no text on them) —
+            # kept saturated for visual punch. Game pills are text-bearing and pair
+            # with text_on_accent above; violet-400 / 6.2:1, blue-400 / 6.7:1.
             "status_dot_active": "#3aaa5e",
             "status_dot_idle":   "#45454c",
-            "game_pill_ttr":     "#7e57c2",
-            "game_pill_cc":      "#3a6dd8",
+            "game_pill_ttr":     "#a78bfa",
+            "game_pill_cc":      "#60a5fa",
         }
     else:
         return {
@@ -239,11 +249,18 @@ def get_theme_colors(is_dark: bool) -> dict:
             "text_muted":     "#475569",
             "text_disabled":  "#64748b",
 
-            # Accent — green
-            "accent_green":        "#16a34a",
+            # On-accent text/icon — universal pair for every text-bearing accent
+            # surface in the light palette (white on green-700/blue-600/orange-700/
+            # red-700/violet-600 all clear AA).
+            "text_on_accent": "#ffffff",
+
+            # Accent — green (text-bearing surface, e.g. Enable button)
+            # green-700 / 5.0:1 vs white (AA). green-600 #16a34a is reserved for
+            # decorative roles (status dot, segment) where 3:1 UI minimum applies.
+            "accent_green":        "#15803d",
             "accent_green_border": "#22c55e",
-            "accent_green_hover":  "#15803d",
-            "accent_green_hover_border": "#16a34a",
+            "accent_green_hover":  "#166534",
+            "accent_green_hover_border": "#15803d",
             "accent_green_subtle": "#86efac",
 
             # Accent — blue
@@ -299,9 +316,11 @@ def get_theme_colors(is_dark: bool) -> dict:
             "toon_btn_inactive_hover":  "#dbe2ea",
             "toon_btn_inactive_hover_border": "#94a3b8",
 
-            # Slot accent colors (badge circles)
+            # Slot accent colors (badge circles — text-bearing, paired with white digit)
+            # All four cleared AA against white: blue-600 5.7, green-700 5.0,
+            # orange-700 5.0, violet-600 5.4.
             "slot_1": "#2563eb",
-            "slot_2": "#16a34a",
+            "slot_2": "#15803d",
             "slot_3": "#c2410c",
             "slot_4": "#7c3aed",
             "slot_dim": "#cbd5e1",
