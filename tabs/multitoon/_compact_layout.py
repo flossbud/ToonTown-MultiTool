@@ -147,9 +147,9 @@ class _CompactLayout(QWidget):
         # mutated. Restore the *original* constraints from each widget's
         # __init__, not just zero them out — Compact relies on the natural
         # size constraints to keep the cards compact.
-        self._tab.set_selectors[i].setFixedHeight(28)  # Full sets 32; SetSelectorWidget defaults to 28
+        self._tab.set_selectors[i].setFixedHeight(28)  # Full scales dynamically; SetSelectorWidget defaults to 28
 
-        # slot_badge: Full sets setFixedSize(104, 104); ToonPortraitWidget's
+        # slot_badge: Full scales dynamically; ToonPortraitWidget's
         # constructor defaults are setMinimumSize(38, 38) + setMaximumSize(64, 64).
         # Without this reset the badge stays at 104x104 in Compact, which makes
         # the cards ~45px taller than designed.
@@ -157,7 +157,7 @@ class _CompactLayout(QWidget):
         badge.setMinimumSize(38, 38)
         badge.setMaximumSize(64, 64)
 
-        # ka_bar: Full sets setFixedSize(90, 8); SmoothProgressBar's constructor
+        # ka_bar: Full scales dynamically; SmoothProgressBar's constructor
         # defaults are setFixedHeight(7) + setMinimumWidth(40), elastic max width.
         # Without this reset the bar fills the row's 32px height (drawing only
         # in a 7px stripe so the rest reads as transparent) AND has no minimum
@@ -176,8 +176,8 @@ class _CompactLayout(QWidget):
         if "padding-right" in sheet:
             name_label.setStyleSheet(sheet.replace("padding-right: 60px;", "").strip())
 
-        # Buttons: Full sets 100×40 enable, 40×40 chat/KA; constructor defaults
-        # are 88×32 enable, 32×32 chat/KA.
+        # Buttons: Full scales dynamically; constructor defaults are
+        # 88×32 enable, 32×32 chat/KA.
         self._tab.toon_buttons[i].setFixedHeight(32)
         self._tab.toon_buttons[i].setFixedWidth(88)
         self._tab.chat_buttons[i].setFixedHeight(32)
