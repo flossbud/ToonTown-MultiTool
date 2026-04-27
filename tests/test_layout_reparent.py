@@ -145,8 +145,8 @@ def test_full_to_compact_roundtrip_restores_shared_widget_sizes(tab):
     assert tab.set_selectors[0].height() <= 28 or tab.set_selectors[0].maximumHeight() == 28
 
     tab.set_layout_mode("full")
-    # Full mutates: selector becomes 44, ka_bar fixed-size, name padding-right
-    assert tab.set_selectors[0].maximumHeight() == 44
+    # Full mutates: selector becomes 40, ka_bar fixed-size, name padding-right
+    assert tab.set_selectors[0].maximumHeight() == 40
 
     tab.set_layout_mode("compact")
     # Compact must restore defaults
@@ -190,23 +190,23 @@ def test_full_name_label_styling_survives_refresh_theme(tab):
 
     name_label, _ = tab.toon_labels[0]
     sheet = name_label.styleSheet()
-    # Full UI requires 26px font-size and right padding for the game pill.
-    assert "font-size: 26px" in sheet, f"Full name-label should be 26px; got {sheet!r}"
+    # Full UI requires 22px font-size and right padding for the game pill.
+    assert "font-size: 22px" in sheet, f"Full name-label should be 22px; got {sheet!r}"
     assert "padding-right: 60px" in sheet, (
         f"Full name-label should reserve 60px for game pill; got {sheet!r}"
     )
 
 
 def test_full_stats_labels_get_scaled_font(tab):
-    """Stats labels (LAFF/beans) must get Full UI's 17px override, not
+    """Stats labels (LAFF/beans) must get Full UI's 15px override, not
     compact's 13px, after refresh_theme + Full apply_theme."""
     tab.set_layout_mode("full")
     tab.refresh_theme()
 
     for label_list in (tab.laff_labels, tab.bean_labels):
         sheet = label_list[0].styleSheet()
-        assert "font-size: 17px" in sheet, (
-            f"Full stats label should be 17px; got {sheet!r}"
+        assert "font-size: 15px" in sheet, (
+            f"Full stats label should be 15px; got {sheet!r}"
         )
 
 
@@ -233,30 +233,21 @@ def test_compact_startup_uses_original_widget_sizes(tab):
     )
 
 
-def test_full_card_portrait_scales_with_card(qapp, tab):
-    """The portrait must dynamically size to fill available card space."""
-    from PySide6.QtCore import QSize
-    from PySide6.QtWidgets import QWidget, QVBoxLayout
-
+def test_full_card_portrait_fixed_size(qapp, tab):
+    """Portrait must be fixed at 130x130 in Full UI, not dynamic."""
     tab.set_layout_mode("full")
     tab._full._cards[0].set_active(True)
 
-    host = QWidget()
-    v = QVBoxLayout(host)
-    v.setContentsMargins(0, 0, 0, 0)
-    v.addWidget(tab)
-    host.resize(QSize(1280, 800))
-    host.show()
-    for _ in range(10):
-        qapp.processEvents()
-
-    card = tab._full._cards[0]
-    portrait_size = card._portrait_wrap.width()
-    assert portrait_size >= 120, (
-        f"portrait should be at least 120px; got {portrait_size}"
+    wrap = tab._full._cards[0]._portrait_wrap
+    assert wrap.maximumWidth() == 130, (
+        f"portrait wrap should be 130px wide; got {wrap.maximumWidth()}"
     )
-    assert card._portrait_wrap.width() == card._portrait_wrap.height(), (
-        "portrait wrapper must be square"
+    assert wrap.maximumHeight() == 130, (
+        f"portrait wrap should be 130px tall; got {wrap.maximumHeight()}"
+    )
+    badge = tab.slot_badges[0]
+    assert badge.maximumWidth() == 130 and badge.maximumHeight() == 130, (
+        f"badge should be 130x130; got {badge.maximumSize()}"
     )
 
 
@@ -274,38 +265,38 @@ def test_game_pill_parented_to_card_not_active_root(tab):
 
 
 def test_full_controls_scaled(tab):
-    """Full UI controls must be 44px tall."""
+    """Full UI controls must be 40px tall."""
     tab.set_layout_mode("full")
 
     btn = tab.toon_buttons[0]
-    assert btn.maximumHeight() == 44, (
-        f"enable button should be 44px tall; got max height {btn.maximumHeight()}"
+    assert btn.maximumHeight() == 40, (
+        f"enable button should be 40px tall; got max height {btn.maximumHeight()}"
     )
-    assert btn.maximumWidth() == 110, (
-        f"enable button should be 110px wide; got max width {btn.maximumWidth()}"
+    assert btn.maximumWidth() == 100, (
+        f"enable button should be 100px wide; got max width {btn.maximumWidth()}"
     )
 
     chat = tab.chat_buttons[0]
-    assert chat.maximumHeight() == 44, (
-        f"chat button should be 44px tall; got {chat.maximumHeight()}"
+    assert chat.maximumHeight() == 40, (
+        f"chat button should be 40px tall; got {chat.maximumHeight()}"
     )
-    assert chat.maximumWidth() == 44, (
-        f"chat button should be 44px wide; got {chat.maximumWidth()}"
+    assert chat.maximumWidth() == 40, (
+        f"chat button should be 40px wide; got {chat.maximumWidth()}"
     )
 
     ka_bar = tab.ka_progress_bars[0]
-    assert ka_bar.maximumWidth() == 140, (
-        f"ka progress bar should be 140px wide; got {ka_bar.maximumWidth()}"
+    assert ka_bar.maximumWidth() == 120, (
+        f"ka progress bar should be 120px wide; got {ka_bar.maximumWidth()}"
     )
-    assert ka_bar.maximumHeight() == 12, (
-        f"ka progress bar should be 12px tall; got {ka_bar.maximumHeight()}"
+    assert ka_bar.maximumHeight() == 10, (
+        f"ka progress bar should be 10px tall; got {ka_bar.maximumHeight()}"
     )
 
 
 def test_full_to_compact_roundtrip_restores_button_sizes(tab):
     """After Full → Compact, buttons must reset to Compact's creation defaults."""
     tab.set_layout_mode("full")
-    assert tab.toon_buttons[0].maximumHeight() == 44
+    assert tab.toon_buttons[0].maximumHeight() == 40
 
     tab.set_layout_mode("compact")
 
@@ -351,3 +342,17 @@ def test_pulse_anim_stops_when_leaving_full(tab):
         assert card._pulse_anim is None, (
             f"Pulse anim should stop on swap to Compact; was_running={pulse_was_running}"
         )
+
+
+def test_full_card_content_block_bounded(qapp, tab):
+    """_active_root must have max size of 500x240 and be centered."""
+    tab.set_layout_mode("full")
+    tab._full._cards[0].set_active(True)
+
+    root = tab._full._cards[0]._active_root
+    assert root.maximumWidth() == 500, (
+        f"content block max width should be 500; got {root.maximumWidth()}"
+    )
+    assert root.maximumHeight() == 240, (
+        f"content block max height should be 240; got {root.maximumHeight()}"
+    )
