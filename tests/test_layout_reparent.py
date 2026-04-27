@@ -190,11 +190,24 @@ def test_full_name_label_styling_survives_refresh_theme(tab):
 
     name_label, _ = tab.toon_labels[0]
     sheet = name_label.styleSheet()
-    # Full UI requires 16px font-size and right padding for the game pill.
-    assert "font-size: 16px" in sheet, f"Full name-label should be 16px; got {sheet!r}"
+    # Full UI requires 20px font-size and right padding for the game pill.
+    assert "font-size: 20px" in sheet, f"Full name-label should be 20px; got {sheet!r}"
     assert "padding-right: 60px" in sheet, (
         f"Full name-label should reserve 60px for game pill; got {sheet!r}"
     )
+
+
+def test_full_stats_labels_get_scaled_font(tab):
+    """Stats labels (LAFF/beans) must get Full UI's 15px override, not
+    compact's 13px, after refresh_theme + Full apply_theme."""
+    tab.set_layout_mode("full")
+    tab.refresh_theme()
+
+    for label_list in (tab.laff_labels, tab.bean_labels):
+        sheet = label_list[0].styleSheet()
+        assert "font-size: 15px" in sheet, (
+            f"Full stats label should be 15px; got {sheet!r}"
+        )
 
 
 def test_compact_startup_uses_original_widget_sizes(tab):
