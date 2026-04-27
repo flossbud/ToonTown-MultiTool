@@ -209,7 +209,8 @@ class PulsingDot(QWidget):
         self._dot_size = size
         # Extra space around the dot for the glow halo
         self.setFixedSize(size + 8, size + 8)
-        self._color = QColor("#555555")
+        from utils.theme_manager import is_dark_palette
+        self._color = QColor("#555555" if is_dark_palette() else "#bbbbbb")
         self._pulse_val = 0.0
         self._pulsing = False
 

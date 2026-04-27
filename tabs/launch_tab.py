@@ -1042,6 +1042,10 @@ class LaunchTab(QWidget):
                 self._apply_row_style(card)
                 apply_card_shadow(card["frame"], is_dark)
 
+                # Re-color idle status dots so theme toggle takes effect live
+                if card.get("state", LoginState.IDLE) == LoginState.IDLE:
+                    card["status_dot"].set_color(c["border_light"], pulse=False)
+
                 card["label_display"].setStyleSheet(
                     f"font-size: 13px; font-weight: bold; color: {c['text_primary']}; "
                     f"background: none; border: none;"
