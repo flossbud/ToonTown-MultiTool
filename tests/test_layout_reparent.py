@@ -163,3 +163,54 @@ def test_full_to_compact_roundtrip_restores_shared_widget_sizes(tab):
     assert sheet.count("padding-right") <= 1, (
         f"padding-right should not accumulate; sheet={sheet!r}"
     )
+
+
+def test_apply_visual_state_propagates_to_full_card(tab):
+    """Critical bug regression: Full UI cards' active state must mirror window availability."""
+    # Initial: no windows detected → all cards inactive
+    for card in tab._full._cards:
+        assert card._is_active is False
+
+    # Simulate a game window arriving for slot 0
+    tab.window_manager.ttr_window_ids = ["fake-window-id"]
+    tab.apply_visual_state(0)
+
+    # Slot 0's Full card should now be active; others remain inactive
+    assert tab._full._cards[0]._is_active is True, (
+        "Full card 0 should reflect window availability after apply_visual_state"
+    )
+    for i in range(1, 4):
+        assert tab._full._cards[i]._is_active is False
+
+
+def test_full_name_label_styling_survives_refresh_theme(tab):
+    """Critical bug regression: refresh_theme must not wipe Full UI's name styling."""
+    tab.set_layout_mode("full")
+    tab.refresh_theme()  # explicit second pass — must not break Full styling
+
+    name_label, _ = tab.toon_labels[0]
+    sheet = name_label.styleSheet()
+    # Full UI requires 16px font-size and right padding for the game pill.
+    assert "font-size: 16px" in sheet, f"Full name-label should be 16px; got {sheet!r}"
+    assert "padding-right: 60px" in sheet, (
+        f"Full name-label should reserve 60px for game pill; got {sheet!r}"
+    )
+
+
+def test_pulse_anim_stops_when_leaving_full(tab):
+    """Important bug regression: pulse animations must not keep running in Compact."""
+    # Activate slot 0 so its pulse starts in Full
+    tab.set_layout_mode("full")
+    tab.window_manager.ttr_window_ids = ["fake-id"]
+    tab.apply_visual_state(0)
+    assert tab._full._cards[0]._is_active is True
+    # Pulse may or may not be running depending on disable_animations; if it is,
+    # leaving Full must stop it.
+    pulse_was_running = tab._full._cards[0]._pulse_anim is not None
+
+    tab.set_layout_mode("compact")
+    # After leaving Full, no card should have a live pulse
+    for card in tab._full._cards:
+        assert card._pulse_anim is None, (
+            f"Pulse anim should stop on swap to Compact; was_running={pulse_was_running}"
+        )

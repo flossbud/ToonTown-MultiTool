@@ -93,6 +93,7 @@ class _FullToonCard(QFrame):
         self._slot = slot_index
         self._tab = tab
         self._is_active = False
+        self._pulse_anim = None
 
         self.setObjectName("full_toon_card")
         self.setMinimumHeight(200)
@@ -156,16 +157,10 @@ class _FullToonCard(QFrame):
         self._status_indicator.move(74, 74)
         self._active_grid.addWidget(self._portrait_wrap, 0, 0, 3, 1, alignment=Qt.AlignTop)
 
-        # Name label (col 1, row 0)
+        # Name label (col 1, row 0). Font + padding are now applied in
+        # apply_theme() so they survive a refresh_theme overwrite. Here we
+        # just attach the widget into the grid.
         name_label, _status_dot_compact = self._tab.toon_labels[self._slot]
-        name_font = name_label.font()
-        name_font.setPointSize(16)
-        name_font.setWeight(QFont.DemiBold)
-        name_label.setFont(name_font)
-        # Set (don't append) so repeated populates don't grow the stylesheet
-        # unboundedly. refresh_theme() may overwrite this anyway, so the value
-        # here is only authoritative briefly.
-        name_label.setStyleSheet("padding-right: 60px;")
         self._active_grid.addWidget(name_label, 0, 1, alignment=Qt.AlignBottom)
 
         # Stats with tabular nums (col 1, rows 1 & 2)
@@ -254,6 +249,11 @@ class _FullToonCard(QFrame):
     def _start_pulse(self) -> None:
         if getattr(self, "_pulse_anim", None) is not None:
             return
+        # Don't start pulse animations while Compact is the visible layout —
+        # deactivate() will have stopped any running pulse on the mode swap, and
+        # apply_all_visual_states (called from refresh_theme) must not restart it.
+        if getattr(self._tab, "_mode", "full") != "full":
+            return
         # Respect the user's reduced-motion / disable_animations setting
         sm = getattr(self._tab, "settings_manager", None)
         if sm and sm.get("disable_animations", False):
@@ -289,6 +289,18 @@ class _FullToonCard(QFrame):
                 f"border-radius: 10px; padding: 3px 10px; "
                 f"font-size: 10px; font-weight: 700; letter-spacing: 0.5px;"
             )
+        # Re-apply Full UI's name-label styling. refresh_theme runs first and
+        # sets a Compact-style 14px stylesheet; this call then overrides for
+        # Full's 16pt DemiBold + 60px right padding (room for the game pill).
+        name_label, _ = self._tab.toon_labels[self._slot]
+        name_label.setStyleSheet(
+            f"font-size: 16px; font-weight: 600; color: {c['text_primary']}; "
+            f"background: transparent; border: none; padding-right: 60px;"
+        )
+        f = name_label.font()
+        f.setPointSize(16)
+        f.setWeight(QFont.DemiBold)
+        name_label.setFont(f)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -376,6 +388,12 @@ class _FullLayout(QWidget):
             card.populate_active()
             # set_active forces visibility + pulse to match current state
             card.set_active(card._is_active)
+
+    def deactivate(self):
+        """Called when the Multitoon tab is leaving Full mode. Stops all
+        per-card pulse animations so they don't keep running on hidden widgets."""
+        for card in self._cards:
+            card._stop_pulse()
 
     def apply_theme(self, c: dict) -> None:
         self.setStyleSheet(f"QWidget {{ background: {c['bg_app']}; }}")
