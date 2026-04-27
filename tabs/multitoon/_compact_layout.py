@@ -176,6 +176,15 @@ class _CompactLayout(QWidget):
         if "padding-right" in sheet:
             name_label.setStyleSheet(sheet.replace("padding-right: 60px;", "").strip())
 
+        # Buttons: Full sets 100×40 enable, 40×40 chat/KA; constructor defaults
+        # are 88×32 enable, 32×32 chat/KA.
+        self._tab.toon_buttons[i].setFixedHeight(32)
+        self._tab.toon_buttons[i].setFixedWidth(88)
+        self._tab.chat_buttons[i].setFixedHeight(32)
+        self._tab.chat_buttons[i].setFixedWidth(32)
+        self._tab.keep_alive_buttons[i].setFixedHeight(32)
+        self._tab.keep_alive_buttons[i].setFixedWidth(32)
+
         # ── existing populate logic continues below ──
         # top_row: badge | name | status_dot | game_badge | <stretch> | stats_row(laff bean)
         clear_layout(slot["top_row"])
