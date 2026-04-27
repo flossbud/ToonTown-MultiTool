@@ -78,3 +78,37 @@ def test_make_ctrl_32_sets_fixed_height_and_radius(qapp):
     assert btn.minimumHeight() == 32
     assert btn.maximumHeight() == 32
     assert "border-radius: 6px" in btn.styleSheet()
+
+
+def test_clear_layout_removes_all_items(qapp):
+    from PySide6.QtWidgets import QHBoxLayout, QPushButton, QWidget
+    from tabs.multitoon._layout_utils import clear_layout
+
+    parent = QWidget()
+    layout = QHBoxLayout(parent)
+    btn1 = QPushButton("a", parent=parent)
+    btn2 = QPushButton("b", parent=parent)
+    layout.addWidget(btn1)
+    layout.addWidget(btn2)
+    layout.addStretch()
+    assert layout.count() == 3
+
+    clear_layout(layout)
+    assert layout.count() == 0
+
+
+def test_clear_layout_does_not_destroy_widgets(qapp):
+    """Widgets are owned externally and must survive the clear."""
+    from PySide6.QtWidgets import QHBoxLayout, QPushButton, QWidget
+    from tabs.multitoon._layout_utils import clear_layout
+
+    parent = QWidget()
+    layout = QHBoxLayout(parent)
+    btn = QPushButton("x", parent=parent)
+    layout.addWidget(btn)
+
+    clear_layout(layout)
+    # Widget still exists; just no parent layout.
+    assert btn is not None
+    btn.setText("still alive")
+    assert btn.text() == "still alive"
