@@ -162,7 +162,10 @@ class _FullToonCard(QFrame):
         name_font.setPointSize(16)
         name_font.setWeight(QFont.DemiBold)
         name_label.setFont(name_font)
-        name_label.setStyleSheet(name_label.styleSheet() + "padding-right: 60px;")
+        # Set (don't append) so repeated populates don't grow the stylesheet
+        # unboundedly. refresh_theme() may overwrite this anyway, so the value
+        # here is only authoritative briefly.
+        name_label.setStyleSheet("padding-right: 60px;")
         self._active_grid.addWidget(name_label, 0, 1, alignment=Qt.AlignBottom)
 
         # Stats with tabular nums (col 1, rows 1 & 2)
