@@ -201,11 +201,6 @@ class MultiToonTool(QMainWindow):
         self._launch_anim.setEndValue(TITLE_ANIM_MAX_WIDTH)
         self._launch_anim.setEasingCurve(QEasingCurve.OutCubic)
 
-        # Disconnect any previous signal to prevent accumulation
-        try:
-            self._launch_anim.finished.disconnect()
-        except RuntimeError:
-            pass
         # After animation, remove the maximum width constraint
         self._launch_anim.finished.connect(lambda: self.title_label.setMaximumWidth(16777215))
         self._launch_anim.start()
