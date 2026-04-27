@@ -103,11 +103,12 @@ class _FullToonCard(QFrame):
         self._stack_layout.setSpacing(0)
 
         # Cached refs for populate_active()
-        self._active_grid = None
+        self._info_col = None
         self._ctrl_row = None
         self._portrait_wrap = None
         self._status_indicator = None
         self._game_pill = None  # set on first populate_active
+        self._last_portrait_size = 0
 
         self._build_active_structure()
         self._build_inactive_view()
@@ -117,60 +118,50 @@ class _FullToonCard(QFrame):
     # ── Active view structure ──────────────────────────────────────────────
     def _build_active_structure(self):
         self._active_root = QWidget(self)
-        # Mockup v9 sets `align-content: start` on the card grid so content
-        # packs at the top with empty space pushed below. Qt's QGridLayout
-        # otherwise distributes excess vertical space across content rows,
-        # which strands name/stats in the middle and pins controls to the
-        # bottom of the card. `Maximum` vertical size policy makes the grid
-        # widget render at its content height so the parent QVBoxLayout
-        # leaves the rest of the card as empty space below.
-        self._active_root.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
-        grid = QGridLayout(self._active_root)
-        grid.setContentsMargins(0, 0, 0, 0)
-        grid.setHorizontalSpacing(18)
-        grid.setVerticalSpacing(4)
-        self._active_grid = grid
+        root_vbox = QVBoxLayout(self._active_root)
+        root_vbox.setContentsMargins(0, 0, 0, 0)
+        root_vbox.setSpacing(12)
 
-        # Portrait wrapper (156x156) — static container; the portrait widget itself
-        # is a shared widget reattached in populate_active.
+        # Content area: portrait (left) + info column (right)
+        self._content_row = QHBoxLayout()
+        self._content_row.setSpacing(18)
+
         self._portrait_wrap = QWidget()
-        self._portrait_wrap.setFixedSize(156, 156)
+        self._portrait_wrap.setMinimumSize(120, 120)
         self._status_indicator = _StatusIndicator(self._portrait_wrap)
-        self._status_indicator.move(126, 126)
 
-        # Empty ctrl_row sub-layout — re-filled by populate_active()
+        self._info_col = QVBoxLayout()
+        self._info_col.setSpacing(4)
+
+        self._content_row.addWidget(self._portrait_wrap)
+        self._content_row.addLayout(self._info_col, 1)
+
+        # Controls row — re-filled by populate_active()
         self._ctrl_row = QHBoxLayout()
         self._ctrl_row.setSpacing(8)
+
+        root_vbox.addLayout(self._content_row, 1)
+        root_vbox.addLayout(self._ctrl_row, 0)
 
         self._stack_layout.addWidget(self._active_root)
 
     # ── Active view populate ───────────────────────────────────────────────
     def populate_active(self):
-        """(Re-)attach the shared widgets into the active grid. Idempotent."""
+        """(Re-)attach the shared widgets into the active layout. Idempotent."""
         from tabs.multitoon._layout_utils import clear_layout
 
-        # Clear the grid and ctrl_row of any prior shared widgets
-        clear_layout(self._active_grid)
+        clear_layout(self._info_col)
         clear_layout(self._ctrl_row)
 
-        # Portrait + status indicator (column 0, rows 0-2)
+        # Portrait + status indicator
         portrait = self._tab.slot_badges[self._slot]
         portrait.setParent(self._portrait_wrap)
-        portrait.setFixedSize(156, 156)
         portrait.move(0, 0)
-        # Re-parent status_indicator too (it's a child of portrait_wrap, which
-        # was re-parented to None when clear_layout ran on the grid).
         self._status_indicator.setParent(self._portrait_wrap)
-        self._status_indicator.move(126, 126)
-        self._active_grid.addWidget(self._portrait_wrap, 0, 0, 3, 1, alignment=Qt.AlignTop)
+        self._last_portrait_size = 0
 
-        # Name label (col 1, row 0). Font + padding are now applied in
-        # apply_theme() so they survive a refresh_theme overwrite. Here we
-        # just attach the widget into the grid.
+        # Info column: vertically centered name + stats
         name_label, _status_dot_compact = self._tab.toon_labels[self._slot]
-        self._active_grid.addWidget(name_label, 0, 1, alignment=Qt.AlignBottom)
-
-        # Stats with tabular nums (col 1, rows 1 & 2)
         for lbl in (self._tab.laff_labels[self._slot], self._tab.bean_labels[self._slot]):
             f = lbl.font()
             try:
@@ -178,8 +169,12 @@ class _FullToonCard(QFrame):
             except Exception:
                 f.setStyleHint(QFont.TypeWriter, QFont.PreferDefault)
             lbl.setFont(f)
-        self._active_grid.addWidget(self._tab.laff_labels[self._slot], 1, 1, alignment=Qt.AlignLeft)
-        self._active_grid.addWidget(self._tab.bean_labels[self._slot], 2, 1, alignment=Qt.AlignLeft)
+
+        self._info_col.addStretch(1)
+        self._info_col.addWidget(name_label)
+        self._info_col.addWidget(self._tab.laff_labels[self._slot])
+        self._info_col.addWidget(self._tab.bean_labels[self._slot])
+        self._info_col.addStretch(1)
 
         # TTR/CC pill (top-right absolute via overlay — parented to card frame)
         self._game_pill = self._tab.game_badges[self._slot]
@@ -210,8 +205,6 @@ class _FullToonCard(QFrame):
         selector = self._tab.set_selectors[self._slot]
         _style_ctrl(selector, 44)
         self._ctrl_row.addWidget(selector)
-
-        self._active_grid.addLayout(self._ctrl_row, 3, 0, 1, 2)
 
     # ── Inactive view ──────────────────────────────────────────────────────
     def _build_inactive_view(self):
@@ -323,9 +316,28 @@ class _FullToonCard(QFrame):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        if self._is_active:
+            self._resize_portrait()
         if self._is_active and self._game_pill is not None:
             pw = self._game_pill.sizeHint().width()
             self._game_pill.move(self.width() - pw - 14, 14)
+
+    def _resize_portrait(self):
+        m = self._stack_layout.contentsMargins()
+        content_h = self.height() - m.top() - m.bottom()
+        content_w = self.width() - m.left() - m.right()
+        ctrl_h = 44
+        spacing = 12
+        avail_h = content_h - ctrl_h - spacing
+        max_w = int(content_w * 0.3)
+        size = max(120, min(avail_h, max_w))
+        if size == self._last_portrait_size:
+            return
+        self._last_portrait_size = size
+        self._portrait_wrap.setFixedSize(size, size)
+        self._tab.slot_badges[self._slot].setFixedSize(size, size)
+        ind_offset = size - 30
+        self._status_indicator.move(ind_offset, ind_offset)
 
 
 class _FullLayout(QWidget):

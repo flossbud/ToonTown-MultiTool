@@ -233,44 +233,30 @@ def test_compact_startup_uses_original_widget_sizes(tab):
     )
 
 
-def test_full_card_content_packs_at_top_in_tall_card(qapp, tab):
-    """Regression: the Full UI card's active grid must use `align-content: start`
-    semantics — content packed at top with empty space below — so when cards
-    expand to fill a tall window, the portrait stays anchored next to the
-    name/stats instead of getting stranded above huge gaps.
-
-    Verifies _active_root has Maximum vertical size policy so it renders at
-    its content height (~140px) instead of stretching to fill the card.
-    """
+def test_full_card_portrait_scales_with_card(qapp, tab):
+    """The portrait must dynamically size to fill available card space."""
     from PySide6.QtCore import QSize
-    from PySide6.QtWidgets import QSizePolicy, QWidget, QVBoxLayout
+    from PySide6.QtWidgets import QWidget, QVBoxLayout
 
     tab.set_layout_mode("full")
     tab._full._cards[0].set_active(True)
 
-    # Show stats so the card content is at its production height
-    name_label, _ = tab.toon_labels[0]
-    name_label.setText("Royal Blue Bear")
-    tab.laff_labels[0].setText(" 15/15"); tab.laff_labels[0].show()
-    tab.bean_labels[0].setText(" 10,935"); tab.bean_labels[0].show()
-
-    host = QWidget(); v = QVBoxLayout(host); v.setContentsMargins(0, 0, 0, 0); v.addWidget(tab)
+    host = QWidget()
+    v = QVBoxLayout(host)
+    v.setContentsMargins(0, 0, 0, 0)
+    v.addWidget(tab)
     host.resize(QSize(1280, 800))
     host.show()
     for _ in range(10):
         qapp.processEvents()
 
     card = tab._full._cards[0]
-    assert card._active_root.sizePolicy().verticalPolicy() == QSizePolicy.Maximum, (
-        "active_root must have Maximum vertical size policy so it does not "
-        "stretch to fill the card height"
+    portrait_size = card._portrait_wrap.width()
+    assert portrait_size >= 120, (
+        f"portrait should be at least 120px; got {portrait_size}"
     )
-    # active_root sized at ~140px (portrait + controls); card is 280-310px in
-    # this layout. The empty space difference must go BELOW the active_root.
-    empty_below = card.height() - (card._active_root.y() + card._active_root.height())
-    assert empty_below > 50, (
-        f"Expected empty space (>50px) below active_root, got {empty_below}px. "
-        f"Card height={card.height()}, active_root height={card._active_root.height()}"
+    assert card._portrait_wrap.width() == card._portrait_wrap.height(), (
+        "portrait wrapper must be square"
     )
 
 
@@ -287,17 +273,9 @@ def test_game_pill_parented_to_card_not_active_root(tab):
     )
 
 
-def test_full_portrait_and_controls_scaled(tab):
-    """Full UI portrait must be 156x156 and controls 44px tall."""
+def test_full_controls_scaled(tab):
+    """Full UI controls must be 44px tall."""
     tab.set_layout_mode("full")
-    card = tab._full._cards[0]
-
-    assert card._portrait_wrap.width() == 156, (
-        f"portrait wrapper should be 156px wide; got {card._portrait_wrap.width()}"
-    )
-    assert card._portrait_wrap.height() == 156, (
-        f"portrait wrapper should be 156px tall; got {card._portrait_wrap.height()}"
-    )
 
     btn = tab.toon_buttons[0]
     assert btn.maximumHeight() == 44, (
