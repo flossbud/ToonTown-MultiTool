@@ -87,7 +87,7 @@ class _FullToonCard(QFrame):
     can rebuild after a layout-mode swap stole them.
     """
 
-    _MAX_CARD_H = 400
+    _REF_H = 400  # card height at which scale == 1.0
 
     def __init__(self, slot_index: int, tab, parent=None):
         super().__init__(parent)
@@ -320,8 +320,8 @@ class _FullToonCard(QFrame):
         content_h = self.height() - m.top() - m.bottom()
         if content_h <= 0:
             return
-        ref_h = self._MAX_CARD_H - m.top() - m.bottom()
-        scale = max(0.6, min(1.0, content_h / ref_h))
+        ref_h = self._REF_H - m.top() - m.bottom()
+        scale = max(0.6, min(1.5, content_h / ref_h))
         if abs(scale - self._scale) < 0.01:
             return
         self._scale = scale
@@ -385,8 +385,8 @@ class _FullLayout(QWidget):
     _H_SPACING = 12
     _V_SPACING = 12
     _ASPECT = 1.6  # 16:10
-    _MAX_CARD_W = 640
-    _MAX_CARD_H = 400
+    _MAX_CARD_W = 960
+    _MAX_CARD_H = 600
 
     def __init__(self, tab, parent=None):
         super().__init__(parent)

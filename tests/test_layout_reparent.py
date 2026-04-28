@@ -359,17 +359,17 @@ def test_full_grid_enforces_aspect_ratio(qapp, tab):
 
 
 def test_full_grid_caps_at_max_size(qapp, tab):
-    """Cards must not exceed 640x400 even on very large windows."""
+    """Cards must not exceed 960x600 even on very large windows."""
     tab.set_layout_mode("full")
-    tab._full.resize(2400, 1400)
+    tab._full.resize(3000, 2000)
     qapp.processEvents()
 
     card = tab._full._cards[0]
-    assert card.width() <= 640, (
-        f"card width should cap at 640; got {card.width()}"
+    assert card.width() <= 960, (
+        f"card width should cap at 960; got {card.width()}"
     )
-    assert card.height() <= 400, (
-        f"card height should cap at 400; got {card.height()}"
+    assert card.height() <= 600, (
+        f"card height should cap at 600; got {card.height()}"
     )
 
 
