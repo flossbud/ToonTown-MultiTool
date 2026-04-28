@@ -345,7 +345,7 @@ def test_pulse_anim_stops_when_leaving_full(tab):
 
 
 def test_full_grid_enforces_aspect_ratio(qapp, tab):
-    """Cards in the Full UI grid must maintain a 16:10 aspect ratio."""
+    """Cards in the Full UI grid must maintain a 7:4 aspect ratio."""
     tab.set_layout_mode("full")
     tab._full.resize(1200, 800)
     qapp.processEvents()
@@ -353,20 +353,20 @@ def test_full_grid_enforces_aspect_ratio(qapp, tab):
     card = tab._full._cards[0]
     assert card.width() > 0 and card.height() > 0, "card must have real geometry"
     ratio = card.width() / card.height()
-    assert abs(ratio - 1.6) < 0.1, (
-        f"card aspect ratio should be ~1.6 (16:10); got {ratio:.2f}"
+    assert abs(ratio - 1.75) < 0.1, (
+        f"card aspect ratio should be ~1.75 (7:4); got {ratio:.2f}"
     )
 
 
 def test_full_grid_caps_at_max_size(qapp, tab):
-    """Cards must not exceed 960x600 even on very large windows."""
+    """Cards must not exceed 1050x600 even on very large windows."""
     tab.set_layout_mode("full")
     tab._full.resize(3000, 2000)
     qapp.processEvents()
 
     card = tab._full._cards[0]
-    assert card.width() <= 960, (
-        f"card width should cap at 960; got {card.width()}"
+    assert card.width() <= 1050, (
+        f"card width should cap at 1050; got {card.width()}"
     )
     assert card.height() <= 600, (
         f"card height should cap at 600; got {card.height()}"
