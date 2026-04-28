@@ -460,6 +460,8 @@ class _FullLayout(QWidget):
         label_h = self._tab.config_label.sizeHint().height() if self._tab.config_label.text() else 0
         label_gap = 8 if label_h > 0 else 0
         avail_h = h - label_h - label_gap
+        if avail_h < self._V_SPACING + 2:
+            return
 
         card_w = (w - self._H_SPACING) / 2
         card_h = card_w / self._ASPECT
