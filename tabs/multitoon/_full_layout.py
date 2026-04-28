@@ -373,12 +373,12 @@ class _FullToonCard(QFrame):
 
 
 class _FullLayout(QWidget):
-    """Top-level Full UI: service bar above a 2x2 toon card grid.
+    """Top-level Full UI: centered controls above a 2x2 toon card grid.
 
     Two-phase construction:
-    - `_build_structure` builds the service-bar QFrame with empty row/sb layouts
-      and four `_FullToonCard` shells.
-    - `populate` clears the service-bar slots + each card's active view, then
+    - `_build_structure` builds the centered controls widget with empty slot
+      layouts and four `_FullToonCard` shells inside a grid container.
+    - `populate` clears the control slots + each card's active view, then
       re-adds the shared widgets in correct order.
     """
 
@@ -392,33 +392,36 @@ class _FullLayout(QWidget):
         super().__init__(parent)
         self._tab = tab
         self._cards = []
-        self._service_row = None  # the QHBoxLayout inside service_bar
-        self._service_sb_layout = None  # the QVBoxLayout that holds service_row + status_bar
+        self._ctrl_layout = None
+        self._pills_row = None
         self._build_structure()
         self.populate()
 
     def _build_structure(self):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(20, 16, 20, 16)
-        outer.setSpacing(14)
+        outer.setSpacing(0)
 
-        # Service bar shell — empty layouts cached for populate()
-        service_bar = QFrame()
-        service_bar.setObjectName("full_service_bar")
-        self._service_sb_layout = QVBoxLayout(service_bar)
-        self._service_sb_layout.setContentsMargins(24, 18, 24, 18)
-        self._service_sb_layout.setSpacing(10)
+        # Centered controls block — no frame, just a widget with max-width
+        controls = QWidget()
+        controls.setMaximumWidth(960)
+        controls.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self._ctrl_layout = QVBoxLayout(controls)
+        self._ctrl_layout.setContentsMargins(0, 0, 0, 0)
+        self._ctrl_layout.setSpacing(0)
 
-        self._service_row = QHBoxLayout()
-        self._service_row.setSpacing(16)
-        self._service_sb_layout.addLayout(self._service_row)
+        self._pills_row = QHBoxLayout()
+        self._pills_row.setSpacing(6)
 
-        outer.addWidget(service_bar)
+        center_row = QHBoxLayout()
+        center_row.setContentsMargins(0, 0, 0, 0)
+        center_row.addStretch(1)
+        center_row.addWidget(controls, 100)
+        center_row.addStretch(1)
+        outer.addLayout(center_row)
+        outer.addSpacing(16)
 
-        # Grid container — cards are children, positioned manually in resizeEvent.
-        # Use a subclass so that when the Qt layout gives _grid_container its real
-        # geometry (which may happen after _FullLayout.resizeEvent fires), the cards
-        # are repositioned immediately rather than waiting for the next event cycle.
+        # Grid container with manually positioned config label + cards
         layout_ref = self
 
         class _GridContainer(QWidget):
@@ -448,20 +451,21 @@ class _FullLayout(QWidget):
         QTimer.singleShot(0, self._position_cards)
 
     def _position_cards(self):
-        # Synchronously flush the outer QVBoxLayout so _grid_container has the
-        # correct geometry even when the widget is hidden (e.g. in tests where
-        # resizeEvent may not fire on direct resize() calls).
         self.layout().setGeometry(QRect(0, 0, self.width(), self.height()))
         w = self._grid_container.width()
         h = self._grid_container.height()
         if w <= 0 or h <= 0:
             return
 
+        label_h = self._tab.config_label.sizeHint().height() if self._tab.config_label.text() else 0
+        label_gap = 8 if label_h > 0 else 0
+        avail_h = h - label_h - label_gap
+
         card_w = (w - self._H_SPACING) / 2
         card_h = card_w / self._ASPECT
 
-        if card_h * 2 + self._V_SPACING > h:
-            card_h = (h - self._V_SPACING) / 2
+        if card_h * 2 + self._V_SPACING > avail_h:
+            card_h = (avail_h - self._V_SPACING) / 2
             card_w = card_h * self._ASPECT
 
         card_w = int(min(card_w, self._MAX_CARD_W))
@@ -469,48 +473,52 @@ class _FullLayout(QWidget):
 
         grid_w = card_w * 2 + self._H_SPACING
         grid_h = card_h * 2 + self._V_SPACING
+        total_h = label_h + label_gap + grid_h
         ox = (w - grid_w) // 2
-        oy = (h - grid_h) // 2
+        oy = (h - total_h) // 2
 
+        if label_h > 0:
+            self._tab.config_label.setGeometry(ox, oy, grid_w, label_h)
+
+        cards_oy = oy + label_h + label_gap
         positions = [
-            (ox, oy),
-            (ox + card_w + self._H_SPACING, oy),
-            (ox, oy + card_h + self._V_SPACING),
-            (ox + card_w + self._H_SPACING, oy + card_h + self._V_SPACING),
+            (ox, cards_oy),
+            (ox + card_w + self._H_SPACING, cards_oy),
+            (ox, cards_oy + card_h + self._V_SPACING),
+            (ox + card_w + self._H_SPACING, cards_oy + card_h + self._V_SPACING),
         ]
         for card, (x, y) in zip(self._cards, positions):
             card.setGeometry(x, y, card_w, card_h)
 
     def populate(self):
-        """(Re-)attach shared widgets into the service bar and each card."""
+        """(Re-)attach shared widgets into the controls block and each card."""
         from tabs.multitoon._layout_utils import clear_layout
 
-        # Service-bar row: toggle | <stretch> | pills | spacing | refresh
-        clear_layout(self._service_row)
-        # status_bar lives in the parent QVBoxLayout (self._service_sb_layout).
-        # The QVBoxLayout has 2 items: [service_row (layout), status_bar (widget)].
-        # Iterate from end and remove only the status_bar widget item — leave
-        # service_row in place because it's our own cached row.
-        for idx in range(self._service_sb_layout.count() - 1, -1, -1):
-            item = self._service_sb_layout.itemAt(idx)
-            w = item.widget()
-            if w is self._tab.status_bar:
-                self._service_sb_layout.takeAt(idx)
-                w.setParent(None)
+        # Controls block: toggle button → status bar → pills row
+        clear_layout(self._ctrl_layout)
+        clear_layout(self._pills_row)
 
-        self._tab.toggle_service_button.setMinimumWidth(180)
-        self._service_row.addWidget(self._tab.toggle_service_button)
-        self._service_row.addStretch()
+        self._tab.toggle_service_button.setMinimumWidth(0)
+        self._ctrl_layout.addWidget(self._tab.toggle_service_button)
+        self._ctrl_layout.addSpacing(8)
+        self._ctrl_layout.addWidget(self._tab.status_bar)
+        self._ctrl_layout.addSpacing(12)
+
+        self._pills_row.addStretch()
         for pill in self._tab.profile_pills:
-            self._service_row.addWidget(pill)
-        self._service_row.addSpacing(8)
-        self._service_row.addWidget(self._tab.refresh_button)
-        self._service_sb_layout.addWidget(self._tab.status_bar)
+            self._pills_row.addWidget(pill)
+        self._pills_row.addSpacing(4)
+        self._pills_row.addWidget(self._tab.refresh_button)
+        self._pills_row.addStretch()
+        self._ctrl_layout.addLayout(self._pills_row)
+
+        # Config label — reparent into grid container, positioned manually
+        self._tab.config_label.setParent(self._grid_container)
+        self._tab.config_label.show()
 
         # Cards
         for card in self._cards:
             card.populate_active()
-            # set_active forces visibility + pulse to match current state
             card.set_active(card._is_active)
 
     def deactivate(self):
