@@ -384,8 +384,8 @@ class _FullLayout(QWidget):
 
     _H_SPACING = 12
     _V_SPACING = 12
-    _ASPECT = 1.6  # 16:10
-    _MAX_CARD_W = 960
+    _ASPECT = 1.75  # 7:4
+    _MAX_CARD_W = 1050
     _MAX_CARD_H = 600
 
     def __init__(self, tab, parent=None):
