@@ -384,7 +384,8 @@ class _FullLayout(QWidget):
 
     _H_SPACING = 12
     _V_SPACING = 12
-    _MAX_CARD_W = 600
+    _ASPECT = 1.6  # 16:10
+    _MAX_CARD_W = 640
     _MAX_CARD_H = 400
 
     def __init__(self, tab, parent=None):
@@ -457,11 +458,11 @@ class _FullLayout(QWidget):
             return
 
         card_w = (w - self._H_SPACING) / 2
-        card_h = card_w / 1.5
+        card_h = card_w / self._ASPECT
 
         if card_h * 2 + self._V_SPACING > h:
             card_h = (h - self._V_SPACING) / 2
-            card_w = card_h * 1.5
+            card_w = card_h * self._ASPECT
 
         card_w = int(min(card_w, self._MAX_CARD_W))
         card_h = int(min(card_h, self._MAX_CARD_H))
