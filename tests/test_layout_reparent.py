@@ -119,6 +119,22 @@ def test_swap_to_full_reparents_shared_widgets(tab):
         assert _is_descendant_of(tab.slot_badges[i], tab._full)
 
 
+def test_config_label_reparented_to_full(tab):
+    """Config label must be a descendant of _full in full mode."""
+    tab.set_layout_mode("full")
+    assert _is_descendant_of(tab.config_label, tab._full), (
+        "config_label should be under _full in full mode"
+    )
+    assert not _is_descendant_of(tab.config_label, tab._compact), (
+        "config_label should NOT be under _compact in full mode"
+    )
+
+    tab.set_layout_mode("compact")
+    assert _is_descendant_of(tab.config_label, tab._compact), (
+        "config_label should be under _compact after swap back"
+    )
+
+
 def test_swap_back_to_compact_reparents_again(tab):
     tab.set_layout_mode("full")
     tab.set_layout_mode("compact")
