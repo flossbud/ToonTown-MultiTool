@@ -369,7 +369,8 @@ class _FullToonCard(QFrame):
         for lbl in (self._tab.laff_labels[self._slot], self._tab.bean_labels[self._slot]):
             lbl.setStyleSheet(
                 f"border: none; background: transparent; font-weight: 600; "
-                f"font-size: {int(16 * s)}px; color: {c['text_primary']};"
+                f"font-size: {int(16 * s)}px; color: {c['text_primary']}; "
+                f"text-align: left;"
             )
 
 

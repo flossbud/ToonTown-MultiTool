@@ -1885,6 +1885,9 @@ class MultitoonTab(QWidget):
             name_label.setStyleSheet(
                 f"font-size: 14px; font-weight: bold; color: {c['text_primary']}; background: none; border: none;"
             )
+        if self._mode == "full" and hasattr(self, "_full") and self._full is not None:
+            for card in self._full._cards:
+                card._apply_scaled_styles()
 
     # ── Accessors ──────────────────────────────────────────────────────────
 
