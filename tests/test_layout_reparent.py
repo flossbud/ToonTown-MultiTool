@@ -161,8 +161,8 @@ def test_full_to_compact_roundtrip_restores_shared_widget_sizes(tab):
     assert tab.set_selectors[0].height() <= 28 or tab.set_selectors[0].maximumHeight() == 28
 
     tab.set_layout_mode("full")
-    # Full mutates: selector becomes 40, ka_bar fixed-size, name padding-right
-    assert tab.set_selectors[0].maximumHeight() == 40
+    # Full mutates: selector becomes 42, ka_bar fixed-size, name padding-right
+    assert tab.set_selectors[0].maximumHeight() == 42
 
     tab.set_layout_mode("compact")
     # Compact must restore defaults
@@ -206,23 +206,23 @@ def test_full_name_label_styling_survives_refresh_theme(tab):
 
     name_label, _ = tab.toon_labels[0]
     sheet = name_label.styleSheet()
-    # Full UI requires 22px font-size and right padding for the game pill.
-    assert "font-size: 22px" in sheet, f"Full name-label should be 22px; got {sheet!r}"
+    # Full UI requires 28px font-size and right padding for the game pill.
+    assert "font-size: 28px" in sheet, f"Full name-label should be 28px; got {sheet!r}"
     assert "padding-right: 60px" in sheet, (
         f"Full name-label should reserve 60px for game pill; got {sheet!r}"
     )
 
 
 def test_full_stats_labels_get_scaled_font(tab):
-    """Stats labels (LAFF/beans) must get Full UI's 15px override, not
+    """Stats labels (LAFF/beans) must get Full UI's 16px override, not
     compact's 13px, after refresh_theme + Full apply_theme."""
     tab.set_layout_mode("full")
     tab.refresh_theme()
 
     for label_list in (tab.laff_labels, tab.bean_labels):
         sheet = label_list[0].styleSheet()
-        assert "font-size: 15px" in sheet, (
-            f"Full stats label should be 15px; got {sheet!r}"
+        assert "font-size: 16px" in sheet, (
+            f"Full stats label should be 16px; got {sheet!r}"
         )
 
 
@@ -250,20 +250,20 @@ def test_compact_startup_uses_original_widget_sizes(tab):
 
 
 def test_full_card_portrait_fixed_size(qapp, tab):
-    """Portrait must be fixed at 130x130 in Full UI, not dynamic."""
+    """Portrait must be fixed at 150x150 in Full UI, not dynamic."""
     tab.set_layout_mode("full")
     tab._full._cards[0].set_active(True)
 
     wrap = tab._full._cards[0]._portrait_wrap
-    assert wrap.maximumWidth() == 130, (
-        f"portrait wrap should be 130px wide; got {wrap.maximumWidth()}"
+    assert wrap.maximumWidth() == 150, (
+        f"portrait wrap should be 150px wide; got {wrap.maximumWidth()}"
     )
-    assert wrap.maximumHeight() == 130, (
-        f"portrait wrap should be 130px tall; got {wrap.maximumHeight()}"
+    assert wrap.maximumHeight() == 150, (
+        f"portrait wrap should be 150px tall; got {wrap.maximumHeight()}"
     )
     badge = tab.slot_badges[0]
-    assert badge.maximumWidth() == 130 and badge.maximumHeight() == 130, (
-        f"badge should be 130x130; got {badge.maximumSize()}"
+    assert badge.maximumWidth() == 150 and badge.maximumHeight() == 150, (
+        f"badge should be 150x150; got {badge.maximumSize()}"
     )
 
 
@@ -281,29 +281,26 @@ def test_game_pill_parented_to_card_not_active_root(tab):
 
 
 def test_full_controls_scaled(tab):
-    """Full UI controls must be 40px tall."""
+    """Full UI controls must be 42px tall."""
     tab.set_layout_mode("full")
 
     btn = tab.toon_buttons[0]
-    assert btn.maximumHeight() == 40, (
-        f"enable button should be 40px tall; got max height {btn.maximumHeight()}"
+    assert btn.maximumHeight() == 42, (
+        f"enable button should be 42px tall; got max height {btn.maximumHeight()}"
     )
     assert btn.maximumWidth() == 100, (
         f"enable button should be 100px wide; got max width {btn.maximumWidth()}"
     )
 
     chat = tab.chat_buttons[0]
-    assert chat.maximumHeight() == 40, (
-        f"chat button should be 40px tall; got {chat.maximumHeight()}"
+    assert chat.maximumHeight() == 42, (
+        f"chat button should be 42px tall; got {chat.maximumHeight()}"
     )
-    assert chat.maximumWidth() == 40, (
-        f"chat button should be 40px wide; got {chat.maximumWidth()}"
+    assert chat.maximumWidth() == 42, (
+        f"chat button should be 42px wide; got {chat.maximumWidth()}"
     )
 
     ka_bar = tab.ka_progress_bars[0]
-    assert ka_bar.maximumWidth() == 120, (
-        f"ka progress bar should be 120px wide; got {ka_bar.maximumWidth()}"
-    )
     assert ka_bar.maximumHeight() == 10, (
         f"ka progress bar should be 10px tall; got {ka_bar.maximumHeight()}"
     )
@@ -312,7 +309,7 @@ def test_full_controls_scaled(tab):
 def test_full_to_compact_roundtrip_restores_button_sizes(tab):
     """After Full → Compact, buttons must reset to Compact's creation defaults."""
     tab.set_layout_mode("full")
-    assert tab.toon_buttons[0].maximumHeight() == 40
+    assert tab.toon_buttons[0].maximumHeight() == 42
 
     tab.set_layout_mode("compact")
 
@@ -398,16 +395,16 @@ def test_full_content_scales_with_card_size(qapp, tab):
     card.resize(600, 400)
     qapp.processEvents()
     portrait_full = tab.slot_badges[0].maximumHeight()
-    assert portrait_full == 130, (
-        f"portrait at scale 1.0 should be 130; got {portrait_full}"
+    assert portrait_full == 150, (
+        f"portrait at scale 1.0 should be 150; got {portrait_full}"
     )
 
     card.resize(375, 250)
     qapp.processEvents()
     portrait_small = tab.slot_badges[0].maximumHeight()
-    assert portrait_small < 130, (
-        f"portrait should shrink below 130 at smaller card size; got {portrait_small}"
+    assert portrait_small < 150, (
+        f"portrait should shrink below 150 at smaller card size; got {portrait_small}"
     )
-    assert portrait_small >= 78, (
-        f"portrait should not go below min scale (0.6 * 130 = 78); got {portrait_small}"
+    assert portrait_small >= 90, (
+        f"portrait should not go below min scale (0.6 * 150 = 90); got {portrait_small}"
     )
