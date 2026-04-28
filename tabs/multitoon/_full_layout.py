@@ -88,6 +88,8 @@ class _FullToonCard(QFrame):
     """
 
     _REF_H = 400  # card height at which scale == 1.0
+    _PORTRAIT_REF = 150
+    _IND_SIZE = 32
 
     def __init__(self, slot_index: int, tab, parent=None):
         super().__init__(parent)
@@ -129,9 +131,10 @@ class _FullToonCard(QFrame):
         self._content_row.setSpacing(20)
 
         self._portrait_wrap = QWidget()
-        self._portrait_wrap.setFixedSize(150, 150)
+        self._portrait_wrap.setFixedSize(self._PORTRAIT_REF, self._PORTRAIT_REF)
         self._status_indicator = _StatusIndicator(self._portrait_wrap)
-        self._status_indicator.move(118, 118)
+        ind_off = self._PORTRAIT_REF - self._IND_SIZE
+        self._status_indicator.move(ind_off, ind_off)
 
         self._info_col = QVBoxLayout()
         self._info_col.setSpacing(4)
@@ -155,13 +158,13 @@ class _FullToonCard(QFrame):
         clear_layout(self._info_col)
         clear_layout(self._ctrl_row)
 
-        # Portrait — fixed 150x150
         portrait = self._tab.slot_badges[self._slot]
         portrait.setParent(self._portrait_wrap)
-        portrait.setFixedSize(150, 150)
+        portrait.setFixedSize(self._PORTRAIT_REF, self._PORTRAIT_REF)
         portrait.move(0, 0)
         self._status_indicator.setParent(self._portrait_wrap)
-        self._status_indicator.move(118, 118)
+        ind_off = self._PORTRAIT_REF - self._IND_SIZE
+        self._status_indicator.move(ind_off, ind_off)
 
         # Info column: vertically centered name + stats
         name_label, _status_dot_compact = self._tab.toon_labels[self._slot]
@@ -326,10 +329,10 @@ class _FullToonCard(QFrame):
             return
         self._scale = scale
 
-        ps = int(150 * scale)
+        ps = int(self._PORTRAIT_REF * scale)
         self._portrait_wrap.setFixedSize(ps, ps)
         self._tab.slot_badges[self._slot].setFixedSize(ps, ps)
-        ind_offset = ps - 32
+        ind_offset = ps - self._IND_SIZE
         self._status_indicator.move(ind_offset, ind_offset)
 
         bh = int(42 * scale)
