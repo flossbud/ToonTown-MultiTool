@@ -71,11 +71,11 @@ class _StatusIndicator(QWidget):
 
 
 def _style_ctrl(widget: QWidget, height: int = 32) -> None:
-    """Force a control to the given height + 6px corner radius."""
+    """Force a control to the given height + 8px corner radius."""
     widget.setFixedHeight(height)
     sheet = widget.styleSheet()
     if "border-radius" not in sheet:
-        widget.setStyleSheet(sheet + "border-radius: 6px;")
+        widget.setStyleSheet(sheet + "border-radius: 8px;")
 
 
 class _FullToonCard(QFrame):
@@ -126,12 +126,12 @@ class _FullToonCard(QFrame):
         root_vbox.setSpacing(10)
 
         self._content_row = QHBoxLayout()
-        self._content_row.setSpacing(16)
+        self._content_row.setSpacing(20)
 
         self._portrait_wrap = QWidget()
-        self._portrait_wrap.setFixedSize(130, 130)
+        self._portrait_wrap.setFixedSize(150, 150)
         self._status_indicator = _StatusIndicator(self._portrait_wrap)
-        self._status_indicator.move(100, 100)
+        self._status_indicator.move(118, 118)
 
         self._info_col = QVBoxLayout()
         self._info_col.setSpacing(4)
@@ -155,13 +155,13 @@ class _FullToonCard(QFrame):
         clear_layout(self._info_col)
         clear_layout(self._ctrl_row)
 
-        # Portrait — fixed 130x130
+        # Portrait — fixed 150x150
         portrait = self._tab.slot_badges[self._slot]
         portrait.setParent(self._portrait_wrap)
-        portrait.setFixedSize(130, 130)
+        portrait.setFixedSize(150, 150)
         portrait.move(0, 0)
         self._status_indicator.setParent(self._portrait_wrap)
-        self._status_indicator.move(100, 100)
+        self._status_indicator.move(118, 118)
 
         # Info column: vertically centered name + stats
         name_label, _status_dot_compact = self._tab.toon_labels[self._slot]
@@ -184,29 +184,29 @@ class _FullToonCard(QFrame):
         self._game_pill.setParent(self)
         self._game_pill.move(0, 0)
 
-        # Controls row — 40px height, proportional widths
+        # Controls row — 42px height, proportional widths
         btn = self._tab.toon_buttons[self._slot]
-        _style_ctrl(btn, 40)
+        _style_ctrl(btn, 42)
         btn.setFixedWidth(100)
         self._ctrl_row.addWidget(btn)
 
         chat = self._tab.chat_buttons[self._slot]
-        _style_ctrl(chat, 40)
-        chat.setFixedWidth(40)
+        _style_ctrl(chat, 42)
+        chat.setFixedWidth(42)
         self._ctrl_row.addWidget(chat)
 
         ka = self._tab.keep_alive_buttons[self._slot]
-        _style_ctrl(ka, 40)
-        ka.setFixedWidth(40)
+        _style_ctrl(ka, 42)
+        ka.setFixedWidth(42)
         self._ctrl_row.addWidget(ka)
 
         ka_bar = self._tab.ka_progress_bars[self._slot]
-        ka_bar.setFixedSize(120, 10)
-        self._ctrl_row.addWidget(ka_bar)
-        self._ctrl_row.addStretch(1)
+        ka_bar.setFixedHeight(10)
+        ka_bar.setMinimumWidth(40)
+        self._ctrl_row.addWidget(ka_bar, 1)
 
         selector = self._tab.set_selectors[self._slot]
-        _style_ctrl(selector, 40)
+        _style_ctrl(selector, 42)
         self._ctrl_row.addWidget(selector)
 
     # ── Inactive view ──────────────────────────────────────────────────────
@@ -326,13 +326,13 @@ class _FullToonCard(QFrame):
             return
         self._scale = scale
 
-        ps = int(130 * scale)
+        ps = int(150 * scale)
         self._portrait_wrap.setFixedSize(ps, ps)
         self._tab.slot_badges[self._slot].setFixedSize(ps, ps)
-        ind_offset = ps - 30
+        ind_offset = ps - 32
         self._status_indicator.move(ind_offset, ind_offset)
 
-        bh = int(40 * scale)
+        bh = int(42 * scale)
         self._tab.toon_buttons[self._slot].setFixedHeight(bh)
         self._tab.toon_buttons[self._slot].setFixedWidth(int(100 * scale))
         self._tab.chat_buttons[self._slot].setFixedHeight(bh)
@@ -340,13 +340,11 @@ class _FullToonCard(QFrame):
         self._tab.keep_alive_buttons[self._slot].setFixedHeight(bh)
         self._tab.keep_alive_buttons[self._slot].setFixedWidth(bh)
 
-        self._tab.ka_progress_bars[self._slot].setFixedSize(
-            int(120 * scale), max(4, int(10 * scale))
-        )
+        self._tab.ka_progress_bars[self._slot].setFixedHeight(max(4, int(10 * scale)))
         self._tab.set_selectors[self._slot].setFixedHeight(bh)
 
         self._active_root.layout().setSpacing(int(10 * scale))
-        self._content_row.setSpacing(int(16 * scale))
+        self._content_row.setSpacing(int(20 * scale))
         self._ctrl_row.setSpacing(int(8 * scale))
 
         self._apply_scaled_styles()
@@ -358,17 +356,17 @@ class _FullToonCard(QFrame):
         s = self._scale
         name_label, _ = self._tab.toon_labels[self._slot]
         name_label.setStyleSheet(
-            f"font-size: {int(22 * s)}px; font-weight: 600; color: {c['text_primary']}; "
+            f"font-size: {int(28 * s)}px; font-weight: 700; color: {c['text_primary']}; "
             f"background: transparent; border: none; padding-right: 60px;"
         )
         f = name_label.font()
-        f.setPointSize(int(22 * s))
-        f.setWeight(QFont.DemiBold)
+        f.setPointSize(int(28 * s))
+        f.setWeight(QFont.Bold)
         name_label.setFont(f)
         for lbl in (self._tab.laff_labels[self._slot], self._tab.bean_labels[self._slot]):
             lbl.setStyleSheet(
                 f"border: none; background: transparent; font-weight: 600; "
-                f"font-size: {int(15 * s)}px; color: {c['text_primary']};"
+                f"font-size: {int(16 * s)}px; color: {c['text_primary']};"
             )
 
 
