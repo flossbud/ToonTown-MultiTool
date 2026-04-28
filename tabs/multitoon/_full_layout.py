@@ -530,6 +530,5 @@ class _FullLayout(QWidget):
             card._stop_pulse()
 
     def apply_theme(self, c: dict) -> None:
-        self.setStyleSheet(f"QWidget {{ background: {c['bg_app']}; }}")
         for card in self._cards:
             card.apply_theme(c)
