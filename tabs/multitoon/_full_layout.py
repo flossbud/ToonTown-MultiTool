@@ -4,7 +4,9 @@ The Full UI is a 2x2 card grid with large portraits and a Discord-style status
 indicator (background-colored ring overlapping the portrait + colored dot inside).
 """
 
-from PySide6.QtCore import Qt, Property, QPropertyAnimation, QEasingCurve, QRect, QTimer
+import re
+
+from PySide6.QtCore import Qt, Property, QPropertyAnimation, QEasingCurve, QRect, QSize, QTimer
 from PySide6.QtGui import QColor, QFont, QPainter
 from PySide6.QtWidgets import (
     QFrame, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
@@ -12,15 +14,15 @@ from PySide6.QtWidgets import (
 
 
 class _StatusIndicator(QWidget):
-    """32x32 widget: a 32px ring in the card-bg color + a 24px filled dot.
+    """Status ring: outer ring in the card-bg color + inset filled dot.
 
     Z-order when overlaid on the portrait: portrait -> ring -> dot. The ring
     color must match the parent card background to create the cutout illusion.
     """
 
-    def __init__(self, parent=None):
+    def __init__(self, size: int = 32, parent=None):
         super().__init__(parent)
-        self.setFixedSize(32, 32)
+        self.setFixedSize(size, size)
         self._active = False
         self._ring_color = QColor("#2a2a30")  # default = dark card-bg
         self._dot_color_active = QColor("#3aaa5e")
@@ -54,20 +56,24 @@ class _StatusIndicator(QWidget):
         p.setRenderHint(QPainter.Antialiasing)
         p.setPen(Qt.NoPen)
 
+        size = min(self.width(), self.height())
+        inset = max(3, round(size * 0.125))
+        dot = size - inset * 2
+
         # Ring fills the entire widget bounds — same color as parent card bg.
         p.setBrush(self._ring_color)
-        p.drawEllipse(0, 0, 32, 32)
+        p.drawEllipse(0, 0, size, size)
 
-        # Dot — 24x24 centered, leaves a 4px ring on every side.
+        # Dot centered inside the ring.
         dot_color = self._dot_color_active if self._active else self._dot_color_idle
         if self._active and self._glow > 0:
             # Glow halo: extra outer dot at low alpha
             halo = QColor(dot_color)
             halo.setAlphaF(0.35 * self._glow)
             p.setBrush(halo)
-            p.drawEllipse(1, 1, 30, 30)
+            p.drawEllipse(1, 1, size - 2, size - 2)
         p.setBrush(dot_color)
-        p.drawEllipse(4, 4, 24, 24)
+        p.drawEllipse(inset, inset, dot, dot)
 
 
 def _style_ctrl(widget: QWidget, height: int = 32) -> None:
@@ -76,6 +82,26 @@ def _style_ctrl(widget: QWidget, height: int = 32) -> None:
     sheet = widget.styleSheet()
     if "border-radius" not in sheet:
         widget.setStyleSheet(sheet + "border-radius: 8px;")
+
+
+def _make_ctrl_32(widget: QWidget) -> QWidget:
+    """Compatibility helper: force a control to Compact's 32px baseline."""
+    widget.setFixedHeight(32)
+    sheet = widget.styleSheet()
+    if "border-radius" not in sheet:
+        widget.setStyleSheet(sheet + "border-radius: 6px;")
+    return widget
+
+
+def _detach_from_layouts(widget: QWidget) -> None:
+    """Remove a shared widget from any ancestor layouts before manual parenting."""
+    parent = widget.parentWidget()
+    while parent is not None:
+        layout = parent.layout()
+        if layout is not None:
+            layout.removeWidget(widget)
+        parent = parent.parentWidget()
+    widget.setParent(None)
 
 
 class _FullToonCard(QFrame):
@@ -87,9 +113,23 @@ class _FullToonCard(QFrame):
     can rebuild after a layout-mode swap stole them.
     """
 
-    _REF_H = 400  # card height at which scale == 1.0
-    _PORTRAIT_REF = 150
-    _IND_SIZE = 32
+    _REF_CARD_W = 632
+    _REF_CARD_H = 360
+    _REF_PORTRAIT = QRect(26, 88, 168, 168)
+    _REF_STATUS = QRect(132, 132, 42, 42)  # relative to portrait, may overflow it
+    _REF_NAME = QRect(219, 104, 360, 54)
+    _REF_LAFF = QRect(249, 158, 150, 30)
+    _REF_BEANS = QRect(249, 200, 165, 30)
+    _REF_ENABLE = QRect(24, 279, 118, 43)
+    _REF_CHAT = QRect(151, 279, 43, 43)
+    _REF_KEEPALIVE = QRect(203, 279, 43, 43)
+    _REF_PROGRESS = QRect(255, 296, 150, 9)
+    _REF_SELECTOR = QRect(436, 284, 174, 36)
+    _REF_PILL = QRect(568, 14, 51, 23)
+    _REF_NAME_FONT = 28
+    _REF_STAT_FONT = 16
+    _REF_BUTTON_FONT = 12
+    _REF_PILL_FONT = 10
 
     def __init__(self, slot_index: int, tab, parent=None):
         super().__init__(parent)
@@ -104,16 +144,11 @@ class _FullToonCard(QFrame):
         self.setMinimumHeight(200)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
-        self._stack_layout = QVBoxLayout(self)
-        self._stack_layout.setContentsMargins(18, 18, 18, 18)
-        self._stack_layout.setSpacing(0)
-
         # Cached refs for populate_active()
-        self._info_col = None
-        self._ctrl_row = None
         self._portrait_wrap = None
         self._status_indicator = None
         self._game_pill = None  # set on first populate_active
+        self._inactive_empty_area = None
 
         self._build_active_structure()
         self._build_inactive_view()
@@ -123,50 +158,28 @@ class _FullToonCard(QFrame):
     # ── Active view structure ──────────────────────────────────────────────
     def _build_active_structure(self):
         self._active_root = QWidget(self)
-        root_vbox = QVBoxLayout(self._active_root)
-        root_vbox.setContentsMargins(0, 0, 0, 0)
-        root_vbox.setSpacing(10)
+        self._active_root.setObjectName("full_active_root")
+        self._active_root.setStyleSheet("background: transparent; border: none;")
 
-        self._content_row = QHBoxLayout()
-        self._content_row.setSpacing(20)
-
-        self._portrait_wrap = QWidget()
-        self._portrait_wrap.setFixedSize(self._PORTRAIT_REF, self._PORTRAIT_REF)
-        self._status_indicator = _StatusIndicator(self._portrait_wrap)
-        ind_off = self._PORTRAIT_REF - self._IND_SIZE
-        self._status_indicator.move(ind_off, ind_off)
-
-        self._info_col = QVBoxLayout()
-        self._info_col.setSpacing(4)
-
-        self._content_row.addWidget(self._portrait_wrap)
-        self._content_row.addLayout(self._info_col, 1)
-
-        self._ctrl_row = QHBoxLayout()
-        self._ctrl_row.setSpacing(8)
-
-        root_vbox.addLayout(self._content_row, 1)
-        root_vbox.addLayout(self._ctrl_row, 0)
-
-        self._stack_layout.addWidget(self._active_root)
+        self._portrait_wrap = QWidget(self._active_root)
+        self._portrait_wrap.setObjectName("full_portrait_wrap")
+        self._portrait_wrap.setStyleSheet("background: transparent; border: none;")
+        self._portrait_wrap.setGeometry(self._REF_PORTRAIT)
+        self._status_indicator = _StatusIndicator(self._REF_STATUS.width(), self._active_root)
+        self._status_indicator.setGeometry(self._status_rect())
 
     # ── Active view populate ───────────────────────────────────────────────
     def populate_active(self):
         """(Re-)attach the shared widgets into the active layout. Idempotent."""
-        from tabs.multitoon._layout_utils import clear_layout
-
-        clear_layout(self._info_col)
-        clear_layout(self._ctrl_row)
-
         portrait = self._tab.slot_badges[self._slot]
+        _detach_from_layouts(portrait)
         portrait.setParent(self._portrait_wrap)
-        portrait.setFixedSize(self._PORTRAIT_REF, self._PORTRAIT_REF)
+        portrait.setFixedSize(self._REF_PORTRAIT.size())
         portrait.move(0, 0)
-        self._status_indicator.setParent(self._portrait_wrap)
-        ind_off = self._PORTRAIT_REF - self._IND_SIZE
-        self._status_indicator.move(ind_off, ind_off)
+        self._status_indicator.setParent(self._active_root)
+        self._status_indicator.setGeometry(self._status_rect())
+        self._status_indicator.raise_()
 
-        # Info column: vertically centered name + stats
         name_label, _status_dot_compact = self._tab.toon_labels[self._slot]
         for lbl in (self._tab.laff_labels[self._slot], self._tab.bean_labels[self._slot]):
             f = lbl.font()
@@ -176,47 +189,61 @@ class _FullToonCard(QFrame):
                 f.setStyleHint(QFont.TypeWriter, QFont.PreferDefault)
             lbl.setFont(f)
 
-        self._info_col.addStretch(1)
-        self._info_col.addWidget(name_label)
-        self._info_col.addWidget(self._tab.laff_labels[self._slot])
-        self._info_col.addWidget(self._tab.bean_labels[self._slot])
-        self._info_col.addStretch(1)
+        for widget in (
+            name_label,
+            self._tab.laff_labels[self._slot],
+            self._tab.bean_labels[self._slot],
+        ):
+            _detach_from_layouts(widget)
+            widget.setParent(self._active_root)
+            widget.show()
 
         # TTR/CC pill — parented to card frame, positioned in resizeEvent
         self._game_pill = self._tab.game_badges[self._slot]
+        _detach_from_layouts(self._game_pill)
         self._game_pill.setParent(self)
         self._game_pill.move(0, 0)
 
-        # Controls row — 42px height, proportional widths
         btn = self._tab.toon_buttons[self._slot]
-        _style_ctrl(btn, 42)
-        btn.setFixedWidth(100)
-        self._ctrl_row.addWidget(btn)
+        _style_ctrl(btn, 32)
+        btn.setFixedWidth(88)
+        _detach_from_layouts(btn)
+        btn.setParent(self._active_root)
 
         chat = self._tab.chat_buttons[self._slot]
-        _style_ctrl(chat, 42)
-        chat.setFixedWidth(42)
-        self._ctrl_row.addWidget(chat)
+        _style_ctrl(chat, 32)
+        chat.setFixedWidth(32)
+        _detach_from_layouts(chat)
+        chat.setParent(self._active_root)
 
         ka = self._tab.keep_alive_buttons[self._slot]
-        _style_ctrl(ka, 42)
-        ka.setFixedWidth(42)
-        self._ctrl_row.addWidget(ka)
+        _style_ctrl(ka, 32)
+        ka.setFixedWidth(32)
+        _detach_from_layouts(ka)
+        ka.setParent(self._active_root)
 
         ka_bar = self._tab.ka_progress_bars[self._slot]
-        ka_bar.setFixedHeight(10)
+        ka_bar.setFixedHeight(7)
+        ka_bar.setFixedWidth(self._REF_PROGRESS.width())
         ka_bar.setMinimumWidth(40)
-        self._ctrl_row.addWidget(ka_bar, 1)
+        _detach_from_layouts(ka_bar)
+        ka_bar.setParent(self._active_root)
 
         selector = self._tab.set_selectors[self._slot]
-        _style_ctrl(selector, 42)
-        self._ctrl_row.addWidget(selector)
+        _style_ctrl(selector, 28)
+        selector.setFixedWidth(self._REF_SELECTOR.width())
+        _detach_from_layouts(selector)
+        selector.setParent(self._active_root)
+
+        self._layout_active_content(force=True)
 
     # ── Inactive view ──────────────────────────────────────────────────────
     def _build_inactive_view(self):
         self._inactive_root = QWidget(self)
+        self._inactive_root.setObjectName("full_inactive_root")
+        self._inactive_root.setStyleSheet("background: transparent; border: none;")
         v = QVBoxLayout(self._inactive_root)
-        v.setContentsMargins(0, 0, 0, 0)
+        v.setContentsMargins(18, 18, 18, 18)
         v.setSpacing(0)
 
         slot_label = QLabel(f"Toon {self._slot + 1}")
@@ -227,8 +254,9 @@ class _FullToonCard(QFrame):
         slot_label.setFont(slot_font)
         v.addWidget(slot_label, alignment=Qt.AlignTop | Qt.AlignLeft)
 
-        empty_area = QWidget()
-        ev = QVBoxLayout(empty_area)
+        self._inactive_empty_area = QWidget()
+        self._inactive_empty_area.setObjectName("full_empty_area")
+        ev = QVBoxLayout(self._inactive_empty_area)
         ev.setContentsMargins(0, 0, 0, 0)
         ev.setSpacing(6)
         ev.addStretch()
@@ -242,9 +270,9 @@ class _FullToonCard(QFrame):
         msg.setAlignment(Qt.AlignCenter)
         ev.addWidget(msg, alignment=Qt.AlignHCenter)
         ev.addStretch()
-        v.addWidget(empty_area, 1)
+        v.addWidget(self._inactive_empty_area, 1)
 
-        self._stack_layout.addWidget(self._inactive_root)
+        self._inactive_root.setGeometry(self.rect())
 
     # ── State ──────────────────────────────────────────────────────────────
     def set_active(self, active: bool) -> None:
@@ -254,6 +282,8 @@ class _FullToonCard(QFrame):
         if self._game_pill is not None:
             self._game_pill.setVisible(active)
         if active:
+            if getattr(self._tab, "_mode", "compact") == "full":
+                self._scale_content()
             self._status_indicator.set_active(True)
             self._start_pulse()
         else:
@@ -296,61 +326,130 @@ class _FullToonCard(QFrame):
         self._status_indicator.apply_theme(
             c["bg_card"], c["status_dot_active"], c["status_dot_idle"]
         )
-        if self._game_pill is not None:
-            self._game_pill.setStyleSheet(
-                f"background: {c['game_pill_ttr']}; color: {c['text_on_accent']}; "
-                f"border-radius: 10px; padding: 3px 10px; "
-                f"font-size: 10px; font-weight: 700; letter-spacing: 0.5px;"
+        self._inactive_root.setStyleSheet("background: transparent; border: none;")
+        if self._inactive_empty_area is not None:
+            self._inactive_empty_area.setStyleSheet(
+                f"#full_empty_area {{ background: {c['bg_card']}; border: none; }}"
             )
+        self._apply_game_pill_style()
         self._apply_scaled_styles()
+
+    def _apply_game_pill_style(self) -> None:
+        if self._theme_colors is None or self._game_pill is None:
+            return
+        c = self._theme_colors
+        s = self._scale
+        text = self._game_pill.text().strip().upper()
+        bg = c["game_pill_cc"] if text == "CC" else c["game_pill_ttr"]
+        pill_h = max(14, round(self._REF_PILL.height() * s))
+        pill_w = max(30, round(self._REF_PILL.width() * s))
+        radius = max(9, pill_h // 2)
+        self._game_pill.setAlignment(Qt.AlignCenter)
+        self._game_pill.setStyleSheet(
+            f"background: {bg}; color: {c['text_on_accent']}; "
+            f"border-radius: {radius}px; padding: 0px; "
+            f"font-size: {max(9, round(self._REF_PILL_FONT * s))}px; "
+            f"font-weight: 700; letter-spacing: 0.5px;"
+        )
+        self._game_pill.setFixedSize(pill_w, pill_h)
+        if self._is_active:
+            self._position_game_pill()
+
+    def _position_game_pill(self) -> None:
+        if self._game_pill is None:
+            return
+        self._game_pill.setGeometry(self._scaled_rect(self._REF_PILL))
 
     def resize(self, *args):
         """Override so _scale_content fires even on hidden widgets (e.g. tests)."""
         super().resize(*args)
+        self._position_roots()
         if self._is_active:
-            QTimer.singleShot(0, self._scale_content)
+            QTimer.singleShot(0, self._layout_active_content)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        self._position_roots()
         if self._is_active:
-            self._scale_content()
-        if self._is_active and self._game_pill is not None:
-            pw = self._game_pill.sizeHint().width()
-            self._game_pill.move(self.width() - pw - 14, 14)
+            self._layout_active_content()
+
+    def _position_roots(self) -> None:
+        rect = self.rect()
+        self._active_root.setGeometry(rect)
+        self._inactive_root.setGeometry(rect)
 
     def _scale_content(self):
-        m = self._stack_layout.contentsMargins()
-        content_h = self.height() - m.top() - m.bottom()
-        if content_h <= 0:
+        self._layout_active_content()
+
+    def _scaled_rect(self, rect: QRect) -> QRect:
+        s = self._scale
+        return QRect(
+            round(rect.x() * s),
+            round(rect.y() * s),
+            round(rect.width() * s),
+            round(rect.height() * s),
+        )
+
+    def _status_rect(self) -> QRect:
+        portrait_rect = self._scaled_rect(self._REF_PORTRAIT)
+        status_rect = self._scaled_rect(self._REF_STATUS)
+        status_rect.moveTo(
+            portrait_rect.x() + status_rect.x(),
+            portrait_rect.y() + status_rect.y(),
+        )
+        return status_rect
+
+    def _place_fixed(self, widget: QWidget, rect: QRect) -> None:
+        widget.setFixedSize(rect.size())
+        widget.move(rect.topLeft())
+
+    def _layout_active_content(self, force: bool = False):
+        if getattr(self._tab, "_mode", "compact") != "full":
+            if not force:
+                return
+        if self.width() <= 0 or self.height() <= 0:
             return
-        ref_h = self._REF_H - m.top() - m.bottom()
-        scale = max(0.6, min(1.5, content_h / ref_h))
-        if abs(scale - self._scale) < 0.01:
-            return
+        if force and (self.width() < 200 or self.height() < 150):
+            scale = 1.0
+        else:
+            scale = max(0.55, min(self.width() / self._REF_CARD_W, self.height() / self._REF_CARD_H))
+        same_scale = abs(scale - self._scale) < 0.005
         self._scale = scale
 
-        ps = int(self._PORTRAIT_REF * scale)
-        self._portrait_wrap.setFixedSize(ps, ps)
-        self._tab.slot_badges[self._slot].setFixedSize(ps, ps)
-        ind_offset = ps - self._IND_SIZE
-        self._status_indicator.move(ind_offset, ind_offset)
+        portrait_rect = self._scaled_rect(self._REF_PORTRAIT)
+        self._place_fixed(self._portrait_wrap, portrait_rect)
+        self._tab.slot_badges[self._slot].setFixedSize(portrait_rect.size())
+        self._tab.slot_badges[self._slot].move(0, 0)
 
-        bh = int(42 * scale)
-        self._tab.toon_buttons[self._slot].setFixedHeight(bh)
-        self._tab.toon_buttons[self._slot].setFixedWidth(int(100 * scale))
-        self._tab.chat_buttons[self._slot].setFixedHeight(bh)
-        self._tab.chat_buttons[self._slot].setFixedWidth(bh)
-        self._tab.keep_alive_buttons[self._slot].setFixedHeight(bh)
-        self._tab.keep_alive_buttons[self._slot].setFixedWidth(bh)
+        status_rect = self._status_rect()
+        self._place_fixed(self._status_indicator, status_rect)
+        self._status_indicator.raise_()
 
-        self._tab.ka_progress_bars[self._slot].setFixedHeight(max(4, int(10 * scale)))
-        self._tab.set_selectors[self._slot].setFixedHeight(bh)
+        name_label, _ = self._tab.toon_labels[self._slot]
+        name_label.setGeometry(self._scaled_rect(self._REF_NAME))
+        self._tab.laff_labels[self._slot].setGeometry(self._scaled_rect(self._REF_LAFF))
+        self._tab.bean_labels[self._slot].setGeometry(self._scaled_rect(self._REF_BEANS))
 
-        self._active_root.layout().setSpacing(int(10 * scale))
-        self._content_row.setSpacing(int(20 * scale))
-        self._ctrl_row.setSpacing(int(8 * scale))
+        self._place_fixed(self._tab.toon_buttons[self._slot], self._scaled_rect(self._REF_ENABLE))
+        self._place_fixed(self._tab.chat_buttons[self._slot], self._scaled_rect(self._REF_CHAT))
+        self._place_fixed(self._tab.keep_alive_buttons[self._slot], self._scaled_rect(self._REF_KEEPALIVE))
+        self._place_fixed(self._tab.ka_progress_bars[self._slot], self._scaled_rect(self._REF_PROGRESS))
+        self._place_fixed(self._tab.set_selectors[self._slot], self._scaled_rect(self._REF_SELECTOR))
+
+        icon = QSize(max(10, round(14 * scale)), max(10, round(14 * scale)))
+        self._tab.chat_buttons[self._slot].setIconSize(icon)
+        self._tab.keep_alive_buttons[self._slot].setIconSize(icon)
+        stat_icon = QSize(max(10, round(16 * scale)), max(10, round(16 * scale)))
+        self._tab.laff_labels[self._slot].setIconSize(stat_icon)
+        self._tab.bean_labels[self._slot].setIconSize(stat_icon)
+        selector = self._tab.set_selectors[self._slot]
+        if hasattr(selector, "set_paint_scale"):
+            selector.set_paint_scale(scale)
 
         self._apply_scaled_styles()
+        self._apply_game_pill_style()
+        if same_scale:
+            self._position_game_pill()
 
     def _apply_scaled_styles(self):
         if self._theme_colors is None:
@@ -359,19 +458,36 @@ class _FullToonCard(QFrame):
         s = self._scale
         name_label, _ = self._tab.toon_labels[self._slot]
         name_label.setStyleSheet(
-            f"font-size: {int(28 * s)}px; font-weight: 700; color: {c['text_primary']}; "
-            f"background: transparent; border: none; padding-right: 60px;"
+            f"font-size: {round(self._REF_NAME_FONT * s)}px; font-weight: 700; color: {c['text_primary']}; "
+            f"background: transparent; border: none;"
         )
         f = name_label.font()
-        f.setPointSize(int(28 * s))
+        f.setPixelSize(max(1, round(self._REF_NAME_FONT * s)))
         f.setWeight(QFont.Bold)
         name_label.setFont(f)
         for lbl in (self._tab.laff_labels[self._slot], self._tab.bean_labels[self._slot]):
             lbl.setStyleSheet(
                 f"border: none; background: transparent; font-weight: 600; "
-                f"font-size: {int(16 * s)}px; color: {c['text_primary']}; "
+                f"font-size: {round(self._REF_STAT_FONT * s)}px; color: {c['text_primary']}; "
                 f"text-align: left;"
             )
+        self._scale_button_styles()
+
+    def _scale_button_styles(self) -> None:
+        font_px = max(10, round(self._REF_BUTTON_FONT * self._scale))
+        for widget in (
+            self._tab.toon_buttons[self._slot],
+            self._tab.chat_buttons[self._slot],
+            self._tab.keep_alive_buttons[self._slot],
+        ):
+            sheet = widget.styleSheet()
+            if not sheet:
+                continue
+            if "font-size" in sheet:
+                sheet = re.sub(r"font-size:\s*\d+px", f"font-size: {font_px}px", sheet)
+            else:
+                sheet += f"\nfont-size: {font_px}px;"
+            widget.setStyleSheet(sheet)
 
 
 class _FullLayout(QWidget):
