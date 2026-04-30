@@ -84,15 +84,6 @@ def _style_ctrl(widget: QWidget, height: int = 32) -> None:
         widget.setStyleSheet(sheet + "border-radius: 8px;")
 
 
-def _make_ctrl_32(widget: QWidget) -> QWidget:
-    """Compatibility helper: force a control to Compact's 32px baseline."""
-    widget.setFixedHeight(32)
-    sheet = widget.styleSheet()
-    if "border-radius" not in sheet:
-        widget.setStyleSheet(sheet + "border-radius: 6px;")
-    return widget
-
-
 def _detach_from_layouts(widget: QWidget) -> None:
     """Remove a shared widget from any ancestor layouts before manual parenting."""
     parent = widget.parentWidget()
