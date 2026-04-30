@@ -4,8 +4,6 @@ The Full UI is a 2x2 card grid with large portraits and a Discord-style status
 indicator (background-colored ring overlapping the portrait + colored dot inside).
 """
 
-import re
-
 from PySide6.QtCore import Qt, Property, QPropertyAnimation, QEasingCurve, QRect, QSize, QTimer
 from PySide6.QtGui import QColor, QFont, QPainter
 from PySide6.QtWidgets import (
@@ -468,14 +466,9 @@ class _FullToonCard(QFrame):
             self._tab.chat_buttons[self._slot],
             self._tab.keep_alive_buttons[self._slot],
         ):
-            sheet = widget.styleSheet()
-            if not sheet:
-                continue
-            if "font-size" in sheet:
-                sheet = re.sub(r"font-size:\s*\d+px", f"font-size: {font_px}px", sheet)
-            else:
-                sheet += f"\nfont-size: {font_px}px;"
-            widget.setStyleSheet(sheet)
+            f = widget.font()
+            f.setPixelSize(font_px)
+            widget.setFont(f)
 
 
 class _FullLayout(QWidget):
