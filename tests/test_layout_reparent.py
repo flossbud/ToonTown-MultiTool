@@ -154,6 +154,34 @@ def test_set_layout_mode_idempotent(tab):
     assert _is_descendant_of(tab.toggle_service_button, tab._compact)
 
 
+def test_set_layout_mode_flips_mode_before_setCurrentWidget(tab):
+    """Regression: _mode must be flipped BEFORE setCurrentWidget so Qt's resize
+    cascade during the swap routes through the new mode's gates. If _mode flips
+    after, _FullToonCard._layout_active_content's mode gate causes the cascade
+    to skip scale recompute, leaving Full's content rendered at a stale small
+    scale after a window minimize/restore cycle (visible as 'tiny content')."""
+    captured = []
+    orig = tab._stack.setCurrentWidget
+
+    def spy(target):
+        captured.append(tab._mode)
+        return orig(target)
+
+    tab._stack.setCurrentWidget = spy
+    try:
+        tab.set_layout_mode("full")
+        assert captured[-1] == "full", (
+            f"_mode should be 'full' when setCurrentWidget runs; got {captured[-1]}"
+        )
+
+        tab.set_layout_mode("compact")
+        assert captured[-1] == "compact", (
+            f"_mode should be 'compact' when setCurrentWidget runs; got {captured[-1]}"
+        )
+    finally:
+        tab._stack.setCurrentWidget = orig
+
+
 def test_full_to_compact_roundtrip_restores_shared_widget_sizes(tab):
     """After Full → Compact, shared widgets must be back to Compact's defaults
     (selector 28px tall, ka_bar elastic, no leftover padding-right on name)."""
