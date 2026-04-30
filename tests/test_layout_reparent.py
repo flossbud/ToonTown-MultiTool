@@ -161,8 +161,8 @@ def test_full_to_compact_roundtrip_restores_shared_widget_sizes(tab):
     assert tab.set_selectors[0].height() <= 28 or tab.set_selectors[0].maximumHeight() == 28
 
     tab.set_layout_mode("full")
-    # Full mutates: selector becomes 42, ka_bar fixed-size, name padding-right
-    assert tab.set_selectors[0].maximumHeight() == 42
+    # Full mutates: selector becomes the reference design-surface size.
+    assert tab.set_selectors[0].maximumHeight() == 36
 
     tab.set_layout_mode("compact")
     # Compact must restore defaults
@@ -183,6 +183,7 @@ def test_full_to_compact_roundtrip_restores_shared_widget_sizes(tab):
 
 def test_apply_visual_state_propagates_to_full_card(tab):
     """Critical bug regression: Full UI cards' active state must mirror window availability."""
+    tab.set_layout_mode("full")
     # Initial: no windows detected → all cards inactive
     for card in tab._full._cards:
         assert card._is_active is False
@@ -199,6 +200,27 @@ def test_apply_visual_state_propagates_to_full_card(tab):
         assert tab._full._cards[i]._is_active is False
 
 
+def test_compact_visual_state_does_not_apply_full_scaling(tab):
+    """Service/window updates in Compact must not let hidden Full cards resize shared widgets."""
+    assert tab._mode == "compact"
+    tab.window_manager.ttr_window_ids = ["fake-window-id"]
+    tab.input_service = object()
+    tab.service_running = True
+    tab.enabled_toons[0] = True
+
+    tab.apply_visual_state(0)
+
+    assert tab.toon_buttons[0].maximumHeight() == 32
+    assert tab.toon_buttons[0].maximumWidth() == 88
+    assert tab.chat_buttons[0].maximumHeight() == 32
+    assert tab.chat_buttons[0].maximumWidth() == 32
+    assert tab.keep_alive_buttons[0].maximumHeight() == 32
+    assert tab.keep_alive_buttons[0].maximumWidth() == 32
+    assert tab.ka_progress_bars[0].maximumHeight() == 7
+    assert tab.ka_progress_bars[0].maximumWidth() >= 16777215
+    assert tab.set_selectors[0].maximumHeight() == 28
+
+
 def test_full_name_label_styling_survives_refresh_theme(tab):
     """Critical bug regression: refresh_theme must not wipe Full UI's name styling."""
     tab.set_layout_mode("full")
@@ -206,10 +228,10 @@ def test_full_name_label_styling_survives_refresh_theme(tab):
 
     name_label, _ = tab.toon_labels[0]
     sheet = name_label.styleSheet()
-    # Full UI requires 28px font-size and right padding for the game pill.
+    # Full UI requires 28px font-size and no Compact-style clipping padding.
     assert "font-size: 28px" in sheet, f"Full name-label should be 28px; got {sheet!r}"
-    assert "padding-right: 60px" in sheet, (
-        f"Full name-label should reserve 60px for game pill; got {sheet!r}"
+    assert "padding-right" not in sheet, (
+        f"Full name-label should use the widened info column instead of padding; got {sheet!r}"
     )
 
 
@@ -224,6 +246,24 @@ def test_full_stats_labels_get_scaled_font(tab):
         assert "font-size: 16px" in sheet, (
             f"Full stats label should be 16px; got {sheet!r}"
         )
+
+
+def test_stats_labels_keep_icons_in_full_mode(tab):
+    """Full should not alternate between icon stats and LAFF/JB text labels."""
+    tab.set_layout_mode("full")
+    tab.window_manager.ttr_window_ids = ["fake-window-id"]
+    tab._last_window_ids = ["fake-window-id"]
+    tab.toon_names[0] = "Mint"
+    tab.toon_laffs[0] = 16
+    tab.toon_max_laffs[0] = 16
+    tab.toon_beans[0] = 10306
+
+    tab._refresh_toon_stats_labels()
+
+    assert tab.laff_labels[0].text() == " 16/16"
+    assert tab.bean_labels[0].text() == " 10,306"
+    assert not tab.laff_labels[0].icon().isNull()
+    assert not tab.bean_labels[0].icon().isNull()
 
 
 def test_compact_startup_uses_original_widget_sizes(tab):
@@ -249,22 +289,39 @@ def test_compact_startup_uses_original_widget_sizes(tab):
     )
 
 
-def test_full_card_portrait_fixed_size(qapp, tab):
-    """Portrait must be fixed at 150x150 in Full UI, not dynamic."""
+def test_full_card_portrait_reference_size(qapp, tab):
+    """Portrait uses Full's reference size when card height is at the reference."""
     tab.set_layout_mode("full")
-    tab._full._cards[0].set_active(True)
+    card = tab._full._cards[0]
+    card.set_active(True)
+    card.resize(632, 360)
+    qapp.processEvents()
 
-    wrap = tab._full._cards[0]._portrait_wrap
-    assert wrap.maximumWidth() == 150, (
-        f"portrait wrap should be 150px wide; got {wrap.maximumWidth()}"
+    wrap = card._portrait_wrap
+    assert wrap.maximumWidth() == 168, (
+        f"portrait wrap should be 168px wide; got {wrap.maximumWidth()}"
     )
-    assert wrap.maximumHeight() == 150, (
-        f"portrait wrap should be 150px tall; got {wrap.maximumHeight()}"
+    assert wrap.maximumHeight() == 168, (
+        f"portrait wrap should be 168px tall; got {wrap.maximumHeight()}"
     )
     badge = tab.slot_badges[0]
-    assert badge.maximumWidth() == 150 and badge.maximumHeight() == 150, (
-        f"badge should be 150x150; got {badge.maximumSize()}"
+    assert badge.maximumWidth() == 168 and badge.maximumHeight() == 168, (
+        f"badge should be 168x168; got {badge.maximumSize()}"
     )
+
+
+def test_full_status_indicator_is_not_clipped_by_portrait(qapp, tab):
+    """The Full status dot may overlap past the portrait without being clipped."""
+    tab.set_layout_mode("full")
+    card = tab._full._cards[0]
+    card.set_active(True)
+    card.resize(632, 360)
+    qapp.processEvents()
+
+    indicator = card._status_indicator
+    wrap = card._portrait_wrap
+    assert indicator.parent() is card._active_root
+    assert indicator.x() + indicator.width() > wrap.x() + wrap.width()
 
 
 def test_game_pill_parented_to_card_not_active_root(tab):
@@ -280,36 +337,102 @@ def test_game_pill_parented_to_card_not_active_root(tab):
     )
 
 
+def test_game_pill_text_is_centered(tab):
+    """TTR/CC pill labels should center text within the rounded pill."""
+    from PySide6.QtCore import Qt
+
+    tab.set_layout_mode("full")
+    card = tab._full._cards[0]
+    card._apply_game_pill_style()
+
+    assert tab.game_badges[0].alignment() & Qt.AlignHCenter
+    assert tab.game_badges[0].alignment() & Qt.AlignVCenter
+
+
+def test_full_inactive_card_root_does_not_cover_card_frame(tab):
+    """Inactive card content must not paint over the Full card frame/background."""
+    tab.set_layout_mode("full")
+    tab.refresh_theme()
+    card = tab._full._cards[1]
+
+    assert "transparent" in card._inactive_root.styleSheet()
+    assert card._inactive_empty_area is not None
+    assert "full_empty_area" in card._inactive_empty_area.styleSheet()
+    assert tab._c()["bg_card"] in card._inactive_empty_area.styleSheet()
+
+
+def test_full_layout_uses_full_surface_colors(tab):
+    """Full Multitoon card surfaces are the light-mode source of truth."""
+    tab.set_layout_mode("full")
+    tab.refresh_theme()
+    c = tab._c()
+
+    card_sheet = tab._full._cards[0].styleSheet()
+    assert c["bg_card"] in card_sheet
+    assert c["border_card"] in card_sheet
+
+
+def test_compact_light_layout_uses_full_card_surface_colors(tab):
+    """Compact light mode should match Full's card surface colors."""
+    tab.settings_manager.set("theme", "light")
+    tab.set_layout_mode("compact")
+    tab.refresh_theme()
+    c = tab._c()
+
+    card_sheet = tab.toon_cards[0].styleSheet()
+    assert c["bg_card"] in card_sheet
+    assert c["border_card"] in card_sheet
+    assert c["bg_card_inner"] not in card_sheet
+    assert c["border_muted"] not in card_sheet
+
+
+def test_compact_dark_layout_keeps_original_card_surface_colors(tab):
+    """Dark mode should keep Compact's existing card colors unchanged."""
+    tab.settings_manager.set("theme", "dark")
+    tab.set_layout_mode("compact")
+    tab.refresh_theme()
+    c = tab._c()
+
+    card_sheet = tab.toon_cards[0].styleSheet()
+    assert c["bg_card_inner"] in card_sheet
+    assert c["border_muted"] in card_sheet
+    assert c["bg_card"] not in card_sheet
+    assert c["border_card"] not in card_sheet
+
+
 def test_full_controls_scaled(tab):
-    """Full UI controls must be 42px tall."""
+    """Full UI controls use the captured reference design-surface sizes."""
     tab.set_layout_mode("full")
 
     btn = tab.toon_buttons[0]
-    assert btn.maximumHeight() == 42, (
-        f"enable button should be 42px tall; got max height {btn.maximumHeight()}"
+    assert btn.maximumHeight() == 43, (
+        f"enable button should be 43px tall; got max height {btn.maximumHeight()}"
     )
-    assert btn.maximumWidth() == 100, (
-        f"enable button should be 100px wide; got max width {btn.maximumWidth()}"
+    assert btn.maximumWidth() == 118, (
+        f"enable button should be 118px wide; got max width {btn.maximumWidth()}"
     )
 
     chat = tab.chat_buttons[0]
-    assert chat.maximumHeight() == 42, (
-        f"chat button should be 42px tall; got {chat.maximumHeight()}"
+    assert chat.maximumHeight() == 43, (
+        f"chat button should be 43px tall; got {chat.maximumHeight()}"
     )
-    assert chat.maximumWidth() == 42, (
-        f"chat button should be 42px wide; got {chat.maximumWidth()}"
+    assert chat.maximumWidth() == 43, (
+        f"chat button should be 43px wide; got {chat.maximumWidth()}"
     )
 
     ka_bar = tab.ka_progress_bars[0]
-    assert ka_bar.maximumHeight() == 10, (
-        f"ka progress bar should be 10px tall; got {ka_bar.maximumHeight()}"
+    assert ka_bar.maximumHeight() == 9, (
+        f"ka progress bar should be 9px tall; got {ka_bar.maximumHeight()}"
+    )
+    assert ka_bar.maximumWidth() == 150, (
+        f"ka progress bar should use capped reference width; got {ka_bar.maximumWidth()}"
     )
 
 
 def test_full_to_compact_roundtrip_restores_button_sizes(tab):
     """After Full → Compact, buttons must reset to Compact's creation defaults."""
     tab.set_layout_mode("full")
-    assert tab.toon_buttons[0].maximumHeight() == 42
+    assert tab.toon_buttons[0].maximumHeight() == 43
 
     tab.set_layout_mode("compact")
 
@@ -335,6 +458,31 @@ def test_full_to_compact_roundtrip_restores_button_sizes(tab):
     )
     assert ka.maximumWidth() == 32, (
         f"KA button width should reset to 32; got {ka.maximumWidth()}"
+    )
+
+
+def test_full_to_compact_roundtrip_restores_icon_sizes(qapp, tab):
+    """After Full at non-1.0 scale -> Compact, icon sizes must reset to defaults."""
+    tab.set_layout_mode("full")
+    card = tab._full._cards[0]
+    card.set_active(True)
+    card.resize(375, 214)
+    qapp.processEvents()
+
+    tab.set_layout_mode("compact")
+
+    from PySide6.QtCore import QSize
+    assert tab.chat_buttons[0].iconSize() == QSize(14, 14), (
+        f"chat icon size should reset to 14x14; got {tab.chat_buttons[0].iconSize()}"
+    )
+    assert tab.keep_alive_buttons[0].iconSize() == QSize(14, 14), (
+        f"KA icon size should reset to 14x14; got {tab.keep_alive_buttons[0].iconSize()}"
+    )
+    assert tab.laff_labels[0].iconSize() == QSize(16, 16), (
+        f"laff icon size should reset to 16x16; got {tab.laff_labels[0].iconSize()}"
+    )
+    assert tab.bean_labels[0].iconSize() == QSize(16, 16), (
+        f"bean icon size should reset to 16x16; got {tab.bean_labels[0].iconSize()}"
     )
 
 
@@ -392,19 +540,73 @@ def test_full_content_scales_with_card_size(qapp, tab):
     card = tab._full._cards[0]
     card.set_active(True)
 
-    card.resize(600, 400)
+    card.resize(632, 360)
     qapp.processEvents()
     portrait_full = tab.slot_badges[0].maximumHeight()
-    assert portrait_full == 150, (
-        f"portrait at scale 1.0 should be 150; got {portrait_full}"
+    assert portrait_full == 168, (
+        f"portrait at scale 1.0 should be 168; got {portrait_full}"
+    )
+
+    card.resize(800, 450)
+    qapp.processEvents()
+    portrait_large = tab.slot_badges[0].maximumHeight()
+    assert portrait_large > 168, (
+        f"portrait should grow above reference size on taller cards; got {portrait_large}"
     )
 
     card.resize(375, 250)
     qapp.processEvents()
     portrait_small = tab.slot_badges[0].maximumHeight()
-    assert portrait_small < 150, (
-        f"portrait should shrink below 150 at smaller card size; got {portrait_small}"
+    assert portrait_small < 168, (
+        f"portrait should shrink below 168 at smaller card size; got {portrait_small}"
     )
-    assert portrait_small >= 90, (
-        f"portrait should not go below min scale (0.6 * 150 = 90); got {portrait_small}"
+    assert portrait_small >= 92, (
+        f"portrait should not go below min scale (0.55 * 168 ~= 92); got {portrait_small}"
     )
+
+
+def test_full_progress_bar_width_is_capped(qapp, tab):
+    """The Full controls row must not let the progress bar absorb all spare width."""
+    tab.set_layout_mode("full")
+    card = tab._full._cards[0]
+    card.set_active(True)
+    card.resize(800, 450)
+    qapp.processEvents()
+
+    bar = tab.ka_progress_bars[0]
+    selector = tab.set_selectors[0]
+    assert bar.maximumWidth() == bar.minimumWidth(), "bar should be fixed-width in Full"
+    assert bar.maximumWidth() <= 190, (
+        f"bar should cap at scaled reference width; got {bar.maximumWidth()}"
+    )
+    assert selector.maximumWidth() == selector.minimumWidth(), (
+        "selector should be fixed-width in Full so right-side spacing remains intentional"
+    )
+
+
+def test_full_active_card_reference_ratios_hold_across_sizes(qapp, tab):
+    """Active card internals should scale as one design surface, not drift by widget."""
+    tab.set_layout_mode("full")
+    card = tab._full._cards[0]
+    card.set_active(True)
+
+    def ratios(width, height):
+        card.resize(width, height)
+        qapp.processEvents()
+        name_label, _ = tab.toon_labels[0]
+        return {
+            "portrait_w": tab.slot_badges[0].width() / card.width(),
+            "portrait_x": card._portrait_wrap.x() / card.width(),
+            "name_x": name_label.x() / card.width(),
+            "button_y": tab.toon_buttons[0].y() / card.height(),
+            "button_h": tab.toon_buttons[0].height() / card.height(),
+            "progress_w": tab.ka_progress_bars[0].width() / card.width(),
+            "selector_x": tab.set_selectors[0].x() / card.width(),
+        }
+
+    base = ratios(632, 360)
+    large = ratios(1000, 570)
+    for key, base_value in base.items():
+        assert abs(base_value - large[key]) < 0.01, (
+            f"{key} drifted: base={base_value:.4f}, large={large[key]:.4f}"
+        )

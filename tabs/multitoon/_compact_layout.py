@@ -2,10 +2,11 @@
 window size. Below the Full UI breakpoint, the outer card clamps to 720 px and
 centers horizontally so wider windows do not stretch it."""
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFrame, QSizePolicy
 
+from utils.theme_manager import make_heart_icon, make_jellybean_icon
 from tabs.multitoon._layout_utils import clear_layout
 
 
@@ -148,6 +149,10 @@ class _CompactLayout(QWidget):
         # __init__, not just zero them out — Compact relies on the natural
         # size constraints to keep the cards compact.
         self._tab.set_selectors[i].setFixedHeight(28)  # Full scales dynamically; SetSelectorWidget defaults to 28
+        self._tab.set_selectors[i].setMinimumWidth(130)
+        self._tab.set_selectors[i].setMaximumWidth(16777215)
+        if hasattr(self._tab.set_selectors[i], "set_paint_scale"):
+            self._tab.set_selectors[i].set_paint_scale(1.0)
 
         # slot_badge: Full scales dynamically; ToonPortraitWidget's
         # constructor defaults are setMinimumSize(38, 38) + setMaximumSize(64, 64).
@@ -167,6 +172,13 @@ class _CompactLayout(QWidget):
         ka_bar.setMaximumWidth(16777215)  # QWIDGETSIZE_MAX
         ka_bar.setFixedHeight(7)
 
+        self._tab.laff_labels[i].setIcon(make_heart_icon(16))
+        self._tab.bean_labels[i].setIcon(make_jellybean_icon(16))
+
+        game_badge = self._tab.game_badges[i]
+        game_badge.setMinimumSize(0, 0)
+        game_badge.setMaximumSize(16777215, 16777215)
+
         # name_label: Full sets 16pt DemiBold + appends "padding-right: 60px;".
         # Reset to default font and clear the padding stanza. refresh_theme()
         # later sets its own stylesheet that determines the visible font-size.
@@ -184,6 +196,10 @@ class _CompactLayout(QWidget):
         self._tab.chat_buttons[i].setFixedWidth(32)
         self._tab.keep_alive_buttons[i].setFixedHeight(32)
         self._tab.keep_alive_buttons[i].setFixedWidth(32)
+        self._tab.chat_buttons[i].setIconSize(QSize(14, 14))
+        self._tab.keep_alive_buttons[i].setIconSize(QSize(14, 14))
+        self._tab.laff_labels[i].setIconSize(QSize(16, 16))
+        self._tab.bean_labels[i].setIconSize(QSize(16, 16))
 
         # ── existing populate logic continues below ──
         # top_row: badge | name | status_dot | game_badge | <stretch> | stats_row(laff bean)
