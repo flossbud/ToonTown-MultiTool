@@ -104,16 +104,16 @@ class _FullToonCard(QFrame):
 
     _REF_CARD_W = 632
     _REF_CARD_H = 360
-    _REF_PORTRAIT = QRect(26, 88, 168, 168)
+    _REF_PORTRAIT = QRect(26, 63, 168, 168)
     _REF_STATUS = QRect(132, 132, 42, 42)  # relative to portrait, may overflow it
-    _REF_NAME = QRect(219, 104, 360, 54)
-    _REF_LAFF = QRect(249, 158, 150, 30)
-    _REF_BEANS = QRect(249, 200, 165, 30)
-    _REF_ENABLE = QRect(24, 279, 118, 43)
-    _REF_CHAT = QRect(151, 279, 43, 43)
-    _REF_KEEPALIVE = QRect(203, 279, 43, 43)
-    _REF_PROGRESS = QRect(255, 296, 150, 9)
-    _REF_SELECTOR = QRect(436, 284, 174, 36)
+    _REF_NAME = QRect(219, 79, 360, 54)
+    _REF_LAFF = QRect(249, 133, 150, 30)
+    _REF_BEANS = QRect(249, 175, 165, 30)
+    _REF_ENABLE = QRect(24, 254, 118, 43)
+    _REF_CHAT = QRect(151, 254, 43, 43)
+    _REF_KEEPALIVE = QRect(203, 254, 43, 43)
+    _REF_PROGRESS = QRect(255, 271, 150, 9)
+    _REF_SELECTOR = QRect(436, 259, 174, 36)
     _REF_PILL = QRect(568, 14, 51, 23)
     _REF_NAME_FONT = 28
     _REF_STAT_FONT = 16
