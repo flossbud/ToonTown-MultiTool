@@ -168,7 +168,7 @@ class ToonPortraitWidget(QWidget):
         if data:
             pm = QPixmap()
             if pm.loadFromData(data):
-                self._pixmap = pm.scaled(38, 38, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                self._pixmap = pm
                 print(f"[Portrait] Slot {self._slot}: loaded OK")
             else:
                 self._pixmap = None
@@ -195,8 +195,12 @@ class ToonPortraitWidget(QWidget):
             path = QPainterPath()
             path.addEllipse(QPointF(cx, cy), r, r)
             p.setClipPath(path)
-            ph, pw = self._pixmap.height(), self._pixmap.width()
-            p.drawPixmap(int(cx - pw / 2), int(cy - ph / 2), self._pixmap)
+            target = max(1, int(r * 2))
+            pm = self._pixmap.scaled(
+                target, target, Qt.KeepAspectRatio, Qt.SmoothTransformation
+            )
+            ph, pw = pm.height(), pm.width()
+            p.drawPixmap(int(cx - pw / 2), int(cy - ph / 2), pm)
             p.setClipping(False)
         else:
             font = QFont()
@@ -396,6 +400,7 @@ class SetSelectorWidget(QWidget):
         self._border_color = "#6AAFFF"
         self._display_text = "Default"
         self._hover_zone = None  # "left", "right", or None
+        self._paint_scale = 1.0
 
         self.setFixedHeight(32)
         self.setMinimumWidth(130)
@@ -405,6 +410,10 @@ class SetSelectorWidget(QWidget):
 
         self._refresh_display()
 
+    def set_paint_scale(self, scale: float):
+        self._paint_scale = max(0.5, float(scale))
+        self.update()
+
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
@@ -412,12 +421,14 @@ class SetSelectorWidget(QWidget):
 
         rect = QRectF(1, 1, self.width() - 2, self.height() - 2)
         show_arrows = self._enabled and self._count() > 1
-        az = self.ARROW_ZONE
+        s = self._paint_scale
+        az = max(16, int(self.ARROW_ZONE * s))
+        radius = max(4, int(6 * s))
 
         # Fill
         p.setPen(Qt.NoPen)
         p.setBrush(QColor(self._bg))
-        p.drawRoundedRect(rect, 6, 6)
+        p.drawRoundedRect(rect, radius, radius)
 
         # Arrow zone hover highlights
         if show_arrows and self._hover_zone:
@@ -426,26 +437,26 @@ class SetSelectorWidget(QWidget):
             p.setPen(Qt.NoPen)
             if self._hover_zone == "left":
                 clip = QPainterPath()
-                clip.addRoundedRect(rect, 6, 6)
+                clip.addRoundedRect(rect, radius, radius)
                 p.setClipPath(clip)
                 p.drawRect(QRectF(1, 1, az, self.height() - 2))
                 p.setClipping(False)
             elif self._hover_zone == "right":
                 clip = QPainterPath()
-                clip.addRoundedRect(rect, 6, 6)
+                clip.addRoundedRect(rect, radius, radius)
                 p.setClipPath(clip)
                 p.drawRect(QRectF(self.width() - az - 1, 1, az, self.height() - 2))
                 p.setClipping(False)
 
         # Border
-        pen = QPen(QColor(self._border_color), 2)
+        pen = QPen(QColor(self._border_color), max(1, int(2 * s)))
         p.setPen(pen)
         p.setBrush(Qt.NoBrush)
-        p.drawRoundedRect(rect, 6, 6)
+        p.drawRoundedRect(rect, radius, radius)
 
         # Center text (name only, no arrows in string)
         font = QFont()
-        font.setPixelSize(12)
+        font.setPixelSize(max(10, int(12 * s)))
         font.setBold(True)
         p.setFont(font)
         p.setPen(QColor(self._text_color))
@@ -455,7 +466,7 @@ class SetSelectorWidget(QWidget):
         # Draw arrows pinned to edges
         if show_arrows:
             arrow_font = QFont()
-            arrow_font.setPixelSize(16)
+            arrow_font.setPixelSize(max(12, int(16 * s)))
             arrow_font.setBold(True)
             p.setFont(arrow_font)
 
@@ -470,11 +481,12 @@ class SetSelectorWidget(QWidget):
                 left_color = QColor(0, 0, 0, left_alpha)
                 right_color = QColor(0, 0, 0, right_alpha)
 
-            left_rect = QRectF(4, 0, az - 4, self.height())
+            pad = max(4, int(4 * s))
+            left_rect = QRectF(pad, 0, az - pad, self.height())
             p.setPen(left_color)
             p.drawText(left_rect, Qt.AlignCenter, S("‹", "<"))
 
-            right_rect = QRectF(self.width() - az, 0, az - 4, self.height())
+            right_rect = QRectF(self.width() - az, 0, az - pad, self.height())
             p.setPen(right_color)
             p.drawText(right_rect, Qt.AlignCenter, S("›", ">"))
 
@@ -484,9 +496,10 @@ class SetSelectorWidget(QWidget):
         if not self._enabled or self._count() <= 1:
             return
         x = event.position().x() if hasattr(event, 'position') else event.x()
-        if x < self.ARROW_ZONE:
+        arrow_zone = max(16, int(self.ARROW_ZONE * self._paint_scale))
+        if x < arrow_zone:
             self._prev()
-        elif x > self.width() - self.ARROW_ZONE:
+        elif x > self.width() - arrow_zone:
             self._next()
         # Clicking the middle does nothing
 
@@ -502,11 +515,12 @@ class SetSelectorWidget(QWidget):
 
         x = event.position().x() if hasattr(event, 'position') else event.x()
         old = self._hover_zone
-        if x < self.ARROW_ZONE:
+        arrow_zone = max(16, int(self.ARROW_ZONE * self._paint_scale))
+        if x < arrow_zone:
             self._hover_zone = "left"
             self.setCursor(Qt.PointingHandCursor)
             self.setToolTip("Previous movement set")
-        elif x > self.width() - self.ARROW_ZONE:
+        elif x > self.width() - arrow_zone:
             self._hover_zone = "right"
             self.setCursor(Qt.PointingHandCursor)
             self.setToolTip("Next movement set")
@@ -759,6 +773,7 @@ class MultitoonTab(QWidget):
 
             game_badge = QLabel()
             game_badge.setObjectName("game_badge")
+            game_badge.setAlignment(Qt.AlignCenter)
             game_badge.hide()
             self.game_badges.append(game_badge)
 
@@ -845,14 +860,20 @@ class MultitoonTab(QWidget):
     def set_layout_mode(self, mode: str) -> None:
         if mode == self._mode:
             return
-        # Leaving Full — stop card-level animations.
+        # Leaving Full — stop card-level animations BEFORE flipping the mode flag.
         if self._mode == "full" and hasattr(self, "_full") and self._full is not None:
             self._full.deactivate()
         target = self._full if mode == "full" else self._compact
+        # Flip _mode BEFORE populate + setCurrentWidget. Qt cascades resize events
+        # during setCurrentWidget; cards' resizeEvent calls _layout_active_content,
+        # which gates on _tab._mode == "full". If _mode is set after setCurrentWidget,
+        # those resize events fire under the OLD mode, the gate fails, and _scale
+        # never recomputes against the new card geometry — leaving Full's content
+        # rendered at a stale small scale after a window minimize/restore cycle.
+        self._mode = mode
         # Re-attach all shared widgets to the target's slots
         target.populate()
         self._stack.setCurrentWidget(target)
-        self._mode = mode
         # Re-apply theme so the new layout picks up colors (incl. game_pill etc.)
         self.refresh_theme()
 
@@ -1037,13 +1058,21 @@ class MultitoonTab(QWidget):
         """)
         self.update_service_button_style()
 
+        if is_dark:
+            toon_card_bg = c['bg_card_inner']
+            toon_card_border = c['border_muted']
+        else:
+            # In light mode, Full UI card surfaces are the source of truth.
+            toon_card_bg = c['bg_card']
+            toon_card_border = c['border_card']
+
         # Toon cards
         for i, card in enumerate(self.toon_cards):
             card.setStyleSheet(f"""
                 QFrame {{
-                    background-color: {c['bg_card_inner']};
+                    background-color: {toon_card_bg};
                     border-radius: 8px;
-                    border: 1px solid {c['border_muted']};
+                    border: 1px solid {toon_card_border};
                 }}
             """)
             name_label, status_dot = self.toon_labels[i]
@@ -1095,8 +1124,9 @@ class MultitoonTab(QWidget):
         window_available = index < len(wids)
 
         # Mirror window availability into the Full UI card's active/inactive view.
-        # Compact uses status_dot for this; Full uses _FullToonCard.set_active.
-        if hasattr(self, "_full") and index < len(self._full._cards):
+        # Only do this while Full owns the shared widgets; otherwise the hidden
+        # Full card can resize Compact's controls during service/window updates.
+        if self._mode == "full" and hasattr(self, "_full") and index < len(self._full._cards):
             self._full._cards[index].set_active(window_available)
 
         slot_colors = self._slot_colors(c)
@@ -1130,6 +1160,8 @@ class MultitoonTab(QWidget):
                 self.game_badges[index].show()
             else:
                 self.game_badges[index].hide()
+            if self._mode == "full" and hasattr(self, "_full") and index < len(self._full._cards):
+                self._full._cards[index]._apply_game_pill_style()
         else:
             self.game_badges[index].hide()
 
@@ -1860,6 +1892,7 @@ class MultitoonTab(QWidget):
                 claff = self.toon_laffs[i]
                 mlaff = self.toon_max_laffs[i]
                 if claff is not None and mlaff is not None:
+                    laff_lbl.setIcon(make_heart_icon(16))
                     laff_lbl.setText(f" {claff}/{mlaff}")
                     laff_lbl.show()
                 else:
@@ -1868,6 +1901,7 @@ class MultitoonTab(QWidget):
                 # Update Beans
                 cbeans = self.toon_beans[i]
                 if cbeans is not None:
+                    bean_lbl.setIcon(make_jellybean_icon(16))
                     bean_lbl.setText(f" {cbeans:,}")
                     bean_lbl.show()
                 else:
