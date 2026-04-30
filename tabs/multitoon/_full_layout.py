@@ -273,8 +273,6 @@ class _FullToonCard(QFrame):
         if self._game_pill is not None:
             self._game_pill.setVisible(active)
         if active:
-            if getattr(self._tab, "_mode", "compact") == "full":
-                self._scale_content()
             self._status_indicator.set_active(True)
             self._start_pulse()
         else:
@@ -368,9 +366,6 @@ class _FullToonCard(QFrame):
         rect = self.rect()
         self._active_root.setGeometry(rect)
         self._inactive_root.setGeometry(rect)
-
-    def _scale_content(self):
-        self._layout_active_content()
 
     def _scaled_rect(self, rect: QRect) -> QRect:
         s = self._scale
