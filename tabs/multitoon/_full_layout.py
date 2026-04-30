@@ -433,6 +433,8 @@ class _FullToonCard(QFrame):
             selector.set_paint_scale(scale)
 
         self._apply_scaled_styles()
+        # _apply_game_pill_style repositions the pill when scale changes; when
+        # only geometry changed (same_scale), reposition without restyling.
         self._apply_game_pill_style()
         if same_scale:
             self._position_game_pill()
