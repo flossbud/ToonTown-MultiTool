@@ -240,3 +240,36 @@ def test_setting_change_on_no_start_when_no_per_toon_active(tab, monkeypatch):
     tab.settings_manager.set("keep_alive_enabled", True)
     tab._on_setting_changed("keep_alive_enabled", True)
     assert started == []
+
+
+def test_load_profile_respects_master_off(tab, monkeypatch):
+    """Loading a profile with keep_alive=[true, true, true, true] while the
+    master is off must NOT start the keep-alive thread, but must preserve the
+    per-toon flags so they restore when the master is later flipped on."""
+    started = []
+    monkeypatch.setattr(
+        tab, "_start_keep_alive", lambda: started.append(True)
+    )
+
+    # Stub a minimal profile_manager so load_profile can run end-to-end.
+    class _Profile:
+        enabled_toons = [True, True, True, True]
+        movement_modes = ["Default"] * 4
+        keep_alive = [True, True, True, True]
+        rapid_fire = [False, False, False, False]
+
+    class _ProfileManager:
+        def get_profile(self, idx):
+            return _Profile()
+
+        def get_name(self, idx):
+            return "Test"
+
+    tab.profile_manager = _ProfileManager()
+    tab._active_profile = -1  # so _autosave_active_profile is a no-op
+    tab.settings_manager.set("keep_alive_enabled", False)
+
+    tab.load_profile(0)
+
+    assert started == []  # _start_keep_alive NOT invoked
+    assert tab.keep_alive_enabled == [True, True, True, True]  # flags preserved

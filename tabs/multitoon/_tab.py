@@ -1032,7 +1032,7 @@ class MultitoonTab(QWidget):
             self.keep_alive_buttons[i].is_rapid_fire = self.rapid_fire_enabled[i]
             self._apply_keep_alive_btn_style(i, self._c())
 
-        if any(self.keep_alive_enabled):
+        if any(self.keep_alive_enabled) and self._keep_alive_globally_enabled():
             self._start_keep_alive()
         else:
             self._stop_keep_alive()
