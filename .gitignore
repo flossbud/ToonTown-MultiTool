@@ -60,3 +60,21 @@ env/
 # === OS junk ===
 Thumbs.db
 desktop.ini
+
+# === Local-only orphan files (untriaged WIP / personal scripts) ===
+/fix-grub-single-fedora.sh
+/docs/full-ui-card-internals-debug-log.md
+/docs/handoff-button-lag-bug.md
+/tests/test_input_service_lifecycle.py
+/tests/test_toon_portrait_widget.py
+/docs/superpowers/plans/2026-04-23-aur-package.md
+/docs/superpowers/plans/2026-04-23-v2.0.1-release.md
+/docs/superpowers/plans/2026-04-26-release-skill.md
+/docs/superpowers/plans/2026-04-26-ui-polish-batch.md
+/docs/superpowers/plans/2026-04-27-full-ui-card-internals-redesign.md
+/docs/superpowers/plans/2026-04-27-full-ui-card-scaling.md
+/docs/superpowers/plans/2026-04-27-full-ui-centered-content-block.md
+/docs/superpowers/plans/2026-04-29-code-review-fixes.md
+/docs/superpowers/specs/2026-04-23-aur-package-design.md
+/docs/superpowers/specs/2026-04-26-release-skill-design.md
+/docs/superpowers/specs/2026-04-27-full-ui-card-internals-redesign.md
