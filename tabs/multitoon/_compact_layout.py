@@ -242,3 +242,147 @@ class _CompactLayout(QWidget):
             # ka_group is at index 0 of middle.
             middle.setStretch(0, target_stretch)
             middle.invalidate()
+
+    def _animate_keep_alive_visibility(self, target_visible: bool) -> None:
+        """Animate KA button + bar appearance/disappearance for all 4 cards.
+        Compact-specific behavior: ka_group's fixed-width animates via
+        QVariantAnimation between chat-only width and full row-filling width,
+        with concurrent opacity fade on KA button + bar.
+
+        Expand: 300 ms width 0→full + 250 ms opacity 0→1 (50 ms delay so
+        reveal trails frame expansion).
+        Collapse: 180 ms opacity 1→0 + 220 ms width full→chat (80 ms delay
+        so frame stays open while widgets fade)."""
+        from PySide6.QtCore import (
+            QVariantAnimation, QPropertyAnimation, QEasingCurve, QTimer,
+        )
+        from PySide6.QtWidgets import QGraphicsOpacityEffect
+
+        if not hasattr(self, "_ka_anims"):
+            self._ka_anims = []
+        for a in self._ka_anims:
+            a.stop()
+        self._ka_anims = []
+
+        QWIDGETSIZE_MAX_VAL = 16777215
+
+        for i, slot in enumerate(self._card_slots):
+            ka_group = slot["ka_group"]
+            middle = slot["middle"]
+            ka_btn = self._tab.keep_alive_buttons[i]
+            ka_bar = self._tab.ka_progress_bars[i]
+
+            # Compute target widths.
+            chat_btn = self._tab.chat_buttons[i]
+            chat_natural = chat_btn.sizeHint().width()
+            ka_group_margins = ka_group.layout().contentsMargins()
+            chat_only_width = (
+                chat_natural
+                + ka_group_margins.left()
+                + ka_group_margins.right()
+            )
+
+            if target_visible:
+                # Expand: ka_group must claim layout space first.
+                middle.setStretch(0, 1)
+                # Make widgets visible with opacity 0 so they can fade in.
+                ka_btn.setVisible(True)
+                ka_bar.setVisible(True)
+                for w in (ka_btn, ka_bar):
+                    effect = QGraphicsOpacityEffect(w)
+                    effect.setOpacity(0.0)
+                    w.setGraphicsEffect(effect)
+
+                # Width animation: chat_only_width → full row width.
+                # Use ka_group's current width as start (it's chat-only-sized
+                # because master was off).
+                width_start = ka_group.width()
+                # Compute target as middle layout's available width.
+                width_end = middle.geometry().width() if middle.geometry().width() > 0 else 600
+                ka_group.setFixedWidth(width_start)
+
+                width_anim = QVariantAnimation()
+                width_anim.setDuration(300)
+                width_anim.setStartValue(int(width_start))
+                width_anim.setEndValue(int(width_end))
+                width_anim.setEasingCurve(QEasingCurve.OutCubic)
+
+                def make_width_step(group):
+                    def _step(value):
+                        group.setFixedWidth(int(value))
+                    return _step
+                width_anim.valueChanged.connect(make_width_step(ka_group))
+
+                def make_width_done(group):
+                    def _done():
+                        group.setMaximumWidth(QWIDGETSIZE_MAX_VAL)
+                        group.setMinimumWidth(0)
+                    return _done
+                width_anim.finished.connect(make_width_done(ka_group))
+                width_anim.start()
+                self._ka_anims.append(width_anim)
+
+                # Opacity animations for ka_btn + ka_bar (delayed 50 ms).
+                for w in (ka_btn, ka_bar):
+                    effect = w.graphicsEffect()
+
+                    op_anim = QPropertyAnimation(effect, b"opacity")
+                    op_anim.setDuration(250)
+                    op_anim.setEasingCurve(QEasingCurve.OutCubic)
+                    op_anim.setStartValue(0.0)
+                    op_anim.setEndValue(1.0)
+
+                    def make_op_done(w_local):
+                        def _done():
+                            w_local.setGraphicsEffect(None)
+                        return _done
+                    op_anim.finished.connect(make_op_done(w))
+                    QTimer.singleShot(50, op_anim.start)
+                    self._ka_anims.append(op_anim)
+
+            else:
+                # Collapse: opacity fade-out first, then frame width collapses.
+                for w in (ka_btn, ka_bar):
+                    effect = QGraphicsOpacityEffect(w)
+                    effect.setOpacity(1.0)
+                    w.setGraphicsEffect(effect)
+
+                    op_anim = QPropertyAnimation(effect, b"opacity")
+                    op_anim.setDuration(180)
+                    op_anim.setEasingCurve(QEasingCurve.InCubic)
+                    op_anim.setStartValue(1.0)
+                    op_anim.setEndValue(0.0)
+
+                    def make_op_done(w_local):
+                        def _done():
+                            w_local.setVisible(False)
+                            w_local.setGraphicsEffect(None)
+                        return _done
+                    op_anim.finished.connect(make_op_done(w))
+                    op_anim.start()
+                    self._ka_anims.append(op_anim)
+
+                # Width collapse, delayed 80 ms.
+                width_start = ka_group.width()
+                width_anim = QVariantAnimation()
+                width_anim.setDuration(220)
+                width_anim.setStartValue(int(width_start))
+                width_anim.setEndValue(int(chat_only_width))
+                width_anim.setEasingCurve(QEasingCurve.InCubic)
+
+                def make_width_step(group):
+                    def _step(value):
+                        group.setFixedWidth(int(value))
+                    return _step
+                width_anim.valueChanged.connect(make_width_step(ka_group))
+
+                def make_collapse_done(group, mid, target_w):
+                    def _done():
+                        group.setFixedWidth(target_w)
+                        mid.setStretch(0, 0)
+                    return _done
+                width_anim.finished.connect(
+                    make_collapse_done(ka_group, middle, chat_only_width)
+                )
+                QTimer.singleShot(80, width_anim.start)
+                self._ka_anims.append(width_anim)
