@@ -39,6 +39,10 @@ class _StatusIndicator(QWidget):
         self._dot_color_idle = QColor(idle_hex)
         self.update()
 
+    def set_dot_color(self, hex_color: str) -> None:
+        self._dot_color_active = QColor(hex_color)
+        self.update()
+
     # Animated glow property — driven by a QPropertyAnimation in a later task.
     def _get_glow(self) -> float:
         return self._glow
@@ -120,6 +124,15 @@ class _FullToonCard(QFrame):
     _REF_BUTTON_FONT = 12
     _REF_PILL_FONT = 10
 
+    # Hardcoded to match compact PulsingDot so the same toon state shows the
+    # same color regardless of layout.
+    _STATE_COLORS = {
+        "active":     "#56c856",  # green
+        "keep_alive": "#ff9900",  # orange
+        "disabled":   "#e84141",  # red
+    }
+    _PULSE_STATES = ("active", "keep_alive")
+
     def __init__(self, slot_index: int, tab, parent=None):
         super().__init__(parent)
         self._slot = slot_index
@@ -128,6 +141,7 @@ class _FullToonCard(QFrame):
         self._pulse_anim = None
         self._scale = 1.0
         self._theme_colors = None
+        self._status_state = "off"
 
         self.setObjectName("full_toon_card")
         self.setMinimumHeight(200)
@@ -271,7 +285,28 @@ class _FullToonCard(QFrame):
         if self._game_pill is not None:
             self._game_pill.setVisible(active)
         if active:
+            # resizeEvent skips _layout_active_content while inactive, so any
+            # geometry changes that arrived during the inactive period left
+            # _scale stale. Recompute now against the card's current size.
+            self._layout_active_content()
+            self._apply_status_state()
+        else:
+            self._stop_pulse()
+
+    def set_status_state(self, state: str) -> None:
+        """Mirror compact's PulsingDot 4-state model: active / keep_alive /
+        disabled / off. Drives both indicator color and pulse animation."""
+        self._status_state = state
+        self._apply_status_state()
+
+    def _apply_status_state(self) -> None:
+        color = self._STATE_COLORS.get(self._status_state)
+        if color is not None:
+            self._status_indicator.set_dot_color(color)
             self._status_indicator.set_active(True)
+        else:
+            self._status_indicator.set_active(False)
+        if self._is_active and self._status_state in self._PULSE_STATES:
             self._start_pulse()
         else:
             self._stop_pulse()
@@ -320,6 +355,8 @@ class _FullToonCard(QFrame):
             )
         self._apply_game_pill_style()
         self._apply_scaled_styles()
+        # Theme reset _dot_color_active to theme green; restore state-driven color.
+        self._apply_status_state()
 
     def _apply_game_pill_style(self) -> None:
         if self._theme_colors is None or self._game_pill is None:
@@ -526,7 +563,12 @@ class _FullLayout(QWidget):
         class _GridContainer(QWidget):
             def resizeEvent(self, ev):
                 super().resizeEvent(ev)
-                layout_ref._position_cards()
+                # Skip card repositioning while Full is the hidden stack page —
+                # main-window resize events still cascade to hidden children,
+                # and laying out 4 cards on every drag-driven Compact resize is
+                # wasted work that compounds drag lag.
+                if self.isVisible():
+                    layout_ref._position_cards()
 
         self._grid_container = _GridContainer()
         for i in range(4):

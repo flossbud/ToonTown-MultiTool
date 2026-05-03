@@ -101,7 +101,7 @@ class AnimatedNavButton(QPushButton):
 
 
 class MultiToonTool(QMainWindow):
-    APP_VERSION = "2.0.4"
+    APP_VERSION = "2.1"
     _api_log = Signal(str)
 
     def __init__(self):
@@ -206,6 +206,7 @@ class MultiToonTool(QMainWindow):
         self.multitoon_tab.dot_state_changed.connect(self.launch_tab.update_dot_state)
 
         self.log("[Debug] ToonTown MultiTool launched.")
+        self.multitoon_tab.prewarm_full_layout(QSize(W_FULL, H_FULL - 48), include_active=True)
         self._animate_launch()
 
     def _capture_multitool_window_id(self):
@@ -398,44 +399,14 @@ class MultiToonTool(QMainWindow):
                     self.logger.append_log(f"[Layout] swap failed: {e}")
 
     def _set_layout_mode(self, target: str) -> None:
-        # Commit to the new mode synchronously so concurrent resizeEvent ticks
-        # during the fade don't restart the animation.
+        # Snap layout instantly. Resize events drive the swap (titlebar drag,
+        # corner resize, maximize toggle) and fire continuously; a cross-fade
+        # via QGraphicsOpacityEffect forces software rendering of the whole
+        # multitoon_tab tree, which makes mid-drag resizes laggy and the very
+        # first apply takes multiple seconds because the effect path has no
+        # warm cache. Instant snap matches the rest of the resize feel.
         self._layout_mode = target
-
-        # Honor disable_animations: instant swap, no fade.
-        if self.settings_manager.get("disable_animations", False):
-            self.multitoon_tab.set_layout_mode(target)
-            return
-
-        # Cross-fade: 80ms fade-out -> swap -> 80ms fade-in (160ms total).
-        widget = self.multitoon_tab
-        effect = QGraphicsOpacityEffect(widget)
-        widget.setGraphicsEffect(effect)
-
-        fade_out = QPropertyAnimation(effect, b"opacity")
-        fade_out.setDuration(80)
-        fade_out.setStartValue(1.0)
-        fade_out.setEndValue(0.0)
-        fade_out.setEasingCurve(QEasingCurve.OutCubic)
-
-        fade_in = QPropertyAnimation(effect, b"opacity")
-        fade_in.setDuration(80)
-        fade_in.setStartValue(0.0)
-        fade_in.setEndValue(1.0)
-        fade_in.setEasingCurve(QEasingCurve.OutCubic)
-
-        def _on_fade_out_done():
-            self.multitoon_tab.set_layout_mode(target)
-            fade_in.start()
-
-        fade_out.finished.connect(_on_fade_out_done)
-        fade_in.finished.connect(lambda: widget.setGraphicsEffect(None))
-
-        # Keep references so they don't get GC'd mid-animation.
-        self._layout_fade_out = fade_out
-        self._layout_fade_in = fade_in
-
-        fade_out.start()
+        self.multitoon_tab.set_layout_mode(target)
 
     def _apply_nav_icons(self):
         c = self._theme_colors()

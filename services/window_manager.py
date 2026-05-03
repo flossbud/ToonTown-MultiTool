@@ -35,7 +35,11 @@ class WindowManager(QObject):
 
     def enable_detection(self):
         self._detection_enabled = True
-        self.assign_windows()
+        # Don't run assign_windows() synchronously on the caller's thread —
+        # this is invoked from the GUI thread on service start, and the
+        # xdotool subprocess chain inside can block for 100ms–several seconds
+        # on Wayland under load. The poll loop will pick up windows within
+        # ~2s on its own.
 
     def disable_detection(self):
         self._detection_enabled = False
