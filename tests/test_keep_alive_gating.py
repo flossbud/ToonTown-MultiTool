@@ -171,3 +171,34 @@ def test_toggle_keep_alive_works_when_master_on(tab):
     assert tab.keep_alive_enabled[0] is True
     # Cleanup so other tests aren't polluted
     tab.toggle_keep_alive(0)
+
+
+def test_suspend_keep_alive_preserves_per_toon_flags(tab):
+    """_suspend_keep_alive stops execution but does NOT zero per-toon flags.
+    Per-toon configuration is the user's setup, preserved across master toggles."""
+    tab.window_manager.ttr_window_ids = ["wid_a", "wid_b"]
+    tab.service_running = True
+    tab.enabled_toons = [True, True, False, False]
+    tab.keep_alive_enabled = [True, True, False, False]
+    tab.rapid_fire_enabled = [False, True, False, False]
+    tab.settings_manager.set("keep_alive_enabled", True)
+
+    tab._suspend_keep_alive()
+
+    # Per-toon flags preserved
+    assert tab.keep_alive_enabled == [True, True, False, False]
+    assert tab.rapid_fire_enabled == [False, True, False, False]
+    # Thread halted (or was never running, but the flag should be cleared)
+    assert tab._keep_alive_running is False
+
+
+def test_long_press_no_op_when_button_disabled(qapp):
+    """Holding a disabled KeepAliveBtn for >5s does not toggle rapid-fire."""
+    from tabs.multitoon._tab import KeepAliveBtn
+    btn = KeepAliveBtn()
+    btn.setEnabled(False)
+    btn.is_rapid_fire = False
+    # Simulate the timer having fired (the timer is a singleshot — bypass
+    # the press/release machinery and call _on_long_press directly).
+    btn._on_long_press()
+    assert btn.is_rapid_fire is False
