@@ -17,10 +17,9 @@ dist/
 # === AppDir — ignore the binary, keep metadata ===
 AppDir/usr/
 
-# === Local editor / tooling configs ===
+# === Local editor configs ===
 .idea/
 .vscode/
-.superpowers/
 
 # === Editor swap / backup files ===
 *.swp
