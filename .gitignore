@@ -17,14 +17,12 @@ dist/
 # === AppDir — ignore the binary, keep metadata ===
 AppDir/usr/
 
-# === Local Claude Code config / skills (not for GitHub) ===
-.claude/
-
-# === Other local agent / editor configs ===
-.codex/
-.superpowers/
+# === Local editor / tooling configs ===
 .idea/
 .vscode/
+.claude/
+.codex/
+.superpowers/
 
 # === Editor swap / backup files ===
 *.swp
@@ -61,11 +59,11 @@ env/
 Thumbs.db
 desktop.ini
 
-# === Internal docs (kept locally, not for public repo) ===
+# === Internal documentation ===
 docs/
 API Docs/
 
-# === Local-only orphan files (untriaged WIP / personal scripts) ===
+# === Local working files ===
 /fix-grub-single-fedora.sh
 /tests/test_input_service_lifecycle.py
 /tests/test_toon_portrait_widget.py
