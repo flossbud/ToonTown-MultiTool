@@ -460,6 +460,20 @@ class SettingsTab(QWidget):
         group = SettingsGroup("Keep-Alive")
         self._groups.append(group)
 
+        # Master opt-in toggle — disabled by default. Enabling fires a
+        # consent dialog (Task 10) before committing the True value.
+        master_initial = bool(self.settings_manager.get("keep_alive_enabled", False))
+        self.ka_master_row = ToggleRow(
+            "Enable Keep-Alive",
+            master_initial,
+            sublabel=(
+                "Periodically sends a keystroke to keep toons logged in. "
+                "Disabled by default — see warning before enabling."
+            ),
+        )
+        self.ka_master_row.toggled.connect(self._on_keep_alive_master_toggle)
+        group.add_row(self.ka_master_row)
+
         self._ka_actions = [
             ("Jump", "jump"),
             ("Open / Close Book", "book"),
@@ -486,7 +500,39 @@ class SettingsTab(QWidget):
         self.ka_delay_row.index_changed.connect(self._on_keep_alive_delay_changed)
         group.add_row(self.ka_delay_row)
 
+        # Apply initial ghost state.
+        self._refresh_keep_alive_row_enabled_state(master_initial)
+
         self._main_layout.addWidget(group)
+
+    def _refresh_keep_alive_row_enabled_state(self, master_enabled: bool):
+        """Ghost (or un-ghost) the action and interval rows based on the
+        master toggle state."""
+        self.ka_action_row.setEnabled(master_enabled)
+        self.ka_delay_row.setEnabled(master_enabled)
+
+    def _on_keep_alive_master_toggle(self, checked: bool):
+        """Handler for the master toggle. On flip-to-on, fire the consent
+        dialog and only commit the True value if the user confirms."""
+        if not checked:
+            self.settings_manager.set("keep_alive_enabled", False)
+            self._refresh_keep_alive_row_enabled_state(False)
+            return
+        # Toggle was flipped on — confirm before committing.
+        if self._show_keep_alive_warning_dialog():
+            self.settings_manager.set("keep_alive_enabled", True)
+            self._refresh_keep_alive_row_enabled_state(True)
+        else:
+            # User cancelled — revert visual without re-firing toggled.
+            self.ka_master_row.blockSignals(True)
+            self.ka_master_row.setChecked(False)
+            self.ka_master_row.blockSignals(False)
+            # Setting was never written; ghost state stays as it was.
+
+    def _show_keep_alive_warning_dialog(self) -> bool:
+        """Stub — replaced in Task 10. Returns True so this task's tests pass
+        with the toggle behaving as if confirmation always succeeds."""
+        return True
 
     def _build_advanced_group(self):
         self.advanced_group = SettingsGroup("Advanced")

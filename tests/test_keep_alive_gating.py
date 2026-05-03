@@ -273,3 +273,36 @@ def test_load_profile_respects_master_off(tab, monkeypatch):
 
     assert started == []  # _start_keep_alive NOT invoked
     assert tab.keep_alive_enabled == [True, True, True, True]  # flags preserved
+
+
+def test_settings_tab_master_toggle_present(qapp, tmp_path, monkeypatch):
+    """SettingsTab's Keep-Alive group has a master ToggleRow, and the
+    action/interval rows are disabled when the master is off."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    from utils.settings_manager import SettingsManager
+    from tabs.settings_tab import SettingsTab
+
+    sm = SettingsManager()
+    sm.set("keep_alive_enabled", False)
+
+    tab = SettingsTab(settings_manager=sm)
+
+    assert hasattr(tab, "ka_master_row")
+    assert tab.ka_master_row.isChecked() is False
+    assert tab.ka_action_row.isEnabled() is False
+    assert tab.ka_delay_row.isEnabled() is False
+
+
+def test_settings_tab_master_on_unghosts_rows(qapp, tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    from utils.settings_manager import SettingsManager
+    from tabs.settings_tab import SettingsTab
+
+    sm = SettingsManager()
+    sm.set("keep_alive_enabled", True)
+
+    tab = SettingsTab(settings_manager=sm)
+
+    assert tab.ka_master_row.isChecked() is True
+    assert tab.ka_action_row.isEnabled() is True
+    assert tab.ka_delay_row.isEnabled() is True
