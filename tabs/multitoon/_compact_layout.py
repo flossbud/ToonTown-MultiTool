@@ -179,14 +179,8 @@ class _CompactLayout(QWidget):
         game_badge.setMinimumSize(0, 0)
         game_badge.setMaximumSize(16777215, 16777215)
 
-        # name_label: Full sets 16pt DemiBold + appends "padding-right: 60px;".
-        # Reset to default font and clear the padding stanza. refresh_theme()
-        # later sets its own stylesheet that determines the visible font-size.
         name_label, _ = self._tab.toon_labels[i]
-        name_label.setFont(QFont())  # application default
-        sheet = name_label.styleSheet()
-        if "padding-right" in sheet:
-            name_label.setStyleSheet(sheet.replace("padding-right: 60px;", "").strip())
+        name_label.setFont(QFont())
 
         # Buttons: Full scales dynamically; constructor defaults are
         # 88×32 enable, 32×32 chat/KA.
