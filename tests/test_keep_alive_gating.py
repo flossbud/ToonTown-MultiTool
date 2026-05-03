@@ -306,3 +306,39 @@ def test_settings_tab_master_on_unghosts_rows(qapp, tmp_path, monkeypatch):
     assert tab.ka_master_row.isChecked() is True
     assert tab.ka_action_row.isEnabled() is True
     assert tab.ka_delay_row.isEnabled() is True
+
+
+def test_dialog_cancel_does_not_persist_setting(qapp, tmp_path, monkeypatch):
+    """Cancelling the consent dialog must leave keep_alive_enabled False
+    and revert the toggle visual."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    from utils.settings_manager import SettingsManager
+    from tabs.settings_tab import SettingsTab
+
+    sm = SettingsManager()
+    tab = SettingsTab(settings_manager=sm)
+    monkeypatch.setattr(tab, "_show_keep_alive_warning_dialog", lambda: False)
+
+    # Directly call the handler (IOSToggle doesn't emit toggled on programmatic setChecked)
+    tab.ka_master_row.toggle.setChecked(True)
+    tab._on_keep_alive_master_toggle(True)
+    # Dialog cancelled → setting still False, toggle reverted.
+    assert sm.get("keep_alive_enabled") is False
+    assert tab.ka_master_row.isChecked() is False
+
+
+def test_dialog_confirm_persists_setting(qapp, tmp_path, monkeypatch):
+    """Confirming the consent dialog must persist keep_alive_enabled True."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    from utils.settings_manager import SettingsManager
+    from tabs.settings_tab import SettingsTab
+
+    sm = SettingsManager()
+    tab = SettingsTab(settings_manager=sm)
+    monkeypatch.setattr(tab, "_show_keep_alive_warning_dialog", lambda: True)
+
+    # Directly call the handler
+    tab.ka_master_row.toggle.setChecked(True)
+    tab._on_keep_alive_master_toggle(True)
+    assert sm.get("keep_alive_enabled") is True
+    assert tab.ka_master_row.isChecked() is True
