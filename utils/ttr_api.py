@@ -77,7 +77,7 @@ def _fetch_toon(port: int, timeout: float = 5.0) -> dict | None:
             if resp.status == 200:
                 return json.loads(resp.read().decode())
         except (OSError, ValueError, KeyError) as e:
-            print(f"[TTR API] Fetch failed on port {port}: {e}")
+            _debug_log(f"fetch_failed_{host}_{port}", f"[TTR API] Fetch failed on port {port}: {e}")
             continue
         finally:
             try:
