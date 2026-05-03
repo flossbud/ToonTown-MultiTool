@@ -112,7 +112,7 @@ class _CompactLayout(QWidget):
         ka_group = QFrame()
         ka_group.setObjectName("ka_group")
         ka_group_layout = QHBoxLayout(ka_group)
-        ka_group_layout.setContentsMargins(4, 4, 6, 4)
+        ka_group_layout.setContentsMargins(4, 4, 4, 4)
         ka_group_layout.setSpacing(4)
 
         layout.addLayout(ctrl_row)
