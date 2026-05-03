@@ -11,6 +11,7 @@ class SettingsManager:
         self.settings = {
             "show_debug_tab":        False,
             "show_diagnostics_tab":  False,
+            "keep_alive_enabled":    False,
             "keep_alive_action":     "jump",
             "keep_alive_delay":      "30 sec",
             "theme":                 "system",

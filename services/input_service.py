@@ -120,7 +120,6 @@ class InputService(QObject):
     def start(self):
         if self.running and self.thread is not None and self.thread.is_alive():
             return
-        self._apply_backend_setting()
         self._stop_event.clear()
         self.running = True
         self.thread = threading.Thread(target=self.run, daemon=False)
@@ -153,16 +152,15 @@ class InputService(QObject):
             self._xlib.disconnect()
             self._xlib = None
 
-    def stop(self):
+    def stop(self, wait: bool = False):
         self.running = False
         self._stop_event.set()
-        self.release_all_keys()
-        if self.thread is not None and self.thread.is_alive():
+        if wait and self.thread is not None and self.thread.is_alive():
             self.thread.join(timeout=2.0)
 
     def shutdown(self):
         """Call once on app exit to clean up the Xlib connection."""
-        self.stop()
+        self.stop(wait=True)
         if self._xlib:
             self._xlib.disconnect()
             self._xlib = None
@@ -345,188 +343,192 @@ class InputService(QObject):
     # ── Run loop ───────────────────────────────────────────────────────────
 
     def run(self):
+        self._apply_backend_setting()
         event_queue    = self.get_event_queue()
         bs_press_time  = None
         bs_last_repeat = 0.0
 
-        while self.running:
-            if not self.should_send_input():
+        try:
+            while self.running:
+                if not self.should_send_input():
+                    while not event_queue.empty():
+                        try:
+                            event_queue.get_nowait()
+                        except queue.Empty:
+                            break
+                    if self.keys_held or self.modifiers_held:
+                        enabled     = self.get_enabled_toons()
+                        assignments = self._get_assignments(enabled)
+                        for key in list(self.keys_held):
+                            self._send_movement_key_km("keyup", key, enabled, assignments)
+                        for key in list(self.modifiers_held):
+                            self._send_modifier_to_bg("keyup", key, enabled, assignments)
+                        self.keys_held.clear()
+                        self.modifiers_held.clear()
+                    self.bg_typing_held.clear()
+                    self._phantom_reset()
+                    if self.global_chat_active:
+                        self._set_chat_active(False)
+                        self.chat_active.clear()
+                    bs_press_time  = None
+                    bs_last_repeat = 0.0
+                    self._stop_event.wait(0.01)
+                    continue
+
+                now            = time.monotonic()
+                enabled        = self.get_enabled_toons()
+                assignments    = self._get_assignments(enabled)
+                movement_keys  = self._movement_keys()
+
+                # Idle timeout — reset chat state if no typing for 15s
+                if (self.global_chat_active or self._phantom_active) and self._chat_last_activity > 0:
+                    if now - self._chat_last_activity > self.CHAT_IDLE_TIMEOUT:
+                        self._timeout_reset_chat(enabled, assignments)
+
+                window_ids = self.window_manager.get_window_ids()
+                if not window_ids:
+                    self.window_manager.assign_windows()
+                    window_ids = self.window_manager.get_window_ids()
+
                 while not event_queue.empty():
                     try:
-                        event_queue.get_nowait()
+                        action, key = event_queue.get_nowait()
                     except queue.Empty:
                         break
-                if self.keys_held or self.modifiers_held:
-                    enabled     = self.get_enabled_toons()
-                    assignments = self._get_assignments(enabled)
-                    for key in list(self.keys_held):
-                        self._send_movement_key_km("keyup", key, enabled, assignments)
-                    for key in list(self.modifiers_held):
-                        self._send_modifier_to_bg("keyup", key, enabled, assignments)
-                    self.keys_held.clear()
-                    self.modifiers_held.clear()
-                self.bg_typing_held.clear()
-                self._phantom_reset()
-                if self.global_chat_active:
-                    self._set_chat_active(False)
-                    self.chat_active.clear()
-                bs_press_time  = None
-                bs_last_repeat = 0.0
-                self._stop_event.wait(0.01)
-                continue
 
-            now            = time.monotonic()
-            enabled        = self.get_enabled_toons()
-            assignments    = self._get_assignments(enabled)
-            movement_keys  = self._movement_keys()
+                    if action == "keydown":
 
-            # Idle timeout — reset chat state if no typing for 15s
-            if (self.global_chat_active or self._phantom_active) and self._chat_last_activity > 0:
-                if now - self._chat_last_activity > self.CHAT_IDLE_TIMEOUT:
-                    self._timeout_reset_chat(enabled, assignments)
+                        # When keymap is active, movement keys take priority over
+                        # modifiers — e.g. Control_L as jump, Alt_L as book.
+                        # BUT when chat is active, modifier keys (e.g. Shift_L mapped
+                        # to "map") must act as modifiers so shifted typing works.
+                        is_movement = key in movement_keys
+                        is_modifier = key in MODIFIER_KEYS and (
+                            not is_movement or self.global_chat_active or self._phantom_active
+                        )
+                        if is_modifier:
+                            is_movement = False
 
-            window_ids = self.window_manager.get_window_ids()
-            if not window_ids:
-                self.window_manager.assign_windows()
-                window_ids = self.window_manager.get_window_ids()
+                        if is_modifier:
+                            if key not in self.modifiers_held:
+                                self.modifiers_held.add(key)
+                                self._send_modifier_to_bg("keydown", key, enabled, assignments)
 
-            while not event_queue.empty():
-                try:
-                    action, key = event_queue.get_nowait()
-                except queue.Empty:
-                    break
-
-                if action == "keydown":
-
-                    # When keymap is active, movement keys take priority over
-                    # modifiers — e.g. Control_L as jump, Alt_L as book.
-                    # BUT when chat is active, modifier keys (e.g. Shift_L mapped
-                    # to "map") must act as modifiers so shifted typing works.
-                    is_movement = key in movement_keys
-                    is_modifier = key in MODIFIER_KEYS and (
-                        not is_movement or self.global_chat_active or self._phantom_active
-                    )
-                    if is_modifier:
-                        is_movement = False
-
-                    if is_modifier:
-                        if key not in self.modifiers_held:
-                            self.modifiers_held.add(key)
-                            self._send_modifier_to_bg("keydown", key, enabled, assignments)
-
-                    elif is_movement:
-                        if key not in self.keys_held:
-                            self.keys_held.add(key)
-                            if self.logging_enabled:
-                                direction = None
-                                if self.keymap_manager:
-                                    for a in set(assignments):
-                                        direction = self.keymap_manager.get_direction_in_set(a, key)
-                                        if direction:
-                                            break
-                                extra = f" (direction: {direction})" if direction else ""
-                                self._log_key(key, "pressed", extra)
-                            if self._phantom_active:
-                                # Stealth chat — suppress movement to bg toons
-                                self._chat_last_activity = now
-                            else:
-                                self._send_movement_key_km("keydown", key, enabled, assignments)
-                                # When global chat is active, movement keys (including space)
-                                # are suppressed natively, so we must broadcast them via typing.
-                                if self.global_chat_active:
+                        elif is_movement:
+                            if key not in self.keys_held:
+                                self.keys_held.add(key)
+                                if self.logging_enabled:
+                                    direction = None
+                                    if self.keymap_manager:
+                                        for a in set(assignments):
+                                            direction = self.keymap_manager.get_direction_in_set(a, key)
+                                            if direction:
+                                                break
+                                    extra = f" (direction: {direction})" if direction else ""
+                                    self._log_key(key, "pressed", extra)
+                                if self._phantom_active:
+                                    # Stealth chat — suppress movement to bg toons
                                     self._chat_last_activity = now
-                                    self._send_typing_to_bg(key, enabled, assignments, movement_keys)
-
-                    elif key == "BackSpace":
-                        if key not in self.keys_held:
-                            self.keys_held.add(key)
-                            self._log_key(key, "pressed")
-                            bs_press_time  = now
-                            bs_last_repeat = 0.0
-                            if self._phantom_active:
-                                self._chat_last_activity = now
-                            else:
-                                self._send_backspace_to_background(enabled, assignments)
-
-                    elif key == "Return":
-                        if key not in self.bg_typing_held:
-                            self.bg_typing_held.add(key)
-                            self._log_key(key, "pressed")
-                            if self._phantom_active:
-                                # Whisper send detected — don't toggle chat on bg toons
-                                self._phantom_reset()
-                            else:
-                                self._set_chat_active(not self.global_chat_active)
-                                self._chat_last_activity = now if self.global_chat_active else 0.0
-                                for i in range(min(len(assignments), len(enabled))):
-                                    if i < len(window_ids) and enabled[i]:
-                                        if not self._is_chat_allowed(i):
-                                            pass
-                                        elif i in self.chat_active:
-                                            self.chat_active.discard(i)
-                                        else:
-                                            self.chat_active.add(i)
-                                self._send_typing_to_bg(key, enabled, assignments, movement_keys)
-
-                    elif key == "Escape":
-                        if key not in self.bg_typing_held:
-                            self.bg_typing_held.add(key)
-                            self._log_key(key, "pressed")
-                            was_chatting = self.global_chat_active
-                            self._set_chat_active(False)
-                            self.chat_active.clear()
-                            self._phantom_reset()
-                            if was_chatting:
-                                self._send_typing_to_bg(key, enabled, assignments, movement_keys)
-
-                    else:
-                        if key not in self.bg_typing_held:
-                            self.bg_typing_held.add(key)
-                            if self._phantom_active:
-                                # Stealth chat mode — suppress all forwarding
-                                self._chat_last_activity = now
-                            elif not self.global_chat_active and len(key) == 1 and key.isprintable():
-                                # Typing without chat open — possible whisper reply
-                                self._phantom_char_count += 1
-                                if self._phantom_char_count >= 3:
-                                    self._phantom_active = True
-                                    self._chat_last_activity = now
-                                    if self.logging_enabled:
-                                        self.input_log.emit("[Input] Whisper reply detected — input suppressed")
                                 else:
-                                    self._send_typing_to_bg(key, enabled, assignments, movement_keys)
-                            else:
-                                if self.global_chat_active:
+                                    self._send_movement_key_km("keydown", key, enabled, assignments)
+                                    # When global chat is active, movement keys (including space)
+                                    # are suppressed natively, so we must broadcast them via typing.
+                                    if self.global_chat_active:
+                                        self._chat_last_activity = now
+                                        self._send_typing_to_bg(key, enabled, assignments, movement_keys)
+
+                        elif key == "BackSpace":
+                            if key not in self.keys_held:
+                                self.keys_held.add(key)
+                                self._log_key(key, "pressed")
+                                bs_press_time  = now
+                                bs_last_repeat = 0.0
+                                if self._phantom_active:
                                     self._chat_last_activity = now
-                                self._send_typing_to_bg(key, enabled, assignments, movement_keys)
+                                else:
+                                    self._send_backspace_to_background(enabled, assignments)
 
-                elif action == "keyup":
+                        elif key == "Return":
+                            if key not in self.bg_typing_held:
+                                self.bg_typing_held.add(key)
+                                self._log_key(key, "pressed")
+                                if self._phantom_active:
+                                    # Whisper send detected — don't toggle chat on bg toons
+                                    self._phantom_reset()
+                                else:
+                                    self._set_chat_active(not self.global_chat_active)
+                                    self._chat_last_activity = now if self.global_chat_active else 0.0
+                                    for i in range(min(len(assignments), len(enabled))):
+                                        if i < len(window_ids) and enabled[i]:
+                                            if not self._is_chat_allowed(i):
+                                                pass
+                                            elif i in self.chat_active:
+                                                self.chat_active.discard(i)
+                                            else:
+                                                self.chat_active.add(i)
+                                    self._send_typing_to_bg(key, enabled, assignments, movement_keys)
 
-                    # Check actual membership rather than re-classifying, since
-                    # chat state may have changed between keydown and keyup.
-                    if key in self.modifiers_held:
-                        self.modifiers_held.discard(key)
-                        self._send_modifier_to_bg("keyup", key, enabled, assignments)
+                        elif key == "Escape":
+                            if key not in self.bg_typing_held:
+                                self.bg_typing_held.add(key)
+                                self._log_key(key, "pressed")
+                                was_chatting = self.global_chat_active
+                                self._set_chat_active(False)
+                                self.chat_active.clear()
+                                self._phantom_reset()
+                                if was_chatting:
+                                    self._send_typing_to_bg(key, enabled, assignments, movement_keys)
 
-                    elif key in self.keys_held:
-                        self.keys_held.discard(key)
-                        self._log_key(key, "released")
-                        if key == "BackSpace":
-                            bs_press_time  = None
-                            bs_last_repeat = 0.0
-                        self._send_movement_key_km("keyup", key, enabled, assignments)
+                        else:
+                            if key not in self.bg_typing_held:
+                                self.bg_typing_held.add(key)
+                                if self._phantom_active:
+                                    # Stealth chat mode — suppress all forwarding
+                                    self._chat_last_activity = now
+                                elif not self.global_chat_active and len(key) == 1 and key.isprintable():
+                                    # Typing without chat open — possible whisper reply
+                                    self._phantom_char_count += 1
+                                    if self._phantom_char_count >= 3:
+                                        self._phantom_active = True
+                                        self._chat_last_activity = now
+                                        if self.logging_enabled:
+                                            self.input_log.emit("[Input] Whisper reply detected — input suppressed")
+                                    else:
+                                        self._send_typing_to_bg(key, enabled, assignments, movement_keys)
+                                else:
+                                    if self.global_chat_active:
+                                        self._chat_last_activity = now
+                                    self._send_typing_to_bg(key, enabled, assignments, movement_keys)
 
-                    else:
-                        self.bg_typing_held.discard(key)
+                    elif action == "keyup":
 
-            if bs_press_time is not None and "BackSpace" in self.keys_held and not self._phantom_active:
-                held_for = now - bs_press_time
-                if held_for >= self.BACKSPACE_REPEAT_DELAY:
-                    if now - bs_last_repeat >= self.BACKSPACE_REPEAT_INTERVAL:
-                        bs_last_repeat = now
-                        self._send_backspace_to_background(enabled, assignments)
+                        # Check actual membership rather than re-classifying, since
+                        # chat state may have changed between keydown and keyup.
+                        if key in self.modifiers_held:
+                            self.modifiers_held.discard(key)
+                            self._send_modifier_to_bg("keyup", key, enabled, assignments)
 
-            time.sleep(0.005)
+                        elif key in self.keys_held:
+                            self.keys_held.discard(key)
+                            self._log_key(key, "released")
+                            if key == "BackSpace":
+                                bs_press_time  = None
+                                bs_last_repeat = 0.0
+                            self._send_movement_key_km("keyup", key, enabled, assignments)
+
+                        else:
+                            self.bg_typing_held.discard(key)
+
+                if bs_press_time is not None and "BackSpace" in self.keys_held and not self._phantom_active:
+                    held_for = now - bs_press_time
+                    if held_for >= self.BACKSPACE_REPEAT_DELAY:
+                        if now - bs_last_repeat >= self.BACKSPACE_REPEAT_INTERVAL:
+                            bs_last_repeat = now
+                            self._send_backspace_to_background(enabled, assignments)
+
+                time.sleep(0.005)
+        finally:
+            self.release_all_keys()
 
     def should_send_input(self):
         active = self.window_manager.get_active_window()

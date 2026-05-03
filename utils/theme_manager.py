@@ -40,7 +40,8 @@ def apply_card_shadow(widget, is_dark: bool, blur: float = 18, offset_y: float =
     if is_dark:
         shadow.setColor(QColor(0, 0, 0, 90))
     else:
-        shadow.setColor(QColor(0, 0, 0, 40))
+        # Slate-900 at low alpha — less muddy than pure black on a cool-slate base
+        shadow.setColor(QColor(15, 23, 42, 32))
     shadow.setBlurRadius(blur)
     shadow.setOffset(0, offset_y)
     widget.setGraphicsEffect(shadow)
@@ -121,6 +122,10 @@ def get_theme_colors(is_dark: bool) -> dict:
             "text_muted":     "#888888",
             "text_disabled":  "#666666",
 
+            # Text/icon paired with accent surfaces. White on saturated accents
+            # is what the v2.0.3 dark theme used; matches the Compact button look.
+            "text_on_accent": "#ffffff",
+
             # Accent — green
             "accent_green":        "#3da343",
             "accent_green_border": "#56d66a",
@@ -197,118 +202,140 @@ def get_theme_colors(is_dark: bool) -> dict:
             "segment_off":    "#1e1e1e",
             "segment_found":  "#363636",
             "segment_active": "#56c856",
+
+            # Full UI tokens (no v2.0.3 equivalent; chosen for dark mode visual
+            # consistency and AA contrast with text_on_accent = white).
+            "status_dot_active": "#56c856",   # matches segment_active green
+            "status_dot_idle":   "#555555",   # matches border_light
+            "game_pill_ttr":     "#7e57c2",   # deeper violet, ~4.6:1 with white (AA)
+            "game_pill_cc":      "#0077ff",   # matches accent_blue_btn for consistency
         }
     else:
         return {
             # Backgrounds  (elevation: sidebar < app < card < card_inner)
-            "bg_app":        "#f0f0f0",
+            "bg_app":        "#f8fafc",
             "bg_card":       "#ffffff",
-            "bg_card_inner": "#f7f7f7",
+            "bg_card_inner": "#f1f5f9",
             "bg_input":      "#ffffff",
-            "bg_input_dark": "#e8e8e8",
-            "bg_status":     "#f0f0f0",
+            "bg_input_dark": "#e8ecf1",
+            "bg_status":     "#f8fafc",
 
             # Sidebar
-            "sidebar_bg":       "#e2e2e2",
+            "sidebar_bg":       "#e8ecf1",
             "sidebar_btn":      "transparent",
-            "sidebar_btn_sel":  "rgba(0,0,0,0.07)",
-            "sidebar_text":     "#777777",
-            "sidebar_text_sel": "#111111",
-            "sidebar_border":   "#d0d0d0",
+            "sidebar_btn_sel":  "rgba(15,23,42,0.07)",
+            "sidebar_text":     "#475569",
+            "sidebar_text_sel": "#0f172a",
+            "sidebar_border":   "#cbd5e1",
 
             # Header
-            "header_bg":     "#f0f0f0",
-            "header_text":   "#222222",
-            "header_accent": "#0077ff",
+            "header_bg":     "#f8fafc",
+            "header_text":   "#0f172a",
+            "header_accent": "#2563eb",
 
             # Borders
-            "border_card":  "#d4d4d4",
-            "border_input": "#bbbbbb",
-            "border_muted": "#d0d0d0",
-            "border_light": "#bbbbbb",
+            "border_card":  "#e2e8f0",
+            "border_input": "#cbd5e1",
+            "border_muted": "#e8ecf1",
+            "border_light": "#cbd5e1",
 
             # Text
-            "text_primary":   "#000000",
-            "text_secondary": "#444444",
-            "text_muted":     "#666666",
-            "text_disabled":  "#888888",
+            "text_primary":   "#0f172a",
+            "text_secondary": "#334155",
+            "text_muted":     "#475569",
+            "text_disabled":  "#64748b",
 
-            # Accent — green
-            "accent_green":        "#3da343",
-            "accent_green_border": "#56d66a",
-            "accent_green_hover":  "#4fc95c",
-            "accent_green_hover_border": "#6ae87d",
-            "accent_green_subtle": "#66aa66",
+            # On-accent text/icon — universal pair for every text-bearing accent
+            # surface in the light palette (white on green-700/blue-600/orange-700/
+            # red-700/violet-600 all clear AA).
+            "text_on_accent": "#ffffff",
+
+            # Accent — green (text-bearing surface, e.g. Enable button)
+            # green-700 / 5.0:1 vs white (AA). green-600 #16a34a is reserved for
+            # decorative roles (status dot, segment) where 3:1 UI minimum applies.
+            "accent_green":        "#15803d",
+            "accent_green_border": "#22c55e",
+            "accent_green_hover":  "#166534",
+            "accent_green_hover_border": "#15803d",
+            "accent_green_subtle": "#86efac",
 
             # Accent — blue
             "accent_blue": "#5ba8c8",
-            "accent_blue_btn":        "#0077ff",
-            "accent_blue_btn_border": "#3399ff",
-            "accent_blue_btn_hover":  "#1a88ff",
+            "accent_blue_btn":        "#2563eb",
+            "accent_blue_btn_border": "#1d4ed8",
+            "accent_blue_btn_hover":  "#1e40af",
 
             # Accent — red
-            "accent_red":        "#b34848",
-            "accent_red_border": "#d95757",
-            "accent_red_hover":  "#cc5e5e",
-            "accent_red_hover_border": "#f06868",
+            "accent_red":        "#b91c1c",
+            "accent_red_border": "#dc2626",
+            "accent_red_hover":  "#991b1b",
+            "accent_red_hover_border": "#b91c1c",
 
             # Accent — orange (keep-alive active)
-            "accent_orange":        "#c47a2a",
-            "accent_orange_border": "#e0943a",
-            "accent_orange_hover":  "#d48a34",
+            "accent_orange":        "#c2410c",
+            "accent_orange_border": "#ea580c",
+            "accent_orange_hover":  "#9a3412",
 
             # Status strip — success
-            "status_success_bg":     "#e8f5e9",
-            "status_success_text":   "#2e7d32",
-            "status_success_border": "#66bb6a",
+            "status_success_bg":     "#dcfce7",
+            "status_success_text":   "#166534",
+            "status_success_border": "#16a34a",
 
             # Status strip — warning
-            "status_warning_bg":     "#fff8e1",
-            "status_warning_text":   "#444444",
-            "status_warning_border": "#f0b400",
+            "status_warning_bg":     "#fef3c7",
+            "status_warning_text":   "#92400e",
+            "status_warning_border": "#f59e0b",
 
             # Status strip — idle
-            "status_idle_bg":     "#f0f0f0",
-            "status_idle_text":   "#444444",
-            "status_idle_border": "#bbbbbb",
+            "status_idle_bg":     "#f1f5f9",
+            "status_idle_text":   "#334155",
+            "status_idle_border": "#cbd5e1",
 
             # Buttons
-            "btn_bg":       "#e8e8e8",
-            "btn_border":   "#c0c0c0",
-            "btn_hover":    "#dcdcdc",
-            "btn_disabled": "#eeeeee",
-            "btn_text":     "#111111",
+            "btn_bg":       "#e8ecf1",
+            "btn_border":   "#cbd5e1",
+            "btn_hover":    "#dbe2ea",
+            "btn_disabled": "#f1f5f9",
+            "btn_text":     "#0f172a",
 
             # Dropdowns
             "dropdown_bg":          "#ffffff",
-            "dropdown_text":        "#111111",
-            "dropdown_border":      "#c0c0c0",
-            "dropdown_list_bg":     "#f8f8f8",
-            "dropdown_sel_bg":      "#e0e0e0",
-            "dropdown_sel_text":    "#000000",
+            "dropdown_text":        "#0f172a",
+            "dropdown_border":      "#cbd5e1",
+            "dropdown_list_bg":     "#f8fafc",
+            "dropdown_sel_bg":      "#e2e8f0",
+            "dropdown_sel_text":    "#0f172a",
 
             # Toon enable button — inactive
-            "toon_btn_inactive_bg":     "#e8e8e8",
-            "toon_btn_inactive_border": "#c0c0c0",
-            "toon_btn_inactive_hover":  "#dcdcdc",
-            "toon_btn_inactive_hover_border": "#aaaaaa",
+            "toon_btn_inactive_bg":     "#e8ecf1",
+            "toon_btn_inactive_border": "#cbd5e1",
+            "toon_btn_inactive_hover":  "#dbe2ea",
+            "toon_btn_inactive_hover_border": "#94a3b8",
 
-            # Slot accent colors (badge circles)
-            "slot_1": "#4a8be0",
-            "slot_2": "#3bc46a",
-            "slot_3": "#e08a30",
-            "slot_4": "#9b6be0",
-            "slot_dim": "#d8d8d8",
+            # Slot accent colors (badge circles — text-bearing, paired with white digit)
+            # All four cleared AA against white: blue-600 5.7, green-700 5.0,
+            # orange-700 5.0, violet-600 5.4.
+            "slot_1": "#2563eb",
+            "slot_2": "#15803d",
+            "slot_3": "#c2410c",
+            "slot_4": "#7c3aed",
+            "slot_dim": "#cbd5e1",
 
-            # Toon cards (floating on gradient)
+            # Toon cards
             "card_toon_bg":        "#ffffff",
-            "card_toon_border":    "#d4d4d4",
-            "card_toon_active_bg": "#eaf5ea",
+            "card_toon_border":    "#e2e8f0",
+            "card_toon_active_bg": "#f0fdf4",
 
             # Segment status bar
-            "segment_off":    "#e0e0e0",
-            "segment_found":  "#c0c0c0",
-            "segment_active": "#4caf50",
+            "segment_off":    "#e2e8f0",
+            "segment_found":  "#cbd5e1",
+            "segment_active": "#16a34a",
+
+            # Full UI tokens
+            "status_dot_active": "#16a34a",
+            "status_dot_idle":   "#cbd5e1",
+            "game_pill_ttr":     "#7c3aed",
+            "game_pill_cc":      "#2563eb",
         }
 
 
@@ -362,42 +389,42 @@ LIGHT_THEME = """
         font-family: 'Inter', 'Segoe UI', 'Noto Sans', 'DejaVu Sans', sans-serif;
         font-size: 12pt;
         background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-            stop:0 #f6f6f6, stop:1 #ebebeb);
-        color: #202020;
+            stop:0 #f8fafc, stop:1 #eef2f7);
+        color: #0f172a;
     }
     QPushButton {
-        background-color: #e8e8e8;
-        color: #111;
+        background-color: #e8ecf1;
+        color: #0f172a;
         border-radius: 8px;
         padding: 6px 14px;
-        border: 1px solid #c0c0c0;
+        border: 1px solid #cbd5e1;
     }
     QPushButton:hover {
-        background-color: #dcdcdc;
-        border: 1px solid #aaaaaa;
+        background-color: #dbe2ea;
+        border: 1px solid #94a3b8;
     }
     QPushButton:pressed {
-        background-color: #d0d0d0;
-        border: 1px solid #999999;
+        background-color: #cbd5e1;
+        border: 1px solid #94a3b8;
         padding-top: 7px;
         padding-bottom: 5px;
     }
     QPushButton:disabled {
-        background-color: #eeeeee;
-        color: #aaaaaa;
-        border: 1px solid #d0d0d0;
+        background-color: #f1f5f9;
+        color: #94a3b8;
+        border: 1px solid #e2e8f0;
     }
     QComboBox {
         background-color: #ffffff;
-        color: #111;
+        color: #0f172a;
         border-radius: 8px;
         padding: 4px 8px;
-        border: 1px solid #c0c0c0;
+        border: 1px solid #cbd5e1;
     }
     QComboBox QAbstractItemView {
-        background-color: #f8f8f8;
-        selection-background-color: #e0e0e0;
-        color: #111;
+        background-color: #f8fafc;
+        selection-background-color: #e2e8f0;
+        color: #0f172a;
     }
 """
 
