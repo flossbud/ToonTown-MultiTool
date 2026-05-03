@@ -138,3 +138,121 @@ def test_init_visibility_master_on_shows_ka_widgets(qapp):
         assert middle.stretch(0) == 1, (
             f"slot {i} ka_group stretch should be 1 when master ON; got {middle.stretch(0)}"
         )
+
+
+def test_setting_change_does_not_alter_visibility_when_tab_hidden(qapp, monkeypatch):
+    """Toggling master while MultitoonTab is hidden must NOT change widget
+    visibility (deferred until showEvent). Thread state still changes."""
+    from tabs.multitoon_tab import MultitoonTab
+    sm = _FakeSettingsManager({"keep_alive_enabled": False})
+    tab = MultitoonTab(settings_manager=sm, window_manager=_FakeWindowManager())
+
+    # Confirm baseline: master OFF, widgets hidden.
+    assert tab.keep_alive_buttons[0].isHidden() is True
+
+    # Force MultitoonTab.isVisible() to return False (simulating user on Settings).
+    monkeypatch.setattr(tab, "isVisible", lambda: False)
+    sm.set("keep_alive_enabled", True)
+    tab._on_setting_changed("keep_alive_enabled", True)
+
+    # Visibility should NOT have changed yet.
+    assert tab.keep_alive_buttons[0].isHidden() is True, (
+        "ka_btn should still be hidden — visibility update is deferred"
+    )
+
+
+def test_show_event_reconciles_visibility_to_match_setting(qapp, monkeypatch):
+    """When the multitoon tab becomes visible and widget hidden state doesn't
+    match the master setting, showEvent should reconcile (instant setVisible
+    in this task; animation comes in later tasks)."""
+    from tabs.multitoon_tab import MultitoonTab
+    from PySide6.QtGui import QShowEvent
+    sm = _FakeSettingsManager({"keep_alive_enabled": False})
+    tab = MultitoonTab(settings_manager=sm, window_manager=_FakeWindowManager())
+
+    # Defer: master flips to True while tab "hidden".
+    monkeypatch.setattr(tab, "isVisible", lambda: False)
+    sm.set("keep_alive_enabled", True)
+    tab._on_setting_changed("keep_alive_enabled", True)
+    assert tab.keep_alive_buttons[0].isHidden() is True  # not yet reconciled
+
+    # Now fire showEvent — reconciliation happens.
+    tab.showEvent(QShowEvent())
+
+    assert tab.keep_alive_buttons[0].isHidden() is False
+    assert tab.ka_progress_bars[0].isHidden() is False
+
+
+def test_setting_change_while_visible_reconciles_immediately(qapp, monkeypatch):
+    """If the user toggles master while already on multitoon (isVisible True),
+    reconciliation happens in _on_setting_changed without waiting for showEvent."""
+    from tabs.multitoon_tab import MultitoonTab
+    sm = _FakeSettingsManager({"keep_alive_enabled": False})
+    tab = MultitoonTab(settings_manager=sm, window_manager=_FakeWindowManager())
+
+    monkeypatch.setattr(tab, "isVisible", lambda: True)
+    sm.set("keep_alive_enabled", True)
+    tab._on_setting_changed("keep_alive_enabled", True)
+
+    assert tab.keep_alive_buttons[0].isHidden() is False
+    assert tab.ka_progress_bars[0].isHidden() is False
+
+
+def test_show_event_no_op_when_state_matches(qapp):
+    """When KA widget visibility already matches the master setting, showEvent
+    must NOT touch the widgets — _maybe_animate_keep_alive_visibility short-
+    circuits."""
+    from tabs.multitoon_tab import MultitoonTab
+    from PySide6.QtGui import QShowEvent
+    sm = _FakeSettingsManager({"keep_alive_enabled": True})
+    tab = MultitoonTab(settings_manager=sm, window_manager=_FakeWindowManager())
+
+    # Master ON, widgets already visible (init paint set them visible).
+    assert tab.keep_alive_buttons[0].isHidden() is False
+
+    # Track setVisible calls on ka_btn[0] via a simple flag override.
+    set_visible_calls = []
+    original_setVisible = tab.keep_alive_buttons[0].setVisible
+    def tracking_setVisible(v):
+        set_visible_calls.append(v)
+        original_setVisible(v)
+    tab.keep_alive_buttons[0].setVisible = tracking_setVisible
+
+    # Fire showEvent — no-op expected.
+    tab.showEvent(QShowEvent())
+
+    assert set_visible_calls == [], (
+        f"showEvent should be no-op when state matches; setVisible called with {set_visible_calls}"
+    )
+
+
+def test_apply_visual_state_does_not_touch_ka_widget_visibility(qapp):
+    """Architectural invariant: apply_visual_state must NOT change KA widget
+    visibility. Visibility is owned only by _init_keep_alive_visibility and
+    the animation completion handlers."""
+    from tabs.multitoon_tab import MultitoonTab
+
+    # Test both master states.
+    for master_state in (False, True):
+        sm = _FakeSettingsManager({"keep_alive_enabled": master_state})
+        tab = MultitoonTab(settings_manager=sm, window_manager=_FakeWindowManager())
+
+        # Capture initial visibility (set by _init_keep_alive_visibility).
+        initial_btn_hidden = tab.keep_alive_buttons[0].isHidden()
+        initial_bar_hidden = tab.ka_progress_bars[0].isHidden()
+
+        # Run apply_visual_state for various per-toon states.
+        for window_available in (False, True):
+            tab.window_manager.ttr_window_ids = ["fake_wid"] if window_available else []
+            tab.service_running = window_available
+            tab.enabled_toons[0] = window_available
+            tab.apply_visual_state(0)
+
+            assert tab.keep_alive_buttons[0].isHidden() is initial_btn_hidden, (
+                f"apply_visual_state changed ka_btn visibility (master={master_state}, "
+                f"window_available={window_available})"
+            )
+            assert tab.ka_progress_bars[0].isHidden() is initial_bar_hidden, (
+                f"apply_visual_state changed ka_bar visibility (master={master_state}, "
+                f"window_available={window_available})"
+            )
