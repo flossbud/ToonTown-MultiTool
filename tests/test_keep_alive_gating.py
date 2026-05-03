@@ -76,3 +76,27 @@ def test_keep_alive_helper_returns_false_by_default(tab):
 def test_keep_alive_helper_returns_true_when_set(tab):
     tab.settings_manager.set("keep_alive_enabled", True)
     assert tab._keep_alive_globally_enabled() is True
+
+
+def _force_window_available(tab, slot=0):
+    """Helper: simulate one detected toon window so per-toon controls activate."""
+    tab.window_manager.ttr_window_ids = ["fake_wid"]
+    tab.enabled_toons[slot] = True
+    tab.service_running = True
+
+
+def test_per_toon_button_disabled_when_master_off(tab):
+    _force_window_available(tab, slot=0)
+    tab.settings_manager.set("keep_alive_enabled", False)
+    tab.apply_visual_state(0)
+    assert tab.keep_alive_buttons[0].isEnabled() is False
+    assert "Settings" in tab.keep_alive_buttons[0].toolTip()
+
+
+def test_per_toon_button_enabled_when_master_on(tab):
+    _force_window_available(tab, slot=0)
+    tab.settings_manager.set("keep_alive_enabled", True)
+    tab.apply_visual_state(0)
+    assert tab.keep_alive_buttons[0].isEnabled() is True
+    # Existing tooltip preserved (set in _build_shared_widgets)
+    assert "Toggle keep-alive" in tab.keep_alive_buttons[0].toolTip()
