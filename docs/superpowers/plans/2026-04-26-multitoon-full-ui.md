@@ -170,22 +170,35 @@ def test_dark_palette_text_is_softer_than_pure_white():
     assert c["text_secondary"] == "#c8c8d0"
 
 
-def test_dark_palette_accent_green_is_saturated():
+def test_dark_palette_accent_green_pairs_with_dark_text():
+    """Material 3 onPrimary pattern: bright surface + dark text clears AAA in dark mode."""
     c = get_theme_colors(is_dark=True)
-    assert c["accent_green"] == "#3aaa5e"
+    assert c["accent_green"] == "#4ade80"  # green-400, ~9.7:1 vs text_on_accent
+    assert c["text_on_accent"] == "#0f172a"
 
 
-def test_dark_palette_accent_blue_btn_is_less_neon():
+def test_dark_palette_accent_blue_btn_pairs_with_dark_text():
     c = get_theme_colors(is_dark=True)
-    assert c["accent_blue_btn"] == "#3a6dd8"
+    assert c["accent_blue_btn"] == "#60a5fa"  # blue-400, ~6.7:1 vs text_on_accent
+
+
+def test_dark_palette_accent_red_pairs_with_dark_text():
+    c = get_theme_colors(is_dark=True)
+    assert c["accent_red"] == "#f87171"  # red-400, ~6.3:1 vs text_on_accent
+
+
+def test_dark_palette_decorative_greens_remain_saturated():
+    """status_dot_active/segment_active are no-text decorations — keep #3aaa5e."""
+    c = get_theme_colors(is_dark=True)
+    assert c["status_dot_active"] == "#3aaa5e"
+    assert c["segment_active"] == "#3aaa5e"
 
 
 def test_dark_palette_includes_full_ui_tokens():
     c = get_theme_colors(is_dark=True)
-    assert c["status_dot_active"] == "#3aaa5e"
     assert c["status_dot_idle"] == "#45454c"
-    assert c["game_pill_ttr"] == "#7e57c2"
-    assert c["game_pill_cc"] == "#3a6dd8"
+    assert c["game_pill_ttr"] == "#a78bfa"  # violet-400, paired with text_on_accent
+    assert c["game_pill_cc"] == "#60a5fa"   # matches accent_blue_btn
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -236,26 +249,33 @@ In `utils/theme_manager.py`, replace the `if is_dark:` return dict (lines ~89-20
             "text_muted":     "#888890",
             "text_disabled":  "#5c5c64",
 
-            # Accent — green
-            "accent_green":        "#3aaa5e",
-            "accent_green_border": "#56d66a",
-            "accent_green_hover":  "#4fc06a",
-            "accent_green_hover_border": "#6ae87d",
+            # On-accent text/icon — universal pair for every bright accent surface
+            # below. Slate-900 clears AA against green-400/blue-400/red-400/violet-400.
+            "text_on_accent": "#0f172a",
+
+            # Accent — green (text-bearing surface, e.g. Enable button)
+            # Pairs with text_on_accent. green-400 / 9.7:1 vs text_on_accent (AAA).
+            "accent_green":        "#4ade80",
+            "accent_green_border": "#86efac",
+            "accent_green_hover":  "#22c55e",
+            "accent_green_hover_border": "#4ade80",
             "accent_green_subtle": "#80c080",
 
-            # Accent — blue
+            # Accent — blue (text-bearing surface, e.g. Set selector)
+            # Pairs with text_on_accent. blue-400 / 6.7:1 (AA, near-AAA).
             "accent_blue": "#88c0d0",
-            "accent_blue_btn":        "#3a6dd8",
-            "accent_blue_btn_border": "#5a8de8",
-            "accent_blue_btn_hover":  "#4a7de0",
+            "accent_blue_btn":        "#60a5fa",
+            "accent_blue_btn_border": "#93c5fd",
+            "accent_blue_btn_hover":  "#3b82f6",
 
-            # Accent — red
-            "accent_red":        "#c44848",
-            "accent_red_border": "#d95757",
-            "accent_red_hover":  "#cc5e5e",
-            "accent_red_hover_border": "#f06868",
+            # Accent — red (text-bearing surface, e.g. Stop Service)
+            # Pairs with text_on_accent. red-400 / 6.3:1 (AA).
+            "accent_red":        "#f87171",
+            "accent_red_border": "#fca5a5",
+            "accent_red_hover":  "#ef4444",
+            "accent_red_hover_border": "#f87171",
 
-            # Accent — orange (keep-alive active)
+            # Accent — orange (keep-alive active — icon-only button, 3:1 UI minimum)
             "accent_orange":        "#c66d2e",
             "accent_orange_border": "#e0843a",
             "accent_orange_hover":  "#d47a34",
@@ -314,10 +334,13 @@ In `utils/theme_manager.py`, replace the `if is_dark:` return dict (lines ~89-20
             "segment_active": "#3aaa5e",
 
             # Full UI tokens
+            # status_dot_active/segment_active are decorative (no text on them) —
+            # kept saturated for visual punch. Game pills are text-bearing and pair
+            # with text_on_accent above.
             "status_dot_active": "#3aaa5e",
             "status_dot_idle":   "#45454c",
-            "game_pill_ttr":     "#7e57c2",
-            "game_pill_cc":      "#3a6dd8",
+            "game_pill_ttr":     "#a78bfa",
+            "game_pill_cc":      "#60a5fa",
         }
 ```
 
@@ -364,18 +387,44 @@ def test_light_palette_text_clears_aaa_on_white():
     assert c["text_disabled"] == "#64748b"     # 4.6:1
 
 
+def test_light_palette_accent_green_clears_aa_with_white():
+    """green-600 is decorative-only; text-bearing button uses green-700 for AA."""
+    c = get_theme_colors(is_dark=False)
+    assert c["accent_green"] == "#15803d"  # green-700, 5.0:1 vs white
+    assert c["text_on_accent"] == "#ffffff"
+
+
+def test_light_palette_slot_2_uses_text_bearing_green():
+    """Slot 2 badge has a white digit on it, so the bg must clear AA against white."""
+    c = get_theme_colors(is_dark=False)
+    assert c["slot_2"] == "#15803d"  # green-700, matches accent_green family
+
+
 def test_light_palette_accent_orange_clears_aa_with_white():
     c = get_theme_colors(is_dark=False)
     # orange-700 #c2410c -> 5.0:1 on white. The previous #c45f1e was 4.4 (borderline AA).
     assert c["accent_orange"] == "#c2410c"
 
 
-def test_light_palette_includes_full_ui_tokens():
+def test_light_palette_decorative_greens_remain_vibrant():
+    """status_dot_active/segment_active have no text — keep green-600 for visual punch."""
     c = get_theme_colors(is_dark=False)
     assert c["status_dot_active"] == "#16a34a"
+    assert c["segment_active"] == "#16a34a"
+
+
+def test_light_palette_includes_full_ui_tokens():
+    c = get_theme_colors(is_dark=False)
     assert c["status_dot_idle"] == "#cbd5e1"
     assert c["game_pill_ttr"] == "#7c3aed"
     assert c["game_pill_cc"] == "#2563eb"
+
+
+def test_text_on_accent_present_in_both_palettes():
+    """Material 3 onPrimary pattern: every theme defines the token used as text/icon
+    on top of every bright accent surface."""
+    assert get_theme_colors(is_dark=True)["text_on_accent"] == "#0f172a"
+    assert get_theme_colors(is_dark=False)["text_on_accent"] == "#ffffff"
 
 
 def test_both_palettes_have_identical_keys():
@@ -435,11 +484,18 @@ In `utils/theme_manager.py`, replace the `else:` return dict (lines ~202-312) wi
             "text_muted":     "#475569",
             "text_disabled":  "#64748b",
 
-            # Accent — green
-            "accent_green":        "#16a34a",
+            # On-accent text/icon — universal pair for every text-bearing accent
+            # surface in the light palette (white on green-700/blue-600/orange-700/
+            # red-700/violet-600 all clear AA).
+            "text_on_accent": "#ffffff",
+
+            # Accent — green (text-bearing surface, e.g. Enable button)
+            # green-700 / 5.0:1 vs white (AA). green-600 #16a34a is reserved for
+            # decorative roles (status dot, segment) where 3:1 UI minimum applies.
+            "accent_green":        "#15803d",
             "accent_green_border": "#22c55e",
-            "accent_green_hover":  "#15803d",
-            "accent_green_hover_border": "#16a34a",
+            "accent_green_hover":  "#166534",
+            "accent_green_hover_border": "#15803d",
             "accent_green_subtle": "#86efac",
 
             # Accent — blue
@@ -495,9 +551,11 @@ In `utils/theme_manager.py`, replace the `else:` return dict (lines ~202-312) wi
             "toon_btn_inactive_hover":  "#dbe2ea",
             "toon_btn_inactive_hover_border": "#94a3b8",
 
-            # Slot accent colors (badge circles)
+            # Slot accent colors (badge circles — text-bearing, paired with white digit)
+            # All four cleared AA against white: blue-600 5.7, green-700 5.0,
+            # orange-700 5.0, violet-600 5.4.
             "slot_1": "#2563eb",
-            "slot_2": "#16a34a",
+            "slot_2": "#15803d",
             "slot_3": "#c2410c",
             "slot_4": "#7c3aed",
             "slot_dim": "#cbd5e1",

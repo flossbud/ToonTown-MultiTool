@@ -303,7 +303,10 @@ class SmoothProgressBar(QWidget):
         self.setMinimumWidth(40)
 
     def set_progress(self, value: float):
-        self._progress = max(0.0, min(1.0, value))
+        clamped = max(0.0, min(1.0, value))
+        if clamped == self._progress:
+            return
+        self._progress = clamped
         self.update()
 
     def set_fill_color(self, hex_color: str):

@@ -45,6 +45,28 @@ from utils.theme_manager import (
 TITLE_ANIM_DURATION_MS = 800
 TITLE_ANIM_MAX_WIDTH = 300
 
+# Layout-mode breakpoint and hysteresis. Window must be >= W_FULL x H_FULL
+# (plus deadband on the way up) to enter Full UI; Compact resumes once either
+# dimension drops below (breakpoint - deadband) on the way down.
+W_FULL = 1280
+H_FULL = 800
+DEADBAND_W = 80
+DEADBAND_H = 60
+
+
+def _decide_layout_mode(current: str, width: int, height: int) -> str:
+    """Pure state-machine: return the layout mode for the given size, given the
+    current mode. Implements deadband hysteresis so a window dragged across the
+    breakpoint does not flicker."""
+    if current == "compact":
+        if width >= W_FULL + DEADBAND_W and height >= H_FULL + DEADBAND_H:
+            return "full"
+        return "compact"
+    # current == "full"
+    if width <= W_FULL - DEADBAND_W or height <= H_FULL - DEADBAND_H:
+        return "compact"
+    return "full"
+
 
 class NoFocusProxyStyle(QProxyStyle):
     def drawPrimitive(self, element, option, painter, widget=None):
@@ -79,15 +101,22 @@ class AnimatedNavButton(QPushButton):
 
 
 class MultiToonTool(QMainWindow):
-    APP_VERSION = "2.0.4"
+    APP_VERSION = "2.1"
     _api_log = Signal(str)
 
     def __init__(self):
         super().__init__()
 
         self.setWindowTitle("ToonTown MultiTool")
-        self.setGeometry(QRect(100, 100, 560, 650))
-        self.setMinimumWidth(520)
+        # Default 740 height. Threshold for the multitoon tab to render cards
+        # without 1-2px compression of the controls pill is 734 (header 48 +
+        # tab natural 686). v2.0.3 used a 650 default but Qt auto-grew the
+        # window to 734 to fit the central widget; that auto-grow no longer
+        # works through the QStackedWidget that hosts Compact + Full layouts,
+        # so we set the default high enough to fit content directly.
+        self.setGeometry(QRect(100, 100, 560, 740))
+        self.setMinimumWidth(575)
+        self._layout_mode = "compact"
 
         self.pressed_keys = set()
         GameRegistry.instance()  # warm up before any launchers
@@ -177,6 +206,7 @@ class MultiToonTool(QMainWindow):
         self.multitoon_tab.dot_state_changed.connect(self.launch_tab.update_dot_state)
 
         self.log("[Debug] ToonTown MultiTool launched.")
+        self.multitoon_tab.prewarm_full_layout(QSize(W_FULL, H_FULL - 48), include_active=True)
         self._animate_launch()
 
     def _capture_multitool_window_id(self):
@@ -356,6 +386,27 @@ class MultiToonTool(QMainWindow):
         # Remove the effect after animation so it doesn't interfere with rendering
         self._page_anim.finished.connect(lambda: w.setGraphicsEffect(None))
         self._page_anim.start()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        size = self.size()
+        target = _decide_layout_mode(self._layout_mode, size.width(), size.height())
+        if target != self._layout_mode:
+            try:
+                self._set_layout_mode(target)
+            except Exception as e:
+                if hasattr(self, "logger") and self.logger:
+                    self.logger.append_log(f"[Layout] swap failed: {e}")
+
+    def _set_layout_mode(self, target: str) -> None:
+        # Snap layout instantly. Resize events drive the swap (titlebar drag,
+        # corner resize, maximize toggle) and fire continuously; a cross-fade
+        # via QGraphicsOpacityEffect forces software rendering of the whole
+        # multitoon_tab tree, which makes mid-drag resizes laggy and the very
+        # first apply takes multiple seconds because the effect path has no
+        # warm cache. Instant snap matches the rest of the resize feel.
+        self._layout_mode = target
+        self.multitoon_tab.set_layout_mode(target)
 
     def _apply_nav_icons(self):
         c = self._theme_colors()

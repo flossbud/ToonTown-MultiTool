@@ -919,7 +919,7 @@ class LaunchTab(QWidget):
             sync_state = card.get("sync_state", "active")
             card["status_dot"].set_state(sync_state)
         elif state == LoginState.IDLE:
-            card["status_dot"].set_color(self._theme_colors()["border_light"], pulse=False)
+            card["status_dot"].set_color(self._c()["border_light"], pulse=False)
         else:
             pulse = state in (LoginState.LOGGING_IN, LoginState.LAUNCHING)
             card["status_dot"].set_color(color, pulse=pulse)
@@ -944,7 +944,7 @@ class LaunchTab(QWidget):
             c = self._c()
             compact_btn = f"""
                 QPushButton {{
-                    background: {c['accent_blue_btn']}; color: white;
+                    background: {c['accent_blue_btn']}; color: {c['text_on_accent']};
                     font-weight: 600; font-size: 11px;
                     border: 1px solid {c['accent_blue_btn_border']};
                     border-radius: 6px; padding: 2px 10px;
@@ -1091,7 +1091,7 @@ class LaunchTab(QWidget):
                 if state != LoginState.RUNNING:
                     compact_btn = f"""
                         QPushButton {{
-                            background: {c['accent_blue_btn']}; color: white;
+                            background: {c['accent_blue_btn']}; color: {c['text_on_accent']};
                             font-weight: 600; font-size: 11px;
                             border: 1px solid {c['accent_blue_btn_border']};
                             border-radius: 6px; padding: 2px 10px;
@@ -1135,7 +1135,7 @@ class LaunchTab(QWidget):
                 for sb in card["edit_frame"].findChildren(QPushButton, "save_btn"):
                     sb.setStyleSheet(f"""
                         QPushButton {{
-                            background: {c['accent_blue_btn']}; color: white;
+                            background: {c['accent_blue_btn']}; color: {c['text_on_accent']};
                             font-weight: bold; font-size: 11px;
                             border: 1px solid {c['accent_blue_btn_border']};
                             border-radius: 6px; padding: 2px 12px;
@@ -1152,7 +1152,7 @@ class LaunchTab(QWidget):
                             border-radius: 6px; padding: 2px 12px;
                         }}
                         QPushButton:hover {{
-                            background: {c['accent_red']}; color: white;
+                            background: {c['accent_red']}; color: {c['text_on_accent']};
                             border: 1px solid {c['accent_red_border']};
                         }}
                     """)

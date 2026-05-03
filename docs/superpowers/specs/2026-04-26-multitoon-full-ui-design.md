@@ -164,7 +164,11 @@ The Launch tab already does this at 480 px and is left untouched.
 
 ## Theme palette
 
-`get_theme_colors()` is rewritten end-to-end. Token names and structure stay the same so callers don't change. New values:
+`get_theme_colors()` is rewritten end-to-end. Token names and structure stay the same so callers don't change.
+
+The palette follows the **Material 3 primary / on-primary pattern**: text-bearing accent surfaces (Enable button, Set selector, Stop Service, game pills, slot badges) pair with a single `text_on_accent` token that clears WCAG AA. Decorative accents (status dots, success-strip borders, segment fills) keep the more saturated values because they only need to satisfy the 3:1 UI-component minimum.
+
+Why two roles per accent: light and dark mode have inverted constraints. In light mode, an accent surface is darker than the page bg, so it pairs naturally with white text — the accent itself just needs to be dark enough (~5:1) for that text. In dark mode, the accent surface needs to be brighter than the dark page bg, which makes white text fail; the standard fix (Material 3, Apple HIG, iOS) is to flip to dark text on a brighter surface. The `text_on_accent` token encodes "whatever color the bright text should be on every accent in this theme."
 
 ### Dark (charcoal + saturated true colors)
 
@@ -182,21 +186,28 @@ text_secondary: #c8c8d0
 text_muted:     #888890
 text_disabled:  #5c5c64
 
-accent_green:        #3aaa5e    # was #3da343 (cleaner saturation)
-accent_blue_btn:     #3a6dd8    # was #0077ff (less neon)
-accent_orange:       #c66d2e    # was #c47a2a
-accent_red:          #c44848
+# Text-bearing accent surfaces — pair with text_on_accent below.
+text_on_accent:      #0f172a    # slate-900, AA on every accent below
+accent_green:        #4ade80    # green-400, ~9.7:1 vs text_on_accent (AAA)
+accent_blue_btn:     #60a5fa    # blue-400,  ~6.7:1 vs text_on_accent (AA, near-AAA)
+accent_red:          #f87171    # red-400,   ~6.3:1 vs text_on_accent (AA)
+
+# Icon-only / non-text-bearing accent — 3:1 UI minimum applies.
+accent_orange:       #c66d2e    # used by KA button (icon only)
 
 slot_1: #5b9bf5  (unchanged)
 slot_2: #4ade80  (unchanged)
 slot_3: #f59e42  (unchanged)
-slot_4: #b07cf5  (unchanged)
+slot_4: #b07cf5  (unchanged — slot badges use existing dark-on-light pattern; not changed in this branch)
 
-# New for Full UI
-status_dot_active:  #3aaa5e
-status_dot_idle:    #45454c
-game_pill_ttr:      #7e57c2
-game_pill_cc:       #3a6dd8
+# Decorative tokens — no text on them, kept saturated for visual punch.
+status_dot_active:   #3aaa5e   # green
+status_dot_idle:     #45454c
+segment_active:      #3aaa5e
+
+# Game pills — text-bearing, pair with text_on_accent.
+game_pill_ttr:       #a78bfa    # violet-400, ~6.2:1 vs text_on_accent
+game_pill_cc:        #60a5fa    # matches accent_blue_btn
 ```
 
 ### Light (cool slate)
@@ -215,27 +226,49 @@ text_secondary: #334155         # slate-700, 10.7:1 on white (AAA)
 text_muted:     #475569         # slate-600, 7.2:1 (AAA)
 text_disabled:  #64748b         # slate-500, 4.6:1 (AA)
 
-accent_green:        #16a34a    # green-600, 4.5:1 with white (AA exact)
-accent_blue_btn:     #2563eb    # blue-600, 5.7:1 with white
-accent_orange:       #c2410c    # orange-700, 5.0:1 with white
-accent_red:          #b91c1c    # red-700, 6.2:1 with white
+# Text-bearing accent surfaces — pair with text_on_accent below.
+text_on_accent:      #ffffff    # white, AA on every accent below
+accent_green:        #15803d    # green-700, 5.0:1 vs white (AA)
+accent_blue_btn:     #2563eb    # blue-600,  5.7:1 vs white
+accent_orange:       #c2410c    # orange-700, 5.0:1 vs white
+accent_red:          #b91c1c    # red-700,   6.2:1 vs white
 
-slot_1: #2563eb  (was #5b9bf5; deeper for white bg)
-slot_2: #16a34a
-slot_3: #c2410c
-slot_4: #7c3aed
+slot_1: #2563eb     # blue-600,   5.7:1 vs white — text-bearing
+slot_2: #15803d     # green-700,  5.0:1 vs white — text-bearing (matches accent_green)
+slot_3: #c2410c     # orange-700, 5.0:1 vs white
+slot_4: #7c3aed     # violet-600, 5.4:1 vs white
 
-status_dot_active:  #16a34a
-status_dot_idle:    #cbd5e1     # slate-300
-game_pill_ttr:      #7c3aed     # violet-600, 5.4:1 with white
-game_pill_cc:       #2563eb
+# Decorative tokens — no text on them, vibrant green-600 for visual punch.
+status_dot_active:   #16a34a
+status_dot_idle:     #cbd5e1     # slate-300
+segment_active:      #16a34a
+
+# Game pills — text-bearing, pair with text_on_accent.
+game_pill_ttr:       #7c3aed     # violet-600, 5.4:1 vs white
+game_pill_cc:        #2563eb     # matches accent_blue_btn
 ```
 
 Card shadow: existing `apply_card_shadow()` helper continues to apply; in light mode it now uses `rgba(15, 23, 42, 0.06)` (slate-900 at low alpha) instead of `rgba(0,0,0,0.10)` for a less muddy shadow.
 
 ### Contrast verification
 
-All listed fg/bg pairs have been verified against WCAG AA (4.5:1 for text, 3:1 for UI components). Text-on-accent pairs (white on green/blue/orange/violet) are AA-compliant. Same for AAA where called out.
+All text-bearing accents in **light mode** clear WCAG AA (≥4.5:1) against `text_on_accent = #ffffff`:
+- `accent_green #15803d` — 5.0:1 ✓
+- `accent_blue_btn #2563eb` — 5.7:1 ✓
+- `accent_orange #c2410c` — 5.0:1 ✓
+- `accent_red #b91c1c` — 6.2:1 ✓
+- `game_pill_ttr #7c3aed` — 5.4:1 ✓
+- All four slot badges — see inline notes above
+
+All text-bearing accents in **dark mode** clear WCAG AA against `text_on_accent = #0f172a`:
+- `accent_green #4ade80` — ~9.7:1 ✓ (AAA)
+- `accent_blue_btn #60a5fa` — ~6.7:1 ✓
+- `accent_red #f87171` — ~6.3:1 ✓
+- `game_pill_ttr #a78bfa` — ~6.2:1 ✓
+
+Dark-mode `accent_orange #c66d2e` is used only on the KA icon-only button (UI component, 3:1 minimum) and meets that bar against the white icon.
+
+Decorative accents (status dots, segment_active, slot badge fills in dark mode) sit on the card background and are governed by 3:1 UI-component contrast, not 4.5:1 text contrast, since no text or icon sits on top of them.
 
 ## Component details
 

@@ -250,7 +250,7 @@ class GamePathRow(SettingsRow):
             }}
             QPushButton:hover {{
                 background-color: {c['accent_blue']};
-                color: white;
+                color: {c['text_on_accent']};
                 border: 1px solid {c['accent_blue']};
             }}
         """
@@ -364,8 +364,15 @@ class SettingsTab(QWidget):
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         outer.addWidget(scroll)
 
+        from utils.layout import clamp_centered
+
+        scroll_inner = QWidget()
+        scroll_inner_layout = QHBoxLayout(scroll_inner)
+        scroll_inner_layout.setContentsMargins(0, 0, 0, 0)
+
         content = QWidget()
-        scroll.setWidget(content)
+        clamp_centered(scroll_inner_layout, content, 720)
+        scroll.setWidget(scroll_inner)
 
         self._main_layout = QVBoxLayout(content)
         self._main_layout.setContentsMargins(20, 24, 20, 24)
@@ -453,6 +460,20 @@ class SettingsTab(QWidget):
         group = SettingsGroup("Keep-Alive")
         self._groups.append(group)
 
+        # Master opt-in toggle — disabled by default. Enabling fires a
+        # consent dialog (Task 10) before committing the True value.
+        master_initial = bool(self.settings_manager.get("keep_alive_enabled", False))
+        self.ka_master_row = ToggleRow(
+            "Enable Keep-Alive",
+            master_initial,
+            sublabel=(
+                "Periodically sends a keystroke to keep toons logged in. "
+                "Disabled by default — see warning before enabling."
+            ),
+        )
+        self.ka_master_row.toggled.connect(self._on_keep_alive_master_toggle)
+        group.add_row(self.ka_master_row)
+
         self._ka_actions = [
             ("Jump", "jump"),
             ("Open / Close Book", "book"),
@@ -479,7 +500,63 @@ class SettingsTab(QWidget):
         self.ka_delay_row.index_changed.connect(self._on_keep_alive_delay_changed)
         group.add_row(self.ka_delay_row)
 
+        # Apply initial ghost state.
+        self._refresh_keep_alive_row_enabled_state(master_initial)
+
         self._main_layout.addWidget(group)
+
+    def _refresh_keep_alive_row_enabled_state(self, master_enabled: bool):
+        """Ghost (or un-ghost) the action and interval rows based on the
+        master toggle state."""
+        self.ka_action_row.setEnabled(master_enabled)
+        self.ka_delay_row.setEnabled(master_enabled)
+
+    def _on_keep_alive_master_toggle(self, checked: bool):
+        """Handler for the master toggle. On flip-to-on, fire the consent
+        dialog and only commit the True value if the user confirms."""
+        if not checked:
+            self.settings_manager.set("keep_alive_enabled", False)
+            self._refresh_keep_alive_row_enabled_state(False)
+            return
+        # Toggle was flipped on — confirm before committing.
+        if self._show_keep_alive_warning_dialog():
+            self.settings_manager.set("keep_alive_enabled", True)
+            self._refresh_keep_alive_row_enabled_state(True)
+        else:
+            # User cancelled — revert visual without re-firing toggled.
+            self.ka_master_row.toggle.blockSignals(True)
+            self.ka_master_row.setChecked(False)
+            self.ka_master_row.toggle.blockSignals(False)
+            # Setting was never written; ghost state stays as it was.
+
+    def _show_keep_alive_warning_dialog(self) -> bool:
+        """Show the TOS-aware consent dialog. Returns True if the user
+        clicked Enable, False on Cancel/Esc/close.
+
+        Factored as a method so tests can monkeypatch it without invoking
+        the real modal."""
+        from PySide6.QtWidgets import QMessageBox
+
+        box = QMessageBox(self.window())
+        box.setIcon(QMessageBox.Warning)
+        box.setWindowTitle("Enable Keep-Alive?")
+        box.setText(
+            "Keep-Alive sends periodic input to your toon windows even while "
+            "you are not actively playing.\n\n"
+            "Both Toontown Rewritten and Corporate Clash prohibit automation "
+            "tools of this kind in their Terms of Service. Use of Keep-Alive — "
+            "particularly in public areas of either game — may result in "
+            "warnings, account suspension, or permanent termination at the "
+            "discretion of those games' moderation teams.\n\n"
+            "ToonTown MultiTool is provided as-is and accepts no responsibility "
+            "for any consequences arising from its use."
+        )
+        enable_btn = box.addButton("Enable", QMessageBox.DestructiveRole)
+        cancel_btn = box.addButton("Cancel", QMessageBox.RejectRole)
+        box.setDefaultButton(cancel_btn)
+        box.setEscapeButton(cancel_btn)
+        box.exec()
+        return box.clickedButton() is enable_btn
 
     def _build_advanced_group(self):
         self.advanced_group = SettingsGroup("Advanced")
