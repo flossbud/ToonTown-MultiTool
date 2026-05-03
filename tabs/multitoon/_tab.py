@@ -2148,7 +2148,8 @@ class MultitoonTab(QWidget):
                 self._reset_ka_cycle()
         elif key == "keep_alive_enabled":
             if value:
-                # Master flipped on. Refresh per-toon visuals (they were ghosted)
+                # Master flipped on. Refresh per-toon visuals (existing styling
+                # path runs apply_visual_state to update enabled/tooltip state)
                 # and start the thread if any per-toon flags are set.
                 for i in range(4):
                     self.apply_visual_state(i)
@@ -2156,6 +2157,12 @@ class MultitoonTab(QWidget):
                     self._start_keep_alive()
             else:
                 self._suspend_keep_alive()
+
+            # Reconcile widget visibility. If the user is on the multitoon tab,
+            # do it now; otherwise defer until showEvent. The orchestrator
+            # is no-op when widgets already match the setting.
+            if self.isVisible():
+                self._maybe_animate_keep_alive_visibility()
 
     # ── Sleep inhibitor ───────────────────────────────────────────────────
 
@@ -2288,6 +2295,41 @@ class MultitoonTab(QWidget):
             if i < len(self.ka_progress_bars):
                 self.ka_progress_bars[i].setVisible(target_visible)
         # Compact: flip ka_group's stretch factor in its middle layout.
+        if hasattr(self, "_compact"):
+            self._compact._set_keep_alive_collapsed(not target_visible)
+
+    def showEvent(self, event):
+        """When the multitoon tab becomes visible, reconcile per-toon KA widget
+        visibility with the master setting if they disagree. This is the
+        deferred-animation trigger point."""
+        super().showEvent(event)
+        self._maybe_animate_keep_alive_visibility()
+
+    def _maybe_animate_keep_alive_visibility(self) -> None:
+        """Compare each per-toon KA widget's hide-state to the master setting.
+        If any widget disagrees, trigger the orchestrator. No-op if all match."""
+        target_visible = self._keep_alive_globally_enabled()
+        # Compare against the first slot's ka_btn — the per-slot widgets are
+        # all updated together, so checking one is sufficient.
+        if not self.keep_alive_buttons:
+            return
+        currently_visible = not self.keep_alive_buttons[0].isHidden()
+        if currently_visible == target_visible:
+            return
+        self._animate_keep_alive_visibility(target_visible)
+
+    def _animate_keep_alive_visibility(self, target_visible: bool) -> None:
+        """Orchestrator: dispatch the visibility change to both layouts'
+        animation methods. The hidden layout's widgets are still set
+        (no animation), so state stays consistent across layout swaps.
+
+        In this task this is an *instant* setVisible. Tasks 4 and 5 replace
+        the layout-specific implementations with real animations."""
+        for i in range(4):
+            if i < len(self.keep_alive_buttons):
+                self.keep_alive_buttons[i].setVisible(target_visible)
+            if i < len(self.ka_progress_bars):
+                self.ka_progress_bars[i].setVisible(target_visible)
         if hasattr(self, "_compact"):
             self._compact._set_keep_alive_collapsed(not target_visible)
 
