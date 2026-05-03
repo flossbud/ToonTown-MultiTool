@@ -1857,6 +1857,12 @@ class MultitoonTab(QWidget):
         self.apply_visual_state(index)
 
     def toggle_rapid_fire(self, index, state):
+        if not self._keep_alive_globally_enabled():
+            # Symmetric to toggle_keep_alive's gate — guards against
+            # programmatic callers from leaving rapid_fire_enabled[i] in a
+            # state inconsistent with keep_alive_enabled[i] when the master
+            # flag is off.
+            return
         self.rapid_fire_enabled[index] = state
         self._apply_keep_alive_btn_style(index, self._c())
         if state and not self.keep_alive_enabled[index]:
