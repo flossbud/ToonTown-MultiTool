@@ -899,6 +899,12 @@ class MultitoonTab(QWidget):
     def set_layout_mode(self, mode: str) -> None:
         if mode == self._mode:
             return
+        # Cancel any in-flight KA animations BEFORE swapping layouts. The
+        # animation's finished handlers may try to setVisible/setGraphicsEffect
+        # on widgets that are about to be reparented; stopping early prevents
+        # unwanted state from landing on the new layout.
+        self._cancel_keep_alive_animations()
+
         # Leaving Full — stop card-level animations BEFORE flipping the mode flag.
         if self._mode == "full" and hasattr(self, "_full") and self._full is not None:
             self._full.deactivate()
@@ -922,6 +928,10 @@ class MultitoonTab(QWidget):
             # QFonts, not stylesheets. Re-issue Compact's stylesheets so the
             # shared widgets render at Compact sizes again.
             self.refresh_theme()
+
+        # After the swap, reconcile visibility (no animation — the swap
+        # itself is an instant snap per the existing layout-swap convention).
+        self._reconcile_keep_alive_visibility_instant()
 
     def prewarm_full_layout(self, size=None, include_active: bool = False) -> None:
         """Pay Full UI's first polish/paint cost while Compact remains visible."""
@@ -2332,6 +2342,36 @@ class MultitoonTab(QWidget):
                     self.keep_alive_buttons[i].setVisible(target_visible)
                 if i < len(self.ka_progress_bars):
                     self.ka_progress_bars[i].setVisible(target_visible)
+
+    def _cancel_keep_alive_animations(self) -> None:
+        """Stop any in-flight KA animations on both layouts. Called before
+        layout swap so animation finish handlers don't fire on widgets being
+        reparented."""
+        for layout in (getattr(self, "_compact", None), getattr(self, "_full", None)):
+            if layout is None:
+                continue
+            anims = getattr(layout, "_ka_anims", None)
+            if not anims:
+                continue
+            for anim in anims:
+                anim.stop()
+            layout._ka_anims = []
+
+    def _reconcile_keep_alive_visibility_instant(self) -> None:
+        """Set per-toon KA widget visibility to match the master setting,
+        instantly (no animation). Called after a layout swap or any other
+        path where animation isn't appropriate."""
+        target_visible = self._keep_alive_globally_enabled()
+        for i in range(4):
+            if i < len(self.keep_alive_buttons):
+                # Clear any leftover graphics effect from a stopped animation.
+                self.keep_alive_buttons[i].setGraphicsEffect(None)
+                self.keep_alive_buttons[i].setVisible(target_visible)
+            if i < len(self.ka_progress_bars):
+                self.ka_progress_bars[i].setGraphicsEffect(None)
+                self.ka_progress_bars[i].setVisible(target_visible)
+        if hasattr(self, "_compact"):
+            self._compact._set_keep_alive_collapsed(not target_visible)
 
     def _run_keep_alive_loop(self):
         try:
