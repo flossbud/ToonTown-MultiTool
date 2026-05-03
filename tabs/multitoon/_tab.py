@@ -371,6 +371,13 @@ class KeepAliveBtn(QPushButton):
         self.update()
 
     def _on_long_press(self):
+        if not self.isEnabled():
+            # Master flag flipped off mid-hold; suppress the rapid-fire toggle.
+            self._charging = False
+            self._charge_tick.stop()
+            self._charge_progress = 0.0
+            self._long_press_fired = False
+            return
         self._charging = False
         self._charge_tick.stop()
         self._charge_progress = 0.0
@@ -2217,6 +2224,20 @@ class MultitoonTab(QWidget):
             self.keep_alive_buttons[i].set_progress(0.0)
             if i < len(self.ka_progress_bars):
                 self.ka_progress_bars[i].set_progress(0.0)
+
+    def _suspend_keep_alive(self):
+        """Stop KA execution and clear button visuals while preserving per-toon
+        flags. Called when the master toggle flips off — per-toon setup is the
+        user's, the master flag is just whether the feature class is enabled."""
+        self._stop_keep_alive()
+        for i in range(4):
+            if i < len(self.keep_alive_buttons):
+                btn = self.keep_alive_buttons[i]
+                btn.setGraphicsEffect(None)
+                btn.set_progress(0.0)
+        self._update_glow_timer()
+        for i in range(4):
+            self.apply_visual_state(i)
 
     def _get_keep_alive_delay(self) -> float:
         if not self.settings_manager:
