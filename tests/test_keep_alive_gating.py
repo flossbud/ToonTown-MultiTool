@@ -145,3 +145,29 @@ def test_keep_alive_loop_fires_when_master_on(tab):
         if state and tab._keep_alive_globally_enabled()
     ]
     assert fire_toons == [0, 1]
+
+
+def test_toggle_keep_alive_no_op_when_master_off(tab):
+    """Programmatic calls to toggle_keep_alive must early-return when master
+    is off (defense against profile-load or hotkey paths)."""
+    tab.window_manager.ttr_window_ids = ["wid_a"]
+    tab.service_running = True
+    tab.enabled_toons[0] = True
+    tab.settings_manager.set("keep_alive_enabled", False)
+
+    assert tab.keep_alive_enabled[0] is False
+    tab.toggle_keep_alive(0)
+    assert tab.keep_alive_enabled[0] is False  # Still off — toggle suppressed
+
+
+def test_toggle_keep_alive_works_when_master_on(tab):
+    tab.window_manager.ttr_window_ids = ["wid_a"]
+    tab.service_running = True
+    tab.enabled_toons[0] = True
+    tab.settings_manager.set("keep_alive_enabled", True)
+
+    assert tab.keep_alive_enabled[0] is False
+    tab.toggle_keep_alive(0)
+    assert tab.keep_alive_enabled[0] is True
+    # Cleanup so other tests aren't polluted
+    tab.toggle_keep_alive(0)
