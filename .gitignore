@@ -16,3 +16,6 @@ dist/
 
 # === AppDir — ignore the binary, keep metadata ===
 AppDir/usr/
+
+# === Local Claude Code config / skills (not for GitHub) ===
+.claude/
