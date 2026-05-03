@@ -342,3 +342,18 @@ def test_dialog_confirm_persists_setting(qapp, tmp_path, monkeypatch):
     tab._on_keep_alive_master_toggle(True)
     assert sm.get("keep_alive_enabled") is True
     assert tab.ka_master_row.isChecked() is True
+
+
+def test_toggle_rapid_fire_no_op_when_master_off(tab):
+    """Programmatic calls to toggle_rapid_fire must early-return when master
+    is off — symmetric to toggle_keep_alive, prevents internal state divergence."""
+    tab.window_manager.ttr_window_ids = ["wid_a"]
+    tab.service_running = True
+    tab.enabled_toons[0] = True
+    tab.settings_manager.set("keep_alive_enabled", False)
+
+    assert tab.rapid_fire_enabled[0] is False
+    tab.toggle_rapid_fire(0, True)
+    # Master off — rapid_fire_enabled must NOT have been written.
+    assert tab.rapid_fire_enabled[0] is False
+    assert tab.keep_alive_enabled[0] is False
