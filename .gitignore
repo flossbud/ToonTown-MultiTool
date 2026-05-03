@@ -16,3 +16,51 @@ dist/
 
 # === AppDir — ignore the binary, keep metadata ===
 AppDir/usr/
+
+# === Local editor configs ===
+.idea/
+.vscode/
+
+# === Editor swap / backup files ===
+*.swp
+*.swo
+*~
+*.bak
+
+# === Local release archives (CI publishes the official ones) ===
+*.tar.gz
+*.zip
+
+# === Python tool caches ===
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# === Virtualenvs ===
+.venv/
+venv/
+env/
+
+# === Python packaging ===
+*.egg-info/
+*.egg
+
+# === Secrets / env files ===
+.env
+.env.*
+!.env.example
+
+# === OS junk ===
+Thumbs.db
+desktop.ini
+
+# === Internal documentation ===
+docs/
+API Docs/
+
+# === Local working files ===
+/fix-grub-single-fedora.sh
+/tests/test_input_service_lifecycle.py
+/tests/test_toon_portrait_widget.py
