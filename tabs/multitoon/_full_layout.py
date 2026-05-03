@@ -670,6 +670,58 @@ class _FullLayout(QWidget):
         for card in self._cards:
             card._stop_pulse()
 
+    def _animate_keep_alive_visibility(self, target_visible: bool) -> None:
+        """Animate KA button + bar opacity for all 4 cards. No position changes.
+        On expand: 250 ms 0→1 fade-in. On collapse: 180 ms 1→0 fade-out, then
+        setVisible(False) at completion."""
+        from PySide6.QtCore import QPropertyAnimation, QEasingCurve
+        from PySide6.QtWidgets import QGraphicsOpacityEffect
+
+        # Stop any in-flight animations and remove existing effects.
+        if not hasattr(self, "_ka_anims"):
+            self._ka_anims = []
+        for a in self._ka_anims:
+            a.stop()
+        self._ka_anims = []
+
+        duration_ms = 250 if target_visible else 180
+        easing = QEasingCurve.OutCubic if target_visible else QEasingCurve.InCubic
+        start_opacity = 0.0 if target_visible else 1.0
+        end_opacity = 1.0 if target_visible else 0.0
+
+        for i in range(4):
+            ka_btn = self._tab.keep_alive_buttons[i]
+            ka_bar = self._tab.ka_progress_bars[i]
+
+            # Make widget visible BEFORE animating opacity (so 0→1 fade is
+            # visible). For collapse, setVisible(False) happens at end.
+            ka_btn.setVisible(True)
+            ka_bar.setVisible(True)
+
+            for w in (ka_btn, ka_bar):
+                effect = QGraphicsOpacityEffect(w)
+                effect.setOpacity(start_opacity)
+                w.setGraphicsEffect(effect)
+
+                anim = QPropertyAnimation(effect, b"opacity")
+                anim.setDuration(duration_ms)
+                anim.setEasingCurve(easing)
+                anim.setStartValue(start_opacity)
+                anim.setEndValue(end_opacity)
+
+                # Snapshot for closure capture (loop variables would be late-bound).
+                widget = w
+                # Cleanup: remove effect, set final visibility.
+                def make_finished(w_local, target):
+                    def _on_finished():
+                        w_local.setGraphicsEffect(None)
+                        w_local.setVisible(target)
+                    return _on_finished
+
+                anim.finished.connect(make_finished(widget, target_visible))
+                anim.start()
+                self._ka_anims.append(anim)
+
     def apply_theme(self, c: dict) -> None:
         for card in self._cards:
             card.apply_theme(c)
