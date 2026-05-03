@@ -787,6 +787,9 @@ def test_toggle_keep_alive_refreshes_status_dot_to_orange_pulse(qapp, tab):
     toggle_keep_alive, so the dot stayed in its previous state after the toggle.
     """
     # Slot 0: window detected, toon disabled. Establish baseline state.
+    # The master Keep-Alive flag must be on for toggle_keep_alive to take effect
+    # (it now early-returns when the global setting is off).
+    tab.settings_manager.set("keep_alive_enabled", True)
     tab.input_service = object()
     tab.window_manager.ttr_window_ids = ["fake-window-id"]
     tab.enabled_toons[0] = False
