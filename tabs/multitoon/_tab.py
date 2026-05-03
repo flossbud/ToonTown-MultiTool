@@ -7,8 +7,8 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QFrame, QGraphicsDropShadowEffect, QStackedWidget
 )
-from PySide6.QtCore import Qt, Signal, Slot, QTimer, QVariantAnimation, QEasingCurve, QRectF, QPointF
-from PySide6.QtGui import QColor, QFont, QPainter, QPen, QPainterPath, QPixmap
+from PySide6.QtCore import Qt, Signal, Slot, QTimer, QVariantAnimation, QEasingCurve, QRectF, QPointF, QSize
+from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPen, QPainterPath, QPixmap
 from services.input_service import InputService
 from utils.theme_manager import (
     resolve_theme, get_theme_colors, apply_card_shadow,
@@ -18,7 +18,7 @@ from utils.theme_manager import (
 )
 from utils.shared_widgets import PulsingDot, ElidingLabel
 from utils.symbols import S
-from utils.ttr_api import get_toon_names_threaded, invalidate_port_to_wid_cache, clear_stale_names
+from utils.ttr_api import get_toon_names_by_slot, invalidate_port_to_wid_cache, clear_stale_names
 from utils import cc_api
 from utils.game_registry import GameRegistry
 
@@ -73,7 +73,8 @@ class ToonPortraitWidget(QWidget):
 
     RENDITION_URL = "https://rendition.toontownrewritten.com/render/{dna}/portrait/128x128.png"
 
-    # Emitted from bg thread with (dna, raw_bytes_or_None) — QPixmap built on main thread
+    # Emitted from a worker thread with (dna, QImage_or_None). QImage decoding is
+    # safe off the GUI thread; QPixmap creation stays on the GUI thread.
     _image_ready = Signal(str, object)
     clicked = Signal()
 
@@ -115,10 +116,11 @@ class ToonPortraitWidget(QWidget):
 
     def set_dna(self, dna):
         """Load portrait from Rendition. Pass None to revert to fallback circle."""
+        if dna == self._dna and not self._cancelled:
+            if not dna or self._loading or self._pixmap is not None:
+                return
         self._fetch_token += 1
         self._cancelled = False
-        if dna == self._dna:
-            return
         self._dna = dna
         if not dna:
             self._pixmap  = None
@@ -136,7 +138,7 @@ class ToonPortraitWidget(QWidget):
         self._loading = False
 
     def _fetch(self, dna: str, token: int):
-        """Background thread — network I/O only, no Qt objects constructed here."""
+        """Background thread — fetch and decode the portrait off the GUI thread."""
         try:
             import urllib.request
             url = self.RENDITION_URL.format(dna=dna)
@@ -144,15 +146,19 @@ class ToonPortraitWidget(QWidget):
             with urllib.request.urlopen(req, timeout=10) as resp:
                 data = resp.read()
             if not self._cancelled:
-                self._image_ready.emit(f"{dna}|{token}", data)
+                image = QImage()
+                self._image_ready.emit(
+                    f"{dna}|{token}",
+                    image if image.loadFromData(data) else None,
+                )
         except Exception as e:
             print(f"[Portrait] Slot {self._slot}: fetch error — {e}")
             if not self._cancelled:
                 self._image_ready.emit(f"{dna}|{token}", None)
 
     @Slot(str, object)
-    def _on_image_ready(self, payload: str, data):
-        """Main thread — safe to construct QPixmap here."""
+    def _on_image_ready(self, payload: str, image):
+        """Main thread — QPixmap must be constructed on the GUI thread."""
         if "|" not in payload:
             return
         dna, token_str = payload.rsplit("|", 1)
@@ -165,9 +171,9 @@ class ToonPortraitWidget(QWidget):
         if dna != self._dna:
             return
         self._loading = False
-        if data:
-            pm = QPixmap()
-            if pm.loadFromData(data):
+        if isinstance(image, QImage) and not image.isNull():
+            pm = QPixmap.fromImage(image)
+            if not pm.isNull():
                 self._pixmap = pm
                 print(f"[Portrait] Slot {self._slot}: loaded OK")
             else:
@@ -289,14 +295,19 @@ class StatusBar(QFrame):
 class KeepAliveBtn(QPushButton):
     """Keep-alive toggle button with a progress ring.
 
-    Short click  → toggle keep-alive on/off.
-    Hold 3 s     → toggle rapid-fire for this toon only (independent of the
-                   global delay setting). A red charging arc grows clockwise
-                   around the button during the hold; releasing early cancels.
+    Short click   → toggle keep-alive on/off.
+    Hold 5 s      → toggle rapid-fire for this toon only (independent of the
+                    global delay setting). The first 2 s is a silent pre-hold
+                    where the button looks like a normal press; the final 3 s
+                    shows a red arc growing clockwise around the button.
+                    Releasing during the silent pre-hold acts as a click;
+                    releasing during the visible countdown cancels.
     """
     rapid_fire_toggled = Signal(bool)
 
-    _CHARGE_MS = 3000  # hold duration in milliseconds
+    _PRE_HOLD_MS = 2000   # silent pre-hold before the visible countdown begins
+    _COUNTDOWN_MS = 3000  # visible red-arc countdown duration
+    _CHARGE_MS = _PRE_HOLD_MS + _COUNTDOWN_MS  # total hold to fire rapid-fire
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -331,13 +342,20 @@ class KeepAliveBtn(QPushButton):
             was_long = self._long_press_fired
             self._long_press_fired = False
             self._press_timer.stop()
+            elapsed_ms = (
+                (time.monotonic() - self._charge_start) * 1000
+                if self._charging else 0
+            )
+            countdown_visible = self._charging and elapsed_ms >= self._PRE_HOLD_MS
             if self._charging:
                 self._charging = False
                 self._charge_tick.stop()
                 self._charge_progress = 0.0
                 self.update()
-            if was_long:
-                # Block clicked signal so toggle_keep_alive doesn't fire
+            # Block the click signal in two cases:
+            #   - long press fired (rapid-fire already toggled)
+            #   - released after the visible countdown started (explicit cancel)
+            if was_long or countdown_visible:
                 self.blockSignals(True)
                 super().mouseReleaseEvent(e)
                 self.blockSignals(False)
@@ -346,7 +364,10 @@ class KeepAliveBtn(QPushButton):
 
     def _tick_charge(self):
         elapsed_ms = (time.monotonic() - self._charge_start) * 1000
-        self._charge_progress = min(1.0, elapsed_ms / self._CHARGE_MS)
+        if elapsed_ms < self._PRE_HOLD_MS:
+            return  # silent pre-hold: keep _charge_progress at 0, skip repaint
+        countdown_elapsed = elapsed_ms - self._PRE_HOLD_MS
+        self._charge_progress = min(1.0, countdown_elapsed / self._COUNTDOWN_MS)
         self.update()
 
     def _on_long_press(self):
@@ -359,7 +380,10 @@ class KeepAliveBtn(QPushButton):
         self.update()
 
     def set_progress(self, val: float):
-        self._progress = max(0.0, min(1.0, val))
+        clamped = max(0.0, min(1.0, val))
+        if clamped == self._progress:
+            return
+        self._progress = clamped
         self.update()
 
     def paintEvent(self, event):
@@ -666,6 +690,7 @@ class MultitoonTab(QWidget):
         self.toon_max_laffs   = [None] * 4
         self.toon_beans       = [None] * 4
         self._refresh_gen     = 0
+        self._toon_fetch_inflight_keys = set()
         self._active_profile  = -1  # no profile active initially
         self._last_window_ids = []
 
@@ -704,6 +729,10 @@ class MultitoonTab(QWidget):
         self.refresh_timer = QTimer(self)
         self.refresh_timer.setInterval(5000)
         self.refresh_timer.timeout.connect(self._auto_refresh)
+
+        self._toon_fetch_timer = QTimer(self)
+        self._toon_fetch_timer.setSingleShot(True)
+        self._toon_fetch_timer.timeout.connect(self._run_scheduled_toon_fetch)
 
         # Glow animation timer (shared by keep-alive buttons + service button)
         self._glow_phase = 0.0
@@ -864,18 +893,99 @@ class MultitoonTab(QWidget):
         if self._mode == "full" and hasattr(self, "_full") and self._full is not None:
             self._full.deactivate()
         target = self._full if mode == "full" else self._compact
-        # Flip _mode BEFORE populate + setCurrentWidget. Qt cascades resize events
-        # during setCurrentWidget; cards' resizeEvent calls _layout_active_content,
-        # which gates on _tab._mode == "full". If _mode is set after setCurrentWidget,
-        # those resize events fire under the OLD mode, the gate fails, and _scale
-        # never recomputes against the new card geometry — leaving Full's content
-        # rendered at a stale small scale after a window minimize/restore cycle.
         self._mode = mode
-        # Re-attach all shared widgets to the target's slots
         target.populate()
         self._stack.setCurrentWidget(target)
-        # Re-apply theme so the new layout picks up colors (incl. game_pill etc.)
-        self.refresh_theme()
+        # Compact widgets are kept in sync by apply_visual_state calls on
+        # service/window events, so a layout swap doesn't need a full
+        # apply_all_visual_states. Only the Full UI cards need syncing —
+        # while in Compact mode, set_active and set_status_state on the Full
+        # cards were gated out, so they're stale until we sync. apply_theme
+        # is the entry point for layout-specific theme styling on Full cards.
+        if mode == "full" and self._full is not None:
+            self._full.apply_theme(self._c())
+            self._sync_full_cards_to_state()
+        else:
+            # Compact and Full share the same name_label/laff_label/bean_label
+            # widgets. Full's apply_theme set Full-scaled stylesheets on them
+            # (28px name, 16px stat); Compact's populate only resets layout/
+            # QFonts, not stylesheets. Re-issue Compact's stylesheets so the
+            # shared widgets render at Compact sizes again.
+            self.refresh_theme()
+
+    def prewarm_full_layout(self, size=None, include_active: bool = False) -> None:
+        """Pay Full UI's first polish/paint cost while Compact remains visible."""
+        wids = self.window_manager.ttr_window_ids if hasattr(self, "window_manager") else []
+        warm_key = "active" if wids else "inactive"
+        if warm_key == "active" and not include_active:
+            return
+        warmed = getattr(self, "_full_layout_prewarmed_states", set())
+        if warm_key in warmed:
+            return
+        if not hasattr(self, "_full") or self._full is None:
+            return
+        if self._mode != "compact":
+            return
+
+        self._full_layout_prewarmed_states = warmed | {warm_key}
+        current = None
+        try:
+            from PySide6.QtGui import QPixmap
+
+            current = self._stack.currentWidget()
+            c = self._c()
+            self._mode = "full"
+            warm_size = size if size is not None else self.size()
+            if warm_size.width() <= 0 or warm_size.height() <= 0:
+                warm_size = QSize(1280, 812)
+            else:
+                warm_size = QSize(max(warm_size.width(), 1280), max(warm_size.height(), 812))
+            self._full.resize(warm_size)
+            self._full.populate()
+            self._full.apply_theme(c)
+            self._sync_full_cards_to_state()
+            self._full.ensurePolished()
+            self._full._position_cards()
+
+            render_size = self._full.size()
+            if render_size.width() > 0 and render_size.height() > 0:
+                pixmap = QPixmap(render_size)
+                pixmap.fill(Qt.transparent)
+                self._full.render(pixmap)
+        finally:
+            self._full.deactivate()
+            self._compact.populate()
+            self._stack.setCurrentWidget(current or self._compact)
+            self._mode = "compact"
+            # Full's apply_theme set name_label/laff/bean stylesheets at Full's
+            # scaled font sizes (28px name, 16px stat). Compact's populate only
+            # resets layout/sizing — not stylesheets — so without this the
+            # polluted styles linger until something else triggers a refresh.
+            self.refresh_theme()
+
+    def _sync_full_cards_to_state(self) -> None:
+        """Cheap sync of Full UI cards' active view + status state, without
+        the per-toon stylesheet cascade that apply_visual_state runs for
+        Compact widgets. Used right after switching into Full mode, since
+        while Compact was visible the Full cards' set_active/set_status_state
+        calls were gated out and are now stale."""
+        if not self._full:
+            return
+        wids = self.window_manager.ttr_window_ids if hasattr(self, 'input_service') else []
+        for index in range(min(4, len(self._full._cards))):
+            window_available = index < len(wids)
+            active = window_available and self.enabled_toons[index] and self.service_running
+            if active:
+                state_str = "active"
+            elif window_available:
+                state_str = "keep_alive" if self.keep_alive_enabled[index] else "disabled"
+            else:
+                state_str = "off"
+            card = self._full._cards[index]
+            card.set_active(window_available)
+            if window_available:
+                card.set_status_state(state_str)
+                card._apply_game_pill_style()
 
     # ── Set selector rebuild ───────────────────────────────────────────────
 
@@ -1147,6 +1257,8 @@ class MultitoonTab(QWidget):
 
         status_dot.set_state(state_str, tooltip_str)
         self.dot_state_changed.emit(index, state_str)
+        if self._mode == "full" and hasattr(self, "_full") and index < len(self._full._cards):
+            self._full._cards[index].set_status_state(state_str)
 
         if window_available:
             game_tag = GameRegistry.instance().get_game_for_window(str(wids[index]))
@@ -1358,14 +1470,15 @@ class MultitoonTab(QWidget):
         # Rapid-fire ring cycles once per second using modulo
         rf_progress = (elapsed % 1.0) if elapsed > 0 else 0.0
 
+        # Only touch buttons whose state is actually being animated. Hitting
+        # disabled ones every tick re-fires update()/paintEvent for no visual
+        # change — which used to make ~80 redundant paint requests/sec while
+        # the service was on and stutter window drags. Disabled buttons are
+        # cleared once at toggle-off time and again when the timer stops.
         for i in range(4):
-            ka_btn = self.keep_alive_buttons[i]
             if self.keep_alive_enabled[i]:
                 is_rf = getattr(self, 'rapid_fire_enabled', [False] * 4)[i]
-                ka_btn.set_progress(rf_progress if is_rf else normal_progress)
-            else:
-                ka_btn.setGraphicsEffect(None)
-                ka_btn.set_progress(0.0)
+                self.keep_alive_buttons[i].set_progress(rf_progress if is_rf else normal_progress)
 
         # Chat button glow pulse when chat broadcast is active
         if self._chat_glow_active:
@@ -1402,7 +1515,11 @@ class MultitoonTab(QWidget):
 
 
     def _update_glow_timer(self):
-        needs_glow = any(self.keep_alive_enabled) or self.service_running or self._chat_glow_active
+        # service_running alone does NOT need the glow timer — it has no
+        # animated visual tied to it. Including it here had the timer firing
+        # 20 Hz the entire time the service was on, scheduling paintEvents on
+        # all 4 keep-alive buttons even though nothing visual was changing.
+        needs_glow = any(self.keep_alive_enabled) or self._chat_glow_active
         needs_bars = any(self.keep_alive_enabled)
 
         if needs_glow and not self._glow_timer.isActive():
@@ -1525,28 +1642,49 @@ class MultitoonTab(QWidget):
 
     # ── Name fetching ──────────────────────────────────────────────────────
 
+    def schedule_toon_data_fetch(self, delay_ms: int = 1200):
+        if not self.window_manager.ttr_window_ids:
+            return
+        self._toon_fetch_timer.start(max(0, delay_ms))
+
+    def _run_scheduled_toon_fetch(self):
+        self._fetch_names_if_enabled(len(self.window_manager.ttr_window_ids))
+
     def _fetch_names_if_enabled(self, num_slots: int):
+        wids = list(self.window_manager.ttr_window_ids) if hasattr(self, 'window_manager') and self.window_manager else []
+        ttr_enabled = bool(self.settings_manager and self.settings_manager.get("enable_companion_app", True))
+        cc_enabled = bool(self.settings_manager and self.settings_manager.get("enable_cc_companion_app", True))
+        if not wids or not (ttr_enabled or cc_enabled):
+            return
+
+        request_key = (tuple(wids), ttr_enabled, cc_enabled)
+        if request_key in self._toon_fetch_inflight_keys:
+            return
+
+        self._toon_fetch_inflight_keys.add(request_key)
         self._refresh_gen += 1
         gen = self._refresh_gen
-        
-        # Split windows by game type
-        wids = list(self.window_manager.ttr_window_ids) if hasattr(self, 'window_manager') and self.window_manager else []
-        ttr_wids = [wid for wid in wids if GameRegistry.instance().get_game_for_window(wid) == "ttr"]
-        cc_wids = [wid for wid in wids if GameRegistry.instance().get_game_for_window(wid) == "cc"]
-        
-        # TTR Dispatch
-        if ttr_wids and self.settings_manager and self.settings_manager.get("enable_companion_app", True):
-            def _ttr_callback(names, styles, colors, laffs, max_laffs, beans):
-                if gen == self._refresh_gen:
-                    self._toon_data_merge_ready.emit(list(ttr_wids), list(names), list(styles), list(colors), list(laffs), list(max_laffs), list(beans))
-            get_toon_names_threaded(len(ttr_wids), _ttr_callback, ttr_wids)
-            
-        # CC Dispatch
-        if cc_wids and self.settings_manager and self.settings_manager.get("enable_cc_companion_app", True):
-            def _cc_callback(names, styles, colors, laffs, max_laffs, beans):
-                if gen == self._refresh_gen:
-                    self._toon_data_merge_ready.emit(list(cc_wids), list(names), list(styles), list(colors), list(laffs), list(max_laffs), list(beans))
-            cc_api.get_toon_names_threaded(len(cc_wids), _cc_callback, cc_wids)
+
+        def _run_fetch():
+            try:
+                registry = GameRegistry.instance()
+                ttr_wids = [wid for wid in wids if registry.get_game_for_window(wid) == "ttr"]
+                cc_wids = [wid for wid in wids if registry.get_game_for_window(wid) == "cc"]
+
+                if ttr_wids and ttr_enabled:
+                    names, styles, colors, laffs, max_laffs, beans = get_toon_names_by_slot(len(ttr_wids), ttr_wids)
+                    if gen == self._refresh_gen:
+                        self._toon_data_merge_ready.emit(list(ttr_wids), list(names), list(styles), list(colors), list(laffs), list(max_laffs), list(beans))
+
+                if cc_wids and cc_enabled:
+                    def _cc_callback(names, styles, colors, laffs, max_laffs, beans):
+                        if gen == self._refresh_gen:
+                            self._toon_data_merge_ready.emit(list(cc_wids), list(names), list(styles), list(colors), list(laffs), list(max_laffs), list(beans))
+                    cc_api.get_toon_names_threaded(len(cc_wids), _cc_callback, cc_wids)
+            finally:
+                self._toon_fetch_inflight_keys.discard(request_key)
+
+        threading.Thread(target=_run_fetch, daemon=True).start()
 
     def manual_refresh(self):
         self.log("[Service] Manual refresh triggered.")
@@ -1573,17 +1711,20 @@ class MultitoonTab(QWidget):
                 
         if self.service_running:
             self.input_service.stop()
-            self.input_service.release_all_keys()
             self.window_manager.clear_window_ids()
-            self.window_manager.assign_windows()
+            # No main-thread assign_windows(); poll loop reassigns within ~2s.
             self.input_service.start()
-            self._fetch_names_if_enabled(len(self.window_manager.ttr_window_ids))
+            self.schedule_toon_data_fetch(1200)
         else:
             self.window_manager.disable_detection()
             self.update_toon_controls([])
 
     def _auto_refresh(self):
-        self.input_service.window_manager.assign_windows()
+        # Don't call assign_windows() here — it runs xdotool subprocesses
+        # synchronously on the main thread, which blocks the UI for up to a
+        # few seconds on Wayland under load. The window_manager's poll thread
+        # already runs assign_windows() every 2s in its own thread, so the
+        # window list stays fresh without blocking compact↔full swaps.
         self._fetch_names_if_enabled(len(self.window_manager.ttr_window_ids))
 
     # ── Service lifecycle ──────────────────────────────────────────────────
@@ -1591,12 +1732,16 @@ class MultitoonTab(QWidget):
     def toggle_service(self):
         self.service_running = not self.service_running
         if self.service_running:
-            self.input_service.window_manager.assign_windows()
+            # No assign_windows() here — it's a no-op (detection_enabled is
+            # still False), and even when it isn't, the call must not run on
+            # the main thread. Poll loop handles assignment within ~2s.
             self.input_service.window_manager.enable_detection()
             self._start_service_internal()
         else:
             self.input_service.stop()
             self.refresh_timer.stop()
+            self._toon_fetch_timer.stop()
+            self._refresh_gen += 1
             self.input_service.window_manager.disable_detection()
             self.disable_all_toon_controls()
             self.log("[Service] Multitoon service stopped.")
@@ -1619,7 +1764,7 @@ class MultitoonTab(QWidget):
             self.log(f"[Input] {count} toon window{'s' if count != 1 else ''} detected — input + chat enabled")
         self.update_status_label()
         self.refresh_timer.start()
-        self._fetch_names_if_enabled(len(self.window_manager.ttr_window_ids))
+        self.schedule_toon_data_fetch(1200)
 
     def start_service(self):
         if not self.service_running:
@@ -1703,6 +1848,11 @@ class MultitoonTab(QWidget):
         if not self.keep_alive_enabled[index]:
             self.rapid_fire_enabled[index] = False
             self.keep_alive_buttons[index].is_rapid_fire = False
+            # _tick_glow no longer touches disabled buttons each frame; clear
+            # the just-disabled button's progress ring + glow effect here so
+            # it doesn't stay frozen at the last value.
+            self.keep_alive_buttons[index].setGraphicsEffect(None)
+            self.keep_alive_buttons[index].set_progress(0.0)
         else:
             self._reset_ka_cycle()
 
@@ -1715,6 +1865,7 @@ class MultitoonTab(QWidget):
         else:
             self._stop_keep_alive()
         self._update_glow_timer()
+        self.apply_visual_state(index)
 
     def set_toon_enabled(self, index, enabled: bool):
         self.enabled_toons[index] = enabled
@@ -1800,7 +1951,7 @@ class MultitoonTab(QWidget):
                 self.toon_buttons[i].setChecked(True)
             self.apply_visual_state(i)
         self.update_status_label()
-        self._fetch_names_if_enabled(len(window_ids))
+        self.schedule_toon_data_fetch(1200)
         self._update_glow_timer()
         self._refresh_toon_stats_labels()
         if not any(self.keep_alive_enabled):
@@ -2123,6 +2274,7 @@ class MultitoonTab(QWidget):
     def shutdown(self):
         self._stop_keep_alive()
         self.refresh_timer.stop()
+        self._toon_fetch_timer.stop()
         self._glow_timer.stop()
         self._bar_timer.stop()
         for badge in self.slot_badges:
