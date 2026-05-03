@@ -16,3 +16,4 @@ dist/
 
 # === AppDir — ignore the binary, keep metadata ===
 AppDir/usr/
+
