@@ -919,7 +919,7 @@ class LaunchTab(QWidget):
             sync_state = card.get("sync_state", "active")
             card["status_dot"].set_state(sync_state)
         elif state == LoginState.IDLE:
-            card["status_dot"].set_color(self._theme_colors()["border_light"], pulse=False)
+            card["status_dot"].set_color(self._c()["border_light"], pulse=False)
         else:
             pulse = state in (LoginState.LOGGING_IN, LoginState.LAUNCHING)
             card["status_dot"].set_color(color, pulse=pulse)
