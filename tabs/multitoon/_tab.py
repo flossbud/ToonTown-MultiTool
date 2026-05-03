@@ -2251,6 +2251,13 @@ class MultitoonTab(QWidget):
                 if not self._keep_alive_running:
                     break
 
+                # Master flag re-check: if the user opted out while we were
+                # sleeping, skip this cycle. _suspend_keep_alive will stop
+                # the thread soon after; this is defense in depth so at most
+                # one in-flight burst can leak.
+                if not self._keep_alive_globally_enabled():
+                    continue
+
                 now = time.monotonic()
                 normal_delay = self._get_keep_alive_delay()
                 
