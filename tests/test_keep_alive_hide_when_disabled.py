@@ -343,3 +343,51 @@ def test_compact_collapse_animation_hides_widgets_at_end(qapp):
     )
     # Stretch returned to 0
     assert middle.stretch(0) == 0
+
+
+def test_compact_animation_reversal_stops_old_animations(qapp):
+    """Calling _animate_keep_alive_visibility a second time mid-flight
+    should stop the first animations and start new ones."""
+    from tabs.multitoon_tab import MultitoonTab
+    from PySide6.QtCore import QAbstractAnimation
+
+    sm = _FakeSettingsManager({"keep_alive_enabled": False})
+    tab = MultitoonTab(settings_manager=sm, window_manager=_FakeWindowManager())
+
+    # Start expand animation.
+    tab._compact._animate_keep_alive_visibility(True)
+    qapp.processEvents()
+    first_anims = list(tab._compact._ka_anims)
+    assert len(first_anims) > 0
+
+    # Mid-flight, request collapse — first animations should be stopped.
+    tab._compact._animate_keep_alive_visibility(False)
+    qapp.processEvents()
+
+    for a in first_anims:
+        # Stopped animations have state == Stopped (which is 0 in PySide6).
+        assert a.state() == QAbstractAnimation.State.Stopped, (
+            "previous animations should be stopped after reversal"
+        )
+
+
+def test_layout_swap_cancels_in_flight_animation(qapp):
+    """Switching layouts mid-animation should cancel in-flight animations
+    and apply the target state immediately."""
+    from tabs.multitoon_tab import MultitoonTab
+    from PySide6.QtCore import QAbstractAnimation
+
+    sm = _FakeSettingsManager({"keep_alive_enabled": False})
+    tab = MultitoonTab(settings_manager=sm, window_manager=_FakeWindowManager())
+
+    # Trigger expand animation in compact.
+    tab._compact._animate_keep_alive_visibility(True)
+    qapp.processEvents()
+
+    # Mid-animation, swap to full layout.
+    tab.set_layout_mode("full")
+    qapp.processEvents()
+
+    # All compact animations should be stopped.
+    for a in tab._compact._ka_anims:
+        assert a.state() == QAbstractAnimation.State.Stopped
