@@ -524,15 +524,39 @@ class SettingsTab(QWidget):
             self._refresh_keep_alive_row_enabled_state(True)
         else:
             # User cancelled — revert visual without re-firing toggled.
-            self.ka_master_row.blockSignals(True)
+            self.ka_master_row.toggle.blockSignals(True)
             self.ka_master_row.setChecked(False)
-            self.ka_master_row.blockSignals(False)
+            self.ka_master_row.toggle.blockSignals(False)
             # Setting was never written; ghost state stays as it was.
 
     def _show_keep_alive_warning_dialog(self) -> bool:
-        """Stub — replaced in Task 10. Returns True so this task's tests pass
-        with the toggle behaving as if confirmation always succeeds."""
-        return True
+        """Show the TOS-aware consent dialog. Returns True if the user
+        clicked Enable, False on Cancel/Esc/close.
+
+        Factored as a method so tests can monkeypatch it without invoking
+        the real modal."""
+        from PySide6.QtWidgets import QMessageBox
+
+        box = QMessageBox(self.window())
+        box.setIcon(QMessageBox.Warning)
+        box.setWindowTitle("Enable Keep-Alive?")
+        box.setText(
+            "Keep-Alive sends periodic input to your toon windows even while "
+            "you are not actively playing.\n\n"
+            "Both Toontown Rewritten and Corporate Clash prohibit automation "
+            "tools of this kind in their Terms of Service. Use of Keep-Alive — "
+            "particularly in public areas of either game — may result in "
+            "warnings, account suspension, or permanent termination at the "
+            "discretion of those games' moderation teams.\n\n"
+            "ToonTown MultiTool is provided as-is and accepts no responsibility "
+            "for any consequences arising from its use."
+        )
+        enable_btn = box.addButton("Enable", QMessageBox.DestructiveRole)
+        cancel_btn = box.addButton("Cancel", QMessageBox.RejectRole)
+        box.setDefaultButton(cancel_btn)
+        box.setEscapeButton(cancel_btn)
+        box.exec()
+        return box.clickedButton() is enable_btn
 
     def _build_advanced_group(self):
         self.advanced_group = SettingsGroup("Advanced")
