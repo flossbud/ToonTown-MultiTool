@@ -973,6 +973,9 @@ class MultitoonTab(QWidget):
                 pixmap.fill(Qt.transparent)
                 self._full.render(pixmap)
         finally:
+            # Cancel any in-flight KA animations BEFORE deactivate/populate —
+            # animation finish handlers may land on widgets being reparented.
+            self._cancel_keep_alive_animations()
             self._full.deactivate()
             self._compact.populate()
             self._stack.setCurrentWidget(current or self._compact)
@@ -982,6 +985,10 @@ class MultitoonTab(QWidget):
             # resets layout/sizing — not stylesheets — so without this the
             # polluted styles linger until something else triggers a refresh.
             self.refresh_theme()
+            # Reconcile KA widget visibility for the post-prewarm compact state.
+            # The Full UI populate may have left widgets in inconsistent state
+            # if master toggled mid-prewarm.
+            self._reconcile_keep_alive_visibility_instant()
 
     def _sync_full_cards_to_state(self) -> None:
         """Cheap sync of Full UI cards' active view + status state, without

@@ -391,3 +391,35 @@ def test_layout_swap_cancels_in_flight_animation(qapp):
     # All compact animations should be stopped.
     for a in tab._compact._ka_anims:
         assert a.state() == QAbstractAnimation.State.Stopped
+
+
+def test_prewarm_calls_cancel_animations_and_reconcile(qapp, monkeypatch):
+    """prewarm_full_layout's finally block must call _cancel_keep_alive_animations
+    and _reconcile_keep_alive_visibility_instant — symmetric with set_layout_mode."""
+    from tabs.multitoon_tab import MultitoonTab
+    from PySide6.QtCore import QSize
+
+    sm = _FakeSettingsManager({"keep_alive_enabled": False})
+    tab = MultitoonTab(settings_manager=sm, window_manager=_FakeWindowManager())
+
+    cancel_called = []
+    reconcile_called = []
+    monkeypatch.setattr(
+        tab, "_cancel_keep_alive_animations",
+        lambda: cancel_called.append(True),
+    )
+    monkeypatch.setattr(
+        tab, "_reconcile_keep_alive_visibility_instant",
+        lambda: reconcile_called.append(True),
+    )
+
+    # prewarm_full_layout requires self._mode == "compact"
+    tab._mode = "compact"
+    tab.prewarm_full_layout(size=QSize(1280, 812), include_active=True)
+
+    assert cancel_called == [True], (
+        "prewarm should call _cancel_keep_alive_animations"
+    )
+    assert reconcile_called == [True], (
+        "prewarm should call _reconcile_keep_alive_visibility_instant"
+    )
