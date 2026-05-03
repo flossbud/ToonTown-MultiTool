@@ -140,6 +140,36 @@ def test_init_visibility_master_on_shows_ka_widgets(qapp):
         )
 
 
+def test_middle_stretches_are_opposites(qapp):
+    """ka_group and addStretch must have OPPOSITE stretch factors so they don't
+    split the middle layout's leftover space. When ka_group is 1 (master ON),
+    addStretch must be 0 (and vice versa). Anything else makes ka_group share
+    the row width with the spacer, shrinking it from its pre-feature size."""
+    from tabs.multitoon_tab import MultitoonTab
+
+    # Master ON: ka_group=1, addStretch=0 (ka_group fills middle).
+    sm_on = _FakeSettingsManager({"keep_alive_enabled": True})
+    tab_on = MultitoonTab(settings_manager=sm_on, window_manager=_FakeWindowManager())
+    for i in range(4):
+        middle = tab_on._compact._card_slots[i]["middle"]
+        assert middle.stretch(0) == 1, f"slot {i}: ka_group stretch must be 1 when ON"
+        assert middle.stretch(1) == 0, (
+            f"slot {i}: addStretch must be 0 when ON (was {middle.stretch(1)}); "
+            f"otherwise it competes with ka_group and shrinks the frame"
+        )
+
+    # Master OFF: ka_group=0, addStretch=1 (addStretch fills, ka_group is chat-only).
+    sm_off = _FakeSettingsManager({"keep_alive_enabled": False})
+    tab_off = MultitoonTab(settings_manager=sm_off, window_manager=_FakeWindowManager())
+    for i in range(4):
+        middle = tab_off._compact._card_slots[i]["middle"]
+        assert middle.stretch(0) == 0, f"slot {i}: ka_group stretch must be 0 when OFF"
+        assert middle.stretch(1) == 1, (
+            f"slot {i}: addStretch must be 1 when OFF (was {middle.stretch(1)}); "
+            f"otherwise selector won't be pinned to the right edge"
+        )
+
+
 def test_setting_change_does_not_alter_visibility_when_tab_hidden(qapp, monkeypatch):
     """Toggling master while MultitoonTab is hidden must NOT change widget
     visibility (deferred until showEvent). Thread state still changes."""

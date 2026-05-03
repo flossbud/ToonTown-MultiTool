@@ -234,13 +234,19 @@ class _CompactLayout(QWidget):
 
     def _set_keep_alive_collapsed(self, collapsed: bool) -> None:
         """Flip ka_group's stretch factor in each card's middle layout.
-        collapsed=True  → stretch 0 (frame sizes to chat-only natural width)
-        collapsed=False → stretch 1 (frame fills the row)"""
-        target_stretch = 0 if collapsed else 1
+        collapsed=True  → ka_group=0, addStretch=1 (frame chat-only, spacer fills)
+        collapsed=False → ka_group=1, addStretch=0 (frame fills, spacer collapsed)
+
+        ka_group and addStretch must always be opposites — both at stretch 1
+        would split the middle layout's leftover space, shrinking ka_group to
+        roughly half of its pre-feature size."""
+        ka_stretch = 0 if collapsed else 1
+        spacer_stretch = 1 if collapsed else 0
         for slot in self._card_slots:
             middle = slot["middle"]
-            # ka_group is at index 0 of middle.
-            middle.setStretch(0, target_stretch)
+            # ka_group is at index 0; addStretch is at index 1.
+            middle.setStretch(0, ka_stretch)
+            middle.setStretch(1, spacer_stretch)
             middle.invalidate()
 
     def _animate_keep_alive_visibility(self, target_visible: bool) -> None:
@@ -283,8 +289,11 @@ class _CompactLayout(QWidget):
             )
 
             if target_visible:
-                # Expand: ka_group must claim layout space first.
+                # Expand: ka_group must claim layout space first. Spacer goes
+                # to 0 so ka_group gets all of middle's leftover (otherwise
+                # they'd split it 50/50 and shrink the frame).
                 middle.setStretch(0, 1)
+                middle.setStretch(1, 0)
                 # Make widgets visible with opacity 0 so they can fade in.
                 ka_btn.setVisible(True)
                 ka_bar.setVisible(True)
@@ -379,7 +388,9 @@ class _CompactLayout(QWidget):
                 def make_collapse_done(group, mid, target_w):
                     def _done():
                         group.setFixedWidth(target_w)
+                        # ka_group stretch 0, addStretch absorbs leftover.
                         mid.setStretch(0, 0)
+                        mid.setStretch(1, 1)
                     return _done
                 width_anim.finished.connect(
                     make_collapse_done(ka_group, middle, chat_only_width)
