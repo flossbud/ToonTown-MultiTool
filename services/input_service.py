@@ -685,13 +685,6 @@ class InputService(QObject):
         self._set_chat_active(False)
         self._phantom_reset()
 
-    def send_keep_alive_key(self, key):
-        keysym = self._resolve_keysym(key) or key
-        for win_id in self.window_manager.get_window_ids():
-            self._send_via_backend("keydown", win_id, keysym)
-            time.sleep(0.05)
-            self._send_via_backend("keyup", win_id, keysym)
-
     def send_keep_alive_to_window(self, win_id, key, modifiers=None):
         """Send a single keep-alive keypress to a specific window."""
         keysym = self._resolve_keysym(key) or key
