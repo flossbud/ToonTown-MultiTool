@@ -2205,6 +2205,15 @@ class MultitoonTab(QWidget):
             "1 min": 60, "3 min": 180, "5 min": 300, "10 min": 600
         }.get(delay_str, 60)
 
+    def _keep_alive_globally_enabled(self) -> bool:
+        """Return True iff the user has opted in to Keep-Alive via Settings.
+        Gates per-toon button availability, toggle_keep_alive, and the
+        keep-alive thread loop."""
+        return bool(
+            self.settings_manager
+            and self.settings_manager.get("keep_alive_enabled", False)
+        )
+
     def _run_keep_alive_loop(self):
         try:
             last_normal_fire = 0.0
