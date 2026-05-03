@@ -6,6 +6,7 @@ when the user is focused on a different application.
 
 import sys
 import queue
+import threading
 from PySide6.QtCore import QObject, Signal, Qt, QMetaObject, Q_ARG
 from pynput import keyboard
 
@@ -29,6 +30,13 @@ if sys.platform == "win32":
         106: "KP_Multiply", 107: "KP_Add", 109: "KP_Subtract",
         110: "KP_Decimal", 111: "KP_Divide",
     })
+
+
+def _join_quietly(listener):
+    try:
+        listener.join(timeout=2.0)
+    except Exception:
+        pass
 
 
 class HotkeyManager(QObject):
@@ -83,15 +91,23 @@ class HotkeyManager(QObject):
             self.is_listening = True
 
     def _stop_listener(self):
-        if self.is_listening and self.listener:
-            self.listener.stop()
-            try:
-                self.listener.join(timeout=2.0)
-            except Exception:
-                pass
-            self.listener = None
-            self.is_listening = False
-            self.pressed_keys.clear()
+        if not self.is_listening or not self.listener:
+            return
+        # _on_active_window_changed runs on the GUI thread via a Qt queued
+        # connection from WindowManager's poll thread. listener.join blocks
+        # for up to its timeout while pynput's X record session tears down,
+        # which freezes the UI on every focus-out. Join in a background
+        # thread so the GUI thread is unblocked immediately.
+        listener = self.listener
+        self.listener = None
+        self.is_listening = False
+        self.pressed_keys.clear()
+        listener.stop()
+        threading.Thread(
+            target=lambda: _join_quietly(listener),
+            daemon=True,
+            name="hotkey-listener-cleanup",
+        ).start()
 
     def normalize_key(self, key):
         # Check vk FIRST for numpad keys: on X11 a numpad key may have both
