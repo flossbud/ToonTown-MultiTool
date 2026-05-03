@@ -1411,7 +1411,24 @@ class MultitoonTab(QWidget):
 
     def _apply_keep_alive_btn_style(self, index, c):
         ka_btn = self.keep_alive_buttons[index]
+        if not self._keep_alive_globally_enabled():
+            ka_btn.setEnabled(False)
+            ka_btn.setToolTip(
+                "Keep-Alive is disabled. Enable it in Settings → Keep-Alive."
+            )
+            ka_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {c['btn_disabled']};
+                    color: {c['text_disabled']};
+                    border: none; border-radius: 6px;
+                }}
+            """)
+            bar = self.ka_progress_bars[index] if index < len(self.ka_progress_bars) else None
+            if bar:
+                bar.set_fill_color(c.get('text_muted', '#888888'))
+            return
         ka_btn.setEnabled(True)
+        ka_btn.setToolTip("Toggle keep-alive for this toon")
         is_rf = getattr(self, 'rapid_fire_enabled', [False]*4)[index]
         bar = self.ka_progress_bars[index] if index < len(self.ka_progress_bars) else None
         if self.keep_alive_enabled[index]:
