@@ -893,6 +893,9 @@ class MultitoonTab(QWidget):
         self.update_service_button_style()
         self.update_status_label()
 
+        # Apply initial KA widget visibility based on master setting.
+        self._init_keep_alive_visibility()
+
     def set_layout_mode(self, mode: str) -> None:
         if mode == self._mode:
             return
@@ -2272,6 +2275,21 @@ class MultitoonTab(QWidget):
             self.settings_manager
             and self.settings_manager.get("keep_alive_enabled", False)
         )
+
+    def _init_keep_alive_visibility(self) -> None:
+        """One-shot initial-paint helper: set per-toon KA widget visibility
+        and the compact ka_group stretch factor to match the current master
+        flag. Called once at the end of build_ui. Subsequent visibility
+        changes are owned by the animation completion handlers."""
+        target_visible = self._keep_alive_globally_enabled()
+        for i in range(4):
+            if i < len(self.keep_alive_buttons):
+                self.keep_alive_buttons[i].setVisible(target_visible)
+            if i < len(self.ka_progress_bars):
+                self.ka_progress_bars[i].setVisible(target_visible)
+        # Compact: flip ka_group's stretch factor in its middle layout.
+        if hasattr(self, "_compact"):
+            self._compact._set_keep_alive_collapsed(not target_visible)
 
     def _run_keep_alive_loop(self):
         try:

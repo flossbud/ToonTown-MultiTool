@@ -231,3 +231,14 @@ class _CompactLayout(QWidget):
         slot["middle"].addStretch(1)
         slot["ctrl_row"].addLayout(slot["middle"], 1)
         slot["ctrl_row"].addWidget(self._tab.set_selectors[i])
+
+    def _set_keep_alive_collapsed(self, collapsed: bool) -> None:
+        """Flip ka_group's stretch factor in each card's middle layout.
+        collapsed=True  → stretch 0 (frame sizes to chat-only natural width)
+        collapsed=False → stretch 1 (frame fills the row)"""
+        target_stretch = 0 if collapsed else 1
+        for slot in self._card_slots:
+            middle = slot["middle"]
+            # ka_group is at index 0 of middle.
+            middle.setStretch(0, target_stretch)
+            middle.invalidate()
