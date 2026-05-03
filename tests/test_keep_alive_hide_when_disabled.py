@@ -287,3 +287,59 @@ def test_full_ui_animation_fades_opacity(qapp):
     assert selector.x() == pos_before, (
         f"selector x should be unchanged in Full UI animation; was {pos_before}, now {selector.x()}"
     )
+
+
+def test_compact_animation_drives_ka_group_fixed_width(qapp):
+    """Compact's animation should drive ka_group.setFixedWidth via
+    QVariantAnimation. After expand animation completes, ka_group's
+    fixed-width is cleared (set to QWIDGETSIZE_MAX) so stretch takes over."""
+    from PySide6.QtCore import QVariantAnimation
+    from tabs.multitoon_tab import MultitoonTab
+
+    sm = _FakeSettingsManager({"keep_alive_enabled": False})
+    tab = MultitoonTab(settings_manager=sm, window_manager=_FakeWindowManager())
+
+    # Trigger expand via Compact's method directly.
+    tab._compact._animate_keep_alive_visibility(True)
+    qapp.processEvents()
+
+    # During animation, _ka_anims should contain at least one QVariantAnimation
+    # (the width animation) per slot.
+    assert hasattr(tab._compact, "_ka_anims")
+    width_anims = [a for a in tab._compact._ka_anims if isinstance(a, QVariantAnimation)]
+    assert len(width_anims) >= 4, (
+        f"expected at least 4 QVariantAnimation instances (one per slot); got {len(width_anims)}"
+    )
+
+
+def test_compact_collapse_animation_hides_widgets_at_end(qapp):
+    """After a collapse animation completes (driven via processEvents),
+    ka_btn and ka_bar should be hidden, and ka_group's stretch in middle
+    should be 0."""
+    from tabs.multitoon_tab import MultitoonTab
+    import time
+
+    sm = _FakeSettingsManager({"keep_alive_enabled": True})
+    tab = MultitoonTab(settings_manager=sm, window_manager=_FakeWindowManager())
+
+    # Master OFF→trigger collapse.
+    tab._compact._animate_keep_alive_visibility(False)
+
+    # Drive event loop until all collapse animations finish (max 500 ms wall clock).
+    # Both ka_btn hidden AND stretch==0 must be satisfied (width anim finishes ~80ms
+    # after widgets hide, so we keep processing events past the hide event).
+    middle = tab._compact._card_slots[0]["middle"]
+    deadline = time.monotonic() + 0.5
+    while time.monotonic() < deadline:
+        qapp.processEvents()
+        if tab.keep_alive_buttons[0].isHidden() and middle.stretch(0) == 0:
+            break
+
+    assert tab.keep_alive_buttons[0].isHidden() is True, (
+        "ka_btn should be hidden after collapse animation completes"
+    )
+    assert tab.ka_progress_bars[0].isHidden() is True, (
+        "ka_bar should be hidden after collapse animation completes"
+    )
+    # Stretch returned to 0
+    assert middle.stretch(0) == 0
