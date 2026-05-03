@@ -1858,6 +1858,11 @@ class MultitoonTab(QWidget):
             self._ka_cycle_event.set()
 
     def toggle_keep_alive(self, index):
+        if not self._keep_alive_globally_enabled():
+            # Master flag is off — suppress toggle. The button should already
+            # be visually disabled; this guards against programmatic callers
+            # like load_profile or hotkey-driven paths.
+            return
         self.keep_alive_enabled[index] = not self.keep_alive_enabled[index]
         self.keep_alive_buttons[index].setChecked(self.keep_alive_enabled[index])
 
