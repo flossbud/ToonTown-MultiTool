@@ -468,7 +468,8 @@ class SettingsTab(QWidget):
             master_initial,
             sublabel=(
                 "Periodically sends a keystroke to keep toons logged in. "
-                "Disabled by default — see warning before enabling."
+                "Disabled by default — see warning before enabling. "
+                "Your previous per-toon Keep-Alive selections are preserved."
             ),
         )
         self.ka_master_row.toggled.connect(self._on_keep_alive_master_toggle)
