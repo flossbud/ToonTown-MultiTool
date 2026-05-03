@@ -140,6 +140,24 @@ def test_init_visibility_master_on_shows_ka_widgets(qapp):
         )
 
 
+def test_ka_group_margins_are_symmetric(qapp):
+    """ka_group's internal content margins should be horizontally symmetric so
+    that when only chat is visible (master OFF), the frame wraps chat neatly
+    with equal padding on left and right. Asymmetric margins (e.g., 4 left, 6
+    right) leave a visible 2px gap on one side."""
+    from tabs.multitoon_tab import MultitoonTab
+    sm = _FakeSettingsManager({"keep_alive_enabled": False})
+    tab = MultitoonTab(settings_manager=sm, window_manager=_FakeWindowManager())
+    for i in range(4):
+        ka_group = tab._compact._card_slots[i]["ka_group"]
+        margins = ka_group.layout().contentsMargins()
+        assert margins.left() == margins.right(), (
+            f"slot {i}: ka_group horizontal margins must be symmetric "
+            f"(L={margins.left()}, R={margins.right()}); otherwise the frame "
+            f"looks asymmetric around chat in the master-OFF state"
+        )
+
+
 def test_middle_stretches_are_opposites(qapp):
     """ka_group and addStretch must have OPPOSITE stretch factors so they don't
     split the middle layout's leftover space. When ka_group is 1 (master ON),
