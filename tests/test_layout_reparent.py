@@ -8,6 +8,8 @@ under the visible layout. If populate is broken, Full UI renders empty.
 Run via pytest with QT_QPA_PLATFORM=offscreen (set in fixture if needed)."""
 
 import os
+import threading
+import time
 import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -145,6 +147,111 @@ def test_swap_back_to_compact_reparents_again(tab):
     assert not _is_descendant_of(tab.toggle_service_button, tab._full)
     for i in range(4):
         assert _is_descendant_of(tab.toon_buttons[i], tab._compact)
+
+
+def test_prewarm_full_layout_restores_compact_ownership(qapp, tab):
+    """Hidden Full warmup must not visibly switch modes or steal widgets."""
+    tab.prewarm_full_layout()
+    qapp.processEvents()
+
+    assert tab._mode == "compact"
+    assert tab._stack.currentWidget() is tab._compact
+    assert "inactive" in tab._full_layout_prewarmed_states
+    assert _is_descendant_of(tab.toggle_service_button, tab._compact)
+    for i in range(4):
+        assert _is_descendant_of(tab.toon_buttons[i], tab._compact)
+        assert _is_descendant_of(tab.slot_badges[i], tab._compact)
+
+
+def test_prewarm_full_layout_can_warm_active_cards(qapp, tab):
+    """Service-start warmup should cover the active-card path too."""
+    tab.window_manager.ttr_window_ids = ["fake-window-id"]
+    tab.service_running = True
+    tab.enabled_toons[0] = True
+
+    tab.prewarm_full_layout(include_active=True)
+    qapp.processEvents()
+
+    assert tab._mode == "compact"
+    assert "active" in tab._full_layout_prewarmed_states
+    assert _is_descendant_of(tab.toon_buttons[0], tab._compact)
+    assert _is_descendant_of(tab.slot_badges[0], tab._compact)
+
+
+def test_automatic_prewarm_skips_active_cards(qapp, tab):
+    """Automatic warmups must not block the first service-start toon click."""
+    tab.window_manager.ttr_window_ids = ["fake-window-id"]
+    tab.service_running = True
+    tab.enabled_toons[0] = True
+
+    tab.prewarm_full_layout()
+    qapp.processEvents()
+
+    assert tab._mode == "compact"
+    assert not hasattr(tab, "_full_layout_prewarmed_states")
+    assert _is_descendant_of(tab.toon_buttons[0], tab._compact)
+
+
+def test_duplicate_toon_data_fetch_is_deduped(monkeypatch, tab):
+    """Service start and window update can ask for the same toon data at once."""
+    from tabs.multitoon import _tab as multitoon_tab
+    from utils.game_registry import GameRegistry
+
+    calls = []
+    release = threading.Event()
+
+    def fake_get_toon_names_by_slot(num_slots, current_window_ids=None):
+        calls.append((num_slots, list(current_window_ids or [])))
+        assert release.wait(timeout=2.0)
+        return (
+            ["Toon A", "Toon B"],
+            ["dna-a", "dna-b"],
+            [None, None],
+            [None, None],
+            [None, None],
+            [None, None],
+        )
+
+    monkeypatch.setattr(multitoon_tab, "get_toon_names_by_slot", fake_get_toon_names_by_slot)
+    monkeypatch.setattr(
+        GameRegistry.instance(),
+        "get_game_for_window",
+        lambda wid: "ttr",
+    )
+
+    tab.window_manager.ttr_window_ids = ["wid-1", "wid-2"]
+
+    tab._fetch_names_if_enabled(2)
+    deadline = time.monotonic() + 1.0
+    while len(calls) < 1 and time.monotonic() < deadline:
+        time.sleep(0.01)
+    tab._fetch_names_if_enabled(2)
+
+    assert len(calls) == 1
+
+    release.set()
+    deadline = time.monotonic() + 1.0
+    while tab._toon_fetch_inflight_keys and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+    tab._fetch_names_if_enabled(2)
+    assert len(calls) == 2
+
+
+def test_scheduled_toon_data_fetch_coalesces(qapp, monkeypatch, tab):
+    calls = []
+    tab.window_manager.ttr_window_ids = ["wid-1", "wid-2"]
+
+    def fake_fetch(num_slots):
+        calls.append(num_slots)
+
+    monkeypatch.setattr(tab, "_fetch_names_if_enabled", fake_fetch)
+
+    tab.schedule_toon_data_fetch(0)
+    tab.schedule_toon_data_fetch(0)
+    qapp.processEvents()
+
+    assert calls == [2]
 
 
 def test_set_layout_mode_idempotent(tab):
@@ -638,3 +745,124 @@ def test_full_active_card_reference_ratios_hold_across_sizes(qapp, tab):
         assert abs(base_value - large[key]) < 0.01, (
             f"{key} drifted: base={base_value:.4f}, large={large[key]:.4f}"
         )
+
+
+def test_inactive_to_active_relayouts_against_current_card_size(qapp, tab):
+    """Activating a card after it was resized while inactive must re-layout content.
+
+    Regression for the maximize-then-start-service bug: _FullToonCard.resizeEvent
+    is gated on _is_active, so resizes that arrive while the card is showing the
+    inactive view leave _scale stale. When service later flips set_active(True),
+    the active root showed with stale (small) positioning in a now-large card.
+    """
+    tab.set_layout_mode("full")
+    card = tab._full._cards[0]
+    # Card is inactive (no service running, no toon assigned).
+    assert not card._is_active
+    # Simulate the post-maximize cascade: card geometry grows to a real size while
+    # still inactive. resizeEvent fires but _layout_active_content is gated out.
+    card.resize(1000, 570)
+    qapp.processEvents()
+
+    # Now service starts and the card is activated. _scale must reflect 1000x570,
+    # not the stale value from initial populate.
+    card.set_active(True)
+    qapp.processEvents()
+
+    expected_scale = min(1000 / card._REF_CARD_W, 570 / card._REF_CARD_H)
+    assert abs(card._scale - expected_scale) < 0.05, (
+        f"scale should track card size after activation; expected ~{expected_scale:.2f}, got {card._scale:.2f}"
+    )
+    portrait_h = tab.slot_badges[0].height()
+    assert portrait_h > 168, (
+        f"portrait should grow above reference 168 in a 1000x570 card; got {portrait_h}"
+    )
+
+
+def test_toggle_keep_alive_refreshes_status_dot_to_orange_pulse(qapp, tab):
+    """Toggling keep-alive on a disabled-but-detected toon must flip the status
+    dot to the keep_alive state (orange + pulsing).
+
+    Regression: the widget-build refactor dropped apply_visual_state(index) from
+    toggle_keep_alive, so the dot stayed in its previous state after the toggle.
+    """
+    # Slot 0: window detected, toon disabled. Establish baseline state.
+    tab.input_service = object()
+    tab.window_manager.ttr_window_ids = ["fake-window-id"]
+    tab.enabled_toons[0] = False
+    tab.apply_visual_state(0)
+    qapp.processEvents()
+
+    _, status_dot = tab.toon_labels[0]
+    assert not status_dot._pulsing, "baseline disabled dot should not pulse"
+
+    # Now flip keep-alive on. Dot should become keep_alive (orange + pulsing).
+    tab.toggle_keep_alive(0)
+    qapp.processEvents()
+
+    assert status_dot._pulsing, "status dot should pulse when keep-alive is on"
+    assert status_dot._color.name() == "#ff9900", (
+        f"status dot should be orange (#ff9900) for keep_alive state; got {status_dot._color.name()}"
+    )
+
+
+def _setup_full_slot0(tab):
+    """Common setup: full mode, slot 0 has a window, service running."""
+    tab.set_layout_mode("full")
+    tab.input_service = object()
+    tab.window_manager.ttr_window_ids = ["fake-window-id"]
+    tab.service_running = True
+
+
+def test_full_status_indicator_red_when_disabled(qapp, tab):
+    """Detected window + toon disabled + no keep-alive → red dot, no pulse."""
+    _setup_full_slot0(tab)
+    tab.enabled_toons[0] = False
+    tab.keep_alive_enabled[0] = False
+    tab.apply_visual_state(0)
+    qapp.processEvents()
+
+    card = tab._full._cards[0]
+    assert card._status_state == "disabled", (
+        f"expected status_state 'disabled'; got {card._status_state!r}"
+    )
+    assert card._status_indicator._dot_color_active.name() == "#e84141", (
+        f"disabled dot should be red (#e84141); got {card._status_indicator._dot_color_active.name()}"
+    )
+    assert card._pulse_anim is None, "disabled state should not pulse"
+
+
+def test_full_status_indicator_orange_pulse_when_keep_alive(qapp, tab):
+    """Detected window + toon disabled + keep-alive on → orange dot, pulsing."""
+    _setup_full_slot0(tab)
+    tab.enabled_toons[0] = False
+    tab.keep_alive_enabled[0] = True
+    tab.apply_visual_state(0)
+    qapp.processEvents()
+
+    card = tab._full._cards[0]
+    assert card._status_state == "keep_alive", (
+        f"expected status_state 'keep_alive'; got {card._status_state!r}"
+    )
+    assert card._status_indicator._dot_color_active.name() == "#ff9900", (
+        f"keep_alive dot should be orange (#ff9900); got {card._status_indicator._dot_color_active.name()}"
+    )
+    assert card._pulse_anim is not None, "keep_alive state should pulse"
+
+
+def test_full_status_indicator_green_pulse_when_active(qapp, tab):
+    """Detected window + toon enabled + service running → green dot, pulsing."""
+    _setup_full_slot0(tab)
+    tab.enabled_toons[0] = True
+    tab.keep_alive_enabled[0] = False
+    tab.apply_visual_state(0)
+    qapp.processEvents()
+
+    card = tab._full._cards[0]
+    assert card._status_state == "active", (
+        f"expected status_state 'active'; got {card._status_state!r}"
+    )
+    assert card._status_indicator._dot_color_active.name() == "#56c856", (
+        f"active dot should be green (#56c856); got {card._status_indicator._dot_color_active.name()}"
+    )
+    assert card._pulse_anim is not None, "active state should pulse"
