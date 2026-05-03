@@ -2319,19 +2319,22 @@ class MultitoonTab(QWidget):
         self._animate_keep_alive_visibility(target_visible)
 
     def _animate_keep_alive_visibility(self, target_visible: bool) -> None:
-        """Orchestrator: dispatch the visibility change to both layouts'
-        animation methods. The hidden layout's widgets are still set
-        (no animation), so state stays consistent across layout swaps.
-
-        In this task this is an *instant* setVisible. Tasks 4 and 5 replace
-        the layout-specific implementations with real animations."""
-        for i in range(4):
-            if i < len(self.keep_alive_buttons):
-                self.keep_alive_buttons[i].setVisible(target_visible)
-            if i < len(self.ka_progress_bars):
-                self.ka_progress_bars[i].setVisible(target_visible)
-        if hasattr(self, "_compact"):
-            self._compact._set_keep_alive_collapsed(not target_visible)
+        """Orchestrator: dispatch the visibility change to the active layout's
+        animation method. The inactive layout's widgets are set instantly
+        (no animation), so state stays consistent across layout swaps."""
+        # The active layout drives the animation.
+        if self._mode == "full" and hasattr(self, "_full") and self._full is not None:
+            self._full._animate_keep_alive_visibility(target_visible)
+        else:
+            # Compact path will be implemented in Task 5; for now fall through
+            # to instant setVisible so initial paint and Compact still work.
+            for i in range(4):
+                if i < len(self.keep_alive_buttons):
+                    self.keep_alive_buttons[i].setVisible(target_visible)
+                if i < len(self.ka_progress_bars):
+                    self.ka_progress_bars[i].setVisible(target_visible)
+            if hasattr(self, "_compact"):
+                self._compact._set_keep_alive_collapsed(not target_visible)
 
     def _run_keep_alive_loop(self):
         try:

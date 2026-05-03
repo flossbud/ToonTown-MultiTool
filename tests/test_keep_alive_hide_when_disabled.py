@@ -256,3 +256,34 @@ def test_apply_visual_state_does_not_touch_ka_widget_visibility(qapp):
                 f"apply_visual_state changed ka_bar visibility (master={master_state}, "
                 f"window_available={window_available})"
             )
+
+
+def test_full_ui_animation_fades_opacity(qapp):
+    """Full UI's animation method should drive opacity, not position."""
+    from PySide6.QtCore import QPropertyAnimation
+    from tabs.multitoon_tab import MultitoonTab
+
+    sm = _FakeSettingsManager({"keep_alive_enabled": False})
+    tab = MultitoonTab(settings_manager=sm, window_manager=_FakeWindowManager())
+
+    # Switch to Full UI so its animation method is the active one.
+    tab.set_layout_mode("full")
+    qapp.processEvents()
+
+    # Selector x position before — capture for comparison.
+    selector = tab.set_selectors[0]
+    pos_before = selector.x()
+
+    # Trigger expand animation via Full UI's method.
+    tab._full._animate_keep_alive_visibility(True)
+    qapp.processEvents()
+
+    # The animation should have started with widgets visible but starting
+    # at opacity 0 (effect in place, animating up).
+    ka_btn = tab.keep_alive_buttons[0]
+    assert ka_btn.isHidden() is False, "ka_btn should be visible during expand animation"
+
+    # Selector x must NOT have moved (no position changes in Full UI).
+    assert selector.x() == pos_before, (
+        f"selector x should be unchanged in Full UI animation; was {pos_before}, now {selector.x()}"
+    )
