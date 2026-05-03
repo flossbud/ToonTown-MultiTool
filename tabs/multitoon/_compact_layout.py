@@ -100,6 +100,15 @@ class _CompactLayout(QWidget):
         ctrl_row = QHBoxLayout()
         ctrl_row.setSpacing(8)
 
+        # Nested middle layout: ka_group | addStretch
+        # The middle wrapper exists so we can flip ka_group's stretch factor
+        # between 1 (master ON, fills row) and 0 (master OFF, sizes to chat
+        # alone) — and have addStretch absorb the leftover when ka_group is
+        # collapsed, keeping selector pinned at the right edge.
+        middle = QHBoxLayout()
+        middle.setSpacing(0)
+        middle.setContentsMargins(0, 0, 0, 0)
+
         ka_group = QFrame()
         ka_group.setObjectName("ka_group")
         ka_group_layout = QHBoxLayout(ka_group)
@@ -114,6 +123,7 @@ class _CompactLayout(QWidget):
             "top_row": top_row,
             "stats_row": stats_row,
             "ctrl_row": ctrl_row,
+            "middle": middle,
             "ka_group": ka_group,
             "ka_group_layout": ka_group_layout,
         })
@@ -209,12 +219,15 @@ class _CompactLayout(QWidget):
         slot["stats_row"].addWidget(self._tab.bean_labels[i])
         slot["top_row"].addLayout(slot["stats_row"])
 
-        # ctrl_row: toon_button | ka_group(chat ka_btn ka_bar) | set_selector
+        # ctrl_row: toon_button | middle (ka_group + addStretch) | set_selector
         clear_layout(slot["ctrl_row"])
+        clear_layout(slot["middle"])
         clear_layout(slot["ka_group_layout"])
         slot["ctrl_row"].addWidget(self._tab.toon_buttons[i])
         slot["ka_group_layout"].addWidget(self._tab.chat_buttons[i])
         slot["ka_group_layout"].addWidget(self._tab.keep_alive_buttons[i])
         slot["ka_group_layout"].addWidget(self._tab.ka_progress_bars[i], 1)
-        slot["ctrl_row"].addWidget(slot["ka_group"], 1)
+        slot["middle"].addWidget(slot["ka_group"], 1)
+        slot["middle"].addStretch(1)
+        slot["ctrl_row"].addLayout(slot["middle"], 1)
         slot["ctrl_row"].addWidget(self._tab.set_selectors[i])
