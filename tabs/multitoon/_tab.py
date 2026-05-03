@@ -2137,6 +2137,16 @@ class MultitoonTab(QWidget):
         if key in ("keep_alive_delay", "keep_alive_action"):
             if any(self.keep_alive_enabled):
                 self._reset_ka_cycle()
+        elif key == "keep_alive_enabled":
+            if value:
+                # Master flipped on. Refresh per-toon visuals (they were ghosted)
+                # and start the thread if any per-toon flags are set.
+                for i in range(4):
+                    self.apply_visual_state(i)
+                if any(self.keep_alive_enabled):
+                    self._start_keep_alive()
+            else:
+                self._suspend_keep_alive()
 
     # ── Sleep inhibitor ───────────────────────────────────────────────────
 

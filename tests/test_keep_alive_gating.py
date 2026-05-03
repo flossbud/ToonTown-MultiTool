@@ -202,3 +202,41 @@ def test_long_press_no_op_when_button_disabled(qapp):
     # the press/release machinery and call _on_long_press directly).
     btn._on_long_press()
     assert btn.is_rapid_fire is False
+
+
+def test_setting_change_off_invokes_suspend(tab, monkeypatch):
+    """When SettingsManager changes keep_alive_enabled to False,
+    _on_setting_changed must call _suspend_keep_alive."""
+    suspend_called = []
+    monkeypatch.setattr(
+        tab, "_suspend_keep_alive", lambda: suspend_called.append(True)
+    )
+    tab.settings_manager.set("keep_alive_enabled", True)  # initial state
+    tab._on_setting_changed("keep_alive_enabled", False)
+    assert suspend_called == [True]
+
+
+def test_setting_change_on_resumes_per_toon_flags(tab, monkeypatch):
+    """When the master flips on with per-toon flags set, the thread starts."""
+    started = []
+    monkeypatch.setattr(
+        tab, "_start_keep_alive", lambda: started.append(True)
+    )
+    tab.window_manager.ttr_window_ids = ["wid_a"]
+    tab.service_running = True
+    tab.keep_alive_enabled = [True, False, False, False]
+    tab.settings_manager.set("keep_alive_enabled", True)
+    tab._on_setting_changed("keep_alive_enabled", True)
+    assert started == [True]
+
+
+def test_setting_change_on_no_start_when_no_per_toon_active(tab, monkeypatch):
+    """Master flips on but no per-toon flags set → thread NOT started."""
+    started = []
+    monkeypatch.setattr(
+        tab, "_start_keep_alive", lambda: started.append(True)
+    )
+    tab.keep_alive_enabled = [False, False, False, False]
+    tab.settings_manager.set("keep_alive_enabled", True)
+    tab._on_setting_changed("keep_alive_enabled", True)
+    assert started == []
