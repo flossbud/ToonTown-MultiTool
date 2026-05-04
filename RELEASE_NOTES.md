@@ -14,21 +14,22 @@ Major release adding opt-in Keep-Alive with TOS consent and a redesigned Multito
 - Subtle vertical gradient on the light-mode app background.
 - Wider default window (575px min width, 740px default height) to fit redesigned content.
 - Non-Multitoon tabs are now clamped and centered at 720px max width for better readability on wide windows.
-- Typography scale (`font_role`) added and migrated into the header.
 
 ---
 
 ### Bug Fixes
 
-- Fixed hotkey listener blocking the GUI on focus loss by joining the pynput listener off-thread.
-- Fixed launch-animation `RuntimeWarning` caused by a dead signal disconnect.
-- Fixed taskbar grouping by setting a stable Qt application identity.
-- Fixed status dot and Default button off-states to follow the active theme.
-- Fixed account-card outer frame transparency so corner wedges no longer show through.
-- Fixed cross-fade race where `layout_mode` was committed asynchronously.
-- Fixed Keep-Alive ka_group horizontal margins in chat-only Compact frame.
-- Fixed Full UI button and portrait sizing not resetting after a Full to Compact roundtrip.
-- Windows: the app icon now shows on the EXE.
+- Fixed the app freezing briefly when you switched focus to another window.
+- Fixed multiple windows of the app appearing as separate entries in the taskbar.
+- Fixed the status dot and Default button colors not updating with the active theme.
+- Fixed visible artifacts in the corners of account cards.
+- Fixed brief flicker when resizing between Compact and Full Multitoon layouts.
+- Fixed Keep-Alive widgets being misaligned in the chat-only Compact view.
+- Fixed buttons and portraits staying small after switching from Full UI back to Compact.
+- Removed a harmless warning that printed during launch.
+- Windows: the app launches significantly faster.
+- Windows: the app icon now shows correctly in the taskbar and title bar while the app is running.
+- Windows: the app icon now shows on the EXE in Explorer.
 - Windows: removed a brief console flash that appeared when detecting game windows.
 - Windows: fixed the app being blocked by Smart App Control on launch.
 
@@ -38,9 +39,11 @@ Major release adding opt-in Keep-Alive with TOS consent and a redesigned Multito
 
 | File | Platform |
 |------|----------|
-| `ToonTownMultiTool-v2.1.0-Windows-x86_64.exe` | Windows 10/11 |
+| `ToonTownMultiTool-v2.1.0-Windows-x86_64.zip` | Windows 10/11 |
 | `TTMultiTool-v2.1.0-Linux-x86_64.AppImage` | Linux (X11 / Wayland) |
 | `TTMultiTool-v2.1.0-Linux-x86_64.flatpak` | Linux Flatpak |
+
+> Windows: extract the zip anywhere and run `ToonTownMultiTool.exe` from inside the extracted folder.
 
 ---
 
