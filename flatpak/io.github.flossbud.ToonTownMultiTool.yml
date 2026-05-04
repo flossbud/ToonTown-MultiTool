@@ -15,6 +15,7 @@ finish-args:
   - --talk-name=org.kde.kwalletd5
   - --talk-name=org.kde.kwalletd6
   - --talk-name=org.freedesktop.Flatpak
+  - --talk-name=org.freedesktop.portal.Desktop
   - --filesystem=home
   - --filesystem=xdg-config/toontown_multitool:create
   - --filesystem=~/.var/app/com.toontownrewritten.Launcher:ro
