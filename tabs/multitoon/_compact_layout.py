@@ -233,6 +233,27 @@ class _CompactLayout(QWidget):
         slot["ctrl_row"].addLayout(slot["middle"], 1)
         slot["ctrl_row"].addWidget(self._tab.set_selectors[i])
 
+    def _collapsed_ka_group_width(self, slot_index: int) -> int:
+        """Width that ka_group must hold when KA is collapsed.
+
+        ka_group's row contains chat + help + (hidden ka + hidden bar). When
+        collapsed, only chat and help are visible, so the frame must be wide
+        enough to fit BOTH plus inter-widget spacing plus the layout's
+        contentsMargins. Counting only chat (the original formula) caused the
+        animation collapse path to crush chat and help together at ~40px.
+        """
+        chat_btn = self._tab.chat_buttons[slot_index]
+        help_btn = self._tab.help_buttons[slot_index]
+        layout = self._card_slots[slot_index]["ka_group"].layout()
+        margins = layout.contentsMargins()
+        return (
+            chat_btn.sizeHint().width()
+            + help_btn.sizeHint().width()
+            + layout.spacing()
+            + margins.left()
+            + margins.right()
+        )
+
     def _set_keep_alive_collapsed(self, collapsed: bool) -> None:
         """Flip ka_group's stretch factor in each card's middle layout.
         collapsed=True  → ka_group=0, addStretch=1 (frame chat-only, spacer fills)
@@ -279,15 +300,11 @@ class _CompactLayout(QWidget):
             ka_btn = self._tab.keep_alive_buttons[i]
             ka_bar = self._tab.ka_progress_bars[i]
 
-            # Compute target widths.
-            chat_btn = self._tab.chat_buttons[i]
-            chat_natural = chat_btn.sizeHint().width()
-            ka_group_margins = ka_group.layout().contentsMargins()
-            chat_only_width = (
-                chat_natural
-                + ka_group_margins.left()
-                + ka_group_margins.right()
-            )
+            # Width ka_group needs when collapsed (chat + help visible). See
+            # _collapsed_ka_group_width — formula must include the help
+            # button now that v2.1.2's discovery affordance occupies the slot
+            # alongside chat whenever KA is master-disabled.
+            chat_only_width = self._collapsed_ka_group_width(i)
 
             if target_visible:
                 # Expand: ka_group must claim layout space first. Spacer goes

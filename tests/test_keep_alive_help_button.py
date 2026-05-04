@@ -150,6 +150,49 @@ def test_clicking_dismiss_actually_closes_the_popover(qapp):
     assert not btn._popover.isVisible()
 
 
+def test_collapsed_ka_group_width_includes_help_button(qapp):
+    """The compact-layout collapse animation's terminal width must
+    accommodate BOTH chat and help buttons. Previously the formula only
+    counted chat + margins, so the animation collapsed ka_group to ~40px
+    while chat and help together need ~76px. Result: the two buttons
+    rendered crammed together after the user toggled KA off via the UI."""
+    from PySide6.QtWidgets import QFrame, QHBoxLayout, QPushButton
+    from tabs.multitoon._compact_layout import _CompactLayout
+
+    class StubTab:
+        pass
+
+    stub_tab = StubTab()
+    stub_tab.chat_buttons = []
+    stub_tab.help_buttons = []
+    for _ in range(4):
+        cb = QPushButton()
+        cb.setFixedWidth(32)
+        stub_tab.chat_buttons.append(cb)
+        hb = QPushButton()
+        hb.setFixedWidth(32)
+        stub_tab.help_buttons.append(hb)
+
+    ka_group = QFrame()
+    inner = QHBoxLayout(ka_group)
+    inner.setContentsMargins(4, 4, 4, 4)
+    inner.setSpacing(4)
+
+    class StubCompact:
+        pass
+
+    stub_layout = StubCompact()
+    stub_layout._tab = stub_tab
+    stub_layout._card_slots = [
+        {"ka_group": ka_group, "ka_group_layout": inner} for _ in range(4)
+    ]
+
+    bound = _CompactLayout._collapsed_ka_group_width.__get__(stub_layout)
+    width = bound(0)
+    # chat (32) + help (32) + inter-widget spacing (4) + margins (4+4 = 8) = 76
+    assert width >= 76, f"collapsed ka_group width {width} cannot fit chat + help"
+
+
 def test_help_button_visibility_is_inverse_of_keep_alive_widget(qapp):
     """When _reconcile_keep_alive_visibility_instant runs with master OFF,
     help buttons must be visible and KA buttons hidden; with master ON, the
