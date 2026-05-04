@@ -1,57 +1,31 @@
-## ToonTown MultiTool v2.1.0
+## ToonTown MultiTool v2.1.1
 
-Major release adding opt-in Keep-Alive with TOS consent and a redesigned Multitoon Full UI.
-
----
-
-### Improvements
-
-- New Keep-Alive opt-in system: master toggle in Settings gated behind a TOS-aware consent dialog, with per-toon selections preserved across master toggles.
-- Redesigned Multitoon Full UI: new aspect-ratio cards (7:4, max 1050px), centered control block, proportional content scaling, status indicator with pulse animation.
-- Cross-fade animation when Multitoon swaps between Compact and Full UI layouts.
-- Keep-Alive widget visibility now animates: opacity fade in Full UI, frame expand/collapse in Compact.
-- New theme palettes: cool slate light theme and charcoal-saturated dark theme, with AA-compliant accent button text.
-- Subtle vertical gradient on the light-mode app background.
-- Wider default window (575px min width, 740px default height) to fit redesigned content.
-- Non-Multitoon tabs are now clamped and centered at 720px max width for better readability on wide windows.
+Bug-fix release targeting Linux desktop integration on GNOME / Wayland.
 
 ---
 
 ### Bug Fixes
 
-- Fixed the app freezing briefly when you switched focus to another window.
-- Fixed multiple windows of the app appearing as separate entries in the taskbar.
-- Fixed the status dot and Default button colors not updating with the active theme.
-- Fixed visible artifacts in the corners of account cards.
-- Fixed brief flicker when resizing between Compact and Full Multitoon layouts.
-- Fixed Keep-Alive widgets being misaligned in the chat-only Compact view.
-- Fixed buttons and portraits staying small after switching from Full UI back to Compact.
-- Removed a harmless warning that printed during launch.
-- Windows: the app launches significantly faster.
-- Windows: the app icon now shows correctly in the taskbar and title bar while the app is running.
-- Windows: the app icon now shows on the EXE in Explorer.
-- Windows: removed a brief console flash that appeared when detecting game windows.
-- Windows: fixed the app being blocked by Smart App Control on launch.
+- Fixed the app hanging silently for several seconds before quitting on a fresh GNOME session, when the SecretService keyring was locked or hadn't been initialised yet. The diagnostic dump that triggered the hang now uses the same timed wrapper as the rest of the credential code, and runs after the keyring probe completes instead of before it.
+- Fixed the app, when launched on Linux from a pinned dash icon (Arch/AUR install), opening as a separate generic-icon entry instead of grouping under the pinned launcher. The .desktop file installed system-wide now matches the reverse-DNS app id (`io.github.flossbud.ToonTownMultiTool`) that Qt sets as the Wayland app_id and as WM_CLASS on X11.
+- Fixed "system" theme preference always picking light mode on GNOME, even when GNOME was set to prefer dark. The app now reads the desktop's `org.freedesktop.appearance.color-scheme` setting directly, with three independent fallback paths.
+- The app now re-themes live when you toggle dark/light mode at the OS level (Windows, macOS, GNOME-like Linux) — no restart required. Only applies when your in-app theme preference is "system"; explicit light/dark settings are not overridden.
+
+---
+
+### Internal
+
+- Theme detection refactored into a small chain (Qt styleHints → xdg-desktop-portal direct query → palette inspection) with a 1 s memoisation cache invalidated by OS-level change notifications, so per-paint cost stays at zero without sacrificing live updates.
+- AppDir desktop entry and icon basenames now match the reverse-DNS app id, so the AppImage build is consistent with the AUR and Flatpak builds.
 
 ---
 
 ### Downloads
 
 | File | Platform |
-|------|----------|
-| `ToonTownMultiTool-v2.1.0-Windows-x86_64.zip` | Windows 10/11 |
-| `TTMultiTool-v2.1.0-Linux-x86_64.AppImage` | Linux (X11 / Wayland) |
-| `TTMultiTool-v2.1.0-Linux-x86_64.flatpak` | Linux Flatpak |
+| ---- | -------- |
+| `TTMultiTool-v2.1.1-Linux-x86_64.AppImage` | Linux (any distro, no install) |
+| `TTMultiTool-v2.1.1-Linux-x86_64.flatpak` | Linux (Flatpak) |
+| `ToonTownMultiTool-v2.1.1-Windows-x86_64.zip` | Windows 10/11 |
 
-> Windows: extract the zip anywhere and run `ToonTownMultiTool.exe` from inside the extracted folder.
-
----
-
-### Running from Source
-
-```bash
-git clone https://github.com/flossbud/ToonTown-MultiTool.git
-cd ToonTown-MultiTool
-pip install -r requirements.txt
-python main.py
-```
+Arch users: install via AUR (`yay -S toontown-multitool` or your preferred helper). The AUR PKGBUILD must be bumped in lockstep — see `docs/superpowers/plans/2026-05-04-v2.1.1-review-followups.md` for the install-path changes required.
