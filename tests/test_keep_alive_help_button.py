@@ -63,3 +63,51 @@ def test_button_has_help_requested_signal(qapp):
     btn.help_requested.connect(lambda: received.append(True))
     btn.help_requested.emit()
     assert received == [True]
+
+
+def test_clicking_button_creates_popover(qapp):
+    from tabs.multitoon._keep_alive_help_button import KeepAliveHelpButton
+    btn = KeepAliveHelpButton()
+    # Lazy-create — popover starts None, exists after first show_popover call.
+    assert btn._popover is None
+    btn._ensure_popover()
+    assert btn._popover is not None
+
+
+def test_popover_contains_title_and_body_text(qapp):
+    from tabs.multitoon._keep_alive_help_button import KeepAliveHelpButton
+    btn = KeepAliveHelpButton()
+    btn._ensure_popover()
+    text = btn._popover_body_label.text() + " " + btn._popover_title_label.text()
+    assert "Keep-Alive" in text
+    assert "AFK" in text
+    assert "Terms of Service" in text
+    assert "Settings" in text
+
+
+def test_popover_has_two_buttons_with_correct_labels(qapp):
+    from tabs.multitoon._keep_alive_help_button import KeepAliveHelpButton
+    btn = KeepAliveHelpButton()
+    btn._ensure_popover()
+    assert btn._go_to_settings_button.text() == "Go to Settings"
+    assert btn._dismiss_button.text() == "Dismiss"
+
+
+def test_clicking_go_to_settings_emits_help_requested(qapp):
+    from tabs.multitoon._keep_alive_help_button import KeepAliveHelpButton
+    btn = KeepAliveHelpButton()
+    btn._ensure_popover()
+    received = []
+    btn.help_requested.connect(lambda: received.append(True))
+    btn._go_to_settings_button.click()
+    assert received == [True]
+
+
+def test_clicking_dismiss_closes_popover_without_signal(qapp):
+    from tabs.multitoon._keep_alive_help_button import KeepAliveHelpButton
+    btn = KeepAliveHelpButton()
+    btn._ensure_popover()
+    received = []
+    btn.help_requested.connect(lambda: received.append(True))
+    btn._dismiss_button.click()
+    assert received == []
