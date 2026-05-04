@@ -51,3 +51,42 @@ def test_desktop_file_name_override_uses_explicit_value():
         "os.environ", {"TTMT_DESKTOP_FILE_NAME": "custom-app-id"}, clear=True
     ):
         assert _select_desktop_file_name() == "custom-app-id"
+
+
+def test_returns_app_id_when_frozen_with_no_desktop_file_on_disk():
+    """PyInstaller AppImage / Windows EXE builds: the .desktop file is
+    bundled with the AppImage and not necessarily on the user's $XDG_DATA_DIRS
+    path. Trust the frozen state and return APP_DESKTOP_ID."""
+    import sys as _sys
+
+    def fake_isfile(_):
+        return False
+
+    with (
+        patch("sys.platform", "linux"),
+        patch("os.path.isfile", side_effect=fake_isfile),
+        patch.dict("os.environ", {"XDG_DATA_DIRS": "/usr/share"}, clear=True),
+        patch.object(_sys, "frozen", True, create=True),
+    ):
+        assert _select_desktop_file_name() == APP_DESKTOP_ID
+
+
+def test_returns_app_id_for_flatpak_install_when_no_desktop_file_on_disk():
+    """Flatpak: FLATPAK_ID is set to APP_DESKTOP_ID by the runtime. The
+    .desktop file lives inside the sandbox at /app/share/applications,
+    not on the host XDG_DATA_DIRS, so on-disk lookup may miss. Trust
+    the FLATPAK_ID match and return APP_DESKTOP_ID."""
+
+    def fake_isfile(_):
+        return False
+
+    with (
+        patch("sys.platform", "linux"),
+        patch("os.path.isfile", side_effect=fake_isfile),
+        patch.dict(
+            "os.environ",
+            {"XDG_DATA_DIRS": "/usr/share", "FLATPAK_ID": APP_DESKTOP_ID},
+            clear=True,
+        ),
+    ):
+        assert _select_desktop_file_name() == APP_DESKTOP_ID
