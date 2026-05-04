@@ -61,7 +61,11 @@ class KeepAliveHelpButton(QToolButton):
         self.clicked.connect(self._on_clicked)
 
     def _icon_size(self) -> QSize:
-        return QSize(14, 14)
+        # Larger than the chat/KA button icons (14px). The "?"-in-circle glyph
+        # has lower visual density than chat's filled-bubble or KA's filled
+        # mouse, so 14px reads as smaller-than-it-is. 18px gets the help icon
+        # to roughly the same perceived footprint as the neighbouring icons.
+        return QSize(18, 18)
 
     def refresh_theme(self, theme_colors: dict):
         """Update the icon stroke colour for the active theme.
