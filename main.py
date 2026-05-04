@@ -231,6 +231,9 @@ class MultiToonTool(QMainWindow):
         self.hotkey_manager.start()
 
         self.multitoon_tab.dot_state_changed.connect(self.launch_tab.update_dot_state)
+        self.multitoon_tab.keep_alive_help_requested.connect(
+            self._on_keep_alive_help_requested
+        )
 
         self.log("[Debug] ToonTown MultiTool launched.")
         self.multitoon_tab.prewarm_full_layout(QSize(W_FULL, H_FULL - 48), include_active=True)
@@ -565,6 +568,13 @@ class MultiToonTool(QMainWindow):
     def on_clear_credentials_requested(self):
         self.launch_tab.clear_all_credentials()
         self.log("[Credentials] All stored credentials have been cleared from Keyring and session memory.")
+
+    @Slot()
+    def _on_keep_alive_help_requested(self):
+        """User clicked 'Go to Settings' in the Keep-Alive help popover.
+        Navigate to the Settings tab and highlight the Keep-Alive group."""
+        self.nav_select(3)  # Settings tab index — see _build_sidebar nav_items
+        self.settings_tab.highlight_keep_alive_group()
 
     # ── Profiles ────────────────────────────────────────────────────────────
 
