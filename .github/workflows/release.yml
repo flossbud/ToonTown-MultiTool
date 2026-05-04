@@ -21,16 +21,16 @@ jobs:
       - name: Build EXE
         run: pyinstaller --noconfirm ToonTownMultiTool.spec
 
-      - name: Rename EXE with version
+      - name: Package onedir as zip
         shell: pwsh
         run: |
           $tag = "${{ github.ref_name }}"
-          Copy-Item "dist\ToonTownMultiTool.exe" "ToonTownMultiTool-$tag-Windows-x86_64.exe"
+          Compress-Archive -Path "dist\ToonTownMultiTool\*" -DestinationPath "ToonTownMultiTool-$tag-Windows-x86_64.zip"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: windows-exe
-          path: ToonTownMultiTool-*.exe
+          name: windows-zip
+          path: ToonTownMultiTool-*.zip
 
   build-linux:
     runs-on: ubuntu-22.04
@@ -109,6 +109,6 @@ jobs:
           name: ToonTown MultiTool ${{ github.ref_name }}
           body_path: RELEASE_NOTES.md
           files: |
-            windows-exe/ToonTownMultiTool-*.exe
+            windows-zip/ToonTownMultiTool-*.zip
             linux-appimage/TTMultiTool-*.AppImage
             linux-flatpak/TTMultiTool-*.flatpak
