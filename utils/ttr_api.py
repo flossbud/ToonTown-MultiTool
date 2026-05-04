@@ -191,26 +191,16 @@ def _build_port_to_window_id(current_window_ids: list, active_ports: set | None 
         try:
             import sys
             if sys.platform == "win32":
-                # CREATE_NO_WINDOW prevents a console flash when the parent .exe
-                # is built windowed (PyInstaller console=False).
-                out = subprocess.check_output(
-                    ["netstat", "-ano"],
-                    stderr=subprocess.DEVNULL,
-                    timeout=5,
-                    creationflags=subprocess.CREATE_NO_WINDOW,
-                ).decode()
-                for line in out.splitlines():
-                    if "LISTENING" in line:
-                        parts = line.split()
-                        if len(parts) >= 5:
-                            try:
-                                port_str = parts[1].split(":")[-1]
-                                pid = int(parts[-1])
-                                port = int(port_str)
-                                if TTR_API_PORT_START <= port <= TTR_API_PORT_END:
-                                    port_to_host_pid[port] = pid
-                            except ValueError:
-                                continue
+                # psutil instead of netstat: no subprocess, no console flash, and
+                # avoids the Smart App Control heuristic that flagged netstat -ano
+                # + CREATE_NO_WINDOW in the unsigned PyInstaller build.
+                import psutil
+                for conn in psutil.net_connections(kind="inet"):
+                    if conn.status != psutil.CONN_LISTEN or conn.laddr is None or conn.pid is None:
+                        continue
+                    port = conn.laddr.port
+                    if TTR_API_PORT_START <= port <= TTR_API_PORT_END:
+                        port_to_host_pid[port] = conn.pid
             else:
                 from utils.host_spawn import host_check_output
                 out = host_check_output(["ss", "-tlnp"], stderr=subprocess.DEVNULL, timeout=5).decode()
