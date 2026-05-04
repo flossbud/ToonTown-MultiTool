@@ -240,9 +240,14 @@ class MultiToonTool(QMainWindow):
         self._animate_launch()
 
     def _capture_multitool_window_id(self):
-        # xdotool is X11-only; on Windows, multitool_window_id is unused
-        # (broadcast-while-self-focused isn't wired up on the Win32 backend).
+        # xdotool is X11-only; the gate is on the Qt platform, not the
+        # session type. With the default QT_QPA_PLATFORM=xcb on Linux,
+        # Wayland-session users actually run under XWayland, which xdotool
+        # can drive. Skipping when XDG_SESSION_TYPE=wayland would silently
+        # break those users' broadcast-while-self-focused capture.
         if sys.platform != "linux":
+            return
+        if os.environ.get("QT_QPA_PLATFORM", "").lower() == "wayland":
             return
         try:
             win_id = subprocess.check_output(
