@@ -367,7 +367,10 @@ class LaunchTab(QWidget):
 
         self._build_ui()
         self.refresh_theme()
-        self._log_keyring_backend_state("startup")
+        # Diagnostics are logged from _on_keyring_probe_complete after the
+        # timed/threaded probe has finished. Calling them here would hit
+        # format_backend_diagnostics on the main thread before app.exec(),
+        # which can hang on a locked/uninitialized SecretService collection.
         self._start_keyring_probe()
 
     # ── Helpers ────────────────────────────────────────────────────────────
