@@ -39,6 +39,11 @@ class KeepAliveHelpButton(QToolButton):
         return QSize(14, 14)
 
     def refresh_theme(self, theme_colors: dict):
-        """Update the icon stroke colour for the active theme."""
+        """Update the icon stroke colour for the active theme.
+
+        Re-bakes the icon at the current iconSize() (NOT the constructor's
+        initial _icon_size()) so a theme change in Full UI doesn't downsample
+        the icon to 14px and let Qt upscale it to the slot's display rect.
+        """
         color = QColor(theme_colors.get("text_secondary", "#bbbbbb"))
-        self.setIcon(make_help_icon(self._icon_size().width(), color))
+        self.setIcon(make_help_icon(self.iconSize().width(), color))
