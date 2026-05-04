@@ -5,10 +5,17 @@ import sys
 if sys.platform != "win32":
     _session_type = os.getenv("XDG_SESSION_TYPE", "").lower()
     _force_wayland = os.getenv("TTMT_USE_WAYLAND") == "1"
-    # GNOME 50 / Wayland can leave Qt's startup cursor stuck compositor-side.
-    # This app already depends on X11/XWayland-oriented Linux window/input
-    # plumbing, so prefer Qt's xcb platform unless native Wayland is requested
-    # explicitly for diagnostics.
+    # Default the Linux Qt platform to xcb (XWayland on Wayland sessions).
+    # This app's input/window plumbing — services.window_manager (xdotool),
+    # services.hotkey_manager (pynput), and the broadcast-while-self-focused
+    # capture in MultiToonTool._capture_multitool_window_id — is X11-only.
+    # Until those subsystems gain native Wayland equivalents (libei,
+    # xdg-foreign, etc.), running under XWayland is the correct platform.
+    # A side effect of this default is dodging a GNOME 50 native-Wayland
+    # bug where the launch cursor sticks compositor-side; that was the
+    # symptom that surfaced the platform-default question, but the reason
+    # to default to xcb stands on its own. TTMT_USE_WAYLAND=1 opts back
+    # into native Wayland for diagnostics.
     os.environ.setdefault(
         "QT_QPA_PLATFORM",
         "wayland" if _force_wayland and _session_type == "wayland" else "xcb",
