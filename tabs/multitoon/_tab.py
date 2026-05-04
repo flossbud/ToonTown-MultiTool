@@ -664,6 +664,7 @@ class MultitoonTab(QWidget):
     _toon_data_merge_ready = Signal(list, list, list, list, list, list, list)
     keep_alive_updated = Signal()
     dot_state_changed = Signal(int, str)
+    keep_alive_help_requested = Signal()
 
     def __init__(self, logger=None, settings_manager=None, keymap_manager=None, profile_manager=None, window_manager=None):
         super().__init__()
@@ -682,6 +683,7 @@ class MultitoonTab(QWidget):
         self.chat_buttons = []
         self.keep_alive_buttons = []
         self.ka_progress_bars = []
+        self.help_buttons = []
         self.ka_groups = []
         self.set_selectors = []     # replaces movement_dropdowns
         self.toon_cards = []
@@ -860,6 +862,11 @@ class MultitoonTab(QWidget):
 
             ka_bar = SmoothProgressBar()
             self.ka_progress_bars.append(ka_bar)
+
+            from tabs.multitoon._keep_alive_help_button import KeepAliveHelpButton
+            help_btn = KeepAliveHelpButton()
+            help_btn.help_requested.connect(self.keep_alive_help_requested.emit)
+            self.help_buttons.append(help_btn)
 
             selector = SetSelectorWidget(self.keymap_manager)
             selector.setFixedHeight(28)
@@ -1234,6 +1241,9 @@ class MultitoonTab(QWidget):
             """)
         for ka_bar in self.ka_progress_bars:
             ka_bar.set_bg_color(c['border_muted'])
+
+        for help_btn in self.help_buttons:
+            help_btn.refresh_theme(c)
 
         self.apply_all_visual_states()
 
