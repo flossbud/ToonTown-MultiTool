@@ -111,3 +111,40 @@ def test_clicking_dismiss_closes_popover_without_signal(qapp):
     btn.help_requested.connect(lambda: received.append(True))
     btn._dismiss_button.click()
     assert received == []
+
+
+def test_ensure_popover_is_idempotent(qapp):
+    """Calling _ensure_popover() twice must return the same QMenu instance —
+    Task 3's lazy-create pattern is the mechanism Tasks 4-9 rely on for the
+    button to be cheap to instantiate before first click."""
+    from tabs.multitoon._keep_alive_help_button import KeepAliveHelpButton
+    btn = KeepAliveHelpButton()
+    btn._ensure_popover()
+    first = btn._popover
+    btn._ensure_popover()
+    second = btn._popover
+    assert first is second
+
+
+def test_refresh_theme_restyles_existing_popover(qapp):
+    """If the popover has been created, refresh_theme must restyle it so a
+    runtime theme toggle re-renders the popover correctly without forcing a
+    re-show."""
+    from tabs.multitoon._keep_alive_help_button import KeepAliveHelpButton
+    btn = KeepAliveHelpButton()
+    btn._ensure_popover()
+    sentinel_bg = "#deadbe"
+    btn.refresh_theme({"bg_card": sentinel_bg})
+    assert sentinel_bg.lower() in btn._popover.styleSheet().lower()
+
+
+def test_clicking_dismiss_actually_closes_the_popover(qapp):
+    """Tighter version of the dismiss-without-signal test: also verify the
+    popover is closed, not just that no signal fired. Catches the regression
+    where _on_dismiss_clicked stops calling close() on the popover."""
+    from tabs.multitoon._keep_alive_help_button import KeepAliveHelpButton
+    btn = KeepAliveHelpButton()
+    btn._ensure_popover()
+    btn._popover.show()
+    btn._dismiss_button.click()
+    assert not btn._popover.isVisible()
