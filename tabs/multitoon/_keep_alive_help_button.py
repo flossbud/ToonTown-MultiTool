@@ -79,6 +79,11 @@ class KeepAliveHelpButton(QToolButton):
             self._apply_popover_styles(theme_colors)
 
     def _on_clicked(self):
+        # Guard against rapid re-clicks: if the popover is already visible, do
+        # nothing. Without this, clicking again restarts the fade-in animation
+        # and the menu visibly snaps to opacity 0 before fading back in.
+        if self._popover is not None and self._popover.isVisible():
+            return
         self._ensure_popover()
         # Anchor below the button. QMenu.popup() is non-blocking; click-outside
         # and Esc dismiss are handled natively.
@@ -91,6 +96,11 @@ class KeepAliveHelpButton(QToolButton):
         if self._popover is not None:
             return
         menu = QMenu(self)
+        # Required so the QSS border-radius actually clips the menu corners on
+        # composited Linux desktops; QMenu is a top-level Qt::Popup window and
+        # without translucent-background the platform window is rectangular,
+        # leaving square corners that the rounded paint sits inside.
+        menu.setAttribute(Qt.WA_TranslucentBackground, True)
         menu.setAccessibleName("About Keep-Alive")
         action = QWidgetAction(menu)
         widget = self._build_popover_widget()
@@ -129,7 +139,10 @@ class KeepAliveHelpButton(QToolButton):
         self._go_to_settings_button = QPushButton("Go to Settings")
         self._go_to_settings_button.setObjectName("ka_help_go_to_settings_button")
         self._go_to_settings_button.setCursor(Qt.PointingHandCursor)
-        self._go_to_settings_button.setDefault(True)
+        # Note: setDefault(True) does nothing inside a QMenu — the default-button
+        # mechanism is owned by QDialog. Enter cannot activate the primary button
+        # without subclassing QMenu and overriding keyPressEvent. The styling
+        # below conveys "this is the primary action" visually instead.
         self._go_to_settings_button.clicked.connect(self._on_go_to_settings_clicked)
         button_row.addWidget(self._go_to_settings_button)
 
@@ -197,9 +210,9 @@ class KeepAliveHelpButton(QToolButton):
             QPushButton#ka_help_go_to_settings_button {{
                 background: {accent};
                 color: {on_accent};
-                border: 1px solid {accent};
+                border: 2px solid {accent};
                 border-radius: 6px;
-                padding: 6px 14px;
+                padding: 5px 13px;
                 font-weight: 600;
             }}
             QPushButton#ka_help_go_to_settings_button:hover {{
@@ -207,20 +220,20 @@ class KeepAliveHelpButton(QToolButton):
                 border-color: {accent_hover};
             }}
             QPushButton#ka_help_go_to_settings_button:focus {{
-                border: 2px solid {accent_hover};
+                border-color: {accent_hover};
             }}
             QPushButton#ka_help_dismiss_button {{
                 background: transparent;
                 color: {text_primary};
-                border: 1px solid {border};
+                border: 2px solid {border};
                 border-radius: 6px;
-                padding: 6px 14px;
+                padding: 5px 13px;
             }}
             QPushButton#ka_help_dismiss_button:hover {{
                 background: {btn_hover};
             }}
             QPushButton#ka_help_dismiss_button:focus {{
-                border: 2px solid {accent};
+                border-color: {accent};
             }}
             """
         )
