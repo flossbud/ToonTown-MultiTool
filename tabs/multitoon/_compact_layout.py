@@ -225,6 +225,7 @@ class _CompactLayout(QWidget):
         clear_layout(slot["ka_group_layout"])
         slot["ctrl_row"].addWidget(self._tab.toon_buttons[i])
         slot["ka_group_layout"].addWidget(self._tab.chat_buttons[i])
+        slot["ka_group_layout"].addWidget(self._tab.help_buttons[i])
         slot["ka_group_layout"].addWidget(self._tab.keep_alive_buttons[i])
         slot["ka_group_layout"].addWidget(self._tab.ka_progress_bars[i], 1)
         slot["middle"].addWidget(slot["ka_group"], 1)
