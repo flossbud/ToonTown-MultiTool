@@ -2321,6 +2321,10 @@ class MultitoonTab(QWidget):
                 self.keep_alive_buttons[i].setVisible(target_visible)
             if i < len(self.ka_progress_bars):
                 self.ka_progress_bars[i].setVisible(target_visible)
+            if i < len(self.help_buttons):
+                # Help button is the inverse of the KA button — surfaces only
+                # when the user could opt in.
+                self.help_buttons[i].setVisible(not target_visible)
         # Compact: flip ka_group's stretch factor in its middle layout.
         if hasattr(self, "_compact"):
             self._compact._set_keep_alive_collapsed(not target_visible)
@@ -2348,7 +2352,14 @@ class MultitoonTab(QWidget):
     def _animate_keep_alive_visibility(self, target_visible: bool) -> None:
         """Orchestrator: dispatch the visibility change to the active layout's
         animation method. The inactive layout's widgets are set instantly
-        (no animation), so state stays consistent across layout swaps."""
+        (no animation), so state stays consistent across layout swaps.
+
+        Help buttons snap-flip (no fade) at the start of the animation so the
+        user sees a single clean swap: KA fades in as the help button vanishes,
+        and vice versa."""
+        for i in range(4):
+            if i < len(getattr(self, "help_buttons", [])):
+                self.help_buttons[i].setVisible(not target_visible)
         if self._mode == "full" and hasattr(self, "_full") and self._full is not None:
             self._full._animate_keep_alive_visibility(target_visible)
         elif hasattr(self, "_compact"):
@@ -2387,6 +2398,11 @@ class MultitoonTab(QWidget):
             if i < len(self.ka_progress_bars):
                 self.ka_progress_bars[i].setGraphicsEffect(None)
                 self.ka_progress_bars[i].setVisible(target_visible)
+            if i < len(getattr(self, "help_buttons", [])):
+                # Help button visibility is the inverse of the KA button. No
+                # graphics effect to clear; the help button never participates
+                # in the KA animation path.
+                self.help_buttons[i].setVisible(not target_visible)
         if hasattr(self, "_compact"):
             self._compact._set_keep_alive_collapsed(not target_visible)
 
