@@ -571,11 +571,12 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setWindowIcon(QIcon.fromTheme("io.github.flossbud.ToonTownMultiTool"))
     app.setStyle(NoFocusProxyStyle(app.style()))
-    from PySide6.QtGui import QFont, QFontDatabase
-    QFontDatabase.addApplicationFont("/usr/share/fonts/google-noto-color-emoji-fonts/Noto-COLRv1.ttf")
-    _f = app.font()
-    _f.setFamilies([_f.family(), "Noto Color Emoji"])
-    app.setFont(_f)
+    if sys.platform == "linux":
+        from PySide6.QtGui import QFont, QFontDatabase
+        QFontDatabase.addApplicationFont("/usr/share/fonts/google-noto-color-emoji-fonts/Noto-COLRv1.ttf")
+        _f = app.font()
+        _f.setFamilies([_f.family(), "Noto Color Emoji"])
+        app.setFont(_f)
     settings = SettingsManager()
     apply_theme(app, resolve_theme(settings))
     window = MultiToonTool()
