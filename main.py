@@ -5,6 +5,28 @@ import sys
 if sys.platform != "win32":
     os.environ.setdefault("QT_QPA_PLATFORM",
         "wayland" if os.getenv("XDG_SESSION_TYPE") == "wayland" else "xcb")
+# On GNOME-like Linux desktops, prefer the xdg-desktop-portal Qt platform
+# theme so Qt's styleHints().colorScheme() reflects the OS appearance
+# setting. Without this, Qt returns ColorScheme.Light regardless of the
+# GNOME org.freedesktop.appearance.color-scheme, and "system" theme
+# detection always picks light. We narrow this to GNOME-likes (vs. all
+# Linux) so XFCE / MATE / sway users — who never set QT_QPA_PLATFORMTHEME
+# — don't unexpectedly get portal-style file dialogs and icons. On those
+# desktops the direct portal D-Bus query in utils.theme_manager still
+# picks up dark mode without changing any other Qt behavior.
+if sys.platform == "linux":
+    try:
+        from PySide6.QtCore import QLibraryInfo
+        from utils.theme_manager import should_set_xdg_portal_platformtheme
+        _plugin_path = os.path.join(
+            QLibraryInfo.path(QLibraryInfo.LibraryPath.PluginsPath),
+            "platformthemes",
+            "libqxdgdesktopportal.so",
+        )
+        if should_set_xdg_portal_platformtheme(_plugin_path):
+            os.environ.setdefault("QT_QPA_PLATFORMTHEME", "xdgdesktopportal")
+    except Exception:
+        pass
 if getattr(sys, "frozen", False):
     import certifi
     os.environ.setdefault("SSL_CERT_FILE", certifi.where())
@@ -39,6 +61,7 @@ from utils.theme_manager import (
     make_nav_gamepad, make_nav_power,
     make_nav_keyboard, make_nav_gear, make_nav_terminal, make_nav_bookmark,
     make_hint_icon, make_info_icon, font_role,
+    SystemThemeWatcher,
 )
 
 
@@ -148,6 +171,10 @@ class MultiToonTool(QMainWindow):
 
         self.settings_tab.debug_visibility_changed.connect(self.toggle_debug_tab_visibility)
         self.settings_tab.theme_changed.connect(self.on_theme_changed)
+        self._system_theme_watcher = SystemThemeWatcher(self)
+        self._system_theme_watcher.system_theme_changed.connect(
+            self._on_system_color_scheme_changed
+        )
         logging_on = self.settings_manager.get("show_debug_tab", False)
         self.debug_tab.logging_enabled = logging_on
         self.multitoon_tab.input_service.logging_enabled = logging_on
@@ -513,6 +540,13 @@ class MultiToonTool(QMainWindow):
         theme = resolve_theme(self.settings_manager)
         apply_theme(QApplication.instance(), theme)
         self._apply_full_theme()
+
+    @Slot(str)
+    def _on_system_color_scheme_changed(self, _value: str):
+        # Re-theme only when the user has chosen "system"; explicit "light"
+        # or "dark" should not get overwritten by an OS toggle.
+        if self.settings_manager.get("theme", "system") == "system":
+            self.on_theme_changed()
 
     def on_input_backend_changed(self):
         if self.multitoon_tab.service_running:

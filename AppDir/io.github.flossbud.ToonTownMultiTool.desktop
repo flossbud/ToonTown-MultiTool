@@ -3,6 +3,10 @@ Type=Application
 Name=ToonTown MultiTool
 GenericName=Toontown Multibox Controller
 Comment=Multitoon controller for Toontown Rewritten and Corporate Clash
+# Exec is "ToonTownMultiTool" here (PyInstaller binary inside the AppImage).
+# The AUR-installed copy of this file at the repo root uses
+# Exec=toontown-multitool, which is the /usr/bin/ shell wrapper the AUR
+# PKGBUILD writes.
 Exec=ToonTownMultiTool
 Icon=io.github.flossbud.ToonTownMultiTool
 Terminal=false
