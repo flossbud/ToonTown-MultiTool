@@ -162,13 +162,20 @@ def test_popover_body_has_no_em_dashes(qapp):
 
 
 def test_collapsed_ka_group_width_includes_help_button(qapp):
-    """The compact-layout collapse animation's terminal width must
-    accommodate BOTH chat and help buttons. Previously the formula only
-    counted chat + margins, so the animation collapsed ka_group to ~40px
-    while chat and help together need ~76px. Result: the two buttons
-    rendered crammed together after the user toggled KA off via the UI."""
+    """The compact-layout collapse animation's terminal width must match
+    Qt's natural sizeHint for "ka_group containing only chat + help" — i.e.
+    the constrained 32×32 footprint of each button plus spacing + margins.
+
+    Previously the formula only counted chat + margins, smushing chat and
+    help to ~40px. A first fix used raw sizeHint() which under-allocates
+    when setFixedSize forces a width LARGER than the widget's preferred
+    sizeHint (KeepAliveHelpButton: sizeHint=26, fixed=32) — clipping the
+    help button on the right by 4px. The clamping formula matches Qt's
+    own sizeHint computation regardless of preferred-vs-constrained gap.
+    """
     from PySide6.QtWidgets import QFrame, QHBoxLayout, QPushButton
     from tabs.multitoon._compact_layout import _CompactLayout
+    from tabs.multitoon._keep_alive_help_button import KeepAliveHelpButton
 
     class StubTab:
         pass
@@ -178,16 +185,22 @@ def test_collapsed_ka_group_width_includes_help_button(qapp):
     stub_tab.help_buttons = []
     for _ in range(4):
         cb = QPushButton()
+        cb.setFixedHeight(32)
         cb.setFixedWidth(32)
         stub_tab.chat_buttons.append(cb)
-        hb = QPushButton()
-        hb.setFixedWidth(32)
-        stub_tab.help_buttons.append(hb)
+        # Real KeepAliveHelpButton — its QToolButton sizeHint is 26 but
+        # setFixedSize forces 32. Test must use the actual class to catch
+        # the clamping regression.
+        stub_tab.help_buttons.append(KeepAliveHelpButton())
 
     ka_group = QFrame()
     inner = QHBoxLayout(ka_group)
     inner.setContentsMargins(4, 4, 4, 4)
     inner.setSpacing(4)
+    # Add chat + help to the layout so Qt-natural sizeHint computation has
+    # the same children to inspect.
+    inner.addWidget(stub_tab.chat_buttons[0])
+    inner.addWidget(stub_tab.help_buttons[0])
 
     class StubCompact:
         pass
@@ -200,8 +213,16 @@ def test_collapsed_ka_group_width_includes_help_button(qapp):
 
     bound = _CompactLayout._collapsed_ka_group_width.__get__(stub_layout)
     width = bound(0)
-    # chat (32) + help (32) + inter-widget spacing (4) + margins (4+4 = 8) = 76
-    assert width >= 76, f"collapsed ka_group width {width} cannot fit chat + help"
+    # Qt's natural sizeHint for ka_group with just chat + help visible.
+    # Our formula must match (or exceed) it; falling short clips help.
+    qt_natural = ka_group.sizeHint().width()
+    assert width >= qt_natural, (
+        f"collapsed ka_group width {width} < Qt's natural sizeHint {qt_natural}; "
+        "help button will be clipped on the right"
+    )
+    # Also sanity-check the absolute value: chat(32) + help(32) + spacing(4)
+    # + margins(4+4=8) = 76
+    assert width >= 76, f"width {width} cannot fit two 32px buttons + spacing + margins"
 
 
 def test_help_button_visibility_is_inverse_of_keep_alive_widget(qapp):
