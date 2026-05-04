@@ -665,6 +665,18 @@ class SettingsTab(QWidget):
         if group is None:
             return
 
+        # If a previous pulse is still running, stop it first. Otherwise the
+        # old animation's `finished` lambda would fire `setGraphicsEffect(None)`
+        # on the new effect, killing the new pulse before it starts.
+        prior = getattr(self, "_keepalive_highlight_anim", None)
+        if prior is not None:
+            try:
+                prior.stop()
+            except RuntimeError:
+                # Animation's underlying C++ object may already be deleted
+                # via DeleteWhenStopped from a fully-finished previous run.
+                pass
+
         # Best-effort scroll: walk up to the nearest QScrollArea and ensure
         # the group is visible. If no scroll area is found, skip silently.
         widget = group
