@@ -148,3 +148,50 @@ def test_clicking_dismiss_actually_closes_the_popover(qapp):
     btn._popover.show()
     btn._dismiss_button.click()
     assert not btn._popover.isVisible()
+
+
+def test_help_button_visibility_is_inverse_of_keep_alive_widget(qapp):
+    """When _reconcile_keep_alive_visibility_instant runs with master OFF,
+    help buttons must be visible and KA buttons hidden; with master ON, the
+    inverse. Verifies the visibility-reconciliation extension that Tasks 6-7
+    rely on for the slot-layout swap to work end-to-end."""
+    from unittest.mock import MagicMock
+    from PySide6.QtWidgets import QPushButton, QWidget
+    from tabs.multitoon._keep_alive_help_button import KeepAliveHelpButton
+    from tabs.multitoon._tab import MultitoonTab
+
+    # Build a stub that has just the attributes _reconcile_keep_alive_visibility_instant
+    # touches: keep_alive_buttons, ka_progress_bars, help_buttons, and _compact.
+    # We avoid standing up the full MultitoonTab to keep this a unit test.
+    class Stub:
+        pass
+
+    stub = Stub()
+    parent = QWidget()
+    stub.keep_alive_buttons = [QPushButton(parent) for _ in range(4)]
+    stub.ka_progress_bars = [QWidget(parent) for _ in range(4)]
+    stub.help_buttons = [KeepAliveHelpButton(parent) for _ in range(4)]
+    stub._compact = MagicMock()
+    stub._keep_alive_globally_enabled = lambda: False
+
+    # Show all widgets so isHidden() reflects setVisible() state. Off-screen
+    # parent suffices for offscreen QPA.
+    parent.show()
+    for w in stub.keep_alive_buttons + stub.ka_progress_bars + stub.help_buttons:
+        w.show()
+
+    bound = MultitoonTab._reconcile_keep_alive_visibility_instant.__get__(stub)
+    bound()
+
+    for help_btn in stub.help_buttons:
+        assert not help_btn.isHidden(), "help buttons must be visible when KA master is disabled"
+    for ka_btn in stub.keep_alive_buttons:
+        assert ka_btn.isHidden(), "keep-alive buttons must be hidden when KA master is disabled"
+
+    stub._keep_alive_globally_enabled = lambda: True
+    bound()
+
+    for help_btn in stub.help_buttons:
+        assert help_btn.isHidden(), "help buttons must be hidden when KA master is enabled"
+    for ka_btn in stub.keep_alive_buttons:
+        assert not ka_btn.isHidden(), "keep-alive buttons must be visible when KA master is enabled"
