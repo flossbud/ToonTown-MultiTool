@@ -150,6 +150,17 @@ def test_clicking_dismiss_actually_closes_the_popover(qapp):
     assert not btn._popover.isVisible()
 
 
+def test_popover_body_has_no_em_dashes(qapp):
+    """Em-dashes have been scrubbed from user-facing strings; ensure they
+    don't sneak back into the popover. Project policy: en-dash and em-dash
+    are not used in messaging."""
+    from tabs.multitoon._keep_alive_help_button import _POPOVER_BODY, _POPOVER_TITLE
+    assert "—" not in _POPOVER_BODY, "em-dash found in popover body"
+    assert "–" not in _POPOVER_BODY, "en-dash found in popover body"
+    assert "—" not in _POPOVER_TITLE, "em-dash found in popover title"
+    assert "–" not in _POPOVER_TITLE, "en-dash found in popover title"
+
+
 def test_collapsed_ka_group_width_includes_help_button(qapp):
     """The compact-layout collapse animation's terminal width must
     accommodate BOTH chat and help buttons. Previously the formula only

@@ -789,7 +789,7 @@ class LaunchTab(QWidget):
         engine_bin = os.path.join(engine_dir, exe_fn()) if engine_dir else ""
         if not engine_dir or not os.path.isfile(engine_bin):
             _dbg(f"[Credentials] _on_launch: engine not found (dir='{engine_dir}' bin='{engine_bin}')")
-            self._update_status(game, section_index, LoginState.FAILED, "Game path not set — configure in Settings")
+            self._update_status(game, section_index, LoginState.FAILED, "Game path not set. Configure in Settings.")
             return
 
         acct = self.cred_manager.get_account(global_idx)
@@ -801,7 +801,7 @@ class LaunchTab(QWidget):
         )
         _dbg(f"[Credentials] _on_launch slot={section_index} {acct_desc}")
         if not acct or not acct.username or not acct.password:
-            self._update_status(game, section_index, LoginState.FAILED, "Missing username or password — click Edit")
+            self._update_status(game, section_index, LoginState.FAILED, "Missing username or password. Click Edit.")
             return
 
         # Check if already running

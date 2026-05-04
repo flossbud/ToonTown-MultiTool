@@ -284,7 +284,7 @@ class MultiToonTool(QMainWindow):
         self.hint_btn.setIcon(make_hint_icon(40, color, active=self._hints_enabled))
         state = "on" if self._hints_enabled else "off"
         self.hint_btn.setProperty("_always_tooltip", True)
-        self.hint_btn.setToolTip(f"Hover hints are {state} — click to toggle")
+        self.hint_btn.setToolTip(f"Hover hints are {state}. Click to toggle.")
 
         style = f"""
             QPushButton {{
