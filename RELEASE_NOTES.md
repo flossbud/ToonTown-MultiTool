@@ -28,6 +28,8 @@ Major release adding opt-in Keep-Alive with TOS consent and a redesigned Multito
 - Fixed cross-fade race where `layout_mode` was committed asynchronously.
 - Fixed Keep-Alive ka_group horizontal margins in chat-only Compact frame.
 - Fixed Full UI button and portrait sizing not resetting after a Full to Compact roundtrip.
+- Windows: embedded the app icon in the PyInstaller `.exe`.
+- Windows: suppressed console flash when probing the TTR API port.
 
 ---
 
