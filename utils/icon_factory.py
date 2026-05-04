@@ -407,6 +407,7 @@ def make_help_icon(size: int = 18, color: QColor = None) -> QIcon:
     """
     return make_hint_icon(size, color, active=True)
 
+
 def make_edit_icon(size: int = 18, color: QColor = None) -> QIcon:
     """Pencil / edit icon using Qt primitives."""
     color = color or QColor(200, 200, 200)
