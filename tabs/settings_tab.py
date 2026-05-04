@@ -458,6 +458,7 @@ class SettingsTab(QWidget):
 
     def _build_keepalive_group(self):
         group = SettingsGroup("Keep-Alive")
+        self._keepalive_group = group
         self._groups.append(group)
 
         # Master opt-in toggle — disabled by default. Enabling fires a
@@ -646,6 +647,61 @@ class SettingsTab(QWidget):
             "Rapid Fire": 0.25, "1 sec": 1, "5 sec": 5, "10 sec": 10, "30 sec": 30,
             "1 min": 60, "3 min": 180, "5 min": 300, "10 min": 600
         }.get(self.ka_delay_row.combo.currentText(), 60)
+
+    def highlight_keep_alive_group(self):
+        """Scroll the Keep-Alive group into view and run a one-shot pulse
+        animation so a user arriving here from the per-slot help affordance
+        immediately sees what they came for.
+
+        Safe to call before the tab has been shown — the scroll is a best-
+        effort no-op if no enclosing QScrollArea is visible yet, and the
+        pulse animation runs on the group widget regardless.
+        """
+        from PySide6.QtCore import QEasingCurve, QPropertyAnimation
+        from PySide6.QtWidgets import QGraphicsColorizeEffect, QScrollArea
+        from PySide6.QtGui import QColor
+
+        group = getattr(self, "_keepalive_group", None)
+        if group is None:
+            return
+
+        # Best-effort scroll: walk up to the nearest QScrollArea and ensure
+        # the group is visible. If no scroll area is found, skip silently.
+        widget = group
+        while widget is not None:
+            parent = widget.parentWidget()
+            if isinstance(parent, QScrollArea):
+                parent.ensureWidgetVisible(group, 0, 24)
+                break
+            widget = parent
+
+        # 600 ms one-shot accent-blue wash via QGraphicsColorizeEffect.
+        from utils.theme_manager import get_theme_colors, is_dark_palette
+        c = get_theme_colors(is_dark_palette())
+        accent = QColor(c.get("accent_blue_btn", "#0077ff"))
+
+        effect = QGraphicsColorizeEffect(group)
+        effect.setColor(accent)
+        effect.setStrength(0.0)
+        group.setGraphicsEffect(effect)
+
+        anim = QPropertyAnimation(effect, b"strength", group)
+        anim.setDuration(600)
+        anim.setStartValue(0.30)
+        anim.setEndValue(0.0)
+        anim.setEasingCurve(QEasingCurve.OutCubic)
+
+        def _cleanup():
+            # Drop the effect after the animation so subsequent renders are
+            # unmodified.
+            group.setGraphicsEffect(None)
+
+        anim.finished.connect(_cleanup)
+        anim.start(QPropertyAnimation.DeleteWhenStopped)
+        # Hold a temporary reference so the animation isn't garbage-collected
+        # before it finishes — the animation is parented to `group`, but the
+        # extra reference makes the lifetime obvious in code review.
+        self._keepalive_highlight_anim = anim
 
     def change_theme(self, index):
         theme = ["system", "light", "dark"][index]
