@@ -396,6 +396,17 @@ def make_hint_icon(size: int = 18, color: QColor = None, active: bool = True) ->
         p.drawText(QRectF(0, 0, s, s), Qt.AlignCenter, "?")
     return _draw_nav_icon(size, color, draw)
 
+
+def make_help_icon(size: int = 18, color: QColor = None) -> QIcon:
+    """Help '?' icon for the per-slot Keep-Alive discovery affordance.
+
+    Visually identical to make_hint_icon — kept as a separate name so call
+    sites read as "help button" rather than "hint toggle." The drawing is
+    a single source: the global hint-toggle in the sidebar and this
+    discovery affordance share the same glyph.
+    """
+    return make_hint_icon(size, color, active=True)
+
 def make_edit_icon(size: int = 18, color: QColor = None) -> QIcon:
     """Pencil / edit icon using Qt primitives."""
     color = color or QColor(200, 200, 200)
