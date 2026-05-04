@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=ToonTown MultiTool
+GenericName=Toontown Multibox Controller
+Comment=Multitoon controller for Toontown Rewritten and Corporate Clash
+Exec=ToonTownMultiTool
+Icon=io.github.flossbud.ToonTownMultiTool
+Terminal=false
+Categories=Game;
+StartupWMClass=ToonTown MultiTool
