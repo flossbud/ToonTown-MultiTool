@@ -225,6 +225,12 @@ class _FullToonCard(QFrame):
         _detach_from_layouts(ka)
         ka.setParent(self._active_root)
 
+        help_btn = self._tab.help_buttons[self._slot]
+        _style_ctrl(help_btn, 32)
+        help_btn.setFixedWidth(32)
+        _detach_from_layouts(help_btn)
+        help_btn.setParent(self._active_root)
+
         ka_bar = self._tab.ka_progress_bars[self._slot]
         ka_bar.setFixedHeight(7)
         ka_bar.setFixedWidth(self._REF_PROGRESS.width())
@@ -454,12 +460,16 @@ class _FullToonCard(QFrame):
         self._place_fixed(self._tab.toon_buttons[self._slot], self._scaled_rect(self._REF_ENABLE))
         self._place_fixed(self._tab.chat_buttons[self._slot], self._scaled_rect(self._REF_CHAT))
         self._place_fixed(self._tab.keep_alive_buttons[self._slot], self._scaled_rect(self._REF_KEEPALIVE))
+        # Help button shares the keep-alive button's position — only one of
+        # them is ever visible (see MultitoonTab._reconcile_keep_alive_visibility_instant).
+        self._place_fixed(self._tab.help_buttons[self._slot], self._scaled_rect(self._REF_KEEPALIVE))
         self._place_fixed(self._tab.ka_progress_bars[self._slot], self._scaled_rect(self._REF_PROGRESS))
         self._place_fixed(self._tab.set_selectors[self._slot], self._scaled_rect(self._REF_SELECTOR))
 
         icon = QSize(max(10, round(14 * scale)), max(10, round(14 * scale)))
         self._tab.chat_buttons[self._slot].setIconSize(icon)
         self._tab.keep_alive_buttons[self._slot].setIconSize(icon)
+        self._tab.help_buttons[self._slot].setIconSize(icon)
         stat_icon = QSize(max(10, round(16 * scale)), max(10, round(16 * scale)))
         self._tab.laff_labels[self._slot].setIconSize(stat_icon)
         self._tab.bean_labels[self._slot].setIconSize(stat_icon)
@@ -502,6 +512,7 @@ class _FullToonCard(QFrame):
             self._tab.toon_buttons[self._slot],
             self._tab.chat_buttons[self._slot],
             self._tab.keep_alive_buttons[self._slot],
+            self._tab.help_buttons[self._slot],
         ):
             f = widget.font()
             f.setPixelSize(font_px)
