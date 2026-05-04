@@ -650,12 +650,54 @@ def is_dark_palette() -> bool:
     return app.palette().color(QPalette.Base).value() < 128
 
 
+def _fusion_dark_palette() -> QPalette:
+    """Hand-built Fusion-style dark palette.
+
+    Used by apply_theme() to override the default light palette so Qt's
+    Wayland CSD titlebar (and any other native chrome that draws from
+    QPalette rather than the stylesheet) renders dark. Avoids
+    QStyleHints.setColorScheme() because that takes ownership of the
+    color-scheme property away from the OS-tracking layer, which would
+    suppress colorSchemeChanged signals on subsequent OS toggles and
+    break live-update.
+    """
+    p = QPalette()
+    p.setColor(QPalette.Window, QColor(53, 53, 53))
+    p.setColor(QPalette.WindowText, Qt.white)
+    p.setColor(QPalette.Base, QColor(35, 35, 35))
+    p.setColor(QPalette.AlternateBase, QColor(53, 53, 53))
+    p.setColor(QPalette.ToolTipBase, QColor(255, 255, 220))
+    p.setColor(QPalette.ToolTipText, Qt.white)
+    p.setColor(QPalette.Text, Qt.white)
+    p.setColor(QPalette.Button, QColor(53, 53, 53))
+    p.setColor(QPalette.ButtonText, Qt.white)
+    p.setColor(QPalette.BrightText, Qt.red)
+    p.setColor(QPalette.Link, QColor(42, 130, 218))
+    p.setColor(QPalette.Highlight, QColor(42, 130, 218))
+    p.setColor(QPalette.HighlightedText, Qt.black)
+    p.setColor(QPalette.Disabled, QPalette.Text, QColor(127, 127, 127))
+    p.setColor(QPalette.Disabled, QPalette.ButtonText, QColor(127, 127, 127))
+    p.setColor(QPalette.Disabled, QPalette.WindowText, QColor(127, 127, 127))
+    return p
+
+
 def apply_theme(app, theme: str):
     global _APPLIED_THEME
     _APPLIED_THEME = theme if theme in ("dark", "light") else None
     if theme == "dark":
         app.setStyleSheet(DARK_THEME)
+        # Set a dark QPalette so the Wayland CSD titlebar (which Qt draws
+        # from QPalette, not from the stylesheet) renders dark to match
+        # the in-window content. Without this, dark content has a jarring
+        # light titlebar.
+        app.setPalette(_fusion_dark_palette())
     elif theme == "light":
         app.setStyleSheet(LIGHT_THEME)
+        # Reset to the platform-default (light) palette so the titlebar
+        # tracks the rest of the desktop. style().standardPalette() is the
+        # canonical "current style's default palette," not the stale value
+        # we may have overridden during a prior dark-theme apply.
+        app.setPalette(app.style().standardPalette())
     else:
         app.setStyleSheet("")
+        app.setPalette(app.style().standardPalette())
