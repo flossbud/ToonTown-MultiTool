@@ -1,7 +1,10 @@
 from PySide6.QtGui import QPalette, QFont, QPixmap, QPainter, QColor, QIcon, QPen, QPainterPath
 from PySide6.QtWidgets import QApplication, QGraphicsDropShadowEffect, QWidget, QLabel
-from PySide6.QtCore import Qt, QRectF
+from PySide6.QtCore import Qt, QRectF, QObject, Signal, Slot
 import math
+import os
+import sys
+import time
 
 # Backward compatibility: icon generators moved to utils.icon_factory
 from utils.icon_factory import *  # noqa: F401,F403
@@ -429,13 +432,200 @@ LIGHT_THEME = """
 """
 
 
+# GNOME-like desktops where the xdg-desktop-portal Qt plugin's behavior
+# (portal file dialogs, portal-driven appearance settings, etc.) is
+# expected by users. On other desktops we fall back to a direct portal
+# query in _color_scheme_from_portal so we still detect dark-mode without
+# changing Qt's own behavior.
+#
+# Cinnamon is intentionally NOT in this list: it uses
+# org.cinnamon.desktop.interface.gtk-theme, not the freedesktop appearance
+# portal, so loading the Qt portal plugin there wouldn't give live updates
+# anyway. Cinnamon users who want portal integration can set
+# QT_QPA_PLATFORMTHEME=xdgdesktopportal explicitly in their environment.
+_GNOME_LIKE_DESKTOPS = ("gnome", "unity", "pantheon", "budgie")
+
+
+def should_set_xdg_portal_platformtheme(plugin_path: str) -> bool:
+    """Return True if main.py should set QT_QPA_PLATFORMTHEME=xdgdesktopportal.
+
+    Conditions:
+      1. QT_QPA_PLATFORMTHEME is not already set (don't override KDE's "kde",
+         user customizations, etc.). Empty string ("") is treated as not-set
+         by the truthy check.
+      2. The xdg-desktop-portal Qt platform theme plugin file exists at
+         the given path.
+      3. XDG_CURRENT_DESKTOP contains a token from _GNOME_LIKE_DESKTOPS
+         (case-insensitive substring match, so "ubuntu:GNOME", "GNOME-Classic",
+         and "Budgie:GNOME" all match). Cinnamon ("X-Cinnamon") is intentionally
+         excluded — see the comment above _GNOME_LIKE_DESKTOPS for the rationale.
+
+    Pure function for testability — main.py supplies plugin_path, and the
+    caller decides what to do with the result.
+    """
+    if os.environ.get("QT_QPA_PLATFORMTHEME"):
+        return False
+    if not os.path.exists(plugin_path):
+        return False
+    desktop = os.environ.get("XDG_CURRENT_DESKTOP", "").lower()
+    return any(token in desktop for token in _GNOME_LIKE_DESKTOPS)
+
+
+def _color_scheme_from_qt() -> str | None:
+    """Ask Qt for the OS color-scheme preference.
+
+    Reliable on Windows and macOS natively. On Linux it depends on Qt loading
+    a platform theme plugin (xdgdesktopportal / qgnomeplatform / kde) that
+    bridges to the desktop's appearance settings; main.py sets
+    QT_QPA_PLATFORMTHEME=xdgdesktopportal when available so this works on
+    GNOME without extra dependencies. Returns None when Qt has no opinion.
+    """
+    app = QApplication.instance()
+    if app is None:
+        return None
+    scheme = app.styleHints().colorScheme()
+    if scheme == Qt.ColorScheme.Dark:
+        return "dark"
+    if scheme == Qt.ColorScheme.Light:
+        return "light"
+    return None
+
+
+def _color_scheme_from_portal(timeout: float = 1.0) -> str | None:
+    """Linux fallback: query xdg-desktop-portal directly via D-Bus.
+
+    Used when Qt can't answer (e.g. the xdgdesktopportal Qt plugin is not
+    installed but the portal itself is running). Returns None on any failure.
+
+    Per the org.freedesktop.appearance spec:
+      0 = no preference, 1 = prefer dark, 2 = prefer light.
+    """
+    if sys.platform != "linux":
+        return None
+    try:
+        from jeepney import DBusAddress, new_method_call
+        from jeepney.io.blocking import open_dbus_connection
+    except Exception:
+        return None
+    addr = DBusAddress(
+        "/org/freedesktop/portal/desktop",
+        bus_name="org.freedesktop.portal.Desktop",
+        interface="org.freedesktop.portal.Settings",
+    )
+    try:
+        with open_dbus_connection(bus="SESSION") as conn:
+            msg = new_method_call(
+                addr, "Read", "ss", ("org.freedesktop.appearance", "color-scheme")
+            )
+            reply = conn.send_and_get_reply(msg, timeout=timeout)
+    except Exception:
+        return None
+    body = reply.body
+    if not body:
+        return None
+    # Settings.Read returns Variant<Variant<uint32>>. jeepney encodes a
+    # variant as a (signature_str, value) tuple, so we unwrap any nested
+    # variant tuples — but a generic "take body[0] until non-tuple" walk
+    # would land on the signature string ('v'/'u') instead of the value.
+    value = body[0]
+    while isinstance(value, tuple) and len(value) == 2 and isinstance(value[0], str):
+        value = value[1]
+    if value == 1:
+        return "dark"
+    if value == 2:
+        return "light"
+    return None
+
+
+# Cache for detect_system_color_scheme. Invalidated explicitly by
+# SystemThemeWatcher when QStyleHints reports a change, and aged out
+# by a short TTL so a missed signal can't pin the cache to a stale
+# value forever. The cache is critical because resolve_theme() is
+# invoked from every tab's refresh_theme / paint cascade — without
+# memoisation each call hits _color_scheme_from_portal on stacks
+# without a Qt platform theme plugin (1 s blocking D-Bus per paint).
+_SYSTEM_COLOR_SCHEME_CACHE: tuple[str, float] | None = None
+_SYSTEM_COLOR_SCHEME_CACHE_TTL: float = 1.0
+
+
+def invalidate_system_color_scheme_cache() -> None:
+    """Drop the cached system color-scheme.
+
+    Call this whenever an external signal indicates the OS color scheme may
+    have changed, so the next detect_system_color_scheme() call re-queries
+    the OS. SystemThemeWatcher does this automatically for Qt-delivered
+    notifications; other callers (e.g. an application-level settings change
+    handler) can call it directly.
+    """
+    global _SYSTEM_COLOR_SCHEME_CACHE
+    _SYSTEM_COLOR_SCHEME_CACHE = None
+
+
+def detect_system_color_scheme() -> str:
+    """Return 'dark' or 'light' for the OS color-scheme preference.
+
+    Order: Qt styleHints, then xdg-desktop-portal direct (Linux only), then
+    QPalette inspection as a last-resort heuristic.
+
+    Result is memoised for _SYSTEM_COLOR_SCHEME_CACHE_TTL seconds; the cache
+    is invalidated explicitly by SystemThemeWatcher and ages out on the TTL.
+    """
+    global _SYSTEM_COLOR_SCHEME_CACHE
+    cached = _SYSTEM_COLOR_SCHEME_CACHE
+    if cached is not None and time.monotonic() - cached[1] < _SYSTEM_COLOR_SCHEME_CACHE_TTL:
+        return cached[0]
+    answer = _color_scheme_from_qt()
+    if answer is None:
+        answer = _color_scheme_from_portal()
+    if answer is None:
+        app = QApplication.instance()
+        if app is not None:
+            answer = "dark" if app.palette().color(QPalette.Base).value() < 128 else "light"
+        else:
+            answer = "light"
+    _SYSTEM_COLOR_SCHEME_CACHE = (answer, time.monotonic())
+    return answer
+
+
 def resolve_theme(settings_manager) -> str:
     user_pref = settings_manager.get("theme", "system")
     if user_pref in ("light", "dark"):
         return user_pref
-    palette = QApplication.instance().palette()
-    base_color = palette.color(QPalette.Base)
-    return "dark" if base_color.value() < 128 else "light"
+    return detect_system_color_scheme()
+
+
+class SystemThemeWatcher(QObject):
+    """Emits when the OS-level color-scheme preference changes.
+
+    Hooks QStyleHints.colorSchemeChanged, which fires natively on Windows and
+    macOS, and on Linux when a platform theme plugin (xdgdesktopportal etc.)
+    is active. Consumers connect to system_theme_changed and re-apply their
+    theme only when the user's preference is set to "system".
+
+    De-duplicates repeated emits of the same value so consumers don't
+    re-render on no-op signals.
+    """
+
+    system_theme_changed = Signal(str)  # 'dark' or 'light'
+
+    def __init__(self, parent: QObject | None = None):
+        super().__init__(parent)
+        self._last_emitted: str | None = None
+        app = QApplication.instance()
+        if app is not None:
+            app.styleHints().colorSchemeChanged.connect(self._on_qt_changed)
+
+    @Slot(Qt.ColorScheme)
+    def _on_qt_changed(self, _scheme: Qt.ColorScheme):
+        # Drop any cached value first so detect_system_color_scheme actually
+        # re-queries the OS — otherwise we'd echo whatever was cached at the
+        # last paint and miss the change we were notified about.
+        invalidate_system_color_scheme_cache()
+        value = detect_system_color_scheme()
+        if value == self._last_emitted:
+            return
+        self._last_emitted = value
+        self.system_theme_changed.emit(value)
 
 
 _APPLIED_THEME: str | None = None  # set by apply_theme(); used by is_dark_palette()
