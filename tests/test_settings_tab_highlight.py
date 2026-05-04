@@ -36,3 +36,22 @@ def test_highlight_keep_alive_group_does_not_raise(qapp, settings_manager):
     from tabs.settings_tab import SettingsTab
     tab = SettingsTab(settings_manager)
     tab.highlight_keep_alive_group()  # should not raise
+
+
+def test_highlight_keep_alive_group_stops_prior_pulse(qapp, settings_manager):
+    """A second call while the first pulse is still running must stop the
+    prior animation. Without this guard, the prior animation's finished
+    handler would fire setGraphicsEffect(None) on the new effect, killing
+    the new pulse before the user sees it."""
+    from tabs.settings_tab import SettingsTab
+    from PySide6.QtCore import QPropertyAnimation
+    tab = SettingsTab(settings_manager)
+    tab.highlight_keep_alive_group()
+    first = tab._keepalive_highlight_anim
+    assert first.state() == QPropertyAnimation.Running
+    tab.highlight_keep_alive_group()
+    # The prior animation must have been stopped (or be in a non-Running state).
+    assert first.state() != QPropertyAnimation.Running
+    # And a fresh animation is now running.
+    assert tab._keepalive_highlight_anim is not first
+    assert tab._keepalive_highlight_anim.state() == QPropertyAnimation.Running
