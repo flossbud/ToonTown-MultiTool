@@ -18,3 +18,7 @@ python-xlib>=0.33; sys_platform == "linux"
 
 # Windows only — Win32 input backend and window management
 pywin32>=306; sys_platform == "win32"
+
+# Windows only — port->PID enumeration without spawning netstat
+# (avoids Smart App Control / Defender heuristics on the unsigned EXE)
+psutil>=5.9; sys_platform == "win32"
