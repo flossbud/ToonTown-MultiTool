@@ -11,4 +11,4 @@ Exec=ToonTownMultiTool
 Icon=io.github.flossbud.ToonTownMultiTool
 Terminal=false
 Categories=Game;
-StartupWMClass=ToonTown MultiTool
+StartupWMClass=io.github.flossbud.ToonTownMultiTool
