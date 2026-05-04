@@ -238,17 +238,30 @@ class _CompactLayout(QWidget):
 
         ka_group's row contains chat + help + (hidden ka + hidden bar). When
         collapsed, only chat and help are visible, so the frame must be wide
-        enough to fit BOTH plus inter-widget spacing plus the layout's
-        contentsMargins. Counting only chat (the original formula) caused the
-        animation collapse path to crush chat and help together at ~40px.
+        enough to fit BOTH plus inter-widget spacing plus contentsMargins.
+
+        Each child's effective layout width is its `sizeHint().width()`
+        clamped into `[minimumWidth, maximumWidth]`. Children with
+        setFixedWidth/setFixedSize have min == max == fixed value, so the
+        clamp pulls the sizeHint to the constrained value — matching how
+        Qt itself computes the parent's natural sizeHint. Without the
+        clamp, KeepAliveHelpButton (whose QToolButton sizeHint is 26 for
+        an empty button while its setFixedSize forces 32) under-allocates
+        and the help button is clipped on the right.
         """
+        def _layout_width(w):
+            sh = w.sizeHint().width()
+            min_w = w.minimumWidth()
+            max_w = w.maximumWidth()
+            return min(max(sh, min_w), max_w)
+
         chat_btn = self._tab.chat_buttons[slot_index]
         help_btn = self._tab.help_buttons[slot_index]
         layout = self._card_slots[slot_index]["ka_group"].layout()
         margins = layout.contentsMargins()
         return (
-            chat_btn.sizeHint().width()
-            + help_btn.sizeHint().width()
+            _layout_width(chat_btn)
+            + _layout_width(help_btn)
             + layout.spacing()
             + margins.left()
             + margins.right()
