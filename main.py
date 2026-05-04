@@ -22,7 +22,7 @@ if sys.platform != "win32":
 # — don't unexpectedly get portal-style file dialogs and icons. On those
 # desktops the direct portal D-Bus query in utils.theme_manager still
 # picks up dark mode without changing any other Qt behavior.
-if sys.platform == "linux" and os.environ.get("TTMT_DISABLE_PORTAL_PLATFORMTHEME") != "1":
+if sys.platform == "linux":
     try:
         from PySide6.QtCore import QLibraryInfo
         from utils.theme_manager import should_set_xdg_portal_platformtheme
@@ -84,10 +84,6 @@ DEADBAND_W = 80
 DEADBAND_H = 60
 APP_DESKTOP_ID = "io.github.flossbud.ToonTownMultiTool"
 LEGACY_DESKTOP_ID = "toontown-multitool"
-
-
-def _env_flag(name: str) -> bool:
-    return os.environ.get(name, "").lower() in {"1", "true", "yes", "on"}
 
 
 def _decide_layout_mode(current: str, width: int, height: int) -> str:
@@ -191,69 +187,43 @@ class MultiToonTool(QMainWindow):
         self.keymap_manager = KeymapManager()
         self.profile_manager = ProfileManager()
         self.hotkey_manager = None
-        self._diagnostic_tabs = os.environ.get("TTMT_DIAGNOSTIC_TABS", "all").lower()
 
         self.setObjectName("MultiToonToolMainWindow")
         QTimer.singleShot(0, self._capture_multitool_window_id)
 
         self.window_manager = WindowManager(self.settings_manager)
-        if not _env_flag("TTMT_DISABLE_WINDOW_MANAGER"):
-            self.window_manager.start()
+        self.window_manager.start()
 
-        def use_real_tab(name: str) -> bool:
-            return self._diagnostic_tabs in {"all", name}
-
-        self.debug_tab = DebugTab() if use_real_tab("debug") else _make_placeholder_tab("Debug")
+        self.debug_tab = DebugTab()
         self.logger = self.debug_tab
 
-        self.multitoon_tab = (
-            MultitoonTab(
-                logger=self.logger,
-                settings_manager=self.settings_manager,
-                keymap_manager=self.keymap_manager,
-                profile_manager=self.profile_manager,
-                window_manager=self.window_manager,
-            )
-            if use_real_tab("multitoon") else _make_placeholder_tab("Multitoon")
+        self.multitoon_tab = MultitoonTab(
+            logger=self.logger,
+            settings_manager=self.settings_manager,
+            keymap_manager=self.keymap_manager,
+            profile_manager=self.profile_manager,
+            window_manager=self.window_manager,
         )
-        self.launch_tab = (
-            LaunchTab(settings_manager=self.settings_manager, logger=self.logger)
-            if use_real_tab("launch") else _make_placeholder_tab("Launch")
-        )
-        self.keymap_tab = (
-            KeymapTab(self.keymap_manager, self.settings_manager)
-            if use_real_tab("keymap") else _make_placeholder_tab("Keymap")
-        )
-        self.settings_tab = (
-            SettingsTab(self.settings_manager)
-            if use_real_tab("settings") else _make_placeholder_tab("Settings")
-        )
-        self.credits_tab = CreditsTab(self.settings_manager) if use_real_tab("credits") else _make_placeholder_tab("Credits")
-        self.invasions_tab = InvasionsTab(self.settings_manager) if use_real_tab("invasions") else _make_placeholder_tab("Invasions")
+        self.launch_tab = LaunchTab(settings_manager=self.settings_manager, logger=self.logger)
+        self.keymap_tab = KeymapTab(self.keymap_manager, self.settings_manager)
+        self.settings_tab = SettingsTab(self.settings_manager)
+        self.credits_tab = CreditsTab(self.settings_manager)
+        self.invasions_tab = InvasionsTab(self.settings_manager)
 
-        if hasattr(self.settings_tab, "debug_visibility_changed"):
-            self.settings_tab.debug_visibility_changed.connect(self.toggle_debug_tab_visibility)
-        if hasattr(self.settings_tab, "theme_changed"):
-            self.settings_tab.theme_changed.connect(self.on_theme_changed)
-        self._system_theme_watcher = None
-        if not _env_flag("TTMT_DISABLE_SYSTEM_THEME_WATCHER"):
-            self._system_theme_watcher = SystemThemeWatcher(self)
-            self._system_theme_watcher.system_theme_changed.connect(
-                self._on_system_color_scheme_changed
-            )
+        self.settings_tab.debug_visibility_changed.connect(self.toggle_debug_tab_visibility)
+        self.settings_tab.theme_changed.connect(self.on_theme_changed)
+        self._system_theme_watcher = SystemThemeWatcher(self)
+        self._system_theme_watcher.system_theme_changed.connect(
+            self._on_system_color_scheme_changed
+        )
         logging_on = self.settings_manager.get("show_debug_tab", False)
-        if hasattr(self.debug_tab, "logging_enabled"):
-            self.debug_tab.logging_enabled = logging_on
-        if hasattr(self.multitoon_tab, "input_service"):
-            self.multitoon_tab.input_service.logging_enabled = logging_on
+        self.debug_tab.logging_enabled = logging_on
+        self.multitoon_tab.input_service.logging_enabled = logging_on
         ttr_api.set_debug(logging_on)
-        if hasattr(self.debug_tab, "append_log"):
-            self._api_log.connect(self.debug_tab.append_log)
+        self._api_log.connect(self.debug_tab.append_log)
         ttr_api.set_log_callback(self._api_log.emit)
-        if hasattr(self.settings_tab, "input_backend_changed"):
-            self.settings_tab.input_backend_changed.connect(self.on_input_backend_changed)
-        if hasattr(self.settings_tab, "clear_credentials_requested"):
-            self.settings_tab.clear_credentials_requested.connect(self.on_clear_credentials_requested)
+        self.settings_tab.input_backend_changed.connect(self.on_input_backend_changed)
+        self.settings_tab.clear_credentials_requested.connect(self.on_clear_credentials_requested)
 
         # ── Build layout: header + (sidebar | content) ─────────────────────
         root = QVBoxLayout()
@@ -297,24 +267,19 @@ class MultiToonTool(QMainWindow):
         # Install event filter to globally block tooltips when hints disabled
         QApplication.instance().installEventFilter(self)
 
-        if not _env_flag("TTMT_DISABLE_HOTKEYS") and hasattr(self.multitoon_tab, "key_event_queue"):
-            from services.hotkey_manager import HotkeyManager
-            self.hotkey_manager = HotkeyManager(self.window_manager, self.multitoon_tab.key_event_queue)
-            self.hotkey_manager.profile_load_requested.connect(self.load_profile_slot)
-            self.hotkey_manager.start()
+        from services.hotkey_manager import HotkeyManager
+        self.hotkey_manager = HotkeyManager(self.window_manager, self.multitoon_tab.key_event_queue)
+        self.hotkey_manager.profile_load_requested.connect(self.load_profile_slot)
+        self.hotkey_manager.start()
 
-        if hasattr(self.multitoon_tab, "dot_state_changed") and hasattr(self.launch_tab, "update_dot_state"):
-            self.multitoon_tab.dot_state_changed.connect(self.launch_tab.update_dot_state)
-        if hasattr(self.multitoon_tab, "keep_alive_help_requested"):
-            self.multitoon_tab.keep_alive_help_requested.connect(
-                self._on_keep_alive_help_requested
-            )
+        self.multitoon_tab.dot_state_changed.connect(self.launch_tab.update_dot_state)
+        self.multitoon_tab.keep_alive_help_requested.connect(
+            self._on_keep_alive_help_requested
+        )
 
         self.log("[Debug] ToonTown MultiTool launched.")
-        if not _env_flag("TTMT_DISABLE_PREWARM") and hasattr(self.multitoon_tab, "prewarm_full_layout"):
-            self.multitoon_tab.prewarm_full_layout(QSize(W_FULL, H_FULL - 48), include_active=True)
-        if not _env_flag("TTMT_DISABLE_LAUNCH_ANIMATION"):
-            self._animate_launch()
+        self.multitoon_tab.prewarm_full_layout(QSize(W_FULL, H_FULL - 48), include_active=True)
+        self._animate_launch()
 
     def _capture_multitool_window_id(self):
         # xdotool is X11-only; the gate is on the Qt platform, not the
@@ -670,8 +635,7 @@ class MultiToonTool(QMainWindow):
 
     def closeEvent(self, event):
         try:
-            if self.hotkey_manager is not None:
-                self.hotkey_manager.stop()
+            self.hotkey_manager.stop()
             self.launch_tab.shutdown()
             self.multitoon_tab.shutdown()
             self.window_manager.stop()
@@ -697,47 +661,28 @@ def _resolve_app_icon() -> QIcon:
     return QIcon(os.path.join(base, "assets", "ToonTownMultiTool.ico"))
 
 
-def _make_diagnostic_window() -> QMainWindow:
-    window = QMainWindow()
-    window.setWindowTitle("ToonTown MultiTool Diagnostic")
-    window.resize(560, 740)
-    window.setCentralWidget(QLabel("diagnostic window"))
-    return window
-
-
-def _make_placeholder_tab(name: str) -> QWidget:
-    widget = QWidget()
-    layout = QVBoxLayout(widget)
-    layout.addWidget(QLabel(name), alignment=Qt.AlignCenter)
-    return widget
-
-
 if __name__ == "__main__":
     # Identity must be set BEFORE QApplication is constructed; Qt reads these
     # at construction time to populate X11 WM_CLASS and Wayland app_id.
     # Without them Qt falls back to argv[0] ("python3" inside the Flatpak)
     # and KDE/GNOME show an orphan taskbar entry with a generic icon.
-    if not _env_flag("TTMT_DISABLE_APP_METADATA"):
-        QApplication.setApplicationName("ToonTown MultiTool")
-        QApplication.setApplicationDisplayName("ToonTown MultiTool")
-        QApplication.setOrganizationName("flossbud")
-        desktop_file_name = _select_desktop_file_name()
-        if desktop_file_name is not None:
-            QGuiApplication.setDesktopFileName(desktop_file_name)
+    QApplication.setApplicationName("ToonTown MultiTool")
+    QApplication.setApplicationDisplayName("ToonTown MultiTool")
+    QApplication.setOrganizationName("flossbud")
+    desktop_file_name = _select_desktop_file_name()
+    if desktop_file_name is not None:
+        QGuiApplication.setDesktopFileName(desktop_file_name)
     app = QApplication(sys.argv)
-    if not _env_flag("TTMT_DISABLE_APP_ICON"):
-        app.setWindowIcon(_resolve_app_icon())
+    app.setWindowIcon(_resolve_app_icon())
     app.setStyle(NoFocusProxyStyle(app.style()))
-    if sys.platform == "linux" and not _env_flag("TTMT_DISABLE_FONT_SETUP"):
+    if sys.platform == "linux":
         from PySide6.QtGui import QFont, QFontDatabase
         QFontDatabase.addApplicationFont("/usr/share/fonts/google-noto-color-emoji-fonts/Noto-COLRv1.ttf")
         _f = app.font()
         _f.setFamilies([_f.family(), "Noto Color Emoji"])
         app.setFont(_f)
-    diagnostic_simple = _env_flag("TTMT_DIAGNOSTIC_SIMPLE_WINDOW")
-    settings = None if diagnostic_simple else SettingsManager()
-    if settings is not None and not _env_flag("TTMT_DISABLE_APP_THEME"):
-        apply_theme(app, resolve_theme(settings))
-    window = _make_diagnostic_window() if diagnostic_simple else MultiToonTool()
+    settings = SettingsManager()
+    apply_theme(app, resolve_theme(settings))
+    window = MultiToonTool()
     window.show()
     sys.exit(app.exec())
