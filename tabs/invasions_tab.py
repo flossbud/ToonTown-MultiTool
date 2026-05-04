@@ -162,7 +162,7 @@ class InvasionsTab(QWidget):
         icon_lbl.setAlignment(Qt.AlignCenter)
         lay.addWidget(icon_lbl)
 
-        hint_lbl = QLabel("Check back soon — invasions update every minute")
+        hint_lbl = QLabel("Check back soon. Invasions update every minute.")
         hint_lbl.setObjectName("empty_hint")
         hint_lbl.setAlignment(Qt.AlignCenter)
         lay.addWidget(hint_lbl)

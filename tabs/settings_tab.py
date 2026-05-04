@@ -259,7 +259,7 @@ class GamePathRow(SettingsRow):
 
     def _refresh_display(self, path: str, error: bool = False):
         if not path:
-            self.sub_widget.setText("Not found — click Browse or Auto-detect")
+            self.sub_widget.setText("Not found. Click Browse or Auto-detect.")
             self.sub_widget.setStyleSheet("font-size: 12px; color: #E05252; background: transparent; border: none;")
         elif error:
             self.sub_widget.setText(path)
@@ -293,7 +293,7 @@ class GamePathRow(SettingsRow):
             self.settings_manager.set(self._approval_key, "")
             self._refresh_display(path)
         else:
-            self._refresh_display("Could not auto-detect — click Browse", error=True)
+            self._refresh_display("Could not auto-detect. Click Browse.", error=True)
 
 
 # ── Section Group ──────────────────────────────────────────────────────────────
@@ -469,7 +469,7 @@ class SettingsTab(QWidget):
             master_initial,
             sublabel=(
                 "Periodically sends a keystroke to keep toons logged in. "
-                "Disabled by default — see warning before enabling. "
+                "Disabled by default. See warning before enabling. "
                 "Your previous per-toon Keep-Alive selections are preserved."
             ),
         )
@@ -546,8 +546,8 @@ class SettingsTab(QWidget):
             "Keep-Alive sends periodic input to your toon windows even while "
             "you are not actively playing.\n\n"
             "Both Toontown Rewritten and Corporate Clash prohibit automation "
-            "tools of this kind in their Terms of Service. Use of Keep-Alive — "
-            "particularly in public areas of either game — may result in "
+            "tools of this kind in their Terms of Service. Use of Keep-Alive, "
+            "particularly in public areas of either game, may result in "
             "warnings, account suspension, or permanent termination at the "
             "discretion of those games' moderation teams.\n\n"
             "ToonTown MultiTool is provided as-is and accepts no responsibility "

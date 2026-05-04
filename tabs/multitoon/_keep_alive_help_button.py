@@ -30,7 +30,7 @@ _POPOVER_TITLE = "Keep-Alive"
 _POPOVER_BODY = (
     "Sends periodic input to your toons so they don't go AFK while you "
     "focus another window.\n\n"
-    "Disabled by default — Toontown Rewritten and Corporate Clash discourage "
+    "Disabled by default. Toontown Rewritten and Corporate Clash discourage "
     "tools of this kind in their Terms of Service. Use at your own risk. "
     "You can enable it in Settings."
 )
