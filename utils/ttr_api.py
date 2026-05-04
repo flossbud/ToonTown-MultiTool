@@ -191,7 +191,14 @@ def _build_port_to_window_id(current_window_ids: list, active_ports: set | None 
         try:
             import sys
             if sys.platform == "win32":
-                out = subprocess.check_output(["netstat", "-ano"], stderr=subprocess.DEVNULL, timeout=5).decode()
+                # CREATE_NO_WINDOW prevents a console flash when the parent .exe
+                # is built windowed (PyInstaller console=False).
+                out = subprocess.check_output(
+                    ["netstat", "-ano"],
+                    stderr=subprocess.DEVNULL,
+                    timeout=5,
+                    creationflags=subprocess.CREATE_NO_WINDOW,
+                ).decode()
                 for line in out.splitlines():
                     if "LISTENING" in line:
                         parts = line.split()
