@@ -559,6 +559,17 @@ class MultiToonTool(QMainWindow):
         self.debug_tab.append_log(message)
 
 
+def _resolve_app_icon() -> QIcon:
+    # Linux: AppImage/Flatpak register the icon in the XDG theme.
+    # Windows has no theme system, so fromTheme returns a null icon there;
+    # fall back to the bundled .ico so setWindowIcon has something to use.
+    themed = QIcon.fromTheme("io.github.flossbud.ToonTownMultiTool")
+    if not themed.isNull():
+        return themed
+    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    return QIcon(os.path.join(base, "assets", "ToonTownMultiTool.ico"))
+
+
 if __name__ == "__main__":
     # Identity must be set BEFORE QApplication is constructed; Qt reads these
     # at construction time to populate X11 WM_CLASS and Wayland app_id.
@@ -569,7 +580,7 @@ if __name__ == "__main__":
     QApplication.setOrganizationName("flossbud")
     QGuiApplication.setDesktopFileName("io.github.flossbud.ToonTownMultiTool")
     app = QApplication(sys.argv)
-    app.setWindowIcon(QIcon.fromTheme("io.github.flossbud.ToonTownMultiTool"))
+    app.setWindowIcon(_resolve_app_icon())
     app.setStyle(NoFocusProxyStyle(app.style()))
     if sys.platform == "linux":
         from PySide6.QtGui import QFont, QFontDatabase

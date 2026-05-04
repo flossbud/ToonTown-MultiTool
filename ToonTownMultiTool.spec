@@ -7,7 +7,7 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[('assets/ToonTownMultiTool.ico', 'assets')],
     hiddenimports=[
         'pynput.keyboard._xorg',
         'pynput.mouse._xorg',
