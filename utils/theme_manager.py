@@ -686,18 +686,21 @@ def apply_theme(app, theme: str):
     _APPLIED_THEME = theme if theme in ("dark", "light") else None
     if theme == "dark":
         app.setStyleSheet(DARK_THEME)
-        # Set a dark QPalette so the Wayland CSD titlebar (which Qt draws
-        # from QPalette, not from the stylesheet) renders dark to match
-        # the in-window content. Without this, dark content has a jarring
-        # light titlebar.
-        app.setPalette(_fusion_dark_palette())
     elif theme == "light":
         app.setStyleSheet(LIGHT_THEME)
-        # Reset to the platform-default (light) palette so the titlebar
-        # tracks the rest of the desktop. style().standardPalette() is the
-        # canonical "current style's default palette," not the stale value
-        # we may have overridden during a prior dark-theme apply.
-        app.setPalette(app.style().standardPalette())
     else:
         app.setStyleSheet("")
-        app.setPalette(app.style().standardPalette())
+    # Linux-only: sync Qt's QPalette so the Wayland CSD titlebar (which Qt
+    # draws from QPalette, not from the stylesheet) tracks the theme.
+    # Skipped on Windows / macOS — Qt 6.5+ delivers a native dark/light
+    # palette tied to the OS appearance there, and overriding it with our
+    # hand-rolled Fusion palette would visually clash with native chrome
+    # (file dialogs, message boxes, system menus) the app uses.
+    if sys.platform == "linux":
+        if theme == "dark":
+            app.setPalette(_fusion_dark_palette())
+        else:
+            # style().standardPalette() is the canonical "current style's
+            # default palette," not the stale value we may have overridden
+            # during a prior dark-theme apply.
+            app.setPalette(app.style().standardPalette())
