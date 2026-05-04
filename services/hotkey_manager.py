@@ -8,7 +8,16 @@ import sys
 import queue
 import threading
 from PySide6.QtCore import QObject, Signal, Qt, QMetaObject, Q_ARG
-from pynput import keyboard
+
+keyboard = None
+
+
+def _keyboard_module():
+    global keyboard
+    if keyboard is None:
+        from pynput import keyboard as pynput_keyboard
+        keyboard = pynput_keyboard
+    return keyboard
 
 # Build the VK→keysym map at module level so the platform check runs once.
 _PYNPUT_VK_MAP = {
@@ -83,7 +92,8 @@ class HotkeyManager(QObject):
 
     def _start_listener(self):
         if not self.is_listening:
-            self.listener = keyboard.Listener(
+            keyboard_module = _keyboard_module()
+            self.listener = keyboard_module.Listener(
                 on_press=self.on_global_key_press,
                 on_release=self.on_global_key_release
             )
@@ -131,7 +141,8 @@ class HotkeyManager(QObject):
             return
             
         try:
-            if key in [keyboard.Key.ctrl_l, keyboard.Key.ctrl_r]:
+            keyboard_module = _keyboard_module()
+            if key in [keyboard_module.Key.ctrl_l, keyboard_module.Key.ctrl_r]:
                 self.pressed_keys.add("ctrl")
             elif hasattr(key, 'char') and key.char:
                 self.pressed_keys.add(key.char)
@@ -151,7 +162,8 @@ class HotkeyManager(QObject):
 
     def on_global_key_release(self, key):
         try:
-            if key in [keyboard.Key.ctrl_l, keyboard.Key.ctrl_r]:
+            keyboard_module = _keyboard_module()
+            if key in [keyboard_module.Key.ctrl_l, keyboard_module.Key.ctrl_r]:
                 self.pressed_keys.discard("ctrl")
             elif hasattr(key, 'char') and key.char:
                 self.pressed_keys.discard(key.char)
