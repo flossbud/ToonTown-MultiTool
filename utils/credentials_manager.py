@@ -590,15 +590,22 @@ class CredentialsManager:
                         priority = getattr(child, "priority")
                     except Exception as e:
                         priority = f"error:{e}"
-                    probe_status = "not-tested"
-                    probe_detail = ""
-                    try:
-                        value = child.get_password(SERVICE_NAME, "__ttmt_probe__")
+                    # Use the timed wrapper so a hung child backend (e.g. a
+                    # locked-but-no-prompt SecretService collection on a fresh
+                    # GNOME session) cannot block the caller. Without this the
+                    # diagnostic dump can hang the main thread before app.exec().
+                    ok, value_or_err = self._call_backend_method(
+                        child, "get_password", SERVICE_NAME, "__ttmt_probe__", timeout=1.5
+                    )
+                    if ok:
                         probe_status = "ok"
-                        probe_detail = "value-present" if value else "value-empty-or-none"
-                    except Exception as e:
+                        probe_detail = "value-present" if value_or_err else "value-empty-or-none"
+                    elif value_or_err is None:
+                        probe_status = "timeout"
+                        probe_detail = "no response within 1.5s"
+                    else:
                         probe_status = "error"
-                        probe_detail = f"{type(e).__name__}: {e}"
+                        probe_detail = f"{type(value_or_err).__name__}: {value_or_err}"
                     child_backends.append({
                         "backend": f"{child_type.__module__}.{child_type.__name__}",
                         "priority": priority,
