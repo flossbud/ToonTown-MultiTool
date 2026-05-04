@@ -210,6 +210,10 @@ class MultiToonTool(QMainWindow):
         self._animate_launch()
 
     def _capture_multitool_window_id(self):
+        # xdotool is X11-only; on Windows, multitool_window_id is unused
+        # (broadcast-while-self-focused isn't wired up on the Win32 backend).
+        if sys.platform != "linux":
+            return
         try:
             win_id = subprocess.check_output(
                 ["xdotool", "search", "--name", "ToonTown MultiTool"],
