@@ -29,12 +29,11 @@ else:
 from utils.models import AccountCredential
 
 MAX_ACCOUNTS = 16
-SERVICE_NAME = "toontown_multitool"
 
 # Always-on diagnostic log. Writes to a file independent of stdout/console
 # state, so issues inside PyInstaller --noconsole builds (e.g. AppImage) can
 # still be diagnosed after-the-fact.
-from utils.build_flavor import config_dir as _config_dir
+from utils.build_flavor import config_dir as _config_dir, keyring_service
 _DEBUG_LOG_PATH = os.path.join(_config_dir(), "keyring-debug.log")
 _DEBUG_LOG_LOCK = threading.Lock()
 _DEBUG_LOG_MAX_BYTES = 256 * 1024  # rotate past 256 KiB
@@ -250,7 +249,7 @@ class CredentialsManager:
              f"{type(keyring.get_keyring()).__name__} timeout={timeout}")
         # Step 1: read the probe key. Forces wallet unlock if key exists.
         ok, value = self._try_keyring_call(
-            keyring.get_password, SERVICE_NAME, "__ttmt_probe__", timeout=timeout
+            keyring.get_password, keyring_service(), "__ttmt_probe__", timeout=timeout
         )
         _dbg(f"[Credentials] Probe step1 (get): ok={ok} value={'present' if value else 'none/empty'}")
         if not ok:
@@ -264,7 +263,7 @@ class CredentialsManager:
             # forces the unlock dialog, so this serves the same purpose as a read
             # on an existing key. After this, the wallet is open for the session.
             ok, _ = self._try_keyring_call(
-                keyring.set_password, SERVICE_NAME, "__ttmt_probe__", "1", timeout=timeout
+                keyring.set_password, keyring_service(), "__ttmt_probe__", "1", timeout=timeout
             )
             _dbg(f"[Credentials] Probe step2 (set): ok={ok}")
             if not ok:
@@ -424,7 +423,7 @@ class CredentialsManager:
     def _detect_primary_backend_name(self) -> str | None:
         for backend in self._available_explicit_backends():
             ok, value = self._call_backend_method(
-                backend, "get_password", SERVICE_NAME, "__ttmt_probe__", timeout=1.5
+                backend, "get_password", keyring_service(), "__ttmt_probe__", timeout=1.5
             )
             if ok and value:
                 return self._backend_name(backend)
@@ -443,7 +442,7 @@ class CredentialsManager:
             ):
                 continue
             ok, value = self._call_backend_method(
-                backend, "get_password", SERVICE_NAME, "__ttmt_probe__", timeout=timeout
+                backend, "get_password", keyring_service(), "__ttmt_probe__", timeout=timeout
             )
             if ok:
                 state = "value-present" if value else "value-empty-or-none"
@@ -463,7 +462,7 @@ class CredentialsManager:
             if backend_name != target_name:
                 continue
             ok, _ = self._call_backend_method(
-                backend, "set_password", SERVICE_NAME, account_id, password, timeout=2.0
+                backend, "set_password", keyring_service(), account_id, password, timeout=2.0
             )
             if ok:
                 _dbg(
@@ -482,7 +481,7 @@ class CredentialsManager:
             backend_name = self._backend_name(backend)
             remaining = max(0.5, cumulative_timeout - (time.monotonic() - start))
             ok, value = self._call_backend_method(
-                backend, "get_password", SERVICE_NAME, account_id, timeout=min(1.5, remaining)
+                backend, "get_password", keyring_service(), account_id, timeout=min(1.5, remaining)
             )
             if ok and value:
                 self._migrate_password_to_primary_backend(account_id, value, backend_name)
@@ -495,7 +494,7 @@ class CredentialsManager:
             _dbg("[Credentials] _get_password called with empty account_id")
             return ""
         short_id = account_id[:8]
-        ok, value = self._try_keyring_call(keyring.get_password, SERVICE_NAME, account_id, timeout=1.5)
+        ok, value = self._try_keyring_call(keyring.get_password, keyring_service(), account_id, timeout=1.5)
         _dbg(f"[Credentials] _get_password({short_id}): ok={ok} value={'present' if value else 'empty'}")
         if ok:
             if value:
@@ -527,7 +526,7 @@ class CredentialsManager:
     def _set_password(self, account_id: str, password: str) -> bool:
         if not account_id:
             return False
-        ok, _ = self._try_keyring_call(keyring.set_password, SERVICE_NAME, account_id, password, timeout=1.5)
+        ok, _ = self._try_keyring_call(keyring.set_password, keyring_service(), account_id, password, timeout=1.5)
         if ok:
             with self._fallback_lock:
                 self._fallback_passwords.pop(account_id, None)
@@ -541,7 +540,7 @@ class CredentialsManager:
     def _delete_password(self, account_id: str):
         if not account_id:
             return
-        self._try_keyring_call(keyring.delete_password, SERVICE_NAME, account_id, timeout=1.5)
+        self._try_keyring_call(keyring.delete_password, keyring_service(), account_id, timeout=1.5)
         with self._fallback_lock:
             self._fallback_passwords.pop(account_id, None)
 
@@ -596,7 +595,7 @@ class CredentialsManager:
                     # GNOME session) cannot block the caller. Without this the
                     # diagnostic dump can hang the main thread before app.exec().
                     ok, value_or_err = self._call_backend_method(
-                        child, "get_password", SERVICE_NAME, "__ttmt_probe__", timeout=1.5
+                        child, "get_password", keyring_service(), "__ttmt_probe__", timeout=1.5
                     )
                     if ok:
                         probe_status = "ok"
