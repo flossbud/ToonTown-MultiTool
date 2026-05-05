@@ -30,7 +30,7 @@ class CreditsTab(QWidget):
         card_layout.setContentsMargins(32, 40, 32, 40)
         card_layout.setSpacing(12)
 
-        # Title — version pulled from utils/version so it never goes stale
+        # Title: version pulled from utils/version so it never goes stale
         title = QLabel(f"ToonTown MultiTool v{APP_VERSION}")
         title_font = QFont()
         title_font.setWeight(QFont.Bold)
@@ -38,7 +38,7 @@ class CreditsTab(QWidget):
         title.setFont(title_font)
         title.setAlignment(Qt.AlignCenter)
 
-        # Hook — one-line personality opener
+        # Hook: one-line personality opener
         hook = QLabel("For when one toon isn't enough.")
         hook_font = QFont()
         hook_font.setWeight(QFont.DemiBold)
@@ -47,7 +47,7 @@ class CreditsTab(QWidget):
         hook.setAlignment(Qt.AlignCenter)
         hook.setWordWrap(True)
 
-        # Tagline — factual product description
+        # Tagline: factual product description
         tagline = QLabel(
             "A multitoon controller for Toontown Rewritten and Corporate Clash, "
             "on Linux and Windows."
@@ -58,7 +58,7 @@ class CreditsTab(QWidget):
         tagline.setWordWrap(True)
         tagline.setAlignment(Qt.AlignCenter)
 
-        # Centerpiece image — assets/flossbud.webp scaled to 400x400.
+        # Centerpiece image: assets/flossbud.webp scaled to 400x400.
         # setMinimumSize prevents the parent layout from squeezing the
         # label below the pixmap's size, which would clip the image.
         # Falls back to an empty label if the asset is missing or unreadable;
@@ -66,7 +66,7 @@ class CreditsTab(QWidget):
         image_label = QLabel()
         image_label.setAlignment(Qt.AlignCenter)
         # Two dirname() calls walk from tabs/credits_tab.py up to the repo
-        # root in dev, and up to PyInstaller's _MEIPASS root in a bundle —
+        # root in dev, and up to PyInstaller's _MEIPASS root in a bundle;
         # both layouts have assets/ at the same level as tabs/.
         asset_path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -83,7 +83,7 @@ class CreditsTab(QWidget):
             )
             image_label.setMinimumSize(400, 400)
 
-        # Byline — emoji font fallback chain so the paw glyph renders on
+        # Byline: emoji font fallback chain so the paw glyph renders on
         # systems whose default font lacks U+1F43E coverage (e.g. Fedora
         # without google-noto-emoji-fonts installed).
         byline = QLabel("by flossbud \U0001F43E")
