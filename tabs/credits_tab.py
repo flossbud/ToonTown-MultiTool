@@ -97,6 +97,26 @@ class CreditsTab(QWidget):
         byline.setFont(byline_font)
         byline.setAlignment(Qt.AlignCenter)
 
+        # Footer link row: GitHub | Report a bug | Privacy Policy.
+        # Single QLabel with rich-text HTML so we get one centered line
+        # with three independent anchor tags. Theme color is applied in
+        # refresh_theme() via QPalette.Link so it follows light/dark
+        # without rebuilding the label text.
+        self.footer_links = QLabel(
+            '<a href="https://github.com/flossbud/ToonTown-MultiTool">GitHub</a>'
+            ' &nbsp;|&nbsp; '
+            '<a href="https://github.com/flossbud/ToonTown-MultiTool/issues/new">Report a bug</a>'
+            ' &nbsp;|&nbsp; '
+            '<a href="https://github.com/flossbud/ToonTown-MultiTool/blob/main/PRIVACY.md">Privacy Policy</a>'
+        )
+        self.footer_links.setTextFormat(Qt.RichText)
+        self.footer_links.setOpenExternalLinks(True)
+        self.footer_links.setTextInteractionFlags(Qt.TextBrowserInteraction)
+        footer_font = QFont()
+        footer_font.setPointSize(11)
+        self.footer_links.setFont(footer_font)
+        self.footer_links.setAlignment(Qt.AlignCenter)
+
         card_layout.addWidget(title)
         card_layout.addWidget(hook)
         card_layout.addWidget(tagline)
@@ -104,6 +124,8 @@ class CreditsTab(QWidget):
         card_layout.addWidget(image_label, alignment=Qt.AlignCenter)
         card_layout.addStretch()
         card_layout.addWidget(byline)
+        card_layout.addSpacing(12)
+        card_layout.addWidget(self.footer_links, alignment=Qt.AlignCenter)
 
         from utils.layout import clamp_centered
         clamp_centered(layout, self.card, 720)
