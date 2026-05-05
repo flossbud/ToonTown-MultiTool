@@ -8,7 +8,6 @@ finish-args:
   - --share=network
   - --share=ipc
   - --socket=x11
-  - --socket=fallback-x11
   - --socket=session-bus
   - --device=dri
   - --talk-name=org.freedesktop.secrets
@@ -50,7 +49,7 @@ modules:
     buildsystem: simple
     build-commands:
       - install -d /app/lib/toontown-multitool
-      - cp -r main.py tabs services utils /app/lib/toontown-multitool/
+      - cp -r main.py tabs services utils assets /app/lib/toontown-multitool/
       - install -Dm755 flatpak/launcher.sh /app/bin/toontown-multitool
       - install -Dm644 flatpak/io.github.flossbud.ToonTownMultiTool.desktop
         /app/share/applications/io.github.flossbud.ToonTownMultiTool.desktop
