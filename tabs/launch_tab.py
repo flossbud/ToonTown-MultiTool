@@ -20,6 +20,7 @@ from utils.theme_manager import (
     make_edit_icon, make_section_label,
 )
 from utils.credentials_manager import CredentialsManager, set_debug_log_callback
+from utils.open_url import open_url
 from services.ttr_login_service import TTRLoginWorker, LoginState, find_engine_path, get_engine_executable_name
 from services.ttr_launcher import TTRLauncher
 from services.cc_login_service import CCLoginWorker, find_cc_engine_path, get_cc_engine_executable_name
@@ -250,8 +251,8 @@ class KeyringWarningBanner(QFrame):
         layout.addWidget(self.fix_label)
 
         self.link_label = QLabel("")
-        self.link_label.setOpenExternalLinks(True)
         self.link_label.setTextInteractionFlags(Qt.TextBrowserInteraction)
+        self.link_label.linkActivated.connect(open_url)
         self.link_label.setVisible(sys.platform not in ("win32", "darwin"))
         if self.link_label.isVisible():
             self.link_label.setText(f'<a href="{LINUX_KEYRING_HELP_URL}">Open Secret Service setup resources</a>')

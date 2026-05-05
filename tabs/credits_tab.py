@@ -4,6 +4,7 @@ import sys
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QApplication
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QFont, QPalette, QPixmap
+from utils.open_url import open_url
 from utils.theme_manager import resolve_theme, get_theme_colors
 from utils.version import APP_VERSION
 
@@ -102,6 +103,12 @@ class CreditsTab(QWidget):
         # with three independent anchor tags. Theme color is applied in
         # refresh_theme() via QPalette.Link so it follows light/dark
         # without rebuilding the label text.
+        #
+        # We route clicks through utils.open_url instead of Qt's
+        # setOpenExternalLinks(True) because in a PyInstaller AppImage,
+        # Qt's openUrl forks xdg-open with LD_LIBRARY_PATH still pointing
+        # at the bundled libs, which makes kde-open/gio-open fail symbol
+        # checks against system KF6/Qt6 and silently no-op.
         self.footer_links = QLabel(
             '<a href="https://github.com/flossbud/ToonTown-MultiTool">GitHub</a>'
             ' &nbsp;|&nbsp; '
@@ -110,8 +117,8 @@ class CreditsTab(QWidget):
             '<a href="https://github.com/flossbud/ToonTown-MultiTool/blob/main/PRIVACY.md">Privacy Policy</a>'
         )
         self.footer_links.setTextFormat(Qt.RichText)
-        self.footer_links.setOpenExternalLinks(True)
         self.footer_links.setTextInteractionFlags(Qt.TextBrowserInteraction)
+        self.footer_links.linkActivated.connect(open_url)
         footer_font = QFont()
         footer_font.setPointSize(11)
         self.footer_links.setFont(footer_font)

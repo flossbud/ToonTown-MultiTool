@@ -163,14 +163,33 @@ def test_credits_footer_links_present(qapp, settings_manager):
     assert "Privacy Policy" in joined
 
 
-def test_credits_footer_label_opens_external_links(qapp, settings_manager):
-    """The footer label must open URLs externally and render rich text."""
+def test_credits_footer_label_routes_links_through_open_url(qapp, settings_manager, monkeypatch):
+    """Footer must NOT use Qt's openExternalLinks (broken in AppImage due to
+    PyInstaller's LD_LIBRARY_PATH leak into xdg-open). Instead, clicking a
+    link emits linkActivated, which is wired to utils.open_url.open_url."""
     from PySide6.QtCore import Qt
     from tabs.credits_tab import CreditsTab
+
+    captured: list[str] = []
+
+    def fake_open_url(url):
+        captured.append(url)
+        return True
+
+    monkeypatch.setattr("tabs.credits_tab.open_url", fake_open_url)
+
     tab = CreditsTab(settings_manager=settings_manager)
     footer = tab.footer_links
-    assert footer.openExternalLinks() is True
+    assert footer.openExternalLinks() is False, (
+        "openExternalLinks must be False; Qt's xdg-open call leaks "
+        "LD_LIBRARY_PATH from PyInstaller and breaks links in the AppImage."
+    )
     assert footer.textFormat() == Qt.RichText
+
+    footer.linkActivated.emit("https://example.com/test")
+    assert captured == ["https://example.com/test"], (
+        f"Expected linkActivated to route through open_url, got {captured!r}"
+    )
 
 
 def test_credits_footer_uses_pipe_separators(qapp, settings_manager):
