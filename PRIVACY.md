@@ -1,7 +1,7 @@
 # Privacy Policy
 
-**Project:** ToonTown MultiTool, by flossbud
-**Last updated:** 2026-05-05
+- **Project:** ToonTown MultiTool, by flossbud
+- **Last updated:** 2026-05-05
 
 ## TL;DR
 
