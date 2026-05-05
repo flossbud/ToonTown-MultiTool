@@ -1,13 +1,13 @@
 # Privacy Policy
 
-**Last updated:** 2026-05-05
 **Project:** ToonTown MultiTool, by flossbud
+**Last updated:** 2026-05-05
 
 ## TL;DR
 
 Nothing leaves your device except your own login traffic, and that goes directly to the official Toontown Rewritten or Corporate Clash servers. There is no telemetry, no analytics, no crash reporting. The developer never receives any of your data.
 
-## Who we are
+## About 
 
 - **Author:** flossbud
 - **Privacy contact:** flossbud27@gmail.com
