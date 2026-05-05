@@ -1,22 +1,13 @@
-## ToonTown MultiTool v2.1.1
+## ToonTown MultiTool v2.1.2
 
-Adds a per-toon discovery affordance for Keep-Alive, refreshes the Credits tab, plus a batch of Linux desktop integration fixes for GNOME / Wayland.
-
----
-
-### New
-
-- Each toon card now shows a small `?` help icon next to the chat button when Keep-Alive is disabled, with a popover that explains the feature and offers a one-click jump to the Settings group.
-- Credits tab refreshed with new artwork and an updated description.
+Patch release adding a Credits tab footer with quick links to the project's resources.
 
 ---
 
-### Bug Fixes
+### Improvements
 
-- Fixed the app hanging for several seconds on quit on a fresh GNOME session, when the SecretService keyring hadn't been initialised yet.
-- Fixed the app opening as a separate generic-icon entry on Linux dash launchers (Arch/AUR install) instead of grouping under the pinned icon.
-- Fixed "system" theme preference always picking light mode on GNOME, even when GNOME was set to prefer dark.
-- Theme now updates live when you toggle dark/light mode at the OS level (no restart required), if your in-app theme is set to "system".
+- Credits tab now has a footer with quick links to the project's GitHub, bug tracker, and privacy policy.
+- Footer link color matches your theme (light/dark).
 
 ---
 
@@ -24,9 +15,9 @@ Adds a per-toon discovery affordance for Keep-Alive, refreshes the Credits tab, 
 
 | File | Platform |
 | ---- | -------- |
-| `TTMultiTool-v2.1.1-Linux-x86_64.AppImage` | Linux (any distro, no install) |
-| `TTMultiTool-v2.1.1-Linux-x86_64.flatpak` | Linux (Flatpak) |
-| `ToonTownMultiTool-v2.1.1-Windows-x86_64.zip` | Windows 10/11 |
+| `TTMultiTool-v2.1.2-Linux-x86_64.AppImage` | Linux (any distro, no install) |
+| `TTMultiTool-v2.1.2-Linux-x86_64.flatpak` | Linux (Flatpak) |
+| `ToonTownMultiTool-v2.1.2-Windows-x86_64.zip` | Windows 10/11 |
 
 Arch users: install via AUR (`yay -S toontown-multitool` or your preferred helper).
 
