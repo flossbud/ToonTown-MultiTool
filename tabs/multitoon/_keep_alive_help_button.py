@@ -61,24 +61,50 @@ class KeepAliveHelpButton(QToolButton):
         self.clicked.connect(self._on_clicked)
 
     def _icon_size(self) -> QSize:
-        # Larger than the chat/KA button icons (14px). The "?"-in-circle glyph
-        # has lower visual density than chat's filled-bubble or KA's filled
-        # mouse, so 14px reads as smaller-than-it-is. 18px gets the help icon
-        # to roughly the same perceived footprint as the neighbouring icons.
-        return QSize(18, 18)
+        # Match the chat/KA button icon size (14px) for consistent rhythm
+        # in the ka_group wrapper. make_help_icon compensates for the
+        # "?"-in-circle glyph's lower visual density at small sizes by
+        # rendering with a heavier stroke and bolder "?", so 14px here
+        # still reads at chat's perceived weight.
+        return QSize(14, 14)
 
     def refresh_theme(self, theme_colors: dict):
-        """Update the icon stroke colour for the active theme.
+        """Update the icon stroke colour and button surface for the active theme.
 
         Re-bakes the icon at the current iconSize() (NOT the constructor's
         initial _icon_size()) so a theme change in Full UI doesn't downsample
-        the icon to 14px and let Qt upscale it to the slot's display rect.
+        the icon to its compact size and let Qt upscale it to the slot's
+        display rect.
+
+        Also paints the button surface itself with the same inactive-button
+        treatment (toon_btn_inactive_bg + 1px border) the chat button uses
+        when disabled. Without an explicit background the QToolButton
+        inherits Qt's native chrome, which on dark themes is close enough
+        to ka_group's bg_input that the help button visibly bleeds into
+        its container.
 
         Also restyles the popover body if it has been created already; the
         popover styles are applied lazily on first show otherwise.
         """
         color = QColor(theme_colors.get("text_secondary", "#bbbbbb"))
         self.setIcon(make_help_icon(self.iconSize().width(), color))
+        # Match the chat button's disabled stylesheet exactly so the two
+        # 32x32 buttons sitting side by side in the ka_group share identical
+        # chrome. No border (chat-disabled has none either) — a 1px border
+        # would shrink our interior to 30x30 and make the "?" read larger
+        # than the chat icon. btn_disabled is the same darker fill chat
+        # uses when disabled, so the help surface no longer bleeds into
+        # ka_group's bg_input frame in dark mode.
+        bg = theme_colors.get("btn_disabled", "#2a2a2a")
+        self.setStyleSheet(
+            f"""
+            QToolButton {{
+                background-color: {bg};
+                border: none;
+                border-radius: 6px;
+            }}
+            """
+        )
         if self._popover is not None:
             self._apply_popover_styles(theme_colors)
 

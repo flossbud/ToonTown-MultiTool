@@ -193,15 +193,23 @@ class _CompactLayout(QWidget):
         name_label.setFont(QFont())
 
         # Buttons: Full scales dynamically; constructor defaults are
-        # 88×32 enable, 32×32 chat/KA.
+        # 88×32 enable, 32×32 chat/KA/help, 14px icons.
         self._tab.toon_buttons[i].setFixedHeight(32)
         self._tab.toon_buttons[i].setFixedWidth(88)
         self._tab.chat_buttons[i].setFixedHeight(32)
         self._tab.chat_buttons[i].setFixedWidth(32)
         self._tab.keep_alive_buttons[i].setFixedHeight(32)
         self._tab.keep_alive_buttons[i].setFixedWidth(32)
+        # Help button: prewarm/Full scales it to 43×43 with an 18px icon to
+        # match the full-mode chat/KA reference size; without these resets
+        # those values leak into Compact and the help button renders bigger
+        # than the chat button next to it. Must come before iconSize so the
+        # button has its compact bounds when the icon is re-baked.
+        self._tab.help_buttons[i].setFixedHeight(32)
+        self._tab.help_buttons[i].setFixedWidth(32)
         self._tab.chat_buttons[i].setIconSize(QSize(14, 14))
         self._tab.keep_alive_buttons[i].setIconSize(QSize(14, 14))
+        self._tab.help_buttons[i].setIconSize(QSize(14, 14))
         self._tab.laff_labels[i].setIconSize(QSize(16, 16))
         self._tab.bean_labels[i].setIconSize(QSize(16, 16))
 

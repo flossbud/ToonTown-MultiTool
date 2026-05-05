@@ -397,15 +397,32 @@ def make_hint_icon(size: int = 18, color: QColor = None, active: bool = True) ->
     return _draw_nav_icon(size, color, draw)
 
 
-def make_help_icon(size: int = 18, color: QColor = None) -> QIcon:
+def make_help_icon(size: int = 14, color: QColor = None) -> QIcon:
     """Help '?' icon for the per-slot Keep-Alive discovery affordance.
 
-    Visually identical to make_hint_icon — kept as a separate name so call
-    sites read as "help button" rather than "hint toggle." The drawing is
-    a single source: the global hint-toggle in the sidebar and this
-    discovery affordance share the same glyph.
+    Same '?'-in-circle glyph as the sidebar hint toggle (make_hint_icon),
+    but drawn with a heavier stroke and bolder, larger '?' so it reads
+    at the same visual weight as the neighbouring filled chat-bubble icon
+    when rendered at a small per-slot button size (~14px). The sidebar
+    hint toggle renders at 40px where the lighter stroke is already
+    legible — keeping them as separate functions lets each tune weight
+    for its own size class without a shared regression.
     """
-    return make_hint_icon(size, color, active=True)
+    color = color or QColor(200, 200, 200)
+    def draw(p, s, c):
+        # Just the glyph — no circle. At 14px the outlined circle had to
+        # hold so much detail (ring + tiny "?") that the "?" itself never
+        # read as legibly as the chat bubble next to it. Dropping the
+        # circle and scaling the "?" to fill the icon canvas (~chat-bubble
+        # extent) gets the help button to "I see a question mark" at a
+        # glance, while bold weight balances the chat bubble's filled mass.
+        p.setPen(c)
+        font = p.font()
+        font.setPixelSize(int(s * 0.95))
+        font.setBold(True)
+        p.setFont(font)
+        p.drawText(QRectF(0, 0, s, s), Qt.AlignCenter, "?")
+    return _draw_nav_icon(size, color, draw)
 
 
 def make_edit_icon(size: int = 18, color: QColor = None) -> QIcon:
