@@ -98,7 +98,7 @@ class CreditsTab(QWidget):
         card_layout.addWidget(title)
         card_layout.addWidget(hook)
         card_layout.addWidget(tagline)
-        card_layout.addSpacing(8)
+        card_layout.addSpacing(40)
         card_layout.addWidget(image_label, alignment=Qt.AlignCenter)
         card_layout.addStretch()
         card_layout.addWidget(byline)
