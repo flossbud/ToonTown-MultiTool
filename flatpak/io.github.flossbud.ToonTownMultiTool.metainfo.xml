@@ -25,7 +25,7 @@
     <release version="2.1.1" date="2026-05-04">
       <description>
         <p>New: per-toon Keep-Alive discovery affordance — a help icon now appears next to the chat button on every toon card when Keep-Alive is disabled, with a popover that explains the feature and offers a one-click jump to the Settings group.</p>
-        <p>Linux fixes: dark-mode detection on GNOME via the appearance portal with live re-themeing; .desktop filename and StartupWMClass aligned with the Wayland app id so pinned launchers group correctly; SecretService keyring probe no longer blocks first launch.</p>
+        <p>Linux fixes: dark-mode detection on GNOME via the appearance portal with live re-theming; .desktop filename and StartupWMClass aligned with the Wayland app id so pinned launchers group correctly; SecretService keyring probe no longer blocks first launch.</p>
       </description>
     </release>
     <release version="2.1.0" date="2026-05-03"/>
