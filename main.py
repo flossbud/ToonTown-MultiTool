@@ -78,6 +78,7 @@ from utils.theme_manager import (
     make_hint_icon, make_info_icon, font_role,
     SystemThemeWatcher,
 )
+from utils.build_flavor import window_title, app_name
 
 
 TITLE_ANIM_DURATION_MS = 800
@@ -177,7 +178,7 @@ class MultiToonTool(QMainWindow):
     def __init__(self):
         super().__init__()
 
-        self.setWindowTitle("ToonTown MultiTool")
+        self.setWindowTitle(window_title())
         # Default 740 height. Threshold for the multitoon tab to render cards
         # without 1-2px compression of the controls pill is 734 (header 48 +
         # tab natural 686). v2.0.3 used a 650 default but Qt auto-grew the
@@ -284,7 +285,7 @@ class MultiToonTool(QMainWindow):
             self._on_keep_alive_help_requested
         )
 
-        self.log("[Debug] ToonTown MultiTool launched.")
+        self.log(f"[Debug] {app_name()} launched.")
         self.multitoon_tab.prewarm_full_layout(QSize(W_FULL, H_FULL - 48), include_active=True)
         self._animate_launch()
 
@@ -299,6 +300,8 @@ class MultiToonTool(QMainWindow):
         if os.environ.get("QT_QPA_PLATFORM", "").lower() == "wayland":
             return
         try:
+            # TODO(beta): when both stable and beta run side-by-side, this substring
+            # match returns BOTH windows. Revisit if it becomes a problem.
             win_id = subprocess.check_output(
                 ["xdotool", "search", "--name", "ToonTown MultiTool"],
                 stderr=subprocess.DEVNULL,
@@ -564,7 +567,7 @@ class MultiToonTool(QMainWindow):
             f"font-size: {font_role('title')}px; font-weight: bold; background: transparent;"
         )
         self.title_label.setText(
-            f'<span style="color:{tc}">ToonTown MultiTool</span>'
+            f'<span style="color:{tc}">{app_name()}</span>'
             f' <span style="color:{vc}; font-size:{font_role("label")}px; font-weight:bold;">'
             f'v{APP_VERSION}</span>'
         )
@@ -673,8 +676,8 @@ if __name__ == "__main__":
     # at construction time to populate X11 WM_CLASS and Wayland app_id.
     # Without them Qt falls back to argv[0] ("python3" inside the Flatpak)
     # and KDE/GNOME show an orphan taskbar entry with a generic icon.
-    QApplication.setApplicationName("ToonTown MultiTool")
-    QApplication.setApplicationDisplayName("ToonTown MultiTool")
+    QApplication.setApplicationName(app_name())
+    QApplication.setApplicationDisplayName(app_name())
     QApplication.setOrganizationName("flossbud")
     desktop_file_name = _select_desktop_file_name()
     if desktop_file_name is not None:
