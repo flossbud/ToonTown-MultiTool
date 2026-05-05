@@ -100,8 +100,44 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
 
       - uses: actions/download-artifact@v4
+
+      - name: Render SMOKETEST.md (private only)
+        if: github.repository == 'flossbud/ToonTown-MultiTool-private'
+        run: |
+          set -euo pipefail
+          PREV=$(git describe --tags --abbrev=0 "${{ github.ref_name }}^" 2>/dev/null || echo "")
+          SHA=$(git rev-parse --short "${{ github.sha }}")
+          BUILT=$(date -u +"%Y-%m-%d %H:%M UTC")
+          {
+            echo "# Smoketest — ToonTown MultiTool ${{ github.ref_name }}"
+            echo
+            echo "Built:    $BUILT"
+            echo "Commit:   $SHA"
+            echo "Tag:      ${{ github.ref_name }}"
+            [ -n "$PREV" ] && echo "Previous: $PREV"
+            echo
+            echo "## Manual checklist"
+            echo
+            cat docs/smoketest-checklist.md
+            echo
+            if [ -n "$PREV" ]; then
+              echo "## Changes since $PREV"
+              echo
+              git log "$PREV..${{ github.ref_name }}" --pretty=format:'- %h  %s'
+              echo
+            fi
+            echo
+            echo "## Outcome"
+            echo
+            echo "- [ ] All checklist items pass"
+            echo "- [ ] No regressions noticed"
+            echo "- [ ] OK to promote to public via /release"
+          } > SMOKETEST.md
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -112,3 +148,17 @@ jobs:
             windows-zip/ToonTownMultiTool-*.zip
             linux-appimage/TTMultiTool-*.AppImage
             linux-flatpak/TTMultiTool-*.flatpak
+            SMOKETEST.md
+
+      - name: Dispatch pacman build (private only)
+        if: github.repository == 'flossbud/ToonTown-MultiTool-private'
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.PACMAN_REPO_DISPATCH_TOKEN }}
+          repository: flossbud/ttmt-beta-pacman
+          event-type: ttmt-beta-build
+          client-payload: |
+            {
+              "tag": "${{ github.ref_name }}",
+              "sha": "${{ github.sha }}"
+            }
