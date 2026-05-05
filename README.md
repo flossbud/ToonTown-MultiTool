@@ -168,6 +168,10 @@ Config files at `~/.config/toontown_multitool/`:
 
 ---
 
+## Privacy
+
+See [PRIVACY.md](PRIVACY.md) for what data TTMultiTool stores on your device, where, and what is sent to the official game servers when you launch a toon. The app contains no telemetry, analytics, or crash reporting.
+
 ## License
 
 MIT License. Free to use, share, and modify.
