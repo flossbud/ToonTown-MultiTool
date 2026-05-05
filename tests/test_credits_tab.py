@@ -148,3 +148,35 @@ def test_centerpiece_image_loads(qapp, settings_manager):
         if lbl.pixmap() is not None and not lbl.pixmap().isNull()
     ]
     assert image_labels, "Expected at least one QLabel with a loaded pixmap"
+
+
+def test_credits_footer_links_present(qapp, settings_manager):
+    """Footer row exposes GitHub, Report a bug, and Privacy Policy links with correct URLs."""
+    from tabs.credits_tab import CreditsTab
+    tab = CreditsTab(settings_manager=settings_manager)
+    joined = "\n".join(_all_label_texts(tab))
+    assert "https://github.com/flossbud/ToonTown-MultiTool" in joined
+    assert "https://github.com/flossbud/ToonTown-MultiTool/issues/new" in joined
+    assert "https://github.com/flossbud/ToonTown-MultiTool/blob/main/PRIVACY.md" in joined
+    assert "GitHub" in joined
+    assert "Report a bug" in joined
+    assert "Privacy Policy" in joined
+
+
+def test_credits_footer_label_opens_external_links(qapp, settings_manager):
+    """The footer label must open URLs externally and render rich text."""
+    from PySide6.QtCore import Qt
+    from tabs.credits_tab import CreditsTab
+    tab = CreditsTab(settings_manager=settings_manager)
+    footer = tab.footer_links
+    assert footer.openExternalLinks() is True
+    assert footer.textFormat() == Qt.RichText
+
+
+def test_credits_footer_uses_pipe_separators(qapp, settings_manager):
+    """Footer row uses pipe separators (not middots) between the three links."""
+    from tabs.credits_tab import CreditsTab
+    tab = CreditsTab(settings_manager=settings_manager)
+    text = tab.footer_links.text()
+    assert text.count("|") >= 2, f"Expected at least two pipe separators, got: {text!r}"
+    assert "·" not in text, f"Middot found in footer text; spec says use pipe: {text!r}"
