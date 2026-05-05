@@ -1,6 +1,12 @@
 ## ToonTown MultiTool v2.1.1
 
-Bug-fix release targeting Linux desktop integration on GNOME / Wayland.
+Adds a per-toon discovery affordance for Keep-Alive, plus a batch of Linux desktop integration fixes for GNOME / Wayland.
+
+---
+
+### New
+
+- Each toon card now shows a small `?` help icon next to the chat button whenever Keep-Alive is disabled at the master level. Clicking it opens a short popover explaining what Keep-Alive does (and the TOS posture around it) with a "Go to Settings" shortcut that scrolls to and pulse-highlights the Keep-Alive group in Settings. The icon disappears as soon as Keep-Alive is enabled.
 
 ---
 
