@@ -163,6 +163,52 @@ def test_prewarm_full_layout_restores_compact_ownership(qapp, tab):
         assert _is_descendant_of(tab.slot_badges[i], tab._compact)
 
 
+def test_position_cards_skips_label_when_reparented_to_compact(qapp, tab):
+    """Regression: TOON CONFIGURATION label rendered at y=0 above Start Service.
+
+    _FullLayout.resize() queues _position_cards via QTimer.singleShot(0, ...)
+    so tests / hidden-widget callers can still trigger card positioning. During
+    prewarm_full_layout, _full.resize(warm_size) queues that timer; the prewarm
+    finally block then calls _compact.populate(), which reparents config_label
+    back to outer_card. When the queued timer fires AFTER prewarm returns,
+    _position_cards still calls setGeometry(ox, oy, grid_w, label_h) on
+    config_label — but the label is now in compact's layout, so the geometry
+    clobbers compact's layout-managed position, leaving the label at y=0 with
+    full-grid width above the Start Service button.
+
+    Guard: _position_cards must skip the config_label setGeometry when
+    config_label is no longer parented to _grid_container.
+    """
+    # Run prewarm so _grid_container ends up with real width/height that
+    # _position_cards would otherwise act on.
+    tab.prewarm_full_layout()
+    qapp.processEvents()
+    assert tab._mode == "compact"
+    assert tab.config_label.parentWidget() is tab.outer_card, (
+        "precondition: compact.populate should have reclaimed config_label"
+    )
+
+    # Realize compact's layout so config_label sits where compact wants it
+    # (below the Start Service button + status bar + divider).
+    tab.resize(720, 800)
+    tab.show()
+    qapp.processEvents()
+    expected_geom = tab.config_label.geometry()
+    assert expected_geom.y() > tab.toggle_service_button.y(), (
+        f"sanity: compact should put config_label below the Start Service "
+        f"button; got cfg.y={expected_geom.y()}, btn.y={tab.toggle_service_button.y()}"
+    )
+
+    # Simulate the queued QTimer firing _position_cards after compact has
+    # reclaimed the label. This MUST NOT touch config_label's geometry.
+    tab._full._position_cards()
+
+    assert tab.config_label.geometry() == expected_geom, (
+        f"_position_cards clobbered compact-layout-managed config_label geometry: "
+        f"expected {expected_geom.getRect()}, got {tab.config_label.geometry().getRect()}"
+    )
+
+
 def test_prewarm_full_layout_can_warm_active_cards(qapp, tab):
     """Service-start warmup should cover the active-card path too."""
     tab.window_manager.ttr_window_ids = ["fake-window-id"]
