@@ -469,8 +469,11 @@ class _FullToonCard(QFrame):
         icon = QSize(max(10, round(14 * scale)), max(10, round(14 * scale)))
         self._tab.chat_buttons[self._slot].setIconSize(icon)
         self._tab.keep_alive_buttons[self._slot].setIconSize(icon)
-        # Help icon scales from a larger 18px base to compensate for the
-        # ?-in-circle glyph's lower visual density (compare KeepAliveHelpButton._icon_size).
+        # Help icon scales from a larger 18px base than chat/KA's 14px so
+        # the discovery affordance reads at a glance in Full mode's roomier
+        # card real estate. Compact mode unifies at 14px (see
+        # KeepAliveHelpButton._icon_size) where every pixel of horizontal
+        # space inside ka_group matters more.
         help_icon = QSize(max(13, round(18 * scale)), max(13, round(18 * scale)))
         self._tab.help_buttons[self._slot].setIconSize(help_icon)
         stat_icon = QSize(max(10, round(16 * scale)), max(10, round(16 * scale)))
