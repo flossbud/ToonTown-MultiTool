@@ -21,6 +21,7 @@ from utils.symbols import S
 from utils.ttr_api import get_toon_names_by_slot, invalidate_port_to_wid_cache, clear_stale_names
 from utils import cc_api
 from utils.game_registry import GameRegistry
+from tabs.multitoon._keep_alive_help_button import KeepAliveHelpButton
 
 
 # ── Custom Widgets ─────────────────────────────────────────────────────────
@@ -863,7 +864,6 @@ class MultitoonTab(QWidget):
             ka_bar = SmoothProgressBar()
             self.ka_progress_bars.append(ka_bar)
 
-            from tabs.multitoon._keep_alive_help_button import KeepAliveHelpButton
             help_btn = KeepAliveHelpButton()
             help_btn.help_requested.connect(self.keep_alive_help_requested.emit)
             self.help_buttons.append(help_btn)
