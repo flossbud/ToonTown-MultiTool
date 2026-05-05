@@ -634,7 +634,12 @@ class _FullLayout(QWidget):
         ox = (w - grid_w) // 2
         oy = (h - total_h) // 2
 
-        if label_h > 0:
+        # Only place the label when we still own it. resize() queues this via
+        # QTimer.singleShot(0, ...) for hidden-widget callers (tests, prewarm);
+        # if prewarm already handed config_label back to _CompactLayout, the
+        # queued tick fires after the swap and would clobber compact's layout-
+        # managed geometry — leaving the label at y=0 above Start Service.
+        if label_h > 0 and self._tab.config_label.parentWidget() is self._grid_container:
             self._tab.config_label.setGeometry(ox, oy, grid_w, label_h)
 
         cards_oy = oy + label_h + label_gap
