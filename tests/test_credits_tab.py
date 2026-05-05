@@ -111,15 +111,22 @@ def test_byline_font_includes_noto_emoji_fallback(qapp, settings_manager):
     )
 
 
-def test_four_capability_bullets_present(qapp, settings_manager):
-    """Four bullet labels with key content from each capability area."""
+def test_no_capability_bullets(qapp, settings_manager):
+    """The earlier design had four capability bullets. Visual review
+    removed them in favor of a larger centerpiece image; this is a
+    regression guard so they don't accidentally come back."""
     from tabs.credits_tab import CreditsTab
     tab = CreditsTab(settings_manager=settings_manager)
     joined = "\n".join(_all_label_texts(tab))
-    assert "per-slot custom keymaps" in joined, "Input bullet missing"
-    assert "OS-keyring" in joined, "Credentials bullet missing"
-    assert "invasion tracker" in joined, "Companion bullet missing"
-    assert "Keep-Alive" in joined, "Profiles/Keep-Alive bullet missing"
+    for phrase in (
+        "per-slot custom keymaps",
+        "OS-keyring",
+        "invasion tracker",
+    ):
+        assert phrase not in joined, (
+            f"Capability bullet phrase {phrase!r} found in labels — bullets "
+            f"should not be in the Credits tab"
+        )
 
 
 def test_no_em_dashes_in_user_facing_text(qapp, settings_manager):

@@ -3,7 +3,7 @@ import os
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QApplication
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont, QPixmap
-from utils.theme_manager import resolve_theme, get_theme_colors, apply_card_shadow
+from utils.theme_manager import resolve_theme, get_theme_colors
 from utils.version import APP_VERSION
 
 class CreditsTab(QWidget):
@@ -58,7 +58,9 @@ class CreditsTab(QWidget):
         tagline.setWordWrap(True)
         tagline.setAlignment(Qt.AlignCenter)
 
-        # Centerpiece image — assets/flossbud.webp scaled to 240x240.
+        # Centerpiece image — assets/flossbud.webp scaled to 400x400.
+        # setMinimumSize prevents the parent layout from squeezing the
+        # label below the pixmap's size, which would clip the image.
         # Falls back to an empty label if the asset is missing or unreadable;
         # the rest of the card still renders.
         image_label = QLabel()
@@ -74,31 +76,12 @@ class CreditsTab(QWidget):
         if not pixmap.isNull():
             image_label.setPixmap(
                 pixmap.scaled(
-                    240, 240,
+                    400, 400,
                     Qt.KeepAspectRatio,
                     Qt.SmoothTransformation,
                 )
             )
-
-        # Capability bullets — four lines, narrower max-width than the card
-        # so the bullet column doesn't span 720px next to a 240px image.
-        bullets_container = QWidget()
-        bullets_layout = QVBoxLayout(bullets_container)
-        bullets_layout.setContentsMargins(0, 0, 0, 0)
-        bullets_layout.setSpacing(4)
-        bullet_font = QFont()
-        bullet_font.setPointSize(13)
-        for text in (
-            "• Broadcast input to up to four background toons with per-slot custom keymaps",
-            "• OS-keyring credential storage for sixteen accounts, with one-click login that handles TTR queues and 2FA",
-            "• Live toon names, laff, jellybeans, portraits, and an invasion tracker via the companion APIs",
-            "• Session profiles on hotkeys, plus per-toon Keep-Alive with TOS-aware consent",
-        ):
-            bullet = QLabel(text)
-            bullet.setFont(bullet_font)
-            bullet.setWordWrap(True)
-            bullets_layout.addWidget(bullet)
-        bullets_container.setMaximumWidth(480)
+            image_label.setMinimumSize(400, 400)
 
         # Byline — emoji font fallback chain so the paw glyph renders on
         # systems whose default font lacks U+1F43E coverage (e.g. Fedora
@@ -117,8 +100,6 @@ class CreditsTab(QWidget):
         card_layout.addWidget(tagline)
         card_layout.addSpacing(8)
         card_layout.addWidget(image_label, alignment=Qt.AlignCenter)
-        card_layout.addSpacing(8)
-        card_layout.addWidget(bullets_container, alignment=Qt.AlignCenter)
         card_layout.addStretch()
         card_layout.addWidget(byline)
 
@@ -129,13 +110,23 @@ class CreditsTab(QWidget):
         is_dark = resolve_theme(self.settings_manager) == "dark"
         c = get_theme_colors(is_dark)
 
-        self.setStyleSheet(f"background: {c['bg_app']}; color: {c['text_primary']};")
-        
+        # Tab uses bg_app like every other tab. Labels inherit bg_app via
+        # Qt's stylesheet cascade, so we explicitly transparent them below
+        # to avoid them painting bg_app chips on top of any backdrop.
+        self.setStyleSheet(
+            f"background: {c['bg_app']}; color: {c['text_primary']};"
+        )
+
+        # Card frame is invisible: same color as the surrounding app
+        # background, no border, no shadow. The QFrame is kept only as a
+        # layout container for clamp_centered. The QLabel rule clears any
+        # inherited background so labels float on whatever's behind them.
         self.card.setStyleSheet(f"""
             QFrame#credits_card {{
-                background: {c['bg_card_inner']};
-                border: 1px solid {c['border_muted']};
-                border-radius: 12px;
+                background: {c['bg_app']};
+                border: none;
+            }}
+            QLabel {{
+                background: transparent;
             }}
         """)
-        apply_card_shadow(self.card, is_dark)
