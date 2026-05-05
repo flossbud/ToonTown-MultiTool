@@ -25,7 +25,7 @@ CC_API_URL = "https://corporateclash.net/api/v1/login"
 assert CC_API_URL.startswith("https://"), "CC_API_URL must use HTTPS"
 CC_HEADERS = {
     "Content-Type": "application/json",
-    "User-Agent": "ToontownMultiTool/2.1.0"
+    "User-Agent": "ToontownMultiTool/2.1.1"
 }
 
 # Common locations to search for CorporateClash
