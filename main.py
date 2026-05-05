@@ -64,6 +64,7 @@ from tabs.settings_tab import SettingsTab
 from tabs.credits_tab import CreditsTab
 from tabs.invasions_tab import InvasionsTab
 from tabs.debug_tab import DebugTab
+from utils.version import APP_VERSION
 from utils.settings_manager import SettingsManager
 import utils.ttr_api as ttr_api
 from utils.keymap_manager import KeymapManager
@@ -171,7 +172,6 @@ def _select_desktop_file_name() -> str | None:
 
 
 class MultiToonTool(QMainWindow):
-    APP_VERSION = "2.1.1"
     _api_log = Signal(str)
 
     def __init__(self):
