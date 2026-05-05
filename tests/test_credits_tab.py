@@ -180,3 +180,19 @@ def test_credits_footer_uses_pipe_separators(qapp, settings_manager):
     text = tab.footer_links.text()
     assert text.count("|") >= 2, f"Expected at least two pipe separators, got: {text!r}"
     assert "·" not in text, f"Middot found in footer text; spec says use pipe: {text!r}"
+
+
+def test_credits_footer_link_color_matches_theme_muted(qapp, settings_manager):
+    """Footer link color is sourced from get_theme_colors()['text_muted']."""
+    from PySide6.QtGui import QPalette
+    from tabs.credits_tab import CreditsTab
+    from utils.theme_manager import resolve_theme, get_theme_colors
+
+    tab = CreditsTab(settings_manager=settings_manager)
+    is_dark = resolve_theme(settings_manager) == "dark"
+    expected = get_theme_colors(is_dark)["text_muted"].lower()
+    actual = tab.footer_links.palette().color(QPalette.Link).name().lower()
+    assert actual == expected, (
+        f"Expected footer link color {expected!r} (theme text_muted), "
+        f"got {actual!r}. refresh_theme() must set QPalette.Link on footer_links."
+    )
