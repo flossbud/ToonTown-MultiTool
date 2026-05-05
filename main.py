@@ -566,7 +566,7 @@ class MultiToonTool(QMainWindow):
         self.title_label.setText(
             f'<span style="color:{tc}">ToonTown MultiTool</span>'
             f' <span style="color:{vc}; font-size:{font_role("label")}px; font-weight:bold;">'
-            f'v{self.APP_VERSION}</span>'
+            f'v{APP_VERSION}</span>'
         )
         # Accent stripe
         accent = self.header.findChild(QFrame, "header_accent")
