@@ -46,7 +46,8 @@ DEFAULT_SETS = [
 
 class KeymapManager:
     def __init__(self):
-        config_dir = os.path.expanduser("~/.config/toontown_multitool")
+        from utils.build_flavor import config_dir as _config_dir
+        config_dir = _config_dir()
         os.makedirs(config_dir, exist_ok=True)
         os.chmod(config_dir, 0o700)
         self._path = os.path.join(config_dir, "keymaps.json")

@@ -34,7 +34,8 @@ SERVICE_NAME = "toontown_multitool"
 # Always-on diagnostic log. Writes to a file independent of stdout/console
 # state, so issues inside PyInstaller --noconsole builds (e.g. AppImage) can
 # still be diagnosed after-the-fact.
-_DEBUG_LOG_PATH = os.path.expanduser("~/.config/toontown_multitool/keyring-debug.log")
+from utils.build_flavor import config_dir as _config_dir
+_DEBUG_LOG_PATH = os.path.join(_config_dir(), "keyring-debug.log")
 _DEBUG_LOG_LOCK = threading.Lock()
 _DEBUG_LOG_MAX_BYTES = 256 * 1024  # rotate past 256 KiB
 _DEBUG_LOG_CALLBACK = None
@@ -84,7 +85,7 @@ class CredentialsManager:
              f"platform={sys.platform} session={os.getenv('XDG_SESSION_TYPE', '')} "
              f"desktop={os.getenv('XDG_CURRENT_DESKTOP', '')} "
              f"dbus={'set' if os.getenv('DBUS_SESSION_BUS_ADDRESS') else 'unset'}")
-        config_dir = os.path.expanduser("~/.config/toontown_multitool")
+        config_dir = _config_dir()
         os.makedirs(config_dir, exist_ok=True)
         os.chmod(config_dir, 0o700)
         self._path = os.path.join(config_dir, "accounts.json")
