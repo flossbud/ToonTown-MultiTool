@@ -3,7 +3,7 @@ import sys
 
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QApplication
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont, QPixmap
+from PySide6.QtGui import QColor, QFont, QPalette, QPixmap
 from utils.theme_manager import resolve_theme, get_theme_colors
 from utils.version import APP_VERSION
 
@@ -154,3 +154,11 @@ class CreditsTab(QWidget):
                 background: transparent;
             }}
         """)
+
+        # Footer link color follows the theme's muted text color so the
+        # row reads as fine-print rather than a primary accent. Setting
+        # QPalette.Link avoids embedding hex in the HTML, so the same
+        # label text works across themes.
+        palette = self.footer_links.palette()
+        palette.setColor(QPalette.Link, QColor(c["text_muted"]))
+        self.footer_links.setPalette(palette)
