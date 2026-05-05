@@ -323,7 +323,7 @@ class _CompactLayout(QWidget):
 
             # Width ka_group needs when collapsed (chat + help visible). See
             # _collapsed_ka_group_width — formula must include the help
-            # button now that v2.1.2's discovery affordance occupies the slot
+            # button now that v2.1.1's discovery affordance occupies the slot
             # alongside chat whenever KA is master-disabled.
             chat_only_width = self._collapsed_ka_group_width(i)
 
