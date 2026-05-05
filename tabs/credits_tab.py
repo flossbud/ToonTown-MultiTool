@@ -1,4 +1,5 @@
 import os
+import sys
 
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QApplication
 from PySide6.QtCore import Qt
@@ -65,13 +66,14 @@ class CreditsTab(QWidget):
         # the rest of the card still renders.
         image_label = QLabel()
         image_label.setAlignment(Qt.AlignCenter)
-        # Two dirname() calls walk from tabs/credits_tab.py up to the repo
-        # root in dev, and up to PyInstaller's _MEIPASS root in a bundle;
-        # both layouts have assets/ at the same level as tabs/.
-        asset_path = os.path.join(
+        # _MEIPASS is set by PyInstaller's bootloader to the runtime extraction
+        # root; falls back to two dirname() walks from tabs/credits_tab.py to
+        # reach the repo root in dev. Same idiom as main.py:_resolve_app_icon.
+        base = getattr(
+            sys, "_MEIPASS",
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "assets", "flossbud.webp",
         )
+        asset_path = os.path.join(base, "assets", "flossbud.webp")
         pixmap = QPixmap(asset_path)
         if not pixmap.isNull():
             image_label.setPixmap(
