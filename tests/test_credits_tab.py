@@ -124,7 +124,7 @@ def test_no_capability_bullets(qapp, settings_manager):
         "invasion tracker",
     ):
         assert phrase not in joined, (
-            f"Capability bullet phrase {phrase!r} found in labels — bullets "
+            f"Capability bullet phrase {phrase!r} found in labels; bullets "
             f"should not be in the Credits tab"
         )
 
