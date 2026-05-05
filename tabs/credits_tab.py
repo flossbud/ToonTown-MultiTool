@@ -63,6 +63,9 @@ class CreditsTab(QWidget):
         # the rest of the card still renders.
         image_label = QLabel()
         image_label.setAlignment(Qt.AlignCenter)
+        # Two dirname() calls walk from tabs/credits_tab.py up to the repo
+        # root in dev, and up to PyInstaller's _MEIPASS root in a bundle —
+        # both layouts have assets/ at the same level as tabs/.
         asset_path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
             "assets", "flossbud.webp",
@@ -123,8 +126,8 @@ class CreditsTab(QWidget):
         clamp_centered(layout, self.card, 720)
         
     def refresh_theme(self):
-        c = get_theme_colors(resolve_theme(self.settings_manager) == "dark")
         is_dark = resolve_theme(self.settings_manager) == "dark"
+        c = get_theme_colors(is_dark)
 
         self.setStyleSheet(f"background: {c['bg_app']}; color: {c['text_primary']};")
         
