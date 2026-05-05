@@ -62,10 +62,10 @@ class KeepAliveHelpButton(QToolButton):
 
     def _icon_size(self) -> QSize:
         # Match the chat/KA button icon size (14px) for consistent rhythm
-        # in the ka_group wrapper. make_help_icon compensates for the
-        # "?"-in-circle glyph's lower visual density at small sizes by
-        # rendering with a heavier stroke and bolder "?", so 14px here
-        # still reads at chat's perceived weight.
+        # in the ka_group wrapper. make_help_icon renders a bare bold "?"
+        # glyph (no enclosing circle) scaled to ~95% of the canvas, so
+        # 14px reads at chat's perceived weight without the legibility
+        # loss the ringed sidebar variant had at this size.
         return QSize(14, 14)
 
     def refresh_theme(self, theme_colors: dict):

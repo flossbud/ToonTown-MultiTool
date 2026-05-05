@@ -400,13 +400,14 @@ def make_hint_icon(size: int = 18, color: QColor = None, active: bool = True) ->
 def make_help_icon(size: int = 14, color: QColor = None) -> QIcon:
     """Help '?' icon for the per-slot Keep-Alive discovery affordance.
 
-    Same '?'-in-circle glyph as the sidebar hint toggle (make_hint_icon),
-    but drawn with a heavier stroke and bolder, larger '?' so it reads
-    at the same visual weight as the neighbouring filled chat-bubble icon
-    when rendered at a small per-slot button size (~14px). The sidebar
-    hint toggle renders at 40px where the lighter stroke is already
-    legible — keeping them as separate functions lets each tune weight
-    for its own size class without a shared regression.
+    Bare '?' glyph — no enclosing circle. At per-slot button sizes
+    (~14px) the sidebar hint toggle's '?'-in-circle didn't read as a
+    question mark next to a filled chat bubble: the ring + tiny '?'
+    fought for legibility. Dropping the circle and scaling the '?' to
+    fill the canvas (~chat-bubble extent) with bold weight matches the
+    chat icon's perceived mass. Kept as a separate function from
+    make_hint_icon (which still renders the ringed glyph at 40px) so
+    each can tune for its own size class without a shared regression.
     """
     color = color or QColor(200, 200, 200)
     def draw(p, s, c):
