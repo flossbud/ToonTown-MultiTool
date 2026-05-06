@@ -1,13 +1,18 @@
-## ToonTown MultiTool v2.1.2
+## ToonTown MultiTool v2.1.3
 
-Patch release adding a Credits tab footer with quick links to the project's resources.
+Patch release introducing the ttmt-beta AUR channel and fixing AppImage footer links.
+
+---
+
+### Bug Fixes
+
+- Footer links in the Credits tab now open in your browser when running the AppImage build.
 
 ---
 
 ### Improvements
 
-- Credits tab now has a footer with quick links to the project's GitHub, bug tracker, and privacy policy.
-- Footer link color matches your theme (light/dark).
+- New beta channel: install `ttmt-beta` from AUR for pre-release smoke-test builds. Coexists alongside the stable `toontown-multitool` install with a separate icon, desktop entry, and config directory. Stable users see no change.
 
 ---
 
@@ -15,9 +20,9 @@ Patch release adding a Credits tab footer with quick links to the project's reso
 
 | File | Platform |
 | ---- | -------- |
-| `TTMultiTool-v2.1.2-Linux-x86_64.AppImage` | Linux (any distro, no install) |
-| `TTMultiTool-v2.1.2-Linux-x86_64.flatpak` | Linux (Flatpak) |
-| `ToonTownMultiTool-v2.1.2-Windows-x86_64.zip` | Windows 10/11 |
+| `TTMultiTool-v2.1.3-Linux-x86_64.AppImage` | Linux (any distro, no install) |
+| `TTMultiTool-v2.1.3-Linux-x86_64.flatpak` | Linux (Flatpak) |
+| `ToonTownMultiTool-v2.1.3-Windows-x86_64.zip` | Windows 10/11 |
 
 Arch users: install via AUR (`yay -S toontown-multitool` or your preferred helper).
 
