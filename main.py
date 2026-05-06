@@ -78,7 +78,7 @@ from utils.theme_manager import (
     make_hint_icon, make_info_icon, font_role,
     SystemThemeWatcher,
 )
-from utils.build_flavor import window_title, app_name
+from utils.build_flavor import window_title, app_name, is_beta
 
 
 TITLE_ANIM_DURATION_MS = 800
@@ -92,6 +92,7 @@ H_FULL = 800
 DEADBAND_W = 80
 DEADBAND_H = 60
 APP_DESKTOP_ID = "io.github.flossbud.ToonTownMultiTool"
+BETA_DESKTOP_ID = "io.github.flossbud.ToonTownMultiTool-beta"
 LEGACY_DESKTOP_ID = "toontown-multitool"
 
 
@@ -161,14 +162,16 @@ def _select_desktop_file_name() -> str | None:
             return None
         return override
 
+    canonical_id = BETA_DESKTOP_ID if is_beta() else APP_DESKTOP_ID
+
     if sys.platform != "linux":
-        return APP_DESKTOP_ID
-    if _desktop_file_exists(APP_DESKTOP_ID):
-        return APP_DESKTOP_ID
-    if _desktop_file_exists(LEGACY_DESKTOP_ID):
+        return canonical_id
+    if _desktop_file_exists(canonical_id):
+        return canonical_id
+    if not is_beta() and _desktop_file_exists(LEGACY_DESKTOP_ID):
         return LEGACY_DESKTOP_ID
     if getattr(sys, "frozen", False) or os.environ.get("FLATPAK_ID") == APP_DESKTOP_ID:
-        return APP_DESKTOP_ID
+        return canonical_id
     return None
 
 
