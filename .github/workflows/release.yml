@@ -149,16 +149,3 @@ jobs:
             linux-appimage/TTMultiTool-*.AppImage
             linux-flatpak/TTMultiTool-*.flatpak
             SMOKETEST.md
-
-      - name: Dispatch pacman build (private only)
-        if: github.repository == 'flossbud/ToonTown-MultiTool-private'
-        uses: peter-evans/repository-dispatch@v3
-        with:
-          token: ${{ secrets.PACMAN_REPO_DISPATCH_TOKEN }}
-          repository: flossbud/ttmt-beta-pacman
-          event-type: ttmt-beta-build
-          client-payload: |
-            {
-              "tag": "${{ github.ref_name }}",
-              "sha": "${{ github.sha }}"
-            }
