@@ -18,8 +18,7 @@ except ImportError:
 # L/R-specific VK_LCONTROL/VK_RCONTROL/etc. The L/R distinction lives in the
 # lparam scan code + extended-key bit.
 #
-# Verified against a real WindowProc + SendInput baseline; see
-# debug_probe_postmessage.py in the repo root.
+# Verified against a real WindowProc + SendInput baseline.
 #
 # Posting VK_LCONTROL through PostMessage only sets Panda3D's
 # KeyboardButton::lcontrol() (via lookup_key); TTR's "jump" / "walk" /
@@ -102,12 +101,17 @@ VK_TO_KEYSYM = {
 # Without it, hosts that read scan-code-derived state (Panda3D / TTR) ignore
 # the event. List per Microsoft docs (KEYBDINPUT.dwFlags KEYEVENTF_EXTENDEDKEY
 # documentation): arrow keys, Insert, Delete, Home, End, PageUp/PageDown,
-# right-side modifiers, numpad divide and Enter.
+# numpad divide and Enter.
+#
+# Right-side modifiers (Control_R, Alt_R) are NOT listed here even though
+# they are extended keys at the OS level. They are handled exclusively
+# through WIN32_MODIFIER_OVERRIDES (which encodes the extended bit in its
+# own tuple), and _send branches on the override table before consulting
+# EXTENDED_KEYSYMS — duplicating them would be dead code.
 EXTENDED_KEYSYMS = frozenset({
     'Up', 'Down', 'Left', 'Right',
     'Insert', 'Delete', 'Home', 'End',
     'Prior', 'Next',  # PageUp / PageDown
-    'Control_R', 'Alt_R',
     'KP_Divide', 'KP_Enter',
 })
 
