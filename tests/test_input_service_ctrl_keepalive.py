@@ -1,11 +1,14 @@
 """Repro for v2.1.3 issue 7: keep-alive jump on Left Ctrl doesn't fire on Windows.
 
-Hypothesis: Right Ctrl is a Win32 extended key and needs bit 24 of lparam set.
-Left Ctrl is NOT extended. The fix targets the documented extended-key set
-(arrows, right-side modifiers, nav keys); if A.4 manual verification shows
-Left-Ctrl behavior is still broken, that's a separate follow-up.
+Hardened in 2.2.x: previously this only checked the extended-key bit and
+missed the actual root cause — Win32Backend was posting VK_LCONTROL/
+VK_RCONTROL as wparam, but real Windows keystrokes deliver the generic
+VK_CONTROL (0x11) regardless of side, with L/R encoded in lparam. Panda3D's
+generic 'control' button — which TTR's jump binding polls — is only set
+when wparam == VK_CONTROL.
 
-We test the lparam construction directly so the test runs on any platform.
+We test the full PostMessage payload directly so the test runs on any
+platform.
 """
 import sys
 from unittest.mock import MagicMock
@@ -13,13 +16,17 @@ from unittest.mock import MagicMock
 EXTENDED_BIT = 1 << 24
 
 
-def _captured_lparam_for_ctrl(side):
+def _captured_postmessage_for_ctrl(side):
     fake_win32api = MagicMock()
     fake_win32api.MapVirtualKey.return_value = 0x1D
     fake_win32gui = MagicMock()
     fake_win32con = MagicMock()
     fake_win32con.VK_LCONTROL = 0xA2
     fake_win32con.VK_RCONTROL = 0xA3
+    fake_win32con.VK_LSHIFT = 0xA0
+    fake_win32con.VK_RSHIFT = 0xA1
+    fake_win32con.VK_LMENU = 0xA4
+    fake_win32con.VK_RMENU = 0xA5
     fake_win32con.WM_KEYDOWN = 0x100
     fake_win32con.WM_KEYUP = 0x101
     sys.modules["win32api"] = fake_win32api
@@ -36,20 +43,32 @@ def _captured_lparam_for_ctrl(side):
     backend.send_keydown("12345", keysym)
     if not fake_win32gui.PostMessage.called:
         return None
-    return fake_win32gui.PostMessage.call_args[0][3]
+    args = fake_win32gui.PostMessage.call_args[0]
+    return {"wparam": args[2], "lparam": args[3]}
 
 
-def test_right_ctrl_keydown_sets_extended_bit():
-    """Right Ctrl is always an extended key per Win32 spec."""
-    lparam = _captured_lparam_for_ctrl("right")
-    assert lparam is not None
-    assert lparam & EXTENDED_BIT, (
-        f"WM_KEYDOWN lparam for Control_R missing extended bit. Got 0x{lparam:08X}."
+def test_right_ctrl_keydown_uses_vk_control_with_extended_bit():
+    """Right Ctrl: real OS keystroke is wparam=VK_CONTROL (0x11) with the
+    extended-key bit set in lparam. Posting VK_RCONTROL (0xA3) bypasses the
+    generic-control button TTR's jump binding polls."""
+    p = _captured_postmessage_for_ctrl("right")
+    assert p is not None
+    assert p["wparam"] == 0x11, (
+        f"Control_R wparam must be VK_CONTROL (0x11), got {p['wparam']:#x}"
+    )
+    assert p["lparam"] & EXTENDED_BIT, (
+        f"WM_KEYDOWN lparam for Control_R missing extended bit. lparam={p['lparam']:#08x}"
     )
 
 
-def test_left_ctrl_keydown_does_not_set_extended_bit():
-    """Left Ctrl is NOT extended; only Right Ctrl is. Sanity check the rule isn't applied universally."""
-    lparam = _captured_lparam_for_ctrl("left")
-    assert lparam is not None
-    assert not (lparam & EXTENDED_BIT)
+def test_left_ctrl_keydown_uses_vk_control_without_extended_bit():
+    """Left Ctrl: real OS keystroke is wparam=VK_CONTROL (0x11), ext=0.
+    Posting VK_LCONTROL (0xA2) was the v2.1.3 keep-alive jump regression."""
+    p = _captured_postmessage_for_ctrl("left")
+    assert p is not None
+    assert p["wparam"] == 0x11, (
+        f"Control_L wparam must be VK_CONTROL (0x11), got {p['wparam']:#x}"
+    )
+    assert not (p["lparam"] & EXTENDED_BIT), (
+        f"Left Ctrl must NOT set the extended bit. lparam={p['lparam']:#08x}"
+    )
