@@ -93,6 +93,10 @@ def _explicit_chat_flag(data: dict) -> bool | None:
 
 
 def resolve_chat_block_list(s: TtrSettings) -> set[str]:
+    """Keysym strings to block for chat-off toons given a parsed TtrSettings.
+
+    Always includes Return and Escape. Adds a-z when chat-by-typing is on,
+    because in that TTR config any letter press opens chat."""
     block = {"Return", "Escape"}
     if s.chat_by_typing_enabled_resolved:
         block.update(string.ascii_lowercase)
