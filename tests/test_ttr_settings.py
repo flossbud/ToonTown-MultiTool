@@ -152,3 +152,99 @@ def test_apply_ttr_controls_to_set_skips_missing_keys():
     n = apply_ttr_controls_to_set(km, 1, {"jump": "control"})
     assert n == 1
     assert km.calls == [(1, "jump", "Control_L")]
+
+
+def test_apply_ttr_controls_to_set_translates_default_arrow_aliases():
+    """TTR's settings.json uses 'arrow_up'/'arrow_down'/'arrow_left'/'arrow_right'
+    for the default movement bindings — NOT the bare 'up'/'down'/'left'/'right'
+    that the original _TTR_VALUE_TO_KEYSYM table covered.
+
+    Confirmed by reading a real settings.json from a clean Windows TTR install:
+        "forward": "arrow_up",
+        "reverse": "arrow_down",
+        "left":    "arrow_left",
+        "right":   "arrow_right",
+        "jump":    "control",
+    Without this test, auto-detect wrote raw 'arrow_up' strings into the
+    keymap, causing user-reported issue: arrow forwarding completely
+    nonfunctional under default TTR.
+    """
+    from utils.ttr_settings import apply_ttr_controls_to_set
+    km = _FakeKeymapManager()
+    controls = {
+        "forward": "arrow_up",
+        "reverse": "arrow_down",
+        "left":    "arrow_left",
+        "right":   "arrow_right",
+        "jump":    "control",
+    }
+    n = apply_ttr_controls_to_set(km, 0, controls)
+    assert n == 5
+    by_direction = {d: k for (_, d, k) in km.calls}
+    assert by_direction["up"] == "Up", f"forward=arrow_up must translate to Up keysym, got {by_direction['up']!r}"
+    assert by_direction["down"] == "Down"
+    assert by_direction["left"] == "Left"
+    assert by_direction["right"] == "Right"
+    assert by_direction["jump"] == "Control_L"
+
+
+def test_apply_ttr_controls_to_set_translates_nav_cluster_and_f_keys():
+    """TTR's default controls also include home/end/f8 for showGags/showTasks/
+    stickerBook. Without these in _TTR_VALUE_TO_KEYSYM, the keymap is
+    populated with raw 'home'/'f8' strings that match nothing downstream."""
+    from utils.ttr_settings import apply_ttr_controls_to_set
+    km = _FakeKeymapManager()
+    controls = {
+        "stickerBook": "f8",
+        "showGags": "home",
+        "showTasks": "end",
+        "showMap":  "alt",
+    }
+    n = apply_ttr_controls_to_set(km, 0, controls)
+    assert n == 4
+    by_direction = {d: k for (_, d, k) in km.calls}
+    assert by_direction["book"] == "F8", f"f8 must translate to F8 keysym, got {by_direction['book']!r}"
+    assert by_direction["gags"] == "Home"
+    assert by_direction["tasks"] == "End"
+    assert by_direction["map"] == "Alt_L"
+
+
+def test_apply_ttr_controls_to_set_translates_page_keys_and_insert():
+    """TTR can bind lookUp/lookDown to page_up/page_down by default."""
+    from utils.ttr_settings import apply_ttr_controls_to_set
+    km = _FakeKeymapManager()
+    # No direction in TTMT maps to lookUp/lookDown today, but if/when
+    # TTR's settings.json puts page_up etc. into one of TTMT's 9 tracked
+    # control fields, we must translate it. Use 'jump' as the carrier so
+    # the assertion is exercised.
+    controls = {"jump": "page_up"}
+    n = apply_ttr_controls_to_set(km, 0, controls)
+    assert n == 1
+    assert km.calls[0] == (0, "jump", "Prior")
+
+
+def test_apply_ttr_controls_to_set_translates_insert_and_other_function_keys():
+    from utils.ttr_settings import apply_ttr_controls_to_set
+    km = _FakeKeymapManager()
+    controls = {"jump": "insert", "stickerBook": "f12"}
+    n = apply_ttr_controls_to_set(km, 0, controls)
+    by_direction = {d: k for (_, d, k) in km.calls}
+    assert by_direction["jump"] == "Insert"
+    assert by_direction["book"] == "F12"
+
+
+def test_has_letter_hotkeys_false_for_real_ttr_default_arrows(tmp_path):
+    """Regression guard: a real TTR default settings.json (with 'arrow_up'
+    etc.) must resolve to has_letter_hotkeys=False, so chat-by-typing is
+    inferred ON and the chat-block list includes letters."""
+    from utils.ttr_settings import parse_ttr_settings, resolve_chat_block_list
+    p = _write_settings(tmp_path, {
+        "forward": "arrow_up", "reverse": "arrow_down",
+        "left": "arrow_left", "right": "arrow_right",
+        "jump": "control", "showMap": "alt",
+        "stickerBook": "f8", "showGags": "home", "showTasks": "end",
+    })
+    s = parse_ttr_settings(p)
+    assert s.has_letter_hotkeys is False
+    assert s.chat_by_typing_enabled_resolved is True
+    assert "a" in resolve_chat_block_list(s)
