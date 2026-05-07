@@ -203,12 +203,7 @@ class MultiToonTool(QMainWindow):
         # the user's TTR config without requiring a manual "Detect" press.
         # Cached on settings_manager so the result survives if settings.json
         # is unreadable on a later run.
-        _ttr_settings_at_startup = self._refresh_ttr_settings()
-        if _ttr_settings_at_startup is not None:
-            from utils.ttr_settings import apply_ttr_controls_to_set
-            n = apply_ttr_controls_to_set(self.keymap_manager, 0, _ttr_settings_at_startup.controls)
-            self.settings_manager.set("last_detected_keymap", _ttr_settings_at_startup.controls)
-            print(f"[main] TTR settings auto-detected from {_ttr_settings_at_startup.source_path} ({n} controls)")
+        self._apply_startup_ttr_keymap()
 
         self.setObjectName("MultiToonToolMainWindow")
         QTimer.singleShot(0, self._capture_multitool_window_id)
@@ -670,6 +665,32 @@ class MultiToonTool(QMainWindow):
         self.settings_tab.highlight_keep_alive_group()
 
     # ── TTR settings ──────────────────────────────────────────────────────────
+
+    def _apply_startup_ttr_keymap(self) -> int:
+        """At startup, populate keymap set 0 from TTR's settings.json. If
+        the live read fails (TTR mid-update, engine dir moved, etc.), fall
+        back to the last_detected_keymap cache stored on the previous
+        successful run.
+
+        Returns the number of control fields applied (0 if neither source
+        produced any), so callers / tests can verify *something* happened.
+        """
+        from utils.ttr_settings import apply_ttr_controls_to_set
+
+        live = self._refresh_ttr_settings()
+        if live is not None:
+            n = apply_ttr_controls_to_set(self.keymap_manager, 0, live.controls)
+            self.settings_manager.set("last_detected_keymap", live.controls)
+            print(f"[main] TTR settings auto-detected from {live.source_path} ({n} controls)")
+            return n
+
+        cached = self.settings_manager.get("last_detected_keymap", None)
+        if isinstance(cached, dict) and cached:
+            n = apply_ttr_controls_to_set(self.keymap_manager, 0, cached)
+            print(f"[main] TTR settings.json unreadable; applied cached keymap ({n} controls)")
+            return n
+
+        return 0
 
     def _refresh_ttr_settings(self):
         """Locate and parse TTR's settings.json. Returns TtrSettings or None.
