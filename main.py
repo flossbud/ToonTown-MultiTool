@@ -238,6 +238,12 @@ class MultiToonTool(QMainWindow):
         self._system_theme_watcher.system_theme_changed.connect(
             self._on_system_color_scheme_changed
         )
+        # Credits tab also needs to repaint on OS theme changes when the
+        # user's pref is "system". Late-bound here because the watcher
+        # exists after CreditsTab is constructed.
+        self._system_theme_watcher.system_theme_changed.connect(
+            self.credits_tab._on_system_theme_changed
+        )
         logging_on = self.settings_manager.get("show_debug_tab", False)
         self.debug_tab.logging_enabled = logging_on
         self.multitoon_tab.input_service.logging_enabled = logging_on

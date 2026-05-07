@@ -201,6 +201,47 @@ def test_credits_footer_uses_pipe_separators(qapp, settings_manager):
     assert "·" not in text, f"Middot found in footer text; spec says use pipe: {text!r}"
 
 
+def test_credits_tab_repaints_on_system_theme_change_when_pref_is_system(
+    qapp, settings_manager, monkeypatch
+):
+    """When TTMT theme = 'system', an OS light/dark toggle must trigger
+    refresh_theme on the credits tab. Issue 2 from v2.1.3 beta report."""
+    from tabs.credits_tab import CreditsTab
+
+    settings_manager.set("theme", "system")
+    tab = CreditsTab(settings_manager=settings_manager)
+
+    refresh_calls = []
+    original_refresh = tab.refresh_theme
+
+    def counting_refresh():
+        refresh_calls.append(True)
+        original_refresh()
+
+    monkeypatch.setattr(tab, "refresh_theme", counting_refresh)
+    tab._on_system_theme_changed("dark")
+    assert refresh_calls, "refresh_theme was not called on system_theme_changed"
+
+
+def test_credits_tab_skips_refresh_when_explicit_pref_set(
+    qapp, settings_manager, monkeypatch
+):
+    """When TTMT theme is an explicit 'light' or 'dark', an OS toggle must
+    NOT overwrite the user's choice."""
+    from tabs.credits_tab import CreditsTab
+
+    settings_manager.set("theme", "dark")
+    tab = CreditsTab(settings_manager=settings_manager)
+
+    refresh_calls = []
+    monkeypatch.setattr(tab, "refresh_theme", lambda: refresh_calls.append(True))
+    tab._on_system_theme_changed("light")
+    assert not refresh_calls, (
+        "refresh_theme should not run on system change when user pref is explicit "
+        "(got {} calls)".format(len(refresh_calls))
+    )
+
+
 def test_credits_footer_link_color_matches_theme_muted(qapp, settings_manager):
     """Footer link color is sourced from get_theme_colors()['text_muted']."""
     from PySide6.QtGui import QPalette
