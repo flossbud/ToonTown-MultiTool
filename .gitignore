@@ -70,3 +70,6 @@ API Docs/
 !docs/smoketest-checklist.md
 
 # Private-build skill — local only, never reaches origin.
+
+# === Git worktrees ===
+.worktrees/
