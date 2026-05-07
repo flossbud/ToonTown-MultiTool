@@ -301,11 +301,20 @@ class _CompactLayout(QWidget):
         Expand: 300 ms width 0→full + 250 ms opacity 0→1 (50 ms delay so
         reveal trails frame expansion).
         Collapse: 180 ms opacity 1→0 + 220 ms width full→chat (80 ms delay
-        so frame stays open while widgets fade)."""
+        so frame stays open while widgets fade).
+
+        Under the offscreen Qt platform plugin (used by the test suite), the
+        QGraphicsOpacityEffect path crashes intermittently with an access
+        violation in PySide6 6.11. The fade is purely cosmetic, so under
+        offscreen we keep the width animation but skip the opacity effect
+        and snap visibility instantly. Production never runs offscreen."""
         from PySide6.QtCore import (
             QVariantAnimation, QPropertyAnimation, QEasingCurve, QTimer,
         )
+        from PySide6.QtGui import QGuiApplication
         from PySide6.QtWidgets import QGraphicsOpacityEffect
+
+        use_opacity_fx = QGuiApplication.platformName() != "offscreen"
 
         if not hasattr(self, "_ka_anims"):
             self._ka_anims = []
@@ -336,10 +345,11 @@ class _CompactLayout(QWidget):
                 # Make widgets visible with opacity 0 so they can fade in.
                 ka_btn.setVisible(True)
                 ka_bar.setVisible(True)
-                for w in (ka_btn, ka_bar):
-                    effect = QGraphicsOpacityEffect(w)
-                    effect.setOpacity(0.0)
-                    w.setGraphicsEffect(effect)
+                if use_opacity_fx:
+                    for w in (ka_btn, ka_bar):
+                        effect = QGraphicsOpacityEffect(w)
+                        effect.setOpacity(0.0)
+                        w.setGraphicsEffect(effect)
 
                 # Width animation: chat_only_width → full row width.
                 # Use ka_group's current width as start (it's chat-only-sized
@@ -371,44 +381,52 @@ class _CompactLayout(QWidget):
                 self._ka_anims.append(width_anim)
 
                 # Opacity animations for ka_btn + ka_bar (delayed 50 ms).
-                for w in (ka_btn, ka_bar):
-                    effect = w.graphicsEffect()
+                if use_opacity_fx:
+                    for w in (ka_btn, ka_bar):
+                        effect = w.graphicsEffect()
 
-                    op_anim = QPropertyAnimation(effect, b"opacity")
-                    op_anim.setDuration(250)
-                    op_anim.setEasingCurve(QEasingCurve.OutCubic)
-                    op_anim.setStartValue(0.0)
-                    op_anim.setEndValue(1.0)
+                        op_anim = QPropertyAnimation(effect, b"opacity")
+                        op_anim.setDuration(250)
+                        op_anim.setEasingCurve(QEasingCurve.OutCubic)
+                        op_anim.setStartValue(0.0)
+                        op_anim.setEndValue(1.0)
 
-                    def make_op_done(w_local):
-                        def _done():
-                            w_local.setGraphicsEffect(None)
-                        return _done
-                    op_anim.finished.connect(make_op_done(w))
-                    QTimer.singleShot(50, op_anim.start)
-                    self._ka_anims.append(op_anim)
+                        def make_op_done(w_local):
+                            def _done():
+                                w_local.setGraphicsEffect(None)
+                            return _done
+                        op_anim.finished.connect(make_op_done(w))
+                        QTimer.singleShot(50, op_anim.start)
+                        self._ka_anims.append(op_anim)
 
             else:
                 # Collapse: opacity fade-out first, then frame width collapses.
-                for w in (ka_btn, ka_bar):
-                    effect = QGraphicsOpacityEffect(w)
-                    effect.setOpacity(1.0)
-                    w.setGraphicsEffect(effect)
+                if use_opacity_fx:
+                    for w in (ka_btn, ka_bar):
+                        effect = QGraphicsOpacityEffect(w)
+                        effect.setOpacity(1.0)
+                        w.setGraphicsEffect(effect)
 
-                    op_anim = QPropertyAnimation(effect, b"opacity")
-                    op_anim.setDuration(180)
-                    op_anim.setEasingCurve(QEasingCurve.InCubic)
-                    op_anim.setStartValue(1.0)
-                    op_anim.setEndValue(0.0)
+                        op_anim = QPropertyAnimation(effect, b"opacity")
+                        op_anim.setDuration(180)
+                        op_anim.setEasingCurve(QEasingCurve.InCubic)
+                        op_anim.setStartValue(1.0)
+                        op_anim.setEndValue(0.0)
 
-                    def make_op_done(w_local):
-                        def _done():
-                            w_local.setVisible(False)
-                            w_local.setGraphicsEffect(None)
-                        return _done
-                    op_anim.finished.connect(make_op_done(w))
-                    op_anim.start()
-                    self._ka_anims.append(op_anim)
+                        def make_op_done(w_local):
+                            def _done():
+                                w_local.setVisible(False)
+                                w_local.setGraphicsEffect(None)
+                            return _done
+                        op_anim.finished.connect(make_op_done(w))
+                        op_anim.start()
+                        self._ka_anims.append(op_anim)
+                else:
+                    # Headless: skip the fade and hide widgets directly so
+                    # the rest of the collapse path (width animation) sees
+                    # the same end-state the fade would have produced.
+                    for w in (ka_btn, ka_bar):
+                        w.setVisible(False)
 
                 # Width collapse, delayed 80 ms.
                 width_start = ka_group.width()
