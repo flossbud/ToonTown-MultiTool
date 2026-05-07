@@ -9,7 +9,7 @@ from utils.theme_manager import resolve_theme, get_theme_colors
 from utils.version import APP_VERSION
 
 class CreditsTab(QWidget):
-    def __init__(self, settings_manager=None, parent=None):
+    def __init__(self, settings_manager=None, system_theme_watcher=None, parent=None):
         super().__init__(parent)
         self.settings_manager = settings_manager
         self.build_ui()
@@ -18,8 +18,23 @@ class CreditsTab(QWidget):
         if self.settings_manager:
             self.settings_manager.on_change(self._on_setting_changed)
 
+        # Follow OS light/dark toggles when the user's preference is "system".
+        # Mirrors the pattern in main.py that already hooks the same watcher
+        # for whole-app re-theming. Without this, the credits tab would only
+        # repaint when the user explicitly toggles TTMT's theme setting.
+        if system_theme_watcher is not None:
+            system_theme_watcher.system_theme_changed.connect(
+                self._on_system_theme_changed
+            )
+
     def _on_setting_changed(self, key, value):
         if key == "theme":
+            self.refresh_theme()
+
+    def _on_system_theme_changed(self, _value):
+        # Only re-apply if the user prefers system tracking; an explicit
+        # light/dark choice should not get overwritten by an OS toggle.
+        if self.settings_manager and self.settings_manager.get("theme", "system") == "system":
             self.refresh_theme()
 
     def build_ui(self):
