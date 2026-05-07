@@ -88,7 +88,8 @@ class InputService(QObject):
 
     def __init__(self, window_manager, get_enabled_toons, get_movement_modes, get_event_queue_func,
                  get_chat_enabled=None, settings_manager=None,
-                 get_keymap_assignments=None, keymap_manager=None):
+                 get_keymap_assignments=None, keymap_manager=None,
+                 get_chat_block_list=None):
         super().__init__()
         self.window_manager = window_manager
         self.get_enabled_toons = get_enabled_toons
@@ -98,6 +99,10 @@ class InputService(QObject):
         self.settings_manager = settings_manager
         self.get_keymap_assignments = get_keymap_assignments
         self.keymap_manager = keymap_manager
+        # Resolved per call so changes to TTR's settings.json after service start
+        # are honored without restarting the input thread. Default preserves the
+        # legacy hard-coded behavior for callers that don't wire the helper.
+        self.get_chat_block_list = get_chat_block_list or (lambda: {"Return", "Escape"})
         self.running = False
         self.thread = None
         self._stop_event = threading.Event()
@@ -291,7 +296,7 @@ class InputService(QObject):
                 # If the active window is chatting, only pass keys to background windows that are ALSO chatting.
                 continue
 
-            if key in ("Return", "Escape") and not self._is_chat_allowed(i):
+            if key in self.get_chat_block_list() and not self._is_chat_allowed(i):
                 continue
 
             win = window_ids[i]
