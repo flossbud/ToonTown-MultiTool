@@ -9,6 +9,7 @@ The header never moves, resizes, or changes shape.  Only the body animates.
 """
 
 import sys
+import os
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -611,72 +612,50 @@ class KeymapTab(QWidget):
         self.refresh_theme()
 
     def _on_detect_settings(self):
-        import os, json
+        from utils.ttr_settings import locate_settings_file, parse_ttr_settings
         from services.ttr_login_service import find_engine_path
-        
+
         engine_path = None
         if self.settings_manager:
             engine_path = self.settings_manager.get("ttr_engine_dir", "")
         if not engine_path or not os.path.exists(engine_path):
             engine_path = find_engine_path()
-            
-        settings_file = None
-        if engine_path and os.path.exists(os.path.join(engine_path, "settings.json")):
-            settings_file = os.path.join(engine_path, "settings.json")
-        elif os.path.exists(os.path.expanduser("~/.var/app/com.toontownrewritten.Launcher/data/settings.json")):
-            settings_file = os.path.expanduser("~/.var/app/com.toontownrewritten.Launcher/data/settings.json")
-            
-        if not settings_file:
+
+        path = locate_settings_file(engine_dir=engine_path)
+        if not path:
             print("[KeymapTab] Could not find settings.json")
             return
-            
+
         try:
-            with open(settings_file, "r") as f:
-                data = json.load(f)
-                
-            controls = data.get("controls", {})
-            mapping = {
-                "forward": "up",
-                "reverse": "down",
-                "left": "left",
-                "right": "right",
-                "jump": "jump",
-                "stickerBook": "book",
-                "showGags": "gags",
-                "showTasks": "tasks",
-                "showMap": "map"
-            }
-            
-            ttr_to_keymap = {
-                "shift": "Shift_L",
-                "control": "Control_L",
-                "alt": "Alt_L",
-                "space": "space",
-                "escape": "Escape",
-                "enter": "Return",
-                "tab": "Tab",
-                "backspace": "BackSpace",
-                "delete": "Delete",
-                "up": "Up",
-                "down": "Down",
-                "left": "Left",
-                "right": "Right"
-            }
-            
-            updates = 0
-            for ttr_key, my_dir in mapping.items():
-                if ttr_key in controls:
-                    val = controls[ttr_key]
-                    parsed_val = ttr_to_keymap.get(val, val)
-                    self.keymap_manager.update_set_key(0, my_dir, parsed_val)
-                    updates += 1
-                    
-            if updates > 0:
-                self._build_cards()
-                self.refresh_theme()
-                print(f"[KeymapTab] Detected {updates} settings from {settings_file}")
+            settings = parse_ttr_settings(path)
         except Exception as e:
             print(f"[KeymapTab] Failed to parse settings.json: {e}")
+            return
+
+        mapping = {
+            "forward": "up", "reverse": "down", "left": "left", "right": "right",
+            "jump": "jump", "stickerBook": "book", "showGags": "gags",
+            "showTasks": "tasks", "showMap": "map",
+        }
+        ttr_to_keymap = {
+            "shift": "Shift_L", "control": "Control_L", "alt": "Alt_L",
+            "space": "space", "escape": "Escape", "enter": "Return",
+            "tab": "Tab", "backspace": "BackSpace", "delete": "Delete",
+            "up": "Up", "down": "Down", "left": "Left", "right": "Right",
+        }
+
+        updates = 0
+        for ttr_key, my_dir in mapping.items():
+            val = settings.controls.get(ttr_key)
+            if val is None:
+                continue
+            self.keymap_manager.update_set_key(0, my_dir, ttr_to_keymap.get(val, val))
+            updates += 1
+
+        if updates > 0:
+            self._build_cards()
+            self.refresh_theme()
+            print(f"[KeymapTab] Detected {updates} settings from {path}")
 
     # ── Theme ──────────────────────────────────────────────────────────────
 
