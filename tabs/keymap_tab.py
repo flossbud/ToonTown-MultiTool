@@ -612,7 +612,7 @@ class KeymapTab(QWidget):
         self.refresh_theme()
 
     def _on_detect_settings(self):
-        from utils.ttr_settings import locate_settings_file, parse_ttr_settings
+        from utils.ttr_settings import locate_settings_file, parse_ttr_settings, apply_ttr_controls_to_set
         from services.ttr_login_service import find_engine_path
 
         engine_path = None
@@ -632,26 +632,7 @@ class KeymapTab(QWidget):
             print(f"[KeymapTab] Failed to parse settings.json: {e}")
             return
 
-        mapping = {
-            "forward": "up", "reverse": "down", "left": "left", "right": "right",
-            "jump": "jump", "stickerBook": "book", "showGags": "gags",
-            "showTasks": "tasks", "showMap": "map",
-        }
-        ttr_to_keymap = {
-            "shift": "Shift_L", "control": "Control_L", "alt": "Alt_L",
-            "space": "space", "escape": "Escape", "enter": "Return",
-            "tab": "Tab", "backspace": "BackSpace", "delete": "Delete",
-            "up": "Up", "down": "Down", "left": "Left", "right": "Right",
-        }
-
-        updates = 0
-        for ttr_key, my_dir in mapping.items():
-            val = settings.controls.get(ttr_key)
-            if val is None:
-                continue
-            self.keymap_manager.update_set_key(0, my_dir, ttr_to_keymap.get(val, val))
-            updates += 1
-
+        updates = apply_ttr_controls_to_set(self.keymap_manager, 0, settings.controls)
         if updates > 0:
             self._build_cards()
             self.refresh_theme()

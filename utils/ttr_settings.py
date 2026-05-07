@@ -101,3 +101,33 @@ def resolve_chat_block_list(s: TtrSettings) -> set[str]:
     if s.chat_by_typing_enabled_resolved:
         block.update(string.ascii_lowercase)
     return block
+
+
+_TTR_CONTROL_TO_DIRECTION = {
+    "forward": "up", "reverse": "down", "left": "left", "right": "right",
+    "jump": "jump", "stickerBook": "book", "showGags": "gags",
+    "showTasks": "tasks", "showMap": "map",
+}
+
+_TTR_VALUE_TO_KEYSYM = {
+    "shift": "Shift_L", "control": "Control_L", "alt": "Alt_L",
+    "space": "space", "escape": "Escape", "enter": "Return",
+    "tab": "Tab", "backspace": "BackSpace", "delete": "Delete",
+    "up": "Up", "down": "Down", "left": "Left", "right": "Right",
+}
+
+
+def apply_ttr_controls_to_set(keymap_manager, set_index: int, controls: dict) -> int:
+    """Apply parsed TTR controls onto the given keymap set.
+
+    Returns the count of fields applied. Single-letter values pass through
+    untouched (TTR uses a-z verbatim for letter hotkeys); known TTR-specific
+    names like 'control' are translated to the project's Xkeysym strings."""
+    n = 0
+    for ttr_key, direction in _TTR_CONTROL_TO_DIRECTION.items():
+        val = controls.get(ttr_key)
+        if val is None:
+            continue
+        keymap_manager.update_set_key(set_index, direction, _TTR_VALUE_TO_KEYSYM.get(val, val))
+        n += 1
+    return n

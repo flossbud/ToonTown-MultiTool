@@ -199,6 +199,16 @@ class MultiToonTool(QMainWindow):
         self.profile_manager = ProfileManager()
         self.hotkey_manager = None
 
+        # Auto-detect TTR settings at startup so the default keyset reflects
+        # the user's TTR config without requiring a manual "Detect" press.
+        # Cached on settings_manager so the result survives if settings.json
+        # is unreadable on a later run.
+        self._ttr_settings = self._refresh_ttr_settings()
+        if self._ttr_settings is not None:
+            from utils.ttr_settings import apply_ttr_controls_to_set
+            apply_ttr_controls_to_set(self.keymap_manager, 0, self._ttr_settings.controls)
+            self.settings_manager.set("last_detected_keymap", self._ttr_settings.controls)
+
         self.setObjectName("MultiToonToolMainWindow")
         QTimer.singleShot(0, self._capture_multitool_window_id)
 
@@ -230,6 +240,17 @@ class MultiToonTool(QMainWindow):
         logging_on = self.settings_manager.get("show_debug_tab", False)
         self.debug_tab.logging_enabled = logging_on
         self.multitoon_tab.input_service.logging_enabled = logging_on
+        # Wire the chat-aware key-block resolver into the input service. The
+        # callable is invoked per key event so settings.json edits are honored
+        # without restarting TTMT. Re-parse on each call rather than caching:
+        # the cost is a small JSON read; the win is liveness.
+        from utils.ttr_settings import resolve_chat_block_list
+        def _chat_block_list_provider():
+            s = self._refresh_ttr_settings()
+            if s is None:
+                return {"Return", "Escape"}
+            return resolve_chat_block_list(s)
+        self.multitoon_tab.input_service.get_chat_block_list = _chat_block_list_provider
         ttr_api.set_debug(logging_on)
         self._api_log.connect(self.debug_tab.append_log)
         ttr_api.set_log_callback(self._api_log.emit)
@@ -635,6 +656,25 @@ class MultiToonTool(QMainWindow):
         Navigate to the Settings tab and highlight the Keep-Alive group."""
         self.nav_select(3)  # Settings tab index — see _build_sidebar nav_items
         self.settings_tab.highlight_keep_alive_group()
+
+    # ── TTR settings ──────────────────────────────────────────────────────────
+
+    def _refresh_ttr_settings(self):
+        """Locate and parse TTR's settings.json. Returns TtrSettings or None.
+
+        Used at startup (apply controls + persist cache) and as the source
+        for the chat-aware key-block list. Per-call so settings.json edits
+        made while TTMT is open are honored on the next key event."""
+        from utils.ttr_settings import locate_settings_file, parse_ttr_settings
+        engine_dir = self.settings_manager.get("ttr_engine_dir", "") or None
+        path = locate_settings_file(engine_dir=engine_dir)
+        if not path:
+            return None
+        try:
+            return parse_ttr_settings(path)
+        except Exception as e:
+            print(f"[main] TTR settings parse failed: {e}")
+            return None
 
     # ── Profiles ────────────────────────────────────────────────────────────
 
