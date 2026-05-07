@@ -68,6 +68,19 @@ VK_TO_KEYSYM = {
     106: 'KP_Multiply', 107: 'KP_Add', 109: 'KP_Subtract', 110: 'KP_Decimal', 111: 'KP_Divide'
 }
 
+# Win32 "extended keys" require bit 24 of lparam set on WM_KEYDOWN/WM_KEYUP.
+# Without it, hosts that read scan-code-derived state (Panda3D / TTR) ignore
+# the event. List per Microsoft docs (KEYBDINPUT.dwFlags KEYEVENTF_EXTENDEDKEY
+# documentation): arrow keys, Insert, Delete, Home, End, PageUp/PageDown,
+# right-side modifiers, NumLock, numpad divide and Enter.
+EXTENDED_KEYSYMS = frozenset({
+    'Up', 'Down', 'Left', 'Right',
+    'Insert', 'Delete', 'Home', 'End',
+    'Prior', 'Next',  # PageUp / PageDown
+    'Control_R', 'Alt_R',
+    'KP_Divide', 'KP_Enter',
+})
+
 for c in 'abcdefghijklmnopqrstuvwxyz':
     VK_MAP[c] = ord(c.upper())
 
@@ -109,11 +122,13 @@ class Win32Backend:
                 pass
         return None
         
-    def _send(self, win_id_str: str, msg: int, vk: int) -> bool:
+    def _send(self, win_id_str: str, msg: int, vk: int, keysym_str: str = "") -> bool:
         try:
             hwnd = int(win_id_str)
             scan_code = win32api.MapVirtualKey(vk, 0)
             lparam = (scan_code << 16) | 1
+            if keysym_str in EXTENDED_KEYSYMS:
+                lparam |= (1 << 24)  # extended-key flag
             if msg == win32con.WM_KEYUP:
                 lparam |= (1 << 30)
                 lparam |= (1 << 31)
@@ -126,12 +141,12 @@ class Win32Backend:
     def send_keydown(self, win_id_str: str, keysym_str: str, state: int = 0) -> bool:
         vk = self._get_vk(keysym_str)
         if not vk: return False
-        return self._send(win_id_str, win32con.WM_KEYDOWN, vk)
+        return self._send(win_id_str, win32con.WM_KEYDOWN, vk, keysym_str)
 
     def send_keyup(self, win_id_str: str, keysym_str: str, state: int = 0) -> bool:
         vk = self._get_vk(keysym_str)
         if not vk: return False
-        return self._send(win_id_str, win32con.WM_KEYUP, vk)
+        return self._send(win_id_str, win32con.WM_KEYUP, vk, keysym_str)
 
     def send_key(self, win_id_str: str, keysym_str: str, modifiers: list = None) -> bool:
         mod_map = {"shift": "Shift_L", "ctrl": "Control_L", "alt": "Alt_L"}
