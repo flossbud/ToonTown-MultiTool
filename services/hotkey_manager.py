@@ -60,6 +60,17 @@ class HotkeyManager(QObject):
         "shift": "Shift_L", "shift_l": "Shift_L", "shift_r": "Shift_R",
         "ctrl": "Control_L", "ctrl_l": "Control_L", "ctrl_r": "Control_R",
         "alt": "Alt_L", "alt_l": "Alt_L", "alt_r": "Alt_R",
+        # Navigation cluster — TTR binds lookUp/lookDown/showGags/showTasks
+        # to these by default.
+        "home": "Home", "end": "End",
+        "page_up": "Prior", "page_down": "Next",
+        "insert": "Insert",
+        # Function keys — TTR binds stickerBook=f8 by default and exposes
+        # f1-f12 for various debug/screenshot shortcuts. F-key normalization
+        # is required so the InputService keymap path can match them.
+        "f1":  "F1",  "f2":  "F2",  "f3":  "F3",  "f4":  "F4",
+        "f5":  "F5",  "f6":  "F6",  "f7":  "F7",  "f8":  "F8",
+        "f9":  "F9",  "f10": "F10", "f11": "F11", "f12": "F12",
     }
 
     def __init__(self, window_manager, key_event_queue):
