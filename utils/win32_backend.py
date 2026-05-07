@@ -49,6 +49,17 @@ VK_MAP = {
     'Down': win32con.VK_DOWN,
     'Left': win32con.VK_LEFT,
     'Right': win32con.VK_RIGHT,
+    # Navigation cluster (extended keys per Win32 spec)
+    'Home':   win32con.VK_HOME,
+    'End':    win32con.VK_END,
+    'Prior':  win32con.VK_PRIOR,   # Page Up
+    'Next':   win32con.VK_NEXT,    # Page Down
+    'Insert': win32con.VK_INSERT,
+    # Function keys
+    'F1':  win32con.VK_F1,  'F2':  win32con.VK_F2,  'F3':  win32con.VK_F3,
+    'F4':  win32con.VK_F4,  'F5':  win32con.VK_F5,  'F6':  win32con.VK_F6,
+    'F7':  win32con.VK_F7,  'F8':  win32con.VK_F8,  'F9':  win32con.VK_F9,
+    'F10': win32con.VK_F10, 'F11': win32con.VK_F11, 'F12': win32con.VK_F12,
     # Numpad
     'KP_0': win32con.VK_NUMPAD0,
     'KP_1': win32con.VK_NUMPAD1,
