@@ -60,11 +60,14 @@ class CreditsTab(QWidget):
         tagline.setWordWrap(True)
         tagline.setAlignment(Qt.AlignCenter)
 
-        # Centerpiece image: assets/flossbud.webp scaled to 400x400.
+        # Centerpiece image: assets/flossbud.png scaled to 400x400.
         # setMinimumSize prevents the parent layout from squeezing the
         # label below the pixmap's size, which would clip the image.
         # Falls back to an empty label if the asset is missing or unreadable;
         # the rest of the card still renders.
+        # PNG (not WebP): Arch's pyside6 package doesn't ship the Qt WebP
+        # image plugin, so QPixmap silently fails to load .webp on the AUR
+        # build. PNG has zero plugin dependencies.
         image_label = QLabel()
         image_label.setAlignment(Qt.AlignCenter)
         # _MEIPASS is set by PyInstaller's bootloader to the runtime extraction
@@ -74,7 +77,7 @@ class CreditsTab(QWidget):
             sys, "_MEIPASS",
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
         )
-        asset_path = os.path.join(base, "assets", "flossbud.webp")
+        asset_path = os.path.join(base, "assets", "flossbud.png")
         pixmap = QPixmap(asset_path)
         if not pixmap.isNull():
             image_label.setPixmap(
