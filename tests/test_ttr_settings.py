@@ -94,3 +94,17 @@ def test_locate_returns_none_when_no_path_exists(tmp_path, monkeypatch):
     monkeypatch.setattr("utils.ttr_settings._FLATPAK_PATH", str(tmp_path / "no-such-flatpak"))
     monkeypatch.setattr("utils.ttr_settings._engine_dir_from_settings", lambda: None)
     assert locate_settings_file() is None
+
+
+def test_locate_returns_path_for_engine_dir(tmp_path, monkeypatch):
+    """Positive-hit: when an explicit engine_dir is passed and the file exists,
+    locate_settings_file returns it without consulting the other candidates."""
+    from utils.ttr_settings import locate_settings_file
+    (tmp_path / "settings.json").write_text("{}")
+    # Make the lower-priority candidates unreachable so the test fails loudly
+    # if priority order ever regresses.
+    monkeypatch.setenv("APPDATA", str(tmp_path / "no-such"))
+    monkeypatch.setattr("utils.ttr_settings._FLATPAK_PATH", str(tmp_path / "no-such-flatpak"))
+    monkeypatch.setattr("utils.ttr_settings._engine_dir_from_settings", lambda: None)
+    result = locate_settings_file(engine_dir=str(tmp_path))
+    assert result == tmp_path / "settings.json"
