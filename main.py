@@ -203,11 +203,12 @@ class MultiToonTool(QMainWindow):
         # the user's TTR config without requiring a manual "Detect" press.
         # Cached on settings_manager so the result survives if settings.json
         # is unreadable on a later run.
-        self._ttr_settings = self._refresh_ttr_settings()
-        if self._ttr_settings is not None:
+        _ttr_settings_at_startup = self._refresh_ttr_settings()
+        if _ttr_settings_at_startup is not None:
             from utils.ttr_settings import apply_ttr_controls_to_set
-            apply_ttr_controls_to_set(self.keymap_manager, 0, self._ttr_settings.controls)
-            self.settings_manager.set("last_detected_keymap", self._ttr_settings.controls)
+            n = apply_ttr_controls_to_set(self.keymap_manager, 0, _ttr_settings_at_startup.controls)
+            self.settings_manager.set("last_detected_keymap", _ttr_settings_at_startup.controls)
+            print(f"[main] TTR settings auto-detected from {_ttr_settings_at_startup.source_path} ({n} controls)")
 
         self.setObjectName("MultiToonToolMainWindow")
         QTimer.singleShot(0, self._capture_multitool_window_id)
@@ -633,6 +634,11 @@ class MultiToonTool(QMainWindow):
             self.on_theme_changed()
 
     def on_input_backend_changed(self):
+        # Note: get_chat_block_list (wired in __init__) is preserved here
+        # because stop_service/start_service reuses the same InputService
+        # instance — they only toggle its event loop. If toggle_service ever
+        # constructs a new InputService, the late-bind injection in __init__
+        # would need to be repeated here.
         if self.multitoon_tab.service_running:
             self.multitoon_tab.stop_service()
             self.multitoon_tab.start_service()
@@ -664,9 +670,17 @@ class MultiToonTool(QMainWindow):
 
         Used at startup (apply controls + persist cache) and as the source
         for the chat-aware key-block list. Per-call so settings.json edits
-        made while TTMT is open are honored on the next key event."""
+        made while TTMT is open are honored on the next key event.
+
+        Mirrors the engine-dir fallback chain used by the manual 'Detect'
+        button in keymap_tab: stored ttr_engine_dir first, then
+        find_engine_path() so a Linux native install with no stored dir
+        still auto-detects."""
         from utils.ttr_settings import locate_settings_file, parse_ttr_settings
+        from services.ttr_login_service import find_engine_path
         engine_dir = self.settings_manager.get("ttr_engine_dir", "") or None
+        if not engine_dir:
+            engine_dir = find_engine_path() or None
         path = locate_settings_file(engine_dir=engine_dir)
         if not path:
             return None
