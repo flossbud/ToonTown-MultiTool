@@ -13,6 +13,31 @@ try:
 except ImportError:
     pass
 
+# Real Windows keystrokes for L/R modifiers deliver the GENERIC virtual key
+# code (VK_CONTROL=0x11, VK_SHIFT=0x10, VK_MENU=0x12) as wparam — NOT the
+# L/R-specific VK_LCONTROL/VK_RCONTROL/etc. The L/R distinction lives in the
+# lparam scan code + extended-key bit.
+#
+# Verified against a real WindowProc + SendInput baseline; see
+# debug_probe_postmessage.py in the repo root.
+#
+# Posting VK_LCONTROL through PostMessage only sets Panda3D's
+# KeyboardButton::lcontrol() (via lookup_key); TTR's "jump" / "walk" /
+# "map" bindings poll the GENERIC control / shift / alt button, which is
+# only set when wparam == VK_CONTROL. That's why the v2.2.0 extended-bit
+# Right Ctrl "fix" still didn't move toons — it patched lparam but left
+# wparam wrong.
+#
+# Tuple is (wparam_vk, lparam_scan_code, extended_bit).
+WIN32_MODIFIER_OVERRIDES = {
+    'Control_L': (0x11, 0x1D, False),
+    'Control_R': (0x11, 0x1D, True),
+    'Shift_L':   (0x10, 0x2A, False),
+    'Shift_R':   (0x10, 0x36, False),
+    'Alt_L':     (0x12, 0x38, False),
+    'Alt_R':     (0x12, 0x38, True),
+}
+
 VK_MAP = {
     'space': win32con.VK_SPACE,
     'Return': win32con.VK_RETURN,
@@ -24,12 +49,6 @@ VK_MAP = {
     'Down': win32con.VK_DOWN,
     'Left': win32con.VK_LEFT,
     'Right': win32con.VK_RIGHT,
-    'Shift_L': win32con.VK_LSHIFT,
-    'Shift_R': win32con.VK_RSHIFT,
-    'Control_L': win32con.VK_LCONTROL,
-    'Control_R': win32con.VK_RCONTROL,
-    'Alt_L': win32con.VK_LMENU,
-    'Alt_R': win32con.VK_RMENU,
     # Numpad
     'KP_0': win32con.VK_NUMPAD0,
     'KP_1': win32con.VK_NUMPAD1,
@@ -111,6 +130,8 @@ class Win32Backend:
             return None
 
     def _get_vk(self, keysym_str: str):
+        if keysym_str in WIN32_MODIFIER_OVERRIDES:
+            return WIN32_MODIFIER_OVERRIDES[keysym_str][0]
         if keysym_str in VK_MAP:
             return VK_MAP[keysym_str]
         if len(keysym_str) == 1:
@@ -125,9 +146,13 @@ class Win32Backend:
     def _send(self, win_id_str: str, msg: int, vk: int, keysym_str: str = "") -> bool:
         try:
             hwnd = int(win_id_str)
-            scan_code = win32api.MapVirtualKey(vk, 0)
+            if keysym_str in WIN32_MODIFIER_OVERRIDES:
+                vk, scan_code, extended = WIN32_MODIFIER_OVERRIDES[keysym_str]
+            else:
+                scan_code = win32api.MapVirtualKey(vk, 0)
+                extended = keysym_str in EXTENDED_KEYSYMS
             lparam = (scan_code << 16) | 1
-            if keysym_str in EXTENDED_KEYSYMS:
+            if extended:
                 lparam |= (1 << 24)  # extended-key flag
             if msg == win32con.WM_KEYUP:
                 lparam |= (1 << 30)
