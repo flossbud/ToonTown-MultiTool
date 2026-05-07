@@ -109,11 +109,37 @@ _TTR_CONTROL_TO_DIRECTION = {
     "showTasks": "tasks", "showMap": "map",
 }
 
+# TTR's settings.json control values, translated to TTMT's X-keysym strings.
+# Keys are the actual literal strings TTR writes; values are what the rest
+# of TTMT (KeymapManager, InputService, Win32Backend, XlibBackend) expects.
+#
+# Confirmed by inspecting a real Windows TTR install's settings.json:
+# C:\Program Files (x86)\Toontown Rewritten\settings.json
+#
+# Anything not in this table falls through verbatim. That's intentional for
+# letter hotkeys (a-z) — TTR writes them as "w" / "a" etc., which our
+# keymap stores literally.
 _TTR_VALUE_TO_KEYSYM = {
+    # Modifiers
     "shift": "Shift_L", "control": "Control_L", "alt": "Alt_L",
+    # Arrow keys (TTR uses the 'arrow_*' aliases for the default movement
+    # bindings — bare 'up'/'down'/'left'/'right' are kept for back-compat
+    # in case TTR ever changes the convention).
+    "arrow_up":    "Up",    "up":    "Up",
+    "arrow_down":  "Down",  "down":  "Down",
+    "arrow_left":  "Left",  "left":  "Left",
+    "arrow_right": "Right", "right": "Right",
+    # Whitespace / control
     "space": "space", "escape": "Escape", "enter": "Return",
     "tab": "Tab", "backspace": "BackSpace", "delete": "Delete",
-    "up": "Up", "down": "Down", "left": "Left", "right": "Right",
+    # Navigation cluster
+    "home": "Home", "end": "End",
+    "page_up": "Prior", "page_down": "Next",
+    "insert": "Insert",
+    # Function keys F1–F12
+    "f1":  "F1",  "f2":  "F2",  "f3":  "F3",  "f4":  "F4",
+    "f5":  "F5",  "f6":  "F6",  "f7":  "F7",  "f8":  "F8",
+    "f9":  "F9",  "f10": "F10", "f11": "F11", "f12": "F12",
 }
 
 
