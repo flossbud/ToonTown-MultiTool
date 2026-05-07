@@ -695,8 +695,14 @@ class _FullLayout(QWidget):
     def _animate_keep_alive_visibility(self, target_visible: bool) -> None:
         """Animate KA button + bar opacity for all 4 cards. No position changes.
         On expand: 250 ms 0→1 fade-in. On collapse: 180 ms 1→0 fade-out, then
-        setVisible(False) at completion."""
+        setVisible(False) at completion.
+
+        Under the offscreen Qt platform plugin (used by the test suite),
+        QGraphicsOpacityEffect crashes intermittently with an access violation
+        in PySide6 6.11. The fade is purely cosmetic, so under offscreen we
+        snap visibility instantly. Production never runs offscreen."""
         from PySide6.QtCore import QPropertyAnimation, QEasingCurve
+        from PySide6.QtGui import QGuiApplication
         from PySide6.QtWidgets import QGraphicsOpacityEffect
 
         # Stop any in-flight animations and remove existing effects.
@@ -705,6 +711,14 @@ class _FullLayout(QWidget):
         for a in self._ka_anims:
             a.stop()
         self._ka_anims = []
+
+        if QGuiApplication.platformName() == "offscreen":
+            for i in range(4):
+                if i < len(self._tab.keep_alive_buttons):
+                    self._tab.keep_alive_buttons[i].setVisible(target_visible)
+                if i < len(self._tab.ka_progress_bars):
+                    self._tab.ka_progress_bars[i].setVisible(target_visible)
+            return
 
         duration_ms = 250 if target_visible else 180
         easing = QEasingCurve.OutCubic if target_visible else QEasingCurve.InCubic
