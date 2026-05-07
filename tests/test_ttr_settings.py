@@ -108,3 +108,47 @@ def test_locate_returns_path_for_engine_dir(tmp_path, monkeypatch):
     monkeypatch.setattr("utils.ttr_settings._engine_dir_from_settings", lambda: None)
     result = locate_settings_file(engine_dir=str(tmp_path))
     assert result == tmp_path / "settings.json"
+
+
+class _FakeKeymapManager:
+    def __init__(self):
+        self.calls = []
+
+    def update_set_key(self, set_index, direction, keysym):
+        self.calls.append((set_index, direction, keysym))
+
+
+def test_apply_ttr_controls_to_set_translates_arrows_and_control():
+    from utils.ttr_settings import apply_ttr_controls_to_set
+    km = _FakeKeymapManager()
+    controls = {
+        "forward": "up", "reverse": "down", "left": "left", "right": "right",
+        "jump": "control",
+    }
+    n = apply_ttr_controls_to_set(km, 0, controls)
+    assert n == 5
+    by_direction = {d: k for (_, d, k) in km.calls}
+    assert by_direction["up"] == "Up"
+    assert by_direction["down"] == "Down"
+    assert by_direction["left"] == "Left"
+    assert by_direction["right"] == "Right"
+    assert by_direction["jump"] == "Control_L"
+
+
+def test_apply_ttr_controls_to_set_passes_through_letter_hotkeys():
+    from utils.ttr_settings import apply_ttr_controls_to_set
+    km = _FakeKeymapManager()
+    n = apply_ttr_controls_to_set(km, 0, {"forward": "w", "reverse": "s"})
+    assert n == 2
+    by_direction = {d: k for (_, d, k) in km.calls}
+    assert by_direction["up"] == "w"
+    assert by_direction["down"] == "s"
+
+
+def test_apply_ttr_controls_to_set_skips_missing_keys():
+    from utils.ttr_settings import apply_ttr_controls_to_set
+    km = _FakeKeymapManager()
+    # Only "jump" present; the rest should be skipped.
+    n = apply_ttr_controls_to_set(km, 1, {"jump": "control"})
+    assert n == 1
+    assert km.calls == [(1, "jump", "Control_L")]
