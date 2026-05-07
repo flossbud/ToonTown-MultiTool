@@ -6,7 +6,7 @@ real arrow-key presses from numpad arrows. We test the lparam construction
 directly so the test runs on any platform.
 """
 import sys
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock
 
 EXTENDED_BIT = 1 << 24
 

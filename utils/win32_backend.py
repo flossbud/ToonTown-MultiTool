@@ -72,7 +72,7 @@ VK_TO_KEYSYM = {
 # Without it, hosts that read scan-code-derived state (Panda3D / TTR) ignore
 # the event. List per Microsoft docs (KEYBDINPUT.dwFlags KEYEVENTF_EXTENDEDKEY
 # documentation): arrow keys, Insert, Delete, Home, End, PageUp/PageDown,
-# right-side modifiers, NumLock, numpad divide and Enter.
+# right-side modifiers, numpad divide and Enter.
 EXTENDED_KEYSYMS = frozenset({
     'Up', 'Down', 'Left', 'Right',
     'Insert', 'Delete', 'Home', 'End',
