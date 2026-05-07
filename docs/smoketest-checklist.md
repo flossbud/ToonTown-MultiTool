@@ -38,3 +38,26 @@ Targeted repros for the seven in-scope fixes from the v2.1.3 beta report.
 ### Chat-aware key-block rule (cross-cutting design improvement)
 - [ ] **Default arrows config — chat-off blocks letters:** Configure TTR with default arrow-key movement (no letter hotkeys). Open chat on a background toon and turn chat OFF. Type letters in the foreground toon. Chat must NOT reopen on the background toon.
 - [ ] **Letter hotkey config — chat-off blocks Enter only:** Configure TTR with at least one letter hotkey (e.g. WASD movement). Turn chat OFF on a background toon. Letters typed in the foreground must continue to forward (this is the existing v2.1.3 behavior — regression guard).
+
+## v2.2.x input-forwarding regression checks
+
+Targeted repros for the issues fixed in `2026-05-07-input-forwarding-fixes.md`.
+
+### Modifier wparam fix (Issue 1)
+- [ ] **Keep-alive Left Ctrl jump on default TTR (Windows):** Fresh TTR install, default keys (Left Ctrl = jump). Open TTMT v2.2.x, verify Set 1 jump = `L Ctrl`, set keep-alive action = "Jump", enable keep-alive on a background toon. The toon must visibly jump on the keep-alive interval.
+- [ ] **Foreground Left Ctrl jump forwards to background toons:** Focus a TTR window. Press Left Ctrl. All other enabled toons must jump.
+- [ ] **Right Ctrl forwarding (regression of v2.2.0 release-note claim):** Bind a TTR action to Right Ctrl in-game (use `Detect Game Settings` to refresh TTMT). Press Right Ctrl in the foreground TTR. Background toons must respond.
+- [ ] **Right Alt + Right Shift + Left Shift forwarding:** Same procedure, one modifier at a time.
+- [ ] **No regression for arrow-only keypresses:** Plain Up/Down/Left/Right (no Ctrl held) still forward.
+
+### TTR vocabulary fix (Issue 2)
+- [ ] **Arrow-key movement under default TTR (Windows):** Fresh TTR install. Open TTMT — Set 1 must show "Up Arrow", "Down Arrow", "Left Arrow", "Right Arrow" (not the literal `arrow_up`/`arrow_down`/...). Press an arrow key in the foreground TTR. Background toons must move.
+- [ ] **F-key shortcut (Book = F8 by default):** Press F8 in foreground TTR. Background toons' Sticker Book must open.
+- [ ] **Home / End forwarding (Gags / Tasks):** Same procedure with Home and End.
+
+### Cache fallback
+- [ ] **Settings.json briefly unreadable:** With a working keymap detected once, rename TTR's `settings.json`, restart TTMT. Set 1 must show the previously detected keymap (not WASD defaults). Restore the file.
+
+### Mod-key sanity (no regressions)
+- [ ] **Letter hotkeys still forward (custom WASD config):** Configure TTR for WASD movement in-game, click `Detect Game Settings`. Press W/A/S/D in foreground TTR. Background toons must move.
+- [ ] **Chat-aware key blocking still gates correctly:** Toggle chat off on a background toon under default arrow TTR config. Type letters in foreground; background chat must NOT reopen.
