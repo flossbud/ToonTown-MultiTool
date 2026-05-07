@@ -488,6 +488,23 @@ class LaunchTab(QWidget):
 
         self._layout.addStretch()
 
+        # Re-apply the RUNNING state to any slot whose launcher is still
+        # alive. _build_ui rebuilds card widgets from scratch, which resets
+        # button text to "Launch" and state to IDLE, but _launchers (the
+        # truth source consulted by update_dot_state) is not reset. Without
+        # this loop the dot stays green while the button reverts to "Launch"
+        # — issue 5 from the v2.1.3 beta report.
+        self._restore_running_state_from_launchers()
+
+    def _restore_running_state_from_launchers(self):
+        for game in ("ttr", "cc"):
+            for section_idx, launcher in enumerate(self._launchers[game]):
+                if launcher is None or not launcher.is_running():
+                    continue
+                if section_idx >= len(self._cards[game]):
+                    continue
+                self._update_status(game, section_idx, LoginState.RUNNING, "Game running")
+
     def _build_game_section(self, game: str, max_per: int):
         c = self._c()
 
