@@ -106,8 +106,8 @@ jobs:
 
       - uses: actions/download-artifact@v4
 
-      - name: Render SMOKETEST.md (private only)
-        if: github.repository == 'flossbud/ToonTown-MultiTool-private'
+      - name: Render SMOKETEST.md (beta tags only)
+        if: contains(github.ref_name, '-')
         run: |
           set -euo pipefail
           PREV=$(git describe --tags --abbrev=0 "${{ github.ref_name }}^" 2>/dev/null || echo "")
@@ -144,6 +144,7 @@ jobs:
         with:
           name: ToonTown MultiTool ${{ github.ref_name }}
           body_path: RELEASE_NOTES.md
+          prerelease: ${{ contains(github.ref_name, '-') }}
           files: |
             windows-zip/ToonTownMultiTool-*.zip
             linux-appimage/TTMultiTool-*.AppImage
