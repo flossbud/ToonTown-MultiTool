@@ -78,7 +78,14 @@ class CCLauncher(QObject):
                 import sys
                 kwargs = {}
                 if sys.platform == "win32":
-                    kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+                    # Break out of the parent's Windows Job Object so closing
+                    # multitool doesn't take running games down with it when
+                    # the job has JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE.
+                    kwargs["creationflags"] = (
+                        subprocess.DETACHED_PROCESS
+                        | subprocess.CREATE_NEW_PROCESS_GROUP
+                        | subprocess.CREATE_BREAKAWAY_FROM_JOB
+                    )
 
                 cmd = [engine_path]
                 if gameserver:
@@ -89,14 +96,25 @@ class CCLauncher(QObject):
                 if osst_token:
                     extra_env["CC_OSST_TOKEN"] = osst_token
 
-                self._game_process = host_popen(
-                    cmd,
-                    cwd=engine_dir,
-                    env=build_launcher_env(extra_env),
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    **kwargs
-                )
+                spawn_env = build_launcher_env(extra_env)
+
+                def _spawn():
+                    return host_popen(
+                        cmd,
+                        cwd=engine_dir,
+                        env=spawn_env,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        **kwargs
+                    )
+
+                try:
+                    self._game_process = _spawn()
+                except OSError as e:
+                    if sys.platform != "win32" or getattr(e, "winerror", None) != 5:
+                        raise
+                    kwargs["creationflags"] &= ~subprocess.CREATE_BREAKAWAY_FROM_JOB
+                    self._game_process = _spawn()
                 pid = self._game_process.pid
                 GameRegistry.instance().register(pid, "cc")
                 self.game_launched.emit(pid)

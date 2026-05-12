@@ -80,16 +80,32 @@ class TTRLauncher(QObject):
                 import sys
                 kwargs = {}
                 if sys.platform == "win32":
-                    kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+                    # Break out of the parent's Windows Job Object so closing
+                    # multitool doesn't take running games down with it when
+                    # the job has JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE.
+                    kwargs["creationflags"] = (
+                        subprocess.DETACHED_PROCESS
+                        | subprocess.CREATE_NEW_PROCESS_GROUP
+                        | subprocess.CREATE_BREAKAWAY_FROM_JOB
+                    )
 
-                self._game_process = host_popen(
-                    [engine_path],
-                    cwd=engine_dir,
-                    env=env,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    **kwargs
-                )
+                def _spawn():
+                    return host_popen(
+                        [engine_path],
+                        cwd=engine_dir,
+                        env=env,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        **kwargs
+                    )
+
+                try:
+                    self._game_process = _spawn()
+                except OSError as e:
+                    if sys.platform != "win32" or getattr(e, "winerror", None) != 5:
+                        raise
+                    kwargs["creationflags"] &= ~subprocess.CREATE_BREAKAWAY_FROM_JOB
+                    self._game_process = _spawn()
                 pid = self._game_process.pid
                 GameRegistry.instance().register(pid, "ttr")
                 self.game_launched.emit(pid)
