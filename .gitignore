@@ -69,7 +69,5 @@ API Docs/
 # Smoketest checklist is read by the private-build workflow at build time.
 !docs/smoketest-checklist.md
 
-# Private-build skill — local only, never reaches origin.
-
 # === Git worktrees ===
 .worktrees/
