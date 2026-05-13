@@ -49,7 +49,7 @@ def test_header_icon_has_pixmap(header):
 
 
 from PySide6.QtCore import Qt as _Qt
-from PySide6.QtGui import QMouseEvent
+from PySide6.QtGui import QMouseEvent, QPointingDevice
 from PySide6.QtCore import QPointF, QEvent
 
 
@@ -74,10 +74,12 @@ def test_clicking_brand_link_navigates_to_credits(qapp):
     instance = _instance_with_nav_recorder(qapp)
     header = instance._build_header()
     link = header.findChild(QWidget, "header_brand_link")
-    press = QMouseEvent(QEvent.MouseButtonPress, QPointF(5, 5), _Qt.LeftButton,
-                        _Qt.LeftButton, _Qt.NoModifier)
-    release = QMouseEvent(QEvent.MouseButtonRelease, QPointF(5, 5), _Qt.LeftButton,
-                          _Qt.LeftButton, _Qt.NoModifier)
+    dev = QPointingDevice.primaryPointingDevice()
+    pos = QPointF(5, 5)
+    press = QMouseEvent(QEvent.Type.MouseButtonPress, pos, pos,
+                        _Qt.LeftButton, _Qt.LeftButton, _Qt.NoModifier, dev)
+    release = QMouseEvent(QEvent.Type.MouseButtonRelease, pos, pos,
+                          _Qt.LeftButton, _Qt.LeftButton, _Qt.NoModifier, dev)
     QApplication.sendEvent(link, press)
     QApplication.sendEvent(link, release)
     assert instance._nav_select_calls == [5]
