@@ -1700,7 +1700,7 @@ class MultitoonTab(QWidget):
             self.status_bar.set_text_color(c['status_warning_text'])
         else:
             self.status_bar.set_status_text("Service idle")
-            self.status_bar.set_text_color(c['text_muted'])
+            self.status_bar.set_text_color(c['status_idle_text'])
 
     # ── Name fetching ──────────────────────────────────────────────────────
 
