@@ -520,16 +520,27 @@ class MultiToonTool(QMainWindow):
                     chip_pill_ref.resize(watched.size())
                     # Place the pill on the currently-selected chip whenever
                     # the rail re-lays-out (initial show after __init__,
-                    # window resize). nav_select() runs during __init__
-                    # before chip geometries are computed, so it cannot
-                    # place the pill itself; this filter is the source of
-                    # truth for initial placement and resize tracking.
-                    if not hasattr(outer_self, "stack") or not hasattr(outer_self, "chip_buttons"):
+                    # window resize, compact↔full layout swap). nav_select
+                    # runs during __init__ before chip geometries are
+                    # computed, so this filter is the source of truth for
+                    # initial placement and resize tracking.
+                    if not hasattr(outer_self, "chip_buttons"):
                         return False
-                    idx = outer_self.stack.currentIndex()
-                    if not (0 <= idx < len(outer_self.chip_buttons)):
+                    # Use isChecked() — NOT stack.currentIndex() — because
+                    # during an in-flight push_slide_pages animation,
+                    # currentIndex is still the OUTGOING page (setCurrentIndex
+                    # is deferred to _finalize). chip.setChecked is applied
+                    # synchronously in nav_select so it reflects the truth.
+                    checked_idx = None
+                    for i, c in enumerate(outer_self.chip_buttons):
+                        if c.isChecked():
+                            checked_idx = i
+                            break
+                    if checked_idx is None:
+                        # No chip checked (e.g., user is on Credits via the
+                        # brand-click path) — leave the pill where it is.
                         return False
-                    target_geom = outer_self.chip_buttons[idx].geometry()
+                    target_geom = outer_self.chip_buttons[checked_idx].geometry()
                     if target_geom.isEmpty():
                         return False
                     # Cancel any in-flight slide_to — its end value points
