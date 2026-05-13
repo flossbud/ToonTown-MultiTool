@@ -368,19 +368,19 @@ class MultiToonTool(QMainWindow):
         c = self._theme_colors()
         color = QColor(c['sidebar_text'])
         
-        # We don't want to reset iconSize dynamically to maintain AnimatedNavButton capability.
-        self.hint_btn.setIcon(make_hint_icon(40, color, active=self._hints_enabled))
+        icon_size = self.hint_btn.iconSize().width()
+        self.hint_btn.setIcon(make_hint_icon(icon_size, color, active=self._hints_enabled))
         state = "on" if self._hints_enabled else "off"
         self.hint_btn.setProperty("_always_tooltip", True)
         self.hint_btn.setToolTip(f"Hover hints are {state}. Click to toggle.")
 
         style = f"""
-            QPushButton {{
+            QPushButton, QToolButton {{
                 background: {'rgba(255,255,255,0.08)' if self._hints_enabled else 'transparent'};
                 border: 1px solid {'rgba(255,255,255,0.12)' if self._hints_enabled else 'transparent'};
                 border-radius: 8px;
             }}
-            QPushButton:hover {{
+            QPushButton:hover, QToolButton:hover {{
                 background: rgba(255,255,255,0.12);
             }}
         """
