@@ -198,3 +198,21 @@ def test_general_group_has_no_advanced_row(qapp, tmp_path, monkeypatch):
     assert hasattr(tab, "theme_row")
     assert hasattr(tab, "max_accounts_row")
     assert hasattr(tab, "reduce_motion_row")
+
+
+def test_games_group_contains_both_paths(qapp, tmp_path, monkeypatch):
+    """The single Games section has TTR and CC path rows."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    from utils.settings_manager import SettingsManager
+    from tabs.settings_tab import SettingsTab
+
+    sm = SettingsManager()
+    tab = SettingsTab(settings_manager=sm)
+
+    assert hasattr(tab, "ttr_path_row")
+    assert hasattr(tab, "cc_path_row")
+    # Both rows live in the same SettingsGroup
+    assert tab.ttr_path_row.parent() is tab.cc_path_row.parent()
+    # Row labels carry game names
+    assert tab.ttr_path_row.label_widget.text() == "Toontown Rewritten"
+    assert tab.cc_path_row.label_widget.text() == "Corporate Clash"

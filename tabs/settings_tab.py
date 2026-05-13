@@ -534,8 +534,7 @@ class SettingsTab(QWidget):
         self._main_layout.setAlignment(Qt.AlignTop)
 
         self._build_general_group()
-        self._build_ttr_path_group()
-        self._build_cc_path_group()
+        self._build_games_group()
         self._build_keepalive_group()
         self._build_advanced_group()
 
@@ -596,8 +595,8 @@ class SettingsTab(QWidget):
 
         self._main_layout.addWidget(group)
 
-    def _build_ttr_path_group(self):
-        group = SettingsGroup("Toontown Rewritten")
+    def _build_games_group(self):
+        group = SettingsGroup("Games")
         self._groups.append(group)
 
         self.ttr_path_row = GamePathRow(
@@ -605,20 +604,16 @@ class SettingsTab(QWidget):
             settings_key="ttr_engine_dir",
             exe_name_fn=get_engine_executable_name,
             find_path_fn=find_engine_path,
+            label="Toontown Rewritten",
         )
         group.add_row(self.ttr_path_row)
-
-        self._main_layout.addWidget(group)
-
-    def _build_cc_path_group(self):
-        group = SettingsGroup("Corporate Clash")
-        self._groups.append(group)
 
         self.cc_path_row = GamePathRow(
             self.settings_manager,
             settings_key="cc_engine_dir",
             exe_name_fn=get_cc_engine_executable_name,
             find_path_fn=find_cc_engine_path,
+            label="Corporate Clash",
         )
         group.add_row(self.cc_path_row)
 
