@@ -382,14 +382,20 @@ class MultiToonTool(QMainWindow):
         self.hint_btn.setProperty("_always_tooltip", True)
         self.hint_btn.setToolTip(f"Hover hints are {state}. Click to toggle.")
 
+        # The button itself is bare — the on/off state is carried by the
+        # icon's own active styling (see make_hint_icon's `active` arg).
+        # An always-on background+border (the pre-header sidebar treatment)
+        # boxed the button and pulled the eye in the otherwise-minimal
+        # header. Keep only a subtle hover lift and the keyboard focus
+        # ring so accessibility doesn't regress.
         style = f"""
             QPushButton, QToolButton {{
-                background: {'rgba(255,255,255,0.08)' if self._hints_enabled else 'transparent'};
-                border: 1px solid {'rgba(255,255,255,0.12)' if self._hints_enabled else 'transparent'};
+                background: transparent;
+                border: 1px solid transparent;
                 border-radius: 8px;
             }}
             QPushButton:hover, QToolButton:hover {{
-                background: rgba(255,255,255,0.12);
+                background: rgba(255,255,255,0.06);
             }}
             QPushButton:focus, QToolButton:focus {{
                 border: 2px solid {c['header_accent']};
