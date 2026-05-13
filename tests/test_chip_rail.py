@@ -163,14 +163,18 @@ def test_chip_rail_has_hint_button(qapp):
     assert instance.hint_btn.parent() is rail
 
 
-def test_chip_rail_has_divider_between_chips_and_utilities(qapp):
+def test_chip_rail_no_divider_between_chips_and_utilities(qapp):
+    """The 1px VLine between the chip cluster and the hint utility was
+    dropped — it added visual noise without expressing a real hierarchy
+    boundary, since the right cluster is one toggle, not a nav group."""
     _, rail = _build_rail_with_debug(qapp, show_debug_tab=False)
     dividers = [
         c for c in rail.findChildren(_QFrame)
         if c.objectName() == "chip_rail_divider"
     ]
-    assert len(dividers) == 1
-    assert dividers[0].frameShape() == _QFrame.VLine
+    assert dividers == [], (
+        f"Expected no chip_rail_divider QFrame; found {len(dividers)}"
+    )
 
 
 def test_overflow_button_hidden_when_debug_off(qapp):

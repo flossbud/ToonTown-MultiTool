@@ -490,13 +490,6 @@ class MultiToonTool(QMainWindow):
 
         layout.addStretch()
 
-        divider = QFrame()
-        divider.setObjectName("chip_rail_divider")
-        divider.setFrameShape(QFrame.VLine)
-        divider.setFixedWidth(1)
-        divider.setMinimumHeight(24)
-        layout.addWidget(divider)
-
         # Hint toggle — drives _toggle_hints / _update_hint_icon.
         self._hints_enabled = self.settings_manager.get("hints_enabled", True)
         self.hint_btn = QToolButton(rail)
@@ -531,17 +524,16 @@ class MultiToonTool(QMainWindow):
 
     def _update_chip_rail_phantom_width(self):
         """Size the left phantom spacer to match the visible right utility
-        cluster (divider + hint + optional overflow), so the four chips
-        sit at the geometric center of the chip rail. Called at build
-        time and whenever overflow visibility changes (debug toggle).
-        Reads the show_debug_tab setting directly rather than calling
-        isVisible() because the widget may not yet be shown when this
-        runs at construction time."""
+        cluster (hint + optional overflow), so the four chips sit at the
+        geometric center of the chip rail. Called at build time and
+        whenever overflow visibility changes (debug toggle). Reads
+        show_debug_tab directly rather than isVisible() because the widget
+        may not yet be shown when this runs at construction time."""
         if not hasattr(self, "chip_rail_left_phantom"):
             return
-        spacing = 4  # matches QHBoxLayout.setSpacing(4) above
-        # divider (1 px wide) + hint_btn (34 px) are always visible.
-        width = spacing + 1 + spacing + 34
+        spacing = 4
+        # hint_btn (34 px) is always visible.
+        width = spacing + 34
         if self.settings_manager.get("show_debug_tab", False):
             width += spacing + 34  # overflow_btn (34 px)
         self.chip_rail_left_phantom.changeSize(
