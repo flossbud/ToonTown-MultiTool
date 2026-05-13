@@ -53,7 +53,7 @@ from PySide6.QtWidgets import (
     QLabel, QPushButton, QToolButton, QProxyStyle, QStyle, QFrame,
     QSpacerItem, QSizePolicy,
 )
-from PySide6.QtCore import QObject, QRect, Qt, QSize, QEvent, Signal, Slot, QPropertyAnimation, QEasingCurve, QTimer
+from PySide6.QtCore import QObject, QRect, QRectF, Qt, QSize, QEvent, Signal, Slot, QPropertyAnimation, QEasingCurve, QTimer, QAbstractAnimation
 from PySide6.QtGui import QColor, QGuiApplication, QIcon
 
 # === Internal Imports ===
@@ -512,11 +512,32 @@ class MultiToonTool(QMainWindow):
         # __new__, which doesn't call QMainWindow.__init__, so `self` is not
         # a valid QObject for installEventFilter.
         chip_pill_ref = self.chip_pill
+        outer_self = self  # captured for the nested class to access chip_buttons/stack
 
         class _RailResizeFilter(QObject):
             def eventFilter(self_, watched, event):  # noqa: N805
                 if event.type() == QEvent.Resize:
                     chip_pill_ref.resize(watched.size())
+                    # Place the pill on the currently-selected chip whenever
+                    # the rail re-lays-out (initial show after __init__,
+                    # window resize). nav_select() runs during __init__
+                    # before chip geometries are computed, so it cannot
+                    # place the pill itself; this filter is the source of
+                    # truth for initial placement and resize tracking.
+                    if not hasattr(outer_self, "stack") or not hasattr(outer_self, "chip_buttons"):
+                        return False
+                    idx = outer_self.stack.currentIndex()
+                    if not (0 <= idx < len(outer_self.chip_buttons)):
+                        return False
+                    target_geom = outer_self.chip_buttons[idx].geometry()
+                    if target_geom.isEmpty():
+                        return False
+                    # Cancel any in-flight slide_to — its end value points
+                    # at the chip's pre-resize geometry and is now stale.
+                    anim = chip_pill_ref._anim
+                    if anim is not None and anim.state() == QAbstractAnimation.Running:
+                        anim.stop()
+                    chip_pill_ref.set_pill_rect(QRectF(target_geom))
                 return False
 
         self._chip_rail_resize_filter = _RailResizeFilter(rail)
@@ -683,8 +704,14 @@ class MultiToonTool(QMainWindow):
         self._apply_chip_styles()
 
         # Slide the pill to the new chip's geometry (in rail coordinates).
-        if 0 <= index < len(self.chip_buttons) and hasattr(self, "chip_pill"):
-            from PySide6.QtCore import QRectF
+        # Skip on the first call: chip geometries aren't yet computed at this
+        # point in __init__, and the chip rail's resize event filter places
+        # the pill correctly on first layout activation.
+        if (
+            was_initialized
+            and 0 <= index < len(self.chip_buttons)
+            and hasattr(self, "chip_pill")
+        ):
             target = self.chip_buttons[index].geometry()
             self.chip_pill.slide_to(QRectF(target))
 
