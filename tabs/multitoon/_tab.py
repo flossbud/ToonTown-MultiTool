@@ -793,6 +793,12 @@ class MultitoonTab(QWidget):
             pill.clicked.connect(lambda checked, idx=i: self.load_profile(idx))
             self.profile_pills.append(pill)
 
+        # Profile-row label — sits just before the round 1-5 pills so the
+        # affordance reads as "profile presets" rather than unattributed
+        # numeric chips. Reused across compact and full layouts.
+        self.profile_pills_label = QLabel("PROFILE")
+        self.profile_pills_label.setObjectName("profile_pills_label")
+
         self.refresh_button = QPushButton()
         self.refresh_button.setIcon(make_refresh_icon(14))
         self.refresh_button.setFixedSize(26, 26)
@@ -1185,6 +1191,11 @@ class MultitoonTab(QWidget):
             f"font-size: 10px; font-weight: 600; color: {c['text_muted']}; "
             f"background: transparent; border: none; letter-spacing: 0.8px; margin-top: 4px;"
         )
+        if hasattr(self, "profile_pills_label"):
+            self.profile_pills_label.setStyleSheet(
+                f"font-size: 10px; font-weight: 600; "
+                f"color: {c['text_muted']}; letter-spacing: 0.8px;"
+            )
         self._update_pill_styles()
         self.refresh_button.setStyleSheet(f"""
             QPushButton {{

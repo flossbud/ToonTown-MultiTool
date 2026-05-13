@@ -670,6 +670,8 @@ class _FullLayout(QWidget):
         self._ctrl_layout.addSpacing(12)
 
         self._pills_row.addStretch()
+        self._pills_row.addWidget(self._tab.profile_pills_label)
+        self._pills_row.addSpacing(8)
         for pill in self._tab.profile_pills:
             self._pills_row.addWidget(pill)
         self._pills_row.addSpacing(4)

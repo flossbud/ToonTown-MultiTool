@@ -144,6 +144,8 @@ class _CompactLayout(QWidget):
         clear_layout(self._config_row)
         self._config_row.addWidget(self._tab.config_label)
         self._config_row.addStretch()
+        self._config_row.addWidget(self._tab.profile_pills_label)
+        self._config_row.addSpacing(8)
         for pill in self._tab.profile_pills:
             self._config_row.addWidget(pill)
         self._config_row.addSpacing(4)
