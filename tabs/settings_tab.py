@@ -22,25 +22,28 @@ SPECIAL_KEYS = {
 # ── Settings Row Types ─────────────────────────────────────────────────────────
 
 class SettingsRow(QFrame):
-    """Single iOS-style settings row with label + control."""
+    """Single flat settings row: label + optional sublabel on the left,
+    control widget on the right. Paints a 1px bottom divider unless it is
+    the last row in its enclosing block."""
+
+    HEIGHT_NO_SUB = 48
+    HEIGHT_WITH_SUB = 60
 
     def __init__(self, label: str, sublabel: str = "", parent=None):
         super().__init__(parent)
-        self.setFixedHeight(52 if not sublabel else 62)
         self._label = label
         self._sublabel = sublabel
-        self._is_first = False
-        self._is_last = False
-        self._hovered = False
-        self.setMouseTracking(True)
-        self.setAttribute(Qt.WA_Hover)
+        self._is_last_in_block = False
+        self.setFixedHeight(
+            self.HEIGHT_WITH_SUB if sublabel else self.HEIGHT_NO_SUB
+        )
 
         self._layout = QHBoxLayout(self)
-        self._layout.setContentsMargins(16, 0, 16, 0)
+        self._layout.setContentsMargins(14, 0, 14, 0)
         self._layout.setSpacing(12)
 
         text_col = QVBoxLayout()
-        text_col.setSpacing(1)
+        text_col.setSpacing(2)
         text_col.setContentsMargins(0, 0, 0, 0)
 
         self.label_widget = QLabel(label)
@@ -51,89 +54,47 @@ class SettingsRow(QFrame):
         if sublabel:
             self.sub_widget = QLabel(sublabel)
             self.sub_widget.setStyleSheet("background: transparent; border: none;")
+            self.sub_widget.setWordWrap(True)
+            self.sub_widget.setMaximumWidth(420)
             self.sub_widget.setMinimumWidth(1)
             text_col.addWidget(self.sub_widget)
 
         self._layout.addLayout(text_col, 1)
 
-
     def add_control(self, widget):
         self._layout.addWidget(widget)
 
-    def set_position(self, is_first, is_last):
-        self._is_first = is_first
-        self._is_last = is_last
+    def set_last_in_block(self, is_last: bool):
+        self._is_last_in_block = is_last
+        self.update()
 
     def apply_theme(self, c, is_dark):
         self.label_widget.setStyleSheet(
-            f"font-size: 15px; color: {c['text_primary']}; background: transparent; border: none;"
+            f"font-size: 13px; color: {c['text_primary']}; "
+            f"background: transparent; border: none;"
         )
-        if hasattr(self, 'sub_widget'):
+        if hasattr(self, "sub_widget"):
             self.sub_widget.setStyleSheet(
-                f"font-size: 12px; color: {c['text_muted']}; background: transparent; border: none;"
+                f"font-size: 11px; color: {c['text_muted']}; "
+                f"background: transparent; border: none;"
             )
         self._c = c
         self._is_dark = is_dark
         self.update()
 
-    def enterEvent(self, e):
-        self._hovered = True
-        self.update()
-
-    def leaveEvent(self, e):
-        self._hovered = False
-        self.update()
-
     def paintEvent(self, e):
-        if not hasattr(self, '_c'):
+        if not hasattr(self, "_c"):
+            return
+        if self._is_last_in_block:
             return
         from PySide6.QtCore import QRectF
         p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
-
+        p.setRenderHint(QPainter.Antialiasing, False)
+        p.setPen(QColor(self._c.get("border_muted", "#2e2e2e")))
         w, h = self.width(), self.height()
-        r = 12.0
-
-        bg = QColor(self._c.get('bg_card_inner', '#3a3a3a'))
-        if self._hovered:
-            bg = bg.lighter(115) if self._is_dark else bg.darker(103)
-
-        p.setPen(Qt.NoPen)
-        p.setBrush(bg)
-
-        if self._is_first and self._is_last:
-            p.drawRoundedRect(QRectF(0, 0, w, h), r, r)
-        elif self._is_first:
-            path = QPainterPath()
-            path.moveTo(r, 0)
-            path.lineTo(w - r, 0)
-            path.quadTo(w, 0, w, r)
-            path.lineTo(w, h)
-            path.lineTo(0, h)
-            path.lineTo(0, r)
-            path.quadTo(0, 0, r, 0)
-            path.closeSubpath()
-            p.drawPath(path)
-        elif self._is_last:
-            path = QPainterPath()
-            path.moveTo(0, 0)
-            path.lineTo(w, 0)
-            path.lineTo(w, h - r)
-            path.quadTo(w, h, w - r, h)
-            path.lineTo(r, h)
-            path.quadTo(0, h, 0, h - r)
-            path.lineTo(0, 0)
-            path.closeSubpath()
-            p.drawPath(path)
-        else:
-            p.drawRect(QRectF(0, 0, w, h))
-
-        # Separator (not on last row)
-        if not self._is_last:
-            sep_color = QColor(self._c.get('border_light', '#555555'))
-            p.setPen(sep_color)
-            p.drawLine(16, h - 1, w, h - 1)
-
+        # Divider inset 14px from the left so it lines up with the row
+        # padding and stops short of the block's right edge.
+        p.drawLine(14, h - 1, w - 14, h - 1)
         p.end()
 
 
@@ -299,45 +260,75 @@ class GamePathRow(SettingsRow):
 # ── Section Group ──────────────────────────────────────────────────────────────
 
 class SettingsGroup(QWidget):
-    """Groups rows with iOS card style and an optional section header label."""
+    """Soft-surface section block. Paints a rounded fill behind its rows
+    and renders an optional sentence-case title above the block."""
+
+    CORNER_RADIUS = 12
 
     def __init__(self, title: str = "", parent=None):
         super().__init__(parent)
         self._title = title
+        self._rows = []
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
         if title:
-            self.title_label = QLabel(title.upper())
-            self.title_label.setContentsMargins(4, 0, 0, 6)
+            self.title_label = QLabel(title)
+            self.title_label.setContentsMargins(2, 0, 0, 8)
             layout.addWidget(self.title_label)
 
-        self._rows_container = QWidget()
-        self._rows_layout = QVBoxLayout(self._rows_container)
+        self._block = _SectionBlock(self)
+        self._rows_layout = QVBoxLayout(self._block)
         self._rows_layout.setContentsMargins(0, 0, 0, 0)
         self._rows_layout.setSpacing(0)
-        layout.addWidget(self._rows_container)
+        layout.addWidget(self._block)
 
-        self._rows = []
-
-    def add_row(self, row: SettingsRow):
+    def add_row(self, row):
         self._rows.append(row)
         self._rows_layout.addWidget(row)
-        self._update_positions()
+        self._refresh_last_row()
 
-    def _update_positions(self):
+    def _refresh_last_row(self):
         for i, row in enumerate(self._rows):
-            row.set_position(i == 0, i == len(self._rows) - 1)
+            row.set_last_in_block(i == len(self._rows) - 1)
 
     def apply_theme(self, c, is_dark):
-        if hasattr(self, 'title_label'):
+        if hasattr(self, "title_label"):
             self.title_label.setStyleSheet(
-                f"font-size: 12px; font-weight: 600; color: {c['text_muted']}; "
-                f"background: transparent; letter-spacing: 0.5px;"
+                f"font-size: 14px; font-weight: 600; "
+                f"color: {c['text_primary']}; background: transparent;"
             )
+        self._block.apply_theme(c, is_dark)
         for row in self._rows:
             row.apply_theme(c, is_dark)
+
+
+class _SectionBlock(QFrame):
+    """Inner block widget — paints the rounded soft-surface fill that backs
+    the rows. Split out so the rounded fill lives on its own widget and
+    doesn't interfere with the group's title-above-block layout."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._c = None
+
+    def apply_theme(self, c, is_dark):
+        self._c = c
+        self.update()
+
+    def paintEvent(self, e):
+        if self._c is None:
+            return
+        from PySide6.QtCore import QRectF
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(self._c.get("bg_card_inner", "#2e2e2e")))
+        r = float(SettingsGroup.CORNER_RADIUS)
+        p.drawRoundedRect(QRectF(0, 0, self.width(), self.height()), r, r)
+        p.end()
 
 
 # ── Main Settings Tab ──────────────────────────────────────────────────────────
