@@ -346,7 +346,8 @@ class SettingsGroup(QWidget):
     def apply_theme(self, c, is_dark):
         if hasattr(self, "title_label"):
             self.title_label.setStyleSheet(
-                f"font-size: 14px; font-weight: bold; font-style: normal; "
+                f"font-size: 14px; font-weight: 700; font-style: normal; "
+                f"letter-spacing: 0.15px; "
                 f"color: {c['text_primary']}; background: transparent;"
             )
         self._block.apply_theme(c, is_dark)
@@ -468,7 +469,8 @@ class _CollapsibleHeader(QFrame):
     def apply_theme(self, c, is_dark):
         self._c = c
         self.title_label.setStyleSheet(
-            f"font-size: 14px; font-weight: bold; font-style: normal; "
+            f"font-size: 14px; font-weight: 700; font-style: normal; "
+            f"letter-spacing: 0.15px; "
             f"color: {c['text_primary']}; background: transparent; border: none;"
         )
         self.chevron_label.setStyleSheet(
