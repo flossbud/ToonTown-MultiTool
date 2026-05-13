@@ -64,3 +64,23 @@ def test_settings_group_marks_last_row(qapp):
     assert r1._is_last_in_block is False
     assert r2._is_last_in_block is False
     assert r3._is_last_in_block is True
+
+
+def test_button_row_emits_clicked(qapp):
+    from tabs.settings_tab import ButtonRow
+    row = ButtonRow("Reset", "Resets all stored data", button_text="Reset")
+    fired = []
+    row.clicked.connect(lambda: fired.append(True))
+    row.button.click()
+    assert fired == [True]
+
+
+def test_button_row_destructive_styling_applied(qapp):
+    """destructive=True applies the red-outline style to the button."""
+    from tabs.settings_tab import ButtonRow
+    row = ButtonRow("Clear", "", button_text="Clear", destructive=True)
+    # apply_theme needs to be called so the destructive style attaches
+    from utils.theme_manager import get_theme_colors
+    row.apply_theme(get_theme_colors(is_dark=True), True)
+    style = row.button.styleSheet()
+    assert "#ff3b30" in style

@@ -160,6 +160,56 @@ class DropdownRow(SettingsRow):
         return self.combo.findText(text)
 
 
+class ButtonRow(SettingsRow):
+    """Row with a single right-aligned QPushButton. Optional destructive
+    styling (red outline) for irreversible actions."""
+
+    clicked = Signal()
+
+    def __init__(self, label: str, sublabel: str = "",
+                 button_text: str = "...", destructive: bool = False,
+                 parent=None):
+        super().__init__(label, sublabel, parent)
+        self._destructive = destructive
+        self.button = QPushButton(button_text)
+        self.button.setCursor(Qt.PointingHandCursor)
+        self.button.setFixedHeight(28)
+        self.button.clicked.connect(self.clicked.emit)
+        self.add_control(self.button)
+
+    def apply_theme(self, c, is_dark):
+        super().apply_theme(c, is_dark)
+        if self._destructive:
+            self.button.setStyleSheet("""
+                QPushButton {
+                    color: #ff3b30;
+                    font-weight: bold;
+                    background: transparent;
+                    border: 1px solid #ff3b30;
+                    border-radius: 6px;
+                    padding: 4px 12px;
+                }
+                QPushButton:hover {
+                    background: rgba(255, 59, 48, 0.1);
+                }
+            """)
+        else:
+            self.button.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {c['btn_bg']};
+                    color: {c['text_secondary']};
+                    border: 1px solid {c['border_muted']};
+                    border-radius: 6px;
+                    padding: 4px 12px;
+                }}
+                QPushButton:hover {{
+                    background-color: {c['accent_blue']};
+                    color: {c['text_on_accent']};
+                    border: 1px solid {c['accent_blue']};
+                }}
+            """)
+
+
 class GamePathRow(SettingsRow):
     """Reusable game path row — parameterized for TTR, CC, or any future game."""
 
