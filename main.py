@@ -53,7 +53,7 @@ from PySide6.QtWidgets import (
     QLabel, QPushButton, QToolButton, QProxyStyle, QStyle, QFrame, QMenu,
     QSpacerItem, QSizePolicy,
 )
-from PySide6.QtCore import QRect, Qt, QSize, QEvent, Signal, Slot, QPropertyAnimation, QEasingCurve, QTimer
+from PySide6.QtCore import QObject, QRect, Qt, QSize, QEvent, Signal, Slot, QPropertyAnimation, QEasingCurve, QTimer
 from PySide6.QtGui import QColor, QGuiApplication, QIcon, QAction
 
 # === Internal Imports ===
@@ -502,6 +502,25 @@ class MultiToonTool(QMainWindow):
         rail.setMinimumHeight(CHIP_RAIL_H)
         rail.setObjectName("app_chip_rail")
 
+        from utils.widgets.pill_indicator import PillIndicator
+        self.chip_pill = PillIndicator(rail)
+        self.chip_pill.lower()
+        # Install a lightweight QObject event filter (parented to rail so it
+        # is garbage-collected with the rail). Using a dedicated QObject
+        # rather than `self` keeps the test harness working — tests build via
+        # __new__, which doesn't call QMainWindow.__init__, so `self` is not
+        # a valid QObject for installEventFilter.
+        chip_pill_ref = self.chip_pill
+
+        class _RailResizeFilter(QObject):
+            def eventFilter(self_, watched, event):  # noqa: N805
+                if event.type() == QEvent.Resize:
+                    chip_pill_ref.resize(watched.size())
+                return False
+
+        self._chip_rail_resize_filter = _RailResizeFilter(rail)
+        rail.installEventFilter(self._chip_rail_resize_filter)
+
         layout = QHBoxLayout(rail)
         layout.setContentsMargins(12, 6, 12, 6)
         layout.setSpacing(4)
@@ -610,6 +629,12 @@ class MultiToonTool(QMainWindow):
         for i, chip in enumerate(self.chip_buttons):
             chip.setChecked(i == index)
         self._apply_chip_styles()
+
+        # Slide the pill to the new chip's geometry (in rail coordinates).
+        if 0 <= index < len(self.chip_buttons) and hasattr(self, "chip_pill"):
+            from PySide6.QtCore import QRectF
+            target = self.chip_buttons[index].geometry()
+            self.chip_pill.slide_to(QRectF(target))
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

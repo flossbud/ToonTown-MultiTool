@@ -352,3 +352,52 @@ def test_nav_select_calls_push_slide_pages(qapp, monkeypatch):
 
     assert calls == [(0, 2, "h")]
     assert instance.stack.currentIndex() == 2
+
+
+def test_chip_rail_contains_pill_indicator(chip_rail):
+    """The chip rail must host a PillIndicator child."""
+    from utils.widgets.pill_indicator import PillIndicator
+    pills = chip_rail.findChildren(PillIndicator)
+    assert len(pills) == 1
+
+
+def test_nav_select_slides_pill_to_target_chip(qapp, monkeypatch):
+    """nav_select must call pill.slide_to with the target chip's geometry."""
+    from main import MultiToonTool
+    import utils.motion as motion
+    monkeypatch.setattr(motion, "_os_reduced_motion", lambda: False)
+    monkeypatch.setattr(motion, "_TEST_DURATION_SCALE", 0.0)
+    monkeypatch.setattr(
+        motion, "push_slide_pages",
+        lambda stack, f, t, axis: stack.setCurrentIndex(t),
+    )
+
+    instance = MultiToonTool.__new__(MultiToonTool)
+    instance.settings_manager = _StubSettings(show_debug_tab=False)
+    rail = instance._build_chip_rail()
+    rail.resize(800, 64)
+    rail.show()
+    qapp.processEvents()
+
+    # Stub stack + chips already populated by _build_chip_rail
+    from PySide6.QtWidgets import QStackedWidget, QWidget
+    instance.stack = QStackedWidget()
+    for _ in range(6):
+        instance.stack.addWidget(QWidget())
+    instance.stack.setCurrentIndex(0)
+    instance._apply_chip_styles = lambda: None
+    instance._initialized_nav = True
+    instance.chip_rail = rail
+
+    target_chip = instance.chip_buttons[2]
+    target_geom = target_chip.geometry()
+
+    instance.nav_select(2)
+    # Drain deferred QTimer(0) that starts the animation inside slide_to.
+    qapp.processEvents()
+
+    # Pill should now have the target chip's geometry (as QRectF).
+    pill = rail.findChildren(__import__("utils.widgets.pill_indicator",
+                                       fromlist=["PillIndicator"]).PillIndicator)[0]
+    from PySide6.QtCore import QRectF
+    assert pill._pill_rect == QRectF(target_geom)
