@@ -600,6 +600,12 @@ class MultiToonTool(QMainWindow):
             chip.setIconSize(QSize(20, 20))
             chip.setCheckable(True)
             chip.setMinimumWidth(60)
+            # StrongFocus so mouse clicks transfer keyboard focus to the
+            # clicked chip. QToolButton defaults to TabFocus (Tab-only),
+            # which leaves focus stranded on whichever chip Qt assigned
+            # initial focus to — and the QSS `:focus` rule then paints a
+            # stale focus ring on a now-unselected chip.
+            chip.setFocusPolicy(Qt.StrongFocus)
             chip.clicked.connect(lambda _checked, i=idx: self.nav_select(i))
             chip.pressed.connect(lambda c=chip: __import__("utils.motion",
                 fromlist=["press_scale"]).press_scale(c, depressed=True))
