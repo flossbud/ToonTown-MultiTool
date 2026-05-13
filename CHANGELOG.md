@@ -14,6 +14,21 @@ The left sidebar has been replaced with a horizontal "chip rail" beneath the hea
 
 The full-UI breakpoint shifts from 1280×800 to 1280×852 to keep the multitoon 2×2 card grid's content budget unchanged. The default-window compact layout was tightened slightly to fit the new ~52 px of chrome without compressing the controls pill.
 
+### UI polish (post-chip-rail audit)
+
+- Keyboard focus rings on chip-rail buttons and the hint toggle
+- Light-mode slot-badge contrast bumped to clear WCAG 1.4.11
+- Disabled Enable buttons now read as disabled (lower-contrast tokens)
+- Header carries a live session status (Idle/Running + active toon count)
+- Brand area shows an info glyph so the Credits affordance is visible at rest
+- Version badge wrapped as a soft accent pill
+- "PROFILE" label above the profile-presets pill row
+- Removed the divider between chips and the hint toggle
+- Selected chip's accent border softened to honor the original soft-ring design intent
+- Service-idle status text uses the theme's idle color (no longer italic/washed-out)
+- Full-UI empty cards link out to the Launch tab via "Launch a game"
+- Regression-pinned: light-mode full-UI cards keep their light theme on layout swap
+
 ---
 
 ## v2.0 — Complete Rewrite
