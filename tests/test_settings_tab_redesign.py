@@ -216,3 +216,19 @@ def test_games_group_contains_both_paths(qapp, tmp_path, monkeypatch):
     # Row labels carry game names
     assert tab.ttr_path_row.label_widget.text() == "Toontown Rewritten"
     assert tab.cc_path_row.label_widget.text() == "Corporate Clash"
+
+
+def test_keep_alive_group_ghosts_action_and_interval_when_master_off(
+    qapp, tmp_path, monkeypatch
+):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    from utils.settings_manager import SettingsManager
+    from tabs.settings_tab import SettingsTab
+
+    sm = SettingsManager()
+    sm.set("keep_alive_enabled", False)
+    tab = SettingsTab(settings_manager=sm)
+
+    assert tab.ka_master_row.isChecked() is False
+    assert tab.ka_action_row.isEnabled() is False
+    assert tab.ka_delay_row.isEnabled() is False
