@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QRectF, Signal
 from PySide6.QtGui import QColor, QPainter
 from utils.theme_manager import apply_theme, resolve_theme, get_theme_colors
-from utils.shared_widgets import IOSToggle, IOSSegmentedControl
+from utils.shared_widgets import IOSToggle
 from services.ttr_login_service import find_engine_path, get_engine_executable_name
 from services.cc_login_service import find_cc_engine_path, get_cc_engine_executable_name
 
@@ -963,9 +963,3 @@ class SettingsTab(QWidget):
         toggle_off = c['bg_input'] if is_dark else '#d1d1d6'
         for toggle in self.findChildren(IOSToggle):
             toggle.set_theme_colors(toggle_off)
-
-        for seg in self.findChildren(IOSSegmentedControl):
-            seg.set_theme_colors(
-                c['bg_input'], c['btn_bg'],
-                c['text_primary'], c['text_muted']
-            )
