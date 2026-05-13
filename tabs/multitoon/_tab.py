@@ -1351,6 +1351,12 @@ class MultitoonTab(QWidget):
                     color: {c['text_disabled']};
                     border: none; border-radius: 6px; font-size: 12px;
                 }}
+                QPushButton:disabled {{
+                    background-color: {c['btn_disabled']};
+                    color: {c['text_disabled']};
+                    border: none; border-radius: 6px;
+                    opacity: 0.5;
+                }}
             """)
             chat_btn.setEnabled(False)
             chat_btn.setStyleSheet(f"""
