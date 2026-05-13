@@ -2,7 +2,7 @@ import os
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QComboBox, QApplication, QMessageBox, QFrame,
-    QPushButton, QScrollArea, QFileDialog
+    QPushButton, QScrollArea, QSizePolicy, QFileDialog
 )
 from PySide6.QtCore import Qt, QRectF, Signal
 from PySide6.QtGui import QColor, QPainter, QPen
@@ -55,7 +55,6 @@ class SettingsRow(QFrame):
             self.sub_widget = QLabel(sublabel)
             self.sub_widget.setStyleSheet("background: transparent; border: none;")
             self.sub_widget.setWordWrap(True)
-            self.sub_widget.setMaximumWidth(420)
             self.sub_widget.setMinimumWidth(1)
             text_col.addWidget(self.sub_widget)
 
@@ -529,7 +528,8 @@ class SettingsTab(QWidget):
         scroll_inner_layout.setContentsMargins(0, 0, 0, 0)
 
         content = QWidget()
-        clamp_centered(scroll_inner_layout, content, 720)
+        content.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        clamp_centered(scroll_inner_layout, content, 880)
         scroll.setWidget(scroll_inner)
 
         self._main_layout = QVBoxLayout(content)
