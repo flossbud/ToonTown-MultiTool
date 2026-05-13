@@ -84,3 +84,21 @@ def test_button_row_destructive_styling_applied(qapp):
     row.apply_theme(get_theme_colors(is_dark=True), True)
     style = row.button.styleSheet()
     assert "#ff3b30" in style
+
+
+def test_button_row_non_destructive_uses_theme_tokens(qapp):
+    """The non-destructive path consumes theme tokens — verifies their keys
+    aren't accidentally renamed."""
+    from tabs.settings_tab import ButtonRow
+    from utils.theme_manager import get_theme_colors
+    row = ButtonRow("Action", "", button_text="Go", destructive=False)
+    c = get_theme_colors(is_dark=True)
+    row.apply_theme(c, True)
+    style = row.button.styleSheet()
+    # All four tokens used in the non-destructive branch must appear.
+    assert c["btn_bg"] in style
+    assert c["text_secondary"] in style
+    assert c["accent_blue"] in style
+    assert c["text_on_accent"] in style
+    # The destructive red MUST NOT be present.
+    assert "#ff3b30" not in style
