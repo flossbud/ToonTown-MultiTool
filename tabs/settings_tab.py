@@ -380,6 +380,120 @@ class _SectionBlock(QFrame):
         p.end()
 
 
+class CollapsibleSettingsGroup(SettingsGroup):
+    """Section block whose first row is a clickable header (title + chevron).
+    Clicking the header toggles visibility of the remaining rows and persists
+    the collapsed state via `settings_manager.set(persist_key, bool)`.
+
+    Unlike `SettingsGroup`, the section title is rendered *inside* the block
+    as the first row, not above it. This keeps the collapsed state looking
+    like a single coherent control instead of an empty section beneath a
+    floating title.
+    """
+
+    def __init__(self, title: str, settings_manager, persist_key: str,
+                 parent=None):
+        # Don't render the title above the block — we own the header instead.
+        super().__init__(title="", parent=parent)
+        self._title_text = title
+        self._settings_manager = settings_manager
+        self._persist_key = persist_key
+        self._collapsed = bool(
+            settings_manager.get(persist_key, True)
+        )
+
+        self._header = _CollapsibleHeader(title, self._collapsed, self)
+        self._header.clicked.connect(self.toggle)
+        # The header lives inside the rounded block as the first child of
+        # the rows layout, so the soft-surface fill backs it.
+        self._rows_layout.addWidget(self._header)
+
+    def add_row(self, row):
+        super().add_row(row)
+        row.setVisible(not self._collapsed)
+
+    def is_collapsed(self) -> bool:
+        return self._collapsed
+
+    def toggle(self):
+        self._collapsed = not self._collapsed
+        self._settings_manager.set(self._persist_key, self._collapsed)
+        self._header.set_collapsed(self._collapsed)
+        for row in self._rows:
+            row.setVisible(not self._collapsed)
+
+    def apply_theme(self, c, is_dark):
+        super().apply_theme(c, is_dark)
+        self._header.apply_theme(c, is_dark)
+
+
+class _CollapsibleHeader(QFrame):
+    """Clickable header row used inside a `CollapsibleSettingsGroup`.
+    Same height as a no-sublabel SettingsRow (48px), with the section title
+    on the left and a chevron on the right."""
+
+    clicked = Signal()
+
+    def __init__(self, title: str, collapsed: bool, parent=None):
+        super().__init__(parent)
+        self._collapsed = collapsed
+        self.setFixedHeight(SettingsRow.HEIGHT_NO_SUB)
+        self.setCursor(Qt.PointingHandCursor)
+
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(14, 0, 14, 0)
+        lay.setSpacing(12)
+
+        self.title_label = QLabel(title)
+        self.title_label.setStyleSheet("background: transparent; border: none;")
+        lay.addWidget(self.title_label, 1)
+
+        self.chevron_label = QLabel(self._chevron_glyph())
+        self.chevron_label.setStyleSheet("background: transparent; border: none;")
+        lay.addWidget(self.chevron_label)
+
+    def _chevron_glyph(self) -> str:
+        return "▸" if self._collapsed else "▾"
+
+    def set_collapsed(self, collapsed: bool):
+        self._collapsed = collapsed
+        self.chevron_label.setText(self._chevron_glyph())
+        self.update()
+
+    def apply_theme(self, c, is_dark):
+        self._c = c
+        self.title_label.setStyleSheet(
+            f"font-size: 14px; font-weight: 600; "
+            f"color: {c['text_primary']}; background: transparent; border: none;"
+        )
+        self.chevron_label.setStyleSheet(
+            f"font-size: 14px; color: {c['text_muted']}; "
+            f"background: transparent; border: none;"
+        )
+        self.update()
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            self.clicked.emit()
+            e.accept()
+            return
+        super().mousePressEvent(e)
+
+    def paintEvent(self, e):
+        # When the group is expanded, draw a bottom divider matching
+        # SettingsRow's so the header reads as the first row of the block.
+        if self._collapsed:
+            return
+        if not hasattr(self, "_c"):
+            return
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, False)
+        p.setPen(QColor(self._c.get("border_muted", "#2e2e2e")))
+        w, h = self.width(), self.height()
+        p.drawLine(14, h - 1, w - 14, h - 1)
+        p.end()
+
+
 # ── Main Settings Tab ──────────────────────────────────────────────────────────
 
 class SettingsTab(QWidget):

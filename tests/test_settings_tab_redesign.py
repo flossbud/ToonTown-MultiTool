@@ -121,3 +121,47 @@ def test_game_path_row_accepts_label(qapp, tmp_path, monkeypatch):
         label="Toontown Rewritten",
     )
     assert row.label_widget.text() == "Toontown Rewritten"
+
+
+class _FakeSettingsManager:
+    def __init__(self, initial=None):
+        self._data = dict(initial or {})
+
+    def get(self, key, default=None):
+        return self._data.get(key, default)
+
+    def set(self, key, value):
+        self._data[key] = value
+
+    def on_change(self, callback):
+        pass
+
+
+def test_collapsible_initial_state_from_settings(qapp):
+    from tabs.settings_tab import CollapsibleSettingsGroup, SettingsRow
+    sm = _FakeSettingsManager({"advanced_collapsed": True})
+    g = CollapsibleSettingsGroup("Advanced", sm, "advanced_collapsed")
+    row = SettingsRow("A", "")
+    g.add_row(row)
+    assert g.is_collapsed() is True
+    # Use isHidden(): True iff setVisible(False) was explicitly called,
+    # independent of whether the group hierarchy has been shown yet.
+    assert row.isHidden() is True
+
+
+def test_collapsible_toggle_updates_settings(qapp):
+    from tabs.settings_tab import CollapsibleSettingsGroup, SettingsRow
+    sm = _FakeSettingsManager({"advanced_collapsed": True})
+    g = CollapsibleSettingsGroup("Advanced", sm, "advanced_collapsed")
+    g.add_row(SettingsRow("A", ""))
+    g.toggle()
+    assert sm.get("advanced_collapsed") is False
+    assert g.is_collapsed() is False
+
+
+def test_collapsible_default_true_when_key_missing(qapp):
+    """If the settings key is absent, default to collapsed."""
+    from tabs.settings_tab import CollapsibleSettingsGroup
+    sm = _FakeSettingsManager({})
+    g = CollapsibleSettingsGroup("Advanced", sm, "advanced_collapsed")
+    assert g.is_collapsed() is True
