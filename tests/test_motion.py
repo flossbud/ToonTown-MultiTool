@@ -281,3 +281,39 @@ def test_morph_icon_size_animates_to_target(qapp, monkeypatch, reset_motion_stat
         if anim.state() == QAbstractAnimation.Stopped:
             break
     assert btn.iconSize() == QSize(22, 22)
+
+
+def test_pop_menu_enter_duration_matches_token(qapp, monkeypatch, reset_motion_state):
+    monkeypatch.setattr(motion, "_os_reduced_motion", lambda: False)
+    monkeypatch.setattr(motion, "_TEST_DURATION_SCALE", 1.0)
+
+    from utils.widgets.overflow_popup import OverflowPopup
+    pop = OverflowPopup()
+    anchor = QToolButton()
+    group = motion.pop_menu(pop, anchor, show=True)
+    durations = [group.animationAt(i).duration() for i in range(group.animationCount())]
+    assert all(d == motion.DURATION_MENU for d in durations)
+
+
+def test_pop_menu_exit_shorter_than_enter(qapp, monkeypatch, reset_motion_state):
+    monkeypatch.setattr(motion, "_os_reduced_motion", lambda: False)
+    monkeypatch.setattr(motion, "_TEST_DURATION_SCALE", 1.0)
+
+    from utils.widgets.overflow_popup import OverflowPopup
+    pop = OverflowPopup()
+    anchor = QToolButton()
+    motion.pop_menu(pop, anchor, show=True)
+    group = motion.pop_menu(pop, anchor, show=False)
+    durations = [group.animationAt(i).duration() for i in range(group.animationCount())]
+    assert all(d == motion.DURATION_MENU_X for d in durations)
+    assert motion.DURATION_MENU_X < motion.DURATION_MENU
+
+
+def test_pop_menu_reduced_motion_shows_instantly(qapp, monkeypatch, reset_motion_state):
+    monkeypatch.setattr(motion, "_os_reduced_motion", lambda: True)
+    from utils.widgets.overflow_popup import OverflowPopup
+    pop = OverflowPopup()
+    anchor = QToolButton()
+    result = motion.pop_menu(pop, anchor, show=True)
+    assert result is None
+    assert pop.isVisible()

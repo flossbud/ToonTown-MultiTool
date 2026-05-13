@@ -383,3 +383,74 @@ def morph_icon_size(button, target_px: int):
         button.setIconSize(QSize(target_px, target_px))
         return None
     return _animate_icon_size(button, target_px, DURATION_HOVER, EASE_STANDARD)
+
+
+def pop_menu(popup, anchor, show: bool = True):
+    """Animate an OverflowPopup open or closed.
+
+    Open (show=True): popup becomes visible at the anchor's bottom-right,
+    opacity 0→1 + scale 0.92→1.0 over DURATION_MENU (OutCubic).
+    Close (show=False): opacity 1→0 + scale 1.0→0.92 over DURATION_MENU_X
+    (InCubic). Hides the popup on finish.
+    """
+    if is_reduced():
+        if show:
+            popup.show_at(anchor)
+        else:
+            popup.hide()
+        return None
+
+    if show:
+        popup.show_at(anchor)
+        popup.scale = 0.92
+        # Opacity via QGraphicsOpacityEffect
+        effect = QGraphicsOpacityEffect(popup)
+        popup.setGraphicsEffect(effect)
+        effect.setOpacity(0.0)
+
+        duration = max(1, int(DURATION_MENU * _TEST_DURATION_SCALE))
+        fade = QPropertyAnimation(effect, b"opacity")
+        fade.setDuration(duration)
+        fade.setEasingCurve(EASE_STANDARD)
+        fade.setStartValue(0.0)
+        fade.setEndValue(1.0)
+
+        scale = QPropertyAnimation(popup, b"scale")
+        scale.setDuration(duration)
+        scale.setEasingCurve(EASE_STANDARD)
+        scale.setStartValue(0.92)
+        scale.setEndValue(1.0)
+
+        group = QParallelAnimationGroup(popup)
+        group.addAnimation(fade)
+        group.addAnimation(scale)
+        group.start()
+        popup._motion_anim = group
+        return group
+    else:
+        duration = max(1, int(DURATION_MENU_X * _TEST_DURATION_SCALE))
+        effect = popup.graphicsEffect()
+        if effect is None:
+            effect = QGraphicsOpacityEffect(popup)
+            popup.setGraphicsEffect(effect)
+            effect.setOpacity(1.0)
+
+        fade = QPropertyAnimation(effect, b"opacity")
+        fade.setDuration(duration)
+        fade.setEasingCurve(EASE_MENU_EXIT)
+        fade.setStartValue(effect.opacity())
+        fade.setEndValue(0.0)
+
+        scale = QPropertyAnimation(popup, b"scale")
+        scale.setDuration(duration)
+        scale.setEasingCurve(EASE_MENU_EXIT)
+        scale.setStartValue(popup.scale)
+        scale.setEndValue(0.92)
+
+        group = QParallelAnimationGroup(popup)
+        group.addAnimation(fade)
+        group.addAnimation(scale)
+        group.finished.connect(popup.hide)
+        group.start()
+        popup._motion_anim = group
+        return group
