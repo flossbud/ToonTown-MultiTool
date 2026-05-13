@@ -744,15 +744,23 @@ class MultiToonTool(QMainWindow):
         self.debug_tab.append_log(message)
 
 
+def _resolve_icon_path() -> str:
+    # Linux: AppImage/Flatpak register the icon in the XDG theme. This is the
+    # disk fallback used when theme lookup misses (e.g. Windows, dev runs).
+    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    filename = "ToonTownMultiTool-beta.png" if is_beta() else "ToonTownMultiTool.ico"
+    return os.path.join(base, "assets", filename)
+
+
 def _resolve_app_icon() -> QIcon:
     # Linux: AppImage/Flatpak register the icon in the XDG theme.
     # Windows has no theme system, so fromTheme returns a null icon there;
-    # fall back to the bundled .ico so setWindowIcon has something to use.
-    themed = QIcon.fromTheme("io.github.flossbud.ToonTownMultiTool")
+    # fall back to the bundled file so setWindowIcon has something to use.
+    theme_id = BETA_DESKTOP_ID if is_beta() else APP_DESKTOP_ID
+    themed = QIcon.fromTheme(theme_id)
     if not themed.isNull():
         return themed
-    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
-    return QIcon(os.path.join(base, "assets", "ToonTownMultiTool.ico"))
+    return QIcon(_resolve_icon_path())
 
 
 if __name__ == "__main__":
