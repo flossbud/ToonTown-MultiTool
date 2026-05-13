@@ -5,8 +5,8 @@ from PySide6.QtWidgets import (
     QPushButton, QScrollArea, QSizePolicy, QFileDialog
 )
 from PySide6.QtCore import Property, QPointF, QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPen
-from utils.theme_manager import apply_theme, resolve_theme, get_theme_colors
+from PySide6.QtGui import QColor, QPainter, QPen, QPolygonF
+from utils.theme_manager import apply_card_shadow, apply_theme, get_theme_colors, resolve_theme
 from utils.shared_widgets import IOSToggle
 from services.ttr_login_service import find_engine_path, get_engine_executable_name
 from services.cc_login_service import find_cc_engine_path, get_cc_engine_executable_name
@@ -395,7 +395,6 @@ class _SectionBlock(QFrame):
 
     def apply_theme(self, c, is_dark):
         self._c = c
-        from utils.theme_manager import apply_card_shadow
         apply_card_shadow(self, is_dark, blur=18, offset_y=4)
         self.update()
 
@@ -482,7 +481,6 @@ class _ChevronWidget(QWidget):
     def paintEvent(self, e):
         if self._color is None:
             return
-        from PySide6.QtGui import QPolygonF
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         cx = self.width() / 2
@@ -698,6 +696,7 @@ class _CollapsibleHeader(QFrame):
 
     def apply_theme(self, c, is_dark):
         self._c = c
+        self._is_dark = is_dark
         self.title_label.setStyleSheet(
             f"font-size: 14px; font-weight: 700; font-style: normal; "
             f"letter-spacing: 0.15px; "
@@ -728,9 +727,8 @@ class _CollapsibleHeader(QFrame):
         # Header hover overlay — slightly stronger than SettingsRow's so this
         # row reads as clickable.
         if self._hovered:
-            is_dark = self._c.get("bg_app", "#1a1a1a") == "#1a1a1a"
-            overlay = QColor("#ffffff" if is_dark else "#0f172a")
-            overlay.setAlpha(13 if is_dark else 15)
+            overlay = QColor("#ffffff" if self._is_dark else "#0f172a")
+            overlay.setAlpha(13 if self._is_dark else 15)
             p.fillRect(self.rect(), overlay)
         # Divider only when expanded.
         if not self._collapsed:

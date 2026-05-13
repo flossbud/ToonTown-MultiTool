@@ -255,6 +255,11 @@ def test_collapsible_toggle_with_reduced_motion_snaps(qapp, monkeypatch):
     # No animation in flight; height is snapped to no-max immediately.
     assert g._collapse_anim is None or g._collapse_anim.state() == 0
     assert g._content_container.maximumHeight() == 16777215
+    # After expand, the row should be visible (not hidden).
+    assert g._rows[0].isHidden() is False
+    # Toggle back to collapse — row should be hidden synchronously.
+    g.toggle()
+    assert g._rows[0].isHidden() is True
 
 
 def test_collapsible_toggle_with_normal_motion_starts_animation(qapp, monkeypatch):
