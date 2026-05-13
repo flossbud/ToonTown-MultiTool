@@ -21,6 +21,7 @@ class SettingsManager:
             "active_profile":        -1,
             "reduce_motion":                 False,
             "reduce_motion_set_explicitly":  False,
+            "advanced_collapsed":            True,
         }
         self._callbacks = []
         self._load()
