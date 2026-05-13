@@ -554,22 +554,6 @@ class MultiToonTool(QMainWindow):
         self._chip_rail_resize_filter = _RailResizeFilter(rail)
         rail.installEventFilter(self._chip_rail_resize_filter)
 
-        class _ChipHoverFilter(QObject):
-            """Animates an unselected chip's icon size 20 ↔ 21 on Enter/Leave.
-            Selected chips keep their size (committed to 22 by _apply_chip_styles).
-            Parented to rail so it is GC'd with the rail."""
-            def eventFilter(self_, watched, event):  # noqa: N805
-                from PySide6.QtCore import QEvent
-                if event.type() == QEvent.Enter and not watched.isChecked():
-                    from utils.motion import morph_icon_size
-                    morph_icon_size(watched, 23)
-                elif event.type() == QEvent.Leave and not watched.isChecked():
-                    from utils.motion import morph_icon_size
-                    morph_icon_size(watched, 20)
-                return False
-
-        self._chip_hover_filter = _ChipHoverFilter(rail)
-
         layout = QHBoxLayout(rail)
         layout.setContentsMargins(12, 6, 12, 6)
         layout.setSpacing(4)
@@ -601,14 +585,15 @@ class MultiToonTool(QMainWindow):
         # __new__ — bypassing QMainWindow.__init__ — still work.
         chip_font = QApplication.font()
         chip_font.setPointSize(10)
+        from utils.widgets.chip_button import ChipButton
         layout.addStretch()
         for label, idx in nav_items:
-            chip = QToolButton()
+            chip = ChipButton()
             chip.setObjectName(f"chip_{label.lower()}")
             chip.setText(label)
             chip.setFont(chip_font)
             chip.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
-            chip.setIconSize(QSize(20, 20))
+            chip.setIconSize(QSize(22, 22))
             chip.setCheckable(True)
             chip.setMinimumWidth(60)
             # StrongFocus so mouse clicks transfer keyboard focus to the
@@ -618,11 +603,9 @@ class MultiToonTool(QMainWindow):
             # stale focus ring on a now-unselected chip.
             chip.setFocusPolicy(Qt.StrongFocus)
             chip.clicked.connect(lambda _checked, i=idx: self.nav_select(i))
-            chip.pressed.connect(lambda c=chip: __import__("utils.motion",
-                fromlist=["press_scale"]).press_scale(c, depressed=True))
-            chip.released.connect(lambda c=chip: __import__("utils.motion",
-                fromlist=["press_scale"]).press_scale(c, depressed=False))
-            chip.installEventFilter(self._chip_hover_filter)
+            # Hover and press animations are handled by ChipButton itself
+            # (paint_scale state machine driven by enterEvent/leaveEvent and
+            # the pressed/released signals). No external wiring needed.
             layout.addWidget(chip)
             self.chip_buttons.append(chip)
 
@@ -769,13 +752,21 @@ class MultiToonTool(QMainWindow):
         # Update the pill border color from the current theme accent.
         if hasattr(self, "chip_pill"):
             self.chip_pill.set_colors(c['header_accent'])
+        # Fixed icon size for ALL chips. Selection is indicated by:
+        #   - the PillIndicator (animated border around the selected chip)
+        #   - icon color (accent for selected, muted for default)
+        #   - text color (sidebar_text_sel vs sidebar_text)
+        # Animated hover/press scaling is uniform across the whole chip and
+        # is owned by ChipButton.paint_scale — so the icon size must stay
+        # constant or the per-frame iconSize change fights the paint_scale
+        # animation.
+        ICON_SIZE = 22
         for i, chip in enumerate(self.chip_buttons):
             is_sel = chip.isChecked()
-            icon_size = 24 if is_sel else 20
-            chip.setIconSize(QSize(icon_size, icon_size))
+            chip.setIconSize(QSize(ICON_SIZE, ICON_SIZE))
             color = QColor(c['header_accent'] if is_sel else c['sidebar_text'])
             if i < len(icon_factories):
-                chip.setIcon(icon_factories[i](icon_size + 4, color))
+                chip.setIcon(icon_factories[i](ICON_SIZE + 4, color))
             text_color = c['sidebar_text_sel'] if is_sel else c['sidebar_text']
             chip.setStyleSheet(f"""
                 QToolButton#{chip.objectName()} {{

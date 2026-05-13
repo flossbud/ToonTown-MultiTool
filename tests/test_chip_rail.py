@@ -212,9 +212,11 @@ def test_view_logs_action_calls_nav_select_with_index_4(qapp):
 # the hint toggle now lives in the header, not the chip rail.
 
 
-def test_apply_chip_styles_tints_selected_icon_with_accent(qapp):
-    """After applying chip styles, the selected chip's icon should be
-    larger than the default chips'."""
+def test_apply_chip_styles_uniform_icon_size_and_font(qapp):
+    """All chips render at the SAME icon size; selection is shown via the
+    pill (a separate widget), icon color tint, and text color — not via
+    size differential. Per-chip iconSize must be constant or the hover/press
+    paint_scale animation would fight a state-driven iconSize snap."""
     from main import MultiToonTool
     instance = MultiToonTool.__new__(MultiToonTool)
     instance.settings_manager = _StubSettings(hints_enabled=True, show_debug_tab=False)
@@ -223,7 +225,6 @@ def test_apply_chip_styles_tints_selected_icon_with_accent(qapp):
     # Pin selection to index 1 (Launch) before styling
     for i, chip in enumerate(instance.chip_buttons):
         chip.setChecked(i == 1)
-    # Stub the theme accessor used by _apply_chip_styles
     instance._theme_colors = lambda: {
         "sidebar_text":     "#aaaaaa",
         "sidebar_text_sel": "#ffffff",
@@ -232,9 +233,11 @@ def test_apply_chip_styles_tints_selected_icon_with_accent(qapp):
         "header_accent":    "#0077ff",
     }
     instance._apply_chip_styles()
-    # Selected chip should render at the larger icon size.
-    assert instance.chip_buttons[1].iconSize().width() == 24
-    assert instance.chip_buttons[0].iconSize().width() == 20
+    # Every chip renders at the same icon size — no size cue for selection.
+    sizes = [c.iconSize().width() for c in instance.chip_buttons]
+    assert len(set(sizes)) == 1, (
+        f"All chip icons should share one size; got {sizes!r}"
+    )
     # Every chip's stylesheet must declare font-size: 10pt — setFont alone is
     # overridden by the application-wide QWidget{font-size:12pt} rule in
     # DARK_THEME/LIGHT_THEME, so the chip's id-specific QSS is the only thing
@@ -390,48 +393,57 @@ def test_nav_select_slides_pill_to_target_chip(qapp, monkeypatch):
     assert pill._pill_rect == QRectF(target_geom)
 
 
-def test_chip_press_signals_call_press_scale(qapp, monkeypatch):
-    """Chip pressed/released signals must call motion.press_scale."""
-    import utils.motion as motion
-    calls = []
-    monkeypatch.setattr(motion, "press_scale",
-                        lambda btn, depressed: calls.append((id(btn), depressed)))
-
+def test_chip_press_drives_chipbutton_paint_scale(qapp):
+    """Pressing the chip flips ChipButton's internal _is_pressed flag and
+    targets the PRESS_SCALE paint_scale. ChipButton owns its own state
+    machine; no external motion.press_scale call is involved."""
     from main import MultiToonTool
+    from utils.widgets.chip_button import ChipButton
     instance = MultiToonTool.__new__(MultiToonTool)
     instance.settings_manager = _StubSettings(show_debug_tab=False)
     rail = instance._build_chip_rail()
 
     chip = instance.chip_buttons[0]
+    assert isinstance(chip, ChipButton)
+    assert chip._is_pressed is False
+    assert chip._target_scale() == ChipButton.NORMAL_SCALE
+
     chip.pressed.emit()
+    assert chip._is_pressed is True
+    assert chip._target_scale() == ChipButton.PRESS_SCALE
+
     chip.released.emit()
+    assert chip._is_pressed is False
+    # Back to NORMAL (not still pressed and not hovered).
+    assert chip._target_scale() == ChipButton.NORMAL_SCALE
+    _ = rail
 
-    assert calls == [(id(chip), True), (id(chip), False)]
 
-
-def test_chip_hover_calls_morph_icon_size(qapp, monkeypatch):
-    import utils.motion as motion
-    calls = []
-    monkeypatch.setattr(motion, "morph_icon_size",
-                        lambda btn, px: calls.append((id(btn), px)))
-
+def test_chip_hover_drives_chipbutton_paint_scale(qapp):
+    """Enter/Leave events flip _is_hovered and re-target paint_scale.
+    ChipButton handles hover internally via enterEvent/leaveEvent —
+    no external event filter is required."""
     from main import MultiToonTool
-    from PySide6.QtCore import QEvent
+    from utils.widgets.chip_button import ChipButton
+    from PySide6.QtCore import QEvent, QPointF
     from PySide6.QtGui import QEnterEvent
-    from PySide6.QtCore import QPointF
     instance = MultiToonTool.__new__(MultiToonTool)
     instance.settings_manager = _StubSettings(show_debug_tab=False)
     rail = instance._build_chip_rail()
     chip = instance.chip_buttons[0]
-    # Chip is not checked by default.
+    assert isinstance(chip, ChipButton)
+    assert chip._is_hovered is False
 
     enter = QEnterEvent(QPointF(0, 0), QPointF(0, 0), QPointF(0, 0))
-    instance._chip_hover_filter.eventFilter(chip, enter)
+    chip.enterEvent(enter)
+    assert chip._is_hovered is True
+    assert chip._target_scale() == ChipButton.HOVER_SCALE
 
     leave = QEvent(QEvent.Leave)
-    instance._chip_hover_filter.eventFilter(chip, leave)
-
-    assert calls == [(id(chip), 23), (id(chip), 20)]
+    chip.leaveEvent(leave)
+    assert chip._is_hovered is False
+    assert chip._target_scale() == ChipButton.NORMAL_SCALE
+    _ = rail
 
 
 def test_overflow_button_uses_overflow_popup_not_qmenu(qapp):
