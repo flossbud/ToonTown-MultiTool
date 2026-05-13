@@ -204,6 +204,12 @@ class MultiToonTool(QMainWindow):
         self.pressed_keys = set()
         GameRegistry.instance()  # warm up before any launchers
         self.settings_manager = SettingsManager()
+
+        # Hook motion module into the app's settings.
+        import utils.motion as motion
+        motion.set_settings_manager(self.settings_manager)
+        self.settings_manager.on_change(motion.on_settings_change)
+
         self.keymap_manager = KeymapManager()
         self.profile_manager = ProfileManager()
         self.hotkey_manager = None

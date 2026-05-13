@@ -75,6 +75,24 @@ def test_explicit_user_override_wins_when_false(monkeypatch, reset_motion_state)
     assert motion.is_reduced() is False
 
 
+def test_settings_change_callback_refreshes_cache(monkeypatch, reset_motion_state):
+    """When the user toggles reduce_motion in Settings, the OS cache must
+    be invalidated so the next is_reduced() reflects the new value."""
+    calls = {"refresh": 0}
+    real_refresh = motion._refresh_cache
+    def spy():
+        calls["refresh"] += 1
+        real_refresh()
+    monkeypatch.setattr(motion, "_refresh_cache", spy)
+
+    motion.on_settings_change("reduce_motion", True)
+    assert calls["refresh"] == 1
+
+    # Unrelated key should not trigger a refresh
+    motion.on_settings_change("theme", "dark")
+    assert calls["refresh"] == 1
+
+
 def test_refresh_cache_clears_os_cache(monkeypatch, reset_motion_state):
     """After _refresh_cache, the next _os_reduced_motion call must re-run."""
     calls = {"n": 0}

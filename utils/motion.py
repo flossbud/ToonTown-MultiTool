@@ -6,7 +6,6 @@ whether animations should run or snap.
 """
 from __future__ import annotations
 
-import os
 import platform
 import shutil
 import subprocess
@@ -139,3 +138,14 @@ def _os_reduced_motion_impl() -> bool:
 
     # macOS and unknown: assume animations on.
     return False
+
+
+# Settings keys this module cares about. Used to filter on_change events.
+_MOTION_SETTINGS_KEYS = frozenset({"reduce_motion", "reduce_motion_set_explicitly"})
+
+
+def on_settings_change(key: str, value) -> None:
+    """Wire as a SettingsManager.on_change callback so toggling the
+    reduce-motion preference invalidates our cache."""
+    if key in _MOTION_SETTINGS_KEYS:
+        _refresh_cache()
