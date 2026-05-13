@@ -164,7 +164,17 @@ def test_collapsible_double_toggle_returns_to_collapsed(qapp):
     """Two toggles bring the group back to its initial collapsed state and
     re-hide the rows."""
     from tabs.settings_tab import CollapsibleSettingsGroup, SettingsRow
-    sm = _FakeSettingsManager({"advanced_collapsed": True})
+    import utils.motion as motion
+
+    # Force reduce-motion ON so the toggle takes the synchronous snap path
+    # — the animation case is exercised in test_settings_tab_polish.py.
+    sm = _FakeSettingsManager({
+        "advanced_collapsed": True,
+        "reduce_motion_set_explicitly": True,
+        "reduce_motion": True,
+    })
+    motion.set_settings_manager(sm)
+
     g = CollapsibleSettingsGroup("Advanced", sm, "advanced_collapsed")
     row = SettingsRow("A", "")
     g.add_row(row)

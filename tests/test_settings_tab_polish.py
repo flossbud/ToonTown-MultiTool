@@ -307,3 +307,36 @@ def test_collapsible_toggle_interrupts_in_flight_animation(qapp, monkeypatch):
     from PySide6.QtCore import QAbstractAnimation
     assert first_anim.state() == QAbstractAnimation.Stopped
     assert g._collapse_anim is not first_anim
+
+
+def test_collapse_animation_starts_with_real_height(qapp, monkeypatch):
+    """The collapse direction must capture the row-visible sizeHint BEFORE
+    hiding rows; otherwise the animation runs 0→0 and is invisible."""
+    from tabs.settings_tab import CollapsibleSettingsGroup, SettingsRow
+    import utils.motion as motion
+
+    class _FakeSM:
+        def __init__(self):
+            self.data = {
+                "advanced_collapsed": False,  # start expanded
+                "reduce_motion_set_explicitly": True,
+                "reduce_motion": False,
+            }
+        def get(self, k, d=None): return self.data.get(k, d)
+        def set(self, k, v): self.data[k] = v
+        def on_change(self, cb): pass
+
+    sm = _FakeSM()
+    motion.set_settings_manager(sm)
+    monkeypatch.setattr(motion, "_TEST_DURATION_SCALE", 100.0)  # keep animation alive
+
+    g = CollapsibleSettingsGroup("Advanced", sm, "advanced_collapsed")
+    # Add a row so the container has a non-trivial sizeHint.
+    g.add_row(SettingsRow("Test row", ""))
+    # Force the layout to compute heights.
+    g._content_container.adjustSize()
+
+    g.toggle()  # collapse
+    assert g._collapse_anim is not None
+    assert g._collapse_anim.startValue() > 0
+    assert g._collapse_anim.endValue() == 0

@@ -532,26 +532,29 @@ class CollapsibleSettingsGroup(SettingsGroup):
         from PySide6.QtCore import QPropertyAnimation
         import utils.motion as motion
 
-        # Resolve target maximumHeight.
+        # Resolve target maximumHeight. Note: rows must remain visible during
+        # a collapse animation, otherwise the layout's preferred height drops
+        # to 0 immediately and there's nothing for maximumHeight to clip
+        # against — the animation becomes a visual no-op.
         if self._collapsed:
-            # Hide rows immediately — maximumHeight animation handles the visual
-            # collapse; rows don't need to be visible for the clipping to work.
-            for row in self._rows:
-                row.setVisible(False)
-            end_h = 0
             start_h = self._content_container.sizeHint().height()
+            end_h = 0
         else:
-            # Rows need to be visible during the expand animation.
+            # Rows need to be visible during the expand animation so the
+            # container has a non-zero sizeHint to animate toward.
             for row in self._rows:
                 row.setVisible(True)
             end_h = self._content_container.sizeHint().height()
             start_h = 0
 
-        # Reduced motion: snap.
+        # Reduced motion: snap to the final state synchronously.
         if motion.is_reduced():
             self._content_container.setMaximumHeight(
                 16777215 if not self._collapsed else 0
             )
+            if self._collapsed:
+                for row in self._rows:
+                    row.setVisible(False)
             return
 
         # Animate.
@@ -565,8 +568,14 @@ class CollapsibleSettingsGroup(SettingsGroup):
         anim.setEndValue(end_h)
 
         def _on_finished():
-            # After expand: lift the maximumHeight cap so the container can grow.
-            if not self._collapsed:
+            # After collapse: hide rows so the layout doesn't reserve space
+            # if/when maxHeight is lifted again.
+            # After expand: lift the maximumHeight cap so the container can
+            # grow if the user resizes or rows are added later.
+            if self._collapsed:
+                for row in self._rows:
+                    row.setVisible(False)
+            else:
                 self._content_container.setMaximumHeight(16777215)
             self._collapse_anim = None
 
