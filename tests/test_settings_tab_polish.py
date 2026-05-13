@@ -155,3 +155,59 @@ def test_settings_row_without_leading_indicator_unaffected(qapp):
     for i in range(row._layout.count()):
         widget = row._layout.itemAt(i).widget()
         assert not isinstance(widget, _LeadingPill)
+
+
+def test_ttr_game_path_row_has_ttr_pill(qapp, tmp_path, monkeypatch):
+    """A GamePathRow for the TTR engine dir gets a TTR-colored pill."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    from utils.settings_manager import SettingsManager
+    from tabs.settings_tab import GamePathRow, _LeadingPill
+    from utils.theme_manager import get_theme_colors
+
+    sm = SettingsManager()
+    row = GamePathRow(
+        settings_manager=sm,
+        settings_key="ttr_engine_dir",
+        exe_name_fn=lambda: "TTREngine",
+        find_path_fn=lambda: None,
+        label="Toontown Rewritten",
+    )
+    assert isinstance(row._leading_pill, _LeadingPill)
+    row.apply_theme(get_theme_colors(is_dark=True), True)
+    assert row._leading_pill._resolved_color == "#7e57c2"  # game_pill_ttr (dark)
+
+
+def test_cc_game_path_row_has_cc_pill(qapp, tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    from utils.settings_manager import SettingsManager
+    from tabs.settings_tab import GamePathRow, _LeadingPill
+    from utils.theme_manager import get_theme_colors
+
+    sm = SettingsManager()
+    row = GamePathRow(
+        settings_manager=sm,
+        settings_key="cc_engine_dir",
+        exe_name_fn=lambda: "ccengine",
+        find_path_fn=lambda: None,
+        label="Corporate Clash",
+    )
+    assert isinstance(row._leading_pill, _LeadingPill)
+    row.apply_theme(get_theme_colors(is_dark=True), True)
+    assert row._leading_pill._resolved_color == "#0077ff"  # game_pill_cc (dark)
+
+
+def test_unknown_settings_key_game_path_row_has_no_pill(qapp, tmp_path, monkeypatch):
+    """A GamePathRow with an unrelated settings key gets no pill (defensive)."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    from utils.settings_manager import SettingsManager
+    from tabs.settings_tab import GamePathRow
+
+    sm = SettingsManager()
+    row = GamePathRow(
+        settings_manager=sm,
+        settings_key="some_other_game_dir",
+        exe_name_fn=lambda: "x",
+        find_path_fn=lambda: None,
+        label="Other",
+    )
+    assert not hasattr(row, "_leading_pill")

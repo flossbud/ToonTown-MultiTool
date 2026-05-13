@@ -240,6 +240,11 @@ class GamePathRow(SettingsRow):
                  exe_name_fn, find_path_fn, label: str = "Game Path",
                  parent=None):
         super().__init__(label, "Not configured", parent)
+        # Game identity pill — TTR violet, CC blue.
+        if settings_key == "ttr_engine_dir":
+            self.set_leading_indicator("game_pill_ttr")
+        elif settings_key == "cc_engine_dir":
+            self.set_leading_indicator("game_pill_cc")
         self.settings_manager = settings_manager
         self._settings_key = settings_key
         self._approval_key = f"{settings_key}_approved_custom_dir"
