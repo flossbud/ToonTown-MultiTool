@@ -431,18 +431,24 @@ class SettingsTab(QWidget):
         # and user hasn't explicitly set it, append (auto-detected).
         import utils.motion as motion
         motion.set_settings_manager(self.settings_manager)
-        os_says_reduced = motion._os_reduced_motion()
         explicit = self.settings_manager.get("reduce_motion_set_explicitly", False)
-        initial = motion.is_reduced()
-        sublabel = "Snap navigation instantly instead of animating. Useful for motion-sensitive users."
-        if os_says_reduced and not explicit:
-            sublabel = "(auto-detected from system) " + sublabel
-        self.reduce_motion_row = ToggleRow(
+        if not explicit:
+            initial_idx = 0  # System default
+        elif self.settings_manager.get("reduce_motion", False):
+            initial_idx = 1  # On
+        else:
+            initial_idx = 2  # Off
+        sublabel = (
+            "System default follows your desktop's reduce-motion setting. "
+            "Choose On or Off to override."
+        )
+        self.reduce_motion_row = DropdownRow(
             "Reduce Motion",
-            initial,
+            ["System default", "On", "Off"],
+            initial_idx,
             sublabel=sublabel,
         )
-        self.reduce_motion_row.toggled.connect(self._on_reduce_motion_toggled)
+        self.reduce_motion_row.index_changed.connect(self._on_reduce_motion_changed)
         group.add_row(self.reduce_motion_row)
 
         self._main_layout.addWidget(group)
@@ -789,9 +795,23 @@ class SettingsTab(QWidget):
         self.settings_manager.set("max_accounts_per_game", value)
         self.max_accounts_changed.emit(value)
 
-    def _on_reduce_motion_toggled(self, val: bool) -> None:
-        self.settings_manager.set("reduce_motion", val)
-        self.settings_manager.set("reduce_motion_set_explicitly", True)
+    def _on_reduce_motion_changed(self, idx: int) -> None:
+        """Tri-state reduce-motion handler.
+
+        idx 0 → "System default" — clear the explicit override, fall
+                back to OS preference.
+        idx 1 → "On"  — explicit override, animations always snap.
+        idx 2 → "Off" — explicit override, animations always run.
+        """
+        if idx == 0:
+            self.settings_manager.set("reduce_motion_set_explicitly", False)
+            self.settings_manager.set("reduce_motion", False)
+        elif idx == 1:
+            self.settings_manager.set("reduce_motion_set_explicitly", True)
+            self.settings_manager.set("reduce_motion", True)
+        else:  # idx == 2
+            self.settings_manager.set("reduce_motion_set_explicitly", True)
+            self.settings_manager.set("reduce_motion", False)
 
     def _on_clear_credentials_clicked(self):
         dlg = QMessageBox(self)
