@@ -50,11 +50,11 @@ import subprocess
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget,
     QVBoxLayout, QHBoxLayout, QStackedWidget,
-    QLabel, QPushButton, QToolButton, QProxyStyle, QStyle, QFrame, QMessageBox,
+    QLabel, QPushButton, QToolButton, QProxyStyle, QStyle, QFrame, QMenu, QMessageBox,
     QGraphicsOpacityEffect,
 )
 from PySide6.QtCore import QRect, Qt, QMetaObject, QSize, QEvent, Signal, Slot, QPropertyAnimation, QEasingCurve, QAbstractAnimation, QTimer, QObject
-from PySide6.QtGui import QColor, QGuiApplication, QIcon
+from PySide6.QtGui import QColor, QGuiApplication, QIcon, QAction
 
 # === Internal Imports ===
 from tabs.multitoon_tab import MultitoonTab
@@ -460,6 +460,43 @@ class MultiToonTool(QMainWindow):
             chip.clicked.connect(lambda _checked, i=idx: self.nav_select(i))
             layout.addWidget(chip)
             self.chip_buttons.append(chip)
+
+        layout.addStretch()
+
+        divider = QFrame()
+        divider.setObjectName("chip_rail_divider")
+        divider.setFrameShape(QFrame.VLine)
+        divider.setFixedWidth(1)
+        divider.setMinimumHeight(24)
+        layout.addWidget(divider)
+
+        # Hint toggle — same _toggle_hints / _update_hint_icon plumbing as
+        # before, just relocated from the sidebar's bottom cluster.
+        self._hints_enabled = self.settings_manager.get("hints_enabled", True)
+        self.hint_btn = QToolButton(rail)
+        self.hint_btn.setObjectName("hint_toggle")
+        self.hint_btn.setFixedSize(34, 34)
+        self.hint_btn.setIconSize(QSize(20, 20))
+        self.hint_btn.setCursor(Qt.PointingHandCursor)
+        self.hint_btn.clicked.connect(self._toggle_hints)
+        layout.addWidget(self.hint_btn)
+
+        # Overflow menu — visible only when debug logging is enabled. Contains
+        # "View Logs" → nav_select(4). When debug is off, the button hides
+        # entirely (matches today's logs_nav_btn visibility behavior).
+        self.overflow_btn = QToolButton(rail)
+        self.overflow_btn.setObjectName("rail_overflow")
+        self.overflow_btn.setText("⋯")
+        self.overflow_btn.setFixedSize(34, 34)
+        self.overflow_btn.setPopupMode(QToolButton.InstantPopup)
+        self.overflow_btn.setToolTip("More")
+        overflow_menu = QMenu(self.overflow_btn)
+        view_logs = QAction("View Logs", overflow_menu)
+        view_logs.triggered.connect(lambda: self.nav_select(4))
+        overflow_menu.addAction(view_logs)
+        self.overflow_btn.setMenu(overflow_menu)
+        self.overflow_btn.setVisible(self.settings_manager.get("show_debug_tab", False))
+        layout.addWidget(self.overflow_btn)
 
         return rail
 
