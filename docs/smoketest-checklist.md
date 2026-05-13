@@ -15,6 +15,15 @@
 - [ ] Keymap edits persist across restart
 - [ ] Settings tab persists across restart
 
+## v2.2 chip-rail navigation
+- [ ] App opens at default 560×748 with header + chip rail visible above the tab content
+- [ ] All four chips (Multitoon, Launch, Keymap, Settings) navigate correctly; selected chip shows accent border + larger tinted icon
+- [ ] Clicking the header logo / title navigates to the Credits page (pointer cursor + "About / Credits" tooltip on hover)
+- [ ] Hints toggle on the right of the chip rail still flips state; on-state shows accent background
+- [ ] Toggle "Show Debug Tab" in Settings — the `⋯` overflow menu appears on the chip rail; menu → "View Logs" navigates to the Logs tab; toggling off hides the `⋯`
+- [ ] Resize window to 1280×852 (or larger) — full-UI 2×2 multitoon card grid renders without compression
+- [ ] Theme toggle (system/light/dark) updates chip rail colors, brand-link hover, and selected chip styling
+
 ## Background features
 - [ ] Keep-alive fires on game window when enabled
 - [ ] Keep-alive does not fire when disabled

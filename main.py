@@ -347,7 +347,7 @@ class MultiToonTool(QMainWindow):
     def _update_hint_icon(self):
         c = self._theme_colors()
         color = QColor(c['sidebar_text'])
-        
+
         icon_size = self.hint_btn.iconSize().width()
         self.hint_btn.setIcon(make_hint_icon(icon_size, color, active=self._hints_enabled))
         state = "on" if self._hints_enabled else "off"

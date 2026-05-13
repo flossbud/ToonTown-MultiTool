@@ -64,7 +64,8 @@ Built with Python + PySide6.
 - Load profiles via hotkeys (Ctrl+1 through Ctrl+5)
 
 **UI**
-- Sidebar navigation with animated transitions
+- Chip-rail navigation under the header (icon + label) with animated transitions
+- Click the app logo in the header to open the Credits page
 - Light and dark themes (auto-detects from system)
 
 ---
