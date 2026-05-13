@@ -232,3 +232,55 @@ def test_keep_alive_group_ghosts_action_and_interval_when_master_off(
     assert tab.ka_master_row.isChecked() is False
     assert tab.ka_action_row.isEnabled() is False
     assert tab.ka_delay_row.isEnabled() is False
+
+
+def test_advanced_group_is_collapsible(qapp, tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    from utils.settings_manager import SettingsManager
+    from tabs.settings_tab import SettingsTab, CollapsibleSettingsGroup
+
+    sm = SettingsManager()
+    tab = SettingsTab(settings_manager=sm)
+
+    assert isinstance(tab.advanced_group, CollapsibleSettingsGroup)
+    # Default state: collapsed
+    assert tab.advanced_group.is_collapsed() is True
+
+
+def test_advanced_collapsed_persists_via_settings_manager(qapp, tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    from utils.settings_manager import SettingsManager
+    from tabs.settings_tab import SettingsTab
+
+    sm = SettingsManager()
+    tab = SettingsTab(settings_manager=sm)
+    assert tab.advanced_group.is_collapsed() is True
+
+    tab.advanced_group.toggle()
+    assert sm.get("advanced_collapsed") is False
+
+    # New tab reads the persisted state
+    tab2 = SettingsTab(settings_manager=sm)
+    assert tab2.advanced_group.is_collapsed() is False
+
+
+def test_advanced_clear_credentials_is_button_row(qapp, tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    from utils.settings_manager import SettingsManager
+    from tabs.settings_tab import SettingsTab, ButtonRow
+
+    sm = SettingsManager()
+    tab = SettingsTab(settings_manager=sm)
+    assert isinstance(tab.clear_credentials_row, ButtonRow)
+
+
+def test_toggle_advanced_visibility_method_removed(qapp, tmp_path, monkeypatch):
+    """The old toggle handler is gone — Advanced is no longer gated by a
+    settings value."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    from utils.settings_manager import SettingsManager
+    from tabs.settings_tab import SettingsTab
+
+    sm = SettingsManager()
+    tab = SettingsTab(settings_manager=sm)
+    assert not hasattr(tab, "toggle_advanced_visibility")

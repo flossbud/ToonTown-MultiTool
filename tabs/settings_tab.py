@@ -724,7 +724,9 @@ class SettingsTab(QWidget):
         return box.clickedButton() is enable_btn
 
     def _build_advanced_group(self):
-        self.advanced_group = SettingsGroup("Advanced")
+        self.advanced_group = CollapsibleSettingsGroup(
+            "Advanced", self.settings_manager, "advanced_collapsed"
+        )
         self._groups.append(self.advanced_group)
 
         self.companion_row = ToggleRow(
@@ -765,33 +767,16 @@ class SettingsTab(QWidget):
         )
         self.backend_row.index_changed.connect(self.change_input_backend)
         self.advanced_group.add_row(self.backend_row)
-        
-        self.clear_credentials_row = SettingsRow(
+
+        self.clear_credentials_row = ButtonRow(
             "Clear Stored Credentials",
-            sublabel="Delete all saved TTR and CC passwords from Keyring and session memory"
+            sublabel="Delete all saved TTR and CC passwords from Keyring and session memory",
+            button_text="Clear",
+            destructive=True,
         )
-        self.clear_credentials_btn = QPushButton("Clear")
-        self.clear_credentials_btn.setFixedWidth(80)
-        self.clear_credentials_btn.setStyleSheet("""
-            QPushButton {
-                color: #ff3b30; 
-                font-weight: bold; 
-                background: transparent;
-                border: 1px solid #ff3b30;
-                border-radius: 6px;
-                padding: 4px;
-            }
-            QPushButton:hover {
-                background: rgba(255, 59, 48, 0.1);
-            }
-        """)
-        self.clear_credentials_btn.setCursor(Qt.PointingHandCursor)
-        self.clear_credentials_btn.clicked.connect(self._on_clear_credentials_clicked)
-        self.clear_credentials_row.add_control(self.clear_credentials_btn)
+        self.clear_credentials_row.clicked.connect(self._on_clear_credentials_clicked)
         self.advanced_group.add_row(self.clear_credentials_row)
 
-        show = self.settings_manager.get("show_advanced", False)
-        self.advanced_group.setVisible(show)
         self._main_layout.addWidget(self.advanced_group)
 
     # ── Handlers ──────────────────────────────────────────────────────────────
@@ -883,10 +868,6 @@ class SettingsTab(QWidget):
         self.settings_manager.set("theme", theme)
         apply_theme(QApplication.instance(), resolve_theme(self.settings_manager))
         self.theme_changed.emit()
-
-    def toggle_advanced_visibility(self, show: bool):
-        self.settings_manager.set("show_advanced", show)
-        self.advanced_group.setVisible(show)
 
     def toggle_companion_app(self, val: bool):
         self.settings_manager.set("enable_companion_app", val)
