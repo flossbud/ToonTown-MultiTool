@@ -20,8 +20,6 @@ The full-UI breakpoint shifts from 1280×800 to 1280×852 to keep the multitoon 
 - Light-mode slot-badge contrast bumped to clear WCAG 1.4.11
 - Disabled Enable buttons now read as disabled (lower-contrast tokens)
 - Header carries a live session status (Idle/Running + active toon count)
-- Brand area shows an info glyph so the Credits affordance is visible at rest
-- Version badge wrapped as a soft accent pill
 - "PROFILE" label above the profile-presets pill row
 - Removed the divider between chips and the hint toggle
 - Selected chip's accent border softened to honor the original soft-ring design intent

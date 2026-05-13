@@ -444,18 +444,6 @@ class MultiToonTool(QMainWindow):
         self.version_label = None  # inline in title_label
         brand_layout.addWidget(self.title_label)
 
-        # Visible affordance for "click brand area to view Credits". An ⓘ
-        # glyph sits at the end of the brand row; the entire row is the
-        # clickable _BrandLink, so the glyph is decorative — it just
-        # signals interactivity at rest (no hover required to discover).
-        self.header_about_glyph = QLabel("ⓘ")  # CIRCLED LATIN SMALL LETTER I
-        self.header_about_glyph.setObjectName("header_about_glyph")
-        self.header_about_glyph.setStyleSheet(
-            "font-size: 14px; color: rgba(255,255,255,0.55); "
-            "padding-left: 4px; background: transparent;"
-        )
-        brand_layout.addWidget(self.header_about_glyph)
-
         outer_layout.addWidget(brand)
         outer_layout.addStretch()
 
@@ -692,23 +680,13 @@ class MultiToonTool(QMainWindow):
         return get_theme_colors(resolve_theme(self.settings_manager) == "dark")
 
     def _set_header_title(self, tc: str, vc: str) -> None:
-        """Render the header title label with the app name and a pill-shaped
-        version badge.  Extracted so tests can exercise the title-build path
-        without wiring up the full theme machinery."""
-        accent_hex = vc.lstrip('#')
-        if len(accent_hex) == 6:
-            ar = int(accent_hex[0:2], 16)
-            ag = int(accent_hex[2:4], 16)
-            ab = int(accent_hex[4:6], 16)
-            pill_bg = f"rgba({ar}, {ag}, {ab}, 0.15)"
-        else:
-            pill_bg = "transparent"
+        """Render the header title label with the app name and an inline
+        accent-colored version string. Extracted so tests can exercise the
+        title-build path without wiring up the full theme machinery."""
         self.title_label.setText(
-            f'<span style="color:{tc}">{app_name()}</span> '
-            f'<span style="color:{vc}; background:{pill_bg}; '
-            f'padding:1px 6px; border-radius:999px; '
-            f'font-size:{font_role("label")}px; font-weight:bold;">'
-            f'v{APP_VERSION}</span>'
+            f'<span style="color:{tc}">{app_name()}</span>'
+            f' <span style="color:{vc}; font-size:{font_role("label")}px; '
+            f'font-weight:bold;">v{APP_VERSION}</span>'
         )
 
     def _refresh_header_session_status(self):
@@ -747,13 +725,6 @@ class MultiToonTool(QMainWindow):
             f"font-size: {font_role('title')}px; font-weight: bold; background: transparent;"
         )
         self._set_header_title(tc, vc)
-        # About glyph follows text_muted so it reads as supportive cue, not
-        # a primary element. Same theme apply path keeps it light/dark aware.
-        if hasattr(self, "header_about_glyph"):
-            self.header_about_glyph.setStyleSheet(
-                f"font-size: 14px; color: {c['text_muted']}; "
-                f"padding-left: 4px; background: transparent;"
-            )
         if hasattr(self, "header_session_status"):
             self.header_session_status.setStyleSheet(
                 f"font-size: {font_role('label')}px; color: {c['text_muted']}; "

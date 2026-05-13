@@ -85,42 +85,39 @@ def test_clicking_brand_link_navigates_to_credits(qapp):
     assert instance._nav_select_calls == [5]
 
 
-def test_header_version_renders_as_pill(qapp):
-    """Version badge in the header should render as a pilled span with
-    background + rounded corners via the production _set_header_title path."""
+def test_header_version_is_inline_text_not_pilled(qapp):
+    """Version reads as subtle accent-colored text next to the title — no
+    background fill, no rounded pill. Reverted from an earlier pilled
+    version per UX feedback; this pins the inline style so the pill
+    treatment doesn't accidentally come back."""
     from utils.theme_manager import get_theme_colors
     instance = _instance_with_nav_recorder(qapp)
     instance.header = instance._build_header()  # keep ref so children aren't GC'd
 
-    # Stub _theme_colors so the call is deterministic and needs no settings_manager.
     instance._theme_colors = lambda: get_theme_colors(is_dark=True)
     c = instance._theme_colors()
-
-    # Call the production title-build helper directly.
     instance._set_header_title(c['header_text'], c['header_accent'])
 
     text = instance.title_label.text()
-    assert "border-radius:999px" in text or "border-radius: 999px" in text, (
-        f"Expected pill border-radius in title HTML; got {text!r}"
+    assert "border-radius" not in text, (
+        f"Version should be inline (no pill border-radius); got {text!r}"
     )
-    assert "background:rgba(" in text or "background: rgba(" in text, (
-        f"Expected rgba background fill on version pill; got {text!r}"
+    assert "background" not in text, (
+        f"Version should be inline (no background fill); got {text!r}"
     )
 
 
-def test_header_brand_contains_about_glyph(qapp):
-    """A small 'ⓘ' glyph inside the brand link visibly signals the
-    'click for Credits' affordance — otherwise it's hover-only and
-    undiscoverable."""
+def test_header_brand_has_no_about_glyph(qapp):
+    """The brand area is the clickable Credits affordance. An earlier
+    cut added an 'ⓘ' glyph next to the title for visibility-at-rest;
+    UX feedback rejected it. This pins the absence so the glyph doesn't
+    accidentally come back."""
     instance = _instance_with_nav_recorder(qapp)
     header = instance._build_header()
     link = header.findChild(QWidget, "header_brand_link")
     assert link is not None
     glyph = link.findChild(QLabel, "header_about_glyph")
-    assert glyph is not None, (
-        f"Expected a QLabel named 'header_about_glyph' inside the brand "
-        f"link; children: {[c.objectName() for c in link.findChildren(QWidget)]}"
+    assert glyph is None, (
+        f"Expected no 'header_about_glyph' label inside the brand link; "
+        f"found one with text {glyph.text()!r}"
     )
-    # The glyph text should be the info circle or a visually equivalent
-    # cue (the visible character itself is design-driven, not pinned).
-    assert glyph.text(), "About glyph QLabel must have non-empty text"
