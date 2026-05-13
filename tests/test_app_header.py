@@ -106,3 +106,21 @@ def test_header_version_renders_as_pill(qapp):
     assert "background:rgba(" in text or "background: rgba(" in text, (
         f"Expected rgba background fill on version pill; got {text!r}"
     )
+
+
+def test_header_brand_contains_about_glyph(qapp):
+    """A small 'ⓘ' glyph inside the brand link visibly signals the
+    'click for Credits' affordance — otherwise it's hover-only and
+    undiscoverable."""
+    instance = _instance_with_nav_recorder(qapp)
+    header = instance._build_header()
+    link = header.findChild(QWidget, "header_brand_link")
+    assert link is not None
+    glyph = link.findChild(QLabel, "header_about_glyph")
+    assert glyph is not None, (
+        f"Expected a QLabel named 'header_about_glyph' inside the brand "
+        f"link; children: {[c.objectName() for c in link.findChildren(QWidget)]}"
+    )
+    # The glyph text should be the info circle or a visually equivalent
+    # cue (the visible character itself is design-driven, not pinned).
+    assert glyph.text(), "About glyph QLabel must have non-empty text"

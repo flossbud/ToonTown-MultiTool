@@ -431,6 +431,18 @@ class MultiToonTool(QMainWindow):
         self.version_label = None  # inline in title_label
         brand_layout.addWidget(self.title_label)
 
+        # Visible affordance for "click brand area to view Credits". An ⓘ
+        # glyph sits at the end of the brand row; the entire row is the
+        # clickable _BrandLink, so the glyph is decorative — it just
+        # signals interactivity at rest (no hover required to discover).
+        self.header_about_glyph = QLabel("ⓘ")  # CIRCLED LATIN SMALL LETTER I
+        self.header_about_glyph.setObjectName("header_about_glyph")
+        self.header_about_glyph.setStyleSheet(
+            "font-size: 14px; color: rgba(255,255,255,0.55); "
+            "padding-left: 4px; background: transparent;"
+        )
+        brand_layout.addWidget(self.header_about_glyph)
+
         outer_layout.addWidget(brand)
         outer_layout.addStretch()
 
@@ -700,6 +712,13 @@ class MultiToonTool(QMainWindow):
             f"font-size: {font_role('title')}px; font-weight: bold; background: transparent;"
         )
         self._set_header_title(tc, vc)
+        # About glyph follows text_muted so it reads as supportive cue, not
+        # a primary element. Same theme apply path keeps it light/dark aware.
+        if hasattr(self, "header_about_glyph"):
+            self.header_about_glyph.setStyleSheet(
+                f"font-size: 14px; color: {c['text_muted']}; "
+                f"padding-left: 4px; background: transparent;"
+            )
         # Accent stripe
         accent = self.header.findChild(QFrame, "header_accent")
         if accent:
