@@ -478,12 +478,40 @@ class CollapsibleSettingsGroup(SettingsGroup):
 
         self._header = _CollapsibleHeader(title, self._collapsed, self)
         self._header.clicked.connect(self.toggle)
-        # The header lives inside the rounded block as the first child of
-        # the rows layout, so the soft-surface fill backs it.
-        self._rows_layout.addWidget(self._header)
+
+        # Wrap content rows in a container so the height of the rows portion
+        # can be animated independently of the header (Task 8). The container
+        # owns self._rows_layout (replacing SettingsGroup's block-level layout).
+        self._content_container = QWidget(self._block)
+        self._rows_layout = QVBoxLayout(self._content_container)
+        self._rows_layout.setContentsMargins(0, 0, 0, 0)
+        self._rows_layout.setSpacing(0)
+
+        # SettingsGroup.__init__ already installed a QVBoxLayout on self._block
+        # for rows. Detach that layout (Qt requires reparenting it to a
+        # throwaway widget — you cannot setLayout(None) on a widget that
+        # already has a layout). Then install a fresh layout with header + container.
+        old_block_layout = self._block.layout()
+        if old_block_layout is not None:
+            tmp = QWidget()
+            tmp.setLayout(old_block_layout)
+            tmp.deleteLater()
+        block_layout = QVBoxLayout(self._block)
+        block_layout.setContentsMargins(0, 0, 0, 0)
+        block_layout.setSpacing(0)
+        block_layout.addWidget(self._header)
+        block_layout.addWidget(self._content_container)
+
+        # Apply initial collapsed state to the container.
+        if self._collapsed:
+            self._content_container.setMaximumHeight(0)
 
     def add_row(self, row):
-        super().add_row(row)
+        # Rows are parented to the content container and tracked in self._rows.
+        self._rows.append(row)
+        self._rows_layout.addWidget(row)
+        self._refresh_last_row()
+        # Honor current collapse state — rows stay hidden while collapsed.
         row.setVisible(not self._collapsed)
 
     def is_collapsed(self) -> bool:
@@ -493,6 +521,12 @@ class CollapsibleSettingsGroup(SettingsGroup):
         self._collapsed = not self._collapsed
         self._settings_manager.set(self._persist_key, self._collapsed)
         self._header.set_collapsed(self._collapsed)
+        # Flip container height between 0 (collapsed) and "no max".
+        if self._collapsed:
+            self._content_container.setMaximumHeight(0)
+        else:
+            self._content_container.setMaximumHeight(16777215)
+        # Per-row visibility flag — Task 8 makes this redundant.
         for row in self._rows:
             row.setVisible(not self._collapsed)
 

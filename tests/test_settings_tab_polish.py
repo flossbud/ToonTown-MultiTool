@@ -211,3 +211,25 @@ def test_unknown_settings_key_game_path_row_has_no_pill(qapp, tmp_path, monkeypa
         label="Other",
     )
     assert not hasattr(row, "_leading_pill")
+
+
+def test_collapsible_content_lives_in_container(qapp):
+    """Content rows go inside _content_container; header is a sibling above."""
+    from tabs.settings_tab import CollapsibleSettingsGroup, SettingsRow
+    from PySide6.QtWidgets import QWidget
+
+    class _FakeSM:
+        def get(self, k, d=None): return False  # start expanded for this test
+        def set(self, k, v): pass
+        def on_change(self, cb): pass
+
+    g = CollapsibleSettingsGroup("Advanced", _FakeSM(), "advanced_collapsed")
+    row = SettingsRow("A", "")
+    g.add_row(row)
+
+    # Container exists and is a QWidget.
+    assert isinstance(g._content_container, QWidget)
+    # Header is in the block directly, not in the container.
+    assert g._header.parent() is not g._content_container
+    # The row is parented to the container.
+    assert row.parent() is g._content_container
