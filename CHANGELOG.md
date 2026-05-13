@@ -8,6 +8,12 @@ The Invasions tab has been removed. Live cog invasion tracking will return in a 
 
 This change sharpens MultiTool's scope around its core purpose: a multi-account input controller for Toontown Rewritten and Corporate Clash. Features that don't serve that purpose, however useful, belong in their own tools where they can be developed and shipped on their own cadence.
 
+### Reworked: Navigation
+
+The left sidebar has been replaced with a horizontal "chip rail" beneath the header. Four nav chips (Multitoon, Launch, Keymap, Settings) sit on the left; the Hints toggle and a debug-gated overflow menu live on the right. The app logo is now a clickable link to the Credits page.
+
+The full-UI breakpoint shifts from 1280×800 to 1280×852 to keep the multitoon 2×2 card grid's content budget unchanged. The default-window compact layout was tightened slightly to fit the new ~52 px of chrome without compressing the controls pill.
+
 ---
 
 ## v2.0 — Complete Rewrite
