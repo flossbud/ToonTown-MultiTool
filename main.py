@@ -417,7 +417,13 @@ class MultiToonTool(QMainWindow):
         header.setObjectName("app_header")
 
         outer_layout = QHBoxLayout(header)
-        outer_layout.setContentsMargins(8, 0, 16, 0)
+        # Bottom margin of 1px reserves a row for the QSS border-bottom.
+        # Qt does NOT automatically reduce contentsRect for partial borders
+        # (border-bottom alone, vs full `border:` shorthand), so without this
+        # the brand widget stretches into y=55 and the border line gets
+        # painted over by the brand's rendering. The chip rail doesn't hit
+        # this bug because its layout has 6px top/bottom margins already.
+        outer_layout.setContentsMargins(8, 0, 16, 1)
         outer_layout.setSpacing(0)
 
         brand = _BrandLink(self.nav_select)

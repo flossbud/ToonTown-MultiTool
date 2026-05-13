@@ -48,6 +48,22 @@ def test_header_min_height_is_56(header):
     assert header.minimumHeight() == 56
 
 
+def test_header_layout_reserves_bottom_row_for_border(header):
+    """Regression guard: Qt does not auto-shrink contentsRect for a
+    partial border (border-bottom: 1px alone, vs full `border:` shorthand).
+    Without an explicit 1px bottom margin on the header's QHBoxLayout, the
+    brand QFrame stretches into the border-row and overpaints the border
+    line under the title. Pin the 1px bottom layout margin so the brand
+    can't bleed into y=55 again."""
+    layout = header.layout()
+    m = layout.contentsMargins()
+    assert m.bottom() == 1, (
+        f"Header layout bottom margin must be >= 1 to reserve a row for the "
+        f"QSS border-bottom; got {m.bottom()}. Without this, the brand widget "
+        f"paints into the border row and the line is missing under the title."
+    )
+
+
 def test_header_icon_widget_exists_with_expected_size(header):
     """The header has a child QLabel named 'header_icon' sized 46x46."""
     icon_label = header.findChild(QLabel, "header_icon")
