@@ -37,21 +37,6 @@ def test_durations_are_in_micro_interaction_band():
     assert 200 <= motion.DURATION_PAGE <= 400
 
 
-def test_press_scale_is_perceptible_below_one():
-    """Press shrinks the chip's iconSize; the chip frame itself does not
-    transform without paint-subclassing QToolButton, so the icon-only
-    feedback must shrink enough to actually read on a ~22px icon.
-    We deliberately leave the UX-rule 0.95-1.05 band to get 3-4 px shrink."""
-    assert 0.75 <= motion.PRESS_SCALE < 0.95
-
-
-def test_ease_overshoot_returns_outback_with_set_overshoot():
-    curve = motion.ease_overshoot(0.10)
-    assert curve.type() == QEasingCurve.OutBack
-    # Qt clamps overshoot internally; verify we set it.
-    assert abs(curve.overshoot() - 0.10) < 1e-6
-
-
 def test_is_reduced_returns_false_when_unset_and_os_says_no(monkeypatch, reset_motion_state):
     monkeypatch.setattr(motion, "_os_reduced_motion", lambda: False)
     assert motion.is_reduced() is False
@@ -218,105 +203,7 @@ def test_push_slide_pages_vertical_axis(monkeypatch, qapp, stack, reset_motion_s
     assert stack.currentIndex() == 2
 
 
-# ── press_scale / morph_icon_size tests ─────────────────────────────────────
-
-from PySide6.QtCore import QSize
 from PySide6.QtWidgets import QToolButton
-
-
-def test_press_scale_shrinks_icon_size(qapp, monkeypatch, reset_motion_state):
-    monkeypatch.setattr(motion, "_os_reduced_motion", lambda: False)
-    monkeypatch.setattr(motion, "_TEST_DURATION_SCALE", 0.0)
-
-    btn = QToolButton()
-    btn.setIconSize(QSize(22, 22))
-
-    anim = motion.press_scale(btn, depressed=True)
-    assert anim is not None
-    for _ in range(50):
-        qapp.processEvents()
-        from PySide6.QtCore import QAbstractAnimation
-        if anim.state() == QAbstractAnimation.Stopped:
-            break
-    # Target = round(22 * PRESS_SCALE) ≈ 19 with PRESS_SCALE=0.85
-    expected = max(1, round(22 * motion.PRESS_SCALE))
-    assert btn.iconSize() == QSize(expected, expected)
-
-
-def test_press_scale_restores_on_release(qapp, monkeypatch, reset_motion_state):
-    monkeypatch.setattr(motion, "_os_reduced_motion", lambda: False)
-    monkeypatch.setattr(motion, "_TEST_DURATION_SCALE", 0.0)
-
-    btn = QToolButton()
-    btn.setIconSize(QSize(22, 22))
-    btn.setProperty("press_baseline_icon_size", 22)
-
-    motion.press_scale(btn, depressed=True)
-    qapp.processEvents()
-    motion.press_scale(btn, depressed=False)
-    qapp.processEvents()
-
-    assert btn.iconSize() == QSize(22, 22)
-
-
-def test_press_scale_reduced_motion_snaps(qapp, monkeypatch, reset_motion_state):
-    monkeypatch.setattr(motion, "_os_reduced_motion", lambda: True)
-    btn = QToolButton()
-    btn.setIconSize(QSize(22, 22))
-
-    result = motion.press_scale(btn, depressed=True)
-
-    assert result is None
-    # Snap to depressed value
-    expected = max(1, round(22 * motion.PRESS_SCALE))
-    assert btn.iconSize() == QSize(expected, expected)
-
-
-def test_press_scale_baseline_refreshes_per_press(qapp, monkeypatch, reset_motion_state):
-    """If the chip's icon size changes between press cycles (e.g., via
-    nav-select toggling selected→unselected), the next press should target
-    a baseline derived from the CURRENT iconSize, not a cached one."""
-    monkeypatch.setattr(motion, "_os_reduced_motion", lambda: False)
-    monkeypatch.setattr(motion, "_TEST_DURATION_SCALE", 0.0)
-
-    btn = QToolButton()
-    btn.setIconSize(QSize(22, 22))
-    # First press-release cycle establishes baseline=22.
-    motion.press_scale(btn, depressed=True)
-    qapp.processEvents()
-    motion.press_scale(btn, depressed=False)
-    qapp.processEvents()
-    assert btn.iconSize() == QSize(22, 22)
-
-    # Simulate the chip being deselected externally (e.g., by nav_select):
-    btn.setIconSize(QSize(20, 20))
-
-    # Press again — baseline should refresh to 20, target = round(20*PRESS_SCALE).
-    motion.press_scale(btn, depressed=True)
-    qapp.processEvents()
-    expected = max(1, round(20 * motion.PRESS_SCALE))
-    assert btn.iconSize() == QSize(expected, expected)
-
-    # Release — should restore to 20, not 22.
-    motion.press_scale(btn, depressed=False)
-    qapp.processEvents()
-    assert btn.iconSize() == QSize(20, 20)
-
-
-def test_morph_icon_size_animates_to_target(qapp, monkeypatch, reset_motion_state):
-    monkeypatch.setattr(motion, "_os_reduced_motion", lambda: False)
-    monkeypatch.setattr(motion, "_TEST_DURATION_SCALE", 0.0)
-
-    btn = QToolButton()
-    btn.setIconSize(QSize(20, 20))
-    anim = motion.morph_icon_size(btn, 22)
-    assert anim is not None
-    for _ in range(50):
-        qapp.processEvents()
-        from PySide6.QtCore import QAbstractAnimation
-        if anim.state() == QAbstractAnimation.Stopped:
-            break
-    assert btn.iconSize() == QSize(22, 22)
 
 
 def test_pop_menu_enter_duration_matches_token(qapp, monkeypatch, reset_motion_state):

@@ -31,18 +31,6 @@ EASE_PRESS       = QEasingCurve.OutQuad
 EASE_MENU_EXIT   = QEasingCurve.InCubic
 
 
-def ease_overshoot(overshoot: float = 0.10) -> QEasingCurve:
-    """OutBack with a configurable overshoot magnitude.
-
-    Qt's OutBack defaults to ~1.7 — way too pronounced for the
-    'Toon-tasteful' personality. Default 0.10 gives a barely-perceptible
-    settle-bounce on pill width arrival.
-    """
-    curve = QEasingCurve(QEasingCurve.OutBack)
-    curve.setOvershoot(overshoot)
-    return curve
-
-
 # ── Scale tokens ────────────────────────────────────────────────────────
 PRESS_SCALE = 0.85  # press feedback. Outside the UX 0.95-1.05 band on
                     # purpose: we can only animate the chip's iconSize (the
@@ -292,109 +280,6 @@ def _delete_transition_proxies(parent) -> None:
     for child in parent.findChildren(QLabel):
         if child.property("is_transition_proxy"):
             child.deleteLater()
-
-
-# ── Icon-size animation helpers ──────────────────────────────────────────────
-
-from PySide6.QtCore import QObject, QSize, Property
-
-
-class _IconSizeProxy(QObject):
-    """Animatable wrapper exposing an int `px` property that writes back
-    to its target button's iconSize.
-    """
-    def __init__(self, button):
-        super().__init__(button)
-        self._button = button
-        self._px = button.iconSize().width()
-        self.anim: Optional[QPropertyAnimation] = None
-
-    def _get_px(self) -> int:
-        return self._px
-
-    def _set_px(self, v: int) -> None:
-        self._px = int(v)
-        self._button.setIconSize(QSize(self._px, self._px))
-
-    px = Property(int, _get_px, _set_px)
-
-
-def _animate_icon_size(button, target_px: int, duration: int, easing) -> QPropertyAnimation:
-    """Use a wrapper Qt property to animate iconSize since QPropertyAnimation
-    cannot drive a QSize property directly. The wrapper interpolates an int
-    and applies it to setIconSize on every tick.
-    """
-    proxy = button.property("_icon_size_proxy")
-    if proxy is None:
-        proxy = _IconSizeProxy(button)
-        button.setProperty("_icon_size_proxy", proxy)
-
-    # Cancel any in-flight animation on this proxy.
-    if proxy.anim is not None and proxy.anim.state() == QAbstractAnimation.Running:
-        proxy.anim.stop()
-
-    raw = duration * _TEST_DURATION_SCALE
-    anim_duration = 0 if raw == 0.0 else max(1, int(raw))
-
-    anim = QPropertyAnimation(proxy, b"px")
-    anim.setDuration(anim_duration)
-    anim.setEasingCurve(easing)
-    anim.setStartValue(button.iconSize().width())
-    anim.setEndValue(target_px)
-    # finished ensures end value is applied even when duration==0
-    # (zero-duration animations skip valueChanged but do fire finished).
-    anim.finished.connect(lambda: button.setIconSize(QSize(target_px, target_px)))
-    proxy.anim = anim
-
-    # Defer start so callers can connect to anim.finished before it fires
-    # and so zero-duration animations complete synchronously inside start().
-    start_timer = QTimer(button)
-    start_timer.setSingleShot(True)
-    start_timer.timeout.connect(anim.start)
-    start_timer.start(0)
-
-    return anim
-
-
-def press_scale(button, depressed: bool):
-    """Animate a QToolButton's iconSize down on press, back up on release.
-
-    The first call on a given button records its current iconSize as the
-    'baseline' in a Qt property; subsequent depressed/restore cycles target
-    that baseline.
-
-    When is_reduced(): snaps to the target size and returns None.
-    """
-    if depressed:
-        # Always re-capture the baseline on press, so a press-without-click
-        # sequence (drag-off-release) restores to the current size, not a
-        # stale baseline from a previous selection state.
-        baseline = button.iconSize().width()
-        button.setProperty("press_baseline_icon_size", baseline)
-    else:
-        baseline = button.property("press_baseline_icon_size")
-        if baseline is None:
-            # No prior depressed call — no-op.
-            baseline = button.iconSize().width()
-
-    if depressed:
-        target_px = max(1, round(baseline * PRESS_SCALE))
-    else:
-        target_px = baseline
-
-    if is_reduced():
-        button.setIconSize(QSize(target_px, target_px))
-        return None
-
-    return _animate_icon_size(button, target_px, DURATION_PRESS, EASE_PRESS)
-
-
-def morph_icon_size(button, target_px: int):
-    """Animate a QToolButton's iconSize to target_px (square)."""
-    if is_reduced():
-        button.setIconSize(QSize(target_px, target_px))
-        return None
-    return _animate_icon_size(button, target_px, DURATION_HOVER, EASE_STANDARD)
 
 
 def pop_menu(popup, anchor, show: bool = True):
