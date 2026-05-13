@@ -1,10 +1,24 @@
-## ToonTown MultiTool v2.2.0
+## ToonTown MultiTool v2.2.0-rc1
 
-Minor release fixing critical Windows input bugs, adding TTR settings auto-detection, and tightening chat-aware key blocking. Originally planned as a `2.1.3-a` private smoke iteration; bumped to `2.2.0` once the structural scope (new TTR-settings helper, new injectable chat-block-list contract on InputService, Win32 backend behavioral fix) crossed into minor-bump territory.
+Release candidate for v2.2.0. If this build passes smoketest with no
+regressions, it'll be re-cut as `v2.2.0` stable. This iteration adds three
+post-v2.2.0 fixes on top of the v2.2.0 work: a Windows process-detachment fix
+so launched games survive closing the multitool, a TTR-settings-detection
+fallback that survives transient `settings.json` read failures at startup,
+and a defensive fix for running under the offscreen Qt platform.
+
+The full v2.2.0 changelog (originally planned as a `2.1.3-a` private smoke
+iteration; bumped to `2.2.0` once the structural scope crossed into
+minor-bump territory) follows below.
 
 ---
 
-### Bug Fixes
+### Bug Fixes (new since v2.2.0)
+
+- **Launched games now survive closing ToonTown MultiTool on Windows.** Previously, when TTMT exited, all child game processes were killed along with it because Windows put them in the same Job Object. The launcher now explicitly detaches each launched game from the multitool's job, so quitting TTMT no longer terminates your active toon windows.
+- **TTR settings auto-detect is more resilient at startup.** If `settings.json` is briefly unreadable on launch (e.g., TTR is mid-write), TTMT now falls back to the last successfully detected keymap rather than treating it as a fresh install.
+
+### Bug Fixes (from v2.2.0)
 
 - **Arrow-key movement now forwards correctly to background toons on Windows.** Multitoon forwarding was completely broken when TTR was configured with default arrow-key movement. The Win32 input backend now sets the extended-key bit in PostMessage `lparam` for arrow keys, which Panda3D requires to distinguish them from numpad arrows.
 - **Right Ctrl, Right Alt, and the navigation cluster (Insert/Delete/Home/End/PageUp/PageDown) now forward correctly on Windows.** Same root cause as arrow-key forwarding; same fix. Note: Left Ctrl is not a Win32 extended key per spec — if Left Ctrl as a hotkey is still misbehaving on your Windows install after this update, that's a separate issue.
@@ -25,10 +39,16 @@ Minor release fixing critical Windows input bugs, adding TTR settings auto-detec
 
 | File | Platform |
 | ---- | -------- |
-| `TTMultiTool-v2.2.0-Linux-x86_64.AppImage` | Linux (any distro, no install) |
-| `TTMultiTool-v2.2.0-Linux-x86_64.flatpak` | Linux (Flatpak) |
-| `ToonTownMultiTool-v2.2.0-Windows-x86_64.zip` | Windows 10/11 |
+| `TTMultiTool-v2.2.0-rc1-Linux-x86_64.AppImage` | Linux (any distro, no install) |
+| `TTMultiTool-v2.2.0-rc1-Linux-x86_64.flatpak` | Linux (Flatpak) |
+| `ToonTownMultiTool-v2.2.0-rc1-Windows-x86_64.zip` | Windows 10/11 |
 
 Beta-channel Arch users: `paru -Syu` (or your preferred helper) to pick up the new `ttmt-beta` package.
 
 GNOME users wanting Adwaita-styled Qt widgets and decorations (instead of the default Fusion look) can install `adwaita-qt6` from the official repos. This is an optional system-level package; it doesn't ship with the app.
+
+---
+
+### Smoketest
+
+This is a release candidate. The full manual smoketest checklist is attached to the GitHub Pre-release as `SMOKETEST.md`. If you're testing this build, please run through it and report any regressions before promotion to stable.
