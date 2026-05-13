@@ -85,8 +85,18 @@ TITLE_ANIM_MAX_WIDTH = 300
 # Layout-mode breakpoint and hysteresis. Window must be >= W_FULL x H_FULL
 # (plus deadband on the way up) to enter Full UI; Compact resumes once either
 # dimension drops below (breakpoint - deadband) on the way down.
+#
+# H_FULL=800 matches the pre-chip-rail trigger threshold so users who used
+# to enter Full at ~860 height (1280+80, 800+60) still can. At the trigger,
+# content area = 860 - HEADER_H(56) - CHIP_RAIL_H(64) = 740, which renders
+# the 2x2 card grid at ~99.5% of its 632x360 reference (744-design). As
+# the window grows, cards scale up to 100% and then cap at _MAX_CARD.
+# The earlier bump to 852/864 preserved cards-at-100% at the trigger
+# but raised the threshold past users' habitual window heights, so we
+# accept the 4px (0.5%) card scale-down at the trigger to keep the
+# threshold accessible.
 W_FULL = 1280
-H_FULL = 864
+H_FULL = 800
 DEADBAND_W = 80
 DEADBAND_H = 60
 

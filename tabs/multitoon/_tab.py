@@ -963,8 +963,11 @@ class MultitoonTab(QWidget):
             c = self._c()
             self._mode = "full"
             warm_size = size if size is not None else self.size()
-            # Floor: 1280×744 = full-UI content area at H_FULL breakpoint
-            # (H_FULL=852 minus HEADER_H=56 minus CHIP_RAIL_H=52).
+            # Floor: 1280×744 = the 2x2 card design reference (two 632×360
+            # cards + 24 px gap). Prewarm at this size regardless of the
+            # current H_FULL trigger so Qt caches polish/paint at the size
+            # most users will see once they've sized the window beyond the
+            # trigger threshold.
             if warm_size.width() <= 0 or warm_size.height() <= 0:
                 warm_size = QSize(1280, 744)
             else:
