@@ -87,7 +87,7 @@ TITLE_ANIM_MAX_WIDTH = 300
 # (plus deadband on the way up) to enter Full UI; Compact resumes once either
 # dimension drops below (breakpoint - deadband) on the way down.
 W_FULL = 1280
-H_FULL = 800
+H_FULL = 852
 DEADBAND_W = 80
 DEADBAND_H = 60
 APP_DESKTOP_ID = "io.github.flossbud.ToonTownMultiTool"
@@ -309,7 +309,7 @@ class MultiToonTool(QMainWindow):
         )
 
         self.log(f"[Debug] {app_name()} launched.")
-        self.multitoon_tab.prewarm_full_layout(QSize(W_FULL, H_FULL - 48), include_active=True)
+        self.multitoon_tab.prewarm_full_layout(QSize(W_FULL, H_FULL - 108), include_active=True)
         self._animate_launch()
 
     def _capture_multitool_window_id(self):
