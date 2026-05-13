@@ -365,6 +365,8 @@ class _SectionBlock(QFrame):
 
     def apply_theme(self, c, is_dark):
         self._c = c
+        from utils.theme_manager import apply_card_shadow
+        apply_card_shadow(self, is_dark, blur=18, offset_y=4)
         self.update()
 
     def paintEvent(self, e):
