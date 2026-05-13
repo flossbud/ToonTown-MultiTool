@@ -65,6 +65,14 @@ class SettingsRow(QFrame):
     def add_control(self, widget):
         self._layout.addWidget(widget)
 
+    def set_leading_indicator(self, token_name: str):
+        """Insert a colored pill at the start of the row.
+
+        `token_name` is a theme-token key (e.g. "game_pill_ttr"); the pill
+        resolves it through the palette on apply_theme."""
+        self._leading_pill = _LeadingPill(token_name, self)
+        self._layout.insertWidget(0, self._leading_pill)
+
     def set_last_in_block(self, is_last: bool):
         self._is_last_in_block = is_last
         self.update()
@@ -90,6 +98,8 @@ class SettingsRow(QFrame):
         self._c = c
         self._is_dark = is_dark
         self.update()
+        if hasattr(self, "_leading_pill"):
+            self._leading_pill.apply_theme(c, is_dark)
 
     def paintEvent(self, e):
         if not hasattr(self, "_c"):
@@ -397,6 +407,45 @@ class _SectionBlock(QFrame):
         p.drawRoundedRect(
             QRectF(0.5, 0.5, self.width() - 1, self.height() - 1), r, r
         )
+        p.end()
+
+
+class _LeadingPill(QWidget):
+    """Small colored circle with a translucent halo. Used as a leading
+    indicator on rows that carry an identity color (e.g. game path rows
+    showing TTR violet or CC blue)."""
+
+    SIZE = 10
+    HALO = 2
+
+    def __init__(self, token_name: str, parent=None):
+        super().__init__(parent)
+        self._token = token_name
+        self._resolved_color: str | None = None
+        side = self.SIZE + self.HALO * 2
+        self.setFixedSize(side, side)
+
+    def apply_theme(self, c, is_dark):
+        self._resolved_color = c.get(self._token, "#888888")
+        self.update()
+
+    def paintEvent(self, e):
+        if self._resolved_color is None:
+            return
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setPen(Qt.NoPen)
+
+        # Halo — 25% alpha of the dot color, full widget size.
+        halo = QColor(self._resolved_color)
+        halo.setAlpha(64)
+        p.setBrush(halo)
+        side = self.SIZE + self.HALO * 2
+        p.drawEllipse(QRectF(0, 0, side, side))
+
+        # Dot — full-alpha core, centered, SIZE×SIZE.
+        p.setBrush(QColor(self._resolved_color))
+        p.drawEllipse(QRectF(self.HALO, self.HALO, self.SIZE, self.SIZE))
         p.end()
 
 

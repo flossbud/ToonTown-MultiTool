@@ -112,3 +112,46 @@ def test_collapsible_header_has_wa_hover(qapp):
 
     g = CollapsibleSettingsGroup("Advanced", _FakeSM(), "advanced_collapsed")
     assert g._header.testAttribute(Qt.WA_Hover) is True
+
+
+def test_leading_pill_widget_size_includes_halo(qapp):
+    """_LeadingPill is a small fixed-size widget. Size = dot + 2*halo."""
+    from tabs.settings_tab import _LeadingPill
+
+    pill = _LeadingPill("game_pill_ttr")
+    # SIZE=10 + HALO=2 on each side = 14×14
+    assert pill.width() == 14
+    assert pill.height() == 14
+
+
+def test_leading_pill_resolves_token_on_apply_theme(qapp):
+    """_LeadingPill stores the resolved hex color from the palette."""
+    from tabs.settings_tab import _LeadingPill
+    from utils.theme_manager import get_theme_colors
+
+    pill = _LeadingPill("game_pill_ttr")
+    pill.apply_theme(get_theme_colors(is_dark=True), True)
+    # The token resolves to the dark-mode TTR pill color.
+    assert pill._resolved_color == "#7e57c2"
+
+
+def test_set_leading_indicator_inserts_pill_at_index_zero(qapp):
+    """set_leading_indicator inserts the pill before the text column."""
+    from tabs.settings_tab import SettingsRow, _LeadingPill
+
+    row = SettingsRow("Label", "")
+    row.set_leading_indicator("game_pill_ttr")
+    # First item in the row's QHBoxLayout is the pill widget.
+    first_item = row._layout.itemAt(0)
+    assert isinstance(first_item.widget(), _LeadingPill)
+
+
+def test_settings_row_without_leading_indicator_unaffected(qapp):
+    """Rows that don't call set_leading_indicator have no pill column."""
+    from tabs.settings_tab import SettingsRow, _LeadingPill
+
+    row = SettingsRow("Label", "")
+    # No call to set_leading_indicator.
+    for i in range(row._layout.count()):
+        widget = row._layout.itemAt(i).widget()
+        assert not isinstance(widget, _LeadingPill)
