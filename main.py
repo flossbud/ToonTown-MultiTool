@@ -458,6 +458,16 @@ class MultiToonTool(QMainWindow):
         # __new__ — bypassing QMainWindow.__init__ — still work.
         chip_font = QApplication.font()
         chip_font.setPointSize(10)
+        # Centering pattern: a left-side stretch balances the right-side
+        # stretch added after the chip loop, so the four chips end up in
+        # the middle of the rail's free space. The utility cluster on the
+        # far right (divider + hint + overflow) sits outside the centering
+        # band, so the chips look approximately centered relative to the
+        # whole rail width (slightly left of geometric center because the
+        # utility cluster takes some of the right side; if true center
+        # becomes important, mirror the utility-cluster width on the left
+        # as a phantom spacer).
+        layout.addStretch()
         for label, idx in nav_items:
             chip = QToolButton()
             chip.setObjectName(f"chip_{label.lower()}")
