@@ -100,9 +100,12 @@ def get_theme_colors(is_dark: bool) -> dict:
             "bg_input_dark": "#141414",
             "bg_status":     "#1e1e1e",
 
-            # Sidebar
+            # Sidebar / chip rail  (keys named "sidebar_*" pre-date the chip
+            # rail; they now style both — sidebar_bg is the chip rail QFrame
+            # background, sidebar_border its bottom divider, sidebar_text /
+            # sidebar_text_sel are chip label colors, and sidebar_btn_sel is
+            # the selected-chip gradient stop and hover background.)
             "sidebar_bg":       "#111111",
-            "sidebar_btn":      "transparent",
             "sidebar_btn_sel":  "rgba(255,255,255,0.09)",
             "sidebar_text":     "#aaaaaa",
             "sidebar_text_sel": "#ffffff",
@@ -223,9 +226,12 @@ def get_theme_colors(is_dark: bool) -> dict:
             "bg_input_dark": "#e8ecf1",
             "bg_status":     "#f8fafc",
 
-            # Sidebar
+            # Sidebar / chip rail  (keys named "sidebar_*" pre-date the chip
+            # rail; they now style both — sidebar_bg is the chip rail QFrame
+            # background, sidebar_border its bottom divider, sidebar_text /
+            # sidebar_text_sel are chip label colors, and sidebar_btn_sel is
+            # the selected-chip gradient stop and hover background.)
             "sidebar_bg":       "#e8ecf1",
-            "sidebar_btn":      "transparent",
             "sidebar_btn_sel":  "rgba(15,23,42,0.07)",
             "sidebar_text":     "#475569",
             "sidebar_text_sel": "#0f172a",

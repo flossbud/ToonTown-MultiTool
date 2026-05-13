@@ -171,3 +171,29 @@ def test_clicking_hint_btn_invokes_toggle_hints(qapp):
     )
     instance.hint_btn.click()
     assert instance._toggle_hints_calls == [True]
+
+
+def test_apply_chip_styles_tints_selected_icon_with_accent(qapp):
+    """After applying chip styles, the selected chip's icon should be
+    larger than the default chips'."""
+    from main import MultiToonTool
+    instance = MultiToonTool.__new__(MultiToonTool)
+    instance.settings_manager = _StubSettings(hints_enabled=True, show_debug_tab=False)
+    instance.nav_select = lambda i: None
+    rail = instance._build_chip_rail()  # hold ref to prevent GC of child widgets
+    # Pin selection to index 1 (Launch) before styling
+    for i, chip in enumerate(instance.chip_buttons):
+        chip.setChecked(i == 1)
+    # Stub the theme accessor used by _apply_chip_styles
+    instance._theme_colors = lambda: {
+        "sidebar_text":     "#aaaaaa",
+        "sidebar_text_sel": "#ffffff",
+        "sidebar_btn_sel":  "rgba(255,255,255,0.09)",
+        "sidebar_bg":       "#111111",
+        "header_accent":    "#0077ff",
+    }
+    instance._apply_chip_styles()
+    # Selected chip should render at the larger icon size.
+    assert instance.chip_buttons[1].iconSize().width() == 22
+    assert instance.chip_buttons[0].iconSize().width() == 20
+    _ = rail  # suppress "unused variable" lint; reference ensures QFrame lifetime
