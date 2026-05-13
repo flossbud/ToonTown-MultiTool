@@ -12,8 +12,6 @@ This change sharpens MultiTool's scope around its core purpose: a multi-account 
 
 The left sidebar has been replaced with a horizontal "chip rail" beneath the header. Four nav chips (Multitoon, Launch, Keymap, Settings) sit on the left; the Hints toggle and a debug-gated overflow menu live on the right. The app logo is now a clickable link to the Credits page.
 
-The full-UI breakpoint shifts from 1280×800 to 1280×852 to keep the multitoon 2×2 card grid's content budget unchanged. The default-window compact layout was tightened slightly to fit the new ~52 px of chrome without compressing the controls pill.
-
 ### UI polish (post-chip-rail audit)
 
 - Keyboard focus rings on chip-rail buttons and the hint toggle
