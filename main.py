@@ -50,7 +50,7 @@ import subprocess
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget,
     QVBoxLayout, QHBoxLayout, QStackedWidget,
-    QLabel, QPushButton, QProxyStyle, QStyle, QFrame, QMessageBox,
+    QLabel, QPushButton, QToolButton, QProxyStyle, QStyle, QFrame, QMessageBox,
     QGraphicsOpacityEffect,
 )
 from PySide6.QtCore import QRect, Qt, QMetaObject, QSize, QEvent, Signal, Slot, QPropertyAnimation, QEasingCurve, QAbstractAnimation, QTimer, QObject
@@ -441,6 +441,25 @@ class MultiToonTool(QMainWindow):
         layout = QHBoxLayout(rail)
         layout.setContentsMargins(12, 8, 12, 8)
         layout.setSpacing(4)
+
+        self.chip_buttons = []
+        nav_items = [
+            ("Multitoon", 0),
+            ("Launch",    1),
+            ("Keymap",    2),
+            ("Settings",  3),
+        ]
+        for label, idx in nav_items:
+            chip = QToolButton()
+            chip.setObjectName(f"chip_{label.lower()}")
+            chip.setText(label)
+            chip.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
+            chip.setIconSize(QSize(20, 20))
+            chip.setCheckable(True)
+            chip.setMinimumWidth(60)
+            chip.clicked.connect(lambda _checked, i=idx: self.nav_select(i))
+            layout.addWidget(chip)
+            self.chip_buttons.append(chip)
 
         return rail
 
