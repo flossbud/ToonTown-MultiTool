@@ -925,6 +925,9 @@ class MultitoonTab(QWidget):
         # while in Compact mode, set_active and set_status_state on the Full
         # cards were gated out, so they're stale until we sync. apply_theme
         # is the entry point for layout-specific theme styling on Full cards.
+        # Pinned by tests/test_light_full_card_theme.py — that test asserts
+        # the light-mode card_toon_bg lands on the card after a compact->full
+        # swap with theme=light.
         if mode == "full" and self._full is not None:
             self._full.apply_theme(self._c())
             self._sync_full_cards_to_state()
