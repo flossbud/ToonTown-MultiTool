@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
     QPushButton, QScrollArea, QFileDialog
 )
 from PySide6.QtCore import Qt, QRectF, Signal
-from PySide6.QtGui import QColor, QPainter
+from PySide6.QtGui import QColor, QPainter, QPen
 from utils.theme_manager import apply_theme, resolve_theme, get_theme_colors
 from utils.shared_widgets import IOSToggle
 from services.ttr_login_service import find_engine_path, get_engine_executable_name
@@ -34,7 +34,7 @@ class SettingsRow(QFrame):
         self._label = label
         self._sublabel = sublabel
         self._is_last_in_block = False
-        self.setFixedHeight(
+        self.setMinimumHeight(
             self.HEIGHT_WITH_SUB if sublabel else self.HEIGHT_NO_SUB
         )
 
@@ -347,7 +347,7 @@ class SettingsGroup(QWidget):
     def apply_theme(self, c, is_dark):
         if hasattr(self, "title_label"):
             self.title_label.setStyleSheet(
-                f"font-size: 14px; font-weight: 600; "
+                f"font-size: 14px; font-weight: bold; font-style: normal; "
                 f"color: {c['text_primary']}; background: transparent;"
             )
         self._block.apply_theme(c, is_dark)
@@ -373,10 +373,14 @@ class _SectionBlock(QFrame):
             return
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        p.setPen(Qt.NoPen)
+        pen = QPen(QColor(self._c.get("border_card", "#363636")))
+        pen.setWidth(1)
+        p.setPen(pen)
         p.setBrush(QColor(self._c.get("bg_card_inner", "#2e2e2e")))
         r = float(SettingsGroup.CORNER_RADIUS)
-        p.drawRoundedRect(QRectF(0, 0, self.width(), self.height()), r, r)
+        p.drawRoundedRect(
+            QRectF(0.5, 0.5, self.width() - 1, self.height() - 1), r, r
+        )
         p.end()
 
 
@@ -463,7 +467,7 @@ class _CollapsibleHeader(QFrame):
     def apply_theme(self, c, is_dark):
         self._c = c
         self.title_label.setStyleSheet(
-            f"font-size: 14px; font-weight: 600; "
+            f"font-size: 14px; font-weight: bold; font-style: normal; "
             f"color: {c['text_primary']}; background: transparent; border: none;"
         )
         self.chevron_label.setStyleSheet(
