@@ -78,3 +78,37 @@ def test_settings_row_has_wa_hover_attribute(qapp):
 
     row = SettingsRow("Label", "")
     assert row.testAttribute(Qt.WA_Hover) is True
+
+
+def test_collapsible_header_hover_flag_toggles(qapp):
+    """The collapsible header tracks its own hover state separately."""
+    from tabs.settings_tab import CollapsibleSettingsGroup
+    from PySide6.QtCore import QEvent
+
+    class _FakeSM:
+        def get(self, k, d=None): return d
+        def set(self, k, v): pass
+        def on_change(self, cb): pass
+
+    g = CollapsibleSettingsGroup("Advanced", _FakeSM(), "advanced_collapsed")
+    h = g._header
+    assert h._hovered is False
+
+    h.enterEvent(QEvent(QEvent.Enter))
+    assert h._hovered is True
+
+    h.leaveEvent(QEvent(QEvent.Leave))
+    assert h._hovered is False
+
+
+def test_collapsible_header_has_wa_hover(qapp):
+    from tabs.settings_tab import CollapsibleSettingsGroup
+    from PySide6.QtCore import Qt
+
+    class _FakeSM:
+        def get(self, k, d=None): return d
+        def set(self, k, v): pass
+        def on_change(self, cb): pass
+
+    g = CollapsibleSettingsGroup("Advanced", _FakeSM(), "advanced_collapsed")
+    assert g._header.testAttribute(Qt.WA_Hover) is True

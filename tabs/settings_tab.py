@@ -459,6 +459,8 @@ class _CollapsibleHeader(QFrame):
         self._collapsed = collapsed
         self.setFixedHeight(SettingsRow.HEIGHT_NO_SUB)
         self.setCursor(Qt.PointingHandCursor)
+        self._hovered = False
+        self.setAttribute(Qt.WA_Hover)
 
         lay = QHBoxLayout(self)
         lay.setContentsMargins(14, 0, 14, 0)
@@ -493,6 +495,14 @@ class _CollapsibleHeader(QFrame):
         )
         self.update()
 
+    def enterEvent(self, e):
+        self._hovered = True
+        self.update()
+
+    def leaveEvent(self, e):
+        self._hovered = False
+        self.update()
+
     def mousePressEvent(self, e):
         if e.button() == Qt.LeftButton:
             self.clicked.emit()
@@ -501,17 +511,22 @@ class _CollapsibleHeader(QFrame):
         super().mousePressEvent(e)
 
     def paintEvent(self, e):
-        # When the group is expanded, draw a bottom divider matching
-        # SettingsRow's so the header reads as the first row of the block.
-        if self._collapsed:
-            return
         if not hasattr(self, "_c"):
             return
         p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing, False)
-        p.setPen(QColor(self._c.get("border_muted", "#2e2e2e")))
-        w, h = self.width(), self.height()
-        p.drawLine(14, h - 1, w - 14, h - 1)
+        # Header hover overlay — slightly stronger than SettingsRow's so this
+        # row reads as clickable.
+        if self._hovered:
+            is_dark = self._c.get("bg_app", "#1a1a1a") == "#1a1a1a"
+            overlay = QColor("#ffffff" if is_dark else "#0f172a")
+            overlay.setAlpha(13 if is_dark else 15)
+            p.fillRect(self.rect(), overlay)
+        # Divider only when expanded.
+        if not self._collapsed:
+            p.setRenderHint(QPainter.Antialiasing, False)
+            p.setPen(QColor(self._c.get("border_muted", "#2e2e2e")))
+            w, h = self.width(), self.height()
+            p.drawLine(14, h - 1, w - 14, h - 1)
         p.end()
 
 
