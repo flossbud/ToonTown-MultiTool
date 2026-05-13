@@ -51,7 +51,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget,
     QVBoxLayout, QHBoxLayout, QStackedWidget,
     QLabel, QPushButton, QToolButton, QProxyStyle, QStyle, QFrame, QMenu,
-    QGraphicsOpacityEffect, QSpacerItem, QSizePolicy,
+    QSpacerItem, QSizePolicy,
 )
 from PySide6.QtCore import QRect, Qt, QSize, QEvent, Signal, Slot, QPropertyAnimation, QEasingCurve, QTimer
 from PySide6.QtGui import QColor, QGuiApplication, QIcon, QAction
@@ -596,25 +596,20 @@ class MultiToonTool(QMainWindow):
     def nav_select(self, index: int):
         if self.stack.currentIndex() == index and getattr(self, "_initialized_nav", False):
             return
+        was_initialized = getattr(self, "_initialized_nav", False)
+        prev_index = self.stack.currentIndex()
         self._initialized_nav = True
 
-        self.stack.setCurrentIndex(index)
+        # First-time nav (during init): snap, no animation.
+        if not was_initialized:
+            self.stack.setCurrentIndex(index)
+        else:
+            from utils.motion import push_slide_pages
+            push_slide_pages(self.stack, prev_index, index, axis="h")
+
         for i, chip in enumerate(self.chip_buttons):
             chip.setChecked(i == index)
         self._apply_chip_styles()
-
-        # Fade-in the incoming page
-        w = self.stack.currentWidget()
-        effect = QGraphicsOpacityEffect(w)
-        w.setGraphicsEffect(effect)
-        self._page_anim = QPropertyAnimation(effect, b"opacity")
-        self._page_anim.setDuration(160)
-        self._page_anim.setStartValue(0.0)
-        self._page_anim.setEndValue(1.0)
-        self._page_anim.setEasingCurve(QEasingCurve.OutCubic)
-        # Remove the effect after animation so it doesn't interfere with rendering
-        self._page_anim.finished.connect(lambda: w.setGraphicsEffect(None))
-        self._page_anim.start()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

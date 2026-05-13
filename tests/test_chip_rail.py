@@ -320,3 +320,35 @@ def test_selected_chip_border_is_semi_transparent(qapp):
         f"(0,119,255); got: {first_border_color!r}"
     )
     _ = rail
+
+
+def test_nav_select_calls_push_slide_pages(qapp, monkeypatch):
+    """nav_select must delegate page transitions to utils.motion."""
+    from main import MultiToonTool
+    import utils.motion as motion
+
+    calls = []
+    def fake_push(stack, from_idx, to_idx, axis):
+        calls.append((from_idx, to_idx, axis))
+        stack.setCurrentIndex(to_idx)
+        return None
+    monkeypatch.setattr(motion, "push_slide_pages", fake_push)
+
+    instance = MultiToonTool.__new__(MultiToonTool)
+    instance.settings_manager = _StubSettings(show_debug_tab=False)
+    # Stub stack + chips
+    from PySide6.QtWidgets import QStackedWidget, QWidget, QToolButton
+    instance.stack = QStackedWidget()
+    for _ in range(6):
+        instance.stack.addWidget(QWidget())
+    instance.stack.setCurrentIndex(0)
+    instance.chip_buttons = [QToolButton() for _ in range(4)]
+    for b in instance.chip_buttons:
+        b.setCheckable(True)
+    instance._apply_chip_styles = lambda: None
+    instance._initialized_nav = True
+
+    instance.nav_select(2)
+
+    assert calls == [(0, 2, "h")]
+    assert instance.stack.currentIndex() == 2
