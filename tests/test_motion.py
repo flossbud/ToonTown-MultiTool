@@ -107,3 +107,109 @@ def test_refresh_cache_clears_os_cache(monkeypatch, reset_motion_state):
     motion._refresh_cache()
     motion._os_reduced_motion()
     assert calls["n"] == 2
+
+
+# ── push_slide_pages tests ───────────────────────────────────────────────────
+
+from PySide6.QtCore import QPoint, Qt
+from PySide6.QtWidgets import QApplication, QLabel, QStackedWidget, QWidget
+
+
+@pytest.fixture(scope="module")
+def qapp():
+    app = QApplication.instance() or QApplication([])
+    return app
+
+
+@pytest.fixture
+def stack(qapp):
+    s = QStackedWidget()
+    s.resize(400, 300)
+    for i in range(3):
+        p = QWidget()
+        p.setObjectName(f"page_{i}")
+        s.addWidget(p)
+    s.show()
+    qapp.processEvents()
+    return s
+
+
+def test_push_slide_pages_reduced_motion_snaps(monkeypatch, stack, reset_motion_state):
+    reset_motion_state.set("reduce_motion_set_explicitly", True)
+    reset_motion_state.set("reduce_motion", True)
+
+    result = motion.push_slide_pages(stack, 0, 2, axis="h")
+
+    assert result is None
+    assert stack.currentIndex() == 2
+    # No proxy labels should have been created.
+    proxies = [c for c in stack.children() if isinstance(c, QLabel)
+               and c.property("is_transition_proxy")]
+    assert proxies == []
+
+
+def test_push_slide_pages_animation_completes(monkeypatch, qapp, stack, reset_motion_state):
+    """With duration scale 0, animation finishes within one event-loop tick."""
+    monkeypatch.setattr(motion, "_os_reduced_motion", lambda: False)
+    monkeypatch.setattr(motion, "_TEST_DURATION_SCALE", 0.0)
+
+    group = motion.push_slide_pages(stack, 0, 1, axis="h")
+    assert group is not None
+
+    # Drive event loop until finished
+    finished = {"v": False}
+    group.finished.connect(lambda: finished.update(v=True))
+    for _ in range(50):
+        qapp.processEvents()
+        if finished["v"]:
+            break
+
+    assert finished["v"] is True
+    assert stack.currentIndex() == 1
+    # Proxy labels cleaned up
+    proxies = [c for c in stack.children() if isinstance(c, QLabel)
+               and c.property("is_transition_proxy")]
+    # Proxies may exist briefly post-finish until deleteLater() processes.
+    qapp.processEvents()
+    proxies = [c for c in stack.children() if isinstance(c, QLabel)
+               and c.property("is_transition_proxy") and not c.isHidden()]
+    assert proxies == []
+
+
+def test_push_slide_pages_interrupt(monkeypatch, qapp, stack, reset_motion_state):
+    """Calling push_slide_pages mid-animation cancels the in-flight one."""
+    monkeypatch.setattr(motion, "_os_reduced_motion", lambda: False)
+    monkeypatch.setattr(motion, "_TEST_DURATION_SCALE", 0.0)
+
+    g1 = motion.push_slide_pages(stack, 0, 1, axis="h")
+    g2 = motion.push_slide_pages(stack, 0, 2, axis="h")
+
+    # First group must be stopped; second must own the in-flight slot.
+    from PySide6.QtCore import QAbstractAnimation
+    assert g1.state() == QAbstractAnimation.Stopped
+    assert getattr(stack, "_in_flight_anim", None) is g2 or g2 is None
+
+    # Eventually settles on the latest target.
+    finished = {"v": False}
+    if g2 is not None:
+        g2.finished.connect(lambda: finished.update(v=True))
+        for _ in range(50):
+            qapp.processEvents()
+            if finished["v"]:
+                break
+    assert stack.currentIndex() == 2
+
+
+def test_push_slide_pages_vertical_axis(monkeypatch, qapp, stack, reset_motion_state):
+    """axis='v' creates a vertical animation. We assert end state, not motion."""
+    monkeypatch.setattr(motion, "_os_reduced_motion", lambda: False)
+    monkeypatch.setattr(motion, "_TEST_DURATION_SCALE", 0.0)
+
+    group = motion.push_slide_pages(stack, 0, 2, axis="v")
+    finished = {"v": False}
+    group.finished.connect(lambda: finished.update(v=True))
+    for _ in range(50):
+        qapp.processEvents()
+        if finished["v"]:
+            break
+    assert stack.currentIndex() == 2
