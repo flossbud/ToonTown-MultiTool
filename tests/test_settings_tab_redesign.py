@@ -153,10 +153,27 @@ def test_collapsible_toggle_updates_settings(qapp):
     from tabs.settings_tab import CollapsibleSettingsGroup, SettingsRow
     sm = _FakeSettingsManager({"advanced_collapsed": True})
     g = CollapsibleSettingsGroup("Advanced", sm, "advanced_collapsed")
-    g.add_row(SettingsRow("A", ""))
+    row = SettingsRow("A", "")
+    g.add_row(row)
     g.toggle()
     assert sm.get("advanced_collapsed") is False
     assert g.is_collapsed() is False
+    assert row.isHidden() is False
+
+
+def test_collapsible_double_toggle_returns_to_collapsed(qapp):
+    """Two toggles bring the group back to its initial collapsed state and
+    re-hide the rows."""
+    from tabs.settings_tab import CollapsibleSettingsGroup, SettingsRow
+    sm = _FakeSettingsManager({"advanced_collapsed": True})
+    g = CollapsibleSettingsGroup("Advanced", sm, "advanced_collapsed")
+    row = SettingsRow("A", "")
+    g.add_row(row)
+    g.toggle()   # expand
+    g.toggle()   # collapse again
+    assert sm.get("advanced_collapsed") is True
+    assert g.is_collapsed() is True
+    assert row.isHidden() is True
 
 
 def test_collapsible_default_true_when_key_missing(qapp):
