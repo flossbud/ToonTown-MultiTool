@@ -72,3 +72,6 @@ API Docs/
 
 # === Git worktrees ===
 .worktrees/
+
+# Superpowers brainstorming companion (mockups, session state)
+.superpowers/
