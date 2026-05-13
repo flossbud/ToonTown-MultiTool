@@ -463,7 +463,7 @@ def test_prewarm_calls_cancel_animations_and_reconcile(qapp, monkeypatch):
 
     # prewarm_full_layout requires self._mode == "compact"
     tab._mode = "compact"
-    tab.prewarm_full_layout(size=QSize(1280, 812), include_active=True)
+    tab.prewarm_full_layout(size=QSize(1280, 744), include_active=True)
 
     assert cancel_called == [True], (
         "prewarm should call _cancel_keep_alive_animations"

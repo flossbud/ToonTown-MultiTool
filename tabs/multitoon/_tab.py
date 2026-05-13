@@ -963,10 +963,12 @@ class MultitoonTab(QWidget):
             c = self._c()
             self._mode = "full"
             warm_size = size if size is not None else self.size()
+            # Floor: 1280×744 = full-UI content area at H_FULL breakpoint
+            # (H_FULL=852 minus HEADER_H=56 minus CHIP_RAIL_H=52).
             if warm_size.width() <= 0 or warm_size.height() <= 0:
-                warm_size = QSize(1280, 812)
+                warm_size = QSize(1280, 744)
             else:
-                warm_size = QSize(max(warm_size.width(), 1280), max(warm_size.height(), 812))
+                warm_size = QSize(max(warm_size.width(), 1280), max(warm_size.height(), 744))
             self._full.resize(warm_size)
             self._full.populate()
             self._full.apply_theme(c)

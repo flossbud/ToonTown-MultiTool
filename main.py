@@ -50,10 +50,10 @@ import subprocess
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget,
     QVBoxLayout, QHBoxLayout, QStackedWidget,
-    QLabel, QPushButton, QToolButton, QProxyStyle, QStyle, QFrame, QMenu, QMessageBox,
+    QLabel, QPushButton, QToolButton, QProxyStyle, QStyle, QFrame, QMenu,
     QGraphicsOpacityEffect,
 )
-from PySide6.QtCore import QRect, Qt, QMetaObject, QSize, QEvent, Signal, Slot, QPropertyAnimation, QEasingCurve, QAbstractAnimation, QTimer, QObject
+from PySide6.QtCore import QRect, Qt, QSize, QEvent, Signal, Slot, QPropertyAnimation, QEasingCurve, QTimer
 from PySide6.QtGui import QColor, QGuiApplication, QIcon, QAction
 
 # === Internal Imports ===
@@ -72,9 +72,7 @@ from services.window_manager import WindowManager
 from utils.game_registry import GameRegistry
 from utils.theme_manager import (
     apply_theme, resolve_theme, get_theme_colors, apply_card_shadow,
-    make_nav_gamepad, make_nav_power,
-    make_nav_keyboard, make_nav_gear, make_nav_terminal,
-    make_hint_icon, make_info_icon, font_role,
+    make_hint_icon, font_role,
     SystemThemeWatcher,
 )
 from utils.build_flavor import window_title, app_name, is_beta
@@ -119,31 +117,6 @@ class NoFocusProxyStyle(QProxyStyle):
         if element == QStyle.PE_FrameFocusRect:
             return
         super().drawPrimitive(element, option, painter, widget)
-
-
-class AnimatedNavButton(QPushButton):
-    """Sidebar button that dynamically scales its icon size on mouse hover."""
-    def __init__(self, base_size: int = 28, hover_size: int = 32, parent=None):
-        super().__init__(parent)
-        self._start = QSize(base_size, base_size)
-        self._end = QSize(hover_size, hover_size)
-        self.setIconSize(self._start)
-
-        self._anim = QPropertyAnimation(self, b"iconSize")
-        self._anim.setDuration(150)
-        self._anim.setStartValue(self._start)
-        self._anim.setEndValue(self._end)
-        self._anim.setEasingCurve(QEasingCurve.OutCubic)
-        
-    def enterEvent(self, event):
-        super().enterEvent(event)
-        self._anim.setDirection(QAbstractAnimation.Forward)
-        self._anim.start()
-        
-    def leaveEvent(self, event):
-        super().leaveEvent(event)
-        self._anim.setDirection(QAbstractAnimation.Backward)
-        self._anim.start()
 
 
 class _BrandLink(QFrame):
@@ -278,22 +251,16 @@ class MultiToonTool(QMainWindow):
         self.settings_tab.input_backend_changed.connect(self.on_input_backend_changed)
         self.settings_tab.clear_credentials_requested.connect(self.on_clear_credentials_requested)
 
-        # ── Build layout: header + (sidebar | content) ─────────────────────
+        # ── Build layout: header + chip_rail + stacked content ─────────────
         root = QVBoxLayout()
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        # Header bar
         self.header = self._build_header()
         root.addWidget(self.header)
 
-        # Body: sidebar + stacked content
-        body = QHBoxLayout()
-        body.setContentsMargins(0, 0, 0, 0)
-        body.setSpacing(0)
-
-        self.sidebar = self._build_sidebar()
-        body.addWidget(self.sidebar)
+        self.chip_rail = self._build_chip_rail()
+        root.addWidget(self.chip_rail)
 
         self.stack = QStackedWidget()
         self.stack.addWidget(self.multitoon_tab)   # 0
@@ -302,11 +269,7 @@ class MultiToonTool(QMainWindow):
         self.stack.addWidget(self.settings_tab)     # 3
         self.stack.addWidget(self.debug_tab)        # 4
         self.stack.addWidget(self.credits_tab)      # 5
-        body.addWidget(self.stack, 1)
-
-        body_widget = QWidget()
-        body_widget.setLayout(body)
-        root.addWidget(body_widget, 1)
+        root.addWidget(self.stack, 1)
 
         self.container = QWidget()
         self.container.setLayout(root)
@@ -492,8 +455,7 @@ class MultiToonTool(QMainWindow):
         divider.setMinimumHeight(24)
         layout.addWidget(divider)
 
-        # Hint toggle — same _toggle_hints / _update_hint_icon plumbing as
-        # before, just relocated from the sidebar's bottom cluster.
+        # Hint toggle — drives _toggle_hints / _update_hint_icon.
         self._hints_enabled = self.settings_manager.get("hints_enabled", True)
         self.hint_btn = QToolButton(rail)
         self.hint_btn.setObjectName("hint_toggle")
@@ -505,7 +467,7 @@ class MultiToonTool(QMainWindow):
 
         # Overflow menu — visible only when debug logging is enabled. Contains
         # "View Logs" → nav_select(4). When debug is off, the button hides
-        # entirely (matches today's logs_nav_btn visibility behavior).
+        # entirely.
         self.overflow_btn = QToolButton(rail)
         self.overflow_btn.setObjectName("rail_overflow")
         self.overflow_btn.setText("⋯")
@@ -522,78 +484,15 @@ class MultiToonTool(QMainWindow):
 
         return rail
 
-    # ── Sidebar ────────────────────────────────────────────────────────────
-
-    def _build_sidebar(self) -> QFrame:
-        sidebar = QFrame()
-        sidebar.setFixedWidth(64)
-        sidebar.setObjectName("app_sidebar")
-
-        layout = QVBoxLayout(sidebar)
-        layout.setContentsMargins(8, 10, 8, 10)
-        layout.setSpacing(4)
-
-        self.nav_buttons = []
-        nav_items = [
-            ("Multitoon", 0),
-            ("Launch",    1),
-            ("Keymap",    2),
-            ("Settings",  3),
-        ]
-        for label, idx in nav_items:
-            btn = AnimatedNavButton(30, 36)
-            btn.setFixedSize(48, 48)
-            btn.setCheckable(True)
-            btn.setToolTip(label)
-            btn.setObjectName(f"nav_{label.lower()}")
-            btn.clicked.connect(lambda checked, i=idx: self.nav_select(i))
-            layout.addWidget(btn, alignment=Qt.AlignHCenter)
-            self.nav_buttons.append(btn)
-
-        layout.addStretch()
-
-        # Logs button at bottom
-        self.logs_nav_btn = AnimatedNavButton(30, 36)
-        self.logs_nav_btn.setFixedSize(48, 48)
-        self.logs_nav_btn.setCheckable(True)
-        self.logs_nav_btn.setToolTip("Logs")
-        self.logs_nav_btn.setObjectName("nav_logs")
-        self.logs_nav_btn.clicked.connect(lambda: self.nav_select(4))
-        self.logs_nav_btn.setVisible(self.settings_manager.get("show_debug_tab", False))
-        layout.addWidget(self.logs_nav_btn, alignment=Qt.AlignHCenter)
-        self.nav_buttons.append(self.logs_nav_btn)
-
-        # Credits button
-        self.credits_btn = AnimatedNavButton(30, 36)
-        self.credits_btn.setFixedSize(48, 48)
-        self.credits_btn.setCheckable(True)
-        self.credits_btn.setCursor(Qt.PointingHandCursor)
-        self.credits_btn.setObjectName("nav_credits")
-        self.credits_btn.setToolTip("Credits")
-        self.credits_btn.clicked.connect(lambda: self.nav_select(5))
-        layout.addWidget(self.credits_btn, alignment=Qt.AlignHCenter)
-        self.nav_buttons.append(self.credits_btn)
-
-        # Hint toggle button (always at very bottom)
-        self._hints_enabled = self.settings_manager.get("hints_enabled", True)
-        self.hint_btn = AnimatedNavButton(30, 36)
-        self.hint_btn.setFixedSize(48, 48)
-        self.hint_btn.setCursor(Qt.PointingHandCursor)
-        self.hint_btn.setObjectName("hint_toggle")
-        self.hint_btn.clicked.connect(self._toggle_hints)
-        layout.addWidget(self.hint_btn, alignment=Qt.AlignHCenter)
-
-        return sidebar
-
     def nav_select(self, index: int):
         if self.stack.currentIndex() == index and getattr(self, "_initialized_nav", False):
             return
         self._initialized_nav = True
 
         self.stack.setCurrentIndex(index)
-        for i, btn in enumerate(self.nav_buttons):
-            btn.setChecked(i == index)
-        self._apply_nav_styles()
+        for i, chip in enumerate(self.chip_buttons):
+            chip.setChecked(i == index)
+        self._apply_chip_styles()
 
         # Fade-in the incoming page
         w = self.stack.currentWidget()
@@ -629,46 +528,9 @@ class MultiToonTool(QMainWindow):
         self._layout_mode = target
         self.multitoon_tab.set_layout_mode(target)
 
-    def _apply_nav_icons(self):
-        c = self._theme_colors()
-        icon_size = 28
-        for i, btn in enumerate(self.nav_buttons):
-            is_sel = btn.isChecked()
-            color = QColor(c['sidebar_text_sel'] if is_sel else c['sidebar_text'])
-            icons = [make_nav_gamepad, make_nav_power,
-                     make_nav_keyboard, make_nav_gear, make_nav_terminal, make_info_icon]
-            if i < len(icons):
-                # Render high-res so it doesn't blur on scaling
-                btn.setIcon(icons[i](40, color))
-
-    def _apply_nav_styles(self):
-        """Update both sidebar button backgrounds/accents and icon colors."""
-        c = self._theme_colors()
-        for btn in self.nav_buttons:
-            is_sel = btn.isChecked()
-            if is_sel:
-                btn.setStyleSheet(f"""
-                    QPushButton {{
-                        background: {c['sidebar_btn_sel']};
-                        border: none;
-                        border-left: 4px solid {c['header_accent']};
-                        border-radius: 10px;
-                        padding: 8px;
-                    }}
-                """)
-            else:
-                btn.setStyleSheet(f"""
-                    QPushButton {{
-                        background: {c['sidebar_btn']};
-                        border: none;
-                        border-radius: 10px;
-                        padding: 8px;
-                    }}
-                    QPushButton:hover {{
-                        background: {c['sidebar_btn_sel']};
-                    }}
-                """)
-        self._apply_nav_icons()
+    def _apply_chip_styles(self):
+        """Apply theme-aware styling to chip rail. Filled in by Task 7."""
+        pass
 
     # ── Theme ──────────────────────────────────────────────────────────────
 
@@ -709,14 +571,14 @@ class MultiToonTool(QMainWindow):
                 border-radius: 2px;
             """)
 
-        # Sidebar
-        self.sidebar.setStyleSheet(f"""
-            QFrame#app_sidebar {{
+        # Chip rail
+        self.chip_rail.setStyleSheet(f"""
+            QFrame#app_chip_rail {{
                 background: {c['sidebar_bg']};
-                border-right: 1px solid {c['sidebar_border']};
+                border-bottom: 1px solid {c['sidebar_border']};
             }}
         """)
-        self._apply_nav_styles()
+        self._apply_chip_styles()
         self._update_hint_icon()
 
         # Content pages
@@ -752,7 +614,7 @@ class MultiToonTool(QMainWindow):
     def toggle_debug_tab_visibility(self, show: bool):
         self.debug_tab.logging_enabled = show
         self.multitoon_tab.input_service.logging_enabled = show
-        self.logs_nav_btn.setVisible(show)
+        self.overflow_btn.setVisible(show)
         ttr_api.set_debug(show)
         if not show and self.stack.currentIndex() == 4:
             self.nav_select(0)
@@ -765,7 +627,7 @@ class MultiToonTool(QMainWindow):
     def _on_keep_alive_help_requested(self):
         """User clicked 'Go to Settings' in the Keep-Alive help popover.
         Navigate to the Settings tab and highlight the Keep-Alive group."""
-        self.nav_select(3)  # Settings tab index — see _build_sidebar nav_items
+        self.nav_select(3)  # Settings tab index — see stack widget order in __init__
         self.settings_tab.highlight_keep_alive_group()
 
     # ── TTR settings ──────────────────────────────────────────────────────────
