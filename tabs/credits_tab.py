@@ -6,7 +6,6 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QFont, QPalette, QPixmap
 from utils.open_url import open_url
 from utils.theme_manager import resolve_theme, get_theme_colors
-from utils.version import APP_VERSION
 
 class CreditsTab(QWidget):
     def __init__(self, settings_manager=None, system_theme_watcher=None, parent=None):
@@ -51,8 +50,7 @@ class CreditsTab(QWidget):
         card_layout.setContentsMargins(32, 12, 32, 12)
         card_layout.setSpacing(12)
 
-        # Title: version pulled from utils/version so it never goes stale
-        title = QLabel(f"ToonTown MultiTool v{APP_VERSION}")
+        title = QLabel("ToonTown MultiTool")
         title_font = QFont()
         title_font.setWeight(QFont.Bold)
         title_font.setPointSize(24)

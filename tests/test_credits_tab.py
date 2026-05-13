@@ -9,7 +9,6 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication, QLabel
 
 from utils.settings_manager import SettingsManager
-from utils.version import APP_VERSION
 
 
 @pytest.fixture(scope="module")
@@ -38,25 +37,21 @@ def test_credits_tab_constructs_without_error(qapp, settings_manager):
     assert tab is not None
 
 
-def test_title_uses_dynamic_app_version(qapp, settings_manager):
-    """Title must read the current APP_VERSION, not a hardcoded string."""
+def test_title_is_app_name_without_version(qapp, settings_manager):
+    """Title is just 'ToonTown MultiTool' — no version suffix. Version
+    text lives in the header bar, so showing it again on the Credits page
+    is redundant."""
     from tabs.credits_tab import CreditsTab
     tab = CreditsTab(settings_manager=settings_manager)
     texts = _all_label_texts(tab)
-    matching = [t for t in texts if "ToonTown MultiTool" in t and APP_VERSION in t]
-    assert matching, (
-        f"Expected a label containing both 'ToonTown MultiTool' and "
-        f"version {APP_VERSION!r}, got labels: {texts!r}"
+    assert "ToonTown MultiTool" in texts, (
+        f"Expected exact title 'ToonTown MultiTool', got labels: {texts!r}"
     )
-
-
-def test_no_stale_v2_0_string_anywhere(qapp, settings_manager):
-    """Regression guard: the literal 'v2.0' string must not appear."""
-    from tabs.credits_tab import CreditsTab
-    tab = CreditsTab(settings_manager=settings_manager)
-    texts = _all_label_texts(tab)
     for t in texts:
-        assert "v2.0" not in t, f"Found stale 'v2.0' in label: {t!r}"
+        # No 'v2', 'v3', etc. version-tag prefix anywhere in the credits.
+        assert " v" not in t and not t.startswith("v"), (
+            f"Found a version-tag substring in credits label: {t!r}"
+        )
 
 
 def test_hook_line_present(qapp, settings_manager):
