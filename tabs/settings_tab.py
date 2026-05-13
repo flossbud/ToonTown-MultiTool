@@ -4,8 +4,8 @@ from PySide6.QtWidgets import (
     QComboBox, QApplication, QMessageBox, QFrame,
     QPushButton, QScrollArea, QSizePolicy, QCheckBox, QFileDialog
 )
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPainterPath
+from PySide6.QtCore import Qt, QRectF, Signal
+from PySide6.QtGui import QColor, QPainter
 from utils.theme_manager import apply_theme, resolve_theme, get_theme_colors
 from utils.shared_widgets import IOSToggle, IOSSegmentedControl
 from services.ttr_login_service import find_engine_path, get_engine_executable_name
@@ -75,7 +75,7 @@ class SettingsRow(QFrame):
         )
         if hasattr(self, "sub_widget"):
             self.sub_widget.setStyleSheet(
-                f"font-size: 11px; color: {c['text_muted']}; "
+                f"font-size: 11.5px; color: {c['text_muted']}; "
                 f"background: transparent; border: none;"
             )
         self._c = c
@@ -87,7 +87,6 @@ class SettingsRow(QFrame):
             return
         if self._is_last_in_block:
             return
-        from PySide6.QtCore import QRectF
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing, False)
         p.setPen(QColor(self._c.get("border_muted", "#2e2e2e")))
@@ -321,7 +320,6 @@ class _SectionBlock(QFrame):
     def paintEvent(self, e):
         if self._c is None:
             return
-        from PySide6.QtCore import QRectF
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         p.setPen(Qt.NoPen)
