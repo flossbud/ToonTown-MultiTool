@@ -113,7 +113,7 @@ def test_chip_rail_has_four_nav_chips_in_order(chip_rail_with_nav):
     instance, rail = chip_rail_with_nav
     chips = [c for c in rail.findChildren(QToolButton) if c.objectName().startswith("chip_")]
     labels = [c.text() for c in chips]
-    assert labels == ["Multitoon", "Launch", "Keymap", "Settings"]
+    assert labels == ["Multitoon", "Launcher", "Keysets", "Settings"]
 
 
 def test_chips_use_text_under_icon_style(chip_rail_with_nav):
