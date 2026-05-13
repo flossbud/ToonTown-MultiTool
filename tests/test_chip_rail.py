@@ -1,8 +1,12 @@
 """Tests for chip-rail construction in MultiToonTool.
 
 Same pattern as test_app_header.py: bypass __init__ via __new__ and call
-the build method directly. _build_chip_rail does read self.settings_manager
-once for the hint-toggle initial state, so tests stub that.
+the build method directly.
+
+The settings_manager stub here is forward-compatible scaffolding — the
+current _build_chip_rail body does not read it. It will be read once
+Task 4 adds the hint toggle and the debug-gated overflow menu, both of
+which probe settings at construction time.
 """
 
 import os
@@ -10,7 +14,6 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
-from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QFrame, QHBoxLayout
 
 
