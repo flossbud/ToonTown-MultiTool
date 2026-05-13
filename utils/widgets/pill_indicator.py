@@ -78,6 +78,19 @@ class PillIndicator(QWidget):
         timer.start(0)
         return anim
 
+    def cancel_animation(self) -> None:
+        """Stop any in-flight slide_to animation. No-op if nothing running.
+
+        Callers (the chip rail's resize filter) use this when they need
+        to snap the pill to a new geometry — the resize has just shifted
+        the chips, so any animation's end value is stale.
+        """
+        if (
+            self._anim is not None
+            and self._anim.state() == QAbstractAnimation.Running
+        ):
+            self._anim.stop()
+
     def paintEvent(self, event) -> None:
         if self._pill_rect.isEmpty():
             return

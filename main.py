@@ -53,7 +53,7 @@ from PySide6.QtWidgets import (
     QLabel, QPushButton, QToolButton, QProxyStyle, QStyle, QFrame,
     QSpacerItem, QSizePolicy,
 )
-from PySide6.QtCore import QObject, QRect, QRectF, Qt, QSize, QEvent, Signal, Slot, QPropertyAnimation, QEasingCurve, QTimer, QAbstractAnimation
+from PySide6.QtCore import QObject, QRect, QRectF, Qt, QSize, QEvent, Signal, Slot, QPropertyAnimation, QEasingCurve, QTimer
 from PySide6.QtGui import QColor, QGuiApplication, QIcon
 
 # === Internal Imports ===
@@ -545,9 +545,7 @@ class MultiToonTool(QMainWindow):
                         return False
                     # Cancel any in-flight slide_to — its end value points
                     # at the chip's pre-resize geometry and is now stale.
-                    anim = chip_pill_ref._anim
-                    if anim is not None and anim.state() == QAbstractAnimation.Running:
-                        anim.stop()
+                    chip_pill_ref.cancel_animation()
                     chip_pill_ref.set_pill_rect(QRectF(target_geom))
                 return False
 

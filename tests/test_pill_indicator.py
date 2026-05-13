@@ -85,3 +85,33 @@ def test_slide_to_interrupts_in_flight(qapp):
         if a2.state() == QAbstractAnimation.Stopped:
             break
     assert pill._pill_rect == QRectF(280, 6, 60, 52)
+
+
+def test_cancel_animation_stops_running_slide(qapp):
+    """PillIndicator.cancel_animation() must stop any in-flight slide_to
+    animation and leave _pill_rect at its current interpolated value.
+    Callers (e.g., the rail resize filter) use this to clear the way for
+    a snap-to-target without reaching into _anim directly."""
+    parent = QWidget()
+    parent.resize(400, 64)
+    pill = PillIndicator(parent)
+    pill.set_pill_rect(QRectF(10, 6, 60, 52))
+
+    anim = pill.slide_to(QRectF(280, 6, 60, 52))
+    assert anim is not None
+
+    pill.cancel_animation()
+
+    assert anim.state() == QAbstractAnimation.Stopped
+
+
+def test_cancel_animation_noop_when_nothing_running(qapp):
+    """Calling cancel_animation with no animation in flight must not
+    raise — the rail resize filter calls it unconditionally on every
+    resize event."""
+    parent = QWidget()
+    pill = PillIndicator(parent)
+    pill.cancel_animation()  # should not raise
+
+    pill.set_pill_rect(QRectF(10, 6, 60, 52))
+    pill.cancel_animation()  # still no animation; still must not raise
