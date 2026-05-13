@@ -397,15 +397,15 @@ class MultiToonTool(QMainWindow):
         header.setObjectName("app_header")
 
         layout = QHBoxLayout(header)
-        layout.setContentsMargins(16, 0, 16, 0)
+        layout.setContentsMargins(8, 0, 16, 0)
         layout.setSpacing(10)
 
-        # App icon — 40px logo loaded via _resolve_app_icon so the beta
+        # App icon — 46px logo loaded via _resolve_app_icon so the beta
         # build picks up the badged variant automatically.
         self.header_icon = QLabel()
         self.header_icon.setObjectName("header_icon")
-        self.header_icon.setFixedSize(40, 40)
-        self.header_icon.setPixmap(_resolve_app_icon().pixmap(40, 40))
+        self.header_icon.setFixedSize(46, 46)
+        self.header_icon.setPixmap(_resolve_app_icon().pixmap(46, 46))
         self.header_icon.setScaledContents(True)
         layout.addWidget(self.header_icon)
 

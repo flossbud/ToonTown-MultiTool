@@ -38,7 +38,7 @@ def test_header_icon_widget_exists_with_expected_size(header):
     """The header has a child QLabel named 'header_icon' sized 40x40."""
     icon_label = header.findChild(QLabel, "header_icon")
     assert icon_label is not None, "header_icon QLabel not found in header"
-    assert icon_label.size() == QSize(40, 40)
+    assert icon_label.size() == QSize(46, 46)
 
 
 def test_header_icon_has_pixmap(header):
