@@ -157,10 +157,17 @@ def _build_rail_with_debug(qapp, *, show_debug_tab: bool):
     return instance, instance._build_chip_rail()
 
 
-def test_chip_rail_has_hint_button(qapp):
+def test_chip_rail_has_no_hint_button(qapp):
+    """The hint toggle moved to the header — the chip rail should no
+    longer construct or parent it. Tests for the hint button's existence
+    live in test_app_header.py now."""
     instance, rail = _build_rail_with_debug(qapp, show_debug_tab=False)
-    assert hasattr(instance, "hint_btn"), "hint_btn should be created inside chip rail"
-    assert instance.hint_btn.parent() is rail
+    # If hint_btn ever does get created on the instance (via __init__
+    # construction order), it must NOT be parented inside the rail.
+    if hasattr(instance, "hint_btn") and instance.hint_btn is not None:
+        assert instance.hint_btn.parent() is not rail, (
+            "hint_btn should live in the header now, not the chip rail"
+        )
 
 
 def test_chip_rail_no_divider_between_chips_and_utilities(qapp):
@@ -199,22 +206,8 @@ def test_view_logs_action_calls_nav_select_with_index_4(qapp):
     assert instance._nav_select_calls == [4]
 
 
-def test_clicking_hint_btn_invokes_toggle_hints(qapp):
-    """Clicking hint_btn should invoke _toggle_hints.
-
-    The chip rail is the only path to the hints toggle after the sidebar was
-    removed. We disconnect the original signal and re-connect a test stub so
-    we can verify the plumbing without instantiating the full app.
-    """
-    instance, _rail = _build_rail_with_debug(qapp, show_debug_tab=False)
-    instance._toggle_hints_calls = []
-    # Disconnect the original connection and re-wire to the stub.
-    instance.hint_btn.clicked.disconnect()
-    instance.hint_btn.clicked.connect(
-        lambda: instance._toggle_hints_calls.append(True)
-    )
-    instance.hint_btn.click()
-    assert instance._toggle_hints_calls == [True]
+# Click test for hint_btn moved to tests/test_app_header.py since
+# the hint toggle now lives in the header, not the chip rail.
 
 
 def test_apply_chip_styles_tints_selected_icon_with_accent(qapp):

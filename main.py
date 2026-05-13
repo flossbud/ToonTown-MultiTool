@@ -455,6 +455,20 @@ class MultiToonTool(QMainWindow):
         self.header_session_status.setText("Idle  •  0/4 toons active")
         outer_layout.addWidget(self.header_session_status)
 
+        # Hint toggle lives in the header (not the chip rail) so it sits
+        # alongside the session-status line at the top of the window.
+        # Construction here; styling + icon land in _update_hint_icon
+        # during _apply_full_theme. _toggle_hints flips the persisted
+        # hints_enabled flag.
+        self._hints_enabled = self.settings_manager.get("hints_enabled", True)
+        self.hint_btn = QToolButton(header)
+        self.hint_btn.setObjectName("hint_toggle")
+        self.hint_btn.setFixedSize(34, 34)
+        self.hint_btn.setIconSize(QSize(20, 20))
+        self.hint_btn.setCursor(Qt.PointingHandCursor)
+        self.hint_btn.clicked.connect(self._toggle_hints)
+        outer_layout.addWidget(self.hint_btn)
+
         return header
 
     # ── Chip Rail ──────────────────────────────────────────────────────────
@@ -511,16 +525,6 @@ class MultiToonTool(QMainWindow):
 
         layout.addStretch()
 
-        # Hint toggle — drives _toggle_hints / _update_hint_icon.
-        self._hints_enabled = self.settings_manager.get("hints_enabled", True)
-        self.hint_btn = QToolButton(rail)
-        self.hint_btn.setObjectName("hint_toggle")
-        self.hint_btn.setFixedSize(34, 34)
-        self.hint_btn.setIconSize(QSize(20, 20))
-        self.hint_btn.setCursor(Qt.PointingHandCursor)
-        self.hint_btn.clicked.connect(self._toggle_hints)
-        layout.addWidget(self.hint_btn)
-
         # Overflow menu — visible only when debug logging is enabled. Contains
         # "View Logs" → nav_select(4). When debug is off, the button hides
         # entirely.
@@ -545,18 +549,20 @@ class MultiToonTool(QMainWindow):
 
     def _update_chip_rail_phantom_width(self):
         """Size the left phantom spacer to match the visible right utility
-        cluster (hint + optional overflow), so the four chips sit at the
-        geometric center of the chip rail. Called at build time and
-        whenever overflow visibility changes (debug toggle). Reads
-        show_debug_tab directly rather than isVisible() because the widget
-        may not yet be shown when this runs at construction time."""
+        cluster (only the debug-gated overflow menu now — the hint button
+        moved to the header), so the four chips sit at the geometric center
+        of the chip rail. Called at build time and whenever overflow
+        visibility changes (debug toggle). Reads show_debug_tab directly
+        rather than isVisible() because the widget may not yet be shown
+        when this runs at construction time."""
         if not hasattr(self, "chip_rail_left_phantom"):
             return
-        spacing = 4
-        # hint_btn (34 px) is always visible.
-        width = spacing + 34
+        # Right utility cluster is empty unless debug is on; in that case
+        # only the overflow button (34 px) plus its 4 px leading spacing.
         if self.settings_manager.get("show_debug_tab", False):
-            width += spacing + 34  # overflow_btn (34 px)
+            width = 4 + 34
+        else:
+            width = 0
         self.chip_rail_left_phantom.changeSize(
             width, 0, QSizePolicy.Fixed, QSizePolicy.Minimum
         )
