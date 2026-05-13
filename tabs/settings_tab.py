@@ -475,6 +475,7 @@ class CollapsibleSettingsGroup(SettingsGroup):
         self._collapsed = bool(
             settings_manager.get(persist_key, True)
         )
+        self._collapse_anim = None
 
         self._header = _CollapsibleHeader(title, self._collapsed, self)
         self._header.clicked.connect(self.toggle)
@@ -507,12 +508,13 @@ class CollapsibleSettingsGroup(SettingsGroup):
             self._content_container.setMaximumHeight(0)
 
     def add_row(self, row):
-        # Rows are parented to the content container and tracked in self._rows.
         self._rows.append(row)
         self._rows_layout.addWidget(row)
         self._refresh_last_row()
-        # Honor current collapse state — rows stay hidden while collapsed.
-        row.setVisible(not self._collapsed)
+        # If we're collapsed, hide the row so initial layout is right and
+        # it doesn't briefly render before the next collapse animation.
+        if self._collapsed:
+            row.setVisible(False)
 
     def is_collapsed(self) -> bool:
         return self._collapsed
@@ -521,14 +523,58 @@ class CollapsibleSettingsGroup(SettingsGroup):
         self._collapsed = not self._collapsed
         self._settings_manager.set(self._persist_key, self._collapsed)
         self._header.set_collapsed(self._collapsed)
-        # Flip container height between 0 (collapsed) and "no max".
+
+        # Interrupt any in-flight animation.
+        if self._collapse_anim is not None:
+            self._collapse_anim.stop()
+            self._collapse_anim = None
+
+        from PySide6.QtCore import QPropertyAnimation
+        import utils.motion as motion
+
+        # Resolve target maximumHeight.
         if self._collapsed:
-            self._content_container.setMaximumHeight(0)
+            # Hide rows immediately — maximumHeight animation handles the visual
+            # collapse; rows don't need to be visible for the clipping to work.
+            for row in self._rows:
+                row.setVisible(False)
+            end_h = 0
+            start_h = self._content_container.sizeHint().height()
         else:
-            self._content_container.setMaximumHeight(16777215)
-        # Per-row visibility flag — Task 8 makes this redundant.
-        for row in self._rows:
-            row.setVisible(not self._collapsed)
+            # Rows need to be visible during the expand animation.
+            for row in self._rows:
+                row.setVisible(True)
+            end_h = self._content_container.sizeHint().height()
+            start_h = 0
+
+        # Reduced motion: snap.
+        if motion.is_reduced():
+            self._content_container.setMaximumHeight(
+                16777215 if not self._collapsed else 0
+            )
+            return
+
+        # Animate.
+        raw_duration = motion.DURATION_PILL * motion._TEST_DURATION_SCALE
+        duration = 0 if raw_duration == 0.0 else max(1, int(raw_duration))
+
+        anim = QPropertyAnimation(self._content_container, b"maximumHeight")
+        anim.setDuration(duration)
+        anim.setEasingCurve(motion.EASE_STANDARD)
+        anim.setStartValue(start_h)
+        anim.setEndValue(end_h)
+
+        def _on_finished():
+            # After expand: lift the maximumHeight cap so the container can grow.
+            if not self._collapsed:
+                self._content_container.setMaximumHeight(16777215)
+            self._collapse_anim = None
+
+        anim.finished.connect(_on_finished)
+        self._collapse_anim = anim
+        # Pre-set the start value before starting so the first frame is correct.
+        self._content_container.setMaximumHeight(start_h)
+        anim.start()
 
     def apply_theme(self, c, is_dark):
         super().apply_theme(c, is_dark)

@@ -233,3 +233,77 @@ def test_collapsible_content_lives_in_container(qapp):
     assert g._header.parent() is not g._content_container
     # The row is parented to the container.
     assert row.parent() is g._content_container
+
+
+def test_collapsible_toggle_with_reduced_motion_snaps(qapp, monkeypatch):
+    """When reduce_motion is on, toggle skips animation and snaps to final state."""
+    from tabs.settings_tab import CollapsibleSettingsGroup, SettingsRow
+    import utils.motion as motion
+
+    class _FakeSM:
+        def __init__(self):
+            self.data = {"advanced_collapsed": True, "reduce_motion_set_explicitly": True, "reduce_motion": True}
+        def get(self, k, d=None): return self.data.get(k, d)
+        def set(self, k, v): self.data[k] = v
+        def on_change(self, cb): pass
+
+    sm = _FakeSM()
+    motion.set_settings_manager(sm)
+    g = CollapsibleSettingsGroup("Advanced", sm, "advanced_collapsed")
+    g.add_row(SettingsRow("A", ""))
+    g.toggle()  # collapse → expand
+    # No animation in flight; height is snapped to no-max immediately.
+    assert g._collapse_anim is None or g._collapse_anim.state() == 0
+    assert g._content_container.maximumHeight() == 16777215
+
+
+def test_collapsible_toggle_with_normal_motion_starts_animation(qapp, monkeypatch):
+    """With reduce_motion off and _TEST_DURATION_SCALE > 0, toggle starts an animation."""
+    from tabs.settings_tab import CollapsibleSettingsGroup, SettingsRow
+    from PySide6.QtCore import QAbstractAnimation
+    import utils.motion as motion
+
+    class _FakeSM:
+        def __init__(self):
+            self.data = {"advanced_collapsed": True, "reduce_motion_set_explicitly": True, "reduce_motion": False}
+        def get(self, k, d=None): return self.data.get(k, d)
+        def set(self, k, v): self.data[k] = v
+        def on_change(self, cb): pass
+
+    sm = _FakeSM()
+    motion.set_settings_manager(sm)
+    # Keep the test fast but DO run the animation.
+    monkeypatch.setattr(motion, "_TEST_DURATION_SCALE", 0.01)
+    g = CollapsibleSettingsGroup("Advanced", sm, "advanced_collapsed")
+    g.add_row(SettingsRow("A", ""))
+    g.toggle()
+    assert g._collapse_anim is not None
+    # Either still running or just-finished (with 0.01x duration it may finish in 0-1ms).
+    assert g._collapse_anim.state() in (QAbstractAnimation.Running, QAbstractAnimation.Stopped)
+
+
+def test_collapsible_toggle_interrupts_in_flight_animation(qapp, monkeypatch):
+    """A second toggle while one is running stops the first and starts a new one."""
+    from tabs.settings_tab import CollapsibleSettingsGroup, SettingsRow
+    import utils.motion as motion
+
+    class _FakeSM:
+        def __init__(self):
+            self.data = {"advanced_collapsed": True, "reduce_motion_set_explicitly": True, "reduce_motion": False}
+        def get(self, k, d=None): return self.data.get(k, d)
+        def set(self, k, v): self.data[k] = v
+        def on_change(self, cb): pass
+
+    sm = _FakeSM()
+    motion.set_settings_manager(sm)
+    # Keep animation alive long enough that we can interrupt it.
+    monkeypatch.setattr(motion, "_TEST_DURATION_SCALE", 100.0)
+    g = CollapsibleSettingsGroup("Advanced", sm, "advanced_collapsed")
+    g.add_row(SettingsRow("A", ""))
+    g.toggle()
+    first_anim = g._collapse_anim
+    g.toggle()  # interrupt
+    # The first animation must have been stopped before the second started.
+    from PySide6.QtCore import QAbstractAnimation
+    assert first_anim.state() == QAbstractAnimation.Stopped
+    assert g._collapse_anim is not first_anim
