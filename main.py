@@ -136,18 +136,19 @@ class NoFocusProxyStyle(QProxyStyle):
 
 
 class _BrandLink(QFrame):
-    """Header logo+accent+title wrapper. Click → Credits page (index 5)."""
+    """Header logo+accent+title wrapper. Click → Credits page (index 5)
+    via a vertical push-slide animation."""
 
-    def __init__(self, nav_callback, parent=None):
+    def __init__(self, credits_callback, parent=None):
         super().__init__(parent)
-        self._nav_callback = nav_callback
+        self._credits_callback = credits_callback
         self.setObjectName("header_brand_link")
         self.setCursor(Qt.PointingHandCursor)
         self.setToolTip("About / Credits")
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.LeftButton and self.rect().contains(event.position().toPoint()):
-            self._nav_callback(5)
+            self._credits_callback()
         super().mouseReleaseEvent(event)
 
 
@@ -432,7 +433,7 @@ class MultiToonTool(QMainWindow):
         outer_layout.setContentsMargins(8, 0, 16, 1)
         outer_layout.setSpacing(0)
 
-        brand = _BrandLink(self.nav_select)
+        brand = _BrandLink(self.nav_select_credits)
         brand_layout = QHBoxLayout(brand)
         brand_layout.setContentsMargins(4, 4, 10, 4)
         brand_layout.setSpacing(10)
@@ -638,6 +639,30 @@ class MultiToonTool(QMainWindow):
         )
         if hasattr(self, "chip_rail"):
             self.chip_rail.layout().invalidate()
+
+    def nav_select_credits(self):
+        """Navigate to the Credits tab with a vertical push-slide.
+
+        The brand lives in the header (not the chip rail), so its
+        transition deliberately uses vertical motion to feel distinct
+        from chip nav. Credits enters from above (modal-motion principle:
+        animate from the trigger source).
+        """
+        prev_index = self.stack.currentIndex()
+        if prev_index == 5:
+            return
+        was_initialized = getattr(self, "_initialized_nav", False)
+        self._initialized_nav = True
+
+        if not was_initialized:
+            self.stack.setCurrentIndex(5)
+        else:
+            from utils.motion import push_slide_pages
+            push_slide_pages(self.stack, prev_index, 5, axis="v")
+
+        for chip in self.chip_buttons:
+            chip.setChecked(False)
+        self._apply_chip_styles()
 
     def nav_select(self, index: int):
         if self.stack.currentIndex() == index and getattr(self, "_initialized_nav", False):

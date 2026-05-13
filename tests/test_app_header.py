@@ -88,7 +88,9 @@ def _instance_with_nav_recorder(qapp):
     instance = MultiToonTool.__new__(MultiToonTool)
     instance.settings_manager = _StubSettings(hints_enabled=True)
     instance._nav_select_calls = []
+    instance._nav_select_credits_calls = []
     instance.nav_select = lambda i: instance._nav_select_calls.append(i)
+    instance.nav_select_credits = lambda: instance._nav_select_credits_calls.append(True)
     return instance
 
 
@@ -102,6 +104,8 @@ def test_header_has_clickable_brand_link(qapp):
 
 
 def test_clicking_brand_link_navigates_to_credits(qapp):
+    """Brand click must invoke nav_select_credits (not nav_select(5)) so
+    the vertical push-slide path is taken."""
     instance = _instance_with_nav_recorder(qapp)
     header = instance._build_header()
     link = header.findChild(QWidget, "header_brand_link")
@@ -113,7 +117,10 @@ def test_clicking_brand_link_navigates_to_credits(qapp):
                           _Qt.LeftButton, _Qt.LeftButton, _Qt.NoModifier, dev)
     QApplication.sendEvent(link, press)
     QApplication.sendEvent(link, release)
-    assert instance._nav_select_calls == [5]
+    assert instance._nav_select_credits_calls == [True]
+    assert instance._nav_select_calls == [], (
+        "Brand should call nav_select_credits, not nav_select"
+    )
 
 
 def test_header_version_is_inline_text_not_pilled(qapp):
@@ -211,3 +218,30 @@ def test_clicking_hint_btn_invokes_toggle_hints(qapp):
     )
     instance.hint_btn.click()
     assert instance._toggle_hints_calls == [True]
+
+
+def test_brand_click_uses_vertical_push_slide(qapp, monkeypatch):
+    """Brand click must navigate to Credits via push_slide_pages(axis='v')."""
+    import utils.motion as motion
+    calls = []
+    monkeypatch.setattr(motion, "push_slide_pages",
+                        lambda stack, f, t, axis: calls.append((f, t, axis)) or stack.setCurrentIndex(t))
+
+    from main import MultiToonTool
+    from PySide6.QtWidgets import QStackedWidget, QWidget, QToolButton
+    instance = MultiToonTool.__new__(MultiToonTool)
+    instance.settings_manager = _StubSettings()
+    instance.stack = QStackedWidget()
+    for _ in range(6):
+        instance.stack.addWidget(QWidget())
+    instance.stack.setCurrentIndex(0)
+    instance.chip_buttons = [QToolButton() for _ in range(4)]
+    for b in instance.chip_buttons:
+        b.setCheckable(True)
+    instance._apply_chip_styles = lambda: None
+    instance._initialized_nav = True
+
+    instance.nav_select_credits()
+
+    assert calls == [(0, 5, "v")]
+    assert instance.stack.currentIndex() == 5
