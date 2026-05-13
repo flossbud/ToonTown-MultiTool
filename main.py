@@ -308,6 +308,12 @@ class MultiToonTool(QMainWindow):
         self.multitoon_tab.dot_state_changed.connect(
             lambda *_: self._refresh_header_session_status()
         )
+        # Also refresh on service-button click — toggle_service can complete
+        # without emitting dot_state_changed (e.g. when no toons are enabled),
+        # which would leave the header stuck on the previous Running/Idle.
+        self.multitoon_tab.toggle_service_button.clicked.connect(
+            lambda _checked=False: self._refresh_header_session_status()
+        )
         self.multitoon_tab.keep_alive_help_requested.connect(
             self._on_keep_alive_help_requested
         )

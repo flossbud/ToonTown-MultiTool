@@ -1356,7 +1356,10 @@ class MultitoonTab(QWidget):
                     background-color: {c['btn_disabled']};
                     color: {c['text_disabled']};
                     border: none; border-radius: 6px;
-                    opacity: 0.5;
+                    /* Qt QSS does not support the 'opacity' property — it is
+                       silently ignored. The disabled visual distinction is
+                       fully carried by the btn_disabled/text_disabled tokens
+                       above; do not add 'opacity' here. */
                 }}
             """)
             chat_btn.setEnabled(False)
