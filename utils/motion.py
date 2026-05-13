@@ -18,7 +18,7 @@ from PySide6.QtCore import (
 from PySide6.QtWidgets import QGraphicsOpacityEffect, QLabel
 
 # ── Duration tokens (ms) ────────────────────────────────────────────────
-DURATION_PRESS   = 100   # press scale down/up
+DURATION_PRESS   = 130   # press scale down/up
 DURATION_HOVER   = 180   # tint fade, icon morph
 DURATION_MENU    = 180   # menu fade + scale (enter)
 DURATION_MENU_X  = 120   # menu exit (~67% of enter; exit-faster-than-enter)
@@ -44,7 +44,12 @@ def ease_overshoot(overshoot: float = 0.10) -> QEasingCurve:
 
 
 # ── Scale tokens ────────────────────────────────────────────────────────
-PRESS_SCALE = 0.96  # within the UX 0.95-1.05 scale-feedback band
+PRESS_SCALE = 0.85  # press feedback. Outside the UX 0.95-1.05 band on
+                    # purpose: we can only animate the chip's iconSize (the
+                    # chip frame itself doesn't scale — QToolButton has no
+                    # transform without subclassing paintEvent), so a 4%
+                    # shrink in the band is invisible on a 22px icon. 0.85
+                    # gives ~3-4 px shrink, which actually reads as feedback.
 
 # ── Test-only override ──────────────────────────────────────────────────
 # Tests set this to 0.0 to make non-reduced-motion animations resolve

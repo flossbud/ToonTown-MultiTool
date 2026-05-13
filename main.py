@@ -562,7 +562,7 @@ class MultiToonTool(QMainWindow):
                 from PySide6.QtCore import QEvent
                 if event.type() == QEvent.Enter and not watched.isChecked():
                     from utils.motion import morph_icon_size
-                    morph_icon_size(watched, 21)
+                    morph_icon_size(watched, 23)
                 elif event.type() == QEvent.Leave and not watched.isChecked():
                     from utils.motion import morph_icon_size
                     morph_icon_size(watched, 20)
@@ -771,7 +771,7 @@ class MultiToonTool(QMainWindow):
             self.chip_pill.set_colors(c['header_accent'])
         for i, chip in enumerate(self.chip_buttons):
             is_sel = chip.isChecked()
-            icon_size = 22 if is_sel else 20
+            icon_size = 24 if is_sel else 20
             chip.setIconSize(QSize(icon_size, icon_size))
             color = QColor(c['header_accent'] if is_sel else c['sidebar_text'])
             if i < len(icon_factories):

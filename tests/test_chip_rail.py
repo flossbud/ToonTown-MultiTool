@@ -233,7 +233,7 @@ def test_apply_chip_styles_tints_selected_icon_with_accent(qapp):
     }
     instance._apply_chip_styles()
     # Selected chip should render at the larger icon size.
-    assert instance.chip_buttons[1].iconSize().width() == 22
+    assert instance.chip_buttons[1].iconSize().width() == 24
     assert instance.chip_buttons[0].iconSize().width() == 20
     # Every chip's stylesheet must declare font-size: 10pt — setFont alone is
     # overridden by the application-wide QWidget{font-size:12pt} rule in
@@ -431,7 +431,7 @@ def test_chip_hover_calls_morph_icon_size(qapp, monkeypatch):
     leave = QEvent(QEvent.Leave)
     instance._chip_hover_filter.eventFilter(chip, leave)
 
-    assert calls == [(id(chip), 21), (id(chip), 20)]
+    assert calls == [(id(chip), 23), (id(chip), 20)]
 
 
 def test_overflow_button_uses_overflow_popup_not_qmenu(qapp):
