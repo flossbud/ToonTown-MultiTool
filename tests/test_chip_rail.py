@@ -271,3 +271,33 @@ def test_chip_qss_has_focus_ring(qapp):
             f"keyboard users will see no focus indicator. Got: {ss!r}"
         )
     _ = rail
+
+
+def test_selected_chip_border_is_semi_transparent(qapp):
+    """The plan called for box-shadow: 0 0 0 1px rgba(accent, .3); QSS lacks
+    box-shadow so we use a border. To honor the soft-ring design intent,
+    the selected chip's border color must be a semi-transparent rgba
+    derived from header_accent, not a full-opacity solid."""
+    from main import MultiToonTool
+    instance = MultiToonTool.__new__(MultiToonTool)
+    instance.settings_manager = _StubSettings(hints_enabled=True, show_debug_tab=False)
+    instance.nav_select = lambda i: None
+    rail = instance._build_chip_rail()
+    for i, chip in enumerate(instance.chip_buttons):
+        chip.setChecked(i == 0)
+    instance._theme_colors = lambda: {
+        "sidebar_text":     "#aaaaaa",
+        "sidebar_text_sel": "#ffffff",
+        "sidebar_btn_sel":  "rgba(255,255,255,0.09)",
+        "sidebar_bg":       "#111111",
+        "header_accent":    "#0077ff",
+    }
+    instance._apply_chip_styles()
+    sel_ss = instance.chip_buttons[0].styleSheet()
+    assert "rgba(" in sel_ss, (
+        f"Selected chip border should use rgba(...) for soft accent ring; "
+        f"got: {sel_ss!r}"
+    )
+    # The default ("unselected" + :focus) border may still use solid
+    # header_accent — only the SELECTED state needs softening.
+    _ = rail

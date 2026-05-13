@@ -604,6 +604,17 @@ class MultiToonTool(QMainWindow):
         background, and a hover lift to sidebar_btn_sel.
         """
         c = self._theme_colors()
+        # Derive a semi-transparent accent for the selected-chip border so
+        # the ring reads as a soft halo rather than a hard outline. QSS has
+        # no box-shadow; this rgba border is the closest analogue.
+        accent_hex = c['header_accent'].lstrip('#')
+        if len(accent_hex) == 6:
+            ar = int(accent_hex[0:2], 16)
+            ag = int(accent_hex[2:4], 16)
+            ab = int(accent_hex[4:6], 16)
+            accent_soft = f"rgba({ar}, {ag}, {ab}, 0.55)"
+        else:
+            accent_soft = c['header_accent']
         icon_factories = [
             make_nav_gamepad, make_nav_power,
             make_nav_keyboard, make_nav_gear,
@@ -621,7 +632,7 @@ class MultiToonTool(QMainWindow):
                         background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                             stop:0 {c['sidebar_btn_sel']}, stop:1 {c['sidebar_bg']});
                         color: {c['sidebar_text_sel']};
-                        border: 1px solid {c['header_accent']};
+                        border: 1px solid {accent_soft};
                         border-radius: 8px;
                         font-size: 10pt;
                         padding: 4px 10px;
