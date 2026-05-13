@@ -360,10 +360,17 @@ def press_scale(button, depressed: bool):
 
     When is_reduced(): snaps to the target size and returns None.
     """
-    baseline = button.property("press_baseline_icon_size")
-    if baseline is None:
+    if depressed:
+        # Always re-capture the baseline on press, so a press-without-click
+        # sequence (drag-off-release) restores to the current size, not a
+        # stale baseline from a previous selection state.
         baseline = button.iconSize().width()
         button.setProperty("press_baseline_icon_size", baseline)
+    else:
+        baseline = button.property("press_baseline_icon_size")
+        if baseline is None:
+            # No prior depressed call — no-op.
+            baseline = button.iconSize().width()
 
     if depressed:
         target_px = max(1, round(baseline * PRESS_SCALE))

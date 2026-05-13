@@ -267,6 +267,36 @@ def test_press_scale_reduced_motion_snaps(qapp, monkeypatch, reset_motion_state)
     assert btn.iconSize() == QSize(21, 21)
 
 
+def test_press_scale_baseline_refreshes_per_press(qapp, monkeypatch, reset_motion_state):
+    """If the chip's icon size changes between press cycles (e.g., via
+    nav-select toggling selected→unselected), the next press should target
+    a baseline derived from the CURRENT iconSize, not a cached one."""
+    monkeypatch.setattr(motion, "_os_reduced_motion", lambda: False)
+    monkeypatch.setattr(motion, "_TEST_DURATION_SCALE", 0.0)
+
+    btn = QToolButton()
+    btn.setIconSize(QSize(22, 22))
+    # First press-release cycle establishes baseline=22.
+    motion.press_scale(btn, depressed=True)
+    qapp.processEvents()
+    motion.press_scale(btn, depressed=False)
+    qapp.processEvents()
+    assert btn.iconSize() == QSize(22, 22)
+
+    # Simulate the chip being deselected externally (e.g., by nav_select):
+    btn.setIconSize(QSize(20, 20))
+
+    # Press again — baseline should refresh to 20, target = round(20*0.96) = 19.
+    motion.press_scale(btn, depressed=True)
+    qapp.processEvents()
+    assert btn.iconSize() == QSize(19, 19)
+
+    # Release — should restore to 20, not 22.
+    motion.press_scale(btn, depressed=False)
+    qapp.processEvents()
+    assert btn.iconSize() == QSize(20, 20)
+
+
 def test_morph_icon_size_animates_to_target(qapp, monkeypatch, reset_motion_state):
     monkeypatch.setattr(motion, "_os_reduced_motion", lambda: False)
     monkeypatch.setattr(motion, "_TEST_DURATION_SCALE", 0.0)
