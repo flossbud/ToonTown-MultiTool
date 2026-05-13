@@ -386,21 +386,18 @@ class MultiToonTool(QMainWindow):
         # icon's own active styling (see make_hint_icon's `active` arg).
         # An always-on background+border (the pre-header sidebar treatment)
         # boxed the button and pulled the eye in the otherwise-minimal
-        # header. Keep only a subtle hover lift and the keyboard focus
-        # ring so accessibility doesn't regress.
-        style = f"""
-            QPushButton, QToolButton {{
+        # header. No :focus rule because the button is set NoFocus in
+        # _build_header — a stray :focus border would never fire anyway
+        # and just risked confusing future readers.
+        style = """
+            QPushButton, QToolButton {
                 background: transparent;
                 border: 1px solid transparent;
                 border-radius: 8px;
-            }}
-            QPushButton:hover, QToolButton:hover {{
+            }
+            QPushButton:hover, QToolButton:hover {
                 background: rgba(255,255,255,0.06);
-            }}
-            QPushButton:focus, QToolButton:focus {{
-                border: 2px solid {c['header_accent']};
-                outline: none;
-            }}
+            }
         """
         self.hint_btn.setStyleSheet(style)
 
@@ -472,6 +469,15 @@ class MultiToonTool(QMainWindow):
         self.hint_btn.setFixedSize(34, 34)
         self.hint_btn.setIconSize(QSize(20, 20))
         self.hint_btn.setCursor(Qt.PointingHandCursor)
+        # Qt.NoFocus prevents Qt from auto-assigning initial focus to this
+        # button on window-show. QToolButton's default policy is TabFocus,
+        # and since this widget is the first focusable in the header (which
+        # precedes the chip rail in tab order), the live app was drawing
+        # the :focus ring on it at every launch. The button remains
+        # click-functional; it's just no longer Tab-reachable. Accept the
+        # small a11y regression for this single secondary toggle — the
+        # chip rail still carries visible focus rings for keyboard nav.
+        self.hint_btn.setFocusPolicy(Qt.NoFocus)
         self.hint_btn.clicked.connect(self._toggle_hints)
         outer_layout.addWidget(self.hint_btn)
 

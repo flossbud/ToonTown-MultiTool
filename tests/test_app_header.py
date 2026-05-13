@@ -156,6 +156,32 @@ def test_header_has_hint_button(qapp):
     assert instance.hint_btn.size() == QSize(34, 34)
 
 
+def test_header_hint_button_has_no_focus_ring(qapp):
+    """Regression guard: the live app was drawing a 2px solid accent
+    border around the hint button at every launch because QToolButton's
+    default TabFocus policy let it auto-receive initial focus, and the
+    button's QSS had a :focus rule. The fix is two-pronged: NoFocus
+    policy AND no :focus rule in the QSS. Pin both."""
+    from main import MultiToonTool, _BrandLink  # noqa: F401
+    from PySide6.QtCore import Qt as _Qt
+    instance = _instance_with_nav_recorder(qapp)
+    instance.header = instance._build_header()
+    assert instance.hint_btn.focusPolicy() == _Qt.NoFocus, (
+        f"hint_btn focus policy must be NoFocus to suppress auto-focus "
+        f"on window show; got {instance.hint_btn.focusPolicy()!r}"
+    )
+    # The :focus rule lives in _update_hint_icon's stylesheet; exercise
+    # that helper and assert the rule is absent.
+    from utils.theme_manager import get_theme_colors
+    instance._theme_colors = lambda: get_theme_colors(is_dark=True)
+    instance._update_hint_icon()
+    ss = instance.hint_btn.styleSheet()
+    assert ":focus" not in ss, (
+        f"hint_btn stylesheet must not declare a :focus rule (paired "
+        f"with NoFocus policy as defense in depth); got: {ss!r}"
+    )
+
+
 def test_clicking_hint_btn_invokes_toggle_hints(qapp):
     """Clicking the header hint_btn should invoke _toggle_hints. We
     disconnect the original signal and re-connect a test stub so we
