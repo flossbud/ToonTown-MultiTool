@@ -19,6 +19,9 @@ def config_dir_name() -> str:
 
 
 def config_dir() -> str:
+    config_home = os.environ.get("XDG_CONFIG_HOME")
+    if config_home:
+        return os.path.join(config_home, config_dir_name())
     return os.path.expanduser(f"~/.config/{config_dir_name()}")
 
 
