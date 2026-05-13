@@ -521,6 +521,22 @@ class MultiToonTool(QMainWindow):
         self._chip_rail_resize_filter = _RailResizeFilter(rail)
         rail.installEventFilter(self._chip_rail_resize_filter)
 
+        class _ChipHoverFilter(QObject):
+            """Animates an unselected chip's icon size 20 ↔ 21 on Enter/Leave.
+            Selected chips keep their size (committed to 22 by _apply_chip_styles).
+            Parented to rail so it is GC'd with the rail."""
+            def eventFilter(self_, watched, event):  # noqa: N805
+                from PySide6.QtCore import QEvent
+                if event.type() == QEvent.Enter and not watched.isChecked():
+                    from utils.motion import morph_icon_size
+                    morph_icon_size(watched, 21)
+                elif event.type() == QEvent.Leave and not watched.isChecked():
+                    from utils.motion import morph_icon_size
+                    morph_icon_size(watched, 20)
+                return False
+
+        self._chip_hover_filter = _ChipHoverFilter(rail)
+
         layout = QHBoxLayout(rail)
         layout.setContentsMargins(12, 6, 12, 6)
         layout.setSpacing(4)
@@ -563,6 +579,11 @@ class MultiToonTool(QMainWindow):
             chip.setCheckable(True)
             chip.setMinimumWidth(60)
             chip.clicked.connect(lambda _checked, i=idx: self.nav_select(i))
+            chip.pressed.connect(lambda c=chip: __import__("utils.motion",
+                fromlist=["press_scale"]).press_scale(c, depressed=True))
+            chip.released.connect(lambda c=chip: __import__("utils.motion",
+                fromlist=["press_scale"]).press_scale(c, depressed=False))
+            chip.installEventFilter(self._chip_hover_filter)
             layout.addWidget(chip)
             self.chip_buttons.append(chip)
 

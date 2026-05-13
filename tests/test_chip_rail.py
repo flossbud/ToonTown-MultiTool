@@ -401,3 +401,47 @@ def test_nav_select_slides_pill_to_target_chip(qapp, monkeypatch):
                                        fromlist=["PillIndicator"]).PillIndicator)[0]
     from PySide6.QtCore import QRectF
     assert pill._pill_rect == QRectF(target_geom)
+
+
+def test_chip_press_signals_call_press_scale(qapp, monkeypatch):
+    """Chip pressed/released signals must call motion.press_scale."""
+    import utils.motion as motion
+    calls = []
+    monkeypatch.setattr(motion, "press_scale",
+                        lambda btn, depressed: calls.append((id(btn), depressed)))
+
+    from main import MultiToonTool
+    instance = MultiToonTool.__new__(MultiToonTool)
+    instance.settings_manager = _StubSettings(show_debug_tab=False)
+    rail = instance._build_chip_rail()
+
+    chip = instance.chip_buttons[0]
+    chip.pressed.emit()
+    chip.released.emit()
+
+    assert calls == [(id(chip), True), (id(chip), False)]
+
+
+def test_chip_hover_calls_morph_icon_size(qapp, monkeypatch):
+    import utils.motion as motion
+    calls = []
+    monkeypatch.setattr(motion, "morph_icon_size",
+                        lambda btn, px: calls.append((id(btn), px)))
+
+    from main import MultiToonTool
+    from PySide6.QtCore import QEvent
+    from PySide6.QtGui import QEnterEvent
+    from PySide6.QtCore import QPointF
+    instance = MultiToonTool.__new__(MultiToonTool)
+    instance.settings_manager = _StubSettings(show_debug_tab=False)
+    rail = instance._build_chip_rail()
+    chip = instance.chip_buttons[0]
+    # Chip is not checked by default.
+
+    enter = QEnterEvent(QPointF(0, 0), QPointF(0, 0), QPointF(0, 0))
+    instance._chip_hover_filter.eventFilter(chip, enter)
+
+    leave = QEvent(QEvent.Leave)
+    instance._chip_hover_filter.eventFilter(chip, leave)
+
+    assert calls == [(id(chip), 21), (id(chip), 20)]
