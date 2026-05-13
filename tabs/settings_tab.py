@@ -34,6 +34,8 @@ class SettingsRow(QFrame):
         self._label = label
         self._sublabel = sublabel
         self._is_last_in_block = False
+        self._hovered = False
+        self.setAttribute(Qt.WA_Hover)
         self.setMinimumHeight(
             self.HEIGHT_WITH_SUB if sublabel else self.HEIGHT_NO_SUB
         )
@@ -67,6 +69,14 @@ class SettingsRow(QFrame):
         self._is_last_in_block = is_last
         self.update()
 
+    def enterEvent(self, e):
+        self._hovered = True
+        self.update()
+
+    def leaveEvent(self, e):
+        self._hovered = False
+        self.update()
+
     def apply_theme(self, c, is_dark):
         self.label_widget.setStyleSheet(
             f"font-size: 13px; color: {c['text_primary']}; "
@@ -84,15 +94,19 @@ class SettingsRow(QFrame):
     def paintEvent(self, e):
         if not hasattr(self, "_c"):
             return
-        if self._is_last_in_block:
-            return
         p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing, False)
-        p.setPen(QColor(self._c.get("border_muted", "#2e2e2e")))
-        w, h = self.width(), self.height()
-        # Divider inset 14px from the left so it lines up with the row
-        # padding and stops short of the block's right edge.
-        p.drawLine(14, h - 1, w - 14, h - 1)
+        # Hover overlay: subtle ambient highlight, no cursor change.
+        if self._hovered:
+            overlay = QColor("#ffffff" if self._is_dark else "#0f172a")
+            overlay.setAlpha(8 if self._is_dark else 10)
+            p.setRenderHint(QPainter.Antialiasing, False)
+            p.fillRect(self.rect(), overlay)
+        # Bottom divider (unchanged behavior).
+        if not self._is_last_in_block:
+            p.setRenderHint(QPainter.Antialiasing, False)
+            p.setPen(QColor(self._c.get("border_muted", "#2e2e2e")))
+            w, h = self.width(), self.height()
+            p.drawLine(14, h - 1, w - 14, h - 1)
         p.end()
 
 

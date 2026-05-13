@@ -54,3 +54,27 @@ def test_collapsible_header_title_has_letter_spacing(qapp):
     g.apply_theme(get_theme_colors(is_dark=True), True)
     assert "letter-spacing: 0.15px" in g._header.title_label.styleSheet()
     assert "font-weight: 700" in g._header.title_label.styleSheet()
+
+
+def test_settings_row_hover_flag_toggles_on_enter_leave(qapp):
+    """SettingsRow tracks hover state for ambient highlight paint."""
+    from tabs.settings_tab import SettingsRow
+    from PySide6.QtCore import QEvent
+
+    row = SettingsRow("Label", "")
+    assert row._hovered is False
+
+    row.enterEvent(QEvent(QEvent.Enter))
+    assert row._hovered is True
+
+    row.leaveEvent(QEvent(QEvent.Leave))
+    assert row._hovered is False
+
+
+def test_settings_row_has_wa_hover_attribute(qapp):
+    """WA_Hover must be set so enterEvent/leaveEvent fire."""
+    from tabs.settings_tab import SettingsRow
+    from PySide6.QtCore import Qt
+
+    row = SettingsRow("Label", "")
+    assert row.testAttribute(Qt.WA_Hover) is True
