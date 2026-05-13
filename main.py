@@ -309,7 +309,10 @@ class MultiToonTool(QMainWindow):
         )
 
         self.log(f"[Debug] {app_name()} launched.")
-        self.multitoon_tab.prewarm_full_layout(QSize(W_FULL, H_FULL - 108), include_active=True)
+        self.multitoon_tab.prewarm_full_layout(
+            QSize(W_FULL, H_FULL - 108),  # 108 = header (56) + chip rail (52)
+            include_active=True,
+        )
         self._animate_launch()
 
     def _capture_multitool_window_id(self):
