@@ -311,6 +311,9 @@ class MultiToonTool(QMainWindow):
         self.multitoon_tab.keep_alive_help_requested.connect(
             self._on_keep_alive_help_requested
         )
+        self.multitoon_tab.launch_tab_requested.connect(
+            lambda: self.nav_select(1)
+        )
 
         self.log(f"[Debug] {app_name()} launched.")
         self.multitoon_tab.prewarm_full_layout(

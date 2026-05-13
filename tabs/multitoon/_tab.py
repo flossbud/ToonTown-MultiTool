@@ -666,6 +666,7 @@ class MultitoonTab(QWidget):
     keep_alive_updated = Signal()
     dot_state_changed = Signal(int, str)
     keep_alive_help_requested = Signal()
+    launch_tab_requested = Signal()
 
     def __init__(self, logger=None, settings_manager=None, keymap_manager=None, profile_manager=None, window_manager=None):
         super().__init__()

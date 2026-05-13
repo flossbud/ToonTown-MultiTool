@@ -278,6 +278,21 @@ class _FullToonCard(QFrame):
         msg.setObjectName("full_empty_msg")
         msg.setAlignment(Qt.AlignCenter)
         ev.addWidget(msg, alignment=Qt.AlignHCenter)
+
+        # Click-through to the Launch tab so users have an explicit path
+        # from "no game" to "launch a game" without hunting through the
+        # chip rail. Click is forwarded to the parent MultitoonTab, which
+        # emits launch_tab_requested for the main window to handle.
+        launch_link = QLabel("Launch a game")
+        launch_link.setObjectName("full_empty_launch_link")
+        launch_link.setAlignment(Qt.AlignCenter)
+        launch_link.setCursor(Qt.PointingHandCursor)
+
+        def _on_press(_event, lbl=launch_link, parent_tab=self._tab):
+            parent_tab.launch_tab_requested.emit()
+        launch_link.mouseReleaseEvent = _on_press
+
+        ev.addWidget(launch_link, alignment=Qt.AlignHCenter)
         ev.addStretch()
         v.addWidget(self._inactive_empty_area, 1)
 
@@ -358,6 +373,12 @@ class _FullToonCard(QFrame):
         if self._inactive_empty_area is not None:
             self._inactive_empty_area.setStyleSheet(
                 f"#full_empty_area {{ background: {c['bg_card']}; border: none; }}"
+            )
+        link = self.findChild(QLabel, "full_empty_launch_link")
+        if link is not None:
+            link.setStyleSheet(
+                f"color: {c['header_accent']}; text-decoration: underline; "
+                f"font-size: 12px; padding: 4px 8px; background: transparent;"
             )
         self._apply_game_pill_style()
         self._apply_scaled_styles()
