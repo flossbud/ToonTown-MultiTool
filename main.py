@@ -86,14 +86,19 @@ TITLE_ANIM_MAX_WIDTH = 300
 # (plus deadband on the way up) to enter Full UI; Compact resumes once either
 # dimension drops below (breakpoint - deadband) on the way down.
 W_FULL = 1280
-H_FULL = 852
+H_FULL = 864
 DEADBAND_W = 80
 DEADBAND_H = 60
 
 # Chrome heights — used by H_FULL math, prewarm hint, and the header /
-# chip rail QFrames so the value lives in one place.
+# chip rail QFrames so the value lives in one place. CHIP_RAIL_H is the
+# minimum that lets a chip with text-under-icon at the configured 10pt
+# label font render its label without Qt clipping it under layout
+# pressure; if the chip sizeHint ever grows past 52px, bump this in
+# lockstep or `tests/test_chip_rail.py::test_chip_rail_height_accommodates_chip_sizeHint`
+# will fail.
 HEADER_H = 56
-CHIP_RAIL_H = 52
+CHIP_RAIL_H = 64
 APP_DESKTOP_ID = "io.github.flossbud.ToonTownMultiTool"
 BETA_DESKTOP_ID = "io.github.flossbud.ToonTownMultiTool-beta"
 LEGACY_DESKTOP_ID = "toontown-multitool"
@@ -182,7 +187,7 @@ class MultiToonTool(QMainWindow):
         # window to fit the central widget; that auto-grow no longer works
         # through the QStackedWidget that hosts Compact + Full layouts, so we
         # set the default high enough to fit content directly.
-        self.setGeometry(QRect(100, 100, 560, 748))
+        self.setGeometry(QRect(100, 100, 560, 760))
         self.setMinimumWidth(575)
         self._layout_mode = "compact"
 
@@ -425,7 +430,7 @@ class MultiToonTool(QMainWindow):
         rail.setObjectName("app_chip_rail")
 
         layout = QHBoxLayout(rail)
-        layout.setContentsMargins(12, 8, 12, 8)
+        layout.setContentsMargins(12, 6, 12, 6)
         layout.setSpacing(4)
 
         self.chip_buttons = []
@@ -435,10 +440,19 @@ class MultiToonTool(QMainWindow):
             ("Keymap",    2),
             ("Settings",  3),
         ]
+        # 10pt explicitly so chips fit in CHIP_RAIL_H without Qt clipping the
+        # label. Inheriting the global 12pt makes chip sizeHint ~63px, which
+        # the chip rail's minimum cannot accommodate under window pressure —
+        # the result is icon-only chips, which the design rejects.
+        # QApplication.font() (not self.font()) so tests that build via
+        # __new__ — bypassing QMainWindow.__init__ — still work.
+        chip_font = QApplication.font()
+        chip_font.setPointSize(10)
         for label, idx in nav_items:
             chip = QToolButton()
             chip.setObjectName(f"chip_{label.lower()}")
             chip.setText(label)
+            chip.setFont(chip_font)
             chip.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
             chip.setIconSize(QSize(20, 20))
             chip.setCheckable(True)
@@ -558,7 +572,8 @@ class MultiToonTool(QMainWindow):
                         color: {c['sidebar_text_sel']};
                         border: 1px solid {c['header_accent']};
                         border-radius: 8px;
-                        padding: 6px 10px;
+                        font-size: 10pt;
+                        padding: 4px 10px;
                     }}
                 """)
             else:
@@ -568,7 +583,8 @@ class MultiToonTool(QMainWindow):
                         color: {c['sidebar_text']};
                         border: 1px solid transparent;
                         border-radius: 8px;
-                        padding: 6px 10px;
+                        font-size: 10pt;
+                        padding: 4px 10px;
                     }}
                     QToolButton#{chip.objectName()}:hover {{
                         background: {c['sidebar_btn_sel']};

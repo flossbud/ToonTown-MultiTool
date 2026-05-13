@@ -45,16 +45,56 @@ def test_chip_rail_is_qframe_with_expected_object_name(chip_rail):
     assert chip_rail.objectName() == "app_chip_rail"
 
 
-def test_chip_rail_minimum_height_is_52(chip_rail):
-    assert chip_rail.minimumHeight() == 52
+def test_chip_rail_minimum_height_is_64(chip_rail):
+    """Bumped from 52 -> 64 after the first 52px estimate proved too small
+    to accommodate chip sizeHint with text-under-icon at 10pt. Qt was
+    compressing the rail to 52 under window pressure, clipping labels."""
+    assert chip_rail.minimumHeight() == 64
 
 
 def test_chip_rail_layout_is_hbox_with_expected_margins(chip_rail):
     layout = chip_rail.layout()
     assert isinstance(layout, QHBoxLayout)
     m = layout.contentsMargins()
-    assert (m.left(), m.top(), m.right(), m.bottom()) == (12, 8, 12, 8)
+    assert (m.left(), m.top(), m.right(), m.bottom()) == (12, 6, 12, 6)
     assert layout.spacing() == 4
+
+
+def test_chip_rail_height_accommodates_chip_sizeHint(chip_rail):
+    """Regression guard: the rail's minimumHeight must be at least the
+    tallest chip sizeHint plus the layout's vertical margins. If a future
+    change (font, padding, icon size) grows chip sizeHint past this
+    budget, Qt will silently clip the label under window pressure."""
+    chips = [c for c in chip_rail.findChildren(QToolButton) if c.objectName().startswith("chip_")]
+    assert len(chips) == 4
+    layout = chip_rail.layout()
+    m = layout.contentsMargins()
+    vertical_margins = m.top() + m.bottom()
+    tallest_chip = max(c.sizeHint().height() for c in chips)
+    assert chip_rail.minimumHeight() >= tallest_chip + vertical_margins, (
+        f"chip rail minimumHeight {chip_rail.minimumHeight()} < "
+        f"tallest_chip {tallest_chip} + margins {vertical_margins}; "
+        f"rail will compress under window pressure and clip chip labels"
+    )
+
+
+def test_chips_use_10pt_label_font(chip_rail):
+    """Spec said 'small text label'; with the default 12pt the chip
+    sizeHint is too tall to fit in CHIP_RAIL_H without growing chrome.
+
+    setFont alone is insufficient — the application-wide DARK_THEME stylesheet
+    declares `QWidget { font-size: 12pt }` and Qt's QSS overrides setFont in
+    the live app. The 10pt must also appear in the chip's own stylesheet
+    (set in _apply_chip_styles) so id-selector specificity wins. Both paths
+    are asserted: setFont for offscreen tests where the theme isn't applied,
+    and the QSS font-size for production where it is.
+    """
+    chips = [c for c in chip_rail.findChildren(QToolButton) if c.objectName().startswith("chip_")]
+    assert len(chips) == 4
+    for chip in chips:
+        assert chip.font().pointSize() == 10, (
+            f"chip {chip.objectName()} font is {chip.font().pointSize()}pt, expected 10pt"
+        )
 
 
 @pytest.fixture
@@ -196,4 +236,12 @@ def test_apply_chip_styles_tints_selected_icon_with_accent(qapp):
     # Selected chip should render at the larger icon size.
     assert instance.chip_buttons[1].iconSize().width() == 22
     assert instance.chip_buttons[0].iconSize().width() == 20
+    # Every chip's stylesheet must declare font-size: 10pt — setFont alone is
+    # overridden by the application-wide QWidget{font-size:12pt} rule in
+    # DARK_THEME/LIGHT_THEME, so the chip's id-specific QSS is the only thing
+    # that wins in production.
+    for chip in instance.chip_buttons:
+        assert "font-size: 10pt" in chip.styleSheet(), (
+            f"chip {chip.objectName()} stylesheet missing font-size: 10pt"
+        )
     _ = rail  # suppress "unused variable" lint; reference ensures QFrame lifetime

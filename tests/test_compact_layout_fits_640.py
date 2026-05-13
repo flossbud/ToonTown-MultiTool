@@ -1,5 +1,8 @@
-"""Pin the compact multitoon layout to fit in the new 640 px content budget
-(default 748-tall window minus 56 header minus 52 chip rail)."""
+"""Pin the compact multitoon layout to fit in the 640 px content budget
+(default 760-tall window minus 56 header minus 64 chip rail). The window
+and chip rail grew together by 12 px each after the first 52 px estimate
+proved too short to render chip labels — the content budget itself is
+unchanged."""
 
 import os
 
@@ -9,7 +12,7 @@ import pytest
 from PySide6.QtWidgets import QApplication
 
 
-CONTENT_BUDGET_PX = 640  # 748 default window - 56 header - 52 chip rail
+CONTENT_BUDGET_PX = 640  # 760 default window - 56 header - 64 chip rail
 CONTENT_WIDTH_PX = 528   # default 560 window minus app left/right margins
 _PIN_HEIGHT_PX = 636     # measured natural height 634; 2px grace for measurement noise
 
