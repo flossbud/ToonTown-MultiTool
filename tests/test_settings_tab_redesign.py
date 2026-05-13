@@ -1,7 +1,16 @@
 """Tests for the Settings tab redesign (2026-05-13)."""
 import os
 
+import pytest
+from PySide6.QtWidgets import QApplication
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+
+@pytest.fixture(scope="module")
+def qapp():
+    app = QApplication.instance() or QApplication([])
+    yield app
 
 
 def test_advanced_collapsed_defaults_true(tmp_path, monkeypatch):
@@ -10,16 +19,6 @@ def test_advanced_collapsed_defaults_true(tmp_path, monkeypatch):
     from utils.settings_manager import SettingsManager
     sm = SettingsManager()
     assert sm.get("advanced_collapsed") is True
-
-
-import pytest
-from PySide6.QtWidgets import QApplication
-
-
-@pytest.fixture(scope="module")
-def qapp():
-    app = QApplication.instance() or QApplication([])
-    yield app
 
 
 def test_settings_row_no_sublabel_is_48px(qapp):
@@ -284,3 +283,29 @@ def test_toggle_advanced_visibility_method_removed(qapp, tmp_path, monkeypatch):
     sm = SettingsManager()
     tab = SettingsTab(settings_manager=sm)
     assert not hasattr(tab, "toggle_advanced_visibility")
+
+
+def test_show_advanced_legacy_key_is_purged_on_construct(tmp_path, monkeypatch):
+    """If settings.json from an older app version contains show_advanced,
+    it should be cleaned up on the next SettingsManager construction."""
+    import json
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    # Pre-seed a legacy settings.json containing show_advanced.
+    from utils.build_flavor import config_dir
+    cfg_dir = config_dir()
+    import os
+    os.makedirs(cfg_dir, exist_ok=True)
+    settings_path = os.path.join(cfg_dir, "settings.json")
+    with open(settings_path, "w") as f:
+        json.dump({"show_advanced": True, "theme": "dark"}, f)
+
+    from utils.settings_manager import SettingsManager
+    sm = SettingsManager()
+    # show_advanced is purged from the in-memory dict
+    assert "show_advanced" not in sm.settings
+    # Preserved keys are still readable
+    assert sm.get("theme") == "dark"
+    # And the on-disk file is rewritten without show_advanced
+    with open(settings_path) as f:
+        on_disk = json.load(f)
+    assert "show_advanced" not in on_disk

@@ -2,7 +2,7 @@ import os
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QComboBox, QApplication, QMessageBox, QFrame,
-    QPushButton, QScrollArea, QSizePolicy, QCheckBox, QFileDialog
+    QPushButton, QScrollArea, QFileDialog
 )
 from PySide6.QtCore import Qt, QRectF, Signal
 from PySide6.QtGui import QColor, QPainter

@@ -25,6 +25,11 @@ class SettingsManager:
         }
         self._callbacks = []
         self._load()
+        # Migration: drop legacy show_advanced key (Settings tab redesign 2026-05-13)
+        # If present in settings.json from an older version, remove on next save.
+        if "show_advanced" in self.settings:
+            del self.settings["show_advanced"]
+            self.save()
 
     def _load(self):
         if os.path.exists(self.settings_path):
