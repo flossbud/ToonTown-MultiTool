@@ -12,7 +12,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
 from PySide6.QtCore import QSize
-from PySide6.QtWidgets import QApplication, QLabel
+from PySide6.QtWidgets import QApplication, QLabel, QWidget
 
 
 @pytest.fixture(scope="module")
@@ -46,3 +46,38 @@ def test_header_icon_has_pixmap(header):
     icon_label = header.findChild(QLabel, "header_icon")
     pixmap = icon_label.pixmap()
     assert not pixmap.isNull()
+
+
+from PySide6.QtCore import Qt as _Qt
+from PySide6.QtGui import QMouseEvent
+from PySide6.QtCore import QPointF, QEvent
+
+
+def _instance_with_nav_recorder(qapp):
+    from main import MultiToonTool
+    instance = MultiToonTool.__new__(MultiToonTool)
+    instance._nav_select_calls = []
+    instance.nav_select = lambda i: instance._nav_select_calls.append(i)
+    return instance
+
+
+def test_header_has_clickable_brand_link(qapp):
+    instance = _instance_with_nav_recorder(qapp)
+    header = instance._build_header()
+    link = header.findChild(QWidget, "header_brand_link")
+    assert link is not None
+    assert link.cursor().shape() == _Qt.PointingHandCursor
+    assert link.toolTip() == "About / Credits"
+
+
+def test_clicking_brand_link_navigates_to_credits(qapp):
+    instance = _instance_with_nav_recorder(qapp)
+    header = instance._build_header()
+    link = header.findChild(QWidget, "header_brand_link")
+    press = QMouseEvent(QEvent.MouseButtonPress, QPointF(5, 5), _Qt.LeftButton,
+                        _Qt.LeftButton, _Qt.NoModifier)
+    release = QMouseEvent(QEvent.MouseButtonRelease, QPointF(5, 5), _Qt.LeftButton,
+                          _Qt.LeftButton, _Qt.NoModifier)
+    QApplication.sendEvent(link, press)
+    QApplication.sendEvent(link, release)
+    assert instance._nav_select_calls == [5]

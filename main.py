@@ -146,6 +146,22 @@ class AnimatedNavButton(QPushButton):
         self._anim.start()
 
 
+class _BrandLink(QFrame):
+    """Header logo+accent+title wrapper. Click → Credits page (index 5)."""
+
+    def __init__(self, nav_callback, parent=None):
+        super().__init__(parent)
+        self._nav_callback = nav_callback
+        self.setObjectName("header_brand_link")
+        self.setCursor(Qt.PointingHandCursor)
+        self.setToolTip("About / Credits")
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton and self.rect().contains(event.position().toPoint()):
+            self._nav_callback(5)
+        super().mouseReleaseEvent(event)
+
+
 def _desktop_file_exists(desktop_id: str) -> bool:
     filename = f"{desktop_id}.desktop"
     data_dirs = [
@@ -401,9 +417,14 @@ class MultiToonTool(QMainWindow):
         header.setMinimumHeight(HEADER_H)
         header.setObjectName("app_header")
 
-        layout = QHBoxLayout(header)
-        layout.setContentsMargins(8, 0, 16, 0)
-        layout.setSpacing(10)
+        outer_layout = QHBoxLayout(header)
+        outer_layout.setContentsMargins(8, 0, 16, 0)
+        outer_layout.setSpacing(0)
+
+        brand = _BrandLink(self.nav_select)
+        brand_layout = QHBoxLayout(brand)
+        brand_layout.setContentsMargins(4, 4, 10, 4)
+        brand_layout.setSpacing(10)
 
         # App icon — 46px logo loaded via _resolve_app_icon so the beta
         # build picks up the badged variant automatically.
@@ -412,22 +433,23 @@ class MultiToonTool(QMainWindow):
         self.header_icon.setFixedSize(46, 46)
         self.header_icon.setPixmap(_resolve_app_icon().pixmap(46, 46))
         self.header_icon.setScaledContents(True)
-        layout.addWidget(self.header_icon)
+        brand_layout.addWidget(self.header_icon)
 
         # Accent stripe (thin vertical bar)
         accent = QFrame()
         accent.setFixedWidth(4)
         accent.setMinimumHeight(24)
         accent.setObjectName("header_accent")
-        layout.addWidget(accent)
+        brand_layout.addWidget(accent)
 
         # Title with inline version
         self.title_label = QLabel()
         self.title_label.setObjectName("header_title")
         self.version_label = None  # inline in title_label
-        layout.addWidget(self.title_label)
+        brand_layout.addWidget(self.title_label)
 
-        layout.addStretch()
+        outer_layout.addWidget(brand)
+        outer_layout.addStretch()
 
         return header
 
