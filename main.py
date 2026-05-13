@@ -292,6 +292,7 @@ class MultiToonTool(QMainWindow):
         self.setCentralWidget(self.container)
 
         self._apply_full_theme()
+        self._refresh_header_session_status()
         self.nav_select(0)
         self._update_hint_icon()
 
@@ -304,6 +305,9 @@ class MultiToonTool(QMainWindow):
         self.hotkey_manager.start()
 
         self.multitoon_tab.dot_state_changed.connect(self.launch_tab.update_dot_state)
+        self.multitoon_tab.dot_state_changed.connect(
+            lambda *_: self._refresh_header_session_status()
+        )
         self.multitoon_tab.keep_alive_help_requested.connect(
             self._on_keep_alive_help_requested
         )
@@ -445,6 +449,14 @@ class MultiToonTool(QMainWindow):
 
         outer_layout.addWidget(brand)
         outer_layout.addStretch()
+
+        # Compact session status — visible at all window widths but most
+        # valuable when the rail is wide. Wired to multitoon state in
+        # __init__ via _refresh_header_session_status.
+        self.header_session_status = QLabel()
+        self.header_session_status.setObjectName("header_session_status")
+        self.header_session_status.setText("Idle  •  0/4 toons active")
+        outer_layout.addWidget(self.header_session_status)
 
         return header
 
@@ -690,6 +702,20 @@ class MultiToonTool(QMainWindow):
             f'v{APP_VERSION}</span>'
         )
 
+    def _refresh_header_session_status(self):
+        """Update the header's right-aligned status label from the live
+        multitoon state. Called from __init__ once and re-fired on
+        service start/stop and enabled-toon changes."""
+        if not hasattr(self, "header_session_status"):
+            return
+        running = getattr(self.multitoon_tab, "service_running", False)
+        enabled = getattr(self.multitoon_tab, "enabled_toons", [False] * 4)
+        active = sum(1 for e in enabled if e)
+        prefix = "Running" if running else "Idle"
+        self.header_session_status.setText(
+            f"{prefix}  •  {active}/4 toons active"
+        )
+
     def _apply_full_theme(self):
         theme = resolve_theme(self.settings_manager)
         c = self._theme_colors()
@@ -718,6 +744,11 @@ class MultiToonTool(QMainWindow):
             self.header_about_glyph.setStyleSheet(
                 f"font-size: 14px; color: {c['text_muted']}; "
                 f"padding-left: 4px; background: transparent;"
+            )
+        if hasattr(self, "header_session_status"):
+            self.header_session_status.setStyleSheet(
+                f"font-size: {font_role('label')}px; color: {c['text_muted']}; "
+                f"background: transparent; padding-right: 12px;"
             )
         # Accent stripe
         accent = self.header.findChild(QFrame, "header_accent")
