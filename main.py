@@ -182,13 +182,13 @@ class MultiToonTool(QMainWindow):
         super().__init__()
 
         self.setWindowTitle(window_title())
-        # Default 740 height. Threshold for the multitoon tab to render cards
-        # without 1-2px compression of the controls pill is 734 (header 48 +
+        # Default 748 height. Threshold for the multitoon tab to render cards
+        # without 1-2px compression of the controls pill is 742 (header 56 +
         # tab natural 686). v2.0.3 used a 650 default but Qt auto-grew the
-        # window to 734 to fit the central widget; that auto-grow no longer
-        # works through the QStackedWidget that hosts Compact + Full layouts,
-        # so we set the default high enough to fit content directly.
-        self.setGeometry(QRect(100, 100, 560, 740))
+        # window to fit the central widget; that auto-grow no longer works
+        # through the QStackedWidget that hosts Compact + Full layouts, so we
+        # set the default high enough to fit content directly.
+        self.setGeometry(QRect(100, 100, 560, 748))
         self.setMinimumWidth(575)
         self._layout_mode = "compact"
 
@@ -393,12 +393,21 @@ class MultiToonTool(QMainWindow):
 
     def _build_header(self) -> QFrame:
         header = QFrame()
-        header.setMinimumHeight(48)
+        header.setMinimumHeight(56)
         header.setObjectName("app_header")
 
         layout = QHBoxLayout(header)
         layout.setContentsMargins(16, 0, 16, 0)
         layout.setSpacing(10)
+
+        # App icon — 40px logo loaded via _resolve_app_icon so the beta
+        # build picks up the badged variant automatically.
+        self.header_icon = QLabel()
+        self.header_icon.setObjectName("header_icon")
+        self.header_icon.setFixedSize(40, 40)
+        self.header_icon.setPixmap(_resolve_app_icon().pixmap(40, 40))
+        self.header_icon.setScaledContents(True)
+        layout.addWidget(self.header_icon)
 
         # Accent stripe (thin vertical bar)
         accent = QFrame()
