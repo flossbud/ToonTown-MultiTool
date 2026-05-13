@@ -39,12 +39,16 @@ class CreditsTab(QWidget):
 
     def build_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 16, 16, 16)
+        # Trimmed top/bottom 16 -> 4 and card top/bottom 40 -> 12 to drop
+        # Credits' sizeHint below the multitoon compact sizeHint so the
+        # window's default-open height isn't dictated by this rarely-visited
+        # page. Side margins kept at 16/32 — they don't affect window height.
+        layout.setContentsMargins(16, 4, 16, 4)
 
         self.card = QFrame()
         self.card.setObjectName("credits_card")
         card_layout = QVBoxLayout(self.card)
-        card_layout.setContentsMargins(32, 40, 32, 40)
+        card_layout.setContentsMargins(32, 12, 32, 12)
         card_layout.setSpacing(12)
 
         # Title: version pulled from utils/version so it never goes stale
@@ -149,7 +153,8 @@ class CreditsTab(QWidget):
         card_layout.addWidget(image_label, alignment=Qt.AlignCenter)
         card_layout.addStretch()
         card_layout.addWidget(byline)
-        card_layout.addSpacing(12)
+        # Was addSpacing(12); the card's setSpacing(12) already separates
+        # byline from the footer row, so this explicit extra was doubling up.
         card_layout.addWidget(self.footer_links, alignment=Qt.AlignCenter)
 
         from utils.layout import clamp_centered

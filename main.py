@@ -197,7 +197,7 @@ class MultiToonTool(QMainWindow):
         # window to fit the central widget; that auto-grow no longer works
         # through the QStackedWidget that hosts Compact + Full layouts, so we
         # set the default high enough to fit content directly.
-        self.setGeometry(QRect(100, 100, 560, 760))
+        self.setGeometry(QRect(100, 100, 560, 770))
         self.setMinimumWidth(575)
         self._layout_mode = "compact"
 
