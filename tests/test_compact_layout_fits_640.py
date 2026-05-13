@@ -6,12 +6,12 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
-from PySide6.QtCore import QSize
 from PySide6.QtWidgets import QApplication
 
 
-CONTENT_BUDGET_PX = 640
-CONTENT_WIDTH_PX = 528  # default 560 window minus app left/right margins
+CONTENT_BUDGET_PX = 640  # 748 default window - 56 header - 52 chip rail
+CONTENT_WIDTH_PX = 528   # default 560 window minus app left/right margins
+_PIN_HEIGHT_PX = 636     # measured natural height 634; 2px grace for measurement noise
 
 
 @pytest.fixture(scope="module")
@@ -74,6 +74,7 @@ def test_compact_layout_fits_in_640px_budget(qapp):
     # sizeHint reflects the natural height the layout wants. After tightening
     # the new budget must accommodate it.
     natural_height = tab.sizeHint().height()
-    assert natural_height <= CONTENT_BUDGET_PX, (
-        f"Compact multitoon natural height {natural_height} > {CONTENT_BUDGET_PX} budget."
+    assert natural_height <= _PIN_HEIGHT_PX, (
+        f"Compact multitoon natural height {natural_height} > {_PIN_HEIGHT_PX} pin "
+        f"(budget is {CONTENT_BUDGET_PX})."
     )
