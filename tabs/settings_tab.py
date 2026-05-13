@@ -426,6 +426,25 @@ class SettingsTab(QWidget):
         self.advanced_row.toggled.connect(self.toggle_advanced_visibility)
         group.add_row(self.advanced_row)
 
+        # Reduce-motion row. Initial visible state reflects motion.is_reduced()
+        # so users see the current effective behavior. When OS says reduced
+        # and user hasn't explicitly set it, append (auto-detected).
+        import utils.motion as motion
+        motion.set_settings_manager(self.settings_manager)
+        os_says_reduced = motion._os_reduced_motion()
+        explicit = self.settings_manager.get("reduce_motion_set_explicitly", False)
+        initial = motion.is_reduced()
+        sublabel = "Snap navigation instantly instead of animating. Useful for motion-sensitive users."
+        if os_says_reduced and not explicit:
+            sublabel = "(auto-detected from system) " + sublabel
+        self.reduce_motion_row = ToggleRow(
+            "Reduce Motion",
+            initial,
+            sublabel=sublabel,
+        )
+        self.reduce_motion_row.toggled.connect(self._on_reduce_motion_toggled)
+        group.add_row(self.reduce_motion_row)
+
         self._main_layout.addWidget(group)
 
     def _build_ttr_path_group(self):
@@ -769,6 +788,10 @@ class SettingsTab(QWidget):
         value = i + 4  # dropdown index 0 = "4", index 4 = "8"
         self.settings_manager.set("max_accounts_per_game", value)
         self.max_accounts_changed.emit(value)
+
+    def _on_reduce_motion_toggled(self, val: bool) -> None:
+        self.settings_manager.set("reduce_motion", val)
+        self.settings_manager.set("reduce_motion_set_explicitly", True)
 
     def _on_clear_credentials_clicked(self):
         dlg = QMessageBox(self)
