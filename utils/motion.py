@@ -184,11 +184,18 @@ def push_slide_pages(stack, from_idx: int, to_idx: int, axis: str = "h"):
         stack._in_flight_anim = None
     _delete_transition_proxies(stack)
 
+    # Validate axis early before allocating pixmaps and proxies.
+    if axis not in ("h", "v"):
+        raise ValueError(f"axis must be 'h' or 'v', got {axis!r}")
+
     outgoing = stack.widget(from_idx)
     incoming = stack.widget(to_idx)
     w, h = stack.width(), stack.height()
 
-    # Ensure incoming has been laid out at least once so its grab is non-empty.
+    # One-time size sync so QWidget.grab() returns a non-empty pixmap.
+    # This runs at most once per page (when the page has never been shown).
+    # It does NOT participate in the per-frame animation — proxies handle
+    # all motion, so the no-layout-reflow guarantee still holds.
     if incoming.size() != stack.size():
         incoming.resize(stack.size())
 
@@ -207,8 +214,6 @@ def push_slide_pages(stack, from_idx: int, to_idx: int, axis: str = "h"):
         in_start = QPoint(0, -h)
         out_end = QPoint(0, int(h * 0.08))
         in_end = QPoint(0, 0)
-    else:
-        raise ValueError(f"axis must be 'h' or 'v', got {axis!r}")
 
     out_label.move(0, 0)
     in_label.move(in_start)
@@ -232,20 +237,24 @@ def push_slide_pages(stack, from_idx: int, to_idx: int, axis: str = "h"):
         group.addAnimation(fade)
 
     def _finalize():
-        out_label.deleteLater()
-        in_label.deleteLater()
-        stack.setCurrentIndex(to_idx)
-        if getattr(stack, "_in_flight_anim", None) is group:
-            stack._in_flight_anim = None
-        if getattr(stack, "_in_flight_timer", None) is start_timer:
-            stack._in_flight_timer = None
+        try:
+            out_label.deleteLater()
+            in_label.deleteLater()
+            stack.setCurrentIndex(to_idx)
+            if getattr(stack, "_in_flight_anim", None) is group:
+                stack._in_flight_anim = None
+            if getattr(stack, "_in_flight_timer", None) is start_timer:
+                stack._in_flight_timer = None
+        except RuntimeError:
+            # Stack/labels were already destroyed by Qt cleanup. No work to do.
+            return
 
     group.finished.connect(_finalize)
     stack._in_flight_anim = group
 
     # Defer start() so callers can connect to group.finished before it fires
     # and inspect _in_flight_anim synchronously (interrupt detection).
-    start_timer = QTimer()
+    start_timer = QTimer(stack)
     start_timer.setSingleShot(True)
     start_timer.timeout.connect(group.start)
     start_timer.start(0)
