@@ -45,3 +45,14 @@ def test_show_at_positions_below_anchor(qapp):
     # Popup top should be at/near anchor bottom.
     expected_y = anchor.mapToGlobal(QPoint(0, anchor.height())).y()
     assert abs(pop.pos().y() - expected_y) <= 4
+
+
+def test_set_theme_colors_updates_paint_attrs(qapp):
+    """OverflowPopup.set_theme_colors must update the background and
+    border colors used by paintEvent so theme switches don't leave the
+    popup painted with stale hex literals."""
+    from PySide6.QtGui import QColor
+    pop = OverflowPopup()
+    pop.set_theme_colors(bg_hex="#ffffff", border_hex="#2563eb")
+    assert pop._bg_color == QColor("#ffffff")
+    assert pop._border_color == QColor("#2563eb")

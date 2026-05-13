@@ -855,6 +855,11 @@ class MultiToonTool(QMainWindow):
             }}
         """)
         self._apply_chip_styles()
+        if hasattr(self, "overflow_popup"):
+            self.overflow_popup.set_theme_colors(
+                bg_hex=c['bg_card'],
+                border_hex=c['header_accent'],
+            )
         self._update_hint_icon()
 
         # Content pages

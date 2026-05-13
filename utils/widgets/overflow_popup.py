@@ -31,6 +31,10 @@ class OverflowPopup(QFrame):
         self.rows: List[QPushButton] = []
         self._scale = 1.0
         self._anchor_corner = (1.0, 0.0)  # top-right of popup = origin
+        # Theme-driven paint colors. Defaults preserve the previous
+        # hardcoded dark appearance until set_theme_colors is called.
+        self._bg_color = QColor("#2b2745")
+        self._border_color = QColor(124, 92, 255, 80)
 
     def add_action(self, label: str, handler: Callable[[], None]) -> None:
         row = QPushButton(label, self)
@@ -49,6 +53,15 @@ class OverflowPopup(QFrame):
         y = anchor_bl.y()
         self.move(x, y)
         self.show()
+
+    def set_theme_colors(self, bg_hex: str, border_hex: str) -> None:
+        """Update the popup's background and border colors from the
+        active theme. Called from MultiToonTool._apply_full_theme on
+        theme switch.
+        """
+        self._bg_color = QColor(bg_hex)
+        self._border_color = QColor(border_hex)
+        self.update()
 
     # ── Scale property (animatable) ─────────────────────────────────────
     def _get_scale(self) -> float:
@@ -72,8 +85,8 @@ class OverflowPopup(QFrame):
 
         path = QPainterPath()
         path.addRoundedRect(0, 0, self.width(), self.height(), 8, 8)
-        p.fillPath(path, QColor("#2b2745"))
-        p.setPen(QColor(124, 92, 255, 80))
+        p.fillPath(path, self._bg_color)
+        p.setPen(self._border_color)
         p.drawPath(path)
         p.end()
         # Let child widgets (the rows) paint normally on top via super().
