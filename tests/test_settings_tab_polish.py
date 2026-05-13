@@ -340,3 +340,77 @@ def test_collapse_animation_starts_with_real_height(qapp, monkeypatch):
     assert g._collapse_anim is not None
     assert g._collapse_anim.startValue() > 0
     assert g._collapse_anim.endValue() == 0
+
+
+def test_chevron_widget_initial_rotation_matches_collapsed(qapp):
+    """Chevron is 0° (pointing right) when group starts collapsed."""
+    from tabs.settings_tab import CollapsibleSettingsGroup, _ChevronWidget
+
+    class _FakeSM:
+        def get(self, k, d=None): return True  # collapsed
+        def set(self, k, v): pass
+        def on_change(self, cb): pass
+
+    g = CollapsibleSettingsGroup("Advanced", _FakeSM(), "advanced_collapsed")
+    assert isinstance(g._header._chevron, _ChevronWidget)
+    assert g._header._chevron.rotation == 0.0
+
+
+def test_chevron_widget_initial_rotation_when_expanded(qapp):
+    """Chevron is 90° (pointing down) when group starts expanded."""
+    from tabs.settings_tab import CollapsibleSettingsGroup
+
+    class _FakeSM:
+        def get(self, k, d=None): return False  # expanded
+        def set(self, k, v): pass
+        def on_change(self, cb): pass
+
+    g = CollapsibleSettingsGroup("Advanced", _FakeSM(), "advanced_collapsed")
+    assert g._header._chevron.rotation == 90.0
+
+
+def test_chevron_animates_on_toggle_with_motion(qapp, monkeypatch):
+    """A toggle with reduce_motion off starts a rotation animation in parallel."""
+    from tabs.settings_tab import CollapsibleSettingsGroup, SettingsRow
+    import utils.motion as motion
+
+    class _FakeSM:
+        def __init__(self):
+            self.data = {"advanced_collapsed": True, "reduce_motion_set_explicitly": True, "reduce_motion": False}
+        def get(self, k, d=None): return self.data.get(k, d)
+        def set(self, k, v): self.data[k] = v
+        def on_change(self, cb): pass
+
+    sm = _FakeSM()
+    motion.set_settings_manager(sm)
+    monkeypatch.setattr(motion, "_TEST_DURATION_SCALE", 100.0)
+    g = CollapsibleSettingsGroup("Advanced", sm, "advanced_collapsed")
+    g.add_row(SettingsRow("A", ""))
+    # Start: chevron at 0°.
+    assert g._header._chevron.rotation == 0.0
+    g.toggle()  # expand
+    # Chevron animation is in flight; final value will be 90.
+    assert g._chevron_anim is not None
+    assert g._chevron_anim.endValue() == 90.0
+
+
+def test_chevron_snaps_with_reduced_motion(qapp, monkeypatch):
+    """With reduce_motion on, toggle sets chevron rotation directly."""
+    from tabs.settings_tab import CollapsibleSettingsGroup, SettingsRow
+    import utils.motion as motion
+
+    class _FakeSM:
+        def __init__(self):
+            self.data = {"advanced_collapsed": True, "reduce_motion_set_explicitly": True, "reduce_motion": True}
+        def get(self, k, d=None): return self.data.get(k, d)
+        def set(self, k, v): self.data[k] = v
+        def on_change(self, cb): pass
+
+    sm = _FakeSM()
+    motion.set_settings_manager(sm)
+    g = CollapsibleSettingsGroup("Advanced", sm, "advanced_collapsed")
+    g.add_row(SettingsRow("A", ""))
+    g.toggle()
+    # No animation should have been started.
+    assert g._chevron_anim is None or g._chevron_anim.state() == 0
+    assert g._header._chevron.rotation == 90.0

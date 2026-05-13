@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (
     QComboBox, QApplication, QMessageBox, QFrame,
     QPushButton, QScrollArea, QSizePolicy, QFileDialog
 )
-from PySide6.QtCore import Qt, QRectF, Signal
+from PySide6.QtCore import Property, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPen
 from utils.theme_manager import apply_theme, resolve_theme, get_theme_colors
 from utils.shared_widgets import IOSToggle
@@ -454,6 +454,53 @@ class _LeadingPill(QWidget):
         p.end()
 
 
+class _ChevronWidget(QWidget):
+    """A small right-pointing triangle that rotates around its center.
+    Exposes a `rotation` Qt property (degrees) so it can be animated."""
+
+    SIZE = 14
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._rotation = 0.0
+        self._color = None
+        self.setFixedSize(self.SIZE, self.SIZE)
+
+    def _get_rotation(self) -> float:
+        return self._rotation
+
+    def _set_rotation(self, value: float):
+        self._rotation = float(value)
+        self.update()
+
+    rotation = Property(float, _get_rotation, _set_rotation)
+
+    def apply_theme(self, c, is_dark):
+        self._color = c.get("text_muted", "#888")
+        self.update()
+
+    def paintEvent(self, e):
+        if self._color is None:
+            return
+        from PySide6.QtGui import QPolygonF
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        cx = self.width() / 2
+        cy = self.height() / 2
+        p.translate(cx, cy)
+        p.rotate(self._rotation)
+        # Right-pointing triangle at rotation=0, centered on origin.
+        tri = QPolygonF([
+            QPointF(-2.5, -3.5),
+            QPointF(-2.5,  3.5),
+            QPointF( 3.5,  0.0),
+        ])
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(self._color))
+        p.drawPolygon(tri)
+        p.end()
+
+
 class CollapsibleSettingsGroup(SettingsGroup):
     """Section block whose first row is a clickable header (title + chevron).
     Clicking the header toggles visibility of the remaining rows and persists
@@ -476,6 +523,7 @@ class CollapsibleSettingsGroup(SettingsGroup):
             settings_manager.get(persist_key, True)
         )
         self._collapse_anim = None
+        self._chevron_anim = None
 
         self._header = _CollapsibleHeader(title, self._collapsed, self)
         self._header.clicked.connect(self.toggle)
@@ -528,6 +576,11 @@ class CollapsibleSettingsGroup(SettingsGroup):
         if self._collapse_anim is not None:
             self._collapse_anim.stop()
             self._collapse_anim = None
+
+        # Interrupt any in-flight chevron animation.
+        if self._chevron_anim is not None:
+            self._chevron_anim.stop()
+            self._chevron_anim = None
 
         from PySide6.QtCore import QPropertyAnimation
         import utils.motion as motion
@@ -585,6 +638,24 @@ class CollapsibleSettingsGroup(SettingsGroup):
         self._content_container.setMaximumHeight(start_h)
         anim.start()
 
+        # Parallel chevron rotation animation.
+        chevron_anim = QPropertyAnimation(self._header._chevron, b"rotation")
+        chevron_anim.setDuration(duration)
+        chevron_anim.setEasingCurve(motion.EASE_STANDARD)
+        # Reverse the snap that set_collapsed already applied — start from
+        # the previous angle and animate to the new one.
+        chevron_anim.setStartValue(90.0 if self._collapsed else 0.0)
+        chevron_anim.setEndValue(0.0 if self._collapsed else 90.0)
+
+        def _on_chevron_done():
+            self._chevron_anim = None
+
+        chevron_anim.finished.connect(_on_chevron_done)
+        self._chevron_anim = chevron_anim
+        # Pre-set the start frame so the visual is consistent.
+        self._header._chevron.rotation = 90.0 if self._collapsed else 0.0
+        chevron_anim.start()
+
     def apply_theme(self, c, is_dark):
         super().apply_theme(c, is_dark)
         self._header.apply_theme(c, is_dark)
@@ -613,16 +684,16 @@ class _CollapsibleHeader(QFrame):
         self.title_label.setStyleSheet("background: transparent; border: none;")
         lay.addWidget(self.title_label, 1)
 
-        self.chevron_label = QLabel(self._chevron_glyph())
-        self.chevron_label.setStyleSheet("background: transparent; border: none;")
-        lay.addWidget(self.chevron_label)
-
-    def _chevron_glyph(self) -> str:
-        return "▸" if self._collapsed else "▾"
+        self._chevron = _ChevronWidget(self)
+        self._chevron.rotation = 90.0 if not collapsed else 0.0
+        lay.addWidget(self._chevron)
 
     def set_collapsed(self, collapsed: bool):
         self._collapsed = collapsed
-        self.chevron_label.setText(self._chevron_glyph())
+        # Snap the chevron rotation. The animated case in
+        # CollapsibleSettingsGroup.toggle pre-sets this to the start value
+        # before starting the animation, then animates over duration.
+        self._chevron.rotation = 0.0 if collapsed else 90.0
         self.update()
 
     def apply_theme(self, c, is_dark):
@@ -632,10 +703,7 @@ class _CollapsibleHeader(QFrame):
             f"letter-spacing: 0.15px; "
             f"color: {c['text_primary']}; background: transparent; border: none;"
         )
-        self.chevron_label.setStyleSheet(
-            f"font-size: 14px; color: {c['text_muted']}; "
-            f"background: transparent; border: none;"
-        )
+        self._chevron.apply_theme(c, is_dark)
         self.update()
 
     def enterEvent(self, e):
