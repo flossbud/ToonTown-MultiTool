@@ -62,7 +62,6 @@ from tabs.launch_tab import LaunchTab
 from tabs.keymap_tab import KeymapTab
 from tabs.settings_tab import SettingsTab
 from tabs.credits_tab import CreditsTab
-from tabs.invasions_tab import InvasionsTab
 from tabs.debug_tab import DebugTab
 from utils.version import APP_VERSION
 from utils.settings_manager import SettingsManager
@@ -74,7 +73,7 @@ from utils.game_registry import GameRegistry
 from utils.theme_manager import (
     apply_theme, resolve_theme, get_theme_colors, apply_card_shadow,
     make_nav_gamepad, make_nav_power,
-    make_nav_keyboard, make_nav_gear, make_nav_terminal, make_nav_bookmark,
+    make_nav_keyboard, make_nav_gear, make_nav_terminal,
     make_hint_icon, make_info_icon, font_role,
     SystemThemeWatcher,
 )
@@ -225,7 +224,6 @@ class MultiToonTool(QMainWindow):
         self.keymap_tab = KeymapTab(self.keymap_manager, self.settings_manager)
         self.settings_tab = SettingsTab(self.settings_manager)
         self.credits_tab = CreditsTab(self.settings_manager)
-        self.invasions_tab = InvasionsTab(self.settings_manager)
 
         self.settings_tab.debug_visibility_changed.connect(self.toggle_debug_tab_visibility)
         self.settings_tab.theme_changed.connect(self.on_theme_changed)
@@ -281,9 +279,8 @@ class MultiToonTool(QMainWindow):
         self.stack.addWidget(self.launch_tab)       # 1
         self.stack.addWidget(self.keymap_tab)       # 2
         self.stack.addWidget(self.settings_tab)     # 3
-        self.stack.addWidget(self.invasions_tab)    # 4
-        self.stack.addWidget(self.debug_tab)        # 5
-        self.stack.addWidget(self.credits_tab)      # 6
+        self.stack.addWidget(self.debug_tab)        # 4
+        self.stack.addWidget(self.credits_tab)      # 5
         body.addWidget(self.stack, 1)
 
         body_widget = QWidget()
@@ -443,7 +440,6 @@ class MultiToonTool(QMainWindow):
             ("Launch",    1),
             ("Keymap",    2),
             ("Settings",  3),
-            ("Invasions", 4),
         ]
         for label, idx in nav_items:
             btn = AnimatedNavButton(30, 36)
@@ -463,7 +459,7 @@ class MultiToonTool(QMainWindow):
         self.logs_nav_btn.setCheckable(True)
         self.logs_nav_btn.setToolTip("Logs")
         self.logs_nav_btn.setObjectName("nav_logs")
-        self.logs_nav_btn.clicked.connect(lambda: self.nav_select(5))
+        self.logs_nav_btn.clicked.connect(lambda: self.nav_select(4))
         self.logs_nav_btn.setVisible(self.settings_manager.get("show_debug_tab", False))
         layout.addWidget(self.logs_nav_btn, alignment=Qt.AlignHCenter)
         self.nav_buttons.append(self.logs_nav_btn)
@@ -475,7 +471,7 @@ class MultiToonTool(QMainWindow):
         self.credits_btn.setCursor(Qt.PointingHandCursor)
         self.credits_btn.setObjectName("nav_credits")
         self.credits_btn.setToolTip("Credits")
-        self.credits_btn.clicked.connect(lambda: self.nav_select(6))
+        self.credits_btn.clicked.connect(lambda: self.nav_select(5))
         layout.addWidget(self.credits_btn, alignment=Qt.AlignHCenter)
         self.nav_buttons.append(self.credits_btn)
 
@@ -541,7 +537,7 @@ class MultiToonTool(QMainWindow):
             is_sel = btn.isChecked()
             color = QColor(c['sidebar_text_sel'] if is_sel else c['sidebar_text'])
             icons = [make_nav_gamepad, make_nav_power,
-                     make_nav_keyboard, make_nav_gear, make_nav_bookmark, make_nav_terminal, make_info_icon]
+                     make_nav_keyboard, make_nav_gear, make_nav_terminal, make_info_icon]
             if i < len(icons):
                 # Render high-res so it doesn't blur on scaling
                 btn.setIcon(icons[i](40, color))
@@ -659,7 +655,7 @@ class MultiToonTool(QMainWindow):
         self.multitoon_tab.input_service.logging_enabled = show
         self.logs_nav_btn.setVisible(show)
         ttr_api.set_debug(show)
-        if not show and self.stack.currentIndex() == 5:
+        if not show and self.stack.currentIndex() == 4:
             self.nav_select(0)
 
     def on_clear_credentials_requested(self):

@@ -1,5 +1,15 @@
 # ToonTown MultiTool — Changelog
 
+## v2.2 — Scope Refinement
+
+### Removed: Invasion Tracker
+
+The Invasions tab has been removed. Live cog invasion tracking will return in a dedicated companion app rather than living inside MultiTool.
+
+This change sharpens MultiTool's scope around its core purpose: a multi-account input controller for Toontown Rewritten and Corporate Clash. Features that don't serve that purpose, however useful, belong in their own tools where they can be developed and shipped on their own cadence.
+
+---
+
 ## v2.0 — Complete Rewrite
 
 v2.0 is a ground-up rewrite. The core concept is the same — multiboxing input control for Toontown — but almost every part of the app has been rebuilt or replaced.

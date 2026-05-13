@@ -224,26 +224,6 @@ def make_nav_power(size: int = 22, color: QColor = None) -> QIcon:
 make_nav_rocket = make_nav_power  # alias so existing imports don't break
 
 
-def make_nav_bookmark(size: int = 22, color: QColor = None) -> QIcon:
-    """Bookmark/save icon for Presets nav."""
-    color = color or QColor(200, 200, 200)
-    def draw(p, s, c):
-        pen = QPen(c, max(1.4, s / 14))
-        pen.setCapStyle(Qt.RoundCap)
-        pen.setJoinStyle(Qt.RoundJoin)
-        p.setPen(pen)
-        p.setBrush(Qt.NoBrush)
-        path = QPainterPath()
-        path.moveTo(s * 0.22, s * 0.1)
-        path.lineTo(s * 0.22, s * 0.85)
-        path.lineTo(s * 0.5, s * 0.65)
-        path.lineTo(s * 0.78, s * 0.85)
-        path.lineTo(s * 0.78, s * 0.1)
-        path.closeSubpath()
-        p.drawPath(path)
-    return _draw_nav_icon(size, color, draw)
-
-
 def make_nav_gear(size: int = 22, color: QColor = None) -> QIcon:
     """Gear icon for Settings nav — 8 teeth with center hole."""
     color = color or QColor(200, 200, 200)

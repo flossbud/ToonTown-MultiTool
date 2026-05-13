@@ -18,7 +18,6 @@
 ## Background features
 - [ ] Keep-alive fires on game window when enabled
 - [ ] Keep-alive does not fire when disabled
-- [ ] Invasion tracker updates
 - [ ] Multitoon controls route per-game (TTR vs CC don't cross over)
 
 ## Exit

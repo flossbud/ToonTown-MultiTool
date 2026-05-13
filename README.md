@@ -19,9 +19,6 @@ Built with Python + PySide6.
 - Live toon name, laff, and jellybean count per slot in the Multitoon tab
 - Toon portrait images fetched and cached from the Rendition API
 
-**🚨 Invasion Tracker**
-- Live cog invasion display, updated every 60 seconds
-
 **💾 Session Profiles**
 - 5 named profiles storing which toon slots are active
 - Load via Ctrl+1–5 hotkeys or change via icons on the main tab, replacing the old Preset system
@@ -69,7 +66,6 @@ Built with Python + PySide6.
 **UI**
 - Sidebar navigation with animated transitions
 - Light and dark themes (auto-detects from system)
-- Invasion tracker with live department status
 
 ---
 
