@@ -378,6 +378,10 @@ class MultiToonTool(QMainWindow):
             QPushButton:hover, QToolButton:hover {{
                 background: rgba(255,255,255,0.12);
             }}
+            QPushButton:focus, QToolButton:focus {{
+                border: 2px solid {c['header_accent']};
+                outline: none;
+            }}
         """
         self.hint_btn.setStyleSheet(style)
 
@@ -622,6 +626,10 @@ class MultiToonTool(QMainWindow):
                         font-size: 10pt;
                         padding: 4px 10px;
                     }}
+                    QToolButton#{chip.objectName()}:focus {{
+                        border: 2px solid {c['header_accent']};
+                        outline: none;
+                    }}
                 """)
             else:
                 chip.setStyleSheet(f"""
@@ -635,6 +643,10 @@ class MultiToonTool(QMainWindow):
                     }}
                     QToolButton#{chip.objectName()}:hover {{
                         background: {c['sidebar_btn_sel']};
+                    }}
+                    QToolButton#{chip.objectName()}:focus {{
+                        border: 2px solid {c['header_accent']};
+                        outline: none;
                     }}
                 """)
 

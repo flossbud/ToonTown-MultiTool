@@ -245,3 +245,29 @@ def test_apply_chip_styles_tints_selected_icon_with_accent(qapp):
             f"chip {chip.objectName()} stylesheet missing font-size: 10pt"
         )
     _ = rail  # suppress "unused variable" lint; reference ensures QFrame lifetime
+
+
+def test_chip_qss_has_focus_ring(qapp):
+    """NoFocusProxyStyle strips the global focus rect; the chip rail must
+    declare its own visible :focus state so keyboard users see where
+    they are. Pins the focus selector on every chip."""
+    from main import MultiToonTool
+    instance = MultiToonTool.__new__(MultiToonTool)
+    instance.settings_manager = _StubSettings(hints_enabled=True, show_debug_tab=False)
+    instance.nav_select = lambda i: None
+    rail = instance._build_chip_rail()
+    instance._theme_colors = lambda: {
+        "sidebar_text":     "#aaaaaa",
+        "sidebar_text_sel": "#ffffff",
+        "sidebar_btn_sel":  "rgba(255,255,255,0.09)",
+        "sidebar_bg":       "#111111",
+        "header_accent":    "#0077ff",
+    }
+    instance._apply_chip_styles()
+    for chip in instance.chip_buttons:
+        ss = chip.styleSheet()
+        assert ":focus" in ss, (
+            f"chip {chip.objectName()} stylesheet has no :focus rule; "
+            f"keyboard users will see no focus indicator. Got: {ss!r}"
+        )
+    _ = rail
