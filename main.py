@@ -90,6 +90,11 @@ W_FULL = 1280
 H_FULL = 852
 DEADBAND_W = 80
 DEADBAND_H = 60
+
+# Chrome heights — used by H_FULL math, prewarm hint, and the header /
+# chip rail QFrames so the value lives in one place.
+HEADER_H = 56
+CHIP_RAIL_H = 52
 APP_DESKTOP_ID = "io.github.flossbud.ToonTownMultiTool"
 BETA_DESKTOP_ID = "io.github.flossbud.ToonTownMultiTool-beta"
 LEGACY_DESKTOP_ID = "toontown-multitool"
@@ -310,7 +315,7 @@ class MultiToonTool(QMainWindow):
 
         self.log(f"[Debug] {app_name()} launched.")
         self.multitoon_tab.prewarm_full_layout(
-            QSize(W_FULL, H_FULL - 108),  # 108 = header (56) + chip rail (52)
+            QSize(W_FULL, H_FULL - HEADER_H - CHIP_RAIL_H),
             include_active=True,
         )
         self._animate_launch()
@@ -393,7 +398,7 @@ class MultiToonTool(QMainWindow):
 
     def _build_header(self) -> QFrame:
         header = QFrame()
-        header.setMinimumHeight(56)
+        header.setMinimumHeight(HEADER_H)
         header.setObjectName("app_header")
 
         layout = QHBoxLayout(header)
@@ -425,6 +430,19 @@ class MultiToonTool(QMainWindow):
         layout.addStretch()
 
         return header
+
+    # ── Chip Rail ──────────────────────────────────────────────────────────
+
+    def _build_chip_rail(self) -> QFrame:
+        rail = QFrame()
+        rail.setMinimumHeight(CHIP_RAIL_H)
+        rail.setObjectName("app_chip_rail")
+
+        layout = QHBoxLayout(rail)
+        layout.setContentsMargins(12, 8, 12, 8)
+        layout.setSpacing(4)
+
+        return rail
 
     # ── Sidebar ────────────────────────────────────────────────────────────
 
