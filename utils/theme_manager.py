@@ -328,7 +328,10 @@ def get_theme_colors(is_dark: bool) -> dict:
             "slot_2": "#15803d",
             "slot_3": "#c2410c",
             "slot_4": "#7c3aed",
-            "slot_dim": "#cbd5e1",
+            # slot-200 -> slate-500: bumped from #cbd5e1 (1.5:1 vs white)
+            # to #64748b so the dim badge clears WCAG 1.4.11 (>= 3:1) on
+            # the white card background.
+            "slot_dim": "#64748b",
 
             # Toon cards
             "card_toon_bg":        "#ffffff",
