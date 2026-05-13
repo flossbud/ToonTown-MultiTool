@@ -51,7 +51,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget,
     QVBoxLayout, QHBoxLayout, QStackedWidget,
     QLabel, QPushButton, QToolButton, QProxyStyle, QStyle, QFrame, QMenu,
-    QGraphicsOpacityEffect,
+    QGraphicsOpacityEffect, QSpacerItem, QSizePolicy,
 )
 from PySide6.QtCore import QRect, Qt, QSize, QEvent, Signal, Slot, QPropertyAnimation, QEasingCurve, QTimer
 from PySide6.QtGui import QColor, QGuiApplication, QIcon, QAction
@@ -443,6 +443,18 @@ class MultiToonTool(QMainWindow):
         layout.setContentsMargins(12, 6, 12, 6)
         layout.setSpacing(4)
 
+        # Left phantom: invisible spacer whose width mirrors the right
+        # utility cluster (divider + hint + optional overflow). Without
+        # this counterbalance, the two addStretch() items around the chips
+        # only center them in the rail width minus the utility cluster —
+        # which appears visibly off-center. QSpacerItem (not QWidget) so
+        # there's nothing to paint. Sized in _update_chip_rail_phantom_width
+        # after the utility widgets exist.
+        self.chip_rail_left_phantom = QSpacerItem(
+            0, 0, QSizePolicy.Fixed, QSizePolicy.Minimum
+        )
+        layout.addSpacerItem(self.chip_rail_left_phantom)
+
         self.chip_buttons = []
         nav_items = [
             ("Multitoon", 0),
@@ -458,15 +470,6 @@ class MultiToonTool(QMainWindow):
         # __new__ — bypassing QMainWindow.__init__ — still work.
         chip_font = QApplication.font()
         chip_font.setPointSize(10)
-        # Centering pattern: a left-side stretch balances the right-side
-        # stretch added after the chip loop, so the four chips end up in
-        # the middle of the rail's free space. The utility cluster on the
-        # far right (divider + hint + overflow) sits outside the centering
-        # band, so the chips look approximately centered relative to the
-        # whole rail width (slightly left of geometric center because the
-        # utility cluster takes some of the right side; if true center
-        # becomes important, mirror the utility-cluster width on the left
-        # as a phantom spacer).
         layout.addStretch()
         for label, idx in nav_items:
             chip = QToolButton()
@@ -517,7 +520,31 @@ class MultiToonTool(QMainWindow):
         self.overflow_btn.setVisible(self.settings_manager.get("show_debug_tab", False))
         layout.addWidget(self.overflow_btn)
 
+        # Phantom width matches the now-built utility cluster.
+        self._update_chip_rail_phantom_width()
+
         return rail
+
+    def _update_chip_rail_phantom_width(self):
+        """Size the left phantom spacer to match the visible right utility
+        cluster (divider + hint + optional overflow), so the four chips
+        sit at the geometric center of the chip rail. Called at build
+        time and whenever overflow visibility changes (debug toggle).
+        Reads the show_debug_tab setting directly rather than calling
+        isVisible() because the widget may not yet be shown when this
+        runs at construction time."""
+        if not hasattr(self, "chip_rail_left_phantom"):
+            return
+        spacing = 4  # matches QHBoxLayout.setSpacing(4) above
+        # divider (1 px wide) + hint_btn (34 px) are always visible.
+        width = spacing + 1 + spacing + 34
+        if self.settings_manager.get("show_debug_tab", False):
+            width += spacing + 34  # overflow_btn (34 px)
+        self.chip_rail_left_phantom.changeSize(
+            width, 0, QSizePolicy.Fixed, QSizePolicy.Minimum
+        )
+        if hasattr(self, "chip_rail"):
+            self.chip_rail.layout().invalidate()
 
     def nav_select(self, index: int):
         if self.stack.currentIndex() == index and getattr(self, "_initialized_nav", False):
@@ -694,6 +721,9 @@ class MultiToonTool(QMainWindow):
         self.debug_tab.logging_enabled = show
         self.multitoon_tab.input_service.logging_enabled = show
         self.overflow_btn.setVisible(show)
+        # Right utility cluster width changed — re-mirror it on the left
+        # phantom so chips stay geometrically centered.
+        self._update_chip_rail_phantom_width()
         ttr_api.set_debug(show)
         if not show and self.stack.currentIndex() == 4:
             self.nav_select(0)
