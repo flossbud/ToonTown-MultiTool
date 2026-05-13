@@ -86,7 +86,7 @@ jobs:
         with:
           bundle: TTMultiTool-${{ github.ref_name }}-Linux-x86_64.flatpak
           manifest-path: flatpak/io.github.flossbud.ToonTownMultiTool.yml
-          cache-key: flatpak-builder-${{ github.sha }}
+          cache-key: flatpak-builder-${{ hashFiles('flatpak/*.yml') }}
 
       - uses: actions/upload-artifact@v4
         with:
