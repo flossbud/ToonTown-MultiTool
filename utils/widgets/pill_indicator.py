@@ -10,23 +10,27 @@ from typing import Optional
 from PySide6.QtCore import (
     QAbstractAnimation, QRectF, Qt, QTimer, QVariantAnimation,
 )
-from PySide6.QtGui import QColor, QLinearGradient, QPainter
+from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import QWidget
 
 import utils.motion as motion
 
 
 class PillIndicator(QWidget):
-    """Overlay widget sized to its parent (the chip rail). Paints a single
-    rounded-rect pill at self._pill_rect.
+    """Overlay widget sized to its parent (the chip rail). Paints a hollow
+    rounded-rect border at self._pill_rect — the selected-chip indicator.
+
+    The chips themselves render with a transparent background so the pill's
+    border is visible around the selected chip and slides between chips
+    on nav change.
     """
 
     def __init__(self, parent: QWidget):
         super().__init__(parent)
         self._pill_rect = QRectF()
         self._anim: Optional[QVariantAnimation] = None
-        self._top_color = QColor("#7c5cff")
-        self._bottom_color = QColor("#5a3fd6")
+        self._border_color = QColor("#7c5cff")  # overridden by set_colors
+        self._border_width = 2.0
         self._radius = 8.0
         self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         # Match parent geometry; caller is responsible for resizing on
@@ -34,9 +38,9 @@ class PillIndicator(QWidget):
         if parent is not None:
             self.resize(parent.size())
 
-    def set_colors(self, top_hex: str, bottom_hex: str) -> None:
-        self._top_color = QColor(top_hex)
-        self._bottom_color = QColor(bottom_hex)
+    def set_colors(self, border_hex: str) -> None:
+        """Set the pill border color (typically theme accent)."""
+        self._border_color = QColor(border_hex)
         self.update()
 
     def set_pill_rect(self, rect: QRectF) -> None:
@@ -79,12 +83,12 @@ class PillIndicator(QWidget):
             return
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing, True)
-        p.setPen(Qt.NoPen)
-        grad = QLinearGradient(
-            0, self._pill_rect.top(),
-            0, self._pill_rect.bottom(),
-        )
-        grad.setColorAt(0.0, self._top_color)
-        grad.setColorAt(1.0, self._bottom_color)
-        p.setBrush(grad)
-        p.drawRoundedRect(self._pill_rect, self._radius, self._radius)
+        pen = QPen(self._border_color)
+        pen.setWidthF(self._border_width)
+        p.setPen(pen)
+        p.setBrush(Qt.NoBrush)
+        # Inset by half the pen width so the stroke sits exactly on the
+        # chip's bounds rather than spilling outward.
+        inset = self._border_width / 2.0
+        rect = self._pill_rect.adjusted(inset, inset, -inset, -inset)
+        p.drawRoundedRect(rect, self._radius, self._radius)

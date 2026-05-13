@@ -12,6 +12,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QApplication, QFrame, QHBoxLayout, QToolButton
 
 
@@ -271,18 +272,13 @@ def test_chip_qss_has_focus_ring(qapp):
     _ = rail
 
 
-def test_selected_chip_border_is_semi_transparent(qapp):
-    """The plan called for box-shadow: 0 0 0 1px rgba(accent, .3); QSS lacks
-    box-shadow so we use a border. To honor the soft-ring design intent,
-    the selected chip's border color must be a semi-transparent rgba
-    derived from header_accent, not a full-opacity solid.
-
-    Specificity: the gradient background also uses rgba(...) so a naive
-    'rgba( in styleSheet' check is satisfied by the gradient alone — we
-    must locate the border declaration explicitly and verify *it* uses
-    rgba (i.e., 'border: 1px solid rgba(...)')."""
-    import re
+def test_selected_chip_has_transparent_chip_border_and_accent_pill(qapp):
+    """Selection is rendered by the PillIndicator (a hollow accent border that
+    slides between chips), not by per-chip QSS. The chip itself must have a
+    transparent border so the pill is visible around it, and the PillIndicator
+    must carry the theme's accent color."""
     from main import MultiToonTool
+    import re
     instance = MultiToonTool.__new__(MultiToonTool)
     instance.settings_manager = _StubSettings(hints_enabled=True, show_debug_tab=False)
     instance.nav_select = lambda i: None
@@ -297,28 +293,18 @@ def test_selected_chip_border_is_semi_transparent(qapp):
         "header_accent":    "#0077ff",
     }
     instance._apply_chip_styles()
+    # The chip itself must NOT carry the selected border — the pill does.
     sel_ss = instance.chip_buttons[0].styleSheet()
-    # Find the first 'border:' declaration in the SELECTED block (not the
-    # :focus block, which intentionally uses solid accent). The selected
-    # block is the one without ':focus' on its selector.
-    # Match: 'border: <Npx> solid <color>;'
     border_decls = re.findall(r"border:\s*\d+px\s+solid\s+([^;]+);", sel_ss)
-    assert border_decls, (
-        f"Expected at least one 'border: Npx solid <color>;' declaration "
-        f"in the selected chip stylesheet; got: {sel_ss!r}"
-    )
-    # The first declaration is the SELECTED-state border (the :focus
-    # override comes later in the f-string). It must be rgba(...), not a
-    # full-opacity #hex like #0077ff.
-    first_border_color = border_decls[0].strip()
-    assert first_border_color.startswith("rgba("), (
-        f"Selected chip border color should be rgba(...) for soft accent ring; "
-        f"got: {first_border_color!r} in stylesheet {sel_ss!r}"
-    )
-    # Verify the rgba is derived from header_accent (#0077ff -> 0, 119, 255)
-    assert "0, 119, 255" in first_border_color or "0,119,255" in first_border_color, (
-        f"Selected chip border rgba should derive from header_accent #0077ff "
-        f"(0,119,255); got: {first_border_color!r}"
+    for color in border_decls:
+        assert color.strip() == "transparent", (
+            f"Selected chip border should be transparent (pill carries the "
+            f"indicator); got: {color!r} in {sel_ss!r}"
+        )
+    # The PillIndicator must carry the theme accent color.
+    assert instance.chip_pill._border_color.name(QColor.HexRgb).lower() == "#0077ff", (
+        f"PillIndicator border should match header_accent; got "
+        f"{instance.chip_pill._border_color.name()!r}"
     )
     _ = rail
 

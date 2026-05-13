@@ -745,28 +745,19 @@ class MultiToonTool(QMainWindow):
     def _apply_chip_styles(self):
         """Apply theme-aware QSS + icon rendering to the chip rail's nav chips.
 
-        Each chip's selected state is read from QToolButton.isChecked().
-        Selected chips get the accent-tinted icon at 22px, a gradient
-        background from sidebar_btn_sel toward sidebar_bg, and a 1px
-        accent border. Default chips get the muted icon at 20px, transparent
-        background, and a hover lift to sidebar_btn_sel.
+        Selection is rendered entirely by the PillIndicator (a hollow accent
+        border that slides between chips on nav change). The chips themselves
+        are transparent buttons — they only carry hover-tint feedback and an
+        icon/text color tweak for the selected one.
         """
         c = self._theme_colors()
-        # Derive a semi-transparent accent for the selected-chip border so
-        # the ring reads as a soft halo rather than a hard outline. QSS has
-        # no box-shadow; this rgba border is the closest analogue.
-        accent_hex = c['header_accent'].lstrip('#')
-        if len(accent_hex) == 6:
-            ar = int(accent_hex[0:2], 16)
-            ag = int(accent_hex[2:4], 16)
-            ab = int(accent_hex[4:6], 16)
-            accent_soft = f"rgba({ar}, {ag}, {ab}, 0.55)"
-        else:
-            accent_soft = c['header_accent']
         icon_factories = [
             make_nav_gamepad, make_nav_power,
             make_nav_keyboard, make_nav_gear,
         ]
+        # Update the pill border color from the current theme accent.
+        if hasattr(self, "chip_pill"):
+            self.chip_pill.set_colors(c['header_accent'])
         for i, chip in enumerate(self.chip_buttons):
             is_sel = chip.isChecked()
             icon_size = 22 if is_sel else 20
@@ -774,40 +765,23 @@ class MultiToonTool(QMainWindow):
             color = QColor(c['header_accent'] if is_sel else c['sidebar_text'])
             if i < len(icon_factories):
                 chip.setIcon(icon_factories[i](icon_size + 4, color))
-            if is_sel:
-                chip.setStyleSheet(f"""
-                    QToolButton#{chip.objectName()} {{
-                        background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                            stop:0 {c['sidebar_btn_sel']}, stop:1 {c['sidebar_bg']});
-                        color: {c['sidebar_text_sel']};
-                        border: 1px solid {accent_soft};
-                        border-radius: 8px;
-                        font-size: 10pt;
-                        padding: 4px 10px;
-                    }}
-                    QToolButton#{chip.objectName()}:focus {{
-                        border: 2px solid {c['header_accent']};
-                        outline: none;
-                    }}
-                """)
-            else:
-                chip.setStyleSheet(f"""
-                    QToolButton#{chip.objectName()} {{
-                        background: transparent;
-                        color: {c['sidebar_text']};
-                        border: 1px solid transparent;
-                        border-radius: 8px;
-                        font-size: 10pt;
-                        padding: 4px 10px;
-                    }}
-                    QToolButton#{chip.objectName()}:hover {{
-                        background: {c['sidebar_btn_sel']};
-                    }}
-                    QToolButton#{chip.objectName()}:focus {{
-                        border: 2px solid {c['header_accent']};
-                        outline: none;
-                    }}
-                """)
+            text_color = c['sidebar_text_sel'] if is_sel else c['sidebar_text']
+            chip.setStyleSheet(f"""
+                QToolButton#{chip.objectName()} {{
+                    background: transparent;
+                    color: {text_color};
+                    border: 1px solid transparent;
+                    border-radius: 8px;
+                    font-size: 10pt;
+                    padding: 4px 10px;
+                }}
+                QToolButton#{chip.objectName()}:hover {{
+                    background: {c['sidebar_btn_sel']};
+                }}
+                QToolButton#{chip.objectName()}:focus {{
+                    outline: none;
+                }}
+            """)
 
     # ── Theme ──────────────────────────────────────────────────────────────
 
