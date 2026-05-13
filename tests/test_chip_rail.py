@@ -142,7 +142,6 @@ def test_clicking_chip_calls_nav_select_with_correct_index(chip_rail_with_nav):
 
 
 from PySide6.QtWidgets import QFrame as _QFrame
-from PySide6.QtGui import QAction
 
 
 def _build_rail_with_debug(qapp, *, show_debug_tab: bool):
@@ -198,11 +197,13 @@ def test_overflow_button_visible_when_debug_on(qapp):
 
 def test_view_logs_action_calls_nav_select_with_index_4(qapp):
     instance, _rail = _build_rail_with_debug(qapp, show_debug_tab=True)
-    menu = instance.overflow_btn.menu()
-    assert menu is not None
-    logs_actions = [a for a in menu.actions() if a.text() == "View Logs"]
-    assert len(logs_actions) == 1
-    logs_actions[0].trigger()
+    # OverflowPopup replaced QMenu — look for the "View Logs" row button.
+    from utils.widgets.overflow_popup import OverflowPopup
+    assert isinstance(instance.overflow_popup, OverflowPopup)
+    from PySide6.QtWidgets import QPushButton
+    logs_rows = [r for r in instance.overflow_popup.rows if r.text() == "View Logs"]
+    assert len(logs_rows) == 1
+    logs_rows[0].click()
     assert instance._nav_select_calls == [4]
 
 
@@ -445,3 +446,39 @@ def test_chip_hover_calls_morph_icon_size(qapp, monkeypatch):
     instance._chip_hover_filter.eventFilter(chip, leave)
 
     assert calls == [(id(chip), 21), (id(chip), 20)]
+
+
+def test_overflow_button_uses_overflow_popup_not_qmenu(qapp):
+    """The chip rail's overflow button must NOT host a QMenu — it must
+    delegate to OverflowPopup via the rail's click handler."""
+    from PySide6.QtWidgets import QMenu
+    from main import MultiToonTool
+
+    instance = MultiToonTool.__new__(MultiToonTool)
+    instance.settings_manager = _StubSettings(show_debug_tab=True)
+    rail = instance._build_chip_rail()
+
+    assert instance.overflow_btn.menu() is None  # no QMenu attached
+    # The instance must own an OverflowPopup
+    from utils.widgets.overflow_popup import OverflowPopup
+    assert hasattr(instance, "overflow_popup")
+    assert isinstance(instance.overflow_popup, OverflowPopup)
+
+
+def test_overflow_button_click_invokes_pop_menu(qapp, monkeypatch):
+    import utils.motion as motion
+    calls = []
+    monkeypatch.setattr(motion, "pop_menu",
+                        lambda popup, anchor, show: calls.append(("show" if show else "hide", popup, anchor)))
+
+    from main import MultiToonTool
+    instance = MultiToonTool.__new__(MultiToonTool)
+    instance.settings_manager = _StubSettings(show_debug_tab=True)
+    rail = instance._build_chip_rail()
+
+    instance.overflow_btn.click()
+
+    assert len(calls) == 1
+    assert calls[0][0] == "show"
+    assert calls[0][2] is instance.overflow_btn
+    _ = rail  # prevent GC of Qt widget tree before assertions

@@ -50,11 +50,11 @@ import subprocess
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget,
     QVBoxLayout, QHBoxLayout, QStackedWidget,
-    QLabel, QPushButton, QToolButton, QProxyStyle, QStyle, QFrame, QMenu,
+    QLabel, QPushButton, QToolButton, QProxyStyle, QStyle, QFrame,
     QSpacerItem, QSizePolicy,
 )
 from PySide6.QtCore import QObject, QRect, Qt, QSize, QEvent, Signal, Slot, QPropertyAnimation, QEasingCurve, QTimer
-from PySide6.QtGui import QColor, QGuiApplication, QIcon, QAction
+from PySide6.QtGui import QColor, QGuiApplication, QIcon
 
 # === Internal Imports ===
 from tabs.multitoon_tab import MultitoonTab
@@ -589,21 +589,27 @@ class MultiToonTool(QMainWindow):
 
         layout.addStretch()
 
-        # Overflow menu — visible only when debug logging is enabled. Contains
-        # "View Logs" → nav_select(4). When debug is off, the button hides
-        # entirely.
+        # Overflow menu — visible only when debug logging is enabled.
+        # Uses a custom OverflowPopup (replaces Qt's QMenu so we can
+        # animate the open/close).
+        from utils.widgets.overflow_popup import OverflowPopup
         self.overflow_btn = QToolButton(rail)
         self.overflow_btn.setObjectName("rail_overflow")
         self.overflow_btn.setText("⋯")
         self.overflow_btn.setFixedSize(34, 34)
-        self.overflow_btn.setPopupMode(QToolButton.InstantPopup)
         self.overflow_btn.setToolTip("More")
-        overflow_menu = QMenu(self.overflow_btn)
-        view_logs = QAction("View Logs", overflow_menu)
-        view_logs.triggered.connect(lambda: self.nav_select(4))
-        overflow_menu.addAction(view_logs)
-        self.overflow_btn.setMenu(overflow_menu)
         self.overflow_btn.setVisible(self.settings_manager.get("show_debug_tab", False))
+
+        self.overflow_popup = OverflowPopup()
+        self.overflow_popup.add_action("View Logs", lambda: self.nav_select(4))
+
+        def _toggle_popup():
+            from utils.motion import pop_menu
+            if self.overflow_popup.isVisible():
+                pop_menu(self.overflow_popup, self.overflow_btn, show=False)
+            else:
+                pop_menu(self.overflow_popup, self.overflow_btn, show=True)
+        self.overflow_btn.clicked.connect(_toggle_popup)
         layout.addWidget(self.overflow_btn)
 
         # Phantom width matches the now-built utility cluster.
