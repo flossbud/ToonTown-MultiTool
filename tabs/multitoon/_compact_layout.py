@@ -30,7 +30,7 @@ class _CompactLayout(QWidget):
     # ── Structure ──────────────────────────────────────────────────────────
     def _build_structure(self):
         outer_layout = QVBoxLayout(self)
-        outer_layout.setContentsMargins(16, 12, 16, 12)
+        outer_layout.setContentsMargins(12, 6, 12, 6)
         outer_layout.setSpacing(0)
 
         outer_card = QFrame()
@@ -42,8 +42,8 @@ class _CompactLayout(QWidget):
         outer_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self._tab.outer_card = outer_card
         card_layout = QVBoxLayout(outer_card)
-        card_layout.setContentsMargins(16, 16, 16, 16)
-        card_layout.setSpacing(10)
+        card_layout.setContentsMargins(16, 10, 16, 10)
+        card_layout.setSpacing(8)
 
         # Service controls slot — empty until populate()
         self._service_layout = QVBoxLayout()
