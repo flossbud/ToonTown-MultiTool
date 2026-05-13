@@ -182,3 +182,19 @@ def test_collapsible_default_true_when_key_missing(qapp):
     sm = _FakeSettingsManager({})
     g = CollapsibleSettingsGroup("Advanced", sm, "advanced_collapsed")
     assert g.is_collapsed() is True
+
+
+def test_general_group_has_no_advanced_row(qapp, tmp_path, monkeypatch):
+    """The 'Advanced Settings' toggle is gone — Advanced is now collapsible."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    from utils.settings_manager import SettingsManager
+    from tabs.settings_tab import SettingsTab
+
+    sm = SettingsManager()
+    tab = SettingsTab(settings_manager=sm)
+
+    assert not hasattr(tab, "advanced_row")
+    # Existing rows still attached
+    assert hasattr(tab, "theme_row")
+    assert hasattr(tab, "max_accounts_row")
+    assert hasattr(tab, "reduce_motion_row")

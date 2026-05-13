@@ -571,18 +571,7 @@ class SettingsTab(QWidget):
         self.max_accounts_row.index_changed.connect(self._on_max_accounts_changed)
         group.add_row(self.max_accounts_row)
 
-        # Show advanced row
-        self.advanced_row = ToggleRow(
-            "Advanced Settings",
-            self.settings_manager.get("show_advanced", False),
-            sublabel="Show extra configuration options"
-        )
-        self.advanced_row.toggled.connect(self.toggle_advanced_visibility)
-        group.add_row(self.advanced_row)
-
-        # Reduce-motion row. Initial visible state reflects motion.is_reduced()
-        # so users see the current effective behavior. When OS says reduced
-        # and user hasn't explicitly set it, append (auto-detected).
+        # Reduce-motion row (tri-state, behavior unchanged from current code)
         import utils.motion as motion
         motion.set_settings_manager(self.settings_manager)
         explicit = self.settings_manager.get("reduce_motion_set_explicitly", False)
