@@ -102,3 +102,22 @@ def test_button_row_non_destructive_uses_theme_tokens(qapp):
     assert c["text_on_accent"] in style
     # The destructive red MUST NOT be present.
     assert "#ff3b30" not in style
+
+
+def test_game_path_row_accepts_label(qapp, tmp_path, monkeypatch):
+    """GamePathRow's label is configurable so the merged Games block can
+    show 'Toontown Rewritten' / 'Corporate Clash' instead of two rows
+    that both say 'Game Path'."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    from utils.settings_manager import SettingsManager
+    from tabs.settings_tab import GamePathRow
+
+    sm = SettingsManager()
+    row = GamePathRow(
+        settings_manager=sm,
+        settings_key="ttr_engine_dir",
+        exe_name_fn=lambda: "TTREngine",
+        find_path_fn=lambda: None,
+        label="Toontown Rewritten",
+    )
+    assert row.label_widget.text() == "Toontown Rewritten"

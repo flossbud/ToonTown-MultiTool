@@ -214,8 +214,9 @@ class GamePathRow(SettingsRow):
     """Reusable game path row — parameterized for TTR, CC, or any future game."""
 
     def __init__(self, settings_manager, settings_key: str,
-                 exe_name_fn, find_path_fn, parent=None):
-        super().__init__("Game Path", "Not configured", parent)
+                 exe_name_fn, find_path_fn, label: str = "Game Path",
+                 parent=None):
+        super().__init__(label, "Not configured", parent)
         self.settings_manager = settings_manager
         self._settings_key = settings_key
         self._approval_key = f"{settings_key}_approved_custom_dir"
