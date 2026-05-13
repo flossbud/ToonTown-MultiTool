@@ -19,6 +19,8 @@ class SettingsManager:
             "enable_companion_app":  True,
             "input_backend":         "xlib",
             "active_profile":        -1,
+            "reduce_motion":                 False,
+            "reduce_motion_set_explicitly":  False,
         }
         self._callbacks = []
         self._load()
