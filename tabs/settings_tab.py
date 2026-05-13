@@ -521,15 +521,23 @@ class SettingsTab(QWidget):
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         outer.addWidget(scroll)
 
-        from utils.layout import clamp_centered
-
         scroll_inner = QWidget()
         scroll_inner_layout = QHBoxLayout(scroll_inner)
         scroll_inner_layout.setContentsMargins(0, 0, 0, 0)
 
         content = QWidget()
-        content.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        clamp_centered(scroll_inner_layout, content, 880)
+        content.setMaximumWidth(880)
+        # Inline the centering pattern: stretches absorb extra space when the
+        # window is wider than 880; the high stretch factor on the content
+        # widget makes it claim available width up to its maxWidth. Doing
+        # this manually instead of via clamp_centered() because that helper
+        # uses Qt.AlignHCenter, which makes Qt honor the widget's sizeHint
+        # and ignore size policy — fine for the Launch tab whose content
+        # has a meaningful sizeHint, but it leaves Settings rows collapsed
+        # to ~400px in a 720px window.
+        scroll_inner_layout.addStretch(1)
+        scroll_inner_layout.addWidget(content, 1000)
+        scroll_inner_layout.addStretch(1)
         scroll.setWidget(scroll_inner)
 
         self._main_layout = QVBoxLayout(content)
