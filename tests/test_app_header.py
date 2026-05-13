@@ -83,3 +83,26 @@ def test_clicking_brand_link_navigates_to_credits(qapp):
     QApplication.sendEvent(link, press)
     QApplication.sendEvent(link, release)
     assert instance._nav_select_calls == [5]
+
+
+def test_header_version_renders_as_pill(qapp):
+    """Version badge in the header should render as a pilled span with
+    background + rounded corners via the production _set_header_title path."""
+    from utils.theme_manager import get_theme_colors
+    instance = _instance_with_nav_recorder(qapp)
+    instance.header = instance._build_header()  # keep ref so children aren't GC'd
+
+    # Stub _theme_colors so the call is deterministic and needs no settings_manager.
+    instance._theme_colors = lambda: get_theme_colors(is_dark=True)
+    c = instance._theme_colors()
+
+    # Call the production title-build helper directly.
+    instance._set_header_title(c['header_text'], c['header_accent'])
+
+    text = instance.title_label.text()
+    assert "border-radius:999px" in text or "border-radius: 999px" in text, (
+        f"Expected pill border-radius in title HTML; got {text!r}"
+    )
+    assert "background:rgba(" in text or "background: rgba(" in text, (
+        f"Expected rgba background fill on version pill; got {text!r}"
+    )

@@ -658,6 +658,26 @@ class MultiToonTool(QMainWindow):
     def _theme_colors(self):
         return get_theme_colors(resolve_theme(self.settings_manager) == "dark")
 
+    def _set_header_title(self, tc: str, vc: str) -> None:
+        """Render the header title label with the app name and a pill-shaped
+        version badge.  Extracted so tests can exercise the title-build path
+        without wiring up the full theme machinery."""
+        accent_hex = vc.lstrip('#')
+        if len(accent_hex) == 6:
+            ar = int(accent_hex[0:2], 16)
+            ag = int(accent_hex[2:4], 16)
+            ab = int(accent_hex[4:6], 16)
+            pill_bg = f"rgba({ar}, {ag}, {ab}, 0.15)"
+        else:
+            pill_bg = "transparent"
+        self.title_label.setText(
+            f'<span style="color:{tc}">{app_name()}</span> '
+            f'<span style="color:{vc}; background:{pill_bg}; '
+            f'padding:1px 6px; border-radius:999px; '
+            f'font-size:{font_role("label")}px; font-weight:bold;">'
+            f'v{APP_VERSION}</span>'
+        )
+
     def _apply_full_theme(self):
         theme = resolve_theme(self.settings_manager)
         c = self._theme_colors()
@@ -679,11 +699,7 @@ class MultiToonTool(QMainWindow):
         self.title_label.setStyleSheet(
             f"font-size: {font_role('title')}px; font-weight: bold; background: transparent;"
         )
-        self.title_label.setText(
-            f'<span style="color:{tc}">{app_name()}</span>'
-            f' <span style="color:{vc}; font-size:{font_role("label")}px; font-weight:bold;">'
-            f'v{APP_VERSION}</span>'
-        )
+        self._set_header_title(tc, vc)
         # Accent stripe
         accent = self.header.findChild(QFrame, "header_accent")
         if accent:
