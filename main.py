@@ -1,5 +1,14 @@
 import os
 import sys
+
+# Must run before any keyring / PySide6 import. See utils/keyring_macos_stub.py
+# for the full incident write-up — TL;DR: skipping this gives a ~60% SIGABRT
+# rate on Linux because shiboken6's signature mapping KeyErrors on a class
+# whose module path was removed from sys.modules during a partial import.
+from utils.keyring_macos_stub import install_stub as _install_keyring_macos_stub
+_install_keyring_macos_stub()
+del _install_keyring_macos_stub
+
 # Environment must be configured before any Qt module is imported,
 # because PySide6 reads QT_QPA_PLATFORM at first import time.
 if sys.platform != "win32":
