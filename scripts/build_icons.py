@@ -35,6 +35,13 @@ PNG_OUTPUTS = [
     REPO_ROOT / "AppDir" / "io.github.flossbud.ToonTownMultiTool.png",
     REPO_ROOT / "AppDir" / ".DirIcon",
 ]
+# Intermediate sizes for the Flatpak hicolor theme. Plasma 6 / kickoff /
+# task manager pick from these instead of downscaling the 512 every time,
+# which is what broke the icon on KDE Plasma Wayland Flatpak installs.
+FLATPAK_SIZES = (48, 64, 128, 256)
+FLATPAK_SIZE_OUTPUTS = [
+    (size, REPO_ROOT / "flatpak" / f"icon-{size}.png") for size in FLATPAK_SIZES
+]
 BETA_OUTPUT = REPO_ROOT / "assets" / "ToonTownMultiTool-beta.png"
 ICO_OUTPUT = REPO_ROOT / "assets" / "ToonTownMultiTool.ico"
 
@@ -67,6 +74,22 @@ def _write_stable_pngs(source: QPixmap) -> None:
     for dest in PNG_OUTPUTS:
         dest.parent.mkdir(parents=True, exist_ok=True)
         ok = source.save(str(dest), "PNG")
+        if not ok:
+            print(f"error: failed to write {dest}", file=sys.stderr)
+            sys.exit(1)
+        print(f"  wrote {dest.relative_to(REPO_ROOT)}")
+
+
+def _write_flatpak_size_pngs(source: QPixmap) -> None:
+    for size, dest in FLATPAK_SIZE_OUTPUTS:
+        scaled = source.scaled(
+            size,
+            size,
+            Qt.KeepAspectRatio,
+            Qt.SmoothTransformation,
+        )
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        ok = scaled.save(str(dest), "PNG")
         if not ok:
             print(f"error: failed to write {dest}", file=sys.stderr)
             sys.exit(1)
@@ -142,6 +165,7 @@ def main() -> int:
     print(f"building icons from {SOURCE.relative_to(REPO_ROOT)}")
     source = _load_source()
     _write_stable_pngs(source)
+    _write_flatpak_size_pngs(source)
     _write_beta_png(source)
     _write_ico()
     print("done.")
