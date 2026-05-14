@@ -1,7 +1,10 @@
 """Modern auto-hide scrollbar — thin pill that fades in on activity."""
 from __future__ import annotations
 
+from PySide6.QtCore import QPropertyAnimation
 from PySide6.QtWidgets import QGraphicsOpacityEffect, QScrollBar
+
+import utils.motion as motion
 
 
 _QSS_TEMPLATE = """
@@ -43,11 +46,32 @@ _LIGHT_HOVER  = "rgba(15, 23, 42, 0.55)"
 class AutoHideScrollBar(QScrollBar):
     """A QScrollBar that fades in on activity and fades out at idle."""
 
+    # Class constants — tests monkey-patch these for instant animations.
+    _FADE_IN_MS = 120
+    _FADE_OUT_MS = 240
+    _IDLE_TIMEOUT_MS = 800
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._opacity_effect = QGraphicsOpacityEffect(self)
         self._opacity_effect.setOpacity(0.0)
         self.setGraphicsEffect(self._opacity_effect)
+
+        self._anim = QPropertyAnimation(self._opacity_effect, b"opacity", self)
+
+    def wake(self) -> None:
+        """Make the bar visible. Animated unless reduce-motion is on."""
+        if motion.is_reduced():
+            self._anim.stop()
+            self._opacity_effect.setOpacity(1.0)
+            return
+        if self._opacity_effect.opacity() >= 1.0 and self._anim.state() != QPropertyAnimation.Running:
+            return
+        self._anim.stop()
+        self._anim.setDuration(self._FADE_IN_MS)
+        self._anim.setStartValue(self._opacity_effect.opacity())
+        self._anim.setEndValue(1.0)
+        self._anim.start()
 
     def set_theme(self, is_dark: bool) -> None:
         if is_dark:

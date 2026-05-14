@@ -79,3 +79,37 @@ def test_bar_starts_with_opacity_effect_at_zero(qapp):
     assert isinstance(effect, QGraphicsOpacityEffect)
     assert effect.opacity() == 0.0
     bar.deleteLater()
+
+
+def test_wake_animates_opacity_to_one(qapp, qtbot, monkeypatch):
+    """When wake() is called, opacity should land at 1.0 within the fade-in
+    duration. Use class-constant override to make the animation instant."""
+    from utils.widgets.auto_hide_scrollbar import AutoHideScrollBar
+    import utils.motion as motion
+
+    monkeypatch.setattr(AutoHideScrollBar, "_FADE_IN_MS", 1)
+    monkeypatch.setattr(motion, "is_reduced", lambda: False)
+
+    bar = AutoHideScrollBar()
+    bar.setRange(0, 100)  # ensure scrollable
+    bar.wake()
+
+    qtbot.waitUntil(lambda: bar._opacity_effect.opacity() == 1.0, timeout=200)
+    bar.deleteLater()
+
+
+def test_wake_is_idempotent_at_full_opacity(qapp, monkeypatch):
+    """A second wake() while already at 1.0 should not crash and should not
+    restart the fade-in animation needlessly."""
+    from utils.widgets.auto_hide_scrollbar import AutoHideScrollBar
+    import utils.motion as motion
+
+    monkeypatch.setattr(AutoHideScrollBar, "_FADE_IN_MS", 1)
+    monkeypatch.setattr(motion, "is_reduced", lambda: False)
+
+    bar = AutoHideScrollBar()
+    bar.setRange(0, 100)
+    bar._opacity_effect.setOpacity(1.0)  # pretend already faded in
+    bar.wake()  # must not raise
+    assert bar._opacity_effect.opacity() == 1.0
+    bar.deleteLater()
