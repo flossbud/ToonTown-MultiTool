@@ -8,6 +8,8 @@ on:
 jobs:
   build:
     uses: ./.github/workflows/build.yml
+    with:
+      version_label: ${{ github.ref_name }}
     # include_windows defaults to true — release ships the Windows EXE
 
   release:

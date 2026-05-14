@@ -7,6 +7,10 @@ on:
         description: Whether to run the Windows EXE build
         type: boolean
         default: true
+      version_label:
+        description: Label embedded in artifact filenames (e.g. a release tag). Must not contain '/'.
+        type: string
+        default: dev
 
 jobs:
   build-windows:
@@ -28,7 +32,7 @@ jobs:
       - name: Package onedir as zip
         shell: pwsh
         run: |
-          $tag = "${{ github.ref_name }}"
+          $tag = "${{ inputs.version_label }}"
           Compress-Archive -Path "dist\ToonTownMultiTool\*" -DestinationPath "ToonTownMultiTool-$tag-Windows-x86_64.zip"
 
       - uses: actions/upload-artifact@v4
@@ -83,7 +87,7 @@ jobs:
       - name: Build AppImage
         run: |
           ARCH=x86_64 ./appimagetool-x86_64.AppImage --appimage-extract-and-run AppDir \
-            TTMultiTool-${{ github.ref_name }}-Linux-x86_64.AppImage
+            TTMultiTool-${{ inputs.version_label }}-Linux-x86_64.AppImage
 
       - uses: actions/upload-artifact@v4
         with:
@@ -101,7 +105,7 @@ jobs:
       - name: Build Flatpak bundle
         uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
-          bundle: TTMultiTool-${{ github.ref_name }}-Linux-x86_64.flatpak
+          bundle: TTMultiTool-${{ inputs.version_label }}-Linux-x86_64.flatpak
           manifest-path: flatpak/io.github.flossbud.ToonTownMultiTool.yml
           cache-key: flatpak-builder-${{ hashFiles('flatpak/*.yml') }}
 
