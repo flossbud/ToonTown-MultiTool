@@ -32,6 +32,11 @@ class TestGetDirectionInSet:
 
     def test_returns_correct_direction_set1(self):
         mgr = _make_manager()
+        mgr.add_set("Arrows", {
+            "up": "Up", "left": "Left", "down": "Down", "right": "Right",
+            "jump": "Control_L", "book": "Alt_R", "gags": "g",
+            "tasks": "t", "map": "Shift_R",
+        })
         assert mgr.get_direction_in_set(1, "Up") == "up"
         assert mgr.get_direction_in_set(1, "Left") == "left"
         assert mgr.get_direction_in_set(1, "Down") == "down"
@@ -54,6 +59,11 @@ class TestGetDirectionInSet:
 class TestGetKeyForDirection:
     def test_returns_correct_key(self):
         mgr = _make_manager()
+        mgr.add_set("Arrows", {
+            "up": "Up", "left": "Left", "down": "Down", "right": "Right",
+            "jump": "Control_L", "book": "Alt_R", "gags": "g",
+            "tasks": "t", "map": "Shift_R",
+        })
         assert mgr.get_key_for_direction(0, "up") == "w"
         assert mgr.get_key_for_direction(1, "up") == "Up"
         assert mgr.get_key_for_direction(0, "jump") == "space"

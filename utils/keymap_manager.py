@@ -31,18 +31,6 @@ DEFAULT_SETS = [
         "tasks": "t",
         "map": "Shift_L",
     },
-    {
-        "name": "Arrows",
-        "up": "Up",
-        "left": "Left",
-        "down": "Down",
-        "right": "Right",
-        "jump": "Control_L",
-        "book": "Alt_R",
-        "gags": "g",
-        "tasks": "t",
-        "map": "Shift_R",
-    },
 ]
 
 
