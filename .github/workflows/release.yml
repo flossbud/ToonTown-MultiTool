@@ -4,100 +4,14 @@ on:
   push:
     tags:
       - 'v*'
-  workflow_call:
 
 jobs:
-  build-windows:
-    runs-on: windows-latest
-    if: github.event_name != 'workflow_call'
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: Install dependencies
-        run: pip install -r requirements.txt pyinstaller
-
-      - name: Build EXE
-        run: pyinstaller --noconfirm ToonTownMultiTool.spec
-
-      - name: Package onedir as zip
-        shell: pwsh
-        run: |
-          $tag = "${{ github.ref_name }}"
-          Compress-Archive -Path "dist\ToonTownMultiTool\*" -DestinationPath "ToonTownMultiTool-$tag-Windows-x86_64.zip"
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: windows-zip
-          path: ToonTownMultiTool-*.zip
-
-  build-linux:
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libfuse2 xdotool libxcb-xinerama0 libxcb-cursor0 libxcb-record0 libxcb-xtest0 libxcb-icccm4-dev libxcb-xkb-dev libxcb-shape0-dev libxcb-keysyms1-dev libxkbcommon-x11-dev
-
-      - name: Install Python dependencies
-        run: pip install -r requirements.txt pyinstaller
-
-      - name: Build binary
-        run: pyinstaller --noconfirm ToonTownMultiTool.spec
-
-      - name: Prepare AppDir
-        run: |
-          mkdir -p AppDir/usr/bin
-          cp dist/ToonTownMultiTool AppDir/usr/bin/ToonTownMultiTool
-          chmod +x AppDir/usr/bin/ToonTownMultiTool
-
-      - name: Download appimagetool
-        run: |
-          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
-          chmod +x appimagetool-x86_64.AppImage
-
-      - name: Build AppImage
-        run: |
-          ARCH=x86_64 ./appimagetool-x86_64.AppImage AppDir \
-            TTMultiTool-${{ github.ref_name }}-Linux-x86_64.AppImage
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: linux-appimage
-          path: TTMultiTool-*.AppImage
-
-  build-flatpak:
-    runs-on: ubuntu-22.04
-    container:
-      image: bilelmoussaoui/flatpak-github-actions:kde-6.7
-      options: --privileged
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Build Flatpak bundle
-        uses: flatpak/flatpak-github-actions/flatpak-builder@v6
-        with:
-          bundle: TTMultiTool-${{ github.ref_name }}-Linux-x86_64.flatpak
-          manifest-path: flatpak/io.github.flossbud.ToonTownMultiTool.yml
-          cache-key: flatpak-builder-${{ hashFiles('flatpak/*.yml') }}
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: linux-flatpak
-          path: TTMultiTool-*.flatpak
+  build:
+    uses: ./.github/workflows/build.yml
+    # include_windows defaults to true — release ships the Windows EXE
 
   release:
-    needs: [build-windows, build-linux, build-flatpak]
-    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
     runs-on: ubuntu-latest
     permissions:
       contents: write

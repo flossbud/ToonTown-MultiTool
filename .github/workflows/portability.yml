@@ -6,10 +6,12 @@ on:
     branches: [dev, main]
 
 jobs:
-  # Reuse the Linux AppImage + Flatpak builds from release.yml so the matrix
+  # Reuse the Linux AppImage + Flatpak builds from build.yml so the matrix
   # tests the exact artifacts users download.
   build:
-    uses: ./.github/workflows/release.yml
+    uses: ./.github/workflows/build.yml
+    with:
+      include_windows: false
 
   source-matrix:
     needs: build
