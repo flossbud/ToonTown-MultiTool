@@ -214,3 +214,22 @@ def test_value_changed_signal_wakes_the_bar(qapp, qtbot, monkeypatch):
 
     qtbot.waitUntil(lambda: bar._opacity_effect.opacity() == 1.0, timeout=200)
     bar.deleteLater()
+
+
+def test_enter_event_wakes_the_bar(qapp, qtbot, monkeypatch):
+    from PySide6.QtCore import QEvent
+    from utils.widgets.auto_hide_scrollbar import AutoHideScrollBar
+    import utils.motion as motion
+
+    monkeypatch.setattr(AutoHideScrollBar, "_FADE_IN_MS", 1)
+    monkeypatch.setattr(motion, "is_reduced", lambda: False)
+
+    bar = AutoHideScrollBar()
+    bar.setRange(0, 100)
+    assert bar._opacity_effect.opacity() == 0.0
+
+    # Synthesize an Enter event — Qt's enterEvent is the canonical hover hook.
+    bar.event(QEvent(QEvent.Enter))
+
+    qtbot.waitUntil(lambda: bar._opacity_effect.opacity() == 1.0, timeout=200)
+    bar.deleteLater()

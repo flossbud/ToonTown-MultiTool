@@ -93,6 +93,10 @@ class AutoHideScrollBar(QScrollBar):
     def _on_value_changed(self, _value: int) -> None:
         self.wake()
 
+    def enterEvent(self, event):
+        self.wake()
+        super().enterEvent(event)
+
     def set_theme(self, is_dark: bool) -> None:
         if is_dark:
             qss = _QSS_TEMPLATE.format(
