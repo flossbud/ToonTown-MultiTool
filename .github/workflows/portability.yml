@@ -92,17 +92,15 @@ jobs:
             libxcb-shape0 libxcb-shm0 libxcb-sync1 libxcb-util1 libxcb-xfixes0 \
             libxcb-xinerama0 libxcb-xkb1 libxkbcommon0 libxkbcommon-x11-0
 
-      - name: Run self-check via AppImage (extract-and-run, no libfuse2)
+      # AppImages self-mount via FUSE, which needs /dev/fuse — unavailable in
+      # a non-privileged container. --appimage-extract-and-run is the canonical
+      # CI/FUSE-less way to run an AppImage and exercises every layer of our
+      # build (squashfs → PyInstaller onefile → app). The libfuse2 requirement
+      # for end-user double-click launch is a docs concern, not a CI test.
+      - name: Run self-check via AppImage (extract-and-run)
         run: |
           chmod +x TTMultiTool-*.AppImage
           xvfb-run -a ./TTMultiTool-*.AppImage --appimage-extract-and-run --self-check
-
-      - name: Run self-check via AppImage (with libfuse2 if available)
-        run: |
-          export DEBIAN_FRONTEND=noninteractive
-          apt-get update
-          apt-get install -y libfuse2 || apt-get install -y libfuse2t64 || true
-          xvfb-run -a ./TTMultiTool-*.AppImage --self-check
 
   flatpak-check:
     needs: build
