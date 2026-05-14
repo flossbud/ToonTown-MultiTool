@@ -14,18 +14,22 @@ def qapp():
 
 
 def test_section_block_has_drop_shadow_after_apply_theme(qapp):
-    """_SectionBlock attaches a QGraphicsDropShadowEffect on apply_theme."""
+    """SettingsGroup attaches a QGraphicsDropShadowEffect to the block wrapper.
+    The shadow lives on a transparent outer wrapper (not on _block itself) to
+    avoid a Qt quirk where graphics effects on widgets with custom paintEvent
+    AND child widgets can suppress the widget's own painting."""
     from tabs.settings_tab import SettingsGroup
     from utils.theme_manager import get_theme_colors
 
     g = SettingsGroup("General")
     g.apply_theme(get_theme_colors(is_dark=True), True)
 
-    effect = g._block.graphicsEffect()
+    effect = g._block_wrapper.graphicsEffect()
     assert isinstance(effect, QGraphicsDropShadowEffect)
-    # Soft, low offset — values match apply_card_shadow's defaults.
     assert effect.blurRadius() == 18
     assert effect.offset().y() == 4
+    # _block itself MUST NOT have the effect — that would re-introduce the bug.
+    assert g._block.graphicsEffect() is None
 
 
 def test_section_title_has_letter_spacing(qapp):

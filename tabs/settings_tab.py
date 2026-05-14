@@ -357,11 +357,26 @@ class SettingsGroup(QWidget):
             self.title_label.setContentsMargins(2, 0, 0, 8)
             layout.addWidget(self.title_label)
 
-        self._block = _SectionBlock(self)
+        # Shadow wrapper — `_block_wrapper` is a transparent QWidget that
+        # carries the QGraphicsDropShadowEffect. `_block` (the visible card
+        # with its rounded fill + border) lives INSIDE it. Mirrors the
+        # Launch tab pattern at launch_tab.py:544-551: applying a shadow
+        # effect directly to a widget that has both a custom paintEvent and
+        # child widgets can suppress the widget's own painting; an outer
+        # transparent wrapper avoids that.
+        self._block_wrapper = QWidget(self)
+        self._block_wrapper.setStyleSheet("background: transparent;")
+        wrapper_layout = QVBoxLayout(self._block_wrapper)
+        wrapper_layout.setContentsMargins(0, 0, 0, 0)
+        wrapper_layout.setSpacing(0)
+
+        self._block = _SectionBlock(self._block_wrapper)
         self._rows_layout = QVBoxLayout(self._block)
         self._rows_layout.setContentsMargins(0, 0, 0, 0)
         self._rows_layout.setSpacing(0)
-        layout.addWidget(self._block)
+        wrapper_layout.addWidget(self._block)
+
+        layout.addWidget(self._block_wrapper)
 
     def add_row(self, row):
         self._rows.append(row)
@@ -379,6 +394,7 @@ class SettingsGroup(QWidget):
                 f"letter-spacing: 0.15px; "
                 f"color: {c['text_primary']}; background: transparent;"
             )
+        apply_card_shadow(self._block_wrapper, is_dark, blur=18, offset_y=4)
         self._block.apply_theme(c, is_dark)
         for row in self._rows:
             row.apply_theme(c, is_dark)
@@ -395,7 +411,6 @@ class _SectionBlock(QFrame):
 
     def apply_theme(self, c, is_dark):
         self._c = c
-        apply_card_shadow(self, is_dark, blur=18, offset_y=4)
         self.update()
 
     def paintEvent(self, e):
