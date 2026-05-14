@@ -1,6 +1,13 @@
 import os
 import sys
 
+if sys.version_info < (3, 9):
+    sys.stderr.write(
+        "ToonTown MultiTool requires Python 3.9 or newer. "
+        f"Detected {sys.version.split()[0]}.\n"
+    )
+    sys.exit(1)
+
 # Must run before any keyring / PySide6 import. See utils/keyring_macos_stub.py
 # for the full incident write-up — TL;DR: skipping this gives a ~60% SIGABRT
 # rate on Linux because shiboken6's signature mapping KeyErrors on a class
@@ -1022,7 +1029,56 @@ def _resolve_app_icon() -> QIcon:
     return QIcon(_resolve_icon_path())
 
 
+def _import_all_modules() -> None:
+    """Import every module under tabs/, services/, utils/ so a syntax or
+    import-time error on the running interpreter surfaces immediately."""
+    import importlib
+    import pkgutil
+
+    # Modules whose top-level body depends on a platform-only library
+    # (e.g. pywin32) and therefore cannot import on every interpreter.
+    # The normal launch path only touches these behind a sys.platform gate.
+    platform_only = set()
+    if sys.platform != "win32":
+        platform_only.add("utils.win32_backend")
+
+    for package_name in ("tabs", "services", "utils"):
+        package = importlib.import_module(package_name)
+        for module_info in pkgutil.walk_packages(
+            package.__path__, prefix=package_name + "."
+        ):
+            if module_info.name in platform_only:
+                continue
+            importlib.import_module(module_info.name)
+
+
+def _run_self_check() -> int:
+    """Headless startup oracle. Imports everything, builds the main window,
+    pumps the event loop briefly, and reports success/failure via exit code.
+    CI runs this under xvfb with the real xcb platform."""
+    try:
+        _import_all_modules()
+        QApplication.setApplicationName(app_name())
+        QApplication.setOrganizationName("flossbud")
+        app = QApplication(sys.argv)
+        settings = SettingsManager()
+        apply_theme(app, resolve_theme(settings))
+        window = MultiToonTool()
+        app.processEvents()
+        window.close()
+        sys.stdout.write("self-check OK\n")
+        return 0
+    except Exception:
+        import traceback
+
+        traceback.print_exc()
+        return 1
+
+
 if __name__ == "__main__":
+    if "--self-check" in sys.argv:
+        sys.exit(_run_self_check())
+
     # Identity must be set BEFORE QApplication is constructed; Qt reads these
     # at construction time to populate X11 WM_CLASS and Wayland app_id.
     # Without them Qt falls back to argv[0] ("python3" inside the Flatpak)
