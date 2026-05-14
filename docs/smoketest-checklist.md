@@ -1,4 +1,13 @@
 ## Launch
+
+CI launch-tests only a bare X server (xvfb) and a headless Wayland compositor —
+it cannot run a real logged-in desktop session. Run the Launch, Credentials,
+and UI sections below on each desktop environment:
+
+- [ ] KDE Plasma (KWallet keyring backend)
+- [ ] GNOME (Secret Service keyring backend)
+- [ ] Cinnamon (Secret Service keyring backend)
+
 - [ ] TTR launches into game
 - [ ] CC launches into game
 - [ ] Two toons launch simultaneously without interfering
