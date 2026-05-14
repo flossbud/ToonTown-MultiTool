@@ -1033,7 +1033,14 @@ def _resolve_app_icon() -> QIcon:
 
 def _import_all_modules() -> None:
     """Import every module under tabs/, services/, utils/ so a syntax or
-    import-time error on the running interpreter surfaces immediately."""
+    import-time error on the running interpreter surfaces immediately.
+
+    Recurses explicitly (iter_modules + manual descent) rather than via
+    walk_packages: walk_packages silently swallows ImportErrors raised while
+    importing a package to recurse into it, and tabs/ + services/ are
+    namespace packages — explicit recursion guarantees every submodule is
+    reached regardless of __init__.py re-exports.
+    """
     import importlib
     import pkgutil
 
@@ -1044,14 +1051,22 @@ def _import_all_modules() -> None:
     if sys.platform != "win32":
         platform_only.add("utils.win32_backend")
 
-    for package_name in ("tabs", "services", "utils"):
+    def import_package(package_name: str) -> None:
         package = importlib.import_module(package_name)
-        for module_info in pkgutil.walk_packages(
-            package.__path__, prefix=package_name + "."
-        ):
-            if module_info.name in platform_only:
+        package_path = getattr(package, "__path__", None)
+        if package_path is None:
+            return
+        for module_info in pkgutil.iter_modules(package_path):
+            full_name = f"{package_name}.{module_info.name}"
+            if full_name in platform_only:
                 continue
-            importlib.import_module(module_info.name)
+            if module_info.ispkg:
+                import_package(full_name)
+            else:
+                importlib.import_module(full_name)
+
+    for top_level in ("tabs", "services", "utils"):
+        import_package(top_level)
 
 
 def _run_self_check() -> int:
