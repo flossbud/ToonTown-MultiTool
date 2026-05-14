@@ -161,3 +161,38 @@ def test_wake_restarts_idle_timer(qapp, qtbot, monkeypatch):
     # Eventually idle does fire.
     qtbot.waitUntil(lambda: bar._opacity_effect.opacity() == 0.0, timeout=500)
     bar.deleteLater()
+
+
+def test_reduce_motion_wakes_instantly_no_animation(qapp, monkeypatch):
+    from utils.widgets.auto_hide_scrollbar import AutoHideScrollBar
+    import utils.motion as motion
+    from PySide6.QtCore import QPropertyAnimation
+
+    monkeypatch.setattr(motion, "is_reduced", lambda: True)
+
+    bar = AutoHideScrollBar()
+    bar.setRange(0, 100)
+    bar.wake()
+
+    # Opacity is 1.0 immediately — no waiting, no animation running.
+    assert bar._opacity_effect.opacity() == 1.0
+    assert bar._anim.state() != QPropertyAnimation.Running
+    # Idle timer is NOT started in reduce-motion mode.
+    assert not bar._idle_timer.isActive()
+    bar.deleteLater()
+
+
+def test_reduce_motion_idle_callback_is_noop(qapp, monkeypatch):
+    """Even if the idle timer somehow fires (e.g. mode toggled mid-wait),
+    _on_idle should not animate when reduce-motion is on."""
+    from utils.widgets.auto_hide_scrollbar import AutoHideScrollBar
+    import utils.motion as motion
+
+    monkeypatch.setattr(motion, "is_reduced", lambda: True)
+
+    bar = AutoHideScrollBar()
+    bar.setRange(0, 100)
+    bar._opacity_effect.setOpacity(1.0)
+    bar._on_idle()  # must not animate or change opacity
+    assert bar._opacity_effect.opacity() == 1.0
+    bar.deleteLater()
