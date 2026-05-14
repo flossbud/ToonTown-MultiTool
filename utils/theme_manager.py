@@ -360,6 +360,18 @@ DARK_THEME = """
         background-color: #1a1a1a;
         color: #e0e0e0;
     }
+    /* QToolTipLabel is a top-level Qt::ToolTip window and does not inherit
+       the QWidget font-family. Explicit rule keeps Flatpak runtimes from
+       falling back to a serif when the listed families are missing. */
+    QToolTip {
+        font-family: 'Inter', 'Segoe UI', 'Noto Sans', 'DejaVu Sans', sans-serif;
+        font-size: 10pt;
+        background-color: #2a2a2a;
+        color: #e0e0e0;
+        border: 1px solid #444444;
+        border-radius: 4px;
+        padding: 4px 8px;
+    }
     QPushButton {
         background-color: #333333;
         color: white;
@@ -403,6 +415,17 @@ LIGHT_THEME = """
         background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
             stop:0 #f8fafc, stop:1 #eef2f7);
         color: #0f172a;
+    }
+    /* See DARK_THEME for why this rule is duplicated rather than relying on
+       QWidget inheritance. */
+    QToolTip {
+        font-family: 'Inter', 'Segoe UI', 'Noto Sans', 'DejaVu Sans', sans-serif;
+        font-size: 10pt;
+        background-color: #ffffff;
+        color: #0f172a;
+        border: 1px solid #cbd5e1;
+        border-radius: 4px;
+        padding: 4px 8px;
     }
     QPushButton {
         background-color: #e8ecf1;
