@@ -73,18 +73,35 @@ Built with Python + PySide6.
 ## ⚙️ Requirements
 
 **🐧 Linux:**
-- Python 3.10+
+- Python 3.9+
 - PySide6, pynput, python-xlib
 - `xdotool` (window detection only, not required for input)
 - Secret Service-compatible keyring (GNOME Keyring or KWallet)
 
 **🪟 Windows:**
-- Python 3.10+
+- Python 3.9+
 - PySide6, pynput, pywin32
 
 ---
 
 ## Installation
+
+### Supported Linux distributions
+
+The AppImage, Flatpak, and run-from-source paths are CI-tested on every push against:
+
+| Base distro          | Python | Linux Mint equivalent |
+|----------------------|--------|-----------------------|
+| Debian 11 (bullseye) | 3.9    | LMDE 5-era            |
+| Debian 12 (bookworm) | 3.11   | LMDE 6                |
+| Ubuntu 22.04 LTS     | 3.10   | Mint 21.x             |
+| Ubuntu 24.04 LTS     | 3.12   | Mint 22.x             |
+
+The AppImage is built against glibc 2.31, so it runs on any of the above and newer. Like
+every Linux GUI application, it relies on the host's standard graphics stack (libGL/libEGL/
+libxcb) — present on every desktop install. AppImage double-click launch additionally needs
+`libfuse2`; on newer distros that don't ship it (Ubuntu 24.04, Mint 22) either install it
+(`sudo apt install libfuse2`) or run the AppImage with `--appimage-extract-and-run`.
 
 ### Arch Linux (AUR)
 
@@ -128,6 +145,8 @@ cd ToonTown-MultiTool
 pip install -r requirements.txt
 python main.py
 ```
+
+On Linux you also need the system Qt6 runtime libraries (the `libxcb-*`, `libxkbcommon-x11`, `libegl1`, `libglib2.0-0` family) in addition to Python 3.9+. They're present on any standard desktop; on a minimal install, install your distro's Qt6 / PySide6 runtime dependencies.
 
 ### Linux: Wayland sessions
 

@@ -17,9 +17,6 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    # Phase 1: discovery — every cell may fail independently.
-    # Phase 3 flips this to false so red blocks merges.
-    continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
@@ -58,7 +55,6 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
@@ -106,7 +102,6 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    continue-on-error: true
     steps:
       - uses: actions/download-artifact@v4
         with:
