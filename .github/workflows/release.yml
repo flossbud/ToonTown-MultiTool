@@ -12,8 +12,15 @@ jobs:
       version_label: ${{ github.ref_name }}
     # include_windows defaults to true — release ships the Windows EXE
 
-  release:
+  test:
     needs: build
+    uses: ./.github/workflows/test.yml
+    with:
+      include_windows: true
+      include_aur: true
+
+  publish:
+    needs: test
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -68,4 +75,5 @@ jobs:
             windows-zip/ToonTownMultiTool-*.zip
             linux-appimage/TTMultiTool-*.AppImage
             linux-flatpak/TTMultiTool-*.flatpak
+            linux-deb/TTMultiTool-*.deb
             SMOKETEST.md
