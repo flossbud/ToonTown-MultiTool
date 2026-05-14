@@ -233,3 +233,55 @@ def test_enter_event_wakes_the_bar(qapp, qtbot, monkeypatch):
 
     qtbot.waitUntil(lambda: bar._opacity_effect.opacity() == 1.0, timeout=200)
     bar.deleteLater()
+
+
+def test_attach_to_viewport_wakes_on_wheel_event(qapp, qtbot, monkeypatch):
+    from PySide6.QtCore import QEvent, QPoint, QPointF, Qt, QCoreApplication
+    from PySide6.QtGui import QWheelEvent
+    from PySide6.QtWidgets import QWidget
+    from utils.widgets.auto_hide_scrollbar import AutoHideScrollBar
+    import utils.motion as motion
+
+    monkeypatch.setattr(AutoHideScrollBar, "_FADE_IN_MS", 1)
+    monkeypatch.setattr(motion, "is_reduced", lambda: False)
+
+    viewport = QWidget()
+    bar = AutoHideScrollBar()
+    bar.setRange(0, 100)
+    bar.attach_to_viewport(viewport)
+
+    assert bar._opacity_effect.opacity() == 0.0
+
+    # Synthesize a wheel event delivered to the viewport.
+    wheel = QWheelEvent(
+        QPointF(10, 10), QPointF(10, 10),
+        QPoint(0, -120), QPoint(0, -120),
+        Qt.NoButton, Qt.NoModifier,
+        Qt.NoScrollPhase, False,
+    )
+    QCoreApplication.sendEvent(viewport, wheel)
+
+    qtbot.waitUntil(lambda: bar._opacity_effect.opacity() == 1.0, timeout=200)
+    bar.deleteLater()
+    viewport.deleteLater()
+
+
+def test_attach_to_viewport_wakes_on_enter(qapp, qtbot, monkeypatch):
+    from PySide6.QtCore import QEvent, QCoreApplication
+    from PySide6.QtWidgets import QWidget
+    from utils.widgets.auto_hide_scrollbar import AutoHideScrollBar
+    import utils.motion as motion
+
+    monkeypatch.setattr(AutoHideScrollBar, "_FADE_IN_MS", 1)
+    monkeypatch.setattr(motion, "is_reduced", lambda: False)
+
+    viewport = QWidget()
+    bar = AutoHideScrollBar()
+    bar.setRange(0, 100)
+    bar.attach_to_viewport(viewport)
+
+    QCoreApplication.sendEvent(viewport, QEvent(QEvent.Enter))
+
+    qtbot.waitUntil(lambda: bar._opacity_effect.opacity() == 1.0, timeout=200)
+    bar.deleteLater()
+    viewport.deleteLater()

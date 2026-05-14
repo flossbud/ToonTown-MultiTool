@@ -1,7 +1,7 @@
 """Modern auto-hide scrollbar — thin pill that fades in on activity."""
 from __future__ import annotations
 
-from PySide6.QtCore import QPropertyAnimation, QTimer
+from PySide6.QtCore import QEvent, QPropertyAnimation, QTimer
 from PySide6.QtWidgets import QGraphicsOpacityEffect, QScrollBar
 
 import utils.motion as motion
@@ -96,6 +96,16 @@ class AutoHideScrollBar(QScrollBar):
     def enterEvent(self, event):
         self.wake()
         super().enterEvent(event)
+
+    def attach_to_viewport(self, viewport) -> None:
+        """Install self as event filter on the QScrollArea's viewport so
+        wheel-scrolls and hover over the content area wake the bar."""
+        viewport.installEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        if event.type() in (QEvent.Wheel, QEvent.Enter):
+            self.wake()
+        return super().eventFilter(obj, event)
 
     def set_theme(self, is_dark: bool) -> None:
         if is_dark:
