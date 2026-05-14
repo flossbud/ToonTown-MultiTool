@@ -73,14 +73,15 @@ def test_set_theme_is_idempotent(qapp):
     bar.deleteLater()
 
 
-def test_bar_starts_with_opacity_effect_at_zero(qapp):
-    from PySide6.QtWidgets import QGraphicsOpacityEffect
+def test_bar_starts_at_opacity_zero(qapp):
+    """The bar starts fully transparent. paintEvent skips painting at
+    opacity 0, so no offscreen-buffer compositing happens at idle."""
     from utils.widgets.auto_hide_scrollbar import AutoHideScrollBar
 
     bar = AutoHideScrollBar()
-    effect = bar.graphicsEffect()
-    assert isinstance(effect, QGraphicsOpacityEffect)
-    assert effect.opacity() == 0.0
+    assert bar.opacity == 0.0
+    # No QGraphicsEffect attached — opacity goes through QPainter directly.
+    assert bar.graphicsEffect() is None
     bar.deleteLater()
 
 
@@ -97,7 +98,7 @@ def test_wake_animates_opacity_to_one(qapp, qtbot, monkeypatch):
     bar.setRange(0, 100)  # ensure scrollable
     bar.wake()
 
-    qtbot.waitUntil(lambda: bar._opacity_effect.opacity() == 1.0, timeout=200)
+    qtbot.waitUntil(lambda: bar.opacity == 1.0, timeout=200)
     bar.deleteLater()
 
 
@@ -112,9 +113,9 @@ def test_wake_is_idempotent_at_full_opacity(qapp, monkeypatch):
 
     bar = AutoHideScrollBar()
     bar.setRange(0, 100)
-    bar._opacity_effect.setOpacity(1.0)  # pretend already faded in
+    bar.opacity = 1.0  # pretend already faded in
     bar.wake()  # must not raise
-    assert bar._opacity_effect.opacity() == 1.0
+    assert bar.opacity == 1.0
     bar.deleteLater()
 
 
@@ -130,10 +131,10 @@ def test_idle_timer_fades_back_to_zero(qapp, qtbot, monkeypatch):
     bar = AutoHideScrollBar()
     bar.setRange(0, 100)
     bar.wake()
-    qtbot.waitUntil(lambda: bar._opacity_effect.opacity() == 1.0, timeout=200)
+    qtbot.waitUntil(lambda: bar.opacity == 1.0, timeout=200)
 
     # After idle timeout fires + fade-out, opacity returns to 0.
-    qtbot.waitUntil(lambda: bar._opacity_effect.opacity() == 0.0, timeout=500)
+    qtbot.waitUntil(lambda: bar.opacity == 0.0, timeout=500)
     bar.deleteLater()
 
 
@@ -151,7 +152,7 @@ def test_wake_restarts_idle_timer(qapp, qtbot, monkeypatch):
     bar = AutoHideScrollBar()
     bar.setRange(0, 100)
     bar.wake()
-    qtbot.waitUntil(lambda: bar._opacity_effect.opacity() == 1.0, timeout=200)
+    qtbot.waitUntil(lambda: bar.opacity == 1.0, timeout=200)
 
     # Re-wake right before the timer would have fired.
     qtbot.wait(60)
@@ -159,10 +160,10 @@ def test_wake_restarts_idle_timer(qapp, qtbot, monkeypatch):
     # The timer must have been restarted — total ~110ms wait shouldn't have
     # triggered fade-out yet.
     qtbot.wait(60)
-    assert bar._opacity_effect.opacity() == 1.0
+    assert bar.opacity == 1.0
 
     # Eventually idle does fire.
-    qtbot.waitUntil(lambda: bar._opacity_effect.opacity() == 0.0, timeout=500)
+    qtbot.waitUntil(lambda: bar.opacity == 0.0, timeout=500)
     bar.deleteLater()
 
 
@@ -178,7 +179,7 @@ def test_reduce_motion_wakes_instantly_no_animation(qapp, monkeypatch):
     bar.wake()
 
     # Opacity is 1.0 immediately — no waiting, no animation running.
-    assert bar._opacity_effect.opacity() == 1.0
+    assert bar.opacity == 1.0
     assert bar._anim.state() != QPropertyAnimation.Running
     # Idle timer is NOT started in reduce-motion mode.
     assert not bar._idle_timer.isActive()
@@ -195,9 +196,9 @@ def test_reduce_motion_idle_callback_is_noop(qapp, monkeypatch):
 
     bar = AutoHideScrollBar()
     bar.setRange(0, 100)
-    bar._opacity_effect.setOpacity(1.0)
+    bar.opacity = 1.0
     bar._on_idle()  # must not animate or change opacity
-    assert bar._opacity_effect.opacity() == 1.0
+    assert bar.opacity == 1.0
     bar.deleteLater()
 
 
@@ -210,12 +211,12 @@ def test_value_changed_signal_wakes_the_bar(qapp, qtbot, monkeypatch):
 
     bar = AutoHideScrollBar()
     bar.setRange(0, 100)
-    assert bar._opacity_effect.opacity() == 0.0
+    assert bar.opacity == 0.0
 
     # Programmatic scroll position change emits valueChanged.
     bar.setValue(50)
 
-    qtbot.waitUntil(lambda: bar._opacity_effect.opacity() == 1.0, timeout=200)
+    qtbot.waitUntil(lambda: bar.opacity == 1.0, timeout=200)
     bar.deleteLater()
 
 
@@ -229,12 +230,12 @@ def test_enter_event_wakes_the_bar(qapp, qtbot, monkeypatch):
 
     bar = AutoHideScrollBar()
     bar.setRange(0, 100)
-    assert bar._opacity_effect.opacity() == 0.0
+    assert bar.opacity == 0.0
 
     # Synthesize an Enter event — Qt's enterEvent is the canonical hover hook.
     bar.event(QEvent(QEvent.Enter))
 
-    qtbot.waitUntil(lambda: bar._opacity_effect.opacity() == 1.0, timeout=200)
+    qtbot.waitUntil(lambda: bar.opacity == 1.0, timeout=200)
     bar.deleteLater()
 
 
@@ -253,7 +254,7 @@ def test_attach_to_viewport_wakes_on_wheel_event(qapp, qtbot, monkeypatch):
     bar.setRange(0, 100)
     bar.attach_to_viewport(viewport)
 
-    assert bar._opacity_effect.opacity() == 0.0
+    assert bar.opacity == 0.0
 
     # Synthesize a wheel event delivered to the viewport.
     wheel = QWheelEvent(
@@ -264,7 +265,7 @@ def test_attach_to_viewport_wakes_on_wheel_event(qapp, qtbot, monkeypatch):
     )
     QCoreApplication.sendEvent(viewport, wheel)
 
-    qtbot.waitUntil(lambda: bar._opacity_effect.opacity() == 1.0, timeout=200)
+    qtbot.waitUntil(lambda: bar.opacity == 1.0, timeout=200)
     bar.deleteLater()
     viewport.deleteLater()
 
@@ -285,7 +286,7 @@ def test_attach_to_viewport_wakes_on_enter(qapp, qtbot, monkeypatch):
 
     QCoreApplication.sendEvent(viewport, QEvent(QEvent.Enter))
 
-    qtbot.waitUntil(lambda: bar._opacity_effect.opacity() == 1.0, timeout=200)
+    qtbot.waitUntil(lambda: bar.opacity == 1.0, timeout=200)
     bar.deleteLater()
     viewport.deleteLater()
 
@@ -343,7 +344,7 @@ def test_install_modern_scrollbar_wakes_on_viewport_wheel(qapp, qtbot, monkeypat
     )
     QCoreApplication.sendEvent(area.viewport(), wheel)
 
-    qtbot.waitUntil(lambda: bar._opacity_effect.opacity() == 1.0, timeout=200)
+    qtbot.waitUntil(lambda: bar.opacity == 1.0, timeout=200)
     area.deleteLater()
 
 

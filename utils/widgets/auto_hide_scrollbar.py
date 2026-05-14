@@ -1,8 +1,9 @@
 """Modern auto-hide scrollbar — thin pill that fades in on activity."""
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, QPropertyAnimation, QTimer
-from PySide6.QtWidgets import QGraphicsOpacityEffect, QScrollBar
+from PySide6.QtCore import Property, QEvent, QPropertyAnimation, QTimer
+from PySide6.QtGui import QPainter
+from PySide6.QtWidgets import QScrollBar, QStyle, QStyleOptionSlider
 
 import utils.motion as motion
 
@@ -44,7 +45,14 @@ _LIGHT_HOVER  = "rgba(15, 23, 42, 0.55)"
 
 
 class AutoHideScrollBar(QScrollBar):
-    """A QScrollBar that fades in on activity and fades out at idle."""
+    """A QScrollBar that fades in on activity and fades out at idle.
+
+    Opacity is implemented via QPainter.setOpacity in paintEvent rather than
+    a QGraphicsOpacityEffect — Qt routes effect-bearing widgets through an
+    offscreen-buffer + composite step on every repaint, which compounds
+    badly with paint-heavy scroll-area contents (e.g. drop-shadowed section
+    blocks). Painter opacity stays in the on-screen pixel pipeline.
+    """
 
     # Class constants — tests monkey-patch these for instant animations.
     _FADE_IN_MS = 120
@@ -53,11 +61,9 @@ class AutoHideScrollBar(QScrollBar):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._opacity_effect = QGraphicsOpacityEffect(self)
-        self._opacity_effect.setOpacity(0.0)
-        self.setGraphicsEffect(self._opacity_effect)
+        self._opacity = 0.0  # animated by self._anim via the Qt Property below
 
-        self._anim = QPropertyAnimation(self._opacity_effect, b"opacity", self)
+        self._anim = QPropertyAnimation(self, b"opacity", self)
 
         self._idle_timer = QTimer(self)
         self._idle_timer.setSingleShot(True)
@@ -65,17 +71,44 @@ class AutoHideScrollBar(QScrollBar):
 
         self.valueChanged.connect(self._on_value_changed)
 
+    # ── Qt Property: opacity ────────────────────────────────────────────────
+    # QPropertyAnimation animates this; the setter triggers a repaint.
+
+    def _get_opacity(self) -> float:
+        return self._opacity
+
+    def _set_opacity(self, value: float) -> None:
+        if self._opacity == value:
+            return
+        self._opacity = value
+        self.update()
+
+    opacity = Property(float, _get_opacity, _set_opacity)
+
+    # ── Painting ────────────────────────────────────────────────────────────
+
+    def paintEvent(self, event):
+        if self._opacity <= 0.0:
+            return  # fully transparent: skip painting entirely
+        painter = QPainter(self)
+        painter.setOpacity(self._opacity)
+        opt = QStyleOptionSlider()
+        self.initStyleOption(opt)
+        self.style().drawComplexControl(QStyle.CC_ScrollBar, opt, painter, self)
+
+    # ── Wake / idle ─────────────────────────────────────────────────────────
+
     def wake(self) -> None:
         """Make the bar visible. Animated unless reduce-motion is on."""
         if motion.is_reduced():
             self._anim.stop()
             self._idle_timer.stop()
-            self._opacity_effect.setOpacity(1.0)
+            self._set_opacity(1.0)
             return
-        if self._opacity_effect.opacity() < 1.0 or self._anim.state() == QPropertyAnimation.Running:
+        if self._opacity < 1.0 or self._anim.state() == QPropertyAnimation.Running:
             self._anim.stop()
             self._anim.setDuration(self._FADE_IN_MS)
-            self._anim.setStartValue(self._opacity_effect.opacity())
+            self._anim.setStartValue(self._opacity)
             self._anim.setEndValue(1.0)
             self._anim.start()
         # Restart idle countdown on every wake.
@@ -86,7 +119,7 @@ class AutoHideScrollBar(QScrollBar):
             return
         self._anim.stop()
         self._anim.setDuration(self._FADE_OUT_MS)
-        self._anim.setStartValue(self._opacity_effect.opacity())
+        self._anim.setStartValue(self._opacity)
         self._anim.setEndValue(0.0)
         self._anim.start()
 
