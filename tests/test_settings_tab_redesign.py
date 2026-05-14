@@ -86,19 +86,20 @@ def test_button_row_destructive_styling_applied(qapp):
 
 
 def test_button_row_non_destructive_uses_theme_tokens(qapp):
-    """The non-destructive path consumes theme tokens — verifies their keys
-    aren't accidentally renamed."""
-    from tabs.settings_tab import ButtonRow
+    """The non-destructive path consumes the elevated-control palette
+    (resting + tonal hover) — verifies the keys aren't accidentally renamed."""
+    from tabs.settings_tab import ButtonRow, _elevated_control_palette
     from utils.theme_manager import get_theme_colors
     row = ButtonRow("Action", "", button_text="Go", destructive=False)
     c = get_theme_colors(is_dark=True)
     row.apply_theme(c, True)
     style = row.button.styleSheet()
-    # All four tokens used in the non-destructive branch must appear.
-    assert c["btn_bg"] in style
+    p = _elevated_control_palette(c, True)
+    assert p["bg"] in style
+    assert p["border"] in style
+    assert p["hover_bg"] in style
+    assert p["hover_border"] in style
     assert c["text_secondary"] in style
-    assert c["accent_blue"] in style
-    assert c["text_on_accent"] in style
     # The destructive red MUST NOT be present.
     assert "#ff3b30" not in style
 

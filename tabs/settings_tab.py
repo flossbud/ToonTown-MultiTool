@@ -2,9 +2,10 @@ import os
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QComboBox, QApplication, QMessageBox, QFrame,
-    QPushButton, QScrollArea, QSizePolicy, QFileDialog
+    QPushButton, QScrollArea, QSizePolicy, QFileDialog,
+    QGraphicsDropShadowEffect
 )
-from PySide6.QtCore import Property, QPointF, QRectF, Qt, Signal
+from PySide6.QtCore import Property, QPointF, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPen, QPolygonF
 from utils.theme_manager import apply_theme, get_theme_colors, resolve_theme
 from utils.shared_widgets import IOSToggle
@@ -17,6 +18,32 @@ SPECIAL_KEYS = {
     Qt.Key_Shift: "Shift_L", Qt.Key_Control: "Control_L",
     Qt.Key_Alt: "Alt_L", Qt.Key_Delete: "Delete"
 }
+
+
+def _elevated_control_palette(c: dict, is_dark: bool) -> dict:
+    """Resting + hover colors for controls living inside a `SettingsGroup`.
+
+    The block paints at an elevated tone (`#333` in dark, `bg_card_inner`
+    in light), so the global `btn_bg` / `border_muted` tokens — sized for
+    controls on `bg_app` — collide with the block surface (dark mode:
+    identical hex) or leave no visible edge (light mode: border == fill).
+    Step the controls one tone clear of the block, and use a tonal-only
+    hover (Material state-layer style) instead of a brand-color swap —
+    Browse / Auto-detect / etc. are tertiary utility actions, not CTAs.
+    """
+    if is_dark:
+        return {
+            "bg": "#3a3a3a",
+            "border": "#4a4a4a",
+            "hover_bg": "#454545",
+            "hover_border": "#5a5a5a",
+        }
+    return {
+        "bg": c["btn_bg"],
+        "border": c["border_input"],
+        "hover_bg": c["btn_hover"],
+        "hover_border": c["border_input"],
+    }
 
 
 # ── Settings Row Types ─────────────────────────────────────────────────────────
@@ -155,20 +182,25 @@ class DropdownRow(SettingsRow):
 
     def apply_theme(self, c, is_dark):
         super().apply_theme(c, is_dark)
+        p = _elevated_control_palette(c, is_dark)
         self.combo.setStyleSheet(f"""
             QComboBox {{
-                background: {c['btn_bg']};
+                background: {p['bg']};
                 color: {c['text_primary']};
-                border: 1px solid {c['border_muted']};
+                border: 1px solid {p['border']};
                 border-radius: 8px;
                 padding: 5px 10px;
                 font-size: 13px;
+            }}
+            QComboBox:hover {{
+                background: {p['hover_bg']};
+                border: 1px solid {p['hover_border']};
             }}
             QComboBox::drop-down {{ border: none; width: 20px; }}
             QComboBox QAbstractItemView {{
                 background: {c['bg_card_inner']};
                 color: {c['text_primary']};
-                selection-background-color: {c['btn_bg']};
+                selection-background-color: {p['bg']};
                 border-radius: 8px;
             }}
         """)
@@ -217,18 +249,19 @@ class ButtonRow(SettingsRow):
                 }
             """)
         else:
+            p = _elevated_control_palette(c, is_dark)
             self.button.setStyleSheet(f"""
                 QPushButton {{
-                    background-color: {c['btn_bg']};
+                    background-color: {p['bg']};
                     color: {c['text_secondary']};
-                    border: 1px solid {c['border_muted']};
+                    border: 1px solid {p['border']};
                     border-radius: 6px;
                     padding: 4px 12px;
                 }}
                 QPushButton:hover {{
-                    background-color: {c['accent_blue']};
-                    color: {c['text_on_accent']};
-                    border: 1px solid {c['accent_blue']};
+                    background-color: {p['hover_bg']};
+                    color: {c['text_primary']};
+                    border: 1px solid {p['hover_border']};
                 }}
             """)
 
@@ -280,17 +313,18 @@ class GamePathRow(SettingsRow):
 
     def apply_theme(self, c, is_dark):
         super().apply_theme(c, is_dark)
+        p = _elevated_control_palette(c, is_dark)
         btn_style = f"""
             QPushButton {{
-                background-color: {c['btn_bg']};
+                background-color: {p['bg']};
                 color: {c['text_secondary']};
-                border: 1px solid {c['border_muted']};
+                border: 1px solid {p['border']};
                 border-radius: 6px; padding: 0 12px;
             }}
             QPushButton:hover {{
-                background-color: {c['accent_blue']};
-                color: {c['text_on_accent']};
-                border: 1px solid {c['accent_blue']};
+                background-color: {p['hover_bg']};
+                color: {c['text_primary']};
+                border: 1px solid {p['hover_border']};
             }}
         """
         self.browse_btn.setStyleSheet(btn_style)
@@ -357,11 +391,9 @@ class SettingsGroup(QWidget):
             self.title_label.setContentsMargins(2, 0, 0, 8)
             layout.addWidget(self.title_label)
 
-        # Shadow wrapper — `_block_wrapper` is a _SectionBlockWrapper that
-        # paints a soft multi-pass shadow around `_block` in its paintEvent.
-        # This replaces QGraphicsDropShadowEffect which clipped the blurred
-        # falloff to the wrapper's own bounds, producing a hard-edged dark
-        # rectangle instead of a soft halo.
+        # Shadow wrapper — `_block_wrapper` hosts a childless shadow caster
+        # behind `_block`. The real block stays effect-free so its custom
+        # paintEvent and child rows render normally.
         self._block_wrapper = _SectionBlockWrapper(self)
         wrapper_layout = QVBoxLayout(self._block_wrapper)
         wrapper_layout.setContentsMargins(
@@ -446,78 +478,106 @@ class _SectionBlock(QFrame):
 
 
 class _SectionBlockWrapper(QWidget):
-    """Transparent wrapper that paints a soft drop shadow behind its inner
+    """Transparent wrapper that hosts a blurred shadow behind its inner
     `_SectionBlock` child.
 
-    Replaces `QGraphicsDropShadowEffect` which clipped the blurred falloff to
-    the wrapper's bounds, producing a hard-edged dark rectangle. Painting the
-    shadow manually as several alpha-blended rounded rects gives us exact
-    control over the falloff and avoids the clipping problem entirely.
+    The effect lives on a simple, childless shadow caster instead of the real
+    block. Applying effects to the block itself breaks custom painting with
+    child rows, while painting the shadow as filled concentric rects creates
+    visible bands. This keeps the real block plain and lets Qt blur one clean
+    rounded silhouette.
     """
 
-    # Margins inside the wrapper: room for shadow to render around the block.
-    # Left/right symmetric; top smaller (no negative shadow offset); bottom
-    # larger to accommodate the downward y-offset + blur falloff.
-    MARGIN_X = 20
-    MARGIN_TOP = 4
-    MARGIN_BOTTOM = 22
-
-    # Shadow passes — (extent_outward_px, alpha_dark, alpha_light).
-    # Tuned for softness: wider extents + lower alphas than the first pass,
-    # so the falloff is more gradual and the innermost shadow doesn't read
-    # as a hard dark band against the section block.
-    _PASSES = (
-        (18, 5,  3),
-        (12, 10, 6),
-        (6,  20, 12),
-    )
-    _Y_OFFSET = 6
+    MARGIN_X = 28
+    MARGIN_TOP = 16
+    MARGIN_BOTTOM = 32
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._is_dark = True
-        # Override the global QWidget stylesheet's background. Without this,
-        # Qt fills the wrapper's bg with the inherited theme bg (a gradient
-        # in light mode, solid in dark mode) BEFORE paintEvent runs. Since
-        # gradients are computed per-widget, the wrapper renders a different
-        # shade than the page widget — visible as a sharp-edged rectangle
-        # around the section block. Transparency lets the page bg show
-        # through, with our painted shadow rects on top.
+        self._c = None
+        self._shadow_live = True
         self.setObjectName("settings_section_wrapper")
-        self.setStyleSheet(
-            "QWidget#settings_section_wrapper { background: transparent; }"
-        )
+        self.setAutoFillBackground(False)
+        self.setAttribute(Qt.WA_NoSystemBackground, True)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WA_StyledBackground, False)
+        self.setStyleSheet("background: transparent; border: none;")
+
+        self._shadow = _SectionBlockShadow(self)
+        self._shadow.lower()
+        self._shadow_effect = QGraphicsDropShadowEffect(self._shadow)
+        self._shadow_effect.setBlurRadius(28)
+        self._shadow_effect.setOffset(0, 6)
+        self._shadow.setGraphicsEffect(self._shadow_effect)
 
     def apply_theme(self, c, is_dark):
+        self._c = c
         self._is_dark = is_dark
+        color = QColor(0, 0, 0) if is_dark else QColor(15, 23, 42)
+        color.setAlpha(90 if is_dark else 36)
+        self._shadow_effect.setColor(color)
+        self._shadow.apply_theme(c, is_dark)
+        self._sync_shadow_geometry()
         self.update()
 
-    def paintEvent(self, e):
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self._sync_shadow_geometry()
+
+    def set_shadow_live(self, live: bool):
+        self._shadow_live = live
+        self._shadow.setVisible(live)
+        if live:
+            self._sync_shadow_geometry()
+
+    def _sync_shadow_geometry(self):
+        # Z-order is set once at construction (shadow is created before the
+        # block is added to the layout, so it's naturally below). Calling
+        # lower()/raise_() per resize forces full repaints of the block and
+        # every row child each animation frame, which destroys the collapse
+        # animation's frame budget.
+        if not self._shadow_live:
+            return
         layout = self.layout()
         if layout is None or layout.count() == 0:
             return
         block_widget = layout.itemAt(0).widget()
         if block_widget is None:
             return
-        block_rect = block_widget.geometry()
+        self._shadow.setGeometry(block_widget.geometry())
 
+
+class _SectionBlockShadow(QFrame):
+    """Childless silhouette used only as the source for the shadow blur."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._c = None
+        self._is_dark = True
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.setStyleSheet("background: transparent; border: none;")
+
+    def apply_theme(self, c, is_dark):
+        self._c = c
+        self._is_dark = is_dark
+        self.update()
+
+    def paintEvent(self, e):
+        if self._c is None:
+            return
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         p.setPen(Qt.NoPen)
+        fill_color = (
+            "#333333" if self._is_dark
+            else self._c.get("bg_card_inner", "#f1f5f9")
+        )
+        p.setBrush(QColor(fill_color))
         radius = float(SettingsGroup.CORNER_RADIUS)
-
-        for extent, alpha_dark, alpha_light in self._PASSES:
-            alpha = alpha_dark if self._is_dark else alpha_light
-            color = QColor(0, 0, 0) if self._is_dark else QColor(15, 23, 42)
-            color.setAlpha(alpha)
-            p.setBrush(color)
-            shadow_rect = QRectF(
-                block_rect.x() - extent,
-                block_rect.y() - extent + self._Y_OFFSET,
-                block_rect.width() + 2 * extent,
-                block_rect.height() + 2 * extent,
-            )
-            p.drawRoundedRect(shadow_rect, radius + extent, radius + extent)
+        p.drawRoundedRect(
+            QRectF(0.5, 0.5, self.width() - 1, self.height() - 1), radius, radius
+        )
         p.end()
 
 
@@ -606,6 +666,64 @@ class _ChevronWidget(QWidget):
         p.end()
 
 
+class _CollapsibleContentClip(QWidget):
+    """Fixed-height viewport that clips a full-height settings row container."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._content = None
+        self._forced_height = None
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.setAutoFillBackground(False)
+        self.setAttribute(Qt.WA_NoSystemBackground, True)
+        self.setStyleSheet("background: transparent; border: none;")
+
+    def set_content_widget(self, widget):
+        self._content = widget
+        widget.setParent(self)
+        self._sync_content_geometry()
+
+    def natural_height(self) -> int:
+        if self._content is None or self._content.layout() is None:
+            return 0
+        return self._content.layout().minimumSize().height()
+
+    def set_forced_height(self, height: int):
+        self._forced_height = max(0, int(height))
+        self.setMinimumHeight(self._forced_height)
+        self.setMaximumHeight(self._forced_height)
+        self._sync_content_geometry()
+        self.updateGeometry()
+
+    def release_height(self):
+        self._forced_height = None
+        self.setMinimumHeight(0)
+        self.setMaximumHeight(16777215)
+        self._sync_content_geometry()
+        self.updateGeometry()
+
+    def sizeHint(self):
+        return QSize(0, self._height_hint())
+
+    def minimumSizeHint(self):
+        return QSize(0, self._height_hint())
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self._sync_content_geometry()
+
+    def _height_hint(self) -> int:
+        if self._forced_height is not None:
+            return self._forced_height
+        return self.natural_height()
+
+    def _sync_content_geometry(self):
+        if self._content is None:
+            return
+        height = max(self.natural_height(), self.height(), self._height_hint())
+        self._content.setGeometry(0, 0, self.width(), height)
+
+
 class CollapsibleSettingsGroup(SettingsGroup):
     """Section block whose first row is a clickable header (title + chevron).
     Clicking the header toggles visibility of the remaining rows and persists
@@ -616,6 +734,8 @@ class CollapsibleSettingsGroup(SettingsGroup):
     like a single coherent control instead of an empty section beneath a
     floating title.
     """
+
+    scroll_reserve_changed = Signal(int)
 
     def __init__(self, title: str, settings_manager, persist_key: str,
                  parent=None):
@@ -629,14 +749,21 @@ class CollapsibleSettingsGroup(SettingsGroup):
         )
         self._collapse_anim = None
         self._chevron_anim = None
+        self._animated_content_height = 0
+        self._scroll_reserve_base = 0
 
         self._header = _CollapsibleHeader(title, self._collapsed, self)
         self._header.clicked.connect(self.toggle)
 
-        # Wrap content rows in a container so the height of the rows portion
-        # can be animated independently of the header (Task 8). The container
-        # owns self._rows_layout (replacing SettingsGroup's block-level layout).
-        self._content_container = QWidget(self._block)
+        # The clip animates height while the inner content container keeps its
+        # natural row layout. That prevents labels/buttons from being squeezed
+        # while the Advanced body opens or closes.
+        self._content_clip = _CollapsibleContentClip(self._block)
+        self._content_container = QWidget(self._content_clip)
+        self._content_container.setStyleSheet(
+            "background: transparent; border: none;"
+        )
+        self._content_clip.set_content_widget(self._content_container)
         self._rows_layout = QVBoxLayout(self._content_container)
         self._rows_layout.setContentsMargins(0, 0, 0, 0)
         self._rows_layout.setSpacing(0)
@@ -654,11 +781,11 @@ class CollapsibleSettingsGroup(SettingsGroup):
         block_layout.setContentsMargins(0, 0, 0, 0)
         block_layout.setSpacing(0)
         block_layout.addWidget(self._header)
-        block_layout.addWidget(self._content_container)
+        block_layout.addWidget(self._content_clip)
 
         # Apply initial collapsed state to the container.
         if self._collapsed:
-            self._content_container.setMaximumHeight(0)
+            self._content_clip.set_forced_height(0)
 
     def add_row(self, row):
         self._rows.append(row)
@@ -668,9 +795,48 @@ class CollapsibleSettingsGroup(SettingsGroup):
         # it doesn't briefly render before the next collapse animation.
         if self._collapsed:
             row.setVisible(False)
+        else:
+            self._content_clip.release_height()
 
     def is_collapsed(self) -> bool:
         return self._collapsed
+
+    def _get_content_height(self) -> int:
+        return self._animated_content_height
+
+    def _set_content_height(self, value: int):
+        height = max(0, int(value))
+        self._animated_content_height = height
+        self._content_clip.set_forced_height(height)
+        self._block.updateGeometry()
+        self._block_wrapper.updateGeometry()
+        self.updateGeometry()
+        parent = self.parentWidget()
+        if parent is not None and parent.layout() is not None:
+            parent.layout().invalidate()
+        self._emit_scroll_reserve(height)
+
+    content_height = Property(int, _get_content_height, _set_content_height)
+
+    def _content_natural_height(self) -> int:
+        # Settings rows declare minimum heights for the polished row rhythm;
+        # their Qt sizeHint can be taller/shorter depending on label content.
+        # The settled layout uses the minimum height, so animate to that value
+        # to avoid a final snap when the fixed animation height is released.
+        return self._content_container.layout().minimumSize().height()
+
+    def _release_content_height(self):
+        self._content_clip.release_height()
+        self._block.updateGeometry()
+        self._block_wrapper.updateGeometry()
+        self.updateGeometry()
+
+    def _emit_scroll_reserve(self, content_height: int):
+        if self._scroll_reserve_base <= 0:
+            self.scroll_reserve_changed.emit(0)
+            return
+        reserve = max(0, self._scroll_reserve_base - content_height)
+        self.scroll_reserve_changed.emit(reserve)
 
     def toggle(self):
         self._collapsed = not self._collapsed
@@ -681,47 +847,57 @@ class CollapsibleSettingsGroup(SettingsGroup):
         if self._collapse_anim is not None:
             self._collapse_anim.stop()
             self._collapse_anim = None
+            self.scroll_reserve_changed.emit(0)
+            self._scroll_reserve_base = 0
 
         # Interrupt any in-flight chevron animation.
         if self._chevron_anim is not None:
             self._chevron_anim.stop()
             self._chevron_anim = None
 
-        from PySide6.QtCore import QPropertyAnimation
+        from PySide6.QtCore import QEasingCurve, QPropertyAnimation
         import utils.motion as motion
 
-        # Resolve target maximumHeight. Note: rows must remain visible during
+        # Resolve target content height. Note: rows must remain visible during
         # a collapse animation, otherwise the layout's preferred height drops
-        # to 0 immediately and there's nothing for maximumHeight to clip
-        # against — the animation becomes a visual no-op.
+        # to 0 immediately and there's nothing to animate.
         if self._collapsed:
-            start_h = self._content_container.sizeHint().height()
+            start_h = self._content_clip.height()
+            if start_h <= 0:
+                start_h = self._content_natural_height()
             end_h = 0
+            self._scroll_reserve_base = start_h
         else:
             # Rows need to be visible during the expand animation so the
             # container has a non-zero sizeHint to animate toward.
             for row in self._rows:
                 row.setVisible(True)
-            end_h = self._content_container.sizeHint().height()
+            end_h = self._content_natural_height()
             start_h = 0
+            self._scroll_reserve_base = 0
+            self.scroll_reserve_changed.emit(0)
 
         # Reduced motion: snap to the final state synchronously.
         if motion.is_reduced():
-            self._content_container.setMaximumHeight(
-                16777215 if not self._collapsed else 0
-            )
+            self._block_wrapper.set_shadow_live(True)
             if self._collapsed:
+                self._set_content_height(0)
                 for row in self._rows:
                     row.setVisible(False)
+            else:
+                self._release_content_height()
+            self.scroll_reserve_changed.emit(0)
+            self._scroll_reserve_base = 0
             return
 
         # Animate.
-        raw_duration = motion.DURATION_PILL * motion._TEST_DURATION_SCALE
+        raw_duration = motion.DURATION_PAGE * motion._TEST_DURATION_SCALE
         duration = 0 if raw_duration == 0.0 else max(1, int(raw_duration))
+        self._block_wrapper.set_shadow_live(False)
 
-        anim = QPropertyAnimation(self._content_container, b"maximumHeight")
+        anim = QPropertyAnimation(self, b"content_height")
         anim.setDuration(duration)
-        anim.setEasingCurve(motion.EASE_STANDARD)
+        anim.setEasingCurve(QEasingCurve.InOutCubic)
         anim.setStartValue(start_h)
         anim.setEndValue(end_h)
 
@@ -731,22 +907,26 @@ class CollapsibleSettingsGroup(SettingsGroup):
             # After expand: lift the maximumHeight cap so the container can
             # grow if the user resizes or rows are added later.
             if self._collapsed:
+                self._set_content_height(0)
                 for row in self._rows:
                     row.setVisible(False)
             else:
-                self._content_container.setMaximumHeight(16777215)
+                self._release_content_height()
+            self._block_wrapper.set_shadow_live(True)
+            self.scroll_reserve_changed.emit(0)
+            self._scroll_reserve_base = 0
             self._collapse_anim = None
 
         anim.finished.connect(_on_finished)
         self._collapse_anim = anim
         # Pre-set the start value before starting so the first frame is correct.
-        self._content_container.setMaximumHeight(start_h)
+        self.content_height = start_h
         anim.start()
 
         # Parallel chevron rotation animation.
         chevron_anim = QPropertyAnimation(self._header._chevron, b"rotation")
         chevron_anim.setDuration(duration)
-        chevron_anim.setEasingCurve(motion.EASE_STANDARD)
+        chevron_anim.setEasingCurve(QEasingCurve.InOutCubic)
         # Reverse the snap that set_collapsed already applied — start from
         # the previous angle and animate to the new one.
         chevron_anim.setStartValue(90.0 if self._collapsed else 0.0)
@@ -865,10 +1045,14 @@ class SettingsTab(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
 
         scroll = QScrollArea()
+        self._scroll = scroll
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         outer.addWidget(scroll)
+        scroll.verticalScrollBar().valueChanged.connect(
+            self._maybe_clear_advanced_scroll_reserve
+        )
 
         scroll_inner = QWidget()
         scroll_inner_layout = QHBoxLayout(scroll_inner)
@@ -1091,6 +1275,9 @@ class SettingsTab(QWidget):
         self.advanced_group = CollapsibleSettingsGroup(
             "Advanced", self.settings_manager, "advanced_collapsed"
         )
+        self.advanced_group.scroll_reserve_changed.connect(
+            self._set_advanced_scroll_reserve
+        )
         self._groups.append(self.advanced_group)
 
         self.companion_row = ToggleRow(
@@ -1142,6 +1329,54 @@ class SettingsTab(QWidget):
         self.advanced_group.add_row(self.clear_credentials_row)
 
         self._main_layout.addWidget(self.advanced_group)
+        self._advanced_scroll_reserve = QWidget()
+        self._advanced_scroll_reserve_active = False
+        self._advanced_scroll_reserve.setFixedHeight(0)
+        self._advanced_scroll_reserve.setStyleSheet(
+            "background: transparent; border: none;"
+        )
+        self._main_layout.addWidget(self._advanced_scroll_reserve)
+
+    def _set_advanced_scroll_reserve(self, height: int):
+        if not hasattr(self, "_advanced_scroll_reserve"):
+            return
+        height = max(0, int(height))
+        bar = self._scroll.verticalScrollBar()
+
+        if height > 0:
+            if not self._advanced_scroll_reserve_active:
+                self._advanced_scroll_reserve_active = (
+                    bar.value() >= bar.maximum() - 2
+                )
+            if self._advanced_scroll_reserve_active:
+                self._advanced_scroll_reserve.setFixedHeight(height)
+            return
+
+        # When collapse starts at the very bottom, keep the reserve after the
+        # body finishes closing. Removing it immediately makes Qt clamp the
+        # scrollbar maximum on the final frame, which reads as a judder.
+        if (
+            self._advanced_scroll_reserve_active
+            and self.advanced_group.is_collapsed()
+            and self._advanced_scroll_reserve.height() > 0
+        ):
+            return
+        self._clear_advanced_scroll_reserve()
+
+    def _maybe_clear_advanced_scroll_reserve(self):
+        if not getattr(self, "_advanced_scroll_reserve_active", False):
+            return
+        if self.advanced_group._collapse_anim is not None:
+            return
+        bar = self._scroll.verticalScrollBar()
+        if bar.value() < bar.maximum() - 2:
+            self._clear_advanced_scroll_reserve()
+
+    def _clear_advanced_scroll_reserve(self):
+        if not hasattr(self, "_advanced_scroll_reserve"):
+            return
+        self._advanced_scroll_reserve_active = False
+        self._advanced_scroll_reserve.setFixedHeight(0)
 
     # ── Handlers ──────────────────────────────────────────────────────────────
 
