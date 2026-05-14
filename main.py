@@ -1092,7 +1092,49 @@ def _run_self_check() -> int:
         return 1
 
 
+def _run_self_check_keyring() -> int:
+    """Keyring backend oracle. Resolves the active `keyring` backend, asserts
+    it is a functional Secret Service backend (not the null/fail backend), and
+    performs a store->retrieve->delete roundtrip. CI runs this under
+    dbus-run-session with gnome-keyring-daemon. KWallet is intentionally not
+    covered here -- it stays a manual smoke-test item."""
+    try:
+        import keyring
+        from keyring.backends import SecretService
+
+        backend = keyring.get_keyring()
+        sys.stdout.write(f"keyring backend: {type(backend).__module__}.{type(backend).__name__}\n")
+        if not isinstance(backend, SecretService.Keyring):
+            sys.stderr.write(
+                "self-check-keyring FAIL: active backend is not Secret Service\n"
+            )
+            return 1
+
+        service = "ttmt-self-check"
+        username = "probe"
+        secret = "roundtrip-value"
+        keyring.set_password(service, username, secret)
+        got = keyring.get_password(service, username)
+        keyring.delete_password(service, username)
+        if got != secret:
+            sys.stderr.write(
+                f"self-check-keyring FAIL: roundtrip mismatch (got {got!r})\n"
+            )
+            return 1
+
+        sys.stdout.write("self-check-keyring OK\n")
+        return 0
+    except Exception:
+        import traceback
+
+        traceback.print_exc()
+        return 1
+
+
 if __name__ == "__main__":
+    if "--self-check-keyring" in sys.argv:
+        sys.exit(_run_self_check_keyring())
+
     if "--self-check" in sys.argv:
         sys.exit(_run_self_check())
 
