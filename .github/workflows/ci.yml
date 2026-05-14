@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [dev, main]
+
+# A new push to a branch cancels its still-running CI -- saves runner minutes
+# on rapid pushes. portability.yml did not do this.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    uses: ./.github/workflows/build.yml
+    with:
+      include_windows: true
+
+  test:
+    needs: build
+    uses: ./.github/workflows/test.yml
+    with:
+      include_windows: true
+      include_aur: false
