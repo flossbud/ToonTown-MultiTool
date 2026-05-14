@@ -9,6 +9,7 @@ on:
 jobs:
   build-windows:
     runs-on: windows-latest
+    if: github.event_name != 'workflow_call'
     steps:
       - uses: actions/checkout@v4
 
