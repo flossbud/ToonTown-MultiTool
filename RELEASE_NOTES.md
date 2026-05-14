@@ -1,37 +1,98 @@
-## ToonTown MultiTool v2.2.0-rc1
+## ToonTown MultiTool v2.3.0-a
 
-Release candidate for v2.2.0. If this build passes smoketest with no
-regressions, it'll be re-cut as `v2.2.0` stable. This iteration adds three
-post-v2.2.0 fixes on top of the v2.2.0 work: a Windows process-detachment fix
-so launched games survive closing the multitool, a TTR-settings-detection
-fallback that survives transient `settings.json` read failures at startup,
-and a defensive fix for running under the offscreen Qt platform.
+First alpha of the v2.3.0 cycle. This iteration ships the dev-branch
+UI/UX rework that's been accumulating since v2.2.0 — new chip-rail
+navigation, modern auto-hide scrollbars, a redesigned Settings tab,
+and a motion system with reduce-motion controls — alongside a Corporate
+Clash launch-diagnostic fix prompted by a user bug report.
 
-The full v2.2.0 changelog (originally planned as a `2.1.3-a` private smoke
-iteration; bumped to `2.2.0` once the structural scope crossed into
-minor-bump territory) follows below.
+Smoke-test this build before promotion to beta or stable. See
+`SMOKETEST.md` attached to this Pre-release.
 
 ---
 
-### Bug Fixes (new since v2.2.0)
+### Bug Fixes
 
-- **Launched games now survive closing ToonTown MultiTool on Windows.** Previously, when TTMT exited, all child game processes were killed along with it because Windows put them in the same Job Object. The launcher now explicitly detaches each launched game from the multitool's job, so quitting TTMT no longer terminates your active toon windows.
-- **TTR settings auto-detect is more resilient at startup.** If `settings.json` is briefly unreadable on launch (e.g., TTR is mid-write), TTMT now falls back to the last successfully detected keymap rather than treating it as a fresh install.
-
-### Bug Fixes (from v2.2.0)
-
-- **Arrow-key movement now forwards correctly to background toons on Windows.** Multitoon forwarding was completely broken when TTR was configured with default arrow-key movement. The Win32 input backend now sets the extended-key bit in PostMessage `lparam` for arrow keys, which Panda3D requires to distinguish them from numpad arrows.
-- **Right Ctrl, Right Alt, and the navigation cluster (Insert/Delete/Home/End/PageUp/PageDown) now forward correctly on Windows.** Same root cause as arrow-key forwarding; same fix. Note: Left Ctrl is not a Win32 extended key per spec — if Left Ctrl as a hotkey is still misbehaving on your Windows install after this update, that's a separate issue.
-- **Credits page portrait now renders on the Arch AUR `ttmt-beta` build.** The asset shipped fine, but Arch's `pyside6` package doesn't include the Qt WebP image plugin, so the portrait silently failed to load. The asset is now PNG and has zero plugin dependencies.
-- **Credits page now follows OS light/dark toggles when your TTMT theme is set to `system`.** Previously only the rest of the app would repaint when the OS toggled themes.
-- **Launch tab button no longer reverts to "Launch" while the status dot stays green.** A card rebuild after launch (triggered by adding/editing/deleting another account, or changing max-accounts-per-game) was resetting the button text without consulting the underlying launcher state. The button now stays in sync with the running launcher across all rebuild paths.
+- **Corporate Clash launch failures now report why in the in-app log.**
+  Previously, when a CC login or game launch failed (network error,
+  server rejection, untrusted engine path, etc.), the only visible
+  feedback was a red status dot and a status-chip message — the actual
+  error string never reached the log shown in the Debug tab, leaving
+  users to file bug reports that didn't include the reason. Both
+  `login_failed` and `launch_failed` paths now log their message so
+  the next bug report includes the cause.
 
 ---
 
 ### Improvements
 
-- **TTR settings auto-detect at startup.** TTMT now reads your TTR `settings.json` on launch and applies the detected control bindings to the default keyset (Set 1) without requiring you to press the manual "Detect" button each session. Detection covers Linux native, Linux Flatpak, and Windows (`%APPDATA%\Toontown Rewritten`); the result is persisted via the app's settings store so it survives runs where `settings.json` is briefly unreadable.
-- **Chat-aware key blocking.** When you turn chat OFF for a background toon, TTMT now blocks the right keys for your TTR config: Return and Escape always, plus a–z if your TTR install has "open chat by typing" enabled (which is the default when no hotkey is bound to a letter). This fixes a long-standing case where chat would silently reopen on background toons in default TTR configurations because TTMT was only blocking Return.
+#### Chip-rail navigation
+- **The left sidebar is gone.** Navigation moved to a horizontal chip
+  rail at the bottom of the window. Tabs (now named Launcher / Keysets
+  / Multi-Toon) are rendered as text-under-icon chips with hover/press
+  animations, focus rings, and a sliding pill indicator that tracks
+  the selected chip.
+- Page transitions use a horizontal push-slide animation between
+  chips, vertical push-slide from the brand area to Credits.
+- Brand area (icon + version pill) is clickable and opens the Credits
+  page.
+- Hint toggle relocated from the chip rail to the header strip.
+- Hidden tabs accessible via an animated overflow popup (debug-gated).
+- Tabs renamed: Launch → Launcher, Keymap → Keysets.
+- Invasions tab removed.
+
+#### Settings tab redesign
+- Section blocks sit on soft elevated surfaces with drop shadows and
+  visible borders, matching the new design language.
+- General settings collapse into an "Advanced" section (collapsible
+  group with an animated rotating chevron).
+- TTR + CC game-path settings merged into a single Games section with
+  per-row "TTR" / "CC" leading pill chips.
+- New `ButtonRow` widget covers Clear (destructive) and other action
+  buttons with consistent theme handling.
+- Row hover/focus states refined; sublabel font and section-title
+  typography aligned with the rest of the app.
+
+#### Motion system
+- New tri-state **Reduce Motion** preference in General settings:
+  System default / On / Off. Honors the OS reduce-motion preference
+  when set to "System default".
+- Page transitions, chip animations, popup animations, and the new
+  modern scrollbar all gate on this preference.
+
+#### Modern auto-hide scrollbar
+- Custom `AutoHideScrollBar` replaces native scrollbars in Launcher,
+  Keysets, and Settings. Fades to fully transparent when idle, wakes
+  on hover, wheel, or value change, then fades back out after an idle
+  timer expires.
+- Theme-aware (light/dark) and reduce-motion compliant (instant snap
+  when motion is reduced).
+- 12 px top/bottom + 6 px right margins so the thumb sits cleanly
+  inside its scroll area.
+
+#### Header polish
+- Header strip taller (48 → 56 px) and now shows the app icon next to
+  the brand text.
+- Session status indicator shows Idle / Running with active toon count.
+- Hint toggle is now a borderless icon button living in the header.
+- New app icon (asset refresh) with a tinted variant for the
+  `ttmt-beta` package.
+
+#### Multitoon polish
+- Empty multitoon cards now include an inline "Launch a game" link
+  directing users to the Launcher tab.
+- Profile-pills row labelled `PROFILE` for clarity.
+- Idle bar drops the italic styling and uses the dedicated idle-text
+  theme color.
+- Disabled-state styling on the Enable buttons is now explicit (no
+  more no-op opacity fallback).
+
+#### Accessibility / theme
+- Light-mode `slot_dim` color bumped from `#cbd5e1` to `#64748b` so it
+  meets WCAG 3:1 contrast against its surrounding fill.
+- Focus rings added to chip-rail chips and the hint toggle.
+- Removed redundant `:disabled` opacity overrides that were producing
+  no visible change.
 
 ---
 
@@ -39,16 +100,23 @@ minor-bump territory) follows below.
 
 | File | Platform |
 | ---- | -------- |
-| `TTMultiTool-v2.2.0-rc1-Linux-x86_64.AppImage` | Linux (any distro, no install) |
-| `TTMultiTool-v2.2.0-rc1-Linux-x86_64.flatpak` | Linux (Flatpak) |
-| `ToonTownMultiTool-v2.2.0-rc1-Windows-x86_64.zip` | Windows 10/11 |
+| `TTMultiTool-v2.3.0-a-Linux-x86_64.AppImage` | Linux (any distro, no install) |
+| `TTMultiTool-v2.3.0-a-Linux-x86_64.flatpak` | Linux (Flatpak) |
+| `ToonTownMultiTool-v2.3.0-a-Windows-x86_64.zip` | Windows 10/11 |
 
-Beta-channel Arch users: `paru -Syu` (or your preferred helper) to pick up the new `ttmt-beta` package.
+Pre-release-channel Arch users: `paru -Syu` (or your preferred helper)
+to pick up the new `ttmt-beta` package.
 
-GNOME users wanting Adwaita-styled Qt widgets and decorations (instead of the default Fusion look) can install `adwaita-qt6` from the official repos. This is an optional system-level package; it doesn't ship with the app.
+GNOME users wanting Adwaita-styled Qt widgets and decorations (instead
+of the default Fusion look) can install `adwaita-qt6` from the
+official repos. This is an optional system-level package; it doesn't
+ship with the app.
 
 ---
 
 ### Smoketest
 
-This is a release candidate. The full manual smoketest checklist is attached to the GitHub Pre-release as `SMOKETEST.md`. If you're testing this build, please run through it and report any regressions before promotion to stable.
+This is an alpha. The full manual smoketest checklist is attached to
+the GitHub Pre-release as `SMOKETEST.md`. If you're testing this
+build, please run through it and report any regressions before
+promotion to beta or stable.
