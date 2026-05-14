@@ -73,6 +73,12 @@ jobs:
           /tmp/build-venv/bin/pip install -r requirements.txt pyinstaller
           /tmp/build-venv/bin/pyinstaller --noconfirm ToonTownMultiTool.spec
 
+      - name: Upload raw Linux binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-binary
+          path: dist/ToonTownMultiTool
+
       - name: Prepare AppDir
         run: |
           mkdir -p AppDir/usr/bin
@@ -113,3 +119,25 @@ jobs:
         with:
           name: linux-flatpak
           path: TTMultiTool-*.flatpak
+
+  build-deb:
+    needs: build-linux
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download the raw Linux binary
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-binary
+          path: dist
+
+      - name: Build .deb
+        run: |
+          chmod +x dist/ToonTownMultiTool
+          bash scripts/build-deb.sh dist/ToonTownMultiTool "${{ inputs.version_label }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-deb
+          path: TTMultiTool-*.deb
