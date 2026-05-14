@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_call:
 
 jobs:
   build-windows:
@@ -95,6 +96,7 @@ jobs:
 
   release:
     needs: [build-windows, build-linux, build-flatpak]
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: write
