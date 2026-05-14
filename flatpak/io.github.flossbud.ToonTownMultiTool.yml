@@ -41,9 +41,12 @@ modules:
       env:
         PIP_DISABLE_PIP_VERSION_CHECK: '1'
     build-commands:
+      # Pin evdev below 1.9: 1.9.x adopted PEP 639 SPDX license strings in
+      # pyproject.toml, which the setuptools shipped in org.kde.Sdk 6.7
+      # rejects. Drop this pin when bumping to a newer KDE runtime.
       - pip3 install --prefix=/app --no-build-isolation
-        "PySide6>=6.5" pynput requests "keyring>=24" certifi cryptography
-        secretstorage jeepney python-xlib
+        "PySide6>=6.5" pynput "evdev<1.9" requests "keyring>=24" certifi
+        cryptography secretstorage jeepney python-xlib
 
   - name: toontown-multitool
     buildsystem: simple
