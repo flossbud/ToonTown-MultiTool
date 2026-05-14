@@ -410,9 +410,11 @@ class _SectionBlock(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._c = None
+        self._is_dark = True
 
     def apply_theme(self, c, is_dark):
         self._c = c
+        self._is_dark = is_dark
         self.update()
 
     def paintEvent(self, e):
@@ -420,10 +422,22 @@ class _SectionBlock(QFrame):
             return
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        pen = QPen(QColor(self._c.get("border_card", "#363636")))
+
+        # Override the bg_card_inner / border_card tokens in dark mode —
+        # they're only ~8% lighter than bg_app, which doesn't read as a
+        # distinct elevated surface against the page. In light mode the
+        # tokens work as-is (bg_card_inner is properly darker than bg_app).
+        if self._is_dark:
+            fill_color = "#333333"
+            border_color = "#4a4a4a"
+        else:
+            fill_color = self._c.get("bg_card_inner", "#f1f5f9")
+            border_color = self._c.get("border_card", "#e2e8f0")
+
+        pen = QPen(QColor(border_color))
         pen.setWidth(1)
         p.setPen(pen)
-        p.setBrush(QColor(self._c.get("bg_card_inner", "#2e2e2e")))
+        p.setBrush(QColor(fill_color))
         r = float(SettingsGroup.CORNER_RADIUS)
         p.drawRoundedRect(
             QRectF(0.5, 0.5, self.width() - 1, self.height() - 1), r, r
