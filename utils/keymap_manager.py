@@ -110,7 +110,7 @@ class KeymapManager:
             return None
 
     def get_set_names(self) -> list:
-        """Return list of set names, e.g. ['TTR Default', 'Arrows', ...]."""
+        """Return list of set names, e.g. ['Default', 'New Set', ...]."""
         with self._lock:
             return [s.get("name", f"Set {i+1}") for i, s in enumerate(self._sets)]
 
