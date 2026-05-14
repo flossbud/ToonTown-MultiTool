@@ -10,6 +10,8 @@ The input service translates: "user pressed W → Set-1 up direction →
 toon on Set-2 receives Up Arrow."
 """
 
+from __future__ import annotations
+
 import os
 import json
 import threading

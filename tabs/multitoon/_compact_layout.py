@@ -2,6 +2,8 @@
 window size. Below the Full UI breakpoint, the outer card clamps to 720 px and
 centers horizontally so wider windows do not stretch it."""
 
+from __future__ import annotations
+
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFrame, QSizePolicy

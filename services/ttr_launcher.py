@@ -3,6 +3,8 @@ TTR Launcher Service — handles launching the actual TTREngine process
 and monitoring its lifecycle (PID, exit code).
 """
 
+from __future__ import annotations
+
 import os
 import subprocess
 import threading

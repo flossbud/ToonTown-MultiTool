@@ -10,6 +10,8 @@ Window discovery still uses xdotool (search, getwindowpid) as those don't
 trigger the portal. Geometry lookups use Xlib directly (fix #6).
 """
 
+from __future__ import annotations
+
 from Xlib import display as xdisplay, X, XK, error
 from Xlib.protocol import event as xevent
 

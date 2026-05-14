@@ -2,6 +2,8 @@
 Helpers for building a reduced child-process environment for game launches.
 """
 
+from __future__ import annotations
+
 import os
 import sys
 

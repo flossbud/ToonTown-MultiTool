@@ -8,6 +8,8 @@ For windows launched outside of TTMT, a process-name fallback table is used
 to identify the game from the executable name.
 """
 
+from __future__ import annotations
+
 import os
 import sys
 import threading

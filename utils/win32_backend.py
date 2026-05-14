@@ -5,6 +5,8 @@ Replaces Xlib calls with pywin32 (win32gui, win32api, win32process, win32con).
 Uses PostMessage to send keystrokes to background windows without stealing focus.
 """
 
+from __future__ import annotations
+
 try:
     import win32api
     import win32con

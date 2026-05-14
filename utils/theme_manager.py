@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from PySide6.QtGui import QPalette, QFont, QPixmap, QPainter, QColor, QIcon, QPen, QPainterPath
 from PySide6.QtWidgets import QApplication, QGraphicsDropShadowEffect, QWidget, QLabel
 from PySide6.QtCore import Qt, QRectF, QObject, Signal, Slot

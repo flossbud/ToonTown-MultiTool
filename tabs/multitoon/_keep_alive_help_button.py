@@ -7,6 +7,8 @@ MultitoonTab connects that signal to a tab-level signal which the main
 window uses to navigate to Settings and highlight the Keep-Alive group.
 """
 
+from __future__ import annotations
+
 from PySide6.QtCore import Qt, QPropertyAnimation, QSize, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (

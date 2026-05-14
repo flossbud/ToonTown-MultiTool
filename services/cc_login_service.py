@@ -13,6 +13,8 @@ Key differences from TTR:
   - No queue polling
 """
 
+from __future__ import annotations
+
 import os
 import threading
 import requests

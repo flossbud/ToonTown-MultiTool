@@ -8,6 +8,8 @@ The metadata (order, labels, usernames) is kept in a plain JSON config,
 while the sensitive part (passwords) is stored in the keyring keyed by a UUID.
 """
 
+from __future__ import annotations
+
 import os
 import json
 import stat

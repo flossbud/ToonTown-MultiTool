@@ -8,6 +8,8 @@ Key differences from TTRLauncher:
   - Different binary name
 """
 
+from __future__ import annotations
+
 import os
 import subprocess
 import threading

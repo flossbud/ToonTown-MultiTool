@@ -8,6 +8,8 @@ Each set is two sibling widgets in the scroll layout:
 The header never moves, resizes, or changes shape.  Only the body animates.
 """
 
+from __future__ import annotations
+
 import sys
 import os
 

@@ -14,6 +14,8 @@ Fix #7: Smart port scanning
 Docs: https://www.toontownrewritten.com/api/localapi
 """
 
+from __future__ import annotations
+
 import http.client
 import json
 import re
