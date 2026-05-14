@@ -1,5 +1,15 @@
 # ToonTown MultiTool v2.0 — Python dependencies
 # Install with: pip install -r requirements.txt
+#
+# Dependency policy:
+#   pip installs the newest release compatible with the running Python via
+#   each wheel's Requires-Python metadata, so modern systems get modern deps
+#   automatically while older ones (Python 3.9 / Debian 11) still resolve.
+#   Keep the >= floors at the lowest version that ships Python 3.9 wheels AND
+#   has the APIs this app uses. Add an upper cap ONLY when a known newer
+#   release breaks Python 3.9 — always behind a python_version marker, never
+#   a blanket pin. The portability CI matrix (.github/workflows/portability.yml)
+#   is the source of truth: it runs pip install across Python 3.9–3.12.
 
 # Core — required on all platforms
 PySide6>=6.5.0
