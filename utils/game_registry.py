@@ -19,6 +19,15 @@ _KNOWN_PROCESSES = {
     "corporateclash":    "cc",
 }
 
+# X11 WM_CLASS values for each supported game. Used as the last-ditch fallback
+# in Flatpak installs, where /proc/<host_pid>/exe is unreadable because the
+# sandbox's PID namespace differs from the host's. Values are lowercased
+# before comparison.
+_KNOWN_X11_CLASSES = {
+    "toontown rewritten": "ttr",
+    "corporate clash":    "cc",
+}
+
 
 class GameRegistry:
     _instance = None
@@ -54,18 +63,23 @@ class GameRegistry:
     def get_game_for_window(self, wid: str) -> str | None:
         """Look up the game tag for a window ID by resolving its PID first.
 
-        Falls back to process-name identification for externally-launched windows.
+        Falls back to process-name identification for externally-launched windows,
+        and then to X11 WM_CLASS when /proc lookups fail (e.g. inside Flatpak,
+        where the sandbox PID namespace makes /proc/<host_pid>/exe unreadable).
         """
         pid = self._get_pid_for_window(wid)
-        if pid is None:
-            return None
+        if pid is not None:
+            game = self.get_game(pid)
+            if game is not None:
+                return game
 
-        game = self.get_game(pid)
-        if game is not None:
-            return game
+            by_name = self._tag_from_process_name(pid)
+            if by_name is not None:
+                return by_name
 
-        # Fallback: check the process executable name
-        return self._tag_from_process_name(pid)
+        if sys.platform != "win32":
+            return self._tag_from_x11_class(wid)
+        return None
 
     def classify_window_for_filtering(self, wid: str) -> tuple[str | None, bool]:
         """Classify a window for additive trust filtering.
@@ -150,6 +164,37 @@ class GameRegistry:
         if name is None:
             return None
         return _KNOWN_PROCESSES.get(name)
+
+    @staticmethod
+    def _tag_from_x11_class(wid: str) -> str | None:
+        """Identify a game by the window's X11 WM_CLASS.
+
+        This is the Flatpak sandbox fallback: WM_CLASS is set by the game and
+        is visible to any X11 client, unlike /proc/<host_pid>/exe which is
+        gated by the PID namespace. Returns None on non-X11 systems or when
+        the class is missing/unknown.
+        """
+        try:
+            from Xlib import display as xdisplay
+
+            d = xdisplay.Display()
+            try:
+                win = d.create_resource_object("window", int(wid))
+                wm_class = win.get_wm_class()
+            finally:
+                d.close()
+        except Exception:
+            return None
+        if not wm_class:
+            return None
+        # WM_CLASS is a (instance, class) tuple; check both, lowercased.
+        for token in wm_class:
+            if not token:
+                continue
+            tag = _KNOWN_X11_CLASSES.get(token.lower())
+            if tag is not None:
+                return tag
+        return None
 
     @staticmethod
     def _get_process_name(pid: int) -> str | None:
