@@ -19,6 +19,7 @@ from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve
 from PySide6.QtGui import QColor, QPainter
 from utils.theme_manager import resolve_theme, get_theme_colors, apply_card_shadow, get_set_color, make_trash_icon
 from utils.symbols import S
+from utils.widgets import install_modern_scrollbar
 
 DIRECTIONS = ("up", "left", "down", "right", "jump", "book", "gags", "tasks", "map")
 DIRECTION_LABELS = {"up": "Up", "left": "Left", "down": "Down", "right": "Right", "jump": "Jump", "book": "Book", "gags": "Gags", "tasks": "Tasks", "map": "Map"}
@@ -307,28 +308,8 @@ class KeymapTab(QWidget):
         self._scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self._scroll.setFrameShape(QFrame.NoFrame)
 
-        # Overlay scrollbar so it doesn't shrink content width
-        self._scroll.setStyleSheet("""
-            QScrollBar:vertical {
-                background: transparent;
-                width: 6px;
-                margin: 0;
-            }
-            QScrollBar::handle:vertical {
-                background: rgba(255,255,255,0.15);
-                border-radius: 3px;
-                min-height: 30px;
-            }
-            QScrollBar::handle:vertical:hover {
-                background: rgba(255,255,255,0.25);
-            }
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
-                height: 0;
-            }
-            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
-                background: transparent;
-            }
-        """)
+        is_dark = resolve_theme(self.settings_manager) == "dark"
+        install_modern_scrollbar(self._scroll, is_dark=is_dark)
 
         from utils.layout import clamp_centered
 
@@ -338,7 +319,7 @@ class KeymapTab(QWidget):
 
         self._scroll_widget = QWidget()
         self._scroll_layout = QVBoxLayout(self._scroll_widget)
-        self._scroll_layout.setContentsMargins(24, 20, 30, 20)  # extra right margin for scrollbar overlay
+        self._scroll_layout.setContentsMargins(24, 20, 24, 20)
         self._scroll_layout.setSpacing(0)
         self._scroll_layout.setAlignment(Qt.AlignTop)
 
@@ -644,11 +625,16 @@ class KeymapTab(QWidget):
         return get_theme_colors(resolve_theme(self.settings_manager) == "dark")
 
     def refresh_theme(self):
+        is_dark = resolve_theme(self.settings_manager) == "dark"
         c = self._c()
 
         self.setStyleSheet(f"background: {c['bg_app']}; color: {c['text_primary']};")
         self._scroll.setStyleSheet(f"background: {c['bg_app']};")
         self._scroll_widget.setStyleSheet(f"background: {c['bg_app']};")
+
+        bar = getattr(self._scroll, "_auto_hide_scrollbar", None)
+        if bar is not None:
+            bar.set_theme(is_dark)
 
         for entry in self._entries:
             idx = entry["index"]

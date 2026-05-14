@@ -26,6 +26,7 @@ from services.ttr_launcher import TTRLauncher
 from services.cc_login_service import CCLoginWorker, find_cc_engine_path, get_cc_engine_executable_name
 from services.cc_launcher import CCLauncher
 from utils.shared_widgets import PulsingDot
+from utils.widgets import install_modern_scrollbar
 
 
 # ── Status colors ──────────────────────────────────────────────────────────
@@ -345,17 +346,9 @@ class LaunchTab(QWidget):
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self._scroll.setFrameShape(QFrame.NoFrame)
-        self._scroll.setStyleSheet("""
-            QScrollBar:vertical {
-                background: transparent; width: 6px; margin: 0;
-            }
-            QScrollBar::handle:vertical {
-                background: rgba(255,255,255,0.15); border-radius: 3px; min-height: 30px;
-            }
-            QScrollBar::handle:vertical:hover { background: rgba(255,255,255,0.25); }
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
-            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }
-        """)
+
+        is_dark = resolve_theme(self.settings_manager) == "dark"
+        install_modern_scrollbar(self._scroll, is_dark=is_dark)
 
         self._scroll_widget = QWidget()
         self._layout = QVBoxLayout(self._scroll_widget)
@@ -1048,6 +1041,9 @@ class LaunchTab(QWidget):
 
         self.setStyleSheet(f"background: {c['bg_app']}; color: {c['text_primary']};")
         self._scroll.setStyleSheet(self._scroll.styleSheet())
+        bar = getattr(self._scroll, "_auto_hide_scrollbar", None)
+        if bar is not None:
+            bar.set_theme(is_dark)
         self._scroll_widget.setStyleSheet(f"background: {c['bg_app']};")
 
         if self._keyring_banner is not None:
