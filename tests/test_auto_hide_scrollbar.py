@@ -68,3 +68,14 @@ def test_set_theme_is_idempotent(qapp):
     bar.set_theme(is_dark=True)
     assert bar.styleSheet() == first
     bar.deleteLater()
+
+
+def test_bar_starts_with_opacity_effect_at_zero(qapp):
+    from PySide6.QtWidgets import QGraphicsOpacityEffect
+    from utils.widgets.auto_hide_scrollbar import AutoHideScrollBar
+
+    bar = AutoHideScrollBar()
+    effect = bar.graphicsEffect()
+    assert isinstance(effect, QGraphicsOpacityEffect)
+    assert effect.opacity() == 0.0
+    bar.deleteLater()

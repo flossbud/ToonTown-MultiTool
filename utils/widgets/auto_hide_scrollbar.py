@@ -1,7 +1,7 @@
 """Modern auto-hide scrollbar — thin pill that fades in on activity."""
 from __future__ import annotations
 
-from PySide6.QtWidgets import QScrollBar
+from PySide6.QtWidgets import QGraphicsOpacityEffect, QScrollBar
 
 
 _QSS_TEMPLATE = """
@@ -45,6 +45,9 @@ class AutoHideScrollBar(QScrollBar):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._opacity_effect = QGraphicsOpacityEffect(self)
+        self._opacity_effect.setOpacity(0.0)
+        self.setGraphicsEffect(self._opacity_effect)
 
     def set_theme(self, is_dark: bool) -> None:
         if is_dark:
