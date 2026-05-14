@@ -1,8 +1,8 @@
-import subprocess
 import threading
 import time
 from PySide6.QtCore import QObject, Signal
 from utils.game_registry import GameRegistry
+from utils import x11_discovery
 
 class WindowManager(QObject):
     window_ids_updated = Signal(list)
@@ -36,10 +36,10 @@ class WindowManager(QObject):
     def enable_detection(self):
         self._detection_enabled = True
         # Don't run assign_windows() synchronously on the caller's thread —
-        # this is invoked from the GUI thread on service start, and the
-        # xdotool subprocess chain inside can block for 100ms–several seconds
-        # on Wayland under load. The poll loop will pick up windows within
-        # ~2s on its own.
+        # this is invoked from the GUI thread on service start, and the X11
+        # tree walk inside can block for 100ms-several seconds on Wayland
+        # under load. The poll loop will pick up windows within ~2s on its
+        # own.
 
     def disable_detection(self):
         self._detection_enabled = False
@@ -90,17 +90,7 @@ class WindowManager(QObject):
                 except Exception:
                     current_active = None
             else:
-                try:
-                    result = subprocess.check_output(
-                        ["xdotool", "getactivewindow"],
-                        stderr=subprocess.DEVNULL,
-                        timeout=0.5
-                    ).decode().strip()
-                    current_active = result
-                except subprocess.TimeoutExpired:
-                    pass  # keep previous current_active
-                except Exception:
-                    current_active = None
+                current_active = x11_discovery.get_active_window_id()
                 
             with self._lock:
                 self._active_id = current_active
@@ -182,37 +172,18 @@ class WindowManager(QObject):
                 new_ids = []
         else:
             try:
-                raw_ids = []
-                for cls in ("Toontown Rewritten", "Corporate Clash"):
-                    try:
-                        out = subprocess.check_output(
-                            ["xdotool", "search", "--class", cls],
-                            stderr=subprocess.DEVNULL,
-                            timeout=0.5
-                        ).decode().strip().split("\n")
-                        raw_ids.extend([w.strip() for w in out if w.strip() and w.strip().isdigit()])
-                    except subprocess.CalledProcessError:
-                        pass
+                raw_ids = x11_discovery.find_window_ids_by_class(
+                    ["Toontown Rewritten", "Corporate Clash"]
+                )
 
                 visible = []
                 for wid in raw_ids:
                     if not _accept_candidate_window(wid):
                         continue
-                    try:
-                        geo = subprocess.check_output(
-                            ["xdotool", "getwindowgeometry", wid],
-                            stderr=subprocess.DEVNULL,
-                            timeout=0.5
-                        ).decode()
-                        if "Position:" in geo and "Geometry:" in geo:
-                            x = 99999
-                            for line in geo.splitlines():
-                                if "Position:" in line:
-                                    x = int(line.split()[1].split(",")[0])
-                                    break
-                            visible.append((wid, x))
-                    except subprocess.CalledProcessError:
+                    x = x11_discovery.get_window_root_x(wid)
+                    if x is None:
                         continue
+                    visible.append((wid, x))
 
                 visible.sort(key=lambda item: (item[1], item[0]))
                 new_ids = list(dict.fromkeys(w for w, _ in visible))[:16]

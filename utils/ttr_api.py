@@ -148,17 +148,12 @@ def _get_window_pids_nspid(window_ids: list, host_pids: set) -> dict:
         except Exception:
             pass
 
+    from utils import x11_discovery
     win_to_ns_pid = {}
     for wid in (window_ids or []):
-        try:
-            pid = int(subprocess.check_output(
-                ["xdotool", "getwindowpid", wid],
-                stderr=subprocess.DEVNULL,
-                timeout=1.0
-            ).decode().strip())
+        pid = x11_discovery.get_window_pid(wid)
+        if pid is not None:
             win_to_ns_pid[wid] = pid
-        except Exception:
-            pass
 
     ns_pid_to_host = {ns: host for host, ns in host_to_ns_pid.items()}
 

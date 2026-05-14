@@ -125,12 +125,8 @@ class GameRegistry:
                 host_pid = GameRegistry._get_host_pid_for_window_xres(wid)
                 if host_pid is not None:
                     return host_pid
-                import subprocess
-                pid_str = subprocess.check_output(
-                    ["xdotool", "getwindowpid", wid],
-                    stderr=subprocess.DEVNULL
-                ).decode().strip()
-                return int(pid_str)
+                from utils import x11_discovery
+                return x11_discovery.get_window_pid(wid)
         except Exception:
             return None
 
