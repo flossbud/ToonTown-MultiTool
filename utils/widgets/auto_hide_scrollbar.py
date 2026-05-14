@@ -11,7 +11,7 @@ _QSS_TEMPLATE = """
 QScrollBar:vertical {{
     background: transparent;
     width: 18px;
-    margin: 0 6px 0 0;
+    margin: 12px 6px 12px 0;
     border: none;
 }}
 QScrollBar::handle:vertical {{
