@@ -4,7 +4,7 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
-from PySide6.QtWidgets import QApplication, QGraphicsDropShadowEffect
+from PySide6.QtWidgets import QApplication
 
 
 @pytest.fixture(scope="module")
@@ -13,24 +13,32 @@ def qapp():
     yield app
 
 
-def test_section_block_has_drop_shadow_after_apply_theme(qapp):
-    """SettingsGroup attaches a QGraphicsDropShadowEffect to the block wrapper.
-    The shadow lives on a transparent outer wrapper (not on _block itself) to
-    avoid a Qt quirk where graphics effects on widgets with custom paintEvent
-    AND child widgets can suppress the widget's own painting."""
-    from tabs.settings_tab import SettingsGroup
+def test_section_block_has_painted_shadow_wrapper(qapp):
+    """SettingsGroup wraps its _block in a _SectionBlockWrapper that paints
+    a soft shadow manually. The wrapper is NOT a plain QWidget and the
+    wrapper carries the dark/light flag from apply_theme.
+
+    Manual painting replaces QGraphicsDropShadowEffect because the effect's
+    blurred output was being clipped to the wrapper's bounds, producing a
+    hard-edged dark rectangle instead of a soft halo.
+    """
+    from tabs.settings_tab import SettingsGroup, _SectionBlockWrapper
     from utils.theme_manager import get_theme_colors
 
     g = SettingsGroup("General")
     g.apply_theme(get_theme_colors(is_dark=True), True)
 
-    effect = g._block_wrapper.graphicsEffect()
-    assert isinstance(effect, QGraphicsDropShadowEffect)
-    # Tuned for dark-mode visibility on the very dark page background.
-    assert effect.blurRadius() == 32
-    assert effect.offset().y() == 8
-    # _block itself MUST NOT have the effect — that would re-introduce the bug.
+    assert isinstance(g._block_wrapper, _SectionBlockWrapper)
+    # apply_theme propagates is_dark to the wrapper.
+    assert g._block_wrapper._is_dark is True
+    # Wrapper has no graphics effect — the shadow is painted, not effect-driven.
+    assert g._block_wrapper.graphicsEffect() is None
+    # _block still has no effect (regression guard from the prior wrapper fix).
     assert g._block.graphicsEffect() is None
+
+    # Re-applying with is_dark=False updates the wrapper's flag.
+    g.apply_theme(get_theme_colors(is_dark=False), False)
+    assert g._block_wrapper._is_dark is False
 
 
 def test_section_title_has_letter_spacing(qapp):

@@ -357,17 +357,19 @@ class SettingsGroup(QWidget):
             self.title_label.setContentsMargins(2, 0, 0, 8)
             layout.addWidget(self.title_label)
 
-        # Shadow wrapper — `_block_wrapper` is a transparent QWidget that
-        # carries the QGraphicsDropShadowEffect. `_block` (the visible card
-        # with its rounded fill + border) lives INSIDE it. Mirrors the
-        # Launch tab pattern at launch_tab.py:544-551: applying a shadow
-        # effect directly to a widget that has both a custom paintEvent and
-        # child widgets can suppress the widget's own painting; an outer
-        # transparent wrapper avoids that.
-        self._block_wrapper = QWidget(self)
-        self._block_wrapper.setStyleSheet("background: transparent;")
+        # Shadow wrapper — `_block_wrapper` is a _SectionBlockWrapper that
+        # paints a soft multi-pass shadow around `_block` in its paintEvent.
+        # This replaces QGraphicsDropShadowEffect which clipped the blurred
+        # falloff to the wrapper's own bounds, producing a hard-edged dark
+        # rectangle instead of a soft halo.
+        self._block_wrapper = _SectionBlockWrapper(self)
         wrapper_layout = QVBoxLayout(self._block_wrapper)
-        wrapper_layout.setContentsMargins(0, 0, 0, 0)
+        wrapper_layout.setContentsMargins(
+            _SectionBlockWrapper.MARGIN_X,
+            _SectionBlockWrapper.MARGIN_TOP,
+            _SectionBlockWrapper.MARGIN_X,
+            _SectionBlockWrapper.MARGIN_BOTTOM,
+        )
         wrapper_layout.setSpacing(0)
 
         self._block = _SectionBlock(self._block_wrapper)
@@ -394,22 +396,7 @@ class SettingsGroup(QWidget):
                 f"letter-spacing: 0.15px; "
                 f"color: {c['text_primary']}; background: transparent;"
             )
-        # Inline shadow tuned for Settings section blocks. The dark-mode page
-        # background is #1a1a1a — already so dark that apply_card_shadow's
-        # default 35%-black shadow has almost no contrast to work with.
-        # Bumping alpha + blur here makes the elevation actually readable
-        # without affecting other tabs' uses of apply_card_shadow.
-        from PySide6.QtWidgets import QGraphicsDropShadowEffect
-        shadow = QGraphicsDropShadowEffect(self._block_wrapper)
-        if is_dark:
-            shadow.setColor(QColor(0, 0, 0, 200))   # ~78% black
-            shadow.setBlurRadius(32)
-            shadow.setOffset(0, 8)
-        else:
-            shadow.setColor(QColor(15, 23, 42, 64))  # ~25% slate-900
-            shadow.setBlurRadius(24)
-            shadow.setOffset(0, 6)
-        self._block_wrapper.setGraphicsEffect(shadow)
+        self._block_wrapper.apply_theme(c, is_dark)
         self._block.apply_theme(c, is_dark)
         for row in self._rows:
             row.apply_theme(c, is_dark)
@@ -441,6 +428,71 @@ class _SectionBlock(QFrame):
         p.drawRoundedRect(
             QRectF(0.5, 0.5, self.width() - 1, self.height() - 1), r, r
         )
+        p.end()
+
+
+class _SectionBlockWrapper(QWidget):
+    """Transparent wrapper that paints a soft drop shadow behind its inner
+    `_SectionBlock` child.
+
+    Replaces `QGraphicsDropShadowEffect` which clipped the blurred falloff to
+    the wrapper's bounds, producing a hard-edged dark rectangle. Painting the
+    shadow manually as several alpha-blended rounded rects gives us exact
+    control over the falloff and avoids the clipping problem entirely.
+    """
+
+    # Margins inside the wrapper: room for shadow to render around the block.
+    # Left/right symmetric; top smaller (no negative shadow offset); bottom
+    # larger to accommodate the downward y-offset + blur falloff.
+    MARGIN_X = 14
+    MARGIN_TOP = 4
+    MARGIN_BOTTOM = 18
+
+    # Shadow passes — (extent_outward_px, alpha_dark, alpha_light).
+    # `extent` widens the shadow rect outward from the block on all sides;
+    # combined with `y_offset` it produces the soft falloff. Outermost pass
+    # is largest/most transparent; innermost is tightest/most opaque.
+    _PASSES = (
+        (12, 14, 8),
+        (8,  28, 16),
+        (4,  56, 28),
+    )
+    _Y_OFFSET = 4
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._is_dark = True
+
+    def apply_theme(self, c, is_dark):
+        self._is_dark = is_dark
+        self.update()
+
+    def paintEvent(self, e):
+        layout = self.layout()
+        if layout is None or layout.count() == 0:
+            return
+        block_widget = layout.itemAt(0).widget()
+        if block_widget is None:
+            return
+        block_rect = block_widget.geometry()
+
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setPen(Qt.NoPen)
+        radius = float(SettingsGroup.CORNER_RADIUS)
+
+        for extent, alpha_dark, alpha_light in self._PASSES:
+            alpha = alpha_dark if self._is_dark else alpha_light
+            color = QColor(0, 0, 0) if self._is_dark else QColor(15, 23, 42)
+            color.setAlpha(alpha)
+            p.setBrush(color)
+            shadow_rect = QRectF(
+                block_rect.x() - extent,
+                block_rect.y() - extent + self._Y_OFFSET,
+                block_rect.width() + 2 * extent,
+                block_rect.height() + 2 * extent,
+            )
+            p.drawRoundedRect(shadow_rect, radius + extent, radius + extent)
         p.end()
 
 
@@ -814,7 +866,10 @@ class SettingsTab(QWidget):
 
         self._main_layout = QVBoxLayout(content)
         self._main_layout.setContentsMargins(20, 24, 20, 24)
-        self._main_layout.setSpacing(28)
+        # Section blocks have internal bottom padding (~18px) for the painted
+        # shadow; reduce the layout-level spacing so the visual gap between
+        # sections stays similar to before the shadow pass.
+        self._main_layout.setSpacing(12)
         self._main_layout.setAlignment(Qt.AlignTop)
 
         self._build_general_group()
