@@ -850,11 +850,11 @@ class LaunchTab(QWidget):
         worker.queue_update.connect(lambda p, e, g=game, si=section_index: self._update_queue(g, si, p, e))
         worker.need_2fa.connect(lambda banner, g=game, si=section_index: self._prompt_2fa(g, si, banner))
         worker.login_success.connect(lambda gs, ck, g=game, si=section_index: self._on_login_success(g, si, gs, ck))
-        worker.login_failed.connect(lambda msg, g=game, si=section_index: self._update_status(g, si, LoginState.FAILED, msg))
+        worker.login_failed.connect(lambda msg, g=game, si=section_index: self._on_login_failed(g, si, msg))
 
         launcher.game_launched.connect(lambda pid, g=game, si=section_index: self._on_game_launched(g, si, pid))
         launcher.game_exited.connect(lambda rc, g=game, si=section_index: self._on_game_exited(g, si, rc))
-        launcher.launch_failed.connect(lambda msg, g=game, si=section_index: self._update_status(g, si, LoginState.FAILED, msg))
+        launcher.launch_failed.connect(lambda msg, g=game, si=section_index: self._on_launcher_failed(g, si, msg))
 
         # Start login
         worker.login(acct.username, acct.password)
@@ -868,6 +868,16 @@ class LaunchTab(QWidget):
         if launcher:
             engine_dir = self._get_engine_dir(game)
             launcher.launch(gameserver, token, engine_dir)
+
+    def _on_login_failed(self, game, section_index, msg):
+        game_label = "TTR" if game == "ttr" else "CC"
+        self.log(f"[Launch] {game_label} account {section_index + 1} login failed: {msg}")
+        self._update_status(game, section_index, LoginState.FAILED, msg)
+
+    def _on_launcher_failed(self, game, section_index, msg):
+        game_label = "TTR" if game == "ttr" else "CC"
+        self.log(f"[Launch] {game_label} account {section_index + 1} launch failed: {msg}")
+        self._update_status(game, section_index, LoginState.FAILED, msg)
 
     def _on_game_launched(self, game, section_index, pid):
         game_label = "TTR" if game == "ttr" else "CC"
