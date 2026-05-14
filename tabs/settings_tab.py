@@ -444,20 +444,20 @@ class _SectionBlockWrapper(QWidget):
     # Margins inside the wrapper: room for shadow to render around the block.
     # Left/right symmetric; top smaller (no negative shadow offset); bottom
     # larger to accommodate the downward y-offset + blur falloff.
-    MARGIN_X = 14
+    MARGIN_X = 20
     MARGIN_TOP = 4
-    MARGIN_BOTTOM = 18
+    MARGIN_BOTTOM = 22
 
     # Shadow passes — (extent_outward_px, alpha_dark, alpha_light).
-    # `extent` widens the shadow rect outward from the block on all sides;
-    # combined with `y_offset` it produces the soft falloff. Outermost pass
-    # is largest/most transparent; innermost is tightest/most opaque.
+    # Tuned for softness: wider extents + lower alphas than the first pass,
+    # so the falloff is more gradual and the innermost shadow doesn't read
+    # as a hard dark band against the section block.
     _PASSES = (
-        (12, 14, 8),
-        (8,  28, 16),
-        (4,  56, 28),
+        (18, 5,  3),
+        (12, 10, 6),
+        (6,  20, 12),
     )
-    _Y_OFFSET = 4
+    _Y_OFFSET = 6
 
     def __init__(self, parent=None):
         super().__init__(parent)
