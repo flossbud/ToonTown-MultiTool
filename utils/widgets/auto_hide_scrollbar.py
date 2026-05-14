@@ -63,6 +63,8 @@ class AutoHideScrollBar(QScrollBar):
         self._idle_timer.setSingleShot(True)
         self._idle_timer.timeout.connect(self._on_idle)
 
+        self.valueChanged.connect(self._on_value_changed)
+
     def wake(self) -> None:
         """Make the bar visible. Animated unless reduce-motion is on."""
         if motion.is_reduced():
@@ -87,6 +89,9 @@ class AutoHideScrollBar(QScrollBar):
         self._anim.setStartValue(self._opacity_effect.opacity())
         self._anim.setEndValue(0.0)
         self._anim.start()
+
+    def _on_value_changed(self, _value: int) -> None:
+        self.wake()
 
     def set_theme(self, is_dark: bool) -> None:
         if is_dark:

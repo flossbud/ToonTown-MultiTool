@@ -196,3 +196,21 @@ def test_reduce_motion_idle_callback_is_noop(qapp, monkeypatch):
     bar._on_idle()  # must not animate or change opacity
     assert bar._opacity_effect.opacity() == 1.0
     bar.deleteLater()
+
+
+def test_value_changed_signal_wakes_the_bar(qapp, qtbot, monkeypatch):
+    from utils.widgets.auto_hide_scrollbar import AutoHideScrollBar
+    import utils.motion as motion
+
+    monkeypatch.setattr(AutoHideScrollBar, "_FADE_IN_MS", 1)
+    monkeypatch.setattr(motion, "is_reduced", lambda: False)
+
+    bar = AutoHideScrollBar()
+    bar.setRange(0, 100)
+    assert bar._opacity_effect.opacity() == 0.0
+
+    # Programmatic scroll position change emits valueChanged.
+    bar.setValue(50)
+
+    qtbot.waitUntil(lambda: bar._opacity_effect.opacity() == 1.0, timeout=200)
+    bar.deleteLater()
