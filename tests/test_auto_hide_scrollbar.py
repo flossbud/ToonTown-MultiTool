@@ -119,8 +119,8 @@ def test_idle_timer_fades_back_to_zero(qapp, qtbot, monkeypatch):
     from utils.widgets.auto_hide_scrollbar import AutoHideScrollBar
     import utils.motion as motion
 
-    monkeypatch.setattr(AutoHideScrollBar, "_FADE_IN_MS", 10)
-    monkeypatch.setattr(AutoHideScrollBar, "_FADE_OUT_MS", 10)
+    monkeypatch.setattr(AutoHideScrollBar, "_FADE_IN_MS", 1)
+    monkeypatch.setattr(AutoHideScrollBar, "_FADE_OUT_MS", 1)
     monkeypatch.setattr(AutoHideScrollBar, "_IDLE_TIMEOUT_MS", 50)
     monkeypatch.setattr(motion, "is_reduced", lambda: False)
 
@@ -140,8 +140,8 @@ def test_wake_restarts_idle_timer(qapp, qtbot, monkeypatch):
     from utils.widgets.auto_hide_scrollbar import AutoHideScrollBar
     import utils.motion as motion
 
-    monkeypatch.setattr(AutoHideScrollBar, "_FADE_IN_MS", 10)
-    monkeypatch.setattr(AutoHideScrollBar, "_FADE_OUT_MS", 10)
+    monkeypatch.setattr(AutoHideScrollBar, "_FADE_IN_MS", 1)
+    monkeypatch.setattr(AutoHideScrollBar, "_FADE_OUT_MS", 1)
     monkeypatch.setattr(AutoHideScrollBar, "_IDLE_TIMEOUT_MS", 100)
     monkeypatch.setattr(motion, "is_reduced", lambda: False)
 
