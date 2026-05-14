@@ -1114,8 +1114,10 @@ def _run_self_check_keyring() -> int:
         username = "probe"
         secret = "roundtrip-value"
         keyring.set_password(service, username, secret)
-        got = keyring.get_password(service, username)
-        keyring.delete_password(service, username)
+        try:
+            got = keyring.get_password(service, username)
+        finally:
+            keyring.delete_password(service, username)
         if got != secret:
             sys.stderr.write(
                 f"self-check-keyring FAIL: roundtrip mismatch (got {got!r})\n"
