@@ -41,7 +41,7 @@ Built with Python + PySide6.
 
 **Multitoon Control**
 - Broadcast keyboard input to up to 4 background toons simultaneously
-- Per-toon movement key mapping! Each toon can use a different key set (WASD, Arrows, or fully custom)
+- Per-toon movement key mapping! Each toon can use a different key set (WASD or fully custom)
 - Up to 8 custom key sets
 - Per-toon keep-alive timer with configurable key and interval
 
