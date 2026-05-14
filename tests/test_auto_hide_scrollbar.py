@@ -349,3 +349,25 @@ def test_re_exported_from_utils_widgets(qapp):
     from utils.widgets import AutoHideScrollBar, install_modern_scrollbar
     assert AutoHideScrollBar is not None
     assert callable(install_modern_scrollbar)
+
+
+def test_no_qscrollbar_qss_remains_in_tabs():
+    """All scrollbar styling must go through AutoHideScrollBar / utils.widgets.
+
+    Regression guard for the 2026-05-13 modern scrollbar migration: bare
+    `QScrollBar:` QSS strings in the `tabs/` tree are forbidden because
+    they bypass the auto-hide / theme-aware bar.
+    """
+    import pathlib
+
+    repo_root = pathlib.Path(__file__).parent.parent
+    tabs_dir = repo_root / "tabs"
+    offenders = []
+    for py in tabs_dir.rglob("*.py"):
+        text = py.read_text(encoding="utf-8")
+        if "QScrollBar:" in text or "QScrollBar::" in text:
+            offenders.append(str(py.relative_to(repo_root)))
+    assert offenders == [], (
+        f"Files in tabs/ contain raw QScrollBar QSS: {offenders}. "
+        f"Use utils.widgets.install_modern_scrollbar instead."
+    )
