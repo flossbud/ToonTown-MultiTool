@@ -285,3 +285,60 @@ def test_attach_to_viewport_wakes_on_enter(qapp, qtbot, monkeypatch):
     qtbot.waitUntil(lambda: bar._opacity_effect.opacity() == 1.0, timeout=200)
     bar.deleteLater()
     viewport.deleteLater()
+
+
+def test_install_modern_scrollbar_wires_up_scroll_area(qapp):
+    from PySide6.QtWidgets import QScrollArea, QLabel
+    from utils.widgets.auto_hide_scrollbar import (
+        AutoHideScrollBar,
+        install_modern_scrollbar,
+    )
+
+    area = QScrollArea()
+    area.setWidget(QLabel("content"))
+
+    install_modern_scrollbar(area, is_dark=True)
+
+    bar = area.verticalScrollBar()
+    assert isinstance(bar, AutoHideScrollBar)
+    # set_theme was called — stylesheet contains dark-mode active color.
+    assert "rgba(255, 255, 255, 0.45)" in bar.styleSheet()
+    # Helper stashed a reference for later theme refreshes.
+    assert area._auto_hide_scrollbar is bar
+    area.deleteLater()
+
+
+def test_install_modern_scrollbar_wakes_on_viewport_wheel(qapp, qtbot, monkeypatch):
+    """Smoke: after install, wheeling on the viewport should wake the bar."""
+    from PySide6.QtCore import QCoreApplication, QPoint, QPointF, Qt
+    from PySide6.QtGui import QWheelEvent
+    from PySide6.QtWidgets import QLabel, QScrollArea
+    from utils.widgets.auto_hide_scrollbar import (
+        AutoHideScrollBar,
+        install_modern_scrollbar,
+    )
+    import utils.motion as motion
+
+    monkeypatch.setattr(AutoHideScrollBar, "_FADE_IN_MS", 1)
+    monkeypatch.setattr(motion, "is_reduced", lambda: False)
+
+    area = QScrollArea()
+    big = QLabel("X" * 5000)
+    big.setWordWrap(True)
+    area.setWidget(big)
+    area.resize(120, 80)
+    install_modern_scrollbar(area, is_dark=True)
+
+    bar = area.verticalScrollBar()
+    bar.setRange(0, 1000)  # ensure the bar has scrollable range
+
+    wheel = QWheelEvent(
+        QPointF(10, 10), QPointF(10, 10),
+        QPoint(0, -120), QPoint(0, -120),
+        Qt.NoButton, Qt.NoModifier,
+        Qt.NoScrollPhase, False,
+    )
+    QCoreApplication.sendEvent(area.viewport(), wheel)
+
+    qtbot.waitUntil(lambda: bar._opacity_effect.opacity() == 1.0, timeout=200)
+    area.deleteLater()

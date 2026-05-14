@@ -119,3 +119,17 @@ class AutoHideScrollBar(QScrollBar):
                 hover_color=_LIGHT_HOVER,
             )
         self.setStyleSheet(qss)
+
+
+def install_modern_scrollbar(scroll_area, *, is_dark: bool) -> None:
+    """Replace the vertical scroll bar of `scroll_area` with an
+    AutoHideScrollBar styled for the current theme.
+
+    Stores a reference at `scroll_area._auto_hide_scrollbar` so the owning
+    tab's refresh_theme can call `set_theme(is_dark)` on it later.
+    """
+    bar = AutoHideScrollBar(scroll_area)
+    scroll_area.setVerticalScrollBar(bar)
+    bar.set_theme(is_dark)
+    bar.attach_to_viewport(scroll_area.viewport())
+    scroll_area._auto_hide_scrollbar = bar
