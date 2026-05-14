@@ -342,3 +342,10 @@ def test_install_modern_scrollbar_wakes_on_viewport_wheel(qapp, qtbot, monkeypat
 
     qtbot.waitUntil(lambda: bar._opacity_effect.opacity() == 1.0, timeout=200)
     area.deleteLater()
+
+
+def test_re_exported_from_utils_widgets(qapp):
+    """Call sites should be able to import from utils.widgets directly."""
+    from utils.widgets import AutoHideScrollBar, install_modern_scrollbar
+    assert AutoHideScrollBar is not None
+    assert callable(install_modern_scrollbar)
