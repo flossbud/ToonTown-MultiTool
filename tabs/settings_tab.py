@@ -476,6 +476,17 @@ class _SectionBlockWrapper(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._is_dark = True
+        # Override the global QWidget stylesheet's background. Without this,
+        # Qt fills the wrapper's bg with the inherited theme bg (a gradient
+        # in light mode, solid in dark mode) BEFORE paintEvent runs. Since
+        # gradients are computed per-widget, the wrapper renders a different
+        # shade than the page widget — visible as a sharp-edged rectangle
+        # around the section block. Transparency lets the page bg show
+        # through, with our painted shadow rects on top.
+        self.setObjectName("settings_section_wrapper")
+        self.setStyleSheet(
+            "QWidget#settings_section_wrapper { background: transparent; }"
+        )
 
     def apply_theme(self, c, is_dark):
         self._is_dark = is_dark
