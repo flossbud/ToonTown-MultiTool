@@ -26,8 +26,9 @@ def test_section_block_has_drop_shadow_after_apply_theme(qapp):
 
     effect = g._block_wrapper.graphicsEffect()
     assert isinstance(effect, QGraphicsDropShadowEffect)
-    assert effect.blurRadius() == 18
-    assert effect.offset().y() == 4
+    # Tuned for dark-mode visibility on the very dark page background.
+    assert effect.blurRadius() == 32
+    assert effect.offset().y() == 8
     # _block itself MUST NOT have the effect — that would re-introduce the bug.
     assert g._block.graphicsEffect() is None
 

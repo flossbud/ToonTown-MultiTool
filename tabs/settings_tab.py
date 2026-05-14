@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Property, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPen, QPolygonF
-from utils.theme_manager import apply_card_shadow, apply_theme, get_theme_colors, resolve_theme
+from utils.theme_manager import apply_theme, get_theme_colors, resolve_theme
 from utils.shared_widgets import IOSToggle
 from services.ttr_login_service import find_engine_path, get_engine_executable_name
 from services.cc_login_service import find_cc_engine_path, get_cc_engine_executable_name
@@ -394,7 +394,22 @@ class SettingsGroup(QWidget):
                 f"letter-spacing: 0.15px; "
                 f"color: {c['text_primary']}; background: transparent;"
             )
-        apply_card_shadow(self._block_wrapper, is_dark, blur=18, offset_y=4)
+        # Inline shadow tuned for Settings section blocks. The dark-mode page
+        # background is #1a1a1a — already so dark that apply_card_shadow's
+        # default 35%-black shadow has almost no contrast to work with.
+        # Bumping alpha + blur here makes the elevation actually readable
+        # without affecting other tabs' uses of apply_card_shadow.
+        from PySide6.QtWidgets import QGraphicsDropShadowEffect
+        shadow = QGraphicsDropShadowEffect(self._block_wrapper)
+        if is_dark:
+            shadow.setColor(QColor(0, 0, 0, 200))   # ~78% black
+            shadow.setBlurRadius(32)
+            shadow.setOffset(0, 8)
+        else:
+            shadow.setColor(QColor(15, 23, 42, 64))  # ~25% slate-900
+            shadow.setBlurRadius(24)
+            shadow.setOffset(0, 6)
+        self._block_wrapper.setGraphicsEffect(shadow)
         self._block.apply_theme(c, is_dark)
         for row in self._rows:
             row.apply_theme(c, is_dark)
