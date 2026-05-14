@@ -113,7 +113,7 @@ def test_chip_rail_has_four_nav_chips_in_order(chip_rail_with_nav):
     instance, rail = chip_rail_with_nav
     chips = [c for c in rail.findChildren(QToolButton) if c.objectName().startswith("chip_")]
     labels = [c.text() for c in chips]
-    assert labels == ["Multitoon", "Launcher", "Keysets", "Settings"]
+    assert labels == ["Multitoon", "Keysets", "Launcher", "Settings"]
 
 
 def test_chips_use_text_under_icon_style(chip_rail_with_nav):
@@ -222,7 +222,7 @@ def test_apply_chip_styles_uniform_icon_size_and_font(qapp):
     instance.settings_manager = _StubSettings(hints_enabled=True, show_debug_tab=False)
     instance.nav_select = lambda i: None
     rail = instance._build_chip_rail()  # hold ref to prevent GC of child widgets
-    # Pin selection to index 1 (Launch) before styling
+    # Pin selection to index 1 (Keysets) before styling
     for i, chip in enumerate(instance.chip_buttons):
         chip.setChecked(i == 1)
     instance._theme_colors = lambda: {
