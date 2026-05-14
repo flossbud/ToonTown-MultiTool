@@ -9,6 +9,7 @@ from PySide6.QtCore import Property, QPointF, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPen, QPolygonF
 from utils.theme_manager import apply_theme, get_theme_colors, resolve_theme
 from utils.shared_widgets import IOSToggle
+from utils.widgets import install_modern_scrollbar
 from services.ttr_login_service import find_engine_path, get_engine_executable_name
 from services.cc_login_service import find_cc_engine_path, get_cc_engine_executable_name
 
@@ -1050,6 +1051,10 @@ class SettingsTab(QWidget):
         scroll.setFrameShape(QFrame.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         outer.addWidget(scroll)
+
+        is_dark = resolve_theme(self.settings_manager) == "dark"
+        install_modern_scrollbar(scroll, is_dark=is_dark)
+
         scroll.verticalScrollBar().valueChanged.connect(
             self._maybe_clear_advanced_scroll_reserve
         )
@@ -1549,11 +1554,14 @@ class SettingsTab(QWidget):
         c = get_theme_colors(is_dark)
         self.setStyleSheet(f"background: {c['bg_app']}; color: {c['text_primary']};")
 
-        # Scroll area background
+        # Scroll area background + scrollbar theme.
         for child in self.findChildren(QScrollArea):
             child.setStyleSheet(f"QScrollArea {{ background: {c['bg_app']}; border: none; }}")
             if child.widget():
                 child.widget().setStyleSheet(f"background: {c['bg_app']};")
+            bar = getattr(child, "_auto_hide_scrollbar", None)
+            if bar is not None:
+                bar.set_theme(is_dark)
 
         for group in self._groups:
             group.apply_theme(c, is_dark)
