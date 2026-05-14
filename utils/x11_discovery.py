@@ -92,7 +92,8 @@ def get_window_root_x(wid: str) -> int | None:
     try:
         try:
             win = d.create_resource_object("window", int(wid))
-            coords = win.translate_coords(d.screen().root, 0, 0)
+            root = d.screen().root
+            coords = root.translate_coords(win, 0, 0)
             return int(coords.x)
         except Exception:
             return None

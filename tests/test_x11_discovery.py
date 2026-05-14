@@ -123,9 +123,11 @@ class TestFindWindowIdsByClass:
 
 class TestGetWindowRootX:
     def test_returns_translated_x(self):
-        win = _make_window(101, x=1920)
+        win = _make_window(101)
         _CREATE_RESOURCE_REGISTRY[101] = win
-        root = _make_window(1)
+        # X11 TranslateCoordinates is called on the root with the window as
+        # source, translating the window's (0, 0) into root space.
+        root = _make_window(1, x=1920)
 
         with patch.object(x11_discovery, "_open_display",
                           return_value=_patched_display(root)):
@@ -133,9 +135,9 @@ class TestGetWindowRootX:
 
     def test_returns_none_on_translate_failure(self):
         win = _make_window(101)
-        win.translate_coords.side_effect = RuntimeError("BadWindow")
         _CREATE_RESOURCE_REGISTRY[101] = win
         root = _make_window(1)
+        root.translate_coords.side_effect = RuntimeError("BadWindow")
 
         with patch.object(x11_discovery, "_open_display",
                           return_value=_patched_display(root)):
