@@ -37,24 +37,37 @@ jobs:
           path: ToonTownMultiTool-*.zip
 
   build-linux:
-    runs-on: ubuntu-22.04
+    # Build inside debian:11 (glibc 2.31) so the AppImage runs on every
+    # currently-supported Debian/Ubuntu/Mint release. The full Qt runtime
+    # lib set is installed so PyInstaller bundles libEGL.so.1 & friends —
+    # the CI matrix proved an ubuntu-built AppImage is not self-contained.
+    runs-on: ubuntu-latest
+    container:
+      image: debian:11-slim
     steps:
+      - name: Install build toolchain and Qt runtime libraries
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update
+          apt-get install -y \
+            python3 python3-pip python3-venv python3-dev \
+            git wget file binutils xz-utils ca-certificates \
+            libglib2.0-0 libgl1 libegl1 libopengl0 libdbus-1-3 \
+            libfontconfig1 libfreetype6 \
+            libx11-6 libx11-xcb1 libxext6 libxrender1 libxi6 libsm6 libice6 \
+            libxcb1 libxcb-cursor0 libxcb-glx0 libxcb-icccm4 libxcb-image0 \
+            libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-render0 \
+            libxcb-shape0 libxcb-shm0 libxcb-sync1 libxcb-util1 libxcb-xfixes0 \
+            libxcb-xinerama0 libxcb-xkb1 libxkbcommon0 libxkbcommon-x11-0
+
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: Install system dependencies
+      - name: Build PyInstaller binary in a venv
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libfuse2 xdotool libxcb-xinerama0 libxcb-cursor0 libxcb-record0 libxcb-xtest0 libxcb-icccm4-dev libxcb-xkb-dev libxcb-shape0-dev libxcb-keysyms1-dev libxkbcommon-x11-dev
-
-      - name: Install Python dependencies
-        run: pip install -r requirements.txt pyinstaller
-
-      - name: Build binary
-        run: pyinstaller --noconfirm ToonTownMultiTool.spec
+          python3 -m venv /tmp/build-venv
+          /tmp/build-venv/bin/pip install --upgrade pip
+          /tmp/build-venv/bin/pip install -r requirements.txt pyinstaller
+          /tmp/build-venv/bin/pyinstaller --noconfirm ToonTownMultiTool.spec
 
       - name: Prepare AppDir
         run: |
@@ -69,7 +82,7 @@ jobs:
 
       - name: Build AppImage
         run: |
-          ARCH=x86_64 ./appimagetool-x86_64.AppImage AppDir \
+          ARCH=x86_64 ./appimagetool-x86_64.AppImage --appimage-extract-and-run AppDir \
             TTMultiTool-${{ github.ref_name }}-Linux-x86_64.AppImage
 
       - uses: actions/upload-artifact@v4
