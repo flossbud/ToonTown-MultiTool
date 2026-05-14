@@ -113,3 +113,51 @@ def test_wake_is_idempotent_at_full_opacity(qapp, monkeypatch):
     bar.wake()  # must not raise
     assert bar._opacity_effect.opacity() == 1.0
     bar.deleteLater()
+
+
+def test_idle_timer_fades_back_to_zero(qapp, qtbot, monkeypatch):
+    from utils.widgets.auto_hide_scrollbar import AutoHideScrollBar
+    import utils.motion as motion
+
+    monkeypatch.setattr(AutoHideScrollBar, "_FADE_IN_MS", 10)
+    monkeypatch.setattr(AutoHideScrollBar, "_FADE_OUT_MS", 10)
+    monkeypatch.setattr(AutoHideScrollBar, "_IDLE_TIMEOUT_MS", 50)
+    monkeypatch.setattr(motion, "is_reduced", lambda: False)
+
+    bar = AutoHideScrollBar()
+    bar.setRange(0, 100)
+    bar.wake()
+    qtbot.waitUntil(lambda: bar._opacity_effect.opacity() == 1.0, timeout=200)
+
+    # After idle timeout fires + fade-out, opacity returns to 0.
+    qtbot.waitUntil(lambda: bar._opacity_effect.opacity() == 0.0, timeout=500)
+    bar.deleteLater()
+
+
+def test_wake_restarts_idle_timer(qapp, qtbot, monkeypatch):
+    """A second wake() while we're waiting to fade-out should reset the timer
+    so the bar stays visible."""
+    from utils.widgets.auto_hide_scrollbar import AutoHideScrollBar
+    import utils.motion as motion
+
+    monkeypatch.setattr(AutoHideScrollBar, "_FADE_IN_MS", 10)
+    monkeypatch.setattr(AutoHideScrollBar, "_FADE_OUT_MS", 10)
+    monkeypatch.setattr(AutoHideScrollBar, "_IDLE_TIMEOUT_MS", 100)
+    monkeypatch.setattr(motion, "is_reduced", lambda: False)
+
+    bar = AutoHideScrollBar()
+    bar.setRange(0, 100)
+    bar.wake()
+    qtbot.waitUntil(lambda: bar._opacity_effect.opacity() == 1.0, timeout=200)
+
+    # Re-wake right before the timer would have fired.
+    qtbot.wait(60)
+    bar.wake()
+    # The timer must have been restarted — total ~110ms wait shouldn't have
+    # triggered fade-out yet.
+    qtbot.wait(60)
+    assert bar._opacity_effect.opacity() == 1.0
+
+    # Eventually idle does fire.
+    qtbot.waitUntil(lambda: bar._opacity_effect.opacity() == 0.0, timeout=500)
+    bar.deleteLater()

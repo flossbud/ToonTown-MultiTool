@@ -1,7 +1,7 @@
 """Modern auto-hide scrollbar — thin pill that fades in on activity."""
 from __future__ import annotations
 
-from PySide6.QtCore import QPropertyAnimation
+from PySide6.QtCore import QPropertyAnimation, QTimer
 from PySide6.QtWidgets import QGraphicsOpacityEffect, QScrollBar
 
 import utils.motion as motion
@@ -59,18 +59,33 @@ class AutoHideScrollBar(QScrollBar):
 
         self._anim = QPropertyAnimation(self._opacity_effect, b"opacity", self)
 
+        self._idle_timer = QTimer(self)
+        self._idle_timer.setSingleShot(True)
+        self._idle_timer.timeout.connect(self._on_idle)
+
     def wake(self) -> None:
         """Make the bar visible. Animated unless reduce-motion is on."""
         if motion.is_reduced():
             self._anim.stop()
+            self._idle_timer.stop()
             self._opacity_effect.setOpacity(1.0)
             return
-        if self._opacity_effect.opacity() >= 1.0 and self._anim.state() != QPropertyAnimation.Running:
+        if self._opacity_effect.opacity() < 1.0 or self._anim.state() == QPropertyAnimation.Running:
+            self._anim.stop()
+            self._anim.setDuration(self._FADE_IN_MS)
+            self._anim.setStartValue(self._opacity_effect.opacity())
+            self._anim.setEndValue(1.0)
+            self._anim.start()
+        # Restart idle countdown on every wake.
+        self._idle_timer.start(self._IDLE_TIMEOUT_MS)
+
+    def _on_idle(self) -> None:
+        if motion.is_reduced():
             return
         self._anim.stop()
-        self._anim.setDuration(self._FADE_IN_MS)
+        self._anim.setDuration(self._FADE_OUT_MS)
         self._anim.setStartValue(self._opacity_effect.opacity())
-        self._anim.setEndValue(1.0)
+        self._anim.setEndValue(0.0)
         self._anim.start()
 
     def set_theme(self, is_dark: bool) -> None:
