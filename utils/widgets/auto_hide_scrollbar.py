@@ -10,8 +10,8 @@ import utils.motion as motion
 _QSS_TEMPLATE = """
 QScrollBar:vertical {{
     background: transparent;
-    width: 12px;
-    margin: 0;
+    width: 18px;
+    margin: 0 6px 0 0;
     border: none;
 }}
 QScrollBar::handle:vertical {{

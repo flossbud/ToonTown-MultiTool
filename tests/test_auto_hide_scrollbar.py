@@ -28,9 +28,11 @@ def test_set_theme_dark_uses_white_alpha(qapp):
     bar.set_theme(is_dark=True)
     qss = bar.styleSheet()
 
-    # Width spec: bar always reserves 12px; thumb is 8px idle, 12px hover.
+    # Width spec: bar reserves 18px (12px gutter + 6px right margin so the
+    # thumb sits clear of the window edge); thumb is 8px idle, 12px hover.
     assert "QScrollBar:vertical" in qss
-    assert "width: 12px" in qss
+    assert "width: 18px" in qss
+    assert "margin: 0 6px 0 0" in qss
     assert "min-width: 8px" in qss
     # Hover thumb expands to 12px.
     assert "QScrollBar::handle:vertical:hover" in qss
