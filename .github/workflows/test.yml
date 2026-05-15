@@ -213,9 +213,13 @@ jobs:
 
       - name: Run keyring self-check under dbus + gnome-keyring
         run: |
+          # `echo ""` (newline-terminated empty password) makes
+          # gnome-keyring-daemon --unlock CREATE the login keyring on first
+          # run; `echo -n ""` sends bare EOF, read as "no password" — the
+          # keyring is never set up and secretstorage falls back to a
+          # GUI prompt that cannot run headless ("Prompt dismissed").
           dbus-run-session -- bash -c '
-            eval "$(echo -n "" | gnome-keyring-daemon --unlock --components=secrets)"
-            export GNOME_KEYRING_CONTROL
+            echo "" | gnome-keyring-daemon --unlock --components=secrets
             python main.py --self-check-keyring
           '
 
