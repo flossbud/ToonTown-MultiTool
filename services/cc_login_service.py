@@ -21,6 +21,7 @@ import requests
 
 from PySide6.QtCore import QObject, Signal
 from services.ttr_login_service import LoginState
+from services.wine_runtimes import discover_cc_installs
 
 
 CC_API_URL = "https://corporateclash.net/api/v1/login"
@@ -45,14 +46,18 @@ def get_cc_engine_executable_name() -> str:
 
 
 def find_cc_engine_path() -> str | None:
-    """Auto-detect CorporateClash binary. Returns path to directory containing it, or None."""
-    binary_name = get_cc_engine_executable_name()
+    """Auto-detect CorporateClash binary.
 
-    for path in CC_ENGINE_SEARCH_PATHS:
-        if os.path.isfile(os.path.join(path, binary_name)):
-            return path
+    Returns the directory containing CorporateClash.exe for the
+    preference-sorted first match, or None if none found.
 
-    return None
+    Detection now covers Bottles, Lutris, Steam Proton, plain Wine prefixes,
+    and the existing Windows-native search list.
+    """
+    installs = discover_cc_installs()
+    if not installs:
+        return None
+    return os.path.dirname(installs[0].exe_path)
 
 
 class CCLoginWorker(QObject):
