@@ -118,6 +118,7 @@ class CCLoginWorker(QObject):
     state_changed = Signal(str, str)       # (state, message)
     queue_update = Signal(int, int)        # (position, eta_seconds) — unused for CC
     need_2fa = Signal(str)                 # (prompt_message)
+    launcher_token_obtained = Signal(str)   # NEW: from /register, before /login
     login_success = Signal(str, str)       # (gameserver, osst_token)
     login_failed = Signal(str)             # (error_message)
 
