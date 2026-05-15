@@ -31,11 +31,42 @@ def host_argv(argv):
     return [spawn, "--host", *argv]
 
 
+def _clean_host_env() -> dict:
+    """Build a copy of os.environ suitable for spawning host commands.
+
+    PyInstaller's --onefile bootloader prepends the bundle's _MEI*
+    extraction dir to LD_LIBRARY_PATH so the bundled libs (libpython,
+    libstdc++ from the build container, etc.) resolve. Child processes
+    inherit that — which BREAKS them when they pull in newer system
+    libs that require a newer libstdc++ than the build container's.
+    The classic symptom is:
+
+      flatpak: /tmp/_MEI*/libstdc++.so.6: version `GLIBCXX_3.4.30'
+        not found (required by /lib/x86_64-linux-gnu/libicuuc.so.74)
+
+    PyInstaller saves the pre-bootloader value in LD_LIBRARY_PATH_ORIG
+    so we can restore the original here. If there was no original
+    (common on fresh sessions), drop LD_LIBRARY_PATH entirely so the
+    system loader uses its defaults.
+    """
+    env = os.environ.copy()
+    orig = env.pop("LD_LIBRARY_PATH_ORIG", None)
+    if orig is not None:
+        env["LD_LIBRARY_PATH"] = orig
+    else:
+        env.pop("LD_LIBRARY_PATH", None)
+    return env
+
+
 def host_run(argv, **kwargs):
+    if "env" not in kwargs:
+        kwargs["env"] = _clean_host_env()
     return subprocess.run(host_argv(argv), **kwargs)
 
 
 def host_check_output(argv, **kwargs):
+    if "env" not in kwargs:
+        kwargs["env"] = _clean_host_env()
     return subprocess.check_output(host_argv(argv), **kwargs)
 
 

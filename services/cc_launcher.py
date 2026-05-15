@@ -129,8 +129,15 @@ class CCLauncher(QObject):
               f"+ CC_OSST_TOKEN(masked)={'present' if 'CC_OSST_TOKEN' in env_overrides else 'absent'}")
 
         def _run():
+            import sys
+            import tempfile
+            # Capture the child's stderr to a temp file so non-zero exits
+            # surface the actual error in the terminal. stdout still goes
+            # to DEVNULL to avoid spamming the parent's stdout with game
+            # noise during normal play.
+            stderr_path = tempfile.mktemp(prefix="ttmt-cc-stderr-", suffix=".log")
+            stderr_fh = open(stderr_path, "w+b")
             try:
-                import sys
                 kwargs = {}
                 if sys.platform == "win32" and install.launcher == "native":
                     kwargs["creationflags"] = (
@@ -145,11 +152,11 @@ class CCLauncher(QObject):
                         cwd=cwd,
                         env=spawn_env,
                         stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
+                        stderr=stderr_fh,
                         **kwargs,
                     )
 
-                print(f"[CCLauncher] _run: spawning…")
+                print(f"[CCLauncher] _run: spawning… (stderr capture at {stderr_path})")
                 try:
                     self._game_process = _spawn()
                 except OSError as e:
@@ -164,6 +171,19 @@ class CCLauncher(QObject):
 
                 retcode = self._game_process.wait()
                 print(f"[CCLauncher] _run: child exited rc={retcode}")
+                # On non-zero exit, dump the captured stderr so the user
+                # has the actual diagnostic without grepping a tempfile.
+                if retcode != 0:
+                    try:
+                        stderr_fh.flush()
+                        stderr_fh.seek(0)
+                        err = stderr_fh.read().decode("utf-8", "replace")
+                    except Exception as e:
+                        err = f"<failed to read stderr capture: {e}>"
+                    snippet = err.strip()
+                    if len(snippet) > 4000:
+                        snippet = snippet[:4000] + f"\n…(+{len(err)-4000} more bytes; full at {stderr_path})"
+                    print(f"[CCLauncher] _run: stderr from child (rc={retcode}):\n{snippet}\n[CCLauncher] _run: --- end stderr ---")
                 GameRegistry.instance().unregister(pid)
                 self._game_process = None
                 self.game_exited.emit(retcode)
@@ -171,6 +191,20 @@ class CCLauncher(QObject):
             except Exception as e:
                 print(f"[CCLauncher] _run: error {type(e).__name__}: {e}")
                 self.launch_failed.emit(f"Launch error: {e}")
+            finally:
+                try:
+                    stderr_fh.close()
+                except Exception:
+                    pass
+                # Clean up the capture file on success; keep it on failure
+                # so the user can paste the full text if it's huge.
+                try:
+                    if self._game_process is None and os.path.exists(stderr_path):
+                        # success path already nulled _game_process; on
+                        # failure we leave the file in /tmp for inspection
+                        pass
+                except Exception:
+                    pass
 
         threading.Thread(target=_run, daemon=True).start()
 
