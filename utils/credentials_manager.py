@@ -511,6 +511,50 @@ class CredentialsManager:
             _dbg(f"[CredentialsManager] get_launcher_token({account_id[:8]}) failed: {type(e).__name__}: {e}")
             return ""
 
+    def set_launcher_token(self, account_id: str, token: str) -> None:
+        """Persist a CC launcher token. Overwrites any existing entry.
+
+        Best-effort: keyring failures are logged via ``_dbg`` but don't
+        raise. Empty ``token`` is treated as a clear request. Uses the
+        channel-aware ``cc_token_service()`` and routes the keyring call
+        through ``_try_keyring_call`` for timeout safety.
+        """
+        if not account_id:
+            return
+        if not token:
+            self.clear_launcher_token(account_id)
+            return
+        try:
+            ok, _ = self._try_keyring_call(
+                keyring.set_password, cc_token_service(), account_id, token, timeout=1.5
+            )
+            if not ok:
+                _dbg(f"[CredentialsManager] set_launcher_token({account_id[:8]}) failed: keyring call did not complete")
+        except Exception as e:
+            _dbg(f"[CredentialsManager] set_launcher_token({account_id[:8]}) failed: {type(e).__name__}: {e}")
+
+    def clear_launcher_token(self, account_id: str) -> None:
+        """Remove the launcher-token entry for an account. No-op if absent.
+
+        Called when the token has been revoked server-side, or when the
+        user updates a CC account's username/password (which invalidates
+        any prior registration). Uses the channel-aware
+        ``cc_token_service()`` and routes the keyring call through
+        ``_try_keyring_call`` for timeout safety.
+        """
+        if not account_id:
+            return
+        try:
+            self._try_keyring_call(
+                keyring.delete_password, cc_token_service(), account_id, timeout=1.5
+            )
+        except Exception:
+            # Most keyring backends raise PasswordDeleteError when the
+            # entry doesn't exist. That's the no-op case; ignore.
+            # ``_try_keyring_call`` already swallows backend errors into
+            # ``ok=False``; this except handles any escape from the wrapper.
+            pass
+
     def _get_password(self, account_id: str) -> str:
         if not account_id:
             _dbg("[Credentials] _get_password called with empty account_id")
