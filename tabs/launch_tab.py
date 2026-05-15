@@ -5,6 +5,7 @@ Accounts are tagged per-game ("ttr" or "cc") and displayed in two separate
 sections within one scrollable list. Each section has its own "+ Add Account"
 button. Workers and launchers are stored per-game so TTR and CC never interfere.
 """
+from __future__ import annotations
 
 import os
 import sys
