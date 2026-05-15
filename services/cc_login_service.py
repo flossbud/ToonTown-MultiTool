@@ -197,6 +197,85 @@ class CCLoginWorker(QObject):
 
         threading.Thread(target=_do, daemon=True).start()
 
+    def login_with_token(self, launcher_token: str) -> None:
+        """Per-launch path for accounts that already have a stored launcher
+        token. POSTs /login with the Bearer header; on success fetches the
+        gameserver via /metadata and emits login_success(gameserver,
+        game_token). On bad_token, emits a user-actionable login_failed.
+
+        Call from the main thread.
+        """
+        self._set_state(LoginState.LOGGING_IN, "Authenticating…")
+        self._stop_event.clear()
+
+        def _do():
+            try:
+                headers = dict(CC_HEADERS)
+                headers["Authorization"] = f"Bearer {launcher_token}"
+                resp = requests.post(
+                    CC_LOGIN_URL, headers=headers, timeout=15, verify=True,
+                )
+                data = self._decode_json_response(
+                    resp, "Invalid response from login server.")
+                if data is None:
+                    return
+                self._handle_login_response(launcher_token, data)
+            except requests.RequestException as e:
+                print(f"[CCLoginWorker] /login network error: {type(e).__name__}: {e}")
+                msg = "Network connection failed. Please check your connection and try again."
+                self._set_state(LoginState.FAILED, msg)
+                self.login_failed.emit(msg)
+
+        threading.Thread(target=_do, daemon=True).start()
+
+    def _handle_login_response(self, launcher_token: str, data: dict) -> None:
+        """Process /login JSON. Runs on the daemon thread."""
+        if data.get("status") is True:
+            game_token = data.get("token", "")
+            if not game_token:
+                msg = "Login succeeded but no game token received."
+                self._set_state(LoginState.FAILED, msg)
+                self.login_failed.emit(msg)
+                return
+            gameserver = self._fetch_gameserver(launcher_token)
+            self._set_state(LoginState.LAUNCHING, "Login successful! Launching…")
+            self.login_success.emit(gameserver, game_token)
+            return
+
+        if data.get("bad_token") is True:
+            msg = ("Your CC launcher token is no longer valid. "
+                   "Click Edit on this account to re-enter your password.")
+            self._set_state(LoginState.FAILED, msg)
+            self.login_failed.emit(msg)
+            return
+
+        msg = data.get("message") or data.get("reason") or "Login failed."
+        self._set_state(LoginState.FAILED, msg)
+        self.login_failed.emit(msg)
+
+    def _fetch_gameserver(self, launcher_token: str) -> str:
+        """GET /metadata; return the first realm's hostname. Fallback to
+        CC_FALLBACK_GAMESERVER on any error. Never raises.
+        """
+        try:
+            headers = dict(CC_HEADERS)
+            headers["Authorization"] = f"Bearer {launcher_token}"
+            resp = requests.get(
+                CC_METADATA_URL, headers=headers, timeout=10, verify=True,
+            )
+            data = resp.json()
+            if data.get("bad_token") is True:
+                print(f"[CC] /metadata returned bad_token; using fallback gameserver")
+                return CC_FALLBACK_GAMESERVER
+            realms = data.get("realms") or []
+            if realms and isinstance(realms[0], dict) and realms[0].get("hostname"):
+                return realms[0]["hostname"]
+            print(f"[CC] /metadata returned no realms; using fallback gameserver")
+            return CC_FALLBACK_GAMESERVER
+        except Exception as e:
+            print(f"[CC] /metadata error: {type(e).__name__}: {e}; using fallback")
+            return CC_FALLBACK_GAMESERVER
+
     def _handle_response(self, data: dict):
         """Parse CC login response.
 
