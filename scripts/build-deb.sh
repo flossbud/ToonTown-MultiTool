@@ -52,5 +52,7 @@ Description: Multitoon controller for Toontown Rewritten and Corporate Clash
 EOF
 
 OUTPUT="$OUTDIR/TTMultiTool-${VERSION}-Linux-x86_64.deb"
-dpkg-deb --build --root-owner-group "$STAGE" "$OUTPUT"
+# -Zxz: Debian 11's dpkg 1.20 cannot read the zstd members modern
+# dpkg-deb produces by default. xz is understood by every supported dpkg.
+dpkg-deb --build --root-owner-group -Zxz "$STAGE" "$OUTPUT"
 echo "built: $OUTPUT"
