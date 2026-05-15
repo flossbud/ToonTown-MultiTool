@@ -132,3 +132,35 @@ def test_auto_detect_opens_picker_when_needs_pick(qapp, monkeypatch):
     expected_sig = install_signature(installs[1])
     assert settings.get("cc_engine_install_signature") == expected_sig
     assert row.needs_pick is False
+    assert settings.get("cc_engine_dir") == os.path.dirname(installs[1].exe_path)
+
+
+def test_auto_detect_does_not_clobber_signature_when_already_matched(qapp, monkeypatch):
+    """Regression test: with multiple installs and a matching stored signature,
+    re-clicking Auto-detect must NOT silently change the signature to the
+    first-discovered install."""
+    from services.wine_runtimes import install_signature
+    installs = [_install("A"), _install("B")]
+    sig_b = install_signature(installs[1])
+    monkeypatch.setattr(
+        "tabs.settings_tab.discover_cc_installs", lambda: installs
+    )
+    monkeypatch.setattr(
+        "tabs.settings_tab.find_cc_engine_path", lambda: "/x/A"
+    )
+    from tabs.settings_tab import GamePathRow
+    from services.cc_login_service import get_cc_engine_executable_name
+    settings = _SettingsStub({
+        "cc_engine_install_signature": sig_b,
+        "cc_engine_dir": "/x/B",
+    })
+    row = GamePathRow(
+        settings_manager=settings,
+        settings_key="cc_engine_dir",
+        exe_name_fn=get_cc_engine_executable_name,
+        find_path_fn=lambda: "/x/A",
+    )
+    assert row.needs_pick is False
+    row._auto_detect()
+    # Signature must STILL be B's, not A's.
+    assert settings.get("cc_engine_install_signature") == sig_b

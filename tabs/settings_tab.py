@@ -411,7 +411,11 @@ class GamePathRow(SettingsRow):
             self.settings_manager.set(self._settings_key, path)
             self.settings_manager.set(self._approval_key, "")
             cc_installs = getattr(self, "_cc_installs", None)
-            if self._settings_key == "cc_engine_dir" and cc_installs:
+            if (
+                self._settings_key == "cc_engine_dir"
+                and cc_installs is not None
+                and len(cc_installs) == 1
+            ):
                 # Single-install case — record signature for stability.
                 self.settings_manager.set(
                     CC_ENGINE_INSTALL_SIGNATURE,
