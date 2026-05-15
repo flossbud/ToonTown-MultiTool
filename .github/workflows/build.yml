@@ -45,27 +45,20 @@ jobs:
           path: ToonTownMultiTool-*.zip
 
   build-linux:
-    # Build inside ubuntu:20.04 (glibc 2.31, same as the previous debian:11)
-    # so the .deb continues to install on every currently-supported Mint /
-    # Debian / Ubuntu release. Python 3.12 comes from the deadsnakes PPA;
-    # deadsnakes builds CPython with --enable-shared, which PyInstaller
-    # requires (manylinux containers static-link Python and don't work
-    # here). 3.12 in turn supports PEP 604 (X | None) and other 3.10+
-    # syntax used in the codebase. The full Qt runtime lib set is
-    # installed so PyInstaller bundles libEGL.so.1 & friends.
+    # Build inside debian:11 (glibc 2.31) so the AppImage runs on every
+    # currently-supported Debian/Ubuntu/Mint release. The full Qt runtime
+    # lib set is installed so PyInstaller bundles libEGL.so.1 & friends —
+    # the CI matrix proved an ubuntu-built AppImage is not self-contained.
     runs-on: ubuntu-latest
     container:
-      image: ubuntu:20.04
+      image: debian:11-slim
     steps:
-      - name: Install Python 3.12 and Qt runtime libraries
+      - name: Install build toolchain and Qt runtime libraries
         run: |
           export DEBIAN_FRONTEND=noninteractive
           apt-get update
-          apt-get install -y software-properties-common gpg-agent
-          add-apt-repository -y ppa:deadsnakes/ppa
-          apt-get update
           apt-get install -y \
-            python3.12 python3.12-dev python3.12-venv \
+            python3 python3-pip python3-venv python3-dev \
             git wget file binutils xz-utils ca-certificates \
             libglib2.0-0 libgl1 libegl1 libopengl0 libdbus-1-3 \
             libfontconfig1 libfreetype6 \
@@ -79,7 +72,7 @@ jobs:
 
       - name: Build PyInstaller binary in a venv
         run: |
-          python3.12 -m venv /tmp/build-venv
+          python3 -m venv /tmp/build-venv
           /tmp/build-venv/bin/pip install --upgrade pip
           /tmp/build-venv/bin/pip install -r requirements.txt pyinstaller
           /tmp/build-venv/bin/pyinstaller --noconfirm ToonTownMultiTool.spec
