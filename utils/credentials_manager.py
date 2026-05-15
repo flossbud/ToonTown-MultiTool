@@ -728,7 +728,10 @@ class CredentialsManager:
                 continue
             password = self._get_password(account_id)
 
-            result.append(AccountCredential.from_dict(a, password))
+            acct = AccountCredential.from_dict(a, password)
+            if acct.game == "cc":
+                acct.launcher_token = self.get_launcher_token(acct.id)
+            result.append(acct)
         return result
 
     def get_accounts_metadata(self, game: str | None = None) -> list[AccountCredential]:
@@ -737,7 +740,10 @@ class CredentialsManager:
         for a in self._accounts:
             if game is not None and a.get("game", "ttr") != game:
                 continue
-            result.append(AccountCredential.from_dict(a, password=""))
+            acct = AccountCredential.from_dict(a, password="")
+            if acct.game == "cc":
+                acct.launcher_token = self.get_launcher_token(acct.id)
+            result.append(acct)
         return result
 
     def get_account(self, index: int) -> AccountCredential | None:

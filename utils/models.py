@@ -8,6 +8,7 @@ class AccountCredential:
     username: str = ""
     password: str = field(default="", repr=False)
     game: str = "ttr"
+    launcher_token: str = ""   # CC-only; populated by get_accounts*
 
     @classmethod
     def from_dict(cls, data: dict, password: str = "") -> 'AccountCredential':
