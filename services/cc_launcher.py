@@ -16,14 +16,11 @@ import threading
 from PySide6.QtCore import QObject, Signal
 from services.cc_login_service import CC_ENGINE_SEARCH_PATHS, get_cc_engine_executable_name
 from services.launcher_env import build_launcher_env
+from services.wine_runtimes import WineInstall
 from utils.game_registry import GameRegistry
 from utils.host_spawn import host_popen
 
 _CUSTOM_APPROVAL_KEY = "cc_engine_dir_approved_custom_dir"
-_TRUSTED_CC_ENGINE_DIRS = {
-    os.path.realpath(path)
-    for path in CC_ENGINE_SEARCH_PATHS
-}
 
 
 def _approved_custom_engine_dir(settings_manager) -> str | None:
@@ -33,13 +30,25 @@ def _approved_custom_engine_dir(settings_manager) -> str | None:
     return os.path.realpath(approved) if approved else None
 
 
-def _is_trusted_cc_engine_path(engine_path: str, settings_manager=None) -> bool:
-    """Return True if the engine path is explicitly trusted or user-approved."""
-    engine_dir = os.path.realpath(os.path.dirname(engine_path))
-    if engine_dir in _TRUSTED_CC_ENGINE_DIRS:
+def _is_trusted(install: WineInstall, settings_manager) -> bool:
+    """Return True when this install is auto-trusted or explicitly approved.
+
+    Discovery-via-known-launcher is the trust signal: classify_path /
+    discover_* only build a non-native WineInstall after observing
+    structural markers (bottle.yml, compatdata layout, dosdevices/c:, etc.).
+    """
+    if install.launcher in ("bottles", "lutris", "steam-proton", "wine"):
         return True
-    approved_custom = _approved_custom_engine_dir(settings_manager)
-    return bool(approved_custom and engine_dir == approved_custom)
+    if install.launcher == "native":
+        engine_dir = os.path.realpath(os.path.dirname(install.exe_path))
+        trusted = {os.path.realpath(p) for p in CC_ENGINE_SEARCH_PATHS}
+        if engine_dir in trusted:
+            return True
+    approved = _approved_custom_engine_dir(settings_manager)
+    return bool(
+        approved
+        and os.path.realpath(os.path.dirname(install.exe_path)) == approved
+    )
 
 
 class CCLauncher(QObject):
