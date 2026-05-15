@@ -68,6 +68,32 @@ def test_classifies_plain_wine_prefix(tmp_path, monkeypatch):
     assert inst.prefix_path == str(prefix)
 
 
+def test_classifies_lutris(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    games_dir = home / ".config/lutris/games"
+    games_dir.mkdir(parents=True)
+    prefix = home / "Games/corporate-clash"
+    install = prefix / "drive_c/users/lutris/AppData/Local/Corporate Clash"
+    install.mkdir(parents=True)
+    exe = install / "CorporateClash.exe"
+    exe.write_text("")
+    yml = games_dir / "corporate-clash.yml"
+    yml.write_text(
+        "game:\n"
+        f"  prefix: {prefix}\n"
+        "name: Corporate Clash\n"
+        "runner: wine\n"
+    )
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr("os.path.expanduser",
+                        lambda p: p.replace("~", str(home)))
+    inst = classify_path(str(exe))
+    assert inst is not None
+    assert inst.launcher == "lutris"
+    assert inst.prefix_path == str(prefix)
+    assert inst.metadata["lutris_slug"] == "corporate-clash"
+
+
 def test_returns_none_for_unrecognized_path(tmp_path):
     exe = tmp_path / "random/CorporateClash.exe"
     exe.parent.mkdir(parents=True)
