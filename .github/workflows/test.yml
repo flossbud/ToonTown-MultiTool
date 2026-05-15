@@ -49,22 +49,32 @@ jobs:
           name: windows-zip
           path: dist-zip
 
+      # From-source first (does the code run?), then the packaged EXE (does
+      # packaging run?) -- this order isolates a code bug from a build bug.
+      - name: Launch-test from source
+        run: |
+          pip install -r requirements.txt
+          python main.py --self-check
+
       - name: Launch-test the packaged EXE
         shell: pwsh
         run: |
           $zip = (Get-ChildItem dist-zip\ToonTownMultiTool-*.zip)[0].FullName
           Expand-Archive -Path $zip -DestinationPath exe-test
-          # The EXE is a GUI-subsystem app (console=False); PowerShell's call
-          # operator does not populate $LASTEXITCODE for it. Start-Process
-          # -Wait -PassThru waits for the GUI process and exposes .ExitCode.
+          # The EXE is a GUI-subsystem app (console=False): PowerShell's call
+          # operator never populates $LASTEXITCODE for it, and it has no
+          # console for the job log to capture. Start-Process -Wait -PassThru
+          # gives the real .ExitCode; redirecting the streams to files makes
+          # a frozen-build failure visible instead of an opaque exit code.
           $exe = (Resolve-Path "exe-test\ToonTownMultiTool.exe").Path
-          $proc = Start-Process -FilePath $exe -ArgumentList "--self-check" -Wait -PassThru
+          $proc = Start-Process -FilePath $exe -ArgumentList "--self-check" -Wait -PassThru `
+            -RedirectStandardOutput exe-out.txt -RedirectStandardError exe-err.txt
+          Write-Host "--- EXE stdout ---"
+          if (Test-Path exe-out.txt) { Get-Content exe-out.txt }
+          Write-Host "--- EXE stderr ---"
+          if (Test-Path exe-err.txt) { Get-Content exe-err.txt }
+          Write-Host "--- EXE exit code: $($proc.ExitCode) ---"
           if ($proc.ExitCode -ne 0) { throw "EXE --self-check failed ($($proc.ExitCode))" }
-
-      - name: Launch-test from source
-        run: |
-          pip install -r requirements.txt
-          python main.py --self-check
 
   test-linux-source:
     runs-on: ubuntu-latest
