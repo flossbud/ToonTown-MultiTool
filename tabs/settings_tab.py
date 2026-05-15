@@ -403,13 +403,45 @@ class GamePathRow(SettingsRow):
                 self._refresh_display(f"{exe_name} not found in that folder", error=True)
 
     def _auto_detect(self):
+        if self._settings_key == "cc_engine_dir" and getattr(self, "needs_pick", False):
+            self._open_picker(self._cc_installs)
+            return
         path = self._find_path_fn()
         if path:
             self.settings_manager.set(self._settings_key, path)
             self.settings_manager.set(self._approval_key, "")
+            cc_installs = getattr(self, "_cc_installs", None)
+            if self._settings_key == "cc_engine_dir" and cc_installs:
+                # Single-install case — record signature for stability.
+                self.settings_manager.set(
+                    CC_ENGINE_INSTALL_SIGNATURE,
+                    install_signature(cc_installs[0]),
+                )
             self._refresh_display(path)
         else:
             self._refresh_display("Could not auto-detect. Click Browse.", error=True)
+
+    def _open_picker(self, installs):
+        from utils.widgets.cc_install_picker import CCInstallPickerDialog
+        dlg = CCInstallPickerDialog(installs, parent=self.window())
+        if dlg.exec() == dlg.Accepted:
+            picked = dlg.selected_install()
+            if picked:
+                self._apply_picked_install(picked)
+
+    def _apply_picked_install(self, install):
+        path = os.path.dirname(install.exe_path)
+        self.settings_manager.set(self._settings_key, path)
+        self.settings_manager.set(self._approval_key, "")
+        self.settings_manager.set(
+            CC_ENGINE_INSTALL_SIGNATURE,
+            install_signature(install),
+        )
+        self.needs_pick = False
+        self._refresh_display(path)
+        # Force re-application of the standard (non-glow) button style.
+        if hasattr(self, "_palette"):
+            self.apply_theme(self._palette, getattr(self, "_is_dark", True))
 
 
 # ── Section Group ──────────────────────────────────────────────────────────────
