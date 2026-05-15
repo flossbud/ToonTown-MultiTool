@@ -197,6 +197,88 @@ class CCLoginWorker(QObject):
 
         threading.Thread(target=_do, daemon=True).start()
 
+    def register_and_login(self, username: str, password: str,
+                           label: str = "") -> None:
+        """Onboarding + legacy-migration path. POSTs /register with the
+        user's credentials; on success emits ``launcher_token_obtained``
+        (so the caller can persist the token BEFORE /login runs, which
+        means the token survives a /login failure), then chains directly
+        into /login and /metadata. Call from the main thread.
+        """
+        self._set_state(LoginState.LOGGING_IN, "Registering with CC…")
+        self._stop_event.clear()
+        friendly = _friendly_name(label)
+
+        def _do():
+            try:
+                resp = requests.post(
+                    CC_REGISTER_URL,
+                    json={
+                        "username": username,
+                        "password": password,
+                        "friendly": friendly,
+                    },
+                    headers=CC_HEADERS,
+                    timeout=15,
+                    verify=True,
+                )
+                data = self._decode_json_response(
+                    resp, "Invalid response from registration server.")
+                if data is None:
+                    return
+                token = self._handle_register_response(data)
+                if token is None:
+                    return  # _handle_register_response already emitted failure
+                self.launcher_token_obtained.emit(token)
+                # Chain into /login on the same daemon thread.
+                self._do_login_chain(token)
+            except requests.RequestException as e:
+                print(f"[CCLoginWorker] /register network error: {type(e).__name__}: {e}")
+                msg = "Network connection failed. Please check your connection and try again."
+                self._set_state(LoginState.FAILED, msg)
+                self.login_failed.emit(msg)
+
+        threading.Thread(target=_do, daemon=True).start()
+
+    def _handle_register_response(self, data: dict) -> str | None:
+        """Return the launcher token on success, or None and emit
+        login_failed on any failure. Runs on the daemon thread.
+        """
+        if data.get("status") is True:
+            token = data.get("token", "")
+            if not token:
+                msg = "Registration succeeded but no launcher token received."
+                self._set_state(LoginState.FAILED, msg)
+                self.login_failed.emit(msg)
+                return None
+            return token
+        msg = data.get("message") or data.get("reason") or "Registration failed."
+        self._set_state(LoginState.FAILED, msg)
+        self.login_failed.emit(msg)
+        return None
+
+    def _do_login_chain(self, launcher_token: str) -> None:
+        """Inner /login + /metadata, called from the daemon thread after
+        a successful /register. Reuses the same daemon thread for the
+        whole register→login chain to avoid extra thread setup.
+        """
+        try:
+            headers = dict(CC_HEADERS)
+            headers["Authorization"] = f"Bearer {launcher_token}"
+            resp = requests.post(
+                CC_LOGIN_URL, headers=headers, timeout=15, verify=True,
+            )
+            data = self._decode_json_response(
+                resp, "Invalid response from login server.")
+            if data is None:
+                return
+            self._handle_login_response(launcher_token, data)
+        except requests.RequestException as e:
+            print(f"[CCLoginWorker] /login network error: {type(e).__name__}: {e}")
+            msg = "Network connection failed. Please check your connection and try again."
+            self._set_state(LoginState.FAILED, msg)
+            self.login_failed.emit(msg)
+
     def login_with_token(self, launcher_token: str) -> None:
         """Per-launch path for accounts that already have a stored launcher
         token. POSTs /login with the Bearer header; on success fetches the
