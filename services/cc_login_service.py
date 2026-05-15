@@ -49,6 +49,32 @@ def _friendly_name(label: str = "") -> str:
     base = f"ToontownMultiTool ({socket.gethostname()})"
     return f"{base} - {label}" if label else base
 
+
+def revoke_launcher_token(launcher_token: str, timeout: float = 5.0) -> bool:
+    """Best-effort: POST /revoke_self with the given token.
+
+    Returns ``True`` only on HTTP 200 with ``status: True`` in the
+    response body. Returns ``False`` on any other shape or any error.
+    Never raises.
+
+    Intended to run on a daemon thread fired from the delete-account
+    flow so UI deletion is instant.
+    """
+    if not launcher_token:
+        return False
+    try:
+        headers = dict(CC_HEADERS)
+        headers["Authorization"] = f"Bearer {launcher_token}"
+        resp = requests.post(
+            CC_REVOKE_URL, headers=headers, timeout=timeout, verify=True,
+        )
+        data = resp.json()
+        return bool(data.get("status") is True)
+    except Exception as e:
+        print(f"[CC] revoke_launcher_token: {type(e).__name__}: {e}")
+        return False
+
+
 # Common locations to search for CorporateClash
 CC_ENGINE_SEARCH_PATHS = [
     os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~\\AppData\\Local")), "Corporate Clash"),
