@@ -29,6 +29,14 @@ def keyring_service() -> str:
     return "ttmt-beta" if is_beta() else "toontown_multitool"
 
 
+def cc_token_service() -> str:
+    """Keyring service name for CC launcher tokens. Channel-aware:
+    beta and stable builds get separate token namespaces so a user
+    can run both side-by-side without cross-pollution.
+    """
+    return f"{keyring_service()}_cc_token"
+
+
 def window_title() -> str:
     return "ToonTown MultiTool BETA" if is_beta() else "ToonTown MultiTool"
 

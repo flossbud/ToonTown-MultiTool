@@ -35,7 +35,7 @@ MAX_ACCOUNTS = 16
 # Always-on diagnostic log. Writes to a file independent of stdout/console
 # state, so issues inside PyInstaller --noconsole builds (e.g. AppImage) can
 # still be diagnosed after-the-fact.
-from utils.build_flavor import config_dir as _config_dir, keyring_service
+from utils.build_flavor import config_dir as _config_dir, keyring_service, cc_token_service
 _DEBUG_LOG_PATH = os.path.join(_config_dir(), "keyring-debug.log")
 _DEBUG_LOG_LOCK = threading.Lock()
 _DEBUG_LOG_MAX_BYTES = 256 * 1024  # rotate past 256 KiB
@@ -491,6 +491,70 @@ class CredentialsManager:
                 return value
         return ""
 
+    def get_launcher_token(self, account_id: str) -> str:
+        """Return CC launcher token for an account, or '' if none stored.
+
+        Best-effort: keyring failures (timeout, missing backend, etc.)
+        degrade to ''. Never raises. Matches the threading and
+        timeout discipline of ``_get_password``.
+        """
+        if not account_id:
+            return ""
+        try:
+            ok, value = self._try_keyring_call(
+                keyring.get_password, cc_token_service(), account_id, timeout=1.5
+            )
+            if ok and value:
+                return value
+            return ""
+        except Exception as e:
+            _dbg(f"[CredentialsManager] get_launcher_token({account_id[:8]}) failed: {type(e).__name__}: {e}")
+            return ""
+
+    def set_launcher_token(self, account_id: str, token: str) -> None:
+        """Persist a CC launcher token. Overwrites any existing entry.
+
+        Best-effort: keyring failures are logged via ``_dbg`` but don't
+        raise. Empty ``token`` is treated as a clear request. Uses the
+        channel-aware ``cc_token_service()`` and routes the keyring call
+        through ``_try_keyring_call`` for timeout safety.
+        """
+        if not account_id:
+            return
+        if not token:
+            self.clear_launcher_token(account_id)
+            return
+        try:
+            ok, _ = self._try_keyring_call(
+                keyring.set_password, cc_token_service(), account_id, token, timeout=1.5
+            )
+            if not ok:
+                _dbg(f"[CredentialsManager] set_launcher_token({account_id[:8]}) failed: keyring call did not complete")
+        except Exception as e:
+            _dbg(f"[CredentialsManager] set_launcher_token({account_id[:8]}) failed: {type(e).__name__}: {e}")
+
+    def clear_launcher_token(self, account_id: str) -> None:
+        """Remove the launcher-token entry for an account. No-op if absent.
+
+        Called when the token has been revoked server-side, or when the
+        user updates a CC account's username/password (which invalidates
+        any prior registration). Uses the channel-aware
+        ``cc_token_service()`` and routes the keyring call through
+        ``_try_keyring_call`` for timeout safety.
+        """
+        if not account_id:
+            return
+        try:
+            self._try_keyring_call(
+                keyring.delete_password, cc_token_service(), account_id, timeout=1.5
+            )
+        except Exception:
+            # Most keyring backends raise PasswordDeleteError when the
+            # entry doesn't exist. That's the no-op case; ignore.
+            # ``_try_keyring_call`` already swallows backend errors into
+            # ``ok=False``; this except handles any escape from the wrapper.
+            pass
+
     def _get_password(self, account_id: str) -> str:
         if not account_id:
             _dbg("[Credentials] _get_password called with empty account_id")
@@ -664,7 +728,10 @@ class CredentialsManager:
                 continue
             password = self._get_password(account_id)
 
-            result.append(AccountCredential.from_dict(a, password))
+            acct = AccountCredential.from_dict(a, password)
+            if acct.game == "cc":
+                acct.launcher_token = self.get_launcher_token(acct.id)
+            result.append(acct)
         return result
 
     def get_accounts_metadata(self, game: str | None = None) -> list[AccountCredential]:
@@ -673,7 +740,10 @@ class CredentialsManager:
         for a in self._accounts:
             if game is not None and a.get("game", "ttr") != game:
                 continue
-            result.append(AccountCredential.from_dict(a, password=""))
+            acct = AccountCredential.from_dict(a, password="")
+            if acct.game == "cc":
+                acct.launcher_token = self.get_launcher_token(acct.id)
+            result.append(acct)
         return result
 
     def get_account(self, index: int) -> AccountCredential | None:
@@ -681,13 +751,19 @@ class CredentialsManager:
             a = self._accounts[index]
             account_id = a.get("id")
             password = self._get_password(account_id) if account_id else ""
-            return AccountCredential.from_dict(a, password)
+            acct = AccountCredential.from_dict(a, password)
+            if acct is not None and acct.game == "cc":
+                acct.launcher_token = self.get_launcher_token(acct.id)
+            return acct
         return None
 
     def get_account_metadata(self, index: int) -> AccountCredential | None:
         """Return account metadata without fetching the password."""
         if 0 <= index < len(self._accounts):
-            return AccountCredential.from_dict(self._accounts[index], password="")
+            acct = AccountCredential.from_dict(self._accounts[index], password="")
+            if acct is not None and acct.game == "cc":
+                acct.launcher_token = self.get_launcher_token(acct.id)
+            return acct
         return None
 
     def count(self) -> int:
@@ -718,7 +794,19 @@ class CredentialsManager:
         """Update specific fields of an account."""
         if 0 <= index < len(self._accounts):
             a = self._accounts[index]
-            
+            game = a.get("game", "ttr")
+
+            # Detect CC-credential mutations that invalidate any stored token.
+            # An empty password ("") is treated as "no change for token
+            # purposes" — the Task 11 _persist_launcher_token flow uses
+            # update_account(idx, password="") to discard a one-time password
+            # without touching the newly-stored launcher token.
+            cc_creds_changed = (
+                game == "cc"
+                and ((username is not None and username != a.get("username"))
+                     or (password is not None and password != ""))
+            )
+
             if label is not None:
                 a["label"] = label
             if username is not None:
@@ -727,16 +815,42 @@ class CredentialsManager:
                 account_id = a.get("id")
                 if account_id:
                     self._set_password(account_id, password)
-                        
+
             self._save()
 
-    def delete_account(self, index: int):
-        if 0 <= index < len(self._accounts):
-            a = self._accounts.pop(index)
-            account_id = a.get("id")
-            if account_id:
-                self._delete_password(account_id)
-            self._save()
+            if cc_creds_changed:
+                account_id = a.get("id")
+                if account_id:
+                    self.clear_launcher_token(account_id)
+
+    def delete_account(self, index: int) -> tuple[str, str | None] | None:
+        """Delete the account at ``index``.
+
+        Returns ``(account_id, token)`` where ``token`` is the CC launcher
+        token previously stored for the account (or ``None`` for TTR
+        accounts and CC accounts without a stored token). The caller is
+        responsible for firing ``/revoke_self`` against the CC API on a
+        best-effort basis.
+
+        Returns ``None`` only when ``index`` is out of range.
+        """
+        if not (0 <= index < len(self._accounts)):
+            return None
+        a = self._accounts[index]
+        account_id = a.get("id")
+        game = a.get("game", "ttr")
+        token: str | None = None
+        if game == "cc" and account_id:
+            stored = self.get_launcher_token(account_id)
+            token = stored or None
+            if stored:
+                self.clear_launcher_token(account_id)
+        # Preserve existing cleanup: pop from list, drop keyring password, save.
+        self._accounts.pop(index)
+        if account_id:
+            self._delete_password(account_id)
+        self._save()
+        return (account_id or "", token)
 
     def reorder(self, old_index: int, new_index: int):
         if 0 <= old_index < len(self._accounts) and 0 <= new_index < len(self._accounts):
@@ -744,11 +858,25 @@ class CredentialsManager:
             self._accounts.insert(new_index, item)
             self._save()
 
-    def clear_all(self):
-        """Delete all stored credentials."""
+    def clear_all(self) -> list[str]:
+        """Delete all stored credentials.
+
+        Returns the list of CC launcher tokens that were stored, so the
+        caller can fire best-effort ``/revoke_self`` against the CC API
+        for each. Returns an empty list if no CC accounts had tokens
+        (or if all accounts were TTR).
+        """
+        tokens: list[str] = []
         for a in self._accounts:
             account_id = a.get("id")
+            game = a.get("game", "ttr")
+            if game == "cc" and account_id:
+                stored = self.get_launcher_token(account_id)
+                if stored:
+                    tokens.append(stored)
+                    self.clear_launcher_token(account_id)
             if account_id:
                 self._delete_password(account_id)
         self._accounts = []
         self._save()
+        return tokens

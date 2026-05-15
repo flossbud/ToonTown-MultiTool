@@ -8,6 +8,7 @@ button. Workers and launchers are stored per-game so TTR and CC never interfere.
 
 import os
 import sys
+import threading
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFrame, QScrollArea, QLineEdit, QInputDialog,
@@ -23,7 +24,12 @@ from utils.credentials_manager import CredentialsManager, set_debug_log_callback
 from utils.open_url import open_url
 from services.ttr_login_service import TTRLoginWorker, LoginState, find_engine_path, get_engine_executable_name
 from services.ttr_launcher import TTRLauncher
-from services.cc_login_service import CCLoginWorker, find_cc_engine_path, get_cc_engine_executable_name
+from services.cc_login_service import (
+    CCLoginWorker,
+    find_cc_engine_path,
+    get_cc_engine_executable_name,
+    revoke_launcher_token,
+)
 from services.cc_launcher import CCLauncher
 from services.wine_runtimes import (
     classify_path,
@@ -391,7 +397,8 @@ class KeyringWarningBanner(QFrame):
 
 
 class LaunchTab(QWidget):
-    def __init__(self, settings_manager=None, logger=None, parent=None):
+    def __init__(self, settings_manager=None, logger=None, parent=None,
+                 credentials_manager=None):
         super().__init__(parent)
         self.settings_manager = settings_manager
         self.logger = logger
@@ -403,7 +410,8 @@ class LaunchTab(QWidget):
             def _tee(msg, _log=self.logger.append_log):
                 QTimer.singleShot(0, lambda m=msg: _log(m))
             set_debug_log_callback(_tee)
-        self.cred_manager = CredentialsManager()
+        # Optional injection point for tests; defaults to a fresh manager.
+        self.cred_manager = credentials_manager or CredentialsManager()
 
         # Per-game workers and launchers
         self._workers = {"ttr": [None] * MAX_PER_GAME, "cc": [None] * MAX_PER_GAME}
@@ -503,7 +511,9 @@ class LaunchTab(QWidget):
     def _disconnect_worker_signals(self, worker):
         if not worker:
             return
-        for signal_name in ("state_changed", "queue_update", "need_2fa", "login_success", "login_failed"):
+        for signal_name in ("state_changed", "queue_update", "need_2fa",
+                            "login_success", "login_failed",
+                            "launcher_token_obtained"):
             try:
                 getattr(worker, signal_name).disconnect()
             except Exception:
@@ -808,7 +818,13 @@ class LaunchTab(QWidget):
                 if launcher:
                     self._disconnect_launcher_signals(launcher)
                     launcher.kill()
-        self.cred_manager.clear_all()
+        tokens = self.cred_manager.clear_all()
+        for token in tokens:
+            threading.Thread(
+                target=revoke_launcher_token,
+                args=(token,),
+                daemon=True,
+            ).start()
         self._build_ui()
         self.refresh_theme()
 
@@ -829,7 +845,15 @@ class LaunchTab(QWidget):
             self._launchers[game][section_index].kill()
             self._launchers[game][section_index] = None
 
-        self.cred_manager.delete_account(global_idx)
+        result = self.cred_manager.delete_account(global_idx)
+        if result is not None:
+            account_id, token = result
+            if token:
+                threading.Thread(
+                    target=revoke_launcher_token,
+                    args=(token,),
+                    daemon=True,
+                ).start()
         self._build_ui()
         self.refresh_theme()
 
@@ -920,7 +944,12 @@ class LaunchTab(QWidget):
             if acct is not None else "acct_exists=False"
         )
         _dbg(f"[Credentials] _on_launch slot={section_index} {acct_desc}")
-        if not acct or not acct.username or not acct.password:
+        if not acct or not acct.username:
+            self._update_status(game, section_index, LoginState.FAILED, "Missing username. Click Edit.")
+            return
+        # TTR still requires a password up front. CC accounts may legitimately
+        # have no password (token-only model after register_and_login).
+        if game == "ttr" and not acct.password:
             self._update_status(game, section_index, LoginState.FAILED, "Missing username or password. Click Edit.")
             return
 
@@ -966,9 +995,48 @@ class LaunchTab(QWidget):
         launcher.launch_failed.connect(lambda msg, g=game, si=section_index: self._on_launcher_failed(g, si, msg))
 
         # Start login
-        worker.login(acct.username, acct.password)
+        if game == "ttr":
+            worker.login(acct.username, acct.password)
+        else:
+            # CC: dispatch by stored credential shape.
+            if acct.launcher_token:
+                worker.login_with_token(acct.launcher_token)
+            elif acct.password:
+                # Legacy / freshly-onboarded account: register first, then
+                # login. Connect the new signal BEFORE firing so we don't
+                # miss the token in case /register completes very fast.
+                worker.launcher_token_obtained.connect(
+                    lambda tok, aid=acct.id: self._persist_launcher_token(aid, tok)
+                )
+                worker.register_and_login(acct.username, acct.password,
+                                          label=acct.label or "")
+            else:
+                self._update_status(game, section_index, LoginState.FAILED,
+                    "No CC credentials stored. Click Edit on this account.")
+                return
         game_label = "TTR" if game == "ttr" else "CC"
         self.log(f"[Launch] Logging in {game_label} account {section_index + 1}…")
+
+    def _persist_launcher_token(self, account_id: str, token: str) -> None:
+        """Save a CC launcher token to keyring AND clear the now-redundant
+        password (token-only model). Best-effort: keyring errors are logged
+        but don't block the launch.
+        """
+        try:
+            self.cred_manager.set_launcher_token(account_id, token)
+            # Discard the password we just registered with.
+            idx = self._index_of_account_id(account_id)
+            if idx is not None:
+                self.cred_manager.update_account(idx, password="")
+        except Exception as e:
+            from utils.credentials_manager import _dbg
+            _dbg(f"[Credentials] _persist_launcher_token({account_id[:8]}) failed: {type(e).__name__}: {e}")
+
+    def _index_of_account_id(self, account_id: str) -> int | None:
+        for i, a in enumerate(self.cred_manager.get_accounts_metadata()):
+            if a.id == account_id:
+                return i
+        return None
 
     def _on_login_success(self, game, section_index, gameserver, token):
         game_label = "TTR" if game == "ttr" else "CC"

@@ -61,15 +61,16 @@ class CCLauncher(QObject):
         self._game_process = None
         self.settings_manager = settings_manager
 
-    def launch(self, gameserver: str, osst_token: str, install):
+    def launch(self, gameserver: str, game_token: str, install):
         """Launch CorporateClash for a discovered install.
 
         Parameters
         ----------
         gameserver : str
             -g <gameserver> CLI arg; empty string omits it.
-        osst_token : str
-            Session token; passed via the CC_OSST_TOKEN env var.
+        game_token : str
+            Per-launch game token from the launcher API /login response;
+            passed to the game via the CC_OSST_TOKEN env var.
         install : services.wine_runtimes.WineInstall
             Discovered install. Caller is responsible for classification.
         """
@@ -100,8 +101,8 @@ class CCLauncher(QObject):
         if gameserver:
             args.extend(["-g", gameserver])
         extra_env: dict[str, str] = {}
-        if osst_token:
-            extra_env["CC_OSST_TOKEN"] = osst_token
+        if game_token:
+            extra_env["CC_OSST_TOKEN"] = game_token
 
         try:
             cmd, env_overrides = build_launch_command(install, args, extra_env)

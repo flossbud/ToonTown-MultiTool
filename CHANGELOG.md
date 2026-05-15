@@ -22,6 +22,32 @@ before.
 
 Adds `PyYAML` as a Linux-only dependency.
 
+### Corporate Clash login flow
+
+Migrated to CC's new launcher API (`/api/launcher/v1/*`) after the legacy
+`/api/v1/login` endpoint was retired without notice. TTMT now stores a
+per-account **launcher token** instead of a password: on first Launch click
+for a legacy account, TTMT silently re-registers using the stored
+credentials, swaps the password for the returned launcher token, and uses
+that token directly on subsequent launches. Aligned with CC's stated policy
+that third-party launchers should not store passwords.
+
+Token revocation: when a CC account is removed in TTMT (single-delete or
+"Clear all credentials"), a best-effort `/revoke_self` fires on a daemon
+thread so CC's authorized-launchers list stays clean. Local deletion is
+instant — the network call happens in the background.
+
+Token namespace is channel-aware: stable builds use the
+`toontown_multitool_cc_token` keyring service and beta builds use
+`ttmt-beta_cc_token`, so the two channels can be installed side-by-side
+without cross-contamination.
+
+If a stored token ever stops working (revoked from CC's website, account
+password changed, etc.), the affected account turns red with the message
+"Your CC launcher token is no longer valid. Click Edit on this account to
+re-enter your password." Editing the password triggers fresh registration
+on the next launch.
+
 ## v2.2 — Scope Refinement
 
 ### Removed: Invasion Tracker
