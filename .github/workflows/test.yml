@@ -137,7 +137,10 @@ jobs:
       - name: Run self-check via AppImage (extract-and-run)
         run: |
           chmod +x TTMultiTool-*.AppImage
-          xvfb-run -a ./TTMultiTool-*.AppImage --appimage-extract-and-run --self-check
+          # -e /dev/stdout surfaces Xvfb's own stderr into the job log.
+          # DIAGNOSTIC: the archlinux cell's Xvfb dies on startup for a
+          # reason xvfb-run otherwise swallows to /dev/null.
+          xvfb-run -a -e /dev/stdout ./TTMultiTool-*.AppImage --appimage-extract-and-run --self-check
 
   test-flatpak:
     runs-on: ubuntu-latest
