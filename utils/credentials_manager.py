@@ -751,13 +751,19 @@ class CredentialsManager:
             a = self._accounts[index]
             account_id = a.get("id")
             password = self._get_password(account_id) if account_id else ""
-            return AccountCredential.from_dict(a, password)
+            acct = AccountCredential.from_dict(a, password)
+            if acct is not None and acct.game == "cc":
+                acct.launcher_token = self.get_launcher_token(acct.id)
+            return acct
         return None
 
     def get_account_metadata(self, index: int) -> AccountCredential | None:
         """Return account metadata without fetching the password."""
         if 0 <= index < len(self._accounts):
-            return AccountCredential.from_dict(self._accounts[index], password="")
+            acct = AccountCredential.from_dict(self._accounts[index], password="")
+            if acct is not None and acct.game == "cc":
+                acct.launcher_token = self.get_launcher_token(acct.id)
+            return acct
         return None
 
     def count(self) -> int:

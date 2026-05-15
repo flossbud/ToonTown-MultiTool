@@ -29,3 +29,30 @@ def test_ttr_account_launcher_token_always_empty(cm):
                    password="pw", game="ttr")
     acct = cm.get_accounts_metadata()[0]
     assert acct.launcher_token == ""
+
+
+def test_get_account_singular_populates_launcher_token(cm):
+    """The singular getter must populate launcher_token for CC accounts,
+    matching the plural getter's invariant. Task 11 depends on this."""
+    cm.add_account(label="Main", username="u@e.com",
+                   password="pw", game="cc")
+    acct_id = cm.get_accounts_metadata()[0].id
+    cm.set_launcher_token(acct_id, "singular-tok")
+    acct = cm.get_account(0)
+    assert acct is not None
+    assert acct.launcher_token == "singular-tok"
+
+
+def test_get_account_metadata_singular_populates_launcher_token(cm):
+    cm.add_account(label="Main", username="u@e.com",
+                   password="pw", game="cc")
+    acct_id = cm.get_accounts_metadata()[0].id
+    cm.set_launcher_token(acct_id, "singular-meta-tok")
+    acct = cm.get_account_metadata(0)
+    assert acct is not None
+    assert acct.launcher_token == "singular-meta-tok"
+
+
+def test_get_account_out_of_range_returns_none(cm):
+    assert cm.get_account(99) is None
+    assert cm.get_account_metadata(99) is None
