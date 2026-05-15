@@ -238,3 +238,68 @@ def discover_bottles() -> list[WineInstall]:
                     )
                 )
     return results
+
+
+_LUTRIS_CONFIG_ROOTS = [
+    "~/.config/lutris/games",
+    "~/.var/app/net.lutris.Lutris/config/lutris/games",
+]
+
+
+def _parse_lutris_yaml(yml_path: str) -> tuple[str | None, str | None, str | None]:
+    """Return (prefix_path, name, runner) from a Lutris game YAML, or
+    (None, None, None) if unparseable."""
+    try:
+        import yaml  # PyYAML — Linux-only, lazy-imported.
+        with open(yml_path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+        # Prefix lives under "game" or "wine" depending on Lutris version.
+        prefix = None
+        for section in ("game", "wine"):
+            block = data.get(section)
+            if isinstance(block, dict) and block.get("prefix"):
+                prefix = str(block["prefix"])
+                break
+        name = data.get("name")
+        runner = data.get("runner")
+        return prefix, (str(name) if name else None), (str(runner) if runner else None)
+    except Exception:
+        return None, None, None
+
+
+def discover_lutris() -> list[WineInstall]:
+    """Find CC inside Wine prefixes managed by Lutris."""
+    if sys.platform == "win32":
+        return []
+    results: list[WineInstall] = []
+    seen: set[str] = set()
+    for root_template in _LUTRIS_CONFIG_ROOTS:
+        root = os.path.expanduser(root_template)
+        if not os.path.isdir(root):
+            continue
+        for entry in sorted(os.listdir(root)):
+            if not entry.endswith(".yml"):
+                continue
+            yml_path = os.path.join(root, entry)
+            prefix, name, runner = _parse_lutris_yaml(yml_path)
+            if not prefix or runner != "wine":
+                continue
+            if not os.path.isdir(prefix):
+                continue
+            for exe in _find_cc_in_prefix(prefix):
+                real = os.path.realpath(exe)
+                if real in seen:
+                    continue
+                seen.add(real)
+                slug = entry[:-4]
+                display = name or slug
+                results.append(
+                    WineInstall(
+                        exe_path=exe,
+                        launcher="lutris",
+                        prefix_path=prefix,
+                        display_name=f"Lutris · {display}",
+                        metadata={"lutris_slug": slug, "lutris_name": name},
+                    )
+                )
+    return results
