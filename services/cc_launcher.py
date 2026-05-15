@@ -14,7 +14,7 @@ import os
 import subprocess
 import threading
 from PySide6.QtCore import QObject, Signal
-from services.cc_login_service import CC_ENGINE_SEARCH_PATHS, get_cc_engine_executable_name
+from services.cc_login_service import CC_ENGINE_SEARCH_PATHS
 from services.launcher_env import build_launcher_env
 from services.wine_runtimes import WineInstall
 from utils.game_registry import GameRegistry
@@ -61,62 +61,76 @@ class CCLauncher(QObject):
         self._game_process = None
         self.settings_manager = settings_manager
 
-    def launch(self, gameserver: str, osst_token: str, engine_dir: str):
-        """Launch CorporateClash with credentials in a background thread."""
-        binary_name = get_cc_engine_executable_name()
-        engine_path = os.path.join(engine_dir, binary_name)
+    def launch(self, gameserver: str, osst_token: str, install):
+        """Launch CorporateClash for a discovered install.
 
-        if not os.path.isfile(engine_path):
-            self.launch_failed.emit(f"CorporateClash not found at {engine_path}")
+        Parameters
+        ----------
+        gameserver : str
+            -g <gameserver> CLI arg; empty string omits it.
+        osst_token : str
+            Session token; passed via the CC_OSST_TOKEN env var.
+        install : services.wine_runtimes.WineInstall
+            Discovered install. Caller is responsible for classification.
+        """
+        from services.wine_runtimes import (
+            build_launch_command, is_launcher_available,
+        )
+
+        if not os.path.isfile(install.exe_path):
+            self.launch_failed.emit(
+                f"CorporateClash not found at {install.exe_path}"
+            )
             return
 
-        if not _is_trusted_cc_engine_path(engine_path, self.settings_manager):
+        if not _is_trusted(install, self.settings_manager):
             self.launch_failed.emit(
                 "CorporateClash path is not in the trusted install list. "
                 "Re-select it in Settings to approve a custom install."
             )
             return
 
-        # Ensure executable (Linux/Wine)
-        if not os.access(engine_path, os.X_OK):
-            try:
-                os.chmod(engine_path, 0o755)
-            except Exception:
-                pass
+        if not is_launcher_available(install.launcher):
+            self.launch_failed.emit(
+                self._availability_error_message(install.launcher)
+            )
+            return
+
+        args: list[str] = []
+        if gameserver:
+            args.extend(["-g", gameserver])
+        extra_env: dict[str, str] = {}
+        if osst_token:
+            extra_env["CC_OSST_TOKEN"] = osst_token
+
+        try:
+            cmd, env_overrides = build_launch_command(install, args, extra_env)
+        except ValueError as e:
+            self.launch_failed.emit(f"Cannot build launch command: {e}")
+            return
+
+        spawn_env = build_launcher_env(env_overrides)
+        cwd = install.prefix_path or os.path.dirname(install.exe_path)
 
         def _run():
             try:
                 import sys
                 kwargs = {}
-                if sys.platform == "win32":
-                    # Break out of the parent's Windows Job Object so closing
-                    # multitool doesn't take running games down with it when
-                    # the job has JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE.
+                if sys.platform == "win32" and install.launcher == "native":
                     kwargs["creationflags"] = (
                         subprocess.DETACHED_PROCESS
                         | subprocess.CREATE_NEW_PROCESS_GROUP
                         | subprocess.CREATE_BREAKAWAY_FROM_JOB
                     )
 
-                cmd = [engine_path]
-                if gameserver:
-                    cmd.extend(["-g", gameserver])
-
-                # Pass token via env var to avoid exposure in ps / /proc/[pid]/cmdline
-                extra_env = {}
-                if osst_token:
-                    extra_env["CC_OSST_TOKEN"] = osst_token
-
-                spawn_env = build_launcher_env(extra_env)
-
                 def _spawn():
                     return host_popen(
                         cmd,
-                        cwd=engine_dir,
+                        cwd=cwd,
                         env=spawn_env,
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL,
-                        **kwargs
+                        **kwargs,
                     )
 
                 try:
@@ -130,7 +144,6 @@ class CCLauncher(QObject):
                 GameRegistry.instance().register(pid, "cc")
                 self.game_launched.emit(pid)
 
-                # Wait for game to exit
                 retcode = self._game_process.wait()
                 GameRegistry.instance().unregister(pid)
                 self._game_process = None
@@ -140,6 +153,34 @@ class CCLauncher(QObject):
                 self.launch_failed.emit(f"Launch error: {e}")
 
         threading.Thread(target=_run, daemon=True).start()
+
+    @staticmethod
+    def _availability_error_message(launcher: str) -> str:
+        messages = {
+            "bottles": (
+                "Detected Corporate Clash inside Bottles, but bottles-cli is "
+                "not available on this system. Install Bottles or pick a "
+                "different install in Settings."
+            ),
+            "lutris": (
+                "Detected Corporate Clash in a Lutris-managed prefix, but the "
+                "wine binary is not available. Install wine or pick a "
+                "different install in Settings."
+            ),
+            "steam-proton": (
+                "Detected Corporate Clash in a Steam Proton prefix, but Steam "
+                "is not available. Launch Steam or pick a different install."
+            ),
+            "wine": (
+                "Detected Corporate Clash in a Wine prefix, but the wine "
+                "binary is not available. Install wine or pick a different "
+                "install in Settings."
+            ),
+        }
+        return messages.get(
+            launcher,
+            f"Required runtime for launcher '{launcher}' is not available.",
+        )
 
     def kill(self):
         """Terminate the game process if running."""
