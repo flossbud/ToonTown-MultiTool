@@ -12,7 +12,11 @@
 #   is the source of truth: it runs pip install across Python 3.9–3.12.
 
 # Core — required on all platforms
-PySide6>=6.5.0
+# Pin: PySide6 6.9.x bundles a Qt6.9 build with a font-engine null-pointer
+# regression in QFontEngineFT::shouldUseDesignMetrics that segfaults during
+# first-launch font rendering on Linux Mint 22 (Ubuntu 24.04 base). Locking
+# below 6.9 until 6.10+ is verified safe across the supported distro matrix.
+PySide6>=6.8,<6.9
 pynput>=1.7.6
 requests>=2.28.0
 keyring>=24.0.0
