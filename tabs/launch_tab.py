@@ -8,6 +8,7 @@ button. Workers and launchers are stored per-game so TTR and CC never interfere.
 
 import os
 import sys
+import threading
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFrame, QScrollArea, QLineEdit, QInputDialog,
@@ -23,7 +24,12 @@ from utils.credentials_manager import CredentialsManager, set_debug_log_callback
 from utils.open_url import open_url
 from services.ttr_login_service import TTRLoginWorker, LoginState, find_engine_path, get_engine_executable_name
 from services.ttr_launcher import TTRLauncher
-from services.cc_login_service import CCLoginWorker, find_cc_engine_path, get_cc_engine_executable_name
+from services.cc_login_service import (
+    CCLoginWorker,
+    find_cc_engine_path,
+    get_cc_engine_executable_name,
+    revoke_launcher_token,
+)
 from services.cc_launcher import CCLauncher
 from services.wine_runtimes import (
     classify_path,
@@ -833,7 +839,15 @@ class LaunchTab(QWidget):
             self._launchers[game][section_index].kill()
             self._launchers[game][section_index] = None
 
-        self.cred_manager.delete_account(global_idx)
+        result = self.cred_manager.delete_account(global_idx)
+        if result is not None:
+            account_id, token = result
+            if token:
+                threading.Thread(
+                    target=revoke_launcher_token,
+                    args=(token,),
+                    daemon=True,
+                ).start()
         self._build_ui()
         self.refresh_theme()
 
