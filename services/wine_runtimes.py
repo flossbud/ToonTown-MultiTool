@@ -303,3 +303,109 @@ def discover_lutris() -> list[WineInstall]:
                     )
                 )
     return results
+
+
+_STEAM_ROOTS = [
+    "~/.local/share/Steam",
+    "~/.steam/steam",
+    "~/.var/app/com.valvesoftware.Steam/.local/share/Steam",
+]
+
+
+def _read_proton_dir(compatdata_dir: str) -> str | None:
+    """Return the Proton install directory recorded in config_info, or None."""
+    cfg = os.path.join(compatdata_dir, "config_info")
+    if not os.path.isfile(cfg):
+        return None
+    try:
+        with open(cfg, "r", encoding="utf-8") as f:
+            first = f.readline().strip()
+        return first or None
+    except Exception:
+        return None
+
+
+def _read_shortcut_name(steam_root: str, appid: str) -> str | None:
+    """Best-effort: extract a non-Steam shortcut name from shortcuts.vdf.
+
+    shortcuts.vdf is a binary VDF blob. We do a simple byte-level scan for the
+    AppName key adjacent to the appid. Returns None on any parse failure.
+    """
+    userdata = os.path.join(steam_root, "userdata")
+    if not os.path.isdir(userdata):
+        return None
+    try:
+        for uid in os.listdir(userdata):
+            shortcuts = os.path.join(userdata, uid, "config", "shortcuts.vdf")
+            if not os.path.isfile(shortcuts):
+                continue
+            with open(shortcuts, "rb") as f:
+                blob = f.read()
+            # Inline shortcut entries contain ASCII keys like "AppName"
+            # followed by a NUL, then the string value, NUL-terminated. We
+            # scan for "AppName\x00<name>\x00...appid\x00<be-int32>" pairs.
+            # This is a best-effort heuristic; failure is silent.
+            idx = 0
+            current_name: str | None = None
+            target = int(appid)
+            while idx < len(blob):
+                if blob[idx:idx+8] == b"AppName\x00":
+                    end = blob.find(b"\x00", idx + 8)
+                    if end == -1:
+                        break
+                    try:
+                        current_name = blob[idx + 8:end].decode("utf-8")
+                    except UnicodeDecodeError:
+                        current_name = None
+                    idx = end + 1
+                    continue
+                if blob[idx:idx+6] == b"appid\x00" and idx + 10 <= len(blob):
+                    val = int.from_bytes(blob[idx+6:idx+10], "little", signed=True)
+                    if val == target and current_name:
+                        return current_name
+                    idx += 10
+                    continue
+                idx += 1
+    except Exception:
+        return None
+    return None
+
+
+def discover_steam_proton() -> list[WineInstall]:
+    """Find CC inside Steam Proton compatdata prefixes."""
+    if sys.platform == "win32":
+        return []
+    results: list[WineInstall] = []
+    seen: set[str] = set()
+    for root_template in _STEAM_ROOTS:
+        steam_root = os.path.expanduser(root_template)
+        compatdata = os.path.join(steam_root, "steamapps", "compatdata")
+        if not os.path.isdir(compatdata):
+            continue
+        for entry in sorted(os.listdir(compatdata)):
+            if not entry.isdigit():
+                continue
+            pfx = os.path.join(compatdata, entry, "pfx")
+            if not os.path.isdir(pfx):
+                continue
+            for exe in _find_cc_in_prefix(pfx):
+                real = os.path.realpath(exe)
+                if real in seen:
+                    continue
+                seen.add(real)
+                proton_dir = _read_proton_dir(os.path.join(compatdata, entry))
+                name = _read_shortcut_name(steam_root, entry) or f"Steam · {entry}"
+                results.append(
+                    WineInstall(
+                        exe_path=exe,
+                        launcher="steam-proton",
+                        prefix_path=pfx,
+                        display_name=f"Steam · {name}" if not name.startswith("Steam · ") else name,
+                        metadata={
+                            "appid": entry,
+                            "steam_root": steam_root,
+                            "proton_dir": proton_dir,
+                        },
+                    )
+                )
+    return results
