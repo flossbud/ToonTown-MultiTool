@@ -794,7 +794,19 @@ class CredentialsManager:
         """Update specific fields of an account."""
         if 0 <= index < len(self._accounts):
             a = self._accounts[index]
-            
+            game = a.get("game", "ttr")
+
+            # Detect CC-credential mutations that invalidate any stored token.
+            # An empty password ("") is treated as "no change for token
+            # purposes" — the Task 11 _persist_launcher_token flow uses
+            # update_account(idx, password="") to discard a one-time password
+            # without touching the newly-stored launcher token.
+            cc_creds_changed = (
+                game == "cc"
+                and ((username is not None and username != a.get("username"))
+                     or (password is not None and password != ""))
+            )
+
             if label is not None:
                 a["label"] = label
             if username is not None:
@@ -803,8 +815,13 @@ class CredentialsManager:
                 account_id = a.get("id")
                 if account_id:
                     self._set_password(account_id, password)
-                        
+
             self._save()
+
+            if cc_creds_changed:
+                account_id = a.get("id")
+                if account_id:
+                    self.clear_launcher_token(account_id)
 
     def delete_account(self, index: int):
         if 0 <= index < len(self._accounts):
