@@ -84,6 +84,58 @@ MAX_PER_GAME = 8  # hard ceiling
 LINUX_KEYRING_HELP_URL = "https://wiki.archlinux.org/title/Secret_Service"
 
 
+# ── CC multi-install launch gate ──────────────────────────────────────────
+
+def _cc_launch_gate(settings_manager, parent) -> bool:
+    """Decide whether a CC launch can proceed.
+
+    Returns True if the launch may proceed. Returns False after showing a
+    blocking dialog when multiple installs are detected and no valid pick
+    has been recorded.
+    """
+    installs = discover_cc_installs()
+    stored_sig = settings_manager.get(CC_ENGINE_INSTALL_SIGNATURE, "")
+    if len(installs) > 1:
+        sig_match = any(install_signature(i) == stored_sig for i in installs)
+        if not sig_match:
+            _show_multi_install_block(parent, settings_manager)
+            return False
+    elif len(installs) == 1:
+        expected = install_signature(installs[0])
+        if stored_sig != expected:
+            settings_manager.set(CC_ENGINE_INSTALL_SIGNATURE, expected)
+    return True
+
+
+def _show_multi_install_block(parent, settings_manager):
+    """Show a themed modal explaining the block and offering to open Settings."""
+    from PySide6.QtWidgets import QMessageBox
+    box = QMessageBox(parent)
+    box.setIcon(QMessageBox.Warning)
+    box.setWindowTitle("Choose Corporate Clash install")
+    box.setText(
+        "Multiple Corporate Clash installs were detected.\n\n"
+        "Choose one in Settings to launch."
+    )
+    open_btn = box.addButton("Open Settings", QMessageBox.AcceptRole)
+    box.addButton("Cancel", QMessageBox.RejectRole)
+    box.exec()
+    if box.clickedButton() is open_btn:
+        _switch_to_cc_settings(parent)
+
+
+def _switch_to_cc_settings(parent):
+    """Best-effort: navigate the user to the CC row in Settings."""
+    w = parent
+    while w is not None and not hasattr(w, "switch_to_settings_tab"):
+        w = w.parent() if hasattr(w, "parent") else None
+    if w is not None:
+        try:
+            w.switch_to_settings_tab(focus="cc_engine_dir")
+        except Exception:
+            pass
+
+
 # ── Animated Edit Panel ───────────────────────────────────────────────────
 
 class AnimatedEditPanel(QFrame):
@@ -825,6 +877,11 @@ class LaunchTab(QWidget):
             return
         card = cards[section_index]
         global_idx = card["global_index"]
+
+        # CC: block launch when multi-install is ambiguous (no stored pick).
+        if game == "cc":
+            if not _cc_launch_gate(self.settings_manager, parent=self.window()):
+                return
 
         # Check engine path
         engine_dir = self._get_engine_dir(game)
