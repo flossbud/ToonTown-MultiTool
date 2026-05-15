@@ -13,7 +13,13 @@ from utils.theme_manager import apply_theme, get_theme_colors, resolve_theme
 from utils.shared_widgets import IOSToggle
 from utils.widgets import install_modern_scrollbar
 from services.ttr_login_service import find_engine_path, get_engine_executable_name
-from services.cc_login_service import find_cc_engine_path, get_cc_engine_executable_name
+from services.cc_login_service import (
+    find_cc_engine_path,
+    get_cc_engine_executable_name,
+    discover_cc_installs,
+)
+from services.wine_runtimes import install_signature
+from utils.settings_keys import CC_ENGINE_INSTALL_SIGNATURE
 
 SPECIAL_KEYS = {
     Qt.Key_Space: "space", Qt.Key_Return: "Return", Qt.Key_Enter: "Return",
@@ -314,8 +320,24 @@ class GamePathRow(SettingsRow):
         else:
             self._refresh_display(current_path)
 
+        self.needs_pick: bool = False
+        self._cc_installs: list = []
+        if settings_key == "cc_engine_dir":
+            self._cc_installs = discover_cc_installs()
+            stored_sig = self.settings_manager.get(
+                CC_ENGINE_INSTALL_SIGNATURE, ""
+            ) if self.settings_manager else ""
+            sig_match = any(
+                install_signature(i) == stored_sig
+                for i in self._cc_installs
+            ) if stored_sig else False
+            if len(self._cc_installs) > 1 and not sig_match:
+                self.needs_pick = True
+
     def apply_theme(self, c, is_dark):
         super().apply_theme(c, is_dark)
+        self._palette = c
+        self._is_dark = is_dark
         p = _elevated_control_palette(c, is_dark)
         btn_style = f"""
             QPushButton {{
@@ -332,6 +354,24 @@ class GamePathRow(SettingsRow):
         """
         self.browse_btn.setStyleSheet(btn_style)
         self.detect_btn.setStyleSheet(btn_style)
+        if getattr(self, "needs_pick", False):
+            orange = c.get("accent_orange", "#c47a2a")
+            orange_border = c.get("accent_orange_border", "#e0943a")
+            self.detect_btn.setStyleSheet(
+                f"""
+                QPushButton {{
+                    background-color: {p['bg']};
+                    color: {orange};
+                    border: 1px solid {orange_border};
+                    border-radius: 6px; padding: 0 12px;
+                }}
+                QPushButton:hover {{
+                    background-color: {p['hover_bg']};
+                    color: {orange};
+                    border: 1px solid {orange_border};
+                }}
+                """
+            )
 
     def _refresh_display(self, path: str, error: bool = False):
         if not path:
