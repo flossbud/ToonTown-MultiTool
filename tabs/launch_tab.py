@@ -1070,8 +1070,16 @@ class LaunchTab(QWidget):
                     print("[Credentials] _on_launch: engine not found (dir='' bin='')")
                     self._update_status(game, section_index, LoginState.FAILED, "Game path not set. Configure in Settings.")
                     return
-                print(f"[Launch] _on_login_success: invoking CCLauncher.launch")
-                launcher.launch(gameserver, token, install)
+                # The new CC launcher protocol needs the account username
+                # for the LAUNCHER_USER env var. Look up the account that
+                # triggered this launch slot.
+                cc_accounts = self._game_accounts_with_indices("cc")
+                username = ""
+                if section_index < len(cc_accounts):
+                    _flat_idx, acct = cc_accounts[section_index]
+                    username = acct.username or ""
+                print(f"[Launch] _on_login_success: invoking CCLauncher.launch username='{username}'")
+                launcher.launch(gameserver, token, install, username=username)
             else:
                 engine_dir = self._get_engine_dir(game)
                 launcher.launch(gameserver, token, engine_dir)

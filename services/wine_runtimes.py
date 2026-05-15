@@ -556,10 +556,26 @@ def build_launch_command(
     if install.launcher == "bottles":
         if not install.prefix_path:
             raise ValueError("bottles launcher requires prefix_path")
-        bottle_name = install.metadata.get("bottle_name")
+        # bottles-cli identifies bottles by the display name from bottle.yml
+        # ("Corporate Clash"), not the filesystem-sanitized dir name
+        # ("Corporate-Clash"). Discovery captures both; prefer the display
+        # name and fall back to the dir basename if bottle.yml was missing.
+        bottle_name = (
+            install.metadata.get("bottle_display_name")
+            or install.metadata.get("bottle_name")
+        )
         if not bottle_name:
             raise ValueError("bottles launcher requires metadata.bottle_name")
-        win_path = host_to_windows_path(install.exe_path, install.prefix_path)
+        # We pass the UNIX host path of the executable, not the Windows
+        # form. Two reasons:
+        #   1. bottles-cli's WineExecutor.__get_cwd has a quoting bug when
+        #      exec_path is a Windows path: it splits the shlex-quoted
+        #      path on '\\' then drops the last segment, which strips the
+        #      closing single quote and produces an unbalanced shell
+        #      string fed to `winepath --unix`. The Unix-path branch in
+        #      __get_cwd skips the broken slice entirely.
+        #   2. Unix paths trigger the `is_unix` branch in start.py, which
+        #      uses `start /unix /wait <path>` — fine for our purposes.
         distribution = install.metadata.get("distribution", "flatpak")
         if distribution == "flatpak":
             base = [
@@ -569,9 +585,13 @@ def build_launch_command(
             ]
         else:
             base = ["bottles-cli"]
-        # bottles-cli `run` takes args as positional trailing tokens
-        # (verified via `bottles-cli run --help`: positional `args ...`).
-        cmd = [*base, "run", "-b", bottle_name, "-e", win_path, *args]
+        # bottles-cli `run` takes args as positional trailing tokens, but
+        # argparse will re-interpret a leading dash on any of them as a
+        # bottles-cli flag. The POSIX terminator `--` stops bottles-cli's
+        # flag parser and forwards everything afterward to the executable
+        # verbatim. (Under the new CC launcher protocol args is empty —
+        # credentials go via env vars — but keep the `--` for safety.)
+        cmd = [*base, "run", "-b", bottle_name, "-e", install.exe_path, "--", *args]
         return cmd, env
 
     raise ValueError(f"Unsupported launcher: {install.launcher}")
@@ -708,6 +728,69 @@ def is_launcher_available(launcher: str) -> bool:
         return False
     print(f"[wine_runtimes] is_launcher_available: unknown launcher {launcher!r}: False")
     return False
+
+
+_BOTTLE_ENV_ALLOWLIST_KEY = "Inherited_Environment_Variables"
+
+
+def ensure_bottle_env_allowlist(prefix_path: str, required_keys: list[str]) -> bool:
+    """Make sure each key in ``required_keys`` is present in the bottle's
+    ``Inherited_Environment_Variables`` allowlist.
+
+    Bottles' ``Limit_System_Environment`` flag, when true (the default in
+    modern Bottles versions), instructs ``WineEnv`` to inherit ONLY the
+    env vars whose names appear in ``Inherited_Environment_Variables``.
+    Anything else — including the env vars CC's new launcher protocol
+    needs (``TT_PLAYCOOKIE``, ``TT_GAMESERVER``, ``LAUNCHER_USER``,
+    ``REALM``, ``SENTRY_ENVIRONMENT``) — is silently dropped before the
+    game is invoked. CC.exe then has no auth context, the gameserver
+    kicks the connection, and the game quietly exits with rc=0 and no
+    log file written.
+
+    Append-only: existing keys keep their order; we add missing keys at
+    the end. A ``.bak`` is written next to the YAML before mutating.
+    Returns True if the file was modified, False if no change was
+    needed or if anything went wrong (the launch then proceeds in best-
+    effort mode, surfacing whatever bottles does without the allowlist
+    fix).
+    """
+    if not prefix_path:
+        return False
+    bottle_yml = os.path.join(prefix_path, "bottle.yml")
+    if not os.path.isfile(bottle_yml):
+        print(f"[wine_runtimes] ensure_bottle_env_allowlist: no bottle.yml at {bottle_yml}")
+        return False
+    try:
+        import yaml
+    except ImportError:
+        print("[wine_runtimes] ensure_bottle_env_allowlist: PyYAML unavailable; skipping")
+        return False
+    try:
+        with open(bottle_yml) as f:
+            cfg = yaml.safe_load(f) or {}
+    except Exception as e:
+        print(f"[wine_runtimes] ensure_bottle_env_allowlist: read failed {type(e).__name__}: {e}")
+        return False
+
+    existing = list(cfg.get(_BOTTLE_ENV_ALLOWLIST_KEY) or [])
+    existing_set = set(existing)
+    missing = [k for k in required_keys if k and k not in existing_set]
+    if not missing:
+        return False
+
+    cfg[_BOTTLE_ENV_ALLOWLIST_KEY] = existing + missing
+
+    backup = bottle_yml + ".bak"
+    try:
+        if not os.path.exists(backup):
+            shutil.copy2(bottle_yml, backup)
+        with open(bottle_yml, "w") as f:
+            yaml.safe_dump(cfg, f, default_flow_style=False, sort_keys=False)
+        print(f"[wine_runtimes] ensure_bottle_env_allowlist: added {missing} to {bottle_yml}")
+        return True
+    except Exception as e:
+        print(f"[wine_runtimes] ensure_bottle_env_allowlist: write failed {type(e).__name__}: {e}")
+        return False
 
 
 def discover_cc_installs() -> list[WineInstall]:

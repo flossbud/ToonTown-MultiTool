@@ -267,6 +267,13 @@ class CCLoginWorker(QObject):
         try:
             headers = dict(CC_HEADERS)
             headers["Authorization"] = f"Bearer {launcher_token}"
+            # The official CC launcher sends `x-realm: <slug>` on /login —
+            # the game token it returns is bound to that realm. Without it
+            # CC.exe successfully starts but the gameserver kicks it on
+            # connect (and the game exits clean, no log). Hardcode
+            # "production" since CC currently exposes one realm; if /metadata
+            # grows multi-realm support, route the user's selection here.
+            headers["x-realm"] = "production"
             print("[CC] /login: POST starting…")
             resp = requests.post(
                 CC_LOGIN_URL, headers=headers, timeout=15, verify=True,
@@ -308,6 +315,10 @@ class CCLoginWorker(QObject):
             try:
                 headers = dict(CC_HEADERS)
                 headers["Authorization"] = f"Bearer {launcher_token}"
+                # Same x-realm requirement as /register's chain — the game
+                # token is realm-bound, and without it CC.exe quietly bails
+                # after the gameserver kicks the unbound token.
+                headers["x-realm"] = "production"
                 print("[CC] /login: POST starting…")
                 resp = requests.post(
                     CC_LOGIN_URL, headers=headers, timeout=15, verify=True,

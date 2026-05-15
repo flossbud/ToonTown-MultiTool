@@ -61,25 +61,41 @@ class CCLauncher(QObject):
         self._game_process = None
         self.settings_manager = settings_manager
 
-    def launch(self, gameserver: str, game_token: str, install):
+    def launch(self, gameserver: str, game_token: str, install,
+               username: str = "", realm_slug: str = "production"):
         """Launch CorporateClash for a discovered install.
+
+        The new (2026) CC launcher protocol passes credentials via env
+        vars, not CLI args. CC.exe gates itself behind these env vars
+        being present — direct-launch without them gets a "Please launch
+        the game from the official launcher!" refusal.
+
+        Env vars (reverse-engineered from new_launcher.exe v1.4.0):
+          * TT_PLAYCOOKIE : game token (from /login response's "token")
+          * TT_GAMESERVER : hostname from /metadata realms[0].hostname
+          * LAUNCHER_USER : account username
+          * REALM         : realm slug, "production" today
 
         Parameters
         ----------
         gameserver : str
-            -g <gameserver> CLI arg; empty string omits it.
+            Hostname for TT_GAMESERVER env var. From /metadata.
         game_token : str
-            Per-launch game token from the launcher API /login response;
-            passed to the game via the CC_OSST_TOKEN env var.
+            Per-launch game token (TT_PLAYCOOKIE). From /login.
         install : services.wine_runtimes.WineInstall
             Discovered install. Caller is responsible for classification.
+        username : str
+            Account username for LAUNCHER_USER env var.
+        realm_slug : str
+            Realm slug for REALM env var. Defaults to "production".
         """
         from services.wine_runtimes import (
-            build_launch_command, is_launcher_available,
+            build_launch_command, ensure_bottle_env_allowlist, is_launcher_available,
         )
 
         print(f"[CCLauncher] launch: gameserver='{gameserver}' "
               f"token_len={len(game_token) if game_token else 0} "
+              f"user='{username}' realm='{realm_slug}' "
               f"install.launcher={install.launcher!r} "
               f"install.exe_path={install.exe_path!r} "
               f"install.prefix_path={install.prefix_path!r}")
@@ -106,12 +122,33 @@ class CCLauncher(QObject):
             )
             return
 
+        # No CLI args under the new launcher protocol — everything is env.
         args: list[str] = []
-        if gameserver:
-            args.extend(["-g", gameserver])
         extra_env: dict[str, str] = {}
         if game_token:
-            extra_env["CC_OSST_TOKEN"] = game_token
+            extra_env["TT_PLAYCOOKIE"] = game_token
+        if gameserver:
+            extra_env["TT_GAMESERVER"] = gameserver
+        if username:
+            extra_env["LAUNCHER_USER"] = username
+        if realm_slug:
+            extra_env["REALM"] = realm_slug
+        # Sentry env tag the launcher sets unconditionally. CC.exe likely
+        # only inspects this when sentry is enabled, but the official
+        # launcher always sets it, so we mirror that to stay
+        # bit-identical to the official flow.
+        extra_env["SENTRY_ENVIRONMENT"] = "corporateclash"
+
+        # Bottles strips any env vars not in the bottle's allowlist when
+        # Limit_System_Environment is on. Extend the allowlist with the
+        # keys we just decided to pass — without this, none of the
+        # TT_*/LAUNCHER_USER/REALM vars reach CC.exe and the game
+        # silently exits rc=0 with no log file written.
+        if install.launcher == "bottles":
+            ensure_bottle_env_allowlist(
+                install.prefix_path,
+                list(extra_env.keys()),
+            )
 
         try:
             cmd, env_overrides = build_launch_command(install, args, extra_env)
@@ -122,20 +159,24 @@ class CCLauncher(QObject):
 
         spawn_env = build_launcher_env(env_overrides)
         cwd = install.prefix_path or os.path.dirname(install.exe_path)
-        safe_env_keys = sorted(k for k in env_overrides if k != "CC_OSST_TOKEN")
+        sensitive = {"TT_PLAYCOOKIE"}
+        safe_env_keys = sorted(k for k in env_overrides if k not in sensitive)
+        masked_keys = sorted(k for k in env_overrides if k in sensitive)
         print(f"[CCLauncher] launch: cmd={cmd}")
         print(f"[CCLauncher] launch: cwd={cwd}")
-        print(f"[CCLauncher] launch: env_overrides keys={safe_env_keys} "
-              f"+ CC_OSST_TOKEN(masked)={'present' if 'CC_OSST_TOKEN' in env_overrides else 'absent'}")
+        print(f"[CCLauncher] launch: env_overrides plain={safe_env_keys} "
+              f"masked={masked_keys}")
 
         def _run():
             import sys
             import tempfile
-            # Capture the child's stderr to a temp file so non-zero exits
-            # surface the actual error in the terminal. stdout still goes
-            # to DEVNULL to avoid spamming the parent's stdout with game
-            # noise during normal play.
+            # Capture BOTH stdout and stderr to temp files. DXVK 'info:'
+            # lines and CC's own progress messages go to stdout; bottles
+            # / wine / fsync messages go to stderr. We need both to
+            # diagnose silent exits.
+            stdout_path = tempfile.mktemp(prefix="ttmt-cc-stdout-", suffix=".log")
             stderr_path = tempfile.mktemp(prefix="ttmt-cc-stderr-", suffix=".log")
+            stdout_fh = open(stdout_path, "w+b")
             stderr_fh = open(stderr_path, "w+b")
             try:
                 kwargs = {}
@@ -151,12 +192,12 @@ class CCLauncher(QObject):
                         cmd,
                         cwd=cwd,
                         env=spawn_env,
-                        stdout=subprocess.DEVNULL,
+                        stdout=stdout_fh,
                         stderr=stderr_fh,
                         **kwargs,
                     )
 
-                print(f"[CCLauncher] _run: spawning… (stderr capture at {stderr_path})")
+                print(f"[CCLauncher] _run: spawning… (stdout {stdout_path}, stderr {stderr_path})")
                 try:
                     self._game_process = _spawn()
                 except OSError as e:
@@ -171,19 +212,26 @@ class CCLauncher(QObject):
 
                 retcode = self._game_process.wait()
                 print(f"[CCLauncher] _run: child exited rc={retcode}")
-                # On non-zero exit, dump the captured stderr so the user
-                # has the actual diagnostic without grepping a tempfile.
-                if retcode != 0:
+
+                def _dump(label, fh, path):
                     try:
-                        stderr_fh.flush()
-                        stderr_fh.seek(0)
-                        err = stderr_fh.read().decode("utf-8", "replace")
+                        fh.flush()
+                        fh.seek(0)
+                        content = fh.read().decode("utf-8", "replace").strip()
                     except Exception as e:
-                        err = f"<failed to read stderr capture: {e}>"
-                    snippet = err.strip()
+                        content = f"<failed to read {label} capture: {e}>"
+                    if not content:
+                        print(f"[CCLauncher] _run: {label} from child (rc={retcode}): <empty>")
+                        return
+                    snippet = content
                     if len(snippet) > 4000:
-                        snippet = snippet[:4000] + f"\n…(+{len(err)-4000} more bytes; full at {stderr_path})"
-                    print(f"[CCLauncher] _run: stderr from child (rc={retcode}):\n{snippet}\n[CCLauncher] _run: --- end stderr ---")
+                        snippet = snippet[:4000] + f"\n…(+{len(content)-4000} more bytes; full at {path})"
+                    print(f"[CCLauncher] _run: {label} from child (rc={retcode}):\n{snippet}\n[CCLauncher] _run: --- end {label} ---")
+
+                # Dump both streams regardless of exit code so we can
+                # diagnose silent exits where rc=0 but nothing happens.
+                _dump("stdout", stdout_fh, stdout_path)
+                _dump("stderr", stderr_fh, stderr_path)
                 GameRegistry.instance().unregister(pid)
                 self._game_process = None
                 self.game_exited.emit(retcode)
