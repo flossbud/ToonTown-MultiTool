@@ -603,35 +603,53 @@ def is_launcher_available(launcher: str) -> bool:
     Probes the host system via utils.host_spawn so that this returns
     correct results when TTMT itself runs inside a Flatpak sandbox.
     """
+    print(f"[wine_runtimes] is_launcher_available({launcher!r}) probing…")
     if launcher == "native":
+        print(f"[wine_runtimes] is_launcher_available: native -> True")
         return True
     if launcher in ("wine", "lutris"):
-        return _host_command_exists("wine")
+        ok = _host_command_exists("wine")
+        print(f"[wine_runtimes] is_launcher_available: {launcher} -> wine on PATH: {ok}")
+        return ok
     if launcher == "bottles":
         if _host_command_exists("bottles-cli"):
+            print("[wine_runtimes] is_launcher_available: bottles -> bottles-cli on PATH: True")
             return True
-        # Flatpak fallback: query flatpak info on the host. 2s is a tight
-        # "is the flatpak daemon responsive" check; a frozen flatpak takes
-        # ~30s, so this avoids blocking the GUI thread for that long.
+        print("[wine_runtimes] is_launcher_available: bottles -> bottles-cli not on PATH, "
+              "falling back to flatpak probe")
+        # Flatpak fallback: query flatpak info on the host. A cold
+        # `flatpak info` can take several seconds on first invocation
+        # while the system daemon initializes; 10s leaves headroom while
+        # a frozen flatpak (~30s) still fails fast.
         if not _host_command_exists("flatpak"):
+            print("[wine_runtimes] is_launcher_available: bottles -> flatpak not on PATH: False")
             return False
         from utils.host_spawn import host_run
         try:
             res = host_run(
                 ["flatpak", "info", "com.usebottles.bottles"],
                 capture_output=True,
-                timeout=2,
+                timeout=10,
             )
-            return res.returncode == 0
-        except Exception:
+            ok = res.returncode == 0
+            print(f"[wine_runtimes] is_launcher_available: bottles -> "
+                  f"flatpak info returncode={res.returncode}: {ok}")
+            return ok
+        except Exception as e:
+            print(f"[wine_runtimes] is_launcher_available: bottles -> "
+                  f"flatpak info raised {type(e).__name__}: {e}: False")
             return False
     if launcher == "steam-proton":
         # Availability is per-install (proton_dir from metadata); generic
         # check just verifies steam exists somewhere.
         for root_template in _STEAM_ROOTS:
             if os.path.isdir(os.path.expanduser(root_template)):
+                print(f"[wine_runtimes] is_launcher_available: steam-proton -> "
+                      f"found root {root_template}: True")
                 return True
+        print("[wine_runtimes] is_launcher_available: steam-proton -> no steam root found: False")
         return False
+    print(f"[wine_runtimes] is_launcher_available: unknown launcher {launcher!r}: False")
     return False
 
 
