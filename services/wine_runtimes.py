@@ -617,28 +617,85 @@ def is_launcher_available(launcher: str) -> bool:
             return True
         print("[wine_runtimes] is_launcher_available: bottles -> bottles-cli not on PATH, "
               "falling back to flatpak probe")
-        # Flatpak fallback: query flatpak info on the host. A cold
-        # `flatpak info` can take several seconds on first invocation
-        # while the system daemon initializes; 10s leaves headroom while
-        # a frozen flatpak (~30s) still fails fast.
         if not _host_command_exists("flatpak"):
             print("[wine_runtimes] is_launcher_available: bottles -> flatpak not on PATH: False")
             return False
         from utils.host_spawn import host_run
+
+        def _decode(b):
+            if b is None:
+                return ""
+            if isinstance(b, bytes):
+                b = b.decode("utf-8", "replace")
+            return b.strip()
+
+        # Probe 1: `flatpak info` defaults to both scopes, but on some
+        # setups it fails when the app is installed --user only and the
+        # subprocess env is missing the right XDG hints.
         try:
             res = host_run(
                 ["flatpak", "info", "com.usebottles.bottles"],
                 capture_output=True,
                 timeout=10,
             )
-            ok = res.returncode == 0
             print(f"[wine_runtimes] is_launcher_available: bottles -> "
-                  f"flatpak info returncode={res.returncode}: {ok}")
-            return ok
+                  f"flatpak info rc={res.returncode} "
+                  f"stderr={_decode(res.stderr)!r} stdout_head={_decode(res.stdout)[:120]!r}")
+            if res.returncode == 0:
+                return True
         except Exception as e:
             print(f"[wine_runtimes] is_launcher_available: bottles -> "
-                  f"flatpak info raised {type(e).__name__}: {e}: False")
-            return False
+                  f"flatpak info raised {type(e).__name__}: {e}")
+
+        # Probe 2: explicit per-scope info. --user finds user installs
+        # even when the default search misses them; --system covers the
+        # opposite case.
+        for scope in ("--user", "--system"):
+            try:
+                res = host_run(
+                    ["flatpak", "info", scope, "com.usebottles.bottles"],
+                    capture_output=True,
+                    timeout=10,
+                )
+                print(f"[wine_runtimes] is_launcher_available: bottles -> "
+                      f"flatpak info {scope} rc={res.returncode} "
+                      f"stderr={_decode(res.stderr)!r}")
+                if res.returncode == 0:
+                    return True
+            except Exception as e:
+                print(f"[wine_runtimes] is_launcher_available: bottles -> "
+                      f"flatpak info {scope} raised {type(e).__name__}: {e}")
+
+        # Probe 3: `flatpak list --app` always returns 0; grep for the id.
+        # Works across both scopes without env quirks.
+        try:
+            res = host_run(
+                ["flatpak", "list", "--app", "--columns=application"],
+                capture_output=True,
+                timeout=10,
+            )
+            apps = _decode(res.stdout)
+            found = "com.usebottles.bottles" in apps.split()
+            print(f"[wine_runtimes] is_launcher_available: bottles -> "
+                  f"flatpak list rc={res.returncode} contains_bottles={found}")
+            if found:
+                return True
+        except Exception as e:
+            print(f"[wine_runtimes] is_launcher_available: bottles -> "
+                  f"flatpak list raised {type(e).__name__}: {e}")
+
+        # Probe 4: filesystem evidence — a bottles-shaped install was
+        # already discovered (we wouldn't be in this branch otherwise),
+        # so accepting the per-user flatpak data dir as proof of install
+        # is consistent with discovery's existing trust signals.
+        user_app_dir = os.path.expanduser("~/.var/app/com.usebottles.bottles")
+        if os.path.isdir(user_app_dir):
+            print(f"[wine_runtimes] is_launcher_available: bottles -> "
+                  f"~/.var/app/com.usebottles.bottles present (per-user install): True")
+            return True
+
+        print("[wine_runtimes] is_launcher_available: bottles -> all probes failed: False")
+        return False
     if launcher == "steam-proton":
         # Availability is per-install (proton_dir from metadata); generic
         # check just verifies steam exists somewhere.
