@@ -1,5 +1,27 @@
 # ToonTown MultiTool — Changelog
 
+## v2.3 — Wine-launcher support for Corporate Clash (in progress)
+
+### Corporate Clash launching on Linux
+
+Detection and launch now cover Bottles (Flatpak and native), Lutris-managed Wine
+prefixes, Steam Proton compatdata, and plain `~/.wine` / `~/.local/share/wineprefixes`
+— regardless of bottle / prefix / shortcut name. Each launcher is invoked through
+the right runtime: Bottles via `bottles-cli`, Steam Proton via the Proton runtime
+referenced in `compatdata/<appid>/config_info`, plain wine with `WINEPREFIX` set.
+Windows behavior is unchanged.
+
+When multiple Corporate Clash installs are detected, a themed picker prompts on
+boot. The Settings Auto-detect button glows orange when a pick is needed, and
+launching is blocked with a routed "Open Settings" dialog until you choose.
+
+Trust is now rooted in launcher-discovery structural signals (`bottle.yml`,
+`compatdata/<id>/pfx`, Lutris game configs, `dosdevices` layout) rather than a
+hardcoded path list. Custom user-typed paths still require explicit approval, as
+before.
+
+Adds `PyYAML` as a Linux-only dependency.
+
 ## v2.2 — Scope Refinement
 
 ### Removed: Invasion Tracker
