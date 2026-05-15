@@ -24,12 +24,30 @@ from services.ttr_login_service import LoginState
 from services.wine_runtimes import discover_cc_installs
 
 
-CC_API_URL = "https://corporateclash.net/api/v1/login"
+CC_API_URL = "https://corporateclash.net/api/v1/login"  # deprecated; removed in Task 16
 assert CC_API_URL.startswith("https://"), "CC_API_URL must use HTTPS"
+CC_REGISTER_URL = "https://corporateclash.net/api/launcher/v1/register"
+CC_LOGIN_URL    = "https://corporateclash.net/api/launcher/v1/login"
+CC_METADATA_URL = "https://corporateclash.net/api/launcher/v1/metadata"
+CC_REVOKE_URL   = "https://corporateclash.net/api/launcher/v1/revoke_self"
+CC_FALLBACK_GAMESERVER = "gs-prd.corporateclash.net:7198"
+
 CC_HEADERS = {
     "Content-Type": "application/json",
-    "User-Agent": "ToontownMultiTool/2.3.0-a"
+    "User-Agent": "ToontownMultiTool/2.3.0-a",
 }
+
+
+def _friendly_name(label: str = "") -> str:
+    """Build the CC-launcher 'friendly' name shown in CC's authorized-
+    launchers list. Format: 'ToontownMultiTool (<hostname>)' or
+    'ToontownMultiTool (<hostname>) - <label>' when a label is supplied.
+
+    ASCII-only (no unicode middle-dot) for maximum API compatibility.
+    """
+    import socket
+    base = f"ToontownMultiTool ({socket.gethostname()})"
+    return f"{base} - {label}" if label else base
 
 # Common locations to search for CorporateClash
 CC_ENGINE_SEARCH_PATHS = [
