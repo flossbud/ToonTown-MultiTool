@@ -5,6 +5,7 @@ All Linux-Wine specifics live here. Pure logic; no Qt dependencies.
 
 from __future__ import annotations
 
+import glob
 import hashlib
 import os
 import sys
@@ -125,4 +126,57 @@ def discover_native_windows() -> list[WineInstall]:
                 metadata={"search_path": path},
             )
         )
+    return results
+
+
+_IN_PREFIX_GLOBS = [
+    "drive_c/users/*/AppData/Local/Corporate Clash/CorporateClash.exe",
+    "drive_c/Program Files/Corporate Clash/CorporateClash.exe",
+    "drive_c/Program Files (x86)/Corporate Clash/CorporateClash.exe",
+]
+
+
+def _find_cc_in_prefix(prefix_path: str) -> list[str]:
+    """Return absolute paths to CorporateClash.exe inside a Wine prefix."""
+    results: list[str] = []
+    for pattern in _IN_PREFIX_GLOBS:
+        for match in glob.glob(os.path.join(prefix_path, pattern)):
+            if os.path.isfile(match):
+                results.append(match)
+    return results
+
+
+def discover_plain_wine() -> list[WineInstall]:
+    """Find CC in ~/.wine and ~/.local/share/wineprefixes/*/."""
+    if sys.platform == "win32":
+        return []
+    results: list[WineInstall] = []
+    candidates: list[str] = []
+    home = os.path.expanduser("~")
+    dot_wine = os.path.join(home, ".wine")
+    if os.path.isdir(dot_wine):
+        candidates.append(dot_wine)
+    wineprefixes_root = os.path.join(home, ".local", "share", "wineprefixes")
+    if os.path.isdir(wineprefixes_root):
+        for entry in sorted(os.listdir(wineprefixes_root)):
+            full = os.path.join(wineprefixes_root, entry)
+            if os.path.isdir(full):
+                candidates.append(full)
+    seen: set[str] = set()
+    for prefix in candidates:
+        for exe in _find_cc_in_prefix(prefix):
+            real = os.path.realpath(exe)
+            if real in seen:
+                continue
+            seen.add(real)
+            name = os.path.basename(prefix.rstrip(os.sep))
+            results.append(
+                WineInstall(
+                    exe_path=exe,
+                    launcher="wine",
+                    prefix_path=prefix,
+                    display_name=f"Wine · {name}",
+                    metadata={"prefix_name": name},
+                )
+            )
     return results
