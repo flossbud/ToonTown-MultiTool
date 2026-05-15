@@ -328,42 +328,47 @@ def _read_proton_dir(compatdata_dir: str) -> str | None:
 def _read_shortcut_name(steam_root: str, appid: str) -> str | None:
     """Best-effort: extract a non-Steam shortcut name from shortcuts.vdf.
 
-    shortcuts.vdf is a binary VDF blob. We do a simple byte-level scan for the
-    AppName key adjacent to the appid. Returns None on any parse failure.
+    shortcuts.vdf is a binary VDF blob. Each shortcut entry stores keys
+    with a type-byte prefix: \x02 for int32, \x01 for string. Steam writes
+    them in this order per entry: appid (int), AppName (string), Exe, etc.
+
+    We scan for "\x02appid\x00<le-uint32>" remembering the most recent
+    appid seen, then on the next "\x01AppName\x00<name>\x00" we return the
+    name if its remembered appid matches the target. Returns None on any
+    parse failure.
     """
     userdata = os.path.join(steam_root, "userdata")
     if not os.path.isdir(userdata):
         return None
     try:
+        target = int(appid)
         for uid in os.listdir(userdata):
+            if not uid.isdigit():
+                continue
             shortcuts = os.path.join(userdata, uid, "config", "shortcuts.vdf")
             if not os.path.isfile(shortcuts):
                 continue
             with open(shortcuts, "rb") as f:
                 blob = f.read()
-            # Inline shortcut entries contain ASCII keys like "AppName"
-            # followed by a NUL, then the string value, NUL-terminated. We
-            # scan for "AppName\x00<name>\x00...appid\x00<be-int32>" pairs.
-            # This is a best-effort heuristic; failure is silent.
             idx = 0
-            current_name: str | None = None
-            target = int(appid)
+            last_appid: int | None = None
             while idx < len(blob):
-                if blob[idx:idx+8] == b"AppName\x00":
-                    end = blob.find(b"\x00", idx + 8)
+                if blob[idx:idx+7] == b"\x02appid\x00" and idx + 11 <= len(blob):
+                    last_appid = int.from_bytes(
+                        blob[idx+7:idx+11], "little", signed=False
+                    )
+                    idx += 11
+                    continue
+                if blob[idx:idx+9] == b"\x01AppName\x00":
+                    end = blob.find(b"\x00", idx + 9)
                     if end == -1:
                         break
-                    try:
-                        current_name = blob[idx + 8:end].decode("utf-8")
-                    except UnicodeDecodeError:
-                        current_name = None
+                    if last_appid == target:
+                        try:
+                            return blob[idx+9:end].decode("utf-8")
+                        except UnicodeDecodeError:
+                            return None
                     idx = end + 1
-                    continue
-                if blob[idx:idx+6] == b"appid\x00" and idx + 10 <= len(blob):
-                    val = int.from_bytes(blob[idx+6:idx+10], "little", signed=True)
-                    if val == target and current_name:
-                        return current_name
-                    idx += 10
                     continue
                 idx += 1
     except Exception:
