@@ -1045,6 +1045,9 @@ def _platform_only_modules(platform: str) -> set[str]:
     if platform != "linux":
         # utils.kwallet_jeepney raises ImportError on non-Linux at import time.
         excluded.add("utils.kwallet_jeepney")
+        # utils.xlib_backend does an unguarded top-level `from Xlib import`;
+        # Xlib is not bundled on non-Linux builds.
+        excluded.add("utils.xlib_backend")
     return excluded
 
 

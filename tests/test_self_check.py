@@ -25,14 +25,16 @@ def test_self_check_exits_zero():
     )
 
 
-def test_platform_only_modules_excludes_kwallet_jeepney_off_linux():
-    """utils.kwallet_jeepney raises ImportError at import time on non-Linux,
-    so the self-check import sweep must skip it on Windows and macOS."""
+def test_platform_only_modules_excludes_linux_only_modules_off_linux():
+    """utils.kwallet_jeepney and utils.xlib_backend both do unguarded
+    top-level imports of Linux-only libraries (jeepney/D-Bus and Xlib), so
+    the self-check import sweep must skip them on Windows and macOS."""
     from main import _platform_only_modules
 
-    assert "utils.kwallet_jeepney" in _platform_only_modules("win32")
-    assert "utils.kwallet_jeepney" in _platform_only_modules("darwin")
-    assert "utils.kwallet_jeepney" not in _platform_only_modules("linux")
+    for mod in ("utils.kwallet_jeepney", "utils.xlib_backend"):
+        assert mod in _platform_only_modules("win32")
+        assert mod in _platform_only_modules("darwin")
+        assert mod not in _platform_only_modules("linux")
 
 
 def test_platform_only_modules_excludes_win32_backend_off_windows():
