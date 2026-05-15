@@ -902,6 +902,7 @@ class LaunchTab(QWidget):
                 install = self._build_cc_install()
                 if install is None:
                     print("[Credentials] _on_launch: engine not found (dir='' bin='')")
+                    self._update_status(game, section_index, LoginState.FAILED, "Game path not set. Configure in Settings.")
                     return
                 launcher.launch(gameserver, token, install)
             else:
