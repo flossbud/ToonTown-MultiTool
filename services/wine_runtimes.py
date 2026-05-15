@@ -508,3 +508,28 @@ def classify_path(exe_path: str) -> WineInstall | None:
         )
 
     return None
+
+
+def build_launch_command(
+    install: WineInstall,
+    args: list[str],
+    extra_env: dict[str, str],
+) -> tuple[list[str], dict[str, str]]:
+    """Return (argv, env_overrides) suitable for subprocess.Popen.
+
+    extra_env is the env the *game* should see (e.g. CC_OSST_TOKEN). It is
+    merged into the result; the caller is responsible for passing this dict
+    to build_launcher_env().
+    """
+    env: dict[str, str] = dict(extra_env)
+
+    if install.launcher == "native":
+        return [install.exe_path, *args], env
+
+    if install.launcher == "wine":
+        if not install.prefix_path:
+            raise ValueError("wine launcher requires prefix_path")
+        env["WINEPREFIX"] = install.prefix_path
+        return ["wine", install.exe_path, *args], env
+
+    raise ValueError(f"Unsupported launcher: {install.launcher}")
