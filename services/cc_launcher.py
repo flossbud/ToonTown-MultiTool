@@ -78,13 +78,21 @@ class CCLauncher(QObject):
             build_launch_command, is_launcher_available,
         )
 
+        print(f"[CCLauncher] launch: gameserver='{gameserver}' "
+              f"token_len={len(game_token) if game_token else 0} "
+              f"install.launcher={install.launcher!r} "
+              f"install.exe_path={install.exe_path!r} "
+              f"install.prefix_path={install.prefix_path!r}")
+
         if not os.path.isfile(install.exe_path):
+            print(f"[CCLauncher] launch: exe_path NOT a file; aborting")
             self.launch_failed.emit(
                 f"CorporateClash not found at {install.exe_path}"
             )
             return
 
         if not _is_trusted(install, self.settings_manager):
+            print(f"[CCLauncher] launch: install NOT trusted; aborting")
             self.launch_failed.emit(
                 "CorporateClash path is not in the trusted install list. "
                 "Re-select it in Settings to approve a custom install."
@@ -92,6 +100,7 @@ class CCLauncher(QObject):
             return
 
         if not is_launcher_available(install.launcher):
+            print(f"[CCLauncher] launch: launcher '{install.launcher}' NOT available; aborting")
             self.launch_failed.emit(
                 self._availability_error_message(install.launcher)
             )
@@ -107,11 +116,17 @@ class CCLauncher(QObject):
         try:
             cmd, env_overrides = build_launch_command(install, args, extra_env)
         except ValueError as e:
+            print(f"[CCLauncher] launch: build_launch_command ValueError {e}")
             self.launch_failed.emit(f"Cannot build launch command: {e}")
             return
 
         spawn_env = build_launcher_env(env_overrides)
         cwd = install.prefix_path or os.path.dirname(install.exe_path)
+        safe_env_keys = sorted(k for k in env_overrides if k != "CC_OSST_TOKEN")
+        print(f"[CCLauncher] launch: cmd={cmd}")
+        print(f"[CCLauncher] launch: cwd={cwd}")
+        print(f"[CCLauncher] launch: env_overrides keys={safe_env_keys} "
+              f"+ CC_OSST_TOKEN(masked)={'present' if 'CC_OSST_TOKEN' in env_overrides else 'absent'}")
 
         def _run():
             try:
@@ -134,6 +149,7 @@ class CCLauncher(QObject):
                         **kwargs,
                     )
 
+                print(f"[CCLauncher] _run: spawning…")
                 try:
                     self._game_process = _spawn()
                 except OSError as e:
@@ -142,15 +158,18 @@ class CCLauncher(QObject):
                     kwargs["creationflags"] &= ~subprocess.CREATE_BREAKAWAY_FROM_JOB
                     self._game_process = _spawn()
                 pid = self._game_process.pid
+                print(f"[CCLauncher] _run: spawned pid={pid}")
                 GameRegistry.instance().register(pid, "cc")
                 self.game_launched.emit(pid)
 
                 retcode = self._game_process.wait()
+                print(f"[CCLauncher] _run: child exited rc={retcode}")
                 GameRegistry.instance().unregister(pid)
                 self._game_process = None
                 self.game_exited.emit(retcode)
 
             except Exception as e:
+                print(f"[CCLauncher] _run: error {type(e).__name__}: {e}")
                 self.launch_failed.emit(f"Launch error: {e}")
 
         threading.Thread(target=_run, daemon=True).start()

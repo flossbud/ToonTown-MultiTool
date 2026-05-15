@@ -260,6 +260,7 @@ class StatusChip(QLabel):
             f"border-radius: 10px; padding: 1px 8px;"
         )
         self.setFixedWidth(max(self.fontMetrics().horizontalAdvance(label) + 20, 60))
+        self.show()
 
 
 class KeyringProbeWorker(QObject):
@@ -482,14 +483,19 @@ class LaunchTab(QWidget):
         a real CorporateClash.exe.
         """
         engine_dir = self.settings_manager.get("cc_engine_dir", "") if self.settings_manager else ""
+        print(f"[Launch] _build_cc_install: cc_engine_dir setting={engine_dir!r}")
         if not engine_dir:
+            print("[Launch] _build_cc_install: engine_dir empty -> None")
             return None
         exe = os.path.join(engine_dir, get_cc_engine_executable_name())
         if not os.path.isfile(exe):
+            print(f"[Launch] _build_cc_install: exe missing at {exe!r} -> None")
             return None
         classified = classify_path(exe)
+        print(f"[Launch] _build_cc_install: classify_path -> {classified!r}")
         if classified is not None:
             return classified
+        print("[Launch] _build_cc_install: falling back to native WineInstall")
         # Fall back to a native install record so the existing trust prompt
         # path still applies.
         return WineInstall(
@@ -1000,9 +1006,13 @@ class LaunchTab(QWidget):
             worker.login(acct.username, acct.password)
         else:
             # CC: dispatch by stored credential shape.
+            print(f"[Launch] CC dispatch slot={section_index} "
+                  f"has_token={bool(acct.launcher_token)} has_password={bool(acct.password)}")
             if acct.launcher_token:
+                print("[Launch] CC dispatch: -> login_with_token (token-only path)")
                 worker.login_with_token(acct.launcher_token)
             elif acct.password:
+                print("[Launch] CC dispatch: -> register_and_login (legacy migration path)")
                 # Legacy / freshly-onboarded account: register first, then
                 # login. Connect the new signal BEFORE firing so we don't
                 # miss the token in case /register completes very fast.
@@ -1012,6 +1022,7 @@ class LaunchTab(QWidget):
                 worker.register_and_login(acct.username, acct.password,
                                           label=acct.label or "")
             else:
+                print("[Launch] CC dispatch: -> error branch, no credentials")
                 self._update_status(game, section_index, LoginState.FAILED,
                     "No CC credentials stored. Click Edit on this account.")
                 return
@@ -1023,14 +1034,19 @@ class LaunchTab(QWidget):
         password (token-only model). Best-effort: keyring errors are logged
         but don't block the launch.
         """
+        print(f"[Launch] _persist_launcher_token: aid={account_id[:8]} token_len={len(token) if token else 0}")
         try:
             self.cred_manager.set_launcher_token(account_id, token)
+            print(f"[Launch] _persist_launcher_token: set_launcher_token ok")
             # Discard the password we just registered with.
             idx = self._index_of_account_id(account_id)
+            print(f"[Launch] _persist_launcher_token: account index={idx}")
             if idx is not None:
                 self.cred_manager.update_account(idx, password="")
+                print(f"[Launch] _persist_launcher_token: cleared password for idx={idx}")
         except Exception as e:
             from utils.credentials_manager import _dbg
+            print(f"[Launch] _persist_launcher_token: FAILED {type(e).__name__}: {e}")
             _dbg(f"[Credentials] _persist_launcher_token({account_id[:8]}) failed: {type(e).__name__}: {e}")
 
     def _index_of_account_id(self, account_id: str) -> int | None:
@@ -1041,15 +1057,20 @@ class LaunchTab(QWidget):
 
     def _on_login_success(self, game, section_index, gameserver, token):
         game_label = "TTR" if game == "ttr" else "CC"
+        print(f"[Launch] _on_login_success: game={game} slot={section_index} "
+              f"gameserver='{gameserver}' token_len={len(token) if token else 0}")
         self.log(f"[Launch] {game_label} account {section_index + 1} authenticated. Launching game…")
         launcher = self._launchers[game][section_index]
+        print(f"[Launch] _on_login_success: launcher_ref={launcher!r}")
         if launcher:
             if game == "cc":
                 install = self._build_cc_install()
+                print(f"[Launch] _on_login_success: cc install={install!r}")
                 if install is None:
                     print("[Credentials] _on_launch: engine not found (dir='' bin='')")
                     self._update_status(game, section_index, LoginState.FAILED, "Game path not set. Configure in Settings.")
                     return
+                print(f"[Launch] _on_login_success: invoking CCLauncher.launch")
                 launcher.launch(gameserver, token, install)
             else:
                 engine_dir = self._get_engine_dir(game)
@@ -1057,6 +1078,7 @@ class LaunchTab(QWidget):
 
     def _on_login_failed(self, game, section_index, msg):
         game_label = "TTR" if game == "ttr" else "CC"
+        print(f"[Launch] _on_login_failed: game={game} slot={section_index} msg={msg!r}")
         self.log(f"[Launch] {game_label} account {section_index + 1} login failed: {msg}")
         self._update_status(game, section_index, LoginState.FAILED, msg)
 

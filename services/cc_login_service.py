@@ -40,6 +40,24 @@ CC_HEADERS = {
 }
 
 
+def _mask(secret: str) -> str:
+    """Return a paste-safe short summary of a token/secret for terminal logs.
+
+    Shows the first 4 chars plus the length; never the full value.
+    """
+    if not secret:
+        return "<empty>"
+    return f"{secret[:4]}…(len={len(secret)})"
+
+
+def _trunc(body: str, limit: int = 300) -> str:
+    """Truncate an HTTP body for logging; keep terminal lines paste-safe."""
+    if body is None:
+        return "<None>"
+    body = body.replace("\n", "\\n").replace("\r", "")
+    return body if len(body) <= limit else body[:limit] + f"…(+{len(body)-limit}b)"
+
+
 def _friendly_name(label: str = "") -> str:
     """Build the CC-launcher 'friendly' name shown in CC's authorized-
     launchers list. Format: 'ToontownMultiTool (<hostname>)' or
@@ -141,6 +159,8 @@ class CCLoginWorker(QObject):
         try:
             return resp.json()
         except ValueError:
+            body = _trunc(resp.text if hasattr(resp, "text") else "<no body>")
+            print(f"[CC] _decode_json_response: non-JSON body, HTTP {resp.status_code}, body={body}")
             msg = f"{failure_message} (HTTP {resp.status_code})"
             self._set_state(LoginState.FAILED, msg)
             self.login_failed.emit(msg)
@@ -171,12 +191,15 @@ class CCLoginWorker(QObject):
         means the token survives a /login failure), then chains directly
         into /login and /metadata. Call from the main thread.
         """
+        print(f"[CC] register_and_login: entry user_len={len(username)} pwd_len={len(password)} label='{label}'")
         self._set_state(LoginState.LOGGING_IN, "Registering with CC…")
         self._stop_event.clear()
         friendly = _friendly_name(label)
+        print(f"[CC] register_and_login: friendly='{friendly}' url={CC_REGISTER_URL}")
 
         def _do():
             try:
+                print("[CC] /register: POST starting…")
                 resp = requests.post(
                     CC_REGISTER_URL,
                     json={
@@ -188,19 +211,31 @@ class CCLoginWorker(QObject):
                     timeout=15,
                     verify=True,
                 )
+                print(f"[CC] /register: HTTP {resp.status_code} body={_trunc(resp.text)}")
                 data = self._decode_json_response(
                     resp, "Invalid response from registration server.")
                 if data is None:
+                    print("[CC] /register: JSON decode failed; aborting chain")
                     return
+                print(f"[CC] /register: parsed status={data.get('status')} "
+                      f"has_token={bool(data.get('token'))} message={data.get('message')!r}")
                 token = self._handle_register_response(data)
                 if token is None:
-                    return  # _handle_register_response already emitted failure
+                    print("[CC] /register: handler returned no token; aborting chain")
+                    return
+                print(f"[CC] /register: token obtained {_mask(token)}; emitting launcher_token_obtained")
                 self.launcher_token_obtained.emit(token)
                 # Chain into /login on the same daemon thread.
+                print("[CC] /register: chaining into _do_login_chain")
                 self._do_login_chain(token)
             except requests.RequestException as e:
-                print(f"[CCLoginWorker] /register network error: {type(e).__name__}: {e}")
+                print(f"[CC] /register: network error {type(e).__name__}: {e}")
                 msg = "Network connection failed. Please check your connection and try again."
+                self._set_state(LoginState.FAILED, msg)
+                self.login_failed.emit(msg)
+            except Exception as e:
+                print(f"[CC] /register: UNEXPECTED {type(e).__name__}: {e}")
+                msg = f"Unexpected error during registration: {type(e).__name__}"
                 self._set_state(LoginState.FAILED, msg)
                 self.login_failed.emit(msg)
 
@@ -228,20 +263,32 @@ class CCLoginWorker(QObject):
         a successful /register. Reuses the same daemon thread for the
         whole register→login chain to avoid extra thread setup.
         """
+        print(f"[CC] _do_login_chain: entry token={_mask(launcher_token)} url={CC_LOGIN_URL}")
         try:
             headers = dict(CC_HEADERS)
             headers["Authorization"] = f"Bearer {launcher_token}"
+            print("[CC] /login: POST starting…")
             resp = requests.post(
                 CC_LOGIN_URL, headers=headers, timeout=15, verify=True,
             )
+            print(f"[CC] /login: HTTP {resp.status_code} body={_trunc(resp.text)}")
             data = self._decode_json_response(
                 resp, "Invalid response from login server.")
             if data is None:
+                print("[CC] /login: JSON decode failed; aborting chain")
                 return
+            print(f"[CC] /login: parsed status={data.get('status')} "
+                  f"has_token={bool(data.get('token'))} bad_token={data.get('bad_token')} "
+                  f"message={data.get('message')!r}")
             self._handle_login_response(launcher_token, data)
         except requests.RequestException as e:
-            print(f"[CCLoginWorker] /login network error: {type(e).__name__}: {e}")
+            print(f"[CC] /login: network error {type(e).__name__}: {e}")
             msg = "Network connection failed. Please check your connection and try again."
+            self._set_state(LoginState.FAILED, msg)
+            self.login_failed.emit(msg)
+        except Exception as e:
+            print(f"[CC] /login: UNEXPECTED {type(e).__name__}: {e}")
+            msg = f"Unexpected error during login: {type(e).__name__}"
             self._set_state(LoginState.FAILED, msg)
             self.login_failed.emit(msg)
 
@@ -253,6 +300,7 @@ class CCLoginWorker(QObject):
 
         Call from the main thread.
         """
+        print(f"[CC] login_with_token: entry token={_mask(launcher_token)} url={CC_LOGIN_URL}")
         self._set_state(LoginState.LOGGING_IN, "Authenticating…")
         self._stop_event.clear()
 
@@ -260,17 +308,28 @@ class CCLoginWorker(QObject):
             try:
                 headers = dict(CC_HEADERS)
                 headers["Authorization"] = f"Bearer {launcher_token}"
+                print("[CC] /login: POST starting…")
                 resp = requests.post(
                     CC_LOGIN_URL, headers=headers, timeout=15, verify=True,
                 )
+                print(f"[CC] /login: HTTP {resp.status_code} body={_trunc(resp.text)}")
                 data = self._decode_json_response(
                     resp, "Invalid response from login server.")
                 if data is None:
+                    print("[CC] /login: JSON decode failed; aborting chain")
                     return
+                print(f"[CC] /login: parsed status={data.get('status')} "
+                      f"has_token={bool(data.get('token'))} bad_token={data.get('bad_token')} "
+                      f"message={data.get('message')!r}")
                 self._handle_login_response(launcher_token, data)
             except requests.RequestException as e:
-                print(f"[CCLoginWorker] /login network error: {type(e).__name__}: {e}")
+                print(f"[CC] /login: network error {type(e).__name__}: {e}")
                 msg = "Network connection failed. Please check your connection and try again."
+                self._set_state(LoginState.FAILED, msg)
+                self.login_failed.emit(msg)
+            except Exception as e:
+                print(f"[CC] /login: UNEXPECTED {type(e).__name__}: {e}")
+                msg = f"Unexpected error during login: {type(e).__name__}"
                 self._set_state(LoginState.FAILED, msg)
                 self.login_failed.emit(msg)
 
@@ -281,16 +340,21 @@ class CCLoginWorker(QObject):
         if data.get("status") is True:
             game_token = data.get("token", "")
             if not game_token:
+                print("[CC] _handle_login_response: status=True but no game token in body")
                 msg = "Login succeeded but no game token received."
                 self._set_state(LoginState.FAILED, msg)
                 self.login_failed.emit(msg)
                 return
+            print(f"[CC] _handle_login_response: status=True game_token={_mask(game_token)}; "
+                  "fetching gameserver…")
             gameserver = self._fetch_gameserver(launcher_token)
+            print(f"[CC] _handle_login_response: gameserver='{gameserver}'; emitting login_success")
             self._set_state(LoginState.LAUNCHING, "Login successful! Launching…")
             self.login_success.emit(gameserver, game_token)
             return
 
         if data.get("bad_token") is True:
+            print("[CC] _handle_login_response: bad_token=True; token revoked or invalid")
             msg = ("Your CC launcher token is no longer valid. "
                    "Click Edit on this account to re-enter your password.")
             self._set_state(LoginState.FAILED, msg)
@@ -298,6 +362,7 @@ class CCLoginWorker(QObject):
             return
 
         msg = data.get("message") or data.get("reason") or "Login failed."
+        print(f"[CC] _handle_login_response: protocol failure msg={msg!r}")
         self._set_state(LoginState.FAILED, msg)
         self.login_failed.emit(msg)
 
@@ -305,23 +370,27 @@ class CCLoginWorker(QObject):
         """GET /metadata; return the first realm's hostname. Fallback to
         CC_FALLBACK_GAMESERVER on any error. Never raises.
         """
+        print(f"[CC] /metadata: GET {CC_METADATA_URL} token={_mask(launcher_token)}")
         try:
             headers = dict(CC_HEADERS)
             headers["Authorization"] = f"Bearer {launcher_token}"
             resp = requests.get(
                 CC_METADATA_URL, headers=headers, timeout=10, verify=True,
             )
+            print(f"[CC] /metadata: HTTP {resp.status_code} body={_trunc(resp.text)}")
             data = resp.json()
             if data.get("bad_token") is True:
-                print(f"[CC] /metadata returned bad_token; using fallback gameserver")
+                print("[CC] /metadata: bad_token=True; using fallback gameserver")
                 return CC_FALLBACK_GAMESERVER
             realms = data.get("realms") or []
+            print(f"[CC] /metadata: parsed realms_count={len(realms)}")
             if realms and isinstance(realms[0], dict) and realms[0].get("hostname"):
+                print(f"[CC] /metadata: chose realm[0]='{realms[0]['hostname']}'")
                 return realms[0]["hostname"]
-            print(f"[CC] /metadata returned no realms; using fallback gameserver")
+            print("[CC] /metadata: no usable realms; using fallback")
             return CC_FALLBACK_GAMESERVER
         except Exception as e:
-            print(f"[CC] /metadata error: {type(e).__name__}: {e}; using fallback")
+            print(f"[CC] /metadata: error {type(e).__name__}: {e}; using fallback")
             return CC_FALLBACK_GAMESERVER
 
     # ── Control ────────────────────────────────────────────────────────────
