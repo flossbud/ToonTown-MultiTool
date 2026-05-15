@@ -858,11 +858,25 @@ class CredentialsManager:
             self._accounts.insert(new_index, item)
             self._save()
 
-    def clear_all(self):
-        """Delete all stored credentials."""
+    def clear_all(self) -> list[str]:
+        """Delete all stored credentials.
+
+        Returns the list of CC launcher tokens that were stored, so the
+        caller can fire best-effort ``/revoke_self`` against the CC API
+        for each. Returns an empty list if no CC accounts had tokens
+        (or if all accounts were TTR).
+        """
+        tokens: list[str] = []
         for a in self._accounts:
             account_id = a.get("id")
+            game = a.get("game", "ttr")
+            if game == "cc" and account_id:
+                stored = self.get_launcher_token(account_id)
+                if stored:
+                    tokens.append(stored)
+                    self.clear_launcher_token(account_id)
             if account_id:
                 self._delete_password(account_id)
         self._accounts = []
         self._save()
+        return tokens

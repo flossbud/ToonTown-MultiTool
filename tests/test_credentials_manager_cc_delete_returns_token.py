@@ -35,3 +35,32 @@ def test_delete_out_of_range_returns_none(cm):
     assert cm.delete_account(-1) is None     # negative
     cm.add_account(label="X", username="u", password="pw", game="ttr")
     assert cm.delete_account(99) is None     # past end with non-empty list
+
+
+def test_clear_all_returns_cc_launcher_tokens(cm):
+    """clear_all returns the launcher tokens it cleared so the caller
+    can revoke them server-side. TTR accounts contribute nothing; CC
+    accounts without stored tokens contribute nothing."""
+    cm.add_account(label="CC1", username="cc1@e.com", password="pw", game="cc")
+    cm.add_account(label="CC2", username="cc2@e.com", password="pw", game="cc")
+    cm.add_account(label="TTR", username="ttr", password="pw", game="ttr")
+    cm.add_account(label="CC3", username="cc3@e.com", password="pw", game="cc")  # no token
+
+    cc1_id = cm.get_accounts_metadata()[0].id
+    cc2_id = cm.get_accounts_metadata()[1].id
+    cm.set_launcher_token(cc1_id, "tok-cc1")
+    cm.set_launcher_token(cc2_id, "tok-cc2")
+    # CC3 has no token set.
+
+    result = cm.clear_all()
+    assert isinstance(result, list)
+    assert sorted(result) == ["tok-cc1", "tok-cc2"]
+    # All accounts cleared.
+    assert cm.get_accounts_metadata() == []
+    # Tokens cleared from keyring.
+    assert cm.get_launcher_token(cc1_id) == ""
+    assert cm.get_launcher_token(cc2_id) == ""
+
+
+def test_clear_all_empty_returns_empty_list(cm):
+    assert cm.clear_all() == []

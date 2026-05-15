@@ -818,7 +818,13 @@ class LaunchTab(QWidget):
                 if launcher:
                     self._disconnect_launcher_signals(launcher)
                     launcher.kill()
-        self.cred_manager.clear_all()
+        tokens = self.cred_manager.clear_all()
+        for token in tokens:
+            threading.Thread(
+                target=revoke_launcher_token,
+                args=(token,),
+                daemon=True,
+            ).start()
         self._build_ui()
         self.refresh_theme()
 
