@@ -170,32 +170,20 @@ class CCLoginWorker(QObject):
 
         threading.Thread(target=_do, daemon=True).start()
 
-    def submit_2fa(self, token: str):
-        """Submit a 2FA token (TOTP or email code)."""
-        with self._token_lock:
-            if not self._response_token:
-                self.login_failed.emit("No pending 2FA session.")
-                return
-            auth_token = self._response_token
-            self._response_token = None
-        self._set_state(LoginState.LOGGING_IN, "Verifying token…")
+    def submit_2fa(self, token: str) -> None:
+        """Compatibility no-op.
 
-        def _do():
-            try:
-                resp = requests.post(CC_API_URL, json={
-                    "token": token,
-                    "authToken": auth_token,
-                }, headers=CC_HEADERS, timeout=15, verify=True)
-                data = self._decode_json_response(resp, "Invalid response from login server.")
-                if data is None:
-                    return
-                self._handle_response(data)
-            except requests.RequestException as e:
-                print(f"[CCLoginWorker] Network error: {type(e).__name__}: {e}")
-                self._set_state(LoginState.FAILED, "Network connection failed. Please check your connection and try again.")
-                self.login_failed.emit("Network connection failed. Please check your connection and try again.")
-
-        threading.Thread(target=_do, daemon=True).start()
+        The new launcher API does not document a 2FA challenge response.
+        Kept on the worker so the launch tab's signal wiring (which expects
+        a ``submit_2fa`` method symmetric with the TTR worker) doesn't
+        break. If a real 2FA flow is ever needed under the new API, this
+        method becomes the place to implement it.
+        """
+        msg = ("2FA submission is not supported in this build of TTMT. "
+               "If you saw a 2FA prompt, your CC account may require "
+               "verification via CC's website first.")
+        self._set_state(LoginState.FAILED, msg)
+        self.login_failed.emit(msg)
 
     def register_and_login(self, username: str, password: str,
                            label: str = "") -> None:
