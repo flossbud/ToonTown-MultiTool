@@ -125,15 +125,35 @@ def _show_multi_install_block(parent, settings_manager):
 
 
 def _switch_to_cc_settings(parent):
-    """Best-effort: navigate the user to the CC row in Settings."""
+    """Best-effort: navigate the user to the Settings tab.
+
+    Walks the parent widget tree looking for an object that exposes
+    `nav_select` (the main window's tab-navigation method). Settings is
+    at index 3 in the main tab stack.
+
+    The CC row is the only one in Settings with an orange-glowing
+    Auto-detect button (per Task 19), so the user will immediately see
+    where to click after the tab switch.
+    """
     w = parent
-    while w is not None and not hasattr(w, "switch_to_settings_tab"):
-        w = w.parent() if hasattr(w, "parent") else None
-    if w is not None:
-        try:
-            w.switch_to_settings_tab(focus="cc_engine_dir")
-        except Exception:
-            pass
+    while w is not None:
+        if hasattr(w, "nav_select"):
+            try:
+                w.nav_select(3)
+            except Exception as e:
+                from utils.credentials_manager import _dbg
+                _dbg(f"[CC] switch_to_cc_settings: nav_select(3) raised {e}")
+            return
+        if hasattr(w, "parent"):
+            try:
+                next_w = w.parent()
+            except Exception:
+                next_w = None
+            if next_w is None or next_w is w:
+                return
+            w = next_w
+        else:
+            return
 
 
 # ── Animated Edit Panel ───────────────────────────────────────────────────

@@ -72,3 +72,55 @@ def test_launch_proceeds_and_updates_sig_when_only_one_install(qapp, monkeypatch
     proceed = launch_tab._cc_launch_gate(settings_manager=_S(), parent=None)
     assert proceed is True
     assert stored["cc_engine_install_signature"] == install_signature(installs[0])
+
+
+def test_switch_to_cc_settings_calls_nav_select_direct(qapp):
+    """Direct hit: parent itself exposes nav_select."""
+    from tabs.launch_tab import _switch_to_cc_settings
+
+    class _Parent:
+        def __init__(self):
+            self.calls = []
+        def nav_select(self, idx):
+            self.calls.append(idx)
+
+    p = _Parent()
+    _switch_to_cc_settings(p)
+    assert p.calls == [3]
+
+
+def test_switch_to_cc_settings_walks_parent_tree(qapp):
+    """Walks up parent() chain until it finds nav_select."""
+    from tabs.launch_tab import _switch_to_cc_settings
+
+    class _Root:
+        def __init__(self):
+            self.calls = []
+        def nav_select(self, idx):
+            self.calls.append(idx)
+        def parent(self):
+            return None
+
+    class _Child:
+        def __init__(self, root):
+            self._root = root
+        def parent(self):
+            return self._root
+
+    root = _Root()
+    child = _Child(root)
+    _switch_to_cc_settings(child)
+    assert root.calls == [3]
+
+
+def test_switch_to_cc_settings_no_nav_select_no_crash(qapp):
+    """Graceful no-op if nothing in the tree exposes nav_select."""
+    from tabs.launch_tab import _switch_to_cc_settings
+
+    class _Orphan:
+        def parent(self):
+            return None
+
+    # Should not raise.
+    _switch_to_cc_settings(_Orphan())
+    _switch_to_cc_settings(None)
