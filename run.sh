@@ -31,13 +31,16 @@ fi
 # without forcing a full rebuild on every run.
 REQ_HASH="$(sha256sum requirements.txt | awk '{print $1}')"
 
-if [ ! -x "$VENV/bin/python" ] || [ ! -f "$SENTINEL" ] || [ "$(cat "$SENTINEL")" != "$REQ_HASH" ]; then
+if [ ! -x "$VENV/bin/python" ] || [ ! -f "$SENTINEL" ] || [ "$(cat "$SENTINEL" 2>/dev/null)" != "$REQ_HASH" ]; then
     echo "run.sh: bootstrapping $VENV (this only happens when requirements.txt changes)…"
     if [ ! -x "$VENV/bin/python" ]; then
         "$PYTHON_BIN" -m venv "$VENV"
     fi
     "$VENV/bin/pip" install --upgrade pip --quiet
-    "$VENV/bin/pip" install --quiet -r requirements.txt
+    # Keep pip's output visible on first bootstrap so install failures
+    # surface the actual error. We only re-run pip when requirements.txt
+    # changes (sentinel check above), so this noise is rare and useful.
+    "$VENV/bin/pip" install -r requirements.txt
     echo "$REQ_HASH" > "$SENTINEL"
     echo "run.sh: bootstrap done."
 fi

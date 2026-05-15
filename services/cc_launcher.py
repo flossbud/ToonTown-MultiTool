@@ -1,11 +1,13 @@
 """
-Corporate Clash Launcher Service — handles launching the CorporateClash process
-and monitoring its lifecycle (PID, exit code).
+Corporate Clash Launcher Service — handles launching the CorporateClash
+process and monitoring its lifecycle (PID, exit code).
 
 Key differences from TTRLauncher:
-  - Uses CLI arg (-g gameserver) and env var (CC_OSST_TOKEN) for credentials
-  - Different trusted install roots
-  - Different binary name
+  - Uses env-var-only credential delivery (TT_PLAYCOOKIE, TT_GAMESERVER,
+    LAUNCHER_USER, REALM, SENTRY_ENVIRONMENT) — no CLI args under the
+    new launcher protocol. See CCLauncher.launch for the full contract.
+  - Different trusted install roots.
+  - Different binary name.
 """
 
 from __future__ import annotations
@@ -14,7 +16,7 @@ import os
 import subprocess
 import threading
 from PySide6.QtCore import QObject, Signal
-from services.cc_login_service import CC_ENGINE_SEARCH_PATHS
+from services.cc_login_service import CC_DEFAULT_REALM, CC_ENGINE_SEARCH_PATHS
 from services.launcher_env import build_launcher_env
 from services.wine_runtimes import WineInstall
 from utils.game_registry import GameRegistry
@@ -62,7 +64,7 @@ class CCLauncher(QObject):
         self.settings_manager = settings_manager
 
     def launch(self, gameserver: str, game_token: str, install,
-               username: str = "", realm_slug: str = "production"):
+               username: str = "", realm_slug: str = CC_DEFAULT_REALM):
         """Launch CorporateClash for a discovered install.
 
         The new (2026) CC launcher protocol passes credentials via env
@@ -93,9 +95,19 @@ class CCLauncher(QObject):
             build_launch_command, ensure_bottle_env_allowlist, is_launcher_available,
         )
 
+        # TODO(ttmt-beta → main): gate the [CCLauncher] / [CC] / [wine_runtimes]
+        # print() diagnostics behind a single env var (e.g. TTMT_LAUNCH_DEBUG)
+        # before the next stable release. The verbose output is invaluable for
+        # debugging the new-launcher-protocol path on real user machines, but
+        # it spams journalctl --user with token-shaped strings (even masked)
+        # in production. Refactor: define _log = print if os.environ.get(...)
+        # else lambda *a, **kw: None at module top, replace print() calls.
+        # Touches: services/cc_login_service.py, services/cc_launcher.py,
+        # services/wine_runtimes.py, tabs/launch_tab.py.
+
         print(f"[CCLauncher] launch: gameserver='{gameserver}' "
               f"token_len={len(game_token) if game_token else 0} "
-              f"user='{username}' realm='{realm_slug}' "
+              f"user_len={len(username) if username else 0} realm='{realm_slug}' "
               f"install.launcher={install.launcher!r} "
               f"install.exe_path={install.exe_path!r} "
               f"install.prefix_path={install.prefix_path!r}")
@@ -159,7 +171,11 @@ class CCLauncher(QObject):
 
         spawn_env = build_launcher_env(env_overrides)
         cwd = install.prefix_path or os.path.dirname(install.exe_path)
-        sensitive = {"TT_PLAYCOOKIE"}
+        # Keys whose values must never appear in plain text in the log.
+        # TT_PLAYCOOKIE is the game-session token (auth secret). LAUNCHER_USER
+        # is the account username — PII that would otherwise leak when a
+        # user pastes terminal output into a public issue tracker.
+        sensitive = {"TT_PLAYCOOKIE", "LAUNCHER_USER"}
         safe_env_keys = sorted(k for k in env_overrides if k not in sensitive)
         masked_keys = sorted(k for k in env_overrides if k in sensitive)
         print(f"[CCLauncher] launch: cmd={cmd}")
@@ -173,11 +189,13 @@ class CCLauncher(QObject):
             # Capture BOTH stdout and stderr to temp files. DXVK 'info:'
             # lines and CC's own progress messages go to stdout; bottles
             # / wine / fsync messages go to stderr. We need both to
-            # diagnose silent exits.
-            stdout_path = tempfile.mktemp(prefix="ttmt-cc-stdout-", suffix=".log")
-            stderr_path = tempfile.mktemp(prefix="ttmt-cc-stderr-", suffix=".log")
-            stdout_fh = open(stdout_path, "w+b")
-            stderr_fh = open(stderr_path, "w+b")
+            # diagnose silent exits. Use mkstemp (atomic create+name) so
+            # there's no TOCTOU between picking a name and opening it.
+            stdout_fd, stdout_path = tempfile.mkstemp(prefix="ttmt-cc-stdout-", suffix=".log")
+            stderr_fd, stderr_path = tempfile.mkstemp(prefix="ttmt-cc-stderr-", suffix=".log")
+            stdout_fh = os.fdopen(stdout_fd, "w+b")
+            stderr_fh = os.fdopen(stderr_fd, "w+b")
+            retcode = None
             try:
                 kwargs = {}
                 if sys.platform == "win32" and install.launcher == "native":
@@ -240,19 +258,23 @@ class CCLauncher(QObject):
                 print(f"[CCLauncher] _run: error {type(e).__name__}: {e}")
                 self.launch_failed.emit(f"Launch error: {e}")
             finally:
-                try:
-                    stderr_fh.close()
-                except Exception:
-                    pass
-                # Clean up the capture file on success; keep it on failure
-                # so the user can paste the full text if it's huge.
-                try:
-                    if self._game_process is None and os.path.exists(stderr_path):
-                        # success path already nulled _game_process; on
-                        # failure we leave the file in /tmp for inspection
+                # Always close both fds. Without this each successful
+                # launch leaks two file descriptors on the parent.
+                for fh in (stdout_fh, stderr_fh):
+                    try:
+                        fh.close()
+                    except Exception:
                         pass
-                except Exception:
-                    pass
+                # Unlink capture files on clean exit. Preserve them on
+                # rc != 0 or on exception so the user can grep them
+                # post-hoc. Without this every launch accumulates two
+                # files in /tmp indefinitely.
+                if retcode == 0:
+                    for path in (stdout_path, stderr_path):
+                        try:
+                            os.unlink(path)
+                        except OSError:
+                            pass
 
         threading.Thread(target=_run, daemon=True).start()
 

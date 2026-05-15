@@ -48,16 +48,24 @@ def test_launch_calls_host_popen_with_built_command(qapp, tmp_path, monkeypatch)
     monkeypatch.setattr("services.wine_runtimes.is_launcher_available",
                         lambda lk: True)
     launcher = ccl.CCLauncher(settings_manager=None)
-    launcher.launch("srv", "tok", install)
+    launcher.launch("srv", "tok", install, username="bob")
     # launch runs the popen on a background thread; busy-wait for it
     import time
     for _ in range(50):
         if "cmd" in captured:
             break
         time.sleep(0.05)
-    assert captured.get("cmd") == ["wine", install.exe_path, "-g", "srv"]
-    assert captured["kw"]["env"]["WINEPREFIX"] == install.prefix_path
-    assert captured["kw"]["env"]["CC_OSST_TOKEN"] == "tok"
+    # New launcher protocol: credentials via env, not via -g/CC_OSST_TOKEN.
+    assert captured.get("cmd") == ["wine", install.exe_path]
+    env = captured["kw"]["env"]
+    assert env["WINEPREFIX"] == install.prefix_path
+    assert env["TT_PLAYCOOKIE"] == "tok"
+    assert env["TT_GAMESERVER"] == "srv"
+    assert env["LAUNCHER_USER"] == "bob"
+    assert env["REALM"] == "production"
+    assert env["SENTRY_ENVIRONMENT"] == "corporateclash"
+    # CC_OSST_TOKEN is the old contract and must not leak through.
+    assert "CC_OSST_TOKEN" not in env
 
 
 def test_launch_fails_when_launcher_unavailable(qapp, tmp_path, monkeypatch):

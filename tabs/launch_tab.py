@@ -1078,8 +1078,10 @@ class LaunchTab(QWidget):
                 if section_index < len(cc_accounts):
                     _flat_idx, acct = cc_accounts[section_index]
                     username = acct.username or ""
-                print(f"[Launch] _on_login_success: invoking CCLauncher.launch username='{username}'")
-                launcher.launch(gameserver, token, install, username=username)
+                print(f"[Launch] _on_login_success: invoking CCLauncher.launch username_len={len(username)}")
+                from services.cc_login_service import CC_DEFAULT_REALM
+                launcher.launch(gameserver, token, install,
+                                username=username, realm_slug=CC_DEFAULT_REALM)
             else:
                 engine_dir = self._get_engine_dir(game)
                 launcher.launch(gameserver, token, engine_dir)

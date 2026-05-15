@@ -13,7 +13,8 @@ Existing accounts with stored passwords are migrated lazily on first
 Launch click (register → store token → discard password).
 
 Key differences from TTR:
-  - Launch uses the game token via CLI/env, similar to old osst.
+  - Launch passes the game token via the TT_PLAYCOOKIE env var
+    (set by CCLauncher; see services/cc_launcher.py for the env contract).
   - No queue polling.
 """
 
@@ -33,6 +34,13 @@ CC_LOGIN_URL    = "https://corporateclash.net/api/launcher/v1/login"
 CC_METADATA_URL = "https://corporateclash.net/api/launcher/v1/metadata"
 CC_REVOKE_URL   = "https://corporateclash.net/api/launcher/v1/revoke_self"
 CC_FALLBACK_GAMESERVER = "gs-prd.corporateclash.net:7198"
+
+# Default realm slug used for the x-realm header on /login and for the
+# REALM env var the game expects. Single-realm today ("production");
+# when CC adds a second realm, callers should plumb a user-selected
+# slug through CCLoginWorker.login_* and CCLauncher.launch instead of
+# importing this constant.
+CC_DEFAULT_REALM = "production"
 
 CC_HEADERS = {
     "Content-Type": "application/json",
@@ -273,7 +281,7 @@ class CCLoginWorker(QObject):
             # connect (and the game exits clean, no log). Hardcode
             # "production" since CC currently exposes one realm; if /metadata
             # grows multi-realm support, route the user's selection here.
-            headers["x-realm"] = "production"
+            headers["x-realm"] = CC_DEFAULT_REALM
             print("[CC] /login: POST starting…")
             resp = requests.post(
                 CC_LOGIN_URL, headers=headers, timeout=15, verify=True,
@@ -318,7 +326,7 @@ class CCLoginWorker(QObject):
                 # Same x-realm requirement as /register's chain — the game
                 # token is realm-bound, and without it CC.exe quietly bails
                 # after the gameserver kicks the unbound token.
-                headers["x-realm"] = "production"
+                headers["x-realm"] = CC_DEFAULT_REALM
                 print("[CC] /login: POST starting…")
                 resp = requests.post(
                     CC_LOGIN_URL, headers=headers, timeout=15, verify=True,

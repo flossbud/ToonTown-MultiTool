@@ -12,9 +12,9 @@ def test_native_returns_exe_and_args():
         display_name="x",
         metadata={},
     )
-    cmd, env = build_launch_command(install, ["-g", "srv"], {"CC_OSST_TOKEN": "t"})
+    cmd, env = build_launch_command(install, ["-g", "srv"], {"TT_PLAYCOOKIE": "t"})
     assert cmd == ["C:\\Program Files\\Corporate Clash\\CorporateClash.exe", "-g", "srv"]
-    assert env == {"CC_OSST_TOKEN": "t"}
+    assert env == {"TT_PLAYCOOKIE": "t"}
 
 
 def test_plain_wine_invocation(tmp_path):
@@ -29,10 +29,10 @@ def test_plain_wine_invocation(tmp_path):
         display_name="x",
         metadata={},
     )
-    cmd, env = build_launch_command(install, ["-g", "srv"], {"CC_OSST_TOKEN": "t"})
+    cmd, env = build_launch_command(install, ["-g", "srv"], {"TT_PLAYCOOKIE": "t"})
     assert cmd == ["wine", str(exe), "-g", "srv"]
     assert env["WINEPREFIX"] == str(prefix)
-    assert env["CC_OSST_TOKEN"] == "t"
+    assert env["TT_PLAYCOOKIE"] == "t"
 
 
 def test_raises_on_unknown_launcher():
@@ -60,7 +60,7 @@ def test_lutris_uses_wine_with_lutris_prefix(tmp_path):
         display_name="x",
         metadata={"lutris_slug": "cc"},
     )
-    cmd, env = build_launch_command(install, ["-g", "srv"], {"CC_OSST_TOKEN": "t"})
+    cmd, env = build_launch_command(install, ["-g", "srv"], {"TT_PLAYCOOKIE": "t"})
     assert cmd == ["wine", str(exe), "-g", "srv"]
     assert env["WINEPREFIX"] == str(prefix)
 
@@ -87,7 +87,7 @@ def test_steam_proton_uses_proton_runtime(tmp_path):
             "proton_dir": str(proton_dir),
         },
     )
-    cmd, env = build_launch_command(install, ["-g", "srv"], {"CC_OSST_TOKEN": "t"})
+    cmd, env = build_launch_command(install, ["-g", "srv"], {"TT_PLAYCOOKIE": "t"})
     assert cmd == [str(proton_bin), "run", str(exe), "-g", "srv"]
     assert env["STEAM_COMPAT_DATA_PATH"] == str(tmp_path / "compatdata/12345")
     assert env["STEAM_COMPAT_CLIENT_INSTALL_PATH"] == str(steam_root)
@@ -120,20 +120,27 @@ def test_bottles_flatpak_invocation(tmp_path):
             "distribution": "flatpak",
         },
     )
-    cmd, env = build_launch_command(install, ["-g", "srv"], {"CC_OSST_TOKEN": "t"})
+    cmd, env = build_launch_command(install, ["-g", "srv"], {"TT_PLAYCOOKIE": "t"})
     assert cmd[:4] == [
         "flatpak", "run",
         "--command=bottles-cli", "com.usebottles.bottles",
     ]
     assert "run" in cmd
-    assert "-b" in cmd and "Corporate-Clash" in cmd
-    # Windows-style path passed via -e
+    assert "-b" in cmd
+    # bottles-cli identifies bottles by display name (from bottle.yml), but
+    # falls back to bottle_name when display name is missing. This test
+    # passes only bottle_name, so the dir-basename fallback is used.
+    assert "Corporate-Clash" in cmd
+    # Unix exec path passed via -e (sidesteps bottles'
+    # WineExecutor.__get_cwd quoting bug on Windows paths).
     assert "-e" in cmd
     ei = cmd.index("-e")
-    assert cmd[ei + 1].startswith("C:\\")
-    # Args are positional trailing tokens (bottles-cli usage:
-    # "bottles-cli run [options] [args ...]").
-    assert cmd[-2:] == ["-g", "srv"]
+    assert cmd[ei + 1] == str(exe)
+    # POSIX '--' terminator separates bottles-cli's own flags from the
+    # trailing tokens that get forwarded to the executable.
+    assert "--" in cmd
+    dashdash = cmd.index("--")
+    assert cmd[dashdash + 1:] == ["-g", "srv"]
 
 
 def test_bottles_native_invocation(tmp_path):

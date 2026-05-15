@@ -518,9 +518,10 @@ def build_launch_command(
 ) -> tuple[list[str], dict[str, str]]:
     """Return (argv, env_overrides) suitable for subprocess.Popen.
 
-    extra_env is the env the *game* should see (e.g. CC_OSST_TOKEN). It is
-    merged into the result; the caller is responsible for passing this dict
-    to build_launcher_env().
+    extra_env is the env the *game* should see (e.g. TT_PLAYCOOKIE,
+    TT_GAMESERVER, LAUNCHER_USER, REALM under the new CC launcher
+    protocol). It is merged into the result; the caller is responsible
+    for passing this dict to build_launcher_env().
     """
     env: dict[str, str] = dict(extra_env)
 
@@ -560,6 +561,12 @@ def build_launch_command(
         # ("Corporate Clash"), not the filesystem-sanitized dir name
         # ("Corporate-Clash"). Discovery captures both; prefer the display
         # name and fall back to the dir basename if bottle.yml was missing.
+        #
+        # The fallback also covers hand-constructed WineInstalls (tests
+        # using only bottle_name, or future code paths that classify
+        # paths without reading bottle.yml). Don't remove the fallback
+        # branch without also auditing every caller that constructs
+        # WineInstall(..., metadata={"bottle_name": ..., ...}).
         bottle_name = (
             install.metadata.get("bottle_display_name")
             or install.metadata.get("bottle_name")
@@ -781,14 +788,26 @@ def ensure_bottle_env_allowlist(prefix_path: str, required_keys: list[str]) -> b
     cfg[_BOTTLE_ENV_ALLOWLIST_KEY] = existing + missing
 
     backup = bottle_yml + ".bak"
+    tmp_path = bottle_yml + ".ttmt-tmp"
     try:
         if not os.path.exists(backup):
             shutil.copy2(bottle_yml, backup)
-        with open(bottle_yml, "w") as f:
+        # Write atomically: render to a sibling file, then rename over the
+        # target. os.replace is atomic on POSIX (and NTFS), so an
+        # interrupted run can never leave bottle.yml half-written. Also
+        # defends against the Bottles GUI holding the file open — its
+        # handle keeps pointing at the old inode until its next reload.
+        with open(tmp_path, "w") as f:
             yaml.safe_dump(cfg, f, default_flow_style=False, sort_keys=False)
+        os.replace(tmp_path, bottle_yml)
         print(f"[wine_runtimes] ensure_bottle_env_allowlist: added {missing} to {bottle_yml}")
         return True
     except Exception as e:
+        # Best-effort cleanup of the temp file on any failure.
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
         print(f"[wine_runtimes] ensure_bottle_env_allowlist: write failed {type(e).__name__}: {e}")
         return False
 
