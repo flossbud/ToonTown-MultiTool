@@ -110,7 +110,7 @@ class CCLoginWorker(QObject):
     Lives on the main thread — spawns background threads for network calls.
 
     Reuses the same LoginState enum as TTR (it is game-agnostic).
-    Emits login_success(gameserver, osst_token) on success — same signal
+    Emits login_success(gameserver, game_token) on success — same signal
     signature as TTRLoginWorker so the launch tab can handle both uniformly.
     """
 
@@ -119,7 +119,7 @@ class CCLoginWorker(QObject):
     queue_update = Signal(int, int)        # (position, eta_seconds) — unused for CC
     need_2fa = Signal(str)                 # (prompt_message)
     launcher_token_obtained = Signal(str)   # NEW: from /register, before /login
-    login_success = Signal(str, str)       # (gameserver, osst_token)
+    login_success = Signal(str, str)       # (gameserver, game_token)
     login_failed = Signal(str)             # (error_message)
 
     def __init__(self, parent=None):
