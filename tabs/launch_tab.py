@@ -505,7 +505,9 @@ class LaunchTab(QWidget):
     def _disconnect_worker_signals(self, worker):
         if not worker:
             return
-        for signal_name in ("state_changed", "queue_update", "need_2fa", "login_success", "login_failed"):
+        for signal_name in ("state_changed", "queue_update", "need_2fa",
+                            "login_success", "login_failed",
+                            "launcher_token_obtained"):
             try:
                 getattr(worker, signal_name).disconnect()
             except Exception:
@@ -1000,11 +1002,15 @@ class LaunchTab(QWidget):
         password (token-only model). Best-effort: keyring errors are logged
         but don't block the launch.
         """
-        self.cred_manager.set_launcher_token(account_id, token)
-        # Discard the password we just registered with.
-        idx = self._index_of_account_id(account_id)
-        if idx is not None:
-            self.cred_manager.update_account(idx, password="")
+        try:
+            self.cred_manager.set_launcher_token(account_id, token)
+            # Discard the password we just registered with.
+            idx = self._index_of_account_id(account_id)
+            if idx is not None:
+                self.cred_manager.update_account(idx, password="")
+        except Exception as e:
+            from utils.credentials_manager import _dbg
+            _dbg(f"[Credentials] _persist_launcher_token({account_id[:8]}) failed: {type(e).__name__}: {e}")
 
     def _index_of_account_id(self, account_id: str) -> int | None:
         for i, a in enumerate(self.cred_manager.get_accounts_metadata()):
