@@ -151,3 +151,31 @@ def test_bottles_native_invocation(tmp_path):
     cmd, _env = build_launch_command(install, [], {})
     assert cmd[0] == "bottles-cli"
     assert "run" in cmd
+
+
+def test_bottles_raises_when_prefix_path_missing():
+    install = WineInstall(
+        exe_path="/x.exe",
+        launcher="bottles",
+        prefix_path=None,
+        display_name="x",
+        metadata={"bottle_name": "Some-Bottle", "distribution": "flatpak"},
+    )
+    with pytest.raises(ValueError):
+        build_launch_command(install, [], {})
+
+
+def test_bottles_raises_when_bottle_name_missing(tmp_path):
+    bottle = tmp_path / "Bottle"
+    exe = bottle / "drive_c/users/steamuser/AppData/Local/Corporate Clash/CorporateClash.exe"
+    exe.parent.mkdir(parents=True)
+    exe.write_text("")
+    install = WineInstall(
+        exe_path=str(exe),
+        launcher="bottles",
+        prefix_path=str(bottle),
+        display_name="x",
+        metadata={"distribution": "flatpak"},  # bottle_name missing
+    )
+    with pytest.raises(ValueError):
+        build_launch_command(install, [], {})
