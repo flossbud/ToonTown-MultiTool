@@ -137,8 +137,9 @@ def test_auto_detect_opens_picker_when_needs_pick(qapp, monkeypatch):
 
 def test_auto_detect_does_not_clobber_signature_when_already_matched(qapp, monkeypatch):
     """Regression test: with multiple installs and a matching stored signature,
-    re-clicking Auto-detect must NOT silently change the signature to the
-    first-discovered install."""
+    re-clicking Auto-detect must NOT silently change cc_engine_dir/signature.
+    Instead it must defer to the picker (giving the user a chance to change
+    their mind)."""
     from services.wine_runtimes import install_signature
     installs = [_install("A"), _install("B")]
     sig_b = install_signature(installs[1])
@@ -147,6 +148,15 @@ def test_auto_detect_does_not_clobber_signature_when_already_matched(qapp, monke
     )
     monkeypatch.setattr(
         "tabs.settings_tab.find_cc_engine_path", lambda: "/x/A"
+    )
+    captured = {"called": False}
+
+    def _fake_open_picker(row, installs_arg):
+        captured["called"] = True
+        # Simulate the user dismissing the picker (no _apply_picked_install).
+
+    monkeypatch.setattr(
+        "tabs.settings_tab.GamePathRow._open_picker", _fake_open_picker
     )
     from tabs.settings_tab import GamePathRow
     from services.cc_login_service import get_cc_engine_executable_name
@@ -162,5 +172,8 @@ def test_auto_detect_does_not_clobber_signature_when_already_matched(qapp, monke
     )
     assert row.needs_pick is False
     row._auto_detect()
-    # Signature must STILL be B's, not A's.
+    # Picker MUST have been called (gives user the chance to change mind).
+    assert captured["called"] is True
+    # Settings must remain unchanged when picker is dismissed.
     assert settings.get("cc_engine_install_signature") == sig_b
+    assert settings.get("cc_engine_dir") == "/x/B"

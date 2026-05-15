@@ -403,9 +403,15 @@ class GamePathRow(SettingsRow):
                 self._refresh_display(f"{exe_name} not found in that folder", error=True)
 
     def _auto_detect(self):
-        if self._settings_key == "cc_engine_dir" and getattr(self, "needs_pick", False):
-            self._open_picker(self._cc_installs)
-            return
+        if self._settings_key == "cc_engine_dir":
+            cc_installs = getattr(self, "_cc_installs", None)
+            if cc_installs and len(cc_installs) > 1:
+                # Multi-install case — always open the picker so the user
+                # can pick (when needs_pick) or change their mind (when not).
+                # This is what eliminates the silent cc_engine_dir clobber
+                # when re-clicking Auto-detect on a resolved row.
+                self._open_picker(cc_installs)
+                return
         path = self._find_path_fn()
         if path:
             self.settings_manager.set(self._settings_key, path)
