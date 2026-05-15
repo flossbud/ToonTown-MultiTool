@@ -180,3 +180,61 @@ def discover_plain_wine() -> list[WineInstall]:
                 )
             )
     return results
+
+
+_BOTTLES_ROOTS = [
+    ("~/.var/app/com.usebottles.bottles/data/bottles/bottles", "flatpak"),
+    ("~/.local/share/bottles/bottles", "native"),
+]
+
+
+def _read_bottle_name(bottle_dir: str) -> str | None:
+    """Parse bottle.yml's Name field. Returns None if unreadable."""
+    bottle_yml = os.path.join(bottle_dir, "bottle.yml")
+    if not os.path.isfile(bottle_yml):
+        return None
+    try:
+        import yaml  # PyYAML — Linux-only, lazy-imported so this module
+        # imports cleanly on Windows where the dep is not installed.
+        with open(bottle_yml, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+        name = data.get("Name")
+        return str(name) if name else None
+    except Exception:
+        return None
+
+
+def discover_bottles() -> list[WineInstall]:
+    """Find CC inside Bottles prefixes (Flatpak and native)."""
+    if sys.platform == "win32":
+        return []
+    results: list[WineInstall] = []
+    seen: set[str] = set()
+    for root_template, distribution in _BOTTLES_ROOTS:
+        root = os.path.expanduser(root_template)
+        if not os.path.isdir(root):
+            continue
+        for entry in sorted(os.listdir(root)):
+            bottle_dir = os.path.join(root, entry)
+            if not os.path.isdir(bottle_dir):
+                continue
+            for exe in _find_cc_in_prefix(bottle_dir):
+                real = os.path.realpath(exe)
+                if real in seen:
+                    continue
+                seen.add(real)
+                bottle_name = _read_bottle_name(bottle_dir) or entry
+                results.append(
+                    WineInstall(
+                        exe_path=exe,
+                        launcher="bottles",
+                        prefix_path=bottle_dir,
+                        display_name=f"Bottles · {bottle_name}",
+                        metadata={
+                            "bottle_name": entry,
+                            "bottle_display_name": bottle_name,
+                            "distribution": distribution,
+                        },
+                    )
+                )
+    return results
