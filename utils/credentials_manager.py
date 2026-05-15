@@ -823,13 +823,34 @@ class CredentialsManager:
                 if account_id:
                     self.clear_launcher_token(account_id)
 
-    def delete_account(self, index: int):
-        if 0 <= index < len(self._accounts):
-            a = self._accounts.pop(index)
-            account_id = a.get("id")
-            if account_id:
-                self._delete_password(account_id)
-            self._save()
+    def delete_account(self, index: int) -> tuple[str, str | None] | None:
+        """Delete the account at ``index``.
+
+        Returns ``(account_id, token)`` where ``token`` is the CC launcher
+        token previously stored for the account (or ``None`` for TTR
+        accounts and CC accounts without a stored token). The caller is
+        responsible for firing ``/revoke_self`` against the CC API on a
+        best-effort basis.
+
+        Returns ``None`` only when ``index`` is out of range.
+        """
+        if not (0 <= index < len(self._accounts)):
+            return None
+        a = self._accounts[index]
+        account_id = a.get("id")
+        game = a.get("game", "ttr")
+        token: str | None = None
+        if game == "cc" and account_id:
+            stored = self.get_launcher_token(account_id)
+            token = stored or None
+            if stored:
+                self.clear_launcher_token(account_id)
+        # Preserve existing cleanup: pop from list, drop keyring password, save.
+        self._accounts.pop(index)
+        if account_id:
+            self._delete_password(account_id)
+        self._save()
+        return (account_id or "", token)
 
     def reorder(self, old_index: int, new_index: int):
         if 0 <= old_index < len(self._accounts) and 0 <= new_index < len(self._accounts):
