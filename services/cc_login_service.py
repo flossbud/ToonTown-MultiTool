@@ -1,16 +1,20 @@
 """
-Corporate Clash Login Service — handles the CC login API flow.
+Corporate Clash Login Service — register / login / metadata for CC's
+launcher API (https://apidocs.corporateclash.net/).
 
-Supports:
-  - Username/password login
-  - Two-factor authentication (TOTP and email)
-  - No queue system (CC does not have login queues)
+Auth flow:
+  1. /register (one-time per account): username+password+friendly → launcher_token
+  2. /login (per launch): Bearer launcher_token → game_token
+  3. /metadata (per launch): Bearer launcher_token → realms (gameserver)
+  4. /revoke_self (on account delete): Bearer launcher_token → status
+
+Storage model is token-only: TTMT stores launcher tokens, never passwords.
+Existing accounts with stored passwords are migrated lazily on first
+Launch click (register → store token → discard password).
 
 Key differences from TTR:
-  - Endpoint: POST https://corporateclash.net/api/v1/login
-  - Response: { status: bool, osst: str, ... } instead of TTR's success string
-  - Launch uses CLI args (-g, -t) instead of environment variables
-  - No queue polling
+  - Launch uses the game token via CLI/env, similar to old osst.
+  - No queue polling.
 """
 
 from __future__ import annotations
@@ -24,8 +28,6 @@ from services.ttr_login_service import LoginState
 from services.wine_runtimes import discover_cc_installs
 
 
-CC_API_URL = "https://corporateclash.net/api/v1/login"  # deprecated; removed in Task 16
-assert CC_API_URL.startswith("https://"), "CC_API_URL must use HTTPS"
 CC_REGISTER_URL = "https://corporateclash.net/api/launcher/v1/register"
 CC_LOGIN_URL    = "https://corporateclash.net/api/launcher/v1/login"
 CC_METADATA_URL = "https://corporateclash.net/api/launcher/v1/metadata"
@@ -125,8 +127,6 @@ class CCLoginWorker(QObject):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._state = LoginState.IDLE
-        self._token_lock = threading.Lock()
-        self._response_token = None  # for 2FA challenge
         self._stop_event = threading.Event()
 
     @property
@@ -147,28 +147,6 @@ class CCLoginWorker(QObject):
             return None
 
     # ── Login Flow ─────────────────────────────────────────────────────────
-
-    def login(self, username: str, password: str):
-        """Start login. Call from main thread."""
-        self._set_state(LoginState.LOGGING_IN, "Authenticating…")
-        self._stop_event.clear()
-
-        def _do():
-            try:
-                resp = requests.post(CC_API_URL, json={
-                    "username": username,
-                    "password": password,
-                }, headers=CC_HEADERS, timeout=15, verify=True)
-                data = self._decode_json_response(resp, "Invalid response from login server.")
-                if data is None:
-                    return
-                self._handle_response(data)
-            except requests.RequestException as e:
-                print(f"[CCLoginWorker] Network error: {type(e).__name__}: {e}")
-                self._set_state(LoginState.FAILED, "Network connection failed. Please check your connection and try again.")
-                self.login_failed.emit("Network connection failed. Please check your connection and try again.")
-
-        threading.Thread(target=_do, daemon=True).start()
 
     def submit_2fa(self, token: str) -> None:
         """Compatibility no-op.
@@ -346,48 +324,10 @@ class CCLoginWorker(QObject):
             print(f"[CC] /metadata error: {type(e).__name__}: {e}; using fallback")
             return CC_FALLBACK_GAMESERVER
 
-    def _handle_response(self, data: dict):
-        """Parse CC login response.
-
-        CC responses differ from TTR:
-          Success:  { "status": true,  "osst": "...", "gameserver": "..." }
-          Failure:  { "status": false, "reason": "..." }
-          2FA:      { "status": false, "reason": "2fa_required", "authToken": "..." }
-        """
-        status = data.get("status", False)
-
-        if status is True:
-            # Login succeeded
-            osst = data.get("osst", "")
-            gameserver = data.get("gameserver", "")
-            if not osst:
-                self._set_state(LoginState.FAILED, "Login succeeded but no token received.")
-                self.login_failed.emit("Login succeeded but no token received.")
-                return
-            self._set_state(LoginState.LAUNCHING, "Login successful! Launching…")
-            self.login_success.emit(gameserver, osst)
-
-        elif data.get("reason") == "2fa_required":
-            # Two-factor authentication needed
-            with self._token_lock:
-                self._response_token = data.get("authToken", "")
-            prompt = data.get("message", "Please enter your authenticator or email code.")
-            self._set_state(LoginState.NEED_2FA, prompt)
-            self.need_2fa.emit(prompt)
-
-        else:
-            # Login failed
-            reason = data.get("reason", "Login failed.")
-            msg = data.get("message", reason)
-            self._set_state(LoginState.FAILED, msg)
-            self.login_failed.emit(msg)
-
     # ── Control ────────────────────────────────────────────────────────────
 
     def cancel(self):
         """Cancel any ongoing login."""
         self._stop_event.set()
-        with self._token_lock:
-            self._response_token = None
         if self._state != LoginState.RUNNING:
             self._set_state(LoginState.IDLE, "Cancelled.")
