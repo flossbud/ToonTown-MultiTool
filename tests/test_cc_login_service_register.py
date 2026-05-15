@@ -50,15 +50,19 @@ def test_register_success_emits_launcher_token_then_login_success(qapp, monkeypa
                         lambda self, t: "gs.example:1")
 
     worker = CCLoginWorker()
-    tokens = []
-    successes = []
-    worker.launcher_token_obtained.connect(tokens.append)
-    worker.login_success.connect(lambda gs, gt: successes.append((gs, gt)))
+    # Record into ONE shared list so order is verifiable.
+    events = []
+    worker.launcher_token_obtained.connect(lambda t: events.append(("token", t)))
+    worker.login_success.connect(lambda gs, gt: events.append(("login", gs, gt)))
 
     worker.register_and_login("user@example.com", "pw", label="Main")
-    assert _wait(lambda: tokens and successes)
-    assert tokens[0] == "launcher-tok"
-    assert successes[0] == ("gs.example:1", "game-tok")
+    assert _wait(lambda: len(events) >= 2)
+    # CRITICAL: launcher_token_obtained must fire BEFORE login_success so
+    # Task 11's launch_tab can persist the token to keyring before any
+    # /login failure could occur.
+    assert events[0] == ("token", "launcher-tok")
+    assert events[1] == ("login", "gs.example:1", "game-tok")
+    # Belt-and-suspenders: HTTP call order also has /register first.
     assert "register" in call_log[0]
     assert "login" in call_log[1]
 
@@ -117,3 +121,25 @@ def test_register_2fa_hint_in_message_routes_to_need_2fa(qapp, monkeypatch):
     worker.register_and_login("u@e.com", "pw")
     assert _wait(lambda: failures)
     assert "2FA required for this account." in failures[0]
+
+
+def test_register_status_true_but_no_token_emits_failure(qapp, monkeypatch):
+    """Defensive: if /register returns status:true with an empty/missing
+    token, surface a clear failure message rather than emitting an empty
+    launcher_token_obtained and then chaining into /login with garbage."""
+    from services.cc_login_service import CCLoginWorker
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {"status": True}  # no token field
+    monkeypatch.setattr("requests.post", lambda *a, **kw: resp)
+    worker = CCLoginWorker()
+
+    failures = []
+    tokens = []
+    worker.launcher_token_obtained.connect(tokens.append)
+    worker.login_failed.connect(failures.append)
+    worker.register_and_login("u@e.com", "pw")
+    assert _wait(lambda: failures)
+    assert "no launcher token" in failures[0].lower()
+    # Must NOT have emitted launcher_token_obtained with an empty token.
+    assert tokens == []
