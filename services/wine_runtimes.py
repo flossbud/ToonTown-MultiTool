@@ -8,6 +8,7 @@ from __future__ import annotations
 import glob
 import hashlib
 import os
+import shutil
 import sys
 from dataclasses import dataclass, field
 from typing import Any
@@ -574,3 +575,62 @@ def build_launch_command(
         return cmd, env
 
     raise ValueError(f"Unsupported launcher: {install.launcher}")
+
+
+_LAUNCHER_PRIORITY = ["bottles", "lutris", "steam-proton", "wine", "native"]
+
+
+def is_launcher_available(launcher: str) -> bool:
+    """Check whether the launcher's required runtime is reachable.
+
+    Uses host_spawn to look at the host PATH (so this works correctly from
+    inside the TTMT Flatpak).
+    """
+    if launcher == "native":
+        return True
+    if launcher in ("wine", "lutris"):
+        return shutil.which("wine") is not None
+    if launcher == "bottles":
+        if shutil.which("bottles-cli"):
+            return True
+        # Flatpak fallback: query flatpak info
+        if shutil.which("flatpak"):
+            import subprocess
+            try:
+                res = subprocess.run(
+                    ["flatpak", "info", "com.usebottles.bottles"],
+                    capture_output=True, timeout=5,
+                )
+                return res.returncode == 0
+            except Exception:
+                return False
+        return False
+    if launcher == "steam-proton":
+        # Availability is per-install (proton_dir from metadata); generic
+        # check just verifies steam exists somewhere.
+        for root_template in _STEAM_ROOTS:
+            if os.path.isdir(os.path.expanduser(root_template)):
+                return True
+        return False
+    return False
+
+
+def discover_cc_installs() -> list[WineInstall]:
+    """Return all detected CC installs, deduped by realpath, sorted by
+    launcher preference: bottles > lutris > steam-proton > wine > native.
+    """
+    discoveries = [
+        *discover_bottles(),
+        *discover_lutris(),
+        *discover_steam_proton(),
+        *discover_plain_wine(),
+        *discover_native_windows(),
+    ]
+    seen: dict[str, WineInstall] = {}
+    priority = {name: i for i, name in enumerate(_LAUNCHER_PRIORITY)}
+    for inst in discoveries:
+        real = os.path.realpath(inst.exe_path)
+        existing = seen.get(real)
+        if existing is None or priority.get(inst.launcher, 99) < priority.get(existing.launcher, 99):
+            seen[real] = inst
+    return sorted(seen.values(), key=lambda i: priority.get(i.launcher, 99))
