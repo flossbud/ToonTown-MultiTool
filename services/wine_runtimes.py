@@ -51,3 +51,27 @@ def install_signature(install: WineInstall) -> str:
     ]
     raw = "\x00".join(parts).encode("utf-8")
     return hashlib.sha256(raw).hexdigest()[:16]
+
+
+def host_to_windows_path(host_path: str, prefix_path: str) -> str:
+    """Translate a host path inside a Wine prefix to its Windows equivalent.
+
+    Example
+    -------
+    host_path   = "<prefix>/drive_c/users/foo/bar.exe"
+    prefix_path = "<prefix>"
+    returns     = "C:\\users\\foo\\bar.exe"
+
+    Raises ValueError if host_path is not under prefix_path/drive_c.
+    """
+    drive_c = os.path.realpath(os.path.join(prefix_path, "drive_c"))
+    host_real = os.path.realpath(host_path)
+    try:
+        rel = os.path.relpath(host_real, drive_c)
+    except ValueError as e:
+        raise ValueError(
+            f"{host_path!r} is not inside {drive_c!r}"
+        ) from e
+    if rel.startswith(".."):
+        raise ValueError(f"{host_path!r} is not inside {drive_c!r}")
+    return "C:\\" + rel.replace("/", "\\")
