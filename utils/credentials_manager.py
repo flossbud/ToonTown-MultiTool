@@ -36,6 +36,7 @@ MAX_ACCOUNTS = 16
 # state, so issues inside PyInstaller --noconsole builds (e.g. AppImage) can
 # still be diagnosed after-the-fact.
 from utils.build_flavor import config_dir as _config_dir, keyring_service
+_KEYRING_SERVICE_CC_TOKEN = "toontown_multitool_cc_token"
 _DEBUG_LOG_PATH = os.path.join(_config_dir(), "keyring-debug.log")
 _DEBUG_LOG_LOCK = threading.Lock()
 _DEBUG_LOG_MAX_BYTES = 256 * 1024  # rotate past 256 KiB
@@ -490,6 +491,20 @@ class CredentialsManager:
                 _dbg(f"[Credentials] Recovered password via {backend_name}.")
                 return value
         return ""
+
+    def get_launcher_token(self, account_id: str) -> str:
+        """Return CC launcher token for an account, or '' if none stored.
+
+        Best-effort: keyring failures degrade to '' (same posture as
+        ``_get_password``). Never raises.
+        """
+        try:
+            import keyring
+            value = keyring.get_password(_KEYRING_SERVICE_CC_TOKEN, account_id)
+            return value or ""
+        except Exception as e:
+            _dbg(f"[CredentialsManager] get_launcher_token({account_id[:8]}) failed: {type(e).__name__}: {e}")
+            return ""
 
     def _get_password(self, account_id: str) -> str:
         if not account_id:
