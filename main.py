@@ -1031,6 +1031,23 @@ def _resolve_app_icon() -> QIcon:
     return QIcon(_resolve_icon_path())
 
 
+def _platform_only_modules(platform: str) -> set[str]:
+    """Modules whose top-level body imports a platform-specific library and
+    therefore cannot be imported on every interpreter. `platform` is a
+    `sys.platform` string ("win32", "linux", "darwin"). The normal launch
+    path only touches these behind a `sys.platform` gate, but the
+    `--self-check` import sweep imports everything and must skip the ones
+    that would raise here."""
+    excluded: set[str] = set()
+    if platform != "win32":
+        # utils.win32_backend imports pywin32.
+        excluded.add("utils.win32_backend")
+    if platform != "linux":
+        # utils.kwallet_jeepney raises ImportError on non-Linux at import time.
+        excluded.add("utils.kwallet_jeepney")
+    return excluded
+
+
 def _import_all_modules() -> None:
     """Import every module under tabs/, services/, utils/ so a syntax or
     import-time error on the running interpreter surfaces immediately.
@@ -1044,12 +1061,7 @@ def _import_all_modules() -> None:
     import importlib
     import pkgutil
 
-    # Modules whose top-level body depends on a platform-only library
-    # (e.g. pywin32) and therefore cannot import on every interpreter.
-    # The normal launch path only touches these behind a sys.platform gate.
-    platform_only = set()
-    if sys.platform != "win32":
-        platform_only.add("utils.win32_backend")
+    platform_only = _platform_only_modules(sys.platform)
 
     def import_package(package_name: str) -> None:
         package = importlib.import_module(package_name)
