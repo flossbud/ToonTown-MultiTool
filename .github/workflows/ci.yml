@@ -2,6 +2,11 @@ name: CI
 
 on:
   workflow_dispatch:
+    inputs:
+      include_flatpak:
+        description: Build and launch-test the Flatpak (slow; uncheck for a faster manual run)
+        type: boolean
+        default: true
   pull_request:
   push:
     branches: [dev, main]
@@ -17,6 +22,8 @@ jobs:
     uses: ./.github/workflows/build.yml
     with:
       include_windows: true
+      # Only a manual run may opt out of Flatpak; push/PR runs always build it.
+      include_flatpak: ${{ github.event_name != 'workflow_dispatch' || inputs.include_flatpak }}
 
   test:
     needs: build
@@ -24,3 +31,4 @@ jobs:
     with:
       include_windows: true
       include_aur: false
+      include_flatpak: ${{ github.event_name != 'workflow_dispatch' || inputs.include_flatpak }}

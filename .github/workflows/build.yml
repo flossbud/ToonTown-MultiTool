@@ -7,6 +7,10 @@ on:
         description: Whether to run the Windows EXE build
         type: boolean
         default: true
+      include_flatpak:
+        description: Whether to build the Flatpak bundle
+        type: boolean
+        default: true
       version_label:
         description: Label embedded in artifact filenames (e.g. a release tag). Must not contain '/'.
         type: string
@@ -101,6 +105,7 @@ jobs:
           path: TTMultiTool-*.AppImage
 
   build-flatpak:
+    if: ${{ inputs.include_flatpak }}
     runs-on: ubuntu-22.04
     container:
       image: bilelmoussaoui/flatpak-github-actions:kde-6.7

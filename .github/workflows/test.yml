@@ -7,6 +7,10 @@ on:
         description: Whether to run the Windows launch tests
         type: boolean
         default: true
+      include_flatpak:
+        description: Whether to run the Flatpak launch test
+        type: boolean
+        default: true
       include_aur:
         description: Whether to run the AUR PKGBUILD launch test (release-only)
         type: boolean
@@ -143,6 +147,7 @@ jobs:
           xvfb-run -a -e /dev/stdout ./TTMultiTool-*.AppImage --appimage-extract-and-run --self-check
 
   test-flatpak:
+    if: ${{ inputs.include_flatpak }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
