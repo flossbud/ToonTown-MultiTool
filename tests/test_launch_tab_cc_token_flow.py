@@ -67,6 +67,22 @@ def test_cc_account_with_token_skips_register(qapp, monkeypatch, tmp_path):
     class _SM:
         def get(self, k, d=""): return d
         def set(self, k, v): pass
+
+    # Stub engine-path resolution so the test doesn't require CC installed.
+    # _on_launch resolves the engine via self._get_engine_dir(game), then
+    # checks os.path.isfile(<engine_bin>). Replace the bound method so the
+    # dispatch logic is reached, and narrow the isfile patch to the fake
+    # path so we don't disturb unrelated filesystem checks.
+    import tabs.launch_tab as _lt
+    monkeypatch.setattr(_lt.LaunchTab, "_get_engine_dir",
+                        lambda self, game: "/fake/cc/install")
+    import os as _os
+    _real_isfile = _os.path.isfile
+    monkeypatch.setattr(
+        _os.path, "isfile",
+        lambda p: True if str(p).startswith("/fake/cc/install") else _real_isfile(p),
+    )
+
     try:
         tab = LaunchTab(credentials_manager=cm, settings_manager=_SM())
         tab._on_launch("cc", 0)
