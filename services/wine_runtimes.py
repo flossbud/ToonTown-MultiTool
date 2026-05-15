@@ -532,4 +532,24 @@ def build_launch_command(
         env["WINEPREFIX"] = install.prefix_path
         return ["wine", install.exe_path, *args], env
 
+    if install.launcher == "lutris":
+        if not install.prefix_path:
+            raise ValueError("lutris launcher requires prefix_path")
+        env["WINEPREFIX"] = install.prefix_path
+        return ["wine", install.exe_path, *args], env
+
+    if install.launcher == "steam-proton":
+        if not install.prefix_path:
+            raise ValueError("steam-proton launcher requires prefix_path")
+        proton_dir = install.metadata.get("proton_dir")
+        steam_root = install.metadata.get("steam_root")
+        if not proton_dir:
+            raise ValueError("steam-proton launcher requires metadata.proton_dir")
+        if not steam_root:
+            raise ValueError("steam-proton launcher requires metadata.steam_root")
+        proton_bin = os.path.join(proton_dir, "proton")
+        env["STEAM_COMPAT_DATA_PATH"] = os.path.dirname(install.prefix_path)
+        env["STEAM_COMPAT_CLIENT_INSTALL_PATH"] = steam_root
+        return [proton_bin, "run", install.exe_path, *args], env
+
     raise ValueError(f"Unsupported launcher: {install.launcher}")
