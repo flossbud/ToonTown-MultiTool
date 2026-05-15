@@ -103,3 +103,51 @@ def test_steam_proton_raises_when_proton_dir_missing():
     )
     with pytest.raises(ValueError):
         build_launch_command(install, [], {})
+
+
+def test_bottles_flatpak_invocation(tmp_path):
+    bottle = tmp_path / "Corporate-Clash"
+    exe = bottle / "drive_c/users/steamuser/AppData/Local/Corporate Clash/CorporateClash.exe"
+    exe.parent.mkdir(parents=True)
+    exe.write_text("")
+    install = WineInstall(
+        exe_path=str(exe),
+        launcher="bottles",
+        prefix_path=str(bottle),
+        display_name="Bottles · CC",
+        metadata={
+            "bottle_name": "Corporate-Clash",
+            "distribution": "flatpak",
+        },
+    )
+    cmd, env = build_launch_command(install, ["-g", "srv"], {"CC_OSST_TOKEN": "t"})
+    assert cmd[:4] == [
+        "flatpak", "run",
+        "--command=bottles-cli", "com.usebottles.bottles",
+    ]
+    assert "run" in cmd
+    assert "-b" in cmd and "Corporate-Clash" in cmd
+    # Windows-style path passed via -e
+    assert "-e" in cmd
+    ei = cmd.index("-e")
+    assert cmd[ei + 1].startswith("C:\\")
+    # Args are positional trailing tokens (bottles-cli usage:
+    # "bottles-cli run [options] [args ...]").
+    assert cmd[-2:] == ["-g", "srv"]
+
+
+def test_bottles_native_invocation(tmp_path):
+    bottle = tmp_path / "MyBottle"
+    exe = bottle / "drive_c/users/steamuser/AppData/Local/Corporate Clash/CorporateClash.exe"
+    exe.parent.mkdir(parents=True)
+    exe.write_text("")
+    install = WineInstall(
+        exe_path=str(exe),
+        launcher="bottles",
+        prefix_path=str(bottle),
+        display_name="x",
+        metadata={"bottle_name": "MyBottle", "distribution": "native"},
+    )
+    cmd, _env = build_launch_command(install, [], {})
+    assert cmd[0] == "bottles-cli"
+    assert "run" in cmd

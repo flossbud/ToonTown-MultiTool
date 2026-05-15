@@ -552,4 +552,25 @@ def build_launch_command(
         env["STEAM_COMPAT_CLIENT_INSTALL_PATH"] = steam_root
         return [proton_bin, "run", install.exe_path, *args], env
 
+    if install.launcher == "bottles":
+        if not install.prefix_path:
+            raise ValueError("bottles launcher requires prefix_path")
+        bottle_name = install.metadata.get("bottle_name")
+        if not bottle_name:
+            raise ValueError("bottles launcher requires metadata.bottle_name")
+        win_path = host_to_windows_path(install.exe_path, install.prefix_path)
+        distribution = install.metadata.get("distribution", "flatpak")
+        if distribution == "flatpak":
+            base = [
+                "flatpak", "run",
+                "--command=bottles-cli",
+                "com.usebottles.bottles",
+            ]
+        else:
+            base = ["bottles-cli"]
+        # bottles-cli `run` takes args as positional trailing tokens
+        # (verified via `bottles-cli run --help`: positional `args ...`).
+        cmd = [*base, "run", "-b", bottle_name, "-e", win_path, *args]
+        return cmd, env
+
     raise ValueError(f"Unsupported launcher: {install.launcher}")
