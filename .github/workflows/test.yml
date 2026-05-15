@@ -120,7 +120,7 @@ jobs:
       - name: Install host Qt runtime libraries (pacman)
         if: ${{ startsWith(matrix.image, 'archlinux') }}
         run: |
-          pacman -Sy --noconfirm xorg-server-xvfb glib2 libglvnd dbus \
+          pacman -Sy --noconfirm xorg-server-xvfb xorg-fonts-misc glib2 libglvnd dbus \
             fontconfig freetype2 libx11 libxext libxrender libxi libsm libice \
             libxcb xcb-util-cursor xcb-util-image xcb-util-keysyms \
             xcb-util-renderutil xcb-util-wm libxkbcommon libxkbcommon-x11
@@ -260,7 +260,7 @@ jobs:
       image: archlinux:latest
     steps:
       - name: Install base toolchain
-        run: pacman -Sy --noconfirm base-devel git sudo xorg-server-xvfb
+        run: pacman -Sy --noconfirm base-devel git sudo xorg-server-xvfb xorg-fonts-misc
 
       - name: Create a non-root build user (makepkg refuses to run as root)
         run: |
