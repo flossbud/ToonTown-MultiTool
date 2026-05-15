@@ -580,31 +580,51 @@ def build_launch_command(
 _LAUNCHER_PRIORITY = ["bottles", "lutris", "steam-proton", "wine", "native"]
 
 
+def _host_command_exists(name: str) -> bool:
+    """True if `which <name>` succeeds on the host system.
+
+    Routes through utils.host_spawn so that when TTMT itself runs inside a
+    Flatpak sandbox, this queries the host PATH (via flatpak-spawn --host)
+    rather than the sandbox PATH.
+    """
+    from utils.host_spawn import host_check_output
+    try:
+        out = host_check_output(["which", name], timeout=2)
+        if isinstance(out, bytes):
+            out = out.decode("utf-8", "replace")
+        return bool(out and out.strip())
+    except Exception:
+        return False
+
+
 def is_launcher_available(launcher: str) -> bool:
     """Check whether the launcher's required runtime is reachable.
 
-    Uses host_spawn to look at the host PATH (so this works correctly from
-    inside the TTMT Flatpak).
+    Probes the host system via utils.host_spawn so that this returns
+    correct results when TTMT itself runs inside a Flatpak sandbox.
     """
     if launcher == "native":
         return True
     if launcher in ("wine", "lutris"):
-        return shutil.which("wine") is not None
+        return _host_command_exists("wine")
     if launcher == "bottles":
-        if shutil.which("bottles-cli"):
+        if _host_command_exists("bottles-cli"):
             return True
-        # Flatpak fallback: query flatpak info
-        if shutil.which("flatpak"):
-            import subprocess
-            try:
-                res = subprocess.run(
-                    ["flatpak", "info", "com.usebottles.bottles"],
-                    capture_output=True, timeout=5,
-                )
-                return res.returncode == 0
-            except Exception:
-                return False
-        return False
+        # Flatpak fallback: query flatpak info on the host. 2s is a tight
+        # "is the flatpak daemon responsive" check; a frozen flatpak takes
+        # ~30s, so this avoids blocking the GUI thread for that long.
+        if not _host_command_exists("flatpak"):
+            return False
+        from utils.host_spawn import host_run
+        try:
+            res = host_run(
+                ["flatpak", "info", "com.usebottles.bottles"],
+                capture_output=True,
+                timeout=2,
+            )
+            return res.returncode == 0
+        except Exception:
+            return False
     if launcher == "steam-proton":
         # Availability is per-install (proton_dir from metadata); generic
         # check just verifies steam exists somewhere.

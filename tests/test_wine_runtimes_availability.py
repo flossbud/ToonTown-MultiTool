@@ -18,9 +18,63 @@ def test_unknown_launcher_returns_false():
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="Linux only")
-def test_wine_availability_checks_path(monkeypatch):
-    monkeypatch.setenv("PATH", "")
+def test_wine_availability_uses_host_command_exists(monkeypatch):
+    """When the host check returns no, availability is False."""
+    monkeypatch.setattr(
+        "services.wine_runtimes._host_command_exists",
+        lambda name: False,
+    )
     assert is_launcher_available("wine") is False
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Linux only")
+def test_wine_availability_true_when_host_finds_wine(monkeypatch):
+    """When the host check returns yes, availability is True."""
+    monkeypatch.setattr(
+        "services.wine_runtimes._host_command_exists",
+        lambda name: True,
+    )
+    assert is_launcher_available("wine") is True
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Linux only")
+def test_bottles_availability_uses_bottles_cli_first(monkeypatch):
+    """If bottles-cli is found on the host, no flatpak probe is performed."""
+    calls = []
+
+    def fake_exists(name):
+        calls.append(name)
+        return name == "bottles-cli"
+
+    monkeypatch.setattr(
+        "services.wine_runtimes._host_command_exists", fake_exists
+    )
+    assert is_launcher_available("bottles") is True
+    assert calls == ["bottles-cli"]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Linux only")
+def test_bottles_availability_falls_back_to_flatpak(monkeypatch):
+    """When bottles-cli is absent but flatpak reports the app, availability is True."""
+    calls = []
+
+    def fake_exists(name):
+        calls.append(name)
+        return name == "flatpak"
+
+    monkeypatch.setattr(
+        "services.wine_runtimes._host_command_exists", fake_exists
+    )
+
+    class _Res:
+        returncode = 0
+
+    def fake_host_run(*args, **kwargs):
+        return _Res()
+
+    monkeypatch.setattr("utils.host_spawn.host_run", fake_host_run)
+    assert is_launcher_available("bottles") is True
+    assert "bottles-cli" in calls and "flatpak" in calls
 
 
 def test_discover_cc_installs_dedupes_and_sorts(tmp_path, monkeypatch):
