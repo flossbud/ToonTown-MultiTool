@@ -25,6 +25,13 @@ from services.ttr_login_service import TTRLoginWorker, LoginState, find_engine_p
 from services.ttr_launcher import TTRLauncher
 from services.cc_login_service import CCLoginWorker, find_cc_engine_path, get_cc_engine_executable_name
 from services.cc_launcher import CCLauncher
+from services.wine_runtimes import (
+    classify_path,
+    discover_cc_installs,
+    install_signature,
+    WineInstall,
+)
+from utils.settings_keys import CC_ENGINE_INSTALL_SIGNATURE
 from utils.shared_widgets import PulsingDot
 from utils.widgets import install_modern_scrollbar
 
@@ -386,6 +393,31 @@ class LaunchTab(QWidget):
             return path
         detected = find_fn()
         return detected or ""
+
+    def _build_cc_install(self) -> "WineInstall | None":
+        """Construct a WineInstall record for the current CC engine_dir setting.
+
+        Returns None when the setting is empty or the path no longer points at
+        a real CorporateClash.exe.
+        """
+        engine_dir = self.settings_manager.get("cc_engine_dir", "") if self.settings_manager else ""
+        if not engine_dir:
+            return None
+        exe = os.path.join(engine_dir, get_cc_engine_executable_name())
+        if not os.path.isfile(exe):
+            return None
+        classified = classify_path(exe)
+        if classified is not None:
+            return classified
+        # Fall back to a native install record so the existing trust prompt
+        # path still applies.
+        return WineInstall(
+            exe_path=exe,
+            launcher="native",
+            prefix_path=None,
+            display_name=f"Corporate Clash ({engine_dir})",
+            metadata={},
+        )
 
     def _game_accounts_with_indices(self, game: str) -> list[tuple[int, object]]:
         """Return [(global_flat_index, AccountCredential), ...] for one game."""
@@ -866,8 +898,15 @@ class LaunchTab(QWidget):
         self.log(f"[Launch] {game_label} account {section_index + 1} authenticated. Launching game…")
         launcher = self._launchers[game][section_index]
         if launcher:
-            engine_dir = self._get_engine_dir(game)
-            launcher.launch(gameserver, token, engine_dir)
+            if game == "cc":
+                install = self._build_cc_install()
+                if install is None:
+                    print("[Credentials] _on_launch: engine not found (dir='' bin='')")
+                    return
+                launcher.launch(gameserver, token, install)
+            else:
+                engine_dir = self._get_engine_dir(game)
+                launcher.launch(gameserver, token, engine_dir)
 
     def _on_login_failed(self, game, section_index, msg):
         game_label = "TTR" if game == "ttr" else "CC"
