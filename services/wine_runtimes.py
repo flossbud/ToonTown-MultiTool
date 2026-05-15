@@ -414,3 +414,97 @@ def discover_steam_proton() -> list[WineInstall]:
                     )
                 )
     return results
+
+
+def _ancestor_with_marker(start: str, marker_basename: str) -> str | None:
+    """Walk up from start, return the first ancestor containing marker_basename."""
+    current = os.path.realpath(start)
+    seen: set[str] = set()
+    while current and current not in seen:
+        seen.add(current)
+        if os.path.exists(os.path.join(current, marker_basename)):
+            return current
+        parent = os.path.dirname(current)
+        if parent == current:
+            return None
+        current = parent
+    return None
+
+
+def classify_path(exe_path: str) -> WineInstall | None:
+    """Inspect on-disk markers to infer which launcher owns this path.
+
+    Returns None when no recognizable launcher signature is present.
+    """
+    if not os.path.isfile(exe_path):
+        return None
+    real = os.path.realpath(exe_path)
+
+    # Bottles: any ancestor contains a bottle.yml
+    bottle_root = _ancestor_with_marker(os.path.dirname(real), "bottle.yml")
+    if bottle_root:
+        bottle_name = _read_bottle_name(bottle_root) or os.path.basename(bottle_root)
+        return WineInstall(
+            exe_path=exe_path,
+            launcher="bottles",
+            prefix_path=bottle_root,
+            display_name=f"Bottles · {bottle_name}",
+            metadata={
+                "bottle_name": os.path.basename(bottle_root),
+                "bottle_display_name": bottle_name,
+            },
+        )
+
+    # Steam Proton: ancestor chain contains compatdata/<digits>/pfx
+    parts = real.split(os.sep)
+    for i in range(len(parts) - 2):
+        if parts[i] == "compatdata" and parts[i + 1].isdigit() and parts[i + 2] == "pfx":
+            appid = parts[i + 1]
+            pfx = os.sep + os.path.join(*parts[: i + 3])
+            steam_root = os.sep + os.path.join(*parts[: i - 1]) if i >= 1 else None
+            proton_dir = _read_proton_dir(os.path.dirname(pfx))
+            name = _read_shortcut_name(steam_root, appid) if steam_root else None
+            display = name or f"Steam · {appid}"
+            return WineInstall(
+                exe_path=exe_path,
+                launcher="steam-proton",
+                prefix_path=pfx,
+                display_name=display if display.startswith("Steam · ") else f"Steam · {display}",
+                metadata={"appid": appid, "steam_root": steam_root, "proton_dir": proton_dir},
+            )
+
+    # Lutris: cross-reference Lutris YAMLs
+    for root_template in _LUTRIS_CONFIG_ROOTS:
+        root = os.path.expanduser(root_template)
+        if not os.path.isdir(root):
+            continue
+        for entry in os.listdir(root):
+            if not entry.endswith(".yml"):
+                continue
+            prefix, name, runner = _parse_lutris_yaml(os.path.join(root, entry))
+            if runner != "wine" or not prefix:
+                continue
+            if real.startswith(os.path.realpath(prefix) + os.sep):
+                slug = entry[:-4]
+                display = name or slug
+                return WineInstall(
+                    exe_path=exe_path,
+                    launcher="lutris",
+                    prefix_path=prefix,
+                    display_name=f"Lutris · {display}",
+                    metadata={"lutris_slug": slug, "lutris_name": name},
+                )
+
+    # Plain Wine: ancestor with a dosdevices/c: marker
+    dosdevices_root = _ancestor_with_marker(os.path.dirname(real), "dosdevices")
+    if dosdevices_root:
+        name = os.path.basename(dosdevices_root.rstrip(os.sep))
+        return WineInstall(
+            exe_path=exe_path,
+            launcher="wine",
+            prefix_path=dosdevices_root,
+            display_name=f"Wine · {name}",
+            metadata={"prefix_name": name},
+        )
+
+    return None
