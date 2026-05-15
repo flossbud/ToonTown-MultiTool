@@ -63,6 +63,7 @@ _POSIX_PREFIXES = (
     "WINE",
     "DXVK_",
     "VKD3D_",
+    "STEAM_",
 )
 
 _WINDOWS_EXACT_VARS = {
