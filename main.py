@@ -1148,6 +1148,41 @@ def _run_self_check_keyring() -> int:
         return 1
 
 
+def _should_prompt_for_cc_install(installs, stored_signature: str) -> bool:
+    """Return True when the boot prompt should fire.
+
+    True only when there are multiple installs AND no stored signature
+    matches any discovered install.
+    """
+    if len(installs) <= 1:
+        return False
+    if not stored_signature:
+        return True
+    from services.wine_runtimes import install_signature
+    return not any(
+        install_signature(i) == stored_signature for i in installs
+    )
+
+
+def _maybe_prompt_for_cc_install(main_window, settings_manager):
+    """Show the picker on boot when multiple CC installs are ambiguous."""
+    from services.wine_runtimes import discover_cc_installs, install_signature
+    from utils.widgets.cc_install_picker import CCInstallPickerDialog
+    from utils.settings_keys import CC_ENGINE_INSTALL_SIGNATURE
+
+    installs = discover_cc_installs()
+    stored = settings_manager.get(CC_ENGINE_INSTALL_SIGNATURE, "")
+    if not _should_prompt_for_cc_install(installs, stored):
+        return
+    dlg = CCInstallPickerDialog(installs, parent=main_window)
+    if dlg.exec() == dlg.Accepted:
+        picked = dlg.selected_install()
+        if picked is not None:
+            settings_manager.set("cc_engine_dir", os.path.dirname(picked.exe_path))
+            settings_manager.set(CC_ENGINE_INSTALL_SIGNATURE, install_signature(picked))
+            settings_manager.set("cc_engine_dir_approved_custom_dir", "")
+
+
 if __name__ == "__main__":
     if "--self-check-keyring" in sys.argv:
         sys.exit(_run_self_check_keyring())
@@ -1178,4 +1213,7 @@ if __name__ == "__main__":
     apply_theme(app, resolve_theme(settings))
     window = MultiToonTool()
     window.show()
+    # Fire the multi-install picker on a 0-delay timer so Qt has finished
+    # processing the show event before any modal dialog steals focus.
+    QTimer.singleShot(0, lambda: _maybe_prompt_for_cc_install(window, window.settings_manager))
     sys.exit(app.exec())
