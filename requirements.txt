@@ -26,6 +26,9 @@ jeepney>=0.7.0; sys_platform == "linux"
 # Linux only — Xlib input backend and XRes PID resolution
 python-xlib>=0.33; sys_platform == "linux"
 
+# Linux only — YAML parsing for Bottles and Lutris config files
+PyYAML>=6.0; sys_platform == "linux"
+
 # Windows only — Win32 input backend and window management
 pywin32>=306; sys_platform == "win32"
 
