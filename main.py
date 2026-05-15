@@ -1181,6 +1181,21 @@ def _maybe_prompt_for_cc_install(main_window, settings_manager):
             settings_manager.set("cc_engine_dir", os.path.dirname(picked.exe_path))
             settings_manager.set(CC_ENGINE_INSTALL_SIGNATURE, install_signature(picked))
             settings_manager.set("cc_engine_dir_approved_custom_dir", "")
+            # Refresh the open SettingsTab's CC row so the orange glow clears
+            # and the path text turns green-on-success. Without this the
+            # already-constructed GamePathRow still believes it's in the
+            # ambiguous-needs-pick state captured at __init__ time.
+            cc_row = getattr(
+                getattr(main_window, "settings_tab", None),
+                "cc_path_row",
+                None,
+            )
+            if cc_row is not None:
+                try:
+                    cc_row._apply_picked_install(picked)
+                except Exception as e:
+                    from utils.credentials_manager import _dbg
+                    _dbg(f"[CC] boot-pick row refresh failed: {e}")
 
 
 if __name__ == "__main__":
