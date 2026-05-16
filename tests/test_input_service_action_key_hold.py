@@ -105,3 +105,25 @@ def test_holding_action_key_sends_keydown_once_then_keyup_on_release():
     # No legacy tap path:
     tap_calls = [c for c in svc._xlib.send_key.call_args_list if c.args[1] == "Delete"]
     assert tap_calls == [], f"unexpected tap: {tap_calls}"
+
+
+def test_action_held_drains_when_chat_opens():
+    """Hold Delete, then press Enter to open chat. Background toons must
+    receive a keyup for Delete BEFORE Return triggers chat behavior, so
+    Delete doesn't stay 'held' on bg toons indefinitely."""
+    svc, q = _make_service()
+
+    _drive(svc, q, [
+        ("keydown", "Delete"),
+        ("keydown", "Return"),  # Opens chat
+    ])
+
+    # Background window 1002 should have received a keyup for Delete:
+    delete_keyups = [
+        c.args for c in svc._xlib.send_keyup.call_args_list if c.args[1] == "Delete"
+    ]
+    assert delete_keyups == [("1002", "Delete")], (
+        f"expected one Delete keyup on chat open, got: {delete_keyups}"
+    )
+    # action_held should be empty after the drain:
+    assert svc.action_held == set(), f"action_held leaked: {svc.action_held}"

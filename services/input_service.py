@@ -292,6 +292,15 @@ class InputService(QObject):
             if win != active_window:
                 self._send_via_backend("keyup", win, keysym)
 
+    def _drain_action_held(self, enabled, assignments):
+        """Send keyup for every held action key and clear the set.
+
+        Called whenever the in-game regime ends (chat opens, focus lost, shutdown).
+        """
+        for key in list(self.action_held):
+            self._send_action_keyup_to_bg(key, enabled, assignments)
+        self.action_held.clear()
+
     def _send_typing_to_bg(self, key, enabled, assignments, movement_keys=None):
         active_window = self.window_manager.get_active_window()
         if movement_keys is None:
@@ -492,6 +501,10 @@ class InputService(QObject):
                                 else:
                                     self._set_chat_active(not self.global_chat_active)
                                     self._chat_last_activity = now if self.global_chat_active else 0.0
+                                    if self.global_chat_active:
+                                        # Chat just opened. Release any in-game keys the user
+                                        # is still holding so they do not stick on bg toons.
+                                        self._drain_action_held(enabled, assignments)
                                     for i in range(min(len(assignments), len(enabled))):
                                         if i < len(window_ids) and enabled[i]:
                                             if not self._is_chat_allowed(i):
