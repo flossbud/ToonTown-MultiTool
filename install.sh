@@ -24,6 +24,11 @@ ASSUME_YES=0
 FORCE=0
 SKIP_SYSTEM_DEPS=0
 
+# CAUTION: print_help's sed range terminates at the first blank line
+# after `# Usage:` in the header above. Do NOT insert blank lines inside
+# the Usage block (e.g. to group flags) or the help output will truncate
+# silently. If you need a visual break, use a `#` comment line with no
+# trailing content instead.
 print_help() {
     sed -n '/^# Usage:/,/^$/p' "$0" | sed 's/^# //; s/^#//'
 }
@@ -251,9 +256,16 @@ run_sudo() {
 missing_python_packages() {
     case "$DISTRO_FAMILY" in
         debian)
+            # Debian stable's newest packaged Python is 3.12 as of 2026
+            # (Debian 12 / Ubuntu 24.04). Bump to 3.13 once Debian 13 /
+            # Ubuntu 26.04 ship it; until then, 3.13 is unavailable via
+            # apt and must be installed via deadsnakes or pyenv.
             echo "python3.12 python3.12-venv python3.12-dev"
             ;;
         fedora)
+            # Fedora ships python3.10 through python3.14 simultaneously
+            # in the official repos; 3.13 is the newest in our supported
+            # window. The asymmetry vs Debian above is real and intentional.
             echo "python3.13 python3.13-devel"
             ;;
         arch)
