@@ -12,23 +12,30 @@ on:
     branches: [dev, main]
 
 # A new push to a branch cancels its still-running CI -- saves runner minutes
-# on rapid pushes. portability.yml did not do this.
+# on rapid pushes.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  build:
-    uses: ./.github/workflows/build.yml
+  build-linux:
+    uses: ./.github/workflows/build-linux.yml
     with:
-      include_windows: true
-      # Only a manual run may opt out of Flatpak; push/PR runs always build it.
+      version_label: dev
       include_flatpak: ${{ github.event_name != 'workflow_dispatch' || inputs.include_flatpak }}
 
-  test:
-    needs: build
-    uses: ./.github/workflows/test.yml
+  test-linux:
+    needs: build-linux
+    uses: ./.github/workflows/test-linux.yml
     with:
-      include_windows: true
-      include_aur: false
       include_flatpak: ${{ github.event_name != 'workflow_dispatch' || inputs.include_flatpak }}
+      include_aur: false
+
+  build-windows:
+    uses: ./.github/workflows/build-windows.yml
+    with:
+      version_label: dev
+
+  test-windows:
+    needs: build-windows
+    uses: ./.github/workflows/test-windows.yml
