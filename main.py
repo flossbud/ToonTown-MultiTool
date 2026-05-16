@@ -3,10 +3,11 @@ from __future__ import annotations
 import os
 import sys
 
-if sys.version_info < (3, 9):
+if not (3, 9) <= sys.version_info[:2] < (3, 14):
     sys.stderr.write(
-        "ToonTown MultiTool requires Python 3.9 or newer. "
-        f"Detected {sys.version.split()[0]}.\n"
+        "ToonTown MultiTool requires Python 3.9-3.13. "
+        f"Detected {sys.version.split()[0]}. "
+        "See the 'Run from source' section in README.md for setup.\n"
     )
     sys.exit(1)
 
