@@ -555,12 +555,21 @@ def build_launch_command(
         # Use "waitforexitandrun" rather than "run". protonfixes guards its
         # game-specific setup (DLL overrides, winetricks deps, registry
         # tweaks) behind `'waitforexitandrun' in sys.argv[1]`. With "run",
-        # protonfixes logs "Skipping fix execution. We are probably running
-        # a unit test." and CC.exe launches without the runtime prep it
-        # needs, exiting rc=1. Steam itself, umu-launcher, and Lutris all
-        # use waitforexitandrun. The setup_*_drive helpers that "run"
-        # adds (drive S:/T: symlinks) aren't needed for CC.
-        return [proton_bin, "waitforexitandrun", install.exe_path, *args], env
+        # protonfixes skips and CC.exe launches without the runtime prep
+        # it needs. Steam, umu-launcher, and Lutris all use this verb.
+        proton_argv = [proton_bin, "waitforexitandrun", install.exe_path, *args]
+        # Modern Protons (Proton 8+, Proton-CachyOS, etc.) are compiled
+        # against a specific Steam Linux Runtime's libc; outside the SLR
+        # pressure-vessel container their wine binary fails to start
+        # with no Wine-level diagnostics (only protonfixes output). Wrap
+        # in the runtime's _v2-entry-point when toolmanifest.vdf declares
+        # require_tool_appid. Older Protons that don't need the SLR
+        # return None and we dispatch directly.
+        from services.steam_proton_tools import find_required_steam_runtime
+        runtime = find_required_steam_runtime(proton_dir, steam_root)
+        if runtime is not None:
+            return [runtime, "--verb=waitforexitandrun", "--", *proton_argv], env
+        return proton_argv, env
 
     if install.launcher == "bottles":
         if not install.prefix_path:

@@ -82,6 +82,76 @@ def _default_roots() -> list[str]:
     return [os.path.expanduser(p) for p in _STEAM_ROOTS]
 
 
+def _read_require_tool_appid(proton_dir: str) -> str | None:
+    """Read the `require_tool_appid` value from a Proton's toolmanifest.vdf.
+
+    Modern Proton builds (Proton 8+, Experimental, Proton-CachyOS, etc.)
+    declare an AppID for the Steam Linux Runtime they're built against.
+    Returns the appid string or None if not present.
+    """
+    manifest = os.path.join(proton_dir, "toolmanifest.vdf")
+    try:
+        with open(manifest, "r", encoding="utf-8", errors="replace") as f:
+            text = f.read()
+    except OSError:
+        return None
+    m = re.search(r'"require_tool_appid"\s*"([^"]+)"', text)
+    return m.group(1) if m else None
+
+
+def _read_appmanifest_installdir(steam_root: str, appid: str) -> str | None:
+    """Read the `installdir` field from a Steam appmanifest_<appid>.acf file."""
+    manifest = os.path.join(
+        steam_root, "steamapps", "appmanifest_" + appid + ".acf"
+    )
+    try:
+        with open(manifest, "r", encoding="utf-8", errors="replace") as f:
+            text = f.read()
+    except OSError:
+        return None
+    m = re.search(r'"installdir"\s*"([^"]+)"', text)
+    return m.group(1) if m else None
+
+
+def find_required_steam_runtime(
+    proton_dir: str, steam_root: str
+) -> str | None:
+    """Locate the Steam Linux Runtime entry point this Proton needs.
+
+    Modern Proton builds are compiled against a specific SLR's libc and
+    library versions; outside the SLR pressure-vessel container, wine
+    fails to start with no diagnostics. Steam dispatches through the
+    runtime's `_v2-entry-point` script when the proton's toolmanifest
+    declares `require_tool_appid`. This function reproduces that lookup
+    for third-party launchers.
+
+    Lookup chain:
+      1. <proton_dir>/toolmanifest.vdf → require_tool_appid
+      2. <steam_root>/steamapps/appmanifest_<appid>.acf → installdir
+      3. <steam_root>/steamapps/common/<installdir>/_v2-entry-point
+
+    Returns the absolute path to `_v2-entry-point`, or None if:
+      - the Proton doesn't declare a required runtime,
+      - the appmanifest is missing (runtime not installed),
+      - the entry point is missing or non-executable.
+
+    Callers should fall back to direct proton invocation when None is
+    returned (older Protons that don't need the SLR will work that way).
+    """
+    appid = _read_require_tool_appid(proton_dir)
+    if not appid:
+        return None
+    installdir = _read_appmanifest_installdir(steam_root, appid)
+    if not installdir:
+        return None
+    entry = os.path.join(
+        steam_root, "steamapps", "common", installdir, "_v2-entry-point"
+    )
+    if not os.path.isfile(entry) or not os.access(entry, os.X_OK):
+        return None
+    return entry
+
+
 def _version_key_from_name(name: str) -> tuple[int, ...]:
     """Extract a sortable version tuple from a tool name.
 

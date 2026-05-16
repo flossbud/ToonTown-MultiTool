@@ -93,6 +93,101 @@ def test_steam_proton_uses_proton_runtime(tmp_path):
     assert env["STEAM_COMPAT_CLIENT_INSTALL_PATH"] == str(steam_root)
 
 
+def test_steam_proton_wraps_in_slr_when_required(tmp_path):
+    """When proton toolmanifest.vdf declares require_tool_appid AND the
+    referenced SteamLinuxRuntime is installed, the command is wrapped
+    in <slr>/_v2-entry-point. Without that wrapper, modern Protons
+    built against the SLR's libc fail with no Wine output (the symptom
+    that motivated this code path)."""
+    import os
+    pfx = tmp_path / "compatdata/12345/pfx"
+    exe = pfx / "drive_c/users/steamuser/AppData/Local/Corporate Clash/CorporateClash.exe"
+    exe.parent.mkdir(parents=True)
+    exe.write_text("")
+    # Proton that declares it needs SLR appid 4183110.
+    proton_dir = tmp_path / "Steam/compatibilitytools.d/proton-cachyos"
+    proton_dir.mkdir(parents=True)
+    proton_bin = proton_dir / "proton"
+    proton_bin.write_text("")
+    (proton_dir / "toolmanifest.vdf").write_text(
+        '"manifest"\n{\n'
+        '  "version" "2"\n'
+        '  "commandline" "/proton %verb%"\n'
+        '  "require_tool_appid" "4183110"\n'
+        "}\n"
+    )
+    steam_root = tmp_path / "Steam"
+    # Steam appmanifest pointing at the runtime install dir.
+    apps = steam_root / "steamapps"
+    apps.mkdir(parents=True, exist_ok=True)
+    (apps / "appmanifest_4183110.acf").write_text(
+        '"AppState"\n{\n'
+        '  "appid" "4183110"\n'
+        '  "name" "Steam Linux Runtime 4.0"\n'
+        '  "installdir" "SteamLinuxRuntime_4"\n'
+        "}\n"
+    )
+    # The actual entry point script — needs to exist + be executable.
+    slr_dir = apps / "common" / "SteamLinuxRuntime_4"
+    slr_dir.mkdir(parents=True)
+    entry = slr_dir / "_v2-entry-point"
+    entry.write_text("#!/bin/sh\nexit 0\n")
+    os.chmod(entry, 0o755)
+
+    install = WineInstall(
+        exe_path=str(exe),
+        launcher="steam-proton",
+        prefix_path=str(pfx),
+        display_name="x",
+        metadata={
+            "appid": "12345",
+            "steam_root": str(steam_root),
+            "proton_dir": str(proton_dir),
+        },
+    )
+    cmd, env = build_launch_command(install, [], {"TT_PLAYCOOKIE": "t"})
+    assert cmd == [
+        str(entry), "--verb=waitforexitandrun", "--",
+        str(proton_bin), "waitforexitandrun", str(exe),
+    ]
+    assert env["STEAM_COMPAT_DATA_PATH"] == str(tmp_path / "compatdata/12345")
+    assert env["STEAM_COMPAT_CLIENT_INSTALL_PATH"] == str(steam_root)
+
+
+def test_steam_proton_falls_back_to_direct_when_slr_missing(tmp_path):
+    """If require_tool_appid is set but the appmanifest isn't installed,
+    fall back to direct proton invocation. Better to attempt the launch
+    than to refuse to run."""
+    pfx = tmp_path / "compatdata/12345/pfx"
+    exe = pfx / "drive_c/users/steamuser/AppData/Local/Corporate Clash/CorporateClash.exe"
+    exe.parent.mkdir(parents=True)
+    exe.write_text("")
+    proton_dir = tmp_path / "Proton"
+    proton_dir.mkdir()
+    proton_bin = proton_dir / "proton"
+    proton_bin.write_text("")
+    (proton_dir / "toolmanifest.vdf").write_text(
+        '"manifest" { "require_tool_appid" "9999999" }\n'
+    )
+    steam_root = tmp_path / "Steam"
+    steam_root.mkdir()
+    # NOTE: no appmanifest_9999999.acf — runtime not installed.
+
+    install = WineInstall(
+        exe_path=str(exe),
+        launcher="steam-proton",
+        prefix_path=str(pfx),
+        display_name="x",
+        metadata={
+            "appid": "12345",
+            "steam_root": str(steam_root),
+            "proton_dir": str(proton_dir),
+        },
+    )
+    cmd, _env = build_launch_command(install, [], {})
+    assert cmd == [str(proton_bin), "waitforexitandrun", str(exe)]
+
+
 def test_steam_proton_raises_when_proton_dir_missing():
     install = WineInstall(
         exe_path="/x.exe",
