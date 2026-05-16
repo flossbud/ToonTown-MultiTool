@@ -231,22 +231,29 @@ class KeymapManager:
             return
         if not logical_actions.supports(game, action):
             return
+        changed = False
         with self._lock:
             sets = self._sets.get(game, [])
             if 0 <= set_index < len(sets):
                 sets[set_index][action] = key
                 self._save()
-        self._notify()
+                changed = True
+        if changed:
+            self._notify()
 
     def next_default_name(self, game: str, exclude_index: int = -1) -> str:
         with self._lock:
-            existing = set()
-            for i, s in enumerate(self._sets.get(game, [])):
-                if i == exclude_index:
-                    continue
-                n = s.get("name", "")
-                if n == "New Set" or (n.startswith("New Set ") and n[8:].isdigit()):
-                    existing.add(n)
+            return self._next_default_name_locked(game, exclude_index)
+
+    def _next_default_name_locked(self, game: str, exclude_index: int = -1) -> str:
+        """Caller must hold self._lock."""
+        existing = set()
+        for i, s in enumerate(self._sets.get(game, [])):
+            if i == exclude_index:
+                continue
+            n = s.get("name", "")
+            if n == "New Set" or (n.startswith("New Set ") and n[8:].isdigit()):
+                existing.add(n)
         if "New Set" not in existing:
             return "New Set"
         i = 1
@@ -257,43 +264,52 @@ class KeymapManager:
     def add_set(self, game: str, name: str | None = None, keys: dict | None = None):
         if game not in GAMES:
             return
-        if name is None:
-            name = self.next_default_name(game)
-        new_set = {"name": name}
+        action_map: dict[str, str] = {}
         for action in logical_actions.actions_for(game):
             if keys and action in keys:
-                new_set[action] = keys[action]
+                action_map[action] = keys[action]
             else:
-                new_set[action] = logical_actions.default_key(game, action) or ""
+                action_map[action] = logical_actions.default_key(game, action) or ""
+        changed = False
         with self._lock:
             sets = self._sets.setdefault(game, [])
             if len(sets) >= self.MAX_SETS_PER_GAME:
                 return
-            sets.append(new_set)
+            chosen_name = name if name is not None else self._next_default_name_locked(game)
+            sets.append({"name": chosen_name, **action_map})
             self._save()
-        self._notify()
+            changed = True
+        if changed:
+            self._notify()
 
     def delete_set(self, game: str, index: int):
         if game not in GAMES:
             return
         if index <= 0:
-            return  # Default (index 0) cannot be deleted
+            # Default (index 0) is protected; negative indices are also rejected.
+            return
+        changed = False
         with self._lock:
             sets = self._sets.get(game, [])
             if index < len(sets):
                 sets.pop(index)
                 self._save()
-        self._notify()
+                changed = True
+        if changed:
+            self._notify()
 
     def update_set_name(self, game: str, index: int, name: str):
         if game not in GAMES:
             return
+        changed = False
         with self._lock:
             sets = self._sets.get(game, [])
             if 0 <= index < len(sets):
                 sets[index]["name"] = name
                 self._save()
-        self._notify()
+                changed = True
+        if changed:
+            self._notify()
 
     def has_conflicts(self, game: str, set_index: int) -> tuple[bool, list[tuple[str, str]]]:
         """Return (has_conflict, list of conflicting action pairs)."""

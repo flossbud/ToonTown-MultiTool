@@ -214,6 +214,29 @@ class TestWriteAPI:
         mgr.update_set_name("ttr", 1, "Joystick")
         assert mgr.get_set_names("ttr") == ["Default", "Joystick"]
 
+    def test_add_set_does_not_notify_when_capped(self, tmp_path):
+        mgr, _ = _make_manager_with_file(tmp_path)
+        for _ in range(KeymapManager.MAX_SETS_PER_GAME):
+            mgr.add_set("ttr")
+        calls = []
+        mgr.on_change(lambda: calls.append(1))
+        mgr.add_set("ttr")  # over the cap; should be a no-op
+        assert calls == []
+
+    def test_delete_set_does_not_notify_when_oob(self, tmp_path):
+        mgr, _ = _make_manager_with_file(tmp_path)
+        calls = []
+        mgr.on_change(lambda: calls.append(1))
+        mgr.delete_set("ttr", 99)  # out of range
+        assert calls == []
+
+    def test_update_set_key_does_not_notify_when_oob(self, tmp_path):
+        mgr, _ = _make_manager_with_file(tmp_path)
+        calls = []
+        mgr.on_change(lambda: calls.append(1))
+        mgr.update_set_key("ttr", 99, "forward", "Up")  # out-of-range set index
+        assert calls == []
+
 
 class TestHasConflicts:
     def test_default_has_no_conflicts(self, tmp_path):
