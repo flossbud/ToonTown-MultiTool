@@ -1,6 +1,5 @@
 import importlib
 import sys
-from unittest.mock import patch
 
 import pytest
 
@@ -20,7 +19,7 @@ def _reset_build_info_cache():
     _bi._reset_cache_for_tests()
 
 
-def test_uses_embedded_when_present(monkeypatch, tmp_path):
+def test_uses_embedded_when_present(monkeypatch):
     # Inject a fake _build_info module.
     fake = type(sys)("utils._build_info")
     fake.BUILD_NUMBER = 458
