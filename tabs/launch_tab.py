@@ -357,8 +357,9 @@ class KeyringWarningBanner(QFrame):
     def _instruction_text(self) -> str:
         if sys.platform == "win32":
             return (
-                "Windows Credential Locker was unavailable. Try running TTMT as your\n"
-                "normal user (not as Administrator)."
+                "Windows Credential Locker stopped responding. Try restarting TTMT.\n"
+                "If it keeps happening, please share the keyring-debug.log file when\n"
+                "reporting."
             )
         if sys.platform == "darwin":
             return (
