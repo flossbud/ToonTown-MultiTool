@@ -303,9 +303,10 @@ class MultiToonTool(QMainWindow):
         root.setSpacing(0)
 
         from utils.widgets.update_banner import UpdateBanner
-        self.update_banner = UpdateBanner()
+        self.update_banner = UpdateBanner(parent=self)
         self.update_banner.clicked.connect(self._on_update_banner_clicked)
         self.update_banner.dismissed.connect(self._on_update_banner_dismissed)
+        self._pending_update_info = None
         root.addWidget(self.update_banner)
 
         self.header = self._build_header()
