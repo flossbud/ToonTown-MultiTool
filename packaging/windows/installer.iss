@@ -69,6 +69,19 @@ Name: "{group}\{#MyAppName}"; Filename: "{app}\ToonTownMultiTool.exe"
 Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"
 Name: "{commondesktop}\{#MyAppName}"; Filename: "{app}\ToonTownMultiTool.exe"; Tasks: desktopicon
 
+[Run]
+; Persist the wizard's checkbox choices into settings.json. The just-installed
+; EXE owns the merge logic (utils.installer_merge); we just call it with flags.
+Filename: "{app}\ToonTownMultiTool.exe"; \
+  Parameters: "--apply-installer-config --check-updates={code:CheckUpdatesFlag} --keep-alive={code:KeepAliveFlag}"; \
+  Flags: runhidden waituntilterminated
+
+; Launch the app if the user kept the "Launch" checkbox.
+Filename: "{app}\ToonTownMultiTool.exe"; \
+  Description: "Launch {#MyAppName}"; \
+  Flags: nowait postinstall skipifsilent; \
+  Tasks: launchapp
+
 [UninstallDelete]
 ; The user-data purge is handled in [Code] via InitializeUninstall + DelTree
 ; so the channel-specific config dir is removed only when the user opts in.
@@ -78,6 +91,22 @@ var
   KeepAliveDisclaimer: TLabel;
   KeepAliveWarning: TLabel;
   UpdatesExplainer: TLabel;
+
+function CheckUpdatesFlag(Param: String): String;
+begin
+  if WizardIsTaskSelected('checkupdates') then
+    Result := '1'
+  else
+    Result := '0';
+end;
+
+function KeepAliveFlag(Param: String): String;
+begin
+  if WizardIsTaskSelected('keepalive') then
+    Result := '1'
+  else
+    Result := '0';
+end;
 
 procedure InitializeWizard;
 var
@@ -130,4 +159,47 @@ begin
   UpdatesExplainer.Caption :=
     'The app will check GitHub for new releases when it launches. ' +
     'You''ll be asked before any update is downloaded or installed.';
+end;
+
+var
+  ShouldPurgeUserData: Boolean;
+
+function InitializeUninstall(): Boolean;
+var
+  Response: Integer;
+  Msg: String;
+begin
+  ShouldPurgeUserData := False;
+  Msg :=
+    '{#MyAppName} will be removed from your computer.' + #13#10 + #13#10 +
+    'Do you also want to remove your saved settings, accounts, and profiles?' + #13#10 + #13#10 +
+    '  Yes   — Remove the app AND wipe settings/accounts/profiles.' + #13#10 +
+    '  No    — Remove the app, keep settings for a future reinstall (recommended).' + #13#10 +
+    '  Cancel — Don''t uninstall anything.' + #13#10 + #13#10 +
+    'Note: saved passwords are stored in Windows Credential Locker and are not ' +
+    'removed by either option. To remove saved passwords, clear them from inside ' +
+    'the app before uninstalling, or use Windows Credential Manager.';
+  Response := MsgBox(Msg, mbConfirmation, MB_YESNOCANCEL);
+  case Response of
+    IDYES:    begin ShouldPurgeUserData := True;  Result := True;  end;
+    IDNO:     begin ShouldPurgeUserData := False; Result := True;  end;
+    IDCANCEL: Result := False;
+  else
+    Result := False;
+  end;
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  ConfigDir: String;
+begin
+  if CurUninstallStep = usPostUninstall then
+  begin
+    if ShouldPurgeUserData then
+    begin
+      ConfigDir := ExpandConstant('{userprofile}\.config\{#ConfigDirName}');
+      if DirExists(ConfigDir) then
+        DelTree(ConfigDir, True, True, True);
+    end;
+  end;
 end;
