@@ -6,6 +6,11 @@
 # and Qt6 runtime libraries) via sudo, creates a venv at ./venv, and
 # installs the Python dependencies from requirements.txt.
 #
+# CAUTION: print_help's sed range terminates at the first blank line
+# after `# Usage:` below. Do NOT insert blank lines inside the Usage
+# block (e.g. to group flags) or --help will truncate silently. Use
+# a `#` comment line with no trailing content for visual breaks.
+#
 # Usage:
 #   ./install.sh                  Interactive install (prompts before each sudo)
 #   ./install.sh --yes            Skip all confirmation prompts
@@ -24,11 +29,6 @@ ASSUME_YES=0
 FORCE=0
 SKIP_SYSTEM_DEPS=0
 
-# CAUTION: print_help's sed range terminates at the first blank line
-# after `# Usage:` in the header above. Do NOT insert blank lines inside
-# the Usage block (e.g. to group flags) or the help output will truncate
-# silently. If you need a visual break, use a `#` comment line with no
-# trailing content instead.
 print_help() {
     sed -n '/^# Usage:/,/^$/p' "$0" | sed 's/^# //; s/^#//'
 }
@@ -100,9 +100,9 @@ venv_python_in_range() {
     esac
 }
 
-# Print a leading line ("Done." or "venv is already up to date."), then a
-# shell-aware activation hint (one line for fish users, two lines for the
-# default bash/zsh case with a fish fallback), then the "Then run" line.
+# Print a leading status line, then a shell-aware activation hint (one
+# line for fish users, two lines for the default bash/zsh case with a
+# fish fallback), then the "Then run" line.
 print_activation_hint() {
     echo "$1"
     case "${SHELL:-}" in
@@ -267,7 +267,8 @@ missing_python_packages() {
         fedora)
             # Fedora ships python3.10 through python3.14 simultaneously
             # in the official repos; 3.13 is the newest in our supported
-            # window. The asymmetry vs Debian above is real and intentional.
+            # window. Asymmetric with Debian above by design: Debian apt
+            # doesn't ship 3.13 on the supported releases.
             echo "python3.13 python3.13-devel"
             ;;
         arch)
