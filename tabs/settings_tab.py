@@ -1462,12 +1462,20 @@ class SettingsTab(QWidget):
 
     def _on_keep_alive_master_toggle(self, checked: bool):
         """Handler for the master toggle. On flip-to-on, fire the consent
-        dialog and only commit the True value if the user confirms."""
+        dialog and only commit the True value if the user confirms. If the
+        user already acknowledged TOS consent during installer setup
+        (keep_alive_consent_acknowledged=true), skip the dialog and commit
+        directly."""
         if not checked:
             self.settings_manager.set("keep_alive_enabled", False)
             self._refresh_keep_alive_row_enabled_state(False)
             return
-        # Toggle was flipped on — confirm before committing.
+        # Toggle was flipped on — confirm before committing, unless the
+        # installer already captured informed consent.
+        if self.settings_manager.get("keep_alive_consent_acknowledged", False):
+            self.settings_manager.set("keep_alive_enabled", True)
+            self._refresh_keep_alive_row_enabled_state(True)
+            return
         if self._show_keep_alive_warning_dialog():
             self.settings_manager.set("keep_alive_enabled", True)
             self._refresh_keep_alive_row_enabled_state(True)

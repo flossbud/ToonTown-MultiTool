@@ -357,3 +357,73 @@ def test_toggle_rapid_fire_no_op_when_master_off(tab):
     # Master off — rapid_fire_enabled must NOT have been written.
     assert tab.rapid_fire_enabled[0] is False
     assert tab.keep_alive_enabled[0] is False
+
+
+def test_master_toggle_skips_dialog_when_consent_acknowledged(qapp, monkeypatch, tmp_path):
+    """If keep_alive_consent_acknowledged=true is in settings, master toggle-on
+    must commit directly without firing the TOS dialog."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    from utils.settings_manager import SettingsManager
+    from tabs.settings_tab import SettingsTab
+
+    sm = SettingsManager()
+    sm.set("keep_alive_consent_acknowledged", True)
+
+    tab = SettingsTab(settings_manager=sm)
+
+    dialog_called = {"count": 0}
+    def fake_dialog(self):
+        dialog_called["count"] += 1
+        return True
+    monkeypatch.setattr(SettingsTab, "_show_keep_alive_warning_dialog", fake_dialog)
+
+    tab._on_keep_alive_master_toggle(True)
+
+    assert dialog_called["count"] == 0
+    assert sm.get("keep_alive_enabled") is True
+
+
+def test_master_toggle_still_fires_dialog_without_acknowledgement(qapp, monkeypatch, tmp_path):
+    """Without the acknowledgement marker, the dialog still fires as before."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    from utils.settings_manager import SettingsManager
+    from tabs.settings_tab import SettingsTab
+
+    sm = SettingsManager()  # no acknowledgement marker
+    tab = SettingsTab(settings_manager=sm)
+
+    dialog_called = {"count": 0}
+    def fake_dialog(self):
+        dialog_called["count"] += 1
+        return True
+    monkeypatch.setattr(SettingsTab, "_show_keep_alive_warning_dialog", fake_dialog)
+
+    tab._on_keep_alive_master_toggle(True)
+
+    assert dialog_called["count"] == 1
+    assert sm.get("keep_alive_enabled") is True
+
+
+def test_master_toggle_off_never_fires_dialog(qapp, monkeypatch, tmp_path):
+    """Toggle-off path is unconditional: never fires the dialog."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    from utils.settings_manager import SettingsManager
+    from tabs.settings_tab import SettingsTab
+
+    sm = SettingsManager()
+    sm.set("keep_alive_enabled", True)
+    tab = SettingsTab(settings_manager=sm)
+
+    dialog_called = {"count": 0}
+    def fake_dialog(self):
+        dialog_called["count"] += 1
+        return True
+    monkeypatch.setattr(SettingsTab, "_show_keep_alive_warning_dialog", fake_dialog)
+
+    tab._on_keep_alive_master_toggle(False)
+
+    assert dialog_called["count"] == 0
+    assert sm.get("keep_alive_enabled") is False
