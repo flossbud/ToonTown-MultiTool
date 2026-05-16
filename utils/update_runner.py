@@ -8,7 +8,9 @@ cases.
 """
 from __future__ import annotations
 
+import logging
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -21,6 +23,9 @@ from PySide6.QtCore import QObject, Signal
 from utils import build_flavor, install_method
 from utils.install_method import InstallMethod
 from utils.terminal_launcher import run_in_terminal
+
+
+_log = logging.getLogger(__name__)
 
 
 _AUR_HELPERS = ["paru", "yay", "pikaur"]
@@ -128,7 +133,10 @@ class UpdateRunner(QObject):
                 note="No AUR helper found on PATH (tried paru, yay, pikaur).",
             )
             return
-        cmd = [helper, "-Syu", "--noconfirm", aur_package_name(is_beta=build_flavor.is_beta())]
+        # Intentionally NOT --noconfirm: AUR helpers surface dependency and
+        # PKGBUILD-review prompts the user should see for a community-built
+        # package. Running interactively in a terminal is fine.
+        cmd = [helper, "-Syu", aur_package_name(is_beta=build_flavor.is_beta())]
         self._spawn_terminal_or_fallback(cmd, info)
 
     def _handle_deb(self, info: dict) -> None:
@@ -140,7 +148,10 @@ class UpdateRunner(QObject):
         if path is None:
             self.failed.emit("Failed to download the .deb")
             return
-        cmd = ["pkexec", "apt", "install", "-y", path]
+        # `dpkg -i` is the canonical local .deb installer (apt install of a
+        # path only works on newer apt and isn't portable to all Debian-based
+        # distros).
+        cmd = ["pkexec", "dpkg", "-i", path]
         self._spawn_terminal_or_fallback(cmd, info)
 
     def _handle_windows(self, info: dict) -> None:
@@ -152,25 +163,31 @@ class UpdateRunner(QObject):
         if path is None:
             self.failed.emit("Failed to download the installer")
             return
-        # Confirm with the user before launching, then quit and hand off to installer.
+        # Never auto-launch without explicit user confirmation; refuse if we
+        # have no parent widget to show a dialog from.
+        if self._parent is None:
+            self.failed.emit("No parent widget to confirm install; aborting.")
+            return
         from PySide6.QtWidgets import QMessageBox
-        if self._parent is not None:
-            box = QMessageBox(self._parent)
-            box.setWindowTitle("Install update")
-            box.setText(f"Install {info.get('tag_name', 'update')} now?")
-            box.setInformativeText(
-                "The app will close and the installer will run silently. "
-                "The app will restart automatically when the installer finishes."
-            )
-            box.setStandardButtons(QMessageBox.Yes | QMessageBox.Cancel)
-            box.setDefaultButton(QMessageBox.Yes)
-            if box.exec() != QMessageBox.Yes:
-                return
+        box = QMessageBox(self._parent)
+        box.setWindowTitle("Install update")
+        box.setText(f"Install {info.get('tag_name', 'update')} now?")
+        box.setInformativeText(
+            "The app will close and the installer will run silently. "
+            "The installer relaunches the app on finish (via Inno's Tasks: launchapp)."
+        )
+        box.setStandardButtons(QMessageBox.Yes | QMessageBox.Cancel)
+        box.setDefaultButton(QMessageBox.Yes)
+        if box.exec() != QMessageBox.Yes:
+            return
         try:
             subprocess.Popen([path, "/SILENT", "/SUPPRESSMSGBOXES"])
         except (OSError, subprocess.SubprocessError) as e:
             self.failed.emit(f"Failed to launch installer: {e}. Installer saved at {path}")
             return
+        # `QApplication.quit()` posts a quit event but the event loop has to
+        # run to process it. Use a singleShot so the installer Popen above
+        # actually starts before we tear down.
         from PySide6.QtWidgets import QApplication
         QApplication.quit()
 
@@ -186,7 +203,10 @@ class UpdateRunner(QObject):
         out_dir = tempfile.gettempdir()
         out_path = os.path.join(out_dir, name)
         try:
-            with requests.get(url, stream=True, timeout=60) as r:
+            # `(connect_timeout, read_timeout)`: 15s to establish, 120s
+            # between chunks. The previous single-int timeout only covered
+            # connect+headers, leaving a stalled stream to hang indefinitely.
+            with requests.get(url, stream=True, timeout=(15, 120)) as r:
                 r.raise_for_status()
                 with open(out_path, "wb") as fh:
                     for chunk in r.iter_content(chunk_size=64 * 1024):
@@ -201,6 +221,10 @@ class UpdateRunner(QObject):
         try:
             actual = os.path.getsize(out_path)
             if expected_size > 0 and abs(actual - expected_size) > max(1024, expected_size // 100):
+                _log.warning(
+                    "Downloaded asset size mismatch: expected %d, got %d (path %s)",
+                    expected_size, actual, out_path,
+                )
                 return None
         except OSError:
             return None
@@ -218,7 +242,7 @@ class UpdateRunner(QObject):
             # No terminal found; present a copy-command dialog as fallback.
             self._show_copy_dialog(
                 title="Update command",
-                command=" ".join(cmd),
+                command=shlex.join(cmd),
                 note="Couldn't find a terminal emulator. Run this command yourself, then restart the app.",
             )
             return
@@ -245,6 +269,7 @@ class UpdateRunner(QObject):
         self.failed.emit(f"{msg} - opening release page.")
 
     def _restart_app(self) -> None:
-        from PySide6.QtWidgets import QApplication
-        QApplication.quit()
+        # `os.execv` replaces the process image immediately, so the Qt event
+        # loop never gets a chance to process a `QApplication.quit()` call —
+        # exec is what actually terminates this process.
         os.execv(sys.executable, [sys.executable, *sys.argv])
