@@ -1215,7 +1215,7 @@ if __name__ == "__main__":
         def _flag(name: str, default: bool = False) -> bool:
             for arg in sys.argv:
                 if arg.startswith(f"--{name}="):
-                    return arg.split("=", 1)[1] in ("1", "true", "True")
+                    return arg.split("=", 1)[1].lower() in ("1", "true")
             return default
 
         from utils.build_flavor import config_dir as _config_dir
