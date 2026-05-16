@@ -74,9 +74,10 @@ class ProtonTool:
 
 
 def _default_roots() -> list[str]:
-    # Import inside the function to avoid a circular dependency: wine_runtimes
-    # already imports nothing from this module, but keeping the dependency
-    # lazy is the safer pattern given cc_launcher.py imports from BOTH.
+    # Single source of truth for the Steam roots list lives in
+    # wine_runtimes (used by CC install discovery). Lazy-import to keep
+    # this module independent at import time; cc_launcher imports from
+    # both modules and the lazy edge keeps the dependency graph acyclic.
     from services.wine_runtimes import _STEAM_ROOTS
     return [os.path.expanduser(p) for p in _STEAM_ROOTS]
 

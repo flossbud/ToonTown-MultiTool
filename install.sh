@@ -240,7 +240,7 @@ missing_python_packages() {
             echo "python3.12 python3.12-venv python3.12-dev"
             ;;
         fedora)
-            echo "python3.13"
+            echo "python3.13 python3.13-devel"
             ;;
         arch)
             # Arch path is only reached when user has already installed a
@@ -283,6 +283,37 @@ missing_qt6_packages() {
                 fi
             done
             echo "$missing" | sed 's/^ //'
+            ;;
+    esac
+}
+
+missing_build_packages() {
+    # Python C headers needed to build native extensions (e.g. evdev via pynput).
+    # Only checks packages for the currently-resolved Python; safe to call after
+    # PYTHON_BIN is set or empty (returns nothing if family is arch or unknown).
+    case "$DISTRO_FAMILY" in
+        debian)
+            # python3.X-dev ships the headers; detect the version from PYTHON_BIN
+            local pyver=""
+            if [ -n "${PYTHON_BIN:-}" ]; then
+                pyver="$("$PYTHON_BIN" -c 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}")' 2>/dev/null || true)"
+            fi
+            local pkg="python${pyver}-dev"
+            if [ -n "$pyver" ] && ! dpkg -s "$pkg" >/dev/null 2>&1; then
+                echo "$pkg"
+            fi
+            ;;
+        fedora)
+            # python3.13-devel ships the headers regardless of which minor was installed
+            local needed=""
+            if ! rpm -q python3.13-devel >/dev/null 2>&1; then
+                needed="python3.13-devel"
+            fi
+            echo "$needed"
+            ;;
+        arch)
+            # Arch ships devel headers in the base python package; nothing extra needed
+            echo ""
             ;;
     esac
 }
@@ -345,7 +376,88 @@ EOF
         echo "Missing Qt6 runtime libraries: $qt_missing"
         run_sudo "$(install_packages_cmd $qt_missing)"
     fi
+
+    # Python build headers (needed for C-extension deps like evdev via pynput)
+    build_missing="$(missing_build_packages)"
+    if [ -n "$build_missing" ]; then
+        echo ""
+        echo "Missing Python build headers: $build_missing"
+        run_sudo "$(install_packages_cmd $build_missing)"
+    fi
 fi
 
+# At this point PYTHON_BIN is guaranteed to be set (Task 2's detection plus
+# the Task 3 install step), or the script has already exited via a bail.
+if [ -z "${PYTHON_BIN:-}" ]; then
+    echo "install.sh: internal error: no Python interpreter resolved." >&2
+    echo "This is a bug; please report it." >&2
+    exit 1
+fi
+
+# Venv creation, with handling for an existing-but-wrong venv
+recreate_venv=0
+if [ -d "$VENV_DIR" ]; then
+    if [ ! -x "$VENV_DIR/bin/python" ] || ! venv_python_in_range; then
+        echo ""
+        echo "Existing $VENV_DIR has a missing or unsupported Python interpreter."
+        if [ "$FORCE" -eq 1 ] || [ "$ASSUME_YES" -eq 1 ]; then
+            recreate_venv=1
+        else
+            # Refuse to guess on non-interactive stdin; require explicit --force.
+            if [ ! -t 0 ]; then
+                echo "Aborted: non-interactive stdin and --force not passed." >&2
+                echo "Re-run with --force to skip this prompt." >&2
+                exit 1
+            fi
+            printf 'Delete and recreate with %s? [y/N] ' "$PYTHON_BIN"
+            reply=""
+            if ! read -r reply; then
+                reply=""
+            fi
+            case "$reply" in
+                y|Y|yes|YES) recreate_venv=1 ;;
+                *)
+                    echo "Aborted. Run ./install.sh --force to skip this prompt." >&2
+                    exit 1
+                    ;;
+            esac
+        fi
+    fi
+fi
+
+if [ "$FORCE" -eq 1 ] || [ "$recreate_venv" -eq 1 ]; then
+    echo "Removing existing $VENV_DIR..."
+    rm -rf "$VENV_DIR"
+fi
+
+if [ ! -d "$VENV_DIR" ]; then
+    echo ""
+    echo "Creating venv at $VENV_DIR with $PYTHON_BIN..."
+    "$PYTHON_BIN" -m venv "$VENV_DIR"
+fi
+
+# Upgrade pip first (quiet) for cleaner output and modern resolver
 echo ""
-echo "install.sh: system deps phase complete; venv + pip phase lands in Task 4."
+echo "Upgrading pip..."
+"$VENV_DIR/bin/pip" install --upgrade pip --quiet
+
+echo ""
+echo "Installing Python dependencies from requirements.txt..."
+"$VENV_DIR/bin/pip" install -r requirements.txt
+
+# Sentinel write
+req_hash > "$SENTINEL"
+
+# Activation hint
+echo ""
+echo "Done."
+case "${SHELL:-}" in
+    */fish)
+        echo "Activate with: source venv/bin/activate.fish"
+        ;;
+    *)
+        echo "Activate with: source venv/bin/activate"
+        echo "          (or  source venv/bin/activate.fish for fish)"
+        ;;
+esac
+echo "Then run: python main.py"

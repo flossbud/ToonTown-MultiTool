@@ -50,7 +50,8 @@ def test_compat_row_hidden_on_windows(qapp, tmp_path, monkeypatch):
         settings_manager=None,
         get_active_install=lambda: _steam_install(tmp_path, _proton_dir(tmp_path, "p")),
     )
-    assert not row.isVisible() or row.is_platform_hidden
+    assert row.is_platform_hidden is True
+    assert row.isHidden() is True
 
 
 def test_steam_proton_no_override_shows_steam_default_suffix(
@@ -80,7 +81,8 @@ def test_steam_proton_no_override_shows_steam_default_suffix(
     from tabs.settings_tab import CompatRuntimeRow
     row = CompatRuntimeRow(settings_manager=sm, get_active_install=lambda: install)
 
-    assert row.change_button.isVisible() or not row.is_platform_hidden
+    assert row.is_platform_hidden is False
+    assert row.change_button.isHidden() is False
     assert "(Steam default)" in row.value_label.text()
     assert "Proton-CachyOS" in row.value_label.text()
 
@@ -160,7 +162,7 @@ def test_bottles_install_shows_readonly_label_no_button(
 
     assert "Bottles" in row.value_label.text()
     assert "Soda 9.0" in row.value_label.text()
-    assert not row.change_button.isVisible() or row.change_button.isHidden()
+    assert row.change_button.isHidden() is True
 
 
 def test_no_cc_install_hides_row(qapp, monkeypatch):
