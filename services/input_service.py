@@ -562,6 +562,11 @@ class InputService(QObject):
                                 bs_last_repeat = 0.0
                             self._send_movement_key_km("keyup", key, enabled, assignments)
 
+                        elif key in self.action_held:
+                            self.action_held.discard(key)
+                            self._log_key(key, "released")
+                            self._send_action_keyup_to_bg(key, enabled, assignments)
+
                         else:
                             self.bg_typing_held.discard(key)
 
