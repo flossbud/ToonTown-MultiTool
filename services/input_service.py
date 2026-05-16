@@ -111,6 +111,7 @@ class InputService(QObject):
         self.keys_held = set()
         self.bg_typing_held = set()
         self.modifiers_held = set()
+        self.action_held = set()
         self.chat_active = set()
         self.global_chat_active = False
 
@@ -262,6 +263,34 @@ class InputService(QObject):
             win = window_ids[i]
             if win != active_window:
                 self._send_via_backend(action, win, keysym)
+
+    def _send_action_keydown_to_bg(self, key, enabled, assignments):
+        """Send a sustained keydown for a non-movement action key to bg toons."""
+        keysym = self._resolve_keysym(key)
+        if not keysym:
+            return
+        active_window = self.window_manager.get_active_window()
+        window_ids = self.window_manager.get_window_ids()
+        for i, is_enabled in enumerate(enabled):
+            if not is_enabled or i >= len(window_ids):
+                continue
+            win = window_ids[i]
+            if win != active_window:
+                self._send_via_backend("keydown", win, keysym)
+
+    def _send_action_keyup_to_bg(self, key, enabled, assignments):
+        """Send a keyup matching a previously-sent action keydown to bg toons."""
+        keysym = self._resolve_keysym(key)
+        if not keysym:
+            return
+        active_window = self.window_manager.get_active_window()
+        window_ids = self.window_manager.get_window_ids()
+        for i, is_enabled in enumerate(enabled):
+            if not is_enabled or i >= len(window_ids):
+                continue
+            win = window_ids[i]
+            if win != active_window:
+                self._send_via_backend("keyup", win, keysym)
 
     def _send_typing_to_bg(self, key, enabled, assignments, movement_keys=None):
         active_window = self.window_manager.get_active_window()
