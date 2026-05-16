@@ -64,7 +64,7 @@ type nul > dist\ToonTownMultiTool\.beta_flavor
 ```
 ToonTownMultiTool-Setup-vDEV-Windows-x86_64.exe /VERYSILENT /SUPPRESSMSGBOXES ^
   /DIR=%TEMP%\ttmt-test /LOG=%TEMP%\install.log
-"%TEMP%\ttmt-test\ToonTownMultiTool.exe" --version
+"%TEMP%\ttmt-test\ToonTownMultiTool.exe" --self-check
 "%TEMP%\ttmt-test\unins000.exe" /VERYSILENT
 ```
 
