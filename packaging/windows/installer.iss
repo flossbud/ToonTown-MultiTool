@@ -1,5 +1,5 @@
 ; ToonTown MultiTool — Inno Setup script
-; Driven by /D defines from CI (build.yml): MyAppVersion, MyAppName, MyAppId,
+; Driven by /D defines from CI (build-windows.yml): MyAppVersion, MyAppName, MyAppId,
 ; MyAppFlavor (stable|beta), ConfigDirName, OutputBaseFilename.
 ;
 ; Local build example (from repo root):
