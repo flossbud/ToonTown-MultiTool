@@ -74,3 +74,6 @@ API Docs/
 
 # Superpowers brainstorming companion (mockups, session state)
 .superpowers/
+
+# === Windows NSIS installer output ===
+packaging/windows/Output/
