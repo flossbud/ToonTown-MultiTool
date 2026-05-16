@@ -8,25 +8,26 @@ Adding a new action: one Action(...) entry below + a label in keymap_tab.py.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import MappingProxyType
 
 
 @dataclass(frozen=True)
 class Action:
     games: frozenset[str]
-    defaults: dict[str, str]
+    defaults: MappingProxyType
 
 
 ACTIONS: dict[str, Action] = {
-    "forward": Action(frozenset({"ttr", "cc"}), {"ttr": "w",       "cc": "w"}),
-    "reverse": Action(frozenset({"ttr", "cc"}), {"ttr": "s",       "cc": "s"}),
-    "left":    Action(frozenset({"ttr", "cc"}), {"ttr": "a",       "cc": "a"}),
-    "right":   Action(frozenset({"ttr", "cc"}), {"ttr": "d",       "cc": "d"}),
-    "jump":    Action(frozenset({"ttr", "cc"}), {"ttr": "space",   "cc": "space"}),
-    "book":    Action(frozenset({"ttr", "cc"}), {"ttr": "Alt_L",   "cc": "Escape"}),
-    "gags":    Action(frozenset({"ttr", "cc"}), {"ttr": "g",       "cc": "q"}),
-    "tasks":   Action(frozenset({"ttr", "cc"}), {"ttr": "t",       "cc": "e"}),
-    "map":     Action(frozenset({"ttr", "cc"}), {"ttr": "Shift_L", "cc": "Alt_L"}),
-    "sprint":  Action(frozenset({"cc"}),       {"cc": "Shift_L"}),
+    "forward": Action(frozenset({"ttr", "cc"}), MappingProxyType({"ttr": "w",       "cc": "w"})),
+    "reverse": Action(frozenset({"ttr", "cc"}), MappingProxyType({"ttr": "s",       "cc": "s"})),
+    "left":    Action(frozenset({"ttr", "cc"}), MappingProxyType({"ttr": "a",       "cc": "a"})),
+    "right":   Action(frozenset({"ttr", "cc"}), MappingProxyType({"ttr": "d",       "cc": "d"})),
+    "jump":    Action(frozenset({"ttr", "cc"}), MappingProxyType({"ttr": "space",   "cc": "space"})),
+    "book":    Action(frozenset({"ttr", "cc"}), MappingProxyType({"ttr": "Alt_L",   "cc": "Escape"})),
+    "gags":    Action(frozenset({"ttr", "cc"}), MappingProxyType({"ttr": "g",       "cc": "q"})),
+    "tasks":   Action(frozenset({"ttr", "cc"}), MappingProxyType({"ttr": "t",       "cc": "e"})),
+    "map":     Action(frozenset({"ttr", "cc"}), MappingProxyType({"ttr": "Shift_L", "cc": "Alt_L"})),
+    "sprint":  Action(frozenset({"cc"}),        MappingProxyType({"cc": "Shift_L"})),
 }
 
 

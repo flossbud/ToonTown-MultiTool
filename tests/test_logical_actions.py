@@ -52,5 +52,18 @@ class TestActionsFor:
             "sprint",
         }
 
+    def test_ttr_action_order_is_stable(self):
+        assert logical_actions.actions_for("ttr") == [
+            "forward", "reverse", "left", "right",
+            "jump", "book", "gags", "tasks", "map",
+        ]
+
+    def test_cc_action_order_is_stable(self):
+        assert logical_actions.actions_for("cc") == [
+            "forward", "reverse", "left", "right",
+            "jump", "book", "gags", "tasks", "map",
+            "sprint",
+        ]
+
     def test_actions_for_unknown_game_is_empty(self):
         assert logical_actions.actions_for("xyz") == []
