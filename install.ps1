@@ -86,31 +86,42 @@ if (-not $Force) {
 
 # Find a supported Python (3.13 down to 3.9)
 function Find-SupportedPython {
-    foreach ($v in '3.13', '3.12', '3.11', '3.10', '3.9') {
-        # Try py launcher first (standard on python.org installs)
-        $pyOutput = & py "-$v" -c 'import sys; print(sys.executable)' 2>$null
-        if ($LASTEXITCODE -eq 0 -and $pyOutput) {
-            return @{
-                Launcher = "py"
-                Version = $v
-                Path = $pyOutput.Trim()
+    # Pre-check command availability so a missing `py` or `python` does not
+    # turn into a PowerShell "command not found" error (which Stop-mode
+    # terminates on, before we get to the LASTEXITCODE check).
+    $pyAvailable = $null -ne (Get-Command py -ErrorAction SilentlyContinue)
+    $pythonAvailable = $null -ne (Get-Command python -ErrorAction SilentlyContinue)
+
+    if ($pyAvailable) {
+        foreach ($v in '3.13', '3.12', '3.11', '3.10', '3.9') {
+            # Try py launcher first (standard on python.org installs)
+            $pyOutput = & py "-$v" -c 'import sys; print(sys.executable)' 2>$null
+            if ($LASTEXITCODE -eq 0 -and $pyOutput) {
+                return @{
+                    Launcher = "py"
+                    Version = $v
+                    Path = $pyOutput.Trim()
+                }
             }
         }
     }
 
-    # Fallback: try plain python on PATH
-    $pythonOutput = & python -c 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}")' 2>$null
-    if ($LASTEXITCODE -eq 0 -and $pythonOutput) {
-        $v = $pythonOutput.Trim()
-        if ($v -in @('3.9', '3.10', '3.11', '3.12', '3.13')) {
-            $path = & python -c 'import sys; print(sys.executable)' 2>$null
-            return @{
-                Launcher = "python"
-                Version = $v
-                Path = $path.Trim()
+    if ($pythonAvailable) {
+        # Fallback: try plain python on PATH
+        $pythonOutput = & python -c 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}")' 2>$null
+        if ($LASTEXITCODE -eq 0 -and $pythonOutput) {
+            $v = $pythonOutput.Trim()
+            if ($v -in @('3.9', '3.10', '3.11', '3.12', '3.13')) {
+                $path = & python -c 'import sys; print(sys.executable)' 2>$null
+                return @{
+                    Launcher = "python"
+                    Version = $v
+                    Path = $path.Trim()
+                }
             }
         }
     }
+
     return $null
 }
 
