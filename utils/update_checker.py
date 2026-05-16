@@ -68,8 +68,11 @@ def select_release(releases: List[dict], *, is_beta: bool) -> Optional[dict]:
             best_build = build
     if best is None:
         return None
-    best["build_number"] = best_build
-    return best
+    # Don't mutate the caller's dict; return a shallow copy with the
+    # parsed build number attached.
+    result = dict(best)
+    result["build_number"] = best_build
+    return result
 
 
 class _CheckWorker(QObject):
@@ -81,7 +84,13 @@ class _CheckWorker(QObject):
         self._manual = manual
 
     def run(self):
-        result = _perform_check(self._sm, manual=self._manual)
+        # Belt-and-suspenders: ensure `finished` always emits, even if
+        # _perform_check raises an unhandled exception. Without this, the
+        # checker would get stuck with _in_flight=True forever.
+        try:
+            result = _perform_check(self._sm, manual=self._manual)
+        except Exception as e:  # noqa: BLE001
+            result = {"kind": "failed", "reason": f"unexpected: {e}"}
         self.finished.emit(result)
 
 
@@ -129,6 +138,21 @@ class UpdateChecker(QObject):
             self._thread.deleteLater()
         self._thread = None
         self._worker = None
+        # Reset here as the guaranteed-final path. _on_finished also
+        # resets, but _cleanup_thread fires even when no `finished`
+        # signal was emitted (e.g. if QThread terminates abnormally).
+        self._in_flight = False
+
+    def shutdown(self) -> None:
+        """Drain any in-flight check before the owning widget closes.
+
+        Matches the pattern in tabs/launch_tab.py for thread teardown.
+        Wait up to 2 seconds for a clean exit; Qt will terminate
+        thereafter on process exit anyway.
+        """
+        if self._thread is not None and self._thread.isRunning():
+            self._thread.quit()
+            self._thread.wait(2000)
 
     def _dispatch(self, result: dict) -> None:
         kind = result.get("kind")

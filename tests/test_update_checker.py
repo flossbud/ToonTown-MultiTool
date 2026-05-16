@@ -1,6 +1,6 @@
 import json
 import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -85,7 +85,7 @@ class FakeResponse:
             raise HTTPError(f"{self.status_code}")
 
 
-def test_check_emits_update_available(monkeypatch, tmp_path):
+def test_check_emits_update_available(monkeypatch):
     sm = MagicMock()
     sm.get.return_value = None  # no cache, no skip
     payload = [
