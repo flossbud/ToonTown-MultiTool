@@ -73,13 +73,13 @@ Built with Python + PySide6.
 ## ⚙️ Requirements
 
 **🐧 Linux:**
-- Python 3.9+
+- Python 3.9 to 3.13
 - PySide6, pynput, python-xlib
 - `xdotool` (window detection only, not required for input)
 - Secret Service-compatible keyring (GNOME Keyring or KWallet)
 
 **🪟 Windows:**
-- Python 3.9+
+- Python 3.9 to 3.13
 - PySide6, pynput, pywin32
 
 ---
@@ -99,7 +99,7 @@ The AppImage, Flatpak, and run-from-source paths are CI-tested on every push aga
 
 The AppImage is built against glibc 2.31, so it runs on any of the above and newer. Like
 every Linux GUI application, it relies on the host's standard graphics stack (libGL/libEGL/
-libxcb) — present on every desktop install. AppImage double-click launch additionally needs
+libxcb), present on every desktop install. AppImage double-click launch additionally needs
 `libfuse2`; on newer distros that don't ship it (Ubuntu 24.04, Mint 22) either install it
 (`sudo apt install libfuse2`) or run the AppImage with `--appimage-extract-and-run`.
 
@@ -139,14 +139,23 @@ The Flatpak runs the app in a sandbox and uses `flatpak-spawn` to launch the hos
 
 ### Run from source
 
+Requires Python 3.9 to 3.13. pip will automatically install the newest dependency versions compatible with your interpreter, so distro defaults work without per-distro pinning.
+
 ```bash
 git clone https://github.com/flossbud/ToonTown-MultiTool.git
 cd ToonTown-MultiTool
+python3 -m venv venv
+source venv/bin/activate
 pip install -r requirements.txt
 python main.py
 ```
 
-On Linux you also need the system Qt6 runtime libraries (the `libxcb-*`, `libxkbcommon-x11`, `libegl1`, `libglib2.0-0` family) in addition to Python 3.9+. They're present on any standard desktop; on a minimal install, install your distro's Qt6 / PySide6 runtime dependencies.
+**If your system Python is 3.14 or newer** (Arch, Fedora 44+, etc.), install a 3.13 interpreter first:
+
+- **Fedora 44+:** `sudo dnf install python3.13`, then use `python3.13` in place of `python3` in the venv command above.
+- **Arch and other bleeding-edge distros:** install Python 3.13 via [pyenv](https://github.com/pyenv/pyenv) (`pyenv install 3.13 && pyenv shell 3.13`), then run the recipe above. The official Arch repos only ship the newest Python (currently 3.14), so a version manager is the cleanest path for working from a source clone. Most Arch users should prefer the AUR package (`yay -S toontown-multitool`) instead.
+
+On Linux you also need the system Qt6 runtime libraries (the `libxcb-*`, `libxkbcommon-x11`, `libegl1`, `libglib2.0-0` family). They're present on any standard desktop; on a minimal install, install your distro's Qt6 / PySide6 runtime dependencies.
 
 ### Linux: Wayland sessions
 
