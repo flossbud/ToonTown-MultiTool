@@ -166,3 +166,6 @@ class TestV1Migration:
         mgr, _ = _make_manager_with_file(tmp_path, {"version": 1, "foo": "bar"})
         assert mgr.num_sets("ttr") == 1
         assert mgr.num_sets("cc") == 1
+        # Reset should produce valid seeded defaults, not empty stubs
+        assert mgr.get_default("ttr")["forward"] == "w"
+        assert mgr.get_default("cc")["sprint"] == "Shift_L"
