@@ -399,15 +399,18 @@ class InputService(QObject):
                             event_queue.get_nowait()
                         except queue.Empty:
                             break
-                    if self.keys_held or self.modifiers_held:
+                    if self.keys_held or self.modifiers_held or self.action_held:
                         enabled     = self.get_enabled_toons()
                         assignments = self._get_assignments(enabled)
                         for key in list(self.keys_held):
                             self._send_movement_key_km("keyup", key, enabled, assignments)
                         for key in list(self.modifiers_held):
                             self._send_modifier_to_bg("keyup", key, enabled, assignments)
+                        for key in list(self.action_held):
+                            self._send_action_keyup_to_bg(key, enabled, assignments)
                         self.keys_held.clear()
                         self.modifiers_held.clear()
+                        self.action_held.clear()
                     self.bg_typing_held.clear()
                     self._phantom_reset()
                     if self.global_chat_active:

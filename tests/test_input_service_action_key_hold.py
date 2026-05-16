@@ -127,3 +127,36 @@ def test_action_held_drains_when_chat_opens():
     )
     # action_held should be empty after the drain:
     assert svc.action_held == set(), f"action_held leaked: {svc.action_held}"
+
+
+def test_action_held_drains_on_focus_loss():
+    """Hold Delete, then have the user alt-tab away (active window becomes
+    something that is neither a toon window nor the multitool). The cleanup
+    branch in the run loop must release Delete on background toons."""
+    svc, q = _make_service()
+
+    # Step 1: prime action_held by pressing Delete
+    q.put(("keydown", "Delete"))
+    svc.start()
+    # Wait for the keydown to register
+    deadline = time.monotonic() + 1.0
+    while time.monotonic() < deadline and ("Delete" not in svc.action_held):
+        time.sleep(0.005)
+    assert "Delete" in svc.action_held, "precondition: keydown did not register"
+
+    # Step 2: simulate focus loss by pointing window manager at an unrelated hwnd
+    svc.window_manager._active = "999999"  # not in window_ids, not multitool
+
+    # Wait for the loop's should_send_input() cleanup branch to fire
+    time.sleep(0.1)
+    svc.stop(wait=True)
+
+    delete_keyups = [
+        c.args for c in svc._xlib.send_keyup.call_args_list if c.args[1] == "Delete"
+    ]
+    # On focus loss the original "focused" toon is no longer active, so the
+    # drain treats every enabled toon as a background recipient.
+    assert ("1002", "Delete") in delete_keyups, (
+        f"expected Delete keyup on focus loss, got: {delete_keyups}"
+    )
+    assert svc.action_held == set()
