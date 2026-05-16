@@ -109,5 +109,114 @@ if [ "$FORCE" -ne 1 ] \
     exit 0
 fi
 
-echo "install.sh: nothing-to-do check did not match; proceeding with install."
-echo "(This stub will be extended in later tasks.)"
+# Distro detection from /etc/os-release
+if [ ! -f /etc/os-release ]; then
+    echo "install.sh: /etc/os-release not found; cannot detect distro." >&2
+    echo "Re-run with --skip-system-deps to skip OS-level detection:" >&2
+    echo "  ./install.sh --skip-system-deps" >&2
+    exit 1
+fi
+
+. /etc/os-release  # exports ID, ID_LIKE, PRETTY_NAME, etc.
+DISTRO_ID="${ID:-unknown}"
+DISTRO_LIKE="${ID_LIKE:-}"
+DISTRO_PRETTY="${PRETTY_NAME:-$DISTRO_ID}"
+
+# Map the detected distro to one of three families
+DISTRO_FAMILY="unsupported"
+case "$DISTRO_ID" in
+    debian|ubuntu|linuxmint|pop|elementary)
+        DISTRO_FAMILY="debian"
+        ;;
+    fedora)
+        DISTRO_FAMILY="fedora"
+        ;;
+    arch|manjaro|endeavouros)
+        DISTRO_FAMILY="arch"
+        ;;
+    *)
+        # Fall back to ID_LIKE for derivatives we haven't enumerated
+        for like in $DISTRO_LIKE; do
+            case "$like" in
+                debian|ubuntu)
+                    DISTRO_FAMILY="debian"
+                    break
+                    ;;
+                fedora|rhel)
+                    DISTRO_FAMILY="fedora"
+                    break
+                    ;;
+                arch)
+                    DISTRO_FAMILY="arch"
+                    break
+                    ;;
+            esac
+        done
+        ;;
+esac
+
+echo "Detected: $DISTRO_PRETTY"
+
+# Supported Python detection: search PATH for python3.13 down to python3.9
+find_supported_python() {
+    local candidate
+    for candidate in python3.13 python3.12 python3.11 python3.10 python3.9; do
+        if command -v "$candidate" >/dev/null 2>&1; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+PYTHON_BIN="$(find_supported_python || true)"
+
+if [ -n "$PYTHON_BIN" ]; then
+    echo "Found supported Python: $PYTHON_BIN -> $(command -v "$PYTHON_BIN")"
+fi
+
+# Arch wart: bail with hint if no supported Python on Arch
+if [ "$DISTRO_FAMILY" = "arch" ] && [ -z "$PYTHON_BIN" ]; then
+    cat >&2 <<EOF
+
+Detected: Arch Linux
+Arch ships Python 3.14 as default, which is not supported by PySide6 6.8.x.
+
+To install a supported Python:
+  AUR:    yay -S python313    (or paru, makepkg)
+  pyenv:  pyenv install 3.13 && pyenv shell 3.13
+
+After installing Python 3.13, re-run ./install.sh.
+
+(Most Arch users should install the AUR package directly:
+   yay -S toontown-multitool
+ instead of running from source.)
+EOF
+    exit 1
+fi
+
+# Unsupported-distro bail (skipped when --skip-system-deps is passed)
+if [ "$SKIP_SYSTEM_DEPS" -eq 0 ]; then
+    if [ "$DISTRO_FAMILY" = "unsupported" ]; then
+        cat >&2 <<EOF
+
+Detected unsupported distro: $DISTRO_PRETTY
+
+This installer does not have a package-manager mapping for your distro
+yet. Please install dependencies manually using your distro's package
+manager:
+  - A Python interpreter in the 3.9 to 3.13 range
+  - The Qt6 base runtime libraries (libxcb-*, libxkbcommon-x11, libegl1,
+    libglib2.0-0 equivalents)
+
+Then re-run with --skip-system-deps:
+  ./install.sh --skip-system-deps
+
+This skips OS package detection and just creates the venv and installs
+the Python deps.
+EOF
+        exit 1
+    fi
+fi
+
+echo "install.sh: detection complete (family=$DISTRO_FAMILY); next phase lands in Task 3."
