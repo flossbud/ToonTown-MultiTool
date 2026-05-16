@@ -50,7 +50,8 @@ def test_compat_row_hidden_on_windows(qapp, tmp_path, monkeypatch):
         settings_manager=None,
         get_active_install=lambda: _steam_install(tmp_path, _proton_dir(tmp_path, "p")),
     )
-    assert not row.isVisible() or row.is_platform_hidden
+    assert row.is_platform_hidden is True
+    assert row.isHidden() is True
 
 
 def test_steam_proton_no_override_shows_steam_default_suffix(
@@ -80,7 +81,8 @@ def test_steam_proton_no_override_shows_steam_default_suffix(
     from tabs.settings_tab import CompatRuntimeRow
     row = CompatRuntimeRow(settings_manager=sm, get_active_install=lambda: install)
 
-    assert row.change_button.isVisible() or not row.is_platform_hidden
+    assert row.is_platform_hidden is False
+    assert row.change_button.isHidden() is False
     assert "(Steam default)" in row.value_label.text()
     assert "Proton-CachyOS" in row.value_label.text()
 
@@ -160,7 +162,7 @@ def test_bottles_install_shows_readonly_label_no_button(
 
     assert "Bottles" in row.value_label.text()
     assert "Soda 9.0" in row.value_label.text()
-    assert not row.change_button.isVisible() or row.change_button.isHidden()
+    assert row.change_button.isHidden() is True
 
 
 def test_no_cc_install_hides_row(qapp, monkeypatch):
@@ -174,4 +176,94 @@ def test_no_cc_install_hides_row(qapp, monkeypatch):
     from tabs.settings_tab import CompatRuntimeRow
     row = CompatRuntimeRow(settings_manager=_SM(), get_active_install=lambda: None)
 
-    assert not row.isVisible() or row.isHidden()
+    assert row.isHidden() is True
+
+
+def test_change_button_click_persists_chosen_override(
+    qapp, tmp_path, monkeypatch,
+):
+    """Clicking Change opens the picker; on Accept with a specific Proton,
+    the override is written to settings and refresh() rebuilds the label."""
+    monkeypatch.setattr(sys, "platform", "linux")
+    proton = _proton_dir(tmp_path, "ChosenProton")
+    install = _steam_install(tmp_path, _proton_dir(tmp_path, "ConfigInfo"))
+
+    class _SM:
+        def __init__(self): self.values = {}
+        def get(self, k, d=None): return self.values.get(k, d)
+        def set(self, k, v): self.values[k] = v
+        def on_change(self, cb): pass
+
+    sm = _SM()
+
+    # Stub the picker: simulate "Accepted with proton=<chosen>".
+    class _StubDialog:
+        DialogCode = type("DC", (), {"Accepted": 1, "Rejected": 0})()
+
+        def __init__(self, tools, current_override, steam_default_display,
+                     parent=None):
+            self._chosen = proton
+
+        def exec(self):
+            return self.DialogCode.Accepted
+
+        def chosen_override(self):
+            return self._chosen
+
+    monkeypatch.setattr("utils.widgets.cc_compat_picker.CCCompatPickerDialog",
+                        _StubDialog)
+    monkeypatch.setattr("services.cc_launcher._resolve_effective_proton",
+                        lambda inst, s: proton)
+    monkeypatch.setattr(
+        "services.steam_proton_tools.enumerate_proton_tools",
+        lambda: [ProtonTool(name="chosen", display_name="ChosenProton",
+                            proton_dir=proton, source="compatibilitytools.d",
+                            steam_root="/fake", version_key=(9, 0))],
+    )
+
+    from tabs.settings_tab import CompatRuntimeRow
+    row = CompatRuntimeRow(settings_manager=sm, get_active_install=lambda: install)
+    row._on_change_clicked()
+
+    assert sm.values.get("cc_steam_proton_override") == proton
+
+
+def test_change_button_click_cancel_does_not_persist(
+    qapp, tmp_path, monkeypatch,
+):
+    """Cancelling the picker leaves cc_steam_proton_override untouched."""
+    monkeypatch.setattr(sys, "platform", "linux")
+    proton = _proton_dir(tmp_path, "ConfigInfo")
+    install = _steam_install(tmp_path, proton)
+
+    class _SM:
+        def __init__(self): self.values = {"cc_steam_proton_override": "preexisting"}
+        def get(self, k, d=None): return self.values.get(k, d)
+        def set(self, k, v): self.values[k] = v
+        def on_change(self, cb): pass
+
+    sm = _SM()
+
+    class _StubDialog:
+        DialogCode = type("DC", (), {"Accepted": 1, "Rejected": 0})()
+        def __init__(self, tools, current_override, steam_default_display, parent=None):
+            pass
+        def exec(self):
+            return self.DialogCode.Rejected
+        def chosen_override(self):
+            return None
+
+    monkeypatch.setattr("utils.widgets.cc_compat_picker.CCCompatPickerDialog",
+                        _StubDialog)
+    monkeypatch.setattr("services.cc_launcher._resolve_effective_proton",
+                        lambda inst, s: proton)
+    monkeypatch.setattr(
+        "services.steam_proton_tools.enumerate_proton_tools",
+        lambda: [],
+    )
+
+    from tabs.settings_tab import CompatRuntimeRow
+    row = CompatRuntimeRow(settings_manager=sm, get_active_install=lambda: install)
+    row._on_change_clicked()
+
+    assert sm.values["cc_steam_proton_override"] == "preexisting"  # unchanged

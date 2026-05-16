@@ -479,7 +479,6 @@ class CompatRuntimeRow(SettingsRow):
 
         # Build the value label + Change button as a single container
         # widget, then slot it via add_control (the real SettingsRow API).
-        from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QWidget
         self.value_label = QLabel("")
         self.value_label.setObjectName("compat_runtime_value")
         self.change_button = QPushButton("Change…")
@@ -542,8 +541,11 @@ class CompatRuntimeRow(SettingsRow):
                       or install.metadata.get("bottle_name") or "(unknown)")
             return f"Bottles · {runner}"
         if install.launcher == "lutris":
-            wine = install.metadata.get("lutris_wine_version") or "wine"
-            return f"Lutris · {wine}"
+            # Lutris pins wine version per-game inside its YAML config, but
+            # _parse_lutris_yaml only surfaces lutris_slug / lutris_name in
+            # metadata today. Show the game name as the next best identifier.
+            name = install.metadata.get("lutris_name") or install.metadata.get("lutris_slug") or "(unknown)"
+            return f"Lutris · {name}"
         if install.launcher == "wine":
             return "Wine · system wine"
         if install.launcher == "native":
