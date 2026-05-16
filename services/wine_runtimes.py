@@ -552,7 +552,15 @@ def build_launch_command(
         proton_bin = os.path.join(proton_dir, "proton")
         env["STEAM_COMPAT_DATA_PATH"] = os.path.dirname(install.prefix_path)
         env["STEAM_COMPAT_CLIENT_INSTALL_PATH"] = steam_root
-        return [proton_bin, "run", install.exe_path, *args], env
+        # Use "waitforexitandrun" rather than "run". protonfixes guards its
+        # game-specific setup (DLL overrides, winetricks deps, registry
+        # tweaks) behind `'waitforexitandrun' in sys.argv[1]`. With "run",
+        # protonfixes logs "Skipping fix execution. We are probably running
+        # a unit test." and CC.exe launches without the runtime prep it
+        # needs, exiting rc=1. Steam itself, umu-launcher, and Lutris all
+        # use waitforexitandrun. The setup_*_drive helpers that "run"
+        # adds (drive S:/T: symlinks) aren't needed for CC.
+        return [proton_bin, "waitforexitandrun", install.exe_path, *args], env
 
     if install.launcher == "bottles":
         if not install.prefix_path:

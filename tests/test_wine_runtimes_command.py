@@ -88,7 +88,7 @@ def test_steam_proton_uses_proton_runtime(tmp_path):
         },
     )
     cmd, env = build_launch_command(install, ["-g", "srv"], {"TT_PLAYCOOKIE": "t"})
-    assert cmd == [str(proton_bin), "run", str(exe), "-g", "srv"]
+    assert cmd == [str(proton_bin), "waitforexitandrun", str(exe), "-g", "srv"]
     assert env["STEAM_COMPAT_DATA_PATH"] == str(tmp_path / "compatdata/12345")
     assert env["STEAM_COMPAT_CLIENT_INSTALL_PATH"] == str(steam_root)
 

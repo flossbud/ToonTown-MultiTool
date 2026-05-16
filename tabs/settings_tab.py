@@ -1516,16 +1516,36 @@ class SettingsTab(QWidget):
         return box.clickedButton() is enable_btn
 
     def _get_active_cc_install(self):
-        """Return the currently-resolved WineInstall for CC, or None."""
-        from services.wine_runtimes import classify_path
-        path = self.settings_manager.get("cc_engine_dir", "") if self.settings_manager else ""
-        if not path:
+        """Return the currently-resolved WineInstall for CC, or None.
+
+        cc_engine_dir stores the install *directory*; classify_path expects
+        the *exe path*. Mirror tabs/launch_tab._build_cc_install: append the
+        engine executable name and verify the file exists before classifying.
+        """
+        from services.cc_login_service import get_cc_engine_executable_name
+        from services.wine_runtimes import WineInstall, classify_path
+        engine_dir = self.settings_manager.get("cc_engine_dir", "") if self.settings_manager else ""
+        if not engine_dir:
+            return None
+        exe = os.path.join(engine_dir, get_cc_engine_executable_name())
+        if not os.path.isfile(exe):
             return None
         try:
-            return classify_path(path)
+            classified = classify_path(exe)
         except Exception as e:
-            print(f"[settings_tab] classify_path({path!r}) failed: {e}")
+            print(f"[settings_tab] classify_path({exe!r}) failed: {e}")
             return None
+        if classified is not None:
+            return classified
+        # Fall back to a native install record so the row still renders
+        # (read-only label path); matches _build_cc_install's behavior.
+        return WineInstall(
+            exe_path=exe,
+            launcher="native",
+            prefix_path=None,
+            display_name="Corporate Clash",
+            metadata={},
+        )
 
     def _build_advanced_group(self):
         self.advanced_group = CollapsibleSettingsGroup(
