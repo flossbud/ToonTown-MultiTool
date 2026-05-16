@@ -20,8 +20,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 # Parse args
+# shellcheck disable=SC2034  # consumed by run_sudo() in Task 3
 ASSUME_YES=0
 FORCE=0
+# shellcheck disable=SC2034  # consumed by the SKIP_SYSTEM_DEPS gate in Task 2
 SKIP_SYSTEM_DEPS=0
 
 print_help() {
@@ -71,6 +73,10 @@ VENV_DIR="./venv"
 SENTINEL="$VENV_DIR/.requirements.sha"
 
 req_hash() {
+    # Return empty silently if requirements.txt is missing, so the
+    # idempotency check falls through to the proceed-with-install path
+    # without printing a sha256sum error.
+    [ -f requirements.txt ] || return 0
     sha256sum requirements.txt | awk '{print $1}'
 }
 
