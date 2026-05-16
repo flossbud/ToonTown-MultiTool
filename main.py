@@ -1208,6 +1208,26 @@ if __name__ == "__main__":
     if "--self-check" in sys.argv:
         sys.exit(_run_self_check())
 
+    if "--apply-installer-config" in sys.argv:
+        # Invoked by the Windows Inno Setup installer's [Run] section to
+        # persist the user's wizard choices into settings.json. Runs headless,
+        # exits before any Qt or service initialization.
+        def _flag(name: str, default: bool = False) -> bool:
+            for arg in sys.argv:
+                if arg.startswith(f"--{name}="):
+                    return arg.split("=", 1)[1].lower() in ("1", "true")
+            return default
+
+        from utils.build_flavor import config_dir as _config_dir
+        from utils.installer_merge import merge_installer_config
+        target = os.path.join(_config_dir(), "settings.json")
+        ok = merge_installer_config(
+            target,
+            check_updates=_flag("check-updates", default=True),
+            keep_alive=_flag("keep-alive", default=False),
+        )
+        sys.exit(0 if ok else 1)
+
     # Identity must be set BEFORE QApplication is constructed; Qt reads these
     # at construction time to populate X11 WM_CLASS and Wayland app_id.
     # Without them Qt falls back to argv[0] ("python3" inside the Flatpak)

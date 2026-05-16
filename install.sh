@@ -6,6 +6,11 @@
 # and Qt6 runtime libraries) via sudo, creates a venv at ./venv, and
 # installs the Python dependencies from requirements.txt.
 #
+# CAUTION: print_help's sed range terminates at the first blank line
+# after `# Usage:` below. Do NOT insert blank lines inside the Usage
+# block (e.g. to group flags) or --help will truncate silently. Use
+# a `#` comment line with no trailing content for visual breaks.
+#
 # Usage:
 #   ./install.sh                  Interactive install (prompts before each sudo)
 #   ./install.sh --yes            Skip all confirmation prompts
@@ -95,15 +100,29 @@ venv_python_in_range() {
     esac
 }
 
+# Print a leading status line, then a shell-aware activation hint (one
+# line for fish users, two lines for the default bash/zsh case with a
+# fish fallback), then the "Then run" line.
+print_activation_hint() {
+    echo "$1"
+    case "${SHELL:-}" in
+        */fish)
+            echo "Activate with: source venv/bin/activate.fish"
+            ;;
+        *)
+            echo "Activate with: source venv/bin/activate"
+            echo "          (or  source venv/bin/activate.fish for fish)"
+            ;;
+    esac
+    echo "Then run: python main.py"
+}
+
 if [ "$FORCE" -ne 1 ] \
     && [ -x "$VENV_DIR/bin/python" ] \
     && venv_python_in_range \
     && [ -f "$SENTINEL" ] \
     && [ "$(cat "$SENTINEL" 2>/dev/null)" = "$(req_hash)" ]; then
-    echo "venv is already up to date."
-    echo "Activate with: source venv/bin/activate"
-    echo "         (or  source venv/bin/activate.fish for fish)"
-    echo "Then run: python main.py"
+    print_activation_hint "venv is already up to date."
     exit 0
 fi
 
@@ -237,9 +256,19 @@ run_sudo() {
 missing_python_packages() {
     case "$DISTRO_FAMILY" in
         debian)
+            # Ubuntu 24.04 LTS ships python3.12 in apt; Debian 12
+            # (bookworm) only ships python3.11 and requires deadsnakes
+            # or pyenv to reach 3.12. We pin 3.12 because Ubuntu 24.04
+            # (and Mint 22, which is Ubuntu-based) is the dominant
+            # target in our supported matrix. Bump to 3.13 once Ubuntu
+            # 26.04 / Debian 13 ship it in apt.
             echo "python3.12 python3.12-venv python3.12-dev"
             ;;
         fedora)
+            # Fedora ships python3.10 through python3.14 simultaneously
+            # in the official repos; 3.13 is the newest in our supported
+            # window. Asymmetric with Debian above by design: Debian apt
+            # doesn't ship 3.13 on the supported releases.
             echo "python3.13 python3.13-devel"
             ;;
         arch)
@@ -450,14 +479,4 @@ req_hash > "$SENTINEL"
 
 # Activation hint
 echo ""
-echo "Done."
-case "${SHELL:-}" in
-    */fish)
-        echo "Activate with: source venv/bin/activate.fish"
-        ;;
-    *)
-        echo "Activate with: source venv/bin/activate"
-        echo "          (or  source venv/bin/activate.fish for fish)"
-        ;;
-esac
-echo "Then run: python main.py"
+print_activation_hint "Done."

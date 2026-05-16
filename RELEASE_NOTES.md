@@ -26,6 +26,9 @@ Smoke-test this build before promotion to beta or stable. See
 
 ### Improvements
 
+#### Windows installer
+- Windows: new traditional installer wizard alongside the existing ZIP. The installer asks per-user or all-users scope, offers a desktop shortcut, lets you opt into Keep-Alive (with TOS warning) and "check for updates at startup", and registers in Add/Remove Programs. Beta and stable installs sit side-by-side. ZIP stays available for portable use.
+
 #### Chip-rail navigation
 - **The left sidebar is gone.** Navigation moved to a horizontal chip
   rail at the bottom of the window. Tabs (now named Launcher / Keysets

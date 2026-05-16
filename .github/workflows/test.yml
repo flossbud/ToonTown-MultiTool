@@ -76,6 +76,61 @@ jobs:
           Write-Host "--- EXE exit code: $($proc.ExitCode) ---"
           if ($proc.ExitCode -ne 0) { throw "EXE --self-check failed ($($proc.ExitCode))" }
 
+  test-windows-installer:
+    if: ${{ inputs.include_windows }}
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download installer artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-installer
+          path: installer-in
+
+      - name: Silent install
+        shell: pwsh
+        run: |
+          $installer = (Get-ChildItem installer-in\*.exe)[0].FullName
+          $target = "$env:RUNNER_TEMP\ttmt-install"
+          & $installer /VERYSILENT /SUPPRESSMSGBOXES /DIR="$target" /LOG="$env:RUNNER_TEMP\install.log"
+          if ($LASTEXITCODE -ne 0) {
+            Get-Content "$env:RUNNER_TEMP\install.log" -ErrorAction SilentlyContinue
+            throw "Installer exited $LASTEXITCODE"
+          }
+          if (-not (Test-Path "$target\ToonTownMultiTool.exe")) {
+            Get-Content "$env:RUNNER_TEMP\install.log" -ErrorAction SilentlyContinue
+            throw "Expected EXE not present at $target\ToonTownMultiTool.exe"
+          }
+
+      - name: Launch-test the installed EXE
+        shell: pwsh
+        run: |
+          # Same Start-Process pattern as test-windows: GUI-subsystem EXE has
+          # no console output, so we redirect streams to files and inspect
+          # the real exit code via -PassThru.
+          $exe = "$env:RUNNER_TEMP\ttmt-install\ToonTownMultiTool.exe"
+          $proc = Start-Process -FilePath $exe -ArgumentList "--self-check" -Wait -PassThru `
+            -RedirectStandardOutput exe-out.txt -RedirectStandardError exe-err.txt
+          Write-Host "--- EXE stdout ---"
+          if (Test-Path exe-out.txt) { Get-Content exe-out.txt }
+          Write-Host "--- EXE stderr ---"
+          if (Test-Path exe-err.txt) { Get-Content exe-err.txt }
+          Write-Host "--- EXE exit code: $($proc.ExitCode) ---"
+          if ($proc.ExitCode -ne 0) { throw "Installed EXE --self-check failed ($($proc.ExitCode))" }
+
+      - name: Silent uninstall
+        shell: pwsh
+        run: |
+          $unins = "$env:RUNNER_TEMP\ttmt-install\unins000.exe"
+          if (Test-Path $unins) {
+            $proc = Start-Process -FilePath $unins -ArgumentList "/VERYSILENT" -Wait -PassThru
+            if ($proc.ExitCode -ne 0) { throw "Uninstaller exited $($proc.ExitCode)" }
+          } else {
+            throw "Expected uninstaller at $unins"
+          }
+
   test-linux-source:
     runs-on: ubuntu-latest
     timeout-minutes: 20
