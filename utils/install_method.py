@@ -52,7 +52,8 @@ def _detect_uncached() -> InstallMethod:
                 ["pacman", "-Qo", exec_path],
                 capture_output=True, text=True, timeout=5,
             )
-            if r.returncode == 0 and ("ttmt" in r.stdout or "ttmt-beta" in r.stdout):
+            # Matches both `ttmt` (stable) and `ttmt-beta` (beta channel).
+            if r.returncode == 0 and "ttmt" in r.stdout:
                 return InstallMethod.AUR
         except (FileNotFoundError, subprocess.SubprocessError):
             pass
