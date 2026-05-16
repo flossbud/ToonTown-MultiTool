@@ -276,7 +276,17 @@ class CCLauncher(QObject):
             return
 
         spawn_env = build_launcher_env(env_overrides)
-        cwd = install.prefix_path or os.path.dirname(install.exe_path)
+        # Run from the game's own install directory so Panda3D resolves
+        # CC's asset multifiles (phase_*.mf) relative to it. The previous
+        # cwd of install.prefix_path made wine set the in-prefix cwd to
+        # something other than the Corporate Clash dir, and CC crashed in
+        # ToontownMusic.__init__ with:
+        #   OSError: Failed to read file: '/phase_3/audio/music.json'
+        # Steam itself launches games with cwd = the game's install dir,
+        # which is the convention CC was built to expect. Bottles-cli
+        # sets its own internal cwd regardless, so this is safe for the
+        # bottles path too.
+        cwd = os.path.dirname(install.exe_path)
         # Keys whose values must never appear in plain text in the log.
         # TT_PLAYCOOKIE is the game-session token (auth secret). LAUNCHER_USER
         # is the account username — PII that would otherwise leak when a

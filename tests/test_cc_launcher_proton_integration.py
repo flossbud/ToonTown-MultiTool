@@ -177,3 +177,40 @@ def test_resolver_none_emits_launch_failed(qapp, tmp_path, monkeypatch):
     assert len(failed_msgs) == 1
     assert "no Proton compatibility tool is installed" in failed_msgs[0]
     assert spawn_called["n"] == 0
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Linux-only path")
+def test_cwd_is_exe_dir_not_prefix_root(qapp, tmp_path, monkeypatch):
+    """Regression test: cwd must be the game's install directory, not
+    the prefix root. CC is a Panda3D game and resolves its asset
+    multifiles (phase_*.mf) relative to cwd. With cwd=prefix_path,
+    Panda crashed with OSError: Failed to read file:
+    '/phase_3/audio/music.json'."""
+    proton = _make_proton_dir(tmp_path, "Proton")
+    install = _steam_proton_install(tmp_path, proton_dir=proton)
+    sm = _FakeSettings({})
+    captured = {}
+
+    class _Proc:
+        def __init__(self): self.pid = 9999
+        def poll(self): return None
+        def wait(self): return 0
+    monkeypatch.setattr(ccl, "host_popen",
+                        lambda cmd, **kw: (captured.update(cmd=cmd, cwd=kw.get("cwd")) or _Proc()))
+    monkeypatch.setattr("services.wine_runtimes.is_launcher_available",
+                        lambda lk: True)
+    monkeypatch.setattr(ccl, "steam_compat_choice", lambda r, a: None)
+    launcher = ccl.CCLauncher(settings_manager=sm)
+
+    launcher.launch(gameserver="g", game_token="t", install=install,
+                    username="u")
+    import time
+    for _ in range(50):
+        if "cwd" in captured:
+            break
+        time.sleep(0.02)
+
+    expected_cwd = os.path.dirname(install.exe_path)
+    assert captured["cwd"] == expected_cwd
+    # Sanity: the prefix root would have been the WRONG cwd.
+    assert captured["cwd"] != install.prefix_path
