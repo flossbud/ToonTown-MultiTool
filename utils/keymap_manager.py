@@ -227,9 +227,9 @@ class KeymapManager:
     # ── Write API (Task 4 expands this further) ────────────────────────────
 
     def update_set_key(self, game: str, set_index: int, action: str, key: str):
-        if action not in logical_actions.ACTIONS:
-            return
         if game not in GAMES:
+            return
+        if not logical_actions.supports(game, action):
             return
         with self._lock:
             sets = self._sets.get(game, [])

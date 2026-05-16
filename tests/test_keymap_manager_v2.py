@@ -2,8 +2,6 @@
 
 import json
 import os
-import tempfile
-from pathlib import Path
 
 import pytest
 
@@ -89,3 +87,24 @@ class TestReadAPI:
         mgr, _ = _make_manager_with_file(tmp_path)
         assert mgr.num_sets("ttr") == 1
         assert mgr.num_sets("cc") == 1
+
+
+class TestUpdateSetKeyGameScope:
+    def test_rejects_cc_only_action_on_ttr_set(self, tmp_path):
+        mgr, _ = _make_manager_with_file(tmp_path)
+        mgr.update_set_key("ttr", 0, "sprint", "Shift_L")
+        # sprint is CC-only; nothing should land in the TTR set
+        assert "sprint" not in mgr.get_default("ttr")
+
+    def test_accepts_shared_action_on_both_games(self, tmp_path):
+        mgr, _ = _make_manager_with_file(tmp_path)
+        mgr.update_set_key("ttr", 0, "forward", "i")
+        mgr.update_set_key("cc", 0, "forward", "j")
+        assert mgr.get_default("ttr")["forward"] == "i"
+        assert mgr.get_default("cc")["forward"] == "j"
+
+    def test_rejects_unknown_game(self, tmp_path):
+        mgr, _ = _make_manager_with_file(tmp_path)
+        mgr.update_set_key("xyz", 0, "forward", "z")
+        # No crash, no state change
+        assert mgr.get_default("ttr")["forward"] == "w"
