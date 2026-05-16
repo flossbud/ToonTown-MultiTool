@@ -29,7 +29,9 @@
 #endif
 
 [Setup]
-AppId={#MyAppId}
+; AppId GUIDs from guids.env arrive wrapped in {...}. The leading `{` must be
+; doubled or Inno parses the value as a constant lookup ("Unknown constant").
+AppId={{#MyAppId}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher=flossbud
