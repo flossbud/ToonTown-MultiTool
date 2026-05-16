@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 import sys
 
+# Upper bound mirrors the PySide6 ceiling in requirements.txt (no 3.14+
+# wheels for PySide6 6.8.x). When that ceiling moves, bump (3, 14) here.
 if not (3, 9) <= sys.version_info[:2] < (3, 14):
     sys.stderr.write(
         "ToonTown MultiTool requires Python 3.9-3.13. "

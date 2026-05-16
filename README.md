@@ -145,7 +145,7 @@ Requires Python 3.9 to 3.13. pip will automatically install the newest dependenc
 git clone https://github.com/flossbud/ToonTown-MultiTool.git
 cd ToonTown-MultiTool
 python3 -m venv venv
-source venv/bin/activate
+source venv/bin/activate           # use activate.fish if your shell is fish
 pip install -r requirements.txt
 python main.py
 ```
