@@ -656,6 +656,9 @@ class InputService(QObject):
         """Idle timeout fired — send Escape to bg toons to close any open chat, then reset."""
         if self.logging_enabled:
             self.input_log.emit("[Input] Chat idle timeout — resetting chat state")
+        # Defensive: in case any action key was somehow held during chat,
+        # release it now. Normal flow drains on chat-open so this is empty.
+        self._drain_action_held(enabled, assignments)
         if self.global_chat_active:
             active_window = self.window_manager.get_active_window()
             window_ids = self.window_manager.get_window_ids()
@@ -745,9 +748,13 @@ class InputService(QObject):
                         if window_ids[i] != active_window:
                             self._send_via_backend("keyup", window_ids[i], keysym)
 
+        for key in list(self.action_held):
+            self._send_action_keyup_to_bg(key, enabled, assignments)
+
         self.keys_held.clear()
         self.modifiers_held.clear()
         self.bg_typing_held.clear()
+        self.action_held.clear()
         self.chat_active.clear()
         self._set_chat_active(False)
         self._phantom_reset()

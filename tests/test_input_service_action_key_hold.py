@@ -160,3 +160,63 @@ def test_action_held_drains_on_focus_loss():
         f"expected Delete keyup on focus loss, got: {delete_keyups}"
     )
     assert svc.action_held == set()
+
+
+def test_action_held_drains_on_release_all_keys():
+    """release_all_keys is invoked on shutdown and must clear action_held
+    so a held Delete doesn't linger after the app exits."""
+    svc, q = _make_service()
+
+    # Prime action_held without triggering the run-loop's own release_all_keys
+    # (which happens in the finally of stop()). We simulate the keydown directly.
+    q.put(("keydown", "Delete"))
+    svc.start()
+    deadline = time.monotonic() + 1.0
+    while time.monotonic() < deadline and ("Delete" not in svc.action_held):
+        time.sleep(0.005)
+    assert "Delete" in svc.action_held, "precondition: Delete should be held"
+
+    svc._xlib.send_keyup.reset_mock()
+    svc.release_all_keys()
+
+    delete_keyups = [
+        c.args for c in svc._xlib.send_keyup.call_args_list if c.args[1] == "Delete"
+    ]
+    # release_all_keys runs after focus-loss-like cleanup so both windows are bg recipients:
+    assert ("1002", "Delete") in delete_keyups, (
+        f"expected Delete keyup on release_all_keys, got: {delete_keyups}"
+    )
+    assert svc.action_held == set()
+
+    svc.stop(wait=True)
+
+
+def test_typing_in_chat_uses_tap_path_not_held_path():
+    """When chat is active, pressing a printable key must use the existing
+    typing/tap path so the character appears in TTR's chatbox. The new
+    held-action path must NOT engage.
+
+    Note: we use a non-movement printable key ("h") because WASD movement
+    keys take a different filtered branch in legacy (no keymap_manager) mode.
+    The spirit of the test is: printable typing should not engage the held
+    action path.
+    """
+    svc, q = _make_service()
+    svc.global_chat_active = True  # simulate chat already open
+
+    _drive(svc, q, [("keydown", "h"), ("keyup", "h")])
+
+    # Should NOT have called send_keydown for "h" (that's the held path):
+    keydowns_for_h = [
+        c.args for c in svc._xlib.send_keydown.call_args_list if c.args[1] == "h"
+    ]
+    assert keydowns_for_h == [], (
+        f"chat typing should use tap path, but got keydowns: {keydowns_for_h}"
+    )
+    # Should have used send_key (the tap path) for "h":
+    taps_for_h = [
+        c.args for c in svc._xlib.send_key.call_args_list if c.args[1] == "h"
+    ]
+    assert taps_for_h, "chat typing did not reach the tap path"
+    # action_held must remain empty:
+    assert svc.action_held == set()
