@@ -46,6 +46,17 @@ For each item below: what is stored, where, and *why*.
 - **Delete everything the app stores.** Delete `~/.config/toontown_multitool/`.
 - **Uninstalling does not remove your config directory.** That cleanup is your choice.
 
+## Update checks
+
+When "Check for updates at startup" is enabled in Settings (or when you
+click "Check now"), the app makes one HTTPS request to
+`api.github.com/repos/flossbud/ToonTownMultiTool-v2/releases` to read
+the public releases list. No user data, machine ID, or telemetry is
+sent. The only identifying value is a `User-Agent` header in the form
+`ToonTownMultiTool/<version>`.
+
+You can disable update checks at any time in Settings, Updates.
+
 ## Future features
 
 If we add features that store more data (for example, the planned Profile Builder, which would persist toon names, photos, and stats locally), we will update this policy and call out the change in the release notes / changelog. We will not silently expand what the app stores or transmits.
