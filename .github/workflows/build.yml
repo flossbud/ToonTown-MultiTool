@@ -44,6 +44,76 @@ jobs:
           name: windows-zip
           path: ToonTownMultiTool-*.zip
 
+  build-windows-installer:
+    needs: build-windows
+    runs-on: windows-latest
+    if: ${{ inputs.include_windows }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download windows onedir zip
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-zip
+          path: zip-in
+
+      - name: Extract onedir into dist\
+        shell: pwsh
+        run: |
+          $zip = (Get-ChildItem zip-in\ToonTownMultiTool-*.zip)[0].FullName
+          New-Item -ItemType Directory -Force -Path dist\ToonTownMultiTool | Out-Null
+          Expand-Archive $zip -DestinationPath dist\ToonTownMultiTool -Force
+
+      - name: Load AppId GUIDs
+        shell: bash
+        run: cat packaging/windows/guids.env >> "$GITHUB_ENV"
+
+      - name: Determine flavor and metadata
+        id: flavor
+        shell: bash
+        run: |
+          tag="${{ inputs.version_label }}"
+          if [[ "$tag" == *-* ]]; then
+            echo "flavor=beta" >> "$GITHUB_OUTPUT"
+            echo "name=ToonTown MultiTool Beta" >> "$GITHUB_OUTPUT"
+            echo "appid=$BETA_APPID" >> "$GITHUB_OUTPUT"
+            echo "configdir=toontown_multitool_beta" >> "$GITHUB_OUTPUT"
+          else
+            echo "flavor=stable" >> "$GITHUB_OUTPUT"
+            echo "name=ToonTown MultiTool" >> "$GITHUB_OUTPUT"
+            echo "appid=$STABLE_APPID" >> "$GITHUB_OUTPUT"
+            echo "configdir=toontown_multitool" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Drop beta sentinel
+        if: steps.flavor.outputs.flavor == 'beta'
+        shell: pwsh
+        run: New-Item -Path dist\ToonTownMultiTool\.beta_flavor -ItemType File -Force | Out-Null
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup -y --no-progress
+
+      - name: Compile installer
+        shell: pwsh
+        run: |
+          $tag = "${{ inputs.version_label }}"
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          & $iscc `
+            "/DMyAppVersion=$tag" `
+            "/DMyAppName=${{ steps.flavor.outputs.name }}" `
+            "/DMyAppId=${{ steps.flavor.outputs.appid }}" `
+            "/DMyAppFlavor=${{ steps.flavor.outputs.flavor }}" `
+            "/DConfigDirName=${{ steps.flavor.outputs.configdir }}" `
+            "/DOutputBaseFilename=ToonTownMultiTool-Setup-$tag-Windows-x86_64" `
+            packaging\windows\installer.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit $LASTEXITCODE" }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: packaging/windows/Output/*.exe
+
   build-linux:
     # Build inside debian:11 (glibc 2.31) so the AppImage runs on every
     # currently-supported Debian/Ubuntu/Mint release. The full Qt runtime
