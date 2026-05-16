@@ -137,6 +137,34 @@ flatpak run io.github.flossbud.ToonTownMultiTool
 
 The Flatpak runs the app in a sandbox and uses `flatpak-spawn` to launch the host TTR and Corporate Clash engines, so you must already have those games installed on the host.
 
+### Windows
+
+**Recommended:** Download the installer from the
+[latest release](https://github.com/flossbud/ToonTownMultiTool-v2/releases/latest):
+
+- `ToonTownMultiTool-Setup-vX.Y.Z-Windows-x86_64.exe`
+
+Run the installer. You'll see a standard wizard that asks whether to install
+for just you (recommended, no admin required) or for all users on the PC.
+
+On first download, Windows SmartScreen will show "Windows protected your PC".
+This is expected for unsigned installers. Click "More info" then "Run anyway".
+
+**Portable (no install):** If you'd rather not install, download the ZIP:
+
+- `ToonTownMultiTool-vX.Y.Z-Windows-x86_64.zip`
+
+Extract it anywhere and run `ToonTownMultiTool.exe` from inside the extracted
+folder. Same EXE, no Start Menu entry or uninstaller.
+
+**Beta channel:** Builds from the development branch are released as separate
+prereleases:
+
+- `ToonTownMultiTool-Setup-vX.Y.Z-A-Windows-x86_64.exe`
+
+The beta installer installs side-by-side with the stable version under a
+separate Start Menu folder, so testing a beta won't disturb your working install.
+
 ### Run from source
 
 After extracting or cloning the source, from inside the repo directory:
