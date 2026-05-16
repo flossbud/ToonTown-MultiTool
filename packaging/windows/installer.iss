@@ -72,3 +72,62 @@ Name: "{commondesktop}\{#MyAppName}"; Filename: "{app}\ToonTownMultiTool.exe"; T
 [UninstallDelete]
 ; The user-data purge is handled in [Code] via InitializeUninstall + DelTree
 ; so the channel-specific config dir is removed only when the user opts in.
+
+[Code]
+var
+  KeepAliveDisclaimer: TLabel;
+  KeepAliveWarning: TLabel;
+  UpdatesExplainer: TLabel;
+
+procedure InitializeWizard;
+var
+  TasksPage: TWizardPage;
+  Anchor: Integer;
+begin
+  // Inno's [Tasks] section auto-generates a TasksList on wpSelectTasks.
+  // We augment that page with our own labels — they sit in the same panel
+  // and inherit the modern wizard styling automatically.
+  TasksPage := PageFromID(wpSelectTasks);
+  Anchor := WizardForm.TasksList.Top + WizardForm.TasksList.Height + ScaleY(8);
+
+  // Keep-Alive disclaimer paragraphs (immediately under the Keep-Alive checkbox)
+  KeepAliveDisclaimer := TLabel.Create(WizardForm);
+  KeepAliveDisclaimer.Parent := TasksPage.Surface;
+  KeepAliveDisclaimer.Left := ScaleX(28);
+  KeepAliveDisclaimer.Top := Anchor;
+  KeepAliveDisclaimer.Width := WizardForm.TasksList.Width - ScaleX(28);
+  KeepAliveDisclaimer.AutoSize := False;
+  KeepAliveDisclaimer.WordWrap := True;
+  KeepAliveDisclaimer.Height := ScaleY(48);
+  KeepAliveDisclaimer.Caption :=
+    'Keep-Alive sends a key to your game windows on a timer to prevent the AFK ' +
+    'disconnect. This is input not produced by a live keystroke from you.';
+
+  KeepAliveWarning := TLabel.Create(WizardForm);
+  KeepAliveWarning.Parent := TasksPage.Surface;
+  KeepAliveWarning.Left := ScaleX(28);
+  KeepAliveWarning.Top := KeepAliveDisclaimer.Top + KeepAliveDisclaimer.Height + ScaleY(4);
+  KeepAliveWarning.Width := WizardForm.TasksList.Width - ScaleX(28);
+  KeepAliveWarning.AutoSize := False;
+  KeepAliveWarning.WordWrap := True;
+  KeepAliveWarning.Height := ScaleY(64);
+  KeepAliveWarning.Font.Color := $002020D0;  // BGR: red emphasis
+  KeepAliveWarning.Font.Style := [fsBold];   // bold survives high-contrast themes
+  KeepAliveWarning.Caption :=
+    'Toontown Rewritten and Corporate Clash both prohibit input automation in ' +
+    'their Terms of Service. Use is at your own risk and may result in action ' +
+    'against your account. You can turn this off any time in Settings.';
+
+  // Updates explainer (under the Updates checkbox)
+  UpdatesExplainer := TLabel.Create(WizardForm);
+  UpdatesExplainer.Parent := TasksPage.Surface;
+  UpdatesExplainer.Left := ScaleX(28);
+  UpdatesExplainer.Top := KeepAliveWarning.Top + KeepAliveWarning.Height + ScaleY(8);
+  UpdatesExplainer.Width := WizardForm.TasksList.Width - ScaleX(28);
+  UpdatesExplainer.AutoSize := False;
+  UpdatesExplainer.WordWrap := True;
+  UpdatesExplainer.Height := ScaleY(32);
+  UpdatesExplainer.Caption :=
+    'The app will check GitHub for new releases when it launches. ' +
+    'You''ll be asked before any update is downloaded or installed.';
+end;
