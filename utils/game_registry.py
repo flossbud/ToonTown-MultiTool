@@ -30,6 +30,15 @@ _KNOWN_X11_CLASSES = {
     "corporate clash":    "cc",
 }
 
+# Linux helper executables that host a Windows game under Wine/Proton. When
+# /proc/<pid>/exe resolves to one of these, the X-client PID is a wine
+# infrastructure process, not the game — so look at argv[0] from cmdline
+# (the Windows-style path to the .exe Wine is hosting) instead.
+_KNOWN_WINE_HELPERS = {
+    "wine-preloader",
+    "wine64-preloader",
+}
+
 
 class GameRegistry:
     _instance = None
@@ -66,8 +75,11 @@ class GameRegistry:
         """Look up the game tag for a window ID by resolving its PID first.
 
         Falls back to process-name identification for externally-launched windows,
-        and then to X11 WM_CLASS when /proc lookups fail (e.g. inside Flatpak,
-        where the sandbox PID namespace makes /proc/<host_pid>/exe unreadable).
+        then to argv[0] inspection when the process is a Wine helper hosting a
+        Windows .exe (the CC-on-Linux case: exe=wine64-preloader,
+        argv[0]=...\\CorporateClash.exe), and finally to X11 WM_CLASS when /proc
+        lookups fail (e.g. inside Flatpak, where the sandbox PID namespace
+        makes /proc/<host_pid>/exe unreadable).
         """
         pid = self._get_pid_for_window(wid)
         if pid is not None:
@@ -78,6 +90,10 @@ class GameRegistry:
             by_name = self._tag_from_process_name(pid)
             if by_name is not None:
                 return by_name
+
+            by_wine = self._tag_from_wine_cmdline(pid)
+            if by_wine is not None:
+                return by_wine
 
         if sys.platform != "win32":
             return self._tag_from_x11_class(wid)
@@ -111,7 +127,17 @@ class GameRegistry:
         name = self._get_process_name(pid)
         if name is None:
             return None, False
-        return _KNOWN_PROCESSES.get(name), True
+        by_name = _KNOWN_PROCESSES.get(name)
+        if by_name is not None:
+            return by_name, True
+        # Wine/Proton case: exe is a wine preloader; the game identity lives
+        # in argv[0]. Without this branch the trust filter rejects every
+        # Proton-launched CC window as "confirmed not a game".
+        if name in _KNOWN_WINE_HELPERS:
+            by_wine = self._tag_from_wine_cmdline(pid)
+            if by_wine is not None:
+                return by_wine, True
+        return None, True
 
     @staticmethod
     def _get_pid_for_window(wid: str) -> int | None:
@@ -162,6 +188,38 @@ class GameRegistry:
         if name is None:
             return None
         return _KNOWN_PROCESSES.get(name)
+
+    @staticmethod
+    def _tag_from_wine_cmdline(pid: int) -> str | None:
+        """Identify a Wine/Proton-hosted game by inspecting argv[0].
+
+        Under Wine, /proc/<pid>/exe points at the preloader binary (e.g.
+        wine64-preloader) for every Windows program — the actual game
+        identity is only in argv[0], which holds the Windows-style path Wine
+        was asked to launch (e.g. r"C:\\users\\steamuser\\AppData\\Local\\
+        Corporate Clash\\CorporateClash.exe"). We extract the trailing
+        basename and look it up in _KNOWN_PROCESSES.
+
+        Returns None on non-Linux, when /proc is unreadable, when the
+        process isn't a wine helper, or when argv[0]'s basename is unknown.
+        """
+        if sys.platform == "win32":
+            return None
+        name = GameRegistry._get_process_name(pid)
+        if name not in _KNOWN_WINE_HELPERS:
+            return None
+        try:
+            with open(f"/proc/{pid}/cmdline", "rb") as f:
+                raw = f.read()
+        except OSError:
+            return None
+        argv0 = raw.split(b"\x00", 1)[0].decode("utf-8", "replace")
+        if not argv0:
+            return None
+        # argv[0] is a Windows path; backslashes are the separator. Splitting
+        # on both lets us handle the rare Wine path that's been normalized.
+        basename = argv0.replace("\\", "/").rsplit("/", 1)[-1].lower()
+        return _KNOWN_PROCESSES.get(basename)
 
     @staticmethod
     def _tag_from_x11_class(wid: str) -> str | None:

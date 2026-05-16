@@ -173,7 +173,8 @@ class WindowManager(QObject):
         else:
             try:
                 raw_ids = x11_discovery.find_window_ids_by_class(
-                    ["Toontown Rewritten", "Corporate Clash"]
+                    ["Toontown Rewritten", "Corporate Clash"],
+                    title_prefixes=["Toontown Rewritten", "Corporate Clash"],
                 )
 
                 visible = []

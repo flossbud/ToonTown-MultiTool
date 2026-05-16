@@ -1,7 +1,7 @@
 """Unit tests for GameRegistry singleton and PID classification."""
 
 import sys
-from unittest.mock import patch
+from unittest.mock import mock_open, patch
 
 import pytest
 from utils.game_registry import GameRegistry, _KNOWN_X11_CLASSES
@@ -119,3 +119,104 @@ class TestX11ClassFallback:
         with patch.object(GameRegistry, "_get_pid_for_window", return_value=None), \
              patch.object(GameRegistry, "_tag_from_x11_class", return_value=None):
             assert reg.get_game_for_window("0x1234") is None
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Wine helper path is Linux-only")
+class TestWineHelperCmdline:
+    """Wine/Proton hosts every Windows .exe under wine64-preloader, so
+    /proc/<pid>/exe is the same string for every Wine app. The real game
+    identity lives in argv[0], the Windows-style path Wine was asked to
+    launch. Without this fallback, Proton-launched Corporate Clash
+    (and any future Wine-only game) cannot be identified, and the
+    multitool's trust filter rejects every Toon window as 'confirmed not
+    a game'."""
+
+    def test_tag_from_wine_cmdline_resolves_cc_under_wine64_preloader(self):
+        cc_argv0 = (
+            b"C:\\users\\steamuser\\AppData\\Local\\Corporate Clash\\"
+            b"CorporateClash.exe\x00--some-flag\x00"
+        )
+        with patch.object(
+            GameRegistry, "_get_process_name", return_value="wine64-preloader"
+        ), patch("builtins.open", mock_open(read_data=cc_argv0)):
+            assert GameRegistry._tag_from_wine_cmdline(PID_A) == "cc"
+
+    def test_tag_from_wine_cmdline_resolves_ttr_under_wine_preloader(self):
+        # If someone ever runs TTR through Wine (Steam Deck, etc), the same
+        # path should work.
+        ttr_argv0 = b"C:\\Program Files\\Toontown Rewritten\\TTREngine64.exe\x00"
+        with patch.object(
+            GameRegistry, "_get_process_name", return_value="wine-preloader"
+        ), patch("builtins.open", mock_open(read_data=ttr_argv0)):
+            assert GameRegistry._tag_from_wine_cmdline(PID_A) == "ttr"
+
+    def test_tag_from_wine_cmdline_returns_none_for_non_wine_process(self):
+        # Bare /proc/<pid>/exe of a normal Linux process: not a wine helper,
+        # don't even bother reading cmdline.
+        with patch.object(
+            GameRegistry, "_get_process_name", return_value="firefox"
+        ):
+            assert GameRegistry._tag_from_wine_cmdline(PID_A) is None
+
+    def test_tag_from_wine_cmdline_returns_none_for_unknown_wine_app(self):
+        # Wine launching something we don't recognise: don't classify it.
+        other_argv0 = b"C:\\Program Files\\Notepad\\notepad.exe\x00"
+        with patch.object(
+            GameRegistry, "_get_process_name", return_value="wine64-preloader"
+        ), patch("builtins.open", mock_open(read_data=other_argv0)):
+            assert GameRegistry._tag_from_wine_cmdline(PID_A) is None
+
+    def test_tag_from_wine_cmdline_handles_oserror(self):
+        # Race: process exited between exe-read and cmdline-read.
+        with patch.object(
+            GameRegistry, "_get_process_name", return_value="wine64-preloader"
+        ), patch("builtins.open", side_effect=OSError("gone")):
+            assert GameRegistry._tag_from_wine_cmdline(PID_A) is None
+
+    def test_get_game_for_window_uses_wine_cmdline_when_proc_name_unknown(self):
+        """End-to-end: PID resolves to a wine preloader, _tag_from_process_name
+        returns None (wine-preloader is not in _KNOWN_PROCESSES), but
+        _tag_from_wine_cmdline finds CC in argv[0]. The multitoon API router
+        gets 'cc' instead of falling all the way through to None."""
+        reg = GameRegistry.instance()
+        with patch.object(GameRegistry, "_get_pid_for_window", return_value=PID_A), \
+             patch.object(GameRegistry, "_tag_from_process_name", return_value=None), \
+             patch.object(GameRegistry, "_tag_from_wine_cmdline", return_value="cc"), \
+             patch.object(GameRegistry, "_tag_from_x11_class") as x11_m:
+            assert reg.get_game_for_window("0x6e00001") == "cc"
+            x11_m.assert_not_called()
+
+    def test_classify_window_for_filtering_accepts_cc_under_wine(self):
+        """The trust filter previously returned (None, True) for every wine
+        window (preloader exe not in _KNOWN_PROCESSES), which made
+        window_manager._accept_candidate_window reject the real game window.
+        With the wine-cmdline branch it now returns ('cc', True) and the
+        window is kept."""
+        reg = GameRegistry.instance()
+        with patch.object(
+            GameRegistry,
+            "_get_host_pid_for_window_xres",
+            return_value=PID_A,
+        ), patch.object(
+            GameRegistry, "_get_process_name", return_value="wine64-preloader"
+        ), patch.object(
+            GameRegistry, "_tag_from_wine_cmdline", return_value="cc"
+        ):
+            game, confirmed = reg.classify_window_for_filtering("0x6e00001")
+            assert (game, confirmed) == ("cc", True)
+
+    def test_classify_window_for_filtering_rejects_non_game_wine_helper(self):
+        """A wine helper hosting something unrelated (e.g. conhost.exe console
+        sibling) must still be confirmed-not-a-game so window_manager
+        rejects it."""
+        reg = GameRegistry.instance()
+        with patch.object(
+            GameRegistry,
+            "_get_host_pid_for_window_xres",
+            return_value=PID_A,
+        ), patch.object(
+            GameRegistry, "_get_process_name", return_value="wine64-preloader"
+        ), patch.object(
+            GameRegistry, "_tag_from_wine_cmdline", return_value=None
+        ):
+            assert reg.classify_window_for_filtering("0x6a00001") == (None, True)

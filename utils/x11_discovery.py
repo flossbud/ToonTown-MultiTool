@@ -34,27 +34,39 @@ def _open_display():
         return None
 
 
-def find_window_ids_by_class(class_names: list[str]) -> list[str]:
-    """Return X11 window IDs whose WM_CLASS class component contains any of
-    ``class_names``. Substring match, case-sensitive, mirroring the behavior
-    of ``xdotool search --class``.
+def find_window_ids_by_class(
+    class_names: list[str],
+    title_prefixes: list[str] | None = None,
+) -> list[str]:
+    """Return X11 window IDs whose WM_CLASS class component substring-matches
+    any of ``class_names``, OR whose WM_NAME starts with any of
+    ``title_prefixes``.
 
-    Returns window IDs as decimal strings (matching xdotool's output format
-    so downstream code doesn't have to change representation).
+    The WM_CLASS path mirrors the original ``xdotool search --class`` behavior
+    (substring, case-sensitive). The title-prefix path exists for Wine/Proton-
+    launched Windows games whose WM_CLASS is forced to ``steam_proton`` (or
+    similar) regardless of the underlying .exe — the only X11-visible signal
+    of "this is Corporate Clash" is the WM_NAME, e.g.
+    ``"Corporate Clash [1.11.17777]"``. We require startswith (not substring)
+    so the sibling Wine console window whose title is the .exe's full Windows
+    path is not falsely matched.
+
+    Returns window IDs as decimal strings.
     """
-    if not class_names:
+    if not class_names and not title_prefixes:
         return []
     d = _open_display()
     if d is None:
         return []
     try:
         results: list[str] = []
-        targets = tuple(class_names)
+        targets = tuple(class_names or ())
+        prefixes = tuple(title_prefixes or ())
         try:
             root = d.screen().root
         except Exception:
             return []
-        _walk_collect(root, targets, results)
+        _walk_collect(root, targets, prefixes, results)
         return results
     finally:
         try:
@@ -63,21 +75,38 @@ def find_window_ids_by_class(class_names: list[str]) -> list[str]:
             pass
 
 
-def _walk_collect(window, targets: tuple[str, ...], results: list[str]) -> None:
-    try:
-        wm_class = window.get_wm_class()
-    except Exception:
-        wm_class = None
-    if wm_class and len(wm_class) >= 2:
-        cls = wm_class[1] or ""
-        if any(target in cls for target in targets):
-            results.append(str(window.id))
+def _walk_collect(
+    window,
+    targets: tuple[str, ...],
+    prefixes: tuple[str, ...],
+    results: list[str],
+) -> None:
+    matched = False
+    if targets:
+        try:
+            wm_class = window.get_wm_class()
+        except Exception:
+            wm_class = None
+        if wm_class and len(wm_class) >= 2:
+            cls = wm_class[1] or ""
+            if any(target in cls for target in targets):
+                results.append(str(window.id))
+                matched = True
+    if not matched and prefixes:
+        try:
+            wm_name = window.get_wm_name()
+        except Exception:
+            wm_name = None
+        if wm_name:
+            name_str = str(wm_name)
+            if any(name_str.startswith(p) for p in prefixes):
+                results.append(str(window.id))
     try:
         children = window.query_tree().children
     except Exception:
         children = []
     for child in children:
-        _walk_collect(child, targets, results)
+        _walk_collect(child, targets, prefixes, results)
 
 
 def get_window_root_x(wid: str) -> int | None:

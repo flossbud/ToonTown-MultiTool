@@ -23,12 +23,13 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _make_window(wid, wm_class=None, children=(), pid=None, x=None):
+def _make_window(wid, wm_class=None, wm_name=None, children=(), pid=None, x=None):
     """Build a fake Xlib Window object with just the attributes our code
     pokes at. WM_CLASS is a (instance, class) tuple to match python-Xlib."""
     win = MagicMock()
     win.id = wid
     win.get_wm_class.return_value = wm_class
+    win.get_wm_name.return_value = wm_name
     win.query_tree.return_value = SimpleNamespace(children=list(children))
     # translate_coords result needs an `.x` attribute
     if x is not None:
@@ -119,6 +120,79 @@ class TestFindWindowIdsByClass:
                           return_value=_patched_display(root)):
             results = x11_discovery.find_window_ids_by_class(["Toontown Rewritten"])
         assert results == []
+
+    def test_title_prefix_matches_wine_proton_game_window(self):
+        """Proton-launched Windows games (Corporate Clash) get WM_CLASS
+        forced to 'steam_proton' regardless of the underlying .exe, so the
+        WM_CLASS substring match misses them entirely. WM_NAME-startswith
+        recovers the real game window."""
+        cc = _make_window(
+            202,
+            wm_class=("steam_proton", "steam_proton"),
+            wm_name="Corporate Clash [1.11.17777]",
+        )
+        root = _make_window(1, children=[cc])
+        with patch.object(x11_discovery, "_open_display",
+                          return_value=_patched_display(root)):
+            results = x11_discovery.find_window_ids_by_class(
+                ["Toontown Rewritten", "Corporate Clash"],
+                title_prefixes=["Toontown Rewritten", "Corporate Clash"],
+            )
+        assert results == ["202"]
+
+    def test_title_prefix_rejects_wine_console_with_exe_path_title(self):
+        """The Wine console sibling window CONTAINS 'Corporate Clash' as a
+        substring of the .exe path, but it doesn't START with the game
+        name, so prefix matching must reject it. If this regresses, the
+        multitool will pick up the wrong window and toon assignment goes
+        sideways."""
+        wine_console = _make_window(
+            505,
+            wm_class=("steam_proton", "steam_proton"),
+            wm_name=r"C:\users\steamuser\AppData\Local\Corporate Clash\CorporateClash.exe",
+        )
+        root = _make_window(1, children=[wine_console])
+        with patch.object(x11_discovery, "_open_display",
+                          return_value=_patched_display(root)):
+            results = x11_discovery.find_window_ids_by_class(
+                ["Toontown Rewritten", "Corporate Clash"],
+                title_prefixes=["Toontown Rewritten", "Corporate Clash"],
+            )
+        assert results == []
+
+    def test_class_match_still_works_when_title_prefixes_given(self):
+        """Native TTR sets its own WM_CLASS, so the class path must still
+        win without needing the title fallback."""
+        ttr = _make_window(
+            101,
+            wm_class=("ttrengine", "Toontown Rewritten"),
+            wm_name=None,
+        )
+        root = _make_window(1, children=[ttr])
+        with patch.object(x11_discovery, "_open_display",
+                          return_value=_patched_display(root)):
+            results = x11_discovery.find_window_ids_by_class(
+                ["Toontown Rewritten", "Corporate Clash"],
+                title_prefixes=["Toontown Rewritten", "Corporate Clash"],
+            )
+        assert results == ["101"]
+
+    def test_class_and_title_dedupe_when_both_match_same_window(self):
+        """A native-class TTR window that also happens to have a title
+        starting with 'Toontown Rewritten' must only appear once."""
+        ttr = _make_window(
+            101,
+            wm_class=("ttrengine", "Toontown Rewritten"),
+            wm_name="Toontown Rewritten",
+        )
+        root = _make_window(1, children=[ttr])
+        with patch.object(x11_discovery, "_open_display",
+                          return_value=_patched_display(root)):
+            results = x11_discovery.find_window_ids_by_class(
+                ["Toontown Rewritten"],
+                title_prefixes=["Toontown Rewritten"],
+            )
+        assert results == ["101"]
 
 
 class TestGetWindowRootX:
