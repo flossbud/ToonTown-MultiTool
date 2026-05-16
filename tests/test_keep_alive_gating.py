@@ -427,3 +427,29 @@ def test_master_toggle_off_never_fires_dialog(qapp, monkeypatch, tmp_path):
 
     assert dialog_called["count"] == 0
     assert sm.get("keep_alive_enabled") is False
+
+
+def test_master_toggle_fires_dialog_when_acknowledgement_explicitly_false(qapp, monkeypatch, tmp_path):
+    """An explicit keep_alive_consent_acknowledged=false (e.g. installer wrote
+    it as false because the user unchecked the wizard box) must behave the
+    same as the marker being absent: dialog fires."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    from utils.settings_manager import SettingsManager
+    from tabs.settings_tab import SettingsTab
+
+    sm = SettingsManager()
+    sm.set("keep_alive_consent_acknowledged", False)
+
+    tab = SettingsTab(settings_manager=sm)
+
+    dialog_called = {"count": 0}
+    def fake_dialog(self):
+        dialog_called["count"] += 1
+        return True
+    monkeypatch.setattr(SettingsTab, "_show_keep_alive_warning_dialog", fake_dialog)
+
+    tab._on_keep_alive_master_toggle(True)
+
+    assert dialog_called["count"] == 1
+    assert sm.get("keep_alive_enabled") is True
