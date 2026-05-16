@@ -168,8 +168,19 @@ function InitializeUninstall(): Boolean;
 var
   Response: Integer;
   Msg: String;
+  CmdTail: String;
 begin
   ShouldPurgeUserData := False;
+  // /SILENT and /VERYSILENT suppress MsgBox (it returns 0, which falls
+  // through to the else branch and aborts uninstall). In silent mode just
+  // proceed without prompting; the user-data purge stays off (the user
+  // didn't ask for it).
+  CmdTail := UpperCase(GetCmdTail());
+  if (Pos('/VERYSILENT', CmdTail) > 0) or (Pos('/SILENT', CmdTail) > 0) then
+  begin
+    Result := True;
+    Exit;
+  end;
   Msg :=
     '{#MyAppName} will be removed from your computer.' + #13#10 + #13#10 +
     'Do you also want to remove your saved settings, accounts, and profiles?' + #13#10 + #13#10 +
