@@ -82,6 +82,7 @@ def test_compatmapping_match_returns_tool_dir(tmp_path, monkeypatch):
         ccl, "enumerate_proton_tools",
         lambda: [ProtonTool(
             name="proton-cachyos", display_name="Proton-CachyOS",
+            nickname="Proton-CachyOS",
             proton_dir=tool_dir, source="compatibilitytools.d",
             steam_root="/fake/root", version_key=(9, 0),
         )],
@@ -119,6 +120,7 @@ def test_stale_config_info_falls_through_to_fallback(tmp_path, monkeypatch):
         ccl, "enumerate_proton_tools",
         lambda: [ProtonTool(
             name="ge-proton", display_name="GE-Proton9-26",
+            nickname="GE-Proton9-26",
             proton_dir=fallback_dir, source="compatibilitytools.d",
             steam_root="/fake/root", version_key=(9, 26),
         )],

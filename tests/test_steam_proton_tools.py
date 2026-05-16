@@ -70,6 +70,16 @@ def test_discovers_official_and_user_tools(tmp_path):
     assert "proton_9" in names  # alias lookup
     assert "proton_8" in names
 
+    # nickname should be populated and not excessively longer than
+    # the display_name for user-installed entries.
+    user_entries = [t for t in tools if t.source == "compatibilitytools.d"]
+    assert user_entries, "expected at least one user-installed tool"
+    for t in user_entries:
+        assert t.nickname, f"nickname empty for {t.name!r}"
+        assert len(t.nickname) <= len(t.display_name) + 2, (
+            f"nickname {t.nickname!r} should be roughly <= display_name {t.display_name!r}"
+        )
+
 
 def test_skips_dir_without_proton_binary(tmp_path):
     root = tmp_path / "Steam"
@@ -132,6 +142,11 @@ def test_display_name_uses_compat_tool_vdf(tmp_path):
     cachyos = [t for t in tools if t.name == "proton-cachyos"][0]
     assert cachyos.display_name == "Proton-CachyOS (special build)"
 
+    # nickname is computed independently from display_name (parses the
+    # dir slug). The VDF's display name happens to be short enough to
+    # win Stage 1 here.
+    assert cachyos.nickname == "Proton-CachyOS (special build)"
+
 
 def test_version_key_extraction():
     """Direct unit test of the version-tuple extraction heuristic."""
@@ -177,3 +192,9 @@ def test_dated_build_sorts_before_undated_same_version(tmp_path):
     # The dated build is "more specific" — should rank first.
     assert user_tools[0].name == "proton-cachyos-90-20251214"
     assert user_tools[1].name == "proton-cachyos-90"
+
+    # Regression: the date suffix must be stripped from the nickname.
+    dated = [t for t in tools if "20251214" in t.name][0]
+    assert "20251214" not in dated.nickname, (
+        f"date should be stripped but nickname is {dated.nickname!r}"
+    )

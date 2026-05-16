@@ -15,9 +15,12 @@ def qapp():
     yield app
 
 
-def _tool(name, display, source="compatibilitytools.d", version=(9, 0)):
+def _tool(name, display, source="compatibilitytools.d", version=(9, 0),
+          nickname=None):
     return ProtonTool(
-        name=name, display_name=display, proton_dir=f"/fake/{name}",
+        name=name, display_name=display,
+        nickname=nickname if nickname is not None else display,
+        proton_dir=f"/fake/{name}",
         source=source, steam_root="/fake", version_key=version,
     )
 

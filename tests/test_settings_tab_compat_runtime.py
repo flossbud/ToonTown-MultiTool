@@ -75,6 +75,7 @@ def test_steam_proton_no_override_shows_steam_default_suffix(
     monkeypatch.setattr(
         "services.steam_proton_tools.enumerate_proton_tools",
         lambda: [ProtonTool(name="proton-cachyos", display_name="Proton-CachyOS",
+                            nickname="Proton-CachyOS",
                             proton_dir=proton, source="compatibilitytools.d",
                             steam_root="/fake", version_key=(9, 0))],
     )
@@ -106,6 +107,7 @@ def test_steam_proton_with_override_shows_custom_suffix(
     monkeypatch.setattr(
         "services.steam_proton_tools.enumerate_proton_tools",
         lambda: [ProtonTool(name="ge-proton", display_name="GE-Proton9-26",
+                            nickname="GE-Proton9-26",
                             proton_dir=proton, source="compatibilitytools.d",
                             steam_root="/fake", version_key=(9, 26))],
     )
@@ -217,6 +219,7 @@ def test_change_button_click_persists_chosen_override(
     monkeypatch.setattr(
         "services.steam_proton_tools.enumerate_proton_tools",
         lambda: [ProtonTool(name="chosen", display_name="ChosenProton",
+                            nickname="ChosenProton",
                             proton_dir=proton, source="compatibilitytools.d",
                             steam_root="/fake", version_key=(9, 0))],
     )
