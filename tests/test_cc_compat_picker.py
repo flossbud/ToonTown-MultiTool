@@ -1,0 +1,96 @@
+"""Tests for the compatibility-runtime picker dialog."""
+
+import os
+import pytest
+from PySide6.QtWidgets import QApplication
+
+from services.steam_proton_tools import ProtonTool
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+
+@pytest.fixture(scope="module")
+def qapp():
+    app = QApplication.instance() or QApplication([])
+    yield app
+
+
+def _tool(name, display, source="compatibilitytools.d", version=(9, 0)):
+    return ProtonTool(
+        name=name, display_name=display, proton_dir=f"/fake/{name}",
+        source=source, steam_root="/fake", version_key=version,
+    )
+
+
+def test_dialog_shows_use_steam_default_first(qapp):
+    from utils.widgets.cc_compat_picker import CCCompatPickerDialog
+    tools = [_tool("proton-cachyos", "Proton-CachyOS")]
+    dlg = CCCompatPickerDialog(
+        tools=tools,
+        current_override="",
+        steam_default_display="Proton-CachyOS",
+    )
+    assert dlg.use_steam_radio.isChecked()
+    assert not dlg.use_specific_radio.isChecked()
+
+
+def test_dialog_reflects_existing_override(qapp):
+    from utils.widgets.cc_compat_picker import CCCompatPickerDialog
+    tools = [
+        _tool("proton-cachyos", "Proton-CachyOS"),
+        _tool("ge-proton9-26", "GE-Proton9-26"),
+    ]
+    dlg = CCCompatPickerDialog(
+        tools=tools,
+        current_override="/fake/ge-proton9-26",
+        steam_default_display="Proton-CachyOS",
+    )
+    assert dlg.use_specific_radio.isChecked()
+    row = dlg.list_widget.currentRow()
+    assert dlg.list_widget.item(row).text().startswith("GE-Proton9-26")
+
+
+def test_save_with_steam_default_returns_empty_string(qapp):
+    from utils.widgets.cc_compat_picker import CCCompatPickerDialog
+    tools = [_tool("proton-cachyos", "Proton-CachyOS")]
+    dlg = CCCompatPickerDialog(
+        tools=tools, current_override="", steam_default_display="Proton-CachyOS",
+    )
+    dlg.use_steam_radio.setChecked(True)
+    dlg._on_save()
+    assert dlg.chosen_override() == ""
+
+
+def test_save_with_specific_proton_returns_proton_dir(qapp):
+    from utils.widgets.cc_compat_picker import CCCompatPickerDialog
+    tools = [_tool("proton-cachyos", "Proton-CachyOS")]
+    dlg = CCCompatPickerDialog(
+        tools=tools, current_override="", steam_default_display="Proton-CachyOS",
+    )
+    dlg.use_specific_radio.setChecked(True)
+    dlg.list_widget.setCurrentRow(0)
+    dlg._on_save()
+    assert dlg.chosen_override() == "/fake/proton-cachyos"
+
+
+def test_source_tags_applied(qapp):
+    from utils.widgets.cc_compat_picker import CCCompatPickerDialog
+    tools = [
+        _tool("proton-cachyos", "Proton-CachyOS", source="compatibilitytools.d"),
+        _tool("proton_9", "Proton 9.0 (Beta)", source="official"),
+    ]
+    dlg = CCCompatPickerDialog(
+        tools=tools, current_override="", steam_default_display="Proton-CachyOS",
+    )
+    assert "[user]" in dlg.list_widget.item(0).text()
+    assert "[official]" in dlg.list_widget.item(1).text()
+
+
+def test_cancel_returns_none(qapp):
+    from utils.widgets.cc_compat_picker import CCCompatPickerDialog
+    tools = [_tool("proton-cachyos", "Proton-CachyOS")]
+    dlg = CCCompatPickerDialog(
+        tools=tools, current_override="", steam_default_display="Proton-CachyOS",
+    )
+    dlg.reject()
+    assert dlg.chosen_override() is None
