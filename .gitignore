@@ -65,7 +65,6 @@ API Docs/
 /fix-grub-single-fedora.sh
 /tests/test_input_service_lifecycle.py
 /tests/test_toon_portrait_widget.py
-
 # Smoketest checklist is read by the private-build workflow at build time.
 !docs/smoketest-checklist.md
 
