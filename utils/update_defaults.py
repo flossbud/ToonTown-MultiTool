@@ -9,6 +9,10 @@ a user-set value.
 """
 from __future__ import annotations
 
+# Module-alias import (not `from utils.install_method import detect`) so
+# `monkeypatch.setattr("utils.install_method.detect", ...)` in tests is
+# picked up here. A direct name import would create a local binding the
+# monkeypatch can't reach.
 import utils.install_method as _install_method_mod
 from utils.install_method import InstallMethod
 from utils.settings_keys import CHECK_FOR_UPDATES_AT_STARTUP
