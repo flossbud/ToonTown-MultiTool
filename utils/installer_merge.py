@@ -31,6 +31,10 @@ def merge_installer_config(
     but not valid JSON; in that case the file is left untouched and the caller
     should log a warning. The app rebuilds defaults on next launch.
     """
+    # NOTE: 'check_for_updates_at_startup' has no consumer in this codebase
+    # yet — it is reserved for the future auto-update flow (Spec B). The
+    # installer captures the user's choice now so Spec B can read it without
+    # asking again.
     to_merge = {"check_for_updates_at_startup": check_updates}
     if keep_alive:
         to_merge.update({
