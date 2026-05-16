@@ -237,3 +237,81 @@ class KeymapManager:
                 sets[set_index][action] = key
                 self._save()
         self._notify()
+
+    def next_default_name(self, game: str, exclude_index: int = -1) -> str:
+        with self._lock:
+            existing = set()
+            for i, s in enumerate(self._sets.get(game, [])):
+                if i == exclude_index:
+                    continue
+                n = s.get("name", "")
+                if n == "New Set" or (n.startswith("New Set ") and n[8:].isdigit()):
+                    existing.add(n)
+        if "New Set" not in existing:
+            return "New Set"
+        i = 1
+        while f"New Set {i}" in existing:
+            i += 1
+        return f"New Set {i}"
+
+    def add_set(self, game: str, name: str | None = None, keys: dict | None = None):
+        if game not in GAMES:
+            return
+        if name is None:
+            name = self.next_default_name(game)
+        new_set = {"name": name}
+        for action in logical_actions.actions_for(game):
+            if keys and action in keys:
+                new_set[action] = keys[action]
+            else:
+                new_set[action] = logical_actions.default_key(game, action) or ""
+        with self._lock:
+            sets = self._sets.setdefault(game, [])
+            if len(sets) >= self.MAX_SETS_PER_GAME:
+                return
+            sets.append(new_set)
+            self._save()
+        self._notify()
+
+    def delete_set(self, game: str, index: int):
+        if game not in GAMES:
+            return
+        if index <= 0:
+            return  # Default (index 0) cannot be deleted
+        with self._lock:
+            sets = self._sets.get(game, [])
+            if index < len(sets):
+                sets.pop(index)
+                self._save()
+        self._notify()
+
+    def update_set_name(self, game: str, index: int, name: str):
+        if game not in GAMES:
+            return
+        with self._lock:
+            sets = self._sets.get(game, [])
+            if 0 <= index < len(sets):
+                sets[index]["name"] = name
+                self._save()
+        self._notify()
+
+    def has_conflicts(self, game: str, set_index: int) -> tuple[bool, list[tuple[str, str]]]:
+        """Return (has_conflict, list of conflicting action pairs)."""
+        with self._lock:
+            sets = self._sets.get(game, [])
+            if not (0 <= set_index < len(sets)):
+                return (False, [])
+            s = sets[set_index]
+            by_key: dict[str, list[str]] = {}
+            for action in logical_actions.actions_for(game):
+                k = s.get(action)
+                if not k:
+                    continue
+                by_key.setdefault(k, []).append(action)
+        pairs: list[tuple[str, str]] = []
+        for actions in by_key.values():
+            if len(actions) > 1:
+                for i in range(len(actions)):
+                    for j in range(i + 1, len(actions)):
+                        pairs.append((actions[i], actions[j]))
+        return (bool(pairs), pairs)

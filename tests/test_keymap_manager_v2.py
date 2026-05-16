@@ -169,3 +169,68 @@ class TestV1Migration:
         # Reset should produce valid seeded defaults, not empty stubs
         assert mgr.get_default("ttr")["forward"] == "w"
         assert mgr.get_default("cc")["sprint"] == "Shift_L"
+
+
+class TestWriteAPI:
+    def test_add_set_adds_to_correct_game(self, tmp_path):
+        mgr, _ = _make_manager_with_file(tmp_path)
+        mgr.add_set("ttr", name="Arrows")
+        assert mgr.num_sets("ttr") == 2
+        assert mgr.num_sets("cc") == 1
+        assert mgr.get_set_names("ttr") == ["Default", "Arrows"]
+
+    def test_add_set_caps_at_max(self, tmp_path):
+        mgr, _ = _make_manager_with_file(tmp_path)
+        for _ in range(KeymapManager.MAX_SETS_PER_GAME + 2):
+            mgr.add_set("ttr")
+        assert mgr.num_sets("ttr") == KeymapManager.MAX_SETS_PER_GAME
+
+    def test_delete_set_removes_non_default(self, tmp_path):
+        mgr, _ = _make_manager_with_file(tmp_path)
+        mgr.add_set("ttr", name="Arrows")
+        mgr.delete_set("ttr", 1)
+        assert mgr.num_sets("ttr") == 1
+
+    def test_delete_set_refuses_default(self, tmp_path):
+        mgr, _ = _make_manager_with_file(tmp_path)
+        mgr.delete_set("ttr", 0)
+        assert mgr.num_sets("ttr") == 1
+        assert mgr.get_default("ttr")["forward"] == "w"
+
+    def test_update_set_key_writes(self, tmp_path):
+        mgr, _ = _make_manager_with_file(tmp_path)
+        mgr.update_set_key("ttr", 0, "forward", "Up")
+        assert mgr.get_key_for_action("ttr", 0, "forward") == "Up"
+
+    def test_update_set_key_ignores_unknown_action(self, tmp_path):
+        mgr, _ = _make_manager_with_file(tmp_path)
+        mgr.update_set_key("ttr", 0, "fly", "f")
+        # No-op, no crash; the set is unchanged
+        assert "fly" not in mgr.get_default("ttr")
+
+    def test_update_set_name(self, tmp_path):
+        mgr, _ = _make_manager_with_file(tmp_path)
+        mgr.add_set("ttr", name="Arrows")
+        mgr.update_set_name("ttr", 1, "Joystick")
+        assert mgr.get_set_names("ttr") == ["Default", "Joystick"]
+
+
+class TestHasConflicts:
+    def test_default_has_no_conflicts(self, tmp_path):
+        mgr, _ = _make_manager_with_file(tmp_path)
+        has, pairs = mgr.has_conflicts("ttr", 0)
+        assert has is False
+        assert pairs == []
+
+    def test_constructed_conflict(self, tmp_path):
+        mgr, _ = _make_manager_with_file(tmp_path)
+        mgr.update_set_key("ttr", 0, "gags", "w")  # collides with forward=w
+        has, pairs = mgr.has_conflicts("ttr", 0)
+        assert has is True
+        assert ("forward", "gags") in pairs or ("gags", "forward") in pairs
+
+    def test_cc_sprint_conflict(self, tmp_path):
+        mgr, _ = _make_manager_with_file(tmp_path)
+        mgr.update_set_key("cc", 0, "sprint", "w")  # collides with cc forward=w
+        has, pairs = mgr.has_conflicts("cc", 0)
+        assert has is True
