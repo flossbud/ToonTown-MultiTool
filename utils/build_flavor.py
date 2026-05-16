@@ -1,10 +1,12 @@
 """Single source of truth for build flavor (stable vs beta).
 
 The Arch ttmt-beta package's launcher sets TTMT_BETA=1 before exec'ing
-main.py; every other install (public AppImage / Flatpak / EXE / AUR
-stable) leaves it unset. Functions below read the env on each call so
-tests can flip the flag with monkeypatch and so the answer is never
-stale relative to the running process's environment.
+main.py; the Windows beta installer drops a .beta_flavor sentinel file
+next to the EXE instead (Start Menu shortcuts cannot set env vars);
+every other install (public AppImage / Flatpak / AUR stable / Windows
+stable) leaves both unset. Functions below read both on each call so
+tests can flip either with monkeypatch and so the answer is never stale
+relative to the running process's environment.
 """
 
 import os
