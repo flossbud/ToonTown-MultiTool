@@ -468,7 +468,12 @@ class CompatRuntimeRow(SettingsRow):
     LABEL = "Compatibility runtime"
 
     def __init__(self, settings_manager, get_active_install, parent=None):
-        super().__init__(self.LABEL, "", parent=parent)
+        # Pass a non-empty sublabel so SettingsRow creates self.sub_widget;
+        # refresh() rewrites the text before the row is ever shown. The
+        # sublabel pattern (label on top, value on a muted second line)
+        # mirrors GamePathRow and fits the Settings tab's default width
+        # without truncating the main label.
+        super().__init__(self.LABEL, " ", parent=parent)
         self.settings_manager = settings_manager
         self._get_active_install = get_active_install
         self.is_platform_hidden = sys.platform == "win32"
@@ -477,25 +482,12 @@ class CompatRuntimeRow(SettingsRow):
             self.hide()
             return
 
-        # Build the value label + Change button as a single container
-        # widget, then slot it via add_control (the real SettingsRow API).
-        self.value_label = QLabel("")
-        self.value_label.setObjectName("compat_runtime_value")
         self.change_button = QPushButton("Change…")
         self.change_button.setObjectName("compat_runtime_change")
         self.change_button.setCursor(Qt.PointingHandCursor)
         self.change_button.setFixedHeight(28)
         self.change_button.clicked.connect(self._on_change_clicked)
-
-        ctrl_lay = QHBoxLayout()
-        ctrl_lay.setContentsMargins(0, 0, 0, 0)
-        ctrl_lay.setSpacing(8)
-        ctrl_lay.addWidget(self.value_label, 1)
-        ctrl_lay.addWidget(self.change_button, 0)
-        container = QWidget()
-        container.setStyleSheet("background: transparent;")
-        container.setLayout(ctrl_lay)
-        self.add_control(container)
+        self.add_control(self.change_button)
 
         if self.settings_manager is not None:
             self.settings_manager.on_change(self._on_setting_changed)
@@ -512,8 +504,8 @@ class CompatRuntimeRow(SettingsRow):
         self.show()
 
         if install.launcher != "steam-proton":
-            self.value_label.setText(self._readonly_label(install))
-            self.value_label.setStyleSheet("")  # default theme
+            self.sub_widget.setText(self._readonly_label(install))
+            self.sub_widget.setStyleSheet("")  # let apply_theme handle muted color
             self.change_button.hide()
             return
 
@@ -521,8 +513,8 @@ class CompatRuntimeRow(SettingsRow):
         from services.cc_launcher import resolve_effective_proton
         chosen = resolve_effective_proton(install, self.settings_manager)
         if chosen is None:
-            self.value_label.setText("No Steam Proton found")
-            self.value_label.setStyleSheet("color: #c0392b;")  # warning
+            self.sub_widget.setText("No Steam Proton found")
+            self.sub_widget.setStyleSheet("color: #c0392b;")  # warning
             self.change_button.setEnabled(False)
             return
 
@@ -531,8 +523,8 @@ class CompatRuntimeRow(SettingsRow):
         override = (self.settings_manager.get("cc_steam_proton_override", "")
                     if self.settings_manager else "")
         suffix = "custom" if override else "default"
-        self.value_label.setText(f"{nickname} · {suffix}")
-        self.value_label.setStyleSheet("")
+        self.sub_widget.setText(f"{nickname} · {suffix}")
+        self.sub_widget.setStyleSheet("")
 
     @staticmethod
     def _readonly_label(install):

@@ -84,7 +84,7 @@ def test_steam_proton_no_override_shows_steam_default_suffix(
 
     assert row.is_platform_hidden is False
     assert row.change_button.isHidden() is False
-    text = row.value_label.text()
+    text = row.sub_widget.text()
     assert " · default" in text, f"expected ' · default' in {text!r}"
     # The test fixture uses a ProtonTool with display_name="Proton-CachyOS";
     # the nickname for that input is also "Proton-CachyOS" (single brand
@@ -118,7 +118,7 @@ def test_steam_proton_with_override_shows_custom_suffix(
     from tabs.settings_tab import CompatRuntimeRow
     row = CompatRuntimeRow(settings_manager=sm, get_active_install=lambda: install)
 
-    text = row.value_label.text()
+    text = row.sub_widget.text()
     assert " · custom" in text, f"expected ' · custom' in {text!r}"
     assert "GE-Proton9-26" in text
 
@@ -141,7 +141,7 @@ def test_steam_proton_resolver_none_disables_change_button(
     from tabs.settings_tab import CompatRuntimeRow
     row = CompatRuntimeRow(settings_manager=sm, get_active_install=lambda: install)
 
-    assert "No Steam Proton found" in row.value_label.text()
+    assert "No Steam Proton found" in row.sub_widget.text()
     assert not row.change_button.isEnabled()
 
 
@@ -167,8 +167,8 @@ def test_bottles_install_shows_readonly_label_no_button(
     from tabs.settings_tab import CompatRuntimeRow
     row = CompatRuntimeRow(settings_manager=_SM(), get_active_install=lambda: install)
 
-    assert "Bottles" in row.value_label.text()
-    assert "Soda 9.0" in row.value_label.text()
+    assert "Bottles" in row.sub_widget.text()
+    assert "Soda 9.0" in row.sub_widget.text()
     assert row.change_button.isHidden() is True
 
 
