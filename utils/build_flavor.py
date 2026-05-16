@@ -8,10 +8,27 @@ stale relative to the running process's environment.
 """
 
 import os
+import sys
+
+
+def _beta_sentinel_path() -> str:
+    """Path to the optional Windows beta marker file next to the running EXE.
+
+    The Windows beta installer drops `.beta_flavor` here so the Start Menu
+    shortcut (which cannot set env vars) still triggers beta mode. Factored
+    out so tests can monkeypatch the path without poking sys.executable.
+    """
+    try:
+        return os.path.join(os.path.dirname(sys.executable), ".beta_flavor")
+    except Exception:
+        return ""
 
 
 def is_beta() -> bool:
-    return bool(os.environ.get("TTMT_BETA"))
+    if os.environ.get("TTMT_BETA"):
+        return True
+    path = _beta_sentinel_path()
+    return bool(path) and os.path.exists(path)
 
 
 def config_dir_name() -> str:
