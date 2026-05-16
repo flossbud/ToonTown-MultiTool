@@ -108,3 +108,61 @@ class TestUpdateSetKeyGameScope:
         mgr.update_set_key("xyz", 0, "forward", "z")
         # No crash, no state change
         assert mgr.get_default("ttr")["forward"] == "w"
+
+
+class TestV1Migration:
+    def test_v1_list_migrates_to_v2(self, tmp_path):
+        legacy = [
+            {"name": "Default", "up": "w", "left": "a", "down": "s",
+             "right": "d", "jump": "space", "book": "Alt_L",
+             "gags": "g", "tasks": "t", "map": "Shift_L"},
+            {"name": "Arrows", "up": "Up", "left": "Left", "down": "Down",
+             "right": "Right", "jump": "Control_L", "book": "Alt_R",
+             "gags": "g", "tasks": "t", "map": "Shift_R"},
+        ]
+        mgr, path = _make_manager_with_file(tmp_path, legacy)
+        data = json.loads(path.read_text())
+        assert data["version"] == 2
+        assert len(data["ttr"]) == 2
+        assert len(data["cc"]) == 1
+
+    def test_v1_up_renamed_to_forward(self, tmp_path):
+        legacy = [{"name": "Default", "up": "w", "down": "s",
+                   "left": "a", "right": "d", "jump": "space",
+                   "book": "Alt_L", "gags": "g", "tasks": "t", "map": "Shift_L"}]
+        mgr, _ = _make_manager_with_file(tmp_path, legacy)
+        ttr = mgr.get_default("ttr")
+        assert ttr["forward"] == "w"
+        assert ttr["reverse"] == "s"
+        assert "up" not in ttr
+        assert "down" not in ttr
+
+    def test_v1_migration_seeds_cc_default(self, tmp_path):
+        legacy = [{"name": "Default", "up": "w", "down": "s",
+                   "left": "a", "right": "d", "jump": "space",
+                   "book": "Alt_L", "gags": "g", "tasks": "t", "map": "Shift_L"}]
+        mgr, _ = _make_manager_with_file(tmp_path, legacy)
+        cc = mgr.get_default("cc")
+        assert cc["forward"] == "w"
+        assert cc["sprint"] == "Shift_L"
+        assert cc["book"] == "Escape"
+
+    def test_v2_backfill_adds_missing_actions(self, tmp_path):
+        v2 = {
+            "version": 2,
+            "ttr": [{"name": "Default", "forward": "w"}],  # everything else missing
+            "cc": [{"name": "Default"}],
+        }
+        mgr, _ = _make_manager_with_file(tmp_path, v2)
+        ttr = mgr.get_default("ttr")
+        assert ttr["forward"] == "w"
+        assert ttr["jump"] == "space"  # backfilled from registry
+        assert ttr["map"] == "Shift_L"
+        cc = mgr.get_default("cc")
+        assert cc["sprint"] == "Shift_L"  # backfilled
+
+    def test_unknown_shape_resets(self, tmp_path):
+        # A dict without version=2 is treated as unrecognized -> reset
+        mgr, _ = _make_manager_with_file(tmp_path, {"version": 1, "foo": "bar"})
+        assert mgr.num_sets("ttr") == 1
+        assert mgr.num_sets("cc") == 1
