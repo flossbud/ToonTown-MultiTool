@@ -9,8 +9,6 @@ corrupted existing JSON.
 import json
 import os
 
-import pytest
-
 
 def test_creates_file_when_missing(tmp_path):
     from utils.installer_merge import merge_installer_config
@@ -127,3 +125,18 @@ def test_atomic_write_uses_temp_file(tmp_path, monkeypatch):
     src, dst = seen_paths[0]
     assert src.endswith(".tmp")
     assert dst == str(target)
+
+
+def test_returns_false_on_write_failure_and_cleans_up_tmp(tmp_path, monkeypatch):
+    """If the atomic-replace step raises OSError (e.g. read-only target),
+    the function returns False AND the .tmp file is cleaned up so a retry
+    is not blocked by a stale partial."""
+    from utils import installer_merge
+    target = tmp_path / "settings.json"
+    def boom(src, dst):
+        raise OSError("simulated disk full")
+    monkeypatch.setattr(os, "replace", boom)
+    ok = installer_merge.merge_installer_config(str(target), check_updates=True, keep_alive=False)
+    assert ok is False
+    assert not (tmp_path / "settings.json.tmp").exists()
+    assert not target.exists()

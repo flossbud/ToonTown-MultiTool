@@ -55,7 +55,14 @@ def merge_installer_config(
     existing.update(to_merge)
 
     tmp_path = settings_path + ".tmp"
-    with open(tmp_path, "w", encoding="utf-8") as fh:
-        json.dump(existing, fh, indent=2)
-    os.replace(tmp_path, settings_path)
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as fh:
+            json.dump(existing, fh, indent=2)
+        os.replace(tmp_path, settings_path)
+    except OSError:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        return False
     return True
