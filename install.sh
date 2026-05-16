@@ -197,12 +197,22 @@ fi
 # then run it. Exit 1 with a clean message on user decline or command failure.
 run_sudo() {
     local cmd="$*"
+    local reply
     echo ""
     echo "The script will run:"
     echo "  sudo $cmd"
     if [ "$ASSUME_YES" -ne 1 ]; then
+        # Refuse to guess on non-interactive stdin; require explicit --yes instead.
+        if [ ! -t 0 ]; then
+            echo "Aborted: non-interactive stdin and --yes not passed." >&2
+            echo "Re-run with --yes to accept all sudo prompts non-interactively." >&2
+            exit 1
+        fi
         printf 'Proceed? [y/N] '
-        read -r reply
+        # Treat EOF / read error as decline (don't let set -e turn this into a silent crash).
+        if ! read -r reply; then
+            reply=""
+        fi
         case "$reply" in
             y|Y|yes|YES)
                 ;;
