@@ -230,10 +230,19 @@ def enumerate_proton_tools(
 
     def _sort_key(p: ProtonTool) -> tuple:
         group_rank = 0 if p.source == "compatibilitytools.d" else 1
-        # Negate values to make Python's natural ascending sort produce
-        # newest-first within each group.
-        neg_version = tuple(-n for n in p.version_key)
-        return (group_rank, neg_version, -_mtime(p))
+        # Tools with no parseable version (e.g. "Proton - Experimental")
+        # have an empty version_key. Push them to the bottom of their
+        # group via has_version=1 so they tiebreak on mtime alone, not
+        # the (incorrect) "empty tuple sorts first" Python default.
+        has_version = 0 if p.version_key else 1
+        # Pad to a fixed length so longer tuples (more specific, e.g.
+        # date-suffixed builds like Proton-CachyOS-9.0-20251214) sort
+        # BEFORE shorter ones with the same prefix. Without padding,
+        # tuple lex-compare puts shorter tuples first, which is
+        # backwards from "newest first."
+        padded = (p.version_key + (0,) * 6)[:6]
+        neg_version = tuple(-n for n in padded)
+        return (group_rank, has_version, neg_version, -_mtime(p))
 
     found.sort(key=_sort_key)
     return found

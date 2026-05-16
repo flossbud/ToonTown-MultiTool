@@ -140,3 +140,40 @@ def test_version_key_extraction():
     assert _version_key_from_name("GE-Proton9-26") == (9, 26)
     assert _version_key_from_name("Proton-CachyOS-9.0-20251214") == (9, 0, 20251214)
     assert _version_key_from_name("Proton - Experimental") == ()
+
+
+def test_empty_version_key_sorts_after_versioned_within_group(tmp_path):
+    """Proton - Experimental (version=()) must sort AFTER Proton 9.0
+    among officials, not before. Bug-fix regression test."""
+    root = tmp_path / "Steam"
+    _make_proton(root, "steamapps/common", "Proton - Experimental",
+                 official=True)
+    _make_proton(root, "steamapps/common", "Proton 9.0 (Beta)",
+                 official=True)
+    _make_proton(root, "steamapps/common", "Proton 8.0", official=True)
+
+    tools = enumerate_proton_tools(steam_roots=[str(root)])
+
+    # Officials only; index 0 should be Proton 9.0 (newest numbered),
+    # then Proton 8.0, then Experimental at the bottom.
+    officials = [t for t in tools if t.source == "official"]
+    assert officials[0].name == "proton_9"
+    assert officials[1].name == "proton_8"
+    assert officials[-1].name == "proton_experimental"
+
+
+def test_dated_build_sorts_before_undated_same_version(tmp_path):
+    """Proton-CachyOS-9.0-20251214 must sort BEFORE Proton-CachyOS-9.0.
+    Bug-fix regression test."""
+    root = tmp_path / "Steam"
+    _make_proton(root, "compatibilitytools.d", "Proton-CachyOS-9.0",
+                 official=False, manifest_internal="proton-cachyos-90")
+    _make_proton(root, "compatibilitytools.d", "Proton-CachyOS-9.0-20251214",
+                 official=False, manifest_internal="proton-cachyos-90-20251214")
+
+    tools = enumerate_proton_tools(steam_roots=[str(root)])
+
+    user_tools = [t for t in tools if t.source == "compatibilitytools.d"]
+    # The dated build is "more specific" — should rank first.
+    assert user_tools[0].name == "proton-cachyos-90-20251214"
+    assert user_tools[1].name == "proton-cachyos-90"
