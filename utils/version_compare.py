@@ -53,16 +53,22 @@ def compare(local: ParsedVersion, remote: ParsedVersion) -> int:
     if lt != rt:
         return -1 if lt < rt else 1
     if local.suffix != remote.suffix:
-        return -1 if local.suffix < remote.suffix else 1
+        # Stable (no suffix) is newer than any pre-release suffix.
+        # Within pre-release, use lexicographic order ("a" < "b" < "rc1").
+        local_key = (0, local.suffix) if local.suffix else (1, "")
+        remote_key = (0, remote.suffix) if remote.suffix else (1, "")
+        return -1 if local_key < remote_key else 1
     return 0
 
 
 def is_newer(
-    local_ver: ParsedVersion,
+    local_ver: Optional[ParsedVersion],
     local_build: int,
-    remote_ver: ParsedVersion,
+    remote_ver: Optional[ParsedVersion],
     remote_build: int,
 ) -> bool:
+    if local_ver is None or remote_ver is None:
+        return False
     c = compare(local_ver, remote_ver)
     if c != 0:
         return c < 0
