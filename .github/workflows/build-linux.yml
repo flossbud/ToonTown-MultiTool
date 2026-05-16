@@ -16,7 +16,7 @@ jobs:
   build-appimage:
     # Build inside debian:11 (glibc 2.31) so the AppImage runs on every
     # currently-supported Debian/Ubuntu/Mint release. The full Qt runtime
-    # lib set is installed so PyInstaller bundles libEGL.so.1 & friends --
+    # lib set is installed so PyInstaller bundles libEGL.so.1 & friends —
     # the CI matrix proved an ubuntu-built AppImage is not self-contained.
     # Also uploads the raw linux-binary artifact for build-deb to consume.
     runs-on: ubuntu-latest
