@@ -92,7 +92,7 @@ class CCCompatPickerDialog(QDialog):
         # to "Use Steam's selection" rather than leaving the user in a
         # confusing "specific Proton checked but no row selected" state.
         # This mirrors the self-healing posture the launch-time resolver
-        # already applies (see services/cc_launcher._resolve_effective_proton).
+        # already applies (see services/cc_launcher.resolve_effective_proton).
         matched_row = -1
         if current_override:
             for i in range(self.list_widget.count()):

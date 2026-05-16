@@ -1,4 +1,4 @@
-"""Tests for cc_launcher._resolve_effective_proton cascade logic."""
+"""Tests for cc_launcher.resolve_effective_proton cascade logic."""
 
 import os
 import pytest
@@ -53,7 +53,7 @@ def test_override_path_wins_when_valid(tmp_path):
     install = _install(tmp_path, proton_dir=_proton_dir(tmp_path, "ConfigInfoProton"))
     sm = _FakeSettings({"cc_steam_proton_override": override})
 
-    result = ccl._resolve_effective_proton(install, sm)
+    result = ccl.resolve_effective_proton(install, sm)
 
     assert result == override
 
@@ -66,7 +66,7 @@ def test_stale_override_clears_setting_and_falls_through(tmp_path, monkeypatch):
     # Block step 2 by ensuring no steam_compat_choice match.
     monkeypatch.setattr(ccl, "steam_compat_choice", lambda root, app: None)
 
-    result = ccl._resolve_effective_proton(install, sm)
+    result = ccl.resolve_effective_proton(install, sm)
 
     assert result == config_info
     assert sm.values["cc_steam_proton_override"] == ""  # cleared
@@ -87,7 +87,7 @@ def test_compatmapping_match_returns_tool_dir(tmp_path, monkeypatch):
         )],
     )
 
-    assert ccl._resolve_effective_proton(install, sm) == tool_dir
+    assert ccl.resolve_effective_proton(install, sm) == tool_dir
 
 
 def test_compatmapping_unmatched_falls_through(tmp_path, monkeypatch):
@@ -98,7 +98,7 @@ def test_compatmapping_unmatched_falls_through(tmp_path, monkeypatch):
                         lambda root, app: "ghost-proton-not-installed")
     monkeypatch.setattr(ccl, "enumerate_proton_tools", lambda: [])
 
-    assert ccl._resolve_effective_proton(install, sm) == config_info
+    assert ccl.resolve_effective_proton(install, sm) == config_info
 
 
 def test_config_info_used_when_no_override_or_mapping(tmp_path, monkeypatch):
@@ -107,7 +107,7 @@ def test_config_info_used_when_no_override_or_mapping(tmp_path, monkeypatch):
     sm = _FakeSettings({})
     monkeypatch.setattr(ccl, "steam_compat_choice", lambda root, app: None)
 
-    assert ccl._resolve_effective_proton(install, sm) == config_info
+    assert ccl.resolve_effective_proton(install, sm) == config_info
 
 
 def test_stale_config_info_falls_through_to_fallback(tmp_path, monkeypatch):
@@ -124,7 +124,7 @@ def test_stale_config_info_falls_through_to_fallback(tmp_path, monkeypatch):
         )],
     )
 
-    assert ccl._resolve_effective_proton(install, sm) == fallback_dir
+    assert ccl.resolve_effective_proton(install, sm) == fallback_dir
 
 
 def test_returns_none_when_nothing_installed(tmp_path, monkeypatch):
@@ -133,7 +133,7 @@ def test_returns_none_when_nothing_installed(tmp_path, monkeypatch):
     monkeypatch.setattr(ccl, "steam_compat_choice", lambda root, app: None)
     monkeypatch.setattr(ccl, "enumerate_proton_tools", lambda: [])
 
-    assert ccl._resolve_effective_proton(install, sm) is None
+    assert ccl.resolve_effective_proton(install, sm) is None
 
 
 def test_missing_steam_root_skips_step2(tmp_path, monkeypatch):
@@ -153,5 +153,5 @@ def test_missing_steam_root_skips_step2(tmp_path, monkeypatch):
         return None
     monkeypatch.setattr(ccl, "steam_compat_choice", _fake_choice)
 
-    assert ccl._resolve_effective_proton(install, sm) == config_info
+    assert ccl.resolve_effective_proton(install, sm) == config_info
     assert called["n"] == 0  # step 2 was skipped, not called with None

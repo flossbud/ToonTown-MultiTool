@@ -136,7 +136,7 @@ def test_bottles_install_does_not_call_resolver(qapp, tmp_path, monkeypatch):
     def _resolver_should_not_be_called(*a, **kw):
         called["n"] += 1
         return None
-    monkeypatch.setattr(ccl, "_resolve_effective_proton",
+    monkeypatch.setattr(ccl, "resolve_effective_proton",
                         _resolver_should_not_be_called)
     monkeypatch.setattr(ccl, "host_popen", lambda cmd, **kw:
                         type("P", (), {"pid": 1, "poll": lambda s: None,
@@ -161,7 +161,7 @@ def test_resolver_none_emits_launch_failed(qapp, tmp_path, monkeypatch):
     sm = _FakeSettings({})
     monkeypatch.setattr("services.wine_runtimes.is_launcher_available",
                         lambda lk: True)
-    monkeypatch.setattr(ccl, "_resolve_effective_proton",
+    monkeypatch.setattr(ccl, "resolve_effective_proton",
                         lambda inst, sm_: None)
     spawn_called = {"n": 0}
     monkeypatch.setattr(ccl, "host_popen", lambda *a, **kw:

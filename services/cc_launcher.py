@@ -63,7 +63,7 @@ def _proton_binary_exists(proton_dir: str | None) -> bool:
     return os.path.isfile(os.path.join(proton_dir, "proton"))
 
 
-def _resolve_effective_proton(install: WineInstall, settings_manager) -> str | None:
+def resolve_effective_proton(install: WineInstall, settings_manager) -> str | None:
     """Pick which proton_dir to use for a steam-proton install.
 
     Cascade (short-circuits on first match):
@@ -245,7 +245,7 @@ class CCLauncher(QObject):
         # build to invoke, regardless of what compatdata/config_info says.
         # WineInstall is frozen; patch via dataclasses.replace.
         if sys.platform != "win32" and install.launcher == "steam-proton":
-            chosen = _resolve_effective_proton(install, self.settings_manager)
+            chosen = resolve_effective_proton(install, self.settings_manager)
             if chosen is None:
                 print("[CCLauncher] launch: no Steam Proton installed; aborting")
                 self.launch_failed.emit(

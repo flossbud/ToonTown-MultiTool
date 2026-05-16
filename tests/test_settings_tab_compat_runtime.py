@@ -70,7 +70,7 @@ def test_steam_proton_no_override_shows_steam_default_suffix(
 
     sm = _SM()
     # Force resolver to return our test proton dir.
-    monkeypatch.setattr("services.cc_launcher._resolve_effective_proton",
+    monkeypatch.setattr("services.cc_launcher.resolve_effective_proton",
                         lambda inst, s: proton)
     monkeypatch.setattr(
         "services.steam_proton_tools.enumerate_proton_tools",
@@ -101,7 +101,7 @@ def test_steam_proton_with_override_shows_custom_suffix(
         def on_change(self, cb): pass
 
     sm = _SM()
-    monkeypatch.setattr("services.cc_launcher._resolve_effective_proton",
+    monkeypatch.setattr("services.cc_launcher.resolve_effective_proton",
                         lambda inst, s: proton)
     monkeypatch.setattr(
         "services.steam_proton_tools.enumerate_proton_tools",
@@ -129,7 +129,7 @@ def test_steam_proton_resolver_none_disables_change_button(
         def on_change(self, cb): pass
 
     sm = _SM()
-    monkeypatch.setattr("services.cc_launcher._resolve_effective_proton",
+    monkeypatch.setattr("services.cc_launcher.resolve_effective_proton",
                         lambda inst, s: None)
     from tabs.settings_tab import CompatRuntimeRow
     row = CompatRuntimeRow(settings_manager=sm, get_active_install=lambda: install)
@@ -212,7 +212,7 @@ def test_change_button_click_persists_chosen_override(
 
     monkeypatch.setattr("utils.widgets.cc_compat_picker.CCCompatPickerDialog",
                         _StubDialog)
-    monkeypatch.setattr("services.cc_launcher._resolve_effective_proton",
+    monkeypatch.setattr("services.cc_launcher.resolve_effective_proton",
                         lambda inst, s: proton)
     monkeypatch.setattr(
         "services.steam_proton_tools.enumerate_proton_tools",
@@ -255,7 +255,7 @@ def test_change_button_click_cancel_does_not_persist(
 
     monkeypatch.setattr("utils.widgets.cc_compat_picker.CCCompatPickerDialog",
                         _StubDialog)
-    monkeypatch.setattr("services.cc_launcher._resolve_effective_proton",
+    monkeypatch.setattr("services.cc_launcher.resolve_effective_proton",
                         lambda inst, s: proton)
     monkeypatch.setattr(
         "services.steam_proton_tools.enumerate_proton_tools",
