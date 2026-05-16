@@ -229,6 +229,23 @@ Config files at `~/.config/toontown_multitool/`:
 
 ---
 
+## Updates
+
+The app can check for new releases on GitHub at startup. Toggle this
+under Settings, Updates, or click "Check now" any time. When an update
+is found, a banner appears at the top of the window; click it for
+release notes and choices (Update now, Remind me later, Skip this
+version).
+
+The update action depends on how you installed:
+
+- **Windows**: downloads the new installer and prompts before running it.
+- **AppImage**: opens the release page in your browser.
+- **Flatpak, AUR, .deb**: opens your default terminal with the right
+  package-manager command (Flatpak update, your AUR helper, or `dpkg -i`
+  via pkexec on the new .deb).
+- **Source**: shows the `git pull` command in a copyable dialog.
+
 ## Privacy
 
 See [PRIVACY.md](PRIVACY.md) for what data TTMultiTool stores on your device, where, and what is sent to the official game servers when you launch a toon. The app contains no telemetry, analytics, or crash reporting.

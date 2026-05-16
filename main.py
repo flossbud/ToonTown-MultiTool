@@ -226,6 +226,8 @@ class MultiToonTool(QMainWindow):
         self.pressed_keys = set()
         GameRegistry.instance()  # warm up before any launchers
         self.settings_manager = SettingsManager()
+        from utils.update_defaults import apply_first_launch_defaults
+        apply_first_launch_defaults(self.settings_manager)
 
         # Hook motion module into the app's settings.
         import utils.motion as motion
@@ -295,10 +297,17 @@ class MultiToonTool(QMainWindow):
         self.settings_tab.input_backend_changed.connect(self.on_input_backend_changed)
         self.settings_tab.clear_credentials_requested.connect(self.on_clear_credentials_requested)
 
-        # ── Build layout: header + chip_rail + stacked content ─────────────
+        # ── Build layout: banner + header + chip_rail + stacked content ────
         root = QVBoxLayout()
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
+
+        from utils.widgets.update_banner import UpdateBanner
+        self.update_banner = UpdateBanner(parent=self)
+        self.update_banner.clicked.connect(self._on_update_banner_clicked)
+        self.update_banner.dismissed.connect(self._on_update_banner_dismissed)
+        self._pending_update_info = None
+        root.addWidget(self.update_banner)
 
         self.header = self._build_header()
         root.addWidget(self.header)
@@ -322,6 +331,8 @@ class MultiToonTool(QMainWindow):
         self._apply_full_theme()
         self._refresh_header_session_status()
         self.nav_select(0)
+        self._setup_update_checker()
+        self._maybe_kick_off_startup_check()
         self._update_hint_icon()
 
         # Install event filter to globally block tooltips when hints disabled
@@ -436,6 +447,42 @@ class MultiToonTool(QMainWindow):
                 return False
             return True  # Block tooltip
         return False
+
+    # ── Update flow ────────────────────────────────────────────────────────
+
+    def _setup_update_checker(self):
+        from utils.update_checker import UpdateChecker
+        from utils.update_runner import UpdateRunner
+        self.update_checker = UpdateChecker(self.settings_manager, parent=self)
+        self.update_runner = UpdateRunner(self)
+        self.update_checker.update_available.connect(self._on_update_available)
+        if hasattr(self.settings_tab, "set_update_checker"):
+            self.settings_tab.set_update_checker(self.update_checker)
+
+    def _maybe_kick_off_startup_check(self):
+        if not bool(self.settings_manager.get("check_for_updates_at_startup", False)):
+            return
+        self.update_checker.check_async(manual=False)
+
+    def _on_update_available(self, info):
+        self._pending_update_info = info
+        self.update_banner.show_for_release(info)
+
+    def _on_update_banner_clicked(self):
+        info = getattr(self, "_pending_update_info", None)
+        if info is None:
+            return
+        from utils.widgets.update_dialog import UpdateDialog
+        from utils import build_info
+        dlg = UpdateDialog(info, local_version_string=build_info.version_string(), parent=self)
+        dlg.update_now.connect(lambda: self.update_runner.run_update(info))
+        dlg.skip_version.connect(lambda: self.settings_manager.set("update_skipped_version", info["tag_name"]))
+        dlg.skip_version.connect(self.update_banner.hide)
+        dlg.exec()
+
+    def _on_update_banner_dismissed(self):
+        # Session-only dismiss; nothing to persist.
+        pass
 
     # ── Header Bar ─────────────────────────────────────────────────────────
 

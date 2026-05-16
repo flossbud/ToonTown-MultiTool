@@ -13,3 +13,9 @@ SHOW_HINTS = "show_hints"
 REDUCE_MOTION = "reduce_motion"
 REDUCE_MOTION_SET_EXPLICITLY = "reduce_motion_set_explicitly"
 ADVANCED_COLLAPSED = "advanced_collapsed"
+
+# Update flow (added 2026-05-16)
+CHECK_FOR_UPDATES_AT_STARTUP = "check_for_updates_at_startup"
+UPDATE_SKIPPED_VERSION = "update_skipped_version"
+UPDATE_LAST_CHECK_AT = "update_last_check_at"
+UPDATE_LAST_CHECK_RESULT = "update_last_check_result"

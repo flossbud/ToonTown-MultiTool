@@ -13,6 +13,23 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Write build info
+        id: buildinfo
+        shell: pwsh
+        run: |
+          $buildNumber = (git rev-list --count HEAD).Trim()
+          $buildSha = (git rev-parse --short HEAD).Trim()
+          $buildDate = (Get-Date -AsUTC -Format "yyyyMMdd")
+          @"
+          BUILD_NUMBER = $buildNumber
+          BUILD_SHA = "$buildSha"
+          BUILD_DATE = "$buildDate"
+          "@ | Set-Content -Path utils/_build_info.py -Encoding utf8
+          Get-Content utils/_build_info.py
+          "BUILD_NUMBER=$buildNumber" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
       - uses: actions/setup-python@v5
         with:
@@ -40,6 +57,23 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Write build info
+        id: buildinfo
+        shell: pwsh
+        run: |
+          $buildNumber = (git rev-list --count HEAD).Trim()
+          $buildSha = (git rev-parse --short HEAD).Trim()
+          $buildDate = (Get-Date -AsUTC -Format "yyyyMMdd")
+          @"
+          BUILD_NUMBER = $buildNumber
+          BUILD_SHA = "$buildSha"
+          BUILD_DATE = "$buildDate"
+          "@ | Set-Content -Path utils/_build_info.py -Encoding utf8
+          Get-Content utils/_build_info.py
+          "BUILD_NUMBER=$buildNumber" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
       - name: Download windows onedir zip
         uses: actions/download-artifact@v4
@@ -91,6 +125,7 @@ jobs:
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           & $iscc `
             "/DMyAppVersion=$tag" `
+            "/DMyBuildNumber=${{ steps.buildinfo.outputs.BUILD_NUMBER }}" `
             "/DMyAppName=${{ steps.flavor.outputs.name }}" `
             "/DMyAppId=${{ steps.flavor.outputs.appid }}" `
             "/DMyAppFlavor=${{ steps.flavor.outputs.flavor }}" `

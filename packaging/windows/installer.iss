@@ -27,6 +27,9 @@
 #ifndef OutputBaseFilename
   #define OutputBaseFilename "ToonTownMultiTool-Setup-" + MyAppVersion + "-Windows-x86_64"
 #endif
+#ifndef MyBuildNumber
+  #define MyBuildNumber "0"
+#endif
 
 [Setup]
 ; AppId GUIDs from guids.env arrive wrapped in {...}. The leading `{` must be
@@ -34,6 +37,10 @@
 AppId={{#MyAppId}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
+; VersionInfoVersion intentionally omitted: MyAppVersion has a `v` prefix
+; and pre-release suffix; Inno's VersionInfoVersion requires plain numeric
+; MAJOR.MINOR.PATCH[.BUILD]. The build number is still persisted via
+; [Registry] below for IsUpgrade/ConfirmDowngrade checks.
 AppPublisher=flossbud
 AppPublisherURL=https://github.com/flossbud/ToonTownMultiTool-v2
 DefaultDirName={autopf}\{#MyAppName}
@@ -62,6 +69,10 @@ Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription
 Name: "keepalive";   Description: "Enable &Keep-Alive on first launch (TOS warning applies)"; GroupDescription: "Keep-Alive:"; Flags: unchecked
 Name: "checkupdates"; Description: "Check for &updates at startup"; GroupDescription: "Updates:"
 Name: "launchapp";   Description: "&Launch {#MyAppName} after install"; GroupDescription: "After install:"
+
+[Registry]
+Root: HKCU; Subkey: "Software\flossbud\{#MyAppName}"; ValueType: dword; ValueName: "BuildNumber"; ValueData: "{#MyBuildNumber}"; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\flossbud\{#MyAppName}"; ValueType: string; ValueName: "AppVersion"; ValueData: "{#MyAppVersion}"; Flags: uninsdeletevalue
 
 [Files]
 Source: "..\..\dist\ToonTownMultiTool\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -108,6 +119,56 @@ begin
     Result := '1'
   else
     Result := '0';
+end;
+
+function IsUpgrade(): Boolean;
+var
+  KeyPath: String;
+begin
+  KeyPath := 'Software\Microsoft\Windows\CurrentVersion\Uninstall\' + '{#MyAppId}' + '_is1';
+  Result := RegKeyExists(HKLM, KeyPath) or RegKeyExists(HKCU, KeyPath);
+end;
+
+function GetInstalledBuildNumber(): Integer;
+var
+  Value: Cardinal;
+begin
+  Result := 0;
+  if RegQueryDWordValue(HKCU, 'Software\flossbud\{#MyAppName}', 'BuildNumber', Value) then
+    Result := Integer(Value);
+end;
+
+function GetInstalledAppVersion(): String;
+var
+  Value: String;
+begin
+  Result := '';
+  RegQueryStringValue(HKCU, 'Software\flossbud\{#MyAppName}', 'AppVersion', Value);
+  Result := Value;
+end;
+
+function ConfirmDowngrade(): Boolean;
+var
+  InstalledBuild: Integer;
+  IncomingBuild: Integer;
+  Msg: String;
+begin
+  Result := True;
+  if not IsUpgrade() then Exit;
+  InstalledBuild := GetInstalledBuildNumber();
+  IncomingBuild := StrToIntDef('{#MyBuildNumber}', 0);
+  if (InstalledBuild > 0) and (IncomingBuild > 0) and (IncomingBuild <= InstalledBuild) then
+  begin
+    Msg :=
+      'You already have ' + GetInstalledAppVersion() + ' (build ' + IntToStr(InstalledBuild) + ') installed.' + #13#10 + #13#10 +
+      'Install ' + '{#MyAppVersion}' + ' (build ' + IntToStr(IncomingBuild) + ') anyway?';
+    Result := (MsgBox(Msg, mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES);
+  end;
+end;
+
+function InitializeSetup(): Boolean;
+begin
+  Result := ConfirmDowngrade();
 end;
 
 procedure InitializeWizard;
@@ -161,6 +222,15 @@ begin
   UpdatesExplainer.Caption :=
     'The app will check GitHub for new releases when it launches. ' +
     'You''ll be asked before any update is downloaded or installed.';
+
+  if IsUpgrade() then
+  begin
+    WizardForm.WelcomeLabel1.Caption := 'Upgrade ' + '{#MyAppName}';
+    WizardForm.WelcomeLabel2.Caption :=
+      'This wizard will upgrade ' + '{#MyAppName}' + ' to ' + '{#MyAppVersion}' +
+      ' (build ' + '{#MyBuildNumber}' + ').' + #13#10 + #13#10 +
+      'It is recommended that you close all other applications before continuing.';
+  end;
 end;
 
 var
