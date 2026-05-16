@@ -20,10 +20,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 # Parse args
-# shellcheck disable=SC2034  # consumed by run_sudo() in Task 3
 ASSUME_YES=0
 FORCE=0
-# shellcheck disable=SC2034  # consumed by the SKIP_SYSTEM_DEPS gate in Task 2
 SKIP_SYSTEM_DEPS=0
 
 print_help() {
@@ -195,6 +193,100 @@ EOF
     exit 1
 fi
 
+# Sudo helper: print the command, prompt for confirmation (unless --yes),
+# then run it. Exit 1 with a clean message on user decline or command failure.
+run_sudo() {
+    local cmd="$*"
+    echo ""
+    echo "The script will run:"
+    echo "  sudo $cmd"
+    if [ "$ASSUME_YES" -ne 1 ]; then
+        printf 'Proceed? [y/N] '
+        read -r reply
+        case "$reply" in
+            y|Y|yes|YES)
+                ;;
+            *)
+                echo "Aborted. No changes were made." >&2
+                exit 1
+                ;;
+        esac
+    fi
+    # shellcheck disable=SC2086
+    if ! sudo $cmd; then
+        echo "" >&2
+        echo "Failed: sudo $cmd" >&2
+        echo "See output above for details. You can fix the issue and re-run ./install.sh;" >&2
+        echo "the idempotency check skips already-installed packages." >&2
+        exit 1
+    fi
+}
+
+# Resolve which packages need to be installed for the detected family.
+# Echoes a list of package names; empty string means "nothing missing".
+missing_python_packages() {
+    case "$DISTRO_FAMILY" in
+        debian)
+            echo "python3.12 python3.12-venv python3.12-dev"
+            ;;
+        fedora)
+            echo "python3.13"
+            ;;
+        arch)
+            # Arch path is only reached when user has already installed a
+            # supported Python via AUR/pyenv (Arch wart already gates this).
+            echo ""
+            ;;
+    esac
+}
+
+missing_qt6_packages() {
+    # Pre-check which packages are already installed; only echo the missing ones.
+    case "$DISTRO_FAMILY" in
+        debian)
+            # Required runtime libs for PySide6 6.8.x on a minimal Debian/Ubuntu install
+            local needed="libxcb-cursor0 libxkbcommon-x11-0 libegl1 libglib2.0-0"
+            local missing=""
+            for pkg in $needed; do
+                if ! dpkg -s "$pkg" >/dev/null 2>&1; then
+                    missing="$missing $pkg"
+                fi
+            done
+            echo "$missing" | sed 's/^ //'
+            ;;
+        fedora)
+            local needed="qt6-qtbase libxkbcommon-x11"
+            local missing=""
+            for pkg in $needed; do
+                if ! rpm -q "$pkg" >/dev/null 2>&1; then
+                    missing="$missing $pkg"
+                fi
+            done
+            echo "$missing" | sed 's/^ //'
+            ;;
+        arch)
+            local needed="qt6-base libxkbcommon-x11"
+            local missing=""
+            for pkg in $needed; do
+                if ! pacman -Q "$pkg" >/dev/null 2>&1; then
+                    missing="$missing $pkg"
+                fi
+            done
+            echo "$missing" | sed 's/^ //'
+            ;;
+    esac
+}
+
+# Map a package-list to the install command for the current family
+install_packages_cmd() {
+    local pkgs="$*"
+    case "$DISTRO_FAMILY" in
+        debian) echo "apt install -y $pkgs" ;;
+        fedora) echo "dnf install -y $pkgs" ;;
+        arch)   echo "pacman -S --noconfirm $pkgs" ;;
+    esac
+}
+
 # Unsupported-distro bail (skipped when --skip-system-deps is passed)
 if [ "$SKIP_SYSTEM_DEPS" -eq 0 ]; then
     if [ "$DISTRO_FAMILY" = "unsupported" ]; then
@@ -217,6 +309,33 @@ the Python deps.
 EOF
         exit 1
     fi
+
+    # System Python install (if missing)
+    if [ -z "$PYTHON_BIN" ]; then
+        py_pkgs="$(missing_python_packages)"
+        if [ -n "$py_pkgs" ]; then
+            echo ""
+            echo "No supported Python (3.9 to 3.13) found."
+            run_sudo "$(install_packages_cmd $py_pkgs)"
+            # Re-detect Python after install
+            PYTHON_BIN="$(find_supported_python || true)"
+            if [ -z "$PYTHON_BIN" ]; then
+                echo "Python install completed but no supported interpreter found on PATH." >&2
+                echo "Aborting; please report this as a bug." >&2
+                exit 1
+            fi
+            echo "Found supported Python: $PYTHON_BIN -> $(command -v "$PYTHON_BIN")"
+        fi
+    fi
+
+    # Qt6 runtime libs install (if missing)
+    qt_missing="$(missing_qt6_packages)"
+    if [ -n "$qt_missing" ]; then
+        echo ""
+        echo "Missing Qt6 runtime libraries: $qt_missing"
+        run_sudo "$(install_packages_cmd $qt_missing)"
+    fi
 fi
 
-echo "install.sh: detection complete (family=$DISTRO_FAMILY); next phase lands in Task 3."
+echo ""
+echo "install.sh: system deps phase complete; venv + pip phase lands in Task 4."
