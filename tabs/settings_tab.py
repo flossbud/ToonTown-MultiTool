@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QComboBox, QApplication, QMessageBox, QFrame,
@@ -452,6 +453,141 @@ class GamePathRow(SettingsRow):
         # Force re-application of the standard (non-glow) button style.
         if hasattr(self, "_palette"):
             self.apply_theme(self._palette, getattr(self, "_is_dark", True))
+
+
+class CompatRuntimeRow(SettingsRow):
+    """Row that shows the active CC install's compatibility runtime.
+
+    For steam-proton installs on Linux, a Change button opens the
+    compat-picker dialog and persists the user's choice in
+    cc_steam_proton_override. For other launcher types, the row is
+    read-only (just shows the detected runner). On Windows, the row
+    is hidden entirely (native launching only).
+    """
+
+    LABEL = "Compatibility runtime"
+
+    def __init__(self, settings_manager, get_active_install, parent=None):
+        super().__init__(self.LABEL, "", parent=parent)
+        self.settings_manager = settings_manager
+        self._get_active_install = get_active_install
+        self.is_platform_hidden = sys.platform == "win32"
+
+        if self.is_platform_hidden:
+            self.hide()
+            return
+
+        # Build the value label + Change button as a single container
+        # widget, then slot it via add_control (the real SettingsRow API).
+        from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QWidget
+        self.value_label = QLabel("")
+        self.value_label.setObjectName("compat_runtime_value")
+        self.change_button = QPushButton("Change…")
+        self.change_button.setObjectName("compat_runtime_change")
+        self.change_button.setCursor(Qt.PointingHandCursor)
+        self.change_button.setFixedHeight(28)
+        self.change_button.clicked.connect(self._on_change_clicked)
+
+        ctrl_lay = QHBoxLayout()
+        ctrl_lay.setContentsMargins(0, 0, 0, 0)
+        ctrl_lay.setSpacing(8)
+        ctrl_lay.addWidget(self.value_label, 1)
+        ctrl_lay.addWidget(self.change_button, 0)
+        container = QWidget()
+        container.setStyleSheet("background: transparent;")
+        container.setLayout(ctrl_lay)
+        self.add_control(container)
+
+        if self.settings_manager is not None:
+            self.settings_manager.on_change(self._on_setting_changed)
+        self.refresh()
+
+    def refresh(self):
+        """Recompute the row state from the active install + override."""
+        if self.is_platform_hidden:
+            return
+        install = self._get_active_install() if self._get_active_install else None
+        if install is None:
+            self.hide()
+            return
+        self.show()
+
+        if install.launcher != "steam-proton":
+            self.value_label.setText(self._readonly_label(install))
+            self.value_label.setStyleSheet("")  # default theme
+            self.change_button.hide()
+            return
+
+        self.change_button.show()
+        from services.cc_launcher import _resolve_effective_proton
+        chosen = _resolve_effective_proton(install, self.settings_manager)
+        if chosen is None:
+            self.value_label.setText("No Steam Proton found")
+            self.value_label.setStyleSheet("color: #c0392b;")  # warning
+            self.change_button.setEnabled(False)
+            return
+
+        self.change_button.setEnabled(True)
+        display = self._display_name_for(chosen)
+        override = (self.settings_manager.get("cc_steam_proton_override", "")
+                    if self.settings_manager else "")
+        suffix = "(custom)" if override else "(Steam default)"
+        self.value_label.setText(f"{display} {suffix}")
+        self.value_label.setStyleSheet("")
+
+    @staticmethod
+    def _readonly_label(install):
+        if install.launcher == "bottles":
+            runner = (install.metadata.get("bottle_display_name")
+                      or install.metadata.get("bottle_name") or "(unknown)")
+            return f"Bottles · {runner}"
+        if install.launcher == "lutris":
+            wine = install.metadata.get("lutris_wine_version") or "wine"
+            return f"Lutris · {wine}"
+        if install.launcher == "wine":
+            return "Wine · system wine"
+        if install.launcher == "native":
+            return "Native (no compatibility layer)"
+        return install.launcher
+
+    @staticmethod
+    def _display_name_for(proton_dir: str) -> str:
+        from services.steam_proton_tools import enumerate_proton_tools
+        for tool in enumerate_proton_tools():
+            if tool.proton_dir == proton_dir:
+                return tool.display_name
+        return os.path.basename(proton_dir.rstrip(os.sep))
+
+    def _on_setting_changed(self, key, _value):
+        if key == "cc_steam_proton_override" or key == "cc_engine_dir":
+            self.refresh()
+
+    def _on_change_clicked(self):
+        from services.steam_proton_tools import enumerate_proton_tools
+        from utils.widgets.cc_compat_picker import CCCompatPickerDialog
+        install = self._get_active_install() if self._get_active_install else None
+        if install is None or install.launcher != "steam-proton":
+            return
+        tools = enumerate_proton_tools()
+        override = (self.settings_manager.get("cc_steam_proton_override", "")
+                    if self.settings_manager else "")
+        from services.cc_launcher import _resolve_effective_proton
+        resolved = _resolve_effective_proton(install, self.settings_manager) or ""
+        default_display = self._display_name_for(resolved) if resolved else "(none installed)"
+        dlg = CCCompatPickerDialog(
+            tools=tools,
+            current_override=override,
+            steam_default_display=default_display,
+            parent=self,
+        )
+        if dlg.exec() != dlg.DialogCode.Accepted:
+            return
+        chosen = dlg.chosen_override()
+        if chosen is None:
+            return
+        if self.settings_manager is not None:
+            self.settings_manager.set("cc_steam_proton_override", chosen)
+        self.refresh()
 
 
 # ── Section Group ──────────────────────────────────────────────────────────────
@@ -1254,6 +1390,15 @@ class SettingsTab(QWidget):
         )
         group.add_row(self.cc_path_row)
 
+        # Compatibility runtime row — visible only when CC install is
+        # configured (read-only) or steam-proton (with Change button).
+        # Hidden entirely on Windows.
+        self.compat_runtime_row = CompatRuntimeRow(
+            settings_manager=self.settings_manager,
+            get_active_install=self._get_active_cc_install,
+        )
+        group.add_row(self.compat_runtime_row)
+
         self._main_layout.addWidget(group)
 
     def _build_keepalive_group(self):
@@ -1359,6 +1504,18 @@ class SettingsTab(QWidget):
         box.setEscapeButton(cancel_btn)
         box.exec()
         return box.clickedButton() is enable_btn
+
+    def _get_active_cc_install(self):
+        """Return the currently-resolved WineInstall for CC, or None."""
+        from services.wine_runtimes import classify_path
+        path = self.settings_manager.get("cc_engine_dir", "") if self.settings_manager else ""
+        if not path:
+            return None
+        try:
+            return classify_path(path)
+        except Exception as e:
+            print(f"[settings_tab] classify_path({path!r}) failed: {e}")
+            return None
 
     def _build_advanced_group(self):
         self.advanced_group = CollapsibleSettingsGroup(
