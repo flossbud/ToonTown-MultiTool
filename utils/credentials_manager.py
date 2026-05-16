@@ -334,6 +334,17 @@ class CredentialsManager:
                     err_msg = str(result["error"]).lower()
                     if any(p in err_msg for p in ("not found", "no item", "does not exist", "no such")):
                         return True, None
+                # WinVaultKeyring (and most other backends) raise
+                # PasswordDeleteError when delete_password is called for a
+                # non-existent key. That's the no-op case, not a backend
+                # failure: don't tear down the keyring for the rest of the
+                # session. The CC-token clear path hits this on every account
+                # that never had a launcher token saved, which is what
+                # surfaced "Credential Storage Unavailable" on Windows.
+                if func is keyring.delete_password:
+                    from keyring.errors import PasswordDeleteError
+                    if isinstance(result["error"], PasswordDeleteError):
+                        return True, None
                 raise result["error"]
             return True, result["value"]
         except Exception as e:
