@@ -2,9 +2,11 @@
 flow. No I/O, no network, no Qt. Tag format: vMAJOR.MINOR.PATCH[-SUFFIX].
 Stable = no suffix; beta = any suffix (-a, -b, -rc1, ...).
 
-Comparison precedence: (major, minor, patch) tuple > suffix lexicographic
-> build_number integer. The build-number tiebreaker covers re-released
-tags and build-bumped-without-tag-bump edge cases.
+Comparison precedence: (major, minor, patch) tuple > suffix ordering >
+build_number integer. Suffix ordering: stable (no suffix) ranks above
+all pre-release suffixes; within pre-releases, lexicographic order
+(`a < b < rc1`). The build-number tiebreaker covers re-released tags
+and build-bumped-without-tag-bump edge cases.
 
 Intentionally not PEP 440: our tag format is constrained enough that a
 small comparator is clearer than pulling in `packaging` as a new runtime
