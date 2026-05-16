@@ -256,10 +256,12 @@ run_sudo() {
 missing_python_packages() {
     case "$DISTRO_FAMILY" in
         debian)
-            # Debian stable's newest packaged Python is 3.12 as of 2026
-            # (Debian 12 / Ubuntu 24.04). Bump to 3.13 once Debian 13 /
-            # Ubuntu 26.04 ship it; until then, 3.13 is unavailable via
-            # apt and must be installed via deadsnakes or pyenv.
+            # Ubuntu 24.04 LTS ships python3.12 in apt; Debian 12
+            # (bookworm) only ships python3.11 and requires deadsnakes
+            # or pyenv to reach 3.12. We pin 3.12 because Ubuntu 24.04
+            # (and Mint 22, which is Ubuntu-based) is the dominant
+            # target in our supported matrix. Bump to 3.13 once Ubuntu
+            # 26.04 / Debian 13 ship it in apt.
             echo "python3.12 python3.12-venv python3.12-dev"
             ;;
         fedora)
