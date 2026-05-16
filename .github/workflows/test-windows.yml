@@ -1,0 +1,111 @@
+name: Test Windows
+
+on:
+  workflow_call:
+
+jobs:
+  test-windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      # Checkout first: actions/checkout cleans the workspace, so it must run
+      # before the artifact download or it would wipe the downloaded zip.
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Download Windows zip
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-zip
+          path: dist-zip
+
+      # From-source first (does the code run?), then the packaged EXE (does
+      # packaging run?) -- this order isolates a code bug from a build bug.
+      - name: Launch-test from source
+        run: |
+          pip install -r requirements.txt
+          python main.py --self-check
+
+      - name: Launch-test the packaged EXE
+        shell: pwsh
+        run: |
+          $zip = (Get-ChildItem dist-zip\ToonTownMultiTool-*.zip)[0].FullName
+          Expand-Archive -Path $zip -DestinationPath exe-test
+          # The EXE is a GUI-subsystem app (console=False): PowerShell's call
+          # operator never populates $LASTEXITCODE for it, and it has no
+          # console for the job log to capture. Start-Process -Wait -PassThru
+          # gives the real .ExitCode; redirecting the streams to files makes
+          # a frozen-build failure visible instead of an opaque exit code.
+          $exe = (Resolve-Path "exe-test\ToonTownMultiTool.exe").Path
+          $proc = Start-Process -FilePath $exe -ArgumentList "--self-check" -Wait -PassThru `
+            -RedirectStandardOutput exe-out.txt -RedirectStandardError exe-err.txt
+          Write-Host "--- EXE stdout ---"
+          if (Test-Path exe-out.txt) { Get-Content exe-out.txt }
+          Write-Host "--- EXE stderr ---"
+          if (Test-Path exe-err.txt) { Get-Content exe-err.txt }
+          Write-Host "--- EXE exit code: $($proc.ExitCode) ---"
+          if ($proc.ExitCode -ne 0) { throw "EXE --self-check failed ($($proc.ExitCode))" }
+
+  test-windows-installer:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download installer artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-installer
+          path: installer-in
+
+      - name: Silent install
+        shell: pwsh
+        run: |
+          # Inno setup.exe is GUI-subsystem: PowerShell's `&` operator leaves
+          # $LASTEXITCODE as $null for it, same quirk handled in test-windows
+          # above. Use Start-Process -Wait -PassThru to get the real exit code.
+          $installer = (Get-ChildItem installer-in\*.exe)[0].FullName
+          $target = "$env:RUNNER_TEMP\ttmt-install"
+          $installLog = "$env:RUNNER_TEMP\install.log"
+          $proc = Start-Process -FilePath $installer `
+            -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/DIR=$target", "/LOG=$installLog", "/TASKS=desktopicon" `
+            -Wait -PassThru
+          Write-Host "--- installer exit code: $($proc.ExitCode) ---"
+          if (Test-Path $installLog) {
+            Write-Host "--- install.log ---"
+            Get-Content $installLog
+          }
+          if ($proc.ExitCode -ne 0) { throw "Installer exited $($proc.ExitCode)" }
+          if (-not (Test-Path "$target\ToonTownMultiTool.exe")) {
+            throw "Expected EXE not present at $target\ToonTownMultiTool.exe"
+          }
+
+      - name: Launch-test the installed EXE
+        shell: pwsh
+        run: |
+          # Same Start-Process pattern as test-windows: GUI-subsystem EXE has
+          # no console output, so we redirect streams to files and inspect
+          # the real exit code via -PassThru.
+          $exe = "$env:RUNNER_TEMP\ttmt-install\ToonTownMultiTool.exe"
+          $proc = Start-Process -FilePath $exe -ArgumentList "--self-check" -Wait -PassThru `
+            -RedirectStandardOutput exe-out.txt -RedirectStandardError exe-err.txt
+          Write-Host "--- EXE stdout ---"
+          if (Test-Path exe-out.txt) { Get-Content exe-out.txt }
+          Write-Host "--- EXE stderr ---"
+          if (Test-Path exe-err.txt) { Get-Content exe-err.txt }
+          Write-Host "--- EXE exit code: $($proc.ExitCode) ---"
+          if ($proc.ExitCode -ne 0) { throw "Installed EXE --self-check failed ($($proc.ExitCode))" }
+
+      - name: Silent uninstall
+        shell: pwsh
+        run: |
+          $unins = "$env:RUNNER_TEMP\ttmt-install\unins000.exe"
+          if (Test-Path $unins) {
+            $proc = Start-Process -FilePath $unins -ArgumentList "/VERYSILENT" -Wait -PassThru
+            if ($proc.ExitCode -ne 0) { throw "Uninstaller exited $($proc.ExitCode)" }
+          } else {
+            throw "Expected uninstaller at $unins"
+          }
