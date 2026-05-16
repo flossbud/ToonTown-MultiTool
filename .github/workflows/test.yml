@@ -99,7 +99,7 @@ jobs:
           $target = "$env:RUNNER_TEMP\ttmt-install"
           $installLog = "$env:RUNNER_TEMP\install.log"
           $proc = Start-Process -FilePath $installer `
-            -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/DIR=$target", "/LOG=$installLog" `
+            -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/DIR=$target", "/LOG=$installLog", "/TASKS=desktopicon" `
             -Wait -PassThru
           Write-Host "--- installer exit code: $($proc.ExitCode) ---"
           if (Test-Path $installLog) {
