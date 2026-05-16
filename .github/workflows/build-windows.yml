@@ -1,0 +1,105 @@
+name: Build Windows
+
+on:
+  workflow_call:
+    inputs:
+      version_label:
+        description: Label embedded in artifact filenames (e.g. a release tag). Must not contain '/'.
+        type: string
+        default: dev
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pyinstaller
+
+      - name: Build EXE
+        run: pyinstaller --noconfirm ToonTownMultiTool.spec
+
+      - name: Package onedir as zip
+        shell: pwsh
+        run: |
+          $tag = "${{ inputs.version_label }}"
+          Compress-Archive -Path "dist\ToonTownMultiTool\*" -DestinationPath "ToonTownMultiTool-$tag-Windows-x86_64.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-zip
+          path: ToonTownMultiTool-*.zip
+
+  build-windows-installer:
+    needs: build-windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download windows onedir zip
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-zip
+          path: zip-in
+
+      - name: Extract onedir into dist\
+        shell: pwsh
+        run: |
+          $zip = (Get-ChildItem zip-in\ToonTownMultiTool-*.zip)[0].FullName
+          New-Item -ItemType Directory -Force -Path dist\ToonTownMultiTool | Out-Null
+          Expand-Archive $zip -DestinationPath dist\ToonTownMultiTool -Force
+
+      - name: Load AppId GUIDs
+        shell: bash
+        run: cat packaging/windows/guids.env >> "$GITHUB_ENV"
+
+      - name: Determine flavor and metadata
+        id: flavor
+        shell: bash
+        run: |
+          tag="${{ inputs.version_label }}"
+          if [[ "$tag" == *-* ]]; then
+            echo "flavor=beta" >> "$GITHUB_OUTPUT"
+            echo "name=ToonTown MultiTool Beta" >> "$GITHUB_OUTPUT"
+            echo "appid=$BETA_APPID" >> "$GITHUB_OUTPUT"
+            echo "configdir=toontown_multitool_beta" >> "$GITHUB_OUTPUT"
+          else
+            echo "flavor=stable" >> "$GITHUB_OUTPUT"
+            echo "name=ToonTown MultiTool" >> "$GITHUB_OUTPUT"
+            echo "appid=$STABLE_APPID" >> "$GITHUB_OUTPUT"
+            echo "configdir=toontown_multitool" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Drop beta sentinel
+        if: steps.flavor.outputs.flavor == 'beta'
+        shell: pwsh
+        run: New-Item -Path dist\ToonTownMultiTool\.beta_flavor -ItemType File -Force | Out-Null
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup -y --no-progress
+
+      - name: Compile installer
+        shell: pwsh
+        run: |
+          $tag = "${{ inputs.version_label }}"
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          & $iscc `
+            "/DMyAppVersion=$tag" `
+            "/DMyAppName=${{ steps.flavor.outputs.name }}" `
+            "/DMyAppId=${{ steps.flavor.outputs.appid }}" `
+            "/DMyAppFlavor=${{ steps.flavor.outputs.flavor }}" `
+            "/DConfigDirName=${{ steps.flavor.outputs.configdir }}" `
+            "/DOutputBaseFilename=ToonTownMultiTool-Setup-$tag-Windows-x86_64" `
+            packaging\windows\installer.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit $LASTEXITCODE" }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: packaging/windows/Output/*.exe
