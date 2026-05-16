@@ -73,6 +73,7 @@ jobs:
           prerelease: ${{ contains(github.ref_name, '-') }}
           files: |
             windows-zip/ToonTownMultiTool-*.zip
+            windows-installer/ToonTownMultiTool-Setup-*.exe
             linux-appimage/TTMultiTool-*.AppImage
             linux-flatpak/TTMultiTool-*.flatpak
             linux-deb/TTMultiTool-*.deb
