@@ -77,3 +77,6 @@ API Docs/
 
 # === Windows NSIS installer output ===
 packaging/windows/Output/
+
+# === CI-generated build identity (never commit the generated file) ===
+utils/_build_info.py
