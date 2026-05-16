@@ -73,6 +73,115 @@ class ProtonTool:
     version_key: tuple[int, ...]
 
 
+# Casing dictionary for brand-word tokens. Anything not in this dict
+# falls back to str.title() casing. Keep this list narrow — only common
+# brand-prefix tokens that title-case mangles ("cachyos" -> "Cachyos"
+# without an entry).
+_BRAND_CASING: dict[str, str] = {
+    "cachyos": "CachyOS",
+    "ge": "GE",
+    "tkg": "Tkg",
+    "proton": "Proton",
+}
+
+
+# Token patterns dropped before brand/version parsing.
+# 8-digit YYYYMMDD date stamps and known architecture / runtime tags.
+_DROP_TOKEN_RE = re.compile(
+    r"^(?:\d{8}|slr|x86_64|amd64|i386|aarch64|win64|linux)$",
+    re.IGNORECASE,
+)
+
+
+# Hybrid token: alphabetic prefix followed by digit(s) (e.g. "Proton9").
+_HYBRID_TOKEN_RE = re.compile(r"^([A-Za-z]+)(\d.*)$")
+
+
+# Pure dotted version: <digits>.<digits> (possibly more dotted parts).
+_DOTTED_VERSION_RE = re.compile(r"^\d+(?:\.\d+)+$")
+
+
+def _case_brand_token(token: str) -> str:
+    """Apply _BRAND_CASING for known tokens, str.title() otherwise."""
+    return _BRAND_CASING.get(token.lower(), token.title())
+
+
+def _make_nickname(dir_name: str, vdf_display_name: str | None) -> str:
+    """Generate a short human-friendly name for a Proton build.
+
+    Two-stage strategy:
+      1. If vdf_display_name is non-empty AND differs from dir_name AND
+         is <= 32 characters, use it unchanged (some upstream tools
+         ship a clean display_name).
+      2. Otherwise parse the dir name: drop date / arch tokens,
+         collect alphabetic brand tokens, then collect digit version
+         tokens. Format as "<Brand> <Version>" or "<Brand>" alone.
+
+    After parsing, truncate to 37 chars + ellipsis if the result still
+    exceeds 40 characters (defensive guard for pathological names).
+
+    Never raises. Always returns a string (possibly the dir_name
+    verbatim if parsing yields nothing).
+    """
+    # Stage 1: trust a substantially-different VDF display name.
+    if (
+        vdf_display_name
+        and vdf_display_name != dir_name
+        and len(vdf_display_name) <= 32
+    ):
+        return vdf_display_name
+
+    # Stage 2: parse the dir name.
+    if not dir_name:
+        return ""
+
+    # Tokenize on -, _, and whitespace. Filter out drop patterns.
+    raw_tokens = re.split(r"[-_\s]+", dir_name)
+    tokens = [t for t in raw_tokens if t and not _DROP_TOKEN_RE.match(t)]
+    if not tokens:
+        return dir_name  # everything got dropped, defensive fallback
+
+    brand_parts: list[str] = []
+    version_parts: list[str] = []
+    in_version = False
+
+    for tok in tokens:
+        if not in_version:
+            # Phase A: collecting brand.
+            if tok.isalpha():
+                brand_parts.append(_case_brand_token(tok))
+                continue
+            # Hybrid token: peel off alpha prefix as brand, digit
+            # suffix starts version.
+            m = _HYBRID_TOKEN_RE.match(tok)
+            if m:
+                brand_parts.append(_case_brand_token(m.group(1)))
+                version_parts.append(m.group(2))
+                in_version = True
+                continue
+            # Token starts with a digit: switch to Phase B; reprocess.
+            in_version = True
+        # Phase B: collecting version.
+        if tok.isdigit() or _DOTTED_VERSION_RE.match(tok):
+            version_parts.append(tok)
+        else:
+            # Non-version token after we started — stop walking.
+            break
+
+    if not brand_parts:
+        return dir_name  # no brand parsed; can't beat the original
+
+    brand = "-".join(brand_parts)
+    if version_parts:
+        result = f"{brand} {'-'.join(version_parts)}"
+    else:
+        result = brand
+
+    if len(result) > 40:
+        result = result[:37] + "…"
+    return result
+
+
 def _default_roots() -> list[str]:
     # Single source of truth for the Steam roots list lives in
     # wine_runtimes (used by CC install discovery). Lazy-import to keep
