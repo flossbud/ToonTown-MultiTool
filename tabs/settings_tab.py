@@ -527,11 +527,11 @@ class CompatRuntimeRow(SettingsRow):
             return
 
         self.change_button.setEnabled(True)
-        display = self._display_name_for(chosen)
+        nickname = self._nickname_for(chosen)
         override = (self.settings_manager.get("cc_steam_proton_override", "")
                     if self.settings_manager else "")
-        suffix = "(custom)" if override else "(Steam default)"
-        self.value_label.setText(f"{display} {suffix}")
+        suffix = "custom" if override else "default"
+        self.value_label.setText(f"{nickname} · {suffix}")
         self.value_label.setStyleSheet("")
 
     @staticmethod
@@ -553,11 +553,11 @@ class CompatRuntimeRow(SettingsRow):
         return install.launcher
 
     @staticmethod
-    def _display_name_for(proton_dir: str) -> str:
+    def _nickname_for(proton_dir: str) -> str:
         from services.steam_proton_tools import enumerate_proton_tools
         for tool in enumerate_proton_tools():
             if tool.proton_dir == proton_dir:
-                return tool.display_name
+                return tool.nickname
         return os.path.basename(proton_dir.rstrip(os.sep))
 
     def _on_setting_changed(self, key, _value):
@@ -575,7 +575,7 @@ class CompatRuntimeRow(SettingsRow):
                     if self.settings_manager else "")
         from services.cc_launcher import resolve_effective_proton
         resolved = resolve_effective_proton(install, self.settings_manager) or ""
-        default_display = self._display_name_for(resolved) if resolved else "(none installed)"
+        default_display = self._nickname_for(resolved) if resolved else "(none installed)"
         dlg = CCCompatPickerDialog(
             tools=tools,
             current_override=override,

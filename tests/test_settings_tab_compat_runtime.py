@@ -84,8 +84,12 @@ def test_steam_proton_no_override_shows_steam_default_suffix(
 
     assert row.is_platform_hidden is False
     assert row.change_button.isHidden() is False
-    assert "(Steam default)" in row.value_label.text()
-    assert "Proton-CachyOS" in row.value_label.text()
+    text = row.value_label.text()
+    assert " · default" in text, f"expected ' · default' in {text!r}"
+    # The test fixture uses a ProtonTool with display_name="Proton-CachyOS";
+    # the nickname for that input is also "Proton-CachyOS" (single brand
+    # token, no version, Stage-1 VDF acceptance).
+    assert "Proton-CachyOS" in text
 
 
 def test_steam_proton_with_override_shows_custom_suffix(
@@ -114,8 +118,9 @@ def test_steam_proton_with_override_shows_custom_suffix(
     from tabs.settings_tab import CompatRuntimeRow
     row = CompatRuntimeRow(settings_manager=sm, get_active_install=lambda: install)
 
-    assert "(custom)" in row.value_label.text()
-    assert "GE-Proton9-26" in row.value_label.text()
+    text = row.value_label.text()
+    assert " · custom" in text, f"expected ' · custom' in {text!r}"
+    assert "GE-Proton9-26" in text
 
 
 def test_steam_proton_resolver_none_disables_change_button(
