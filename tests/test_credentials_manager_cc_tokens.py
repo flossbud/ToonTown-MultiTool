@@ -73,3 +73,51 @@ def test_clear_launcher_token_noop_when_absent(cm):
     # Should not raise.
     cm.clear_launcher_token("never-existed")
     assert cm.get_launcher_token("never-existed") == ""
+
+
+def test_clear_launcher_token_raises_does_not_disable_keyring(tmp_path, monkeypatch):
+    """Regression: WinVaultKeyring (and other backends) raise
+    PasswordDeleteError when the entry being deleted doesn't exist. Before
+    the fix, that benign signal flowed through _try_keyring_call's generic
+    except branch and set _use_keyring=False for the rest of the process,
+    surfacing the "Credential Storage Unavailable" banner on Windows the
+    first time the CC token clear path ran against a never-saved account.
+    """
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    import keyring
+    import keyring.core
+    from keyring.backend import KeyringBackend
+    from keyring.errors import PasswordDeleteError
+
+    class _RaisingDeleteBackend(KeyringBackend):
+        priority = 999
+        def __init__(self):
+            self._store = {}
+        def get_password(self, service, username):
+            return self._store.get((service, username))
+        def set_password(self, service, username, password):
+            self._store[(service, username)] = password
+        def delete_password(self, service, username):
+            if (service, username) not in self._store:
+                raise PasswordDeleteError(service)
+            self._store.pop((service, username))
+
+    backend = _RaisingDeleteBackend()
+    prev = keyring.core._keyring_backend
+    keyring.set_keyring(backend)
+    monkeypatch.setattr(keyring, "get_keyring", lambda: backend)
+    try:
+        from utils.credentials_manager import CredentialsManager
+        cm = CredentialsManager()
+        cm._probe_complete = True
+        cm._use_keyring = True
+
+        # Clearing a non-existent token must not raise...
+        cm.clear_launcher_token("never-existed")
+        # ...and must not disable keyring for the rest of the session.
+        assert cm.keyring_available, (
+            "PasswordDeleteError on missing entry should be treated as a "
+            "no-op, not a permanent keyring failure."
+        )
+    finally:
+        keyring.core._keyring_backend = prev
