@@ -514,13 +514,21 @@ class InputService(QObject):
                                     self._send_typing_to_bg(key, enabled, assignments, movement_keys)
 
                         else:
-                            if key not in self.bg_typing_held:
-                                self.bg_typing_held.add(key)
-                                if self._phantom_active:
-                                    # Stealth chat mode — suppress all forwarding
+                            if self._phantom_active:
+                                # Stealth chat — suppress forwarding (chat is open in spirit)
+                                if key not in self.bg_typing_held:
+                                    self.bg_typing_held.add(key)
                                     self._chat_last_activity = now
-                                elif not self.global_chat_active and len(key) == 1 and key.isprintable():
-                                    # Typing without chat open — possible whisper reply
+                            elif self.global_chat_active:
+                                # Chat open — tap each character through typing path
+                                if key not in self.bg_typing_held:
+                                    self.bg_typing_held.add(key)
+                                    self._chat_last_activity = now
+                                    self._send_typing_to_bg(key, enabled, assignments, movement_keys)
+                            elif len(key) == 1 and key.isprintable():
+                                # Possible whisper reply (3 printable chars with no chat open)
+                                if key not in self.bg_typing_held:
+                                    self.bg_typing_held.add(key)
                                     self._phantom_char_count += 1
                                     if self._phantom_char_count >= 3:
                                         self._phantom_active = True
@@ -529,10 +537,14 @@ class InputService(QObject):
                                             self.input_log.emit("[Input] Whisper reply detected — input suppressed")
                                     else:
                                         self._send_typing_to_bg(key, enabled, assignments, movement_keys)
-                                else:
-                                    if self.global_chat_active:
-                                        self._chat_last_activity = now
-                                    self._send_typing_to_bg(key, enabled, assignments, movement_keys)
+                            else:
+                                # In-game non-printable key (Delete, F-keys, numpad, etc.)
+                                # Hold for as long as the user holds it so TTR's action-key
+                                # duration replicates on background toons.
+                                if key not in self.action_held:
+                                    self.action_held.add(key)
+                                    self._log_key(key, "pressed")
+                                    self._send_action_keydown_to_bg(key, enabled, assignments)
 
                     elif action == "keyup":
 

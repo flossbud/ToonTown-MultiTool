@@ -82,3 +82,26 @@ def test_action_helpers_have_action_held_set_initialized():
     svc, _ = _make_service()
     assert hasattr(svc, "action_held")
     assert svc.action_held == set()
+
+
+def test_holding_action_key_sends_keydown_once_then_keyup_on_release():
+    """Repro: holding Delete (TTR Perform Action) must send ONE keydown and
+    ONE keyup to each background toon, not the legacy tap. Autorepeat
+    keydown events from the OS must be suppressed by `action_held`."""
+    svc, q = _make_service()
+
+    _drive(svc, q, [
+        ("keydown", "Delete"),
+        ("keydown", "Delete"),  # OS autorepeat
+        ("keydown", "Delete"),  # OS autorepeat
+        ("keyup",   "Delete"),
+    ])
+
+    kd = [c.args for c in svc._xlib.send_keydown.call_args_list if c.args[1] == "Delete"]
+    ku = [c.args for c in svc._xlib.send_keyup.call_args_list   if c.args[1] == "Delete"]
+    # Exactly one keydown and one keyup per background window:
+    assert kd == [("1002", "Delete")], f"keydowns: {kd}"
+    assert ku == [("1002", "Delete")], f"keyups: {ku}"
+    # No legacy tap path:
+    tap_calls = [c for c in svc._xlib.send_key.call_args_list if c.args[1] == "Delete"]
+    assert tap_calls == [], f"unexpected tap: {tap_calls}"
