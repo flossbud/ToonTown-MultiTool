@@ -10,13 +10,21 @@ copy-command dialog instead.
 """
 from __future__ import annotations
 
+import logging
 import os
+import shlex
 import shutil
 import subprocess
 import threading
 from typing import Callable, List, Optional
 
 
+_log = logging.getLogger(__name__)
+
+
+# Detection order: gnome-terminal first because GNOME has the largest
+# installed base; konsole second for KDE; XFCE, kitty, alacritty next;
+# xterm last as the universal X11 fallback.
 TERMINAL_ORDER = [
     "gnome-terminal",
     "konsole",
@@ -51,8 +59,9 @@ def build_argv(terminal_path: str, cmd: List[str]) -> List[str]:
     if name == "xterm":
         return [terminal_path, "-e", *cmd]
     if name == "xfce4-terminal":
-        # xfce4-terminal --command takes a single string
-        return [terminal_path, "--command", " ".join(cmd)]
+        # xfce4-terminal --command takes a single string parsed by a shell.
+        # shlex.quote each element so paths containing spaces survive.
+        return [terminal_path, "--command", " ".join(shlex.quote(a) for a in cmd)]
     if name == "kitty":
         return [terminal_path, *cmd]
     if name == "alacritty":
@@ -80,7 +89,7 @@ def run_in_terminal(cmd: List[str], on_exit: Callable[[int], None]) -> bool:
         try:
             on_exit(rc)
         except Exception:
-            pass
+            _log.exception("on_exit callback raised in terminal launcher thread")
 
     t = threading.Thread(target=_wait, daemon=True)
     t.start()

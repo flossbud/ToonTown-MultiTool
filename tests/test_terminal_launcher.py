@@ -1,8 +1,14 @@
 import shutil
+import subprocess
 
 import pytest
 
-from utils.terminal_launcher import detect_terminal, build_argv, TERMINAL_ORDER
+from utils.terminal_launcher import (
+    detect_terminal,
+    build_argv,
+    run_in_terminal,
+    TERMINAL_ORDER,
+)
 
 
 def test_detect_terminal_respects_env(monkeypatch):
@@ -44,3 +50,38 @@ def test_build_argv_per_terminal(terminal, cmd, expected_tail):
     argv = build_argv(terminal, cmd)
     assert argv[0] == terminal
     assert argv[1:] == expected_tail
+
+
+def test_build_argv_xfce_shell_quotes_spaces():
+    # xfce4-terminal passes --command to a shell. Paths with spaces
+    # must round-trip through shell parsing without losing the boundary.
+    argv = build_argv("/usr/bin/xfce4-terminal", ["pkexec", "apt", "install", "/tmp/foo bar.deb"])
+    assert argv[0] == "/usr/bin/xfce4-terminal"
+    assert argv[1] == "--command"
+    assert argv[2] == "pkexec apt install '/tmp/foo bar.deb'"
+
+
+def test_run_in_terminal_returns_false_when_no_terminal(monkeypatch):
+    monkeypatch.setattr("utils.terminal_launcher.detect_terminal", lambda: None)
+    assert run_in_terminal(["echo", "hi"], lambda rc: None) is False
+
+
+def test_run_in_terminal_returns_false_on_popen_error(monkeypatch):
+    monkeypatch.setattr("utils.terminal_launcher.detect_terminal", lambda: "/usr/bin/xterm")
+
+    def boom(*a, **kw):
+        raise OSError("not found")
+
+    monkeypatch.setattr(subprocess, "Popen", boom)
+    assert run_in_terminal(["echo", "hi"], lambda rc: None) is False
+
+
+def test_terminal_order_and_build_argv_are_consistent():
+    # Every name in TERMINAL_ORDER must have an explicit branch in build_argv
+    # (or intentionally fall through to the -e fallback). Drift here would
+    # silently route a detected terminal through the wrong argv shape.
+    handled = {
+        "gnome-terminal", "konsole", "xfce4-terminal",
+        "kitty", "alacritty", "xterm",
+    }
+    assert set(TERMINAL_ORDER) == handled
