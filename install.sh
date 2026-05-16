@@ -95,15 +95,29 @@ venv_python_in_range() {
     esac
 }
 
+# Print a leading line ("Done." or "venv is already up to date."), then a
+# shell-aware activation hint (one line for fish users, two lines for the
+# default bash/zsh case with a fish fallback), then the "Then run" line.
+print_activation_hint() {
+    echo "$1"
+    case "${SHELL:-}" in
+        */fish)
+            echo "Activate with: source venv/bin/activate.fish"
+            ;;
+        *)
+            echo "Activate with: source venv/bin/activate"
+            echo "          (or  source venv/bin/activate.fish for fish)"
+            ;;
+    esac
+    echo "Then run: python main.py"
+}
+
 if [ "$FORCE" -ne 1 ] \
     && [ -x "$VENV_DIR/bin/python" ] \
     && venv_python_in_range \
     && [ -f "$SENTINEL" ] \
     && [ "$(cat "$SENTINEL" 2>/dev/null)" = "$(req_hash)" ]; then
-    echo "venv is already up to date."
-    echo "Activate with: source venv/bin/activate"
-    echo "         (or  source venv/bin/activate.fish for fish)"
-    echo "Then run: python main.py"
+    print_activation_hint "venv is already up to date."
     exit 0
 fi
 
@@ -450,14 +464,4 @@ req_hash > "$SENTINEL"
 
 # Activation hint
 echo ""
-echo "Done."
-case "${SHELL:-}" in
-    */fish)
-        echo "Activate with: source venv/bin/activate.fish"
-        ;;
-    *)
-        echo "Activate with: source venv/bin/activate"
-        echo "          (or  source venv/bin/activate.fish for fish)"
-        ;;
-esac
-echo "Then run: python main.py"
+print_activation_hint "Done."
