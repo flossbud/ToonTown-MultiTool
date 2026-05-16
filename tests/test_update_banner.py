@@ -19,8 +19,8 @@ def test_banner_hidden_by_default(qapp):
 
 def test_banner_shows_when_release_set(qapp):
     b = UpdateBanner()
+    # show_for_release internally calls self.show(); no extra call needed.
     b.show_for_release({"tag_name": "v2.4.0-a", "html_url": "https://x"})
-    b.show()
     assert b.isVisible()
 
 
