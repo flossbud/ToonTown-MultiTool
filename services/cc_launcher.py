@@ -18,6 +18,8 @@ import threading
 from PySide6.QtCore import QObject, Signal
 from services.cc_login_service import CC_DEFAULT_REALM, CC_ENGINE_SEARCH_PATHS
 from services.launcher_env import build_launcher_env
+from services.steam_compat_mapping import steam_compat_choice
+from services.steam_proton_tools import enumerate_proton_tools
 from services.wine_runtimes import WineInstall
 from utils.game_registry import GameRegistry
 from utils.host_spawn import host_popen
@@ -51,6 +53,91 @@ def _is_trusted(install: WineInstall, settings_manager) -> bool:
         approved
         and os.path.realpath(os.path.dirname(install.exe_path)) == approved
     )
+
+
+def _proton_binary_exists(proton_dir: str | None) -> bool:
+    if not proton_dir:
+        return False
+    return os.path.isfile(os.path.join(proton_dir, "proton"))
+
+
+def _resolve_effective_proton(install: WineInstall, settings_manager) -> str | None:
+    """Pick which proton_dir to use for a steam-proton install.
+
+    Cascade (short-circuits on first match):
+      1. settings.cc_steam_proton_override (validated)
+      2. steam_compat_choice(steam_root, appid) → match enumerate by name
+      3. install.metadata["proton_dir"] (today's config_info path)
+      4. enumerate_proton_tools()[0] — newest user-installed, or newest
+         official if no user-installed Protons exist
+      5. None — caller emits launch_failed
+
+    Side effect: step 1 clears a stale override path before falling
+    through. Logs exactly one [CCLauncher] resolve_proton: line per call.
+    """
+    # Step 1: explicit user override.
+    override = ""
+    if settings_manager is not None:
+        override = settings_manager.get("cc_steam_proton_override", "") or ""
+    if override:
+        if _proton_binary_exists(override):
+            print(f"[CCLauncher] resolve_proton: source=override "
+                  f"path={override!r}")
+            return override
+        print(f"[CCLauncher] proton override path no longer exists, "
+              f"clearing setting and falling back: {override!r}")
+        if settings_manager is not None:
+            settings_manager.set("cc_steam_proton_override", "")
+
+    # Step 2: Steam's own CompatToolMapping (per-appid → global).
+    steam_root = install.metadata.get("steam_root")
+    appid = install.metadata.get("appid")
+    if steam_root and appid:
+        try:
+            name = steam_compat_choice(steam_root, appid)
+        except Exception as e:  # pragma: no cover — defensive
+            print(f"[CCLauncher] steam_compat_choice raised "
+                  f"{type(e).__name__}: {e}; falling back")
+            name = None
+        if name:
+            try:
+                tools = enumerate_proton_tools()
+            except Exception as e:  # pragma: no cover — defensive
+                print(f"[CCLauncher] enumerate_proton_tools raised "
+                      f"{type(e).__name__}: {e}; falling back")
+                tools = []
+            for tool in tools:
+                if tool.name == name and _proton_binary_exists(tool.proton_dir):
+                    print(f"[CCLauncher] resolve_proton: source=compatmapping "
+                          f"name={name!r} path={tool.proton_dir!r}")
+                    return tool.proton_dir
+            print(f"[CCLauncher] resolve_proton: CompatToolMapping references "
+                  f"uninstalled tool {name!r}, falling back")
+
+    # Step 3: config_info (today's behavior).
+    cfg_dir = install.metadata.get("proton_dir")
+    if _proton_binary_exists(cfg_dir):
+        print(f"[CCLauncher] resolve_proton: source=config_info "
+              f"path={cfg_dir!r}")
+        return cfg_dir
+
+    # Step 4: newest enumerated Proton.
+    try:
+        tools = enumerate_proton_tools()
+    except Exception as e:  # pragma: no cover — defensive
+        print(f"[CCLauncher] enumerate_proton_tools raised "
+              f"{type(e).__name__}: {e}; falling back to None")
+        tools = []
+    if tools:
+        chosen = tools[0]
+        print(f"[CCLauncher] resolve_proton: source=fallback-newest "
+              f"path={chosen.proton_dir!r}")
+        return chosen.proton_dir
+
+    # Step 5: truly nothing.
+    print("[CCLauncher] resolve_proton: source=none — no Steam Proton "
+          "installed")
+    return None
 
 
 class CCLauncher(QObject):
