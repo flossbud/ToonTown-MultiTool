@@ -159,7 +159,7 @@ python main.py
 
 The installer detects your OS and distro, installs Python 3.9 to 3.13 if missing, installs the Qt6 runtime libraries on Linux (PySide6 wheels are self-contained on Windows), creates a venv at `./venv`, and installs the Python dependencies. It will ask before each `sudo` command; pass `--yes` (or `-Yes` on Windows) to skip the prompts. Re-running the installer is fast: it detects an existing valid venv via a SHA-256 sentinel and exits without re-prompting unless `requirements.txt` has changed or `--force` is passed.
 
-For unsupported distros (openSUSE, Gentoo, NixOS, etc.), install Python 3.9 to 3.13 and the Qt6 runtime libraries manually, then run:
+For unsupported distros (openSUSE, Gentoo, NixOS, etc.) or if you've already installed Python 3.9 to 3.13 and the Qt6 runtime libraries yourself, skip the OS package detection and go straight to the venv + pip install:
 
 ```bash
 ./install.sh --skip-system-deps
