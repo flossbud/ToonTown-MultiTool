@@ -1,13 +1,21 @@
 """
-Keymap Manager — stores and translates movement sets.
+Keymap Manager — stores and translates per-game movement/action sets.
 
-Movement sets are persisted as JSON at ~/.config/toontown_multitool/keymaps.json.
-Each set has 5 slots: up, left, down, right, jump.
+Persisted at ~/.config/toontown_multitool/keymaps.json as:
 
-Set 1 is always the TTR default (what the user physically presses).
-Additional sets define what keys a background toon's TTR client expects.
-The input service translates: "user pressed W → Set-1 up direction →
-toon on Set-2 receives Up Arrow."
+    {
+      "version": 2,
+      "ttr": [ {name, forward, reverse, left, right, jump, book, gags, tasks, map}, ... ],
+      "cc":  [ {name, forward, reverse, left, right, jump, book, gags, tasks, map, sprint}, ... ]
+    }
+
+Set 0 of each game ("Default") represents both what the user physically presses
+when that game is foregrounded AND what that game's client expects to receive.
+Alternate sets define alternate per-toon client configurations.
+
+Migration: a top-level list (legacy v1) is detected at load and rewritten as v2
+with the list moved into the `ttr` bucket (with up->forward, down->reverse rename)
+and a default CC bucket seeded from LogicalActionRegistry.
 """
 
 from __future__ import annotations
@@ -16,25 +24,24 @@ import os
 import json
 import threading
 
-DIRECTIONS = ("up", "left", "down", "right", "jump", "book", "gags", "tasks", "map")
+from utils import logical_actions
 
-DEFAULT_SETS = [
-    {
-        "name": "Default",
-        "up": "w",
-        "left": "a",
-        "down": "s",
-        "right": "d",
-        "jump": "space",
-        "book": "Alt_L",
-        "gags": "g",
-        "tasks": "t",
-        "map": "Shift_L",
-    },
-]
+GAMES = ("ttr", "cc")
+
+
+def _seed_default_set(game: str) -> dict:
+    """Build a fresh Default set for a game from the registry."""
+    s = {"name": "Default"}
+    for action in logical_actions.actions_for(game):
+        k = logical_actions.default_key(game, action)
+        if k is not None:
+            s[action] = k
+    return s
 
 
 class KeymapManager:
+    MAX_SETS_PER_GAME = 8
+
     def __init__(self):
         from utils.build_flavor import config_dir as _config_dir
         config_dir = _config_dir()
@@ -43,39 +50,96 @@ class KeymapManager:
         self._path = os.path.join(config_dir, "keymaps.json")
         self._lock = threading.Lock()
         self._listeners = []
-        self._sets = []
+        self._sets: dict[str, list[dict]] = {"ttr": [], "cc": []}
         self._load()
 
     # ── Persistence ────────────────────────────────────────────────────────
 
     def _load(self):
-        if os.path.exists(self._path):
-            try:
-                with open(self._path, "r") as f:
-                    data = json.load(f)
-                if isinstance(data, list) and len(data) >= 1:
-                    self._sets = data
-                    # Backfill any direction keys added after this file was saved
-                    migrated = False
-                    for i, s in enumerate(self._sets):
-                        for d in DIRECTIONS:
-                            if d not in s:
-                                default = DEFAULT_SETS[i] if i < len(DEFAULT_SETS) else DEFAULT_SETS[-1]
-                                s[d] = default.get(d, "")
-                                migrated = True
-                    if migrated:
-                        self._save()
-                    return
-            except Exception as e:
-                print(f"[KeymapManager] Failed to load keymaps: {e}")
-        # Fallback: use defaults
-        self._sets = [dict(s) for s in DEFAULT_SETS]
+        if not os.path.exists(self._path):
+            self._sets = {"ttr": [_seed_default_set("ttr")],
+                          "cc": [_seed_default_set("cc")]}
+            self._save()
+            return
+
+        try:
+            with open(self._path, "r") as f:
+                data = json.load(f)
+        except Exception as e:
+            print(f"[KeymapManager] Failed to load keymaps: {e}")
+            self._sets = {"ttr": [_seed_default_set("ttr")],
+                          "cc": [_seed_default_set("cc")]}
+            self._save()
+            return
+
+        # v1 detection: top-level list
+        if isinstance(data, list):
+            print("[KeymapManager] Migrating v1 keymaps.json to v2")
+            self._sets = self._migrate_v1_list(data)
+            self._save()
+            return
+
+        # v2
+        if isinstance(data, dict) and data.get("version") == 2:
+            ttr = data.get("ttr") or [_seed_default_set("ttr")]
+            cc = data.get("cc") or [_seed_default_set("cc")]
+            self._sets = {"ttr": ttr, "cc": cc}
+            if self._backfill_missing_actions():
+                self._save()
+            return
+
+        # Unrecognized — reset.
+        print("[KeymapManager] Unrecognized keymaps.json shape; resetting")
+        self._sets = {"ttr": [_seed_default_set("ttr")],
+                      "cc": [_seed_default_set("cc")]}
         self._save()
+
+    @staticmethod
+    def _migrate_v1_list(legacy: list) -> dict[str, list[dict]]:
+        """Convert v1 list-of-sets into v2 {ttr, cc} with up->forward, down->reverse rename."""
+        ttr_sets: list[dict] = []
+        for entry in legacy:
+            if not isinstance(entry, dict):
+                continue
+            renamed = {}
+            for k, v in entry.items():
+                if k == "up":
+                    renamed["forward"] = v
+                elif k == "down":
+                    renamed["reverse"] = v
+                else:
+                    renamed[k] = v
+            ttr_sets.append(renamed)
+        if not ttr_sets:
+            ttr_sets = [_seed_default_set("ttr")]
+        # Backfill any missing TTR actions from defaults
+        for s in ttr_sets:
+            for action in logical_actions.actions_for("ttr"):
+                if action not in s:
+                    s[action] = logical_actions.default_key("ttr", action) or ""
+        return {"ttr": ttr_sets, "cc": [_seed_default_set("cc")]}
+
+    def _backfill_missing_actions(self) -> bool:
+        """Ensure every set has every action key. Returns True if anything changed."""
+        changed = False
+        for game in GAMES:
+            sets = self._sets.get(game, [])
+            for i, s in enumerate(sets):
+                for action in logical_actions.actions_for(game):
+                    if action in s:
+                        continue
+                    if i == 0:
+                        fallback = logical_actions.default_key(game, action) or ""
+                    else:
+                        fallback = sets[0].get(action, "")
+                    s[action] = fallback
+                    changed = True
+        return changed
 
     def _save(self):
         try:
             with open(self._path, "w") as f:
-                json.dump(self._sets, f, indent=2)
+                json.dump({"version": 2, "ttr": self._sets["ttr"], "cc": self._sets["cc"]}, f, indent=2)
                 f.flush()
         except Exception as e:
             print(f"[KeymapManager] Failed to save keymaps: {e}")
@@ -83,7 +147,6 @@ class KeymapManager:
     # ── Change notification ────────────────────────────────────────────────
 
     def on_change(self, callback):
-        """Register a callback to be called when sets are added/deleted/modified."""
         with self._lock:
             self._listeners.append(callback)
 
@@ -98,144 +161,79 @@ class KeymapManager:
 
     # ── Read API ───────────────────────────────────────────────────────────
 
-    def get_sets(self) -> list:
-        """Return a copy of all movement sets."""
+    def get_sets(self, game: str) -> list:
         with self._lock:
-            return [dict(s) for s in self._sets]
+            return [dict(s) for s in self._sets.get(game, [])]
 
-    def get_set(self, index: int) -> dict | None:
+    def get_set(self, game: str, index: int) -> dict | None:
         with self._lock:
-            if 0 <= index < len(self._sets):
-                return dict(self._sets[index])
+            sets = self._sets.get(game, [])
+            if 0 <= index < len(sets):
+                return dict(sets[index])
             return None
 
-    def get_set_names(self) -> list:
-        """Return list of set names, e.g. ['Default', 'New Set', ...]."""
+    def get_default(self, game: str) -> dict:
         with self._lock:
-            return [s.get("name", f"Set {i+1}") for i, s in enumerate(self._sets)]
+            sets = self._sets.get(game, [])
+            return dict(sets[0]) if sets else {}
 
-    def num_sets(self) -> int:
+    def get_set_names(self, game: str) -> list:
         with self._lock:
-            return len(self._sets)
+            return [s.get("name", f"Set {i+1}") for i, s in enumerate(self._sets.get(game, []))]
 
-    def get_set1_keys(self) -> frozenset:
-        """Return the frozenset of physical keys the user presses (Set 1)."""
+    def num_sets(self, game: str) -> int:
         with self._lock:
-            s = self._sets[0]
-            return frozenset(v for d in DIRECTIONS if (v := s.get(d)))
+            return len(self._sets.get(game, []))
+
+    def get_action_in_set(self, game: str, set_index: int, key: str) -> str | None:
+        with self._lock:
+            sets = self._sets.get(game, [])
+            if not (0 <= set_index < len(sets)):
+                return None
+            s = sets[set_index]
+            for action in logical_actions.actions_for(game):
+                if s.get(action) == key:
+                    return action
+            return None
+
+    def get_key_for_action(self, game: str, set_index: int, action: str) -> str | None:
+        with self._lock:
+            sets = self._sets.get(game, [])
+            if not (0 <= set_index < len(sets)):
+                return None
+            return sets[set_index].get(action)
 
     def get_all_keys(self) -> frozenset:
-        """Return frozenset of ALL keys across ALL movement sets."""
+        """Union of every action's bound key across both games and all sets."""
         with self._lock:
             keys = set()
-            for s in self._sets:
-                for d in DIRECTIONS:
-                    k = s.get(d)
-                    if k:
-                        keys.add(k)
+            for game in GAMES:
+                for s in self._sets.get(game, []):
+                    for action in logical_actions.actions_for(game):
+                        k = s.get(action)
+                        if k:
+                            keys.add(k)
             return frozenset(keys)
 
-    def get_direction(self, key: str) -> str | None:
-        """Given a Set-1 physical key, return which direction it maps to."""
+    def get_default_keys(self, game: str) -> frozenset:
+        """The set of keys bound in this game's Default set."""
         with self._lock:
-            s = self._sets[0]
-            for d in DIRECTIONS:
-                if s.get(d) == key:
-                    return d
-            return None
+            sets = self._sets.get(game, [])
+            if not sets:
+                return frozenset()
+            s = sets[0]
+            return frozenset(v for a in logical_actions.actions_for(game) if (v := s.get(a)))
 
-    def get_direction_in_set(self, set_index: int, key: str) -> str | None:
-        """Given a key and set index, return which direction it maps to in that set."""
-        with self._lock:
-            if 0 <= set_index < len(self._sets):
-                s = self._sets[set_index]
-                for d in DIRECTIONS:
-                    if s.get(d) == key:
-                        return d
-            return None
+    # ── Write API (Task 4 expands this further) ────────────────────────────
 
-    def get_key_for_direction(self, set_index: int, direction: str) -> str | None:
-        """Return the key that a given set uses for a direction."""
-        with self._lock:
-            if 0 <= set_index < len(self._sets):
-                return self._sets[set_index].get(direction)
-            return None
-
-    def translate(self, pressed_key: str, target_set_index: int) -> str | None:
-        """Convenience: translate a Set-1 physical key to the target set's key."""
-        direction = self.get_direction(pressed_key)
-        if direction is None:
-            return None
-        return self.get_key_for_direction(target_set_index, direction)
-
-    # ── Write API ──────────────────────────────────────────────────────────
-
-    MAX_SETS = 8
-
-    def next_default_name(self, exclude_index: int = -1):
-        """Return the next available default name: 'New Set', 'New Set 1', 'New Set 2', etc.
-        exclude_index: skip this set when checking (for renaming the set itself)."""
-        with self._lock:
-            existing = set()
-            for i, s in enumerate(self._sets):
-                if i == exclude_index:
-                    continue
-                n = s.get("name", "")
-                if n == "New Set" or (n.startswith("New Set ") and n[8:].isdigit()):
-                    existing.add(n)
-        if "New Set" not in existing:
-            return "New Set"
-        i = 1
-        while f"New Set {i}" in existing:
-            i += 1
-        return f"New Set {i}"
-
-    def add_set(self, name: str = None, keys: dict = None):
-        """Add a new movement set. keys is optional {direction: key_str}. Max 8 sets."""
-        if name is None:
-            name = self.next_default_name()
-        new_set = {"name": name}
-        if keys:
-            for d in DIRECTIONS:
-                new_set[d] = keys.get(d, "")
-        else:
-            # Default to arrow keys + ctrl + alt
-            new_set.update({
-                "up": "Up", "left": "Left", "down": "Down",
-                "right": "Right", "jump": "Control_L", "book": "Alt_R",
-                "gags": "g", "tasks": "t", "map": "Shift_R",
-            })
-        with self._lock:
-            if len(self._sets) >= self.MAX_SETS:
-                return
-            self._sets.append(new_set)
-            self._save()
-        self._notify()
-
-    def delete_set(self, index: int):
-        """Delete a set. Set 1 (index 0) cannot be deleted."""
-        if index <= 0:
+    def update_set_key(self, game: str, set_index: int, action: str, key: str):
+        if action not in logical_actions.ACTIONS:
+            return
+        if game not in GAMES:
             return
         with self._lock:
-            if index < len(self._sets):
-                self._sets.pop(index)
-                self._save()
-        self._notify()
-
-    def update_set_name(self, index: int, name: str):
-        """Rename a movement set."""
-        with self._lock:
-            if 0 <= index < len(self._sets):
-                self._sets[index]["name"] = name
-                self._save()
-        self._notify()
-
-    def update_set_key(self, set_index: int, direction: str, key: str):
-        """Update a single key binding in a movement set."""
-        if direction not in DIRECTIONS:
-            return
-        with self._lock:
-            if 0 <= set_index < len(self._sets):
-                self._sets[set_index][direction] = key
+            sets = self._sets.get(game, [])
+            if 0 <= set_index < len(sets):
+                sets[set_index][action] = key
                 self._save()
         self._notify()
