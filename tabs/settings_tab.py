@@ -1301,6 +1301,7 @@ class SettingsTab(QWidget):
         self._main_layout.setAlignment(Qt.AlignTop)
 
         self._build_general_group()
+        self._build_updates_group()
         self._build_games_group()
         self._build_keepalive_group()
         self._build_advanced_group()
@@ -1361,6 +1362,83 @@ class SettingsTab(QWidget):
         group.add_row(self.reduce_motion_row)
 
         self._main_layout.addWidget(group)
+
+    def _build_updates_group(self):
+        from utils import build_info
+        group = SettingsGroup("Updates")
+        self._groups.append(group)
+
+        # Toggle row — ToggleRow exposes a `toggled(bool)` signal
+        # (tabs/settings_tab.py:161); use it directly.
+        enabled = bool(self.settings_manager.get("check_for_updates_at_startup", False))
+        self.update_check_toggle = ToggleRow(
+            "Check for updates on startup",
+            enabled,
+            sublabel="Look for new releases when the app launches.",
+        )
+        self.update_check_toggle.toggled.connect(self._on_check_for_updates_toggled)
+        group.add_row(self.update_check_toggle)
+
+        # Button row + version display in the sublabel
+        self.update_check_now_btn = ButtonRow(
+            "Check for updates now",
+            sublabel=f"Current build: {build_info.version_string()}",
+            button_text="Check now",
+        )
+        self.update_check_now_btn.button.clicked.connect(self._on_check_now_clicked)
+        group.add_row(self.update_check_now_btn)
+
+        self._main_layout.addWidget(group)
+
+    def _on_check_for_updates_toggled(self, checked: bool):
+        self.settings_manager.set("check_for_updates_at_startup", checked)
+
+    def _on_check_now_clicked(self):
+        # Wired up by main.py via `set_update_checker(checker)`; if not yet
+        # connected we no-op safely.
+        if hasattr(self, "_update_checker") and self._update_checker is not None:
+            self.update_check_now_btn.button.setEnabled(False)
+            self.update_check_now_btn.button.setText("Checking...")
+            self._update_checker.check_async(manual=True)
+
+    def set_update_checker(self, checker):
+        """Wire the checker so the manual button can dispatch and the
+        feedback row updates on result signals."""
+        self._update_checker = checker
+        checker.update_available.connect(self._on_check_complete_update)
+        checker.no_update.connect(self._on_check_complete_no_update)
+        checker.check_failed.connect(self._on_check_complete_failed)
+
+    def _restore_check_button(self):
+        self.update_check_now_btn.button.setEnabled(True)
+        self.update_check_now_btn.button.setText("Check now")
+
+    def _on_check_complete_update(self, info):
+        self._restore_check_button()
+        # main.py is the canonical signal owner for showing the dialog --
+        # we just restore the button state here.
+
+    def _on_check_complete_no_update(self):
+        self._restore_check_button()
+        # Show "You're on the latest version." inline for ~5 seconds.
+        from PySide6.QtCore import QTimer
+        from utils import build_info
+        sub = getattr(self.update_check_now_btn, "sub_widget", None)
+        if sub is not None:
+            sub.setText("You're on the latest version.")
+            default_text = f"Current build: {build_info.version_string()}"
+            QTimer.singleShot(5000, lambda: sub.setText(default_text))
+
+    def _on_check_complete_failed(self, reason):
+        self._restore_check_button()
+        from PySide6.QtCore import QTimer
+        from utils import build_info
+        sub = getattr(self.update_check_now_btn, "sub_widget", None)
+        if sub is not None:
+            short = reason[:80]
+            sub.setText(f"Couldn't reach GitHub: {short}")
+            default_text = f"Current build: {build_info.version_string()}"
+            QTimer.singleShot(10000, lambda: sub.setText(default_text))
 
     def _build_games_group(self):
         group = SettingsGroup("Games")
