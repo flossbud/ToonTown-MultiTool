@@ -86,13 +86,22 @@ class CCCompatPickerDialog(QDialog):
         self.use_steam_radio.toggled.connect(self._on_radio_changed)
         self.use_specific_radio.toggled.connect(self._on_radio_changed)
 
-        # Initial selection: reflect current_override.
+        # Initial selection: reflect current_override. If the override path
+        # is non-empty but no longer matches any enumerated tool (e.g. the
+        # Proton was uninstalled since the override was saved), fall back
+        # to "Use Steam's selection" rather than leaving the user in a
+        # confusing "specific Proton checked but no row selected" state.
+        # This mirrors the self-healing posture the launch-time resolver
+        # already applies (see services/cc_launcher._resolve_effective_proton).
+        matched_row = -1
         if current_override:
-            self.use_specific_radio.setChecked(True)
             for i in range(self.list_widget.count()):
                 if self.list_widget.item(i).data(Qt.UserRole) == current_override:
-                    self.list_widget.setCurrentRow(i)
+                    matched_row = i
                     break
+        if matched_row >= 0:
+            self.use_specific_radio.setChecked(True)
+            self.list_widget.setCurrentRow(matched_row)
         else:
             self.use_steam_radio.setChecked(True)
         self._on_radio_changed()

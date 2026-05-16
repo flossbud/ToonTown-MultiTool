@@ -94,3 +94,35 @@ def test_cancel_returns_none(qapp):
     )
     dlg.reject()
     assert dlg.chosen_override() is None
+
+
+def test_stale_override_falls_back_to_steam_default(qapp):
+    """If current_override doesn't match any tool, fall back to
+    'Use Steam's selection' rather than leaving 'specific' checked
+    with no row selected. Bug-fix regression test."""
+    from utils.widgets.cc_compat_picker import CCCompatPickerDialog
+    tools = [_tool("proton-cachyos", "Proton-CachyOS")]
+    dlg = CCCompatPickerDialog(
+        tools=tools,
+        current_override="/fake/uninstalled-proton",
+        steam_default_display="Proton-CachyOS",
+    )
+    assert dlg.use_steam_radio.isChecked()
+    assert not dlg.use_specific_radio.isChecked()
+
+
+def test_save_specific_with_no_row_rejects(qapp):
+    """Defensive: if 'specific' is checked but no row is selected,
+    Save treats it as Cancel (returns None)."""
+    from utils.widgets.cc_compat_picker import CCCompatPickerDialog
+    tools = [_tool("proton-cachyos", "Proton-CachyOS")]
+    dlg = CCCompatPickerDialog(
+        tools=tools,
+        current_override="",
+        steam_default_display="Proton-CachyOS",
+    )
+    dlg.use_specific_radio.setChecked(True)
+    dlg.list_widget.setCurrentRow(-1)
+    dlg._on_save()
+    assert dlg.chosen_override() is None
+    assert dlg.result() == dlg.DialogCode.Rejected
