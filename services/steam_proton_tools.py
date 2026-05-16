@@ -73,15 +73,12 @@ class ProtonTool:
     version_key: tuple[int, ...]
 
 
-_DEFAULT_STEAM_ROOTS = [
-    "~/.local/share/Steam",
-    "~/.steam/steam",
-    "~/.var/app/com.valvesoftware.Steam/.local/share/Steam",
-]
-
-
 def _default_roots() -> list[str]:
-    return [os.path.expanduser(p) for p in _DEFAULT_STEAM_ROOTS]
+    # Import inside the function to avoid a circular dependency: wine_runtimes
+    # already imports nothing from this module, but keeping the dependency
+    # lazy is the safer pattern given cc_launcher.py imports from BOTH.
+    from services.wine_runtimes import _STEAM_ROOTS
+    return [os.path.expanduser(p) for p in _STEAM_ROOTS]
 
 
 def _version_key_from_name(name: str) -> tuple[int, ...]:
@@ -156,7 +153,18 @@ def _read_proton_dir_entry(
             display = dir_name
     else:
         # official
-        internal = _OFFICIAL_NAME_ALIASES.get(dir_name, dir_name)
+        internal = _OFFICIAL_NAME_ALIASES.get(dir_name)
+        if internal is None:
+            # Spec §3.1 envisioned parsing toolmanifest.vdf for the official
+            # alias, but for now we use a hardcoded dict. When Valve ships a
+            # new Proton not in the dict, log so the maintainer knows to
+            # extend _OFFICIAL_NAME_ALIASES. Cascade step 2 won't match this
+            # tool against Steam's CompatToolMapping until then; step 3
+            # (config_info) still handles it correctly.
+            print(f"[CCLauncher] unknown official Proton dir {dir_name!r}; "
+                  f"CompatToolMapping match for this tool will not work "
+                  f"until _OFFICIAL_NAME_ALIASES is extended")
+            internal = dir_name
         display = dir_name
     return ProtonTool(
         name=internal,

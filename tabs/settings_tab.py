@@ -519,8 +519,8 @@ class CompatRuntimeRow(SettingsRow):
             return
 
         self.change_button.show()
-        from services.cc_launcher import _resolve_effective_proton
-        chosen = _resolve_effective_proton(install, self.settings_manager)
+        from services.cc_launcher import resolve_effective_proton
+        chosen = resolve_effective_proton(install, self.settings_manager)
         if chosen is None:
             self.value_label.setText("No Steam Proton found")
             self.value_label.setStyleSheet("color: #c0392b;")  # warning
@@ -571,8 +571,8 @@ class CompatRuntimeRow(SettingsRow):
         tools = enumerate_proton_tools()
         override = (self.settings_manager.get("cc_steam_proton_override", "")
                     if self.settings_manager else "")
-        from services.cc_launcher import _resolve_effective_proton
-        resolved = _resolve_effective_proton(install, self.settings_manager) or ""
+        from services.cc_launcher import resolve_effective_proton
+        resolved = resolve_effective_proton(install, self.settings_manager) or ""
         default_display = self._display_name_for(resolved) if resolved else "(none installed)"
         dlg = CCCompatPickerDialog(
             tools=tools,
