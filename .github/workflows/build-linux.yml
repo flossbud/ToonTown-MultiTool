@@ -39,6 +39,20 @@ jobs:
             libxcb-xinerama0 libxcb-xkb1 libxkbcommon0 libxkbcommon-x11-0
 
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Write build info
+        run: |
+          BUILD_NUMBER=$(git rev-list --count HEAD)
+          BUILD_SHA=$(git rev-parse --short HEAD)
+          BUILD_DATE=$(date -u +%Y%m%d)
+          cat > utils/_build_info.py <<EOF
+          BUILD_NUMBER = $BUILD_NUMBER
+          BUILD_SHA = "$BUILD_SHA"
+          BUILD_DATE = "$BUILD_DATE"
+          EOF
+          cat utils/_build_info.py
 
       - name: Build PyInstaller binary in a venv
         run: |
@@ -82,6 +96,20 @@ jobs:
       options: --privileged
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Write build info
+        run: |
+          BUILD_NUMBER=$(git rev-list --count HEAD)
+          BUILD_SHA=$(git rev-parse --short HEAD)
+          BUILD_DATE=$(date -u +%Y%m%d)
+          cat > utils/_build_info.py <<EOF
+          BUILD_NUMBER = $BUILD_NUMBER
+          BUILD_SHA = "$BUILD_SHA"
+          BUILD_DATE = "$BUILD_DATE"
+          EOF
+          cat utils/_build_info.py
 
       - name: Build Flatpak bundle
         uses: flatpak/flatpak-github-actions/flatpak-builder@v6
@@ -100,6 +128,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Write build info
+        run: |
+          BUILD_NUMBER=$(git rev-list --count HEAD)
+          BUILD_SHA=$(git rev-parse --short HEAD)
+          BUILD_DATE=$(date -u +%Y%m%d)
+          cat > utils/_build_info.py <<EOF
+          BUILD_NUMBER = $BUILD_NUMBER
+          BUILD_SHA = "$BUILD_SHA"
+          BUILD_DATE = "$BUILD_DATE"
+          EOF
+          cat utils/_build_info.py
 
       - name: Download the raw Linux binary
         uses: actions/download-artifact@v4
