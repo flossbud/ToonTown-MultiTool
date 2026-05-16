@@ -139,23 +139,31 @@ The Flatpak runs the app in a sandbox and uses `flatpak-spawn` to launch the hos
 
 ### Run from source
 
-Requires Python 3.9 to 3.13. pip will automatically install the newest dependency versions compatible with your interpreter, so distro defaults work without per-distro pinning.
+After extracting or cloning the source, from inside the repo directory:
+
+**Linux** (Debian/Ubuntu/Mint, Fedora, Arch):
 
 ```bash
-git clone https://github.com/flossbud/ToonTown-MultiTool.git
-cd ToonTown-MultiTool
-python3 -m venv venv
+./install.sh
 source venv/bin/activate           # use activate.fish if your shell is fish
-pip install -r requirements.txt
 python main.py
 ```
 
-**If your system Python is 3.14 or newer** (Arch, Fedora 44+, etc.), install a 3.13 interpreter first:
+**Windows:**
 
-- **Fedora 44+:** `sudo dnf install python3.13`, then use `python3.13` in place of `python3` in the venv command above.
-- **Arch and other bleeding-edge distros:** install Python 3.13 via [pyenv](https://github.com/pyenv/pyenv) (`pyenv install 3.13 && pyenv shell 3.13`), then run the recipe above. The official Arch repos only ship the newest Python (currently 3.14), so a version manager is the cleanest path for working from a source clone. Most Arch users should prefer the AUR package (`yay -S toontown-multitool`) instead.
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install.ps1
+.\venv\Scripts\Activate.ps1
+python main.py
+```
 
-On Linux you also need the system Qt6 runtime libraries (the `libxcb-*`, `libxkbcommon-x11`, `libegl1`, `libglib2.0-0` family). They're present on any standard desktop; on a minimal install, install your distro's Qt6 / PySide6 runtime dependencies.
+The installer detects your OS and distro, installs Python 3.9 to 3.13 if missing, installs the Qt6 runtime libraries on Linux (PySide6 wheels are self-contained on Windows), creates a venv at `./venv`, and installs the Python dependencies. It will ask before each `sudo` command; pass `--yes` (or `-Yes` on Windows) to skip the prompts. Re-running the installer is fast: it detects an existing valid venv via a SHA-256 sentinel and exits without re-prompting unless `requirements.txt` has changed or `--force` is passed.
+
+For unsupported distros (openSUSE, Gentoo, NixOS, etc.), install Python 3.9 to 3.13 and the Qt6 runtime libraries manually, then run:
+
+```bash
+./install.sh --skip-system-deps
+```
 
 ### Linux: Wayland sessions
 
