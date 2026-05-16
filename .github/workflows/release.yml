@@ -6,21 +6,30 @@ on:
       - 'v*'
 
 jobs:
-  build:
-    uses: ./.github/workflows/build.yml
+  build-linux:
+    uses: ./.github/workflows/build-linux.yml
     with:
       version_label: ${{ github.ref_name }}
-    # include_windows defaults to true — release ships the Windows EXE
+      include_flatpak: true
 
-  test:
-    needs: build
-    uses: ./.github/workflows/test.yml
+  test-linux:
+    needs: build-linux
+    uses: ./.github/workflows/test-linux.yml
     with:
-      include_windows: true
+      include_flatpak: true
       include_aur: true
 
+  build-windows:
+    uses: ./.github/workflows/build-windows.yml
+    with:
+      version_label: ${{ github.ref_name }}
+
+  test-windows:
+    needs: build-windows
+    uses: ./.github/workflows/test-windows.yml
+
   publish:
-    needs: test
+    needs: [test-linux, test-windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
