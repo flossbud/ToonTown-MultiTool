@@ -76,7 +76,7 @@ class CCCompatPickerDialog(QDialog):
         self.list_widget.setObjectName("cc_compat_picker_list")
         for tool in tools:
             tag = _SOURCE_TAG.get(tool.source, tool.source)
-            label = f"{tool.display_name}    [{tag}]"
+            label = f"{tool.nickname}    [{tag}]"
             item = QListWidgetItem(label)
             item.setData(Qt.UserRole, tool.proton_dir)
             self.list_widget.addItem(item)

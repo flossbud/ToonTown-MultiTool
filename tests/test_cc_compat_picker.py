@@ -79,14 +79,24 @@ def test_save_with_specific_proton_returns_proton_dir(qapp):
 def test_source_tags_applied(qapp):
     from utils.widgets.cc_compat_picker import CCCompatPickerDialog
     tools = [
-        _tool("proton-cachyos", "Proton-CachyOS", source="compatibilitytools.d"),
-        _tool("proton_9", "Proton 9.0 (Beta)", source="official"),
+        _tool("proton-cachyos", "long-dirty-vdf-display-name",
+              source="compatibilitytools.d", nickname="Proton-CachyOS 11.0"),
+        _tool("proton_9", "Proton 9.0 (Beta)",
+              source="official", nickname="Proton 9.0 (Beta)"),
     ]
     dlg = CCCompatPickerDialog(
-        tools=tools, current_override="", steam_default_display="Proton-CachyOS",
+        tools=tools, current_override="",
+        steam_default_display="Proton-CachyOS 11.0",
     )
-    assert "[user]" in dlg.list_widget.item(0).text()
-    assert "[official]" in dlg.list_widget.item(1).text()
+    item0 = dlg.list_widget.item(0).text()
+    item1 = dlg.list_widget.item(1).text()
+    # The picker must display the nickname, not the display_name.
+    assert "Proton-CachyOS 11.0" in item0
+    assert "long-dirty-vdf-display-name" not in item0
+    assert "Proton 9.0 (Beta)" in item1
+    # Source tags still rendered.
+    assert "[user]" in item0
+    assert "[official]" in item1
 
 
 def test_cancel_returns_none(qapp):
