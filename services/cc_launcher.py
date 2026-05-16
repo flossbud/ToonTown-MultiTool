@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 import threading
+from dataclasses import replace
 from PySide6.QtCore import QObject, Signal
 from services.cc_login_service import CC_DEFAULT_REALM, CC_ENGINE_SEARCH_PATHS
 from services.launcher_env import build_launcher_env
@@ -238,6 +240,23 @@ class CCLauncher(QObject):
         # bit-identical to the official flow.
         extra_env["SENTRY_ENVIRONMENT"] = "corporateclash"
 
+        # Resolve effective Proton for steam-proton installs on Linux.
+        # The override / CompatToolMapping cascade decides which Proton
+        # build to invoke, regardless of what compatdata/config_info says.
+        # WineInstall is frozen; patch via dataclasses.replace.
+        if sys.platform != "win32" and install.launcher == "steam-proton":
+            chosen = _resolve_effective_proton(install, self.settings_manager)
+            if chosen is None:
+                print("[CCLauncher] launch: no Steam Proton installed; aborting")
+                self.launch_failed.emit(
+                    self._availability_error_message("steam-proton-empty")
+                )
+                return
+            install = replace(install, metadata={
+                **install.metadata,
+                "proton_dir": chosen,
+            })
+
         # Bottles strips any env vars not in the bottle's allowlist when
         # Limit_System_Environment is on. Extend the allowlist with the
         # keys we just decided to pass — without this, none of the
@@ -381,6 +400,12 @@ class CCLauncher(QObject):
             "steam-proton": (
                 "Detected Corporate Clash in a Steam Proton prefix, but Steam "
                 "is not available. Launch Steam or pick a different install."
+            ),
+            "steam-proton-empty": (
+                "Detected Corporate Clash in a Steam Proton prefix, but no "
+                "Proton compatibility tool is installed. Install one via "
+                "Steam → Settings → Compatibility, or pick a different CC "
+                "install in Settings."
             ),
             "wine": (
                 "Detected Corporate Clash in a Wine prefix, but the wine "
