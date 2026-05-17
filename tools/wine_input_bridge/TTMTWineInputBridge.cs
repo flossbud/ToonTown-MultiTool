@@ -54,9 +54,6 @@ public static class TTMTWineInputBridge
 
     public static int Main(string[] args)
     {
-        if (args.Length >= 1 && args[0] == "--once")
-            return RunOnce(args);
-
         int port = 37377;
         if (args.Length >= 2 && args[0] == "--port")
             int.TryParse(args[1], out port);
@@ -89,24 +86,6 @@ public static class TTMTWineInputBridge
 
         listener.Stop();
         return 0;
-    }
-
-    private static int RunOnce(string[] args)
-    {
-        if (args.Length < 4)
-        {
-            Console.Error.WriteLine("Usage: TTMTWineInputBridge.exe --once <down|up|tap|list> <index> <key>");
-            return 2;
-        }
-        Console.WriteLine(HandleCommand(string.Join(" ", SubArray(args, 1))));
-        return 0;
-    }
-
-    private static string[] SubArray(string[] args, int start)
-    {
-        var result = new string[Math.Max(0, args.Length - start)];
-        Array.Copy(args, start, result, 0, result.Length);
-        return result;
     }
 
     private static string HandleCommand(string line)
@@ -159,19 +138,18 @@ public static class TTMTWineInputBridge
     private static string ListWindows()
     {
         var windows = FindCorporateClashWindows(-1);
-        IntPtr foreground = GetForegroundWindow();
-        var sb = new StringBuilder();
-        sb.Append("OK count=").Append(windows.Count);
-        for (int i = 0; i < windows.Count; i++)
+        if (windows.Count == 0)
+            return "OK ";
+        var parts = new List<string>();
+        foreach (var w in windows)
         {
-            var w = windows[i];
-            sb.Append(" [").Append(i).Append("] hwnd=0x")
-              .Append(w.Hwnd.ToInt64().ToString("x"))
-              .Append(w.Hwnd == foreground ? " fg=1" : " fg=0")
-              .Append(" x=").Append(w.Rect.Left)
-              .Append(" title=").Append(w.Title.Replace("[", "(").Replace("]", ")"));
+            // Format: <hwnd-hex>:<left>:<top> — Python uses :left to validate
+            // that its X11 root_x sort agrees with our Win32 GetWindowRect.Left
+            // sort. Disagreement bails to Xlib backend.
+            parts.Add(string.Format("{0:X}:{1}:{2}",
+                w.Hwnd.ToInt64(), w.Rect.Left, w.Rect.Top));
         }
-        return sb.ToString();
+        return "OK " + string.Join(",", parts);
     }
 
     private static List<GameWindow> FindCorporateClashWindows(int activeIndex)
@@ -317,6 +295,30 @@ public static class TTMTWineInputBridge
             case "F10": vk = 0x79; return true;
             case "F11": vk = 0x7a; return true;
             case "F12": vk = 0x7b; return true;
+            // Numpad number keys: VK_NUMPAD0..VK_NUMPAD9 = 0x60..0x69
+            case "KP_0": vk = 0x60; return true;
+            case "KP_1": vk = 0x61; return true;
+            case "KP_2": vk = 0x62; return true;
+            case "KP_3": vk = 0x63; return true;
+            case "KP_4": vk = 0x64; return true;
+            case "KP_5": vk = 0x65; return true;
+            case "KP_6": vk = 0x66; return true;
+            case "KP_7": vk = 0x67; return true;
+            case "KP_8": vk = 0x68; return true;
+            case "KP_9": vk = 0x69; return true;
+            // Numpad operators
+            case "KP_Multiply": vk = 0x6a; return true;
+            case "KP_Add":      vk = 0x6b; return true;
+            case "KP_Separator": vk = 0x6c; return true;
+            case "KP_Subtract": vk = 0x6d; return true;
+            case "KP_Decimal":  vk = 0x6e; return true;
+            case "KP_Divide":   vk = 0x6f; return true;
+            // Numpad Enter shares VK_RETURN (0x0d) with the main Enter key.
+            // Wine's keyboard handling does not distinguish these by VK code;
+            // regular Return and KP_Enter produce the same Win32 message
+            // stream from this bridge. Acceptable for game input — both
+            // dispatch as Enter to the focused control.
+            case "KP_Enter":    vk = 0x0d; return true;
             default:
                 return false;
         }

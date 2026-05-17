@@ -23,7 +23,12 @@ from utils.build_flavor import config_dir
 
 _BRIDGES: dict[str, "WineInputBridge"] = {}
 _BRIDGES_LOCK = threading.Lock()
-_BAD_PREFIXES: set[str] = set()
+# Prefixes for which bridge setup recently failed. Maps prefix -> monotonic
+# timestamp of the failure. Entries expire after _BAD_PREFIX_COOLDOWN, after
+# which the bridge will be retried (so a user who fixes their Wine Mono
+# install mid-session doesn't have to restart TTMT).
+_BAD_PREFIXES: dict[str, float] = {}
+_BAD_PREFIX_COOLDOWN = 300.0  # seconds; 5 minutes
 
 
 def shutdown_all() -> None:
@@ -62,6 +67,13 @@ def send_to_window(win_id: str, window_ids: list[str], action: str, keysym: str,
 
     bridge = _bridge_for_pid(pid)
     if bridge is None:
+        return False
+
+    if not bridge.cross_check_sort_order([str(w) for w in window_ids]):
+        print(
+            f"[wine_input_bridge] sort-order disagreement between X11 and Win32 "
+            f"for prefix={bridge.prefix}; falling back to Xlib"
+        )
         return False
 
     active_index = _active_index(window_ids)
@@ -113,22 +125,27 @@ def _bridge_for_pid(pid: int) -> "WineInputBridge | None":
         return None
 
     key = os.path.realpath(prefix)
-    if key in _BAD_PREFIXES:
-        return None
+    now = time.monotonic()
+    cooldown_at = _BAD_PREFIXES.get(key)
+    if cooldown_at is not None:
+        if now - cooldown_at < _BAD_PREFIX_COOLDOWN:
+            return None
+        # Cooldown expired — drop the entry and re-attempt.
+        _BAD_PREFIXES.pop(key, None)
 
     with _BRIDGES_LOCK:
         bridge = _BRIDGES.get(key)
         if bridge is None:
             proton_dir = _proton_dir_for_pid(pid, env)
             if proton_dir is None:
-                _BAD_PREFIXES.add(key)
+                _BAD_PREFIXES[key] = time.monotonic()
                 print(f"[wine_input_bridge] could not resolve Proton dir for pid={pid}; bridge disabled for prefix={key}")
                 return None
             bridge = WineInputBridge(prefix=key, proton_dir=proton_dir, env=env)
             _BRIDGES[key] = bridge
 
     if not bridge.ensure_running():
-        _BAD_PREFIXES.add(key)
+        _BAD_PREFIXES[key] = time.monotonic()
         print(f"[wine_input_bridge] bridge unavailable for prefix={key}; falling back to Xlib for all future CC keys")
         return None
     return bridge
@@ -177,6 +194,17 @@ class WineInputBridge:
         self.prefix = prefix
         self.proton_dir = proton_dir
         self.env = dict(env)
+        # Deterministic per-prefix port: SHA1(prefix) mod 1000 added to a base.
+        # Tradeoff vs. OS-assigned ports (binding port 0, reading the port from
+        # the helper's stdout): the deterministic approach lets Python query
+        # the running helper without needing to remember a port across TTMT
+        # restarts, and avoids a stdout-pipe lifecycle. Birthday-problem
+        # collision math: two prefixes collide with p ~ 0.1%; ten prefixes
+        # with p ~ 4.4%. On a collision the second helper's listener.Start()
+        # raises SocketException, the process exits, _ping() times out, and
+        # the prefix lands in _BAD_PREFIXES (Task 5 added a cooldown so this
+        # isn't permanent). If multi-prefix users start hitting collisions
+        # in practice, switch to OS-assigned ports + stdout handshake.
         self.port = 37377 + (int(hashlib.sha1(prefix.encode("utf-8")).hexdigest()[:6], 16) % 1000)
         self._process: subprocess.Popen | None = None
         self._lock = threading.Lock()
@@ -192,6 +220,12 @@ class WineInputBridge:
 
     def ensure_running(self) -> bool:
         with self._lock:
+            if not os.path.isfile(self.wine_bin):
+                print(
+                    f"[wine_input_bridge] wine binary not found at {self.wine_bin}; "
+                    f"bridge cannot start for prefix={self.prefix}"
+                )
+                return False
             if self._ping():
                 return True
             if not self._ensure_compiled():
@@ -219,15 +253,63 @@ class WineInputBridge:
         response = self._request("list", timeout=0.15)
         return bool(response and response.startswith("OK "))
 
+    def cross_check_sort_order(self, window_ids: list[str]) -> bool:
+        """Verify that the helper's window-list sort order agrees with the
+        caller's. Returns True when the agreement holds (so positional
+        indices are safe to use), False on disagreement (caller should
+        fall back to the X11 backend).
+
+        Strategy: ask the helper for its window list, parse the per-window
+        Left coordinates, and verify they are monotonically non-decreasing.
+        Python's window_ids are already sorted left-to-right by
+        WindowManager.assign_windows; the helper's response is sorted
+        left-to-right by GetWindowRect().Left in FindCorporateClashWindows.
+        If both axes agree, the Left values come out non-decreasing. A
+        mismatch fires when XWayland's coord space and Win32's coord
+        space diverge (e.g. hypothetical multi-monitor edge case)."""
+        response = self._request("list", timeout=0.3)
+        if not response or not response.startswith("OK"):
+            return False
+        payload = response[3:].strip()
+        if not payload:
+            return len(window_ids) == 0
+        cs_entries = []
+        for tok in payload.split(","):
+            parts = tok.split(":")
+            if len(parts) < 2:
+                return False
+            try:
+                cs_entries.append(int(parts[1]))  # Left
+            except ValueError:
+                return False
+        if len(cs_entries) != len(window_ids):
+            return False
+        # Verify Left values are monotonically non-decreasing.
+        for a, b in zip(cs_entries, cs_entries[1:]):
+            if a > b:
+                return False
+        return True
+
+    _MAX_RESPONSE_BYTES = 64 * 1024  # generous cap; helper responses are short
+
     def _request(self, line: str, timeout: float = 0.5) -> str | None:
         try:
             with socket.create_connection(("127.0.0.1", self.port), timeout=timeout) as sock:
                 sock.sendall((line + "\n").encode("utf-8"))
                 sock.settimeout(timeout)
-                data = sock.recv(4096)
+                # Helper writes exactly one newline-terminated line per command.
+                # Loop until we see a newline or hit the cap so multi-recv
+                # responses (rare on loopback but not guaranteed by TCP) are
+                # handled correctly.
+                buf = bytearray()
+                while b"\n" not in buf and len(buf) < self._MAX_RESPONSE_BYTES:
+                    chunk = sock.recv(4096)
+                    if not chunk:
+                        break
+                    buf.extend(chunk)
         except OSError:
             return None
-        return data.decode("utf-8", "replace").strip()
+        return buf.decode("utf-8", "replace").strip()
 
     def shutdown(self) -> None:
         """Best-effort: ask the helper to quit, then ensure the process is gone."""
