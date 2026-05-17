@@ -67,7 +67,10 @@ def test_bottles_availability_falls_back_to_flatpak(monkeypatch):
     )
 
     class _Res:
-        returncode = 0
+        def __init__(self, returncode=0, stdout=b"com.usebottles.bottles\n", stderr=b""):
+            self.returncode = returncode
+            self.stdout = stdout
+            self.stderr = stderr
 
     def fake_host_run(*args, **kwargs):
         return _Res()
