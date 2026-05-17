@@ -311,3 +311,93 @@ def test_cross_check_sort_order_accepts_empty_when_no_windows(monkeypatch):
     )
     assert bridge.cross_check_sort_order([]) is True
     assert bridge.cross_check_sort_order(["win_a"]) is False
+
+
+def test_port_for_prefix_matches_bridge_instance_formula():
+    """The module-level port helper must agree with what
+    WineInputBridge.__init__ computes for the same prefix, otherwise the
+    pre-launch sweep targets a port the running helper isn't bound to."""
+    from utils.wine_input_bridge import WineInputBridge, _port_for_prefix
+
+    prefix = "/home/u/.local/share/Steam/steamapps/compatdata/3555655912/pfx"
+    bridge = WineInputBridge.__new__(WineInputBridge)
+    bridge.__init__(prefix=prefix, proton_dir="/opt/proton", env={})
+
+    assert _port_for_prefix(prefix) == bridge.port
+
+
+def test_shutdown_for_prefix_calls_in_memory_bridge_shutdown(monkeypatch):
+    """When a WineInputBridge instance is in _BRIDGES for the given
+    prefix, shutdown_for_prefix must pop it and call .shutdown() on it
+    (reaping the Popen handle), not fall through to the TCP path."""
+    from utils import wine_input_bridge as wib
+
+    class FakeBridge:
+        def __init__(self):
+            self.shutdown_called = False
+        def shutdown(self):
+            self.shutdown_called = True
+
+    quits = []
+    monkeypatch.setattr(wib, "_send_quit", lambda port: quits.append(port))
+
+    prefix = "/prefix/a"
+    fake = FakeBridge()
+    wib._BRIDGES[prefix] = fake
+    try:
+        wib.shutdown_for_prefix(prefix)
+        assert fake.shutdown_called is True
+        assert prefix not in wib._BRIDGES
+        assert quits == [], "TCP fallback must not fire when in-memory bridge was found"
+    finally:
+        wib._BRIDGES.pop(prefix, None)
+
+
+def test_shutdown_for_prefix_falls_back_to_tcp_quit_when_no_in_memory_bridge(monkeypatch):
+    """If a previous TTMT session crashed, its WineInputBridge instance
+    is gone but TTMTWineInputBridge.exe may still be alive inside the
+    Wine prefix, listening on the deterministic port. shutdown_for_prefix
+    must send a TCP quit to that port in this case."""
+    from utils import wine_input_bridge as wib
+
+    quits = []
+    monkeypatch.setattr(wib, "_send_quit", lambda port: quits.append(port))
+
+    prefix = "/prefix/orphan"
+    wib._BRIDGES.pop(prefix, None)
+    wib.shutdown_for_prefix(prefix)
+    assert quits == [wib._port_for_prefix(prefix)]
+
+
+def test_shutdown_for_prefix_normalizes_path_to_match_bridges_key(monkeypatch, tmp_path):
+    """_BRIDGES is keyed by os.path.realpath(prefix). Callers may pass
+    a path with a trailing slash or a non-realpath form;
+    shutdown_for_prefix must normalize before lookup or it'll miss the
+    in-memory bridge and incorrectly fall through to the TCP path."""
+    from utils import wine_input_bridge as wib
+    import os
+
+    real = tmp_path / "pfx"
+    real.mkdir()
+    link = tmp_path / "alias"
+    link.symlink_to(real)
+
+    canonical = os.path.realpath(str(real))
+
+    class FakeBridge:
+        def __init__(self):
+            self.shutdown_called = False
+        def shutdown(self):
+            self.shutdown_called = True
+
+    fake = FakeBridge()
+    wib._BRIDGES[canonical] = fake
+    quits = []
+    monkeypatch.setattr(wib, "_send_quit", lambda port: quits.append(port))
+    try:
+        wib.shutdown_for_prefix(str(link) + "/")
+        assert fake.shutdown_called is True
+        assert canonical not in wib._BRIDGES
+        assert quits == []
+    finally:
+        wib._BRIDGES.pop(canonical, None)
