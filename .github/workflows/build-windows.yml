@@ -36,7 +36,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install dependencies
-        run: pip install -r requirements.txt pyinstaller
+        run: pip install -r requirements.txt
 
       - name: Build EXE
         run: pyinstaller --noconfirm ToonTownMultiTool.spec

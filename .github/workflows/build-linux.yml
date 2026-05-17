@@ -58,7 +58,7 @@ jobs:
         run: |
           python3 -m venv /tmp/build-venv
           /tmp/build-venv/bin/pip install --upgrade pip
-          /tmp/build-venv/bin/pip install -r requirements.txt pyinstaller
+          /tmp/build-venv/bin/pip install -r requirements.txt
           /tmp/build-venv/bin/pyinstaller --noconfirm ToonTownMultiTool.spec
 
       - name: Upload raw Linux binary

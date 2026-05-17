@@ -19,6 +19,7 @@ OUTDIR="${3:-.}"
 # Debian Version: field must not carry a leading 'v'; the CI 'dev' label is
 # not a valid Debian version, so map it to a clearly-pre-release string.
 DEB_VERSION="${VERSION#v}"
+DEB_VERSION="${DEB_VERSION//-/~}"  # dpkg: tilde sorts pre-release before stable; hyphen would be misread as a revision
 [ "$DEB_VERSION" = "dev" ] && DEB_VERSION="0.0.0~dev"
 
 STAGE="$(mktemp -d)"

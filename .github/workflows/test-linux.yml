@@ -223,7 +223,18 @@ jobs:
           chmod 700 "$XDG_RUNTIME_DIR"
           weston --backend=headless-backend.so --socket=wayland-ci --idle-time=0 &
           WESTON_PID=$!
-          sleep 3
+          # Poll for Wayland socket readiness instead of a fixed sleep. Cap at 15s.
+          for i in $(seq 1 75); do
+            if [ -S "${XDG_RUNTIME_DIR}/wayland-ci" ]; then
+              break
+            fi
+            sleep 0.2
+          done
+          if ! [ -S "${XDG_RUNTIME_DIR}/wayland-ci" ]; then
+            echo "Weston failed to create socket within 15s" >&2
+            kill "$WESTON_PID" 2>/dev/null || true
+            exit 1
+          fi
           set +e
           WAYLAND_DISPLAY=wayland-ci QT_QPA_PLATFORM=wayland \
             python main.py --self-check
