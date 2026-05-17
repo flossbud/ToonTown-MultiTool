@@ -567,13 +567,18 @@ class KeymapTab(QWidget):
         bl.addLayout(two_col)
 
         if index == 0:
-            detect_btn = QPushButton(f"{S('🔍 ', '')}Detect Game Settings")
+            label = "Detect TTR Settings" if self._active_game == "ttr" else "Detect CC Settings"
+            detect_btn = QPushButton(f"{S('🔍 ', '')}{label}")
             detect_btn.setFixedHeight(30)
             detect_btn.setCursor(Qt.PointingHandCursor)
-            detect_btn.setToolTip("Read current settings from Toontown Rewritten configuration")
+            detect_btn.setToolTip(
+                "Read current settings from Toontown Rewritten configuration"
+                if self._active_game == "ttr"
+                else "Read current settings from Corporate Clash preferences"
+            )
             detect_btn.setObjectName("detect_btn")
             detect_btn.clicked.connect(self._on_detect_settings)
-            
+
             btn_row = QHBoxLayout()
             btn_row.addStretch()
             btn_row.addWidget(detect_btn)
@@ -717,6 +722,12 @@ class KeymapTab(QWidget):
         self.refresh_theme()
 
     def _on_detect_settings(self):
+        if self._active_game == "ttr":
+            self._on_detect_ttr_settings()
+        else:
+            self._on_detect_cc_settings()
+
+    def _on_detect_ttr_settings(self):
         from utils.ttr_settings import locate_settings_file, parse_ttr_settings, apply_ttr_controls_to_set
         from services.ttr_login_service import find_engine_path
 
@@ -728,20 +739,66 @@ class KeymapTab(QWidget):
 
         path = locate_settings_file(engine_dir=engine_path)
         if not path:
-            print("[KeymapTab] Could not find settings.json")
+            print("[KeymapTab] Could not find TTR settings.json")
             return
 
         try:
             settings = parse_ttr_settings(path)
         except Exception as e:
-            print(f"[KeymapTab] Failed to parse settings.json: {e}")
+            print(f"[KeymapTab] Failed to parse TTR settings.json: {e}")
             return
 
         updates = apply_ttr_controls_to_set(self.keymap_manager, 0, settings.controls)
         if updates > 0:
             self._build_cards()
             self.refresh_theme()
-            print(f"[KeymapTab] Detected {updates} settings from {path}")
+            print(f"[KeymapTab] Detected {updates} TTR settings from {path}")
+
+    def _on_detect_cc_settings(self):
+        from utils.cc_settings import locate_cc_preferences, parse_cc_preferences, apply_cc_controls_to_set
+        try:
+            from services.wine_runtimes import discover_cc_installs
+        except Exception:
+            discover_cc_installs = None
+
+        install = None
+        installs = []
+        if discover_cc_installs is not None:
+            try:
+                installs = discover_cc_installs() or []
+            except Exception as e:
+                print(f"[KeymapTab] CC install discovery failed: {e}")
+
+        # Prefer the install currently active in Settings if it's discoverable.
+        cc_dir = self.settings_manager.get("cc_engine_dir", "") if self.settings_manager else ""
+        if cc_dir:
+            for cand in installs:
+                exe = getattr(cand, "exe_path", None)
+                if exe and os.path.dirname(exe) == cc_dir:
+                    install = cand
+                    break
+        if install is None and installs:
+            install = installs[0]
+        if install is None:
+            print("[KeymapTab] No CC install detected")
+            return
+
+        path = locate_cc_preferences(install)
+        if not path:
+            print("[KeymapTab] Could not find CC preferences.json")
+            return
+
+        try:
+            settings = parse_cc_preferences(path)
+        except Exception as e:
+            print(f"[KeymapTab] Failed to parse CC preferences.json: {e}")
+            return
+
+        updates = apply_cc_controls_to_set(self.keymap_manager, 0, settings)
+        if updates > 0:
+            self._build_cards()
+            self.refresh_theme()
+            print(f"[KeymapTab] Detected {updates} CC settings from {path}")
 
     # ── Theme ──────────────────────────────────────────────────────────────
 
