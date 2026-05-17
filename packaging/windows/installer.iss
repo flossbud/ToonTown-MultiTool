@@ -136,6 +136,14 @@ begin
   Result := RegKeyExists(HKLM, KeyPath) or RegKeyExists(HKCU, KeyPath);
 end;
 
+function ShouldSkipPage(PageID: Integer): Boolean;
+begin
+  if (PageID = KeepAliveConsentPage.ID) then
+    Result := not WizardIsTaskSelected('keepalive')
+  else
+    Result := False;
+end;
+
 function GetInstalledBuildNumber(): Integer;
 var
   Value: Cardinal;
