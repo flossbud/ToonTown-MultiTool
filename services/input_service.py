@@ -505,8 +505,8 @@ class InputService(QObject):
                             if key not in self.keys_held:
                                 self.keys_held.add(key)
                                 if self.logging_enabled:
-                                    action = self._resolve_logical_action(key)
-                                    extra = f" (action: {action})" if action else ""
+                                    logical = self._resolve_logical_action(key)
+                                    extra = f" (action: {logical})" if logical else ""
                                     self._log_key(key, "pressed", extra)
                                 if self._phantom_active:
                                     # Stealth chat — suppress movement to bg toons
