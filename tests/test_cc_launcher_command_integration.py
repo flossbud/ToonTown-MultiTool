@@ -78,3 +78,81 @@ def test_launch_fails_when_launcher_unavailable(qapp, tmp_path, monkeypatch):
     launcher.launch("srv", "tok", install)
     qapp.processEvents()
     assert any("bottles" in e.lower() or "Bottles" in e for e in errors)
+
+
+def test_steam_proton_verb_switches_to_run_for_second_launch(tmp_path):
+    """Multi-instance: second launch against the same compatdata must use the
+    'run' verb instead of 'waitforexitandrun' so it doesn't block on the
+    existing wineserver's prefix flock."""
+    from services.wine_runtimes import (
+        WineInstall, build_launch_command,
+        register_active_proton_compatdata,
+        unregister_active_proton_compatdata,
+        is_proton_compatdata_active,
+    )
+
+    # Build a fake steam-proton WineInstall pointing at tmp_path.
+    steam_root = tmp_path / "steam"
+    compatdata = steam_root / "steamapps" / "compatdata" / "12345"
+    prefix = compatdata / "pfx"
+    prefix.mkdir(parents=True)
+    proton_dir = steam_root / "compatibilitytools.d" / "fake-proton"
+    (proton_dir / "files" / "bin").mkdir(parents=True)
+    (proton_dir / "proton").write_text("#!/bin/sh\nexit 0\n")
+    (proton_dir / "files" / "bin" / "wineserver").write_text("#!/bin/sh\nexit 0\n")
+    install = WineInstall(
+        exe_path=str(prefix / "drive_c" / "CorporateClash.exe"),
+        launcher="steam-proton",
+        prefix_path=str(prefix),
+        display_name="Steam · CC",
+        metadata={
+            "appid": "12345",
+            "steam_root": str(steam_root),
+            "proton_dir": str(proton_dir),
+        },
+    )
+
+    # First launch: nothing registered, verb should be waitforexitandrun.
+    assert not is_proton_compatdata_active(str(compatdata))
+    cmd, _ = build_launch_command(install, args=[], extra_env={})
+    cmd_str = " ".join(cmd)
+    assert "waitforexitandrun" in cmd_str
+    assert " run " not in cmd_str
+
+    # Register this compatdata as live; second launch should switch to run.
+    register_active_proton_compatdata(str(compatdata))
+    try:
+        cmd2, _ = build_launch_command(install, args=[], extra_env={})
+        cmd2_str = " ".join(cmd2)
+        assert "waitforexitandrun" not in cmd2_str or "--verb=run" in cmd2_str
+        # Either the proton verb arg is "run" or the runtime wrapper's --verb is run
+        assert any(part == "run" or part == "--verb=run" for part in cmd2)
+    finally:
+        unregister_active_proton_compatdata(str(compatdata))
+
+    # After unregister, third launch reverts to waitforexitandrun.
+    assert not is_proton_compatdata_active(str(compatdata))
+    cmd3, _ = build_launch_command(install, args=[], extra_env={})
+    assert "waitforexitandrun" in " ".join(cmd3)
+
+
+def test_register_unregister_idempotent_and_isolated(tmp_path):
+    from services.wine_runtimes import (
+        register_active_proton_compatdata,
+        unregister_active_proton_compatdata,
+        is_proton_compatdata_active,
+    )
+    pa = str(tmp_path / "a")
+    pb = str(tmp_path / "b")
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+
+    register_active_proton_compatdata(pa)
+    register_active_proton_compatdata(pa)  # idempotent
+    assert is_proton_compatdata_active(pa)
+    assert not is_proton_compatdata_active(pb)
+
+    unregister_active_proton_compatdata(pa)
+    assert not is_proton_compatdata_active(pa)
+    unregister_active_proton_compatdata(pa)  # idempotent on already-absent
+    assert not is_proton_compatdata_active(pa)
