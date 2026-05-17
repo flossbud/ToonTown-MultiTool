@@ -656,6 +656,24 @@ class InputService(QObject):
 
     def _send_via_backend(self, action: str, win_id: str, keysym: str, modifiers: list = None):
         """Route input through Xlib or xdotool depending on USE_XLIB_BACKEND."""
+        import sys
+        if sys.platform != "win32":
+            try:
+                from utils.game_registry import GameRegistry
+                if GameRegistry.instance().get_game_for_window(str(win_id)) == "cc":
+                    from utils import wine_input_bridge
+                    if wine_input_bridge.send_to_window(
+                        str(win_id),
+                        [str(w) for w in self.window_manager.get_window_ids()],
+                        action,
+                        keysym,
+                        modifiers,
+                    ):
+                        return
+            except Exception as e:
+                if self.logging_enabled:
+                    self.input_log.emit(f"[Input] Wine bridge unavailable; falling back ({type(e).__name__})")
+
         success = True
         if self._xlib:
             if action == "keydown":

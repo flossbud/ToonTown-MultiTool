@@ -7,7 +7,10 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('assets', 'assets')],
+    datas=[
+        ('assets', 'assets'),
+        ('tools/wine_input_bridge/TTMTWineInputBridge.cs', 'tools/wine_input_bridge'),
+    ],
     hiddenimports=[
         'pynput.keyboard._xorg',
         'pynput.mouse._xorg',
