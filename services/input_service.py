@@ -255,6 +255,50 @@ class InputService(QObject):
                             f"[Input] Key '{key}' → '{mapped}' (legacy {mode} conversion)"
                         )
 
+    def _send_logical_action_km(self, action, key, enabled, assignments):
+        """Send a movement-class action to background toons via logical-action layer.
+
+        The pressed key is resolved to a logical action via the foreground game's
+        Default set, then each enabled bg toon receives the binding for that
+        logical action in its assigned set, scoped to its window's game.
+        """
+        if self.global_chat_active:
+            return
+        logical = self._resolve_logical_action(key)
+        if logical is None:
+            return
+
+        from utils.game_registry import GameRegistry
+        from utils import logical_actions
+
+        active_window = self.window_manager.get_active_window()
+        window_ids = self.window_manager.get_window_ids()
+        registry = GameRegistry.instance()
+
+        for i, is_enabled in enumerate(enabled):
+            if not is_enabled or i >= len(window_ids):
+                continue
+            win = window_ids[i]
+            if win == active_window:
+                continue
+            toon_game = registry.get_game_for_window(str(win))
+            if toon_game is None:
+                continue
+            if not logical_actions.supports(toon_game, logical):
+                continue
+            set_idx = assignments[i] if i < len(assignments) else 0
+            outbound = self.keymap_manager.get_key_for_action(toon_game, set_idx, logical)
+            if outbound is None:
+                continue
+            keysym = self._resolve_keysym(outbound)
+            if keysym:
+                self._send_via_backend(action, win, keysym)
+                if self.logging_enabled and action == "keydown" and key != outbound:
+                    self.input_log.emit(
+                        f"[Input] '{key}' -> '{outbound}' "
+                        f"(action: {logical}, {toon_game} set {set_idx + 1})"
+                    )
+
     def _send_modifier_to_bg(self, action, key, enabled, assignments):
         active_window = self.window_manager.get_active_window()
         keysym = self._resolve_keysym(key)
