@@ -235,9 +235,10 @@ class KeymapManager:
         with self._lock:
             sets = self._sets.get(game, [])
             if 0 <= set_index < len(sets):
-                sets[set_index][action] = key
-                self._save()
-                changed = True
+                if sets[set_index].get(action) != key:
+                    sets[set_index][action] = key
+                    self._save()
+                    changed = True
         if changed:
             self._notify()
 

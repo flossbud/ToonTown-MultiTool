@@ -112,7 +112,11 @@ def apply_cc_controls_to_set(keymap_manager, set_index: int, settings: CcSetting
       translate values via _CC_VALUE_TO_KEYSYM. Unknown action-name keys
       are logged; the corresponding action keeps its baked default.
 
-    Returns the count of actions whose binding was written.
+    Returns the count of CC actions seeded from defaults (the defaults
+    pass). In the custom-controls path this equals len(actions_for("cc"));
+    overlay writes on top of those are not separately counted, so the
+    return value is a "did something happen" signal rather than a count
+    of overlay applications.
     """
     use_defaults = (not settings.want_custom_controls) or (not settings.keymap)
     n = 0

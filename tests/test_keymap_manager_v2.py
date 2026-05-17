@@ -237,6 +237,17 @@ class TestWriteAPI:
         mgr.update_set_key("ttr", 99, "forward", "Up")  # out-of-range set index
         assert calls == []
 
+    def test_update_set_key_noop_when_value_unchanged(self, tmp_path):
+        mgr, _ = _make_manager_with_file(tmp_path)
+        calls = []
+        mgr.on_change(lambda: calls.append(1))
+        # The default already has forward=w; writing w again is a no-op
+        mgr.update_set_key("ttr", 0, "forward", "w")
+        assert calls == []
+        # Writing a different value triggers exactly one notification
+        mgr.update_set_key("ttr", 0, "forward", "i")
+        assert calls == [1]
+
 
 class TestHasConflicts:
     def test_default_has_no_conflicts(self, tmp_path):
