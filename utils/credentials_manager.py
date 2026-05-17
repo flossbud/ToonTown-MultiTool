@@ -345,6 +345,13 @@ class CredentialsManager:
                     from keyring.errors import PasswordDeleteError
                     if isinstance(result["error"], PasswordDeleteError):
                         return True, None
+                if func is keyring.set_password:
+                    from keyring.errors import PasswordSetError
+                    if isinstance(result["error"], PasswordSetError):
+                        # Transient KWallet/Secret Service write failure — log and report
+                        # failure, but keep the keyring backend usable for retry.
+                        _dbg(f"keyring write failed (transient): {result['error']!r}")
+                        return (False, None)
                 raise result["error"]
             return True, result["value"]
         except Exception as e:
@@ -792,6 +799,9 @@ class CredentialsManager:
         if not self._set_password(account_id, password):
             return False
 
+        if not self._use_keyring:
+            _dbg(f"WARNING: account {account_id} added but password held in-memory only (keyring unavailable)")
+
         self._accounts.append({
             "id": account_id,
             "label": label,
@@ -802,7 +812,15 @@ class CredentialsManager:
         return True
 
     def update_account(self, index: int, label: str = None, username: str = None, password: str = None):
-        """Update specific fields of an account."""
+        """Update specific fields of an account.
+
+        password=None: do not touch the stored password.
+        password="": clear the stored password (destructive).
+                     Used by _persist_launcher_token in launch_tab.py to
+                     discard the one-time registration password after the
+                     launcher token has been obtained.
+        password=<str>: overwrite the stored password with the given value.
+        """
         if 0 <= index < len(self._accounts):
             a = self._accounts[index]
             game = a.get("game", "ttr")

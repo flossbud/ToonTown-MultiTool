@@ -39,3 +39,6 @@ pywin32>=306; sys_platform == "win32"
 # Windows only — port->PID enumeration without spawning netstat
 # (avoids Smart App Control / Defender heuristics on the unsigned EXE)
 psutil>=5.9; sys_platform == "win32"
+
+# Build-time dependency for PyInstaller-based packaging (Linux AppImage + Windows EXE).
+pyinstaller>=6.0,<7

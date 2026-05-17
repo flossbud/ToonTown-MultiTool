@@ -415,6 +415,14 @@ EOF
     fi
 fi
 
+# If --skip-system-deps was passed but no supported Python was found, give a
+# clear user-facing error rather than falling through to the internal-error guard.
+if [ "$SKIP_SYSTEM_DEPS" -eq 1 ] && [ -z "${PYTHON_BIN:-}" ]; then
+    echo "install.sh: --skip-system-deps was passed but no supported Python (3.9-3.13) was found on PATH." >&2
+    echo "Install a Python in that range manually, then re-run ./install.sh --skip-system-deps." >&2
+    exit 1
+fi
+
 # At this point PYTHON_BIN is guaranteed to be set (Task 2's detection plus
 # the Task 3 install step), or the script has already exited via a bail.
 if [ -z "${PYTHON_BIN:-}" ]; then

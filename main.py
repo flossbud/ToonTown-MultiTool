@@ -1053,6 +1053,11 @@ class MultiToonTool(QMainWindow):
             self.window_manager.stop()
         except Exception as e:
             print(f"[CloseEvent] Error during shutdown: {e}")
+        try:
+            if hasattr(self, "update_checker"):
+                self.update_checker.shutdown()
+        except Exception as e:
+            print(f"[Main] update_checker shutdown error: {e}")
         super().closeEvent(event)
 
     def log(self, message: str):

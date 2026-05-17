@@ -49,6 +49,11 @@ def _session_bus_owns(name: str) -> bool:
         return False
     addr = DBusAddress(_DBUS_PATH, bus_name=_DBUS_DAEMON, interface=_DBUS_IFACE)
     try:
+        # TODO: bound this call with a timeout to prevent indefinite hang when D-Bus
+        # itself is unhealthy. The probe is already on a daemon thread so the main
+        # thread is unaffected, but this can extend probe time past the wrapper limit.
+        # open_dbus_connection only accepts auth_timeout (auth step only), not a
+        # general connection timeout, so a full-hang guard would require a thread+future.
         with open_dbus_connection(bus="SESSION") as conn:
             msg = new_method_call(addr, "NameHasOwner", "s", (name,))
             reply = conn.send_and_get_reply(msg)
@@ -157,7 +162,9 @@ class _KWalletSession:
     def _call(self, method: str, signature: str, args: tuple):
         from jeepney import MessageType, new_method_call
         msg = new_method_call(self._addr, method, signature, args)
-        reply = self._conn.send_and_get_reply(msg, timeout=5.0)
+        # Inner timeout must be < outer _try_keyring_call timeout (1.5s for non-probe)
+        # so the jeepney thread releases before the wrapper gives up.
+        reply = self._conn.send_and_get_reply(msg, timeout=1.0)
         if reply.header.message_type == MessageType.error:
             err_name = reply.header.fields.get(4, "<unknown>")
             err_msg = reply.body[0] if reply.body else ""

@@ -26,6 +26,8 @@ from typing import Iterable
 # through to the dir basename and step 2 simply doesn't match (the
 # cascade then handles it via step 3 / step 4).
 _OFFICIAL_NAME_ALIASES: dict[str, str] = {
+    "Proton 10.0 (Beta)": "proton_10",
+    "Proton 10.0": "proton_10",
     "Proton 9.0 (Beta)": "proton_9",
     "Proton 9.0": "proton_9",
     "Proton 8.0": "proton_8",

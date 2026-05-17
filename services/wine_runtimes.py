@@ -400,13 +400,14 @@ def discover_steam_proton() -> list[WineInstall]:
                     continue
                 seen.add(real)
                 proton_dir = _read_proton_dir(os.path.join(compatdata, entry))
-                name = _read_shortcut_name(steam_root, entry) or f"Steam · {entry}"
+                shortcut_name = _read_shortcut_name(steam_root, entry)
+                display_name = f"Steam · {shortcut_name}" if shortcut_name else f"Steam · {entry}"
                 results.append(
                     WineInstall(
                         exe_path=exe,
                         launcher="steam-proton",
                         prefix_path=pfx,
-                        display_name=f"Steam · {name}" if not name.startswith("Steam · ") else name,
+                        display_name=display_name,
                         metadata={
                             "appid": entry,
                             "steam_root": steam_root,
@@ -462,7 +463,7 @@ def classify_path(exe_path: str) -> WineInstall | None:
         if parts[i] == "compatdata" and parts[i + 1].isdigit() and parts[i + 2] == "pfx":
             appid = parts[i + 1]
             pfx = os.sep + os.path.join(*parts[: i + 3])
-            steam_root = os.sep + os.path.join(*parts[: i - 1]) if i >= 1 else None
+            steam_root = os.sep + os.path.join(*parts[: i - 1]) if i >= 2 else None
             proton_dir = _read_proton_dir(os.path.dirname(pfx))
             name = _read_shortcut_name(steam_root, appid) if steam_root else None
             display = name or f"Steam · {appid}"

@@ -66,6 +66,20 @@ def _trunc(body: str, limit: int = 300) -> str:
     return body if len(body) <= limit else body[:limit] + f"…(+{len(body)-limit}b)"
 
 
+def _redact_token(body_text: str) -> str:
+    """Redact the value of any "token": "..." field in a JSON-shaped string.
+
+    Tolerant of pretty-printing and Unicode escapes; falls back to verbatim
+    when no token field is detected so non-JSON error bodies still surface.
+    """
+    import re
+    return re.sub(
+        r'("token"\s*:\s*")([^"\\]*(?:\\.[^"\\]*)*)(")',
+        r'\1<redacted>\3',
+        body_text,
+    )
+
+
 def _friendly_name(label: str = "") -> str:
     """Build the CC-launcher 'friendly' name shown in CC's authorized-
     launchers list. Format: 'ToontownMultiTool (<hostname>)' or
@@ -219,7 +233,7 @@ class CCLoginWorker(QObject):
                     timeout=15,
                     verify=True,
                 )
-                print(f"[CC] /register: HTTP {resp.status_code} body={_trunc(resp.text)}")
+                print(f"[CC] /register: HTTP {resp.status_code} body={_trunc(_redact_token(resp.text))}")
                 data = self._decode_json_response(
                     resp, "Invalid response from registration server.")
                 if data is None:
@@ -286,7 +300,7 @@ class CCLoginWorker(QObject):
             resp = requests.post(
                 CC_LOGIN_URL, headers=headers, timeout=15, verify=True,
             )
-            print(f"[CC] /login: HTTP {resp.status_code} body={_trunc(resp.text)}")
+            print(f"[CC] /login: HTTP {resp.status_code} body={_trunc(_redact_token(resp.text))}")
             data = self._decode_json_response(
                 resp, "Invalid response from login server.")
             if data is None:
@@ -331,7 +345,7 @@ class CCLoginWorker(QObject):
                 resp = requests.post(
                     CC_LOGIN_URL, headers=headers, timeout=15, verify=True,
                 )
-                print(f"[CC] /login: HTTP {resp.status_code} body={_trunc(resp.text)}")
+                print(f"[CC] /login: HTTP {resp.status_code} body={_trunc(_redact_token(resp.text))}")
                 data = self._decode_json_response(
                     resp, "Invalid response from login server.")
                 if data is None:

@@ -71,8 +71,8 @@ Name: "checkupdates"; Description: "Check for &updates at startup"; GroupDescrip
 Name: "launchapp";   Description: "&Launch {#MyAppName} after install"; GroupDescription: "After install:"
 
 [Registry]
-Root: HKCU; Subkey: "Software\flossbud\{#MyAppName}"; ValueType: dword; ValueName: "BuildNumber"; ValueData: "{#MyBuildNumber}"; Flags: uninsdeletevalue
-Root: HKCU; Subkey: "Software\flossbud\{#MyAppName}"; ValueType: string; ValueName: "AppVersion"; ValueData: "{#MyAppVersion}"; Flags: uninsdeletevalue
+Root: HKA; Subkey: "Software\flossbud\{#MyAppName}"; ValueType: dword; ValueName: "BuildNumber"; ValueData: "{#MyBuildNumber}"; Flags: uninsdeletevalue
+Root: HKA; Subkey: "Software\flossbud\{#MyAppName}"; ValueType: string; ValueName: "AppVersion"; ValueData: "{#MyAppVersion}"; Flags: uninsdeletevalue
 
 [Files]
 Source: "..\..\dist\ToonTownMultiTool\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -134,7 +134,7 @@ var
   Value: Cardinal;
 begin
   Result := 0;
-  if RegQueryDWordValue(HKCU, 'Software\flossbud\{#MyAppName}', 'BuildNumber', Value) then
+  if RegQueryDWordValue(HKA, 'Software\flossbud\{#MyAppName}', 'BuildNumber', Value) then
     Result := Integer(Value);
 end;
 
@@ -143,7 +143,7 @@ var
   Value: String;
 begin
   Result := '';
-  RegQueryStringValue(HKCU, 'Software\flossbud\{#MyAppName}', 'AppVersion', Value);
+  RegQueryStringValue(HKA, 'Software\flossbud\{#MyAppName}', 'AppVersion', Value);
   Result := Value;
 end;
 
