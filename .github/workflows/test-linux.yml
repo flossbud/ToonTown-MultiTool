@@ -276,6 +276,27 @@ jobs:
           git clone "https://aur.archlinux.org/${{ steps.aur.outputs.pkg }}.git" /tmp/aur
           chown -R builder /tmp/aur
 
+      # Bootstrap an AUR helper so makepkg -si in the next step can resolve
+      # AUR-only deps (e.g. python-pynput is in AUR, not official repos, so
+      # bare `pacman` cannot install it and `makepkg -si` would fail with
+      # "error: target not found: python-pynput"). paru-bin is itself an AUR
+      # package, but its own deps are all in official repos, so it bootstraps
+      # cleanly via `makepkg -si`.
+      - name: Bootstrap paru-bin (AUR helper for transitive AUR deps)
+        run: |
+          sudo -u builder git clone https://aur.archlinux.org/paru-bin.git /tmp/paru-bin
+          sudo -u builder bash -c 'cd /tmp/paru-bin && makepkg -si --noconfirm'
+
+      # Pre-install the AUR-only deps via paru. Once installed, the
+      # subsequent makepkg -si --noconfirm sees them satisfied and proceeds
+      # to build + install the target PKGBUILD.
+      - name: Install AUR-only deps via paru
+        run: |
+          # Pinned list: anything currently in the published PKGBUILD's
+          # depends=() that lives in AUR rather than extra/core. Update if
+          # the AUR dep set changes.
+          sudo -u builder paru -S --noconfirm --skipreview python-pynput
+
       # Builds the real, already-published PKGBUILD exactly as `yay`/`paru`
       # would. The /release and /pre-release skills are responsible for
       # having pushed the matching pkgver bump BEFORE the git tag was pushed.
