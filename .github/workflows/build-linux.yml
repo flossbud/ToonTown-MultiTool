@@ -74,9 +74,13 @@ jobs:
           chmod +x AppDir/usr/bin/ToonTownMultiTool
 
       - name: Download appimagetool
+        # Pinned by SHA256 against the AppImage/appimagetool 'continuous' tag.
+        # The upstream project only ships a rolling tag, so we verify the
+        # checksum instead. Bump both URL and SHA together when updating;
+        # the build will fail-fast if upstream changes without our consent.
         run: |
-          wget -q https://github.com/AppImage/AppImageKit/releases/download/13/appimagetool-x86_64.AppImage
-          echo "df3baf5ca5facbecfc2f3fa6713c29ab9cefa8fd8c1eac5d283b79cab33e4acb  appimagetool-x86_64.AppImage" | sha256sum -c -
+          wget -q https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          echo "a6d71e2b6cd66f8e8d16c37ad164658985e0cf5fcaa950c90a482890cb9d13e0  appimagetool-x86_64.AppImage" | sha256sum -c -
           chmod +x appimagetool-x86_64.AppImage
 
       - name: Build AppImage
