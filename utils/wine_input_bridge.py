@@ -187,6 +187,17 @@ class WineInputBridge:
         self.prefix = prefix
         self.proton_dir = proton_dir
         self.env = dict(env)
+        # Deterministic per-prefix port: SHA1(prefix) mod 1000 added to a base.
+        # Tradeoff vs. OS-assigned ports (binding port 0, reading the port from
+        # the helper's stdout): the deterministic approach lets Python query
+        # the running helper without needing to remember a port across TTMT
+        # restarts, and avoids a stdout-pipe lifecycle. Birthday-problem
+        # collision math: two prefixes collide with p ~ 0.1%; ten prefixes
+        # with p ~ 4.4%. On a collision the second helper's listener.Start()
+        # raises SocketException, the process exits, _ping() times out, and
+        # the prefix lands in _BAD_PREFIXES (Task 5 added a cooldown so this
+        # isn't permanent). If multi-prefix users start hitting collisions
+        # in practice, switch to OS-assigned ports + stdout handshake.
         self.port = 37377 + (int(hashlib.sha1(prefix.encode("utf-8")).hexdigest()[:6], 16) % 1000)
         self._process: subprocess.Popen | None = None
         self._lock = threading.Lock()
