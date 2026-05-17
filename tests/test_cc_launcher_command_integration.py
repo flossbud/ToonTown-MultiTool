@@ -216,7 +216,6 @@ def test_launch_tears_down_bridge_after_cc_exits(qapp, monkeypatch, tmp_path):
     immediately, and the prefix is held indefinitely until TTMT itself
     exits."""
     import threading
-    from PySide6.QtCore import Qt
     from services.cc_launcher import CCLauncher
     from services.wine_runtimes import WineInstall
     from utils import wine_input_bridge
@@ -234,13 +233,14 @@ def test_launch_tears_down_bridge_after_cc_exits(qapp, monkeypatch, tmp_path):
     )
 
     sweeps = []
-    monkeypatch.setattr(
-        wine_input_bridge,
-        "shutdown_for_prefix",
-        lambda p: sweeps.append(p),
-    )
+    second_sweep = threading.Event()
 
-    exited = threading.Event()
+    def fake_shutdown_for_prefix(p):
+        sweeps.append(p)
+        if len(sweeps) >= 2:
+            second_sweep.set()
+
+    monkeypatch.setattr(wine_input_bridge, "shutdown_for_prefix", fake_shutdown_for_prefix)
 
     class FakeProc:
         pid = 99999
@@ -260,9 +260,6 @@ def test_launch_tears_down_bridge_after_cc_exits(qapp, monkeypatch, tmp_path):
     monkeypatch.setattr("services.cc_launcher.unregister_active_proton_compatdata", lambda _p: None)
 
     launcher = CCLauncher(settings_manager=None)
-    # DirectConnection so the slot fires on the background thread immediately,
-    # without needing the main thread to processEvents.
-    launcher.game_exited.connect(lambda _rc: exited.set(), Qt.DirectConnection)
     launcher.launch(
         gameserver="gs-test",
         game_token="t" * 64,
@@ -271,11 +268,15 @@ def test_launch_tears_down_bridge_after_cc_exits(qapp, monkeypatch, tmp_path):
         realm_slug="production",
     )
 
-    assert exited.wait(timeout=2.0), "game_exited never fired"
-    # Two sweep calls expected: one pre-launch (Task 2), one post-exit (this task).
-    assert sweeps.count(str(prefix)) == 2, f"expected exactly two sweeps, got {sweeps}"
-    # And they must be exclusively for this prefix.
-    assert all(p == str(prefix) for p in sweeps), f"unexpected prefix in sweeps: {sweeps}"
+    # Wait on the post-exit sweep itself, not on game_exited. game_exited.emit
+    # fires inside the try body before finally runs, so a wait keyed on it
+    # races the finally block's post-exit shutdown_for_prefix (~3% flake rate
+    # in measurement). Keying off the second sweep eliminates the race.
+    assert second_sweep.wait(timeout=2.0), f"second sweep never fired, sweeps={sweeps}"
+    assert sweeps == [str(prefix), str(prefix)], (
+        f"expected pre-launch sweep then post-exit sweep both for this prefix, "
+        f"got {sweeps}"
+    )
 
 
 def test_register_unregister_idempotent_and_isolated(tmp_path):
