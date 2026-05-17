@@ -20,6 +20,10 @@ from dataclasses import replace
 from PySide6.QtCore import QObject, Signal
 from services.cc_login_service import CC_DEFAULT_REALM, CC_ENGINE_SEARCH_PATHS
 from services.launcher_env import build_launcher_env
+from services.wine_runtimes import (
+    register_active_proton_compatdata,
+    unregister_active_proton_compatdata,
+)
 from services.steam_compat_mapping import steam_compat_choice
 from services.steam_proton_tools import enumerate_proton_tools
 from services.wine_runtimes import WineInstall
@@ -312,6 +316,7 @@ class CCLauncher(QObject):
             stdout_fh = os.fdopen(stdout_fd, "w+b")
             stderr_fh = os.fdopen(stderr_fd, "w+b")
             retcode = None
+            proton_compatdata = None  # Set after successful spawn for steam-proton
             try:
                 kwargs = {}
                 if sys.platform == "win32" and install.launcher == "native":
@@ -341,6 +346,13 @@ class CCLauncher(QObject):
                     self._game_process = _spawn()
                 pid = self._game_process.pid
                 print(f"[CCLauncher] _run: spawned pid={pid}")
+                # Track this compatdata as active so subsequent CC launches
+                # against the same prefix switch from 'waitforexitandrun'
+                # (which blocks on the existing wineserver's flock) to 'run'.
+                # Symmetrically released in the finally block.
+                if install.launcher == "steam-proton":
+                    proton_compatdata = os.path.dirname(install.prefix_path)
+                    register_active_proton_compatdata(proton_compatdata)
                 GameRegistry.instance().register(pid, "cc")
                 self.game_launched.emit(pid)
 
@@ -374,6 +386,8 @@ class CCLauncher(QObject):
                 print(f"[CCLauncher] _run: error {type(e).__name__}: {e}")
                 self.launch_failed.emit(f"Launch error: {e}")
             finally:
+                if proton_compatdata is not None:
+                    unregister_active_proton_compatdata(proton_compatdata)
                 # Always close both fds. Without this each successful
                 # launch leaks two file descriptors on the parent.
                 for fh in (stdout_fh, stderr_fh):

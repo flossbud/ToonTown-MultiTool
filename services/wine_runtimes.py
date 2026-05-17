@@ -10,8 +10,50 @@ import hashlib
 import os
 import shutil
 import sys
+import threading
 from dataclasses import dataclass, field
 from typing import Any
+
+# ── Active-launcher state for Proton multi-instance handling ────────────────
+# Steam-Proton's `waitforexitandrun` verb runs `wineserver -w` first, which
+# blocks on the prefix's wineserver flock if another instance is already
+# running against the same compatdata. For second-and-later launches we
+# switch to the `run` verb, which skips that wait and attaches to the
+# existing wineserver naturally (standard Wine concurrency).
+#
+# Set membership is keyed by realpath'd compatdata path so two launches
+# against the same prefix (via different symlinks/aliases) still share state.
+_active_proton_compatdata: set[str] = set()
+_active_proton_lock = threading.Lock()
+
+
+def _normalize_compatdata(path: str) -> str:
+    """Stable key for an active-compatdata entry."""
+    try:
+        return os.path.realpath(path)
+    except OSError:
+        return path
+
+
+def register_active_proton_compatdata(compatdata_path: str) -> None:
+    """Record that a launcher is live against this compatdata path."""
+    key = _normalize_compatdata(compatdata_path)
+    with _active_proton_lock:
+        _active_proton_compatdata.add(key)
+
+
+def unregister_active_proton_compatdata(compatdata_path: str) -> None:
+    """Drop a compatdata path from the active set. Idempotent."""
+    key = _normalize_compatdata(compatdata_path)
+    with _active_proton_lock:
+        _active_proton_compatdata.discard(key)
+
+
+def is_proton_compatdata_active(compatdata_path: str) -> bool:
+    """True iff at least one launcher is currently live against this compatdata."""
+    key = _normalize_compatdata(compatdata_path)
+    with _active_proton_lock:
+        return key in _active_proton_compatdata
 
 
 @dataclass(frozen=True)
@@ -553,12 +595,15 @@ def build_launch_command(
         proton_bin = os.path.join(proton_dir, "proton")
         env["STEAM_COMPAT_DATA_PATH"] = os.path.dirname(install.prefix_path)
         env["STEAM_COMPAT_CLIENT_INSTALL_PATH"] = steam_root
-        # Use "waitforexitandrun" rather than "run". protonfixes guards its
-        # game-specific setup (DLL overrides, winetricks deps, registry
-        # tweaks) behind `'waitforexitandrun' in sys.argv[1]`. With "run",
-        # protonfixes skips and CC.exe launches without the runtime prep
-        # it needs. Steam, umu-launcher, and Lutris all use this verb.
-        proton_argv = [proton_bin, "waitforexitandrun", install.exe_path, *args]
+        # First launch into a prefix uses 'waitforexitandrun' so Proton's
+        # main-stage protonfixes and prefix setup run cleanly. Second-and-
+        # later launches against the same compatdata use 'run' — that verb
+        # skips the wineserver -w wait that would otherwise block on the
+        # already-running first instance's prefix flock. Wine attaches to
+        # the existing wineserver as a normal additional client.
+        compatdata = env["STEAM_COMPAT_DATA_PATH"]
+        verb = "run" if is_proton_compatdata_active(compatdata) else "waitforexitandrun"
+        proton_argv = [proton_bin, verb, install.exe_path, *args]
         # Modern Protons (Proton 8+, Proton-CachyOS, etc.) are compiled
         # against a specific Steam Linux Runtime's libc; outside the SLR
         # pressure-vessel container their wine binary fails to start
@@ -569,7 +614,7 @@ def build_launch_command(
         from services.steam_proton_tools import find_required_steam_runtime
         runtime = find_required_steam_runtime(proton_dir, steam_root)
         if runtime is not None:
-            return [runtime, "--verb=waitforexitandrun", "--", *proton_argv], env
+            return [runtime, f"--verb={verb}", "--", *proton_argv], env
         return proton_argv, env
 
     if install.launcher == "bottles":
