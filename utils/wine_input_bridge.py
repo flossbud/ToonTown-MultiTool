@@ -31,6 +31,57 @@ _BAD_PREFIXES: dict[str, float] = {}
 _BAD_PREFIX_COOLDOWN = 300.0  # seconds; 5 minutes
 
 
+def _port_for_prefix(prefix: str) -> int:
+    """SHA1-derived per-prefix port. Must stay consistent with
+    WineInputBridge.__init__ so the pre-launch sweep targets the same
+    port the running helper bound to."""
+    return 37377 + (int(hashlib.sha1(prefix.encode("utf-8")).hexdigest()[:6], 16) % 1000)
+
+
+def _send_quit(port: int) -> None:
+    """Best-effort TCP 'quit' to a bridge helper. Used when we don't
+    have a WineInputBridge instance for the prefix (orphan from a
+    prior TTMT session). Connection errors and timeouts are silent -
+    no bridge to quit is the success case, not a failure."""
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.5) as sock:
+            sock.sendall(b"quit\n")
+            sock.settimeout(0.5)
+            try:
+                sock.recv(64)
+            except OSError:
+                pass
+    except OSError:
+        pass
+
+
+def shutdown_for_prefix(prefix: str) -> None:
+    """Tear down the bridge for a single Wine prefix. Idempotent.
+
+    Two paths:
+      1. In-memory: if a WineInputBridge is in _BRIDGES for this prefix,
+         pop and shutdown() it (sends 'quit' over TCP AND reaps the
+         Linux-side Popen handle).
+      2. Orphan: otherwise send 'quit' to the SHA1-derived port. Covers
+         bridges left behind by a crashed prior TTMT session whose
+         Popen handle is gone but whose .exe is still alive inside
+         the Wine prefix, pinning wineserver.
+
+    Either way, the wineserver should drain shortly after, freeing the
+    prefix lock so Proton's waitforexitandrun on the next launch
+    doesn't block in fcntl_setlk."""
+    key = os.path.realpath(prefix.rstrip("/"))
+    with _BRIDGES_LOCK:
+        bridge = _BRIDGES.pop(key, None)
+    if bridge is not None:
+        try:
+            bridge.shutdown()
+        except Exception as e:
+            print(f"[wine_input_bridge] shutdown_for_prefix error: {e}")
+        return
+    _send_quit(_port_for_prefix(key))
+
+
 def shutdown_all() -> None:
     """Tear down every active bridge. Idempotent; safe to call on app exit."""
     with _BRIDGES_LOCK:
@@ -205,7 +256,7 @@ class WineInputBridge:
         # the prefix lands in _BAD_PREFIXES (Task 5 added a cooldown so this
         # isn't permanent). If multi-prefix users start hitting collisions
         # in practice, switch to OS-assigned ports + stdout handshake.
-        self.port = 37377 + (int(hashlib.sha1(prefix.encode("utf-8")).hexdigest()[:6], 16) % 1000)
+        self.port = _port_for_prefix(prefix)
         self._process: subprocess.Popen | None = None
         self._lock = threading.Lock()
 

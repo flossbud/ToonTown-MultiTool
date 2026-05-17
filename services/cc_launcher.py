@@ -336,6 +336,19 @@ class CCLauncher(QObject):
                         **kwargs,
                     )
 
+                # Pre-launch sweep: a TTMTWineInputBridge.exe left over
+                # from a prior CC session (or a crashed prior TTMT
+                # session) keeps the prefix's wineserver alive. Proton's
+                # waitforexitandrun then blocks in fcntl_setlk on the
+                # prefix lock and the launch hangs forever. Drain the
+                # bridge before spawn so the prefix is free.
+                if install.launcher in ("steam-proton", "bottles", "lutris", "wine") and install.prefix_path:
+                    try:
+                        from utils import wine_input_bridge
+                        wine_input_bridge.shutdown_for_prefix(install.prefix_path)
+                    except Exception as e:
+                        print(f"[CCLauncher] _run: bridge pre-launch sweep error: {e}")
+
                 print(f"[CCLauncher] _run: spawning… (stdout {stdout_path}, stderr {stderr_path})")
                 try:
                     self._game_process = _spawn()
@@ -388,6 +401,17 @@ class CCLauncher(QObject):
             finally:
                 if proton_compatdata is not None:
                     unregister_active_proton_compatdata(proton_compatdata)
+                # Post-exit cleanup: drain the bridge for this prefix
+                # so wineserver can exit promptly. Symmetric with the
+                # pre-launch sweep above. Without this, the bridge
+                # outlives CC, pins wineserver, and the next launch
+                # blocks in fcntl_setlk on the prefix lock.
+                if install.launcher in ("steam-proton", "bottles", "lutris", "wine") and install.prefix_path:
+                    try:
+                        from utils import wine_input_bridge
+                        wine_input_bridge.shutdown_for_prefix(install.prefix_path)
+                    except Exception as e:
+                        print(f"[CCLauncher] _run: bridge post-exit cleanup error: {e}")
                 # Always close both fds. Without this each successful
                 # launch leaks two file descriptors on the parent.
                 for fh in (stdout_fh, stderr_fh):
