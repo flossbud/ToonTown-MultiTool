@@ -54,9 +54,6 @@ public static class TTMTWineInputBridge
 
     public static int Main(string[] args)
     {
-        if (args.Length >= 1 && args[0] == "--once")
-            return RunOnce(args);
-
         int port = 37377;
         if (args.Length >= 2 && args[0] == "--port")
             int.TryParse(args[1], out port);
@@ -89,24 +86,6 @@ public static class TTMTWineInputBridge
 
         listener.Stop();
         return 0;
-    }
-
-    private static int RunOnce(string[] args)
-    {
-        if (args.Length < 4)
-        {
-            Console.Error.WriteLine("Usage: TTMTWineInputBridge.exe --once <down|up|tap|list> <index> <key>");
-            return 2;
-        }
-        Console.WriteLine(HandleCommand(string.Join(" ", SubArray(args, 1))));
-        return 0;
-    }
-
-    private static string[] SubArray(string[] args, int start)
-    {
-        var result = new string[Math.Max(0, args.Length - start)];
-        Array.Copy(args, start, result, 0, result.Length);
-        return result;
     }
 
     private static string HandleCommand(string line)
