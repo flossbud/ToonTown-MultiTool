@@ -121,7 +121,8 @@ class UpdateRunner(QObject):
         )
 
     def _handle_flatpak(self, info: dict) -> None:
-        cmd = ["flatpak", "update", "-y", _FLATPAK_APP_ID]
+        from utils.host_spawn import host_argv
+        cmd = host_argv(["flatpak", "update", "-y", _FLATPAK_APP_ID])
         self._spawn_terminal_or_fallback(cmd, info)
 
     def _handle_aur(self, info: dict) -> None:
@@ -196,7 +197,8 @@ class UpdateRunner(QObject):
     def _download_asset(self, asset: dict) -> Optional[str]:
         import requests
         url = asset.get("browser_download_url")
-        name = asset.get("name", "download")
+        raw_name = asset.get("name", "download") or "download"
+        name = os.path.basename(raw_name) or "download"
         expected_size = int(asset.get("size", 0))
         if not url:
             return None
