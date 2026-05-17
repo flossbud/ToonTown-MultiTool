@@ -123,6 +123,10 @@ class InputService(QObject):
 
         self._xlib = None
 
+        # Track the most recent foreground game so keys pressed while TTMT
+        # itself has focus still resolve through a meaningful default set.
+        self._last_known_foreground_game: str | None = None
+
     def start(self):
         if self.running and self.thread is not None and self.thread.is_alive():
             return
@@ -605,6 +609,29 @@ class InputService(QObject):
             return True
         multitool_id = self.settings_manager.get("multitool_window_id") if self.settings_manager else None
         return bool(multitool_id and active == str(multitool_id))
+
+    def _foreground_game(self) -> str | None:
+        from utils.game_registry import GameRegistry
+        wid = self.window_manager.get_active_window()
+        game = None
+        if wid:
+            game = GameRegistry.instance().get_game_for_window(str(wid))
+        if game is not None:
+            self._last_known_foreground_game = game
+        return self._last_known_foreground_game
+
+    def _resolve_logical_action(self, pressed_key: str) -> str | None:
+        if self.keymap_manager is None:
+            return None
+        game = self._foreground_game()
+        if game is None:
+            return None
+        default_set = self.keymap_manager.get_default(game)
+        from utils import logical_actions
+        for action in logical_actions.actions_for(game):
+            if default_set.get(action) == pressed_key:
+                return action
+        return None
 
     def _active_modifiers(self):
         seen = set()
