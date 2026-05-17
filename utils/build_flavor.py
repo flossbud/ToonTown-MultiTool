@@ -38,6 +38,11 @@ def config_dir_name() -> str:
 
 
 def config_dir() -> str:
+    # Test affordance: redirect the config dir under pytest. Not a supported
+    # user-facing override.
+    override = os.environ.get("TTMT_CONFIG_DIR")
+    if override:
+        return override
     config_home = os.environ.get("XDG_CONFIG_HOME")
     if config_home:
         return os.path.join(config_home, config_dir_name())

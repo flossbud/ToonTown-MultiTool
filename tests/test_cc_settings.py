@@ -1,0 +1,138 @@
+"""Unit tests for CC preferences.json reader."""
+
+import json
+import os
+from pathlib import Path
+from types import SimpleNamespace
+
+from utils.cc_settings import (
+    locate_cc_preferences, parse_cc_preferences, CcSettings,
+)
+
+
+def _make_steamproton_install(tmp_path, prefs_content):
+    """Build a fake Steam-Proton-shaped prefix with preferences.json."""
+    prefix = tmp_path / "compatdata" / "12345" / "pfx"
+    prefs_dir = prefix / "drive_c" / "users" / "steamuser" / "AppData" / "Local" / "Corporate Clash"
+    prefs_dir.mkdir(parents=True)
+    if prefs_content is not None:
+        (prefs_dir / "preferences.json").write_text(json.dumps(prefs_content))
+    return SimpleNamespace(launcher="steam-proton", prefix_path=str(prefix), exe_path="")
+
+
+class TestLocateCcPreferences:
+    def test_finds_preferences_in_steamproton_prefix(self, tmp_path):
+        install = _make_steamproton_install(tmp_path, {"keymap": {}})
+        path = locate_cc_preferences(install)
+        assert path is not None
+        assert path.name == "preferences.json"
+
+    def test_returns_none_when_file_missing(self, tmp_path):
+        install = _make_steamproton_install(tmp_path, None)
+        assert locate_cc_preferences(install) is None
+
+    def test_finds_under_non_steamuser_wineuser(self, tmp_path):
+        """Plain Wine prefixes may use $USER instead of steamuser."""
+        prefix = tmp_path / "prefix"
+        prefs_dir = prefix / "drive_c" / "users" / "jaret" / "AppData" / "Local" / "Corporate Clash"
+        prefs_dir.mkdir(parents=True)
+        (prefs_dir / "preferences.json").write_text("{}")
+        install = SimpleNamespace(launcher="wine", prefix_path=str(prefix), exe_path="")
+        path = locate_cc_preferences(install)
+        assert path is not None
+        assert "jaret" in str(path)
+
+
+class TestParseCcPreferences:
+    def test_parses_defaults_state(self, tmp_path):
+        p = tmp_path / "preferences.json"
+        p.write_text(json.dumps({"want-Custom-Controls": False, "keymap": {}}))
+        s = parse_cc_preferences(p)
+        assert s.want_custom_controls is False
+        assert s.keymap == {}
+        assert s.source_path == p
+
+    def test_parses_custom_controls(self, tmp_path):
+        p = tmp_path / "preferences.json"
+        p.write_text(json.dumps({
+            "want-Custom-Controls": True,
+            "keymap": {"forward": "w", "sprint": "shift"},
+        }))
+        s = parse_cc_preferences(p)
+        assert s.want_custom_controls is True
+        assert s.keymap == {"forward": "w", "sprint": "shift"}
+
+    def test_handles_missing_fields(self, tmp_path):
+        p = tmp_path / "preferences.json"
+        p.write_text("{}")
+        s = parse_cc_preferences(p)
+        assert s.want_custom_controls is False
+        assert s.keymap == {}
+
+    def test_non_dict_keymap_falls_back_to_empty(self, tmp_path):
+        p = tmp_path / "preferences.json"
+        p.write_text(json.dumps({"keymap": [1, 2, 3]}))  # malformed: list instead of dict
+        s = parse_cc_preferences(p)
+        assert s.keymap == {}
+
+    def test_string_keymap_falls_back_to_empty(self, tmp_path):
+        p = tmp_path / "preferences.json"
+        p.write_text(json.dumps({"keymap": "broken"}))
+        s = parse_cc_preferences(p)
+        assert s.keymap == {}
+
+
+class TestApplyCcControls:
+    def test_no_custom_controls_writes_defaults(self, tmp_path, monkeypatch):
+        from utils.cc_settings import apply_cc_controls_to_set
+        from utils.keymap_manager import KeymapManager
+        monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
+        km = KeymapManager()
+        s = CcSettings(keymap={}, want_custom_controls=False)
+        n = apply_cc_controls_to_set(km, 0, s)
+        assert n >= 9  # all CC actions written
+        cc = km.get_default("cc")
+        assert cc["forward"] == "w"
+        assert cc["sprint"] == "Shift_L"
+        assert cc["book"] == "Escape"
+
+    def test_custom_controls_translate_known_names(self, tmp_path, monkeypatch):
+        from utils.cc_settings import apply_cc_controls_to_set
+        from utils.keymap_manager import KeymapManager
+        monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
+        km = KeymapManager()
+        s = CcSettings(
+            keymap={"forward": "i", "sprint": "shift", "book": "escape"},
+            want_custom_controls=True,
+        )
+        apply_cc_controls_to_set(km, 0, s)
+        cc = km.get_default("cc")
+        assert cc["forward"] == "i"
+        assert cc["sprint"] == "Shift_L"  # value translated
+        assert cc["book"] == "Escape"
+
+    def test_unknown_action_names_dont_break(self, tmp_path, monkeypatch):
+        from utils.cc_settings import apply_cc_controls_to_set
+        from utils.keymap_manager import KeymapManager
+        monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
+        km = KeymapManager()
+        s = CcSettings(
+            keymap={"forward": "i", "futureAction": "z"},
+            want_custom_controls=True,
+        )
+        apply_cc_controls_to_set(km, 0, s)
+        cc = km.get_default("cc")
+        # Known action applied, unknown ignored, defaults preserved elsewhere
+        assert cc["forward"] == "i"
+        assert cc["sprint"] == "Shift_L"
+        assert "futureAction" not in cc
+
+    def test_empty_keymap_with_custom_flag_writes_defaults(self, tmp_path, monkeypatch):
+        from utils.cc_settings import apply_cc_controls_to_set
+        from utils.keymap_manager import KeymapManager
+        monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
+        km = KeymapManager()
+        s = CcSettings(keymap={}, want_custom_controls=True)
+        n = apply_cc_controls_to_set(km, 0, s)
+        assert n >= 9
+        assert km.get_default("cc")["sprint"] == "Shift_L"

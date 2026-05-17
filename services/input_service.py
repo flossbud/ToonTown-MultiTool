@@ -123,6 +123,10 @@ class InputService(QObject):
 
         self._xlib = None
 
+        # Track the most recent foreground game so keys pressed while TTMT
+        # itself has focus still resolve through a meaningful default set.
+        self._last_known_foreground_game: str | None = None
+
     def start(self):
         if self.running and self.thread is not None and self.thread.is_alive():
             return
@@ -182,74 +186,56 @@ class InputService(QObject):
         return MOVEMENT_KEYS
 
     def _get_assignments(self, enabled) -> list:
-        """Return per-toon set indices. Falls back to legacy WASD/ARROWS mapping."""
+        """Return per-toon set indices."""
         if self.get_keymap_assignments:
             return self.get_keymap_assignments()
-        # Legacy: ARROWS mode → index 1, WASD → index 0
-        modes = self.get_movement_modes()
-        return [1 if m == "ARROWS" else 0 for m in modes]
+        return [0] * len(enabled)
 
     # ── Keymap-aware send methods ──────────────────────────────────────────
 
-    def _send_movement_key_km(self, action, key, enabled, assignments):
-        """Send a movement key to background toons, translating through keymap.
+    def _send_logical_action_km(self, action, key, enabled, assignments):
+        """Send a movement-class action to background toons via logical-action layer.
 
-        Each toon responds only to keys from its assigned set.
-        Keys are translated TO Set 1 before sending, since all TTR clients
-        use Set 1's movement config.
+        The pressed key is resolved to a logical action via the foreground game's
+        Default set, then each enabled bg toon receives the binding for that
+        logical action in its assigned set, scoped to its window's game.
         """
         if self.global_chat_active:
             return
+        logical = self._resolve_logical_action(key)
+        if logical is None:
+            return
+
+        from utils.game_registry import GameRegistry
+        from utils import logical_actions
 
         active_window = self.window_manager.get_active_window()
         window_ids = self.window_manager.get_window_ids()
+        registry = GameRegistry.instance()
 
         for i, is_enabled in enumerate(enabled):
             if not is_enabled or i >= len(window_ids):
                 continue
-
             win = window_ids[i]
-            # Always skip focused window — real keyboard handles it
             if win == active_window:
                 continue
-
-            assignment = assignments[i] if i < len(assignments) else 0
-
-            if self.keymap_manager:
-                # Find the direction for the physical key pressed by seeing if it exists in the toon's assigned set
-                direction = self.keymap_manager.get_direction_in_set(assignment, key)
-                if direction is None:
-                    continue
-
-                # Translate to Set 1's key for this direction (because all TTR instances share bindings)
-                set1_key = self.keymap_manager.get_key_for_direction(0, direction)
-                if set1_key is None:
-                    continue
-
-                keysym = self._resolve_keysym(set1_key)
-                if keysym:
-                    self._send_via_backend(action, win, keysym)
-                    if self.logging_enabled and action == "keydown" and key != set1_key:
-                        self.input_log.emit(
-                            f"[Input] Key '{key}' → '{set1_key}' "
-                            f"(direction: {direction}, set {assignment + 1} → set 1)"
-                        )
-            else:
-                # Legacy fallback (no keymap_manager)
-                modes = self.get_movement_modes()
-                mode = modes[i] if i < len(modes) else "WASD"
-                if mode == "WASD" and key in ARROW_KEYS:
-                    continue
-                if mode == "ARROWS" and key in WASD_KEYS:
-                    continue
-                mapped = ARROW_TO_WASD.get(key, key) if mode == "ARROWS" else key
-                keysym = self._resolve_keysym(mapped)
-                if keysym:
-                    self._send_via_backend(action, win, keysym)
-                    if self.logging_enabled and action == "keydown" and key != mapped:
-                        self.input_log.emit(
-                            f"[Input] Key '{key}' → '{mapped}' (legacy {mode} conversion)"
-                        )
+            toon_game = registry.get_game_for_window(str(win))
+            if toon_game is None:
+                toon_game = "ttr"  # Windows fallback: TTMT pre-dates CC support and TTR is the safe default
+            if not logical_actions.supports(toon_game, logical):
+                continue
+            set_idx = assignments[i] if i < len(assignments) else 0
+            outbound = self.keymap_manager.get_key_for_action(toon_game, set_idx, logical)
+            if outbound is None:
+                continue
+            keysym = self._resolve_keysym(outbound)
+            if keysym:
+                self._send_via_backend(action, win, keysym)
+                if self.logging_enabled and action == "keydown" and key != outbound:
+                    self.input_log.emit(
+                        f"[Input] '{key}' -> '{outbound}' "
+                        f"(action: {logical}, {toon_game} set {set_idx + 1})"
+                    )
 
     def _send_modifier_to_bg(self, action, key, enabled, assignments):
         active_window = self.window_manager.get_active_window()
@@ -302,49 +288,42 @@ class InputService(QObject):
         self.action_held.clear()
 
     def _send_typing_to_bg(self, key, enabled, assignments, movement_keys=None):
+        from utils.game_registry import GameRegistry
+        from utils import logical_actions
+
         active_window = self.window_manager.get_active_window()
         if movement_keys is None:
             movement_keys = self._movement_keys()
         window_ids = self.window_manager.get_window_ids()
+        registry = GameRegistry.instance()
 
         for i, is_enabled in enumerate(enabled):
             if not is_enabled or i >= len(window_ids):
                 continue
+            win = window_ids[i]
+            if win == active_window:
+                continue
 
-            assignment = assignments[i] if i < len(assignments) else 0
+            toon_game = registry.get_game_for_window(str(win))
+            set_idx = assignments[i] if i < len(assignments) else 0
 
-            if self.keymap_manager:
-                # Check if this key belongs to THIS toon's assigned set
+            if self.keymap_manager and toon_game is not None:
                 is_toon_movement_key = (
-                    self.keymap_manager.get_direction_in_set(assignment, key) is not None
+                    self.keymap_manager.get_action_in_set(toon_game, set_idx, key) is not None
                 )
-                # Skip the toon's own movement keys because _send_movement_key_km
-                # already sends the native Set 1 translation as a keydown event,
-                # which naturally types the character into the chatbox in Panda3D.
+                # Movement-class keys ride the keydown path in _send_logical_action_km,
+                # which produces native typed input in Panda3D chat anyway.
                 if is_toon_movement_key and not self.global_chat_active:
-                    continue
-            else:
-                # Legacy logic
-                if assignment == 0 and key in movement_keys:
-                    continue
-                if assignment != 0 and key in movement_keys and not self._is_chat_active(i):
                     continue
 
             if self.global_chat_active and not self._is_chat_allowed(i):
-                # If the active window is chatting, only pass keys to background windows that are ALSO chatting.
                 continue
-
             if key in self.get_chat_block_list() and not self._is_chat_allowed(i):
-                continue
-
-            win = window_ids[i]
-            if win == active_window:
                 continue
 
             keysym = self._resolve_keysym(key)
             if not keysym:
                 continue
-
             mods = self._active_modifiers()
             self._send_via_backend("key", win, keysym, mods if mods else None)
 
@@ -358,30 +337,6 @@ class InputService(QObject):
             if win == active_window:
                 continue
             self._send_via_backend("key", win, "BackSpace")
-
-    # ── Legacy methods (kept for backward compat, unused with keymap) ──────
-
-    def _send_movement_key(self, action, key, enabled, modes):
-        active_window = self.window_manager.get_active_window()
-        window_ids = self.window_manager.get_window_ids()
-        for i, (is_enabled, mode) in enumerate(zip(enabled, modes)):
-            if not is_enabled or i >= len(window_ids):
-                continue
-            if mode == "WASD" and key in ARROW_KEYS:
-                continue
-            if mode == "ARROWS" and key in WASD_KEYS:
-                continue
-            mapped = ARROW_TO_WASD.get(key, key) if mode == "ARROWS" else key
-            keysym = self._resolve_keysym(mapped)
-            if not keysym:
-                continue
-            win = window_ids[i]
-            if win == active_window:
-                continue
-            self._send_via_backend(action, win, keysym)
-
-    def _release_movement_key(self, key, enabled, modes):
-        self._send_movement_key("keyup", key, enabled, modes)
 
     # ── Run loop ───────────────────────────────────────────────────────────
 
@@ -403,7 +358,7 @@ class InputService(QObject):
                         enabled     = self.get_enabled_toons()
                         assignments = self._get_assignments(enabled)
                         for key in list(self.keys_held):
-                            self._send_movement_key_km("keyup", key, enabled, assignments)
+                            self._send_logical_action_km("keyup", key, enabled, assignments)
                         for key in list(self.modifiers_held):
                             self._send_modifier_to_bg("keyup", key, enabled, assignments)
                         for key in list(self.action_held):
@@ -464,19 +419,14 @@ class InputService(QObject):
                             if key not in self.keys_held:
                                 self.keys_held.add(key)
                                 if self.logging_enabled:
-                                    direction = None
-                                    if self.keymap_manager:
-                                        for a in set(assignments):
-                                            direction = self.keymap_manager.get_direction_in_set(a, key)
-                                            if direction:
-                                                break
-                                    extra = f" (direction: {direction})" if direction else ""
+                                    logical = self._resolve_logical_action(key)
+                                    extra = f" (action: {logical})" if logical else ""
                                     self._log_key(key, "pressed", extra)
                                 if self._phantom_active:
                                     # Stealth chat — suppress movement to bg toons
                                     self._chat_last_activity = now
                                 else:
-                                    self._send_movement_key_km("keydown", key, enabled, assignments)
+                                    self._send_logical_action_km("keydown", key, enabled, assignments)
                                     # When global chat is active, movement keys (including space)
                                     # are suppressed natively, so we must broadcast them via typing.
                                     if self.global_chat_active:
@@ -576,7 +526,7 @@ class InputService(QObject):
                             if key == "BackSpace":
                                 bs_press_time  = None
                                 bs_last_repeat = 0.0
-                            self._send_movement_key_km("keyup", key, enabled, assignments)
+                            self._send_logical_action_km("keyup", key, enabled, assignments)
 
                         elif key in self.action_held:
                             self.action_held.discard(key)
@@ -605,6 +555,29 @@ class InputService(QObject):
             return True
         multitool_id = self.settings_manager.get("multitool_window_id") if self.settings_manager else None
         return bool(multitool_id and active == str(multitool_id))
+
+    def _foreground_game(self) -> str | None:
+        from utils.game_registry import GameRegistry
+        wid = self.window_manager.get_active_window()
+        game = None
+        if wid:
+            game = GameRegistry.instance().get_game_for_window(str(wid))
+        if game is not None:
+            self._last_known_foreground_game = game
+        return self._last_known_foreground_game
+
+    def _resolve_logical_action(self, pressed_key: str) -> str | None:
+        if self.keymap_manager is None:
+            return None
+        game = self._foreground_game()
+        if game is None:
+            return None
+        default_set = self.keymap_manager.get_default(game)
+        from utils import logical_actions
+        for action in logical_actions.actions_for(game):
+            if default_set.get(action) == pressed_key:
+                return action
+        return None
 
     def _active_modifiers(self):
         seen = set()
@@ -714,31 +687,43 @@ class InputService(QObject):
             return False
 
     def release_all_keys(self):
+        from utils.game_registry import GameRegistry
+        from utils import logical_actions
+
         assignments = self._get_assignments(self.get_enabled_toons())
         enabled = self.get_enabled_toons()
         active_window = self.window_manager.get_active_window()
         window_ids = self.window_manager.get_window_ids()
+        registry = GameRegistry.instance()
+        fg_game = self._last_known_foreground_game
 
         for key in list(self.keys_held):
+            # Find the logical action under the last-known fg game's Default set.
+            logical = None
+            if fg_game is not None and self.keymap_manager:
+                default = self.keymap_manager.get_default(fg_game)
+                for action in logical_actions.actions_for(fg_game):
+                    if default.get(action) == key:
+                        logical = action
+                        break
+            if logical is None:
+                continue
             for i, is_enabled in enumerate(enabled):
-                if is_enabled and i < len(window_ids):
-                    win = window_ids[i]
-                    if win == active_window:
-                        continue
-                    assignment = assignments[i] if i < len(assignments) else 0
-                    if self.keymap_manager:
-                        direction = self.keymap_manager.get_direction_in_set(assignment, key)
-                        if direction is None:
-                            continue
-                        set1_key = self.keymap_manager.get_key_for_direction(0, direction)
-                        keysym = self._resolve_keysym(set1_key) if set1_key else None
-                    else:
-                        modes = self.get_movement_modes()
-                        mode = modes[i] if i < len(modes) else "WASD"
-                        mapped = ARROW_TO_WASD.get(key, key) if mode == "ARROWS" else key
-                        keysym = self._resolve_keysym(mapped)
-                    if keysym:
-                        self._send_via_backend("keyup", win, keysym)
+                if not (is_enabled and i < len(window_ids)):
+                    continue
+                win = window_ids[i]
+                if win == active_window:
+                    continue
+                toon_game = registry.get_game_for_window(str(win))
+                if toon_game is None:
+                    toon_game = "ttr"  # Windows fallback: TTMT pre-dates CC support and TTR is the safe default
+                if not logical_actions.supports(toon_game, logical):
+                    continue
+                set_idx = assignments[i] if i < len(assignments) else 0
+                outbound = self.keymap_manager.get_key_for_action(toon_game, set_idx, logical)
+                keysym = self._resolve_keysym(outbound) if outbound else None
+                if keysym:
+                    self._send_via_backend("keyup", win, keysym)
 
         for key in list(self.modifiers_held):
             keysym = self._resolve_keysym(key)

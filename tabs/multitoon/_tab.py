@@ -433,6 +433,9 @@ class SetSelectorWidget(QWidget):
         self._display_text = "Default"
         self._hover_zone = None  # "left", "right", or None
         self._paint_scale = 1.0
+        self._toon_game: str | None = None  # set by parent tab via set_toon_game()
+        self._has_conflict: bool = False
+        self._conflict_tooltip: str = ""
 
         self.setFixedHeight(32)
         self.setMinimumWidth(130)
@@ -445,6 +448,31 @@ class SetSelectorWidget(QWidget):
     def set_paint_scale(self, scale: float):
         self._paint_scale = max(0.5, float(scale))
         self.update()
+
+    def set_has_conflict(self, has: bool, conflict_pairs: list[tuple[str, str]] | None = None):
+        if has == self._has_conflict:
+            return
+        self._has_conflict = has
+        if has and conflict_pairs:
+            from tabs.keymap_tab import ACTION_LABELS
+            pretty_pairs = [
+                f"{ACTION_LABELS.get(a, a.title())} <-> {ACTION_LABELS.get(b, b.title())}"
+                for (a, b) in conflict_pairs
+            ]
+            self._conflict_tooltip = "Keyset conflicts: " + ", ".join(pretty_pairs)
+        else:
+            self._conflict_tooltip = ""
+        self.setToolTip(self._conflict_tooltip)
+        self.update()
+
+    def _refresh_conflict(self):
+        game = self._toon_game or "ttr"
+        idx = self.currentIndex()
+        if not self.keymap_manager:
+            self.set_has_conflict(False)
+            return
+        has, pairs = self.keymap_manager.has_conflicts(game, idx)
+        self.set_has_conflict(has, pairs)
 
     def paintEvent(self, event):
         p = QPainter(self)
@@ -522,6 +550,30 @@ class SetSelectorWidget(QWidget):
             p.setPen(right_color)
             p.drawText(right_rect, Qt.AlignCenter, S("›", ">"))
 
+        # Conflict marker: red triangle with "!" in top-right corner
+        if self._has_conflict:
+            from PySide6.QtGui import QPolygon
+            from PySide6.QtCore import QPoint
+            scale = self._paint_scale or 1.0
+            size = int(12 * scale)
+            margin = int(4 * scale)
+            x = self.width() - size - margin
+            y = margin
+            tri = QPolygon([
+                QPoint(x, y + size),
+                QPoint(x + size, y + size),
+                QPoint(x + size // 2, y),
+            ])
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor("#d04040"))
+            p.drawPolygon(tri)
+            f = QFont(self.font())
+            f.setBold(True)
+            f.setPixelSize(max(8, int(size * 0.7)))
+            p.setFont(f)
+            p.setPen(QColor("white"))
+            p.drawText(x, y, size, size, Qt.AlignCenter, "!")
+
         p.end()
 
     def mousePressEvent(self, event):
@@ -571,7 +623,7 @@ class SetSelectorWidget(QWidget):
 
     def _count(self):
         if self.keymap_manager:
-            return len(self.keymap_manager.get_set_names())
+            return len(self.keymap_manager.get_set_names(self._toon_game or "ttr"))
         return 1
 
     def _prev(self):
@@ -598,10 +650,11 @@ class SetSelectorWidget(QWidget):
         elif idx >= count:
             self._index = 0
         self._refresh_display()
+        self._refresh_conflict()
 
     def currentText(self) -> str:
         if self.keymap_manager:
-            names = self.keymap_manager.get_set_names()
+            names = self.keymap_manager.get_set_names(self._toon_game or "ttr")
             if self._index < len(names):
                 return names[self._index]
         return ""
@@ -611,7 +664,7 @@ class SetSelectorWidget(QWidget):
 
     def findText(self, text: str) -> int:
         if self.keymap_manager:
-            names = self.keymap_manager.get_set_names()
+            names = self.keymap_manager.get_set_names(self._toon_game or "ttr")
             for i, name in enumerate(names):
                 if name == text:
                     return i
@@ -628,10 +681,32 @@ class SetSelectorWidget(QWidget):
         self._refresh_display()
 
     def _refresh_display(self):
-        names = self.keymap_manager.get_set_names() if self.keymap_manager else ["Default"]
+        names = self.keymap_manager.get_set_names(self._toon_game or "ttr") if self.keymap_manager else ["Default"]
         name = names[self._index] if self._index < len(names) else "Default"
         self._display_text = name
         self.apply_colors()
+
+    def set_toon_game(self, game: str | None):
+        """Update which game this toon's set list comes from."""
+        if game == self._toon_game:
+            return
+        self._toon_game = game
+        self._rebuild_for_game()
+
+    def _rebuild_for_game(self):
+        """Re-fetch the set names from KeymapManager scoped to the current game,
+        and clamp the selected index if the list shrank."""
+        game = self._toon_game or "ttr"
+        names = self.keymap_manager.get_set_names(game) if self.keymap_manager else ["Default"]
+        prev = self.currentIndex()
+        if prev >= len(names):
+            prev = 0
+        if self.currentIndex() != prev:
+            self.setCurrentIndex(prev)
+        else:
+            self._refresh_display()
+        self.update()  # repaint
+        self._refresh_conflict()
 
     def apply_colors(self, theme_colors=None):
         bg, text = get_set_color(self._index)
@@ -725,6 +800,8 @@ class MultitoonTab(QWidget):
             get_keymap_assignments=self.get_keymap_assignments,
             keymap_manager=self.keymap_manager,
         )
+        # Default to TTR for foreground-game cache if no game window has been focused yet.
+        self.input_service._last_known_foreground_game = "ttr"
         self.input_service.chat_state_changed.connect(self._on_chat_state_changed)
         self.input_service.input_log.connect(self._on_input_log)
         self._chat_glow_active = False
@@ -759,6 +836,7 @@ class MultitoonTab(QWidget):
         # Listen for keymap changes to refresh dropdowns
         if self.keymap_manager:
             self.keymap_manager.on_change(self._rebuild_set_selectors)
+            self.keymap_manager.on_change(self._refresh_all_set_selectors_conflict)
 
         # Listen for settings changes to reset keep-alive cycle
         if self.settings_manager:
@@ -880,6 +958,10 @@ class MultitoonTab(QWidget):
             selector.setToolTip("Movement set for this toon")
             selector.index_changed.connect(lambda _, idx=i: self._autosave_active_profile())
             self.set_selectors.append(selector)
+
+        # Initial classification — `apply_visual_state` will update as windows resolve.
+        for sel in self.set_selectors:
+            sel.set_toon_game(None)
 
     def build_ui(self):
         from tabs.multitoon._compact_layout import _CompactLayout
@@ -1161,6 +1243,10 @@ class MultitoonTab(QWidget):
         for selector in self.set_selectors:
             selector.rebuild()
 
+    def _refresh_all_set_selectors_conflict(self):
+        for sel in getattr(self, "set_selectors", []):
+            sel._refresh_conflict()
+
     # ── Theme helpers ──────────────────────────────────────────────────────
 
     def _c(self):
@@ -1331,6 +1417,9 @@ class MultitoonTab(QWidget):
                 self.game_badges[index].hide()
             if self._mode == "full" and hasattr(self, "_full") and index < len(self._full._cards):
                 self._full._cards[index]._apply_game_pill_style()
+            # Keep this toon's set selector scoped to its game's set list.
+            if hasattr(self, "set_selectors") and index < len(self.set_selectors):
+                self.set_selectors[index].set_toon_game(game_tag)
         else:
             self.game_badges[index].hide()
 

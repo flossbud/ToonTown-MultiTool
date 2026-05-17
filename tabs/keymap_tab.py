@@ -23,8 +23,20 @@ from utils.theme_manager import resolve_theme, get_theme_colors, apply_card_shad
 from utils.symbols import S
 from utils.widgets import install_modern_scrollbar
 
-DIRECTIONS = ("up", "left", "down", "right", "jump", "book", "gags", "tasks", "map")
-DIRECTION_LABELS = {"up": "Up", "left": "Left", "down": "Down", "right": "Right", "jump": "Jump", "book": "Book", "gags": "Gags", "tasks": "Tasks", "map": "Map"}
+from utils import logical_actions
+
+ACTION_LABELS = {
+    "forward": "Forward",
+    "reverse": "Reverse",
+    "left":    "Left",
+    "right":   "Right",
+    "jump":    "Jump",
+    "book":    "Book",
+    "gags":    "Gags",
+    "tasks":   "Tasks",
+    "map":     "Map",
+    "sprint":  "Sprint",
+}
 
 DISPLAY_NAMES = {
     "space": "Space", "Control_L": "L Ctrl", "Control_R": "R Ctrl",
@@ -330,15 +342,31 @@ class KeymapTab(QWidget):
         self._scroll.setWidget(scroll_inner)
         outer.addWidget(self._scroll)
 
+        # Scope to the first detected game; default to TTR if neither or both are detected.
+        if self._cc_detected() and not self._ttr_detected():
+            self._active_game: str = "cc"
+        else:
+            self._active_game: str = "ttr"
+        self._segmented = None
+        # Detection is intentionally cached at construction. Live re-evaluation on
+        # settings_manager.on_change is queued as a v2 followup; users currently
+        # need to restart TTMT after adding a game install path in Settings.
+        self._show_segmented = self._both_games_detected()
+        if self._show_segmented:
+            self._segmented = self._build_segmented_control()
+            outer.insertWidget(0, self._segmented)
+
         self._build_cards()
         self.refresh_theme()
 
     # ── Build ──────────────────────────────────────────────────────────────
 
     def _build_cards(self):
-        if not hasattr(self, "_initialized_expansion"):
+        if not hasattr(self, "_initialized_expansion") or not self._initialized_expansion:
             self._initialized_expansion = True
-            expanded_list = self.settings_manager.get("keymap_expanded_states", [0]) if self.settings_manager else [0]
+            key = f"keymap_expanded_states_{self._active_game}"
+            legacy = self.settings_manager.get("keymap_expanded_states", None) if self.settings_manager else None
+            expanded_list = self.settings_manager.get(key, legacy if legacy is not None else [0]) if self.settings_manager else [0]
             prev_states = {i: (i in expanded_list) for i in range(16)}
         else:
             prev_states = {entry["index"]: entry["expanded"] for entry in self._entries}
@@ -356,7 +384,7 @@ class KeymapTab(QWidget):
             if w:
                 w.deleteLater()
 
-        sets = self.keymap_manager.get_sets()
+        sets = self.keymap_manager.get_sets(self._active_game)
         for idx, s in enumerate(sets):
             if idx > 0:
                 self._scroll_layout.addSpacing(12)
@@ -383,9 +411,11 @@ class KeymapTab(QWidget):
         self._add_btn.setMaximumWidth(260)
         self._add_btn.setCursor(Qt.PointingHandCursor)
         self._add_btn.clicked.connect(self._on_add_set)
-        self._add_btn.setVisible(len(sets) < self.keymap_manager.MAX_SETS)
+        self._add_btn.setVisible(len(sets) < self.keymap_manager.MAX_SETS_PER_GAME)
         self._scroll_layout.addWidget(self._add_btn, alignment=Qt.AlignHCenter)
         self._scroll_layout.addStretch()
+
+        self._refresh_default_conflict_markers()
 
     def _make_pair(self, index, set_data):
         """Return (header, body, chevron) as independent widgets."""
@@ -451,7 +481,7 @@ class KeymapTab(QWidget):
             def _on_finish(idx=index, w=name_edit):
                 t = w.text().strip()
                 if not t:
-                    t = self.keymap_manager.next_default_name(exclude_index=idx)
+                    t = self.keymap_manager.next_default_name(self._active_game, exclude_index=idx)
                     w.setText(t)
                 self._on_name_changed(idx, t)
                 _resize_to_text(w)
@@ -508,31 +538,34 @@ class KeymapTab(QWidget):
         two_col = QHBoxLayout()
         two_col.setSpacing(20)
 
-        def _make_key_row(direction):
+        def _make_key_row(action):
             row = QHBoxLayout()
             row.setSpacing(8)
-            lbl = QLabel(DIRECTION_LABELS[direction])
+            lbl = QLabel(ACTION_LABELS.get(action, action.title()))
             lbl.setObjectName("direction_label")
             lbl.setFixedWidth(40)
             row.addWidget(lbl)
-            field = MovementKeyField(set_data.get(direction, ""))
-            field.setObjectName(f"key_field_{direction}")
+            field = MovementKeyField(set_data.get(action, ""))
+            field.setObjectName(f"key_field_{action}")
             field.key_captured.connect(
-                lambda key, idx=index, d=direction: self._on_key_changed(idx, d, key)
+                lambda key, idx=index, d=action: self._on_key_changed(idx, d, key)
             )
             row.addWidget(field)
             row.addStretch()
             return row
 
+        actions = logical_actions.actions_for(self._active_game)
         move_col = QVBoxLayout()
         move_col.setSpacing(6)
-        for direction in ("up", "left", "down", "right", "jump"):
-            move_col.addLayout(_make_key_row(direction))
+        for action in actions:
+            if action in ("forward", "reverse", "left", "right", "jump"):
+                move_col.addLayout(_make_key_row(action))
 
         aux_col = QVBoxLayout()
         aux_col.setSpacing(6)
-        for direction in ("book", "gags", "tasks", "map"):
-            aux_col.addLayout(_make_key_row(direction))
+        for action in actions:
+            if action in ("book", "gags", "tasks", "map", "sprint"):
+                aux_col.addLayout(_make_key_row(action))
         aux_col.addStretch()
 
         two_col.addLayout(move_col)
@@ -541,13 +574,18 @@ class KeymapTab(QWidget):
         bl.addLayout(two_col)
 
         if index == 0:
-            detect_btn = QPushButton(f"{S('🔍 ', '')}Detect Game Settings")
+            label = "Detect TTR Settings" if self._active_game == "ttr" else "Detect CC Settings"
+            detect_btn = QPushButton(f"{S('🔍 ', '')}{label}")
             detect_btn.setFixedHeight(30)
             detect_btn.setCursor(Qt.PointingHandCursor)
-            detect_btn.setToolTip("Read current settings from Toontown Rewritten configuration")
+            detect_btn.setToolTip(
+                "Read current settings from Toontown Rewritten configuration"
+                if self._active_game == "ttr"
+                else "Read current settings from Corporate Clash preferences"
+            )
             detect_btn.setObjectName("detect_btn")
             detect_btn.clicked.connect(self._on_detect_settings)
-            
+
             btn_row = QHBoxLayout()
             btn_row.addStretch()
             btn_row.addWidget(detect_btn)
@@ -557,6 +595,69 @@ class KeymapTab(QWidget):
         header.clicked.connect(lambda idx=index: self._toggle(idx))
 
         return header, body, chevron
+
+    # ── Game detection + segmented control ────────────────────────────────
+
+    def _both_games_detected(self) -> bool:
+        """True when both TTR and CC are findable on this machine."""
+        return self._ttr_detected() and self._cc_detected()
+
+    def _ttr_detected(self) -> bool:
+        if self.settings_manager is None:
+            return False
+        engine = self.settings_manager.get("ttr_engine_dir", "")
+        if engine and os.path.exists(engine):
+            return True
+        try:
+            from services.ttr_login_service import find_engine_path
+            return bool(find_engine_path())
+        except Exception:
+            return False
+
+    def _cc_detected(self) -> bool:
+        if self.settings_manager is None:
+            return False
+        engine = self.settings_manager.get("cc_engine_dir", "")
+        if engine and os.path.exists(engine):
+            return True
+        try:
+            from services.wine_runtimes import discover_cc_installs
+            return bool(discover_cc_installs())
+        except Exception:
+            return False
+
+    def _build_segmented_control(self):
+        from PySide6.QtWidgets import QPushButton, QHBoxLayout, QFrame
+        wrap = QFrame()
+        wrap.setObjectName("keymap_segmented_wrap")
+        wrap.setFixedHeight(36)
+        row = QHBoxLayout(wrap)
+        row.setContentsMargins(24, 4, 24, 4)
+        row.setSpacing(0)
+        row.addStretch()
+        self._seg_buttons: dict[str, QPushButton] = {}
+        for game, label in (("ttr", "TTR"), ("cc", "CC")):
+            b = QPushButton(label)
+            b.setCheckable(True)
+            b.setFixedWidth(80)
+            b.setCursor(Qt.PointingHandCursor)
+            b.clicked.connect(lambda _, g=game: self._on_segment_clicked(g))
+            self._seg_buttons[game] = b
+            row.addWidget(b)
+        self._seg_buttons[self._active_game].setChecked(True)
+        row.addStretch()
+        return wrap
+
+    def _on_segment_clicked(self, game: str):
+        if game == self._active_game:
+            self._seg_buttons[game].setChecked(True)
+            return
+        self._active_game = game
+        for g, btn in self._seg_buttons.items():
+            btn.setChecked(g == game)
+        self._initialized_expansion = False  # re-read expand state for new game
+        self._build_cards()
+        self.refresh_theme()
 
     # ── Toggle ─────────────────────────────────────────────────────────────
 
@@ -573,28 +674,67 @@ class KeymapTab(QWidget):
             entry["body"].collapse()
 
         if self.settings_manager:
+            key = f"keymap_expanded_states_{self._active_game}"
             expanded_list = [e["index"] for e in self._entries if e["expanded"]]
-            self.settings_manager.set("keymap_expanded_states", expanded_list)
+            self.settings_manager.set(key, expanded_list)
 
     # ── Callbacks ──────────────────────────────────────────────────────────
 
     def _on_name_changed(self, index, name):
-        self.keymap_manager.update_set_name(index, name)
+        self.keymap_manager.update_set_name(self._active_game, index, name)
 
-    def _on_key_changed(self, set_index, direction, key):
-        self.keymap_manager.update_set_key(set_index, direction, key)
+    def _refresh_default_conflict_markers(self):
+        """Recompute conflicts in this game's Default set and paint affected fields red."""
+        if not self._entries:
+            return
+        default_entry = self._entries[0]
+        body = default_entry["body"]
+        has, pairs = self.keymap_manager.has_conflicts(self._active_game, 0)
+        conflicting_actions: set[str] = set()
+        for a, b in pairs:
+            conflicting_actions.add(a)
+            conflicting_actions.add(b)
+        for action in logical_actions.actions_for(self._active_game):
+            field = body.findChild(MovementKeyField, f"key_field_{action}")
+            if field is None:
+                continue
+            in_conflict = action in conflicting_actions
+            field.setProperty("conflict", "true" if in_conflict else "false")
+            field.style().unpolish(field)
+            field.style().polish(field)
+            if in_conflict:
+                others = set()
+                for x, y in pairs:
+                    if x == action:
+                        others.add(y)
+                    elif y == action:
+                        others.add(x)
+                pretty = ", ".join(ACTION_LABELS.get(o, o.title()) for o in sorted(others))
+                field.setToolTip(f"Conflicts with: {pretty}")
+            else:
+                field.setToolTip("")
+
+    def _on_key_changed(self, set_index, action, key):
+        self.keymap_manager.update_set_key(self._active_game, set_index, action, key)
+        self._refresh_default_conflict_markers()
 
     def _on_add_set(self):
-        self.keymap_manager.add_set()
+        self.keymap_manager.add_set(self._active_game)
         self._build_cards()
         self.refresh_theme()
 
     def _on_delete_set(self, index):
-        self.keymap_manager.delete_set(index)
+        self.keymap_manager.delete_set(self._active_game, index)
         self._build_cards()
         self.refresh_theme()
 
     def _on_detect_settings(self):
+        if self._active_game == "ttr":
+            self._on_detect_ttr_settings()
+        else:
+            self._on_detect_cc_settings()
+
+    def _on_detect_ttr_settings(self):
         from utils.ttr_settings import locate_settings_file, parse_ttr_settings, apply_ttr_controls_to_set
         from services.ttr_login_service import find_engine_path
 
@@ -606,20 +746,66 @@ class KeymapTab(QWidget):
 
         path = locate_settings_file(engine_dir=engine_path)
         if not path:
-            print("[KeymapTab] Could not find settings.json")
+            print("[KeymapTab] Could not find TTR settings.json")
             return
 
         try:
             settings = parse_ttr_settings(path)
         except Exception as e:
-            print(f"[KeymapTab] Failed to parse settings.json: {e}")
+            print(f"[KeymapTab] Failed to parse TTR settings.json: {e}")
             return
 
         updates = apply_ttr_controls_to_set(self.keymap_manager, 0, settings.controls)
         if updates > 0:
             self._build_cards()
             self.refresh_theme()
-            print(f"[KeymapTab] Detected {updates} settings from {path}")
+            print(f"[KeymapTab] Detected {updates} TTR settings from {path}")
+
+    def _on_detect_cc_settings(self):
+        from utils.cc_settings import locate_cc_preferences, parse_cc_preferences, apply_cc_controls_to_set
+        try:
+            from services.wine_runtimes import discover_cc_installs
+        except Exception:
+            discover_cc_installs = None
+
+        install = None
+        installs = []
+        if discover_cc_installs is not None:
+            try:
+                installs = discover_cc_installs() or []
+            except Exception as e:
+                print(f"[KeymapTab] CC install discovery failed: {e}")
+
+        # Prefer the install currently active in Settings if it's discoverable.
+        cc_dir = self.settings_manager.get("cc_engine_dir", "") if self.settings_manager else ""
+        if cc_dir:
+            for cand in installs:
+                exe = getattr(cand, "exe_path", None)
+                if exe and os.path.dirname(exe) == cc_dir:
+                    install = cand
+                    break
+        if install is None and installs:
+            install = installs[0]
+        if install is None:
+            print("[KeymapTab] No CC install detected")
+            return
+
+        path = locate_cc_preferences(install)
+        if not path:
+            print("[KeymapTab] Could not find CC preferences.json")
+            return
+
+        try:
+            settings = parse_cc_preferences(path)
+        except Exception as e:
+            print(f"[KeymapTab] Failed to parse CC preferences.json: {e}")
+            return
+
+        updates = apply_cc_controls_to_set(self.keymap_manager, 0, settings)
+        if updates > 0:
+            self._build_cards()
+            self.refresh_theme()
+            print(f"[KeymapTab] Detected {updates} CC settings from {path}")
 
     # ── Theme ──────────────────────────────────────────────────────────────
 
@@ -680,6 +866,10 @@ class KeymapTab(QWidget):
                         border: 1px solid {set_bg};
                         color: {c['text_muted']};
                     }}
+                    QLineEdit[conflict="true"] {{
+                        border: 1px solid #d04040;
+                        background: rgba(208, 64, 64, 0.10);
+                    }}
                 """)
 
         if hasattr(self, "_add_btn"):
@@ -710,5 +900,41 @@ class KeymapTab(QWidget):
                     background: {c['accent_blue_btn']};
                     color: {c['text_on_accent']};
                     border: 1px solid {c['accent_blue_btn_border']};
+                }}
+            """)
+
+        # Segmented control (visible only when both games are detected)
+        if getattr(self, "_segmented", None) is not None:
+            self._segmented.setStyleSheet(f"""
+                QFrame#keymap_segmented_wrap {{
+                    background: transparent;
+                    border: none;
+                }}
+                QFrame#keymap_segmented_wrap QPushButton {{
+                    background: {c['bg_card_inner']};
+                    color: {c['text_secondary']};
+                    border: 1px solid {c['border_muted']};
+                    border-radius: 0;
+                    font-weight: 600;
+                    font-size: 12px;
+                    padding: 4px 0;
+                }}
+                QFrame#keymap_segmented_wrap QPushButton:first-child {{
+                    border-top-left-radius: 8px;
+                    border-bottom-left-radius: 8px;
+                    border-right: none;
+                }}
+                QFrame#keymap_segmented_wrap QPushButton:last-child {{
+                    border-top-right-radius: 8px;
+                    border-bottom-right-radius: 8px;
+                }}
+                QFrame#keymap_segmented_wrap QPushButton:hover {{
+                    background: {c['bg_input']};
+                    color: {c['text_primary']};
+                }}
+                QFrame#keymap_segmented_wrap QPushButton:checked {{
+                    background: {c['accent_blue_btn']};
+                    color: {c['text_on_accent']};
+                    border-color: {c['accent_blue_btn_border']};
                 }}
             """)

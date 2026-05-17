@@ -114,8 +114,8 @@ class _FakeKeymapManager:
     def __init__(self):
         self.calls = []
 
-    def update_set_key(self, set_index, direction, keysym):
-        self.calls.append((set_index, direction, keysym))
+    def update_set_key(self, game, set_index, action, keysym):
+        self.calls.append((game, set_index, action, keysym))
 
 
 def test_apply_ttr_controls_to_set_translates_arrows_and_control():
@@ -127,12 +127,13 @@ def test_apply_ttr_controls_to_set_translates_arrows_and_control():
     }
     n = apply_ttr_controls_to_set(km, 0, controls)
     assert n == 5
-    by_direction = {d: k for (_, d, k) in km.calls}
-    assert by_direction["up"] == "Up"
-    assert by_direction["down"] == "Down"
-    assert by_direction["left"] == "Left"
-    assert by_direction["right"] == "Right"
-    assert by_direction["jump"] == "Control_L"
+    assert all(call[0] == "ttr" for call in km.calls)
+    by_action = {action: k for (_, _, action, k) in km.calls}
+    assert by_action["forward"] == "Up"
+    assert by_action["reverse"] == "Down"
+    assert by_action["left"] == "Left"
+    assert by_action["right"] == "Right"
+    assert by_action["jump"] == "Control_L"
 
 
 def test_apply_ttr_controls_to_set_passes_through_letter_hotkeys():
@@ -140,9 +141,10 @@ def test_apply_ttr_controls_to_set_passes_through_letter_hotkeys():
     km = _FakeKeymapManager()
     n = apply_ttr_controls_to_set(km, 0, {"forward": "w", "reverse": "s"})
     assert n == 2
-    by_direction = {d: k for (_, d, k) in km.calls}
-    assert by_direction["up"] == "w"
-    assert by_direction["down"] == "s"
+    assert all(call[0] == "ttr" for call in km.calls)
+    by_action = {action: k for (_, _, action, k) in km.calls}
+    assert by_action["forward"] == "w"
+    assert by_action["reverse"] == "s"
 
 
 def test_apply_ttr_controls_to_set_skips_missing_keys():
@@ -151,7 +153,7 @@ def test_apply_ttr_controls_to_set_skips_missing_keys():
     # Only "jump" present; the rest should be skipped.
     n = apply_ttr_controls_to_set(km, 1, {"jump": "control"})
     assert n == 1
-    assert km.calls == [(1, "jump", "Control_L")]
+    assert km.calls == [("ttr", 1, "jump", "Control_L")]
 
 
 def test_apply_ttr_controls_to_set_translates_default_arrow_aliases():
@@ -180,12 +182,13 @@ def test_apply_ttr_controls_to_set_translates_default_arrow_aliases():
     }
     n = apply_ttr_controls_to_set(km, 0, controls)
     assert n == 5
-    by_direction = {d: k for (_, d, k) in km.calls}
-    assert by_direction["up"] == "Up", f"forward=arrow_up must translate to Up keysym, got {by_direction['up']!r}"
-    assert by_direction["down"] == "Down"
-    assert by_direction["left"] == "Left"
-    assert by_direction["right"] == "Right"
-    assert by_direction["jump"] == "Control_L"
+    assert all(call[0] == "ttr" for call in km.calls)
+    by_action = {action: k for (_, _, action, k) in km.calls}
+    assert by_action["forward"] == "Up", f"forward=arrow_up must translate to Up keysym, got {by_action['forward']!r}"
+    assert by_action["reverse"] == "Down"
+    assert by_action["left"] == "Left"
+    assert by_action["right"] == "Right"
+    assert by_action["jump"] == "Control_L"
 
 
 def test_apply_ttr_controls_to_set_translates_nav_cluster_and_f_keys():
@@ -202,11 +205,12 @@ def test_apply_ttr_controls_to_set_translates_nav_cluster_and_f_keys():
     }
     n = apply_ttr_controls_to_set(km, 0, controls)
     assert n == 4
-    by_direction = {d: k for (_, d, k) in km.calls}
-    assert by_direction["book"] == "F8", f"f8 must translate to F8 keysym, got {by_direction['book']!r}"
-    assert by_direction["gags"] == "Home"
-    assert by_direction["tasks"] == "End"
-    assert by_direction["map"] == "Alt_L"
+    assert all(call[0] == "ttr" for call in km.calls)
+    by_action = {action: k for (_, _, action, k) in km.calls}
+    assert by_action["book"] == "F8", f"f8 must translate to F8 keysym, got {by_action['book']!r}"
+    assert by_action["gags"] == "Home"
+    assert by_action["tasks"] == "End"
+    assert by_action["map"] == "Alt_L"
 
 
 def test_apply_ttr_controls_to_set_translates_page_keys_and_insert():
@@ -220,7 +224,7 @@ def test_apply_ttr_controls_to_set_translates_page_keys_and_insert():
     controls = {"jump": "page_up"}
     n = apply_ttr_controls_to_set(km, 0, controls)
     assert n == 1
-    assert km.calls[0] == (0, "jump", "Prior")
+    assert km.calls[0] == ("ttr", 0, "jump", "Prior")
 
 
 def test_apply_ttr_controls_to_set_translates_insert_and_other_function_keys():
@@ -228,9 +232,10 @@ def test_apply_ttr_controls_to_set_translates_insert_and_other_function_keys():
     km = _FakeKeymapManager()
     controls = {"jump": "insert", "stickerBook": "f12"}
     n = apply_ttr_controls_to_set(km, 0, controls)
-    by_direction = {d: k for (_, d, k) in km.calls}
-    assert by_direction["jump"] == "Insert"
-    assert by_direction["book"] == "F12"
+    assert all(call[0] == "ttr" for call in km.calls)
+    by_action = {action: k for (_, _, action, k) in km.calls}
+    assert by_action["jump"] == "Insert"
+    assert by_action["book"] == "F12"
 
 
 def test_has_letter_hotkeys_false_for_real_ttr_default_arrows(tmp_path):
