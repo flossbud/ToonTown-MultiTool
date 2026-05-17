@@ -112,6 +112,13 @@ var
   BtnConsentDecline:           TButton;
   BtnConsentAccept:            TButton;
 
+// Forward declarations: InitializeWizard references @OnConsentDeclineClick
+// and @OnConsentAcceptClick to wire the consent-page buttons, but the
+// procedure bodies live further down the file. Pascal Script requires
+// declaration before use when taking a procedure address.
+procedure OnConsentDeclineClick(Sender: TObject); forward;
+procedure OnConsentAcceptClick(Sender: TObject); forward;
+
 function CheckUpdatesFlag(Param: String): String;
 begin
   if WizardIsTaskSelected('checkupdates') then
