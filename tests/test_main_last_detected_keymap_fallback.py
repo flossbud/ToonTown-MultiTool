@@ -49,7 +49,8 @@ def test_apply_cached_keymap_when_settings_json_unreadable(monkeypatch):
 
     n = instance._apply_startup_ttr_keymap()
     assert n > 0, "Cached keymap must be applied when live detection fails"
-    by_direction = {d: k for (_, d, k) in keymap_calls}
+    # v2 update_set_key signature: (game, set_index, action, key)
+    by_direction = {action: key for (_game, _idx, action, key) in keymap_calls}
     assert by_direction["up"] == "Up"
     assert by_direction["jump"] == "Control_L"
 
@@ -80,6 +81,7 @@ def test_live_detection_takes_precedence_over_cache(monkeypatch):
     monkeypatch.setattr(MultiToonTool, "_refresh_ttr_settings", lambda self: fresh)
 
     instance._apply_startup_ttr_keymap()
-    by_direction = {d: k for (_, d, k) in keymap_calls}
+    # v2 update_set_key signature: (game, set_index, action, key)
+    by_direction = {action: key for (_game, _idx, action, key) in keymap_calls}
     assert by_direction["up"] == "Up"
     assert by_direction["jump"] == "Control_L"

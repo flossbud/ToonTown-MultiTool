@@ -800,6 +800,8 @@ class MultitoonTab(QWidget):
             get_keymap_assignments=self.get_keymap_assignments,
             keymap_manager=self.keymap_manager,
         )
+        # Default to TTR for foreground-game cache if no game window has been focused yet.
+        self.input_service._last_known_foreground_game = "ttr"
         self.input_service.chat_state_changed.connect(self._on_chat_state_changed)
         self.input_service.input_log.connect(self._on_input_log)
         self._chat_glow_active = False
