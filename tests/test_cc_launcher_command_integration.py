@@ -167,6 +167,7 @@ def test_launch_sweeps_bridge_for_prefix_before_spawning_proton(tmp_path, monkey
     )
 
     spawn_event = threading.Event()
+    sweeps_at_spawn = []
 
     class FakeProc:
         pid = 99999
@@ -174,6 +175,7 @@ def test_launch_sweeps_bridge_for_prefix_before_spawning_proton(tmp_path, monkey
             return 0
 
     def fake_host_popen(*args, **kwargs):
+        sweeps_at_spawn.extend(sweeps)
         spawn_event.set()
         return FakeProc()
 
@@ -185,9 +187,9 @@ def test_launch_sweeps_bridge_for_prefix_before_spawning_proton(tmp_path, monkey
         "services.wine_runtimes.build_launch_command",
         lambda install, args, extra_env: (["fake"], dict(extra_env)),
     )
-    monkeypatch.setattr("services.launcher_env.build_launcher_env", lambda overrides: dict(overrides))
-    monkeypatch.setattr("services.wine_runtimes.register_active_proton_compatdata", lambda _p: None)
-    monkeypatch.setattr("services.wine_runtimes.unregister_active_proton_compatdata", lambda _p: None)
+    monkeypatch.setattr("services.cc_launcher.build_launcher_env", lambda overrides: dict(overrides))
+    monkeypatch.setattr("services.cc_launcher.register_active_proton_compatdata", lambda _p: None)
+    monkeypatch.setattr("services.cc_launcher.unregister_active_proton_compatdata", lambda _p: None)
 
     launcher = CCLauncher(settings_manager=None)
     launcher.launch(
@@ -199,9 +201,12 @@ def test_launch_sweeps_bridge_for_prefix_before_spawning_proton(tmp_path, monkey
     )
 
     assert spawn_event.wait(timeout=2.0), "fake spawn never ran"
-    # Sweep must have been recorded before host_popen returned (recorded
-    # in module-level list during the same thread as the spawn).
-    assert sweeps == [str(prefix)], f"expected pre-launch sweep, got sweeps={sweeps}"
+    assert sweeps_at_spawn == [str(prefix)], (
+        f"sweep must run BEFORE host_popen; "
+        f"sweeps_at_spawn={sweeps_at_spawn}, final sweeps={sweeps}"
+    )
+    # And confirm exactly one sweep total (no duplicates).
+    assert sweeps == [str(prefix)], f"expected exactly one sweep, got {sweeps}"
 
 
 def test_register_unregister_idempotent_and_isolated(tmp_path):
