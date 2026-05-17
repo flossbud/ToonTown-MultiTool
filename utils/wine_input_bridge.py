@@ -229,15 +229,26 @@ class WineInputBridge:
         response = self._request("list", timeout=0.15)
         return bool(response and response.startswith("OK "))
 
+    _MAX_RESPONSE_BYTES = 64 * 1024  # generous cap; helper responses are short
+
     def _request(self, line: str, timeout: float = 0.5) -> str | None:
         try:
             with socket.create_connection(("127.0.0.1", self.port), timeout=timeout) as sock:
                 sock.sendall((line + "\n").encode("utf-8"))
                 sock.settimeout(timeout)
-                data = sock.recv(4096)
+                # Helper writes exactly one newline-terminated line per command.
+                # Loop until we see a newline or hit the cap so multi-recv
+                # responses (rare on loopback but not guaranteed by TCP) are
+                # handled correctly.
+                buf = bytearray()
+                while b"\n" not in buf and len(buf) < self._MAX_RESPONSE_BYTES:
+                    chunk = sock.recv(4096)
+                    if not chunk:
+                        break
+                    buf.extend(chunk)
         except OSError:
             return None
-        return data.decode("utf-8", "replace").strip()
+        return buf.decode("utf-8", "replace").strip()
 
     def shutdown(self) -> None:
         """Best-effort: ask the helper to quit, then ensure the process is gone."""
