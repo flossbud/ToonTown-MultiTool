@@ -9,6 +9,9 @@ class _FakeBridge:
         self.calls.append((op, index, keysym, active_index))
         return True
 
+    def cross_check_sort_order(self, window_ids):
+        return True
+
 
 def test_send_to_window_passes_target_and_active_indices(monkeypatch):
     bridge = _FakeBridge()
@@ -134,6 +137,9 @@ def test_send_to_window_handles_last_window_as_active(monkeypatch):
             captured.append((op, index, keysym, active_index))
             return True
 
+        def cross_check_sort_order(self, window_ids):
+            return True
+
     monkeypatch.setattr(wine_input_bridge, "_bridge_for_pid", lambda _pid: StubBridge())
     monkeypatch.setattr(
         GameRegistry,
@@ -245,3 +251,63 @@ def test_bad_prefix_cooldown_allows_retry_after_expiry(monkeypatch):
         assert proton_dir_calls == [], "Fresh BAD_PREFIX entry must short-circuit before _proton_dir_for_pid"
     finally:
         wib._BAD_PREFIXES.clear()
+
+
+def test_cross_check_sort_order_accepts_monotonic_helper_response(monkeypatch):
+    """Regression guard for review item I-1: cross-check should accept a
+    helper list with strictly increasing Left coordinates."""
+    from utils.wine_input_bridge import WineInputBridge
+
+    bridge = WineInputBridge.__new__(WineInputBridge)
+    bridge.port = 12345
+    bridge.prefix = "/prefix/test"
+    monkeypatch.setattr(
+        WineInputBridge, "_request",
+        lambda self, line, timeout=0.5: "OK 1A:10:0,2B:800:0,3C:1600:0",
+    )
+    assert bridge.cross_check_sort_order(["win_a", "win_b", "win_c"]) is True
+
+
+def test_cross_check_sort_order_rejects_count_mismatch(monkeypatch):
+    """Cross-check must reject when the helper reports a different
+    number of windows than the caller knows about."""
+    from utils.wine_input_bridge import WineInputBridge
+
+    bridge = WineInputBridge.__new__(WineInputBridge)
+    bridge.port = 12345
+    bridge.prefix = "/prefix/test"
+    monkeypatch.setattr(
+        WineInputBridge, "_request",
+        lambda self, line, timeout=0.5: "OK 1A:10:0",  # only one entry
+    )
+    assert bridge.cross_check_sort_order(["win_a", "win_b"]) is False
+
+
+def test_cross_check_sort_order_rejects_non_monotonic(monkeypatch):
+    """Cross-check must reject when the helper's Left values are not
+    monotonically non-decreasing (sort axes disagree)."""
+    from utils.wine_input_bridge import WineInputBridge
+
+    bridge = WineInputBridge.__new__(WineInputBridge)
+    bridge.port = 12345
+    bridge.prefix = "/prefix/test"
+    monkeypatch.setattr(
+        WineInputBridge, "_request",
+        lambda self, line, timeout=0.5: "OK 1A:1600:0,2B:10:0",  # out of order
+    )
+    assert bridge.cross_check_sort_order(["win_a", "win_b"]) is False
+
+
+def test_cross_check_sort_order_accepts_empty_when_no_windows(monkeypatch):
+    """Empty helper response is valid IFF the caller also has no windows."""
+    from utils.wine_input_bridge import WineInputBridge
+
+    bridge = WineInputBridge.__new__(WineInputBridge)
+    bridge.port = 12345
+    bridge.prefix = "/prefix/test"
+    monkeypatch.setattr(
+        WineInputBridge, "_request",
+        lambda self, line, timeout=0.5: "OK ",
+    )
+    assert bridge.cross_check_sort_order([]) is True
+    assert bridge.cross_check_sort_order(["win_a"]) is False

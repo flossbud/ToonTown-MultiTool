@@ -69,6 +69,13 @@ def send_to_window(win_id: str, window_ids: list[str], action: str, keysym: str,
     if bridge is None:
         return False
 
+    if not bridge.cross_check_sort_order([str(w) for w in window_ids]):
+        print(
+            f"[wine_input_bridge] sort-order disagreement between X11 and Win32 "
+            f"for prefix={bridge.prefix}; falling back to Xlib"
+        )
+        return False
+
     active_index = _active_index(window_ids)
 
     if action == "keydown":
@@ -245,6 +252,43 @@ class WineInputBridge:
     def _ping(self) -> bool:
         response = self._request("list", timeout=0.15)
         return bool(response and response.startswith("OK "))
+
+    def cross_check_sort_order(self, window_ids: list[str]) -> bool:
+        """Verify that the helper's window-list sort order agrees with the
+        caller's. Returns True when the agreement holds (so positional
+        indices are safe to use), False on disagreement (caller should
+        fall back to the X11 backend).
+
+        Strategy: ask the helper for its window list, parse the per-window
+        Left coordinates, and verify they are monotonically non-decreasing.
+        Python's window_ids are already sorted left-to-right by
+        WindowManager.assign_windows; the helper's response is sorted
+        left-to-right by GetWindowRect().Left in FindCorporateClashWindows.
+        If both axes agree, the Left values come out non-decreasing. A
+        mismatch fires when XWayland's coord space and Win32's coord
+        space diverge (e.g. hypothetical multi-monitor edge case)."""
+        response = self._request("list", timeout=0.3)
+        if not response or not response.startswith("OK"):
+            return False
+        payload = response[3:].strip()
+        if not payload:
+            return len(window_ids) == 0
+        cs_entries = []
+        for tok in payload.split(","):
+            parts = tok.split(":")
+            if len(parts) < 2:
+                return False
+            try:
+                cs_entries.append(int(parts[1]))  # Left
+            except ValueError:
+                return False
+        if len(cs_entries) != len(window_ids):
+            return False
+        # Verify Left values are monotonically non-decreasing.
+        for a, b in zip(cs_entries, cs_entries[1:]):
+            if a > b:
+                return False
+        return True
 
     _MAX_RESPONSE_BYTES = 64 * 1024  # generous cap; helper responses are short
 

@@ -138,19 +138,18 @@ public static class TTMTWineInputBridge
     private static string ListWindows()
     {
         var windows = FindCorporateClashWindows(-1);
-        IntPtr foreground = GetForegroundWindow();
-        var sb = new StringBuilder();
-        sb.Append("OK count=").Append(windows.Count);
-        for (int i = 0; i < windows.Count; i++)
+        if (windows.Count == 0)
+            return "OK ";
+        var parts = new List<string>();
+        foreach (var w in windows)
         {
-            var w = windows[i];
-            sb.Append(" [").Append(i).Append("] hwnd=0x")
-              .Append(w.Hwnd.ToInt64().ToString("x"))
-              .Append(w.Hwnd == foreground ? " fg=1" : " fg=0")
-              .Append(" x=").Append(w.Rect.Left)
-              .Append(" title=").Append(w.Title.Replace("[", "(").Replace("]", ")"));
+            // Format: <hwnd-hex>:<left>:<top> — Python uses :left to validate
+            // that its X11 root_x sort agrees with our Win32 GetWindowRect.Left
+            // sort. Disagreement bails to Xlib backend.
+            parts.Add(string.Format("{0:X}:{1}:{2}",
+                w.Hwnd.ToInt64(), w.Rect.Left, w.Rect.Top));
         }
-        return sb.ToString();
+        return "OK " + string.Join(",", parts);
     }
 
     private static List<GameWindow> FindCorporateClashWindows(int activeIndex)
