@@ -154,3 +154,53 @@ def test_send_to_window_handles_last_window_as_active(monkeypatch):
     )
     assert ok
     assert captured == [("down", 2, "w", 2)]
+
+
+def test_input_service_falls_through_to_xlib_for_ttr(monkeypatch):
+    """Regression guard for review item I-4: the Wine bridge must only be
+    invoked for game='cc' windows. TTR (native Linux) must continue to use
+    the Xlib backend even when the bridge module is importable."""
+    import sys
+    monkeypatch.setattr(sys, "platform", "linux")
+
+    from utils.game_registry import GameRegistry
+    monkeypatch.setattr(
+        GameRegistry,
+        "instance",
+        classmethod(lambda cls: type("GR", (), {
+            "get_game_for_window": staticmethod(lambda _wid: "ttr"),
+        })()),
+    )
+
+    bridge_calls = []
+    xlib_calls = []
+
+    def stub_send_to_window(*args, **kwargs):
+        bridge_calls.append((args, kwargs))
+        return True  # if reached, would block Xlib — but it must NOT be reached
+
+    from utils import wine_input_bridge
+    monkeypatch.setattr(wine_input_bridge, "send_to_window", stub_send_to_window)
+
+    class StubXlib:
+        def send_keydown(self, win_id, keysym, state=0):
+            xlib_calls.append(("keydown", win_id, keysym))
+            return True
+        def send_keyup(self, win_id, keysym, state=0):
+            xlib_calls.append(("keyup", win_id, keysym))
+            return True
+        def send_key(self, win_id, keysym, modifiers=None):
+            xlib_calls.append(("key", win_id, keysym, modifiers))
+            return True
+
+    # Build a minimal InputService instance via __new__ (avoid full __init__).
+    from services.input_service import InputService
+    svc = InputService.__new__(InputService)
+    svc._xlib = StubXlib()
+    svc.window_manager = type("WM", (), {"get_window_ids": staticmethod(lambda: ["win_a"])})()
+    svc.logging_enabled = False
+    svc.input_log = type("Sig", (), {"emit": staticmethod(lambda *_a, **_k: None)})()
+
+    svc._send_via_backend("keydown", "win_a", "w")
+    assert bridge_calls == [], "Wine bridge must not be called for TTR windows"
+    assert xlib_calls == [("keydown", "win_a", "w")], "Xlib backend must be called for TTR"
