@@ -23,7 +23,12 @@ from utils.build_flavor import config_dir
 
 _BRIDGES: dict[str, "WineInputBridge"] = {}
 _BRIDGES_LOCK = threading.Lock()
-_BAD_PREFIXES: set[str] = set()
+# Prefixes for which bridge setup recently failed. Maps prefix -> monotonic
+# timestamp of the failure. Entries expire after _BAD_PREFIX_COOLDOWN, after
+# which the bridge will be retried (so a user who fixes their Wine Mono
+# install mid-session doesn't have to restart TTMT).
+_BAD_PREFIXES: dict[str, float] = {}
+_BAD_PREFIX_COOLDOWN = 300.0  # seconds; 5 minutes
 
 
 def shutdown_all() -> None:
@@ -113,22 +118,27 @@ def _bridge_for_pid(pid: int) -> "WineInputBridge | None":
         return None
 
     key = os.path.realpath(prefix)
-    if key in _BAD_PREFIXES:
-        return None
+    now = time.monotonic()
+    cooldown_at = _BAD_PREFIXES.get(key)
+    if cooldown_at is not None:
+        if now - cooldown_at < _BAD_PREFIX_COOLDOWN:
+            return None
+        # Cooldown expired — drop the entry and re-attempt.
+        _BAD_PREFIXES.pop(key, None)
 
     with _BRIDGES_LOCK:
         bridge = _BRIDGES.get(key)
         if bridge is None:
             proton_dir = _proton_dir_for_pid(pid, env)
             if proton_dir is None:
-                _BAD_PREFIXES.add(key)
+                _BAD_PREFIXES[key] = time.monotonic()
                 print(f"[wine_input_bridge] could not resolve Proton dir for pid={pid}; bridge disabled for prefix={key}")
                 return None
             bridge = WineInputBridge(prefix=key, proton_dir=proton_dir, env=env)
             _BRIDGES[key] = bridge
 
     if not bridge.ensure_running():
-        _BAD_PREFIXES.add(key)
+        _BAD_PREFIXES[key] = time.monotonic()
         print(f"[wine_input_bridge] bridge unavailable for prefix={key}; falling back to Xlib for all future CC keys")
         return None
     return bridge

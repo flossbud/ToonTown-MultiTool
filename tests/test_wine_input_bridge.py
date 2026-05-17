@@ -204,3 +204,44 @@ def test_input_service_falls_through_to_xlib_for_ttr(monkeypatch):
     svc._send_via_backend("keydown", "win_a", "w")
     assert bridge_calls == [], "Wine bridge must not be called for TTR windows"
     assert xlib_calls == [("keydown", "win_a", "w")], "Xlib backend must be called for TTR"
+
+
+def test_bad_prefix_cooldown_allows_retry_after_expiry(monkeypatch):
+    """Regression guard for review item I-5: a prefix that recently failed
+    to set up a bridge should be retried after the cooldown expires."""
+    from utils import wine_input_bridge as wib
+
+    fake_now = [1000.0]
+    monkeypatch.setattr(wib.time, "monotonic", lambda: fake_now[0])
+
+    # Seed an "old" failure (expired) and a "fresh" failure (still cooling)
+    wib._BAD_PREFIXES.clear()
+    wib._BAD_PREFIXES["/prefix/old"] = fake_now[0] - (wib._BAD_PREFIX_COOLDOWN + 1)
+    wib._BAD_PREFIXES["/prefix/fresh"] = fake_now[0] - 1.0
+
+    try:
+        # Old entry: cooldown has expired. _bridge_for_pid should
+        # pop the entry and re-attempt setup. We patch the next gate
+        # (_proton_dir_for_pid) so it falls through and re-adds the entry
+        # with a new timestamp.
+        monkeypatch.setattr(wib, "_read_process_env", lambda _pid: {"WINEPREFIX": "/prefix/old"})
+        monkeypatch.setattr(wib, "_proton_dir_for_pid", lambda _pid, _env: None)
+        result = wib._bridge_for_pid(99999)
+        assert result is None
+        # The old entry should be replaced with a fresh "now" timestamp.
+        assert wib._BAD_PREFIXES["/prefix/old"] == fake_now[0]
+
+        # Fresh entry: still within cooldown. Must short-circuit BEFORE
+        # _proton_dir_for_pid is consulted.
+        monkeypatch.setattr(wib, "_read_process_env", lambda _pid: {"WINEPREFIX": "/prefix/fresh"})
+        proton_dir_calls = []
+        monkeypatch.setattr(
+            wib,
+            "_proton_dir_for_pid",
+            lambda _pid, _env: (proton_dir_calls.append(1) or None),
+        )
+        result = wib._bridge_for_pid(99999)
+        assert result is None
+        assert proton_dir_calls == [], "Fresh BAD_PREFIX entry must short-circuit before _proton_dir_for_pid"
+    finally:
+        wib._BAD_PREFIXES.clear()
