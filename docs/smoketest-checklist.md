@@ -51,6 +51,7 @@ A new wizard page appears between Tasks and Ready when the Keep-Alive checkbox i
 - [ ] **Back-from-Ready re-entry**: Accept path → on Ready, click Back → consent page re-renders. Click Decline this time → Ready. Click Back twice → Tasks page shows Keep-Alive unchecked.
 - [ ] **Silent install with opt-in**: `installer.exe /TASKS=keepalive /VERYSILENT` → no UI → install completes → `settings.json` contains the consent keys.
 - [ ] **Silent install without `/TASKS`**: `installer.exe /VERYSILENT` → install completes → `settings.json` does NOT contain consent keys (`keepalive` defaults to unchecked).
+- [ ] **Upgrade preserves existing consent**: with `keep_alive_consent_acknowledged=true` already in `settings.json` from a prior install, run the new installer with Keep-Alive UNCHECKED on the Tasks page. After install, the existing consent keys must still be present in `settings.json` (verifies `installer_merge.py` never strips consent on upgrade).
 
 ## v2.1.3-a regression checks
 Targeted repros for the seven in-scope fixes from the v2.1.3 beta report.
