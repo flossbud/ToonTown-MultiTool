@@ -16,6 +16,8 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from utils import logical_actions
+
 
 @dataclass
 class CcSettings:
@@ -62,3 +64,87 @@ def parse_cc_preferences(path: Path) -> CcSettings:
         want_custom_controls=bool(data.get("want-Custom-Controls", False)),
         source_path=Path(path),
     )
+
+
+# CC preferences.json `keymap` dict key -> our logical action name.
+# Inferred from the in-game options labels until a populated dict is observed
+# in the wild; unknown keys are logged at apply time so the table can grow.
+_CC_ACTION_NAME_MAP = {
+    "forward": "forward",
+    "reverse": "reverse",
+    "left":    "left",
+    "right":   "right",
+    "jump":    "jump",
+    "sprint":  "sprint",
+    "gags":    "gags",
+    "tasks":   "tasks",
+    "book":    "book",
+    "stickerbook": "book",  # alias seen in some CC builds
+    "map":     "map",
+    "showmap": "map",
+}
+
+# CC's binding value strings -> our keysym strings.
+_CC_VALUE_TO_KEYSYM = {
+    "shift":    "Shift_L",
+    "control":  "Control_L",
+    "ctrl":     "Control_L",
+    "alt":      "Alt_L",
+    "space":    "space",
+    "escape":   "Escape",
+    "enter":    "Return",
+    "tab":      "Tab",
+    "backspace": "BackSpace",
+    "delete":   "Delete",
+    "arrow_up":    "Up",    "up":    "Up",
+    "arrow_down":  "Down",  "down":  "Down",
+    "arrow_left":  "Left",  "left":  "Left",
+    "arrow_right": "Right", "right": "Right",
+}
+
+
+def apply_cc_controls_to_set(keymap_manager, set_index: int, settings: CcSettings) -> int:
+    """Apply CC bindings onto the CC bucket's set at set_index.
+
+    - If want_custom_controls is False OR keymap is empty: write baked
+      defaults from LogicalActionRegistry for every CC action.
+    - Else translate known action-name keys via _CC_ACTION_NAME_MAP, then
+      translate values via _CC_VALUE_TO_KEYSYM. Unknown action-name keys
+      are logged; the corresponding action keeps its baked default.
+
+    Returns the count of actions whose binding was written.
+    """
+    use_defaults = (not settings.want_custom_controls) or (not settings.keymap)
+    n = 0
+
+    if use_defaults:
+        for action in logical_actions.actions_for("cc"):
+            k = logical_actions.default_key("cc", action)
+            if k is not None:
+                keymap_manager.update_set_key("cc", set_index, action, k)
+                n += 1
+        return n
+
+    # Start from defaults so unspecified actions stay sensible.
+    for action in logical_actions.actions_for("cc"):
+        k = logical_actions.default_key("cc", action)
+        if k is not None:
+            keymap_manager.update_set_key("cc", set_index, action, k)
+            n += 1
+
+    unknown_keys = []
+    for raw_name, raw_val in settings.keymap.items():
+        action = _CC_ACTION_NAME_MAP.get(str(raw_name).lower())
+        if action is None:
+            unknown_keys.append(raw_name)
+            continue
+        if not logical_actions.supports("cc", action):
+            unknown_keys.append(raw_name)
+            continue
+        translated = _CC_VALUE_TO_KEYSYM.get(str(raw_val).lower(), raw_val)
+        keymap_manager.update_set_key("cc", set_index, action, translated)
+
+    if unknown_keys:
+        print(f"[cc_settings] unknown keymap keys (will not migrate): {unknown_keys}")
+
+    return n

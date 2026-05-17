@@ -80,3 +80,59 @@ class TestParseCcPreferences:
         p.write_text(json.dumps({"keymap": "broken"}))
         s = parse_cc_preferences(p)
         assert s.keymap == {}
+
+
+class TestApplyCcControls:
+    def test_no_custom_controls_writes_defaults(self, tmp_path, monkeypatch):
+        from utils.cc_settings import apply_cc_controls_to_set
+        from utils.keymap_manager import KeymapManager
+        monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
+        km = KeymapManager()
+        s = CcSettings(keymap={}, want_custom_controls=False)
+        n = apply_cc_controls_to_set(km, 0, s)
+        assert n >= 9  # all CC actions written
+        cc = km.get_default("cc")
+        assert cc["forward"] == "w"
+        assert cc["sprint"] == "Shift_L"
+        assert cc["book"] == "Escape"
+
+    def test_custom_controls_translate_known_names(self, tmp_path, monkeypatch):
+        from utils.cc_settings import apply_cc_controls_to_set
+        from utils.keymap_manager import KeymapManager
+        monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
+        km = KeymapManager()
+        s = CcSettings(
+            keymap={"forward": "i", "sprint": "shift", "book": "escape"},
+            want_custom_controls=True,
+        )
+        apply_cc_controls_to_set(km, 0, s)
+        cc = km.get_default("cc")
+        assert cc["forward"] == "i"
+        assert cc["sprint"] == "Shift_L"  # value translated
+        assert cc["book"] == "Escape"
+
+    def test_unknown_action_names_dont_break(self, tmp_path, monkeypatch):
+        from utils.cc_settings import apply_cc_controls_to_set
+        from utils.keymap_manager import KeymapManager
+        monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
+        km = KeymapManager()
+        s = CcSettings(
+            keymap={"forward": "i", "futureAction": "z"},
+            want_custom_controls=True,
+        )
+        apply_cc_controls_to_set(km, 0, s)
+        cc = km.get_default("cc")
+        # Known action applied, unknown ignored, defaults preserved elsewhere
+        assert cc["forward"] == "i"
+        assert cc["sprint"] == "Shift_L"
+        assert "futureAction" not in cc
+
+    def test_empty_keymap_with_custom_flag_writes_defaults(self, tmp_path, monkeypatch):
+        from utils.cc_settings import apply_cc_controls_to_set
+        from utils.keymap_manager import KeymapManager
+        monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
+        km = KeymapManager()
+        s = CcSettings(keymap={}, want_custom_controls=True)
+        n = apply_cc_controls_to_set(km, 0, s)
+        assert n >= 9
+        assert km.get_default("cc")["sprint"] == "Shift_L"
