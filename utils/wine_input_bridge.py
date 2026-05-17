@@ -202,6 +202,12 @@ class WineInputBridge:
 
     def ensure_running(self) -> bool:
         with self._lock:
+            if not os.path.isfile(self.wine_bin):
+                print(
+                    f"[wine_input_bridge] wine binary not found at {self.wine_bin}; "
+                    f"bridge cannot start for prefix={self.prefix}"
+                )
+                return False
             if self._ping():
                 return True
             if not self._ensure_compiled():
