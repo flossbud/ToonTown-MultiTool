@@ -101,9 +101,16 @@ Filename: "{app}\ToonTownMultiTool.exe"; \
 
 [Code]
 var
-  KeepAliveDisclaimer: TLabel;
-  KeepAliveWarning: TLabel;
-  UpdatesExplainer: TLabel;
+  KeepAliveShortNote:          TLabel;
+  UpdatesExplainer:            TLabel;
+  KeepAliveConsentPage:        TWizardPage;
+  KeepAliveConsentHeading:     TLabel;
+  KeepAliveConsentDisclaimer:  TLabel;
+  KeepAliveConsentTOS:         TLabel;
+  KeepAliveConsentPrompt:      TLabel;
+  KeepAliveTaskIndex:          Integer;
+  BtnConsentDecline:           TButton;
+  BtnConsentAccept:            TButton;
 
 function CheckUpdatesFlag(Param: String): String;
 begin
@@ -127,6 +134,14 @@ var
 begin
   KeyPath := 'Software\Microsoft\Windows\CurrentVersion\Uninstall\' + '{#MyAppId}' + '_is1';
   Result := RegKeyExists(HKLM, KeyPath) or RegKeyExists(HKCU, KeyPath);
+end;
+
+function ShouldSkipPage(PageID: Integer): Boolean;
+begin
+  if (PageID = KeepAliveConsentPage.ID) then
+    Result := not WizardIsTaskSelected('keepalive')
+  else
+    Result := False;
 end;
 
 function GetInstalledBuildNumber(): Integer;
@@ -175,6 +190,7 @@ procedure InitializeWizard;
 var
   TasksPage: TWizardPage;
   Anchor: Integer;
+  I: Integer;
 begin
   // Inno's [Tasks] section auto-generates a TasksList on wpSelectTasks.
   // We augment that page with our own labels — they sit in the same panel
@@ -182,39 +198,25 @@ begin
   TasksPage := PageFromID(wpSelectTasks);
   Anchor := WizardForm.TasksList.Top + WizardForm.TasksList.Height + ScaleY(8);
 
-  // Keep-Alive disclaimer paragraphs (immediately under the Keep-Alive checkbox)
-  KeepAliveDisclaimer := TLabel.Create(WizardForm);
-  KeepAliveDisclaimer.Parent := TasksPage.Surface;
-  KeepAliveDisclaimer.Left := ScaleX(28);
-  KeepAliveDisclaimer.Top := Anchor;
-  KeepAliveDisclaimer.Width := WizardForm.TasksList.Width - ScaleX(28);
-  KeepAliveDisclaimer.AutoSize := False;
-  KeepAliveDisclaimer.WordWrap := True;
-  KeepAliveDisclaimer.Height := ScaleY(48);
-  KeepAliveDisclaimer.Caption :=
-    'Keep-Alive sends a key to your game windows on a timer to prevent the AFK ' +
-    'disconnect. This is input not produced by a live keystroke from you.';
-
-  KeepAliveWarning := TLabel.Create(WizardForm);
-  KeepAliveWarning.Parent := TasksPage.Surface;
-  KeepAliveWarning.Left := ScaleX(28);
-  KeepAliveWarning.Top := KeepAliveDisclaimer.Top + KeepAliveDisclaimer.Height + ScaleY(4);
-  KeepAliveWarning.Width := WizardForm.TasksList.Width - ScaleX(28);
-  KeepAliveWarning.AutoSize := False;
-  KeepAliveWarning.WordWrap := True;
-  KeepAliveWarning.Height := ScaleY(64);
-  KeepAliveWarning.Font.Color := $002020D0;  // BGR: red emphasis
-  KeepAliveWarning.Font.Style := [fsBold];   // bold survives high-contrast themes
-  KeepAliveWarning.Caption :=
-    'Toontown Rewritten and Corporate Clash both prohibit input automation in ' +
-    'their Terms of Service. Use is at your own risk and may result in action ' +
-    'against your account. You can turn this off any time in Settings.';
+  // Keep-Alive short note (immediately under the Keep-Alive checkbox)
+  KeepAliveShortNote := TLabel.Create(WizardForm);
+  KeepAliveShortNote.Parent := TasksPage.Surface;
+  KeepAliveShortNote.Left := ScaleX(28);
+  KeepAliveShortNote.Top := Anchor;
+  KeepAliveShortNote.Width := WizardForm.TasksList.Width - ScaleX(28);
+  KeepAliveShortNote.AutoSize := False;
+  KeepAliveShortNote.WordWrap := True;
+  KeepAliveShortNote.Height := ScaleY(48);
+  KeepAliveShortNote.Caption :=
+    'Keep-Alive sends automated input to your game windows. Both TTR and CC ' +
+    'Terms-of-Service warnings apply. Review the details on the next page ' +
+    'if you enable this option.';
 
   // Updates explainer (under the Updates checkbox)
   UpdatesExplainer := TLabel.Create(WizardForm);
   UpdatesExplainer.Parent := TasksPage.Surface;
   UpdatesExplainer.Left := ScaleX(28);
-  UpdatesExplainer.Top := KeepAliveWarning.Top + KeepAliveWarning.Height + ScaleY(8);
+  UpdatesExplainer.Top := KeepAliveShortNote.Top + KeepAliveShortNote.Height + ScaleY(8);
   UpdatesExplainer.Width := WizardForm.TasksList.Width - ScaleX(28);
   UpdatesExplainer.AutoSize := False;
   UpdatesExplainer.WordWrap := True;
@@ -230,6 +232,149 @@ begin
       'This wizard will upgrade ' + '{#MyAppName}' + ' to ' + '{#MyAppVersion}' +
       ' (build ' + '{#MyBuildNumber}' + ').' + #13#10 + #13#10 +
       'It is recommended that you close all other applications before continuing.';
+  end;
+
+  // ── Keep-Alive consent page ──────────────────────────────────────────────
+  // Inserted after wpSelectTasks. Gated by ShouldSkipPage (added in Task 3).
+  KeepAliveConsentPage := CreateCustomPage(
+    wpSelectTasks,
+    'Confirm Keep-Alive Opt-In',
+    'Please read the disclaimer below before enabling Keep-Alive on first launch.'
+  );
+
+  // TODO: per the design spec, a warning icon (imageres.dll index 79 or a
+  // bundled bitmap) should sit to the left of this heading. Deferred — the
+  // bold heading + bold red TOS warning carry enough visual gravity for now.
+
+  // Bold heading
+  KeepAliveConsentHeading := TLabel.Create(WizardForm);
+  KeepAliveConsentHeading.Parent := KeepAliveConsentPage.Surface;
+  KeepAliveConsentHeading.Left := ScaleX(28);
+  KeepAliveConsentHeading.Top := ScaleY(8);
+  KeepAliveConsentHeading.Width := KeepAliveConsentPage.SurfaceWidth - ScaleX(56);
+  KeepAliveConsentHeading.AutoSize := False;
+  KeepAliveConsentHeading.Height := ScaleY(32);
+  KeepAliveConsentHeading.Font.Style := [fsBold];
+  KeepAliveConsentHeading.Font.Size := 14;
+  KeepAliveConsentHeading.Caption := 'Keep-Alive uses automated input.';
+
+  // Disclaimer paragraph (verbatim from the original inline label)
+  KeepAliveConsentDisclaimer := TLabel.Create(WizardForm);
+  KeepAliveConsentDisclaimer.Parent := KeepAliveConsentPage.Surface;
+  KeepAliveConsentDisclaimer.Left := ScaleX(28);
+  KeepAliveConsentDisclaimer.Top := KeepAliveConsentHeading.Top + KeepAliveConsentHeading.Height + ScaleY(8);
+  KeepAliveConsentDisclaimer.Width := KeepAliveConsentPage.SurfaceWidth - ScaleX(56);
+  KeepAliveConsentDisclaimer.AutoSize := False;
+  KeepAliveConsentDisclaimer.WordWrap := True;
+  KeepAliveConsentDisclaimer.Height := ScaleY(48);
+  KeepAliveConsentDisclaimer.Caption :=
+    'Keep-Alive sends a key to your game windows on a timer to prevent the AFK ' +
+    'disconnect. This is input not produced by a live keystroke from you.';
+
+  // TOS warning paragraph (verbatim, bold red)
+  KeepAliveConsentTOS := TLabel.Create(WizardForm);
+  KeepAliveConsentTOS.Parent := KeepAliveConsentPage.Surface;
+  KeepAliveConsentTOS.Left := ScaleX(28);
+  KeepAliveConsentTOS.Top := KeepAliveConsentDisclaimer.Top + KeepAliveConsentDisclaimer.Height + ScaleY(8);
+  KeepAliveConsentTOS.Width := KeepAliveConsentPage.SurfaceWidth - ScaleX(56);
+  KeepAliveConsentTOS.AutoSize := False;
+  KeepAliveConsentTOS.WordWrap := True;
+  KeepAliveConsentTOS.Height := ScaleY(80);
+  KeepAliveConsentTOS.Font.Color := $002020D0;  // BGR: red emphasis
+  KeepAliveConsentTOS.Font.Style := [fsBold];
+  KeepAliveConsentTOS.Caption :=
+    'Toontown Rewritten and Corporate Clash both prohibit input automation in ' +
+    'their Terms of Service. Use is at your own risk and may result in action ' +
+    'against your account. You can turn this off any time in Settings.';
+
+  // Action prompt
+  KeepAliveConsentPrompt := TLabel.Create(WizardForm);
+  KeepAliveConsentPrompt.Parent := KeepAliveConsentPage.Surface;
+  KeepAliveConsentPrompt.Left := ScaleX(28);
+  KeepAliveConsentPrompt.Top := KeepAliveConsentTOS.Top + KeepAliveConsentTOS.Height + ScaleY(24);
+  KeepAliveConsentPrompt.Width := KeepAliveConsentPage.SurfaceWidth - ScaleX(56);
+  KeepAliveConsentPrompt.AutoSize := False;
+  KeepAliveConsentPrompt.Height := ScaleY(24);
+  KeepAliveConsentPrompt.Font.Style := [fsItalic];
+  KeepAliveConsentPrompt.Caption := 'Choose one option below to continue.';
+
+  // ── Locate keepalive in TasksList ────────────────────────────────────────
+  // OnConsentDeclineClick will use this index to programmatically uncheck
+  // the task. Substring match on the displayed caption text — if it fails
+  // (e.g. the [Tasks] description changes upstream), Decline no-ops the
+  // uncheck and the install log gets a warning so it surfaces in QA.
+  KeepAliveTaskIndex := -1;
+  for I := 0 to WizardForm.TasksList.Items.Count - 1 do
+    if Pos('Keep-Alive', WizardForm.TasksList.ItemCaption[I]) > 0 then
+    begin
+      KeepAliveTaskIndex := I;
+      Break;
+    end;
+  if KeepAliveTaskIndex < 0 then
+    Log('WARNING: Keep-Alive task index not found in WizardForm.TasksList. ' +
+        'Decline auto-uncheck will no-op.');
+
+  // ── Consent-page action buttons ──────────────────────────────────────────
+  // Parented to WizardForm (not a page surface) so they live alongside the
+  // wizard's native Next/Back/Cancel button row. Visibility is toggled in
+  // CurPageChanged (Task 5). OnClick is wired in Task 6.
+  BtnConsentDecline := TButton.Create(WizardForm);
+  BtnConsentDecline.Parent  := WizardForm;
+  BtnConsentDecline.Caption := 'Decline';
+  BtnConsentDecline.Default := True;
+  BtnConsentDecline.Visible := False;
+  BtnConsentDecline.Width   := ScaleX(80);
+  BtnConsentDecline.OnClick := @OnConsentDeclineClick;
+
+  BtnConsentAccept := TButton.Create(WizardForm);
+  BtnConsentAccept.Parent  := WizardForm;
+  BtnConsentAccept.Caption := 'I Accept and Enable Keep-Alive';
+  BtnConsentAccept.Visible := False;
+  BtnConsentAccept.Width   := ScaleX(220);
+  BtnConsentAccept.OnClick := @OnConsentAcceptClick;
+end;
+
+procedure OnConsentDeclineClick(Sender: TObject);
+begin
+  if KeepAliveTaskIndex >= 0 then
+    WizardForm.TasksList.Checked[KeepAliveTaskIndex] := False;
+  // Advance via the wizard's standard Next-button click handler so all
+  // existing hooks (validation, ShouldSkipPage on the next page, etc.) fire.
+  WizardForm.NextButton.OnClick(WizardForm.NextButton);
+end;
+
+procedure OnConsentAcceptClick(Sender: TObject);
+begin
+  // Task stays checked. Just advance.
+  WizardForm.NextButton.OnClick(WizardForm.NextButton);
+end;
+
+procedure CurPageChanged(CurPageID: Integer);
+begin
+  if (CurPageID = KeepAliveConsentPage.ID) then
+  begin
+    // Hide the standard Next and reveal our two consent buttons positioned
+    // to the left of the Cancel button.
+    WizardForm.NextButton.Visible := False;
+
+    BtnConsentAccept.Top     := WizardForm.NextButton.Top;
+    BtnConsentAccept.Height  := WizardForm.NextButton.Height;
+    BtnConsentAccept.Left    :=
+      WizardForm.CancelButton.Left - BtnConsentAccept.Width - ScaleX(8);
+    BtnConsentAccept.Visible := True;
+
+    BtnConsentDecline.Top     := WizardForm.NextButton.Top;
+    BtnConsentDecline.Height  := WizardForm.NextButton.Height;
+    BtnConsentDecline.Left    :=
+      BtnConsentAccept.Left - BtnConsentDecline.Width - ScaleX(8);
+    BtnConsentDecline.Visible := True;
+  end
+  else
+  begin
+    // Restore the standard Next on every other page; hide the consent buttons.
+    WizardForm.NextButton.Visible := True;
+    BtnConsentDecline.Visible     := False;
+    BtnConsentAccept.Visible      := False;
   end;
 end;
 
