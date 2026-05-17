@@ -408,6 +408,8 @@ class KeymapTab(QWidget):
         self._scroll_layout.addWidget(self._add_btn, alignment=Qt.AlignHCenter)
         self._scroll_layout.addStretch()
 
+        self._refresh_default_conflict_markers()
+
     def _make_pair(self, index, set_data):
         """Return (header, body, chevron) as independent widgets."""
         bg, text = get_set_color(index)
@@ -669,8 +671,40 @@ class KeymapTab(QWidget):
     def _on_name_changed(self, index, name):
         self.keymap_manager.update_set_name(self._active_game, index, name)
 
+    def _refresh_default_conflict_markers(self):
+        """Recompute conflicts in this game's Default set and paint affected fields red."""
+        if not self._entries:
+            return
+        default_entry = self._entries[0]
+        body = default_entry["body"]
+        has, pairs = self.keymap_manager.has_conflicts(self._active_game, 0)
+        conflicting_actions: set[str] = set()
+        for a, b in pairs:
+            conflicting_actions.add(a)
+            conflicting_actions.add(b)
+        for action in logical_actions.actions_for(self._active_game):
+            field = body.findChild(MovementKeyField, f"key_field_{action}")
+            if field is None:
+                continue
+            in_conflict = action in conflicting_actions
+            field.setProperty("conflict", "true" if in_conflict else "false")
+            field.style().unpolish(field)
+            field.style().polish(field)
+            if in_conflict:
+                others = set()
+                for x, y in pairs:
+                    if x == action:
+                        others.add(y)
+                    elif y == action:
+                        others.add(x)
+                pretty = ", ".join(ACTION_LABELS.get(o, o.title()) for o in sorted(others))
+                field.setToolTip(f"Conflicts with: {pretty}")
+            else:
+                field.setToolTip("")
+
     def _on_key_changed(self, set_index, action, key):
         self.keymap_manager.update_set_key(self._active_game, set_index, action, key)
+        self._refresh_default_conflict_markers()
 
     def _on_add_set(self):
         self.keymap_manager.add_set(self._active_game)
@@ -767,6 +801,10 @@ class KeymapTab(QWidget):
                         background: {set_bg}18;
                         border: 1px solid {set_bg};
                         color: {c['text_muted']};
+                    }}
+                    QLineEdit[conflict="true"] {{
+                        border: 1px solid #d04040;
+                        background: rgba(208, 64, 64, 0.10);
                     }}
                 """)
 
