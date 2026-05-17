@@ -332,6 +332,35 @@ begin
   BtnConsentAccept.Width   := ScaleX(220);
 end;
 
+procedure CurPageChanged(CurPageID: Integer);
+begin
+  if (CurPageID = KeepAliveConsentPage.ID) then
+  begin
+    // Hide the standard Next and reveal our two consent buttons positioned
+    // to the left of the Cancel button.
+    WizardForm.NextButton.Visible := False;
+
+    BtnConsentAccept.Top     := WizardForm.NextButton.Top;
+    BtnConsentAccept.Height  := WizardForm.NextButton.Height;
+    BtnConsentAccept.Left    :=
+      WizardForm.CancelButton.Left - BtnConsentAccept.Width - ScaleX(8);
+    BtnConsentAccept.Visible := True;
+
+    BtnConsentDecline.Top     := WizardForm.NextButton.Top;
+    BtnConsentDecline.Height  := WizardForm.NextButton.Height;
+    BtnConsentDecline.Left    :=
+      BtnConsentAccept.Left - BtnConsentDecline.Width - ScaleX(8);
+    BtnConsentDecline.Visible := True;
+  end
+  else
+  begin
+    // Restore the standard Next on every other page; hide the consent buttons.
+    WizardForm.NextButton.Visible := True;
+    BtnConsentDecline.Visible     := False;
+    BtnConsentAccept.Visible      := False;
+  end;
+end;
+
 var
   ShouldPurgeUserData: Boolean;
 
