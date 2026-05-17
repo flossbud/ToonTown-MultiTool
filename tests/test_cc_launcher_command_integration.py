@@ -136,6 +136,74 @@ def test_steam_proton_verb_switches_to_run_for_second_launch(tmp_path):
     assert "waitforexitandrun" in " ".join(cmd3)
 
 
+def test_launch_sweeps_bridge_for_prefix_before_spawning_proton(tmp_path, monkeypatch):
+    """Regression guard: before spawning Proton, CCLauncher must call
+    wine_input_bridge.shutdown_for_prefix so any stale bridge (from a
+    crashed prior TTMT session, or a CC the user closed without
+    closing TTMT) is torn down. Otherwise Proton's waitforexitandrun
+    blocks in fcntl_setlk waiting for the prefix lock."""
+    import threading
+    from services.cc_launcher import CCLauncher
+    from services.wine_runtimes import WineInstall
+    from utils import wine_input_bridge
+
+    prefix = tmp_path / "pfx"
+    exe = prefix / "drive_c" / "users" / "steamuser" / "AppData" / "Local" / "Corporate Clash" / "CorporateClash.exe"
+    exe.parent.mkdir(parents=True)
+    exe.write_bytes(b"")
+    install = WineInstall(
+        exe_path=str(exe),
+        launcher="steam-proton",
+        prefix_path=str(prefix),
+        display_name="Test",
+        metadata={"appid": "3555655912", "steam_root": str(tmp_path / "steam"), "proton_dir": str(tmp_path / "proton")},
+    )
+
+    sweeps = []
+    monkeypatch.setattr(
+        wine_input_bridge,
+        "shutdown_for_prefix",
+        lambda p: sweeps.append(p),
+    )
+
+    spawn_event = threading.Event()
+
+    class FakeProc:
+        pid = 99999
+        def wait(self):
+            return 0
+
+    def fake_host_popen(*args, **kwargs):
+        spawn_event.set()
+        return FakeProc()
+
+    monkeypatch.setattr("services.cc_launcher.host_popen", fake_host_popen)
+    monkeypatch.setattr("services.cc_launcher._is_trusted", lambda *a, **kw: True)
+    monkeypatch.setattr("services.cc_launcher.resolve_effective_proton", lambda *a, **kw: str(tmp_path / "proton"))
+    monkeypatch.setattr("services.wine_runtimes.is_launcher_available", lambda _l: True)
+    monkeypatch.setattr(
+        "services.wine_runtimes.build_launch_command",
+        lambda install, args, extra_env: (["fake"], dict(extra_env)),
+    )
+    monkeypatch.setattr("services.launcher_env.build_launcher_env", lambda overrides: dict(overrides))
+    monkeypatch.setattr("services.wine_runtimes.register_active_proton_compatdata", lambda _p: None)
+    monkeypatch.setattr("services.wine_runtimes.unregister_active_proton_compatdata", lambda _p: None)
+
+    launcher = CCLauncher(settings_manager=None)
+    launcher.launch(
+        gameserver="gs-test",
+        game_token="t" * 64,
+        install=install,
+        username="u",
+        realm_slug="production",
+    )
+
+    assert spawn_event.wait(timeout=2.0), "fake spawn never ran"
+    # Sweep must have been recorded before host_popen returned (recorded
+    # in module-level list during the same thread as the spawn).
+    assert sweeps == [str(prefix)], f"expected pre-launch sweep, got sweeps={sweeps}"
+
+
 def test_register_unregister_idempotent_and_isolated(tmp_path):
     from services.wine_runtimes import (
         register_active_proton_compatdata,
