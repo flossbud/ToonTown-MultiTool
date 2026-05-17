@@ -209,6 +209,75 @@ def test_launch_sweeps_bridge_for_prefix_before_spawning_proton(tmp_path, monkey
     assert sweeps == [str(prefix)], f"expected exactly one sweep, got {sweeps}"
 
 
+def test_launch_tears_down_bridge_after_cc_exits(qapp, monkeypatch, tmp_path):
+    """When CC exits, CCLauncher must shutdown_for_prefix the install's
+    prefix so the bridge doesn't keep wineserver alive into the next
+    user session. Otherwise the user closes CC, doesn't relaunch
+    immediately, and the prefix is held indefinitely until TTMT itself
+    exits."""
+    import threading
+    from PySide6.QtCore import Qt
+    from services.cc_launcher import CCLauncher
+    from services.wine_runtimes import WineInstall
+    from utils import wine_input_bridge
+
+    prefix = tmp_path / "pfx"
+    exe = prefix / "drive_c" / "users" / "steamuser" / "AppData" / "Local" / "Corporate Clash" / "CorporateClash.exe"
+    exe.parent.mkdir(parents=True)
+    exe.write_bytes(b"")
+    install = WineInstall(
+        exe_path=str(exe),
+        launcher="steam-proton",
+        prefix_path=str(prefix),
+        display_name="Test",
+        metadata={"appid": "3555655912", "steam_root": str(tmp_path / "steam"), "proton_dir": str(tmp_path / "proton")},
+    )
+
+    sweeps = []
+    monkeypatch.setattr(
+        wine_input_bridge,
+        "shutdown_for_prefix",
+        lambda p: sweeps.append(p),
+    )
+
+    exited = threading.Event()
+
+    class FakeProc:
+        pid = 99999
+        def wait(self):
+            return 0
+
+    monkeypatch.setattr("services.cc_launcher.host_popen", lambda *a, **kw: FakeProc())
+    monkeypatch.setattr("services.cc_launcher._is_trusted", lambda *a, **kw: True)
+    monkeypatch.setattr("services.cc_launcher.resolve_effective_proton", lambda *a, **kw: str(tmp_path / "proton"))
+    monkeypatch.setattr("services.wine_runtimes.is_launcher_available", lambda _l: True)
+    monkeypatch.setattr(
+        "services.wine_runtimes.build_launch_command",
+        lambda install, args, extra_env: (["fake"], dict(extra_env)),
+    )
+    monkeypatch.setattr("services.cc_launcher.build_launcher_env", lambda overrides: dict(overrides))
+    monkeypatch.setattr("services.cc_launcher.register_active_proton_compatdata", lambda _p: None)
+    monkeypatch.setattr("services.cc_launcher.unregister_active_proton_compatdata", lambda _p: None)
+
+    launcher = CCLauncher(settings_manager=None)
+    # DirectConnection so the slot fires on the background thread immediately,
+    # without needing the main thread to processEvents.
+    launcher.game_exited.connect(lambda _rc: exited.set(), Qt.DirectConnection)
+    launcher.launch(
+        gameserver="gs-test",
+        game_token="t" * 64,
+        install=install,
+        username="u",
+        realm_slug="production",
+    )
+
+    assert exited.wait(timeout=2.0), "game_exited never fired"
+    # Two sweep calls expected: one pre-launch (Task 2), one post-exit (this task).
+    assert sweeps.count(str(prefix)) == 2, f"expected exactly two sweeps, got {sweeps}"
+    # And they must be exclusively for this prefix.
+    assert all(p == str(prefix) for p in sweeps), f"unexpected prefix in sweeps: {sweeps}"
+
+
 def test_register_unregister_idempotent_and_isolated(tmp_path):
     from services.wine_runtimes import (
         register_active_proton_compatdata,
