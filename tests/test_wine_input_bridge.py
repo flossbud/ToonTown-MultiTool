@@ -114,3 +114,43 @@ def test_shutdown_all_clears_bridges_and_calls_shutdown(monkeypatch):
         assert wib._BRIDGES == {}
     finally:
         wib._BRIDGES.clear()
+
+
+def test_send_to_window_handles_last_window_as_active(monkeypatch):
+    """Regression guard for review item I-2: when the active window is the
+    last sorted index, the Python side sends activeIndex == len(windows)-1.
+    The bridge must accept this without erroring. (The original review
+    flagged a perceived off-by-one in the C# helper's foreground-reorder
+    logic; verification showed List<T>.Insert(Count, item) is legal in
+    C# and equivalent to Add, so the C# code is correct as-is. This test
+    pins the Python-side contract so a future refactor doesn't break it.)"""
+    from utils import wine_input_bridge
+    from utils.game_registry import GameRegistry
+
+    captured = []
+
+    class StubBridge:
+        def send(self, op, index, keysym, active_index):
+            captured.append((op, index, keysym, active_index))
+            return True
+
+    monkeypatch.setattr(wine_input_bridge, "_bridge_for_pid", lambda _pid: StubBridge())
+    monkeypatch.setattr(
+        GameRegistry,
+        "_get_host_pid_for_window_xres",
+        staticmethod(lambda _wid: 12345),
+    )
+    monkeypatch.setattr(
+        wine_input_bridge.x11_discovery,
+        "get_active_window_id",
+        lambda: "win_c",  # active is the last window in the list
+    )
+
+    ok = wine_input_bridge.send_to_window(
+        "win_c",
+        ["win_a", "win_b", "win_c"],
+        "keydown",
+        "w",
+    )
+    assert ok
+    assert captured == [("down", 2, "w", 2)]
