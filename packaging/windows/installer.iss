@@ -324,12 +324,29 @@ begin
   BtnConsentDecline.Default := True;
   BtnConsentDecline.Visible := False;
   BtnConsentDecline.Width   := ScaleX(80);
+  BtnConsentDecline.OnClick := @OnConsentDeclineClick;
 
   BtnConsentAccept := TButton.Create(WizardForm);
   BtnConsentAccept.Parent  := WizardForm;
   BtnConsentAccept.Caption := 'I Accept and Enable Keep-Alive';
   BtnConsentAccept.Visible := False;
   BtnConsentAccept.Width   := ScaleX(220);
+  BtnConsentAccept.OnClick := @OnConsentAcceptClick;
+end;
+
+procedure OnConsentDeclineClick(Sender: TObject);
+begin
+  if KeepAliveTaskIndex >= 0 then
+    WizardForm.TasksList.Checked[KeepAliveTaskIndex] := False;
+  // Advance via the wizard's standard Next-button click handler so all
+  // existing hooks (validation, ShouldSkipPage on the next page, etc.) fire.
+  WizardForm.NextButton.OnClick(WizardForm.NextButton);
+end;
+
+procedure OnConsentAcceptClick(Sender: TObject);
+begin
+  // Task stays checked. Just advance.
+  WizardForm.NextButton.OnClick(WizardForm.NextButton);
 end;
 
 procedure CurPageChanged(CurPageID: Integer);
