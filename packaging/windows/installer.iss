@@ -101,8 +101,7 @@ Filename: "{app}\ToonTownMultiTool.exe"; \
 
 [Code]
 var
-  KeepAliveDisclaimer: TLabel;
-  KeepAliveWarning: TLabel;
+  KeepAliveShortNote: TLabel;
   UpdatesExplainer: TLabel;
 
 function CheckUpdatesFlag(Param: String): String;
@@ -182,39 +181,24 @@ begin
   TasksPage := PageFromID(wpSelectTasks);
   Anchor := WizardForm.TasksList.Top + WizardForm.TasksList.Height + ScaleY(8);
 
-  // Keep-Alive disclaimer paragraphs (immediately under the Keep-Alive checkbox)
-  KeepAliveDisclaimer := TLabel.Create(WizardForm);
-  KeepAliveDisclaimer.Parent := TasksPage.Surface;
-  KeepAliveDisclaimer.Left := ScaleX(28);
-  KeepAliveDisclaimer.Top := Anchor;
-  KeepAliveDisclaimer.Width := WizardForm.TasksList.Width - ScaleX(28);
-  KeepAliveDisclaimer.AutoSize := False;
-  KeepAliveDisclaimer.WordWrap := True;
-  KeepAliveDisclaimer.Height := ScaleY(48);
-  KeepAliveDisclaimer.Caption :=
-    'Keep-Alive sends a key to your game windows on a timer to prevent the AFK ' +
-    'disconnect. This is input not produced by a live keystroke from you.';
-
-  KeepAliveWarning := TLabel.Create(WizardForm);
-  KeepAliveWarning.Parent := TasksPage.Surface;
-  KeepAliveWarning.Left := ScaleX(28);
-  KeepAliveWarning.Top := KeepAliveDisclaimer.Top + KeepAliveDisclaimer.Height + ScaleY(4);
-  KeepAliveWarning.Width := WizardForm.TasksList.Width - ScaleX(28);
-  KeepAliveWarning.AutoSize := False;
-  KeepAliveWarning.WordWrap := True;
-  KeepAliveWarning.Height := ScaleY(64);
-  KeepAliveWarning.Font.Color := $002020D0;  // BGR: red emphasis
-  KeepAliveWarning.Font.Style := [fsBold];   // bold survives high-contrast themes
-  KeepAliveWarning.Caption :=
-    'Toontown Rewritten and Corporate Clash both prohibit input automation in ' +
-    'their Terms of Service. Use is at your own risk and may result in action ' +
-    'against your account. You can turn this off any time in Settings.';
+  // Keep-Alive short note (immediately under the Keep-Alive checkbox)
+  KeepAliveShortNote := TLabel.Create(WizardForm);
+  KeepAliveShortNote.Parent := TasksPage.Surface;
+  KeepAliveShortNote.Left := ScaleX(28);
+  KeepAliveShortNote.Top := Anchor;
+  KeepAliveShortNote.Width := WizardForm.TasksList.Width - ScaleX(28);
+  KeepAliveShortNote.AutoSize := False;
+  KeepAliveShortNote.WordWrap := True;
+  KeepAliveShortNote.Height := ScaleY(36);
+  KeepAliveShortNote.Caption :=
+    'Keep-Alive sends automated input to your game windows. Both TTR and CC ' +
+    'TOS warnings apply - review the details on the next page if you enable it.';
 
   // Updates explainer (under the Updates checkbox)
   UpdatesExplainer := TLabel.Create(WizardForm);
   UpdatesExplainer.Parent := TasksPage.Surface;
   UpdatesExplainer.Left := ScaleX(28);
-  UpdatesExplainer.Top := KeepAliveWarning.Top + KeepAliveWarning.Height + ScaleY(8);
+  UpdatesExplainer.Top := KeepAliveShortNote.Top + KeepAliveShortNote.Height + ScaleY(8);
   UpdatesExplainer.Width := WizardForm.TasksList.Width - ScaleX(28);
   UpdatesExplainer.AutoSize := False;
   UpdatesExplainer.WordWrap := True;
