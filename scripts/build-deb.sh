@@ -19,7 +19,11 @@ OUTDIR="${3:-.}"
 # Debian Version: field must not carry a leading 'v'; the CI 'dev' label is
 # not a valid Debian version, so map it to a clearly-pre-release string.
 DEB_VERSION="${VERSION#v}"
-DEB_VERSION="${DEB_VERSION//-/~}"  # dpkg: tilde sorts pre-release before stable; hyphen would be misread as a revision
+# dpkg: tilde sorts pre-release before stable; hyphen would be misread as a
+# revision. The backslash before the tilde is load-bearing: bash performs
+# tilde expansion on an UNESCAPED `~` in the replacement of ${var//pat/repl},
+# so `${DEB_VERSION//-/~}` produced e.g. `2.3.0/home/runnera1` on CI.
+DEB_VERSION="${DEB_VERSION//-/\~}"
 [ "$DEB_VERSION" = "dev" ] && DEB_VERSION="0.0.0~dev"
 
 STAGE="$(mktemp -d)"
