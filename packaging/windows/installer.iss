@@ -190,6 +190,7 @@ procedure InitializeWizard;
 var
   TasksPage: TWizardPage;
   Anchor: Integer;
+  I: Integer;
 begin
   // Inno's [Tasks] section auto-generates a TasksList on wpSelectTasks.
   // We augment that page with our own labels — they sit in the same panel
@@ -296,6 +297,39 @@ begin
   KeepAliveConsentPrompt.Height := ScaleY(24);
   KeepAliveConsentPrompt.Font.Style := [fsItalic];
   KeepAliveConsentPrompt.Caption := 'Choose one option below to continue.';
+
+  // ── Locate keepalive in TasksList ────────────────────────────────────────
+  // OnConsentDeclineClick will use this index to programmatically uncheck
+  // the task. Substring match on the displayed caption text — if it fails
+  // (e.g. the [Tasks] description changes upstream), Decline no-ops the
+  // uncheck and the install log gets a warning so it surfaces in QA.
+  KeepAliveTaskIndex := -1;
+  for I := 0 to WizardForm.TasksList.Items.Count - 1 do
+    if Pos('Keep-Alive', WizardForm.TasksList.ItemCaption[I]) > 0 then
+    begin
+      KeepAliveTaskIndex := I;
+      Break;
+    end;
+  if KeepAliveTaskIndex < 0 then
+    Log('WARNING: Keep-Alive task index not found in WizardForm.TasksList. ' +
+        'Decline auto-uncheck will no-op.');
+
+  // ── Consent-page action buttons ──────────────────────────────────────────
+  // Parented to WizardForm (not a page surface) so they live alongside the
+  // wizard's native Next/Back/Cancel button row. Visibility is toggled in
+  // CurPageChanged (Task 5). OnClick is wired in Task 6.
+  BtnConsentDecline := TButton.Create(WizardForm);
+  BtnConsentDecline.Parent  := WizardForm;
+  BtnConsentDecline.Caption := 'Decline';
+  BtnConsentDecline.Default := True;
+  BtnConsentDecline.Visible := False;
+  BtnConsentDecline.Width   := ScaleX(80);
+
+  BtnConsentAccept := TButton.Create(WizardForm);
+  BtnConsentAccept.Parent  := WizardForm;
+  BtnConsentAccept.Caption := 'I Accept and Enable Keep-Alive';
+  BtnConsentAccept.Visible := False;
+  BtnConsentAccept.Width   := ScaleX(220);
 end;
 
 var
