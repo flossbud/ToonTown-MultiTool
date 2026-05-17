@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 import os
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 
@@ -55,8 +55,10 @@ def locate_cc_preferences(install) -> Path | None:
 
 def parse_cc_preferences(path: Path) -> CcSettings:
     data = json.loads(Path(path).read_text())
+    raw_keymap = data.get("keymap")
+    keymap = dict(raw_keymap) if isinstance(raw_keymap, dict) else {}
     return CcSettings(
-        keymap=dict(data.get("keymap") or {}),
+        keymap=keymap,
         want_custom_controls=bool(data.get("want-Custom-Controls", False)),
         source_path=Path(path),
     )

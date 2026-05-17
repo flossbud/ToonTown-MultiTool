@@ -5,8 +5,6 @@ import os
 from pathlib import Path
 from types import SimpleNamespace
 
-import pytest
-
 from utils.cc_settings import (
     locate_cc_preferences, parse_cc_preferences, CcSettings,
 )
@@ -69,4 +67,16 @@ class TestParseCcPreferences:
         p.write_text("{}")
         s = parse_cc_preferences(p)
         assert s.want_custom_controls is False
+        assert s.keymap == {}
+
+    def test_non_dict_keymap_falls_back_to_empty(self, tmp_path):
+        p = tmp_path / "preferences.json"
+        p.write_text(json.dumps({"keymap": [1, 2, 3]}))  # malformed: list instead of dict
+        s = parse_cc_preferences(p)
+        assert s.keymap == {}
+
+    def test_string_keymap_falls_back_to_empty(self, tmp_path):
+        p = tmp_path / "preferences.json"
+        p.write_text(json.dumps({"keymap": "broken"}))
+        s = parse_cc_preferences(p)
         assert s.keymap == {}
