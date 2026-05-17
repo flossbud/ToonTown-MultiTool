@@ -189,10 +189,11 @@ begin
   KeepAliveShortNote.Width := WizardForm.TasksList.Width - ScaleX(28);
   KeepAliveShortNote.AutoSize := False;
   KeepAliveShortNote.WordWrap := True;
-  KeepAliveShortNote.Height := ScaleY(36);
+  KeepAliveShortNote.Height := ScaleY(48);
   KeepAliveShortNote.Caption :=
     'Keep-Alive sends automated input to your game windows. Both TTR and CC ' +
-    'TOS warnings apply - review the details on the next page if you enable it.';
+    'Terms-of-Service warnings apply. Review the details on the next page ' +
+    'if you enable this option.';
 
   // Updates explainer (under the Updates checkbox)
   UpdatesExplainer := TLabel.Create(WizardForm);
