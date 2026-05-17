@@ -41,6 +41,17 @@ and UI sections below on each desktop environment:
 ## Exit
 - [ ] App exits cleanly with no orphan processes
 
+## Windows installer — Keep-Alive consent page
+
+A new wizard page appears between Tasks and Ready when the Keep-Alive checkbox is checked on the Tasks page. Manual checks per fresh installer run:
+
+- [ ] **No-opt-in path**: Tasks page → leave Keep-Alive unchecked → Next → Ready (consent page is NOT shown). Install completes. After install, `%APPDATA%\toontown_multitool\settings.json` does NOT contain `keep_alive_consent_acknowledged`.
+- [ ] **Accept path**: Tasks page → check Keep-Alive → Next → consent page renders with bold heading, full disclaimer, red TOS warning, italic prompt. Click "I Accept and Enable Keep-Alive" → Ready. After install, `settings.json` contains all four consent keys (`keep_alive_enabled=true`, `keep_alive_consent_acknowledged=true`, `keep_alive_consent_source="installer"`, `keep_alive_consent_version=1`).
+- [ ] **Decline path**: Tasks page → check Keep-Alive → Next → consent page → click "Decline" → Ready. The Keep-Alive checkbox is now unchecked (verify by clicking Back to Tasks). After install, `settings.json` does NOT contain the consent keys.
+- [ ] **Back-from-Ready re-entry**: Accept path → on Ready, click Back → consent page re-renders. Click Decline this time → Ready. Click Back twice → Tasks page shows Keep-Alive unchecked.
+- [ ] **Silent install with opt-in**: `installer.exe /TASKS=keepalive /VERYSILENT` → no UI → install completes → `settings.json` contains the consent keys.
+- [ ] **Silent install without `/TASKS`**: `installer.exe /VERYSILENT` → install completes → `settings.json` does NOT contain consent keys (`keepalive` defaults to unchecked).
+
 ## v2.1.3-a regression checks
 Targeted repros for the seven in-scope fixes from the v2.1.3 beta report.
 
