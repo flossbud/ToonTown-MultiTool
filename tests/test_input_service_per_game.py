@@ -154,3 +154,13 @@ class TestSendLogicalActionKm:
         svc.global_chat_active = True
         svc._send_logical_action_km("keydown", "w", [True, True], [0, 0])
         assert sent == []
+
+    def test_unclassified_window_falls_back_to_ttr(self, monkeypatch, tmp_path):
+        svc, km, sent = self._setup_with_two_toons(monkeypatch, tmp_path,
+                                                   toon0_game=None, toon1_game="ttr",
+                                                   fg_game="ttr")
+        # Toon 0's window is unclassified; should still receive input as if TTR.
+        svc._send_logical_action_km("keydown", "w", [True, True], [0, 0])
+        sent_wids = {s[1] for s in sent}
+        assert "bg-0" in sent_wids
+        assert "bg-1" in sent_wids

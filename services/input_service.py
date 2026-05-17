@@ -221,7 +221,7 @@ class InputService(QObject):
                 continue
             toon_game = registry.get_game_for_window(str(win))
             if toon_game is None:
-                continue
+                toon_game = "ttr"  # Windows fallback: TTMT pre-dates CC support and TTR is the safe default
             if not logical_actions.supports(toon_game, logical):
                 continue
             set_idx = assignments[i] if i < len(assignments) else 0
@@ -715,7 +715,9 @@ class InputService(QObject):
                 if win == active_window:
                     continue
                 toon_game = registry.get_game_for_window(str(win))
-                if toon_game is None or not logical_actions.supports(toon_game, logical):
+                if toon_game is None:
+                    toon_game = "ttr"  # Windows fallback: TTMT pre-dates CC support and TTR is the safe default
+                if not logical_actions.supports(toon_game, logical):
                     continue
                 set_idx = assignments[i] if i < len(assignments) else 0
                 outbound = self.keymap_manager.get_key_for_action(toon_game, set_idx, logical)

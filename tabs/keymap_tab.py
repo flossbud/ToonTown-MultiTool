@@ -342,8 +342,15 @@ class KeymapTab(QWidget):
         self._scroll.setWidget(scroll_inner)
         outer.addWidget(self._scroll)
 
-        self._active_game: str = "ttr"
+        # Scope to the first detected game; default to TTR if neither or both are detected.
+        if self._cc_detected() and not self._ttr_detected():
+            self._active_game: str = "cc"
+        else:
+            self._active_game: str = "ttr"
         self._segmented = None
+        # Detection is intentionally cached at construction. Live re-evaluation on
+        # settings_manager.on_change is queued as a v2 followup; users currently
+        # need to restart TTMT after adding a game install path in Settings.
         self._show_segmented = self._both_games_detected()
         if self._show_segmented:
             self._segmented = self._build_segmented_control()
