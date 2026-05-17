@@ -127,6 +127,7 @@ def test_apply_ttr_controls_to_set_translates_arrows_and_control():
     }
     n = apply_ttr_controls_to_set(km, 0, controls)
     assert n == 5
+    assert all(call[0] == "ttr" for call in km.calls)
     by_action = {action: k for (_, _, action, k) in km.calls}
     assert by_action["forward"] == "Up"
     assert by_action["reverse"] == "Down"
@@ -140,6 +141,7 @@ def test_apply_ttr_controls_to_set_passes_through_letter_hotkeys():
     km = _FakeKeymapManager()
     n = apply_ttr_controls_to_set(km, 0, {"forward": "w", "reverse": "s"})
     assert n == 2
+    assert all(call[0] == "ttr" for call in km.calls)
     by_action = {action: k for (_, _, action, k) in km.calls}
     assert by_action["forward"] == "w"
     assert by_action["reverse"] == "s"
@@ -180,6 +182,7 @@ def test_apply_ttr_controls_to_set_translates_default_arrow_aliases():
     }
     n = apply_ttr_controls_to_set(km, 0, controls)
     assert n == 5
+    assert all(call[0] == "ttr" for call in km.calls)
     by_action = {action: k for (_, _, action, k) in km.calls}
     assert by_action["forward"] == "Up", f"forward=arrow_up must translate to Up keysym, got {by_action['forward']!r}"
     assert by_action["reverse"] == "Down"
@@ -202,6 +205,7 @@ def test_apply_ttr_controls_to_set_translates_nav_cluster_and_f_keys():
     }
     n = apply_ttr_controls_to_set(km, 0, controls)
     assert n == 4
+    assert all(call[0] == "ttr" for call in km.calls)
     by_action = {action: k for (_, _, action, k) in km.calls}
     assert by_action["book"] == "F8", f"f8 must translate to F8 keysym, got {by_action['book']!r}"
     assert by_action["gags"] == "Home"
@@ -228,6 +232,7 @@ def test_apply_ttr_controls_to_set_translates_insert_and_other_function_keys():
     km = _FakeKeymapManager()
     controls = {"jump": "insert", "stickerBook": "f12"}
     n = apply_ttr_controls_to_set(km, 0, controls)
+    assert all(call[0] == "ttr" for call in km.calls)
     by_action = {action: k for (_, _, action, k) in km.calls}
     assert by_action["jump"] == "Insert"
     assert by_action["book"] == "F12"
