@@ -800,3 +800,39 @@ class KeymapTab(QWidget):
                     border: 1px solid {c['accent_blue_btn_border']};
                 }}
             """)
+
+        # Segmented control (visible only when both games are detected)
+        if getattr(self, "_segmented", None) is not None:
+            self._segmented.setStyleSheet(f"""
+                QFrame#keymap_segmented_wrap {{
+                    background: transparent;
+                    border: none;
+                }}
+                QFrame#keymap_segmented_wrap QPushButton {{
+                    background: {c['bg_card_inner']};
+                    color: {c['text_secondary']};
+                    border: 1px solid {c['border_muted']};
+                    border-radius: 0;
+                    font-weight: 600;
+                    font-size: 12px;
+                    padding: 4px 0;
+                }}
+                QFrame#keymap_segmented_wrap QPushButton:first-child {{
+                    border-top-left-radius: 8px;
+                    border-bottom-left-radius: 8px;
+                    border-right: none;
+                }}
+                QFrame#keymap_segmented_wrap QPushButton:last-child {{
+                    border-top-right-radius: 8px;
+                    border-bottom-right-radius: 8px;
+                }}
+                QFrame#keymap_segmented_wrap QPushButton:hover {{
+                    background: {c['bg_input']};
+                    color: {c['text_primary']};
+                }}
+                QFrame#keymap_segmented_wrap QPushButton:checked {{
+                    background: {c['accent_blue_btn']};
+                    color: {c['text_on_accent']};
+                    border-color: {c['accent_blue_btn_border']};
+                }}
+            """)
