@@ -44,6 +44,13 @@ jobs:
 
       - name: Write build info
         run: |
+          # actions/checkout@v4 adds the workspace as safe.directory in a
+          # temporary HOME that gets discarded; subsequent in-container git
+          # calls run with a fresh HOME and trip CVE-2022-24765's
+          # dubious-ownership check (workspace is bind-mounted from the host
+          # at a different UID). Re-add the exception here so git rev-list
+          # works regardless of HOME state.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           BUILD_NUMBER=$(git rev-list --count HEAD)
           BUILD_SHA=$(git rev-parse --short HEAD)
           BUILD_DATE=$(date -u +%Y%m%d)
@@ -106,6 +113,8 @@ jobs:
 
       - name: Write build info
         run: |
+          # See build-appimage's Write build info step for why this is needed.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           BUILD_NUMBER=$(git rev-list --count HEAD)
           BUILD_SHA=$(git rev-parse --short HEAD)
           BUILD_DATE=$(date -u +%Y%m%d)
