@@ -101,8 +101,16 @@ Filename: "{app}\ToonTownMultiTool.exe"; \
 
 [Code]
 var
-  KeepAliveShortNote: TLabel;
-  UpdatesExplainer: TLabel;
+  KeepAliveShortNote:          TLabel;
+  UpdatesExplainer:            TLabel;
+  KeepAliveConsentPage:        TWizardPage;
+  KeepAliveConsentHeading:     TLabel;
+  KeepAliveConsentDisclaimer:  TLabel;
+  KeepAliveConsentTOS:         TLabel;
+  KeepAliveConsentPrompt:      TLabel;
+  KeepAliveTaskIndex:          Integer;
+  BtnConsentDecline:           TButton;
+  BtnConsentAccept:            TButton;
 
 function CheckUpdatesFlag(Param: String): String;
 begin
@@ -216,6 +224,66 @@ begin
       ' (build ' + '{#MyBuildNumber}' + ').' + #13#10 + #13#10 +
       'It is recommended that you close all other applications before continuing.';
   end;
+
+  // ── Keep-Alive consent page ──────────────────────────────────────────────
+  // Inserted after wpSelectTasks. Gated by ShouldSkipPage (added in Task 3).
+  KeepAliveConsentPage := CreateCustomPage(
+    wpSelectTasks,
+    'Confirm Keep-Alive Opt-In',
+    'Please read the disclaimer below before enabling Keep-Alive on first launch.'
+  );
+
+  // Bold heading
+  KeepAliveConsentHeading := TLabel.Create(WizardForm);
+  KeepAliveConsentHeading.Parent := KeepAliveConsentPage.Surface;
+  KeepAliveConsentHeading.Left := ScaleX(28);
+  KeepAliveConsentHeading.Top := ScaleY(8);
+  KeepAliveConsentHeading.Width := KeepAliveConsentPage.SurfaceWidth - ScaleX(56);
+  KeepAliveConsentHeading.AutoSize := False;
+  KeepAliveConsentHeading.Height := ScaleY(28);
+  KeepAliveConsentHeading.Font.Style := [fsBold];
+  KeepAliveConsentHeading.Font.Size := 11;
+  KeepAliveConsentHeading.Caption := 'Keep-Alive uses automated input.';
+
+  // Disclaimer paragraph (verbatim from the original inline label)
+  KeepAliveConsentDisclaimer := TLabel.Create(WizardForm);
+  KeepAliveConsentDisclaimer.Parent := KeepAliveConsentPage.Surface;
+  KeepAliveConsentDisclaimer.Left := ScaleX(28);
+  KeepAliveConsentDisclaimer.Top := KeepAliveConsentHeading.Top + KeepAliveConsentHeading.Height + ScaleY(8);
+  KeepAliveConsentDisclaimer.Width := KeepAliveConsentPage.SurfaceWidth - ScaleX(56);
+  KeepAliveConsentDisclaimer.AutoSize := False;
+  KeepAliveConsentDisclaimer.WordWrap := True;
+  KeepAliveConsentDisclaimer.Height := ScaleY(48);
+  KeepAliveConsentDisclaimer.Caption :=
+    'Keep-Alive sends a key to your game windows on a timer to prevent the AFK ' +
+    'disconnect. This is input not produced by a live keystroke from you.';
+
+  // TOS warning paragraph (verbatim, bold red)
+  KeepAliveConsentTOS := TLabel.Create(WizardForm);
+  KeepAliveConsentTOS.Parent := KeepAliveConsentPage.Surface;
+  KeepAliveConsentTOS.Left := ScaleX(28);
+  KeepAliveConsentTOS.Top := KeepAliveConsentDisclaimer.Top + KeepAliveConsentDisclaimer.Height + ScaleY(8);
+  KeepAliveConsentTOS.Width := KeepAliveConsentPage.SurfaceWidth - ScaleX(56);
+  KeepAliveConsentTOS.AutoSize := False;
+  KeepAliveConsentTOS.WordWrap := True;
+  KeepAliveConsentTOS.Height := ScaleY(80);
+  KeepAliveConsentTOS.Font.Color := $002020D0;  // BGR: red emphasis
+  KeepAliveConsentTOS.Font.Style := [fsBold];
+  KeepAliveConsentTOS.Caption :=
+    'Toontown Rewritten and Corporate Clash both prohibit input automation in ' +
+    'their Terms of Service. Use is at your own risk and may result in action ' +
+    'against your account. You can turn this off any time in Settings.';
+
+  // Action prompt
+  KeepAliveConsentPrompt := TLabel.Create(WizardForm);
+  KeepAliveConsentPrompt.Parent := KeepAliveConsentPage.Surface;
+  KeepAliveConsentPrompt.Left := ScaleX(28);
+  KeepAliveConsentPrompt.Top := KeepAliveConsentTOS.Top + KeepAliveConsentTOS.Height + ScaleY(24);
+  KeepAliveConsentPrompt.Width := KeepAliveConsentPage.SurfaceWidth - ScaleX(56);
+  KeepAliveConsentPrompt.AutoSize := False;
+  KeepAliveConsentPrompt.Height := ScaleY(24);
+  KeepAliveConsentPrompt.Font.Style := [fsItalic];
+  KeepAliveConsentPrompt.Caption := 'Choose one option below to continue.';
 end;
 
 var
