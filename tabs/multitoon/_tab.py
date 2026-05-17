@@ -433,6 +433,7 @@ class SetSelectorWidget(QWidget):
         self._display_text = "Default"
         self._hover_zone = None  # "left", "right", or None
         self._paint_scale = 1.0
+        self._toon_game: str | None = None  # set by parent tab via set_toon_game()
 
         self.setFixedHeight(32)
         self.setMinimumWidth(130)
@@ -571,7 +572,7 @@ class SetSelectorWidget(QWidget):
 
     def _count(self):
         if self.keymap_manager:
-            return len(self.keymap_manager.get_set_names())
+            return len(self.keymap_manager.get_set_names(self._toon_game or "ttr"))
         return 1
 
     def _prev(self):
@@ -601,7 +602,7 @@ class SetSelectorWidget(QWidget):
 
     def currentText(self) -> str:
         if self.keymap_manager:
-            names = self.keymap_manager.get_set_names()
+            names = self.keymap_manager.get_set_names(self._toon_game or "ttr")
             if self._index < len(names):
                 return names[self._index]
         return ""
@@ -611,7 +612,7 @@ class SetSelectorWidget(QWidget):
 
     def findText(self, text: str) -> int:
         if self.keymap_manager:
-            names = self.keymap_manager.get_set_names()
+            names = self.keymap_manager.get_set_names(self._toon_game or "ttr")
             for i, name in enumerate(names):
                 if name == text:
                     return i
@@ -628,10 +629,31 @@ class SetSelectorWidget(QWidget):
         self._refresh_display()
 
     def _refresh_display(self):
-        names = self.keymap_manager.get_set_names() if self.keymap_manager else ["Default"]
+        names = self.keymap_manager.get_set_names(self._toon_game or "ttr") if self.keymap_manager else ["Default"]
         name = names[self._index] if self._index < len(names) else "Default"
         self._display_text = name
         self.apply_colors()
+
+    def set_toon_game(self, game: str | None):
+        """Update which game this toon's set list comes from."""
+        if game == self._toon_game:
+            return
+        self._toon_game = game
+        self._rebuild_for_game()
+
+    def _rebuild_for_game(self):
+        """Re-fetch the set names from KeymapManager scoped to the current game,
+        and clamp the selected index if the list shrank."""
+        game = self._toon_game or "ttr"
+        names = self.keymap_manager.get_set_names(game) if self.keymap_manager else ["Default"]
+        prev = self.currentIndex()
+        if prev >= len(names):
+            prev = 0
+        if self.currentIndex() != prev:
+            self.setCurrentIndex(prev)
+        else:
+            self._refresh_display()
+        self.update()  # repaint
 
     def apply_colors(self, theme_colors=None):
         bg, text = get_set_color(self._index)
@@ -880,6 +902,10 @@ class MultitoonTab(QWidget):
             selector.setToolTip("Movement set for this toon")
             selector.index_changed.connect(lambda _, idx=i: self._autosave_active_profile())
             self.set_selectors.append(selector)
+
+        # Initial classification — `apply_visual_state` will update as windows resolve.
+        for sel in self.set_selectors:
+            sel.set_toon_game(None)
 
     def build_ui(self):
         from tabs.multitoon._compact_layout import _CompactLayout
@@ -1331,6 +1357,9 @@ class MultitoonTab(QWidget):
                 self.game_badges[index].hide()
             if self._mode == "full" and hasattr(self, "_full") and index < len(self._full._cards):
                 self._full._cards[index]._apply_game_pill_style()
+            # Keep this toon's set selector scoped to its game's set list.
+            if hasattr(self, "set_selectors") and index < len(self.set_selectors):
+                self.set_selectors[index].set_toon_game(game_tag)
         else:
             self.game_badges[index].hide()
 
