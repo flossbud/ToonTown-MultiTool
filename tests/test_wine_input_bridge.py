@@ -94,3 +94,23 @@ def test_input_service_uses_bridge_for_cc_before_xlib(monkeypatch):
     svc._send_via_backend("keydown", "cc-2", "w")
 
     assert calls == [("cc-2", ["cc-1", "cc-2"], "keydown", "w", None)]
+
+
+def test_shutdown_all_clears_bridges_and_calls_shutdown(monkeypatch):
+    from utils import wine_input_bridge as wib
+
+    class FakeBridge:
+        def __init__(self):
+            self.shutdown_called = False
+        def shutdown(self):
+            self.shutdown_called = True
+
+    a, b = FakeBridge(), FakeBridge()
+    wib._BRIDGES["/prefix/a"] = a
+    wib._BRIDGES["/prefix/b"] = b
+    try:
+        wib.shutdown_all()
+        assert a.shutdown_called and b.shutdown_called
+        assert wib._BRIDGES == {}
+    finally:
+        wib._BRIDGES.clear()

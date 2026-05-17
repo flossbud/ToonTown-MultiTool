@@ -171,6 +171,11 @@ class InputService(QObject):
     def shutdown(self):
         """Call once on app exit to clean up the Xlib connection."""
         self.stop(wait=True)
+        try:
+            from utils import wine_input_bridge
+            wine_input_bridge.shutdown_all()
+        except Exception as e:
+            print(f"[InputService] wine_input_bridge shutdown error: {e}")
         if self._xlib:
             self._xlib.disconnect()
             self._xlib = None

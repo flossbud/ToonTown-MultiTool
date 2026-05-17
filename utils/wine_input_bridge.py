@@ -26,6 +26,18 @@ _BRIDGES_LOCK = threading.Lock()
 _BAD_PREFIXES: set[str] = set()
 
 
+def shutdown_all() -> None:
+    """Tear down every active bridge. Idempotent; safe to call on app exit."""
+    with _BRIDGES_LOCK:
+        bridges = list(_BRIDGES.values())
+        _BRIDGES.clear()
+    for bridge in bridges:
+        try:
+            bridge.shutdown()
+        except Exception as e:
+            print(f"[wine_input_bridge] shutdown error: {e}")
+
+
 def send_to_window(win_id: str, window_ids: list[str], action: str, keysym: str, modifiers=None) -> bool:
     """Send one key action to a CC window via the Wine helper.
 
@@ -110,12 +122,14 @@ def _bridge_for_pid(pid: int) -> "WineInputBridge | None":
             proton_dir = _proton_dir_for_pid(pid, env)
             if proton_dir is None:
                 _BAD_PREFIXES.add(key)
+                print(f"[wine_input_bridge] could not resolve Proton dir for pid={pid}; bridge disabled for prefix={key}")
                 return None
             bridge = WineInputBridge(prefix=key, proton_dir=proton_dir, env=env)
             _BRIDGES[key] = bridge
 
     if not bridge.ensure_running():
         _BAD_PREFIXES.add(key)
+        print(f"[wine_input_bridge] bridge unavailable for prefix={key}; falling back to Xlib for all future CC keys")
         return None
     return bridge
 
@@ -215,10 +229,37 @@ class WineInputBridge:
             return None
         return data.decode("utf-8", "replace").strip()
 
+    def shutdown(self) -> None:
+        """Best-effort: ask the helper to quit, then ensure the process is gone."""
+        try:
+            self._request("quit", timeout=0.5)
+        except Exception:
+            pass
+        proc = self._process
+        self._process = None
+        if proc is None:
+            return
+        try:
+            if proc.poll() is None:
+                try:
+                    proc.wait(timeout=1.0)
+                except subprocess.TimeoutExpired:
+                    try:
+                        proc.terminate()
+                        proc.wait(timeout=0.5)
+                    except (OSError, subprocess.TimeoutExpired):
+                        try:
+                            proc.kill()
+                        except OSError:
+                            pass
+        except OSError:
+            pass
+
     def _ensure_compiled(self) -> bool:
         exe = self.exe_path
         source = _resource_path("tools", "wine_input_bridge", "TTMTWineInputBridge.cs")
         if not source.exists():
+            print(f"[wine_input_bridge] C# source not found at {source}; bridge unavailable")
             return False
         if exe.exists() and exe.stat().st_mtime >= source.stat().st_mtime:
             return True
@@ -240,6 +281,14 @@ class WineInputBridge:
                 stderr=subprocess.DEVNULL,
                 timeout=30,
             )
-        except (OSError, subprocess.TimeoutExpired):
+        except (OSError, subprocess.TimeoutExpired) as e:
+            print(f"[wine_input_bridge] csc compile failed for prefix={self.prefix}: {e}")
             return False
-        return result.returncode == 0 and exe.exists()
+        if result.returncode != 0 or not exe.exists():
+            print(
+                f"[wine_input_bridge] csc compile non-zero (rc={result.returncode}) "
+                f"or missing output for prefix={self.prefix}; "
+                f"wine-mono may be absent or csc.exe path wrong"
+            )
+            return False
+        return True
