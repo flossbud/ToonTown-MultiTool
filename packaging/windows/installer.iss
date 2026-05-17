@@ -233,6 +233,10 @@ begin
     'Please read the disclaimer below before enabling Keep-Alive on first launch.'
   );
 
+  // TODO: per the design spec, a warning icon (imageres.dll index 79 or a
+  // bundled bitmap) should sit to the left of this heading. Deferred — the
+  // bold heading + bold red TOS warning carry enough visual gravity for now.
+
   // Bold heading
   KeepAliveConsentHeading := TLabel.Create(WizardForm);
   KeepAliveConsentHeading.Parent := KeepAliveConsentPage.Surface;
@@ -240,9 +244,9 @@ begin
   KeepAliveConsentHeading.Top := ScaleY(8);
   KeepAliveConsentHeading.Width := KeepAliveConsentPage.SurfaceWidth - ScaleX(56);
   KeepAliveConsentHeading.AutoSize := False;
-  KeepAliveConsentHeading.Height := ScaleY(28);
+  KeepAliveConsentHeading.Height := ScaleY(32);
   KeepAliveConsentHeading.Font.Style := [fsBold];
-  KeepAliveConsentHeading.Font.Size := 11;
+  KeepAliveConsentHeading.Font.Size := 14;
   KeepAliveConsentHeading.Caption := 'Keep-Alive uses automated input.';
 
   // Disclaimer paragraph (verbatim from the original inline label)
