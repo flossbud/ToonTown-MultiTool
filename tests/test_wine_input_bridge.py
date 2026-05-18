@@ -436,3 +436,20 @@ def test_wine_bin_for_pid_unknown_layout_returns_none(monkeypatch):
     monkeypatch.setattr(wib.os, "readlink", lambda p: "/usr/bin/firefox")
     result = wib._wine_bin_for_pid(99999, {})
     assert result is None
+
+
+def test_wine_bin_for_pid_proton_winedllpath_fallback(monkeypatch):
+    """When /proc/<pid>/exe lookup fails (e.g. no readlink permission) but
+    WINEDLLPATH points at a Proton install, _wine_bin_for_pid must fall
+    back to the env var and still return the proton bin/wine path."""
+    from utils import wine_input_bridge as wib
+
+    def _raise(_path):
+        raise OSError("no permission")
+
+    monkeypatch.setattr(wib.os, "readlink", _raise)
+
+    proton_root = "/opt/proton-9"
+    winedll = f"{proton_root}/files/lib/wine:/some/other/lib"
+    result = wib._wine_bin_for_pid(99999, {"WINEDLLPATH": winedll})
+    assert result == f"{proton_root}/files/bin/wine"

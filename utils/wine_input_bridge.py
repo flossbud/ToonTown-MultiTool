@@ -222,9 +222,9 @@ def _read_process_env(pid: int) -> dict[str, str]:
 
 
 # Wine preloader executable basenames that identify a plain-wine
-# (non-Proton) game process. Mirrors utils.game_registry._KNOWN_WINE_HELPERS
-# but is kept independent because game_registry is a runtime singleton with
-# heavy import side effects.
+# (non-Proton) game process. Intentionally duplicated from
+# utils.game_registry._KNOWN_WINE_HELPERS to avoid coupling this
+# bridge module to the GameRegistry singleton over a two-element set.
 _PLAIN_WINE_PRELOADERS = {"wine-preloader", "wine64-preloader"}
 
 
