@@ -228,7 +228,7 @@ def test_bad_prefix_cooldown_allows_retry_after_expiry(monkeypatch):
     try:
         # Old entry: cooldown has expired. _bridge_for_pid should
         # pop the entry and re-attempt setup. We patch the next gate
-        # (_proton_dir_for_pid) so it falls through and re-adds the entry
+        # (_wine_bin_for_pid) so it falls through and re-adds the entry
         # with a new timestamp.
         monkeypatch.setattr(wib, "_read_process_env", lambda _pid: {"WINEPREFIX": "/prefix/old"})
         monkeypatch.setattr(wib, "_wine_bin_for_pid", lambda _pid, _env: None)
@@ -238,7 +238,7 @@ def test_bad_prefix_cooldown_allows_retry_after_expiry(monkeypatch):
         assert wib._BAD_PREFIXES["/prefix/old"] == fake_now[0]
 
         # Fresh entry: still within cooldown. Must short-circuit BEFORE
-        # _proton_dir_for_pid is consulted.
+        # _wine_bin_for_pid is consulted.
         monkeypatch.setattr(wib, "_read_process_env", lambda _pid: {"WINEPREFIX": "/prefix/fresh"})
         wine_bin_calls = []
         monkeypatch.setattr(
