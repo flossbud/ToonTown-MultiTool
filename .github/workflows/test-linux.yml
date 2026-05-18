@@ -301,7 +301,13 @@ jobs:
 
       - name: Launch-test the installed AUR package
         run: |
+          # The previous awk pattern '/usr/bin/' matched BOTH the directory
+          # entry '/usr/bin/' AND the binary '/usr/bin/<pkg>' that pacman -Ql
+          # lists. head -1 then picked the directory and xvfb-run died with
+          # 'Is a directory'. Require at least one non-slash char after
+          # /usr/bin/ and no trailing slash so only the actual executable
+          # is picked.
           BIN=$(pacman -Ql "${{ steps.aur.outputs.pkg }}" \
-            | awk '$2 ~ "/usr/bin/" {print $2}' | head -1)
+            | awk '$2 ~ /^\/usr\/bin\/[^/]+$/ {print $2}' | head -1)
           [ -n "$BIN" ] || { echo "no /usr/bin entry found for ${{ steps.aur.outputs.pkg }}"; exit 1; }
           xvfb-run -a "$BIN" --self-check

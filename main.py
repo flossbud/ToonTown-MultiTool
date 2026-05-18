@@ -3,11 +3,16 @@ from __future__ import annotations
 import os
 import sys
 
-# Upper bound mirrors the PySide6 ceiling in requirements.txt (no 3.14+
-# wheels for PySide6 6.8.x). When that ceiling moves, bump (3, 14) here.
-if not (3, 9) <= sys.version_info[:2] < (3, 14):
+# Upper bound was previously (3, 14) to mirror the PySide6 6.8.x wheel
+# ceiling for pip-installed source runs. Bumped to (3, 15) once
+# archlinux:latest started shipping Python 3.14 by default: the AUR
+# install path uses the system pyside6 (currently 6.10+) which is built
+# for whichever Python Arch ships, so the cap was overly defensive there.
+# Self-check verified on 3.14 + PySide6 6.10.2. Source-from-git pip users
+# on 3.14 may still need to upgrade the PySide6 pin in requirements.txt.
+if not (3, 9) <= sys.version_info[:2] < (3, 15):
     sys.stderr.write(
-        "ToonTown MultiTool requires Python 3.9-3.13. "
+        "ToonTown MultiTool requires Python 3.9-3.14. "
         f"Detected {sys.version.split()[0]}. "
         "See the 'Run from source' section in README.md for setup.\n"
     )
