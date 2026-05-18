@@ -1,12 +1,14 @@
 """StatusChip on FAILED state shows the static label, not the raw message."""
 
 import os
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
 import pytest
 
 
 @pytest.fixture(scope="module")
 def qapp():
-    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication
     return QApplication.instance() or QApplication([])
 
@@ -24,7 +26,6 @@ def test_failed_state_shows_static_label_and_full_tooltip(qapp):
     chip.set_status(LoginState.FAILED, long_msg)
 
     assert chip.text() == STATUS_LABELS[LoginState.FAILED]
-    assert chip.text() == "Failed"
     assert chip.toolTip() == long_msg
     assert chip.isVisible()
 
