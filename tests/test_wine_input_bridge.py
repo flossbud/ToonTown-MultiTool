@@ -231,7 +231,7 @@ def test_bad_prefix_cooldown_allows_retry_after_expiry(monkeypatch):
         # (_proton_dir_for_pid) so it falls through and re-adds the entry
         # with a new timestamp.
         monkeypatch.setattr(wib, "_read_process_env", lambda _pid: {"WINEPREFIX": "/prefix/old"})
-        monkeypatch.setattr(wib, "_proton_dir_for_pid", lambda _pid, _env: None)
+        monkeypatch.setattr(wib, "_wine_bin_for_pid", lambda _pid, _env: None)
         result = wib._bridge_for_pid(99999)
         assert result is None
         # The old entry should be replaced with a fresh "now" timestamp.
@@ -240,15 +240,15 @@ def test_bad_prefix_cooldown_allows_retry_after_expiry(monkeypatch):
         # Fresh entry: still within cooldown. Must short-circuit BEFORE
         # _proton_dir_for_pid is consulted.
         monkeypatch.setattr(wib, "_read_process_env", lambda _pid: {"WINEPREFIX": "/prefix/fresh"})
-        proton_dir_calls = []
+        wine_bin_calls = []
         monkeypatch.setattr(
             wib,
-            "_proton_dir_for_pid",
-            lambda _pid, _env: (proton_dir_calls.append(1) or None),
+            "_wine_bin_for_pid",
+            lambda _pid, _env: (wine_bin_calls.append(1) or None),
         )
         result = wib._bridge_for_pid(99999)
         assert result is None
-        assert proton_dir_calls == [], "Fresh BAD_PREFIX entry must short-circuit before _proton_dir_for_pid"
+        assert wine_bin_calls == [], "Fresh BAD_PREFIX entry must short-circuit before _wine_bin_for_pid"
     finally:
         wib._BAD_PREFIXES.clear()
 
@@ -321,7 +321,7 @@ def test_port_for_prefix_matches_bridge_instance_formula():
 
     prefix = "/home/u/.local/share/Steam/steamapps/compatdata/3555655912/pfx"
     bridge = WineInputBridge.__new__(WineInputBridge)
-    bridge.__init__(prefix=prefix, proton_dir="/opt/proton", env={})
+    bridge.__init__(prefix=prefix, wine_bin="/opt/proton/files/bin/wine", env={})
 
     assert _port_for_prefix(prefix) == bridge.port
 
@@ -401,3 +401,38 @@ def test_shutdown_for_prefix_normalizes_path_to_match_bridges_key(monkeypatch, t
         assert quits == []
     finally:
         wib._BRIDGES.pop(canonical, None)
+
+
+def test_wine_bin_for_pid_proton_layout(monkeypatch, tmp_path):
+    """Proton's <root>/files/lib/wine/x86_64-windows/wine64-preloader as
+    /proc/<pid>/exe -> wine binary is <root>/files/bin/wine."""
+    from utils import wine_input_bridge as wib
+
+    proton_root = "/home/u/.steam/steam/steamapps/common/Proton 9.0"
+    preloader = f"{proton_root}/files/lib/wine/x86_64-windows/wine64-preloader"
+    monkeypatch.setattr(wib.os, "readlink", lambda p: preloader)
+
+    result = wib._wine_bin_for_pid(99999, {})
+    assert result == f"{proton_root}/files/bin/wine"
+
+
+def test_wine_bin_for_pid_plain_wine_layout(monkeypatch):
+    """Plain-wine /usr/lib/wine/wine64-preloader as /proc/<pid>/exe ->
+    wine binary is whatever shutil.which('wine') resolves to."""
+    from utils import wine_input_bridge as wib
+    import shutil
+
+    monkeypatch.setattr(wib.os, "readlink", lambda p: "/usr/lib/wine/wine64-preloader")
+    monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/wine" if name == "wine" else None)
+
+    result = wib._wine_bin_for_pid(99999, {})
+    assert result == "/usr/bin/wine"
+
+
+def test_wine_bin_for_pid_unknown_layout_returns_none(monkeypatch):
+    """Non-wine process /proc/<pid>/exe -> None (caller falls back to Xlib)."""
+    from utils import wine_input_bridge as wib
+
+    monkeypatch.setattr(wib.os, "readlink", lambda p: "/usr/bin/firefox")
+    result = wib._wine_bin_for_pid(99999, {})
+    assert result is None

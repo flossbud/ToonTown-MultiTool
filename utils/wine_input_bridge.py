@@ -1,15 +1,17 @@
-"""Wine-side input bridge for Proton-hosted Corporate Clash windows.
+"""Wine-side input bridge for Wine-hosted Corporate Clash windows.
 
-XSendEvent is enough for native TTR, but Proton/Wine game clients commonly
-ignore background synthetic X11 key events. This bridge compiles and runs a
-small managed Windows helper inside the same Wine prefix as CC; the helper
-posts Win32 keyboard messages to CC HWNDs directly.
+XSendEvent is enough for native TTR, but Wine game clients (whether
+launched via Proton, bottles, lutris, or plain system wine) commonly
+ignore background synthetic X11 key events. This bridge compiles and
+runs a small managed Windows helper inside the same Wine prefix as CC;
+the helper posts Win32 keyboard messages to CC HWNDs directly.
 """
 
 from __future__ import annotations
 
 import hashlib
 import os
+import shutil
 import socket
 import subprocess
 import sys
@@ -187,12 +189,12 @@ def _bridge_for_pid(pid: int) -> "WineInputBridge | None":
     with _BRIDGES_LOCK:
         bridge = _BRIDGES.get(key)
         if bridge is None:
-            proton_dir = _proton_dir_for_pid(pid, env)
-            if proton_dir is None:
+            wine_bin = _wine_bin_for_pid(pid, env)
+            if wine_bin is None:
                 _BAD_PREFIXES[key] = time.monotonic()
-                print(f"[wine_input_bridge] could not resolve Proton dir for pid={pid}; bridge disabled for prefix={key}")
+                print(f"[wine_input_bridge] could not resolve wine binary for pid={pid}; bridge disabled for prefix={key}")
                 return None
-            bridge = WineInputBridge(prefix=key, proton_dir=proton_dir, env=env)
+            bridge = WineInputBridge(prefix=key, wine_bin=wine_bin, env=env)
             _BRIDGES[key] = bridge
 
     if not bridge.ensure_running():
@@ -219,19 +221,45 @@ def _read_process_env(pid: int) -> dict[str, str]:
     return env
 
 
-def _proton_dir_for_pid(pid: int, env: dict[str, str]) -> str | None:
+# Wine preloader executable basenames that identify a plain-wine
+# (non-Proton) game process. Mirrors utils.game_registry._KNOWN_WINE_HELPERS
+# but is kept independent because game_registry is a runtime singleton with
+# heavy import side effects.
+_PLAIN_WINE_PRELOADERS = {"wine-preloader", "wine64-preloader"}
+
+
+def _wine_bin_for_pid(pid: int, env: dict[str, str]) -> str | None:
+    """Resolve the wine binary path for a running game process.
+
+    Proton path: /proc/<pid>/exe lives under <proton_root>/files/lib/wine/
+    (or WINEDLLPATH points at it). The wine binary is then at
+    <proton_root>/files/bin/wine.
+
+    Plain-wine path: /proc/<pid>/exe basename is a known wine preloader
+    (e.g. wine64-preloader installed by the distro at /usr/lib/wine/).
+    Resolve the user-facing wine binary via shutil.which('wine').
+
+    Returns None for non-wine processes; caller falls back to Xlib.
+    """
     try:
         exe = os.readlink(f"/proc/{pid}/exe")
     except OSError:
         exe = ""
+
     marker = "/files/lib/wine/"
     if marker in exe:
-        return exe.split(marker, 1)[0]
+        proton_root = exe.split(marker, 1)[0]
+        return os.path.join(proton_root, "files", "bin", "wine")
 
     winedll = env.get("WINEDLLPATH", "")
     for part in winedll.split(":"):
         if part.endswith("/files/lib/wine"):
-            return part[: -len("/files/lib/wine")]
+            proton_root = part[: -len("/files/lib/wine")]
+            return os.path.join(proton_root, "files", "bin", "wine")
+
+    if os.path.basename(exe) in _PLAIN_WINE_PRELOADERS:
+        return shutil.which("wine")
+
     return None
 
 
@@ -241,9 +269,9 @@ def _resource_path(*parts: str) -> Path:
 
 
 class WineInputBridge:
-    def __init__(self, prefix: str, proton_dir: str, env: dict[str, str]):
+    def __init__(self, prefix: str, wine_bin: str, env: dict[str, str]):
         self.prefix = prefix
-        self.proton_dir = proton_dir
+        self.wine_bin = wine_bin
         self.env = dict(env)
         # Deterministic per-prefix port: SHA1(prefix) mod 1000 added to a base.
         # Tradeoff vs. OS-assigned ports (binding port 0, reading the port from
@@ -259,10 +287,6 @@ class WineInputBridge:
         self.port = _port_for_prefix(prefix)
         self._process: subprocess.Popen | None = None
         self._lock = threading.Lock()
-
-    @property
-    def wine_bin(self) -> str:
-        return os.path.join(self.proton_dir, "files", "bin", "wine")
 
     @property
     def exe_path(self) -> Path:
