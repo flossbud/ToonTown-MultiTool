@@ -11,7 +11,6 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
-from unittest.mock import MagicMock
 
 
 @pytest.fixture(scope="module")

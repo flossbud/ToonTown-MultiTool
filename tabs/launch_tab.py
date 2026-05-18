@@ -1135,6 +1135,7 @@ class LaunchTab(QWidget):
     def _on_game_exited(self, game, section_index, retcode):
         game_label = "TTR" if game == "ttr" else "CC"
         self.log(f"[Launch] {game_label} account {section_index + 1} game exited (code {retcode})")
+        # game crash / kill: status chip carries the exit code; no login-failure dialog (post-launch is out of scope)
         if retcode not in (0, -9, -15, None):
             self._update_status(game, section_index, LoginState.FAILED, f"Failed: code {retcode}")
         else:
