@@ -73,13 +73,13 @@ Built with Python + PySide6.
 ## ⚙️ Requirements
 
 **🐧 Linux:**
-- Python 3.9 to 3.13
+- Python 3.9 to 3.14
 - PySide6, pynput, python-xlib
 - `xdotool` (window detection only, not required for input)
 - Secret Service-compatible keyring (GNOME Keyring or KWallet)
 
 **🪟 Windows:**
-- Python 3.9 to 3.13
+- Python 3.9 to 3.14
 - PySide6, pynput, pywin32
 
 ---
@@ -96,6 +96,7 @@ The AppImage, Flatpak, and run-from-source paths are CI-tested on every push aga
 | Debian 12 (bookworm) | 3.11   | LMDE 6                |
 | Ubuntu 22.04 LTS     | 3.10   | Mint 21.x             |
 | Ubuntu 24.04 LTS     | 3.12   | Mint 22.x             |
+| Arch Linux (rolling) | 3.14   | -                     |
 
 The AppImage is built against glibc 2.31, so it runs on any of the above and newer. Like
 every Linux GUI application, it relies on the host's standard graphics stack (libGL/libEGL/
