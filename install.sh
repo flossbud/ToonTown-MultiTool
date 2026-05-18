@@ -2,7 +2,7 @@
 #
 # install.sh - ToonTown MultiTool dependency installer for Linux
 #
-# Detects your distro, installs system dependencies (Python 3.9 to 3.13
+# Detects your distro, installs system dependencies (Python 3.9 to 3.14
 # and Qt6 runtime libraries) via sudo, creates a venv at ./venv, and
 # installs the Python dependencies from requirements.txt.
 #
@@ -95,7 +95,7 @@ venv_python_in_range() {
     local v
     v="$(venv_python_version)"
     case "$v" in
-        3.9|3.10|3.11|3.12|3.13) return 0 ;;
+        3.9|3.10|3.11|3.12|3.13|3.14) return 0 ;;
         *) return 1 ;;
     esac
 }
@@ -174,10 +174,10 @@ esac
 
 echo "Detected: $DISTRO_PRETTY"
 
-# Supported Python detection: search PATH for python3.13 down to python3.9
+# Supported Python detection: search PATH for python3.14 down to python3.9
 find_supported_python() {
     local candidate
-    for candidate in python3.13 python3.12 python3.11 python3.10 python3.9; do
+    for candidate in python3.14 python3.13 python3.12 python3.11 python3.10 python3.9; do
         if command -v "$candidate" >/dev/null 2>&1; then
             echo "$candidate"
             return 0
@@ -190,26 +190,6 @@ PYTHON_BIN="$(find_supported_python || true)"
 
 if [ -n "$PYTHON_BIN" ]; then
     echo "Found supported Python: $PYTHON_BIN -> $(command -v "$PYTHON_BIN")"
-fi
-
-# Arch wart: bail with hint if no supported Python on Arch
-if [ "$DISTRO_FAMILY" = "arch" ] && [ -z "$PYTHON_BIN" ]; then
-    cat >&2 <<EOF
-
-Detected: Arch Linux
-Arch ships Python 3.14 as default, which is not supported by PySide6 6.8.x.
-
-To install a supported Python:
-  AUR:    yay -S python313    (or paru, makepkg)
-  pyenv:  pyenv install 3.13 && pyenv shell 3.13
-
-After installing Python 3.13, re-run ./install.sh.
-
-(Most Arch users should install the AUR package directly:
-   yay -S toontown-multitool
- instead of running from source.)
-EOF
-    exit 1
 fi
 
 # Sudo helper: print the command, prompt for confirmation (unless --yes),
@@ -272,8 +252,8 @@ missing_python_packages() {
             echo "python3.13 python3.13-devel"
             ;;
         arch)
-            # Arch path is only reached when user has already installed a
-            # supported Python via AUR/pyenv (Arch wart already gates this).
+            # Arch ships python (3.14) by default; find_supported_python picks
+            # it up. Nothing to install via pacman here.
             echo ""
             ;;
     esac

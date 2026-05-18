@@ -37,16 +37,31 @@ jobs:
           - debian:12
           - ubuntu:22.04
           - ubuntu:24.04
+          - archlinux:latest
     container:
       image: ${{ matrix.image }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install system + Qt runtime dependencies
+      - name: Install system + Qt runtime dependencies (apt)
+        if: ${{ startsWith(matrix.image, 'debian') || startsWith(matrix.image, 'ubuntu') }}
         run: |
           export DEBIAN_FRONTEND=noninteractive
           apt-get update
           apt-get install -y python3 python3-pip python3-venv xvfb $QT_LIBS
+
+      - name: Install system + Qt runtime dependencies (pacman)
+        if: ${{ startsWith(matrix.image, 'archlinux') }}
+        run: |
+          # -Syu (full upgrade), not -Sy: the archlinux:latest image ships an
+          # older base set, and `pacman -Sy <pkg>` installs the *latest* pkg
+          # against it -- a partial upgrade that breaks sonames (e.g. the new
+          # xorg-server-xvfb needing libnettle.so.9 the stale nettle lacks).
+          pacman -Syu --noconfirm python python-pip xorg-server-xvfb xorg-fonts-misc \
+            glib2 libglvnd dbus fontconfig freetype2 libx11 libxext libxrender \
+            libxi libsm libice libxcb xcb-util-cursor xcb-util-image \
+            xcb-util-keysyms xcb-util-renderutil xcb-util-wm libxkbcommon \
+            libxkbcommon-x11
 
       - name: Create venv and install Python dependencies
         run: |
