@@ -252,8 +252,10 @@ class StatusChip(QLabel):
         if state == LoginState.IDLE or not label:
             self.hide()
             return
+        if state == LoginState.FAILED:
+            label = STATUS_LABELS.get(state, "Failed")
         self.setText(label)
-        self.setToolTip(label)
+        self.setToolTip(message or label)
         self.setStyleSheet(
             f"font-size: 10px; font-weight: 600; color: {color}; "
             f"background: {color}22; border: 1px solid {color}44; "
@@ -941,7 +943,9 @@ class LaunchTab(QWidget):
         engine_bin = os.path.join(engine_dir, exe_fn()) if engine_dir else ""
         if not engine_dir or not os.path.isfile(engine_bin):
             _dbg(f"[Credentials] _on_launch: engine not found (dir='{engine_dir}' bin='{engine_bin}')")
-            self._update_status(game, section_index, LoginState.FAILED, "Game path not set. Configure in Settings.")
+            msg = "Game path not set. Configure in Settings."
+            self._update_status(game, section_index, LoginState.FAILED, msg)
+            self._show_failure_dialog(game, section_index, msg)
             return
 
         acct = self.cred_manager.get_account(global_idx)
@@ -953,12 +957,16 @@ class LaunchTab(QWidget):
         )
         _dbg(f"[Credentials] _on_launch slot={section_index} {acct_desc}")
         if not acct or not acct.username:
-            self._update_status(game, section_index, LoginState.FAILED, "Missing username. Click Edit.")
+            msg = "Missing username. Click Edit."
+            self._update_status(game, section_index, LoginState.FAILED, msg)
+            self._show_failure_dialog(game, section_index, msg)
             return
         # TTR still requires a password up front. CC accounts may legitimately
         # have no password (token-only model after register_and_login).
         if game == "ttr" and not acct.password:
-            self._update_status(game, section_index, LoginState.FAILED, "Missing username or password. Click Edit.")
+            msg = "Missing username or password. Click Edit."
+            self._update_status(game, section_index, LoginState.FAILED, msg)
+            self._show_failure_dialog(game, section_index, msg)
             return
 
         # Check if already running
@@ -1024,8 +1032,9 @@ class LaunchTab(QWidget):
                                           label=acct.label or "")
             else:
                 print("[Launch] CC dispatch: -> error branch, no credentials")
-                self._update_status(game, section_index, LoginState.FAILED,
-                    "No CC credentials stored. Click Edit on this account.")
+                msg = "No CC credentials stored. Click Edit on this account."
+                self._update_status(game, section_index, LoginState.FAILED, msg)
+                self._show_failure_dialog(game, section_index, msg)
                 return
         game_label = "TTR" if game == "ttr" else "CC"
         self.log(f"[Launch] Logging in {game_label} account {section_index + 1}…")
@@ -1069,7 +1078,9 @@ class LaunchTab(QWidget):
                 print(f"[Launch] _on_login_success: cc install={install!r}")
                 if install is None:
                     print("[Credentials] _on_launch: engine not found (dir='' bin='')")
-                    self._update_status(game, section_index, LoginState.FAILED, "Game path not set. Configure in Settings.")
+                    msg = "Game path not set. Configure in Settings."
+                    self._update_status(game, section_index, LoginState.FAILED, msg)
+                    self._show_failure_dialog(game, section_index, msg)
                     return
                 # The new CC launcher protocol needs the account username
                 # for the LAUNCHER_USER env var. Look up the account that
@@ -1092,11 +1103,29 @@ class LaunchTab(QWidget):
         print(f"[Launch] _on_login_failed: game={game} slot={section_index} msg={msg!r}")
         self.log(f"[Launch] {game_label} account {section_index + 1} login failed: {msg}")
         self._update_status(game, section_index, LoginState.FAILED, msg)
+        self._show_failure_dialog(game, section_index, msg)
 
     def _on_launcher_failed(self, game, section_index, msg):
         game_label = "TTR" if game == "ttr" else "CC"
         self.log(f"[Launch] {game_label} account {section_index + 1} launch failed: {msg}")
         self._update_status(game, section_index, LoginState.FAILED, msg)
+        self._show_failure_dialog(game, section_index, msg)
+
+    def _show_failure_dialog(self, game, section_index, msg):
+        """Pop a modal warning dialog with the full failure message.
+
+        Called from every terminal failure dispatch site. See spec
+        docs/superpowers/specs/2026-05-17-login-failure-dialog-design.md.
+        """
+        from PySide6.QtWidgets import QMessageBox
+        game_label = "Toontown Rewritten" if game == "ttr" else "Corporate Clash"
+        box = QMessageBox(self.window())
+        box.setIcon(QMessageBox.Warning)
+        box.setWindowTitle(f"{game_label} login failed")
+        box.setText(f"Account {section_index + 1} couldn't sign in.")
+        box.setInformativeText(msg)
+        box.setStandardButtons(QMessageBox.Ok)
+        box.exec()
 
     def _on_game_launched(self, game, section_index, pid):
         game_label = "TTR" if game == "ttr" else "CC"
@@ -1106,6 +1135,7 @@ class LaunchTab(QWidget):
     def _on_game_exited(self, game, section_index, retcode):
         game_label = "TTR" if game == "ttr" else "CC"
         self.log(f"[Launch] {game_label} account {section_index + 1} game exited (code {retcode})")
+        # game crash / kill: status chip carries the exit code; no login-failure dialog (post-launch is out of scope)
         if retcode not in (0, -9, -15, None):
             self._update_status(game, section_index, LoginState.FAILED, f"Failed: code {retcode}")
         else:
