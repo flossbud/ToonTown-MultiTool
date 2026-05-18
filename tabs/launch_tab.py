@@ -252,8 +252,10 @@ class StatusChip(QLabel):
         if state == LoginState.IDLE or not label:
             self.hide()
             return
+        if state == LoginState.FAILED:
+            label = STATUS_LABELS.get(state, "Failed")
         self.setText(label)
-        self.setToolTip(label)
+        self.setToolTip(message or label)
         self.setStyleSheet(
             f"font-size: 10px; font-weight: 600; color: {color}; "
             f"background: {color}22; border: 1px solid {color}44; "
