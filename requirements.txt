@@ -12,11 +12,18 @@
 #   is the source of truth: it runs pip install across Python 3.9–3.12.
 
 # Core — required on all platforms
-# Pin: PySide6 6.9.x bundles a Qt6.9 build with a font-engine null-pointer
-# regression in QFontEngineFT::shouldUseDesignMetrics that segfaults during
-# first-launch font rendering on Linux Mint 22 (Ubuntu 24.04 base). Locking
-# below 6.9 until 6.10+ is verified safe across the supported distro matrix.
-PySide6>=6.8,<6.9
+# Pin (legacy Python): PySide6 6.9.x bundles a Qt6.9 build with a font-engine
+# null-pointer regression in QFontEngineFT::shouldUseDesignMetrics that segfaults
+# during first-launch font rendering on Linux Mint 22 (Ubuntu 24.04 base). Locking
+# below 6.9 for Pythons that still receive 6.8 wheels. The 6.8 wheels' Requires-Python
+# metadata caps at <3.13, so this pin only applies to Python 3.9-3.12.
+PySide6>=6.8,<6.9; python_version < "3.13"
+
+# Pin (modern Python): PySide6 6.10+ is required for Python 3.13/3.14 (6.8 wheels
+# aren't built for those Pythons per their Requires-Python metadata). Skipping
+# 6.9.x for the same NULL-pointer bug as above. Broad <7 range matches the
+# existing major-version policy.
+PySide6>=6.10,<7; python_version >= "3.13"
 pynput>=1.7.6
 requests>=2.28.0
 keyring>=24.0.0
