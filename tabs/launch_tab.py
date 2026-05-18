@@ -1100,6 +1100,22 @@ class LaunchTab(QWidget):
         self.log(f"[Launch] {game_label} account {section_index + 1} launch failed: {msg}")
         self._update_status(game, section_index, LoginState.FAILED, msg)
 
+    def _show_failure_dialog(self, game, section_index, msg):
+        """Pop a modal warning dialog with the full failure message.
+
+        Called from every terminal failure dispatch site. See spec
+        docs/superpowers/specs/2026-05-17-login-failure-dialog-design.md.
+        """
+        from PySide6.QtWidgets import QMessageBox
+        game_label = "Toontown Rewritten" if game == "ttr" else "Corporate Clash"
+        box = QMessageBox(self.window())
+        box.setIcon(QMessageBox.Warning)
+        box.setWindowTitle(f"{game_label} login failed")
+        box.setText(f"Account {section_index + 1} couldn't sign in.")
+        box.setInformativeText(msg)
+        box.setStandardButtons(QMessageBox.Ok)
+        box.exec()
+
     def _on_game_launched(self, game, section_index, pid):
         game_label = "TTR" if game == "ttr" else "CC"
         self.log(f"[Launch] {game_label} account {section_index + 1} game running (PID {pid})")
