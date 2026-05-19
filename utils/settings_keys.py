@@ -19,3 +19,8 @@ CHECK_FOR_UPDATES_AT_STARTUP = "check_for_updates_at_startup"
 UPDATE_SKIPPED_VERSION = "update_skipped_version"
 UPDATE_LAST_CHECK_AT = "update_last_check_at"
 UPDATE_LAST_CHECK_RESULT = "update_last_check_result"
+
+# Per-toon control isolation (added 2026-05-18)
+ISOLATION_ENABLED = "isolation_enabled"
+ISOLATION_CANONICAL = "isolation_canonical"
+ISOLATION_USE_INPUT_GRAB = "isolation_use_input_grab"
