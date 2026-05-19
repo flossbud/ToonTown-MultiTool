@@ -432,6 +432,7 @@ class KeymapTab(QWidget):
         self._scroll_layout.addStretch()
 
         self._refresh_default_conflict_markers()
+        getattr(self, "_refresh_isolation_lock_state", lambda: None)()
 
     # ── Per-toon control isolation panel ──────────────────────────────────
 
@@ -529,6 +530,7 @@ class KeymapTab(QWidget):
 
         self._isolation_panel = panel
         self._refresh_isolation_panel_visibility()
+        self._refresh_isolation_lock_state()
 
     def _refresh_isolation_panel_visibility(self):
         """Show/hide the canonical picker and restore button based on toggle state."""
@@ -537,6 +539,55 @@ class KeymapTab(QWidget):
         on = self._isolation_toggle.isChecked()
         self._isolation_canonical_picker.setVisible(on)
         self._isolation_restore_button.setVisible(on)
+
+    def _refresh_isolation_lock_state(self):
+        """Show/hide the CC Default locked banner and toggle movement-row editability."""
+        from PySide6.QtWidgets import QLabel
+        from utils import settings_keys, cc_isolation
+
+        enabled = bool(
+            self.settings_manager
+            and self.settings_manager.get(settings_keys.ISOLATION_ENABLED, False)
+        )
+
+        # Banner widget: created lazily on first call.
+        banner = self.findChild(QLabel, "isolation_default_banner")
+        if banner is None:
+            banner = QLabel(
+                "Locked by Per-toon control isolation. To edit CC's bindings, disable isolation first."
+            )
+            banner.setObjectName("isolation_default_banner")
+            banner.setStyleSheet("color: #999; font-style: italic;")
+            banner.setWordWrap(True)
+            # Insert right after the isolation panel in the scroll layout.
+            # Find the isolation panel's index; fall back to appending.
+            sl = getattr(self, "_scroll_layout", None)
+            inserted = False
+            if sl is not None:
+                iso_panel = getattr(self, "_isolation_panel", None)
+                if iso_panel is not None:
+                    for i in range(sl.count()):
+                        item = sl.itemAt(i)
+                        if item and item.widget() is iso_panel:
+                            sl.insertWidget(i + 1, banner)
+                            inserted = True
+                            break
+                if not inserted:
+                    sl.addWidget(banner)
+            else:
+                # Fallback: append to whatever layout exists.
+                if self.layout() is not None:
+                    self.layout().addWidget(banner)
+        # Show the banner whenever isolation is on; the panel itself is only
+        # rendered when _active_game == "cc", so there is no TTR visual bleed.
+        banner.setVisible(enabled)
+
+        # Toggle read-only on movement fields in the CC Default card.
+        for action in cc_isolation.MOVEMENT_ACTIONS:
+            field = self.findChild(object, f"cc_default_field_{action}")
+            if field is not None and hasattr(field, "setReadOnly"):
+                field.setReadOnly(enabled)
+                field.setStyleSheet("color: #999;" if enabled else "")
 
     def _discover_cc_installs(self) -> list:
         """Return the list of discovered CC installs.
@@ -748,6 +799,7 @@ class KeymapTab(QWidget):
             self._show_restart_notice(all_pids)
 
         self._refresh_isolation_panel_visibility()
+        self._refresh_isolation_lock_state()
 
     def _do_isolation_restore(self):
         from utils import cc_settings
@@ -760,6 +812,7 @@ class KeymapTab(QWidget):
                 print(f"[KeymapTab] restore_all_installs failed: {e}")
         if sm:
             sm.set(settings_keys.ISOLATION_ENABLED, False)
+        self._refresh_isolation_lock_state()
 
     def _on_isolation_restore(self):
         # Flipping the toggle off triggers _on_isolation_toggled(False), which
@@ -917,6 +970,10 @@ class KeymapTab(QWidget):
             row.addWidget(lbl)
             field = MovementKeyField(set_data.get(action, ""))
             field.setObjectName(f"key_field_{action}")
+            # Tag CC Default movement fields so the isolation lock-state refresher can find them.
+            from utils import cc_isolation
+            if self._active_game == "cc" and index == 0 and action in cc_isolation.MOVEMENT_ACTIONS:
+                field.setObjectName(f"cc_default_field_{action}")
             field.key_captured.connect(
                 lambda key, idx=index, d=action: self._on_key_changed(idx, d, key)
             )
@@ -1028,6 +1085,7 @@ class KeymapTab(QWidget):
         self._initialized_expansion = False  # re-read expand state for new game
         self._build_cards()
         self.refresh_theme()
+        self._refresh_isolation_lock_state()
 
     # ── Toggle ─────────────────────────────────────────────────────────────
 

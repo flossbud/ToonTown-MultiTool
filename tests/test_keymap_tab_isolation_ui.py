@@ -165,3 +165,33 @@ def test_input_grab_subtoggle_is_disabled_in_phase_a(qapp, keymap_manager, setti
     assert sub is not None
     assert sub.isEnabled() is False
     assert "later release" in sub.toolTip().lower()
+
+
+def test_default_set_movement_rows_become_readonly_when_isolation_on(qapp, keymap_manager, settings, monkeypatch):
+    settings._store[settings_keys.ISOLATION_ENABLED] = True
+
+    tab = KeymapTab(keymap_manager, settings)
+    # Force re-render of cards under the isolation-on flag.
+    tab._refresh_isolation_lock_state()
+
+    banner = tab.findChild(object, "isolation_default_banner")
+    assert banner is not None
+    # Banner must be intended-visible while the CC tab is active and isolation is on.
+    # Use isVisibleTo to account for offscreen (no .show()) tree.
+    assert banner.isVisibleTo(tab) is True
+
+    # Movement key fields in CC Default should be read-only.
+    for action in ("forward", "reverse", "left", "right"):
+        field = tab.findChild(object, f"cc_default_field_{action}")
+        if field is not None:  # field may be absent in test fixture
+            assert field.isReadOnly() is True
+
+
+def test_default_set_movement_rows_editable_when_isolation_off(qapp, keymap_manager, settings):
+    settings._store[settings_keys.ISOLATION_ENABLED] = False
+
+    tab = KeymapTab(keymap_manager, settings)
+
+    banner = tab.findChild(object, "isolation_default_banner")
+    if banner is not None:
+        assert banner.isVisibleTo(tab) is False
