@@ -3,6 +3,17 @@ from __future__ import annotations
 import os
 import sys
 
+# Redirect to ./venv/bin/python when invoked via system Python. The
+# venv ships pip-installed PySide6 with bundled Qt; system PySide6 may
+# link against a broken system Qt6 (e.g. the QFontEngineFT NULL-pointer
+# crash on current Arch + Python 3.14). Runs BEFORE the version check
+# below so a user on a future Python whose system PySide6 has no wheel
+# can still launch via the venv's pinned interpreter. See
+# utils/venv_reexec.py for the full skip-condition list.
+from utils.venv_reexec import reexec_into_venv
+reexec_into_venv(__file__)
+del reexec_into_venv
+
 # Upper bound was previously (3, 14) to mirror the PySide6 6.8.x wheel
 # ceiling for pip-installed source runs. Bumped to (3, 15) once
 # archlinux:latest started shipping Python 3.14 by default: the AUR
