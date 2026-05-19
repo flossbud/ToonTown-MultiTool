@@ -402,19 +402,36 @@ class KeyringWarningBanner(QFrame):
 
 
 class LaunchTab(QWidget):
+    # Cross-thread bridge for credential-manager debug messages. Emitted
+    # from the keyring probe worker thread; auto-connected to the main-
+    # thread DebugTab.append_log slot. See the __init__ comment below.
+    _log_to_debug_tab = Signal(str)
+
     def __init__(self, settings_manager=None, logger=None, parent=None,
                  credentials_manager=None):
         super().__init__(parent)
         self.settings_manager = settings_manager
         self.logger = logger
-        # Tee credential diagnostics into the in-app log via the debug tab.
-        # This uses a QTimer trampoline so the callback is safe to fire from
-        # the keyring probe thread.
         if self.logger is not None:
-            from PySide6.QtCore import QTimer
-            def _tee(msg, _log=self.logger.append_log):
-                QTimer.singleShot(0, lambda m=msg: _log(m))
-            set_debug_log_callback(_tee)
+            # Tee credential diagnostics into the in-app log. The keyring
+            # probe runs on a worker thread, so the callback fires off the
+            # main thread. QPlainTextEdit (which logger.append_log feeds)
+            # is a main-thread QObject; writing to it from a worker thread
+            # is undefined behavior and corrupts QTextDocument internals,
+            # causing crashes deep in Qt's font-shaping path during posted-
+            # event delivery (SIGSEGV in QFontEngineFT, SIGBUS in
+            # ~QObject, both with QApplicationPrivate::notify_helper above
+            # them on the stack).
+            #
+            # Earlier version used QTimer.singleShot(0, ...) thinking it
+            # would bounce to the main thread, but QTimer's affinity is
+            # the calling thread, so the lambda ran on the worker too.
+            #
+            # Correct pattern: emit a signal across threads. AutoConnection
+            # detects the cross-thread case and queues the slot on the
+            # receiver's (main) thread.
+            self._log_to_debug_tab.connect(self.logger.append_log)
+            set_debug_log_callback(self._log_to_debug_tab.emit)
         # Optional injection point for tests; defaults to a fresh manager.
         self.cred_manager = credentials_manager or CredentialsManager()
 
@@ -547,7 +564,19 @@ class LaunchTab(QWidget):
         self._probe_thread.started.connect(self._probe_worker.run)
         self._probe_worker.probe_complete.connect(self._on_keyring_probe_complete)
         self._probe_worker.probe_complete.connect(self._probe_thread.quit)
-        self._probe_thread.finished.connect(self._probe_worker.deleteLater)
+        # Don't connect finished -> worker.deleteLater. The earlier wiring
+        # raced with the main-thread cleanup (_on_probe_thread_finished sets
+        # self._probe_worker = None), causing a double-delete or use-after-
+        # free in the worker QObject: Qt's posted DeferredDelete on the
+        # worker thread fired in parallel with PySide6's wrapper deletion
+        # on the main thread. Symptom: SIGBUS in QObject::~QObject() during
+        # QApplicationPrivate::notify_helper posted-event delivery.
+        #
+        # Safe pattern: rely on Python reference counting for both objects.
+        # _on_probe_thread_finished blocks on the worker thread's true exit
+        # before dropping refs, so by the time the wrapper is destroyed the
+        # worker thread is fully gone and PySide6's deletion is the only
+        # actor touching the C++ QObject.
         self._probe_thread.finished.connect(self._on_probe_thread_finished)
         self._probe_thread.start()
 
@@ -559,8 +588,15 @@ class LaunchTab(QWidget):
             _dbg(line)
 
     def _on_probe_thread_finished(self):
+        # Block on the worker thread's true exit before dropping refs.
+        # The connected slot fires when QThread::finished is emitted, but
+        # that's emitted from inside the worker thread's exec() exit path
+        # -- the OS thread may not yet have fully unwound. Waiting here
+        # guarantees PySide6's wrapper deletion (triggered by the ref
+        # drops below) is the only actor touching the worker QObject's
+        # C++ state, eliminating the race documented in _start_keyring_probe.
         if self._probe_thread is not None:
-            self._probe_thread.deleteLater()
+            self._probe_thread.wait(2000)
         self._probe_thread = None
         self._probe_worker = None
 

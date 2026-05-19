@@ -119,7 +119,13 @@ class UpdateChecker(QObject):
         self._thread.started.connect(self._worker.run)
         self._worker.finished.connect(self._on_finished)
         self._worker.finished.connect(self._thread.quit)
-        self._thread.finished.connect(self._worker.deleteLater)
+        # No finished->worker.deleteLater: that DeferredDelete posted on the
+        # worker thread races with PySide6's wrapper deletion when
+        # _cleanup_thread drops self._worker = None on the main thread. Same
+        # double-delete / shiboken-Python-access crash as the keyring probe
+        # had before its fix in tabs/launch_tab.py. _cleanup_thread now
+        # waits for the worker thread before clearing refs, so PySide6's
+        # ref-drop deletion is the only actor.
         self._thread.finished.connect(self._cleanup_thread)
         self._thread.start()
         return True
@@ -134,8 +140,13 @@ class UpdateChecker(QObject):
         self._in_flight = False
 
     def _cleanup_thread(self) -> None:
+        # Block on the worker thread's true exit before dropping refs.
+        # See check_async for the full rationale: clearing self._worker = None
+        # while the worker thread is mid-shutdown raced with shiboken's
+        # Python-state access from ~QObject() and crashed with SIGBUS /
+        # SIGSEGV in Sbk_GetPyOverride during posted-event delivery.
         if self._thread is not None:
-            self._thread.deleteLater()
+            self._thread.wait(2000)
         self._thread = None
         self._worker = None
         # Reset here as the guaranteed-final path. _on_finished also
