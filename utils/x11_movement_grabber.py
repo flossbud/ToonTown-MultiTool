@@ -36,23 +36,37 @@ except ImportError:
     _HAS_XLIB = False
 
 
-# Lock-modifier permutations. XGrabKey registers a grab for an exact
+# Full modifier permutations. XGrabKey registers a grab for an exact
 # modifier mask, so we must enumerate every combination of the three
-# common lock states (Caps, Num, Scroll) the user might be in. Without
-# this the grab silently misses when, e.g., NumLock is on.
-def _lock_modifier_combos():
+# common lock states (Caps, Num, Scroll) AND every combination of the
+# user-controlled modifiers (Shift, Ctrl, Alt) the user might be in.
+# Without the lock combos the grab silently misses when, e.g., NumLock
+# is on. Without the user-modifier combos the grab silently misses
+# when, e.g., the user is holding Shift to sprint (so Shift+Up reaches
+# the focused CC window and moves the wrong toon).
+def _modifier_combos():
     if not _HAS_XLIB:
         return ()
     locks = (0, X.LockMask, X.Mod2Mask, X.Mod5Mask)
-    combos = set()
+    user_mods = (0, X.ShiftMask, X.ControlMask, X.Mod1Mask)
+    lock_combos = set()
     for a in locks:
         for b in locks:
             for c in locks:
-                combos.add(a | b | c)
+                lock_combos.add(a | b | c)
+    user_combos = set()
+    for a in user_mods:
+        for b in user_mods:
+            for c in user_mods:
+                user_combos.add(a | b | c)
+    combos = set()
+    for lc in lock_combos:
+        for uc in user_combos:
+            combos.add(lc | uc)
     return tuple(sorted(combos))
 
 
-_LOCK_MODIFIERS = _lock_modifier_combos()
+_LOCK_MODIFIERS = _modifier_combos()
 
 
 def xlib_available() -> bool:
@@ -287,7 +301,14 @@ class MovementKeyGrabber:
                 self._on_key(action, keysym_name)
             except Exception as e:  # noqa: BLE001
                 print(f"[x11_movement_grabber] on_key raised: {e}")
-        elif kind == "passthrough" and self._on_passthrough is not None:
+        elif keysym_name and self._on_passthrough is not None:
+            # Fall through to passthrough for two cases:
+            #  - kind == "passthrough" (key registered as passthrough only)
+            #  - kind == "grabbed" but should_consume returned False (e.g.
+            #    chat is active so arrows should reach the focused chat
+            #    box for cursor movement). ReplayKeyboard is a no-op in
+            #    GrabModeAsync, so without this hand-off the key would
+            #    vanish.
             try:
                 self._on_passthrough(action, keysym_name)
             except Exception as e:  # noqa: BLE001

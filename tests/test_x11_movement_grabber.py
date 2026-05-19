@@ -355,6 +355,61 @@ def test_passthrough_event_fires_on_passthrough_not_on_key(fake_display):
     assert on_key_calls == []
 
 
+def test_modifier_combos_cover_shift_ctrl_alt(fake_display):
+    """The modifier set must include masks for Shift, Ctrl, and Alt so
+    grabs fire even when the user is holding a modifier (e.g. Shift+Up
+    for sprint-forward)."""
+    assert X.ShiftMask in grabber_mod._LOCK_MODIFIERS
+    assert X.ControlMask in grabber_mod._LOCK_MODIFIERS
+    assert X.Mod1Mask in grabber_mod._LOCK_MODIFIERS  # Alt
+    # Combined: Shift+Ctrl, Shift+Alt, Ctrl+Alt
+    assert (X.ShiftMask | X.ControlMask) in grabber_mod._LOCK_MODIFIERS
+    assert (X.ShiftMask | X.Mod1Mask) in grabber_mod._LOCK_MODIFIERS
+    # And mixed with lock keys
+    assert (X.ShiftMask | X.LockMask) in grabber_mod._LOCK_MODIFIERS
+
+
+def test_modifier_combos_has_64_entries(fake_display):
+    """8 lock combos x 8 user-modifier combos = 64 unique masks."""
+    assert len(grabber_mod._LOCK_MODIFIERS) == 64
+
+
+def test_grabbed_key_with_consume_false_falls_through_to_passthrough(fake_display):
+    """When should_consume returns False for a grabbed key (e.g. chat is
+    active), the event should still fire on_passthrough so the focused
+    window's chat box receives the arrow for cursor movement."""
+    d, root = fake_display
+    g = grabber_mod.MovementKeyGrabber()
+
+    on_key_calls = []
+    on_passthrough_calls = []
+
+    from Xlib import XK
+    d.keysym_to_keycode.side_effect = lambda ks: 111 if ks == XK.string_to_keysym("Up") else 0
+
+    event = MagicMock()
+    event.type = X.KeyPress
+    event.detail = 111
+    event.time = 1234
+
+    pending_seq = iter([1, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+    d.pending_events.side_effect = lambda: next(pending_seq, 0)
+    d.next_event.return_value = event
+
+    g.start(
+        keysyms=["Up"],
+        on_key=lambda a, k: on_key_calls.append((a, k)),
+        on_passthrough=lambda a, k: on_passthrough_calls.append((a, k)),
+        should_consume=lambda _: False,  # e.g. chat active
+    )
+    import time
+    time.sleep(0.1)
+    g.stop()
+
+    assert on_key_calls == []
+    assert on_passthrough_calls == [("keydown", "Up")]
+
+
 def test_passthrough_event_uses_replay_keyboard_mode(fake_display):
     """Passthrough events should use ReplayKeyboard so X is told to let
     the event flow normally (even though Replay is a no-op in async)."""
