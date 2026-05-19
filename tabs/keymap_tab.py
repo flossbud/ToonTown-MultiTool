@@ -16,9 +16,13 @@ import os
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFrame, QScrollArea, QLineEdit, QSizePolicy,
+    QCheckBox, QRadioButton, QButtonGroup, QDialog,
+    QDialogButtonBox, QMessageBox,
 )
 from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve
 from PySide6.QtGui import QColor, QPainter
+
+from utils import settings_keys, cc_isolation
 from utils.theme_manager import resolve_theme, get_theme_colors, apply_card_shadow, get_set_color, make_trash_icon
 from utils.symbols import S
 from utils.widgets import install_modern_scrollbar
@@ -377,12 +381,24 @@ class KeymapTab(QWidget):
             entry["body"].deleteLater()
         self._entries.clear()
 
-        # Remove spacers and add button
+        # Build the isolation panel once; it persists across rebuilds.
+        self._build_isolation_panel()
+
+        # Remove spacers and add button (preserve the persistent isolation panel).
         while self._scroll_layout.count():
             item = self._scroll_layout.takeAt(0)
             w = item.widget()
+            if w is self._isolation_panel:
+                continue
             if w:
                 w.deleteLater()
+
+        # Re-insert the persistent isolation panel at the top. Only meaningful
+        # for the CC bucket, so we hide it for TTR.
+        self._scroll_layout.addWidget(self._isolation_panel)
+        self._isolation_panel.setVisible(self._active_game == "cc")
+        if self._active_game == "cc":
+            self._scroll_layout.addSpacing(12)
 
         sets = self.keymap_manager.get_sets(self._active_game)
         for idx, s in enumerate(sets):
@@ -416,6 +432,360 @@ class KeymapTab(QWidget):
         self._scroll_layout.addStretch()
 
         self._refresh_default_conflict_markers()
+
+    # ── Per-toon control isolation panel ──────────────────────────────────
+
+    def _build_isolation_panel(self):
+        """Build the persistent isolation panel widget. Idempotent."""
+        if getattr(self, "_isolation_built", False):
+            return
+        self._isolation_built = True
+
+        sm = self.settings_manager
+        enabled = bool(sm.get(settings_keys.ISOLATION_ENABLED, False)) if sm else False
+        canonical = sm.get(settings_keys.ISOLATION_CANONICAL, cc_isolation.DEFAULT_CANONICAL) if sm else cc_isolation.DEFAULT_CANONICAL
+        if canonical not in ("wasd", "arrows"):
+            canonical = cc_isolation.DEFAULT_CANONICAL
+
+        panel = QFrame()
+        panel.setObjectName("isolation_panel")
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(6)
+
+        title = QLabel("Per-toon control isolation")
+        title.setObjectName("isolation_title")
+        title.setStyleSheet("font-weight: bold; font-size: 13px;")
+        layout.addWidget(title)
+
+        desc = QLabel("Lock CC to a single movement keyset so per-toon key assignments don't collide.")
+        desc.setObjectName("isolation_description")
+        desc.setWordWrap(True)
+        desc.setStyleSheet("font-size: 11px; color: rgba(255,255,255,0.6);")
+        layout.addWidget(desc)
+
+        self._isolation_toggle = QCheckBox("Enable")
+        self._isolation_toggle.setObjectName("isolation_toggle")
+        self._isolation_toggle.setChecked(enabled)
+        self._isolation_toggle.toggled.connect(self._on_isolation_toggled)
+        layout.addWidget(self._isolation_toggle)
+
+        # Canonical picker (radio buttons).
+        picker = QWidget()
+        picker.setObjectName("isolation_canonical_picker")
+        picker_layout = QHBoxLayout(picker)
+        picker_layout.setContentsMargins(0, 0, 0, 0)
+        picker_layout.setSpacing(8)
+        picker_layout.addWidget(QLabel("Canonical keyset:"))
+
+        self._isolation_radio_wasd = QRadioButton("WASD")
+        self._isolation_radio_wasd.setObjectName("isolation_canonical_wasd")
+        self._isolation_radio_arrows = QRadioButton("Arrows")
+        self._isolation_radio_arrows.setObjectName("isolation_canonical_arrows")
+
+        self._isolation_radio_group = QButtonGroup(picker)
+        self._isolation_radio_group.addButton(self._isolation_radio_wasd)
+        self._isolation_radio_group.addButton(self._isolation_radio_arrows)
+
+        if canonical == "arrows":
+            self._isolation_radio_arrows.setChecked(True)
+        else:
+            self._isolation_radio_wasd.setChecked(True)
+
+        self._isolation_radio_wasd.toggled.connect(self._on_canonical_changed)
+        self._isolation_radio_arrows.toggled.connect(self._on_canonical_changed)
+
+        picker_layout.addWidget(self._isolation_radio_wasd)
+        picker_layout.addWidget(self._isolation_radio_arrows)
+        picker_layout.addStretch()
+        layout.addWidget(picker)
+        self._isolation_canonical_picker = picker
+
+        # Restore button.
+        restore_btn = QPushButton("Restore CC defaults")
+        restore_btn.setObjectName("isolation_restore_button")
+        restore_btn.setCursor(Qt.PointingHandCursor)
+        restore_btn.clicked.connect(self._on_isolation_restore)
+        layout.addWidget(restore_btn, alignment=Qt.AlignLeft)
+        self._isolation_restore_button = restore_btn
+
+        # "It didn't work?" reveal link.
+        didnt_work = QLabel("<a href='#'>It didn't work?</a>")
+        didnt_work.setObjectName("isolation_didnt_work_link")
+        didnt_work.setOpenExternalLinks(False)
+        didnt_work.setTextInteractionFlags(Qt.LinksAccessibleByMouse | Qt.LinksAccessibleByKeyboard)
+        didnt_work.linkActivated.connect(self._on_isolation_didnt_work_clicked)
+        layout.addWidget(didnt_work)
+        self._isolation_didnt_work_link = didnt_work
+
+        # Sub-toggle (Phase B placeholder, disabled).
+        sub = QCheckBox("Use input grab fallback")
+        sub.setObjectName("isolation_input_grab_subtoggle")
+        sub.setEnabled(False)
+        sub.setToolTip("Coming in a later release if needed for your setup.")
+        sub.setVisible(False)
+        layout.addWidget(sub)
+        self._isolation_input_grab_subtoggle = sub
+
+        self._isolation_panel = panel
+        self._refresh_isolation_panel_visibility()
+
+    def _refresh_isolation_panel_visibility(self):
+        """Show/hide the canonical picker and restore button based on toggle state."""
+        if not getattr(self, "_isolation_built", False):
+            return
+        on = self._isolation_toggle.isChecked()
+        self._isolation_canonical_picker.setVisible(on)
+        self._isolation_restore_button.setVisible(on)
+
+    def _discover_cc_installs(self) -> list:
+        """Return the list of discovered CC installs.
+
+        Tests monkeypatch this method; the production fallback chain checks
+        GameRegistry for a published helper and otherwise asks the runtimes
+        service directly.
+        """
+        try:
+            from utils.game_registry import GameRegistry
+            reg = GameRegistry.instance()
+            if hasattr(reg, "get_cc_installs"):
+                return list(reg.get_cc_installs())
+            if hasattr(reg, "cc_installs"):
+                return list(reg.cc_installs)
+        except Exception:
+            pass
+        try:
+            from services.wine_runtimes import discover_cc_installs
+            return list(discover_cc_installs() or [])
+        except Exception:
+            return []
+
+    def _show_isolation_explainer(self, parent, default_canonical):
+        """Show the first-time-enable explainer modal.
+
+        Returns 'wasd', 'arrows', or None (cancel).
+        """
+        dlg = QDialog(parent)
+        dlg.setWindowTitle("Enable per-toon control isolation")
+        dlg.setModal(True)
+        dlg_layout = QVBoxLayout(dlg)
+
+        body = QLabel(
+            "This will overwrite Corporate Clash's movement bindings so every install uses "
+            "the same canonical keyset. Per-toon assignments will then be sent through TTMT."
+        )
+        body.setWordWrap(True)
+        dlg_layout.addWidget(body)
+
+        picker_row = QHBoxLayout()
+        picker_row.addWidget(QLabel("Canonical keyset:"))
+        wasd = QRadioButton("WASD")
+        arrows = QRadioButton("Arrows")
+        if default_canonical == "arrows":
+            arrows.setChecked(True)
+        else:
+            wasd.setChecked(True)
+        picker_row.addWidget(wasd)
+        picker_row.addWidget(arrows)
+        picker_row.addStretch()
+        dlg_layout.addLayout(picker_row)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dlg.accept)
+        buttons.rejected.connect(dlg.reject)
+        dlg_layout.addWidget(buttons)
+
+        if dlg.exec() != QDialog.Accepted:
+            return None
+        return "arrows" if arrows.isChecked() else "wasd"
+
+    def _show_custom_bindings_confirm(self, parent, current_dict, proposed_dict):
+        """Show the custom-bindings confirmation modal.
+
+        Returns 'wasd', 'arrows', or 'cancel'.
+        """
+        box = QMessageBox(parent)
+        box.setIcon(QMessageBox.Warning)
+        box.setWindowTitle("Overwrite custom CC bindings?")
+        box.setText(
+            "Corporate Clash currently has custom movement bindings. Enabling isolation "
+            "will overwrite them with a canonical keyset. A backup will be saved."
+        )
+        wasd_btn = box.addButton("Overwrite with WASD", QMessageBox.AcceptRole)
+        arrows_btn = box.addButton("Overwrite with Arrows", QMessageBox.AcceptRole)
+        cancel_btn = box.addButton(QMessageBox.Cancel)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is wasd_btn:
+            return "wasd"
+        if clicked is arrows_btn:
+            return "arrows"
+        return "cancel"
+
+    def _show_restart_notice(self, pids):
+        """Notify the user that running CC processes need a restart."""
+        if not pids:
+            return
+        pretty = ", ".join(str(p) for p in pids)
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Information)
+        box.setWindowTitle("Restart these CC processes")
+        box.setText(
+            "Some Corporate Clash processes are running and won't see the new bindings "
+            f"until restarted. PIDs: {pretty}"
+        )
+        box.exec()
+
+    def _revert_isolation_toggle(self, to: bool):
+        """Set the isolation toggle's checked state without re-triggering the handler."""
+        self._isolation_toggle.blockSignals(True)
+        self._isolation_toggle.setChecked(to)
+        self._isolation_toggle.blockSignals(False)
+
+    def _on_isolation_toggled(self, checked: bool):
+        from utils import cc_settings
+        from utils import cc_running_pids
+
+        sm = self.settings_manager
+
+        if not checked:
+            # Run restore + clear setting; refresh visibility.
+            self._do_isolation_restore()
+            self._refresh_isolation_panel_visibility()
+            return
+
+        # First-time enable path: show explainer, pick canonical, write prefs.
+        previously_enabled = bool(sm.get(settings_keys.ISOLATION_ENABLED, False)) if sm else False
+        default_canonical = (sm.get(settings_keys.ISOLATION_CANONICAL, cc_isolation.DEFAULT_CANONICAL)
+                             if sm else cc_isolation.DEFAULT_CANONICAL)
+        if default_canonical not in ("wasd", "arrows"):
+            default_canonical = cc_isolation.DEFAULT_CANONICAL
+
+        canonical = default_canonical
+        if not previously_enabled:
+            canonical = self._show_isolation_explainer(self, default_canonical)
+            if canonical not in ("wasd", "arrows"):
+                # User cancelled: revert.
+                self._revert_isolation_toggle(False)
+                self._refresh_isolation_panel_visibility()
+                return
+
+        installs = self._discover_cc_installs()
+        if not installs:
+            QMessageBox.warning(
+                self,
+                "No Corporate Clash install detected",
+                "TTMT could not find any Corporate Clash installs to configure.",
+            )
+            self._revert_isolation_toggle(False)
+            self._refresh_isolation_panel_visibility()
+            return
+
+        # If any install currently has user-customized movement bindings, confirm.
+        has_custom = False
+        current_bindings = {}
+        for inst in installs:
+            path = cc_settings.locate_cc_preferences(inst)
+            if path is None:
+                continue
+            try:
+                parsed = cc_settings.parse_cc_preferences(path)
+            except Exception:
+                continue
+            if cc_settings.detect_custom_bindings(parsed) == "user_custom":
+                has_custom = True
+                current_bindings = dict(parsed.keymap or {})
+                break
+
+        if has_custom:
+            proposed = dict(cc_isolation.CANONICAL_KEYMAP[canonical])
+            answer = self._show_custom_bindings_confirm(self, current_bindings, proposed)
+            if answer == "cancel":
+                self._revert_isolation_toggle(False)
+                self._refresh_isolation_panel_visibility()
+                return
+            canonical = answer  # user may have picked a different keyset in the confirm
+
+        results = cc_settings.write_canonical_to_all_installs(installs, canonical)
+        if not results or not all(getattr(r, "ok", False) for r in results):
+            errors = [getattr(r, "error", "?") for r in (results or []) if not getattr(r, "ok", False)]
+            QMessageBox.critical(
+                self,
+                "Could not write CC preferences",
+                "TTMT failed to update Corporate Clash preferences. "
+                + ("\n".join(errors) if errors else "No installs were updated."),
+            )
+            self._revert_isolation_toggle(False)
+            self._refresh_isolation_panel_visibility()
+            return
+
+        # Persist settings.
+        if sm:
+            sm.set(settings_keys.ISOLATION_ENABLED, True)
+            sm.set(settings_keys.ISOLATION_CANONICAL, canonical)
+
+        # Sync the radio buttons to the picked canonical without firing change handlers.
+        self._isolation_radio_wasd.blockSignals(True)
+        self._isolation_radio_arrows.blockSignals(True)
+        if canonical == "arrows":
+            self._isolation_radio_arrows.setChecked(True)
+        else:
+            self._isolation_radio_wasd.setChecked(True)
+        self._isolation_radio_wasd.blockSignals(False)
+        self._isolation_radio_arrows.blockSignals(False)
+
+        # Restart notice (best effort; failure is non-fatal).
+        all_pids = []
+        for inst in installs:
+            prefix = getattr(inst, "prefix_path", None)
+            if not prefix:
+                continue
+            try:
+                all_pids.extend(cc_running_pids.scan_for_prefix(prefix))
+            except Exception:
+                pass
+        if all_pids:
+            self._show_restart_notice(all_pids)
+
+        self._refresh_isolation_panel_visibility()
+
+    def _do_isolation_restore(self):
+        from utils import cc_settings
+        sm = self.settings_manager
+        installs = self._discover_cc_installs()
+        if installs:
+            try:
+                cc_settings.restore_all_installs(installs)
+            except Exception as e:
+                print(f"[KeymapTab] restore_all_installs failed: {e}")
+        if sm:
+            sm.set(settings_keys.ISOLATION_ENABLED, False)
+
+    def _on_isolation_restore(self):
+        # Flipping the toggle off triggers _on_isolation_toggled(False), which
+        # runs the restore + clears the setting + refreshes visibility.
+        self._isolation_toggle.setChecked(False)
+
+    def _on_canonical_changed(self, _checked: bool):
+        from utils import cc_settings
+        sm = self.settings_manager
+        if not sm or not bool(sm.get(settings_keys.ISOLATION_ENABLED, False)):
+            return
+        # Avoid double-firing: only react when something is actually checked.
+        new_canonical = "arrows" if self._isolation_radio_arrows.isChecked() else "wasd"
+        current = sm.get(settings_keys.ISOLATION_CANONICAL, cc_isolation.DEFAULT_CANONICAL)
+        if new_canonical == current:
+            return
+        installs = self._discover_cc_installs()
+        if not installs:
+            return
+        results = cc_settings.write_canonical_to_all_installs(installs, new_canonical)
+        if results and all(getattr(r, "ok", False) for r in results):
+            sm.set(settings_keys.ISOLATION_CANONICAL, new_canonical)
+
+    def _on_isolation_didnt_work_clicked(self, _link: str):
+        # Reveal the disabled Phase B sub-toggle.
+        self._isolation_input_grab_subtoggle.setVisible(True)
 
     def _make_pair(self, index, set_data):
         """Return (header, body, chevron) as independent widgets."""
