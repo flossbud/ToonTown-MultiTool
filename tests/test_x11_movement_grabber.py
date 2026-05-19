@@ -294,3 +294,95 @@ def test_release_with_no_pending_is_processed_normally(fake_display):
     g.stop()
 
     assert ("keyup", "Up") in on_key_calls
+
+
+def test_passthrough_keysyms_register_but_dont_install_grabs(fake_display):
+    """Passthrough keysyms get a keycode mapping but no XGrabKey calls.
+    A grabbed key still gets its 8 lock-modifier combos."""
+    d, root = fake_display
+    g = grabber_mod.MovementKeyGrabber()
+    try:
+        ok = g.start(
+            keysyms=["Up"],
+            passthrough_keysyms=["w", "a"],
+            on_key=lambda *_: None,
+            on_passthrough=lambda *_: None,
+            should_consume=lambda _: True,
+        )
+        assert ok
+        # Only Up gets grabbed (1 keysym * 8 lock combos), w/a get no grabs.
+        assert root.grab_key.call_count == len(grabber_mod._LOCK_MODIFIERS)
+    finally:
+        g.stop()
+
+
+def test_passthrough_event_fires_on_passthrough_not_on_key(fake_display):
+    """When a passthrough key event arrives during the active grab,
+    on_passthrough fires with (action, keysym) and on_key is skipped."""
+    d, root = fake_display
+    g = grabber_mod.MovementKeyGrabber()
+
+    on_key_calls = []
+    on_passthrough_calls = []
+
+    from Xlib import XK
+    up_ks = XK.string_to_keysym("Up")
+    w_ks = XK.string_to_keysym("w")
+    d.keysym_to_keycode.side_effect = lambda ks: {up_ks: 111, w_ks: 25}.get(ks, 0)
+
+    # One W KeyPress event (simulating W arriving during Up's active grab).
+    event = MagicMock()
+    event.type = X.KeyPress
+    event.detail = 25
+    event.time = 1234
+
+    pending_seq = iter([1, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+    d.pending_events.side_effect = lambda: next(pending_seq, 0)
+    d.next_event.return_value = event
+
+    g.start(
+        keysyms=["Up"],
+        passthrough_keysyms=["w"],
+        on_key=lambda a, k: on_key_calls.append((a, k)),
+        on_passthrough=lambda a, k: on_passthrough_calls.append((a, k)),
+        should_consume=lambda _: True,
+    )
+    import time
+    time.sleep(0.1)
+    g.stop()
+
+    assert on_passthrough_calls == [("keydown", "w")]
+    assert on_key_calls == []
+
+
+def test_passthrough_event_uses_replay_keyboard_mode(fake_display):
+    """Passthrough events should use ReplayKeyboard so X is told to let
+    the event flow normally (even though Replay is a no-op in async)."""
+    d, root = fake_display
+    g = grabber_mod.MovementKeyGrabber()
+
+    from Xlib import XK
+    d.keysym_to_keycode.side_effect = lambda ks: {XK.string_to_keysym("Up"): 111, XK.string_to_keysym("w"): 25}.get(ks, 0)
+
+    event = MagicMock()
+    event.type = X.KeyPress
+    event.detail = 25
+    event.time = 1234
+
+    pending_seq = iter([1, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+    d.pending_events.side_effect = lambda: next(pending_seq, 0)
+    d.next_event.return_value = event
+
+    g.start(
+        keysyms=["Up"],
+        passthrough_keysyms=["w"],
+        on_key=lambda *_: None,
+        on_passthrough=lambda *_: None,
+        should_consume=lambda _: True,
+    )
+    import time
+    time.sleep(0.1)
+    g.stop()
+
+    modes = [c.args[0] for c in d.allow_events.call_args_list]
+    assert X.ReplayKeyboard in modes

@@ -11,6 +11,7 @@ from services import input_service
 from services.input_service import (
     InputService,
     _conflicting_canonical_keysyms,
+    _passthrough_keysyms_for_canonical,
 )
 
 
@@ -126,3 +127,75 @@ def test_shutdown_calls_grabber_stop(svc, monkeypatch):
     svc.shutdown()
     fake.stop.assert_called_once()
     assert svc._key_grabber is None
+
+
+def test_passthrough_keysyms_for_wasd_canonical_includes_movement_modifiers_letters():
+    keys = _passthrough_keysyms_for_canonical("wasd")
+    # Canonical movement keys
+    assert "w" in keys and "a" in keys and "s" in keys and "d" in keys
+    # Modifiers
+    assert "Shift_L" in keys and "Control_L" in keys and "Alt_L" in keys
+    # Common action keys
+    assert "space" in keys and "Tab" in keys and "Escape" in keys
+    # Common letters used in CC bindings (q=gags, e=tasks)
+    assert "q" in keys and "e" in keys
+    # Digits
+    assert "1" in keys and "9" in keys
+
+
+def test_passthrough_keysyms_for_arrows_canonical_includes_arrows():
+    keys = _passthrough_keysyms_for_canonical("arrows")
+    assert "Up" in keys and "Down" in keys and "Left" in keys and "Right" in keys
+
+
+def test_on_passthrough_key_no_active_window_is_a_noop(svc):
+    svc.window_manager.get_active_window.return_value = None
+    # Must not raise even though no bridge call will succeed.
+    svc._on_passthrough_key("keydown", "w")
+
+
+def test_on_passthrough_key_non_cc_window_is_a_noop(svc, monkeypatch):
+    svc.window_manager.get_active_window.return_value = "w1"
+    from utils import game_registry as gr
+    fake_reg = MagicMock()
+    fake_reg.get_game_for_window.return_value = "ttr"
+    monkeypatch.setattr(gr.GameRegistry, "instance", lambda: fake_reg)
+
+    bridge = MagicMock()
+    monkeypatch.setattr("utils.wine_input_bridge.send_to_window", bridge)
+
+    svc._on_passthrough_key("keydown", "w")
+
+    bridge.assert_not_called()
+
+
+def test_on_passthrough_key_cc_window_routes_to_wine_bridge(svc, monkeypatch):
+    svc.window_manager.get_active_window.return_value = "w1"
+    svc.window_manager.get_window_ids.return_value = ["w1", "w2"]
+    from utils import game_registry as gr
+    fake_reg = MagicMock()
+    fake_reg.get_game_for_window.return_value = "cc"
+    monkeypatch.setattr(gr.GameRegistry, "instance", lambda: fake_reg)
+
+    bridge = MagicMock()
+    monkeypatch.setattr("utils.wine_input_bridge.send_to_window", bridge)
+
+    svc._on_passthrough_key("keydown", "w")
+
+    bridge.assert_called_once_with("w1", ["w1", "w2"], "keydown", "w")
+
+
+def test_on_passthrough_key_swallows_bridge_exceptions(svc, monkeypatch):
+    svc.window_manager.get_active_window.return_value = "w1"
+    svc.window_manager.get_window_ids.return_value = ["w1"]
+    from utils import game_registry as gr
+    fake_reg = MagicMock()
+    fake_reg.get_game_for_window.return_value = "cc"
+    monkeypatch.setattr(gr.GameRegistry, "instance", lambda: fake_reg)
+
+    def boom(*_args, **_kw):
+        raise RuntimeError("bridge unavailable")
+    monkeypatch.setattr("utils.wine_input_bridge.send_to_window", boom)
+
+    # Must not raise.
+    svc._on_passthrough_key("keydown", "w")

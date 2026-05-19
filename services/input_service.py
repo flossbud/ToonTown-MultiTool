@@ -149,6 +149,15 @@ class InputService(QObject):
         XGrabKey the conflicting keys and decide per-event whether to
         consume or replay.
 
+        Passthrough: while an arrow is held, the X server's active
+        keyboard grab redirects ALL keyboard events to TTMT, including
+        WASD/modifiers/etc. that should reach the focused CC window.
+        AllowEvents(ReplayKeyboard) is a no-op in GrabModeAsync, so
+        the events would otherwise be lost. We register WASD + common
+        action keys as "passthrough" keysyms so the grabber recognizes
+        them and routes them via on_passthrough to the focused CC HWND
+        through the wine bridge.
+
         Silent failure: if Xlib is missing or the display can't be
         opened, the grabber simply doesn't run. Per-toon routing for
         background toons still works; only the focused-window cross
@@ -165,11 +174,14 @@ class InputService(QObject):
         keysyms = list(_conflicting_canonical_keysyms(cc_isolation.DEFAULT_CANONICAL))
         if not keysyms:
             return
+        passthrough_keysyms = list(_passthrough_keysyms_for_canonical(cc_isolation.DEFAULT_CANONICAL))
         self._key_grabber = MovementKeyGrabber()
         ok = self._key_grabber.start(
             keysyms=keysyms,
             on_key=self._on_grabbed_key,
             should_consume=self._should_consume_grabbed_key,
+            passthrough_keysyms=passthrough_keysyms,
+            on_passthrough=self._on_passthrough_key,
         )
         if not ok:
             self._key_grabber = None
@@ -182,6 +194,37 @@ class InputService(QObject):
                 event_queue.put_nowait((action, keysym))
         except Exception as e:  # noqa: BLE001
             print(f"[InputService] enqueue from grabber failed: {e}")
+
+    def _on_passthrough_key(self, action: str, keysym: str) -> None:
+        """Hand a non-grabbed key that arrived during our active grab
+        back to the focused CC window via the wine bridge.
+
+        Without this the focused window loses control of WASD/modifiers/
+        action keys while an arrow is held, because X redirects every
+        keyboard event to the grabbing client during the active grab.
+        """
+        try:
+            active = self.window_manager.get_active_window()
+        except Exception:
+            return
+        if not active:
+            return
+        try:
+            from utils.game_registry import GameRegistry
+            if GameRegistry.instance().get_game_for_window(str(active)) != "cc":
+                return
+        except Exception:
+            return
+        try:
+            from utils import wine_input_bridge
+            wine_input_bridge.send_to_window(
+                str(active),
+                [str(w) for w in self.window_manager.get_window_ids()],
+                action,
+                keysym,
+            )
+        except Exception as e:  # noqa: BLE001
+            print(f"[InputService] passthrough bridge send failed: {e}")
 
     def _should_consume_grabbed_key(self, keysym: str) -> bool:
         """Decide per-event whether to suppress the grabbed key from the
@@ -905,4 +948,35 @@ def _conflicting_canonical_keysyms(canonical: str) -> tuple[str, ...]:
         return ("Up", "Down", "Left", "Right")
     if canonical == "arrows":
         return ("w", "a", "s", "d")
+    return ()
+
+
+def _passthrough_keysyms_for_canonical(canonical: str) -> tuple[str, ...]:
+    """Keys to recognize as passthrough while the grabber's active
+    grab is in effect (so the focused window keeps responding to them).
+
+    The set covers: the canonical movement keyset, modifiers, common
+    action keys mapped by CC defaults, letters used by CC bindings
+    (q, e for gags/tasks), digits, space/Tab/Return/Escape/Backspace.
+
+    This is intentionally broad. The cost of recognizing an extra key
+    is just a dict entry and a synthetic bridge send when it fires;
+    the cost of MISSING a key is the focused toon losing that input
+    while an arrow is held.
+    """
+    canonical_keys = tuple(
+        _canonical_keys_for(canonical)
+    )
+    modifiers = ("Shift_L", "Shift_R", "Control_L", "Control_R", "Alt_L", "Alt_R")
+    common = ("space", "Tab", "Return", "Escape", "BackSpace", "Delete")
+    letters = tuple("abcdefghijklmnopqrstuvwxyz")
+    digits = tuple("0123456789")
+    return canonical_keys + modifiers + common + letters + digits
+
+
+def _canonical_keys_for(canonical: str) -> tuple[str, ...]:
+    if canonical == "wasd":
+        return ("w", "a", "s", "d")
+    if canonical == "arrows":
+        return ("Up", "Down", "Left", "Right")
     return ()

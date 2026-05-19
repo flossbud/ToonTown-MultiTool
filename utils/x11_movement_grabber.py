@@ -71,11 +71,17 @@ class MovementKeyGrabber:
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
         self._grabbed: list[tuple[int, int]] = []
-        # Map keycode -> the keysym name we registered for it. Needed because
-        # XK.keysym_to_string returns None for non-printable keysyms like Up,
-        # Down, Left, Right. Built at start() from the keysyms we grab.
-        self._keycode_to_name: dict[int, str] = {}
+        # Map keycode -> (kind, keysym_name) where kind is "grabbed"
+        # (events get consumed and routed via on_key) or "passthrough"
+        # (events arrive at our grab during the active-grab window and
+        # we hand them to on_passthrough so the focused window doesn't
+        # lose control of WASD/modifiers/etc. while an arrow is held).
+        # XK.keysym_to_string would return None for non-printable
+        # keysyms like Up/Down/Left/Right, so we build this map at
+        # start() from the keysyms we explicitly register.
+        self._keycode_to_name: dict[int, tuple[str, str]] = {}
         self._on_key: Optional[Callable[[str, str], None]] = None
+        self._on_passthrough: Optional[Callable[[str, str], None]] = None
         self._should_consume: Optional[Callable[[str], bool]] = None
 
     def start(
@@ -83,10 +89,23 @@ class MovementKeyGrabber:
         keysyms: list[str],
         on_key: Callable[[str, str], None],
         should_consume: Callable[[str], bool],
+        passthrough_keysyms: Optional[list[str]] = None,
+        on_passthrough: Optional[Callable[[str, str], None]] = None,
     ) -> bool:
         """Register passive grabs for each keysym and start the event-loop
         thread. Returns True on success, False if xlib is unavailable, the
-        display can't be opened, or the grabber is already running."""
+        display can't be opened, or the grabber is already running.
+
+        passthrough_keysyms is the list of OTHER keys we want to recognize
+        when they arrive at our grab during the active-grab window (e.g.
+        WASD pressed while an arrow is held). For those we don't establish
+        a passive grab, but we DO record their keycode so the event loop
+        can route them via on_passthrough. Without this the user loses
+        control of the focused window while an arrow is held because the
+        X server redirects all keyboard events to the grabbing client
+        during the active grab, and AllowEvents(ReplayKeyboard) is a no-op
+        when keyboard_mode is Async.
+        """
         if not _HAS_XLIB:
             return False
         if self._thread is not None and self._thread.is_alive():
@@ -100,6 +119,7 @@ class MovementKeyGrabber:
 
         self._root = self._display.screen().root
         self._on_key = on_key
+        self._on_passthrough = on_passthrough
         self._should_consume = should_consume
 
         registered = 0
@@ -111,7 +131,7 @@ class MovementKeyGrabber:
             keycode = self._display.keysym_to_keycode(ks)
             if keycode == 0:
                 continue
-            self._keycode_to_name[keycode] = keysym_name
+            self._keycode_to_name[keycode] = ("grabbed", keysym_name)
             for mod in _LOCK_MODIFIERS:
                 try:
                     self._root.grab_key(
@@ -124,6 +144,16 @@ class MovementKeyGrabber:
                     # Another client already grabbed this combo. Not fatal -
                     # we just won't suppress that exact key+mod combo.
                     pass
+
+        for keysym_name in passthrough_keysyms or []:
+            ks = XK.string_to_keysym(keysym_name)
+            if ks == 0:
+                continue
+            keycode = self._display.keysym_to_keycode(ks)
+            if keycode == 0:
+                continue
+            # Don't overwrite a grabbed entry if it happens to share a keycode.
+            self._keycode_to_name.setdefault(keycode, ("passthrough", keysym_name))
 
         try:
             self._display.sync()
@@ -231,14 +261,13 @@ class MovementKeyGrabber:
             self._handle_event(event)
 
     def _handle_event(self, event) -> None:
-        """Decide consume/replay for a single key event and fire on_key
-        if consumed. Pulled out of _run so the auto-repeat branch can
-        reuse it for the 'not actually auto-repeat' case where we have
-        two events on hand and need to process both."""
-        keysym_name = self._keycode_to_name.get(event.detail)
+        """Decide consume / passthrough / replay for a single key event."""
+        entry = self._keycode_to_name.get(event.detail)
+        kind = entry[0] if entry else None
+        keysym_name = entry[1] if entry else None
 
         consume = False
-        if keysym_name and self._should_consume is not None:
+        if kind == "grabbed" and self._should_consume is not None:
             try:
                 consume = bool(self._should_consume(keysym_name))
             except Exception as e:  # noqa: BLE001
@@ -252,9 +281,14 @@ class MovementKeyGrabber:
         except Exception:
             return
 
-        if consume and keysym_name and self._on_key is not None:
-            action = "keydown" if event.type == X.KeyPress else "keyup"
+        action = "keydown" if event.type == X.KeyPress else "keyup"
+        if consume and self._on_key is not None:
             try:
                 self._on_key(action, keysym_name)
             except Exception as e:  # noqa: BLE001
                 print(f"[x11_movement_grabber] on_key raised: {e}")
+        elif kind == "passthrough" and self._on_passthrough is not None:
+            try:
+                self._on_passthrough(action, keysym_name)
+            except Exception as e:  # noqa: BLE001
+                print(f"[x11_movement_grabber] on_passthrough raised: {e}")
