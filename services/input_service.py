@@ -201,48 +201,88 @@ class InputService(QObject):
     # ── Keymap-aware send methods ──────────────────────────────────────────
 
     def _send_logical_action_km(self, action, key, enabled, assignments):
-        """Send a movement-class action to background toons via logical-action layer.
+        """Route a movement-class action to toons.
 
-        The pressed key is resolved to a logical action via the foreground game's
-        Default set, then each enabled bg toon receives the binding for that
-        logical action in its assigned set, scoped to its window's game.
+        CC: per-toon routing. Each enabled toon's assigned set is consulted
+        independently for the pressed key. When a toon's set binds the key,
+        TTMT emits CC's canonical key for that action to that toon's window.
+        For movement, canonical is the WASD that TTMT locks CC's prefs to
+        (utils/cc_isolation.py). For other actions, canonical is the toon's
+        own binding (mirrors CC Default which mirrors CC's prefs).
+
+        The foreground toon is skipped only when the pressed key already
+        matches the canonical -- in that case the OS-delivered key reaches
+        the focused window naturally. When the pressed key differs from the
+        canonical (e.g. user pressed Up but CC's prefs lock means Up is
+        ignored), the foreground also gets a bridge-sent canonical key.
+
+        TTR: unchanged broadcast-with-translation. Resolve via foreground
+        default; send toon-set[action] to each background toon.
         """
         if self.global_chat_active:
             return
-        logical = self._resolve_logical_action(key)
-        if logical is None:
+        if self.keymap_manager is None:
             return
 
         from utils.game_registry import GameRegistry
-        from utils import logical_actions
+        from utils import logical_actions, cc_isolation
+
+        cc_canonical_movement = cc_isolation.canonical_to_ttmt_keysyms(
+            cc_isolation.DEFAULT_CANONICAL
+        )
 
         active_window = self.window_manager.get_active_window()
         window_ids = self.window_manager.get_window_ids()
         registry = GameRegistry.instance()
 
+        legacy_logical = self._resolve_logical_action(key)
+
         for i, is_enabled in enumerate(enabled):
             if not is_enabled or i >= len(window_ids):
                 continue
             win = window_ids[i]
-            if win == active_window:
-                continue
             toon_game = registry.get_game_for_window(str(win))
             if toon_game is None:
                 toon_game = "ttr"  # Windows fallback: TTMT pre-dates CC support and TTR is the safe default
-            if not logical_actions.supports(toon_game, logical):
-                continue
             set_idx = assignments[i] if i < len(assignments) else 0
-            outbound = self.keymap_manager.get_key_for_action(toon_game, set_idx, logical)
-            if outbound is None:
-                continue
-            keysym = self._resolve_keysym(outbound)
-            if keysym:
-                self._send_via_backend(action, win, keysym)
-                if self.logging_enabled and action == "keydown" and key != outbound:
-                    self.input_log.emit(
-                        f"[Input] '{key}' -> '{outbound}' "
-                        f"(action: {logical}, {toon_game} set {set_idx + 1})"
-                    )
+
+            if toon_game == "cc":
+                toon_action = self.keymap_manager.get_action_in_set("cc", set_idx, key)
+                if toon_action is None:
+                    continue
+                if not logical_actions.supports("cc", toon_action):
+                    continue
+                canonical = cc_canonical_movement.get(toon_action)
+                if canonical is None:
+                    canonical = self.keymap_manager.get_key_for_action("cc", 0, toon_action)
+                if canonical is None:
+                    continue
+                if win == active_window and key == canonical:
+                    continue
+                keysym = self._resolve_keysym(canonical)
+                if keysym:
+                    self._send_via_backend(action, win, keysym)
+                    if self.logging_enabled and action == "keydown" and key != canonical:
+                        self.input_log.emit(
+                            f"[Input] '{key}' -> '{canonical}' "
+                            f"(cc action: {toon_action}, set {set_idx + 1})"
+                        )
+            else:
+                if legacy_logical is None or win == active_window:
+                    continue
+                if not logical_actions.supports(toon_game, legacy_logical):
+                    continue
+                outbound = self.keymap_manager.get_key_for_action(toon_game, set_idx, legacy_logical)
+                if outbound is None:
+                    continue
+                keysym = self._resolve_keysym(outbound)
+                if keysym:
+                    self._send_via_backend(action, win, keysym)
+                    if self.logging_enabled and action == "keydown" and key != outbound:
+                        self.input_log.emit(
+                            f"[Input] '{key}' -> '{outbound}' "
+                            f"(action: {legacy_logical}, {toon_game} set {set_idx + 1})"
+                        )
 
     def _send_modifier_to_bg(self, action, key, enabled, assignments):
         active_window = self.window_manager.get_active_window()

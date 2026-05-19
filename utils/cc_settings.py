@@ -152,3 +152,130 @@ def apply_cc_controls_to_set(keymap_manager, set_index: int, settings: CcSetting
         print(f"[cc_settings] unknown keymap keys (will not migrate): {unknown_keys}")
 
     return n
+
+
+# ── Write side (silent CC prefs lock for per-toon keyset support) ──────────
+
+from dataclasses import dataclass
+
+from utils import cc_isolation
+
+
+@dataclass
+class WriteResult:
+    ok: bool
+    backup_path: Path | None = None
+    error: str | None = None
+
+
+@dataclass
+class RestoreResult:
+    ok: bool
+    error: str | None = None
+
+
+def write_cc_canonical_keymap(
+    prefs_path: Path,
+    canonical: cc_isolation.Canonical,
+) -> WriteResult:
+    """Lock CC's preferences.json to a single movement keyset.
+
+    Sets want-Custom-Controls=true, replaces the four movement bindings
+    in `keymap` with the canonical's values, preserves all other keys
+    (other keymap entries AND other top-level prefs). The original file
+    is backed up to <prefs>.ttmt-backup on first call only -- subsequent
+    writes keep that original intact.
+
+    Atomic: writes to .ttmt-tmp then renames. Idempotent in outcome: if
+    the keymap already matches, the file is rewritten with the same
+    content (no-op semantically).
+    """
+    prefs_path = Path(prefs_path)
+    backup_path = prefs_path.with_suffix(".json.ttmt-backup")
+    tmp_path = prefs_path.with_suffix(".json.ttmt-tmp")
+
+    try:
+        if prefs_path.exists():
+            existing = json.loads(prefs_path.read_text())
+        else:
+            existing = {}
+
+        if prefs_path.exists() and not backup_path.exists():
+            backup_path.write_text(prefs_path.read_text())
+
+        keymap = dict(existing.get("keymap") or {})
+        for action in cc_isolation.MOVEMENT_ACTIONS:
+            keymap[action] = cc_isolation.CANONICAL_KEYMAP[canonical][action]
+
+        updated = dict(existing)
+        updated["keymap"] = keymap
+        updated["want-Custom-Controls"] = True
+
+        tmp_path.write_text(json.dumps(updated, indent=4))
+        os.replace(tmp_path, prefs_path)
+
+        return WriteResult(ok=True, backup_path=backup_path if backup_path.exists() else None)
+    except OSError as e:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return WriteResult(ok=False, error=str(e))
+
+
+def restore_cc_prefs(prefs_path: Path) -> RestoreResult:
+    """Copy <prefs>.ttmt-backup back over <prefs> and remove the backup.
+
+    There is no UI for this in TTMT; the function exists so power users
+    or recovery tooling can call it manually. After restore, the next
+    TTMT startup will re-lock the prefs (the backup creation guards
+    against double-overwrite, so re-locking is safe but the user will
+    see WASD again). To opt out permanently, delete the install or
+    block TTMT from reaching the prefs path.
+    """
+    prefs_path = Path(prefs_path)
+    backup_path = prefs_path.with_suffix(".json.ttmt-backup")
+    tmp_path = prefs_path.with_suffix(".json.ttmt-tmp")
+
+    if not backup_path.exists():
+        return RestoreResult(ok=False, error=f"No backup at {backup_path}")
+
+    try:
+        tmp_path.write_text(backup_path.read_text())
+        os.replace(tmp_path, prefs_path)
+        backup_path.unlink()
+        return RestoreResult(ok=True)
+    except OSError as e:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return RestoreResult(ok=False, error=str(e))
+
+
+def write_canonical_to_all_installs(
+    installs: list,
+    canonical: cc_isolation.Canonical,
+) -> list[WriteResult]:
+    """Apply write_cc_canonical_keymap to every discovered CC install.
+
+    Skips installs with no preferences.json path. Returns a list parallel
+    to the resolved paths.
+    """
+    results = []
+    for inst in installs:
+        path = locate_cc_preferences(inst)
+        if path is None:
+            continue
+        results.append(write_cc_canonical_keymap(path, canonical))
+    return results
+
+
+def restore_all_installs(installs: list) -> list[RestoreResult]:
+    results = []
+    for inst in installs:
+        path = locate_cc_preferences(inst)
+        if path is None:
+            continue
+        results.append(restore_cc_prefs(path))
+    return results

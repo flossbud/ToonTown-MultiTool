@@ -1235,6 +1235,34 @@ def _should_prompt_for_cc_install(installs, stored_signature: str) -> bool:
     )
 
 
+def _lock_cc_prefs_silently():
+    """Auto-write CC's preferences.json to lock movement to WASD.
+
+    CC's default keymap accepts both WASD and arrow keys for movement,
+    which breaks per-toon keyset assignments (the focused window catches
+    both keysets natively). Locking CC to WASD lets TTMT route the other
+    keyset's keys via the wine bridge without focused-window cross-talk.
+
+    Silent: no UI, no toast. The backup at preferences.json.ttmt-backup
+    preserves the original prefs for recovery; the writer is idempotent
+    so this is safe to call on every startup.
+    """
+    try:
+        from services.wine_runtimes import discover_cc_installs
+        from utils import cc_settings, cc_isolation
+        installs = discover_cc_installs()
+        if not installs:
+            return
+        results = cc_settings.write_canonical_to_all_installs(
+            installs, cc_isolation.DEFAULT_CANONICAL
+        )
+        failed = [r.error for r in results if not r.ok and r.error]
+        if failed:
+            print(f"[main] CC prefs auto-lock partial failure: {failed}")
+    except Exception as e:
+        print(f"[main] CC prefs auto-lock skipped: {e}")
+
+
 def _maybe_prompt_for_cc_install(main_window, settings_manager):
     """Show the picker on boot when multiple CC installs are ambiguous."""
     from services.wine_runtimes import discover_cc_installs, install_signature
@@ -1319,6 +1347,7 @@ if __name__ == "__main__":
     apply_theme(app, resolve_theme(settings))
     window = MultiToonTool()
     window.show()
+    _lock_cc_prefs_silently()
     # Fire the multi-install picker on a 0-delay timer so Qt has finished
     # processing the show event before any modal dialog steals focus.
     QTimer.singleShot(0, lambda: _maybe_prompt_for_cc_install(window, window.settings_manager))
