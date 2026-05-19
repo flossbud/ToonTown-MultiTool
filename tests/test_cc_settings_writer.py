@@ -189,3 +189,41 @@ def test_detect_custom_bindings_user_custom(tmp_path):
         want_custom_controls=True,
     )
     assert cc_settings.detect_custom_bindings(settings) == "user_custom"
+
+
+def test_write_canonical_to_all_installs_applies_to_each(tmp_path, monkeypatch):
+    """Two fake installs in separate prefixes; both prefs files get rewritten."""
+    from utils import cc_settings
+
+    prefs_a = tmp_path / "a" / "preferences.json"
+    prefs_b = tmp_path / "b" / "preferences.json"
+    prefs_a.parent.mkdir()
+    prefs_b.parent.mkdir()
+    _write(prefs_a, {"keymap": {}, "want-Custom-Controls": False})
+    _write(prefs_b, {"keymap": {}, "want-Custom-Controls": False})
+
+    fake_installs = [
+        type("I", (), {"prefix_path": str(prefs_a.parent)})(),
+        type("I", (), {"prefix_path": str(prefs_b.parent)})(),
+    ]
+
+    # Patch locator to return our two fake paths.
+    paths = iter([prefs_a, prefs_b])
+    monkeypatch.setattr(cc_settings, "locate_cc_preferences", lambda inst: next(paths))
+
+    results = cc_settings.write_canonical_to_all_installs(fake_installs, "wasd")
+
+    assert all(r.ok for r in results)
+    assert _read(prefs_a)["keymap"]["forward"] == "w"
+    assert _read(prefs_b)["keymap"]["forward"] == "w"
+
+
+def test_write_canonical_skips_installs_with_no_prefs(tmp_path, monkeypatch):
+    from utils import cc_settings
+
+    monkeypatch.setattr(cc_settings, "locate_cc_preferences", lambda inst: None)
+
+    fake_installs = [type("I", (), {"prefix_path": "/nope"})()]
+    results = cc_settings.write_canonical_to_all_installs(fake_installs, "wasd")
+
+    assert results == []

@@ -245,6 +245,34 @@ def restore_cc_prefs(prefs_path: Path) -> RestoreResult:
         return RestoreResult(ok=False, error=str(e))
 
 
+def write_canonical_to_all_installs(
+    installs: list,
+    canonical: cc_isolation.Canonical,
+) -> list[WriteResult]:
+    """Apply write_cc_canonical_keymap to every discovered CC install.
+
+    Skips installs with no preferences.json path. Returns a list of
+    WriteResult parallel to the resolved paths."""
+    results = []
+    for inst in installs:
+        path = locate_cc_preferences(inst)
+        if path is None:
+            continue
+        results.append(write_cc_canonical_keymap(path, canonical))
+    return results
+
+
+def restore_all_installs(installs: list) -> list[RestoreResult]:
+    """Restore every discovered CC install from its .ttmt-backup."""
+    results = []
+    for inst in installs:
+        path = locate_cc_preferences(inst)
+        if path is None:
+            continue
+        results.append(restore_cc_prefs(path))
+    return results
+
+
 _STOCK_BINDINGS: dict[Literal["wasd", "arrows"], dict[str, str]] = {
     "wasd":   {"forward": "w",        "reverse": "s",          "left": "a",         "right": "d"},
     "arrows": {"forward": "arrow_up", "reverse": "arrow_down", "left": "arrow_left", "right": "arrow_right"},
