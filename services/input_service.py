@@ -201,71 +201,25 @@ class InputService(QObject):
     # ── Keymap-aware send methods ──────────────────────────────────────────
 
     def _send_logical_action_km(self, action, key, enabled, assignments):
-        """Send a movement-class action to background toons.
+        """Send a movement-class action to background toons via logical-action layer.
 
-        Two modes:
-        - Legacy (isolation off): resolve via foreground default; for each
-          bg toon, send toon_set[action] to that toon's window.
-        - Isolation on (ISOLATION_ENABLED setting): for each enabled toon,
-          look up the action in THAT toon's assigned set; if found, emit
-          the CC-canonical key (from isolation settings) for that action
-          to that toon's window. The foreground toon is skipped (it
-          receives the OS-delivered key naturally and CC's rewritten
-          prefs determine whether to honor it).
+        The pressed key is resolved to a logical action via the foreground game's
+        Default set, then each enabled bg toon receives the binding for that
+        logical action in its assigned set, scoped to its window's game.
         """
         if self.global_chat_active:
             return
+        logical = self._resolve_logical_action(key)
+        if logical is None:
+            return
 
         from utils.game_registry import GameRegistry
-        from utils import logical_actions, settings_keys, cc_isolation
+        from utils import logical_actions
 
         active_window = self.window_manager.get_active_window()
         window_ids = self.window_manager.get_window_ids()
         registry = GameRegistry.instance()
 
-        isolation_on = bool(
-            self.settings_manager
-            and self.settings_manager.get(settings_keys.ISOLATION_ENABLED, False)
-        )
-        canonical = (
-            self.settings_manager.get(settings_keys.ISOLATION_CANONICAL, cc_isolation.DEFAULT_CANONICAL)
-            if self.settings_manager else cc_isolation.DEFAULT_CANONICAL
-        )
-        cc_canonical_keysyms = cc_isolation.canonical_to_ttmt_keysyms(canonical) if isolation_on else None
-
-        if not isolation_on:
-            # Legacy path: resolve via foreground default; emit toon_set[action].
-            logical = self._resolve_logical_action(key)
-            if logical is None:
-                return
-
-            for i, is_enabled in enumerate(enabled):
-                if not is_enabled or i >= len(window_ids):
-                    continue
-                win = window_ids[i]
-                if win == active_window:
-                    continue
-                toon_game = registry.get_game_for_window(str(win))
-                if toon_game is None:
-                    toon_game = "ttr"
-                if not logical_actions.supports(toon_game, logical):
-                    continue
-                set_idx = assignments[i] if i < len(assignments) else 0
-                outbound = self.keymap_manager.get_key_for_action(toon_game, set_idx, logical)
-                if outbound is None:
-                    continue
-                keysym = self._resolve_keysym(outbound)
-                if keysym:
-                    self._send_via_backend(action, win, keysym)
-                    if self.logging_enabled and action == "keydown" and key != outbound:
-                        self.input_log.emit(
-                            f"[Input] '{key}' -> '{outbound}' "
-                            f"(action: {logical}, {toon_game} set {set_idx + 1})"
-                        )
-            return
-
-        # Isolation path: per-toon set resolution; CC bg toons get canonical
-        # keysym; TTR bg toons keep legacy routing.
         for i, is_enabled in enumerate(enabled):
             if not is_enabled or i >= len(window_ids):
                 continue
@@ -274,26 +228,20 @@ class InputService(QObject):
                 continue
             toon_game = registry.get_game_for_window(str(win))
             if toon_game is None:
-                toon_game = "ttr"
+                toon_game = "ttr"  # Windows fallback: TTMT pre-dates CC support and TTR is the safe default
+            if not logical_actions.supports(toon_game, logical):
+                continue
             set_idx = assignments[i] if i < len(assignments) else 0
-            toon_action = self.keymap_manager.get_action_in_set(toon_game, set_idx, key)
-            if toon_action is None:
-                continue
-            if not logical_actions.supports(toon_game, toon_action):
-                continue
-            if toon_game == "cc":
-                outbound = cc_canonical_keysyms.get(toon_action)
-            else:
-                outbound = self.keymap_manager.get_key_for_action(toon_game, set_idx, toon_action)
+            outbound = self.keymap_manager.get_key_for_action(toon_game, set_idx, logical)
             if outbound is None:
                 continue
             keysym = self._resolve_keysym(outbound)
             if keysym:
                 self._send_via_backend(action, win, keysym)
-                if self.logging_enabled and action == "keydown":
+                if self.logging_enabled and action == "keydown" and key != outbound:
                     self.input_log.emit(
                         f"[Input] '{key}' -> '{outbound}' "
-                        f"(isolation: {toon_game} action={toon_action}, canonical={canonical})"
+                        f"(action: {logical}, {toon_game} set {set_idx + 1})"
                     )
 
     def _send_modifier_to_bg(self, action, key, enabled, assignments):

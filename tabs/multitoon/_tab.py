@@ -444,11 +444,6 @@ class SetSelectorWidget(QWidget):
         self.setCursor(Qt.ArrowCursor)
         self.setMouseTracking(True)
         self.setAttribute(Qt.WA_StyledBackground, False)
-        self.setToolTip(
-            "These keysets describe what you press for each toon. "
-            "When Per-toon control isolation is on, CC always receives "
-            "the canonical keys on the wire."
-        )
 
         self._refresh_display()
 
