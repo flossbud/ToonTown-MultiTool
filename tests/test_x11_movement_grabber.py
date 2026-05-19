@@ -179,3 +179,118 @@ def test_double_stop_is_idempotent(fake_display):
     g.start(keysyms=["Up"], on_key=lambda *_: None, should_consume=lambda _: True)
     g.stop()
     g.stop()  # must not raise
+
+
+def test_autorepeat_pair_is_dropped(fake_display):
+    """X11 represents auto-repeat as KeyRelease+KeyPress at same time on
+    the same key. The grabber must drop both halves and NOT fire on_key,
+    so the bridge doesn't spam press/release cycles to the routed toon."""
+    d, root = fake_display
+    g = grabber_mod.MovementKeyGrabber()
+
+    on_key_calls = []
+
+    from Xlib import XK
+    d.keysym_to_keycode.side_effect = lambda ks: 111 if ks == XK.string_to_keysym("Up") else 0
+
+    release = MagicMock()
+    release.type = X.KeyRelease
+    release.detail = 111
+    release.time = 5000
+
+    press = MagicMock()
+    press.type = X.KeyPress
+    press.detail = 111
+    press.time = 5000  # SAME time as release - auto-repeat signature
+
+    # pending_events sequence: 1 (for release), then 1 (for the peek inside
+    # the autorepeat branch), then 0 to let the loop exit.
+    pending_seq = iter([1, 1, 0, 0, 0, 0, 0, 0, 0, 0])
+    d.pending_events.side_effect = lambda: next(pending_seq, 0)
+    # next_event returns release first, then press.
+    d.next_event.side_effect = [release, press]
+
+    g.start(
+        keysyms=["Up"],
+        on_key=lambda a, k: on_key_calls.append((a, k)),
+        should_consume=lambda _: True,
+    )
+    import time
+    time.sleep(0.1)
+    g.stop()
+
+    # Auto-repeat: both events dropped, no callback fires.
+    assert on_key_calls == []
+
+
+def test_release_not_auto_repeat_is_processed_normally(fake_display):
+    """If a KeyRelease isn't followed by a same-time KeyPress, treat it
+    as a real release: fire on_key for the keyup."""
+    d, root = fake_display
+    g = grabber_mod.MovementKeyGrabber()
+
+    on_key_calls = []
+
+    from Xlib import XK
+    d.keysym_to_keycode.side_effect = lambda ks: 111 if ks == XK.string_to_keysym("Up") else 0
+
+    release = MagicMock()
+    release.type = X.KeyRelease
+    release.detail = 111
+    release.time = 5000
+
+    # Next event is a DIFFERENT key at a different time. Not auto-repeat.
+    other = MagicMock()
+    other.type = X.KeyPress
+    other.detail = 999
+    other.time = 6000
+
+    pending_seq = iter([1, 1, 0, 0, 0, 0, 0, 0, 0, 0])
+    d.pending_events.side_effect = lambda: next(pending_seq, 0)
+    d.next_event.side_effect = [release, other]
+
+    g.start(
+        keysyms=["Up"],
+        on_key=lambda a, k: on_key_calls.append((a, k)),
+        should_consume=lambda _: True,
+    )
+    import time
+    time.sleep(0.1)
+    g.stop()
+
+    # Release was processed; on_key called with "keyup" for Up.
+    assert ("keyup", "Up") in on_key_calls
+
+
+def test_release_with_no_pending_is_processed_normally(fake_display):
+    """KeyRelease with no follow-up event in queue should fire on_key
+    for the keyup. Without this case, real releases would never reach
+    the routing layer."""
+    d, root = fake_display
+    g = grabber_mod.MovementKeyGrabber()
+
+    on_key_calls = []
+
+    from Xlib import XK
+    d.keysym_to_keycode.side_effect = lambda ks: 111 if ks == XK.string_to_keysym("Up") else 0
+
+    release = MagicMock()
+    release.type = X.KeyRelease
+    release.detail = 111
+    release.time = 5000
+
+    # pending_events: 1 (the release), then 0 (no peek-target), then 0...
+    pending_seq = iter([1, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+    d.pending_events.side_effect = lambda: next(pending_seq, 0)
+    d.next_event.return_value = release
+
+    g.start(
+        keysyms=["Up"],
+        on_key=lambda a, k: on_key_calls.append((a, k)),
+        should_consume=lambda _: True,
+    )
+    import time
+    time.sleep(0.1)
+    g.stop()
+
+    assert ("keyup", "Up") in on_key_calls

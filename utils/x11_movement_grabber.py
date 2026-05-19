@@ -185,29 +185,76 @@ class MovementKeyGrabber:
             if event.type not in (X.KeyPress, X.KeyRelease):
                 continue
 
-            # Look up the name via our keycode->name map (built from the
-            # keysyms we registered). XK.keysym_to_string would return None
-            # for non-printable keysyms like Up/Down/Left/Right.
-            keysym_name = self._keycode_to_name.get(event.detail)
-
-            consume = False
-            if keysym_name and self._should_consume is not None:
+            # Auto-repeat detection. X11 represents auto-repeat as a
+            # KeyRelease immediately followed by a KeyPress for the same
+            # key at the same timestamp. Without this dedup, every
+            # auto-repeat tick fires a keyup+keydown to the routed toon,
+            # which manifests as the bridge spamming rapid press/release
+            # cycles instead of one held key. We treat any matched pair as
+            # "no event" (the key is still logically held; no new keydown,
+            # no real keyup) and let the InputService's existing
+            # keys_held set keep the held state.
+            if event.type == X.KeyRelease:
                 try:
-                    consume = bool(self._should_consume(keysym_name))
-                except Exception as e:  # noqa: BLE001
-                    print(f"[x11_movement_grabber] should_consume raised: {e}")
-                    consume = False
+                    next_pending = self._display.pending_events()
+                except Exception:
+                    next_pending = 0
+                if next_pending > 0:
+                    try:
+                        next_event = self._display.next_event()
+                    except (ConnectionClosedError, OSError):
+                        break
+                    is_autorepeat = (
+                        next_event.type == X.KeyPress
+                        and next_event.detail == event.detail
+                        and next_event.time == event.time
+                    )
+                    if is_autorepeat:
+                        # Drop both halves of the auto-repeat pair.
+                        # AllowEvents on the release's time keeps X
+                        # processing happy; no callback fires.
+                        try:
+                            self._display.allow_events(X.AsyncKeyboard, event.time)
+                            self._display.sync()
+                        except Exception:
+                            break
+                        continue
+                    else:
+                        # Not auto-repeat. Process the release we already
+                        # popped, then loop back so the next iteration
+                        # picks up next_event from the queue... but we
+                        # consumed it, so process it inline here too.
+                        self._handle_event(event)
+                        self._handle_event(next_event)
+                        continue
 
-            mode = X.AsyncKeyboard if consume else X.ReplayKeyboard
+            self._handle_event(event)
+
+    def _handle_event(self, event) -> None:
+        """Decide consume/replay for a single key event and fire on_key
+        if consumed. Pulled out of _run so the auto-repeat branch can
+        reuse it for the 'not actually auto-repeat' case where we have
+        two events on hand and need to process both."""
+        keysym_name = self._keycode_to_name.get(event.detail)
+
+        consume = False
+        if keysym_name and self._should_consume is not None:
             try:
-                self._display.allow_events(mode, event.time)
-                self._display.sync()
-            except Exception:
-                break
+                consume = bool(self._should_consume(keysym_name))
+            except Exception as e:  # noqa: BLE001
+                print(f"[x11_movement_grabber] should_consume raised: {e}")
+                consume = False
 
-            if consume and keysym_name and self._on_key is not None:
-                action = "keydown" if event.type == X.KeyPress else "keyup"
-                try:
-                    self._on_key(action, keysym_name)
-                except Exception as e:  # noqa: BLE001
-                    print(f"[x11_movement_grabber] on_key raised: {e}")
+        mode = X.AsyncKeyboard if consume else X.ReplayKeyboard
+        try:
+            self._display.allow_events(mode, event.time)
+            self._display.sync()
+        except Exception:
+            return
+
+        if consume and keysym_name and self._on_key is not None:
+            action = "keydown" if event.type == X.KeyPress else "keyup"
+            try:
+                self._on_key(action, keysym_name)
+            except Exception as e:  # noqa: BLE001
+                print(f"[x11_movement_grabber] on_key raised: {e}")
