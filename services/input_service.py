@@ -124,6 +124,7 @@ class InputService(QObject):
         self.CHAT_IDLE_TIMEOUT = 15.0
 
         self._xlib = None
+        self._key_grabber = None
 
         # Track the most recent foreground game so keys pressed while TTMT
         # itself has focus still resolve through a meaningful default set.
@@ -136,6 +137,72 @@ class InputService(QObject):
         self.running = True
         self.thread = threading.Thread(target=self.run, daemon=False)
         self.thread.start()
+        self._start_key_grabber()
+
+    def _start_key_grabber(self) -> None:
+        """Install the X11 passive grab on the conflicting CC keyset.
+
+        Why: CC accepts both WASD and arrows hardcoded; locking
+        preferences.json to WASD does not actually disable arrows in
+        the running game. To stop the focused CC window from catching
+        the OTHER keyset (which TTMT routes to background toons), we
+        XGrabKey the conflicting keys and decide per-event whether to
+        consume or replay.
+
+        Silent failure: if Xlib is missing or the display can't be
+        opened, the grabber simply doesn't run. Per-toon routing for
+        background toons still works; only the focused-window cross
+        talk persists.
+        """
+        try:
+            from utils import cc_isolation
+            from utils.x11_movement_grabber import MovementKeyGrabber, xlib_available
+        except ImportError as e:
+            print(f"[InputService] key grabber unavailable: {e}")
+            return
+        if not xlib_available():
+            return
+        keysyms = list(_conflicting_canonical_keysyms(cc_isolation.DEFAULT_CANONICAL))
+        if not keysyms:
+            return
+        self._key_grabber = MovementKeyGrabber()
+        ok = self._key_grabber.start(
+            keysyms=keysyms,
+            on_key=self._on_grabbed_key,
+            should_consume=self._should_consume_grabbed_key,
+        )
+        if not ok:
+            self._key_grabber = None
+
+    def _on_grabbed_key(self, action: str, keysym: str) -> None:
+        """Forward a consumed grab event into the same queue pynput uses."""
+        try:
+            event_queue = self.get_event_queue()
+            if event_queue is not None:
+                event_queue.put_nowait((action, keysym))
+        except Exception as e:  # noqa: BLE001
+            print(f"[InputService] enqueue from grabber failed: {e}")
+
+    def _should_consume_grabbed_key(self, keysym: str) -> bool:
+        """Decide per-event whether to suppress the grabbed key from the
+        focused window. Only consume when:
+          - the active window is a CC window (TTR / non-game windows pass through),
+          - and CC chat broadcast isn't active (so arrows still drive the
+            chat cursor when the user is typing).
+        """
+        if self.global_chat_active:
+            return False
+        try:
+            active = self.window_manager.get_active_window()
+        except Exception:
+            return False
+        if not active:
+            return False
+        try:
+            from utils.game_registry import GameRegistry
+            return GameRegistry.instance().get_game_for_window(str(active)) == "cc"
+        except Exception:
+            return False
 
     def _apply_backend_setting(self):
         """Connect or disconnect backend based on platform and current settings."""
@@ -173,6 +240,12 @@ class InputService(QObject):
     def shutdown(self):
         """Call once on app exit to clean up the Xlib connection."""
         self.stop(wait=True)
+        if self._key_grabber is not None:
+            try:
+                self._key_grabber.stop()
+            except Exception as e:
+                print(f"[InputService] key grabber shutdown error: {e}")
+            self._key_grabber = None
         try:
             from utils import wine_input_bridge
             wine_input_bridge.shutdown_all()
@@ -818,3 +891,18 @@ class InputService(QObject):
             self._send_via_backend("keydown", win_id, keysym)
             time.sleep(0.05)
             self._send_via_backend("keyup", win_id, keysym)
+
+
+def _conflicting_canonical_keysyms(canonical: str) -> tuple[str, ...]:
+    """Return the keysyms in the OPPOSITE keyset from the canonical.
+
+    When canonical=wasd, the conflicting keyset is arrows; when canonical
+    =arrows, the conflicting keyset is WASD. The grabber suppresses the
+    conflicting set from reaching focused CC windows because CC accepts
+    both hardcoded regardless of its preferences.json keymap.
+    """
+    if canonical == "wasd":
+        return ("Up", "Down", "Left", "Right")
+    if canonical == "arrows":
+        return ("w", "a", "s", "d")
+    return ()
