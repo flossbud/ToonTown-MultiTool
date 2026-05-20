@@ -235,17 +235,38 @@ def test_start_key_grabber_instantiates_when_cc_installs_present(monkeypatch, sv
     svc._start_key_grabber()
     assert svc._key_grabber is fake_instance
     fake_instance.prepare.assert_called_once()
-    # install_grabs is now focus-aware: it is called only when the focused
-    # window is a CC window. The svc fixture's wm has no CC window registered
-    # so the seed call in _on_active_window_changed_for_grabber resolves to
-    # a non-CC game and the grabber stays idle (uninstalled) at startup.
-    # install_grabs call count is tested in the focused-svc lifecycle tests.
+    # install_grabs() is no longer called unconditionally at startup;
+    # focus-aware behavior is covered by the lifecycle tests below.
+
+
+def test_start_key_grabber_is_idempotent(monkeypatch):
+    """stop()+start() flows (main.py input-backend change, tab window
+    reassignment) call _start_key_grabber twice. Second call must be a
+    no-op: no second MovementKeyGrabber instance, no second signal
+    connect."""
+    svc, grabber = _make_focused_svc(
+        monkeypatch,
+        focus_window_id="200",
+        registry_mapping={"200": "cc"},
+        assignments=[0],
+    )
+    svc._start_key_grabber()
+    first_instance = svc._key_grabber
+    first_connect_count = svc.window_manager.active_window_changed.connect.call_count
+    svc._start_key_grabber()
+    # Same grabber instance; no new connect.
+    assert svc._key_grabber is first_instance
+    assert svc.window_manager.active_window_changed.connect.call_count == first_connect_count
 
 
 def _make_focused_svc(monkeypatch, focus_window_id, registry_mapping, assignments):
     """Helper: build an InputService whose WindowManager reports the
     given focused window and whose GameRegistry returns the given games.
-    Returns (svc, fake_grabber_instance)."""
+    Returns (svc, fake_grabber_instance).
+
+    Tests using this helper must also call `svc._start_key_grabber()`
+    explicitly to wire the slot; this helper only constructs.
+    """
     monkeypatch.setattr(
         "services.wine_runtimes.discover_cc_installs", lambda: ["fake-install"]
     )

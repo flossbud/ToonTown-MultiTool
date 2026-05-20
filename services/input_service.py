@@ -147,6 +147,8 @@ class InputService(QObject):
         window has focus, uninstall on focus-change away from CC.
         Canonical set is the focused CC toon's assigned set.
         """
+        if self._key_grabber is not None:
+            return  # already initialized; stop()/start() cycle preserves the grabber
         try:
             from utils import cc_isolation  # noqa: F401
             from utils.x11_movement_grabber import MovementKeyGrabber, xlib_available
@@ -191,6 +193,11 @@ class InputService(QObject):
         Resolves the assigned set's forward binding: 'w' -> WASD;
         'Up' -> arrows. Returns None if the index is out of range or the
         keymap manager isn't wired.
+
+        Staleness note: changes to the focused toon's assignment are
+        picked up on the NEXT focus-change event, not live. A user who
+        re-assigns the currently-focused CC toon's keyset must alt-tab
+        away and back for the grabber to pick up the new canonical.
         """
         if self.keymap_manager is None:
             return None
@@ -217,7 +224,7 @@ class InputService(QObject):
         focused CC toon's keyset.
         """
         if self._key_grabber is None:
-            return
+            return  # no grabber instantiated (CC not installed or prepare() failed)
         if not window_id:
             self._key_grabber.uninstall_grabs()
             return
