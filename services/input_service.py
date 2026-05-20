@@ -291,7 +291,7 @@ class InputService(QObject):
             from utils import wine_input_bridge
             wine_input_bridge.send_to_window(
                 str(active),
-                [str(w) for w in self.window_manager.get_window_ids()],
+                self._cc_window_ids(),
                 action,
                 keysym,
             )
@@ -933,6 +933,34 @@ class InputService(QObject):
             return _KEYSYM_LOOKUP.get(key.lower())
         return None
 
+    def _cc_window_ids(self) -> list:
+        """Return the subset of managed windows that are CC windows.
+
+        The wine bridge's helper only knows about CC windows in its
+        prefix; passing the full window list (which may include TTR
+        windows in mixed layouts) makes cross_check_sort_order's length
+        comparison fail and forces a fallback to the xlib backend that
+        Wine ignores. This helper provides the CC-only subset the bridge
+        expects. Left-to-right sort order is preserved because the
+        original list is already sorted that way by
+        WindowManager.assign_windows.
+
+        Known limitation: when multiple CC installs are running from
+        different Wine prefixes (rare), the filter still returns all CC
+        windows across prefixes. The per-prefix helper would then see a
+        length mismatch. Out of scope for this fix; addressing it would
+        require per-window prefix resolution at the routing layer.
+        """
+        try:
+            from utils.game_registry import GameRegistry
+            registry = GameRegistry.instance()
+        except Exception:
+            return []
+        return [
+            str(w) for w in self.window_manager.get_window_ids()
+            if registry.get_game_for_window(str(w)) == "cc"
+        ]
+
     def _send_via_backend(self, action: str, win_id: str, keysym: str, modifiers: list = None):
         """Route input through Xlib or xdotool depending on USE_XLIB_BACKEND."""
         import sys
@@ -943,7 +971,7 @@ class InputService(QObject):
                     from utils import wine_input_bridge
                     if wine_input_bridge.send_to_window(
                         str(win_id),
-                        [str(w) for w in self.window_manager.get_window_ids()],
+                        self._cc_window_ids(),
                         action,
                         keysym,
                         modifiers,
