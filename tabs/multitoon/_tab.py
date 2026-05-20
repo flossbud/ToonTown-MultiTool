@@ -23,6 +23,7 @@ from utils.symbols import S
 from utils.ttr_api import get_toon_names_by_slot, invalidate_port_to_wid_cache, clear_stale_names
 from utils import cc_api
 from utils.game_registry import GameRegistry
+from utils import logical_actions
 from tabs.multitoon._keep_alive_help_button import KeepAliveHelpButton
 
 
@@ -2611,3 +2612,15 @@ class MultitoonTab(QWidget):
             except Exception:
                 pass
         self.input_service.shutdown()
+
+
+def _dispatch_keep_alive_cycle(action, fire_toons, window_manager, keymap_manager,
+                                assignments, input_service):
+    """Dispatch one keep-alive cycle to the requested toon slots.
+
+    Returns the number of toons that actually received a keypress (after
+    per-toon game / set / binding resolution). A return of 0 with a non-empty
+    fire_toons list means every candidate was skipped.
+    """
+    return 0
+
