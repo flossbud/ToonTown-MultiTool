@@ -18,10 +18,10 @@ class Action:
 
 
 ACTIONS: dict[str, Action] = {
-    "forward": Action(frozenset({"ttr", "cc"}), MappingProxyType({"ttr": "w",       "cc": "w"})),
-    "reverse": Action(frozenset({"ttr", "cc"}), MappingProxyType({"ttr": "s",       "cc": "s"})),
-    "left":    Action(frozenset({"ttr", "cc"}), MappingProxyType({"ttr": "a",       "cc": "a"})),
-    "right":   Action(frozenset({"ttr", "cc"}), MappingProxyType({"ttr": "d",       "cc": "d"})),
+    "forward": Action(frozenset({"ttr", "cc"}), MappingProxyType({"ttr": "Up",      "cc": "w"})),
+    "reverse": Action(frozenset({"ttr", "cc"}), MappingProxyType({"ttr": "Down",    "cc": "s"})),
+    "left":    Action(frozenset({"ttr", "cc"}), MappingProxyType({"ttr": "Left",    "cc": "a"})),
+    "right":   Action(frozenset({"ttr", "cc"}), MappingProxyType({"ttr": "Right",   "cc": "d"})),
     "jump":    Action(frozenset({"ttr", "cc"}), MappingProxyType({"ttr": "space",   "cc": "space"})),
     "book":    Action(frozenset({"ttr", "cc"}), MappingProxyType({"ttr": "Alt_L",   "cc": "Escape"})),
     "gags":    Action(frozenset({"ttr", "cc"}), MappingProxyType({"ttr": "g",       "cc": "q"})),
