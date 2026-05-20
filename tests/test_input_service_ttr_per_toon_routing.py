@@ -199,3 +199,103 @@ class TestTtrPerToonRouting:
         # The correct behavior is to send "w" (TTR's default forward).
         assert ("keydown", "200", "w") in sent
         assert ("keydown", "200", "Up") not in sent
+
+
+class TestNonMovementFallback:
+    """Sets in TTMT are movement-only overrides; non-movement bindings
+    (jump, sprint, map, etc.) live only in the default set. Strict
+    per-toon for movement; default-set fallback for non-movement.
+    """
+
+    def _build_svc(self, monkeypatch, registry_mapping, focus_window_id, assignments):
+        wm = _FakeWindowManager(list(registry_mapping.keys()), focus_window_id)
+        fake_registry = _FakeRegistry(registry_mapping)
+        monkeypatch.setattr(
+            "utils.game_registry.GameRegistry.instance", lambda: fake_registry
+        )
+        sent = []
+        # Default set has jump=space and movement; arrows set has only
+        # movement bindings (matching the production keymap manager's
+        # movement-only-override model).
+        km = _FakeKeymap({
+            "ttr": [
+                {"forward": "w",  "reverse": "s",    "left": "a",    "right": "d",
+                 "jump": "space", "book": "Alt_L",   "gags": "g",    "tasks": "t",
+                 "map": "Shift_L"},
+                {"forward": "Up", "reverse": "Down", "left": "Left", "right": "Right"},
+            ],
+            "cc": [
+                {"forward": "w",  "reverse": "s",    "left": "a",    "right": "d",
+                 "jump": "space", "book": "Escape",  "gags": "q",    "tasks": "e",
+                 "map": "Alt_L",  "sprint": "Shift_L"},
+                {"forward": "Up", "reverse": "Down", "left": "Left", "right": "Right"},
+            ],
+        })
+        svc = InputService(
+            window_manager=wm,
+            get_enabled_toons=lambda: [True] * len(registry_mapping),
+            get_movement_modes=lambda: ["both"] * len(registry_mapping),
+            get_event_queue_func=lambda: None,
+            settings_manager=MagicMock(),
+            get_keymap_assignments=lambda: list(assignments),
+            keymap_manager=km,
+        )
+        svc._send_via_backend = lambda action, win, keysym, mods=None: sent.append(
+            (action, win, keysym)
+        )
+        svc._resolve_keysym = lambda k: k
+        return svc, sent
+
+    def test_space_routes_to_arrows_set_toon_via_default_fallback(self, monkeypatch):
+        """CC1 default + TTR2 arrows, focus CC1, press space.
+        Arrows set doesn't bind space; default has space=jump (non-
+        movement). Fallback fires and TTR2 receives space."""
+        svc, sent = self._build_svc(
+            monkeypatch,
+            registry_mapping={"100": "cc", "200": "ttr"},
+            focus_window_id="100",
+            assignments=[0, 1],
+        )
+        svc._send_logical_action_km("keydown", "space", [True, True], [0, 1])
+        assert ("keydown", "200", "space") in sent
+
+    def test_movement_key_does_not_fall_back(self, monkeypatch):
+        """The fallback MUST NOT apply to movement keys. CC1 default +
+        TTR2 arrows, focus CC1, press W. TTR2's arrows set doesn't
+        bind W; default has W=forward (MOVEMENT). Fallback rejects
+        movement -> TTR2 strict skip."""
+        svc, sent = self._build_svc(
+            monkeypatch,
+            registry_mapping={"100": "cc", "200": "ttr"},
+            focus_window_id="100",
+            assignments=[0, 1],
+        )
+        svc._send_logical_action_km("keydown", "w", [True, True], [0, 1])
+        # TTR2 should NOT receive anything (W is movement, fallback denied).
+        sent_for_ttr = [s for s in sent if s[1] == "200"]
+        assert sent_for_ttr == []
+
+    def test_default_set_toon_does_not_need_fallback(self, monkeypatch):
+        """Toon on default set (set_idx=0) takes the direct match path;
+        no fallback considered. Press space with both toons on default."""
+        svc, sent = self._build_svc(
+            monkeypatch,
+            registry_mapping={"100": "cc", "200": "ttr"},
+            focus_window_id="100",
+            assignments=[0, 0],
+        )
+        svc._send_logical_action_km("keydown", "space", [True, True], [0, 0])
+        assert ("keydown", "200", "space") in sent
+
+    def test_sprint_falls_back_for_arrows_set_cc(self, monkeypatch):
+        """TTR1 default + CC2 arrows. Press Shift_L (CC default binds
+        Shift_L to sprint). Arrows set doesn't bind Shift_L. Sprint is
+        non-movement -> CC2 receives Shift_L via fallback."""
+        svc, sent = self._build_svc(
+            monkeypatch,
+            registry_mapping={"100": "ttr", "200": "cc"},
+            focus_window_id="100",
+            assignments=[0, 1],
+        )
+        svc._send_logical_action_km("keydown", "Shift_L", [True, True], [0, 1])
+        assert ("keydown", "200", "Shift_L") in sent

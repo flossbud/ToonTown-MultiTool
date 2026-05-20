@@ -7,6 +7,8 @@ import time
 from functools import lru_cache
 from PySide6.QtCore import QObject, Signal
 
+from utils.cc_isolation import MOVEMENT_ACTIONS as _MOVEMENT_ACTIONS
+
 WASD_KEYS     = frozenset({'w', 'a', 's', 'd'})
 MOVEMENT_KEYS = WASD_KEYS | frozenset({'Up', 'Down', 'Left', 'Right', 'space'})
 ARROW_KEYS    = frozenset({'Up', 'Down', 'Left', 'Right'})
@@ -439,6 +441,18 @@ class InputService(QObject):
 
             if toon_game == "cc":
                 toon_action = self.keymap_manager.get_action_in_set("cc", set_idx, key)
+                if toon_action is None and set_idx != 0:
+                    # The toon is on a non-default set that does not bind
+                    # this key. Sets in TTMT are movement-only overrides:
+                    # non-movement bindings (jump, sprint, map, etc.) live
+                    # only in the default set. Fall back to the default
+                    # set's binding -- but ONLY when the resolved action
+                    # is non-movement. Movement actions stay strict per-
+                    # toon so a key the toon's set explicitly does not
+                    # bind for movement is not forwarded as movement.
+                    default_action = self.keymap_manager.get_action_in_set("cc", 0, key)
+                    if default_action is not None and default_action not in _MOVEMENT_ACTIONS:
+                        toon_action = default_action
                 if toon_action is None:
                     continue
                 if not logical_actions.supports("cc", toon_action):
@@ -459,12 +473,16 @@ class InputService(QObject):
                             f"(cc action: {toon_action}, set {set_idx + 1})"
                         )
             else:
-                # Strict per-toon: route only when the toon's assigned
-                # set binds the pressed key. The set is an input layer;
-                # outbound goes to the game's default (native) binding
-                # because the bg toon's settings.json reflects the user's
-                # default, not their TTMT-side set choice.
+                # Strict per-toon for movement; default-set fallback for
+                # non-movement actions only. Sets in TTMT are movement-
+                # only overrides; non-movement bindings (jump, etc.) live
+                # only in the default set. Outbound stays sourced from
+                # set 0 (native binding).
                 toon_action = self.keymap_manager.get_action_in_set(toon_game, set_idx, key)
+                if toon_action is None and set_idx != 0:
+                    default_action = self.keymap_manager.get_action_in_set(toon_game, 0, key)
+                    if default_action is not None and default_action not in _MOVEMENT_ACTIONS:
+                        toon_action = default_action
                 if toon_action is None:
                     continue
                 if not logical_actions.supports(toon_game, toon_action):
@@ -1032,6 +1050,10 @@ class InputService(QObject):
                 if self.keymap_manager is None:
                     continue
                 toon_action = self.keymap_manager.get_action_in_set(toon_game, set_idx, key)
+                if toon_action is None and set_idx != 0:
+                    default_action = self.keymap_manager.get_action_in_set(toon_game, 0, key)
+                    if default_action is not None and default_action not in _MOVEMENT_ACTIONS:
+                        toon_action = default_action
                 if toon_action is None:
                     continue
                 if not logical_actions.supports(toon_game, toon_action):
