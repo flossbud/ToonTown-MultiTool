@@ -186,3 +186,109 @@ def test_global_chat_active_suppresses_all_routing(cc_setup):
     svc._send_logical_action_km("keydown", "w", [True, True], [1, 2])
     svc._send_logical_action_km("keydown", "Up", [True, True], [1, 2])
     assert sent == []
+
+
+class TestHybridRoutingMixed:
+    """The routing matrix from the spec, exercised against
+    _send_logical_action_km. Each test sets up a 2-toon layout, simulates
+    a single keydown, and asserts which toons receive bridge sends."""
+
+    def _build_svc(self, monkeypatch, registry_mapping, focus_window_id, assignments):
+        wm = _FakeWindowManager(list(registry_mapping.keys()), focus_window_id)
+        fake_registry = _FakeRegistry(registry_mapping)
+        monkeypatch.setattr(
+            "utils.game_registry.GameRegistry.instance", lambda: fake_registry
+        )
+        sent = []
+        svc = InputService(
+            window_manager=wm,
+            get_enabled_toons=lambda: [True] * len(registry_mapping),
+            get_movement_modes=lambda: ["both"] * len(registry_mapping),
+            get_event_queue_func=lambda: None,
+            settings_manager=MagicMock(),
+            get_keymap_assignments=lambda: list(assignments),
+            keymap_manager=_FakeKeymap({
+                "ttr": [
+                    {"forward": "Up", "reverse": "Down", "left": "Left", "right": "Right"},
+                    {"forward": "w",  "reverse": "s",    "left": "a",    "right": "d"},
+                ],
+                "cc": [
+                    {"forward": "w",  "reverse": "s",    "left": "a",    "right": "d"},
+                    {"forward": "Up", "reverse": "Down", "left": "Left", "right": "Right"},
+                ],
+            }),
+        )
+        svc._send_via_backend = lambda action, win, keysym, mods=None: sent.append(
+            (action, win, keysym)
+        )
+        svc._resolve_keysym = lambda k: k  # passthrough
+        return svc, sent
+
+    def test_ttr_focused_arrow_press_routes_cc_via_legacy_fallback(self, monkeypatch):
+        """TTR1=arrows focused, CC2=WASD background, press Up.
+        Hybrid: per-toon CC lookup on Up returns None; foreground is TTR
+        (not CC) so fall back to legacy_logical=forward; CC2's set's
+        forward is 'w'; send 'w' (canonical) to CC2."""
+        svc, sent = self._build_svc(
+            monkeypatch,
+            registry_mapping={"100": "ttr", "200": "cc"},
+            focus_window_id="100",
+            assignments=[0, 0],  # TTR1 set 0 (arrows), CC2 set 0 (WASD)
+        )
+        svc._send_logical_action_km(
+            "keydown", "Up", [True, True], [0, 0]
+        )
+        assert ("keydown", "200", "w") in sent
+
+    def test_cc_focused_other_keyset_press_skips_cc_strict(self, monkeypatch):
+        """CC1=WASD focused, CC2=arrows background, press W.
+        Per-toon CC lookup on W binds 'forward' for CC1 (focused, skipped
+        by key==canonical guard) and returns None for CC2 (arrows set
+        doesn't bind W). Foreground IS CC -> no legacy fallback -> CC2
+        is skipped. Only CC1 (focused, native) moves."""
+        svc, sent = self._build_svc(
+            monkeypatch,
+            registry_mapping={"100": "cc", "200": "cc"},
+            focus_window_id="100",
+            assignments=[0, 1],  # CC1 WASD, CC2 arrows
+        )
+        svc._send_logical_action_km(
+            "keydown", "w", [True, True], [0, 1]
+        )
+        sent_for_cc2 = [s for s in sent if s[1] == "200"]
+        assert sent_for_cc2 == []
+
+    def test_cc_focused_arrow_press_routes_cc_arrows_toon(self, monkeypatch):
+        """CC1=WASD focused, CC2=arrows background, press Up.
+        Per-toon CC lookup on Up returns None for CC1 (WASD set), returns
+        'forward' for CC2 (arrows set, binds Up). CC2 gets canonical 'w'
+        via bridge."""
+        svc, sent = self._build_svc(
+            monkeypatch,
+            registry_mapping={"100": "cc", "200": "cc"},
+            focus_window_id="100",
+            assignments=[0, 1],
+        )
+        svc._send_logical_action_km(
+            "keydown", "Up", [True, True], [0, 1]
+        )
+        assert ("keydown", "200", "w") in sent
+        assert not any(s for s in sent if s[1] == "100")
+
+    def test_ttr_focused_ttr_default_press_broadcasts_to_all(self, monkeypatch):
+        """TTR1=arrows focused, TTR2=WASD bg, CC3=WASD bg, press Up.
+        TTR1 native (handled outside this function).
+        TTR2: legacy_logical=forward -> outbound='w' -> send.
+        CC3: per-toon Up->None on WASD set; foreground=TTR -> fallback
+        legacy=forward -> canonical='w' -> send."""
+        svc, sent = self._build_svc(
+            monkeypatch,
+            registry_mapping={"100": "ttr", "200": "ttr", "300": "cc"},
+            focus_window_id="100",
+            assignments=[0, 1, 0],  # TTR1 arrows, TTR2 WASD, CC3 WASD
+        )
+        svc._send_logical_action_km(
+            "keydown", "Up", [True, True, True], [0, 1, 0]
+        )
+        assert ("keydown", "200", "w") in sent  # TTR2 bridged W
+        assert ("keydown", "300", "w") in sent  # CC3 bridged via hybrid

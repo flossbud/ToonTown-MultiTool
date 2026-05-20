@@ -436,7 +436,20 @@ class InputService(QObject):
             if toon_game == "cc":
                 toon_action = self.keymap_manager.get_action_in_set("cc", set_idx, key)
                 if toon_action is None:
-                    continue
+                    # Hybrid fallback: when foreground is non-CC (typically
+                    # TTR), use the foreground-derived legacy logical action
+                    # so a single keypress broadcasts to background CC toons
+                    # the way TTR multi-toon does. When foreground IS CC,
+                    # stay strict so two CC toons with conflicting keysets
+                    # remain independent.
+                    foreground_game = self._foreground_game()
+                    if foreground_game in (None, "cc"):
+                        continue
+                    if legacy_logical is None:
+                        continue
+                    if not logical_actions.supports("cc", legacy_logical):
+                        continue
+                    toon_action = legacy_logical
                 if not logical_actions.supports("cc", toon_action):
                     continue
                 canonical = cc_canonical_movement.get(toon_action)
