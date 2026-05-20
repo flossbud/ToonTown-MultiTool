@@ -292,3 +292,38 @@ class TestHybridRoutingMixed:
         )
         assert ("keydown", "200", "w") in sent  # TTR2 bridged W
         assert ("keydown", "300", "w") in sent  # CC3 bridged via hybrid
+
+    def test_cc_focused_native_press_routes_ttr_bg_via_legacy(self, monkeypatch):
+        """TTR1=arrows + CC2=WASD, focus CC2, press W (CC2's canonical).
+        CC2 (focused) skipped by key==canonical guard.
+        TTR1 (background): legacy_logical=forward (CC2's set's forward=w
+        -> CC default-set forward=w). get_key_for_action(ttr, 0, forward)
+        = 'Up'. Send Up to TTR1 via bridge."""
+        svc, sent = self._build_svc(
+            monkeypatch,
+            registry_mapping={"100": "ttr", "200": "cc"},
+            focus_window_id="200",
+            assignments=[0, 0],  # TTR1 arrows (set 0), CC2 WASD (set 0)
+        )
+        svc._send_logical_action_km(
+            "keydown", "w", [True, True], [0, 0]
+        )
+        assert ("keydown", "100", "Up") in sent
+        # CC2 is focused and key == canonical -> not sent via bridge.
+        assert not any(s for s in sent if s[1] == "200")
+
+    def test_ttr_focused_arrow_press_routes_arrows_cc_via_per_toon(self, monkeypatch):
+        """TTR1=arrows + CC2=arrows, TTR1 focused, press Up.
+        Per-toon CC lookup for CC2: get_action_in_set('cc', arrows, Up)
+        = 'forward' (binds Up). So the per-toon match path fires (NOT the
+        hybrid fallback). canonical='w'. Send 'w' to CC2 via bridge."""
+        svc, sent = self._build_svc(
+            monkeypatch,
+            registry_mapping={"100": "ttr", "200": "cc"},
+            focus_window_id="100",
+            assignments=[0, 1],  # TTR1 arrows (set 0), CC2 arrows (set 1)
+        )
+        svc._send_logical_action_km(
+            "keydown", "Up", [True, True], [0, 1]
+        )
+        assert ("keydown", "200", "w") in sent

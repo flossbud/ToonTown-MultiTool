@@ -419,6 +419,7 @@ class InputService(QObject):
         )
 
         active_window = self.window_manager.get_active_window()
+        foreground_game = self._foreground_game()
         window_ids = self.window_manager.get_window_ids()
         registry = GameRegistry.instance()
 
@@ -442,7 +443,6 @@ class InputService(QObject):
                     # the way TTR multi-toon does. When foreground IS CC,
                     # stay strict so two CC toons with conflicting keysets
                     # remain independent.
-                    foreground_game = self._foreground_game()
                     if foreground_game in (None, "cc"):
                         continue
                     if legacy_logical is None:
@@ -450,8 +450,9 @@ class InputService(QObject):
                     if not logical_actions.supports("cc", legacy_logical):
                         continue
                     toon_action = legacy_logical
-                if not logical_actions.supports("cc", toon_action):
-                    continue
+                else:
+                    if not logical_actions.supports("cc", toon_action):
+                        continue
                 canonical = cc_canonical_movement.get(toon_action)
                 if canonical is None:
                     canonical = self.keymap_manager.get_key_for_action("cc", 0, toon_action)
