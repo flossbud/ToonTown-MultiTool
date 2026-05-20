@@ -460,6 +460,82 @@ def discover_steam_proton() -> list[WineInstall]:
     return results
 
 
+_FAUGUS_GAMES_JSON_PATHS = [
+    "~/.var/app/io.github.Faugus.faugus-launcher/config/faugus-launcher/games.json",
+    "~/.config/faugus-launcher/games.json",
+]
+
+
+def _is_cc_entry(entry: dict) -> bool:
+    title = (entry.get("title") or "").lower()
+    path = (entry.get("path") or "").lower()
+    return (
+        "corporate clash" in title
+        or path.endswith("corporateclash.exe")
+        or "corporate clash" in path
+    )
+
+
+def _parse_faugus_games_json(path: str) -> list:
+    """Return the games list from a Faugus games.json, or [] on any read /
+    parse failure. Malformed catalogs log one line and return []."""
+    import json
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except json.JSONDecodeError as e:
+        print(f"[wine_runtimes] discover_faugus: malformed catalog at {path}: {e}")
+        return []
+    except OSError:
+        return []
+    return data if isinstance(data, list) else []
+
+
+def discover_faugus() -> list[WineInstall]:
+    """Find CC inside Faugus-managed prefixes via games.json catalogs.
+
+    Probes Flatpak first (~/.var/app/io.github.Faugus.faugus-launcher/...)
+    then native (~/.config/faugus-launcher/games.json). Entries are deduped
+    by realpath of CorporateClash.exe; the first probe wins.
+    """
+    if sys.platform == "win32":
+        return []
+    results: list[WineInstall] = []
+    seen: set[str] = set()
+    for path_template in _FAUGUS_GAMES_JSON_PATHS:
+        path = os.path.expanduser(path_template)
+        if not os.path.isfile(path):
+            continue
+        install_kind = "flatpak" if ".var/app/" in path else "native"
+        for entry in _parse_faugus_games_json(path):
+            if not isinstance(entry, dict) or not _is_cc_entry(entry):
+                continue
+            prefix = entry.get("prefix") or ""
+            if not prefix or not os.path.isdir(prefix):
+                continue
+            title = entry.get("title") or os.path.basename(prefix.rstrip(os.sep))
+            runner = entry.get("runner") or ""
+            for exe in _find_cc_in_prefix(prefix):
+                real = os.path.realpath(exe)
+                if real in seen:
+                    continue
+                seen.add(real)
+                results.append(
+                    WineInstall(
+                        exe_path=exe,
+                        launcher="faugus",
+                        prefix_path=prefix,
+                        display_name=f"Faugus · {title}",
+                        metadata={
+                            "faugus_runner": runner,
+                            "faugus_install_kind": install_kind,
+                            "faugus_gameid": entry.get("gameid") or "",
+                        },
+                    )
+                )
+    return results
+
+
 def _ancestor_with_marker(start: str, marker_basename: str) -> str | None:
     """Walk up from start, return the first ancestor containing marker_basename."""
     current = os.path.realpath(start)
