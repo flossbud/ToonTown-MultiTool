@@ -1273,7 +1273,9 @@ def _maybe_prompt_for_cc_install(main_window, settings_manager):
     stored = settings_manager.get(CC_ENGINE_INSTALL_SIGNATURE, "")
     if not _should_prompt_for_cc_install(installs, stored):
         return
-    dlg = CCInstallPickerDialog(installs, parent=main_window)
+    dlg = CCInstallPickerDialog(
+        installs, parent=main_window, active_signature=stored or None,
+    )
     if dlg.exec() == dlg.Accepted:
         picked = dlg.selected_install()
         if picked is not None:

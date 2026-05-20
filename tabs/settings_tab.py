@@ -315,12 +315,6 @@ class GamePathRow(SettingsRow):
         btn_container.setLayout(btn_lay)
         self.add_control(btn_container)
 
-        current_path = self.settings_manager.get(self._settings_key, "")
-        if not current_path:
-            self._auto_detect()
-        else:
-            self._refresh_display(current_path)
-
         self.needs_pick: bool = False
         self._cc_installs: list = []
         if settings_key == "cc_engine_dir":
@@ -334,6 +328,12 @@ class GamePathRow(SettingsRow):
             ) if stored_sig else False
             if len(self._cc_installs) > 1 and not sig_match:
                 self.needs_pick = True
+
+        current_path = self.settings_manager.get(self._settings_key, "")
+        if not current_path:
+            self._auto_detect()
+        else:
+            self._refresh_display(current_path)
 
     def apply_theme(self, c, is_dark):
         super().apply_theme(c, is_dark)
@@ -377,15 +377,50 @@ class GamePathRow(SettingsRow):
     def _refresh_display(self, path: str, error: bool = False):
         if not path:
             self.sub_widget.setText("Not found. Click Browse or Auto-detect.")
-            self.sub_widget.setStyleSheet("font-size: 12px; color: #E05252; background: transparent; border: none;")
-        elif error:
+            self.sub_widget.setStyleSheet(
+                "font-size: 12px; color: #E05252; background: transparent; border: none;"
+            )
+            return
+        if error:
             self.sub_widget.setText(path)
-            self.sub_widget.setStyleSheet("font-size: 12px; color: #E05252; background: transparent; border: none;")
-        else:
-            home = os.path.expanduser("~")
-            display = path.replace(home, "~") if path.startswith(home) else path
-            self.sub_widget.setText(display)
-            self.sub_widget.setStyleSheet("font-size: 12px; color: #56c856; background: transparent; border: none;")
+            self.sub_widget.setStyleSheet(
+                "font-size: 12px; color: #E05252; background: transparent; border: none;"
+            )
+            return
+        home = os.path.expanduser("~")
+        display = path.replace(home, "~") if path.startswith(home) else path
+        subtitle = display
+        if self._settings_key == "cc_engine_dir":
+            chip_suffix = self._active_install_chip()
+            if chip_suffix:
+                subtitle = f"{display}  ·  {chip_suffix}"
+        self.sub_widget.setText(subtitle)
+        self.sub_widget.setStyleSheet(
+            "font-size: 12px; color: #56c856; background: transparent; border: none;"
+        )
+
+    def _active_install_chip(self) -> str:
+        """Return '[CHIP] Display Name' for the install matching the stored
+        signature, or '' if no match or anything goes wrong."""
+        try:
+            sig = self.settings_manager.get(
+                CC_ENGINE_INSTALL_SIGNATURE, ""
+            ) if self.settings_manager else ""
+            if not sig:
+                return ""
+            installs = getattr(self, "_cc_installs", None)
+            if not installs:
+                return ""
+            from utils.launcher_chip import LAUNCHER_CHIP_LABEL
+            for inst in installs:
+                if install_signature(inst) == sig:
+                    chip = LAUNCHER_CHIP_LABEL.get(
+                        inst.launcher, inst.launcher.upper()
+                    )
+                    return f"[{chip}] {inst.display_name}"
+        except Exception:
+            return ""
+        return ""
 
     def _browse(self):
         exe_name = self._exe_name_fn()
@@ -434,7 +469,12 @@ class GamePathRow(SettingsRow):
 
     def _open_picker(self, installs):
         from utils.widgets.cc_install_picker import CCInstallPickerDialog
-        dlg = CCInstallPickerDialog(installs, parent=self.window())
+        stored = self.settings_manager.get(
+            CC_ENGINE_INSTALL_SIGNATURE, ""
+        ) if self.settings_manager else ""
+        dlg = CCInstallPickerDialog(
+            installs, parent=self.window(), active_signature=stored or None,
+        )
         if dlg.exec() == dlg.Accepted:
             picked = dlg.selected_install()
             if picked:
@@ -449,6 +489,10 @@ class GamePathRow(SettingsRow):
             install_signature(install),
         )
         self.needs_pick = False
+        try:
+            self._cc_installs = discover_cc_installs()
+        except Exception:
+            pass
         self._refresh_display(path)
         # Force re-application of the standard (non-glow) button style.
         if hasattr(self, "_palette"):
