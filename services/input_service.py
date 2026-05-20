@@ -7,6 +7,8 @@ import time
 from functools import lru_cache
 from PySide6.QtCore import QObject, Signal
 
+from utils.cc_isolation import MOVEMENT_ACTIONS as _MOVEMENT_ACTIONS
+
 WASD_KEYS     = frozenset({'w', 'a', 's', 'd'})
 MOVEMENT_KEYS = WASD_KEYS | frozenset({'Up', 'Down', 'Left', 'Right', 'space'})
 ARROW_KEYS    = frozenset({'Up', 'Down', 'Left', 'Right'})
@@ -87,6 +89,7 @@ class InputService(QObject):
 
     BACKSPACE_REPEAT_DELAY    = 0.4
     BACKSPACE_REPEAT_INTERVAL = 0.05
+    AUTO_REPEAT_DEDUP_WINDOW  = 0.015
 
     def __init__(self, window_manager, get_enabled_toons, get_movement_modes, get_event_queue_func,
                  get_chat_enabled=None, settings_manager=None,
@@ -140,51 +143,121 @@ class InputService(QObject):
         self._start_key_grabber()
 
     def _start_key_grabber(self) -> None:
-        """Install the X11 passive grab on the conflicting CC keyset.
+        """Install the X11 grabber in focus-aware mode.
 
-        Why: CC accepts both WASD and arrows hardcoded; locking
-        preferences.json to WASD does not actually disable arrows in
-        the running game. To stop the focused CC window from catching
-        the OTHER keyset (which TTMT routes to background toons), we
-        XGrabKey the conflicting keys and decide per-event whether to
-        consume or replay.
-
-        Passthrough: while an arrow is held, the X server's active
-        keyboard grab redirects ALL keyboard events to TTMT, including
-        WASD/modifiers/etc. that should reach the focused CC window.
-        AllowEvents(ReplayKeyboard) is a no-op in GrabModeAsync, so
-        the events would otherwise be lost. We register WASD + common
-        action keys as "passthrough" keysyms so the grabber recognizes
-        them and routes them via on_passthrough to the focused CC HWND
-        through the wine bridge.
-
-        Silent failure: if Xlib is missing or the display can't be
-        opened, the grabber simply doesn't run. Per-toon routing for
-        background toons still works; only the focused-window cross
-        talk persists.
+        Gate: skip entirely when no CC install detected.
+        Lifecycle: prepare() at startup, install_grabs only while a CC
+        window has focus, uninstall on focus-change away from CC.
+        Canonical set is the focused CC toon's assigned set.
         """
+        if self._key_grabber is not None:
+            return  # already initialized; stop()/start() cycle preserves the grabber
         try:
-            from utils import cc_isolation
             from utils.x11_movement_grabber import MovementKeyGrabber, xlib_available
+            from services.wine_runtimes import discover_cc_installs
         except ImportError as e:
             print(f"[InputService] key grabber unavailable: {e}")
             return
         if not xlib_available():
             return
-        keysyms = list(_conflicting_canonical_keysyms(cc_isolation.DEFAULT_CANONICAL))
-        if not keysyms:
-            return
-        passthrough_keysyms = list(_passthrough_keysyms_for_canonical(cc_isolation.DEFAULT_CANONICAL))
+        try:
+            installs = discover_cc_installs()
+        except Exception as e:  # noqa: BLE001
+            print(f"[InputService] CC install detection failed: {e}")
+            installs = []
+        if not installs:
+            return  # no CC detected (or detection failed); no grabber
         self._key_grabber = MovementKeyGrabber()
-        ok = self._key_grabber.start(
-            keysyms=keysyms,
+        ok = self._key_grabber.prepare(
             on_key=self._on_grabbed_key,
             should_consume=self._should_consume_grabbed_key,
-            passthrough_keysyms=passthrough_keysyms,
             on_passthrough=self._on_passthrough_key,
         )
         if not ok:
             self._key_grabber = None
+            return
+        # Subscribe to focus changes; seed with current focus.
+        try:
+            self.window_manager.active_window_changed.connect(
+                self._on_active_window_changed_for_grabber
+            )
+        except Exception as e:  # noqa: BLE001
+            print(f"[InputService] active_window_changed connect failed: {e}")
+        try:
+            seed = self.window_manager.get_active_window()
+        except Exception:
+            seed = None
+        self._on_active_window_changed_for_grabber(seed or "")
+
+    def _canonical_set_for_toon_index(self, toon_index: int) -> str | None:
+        """Return 'wasd' or 'arrows' for the keyset assigned to a CC toon.
+
+        Resolves the assigned set's forward binding: 'w' -> WASD;
+        'Up' -> arrows. Returns None if the index is out of range or the
+        keymap manager isn't wired.
+
+        Staleness note: changes to the focused toon's assignment are
+        picked up on the NEXT focus-change event, not live. A user who
+        re-assigns the currently-focused CC toon's keyset must alt-tab
+        away and back for the grabber to pick up the new canonical.
+        """
+        if self.keymap_manager is None:
+            return None
+        try:
+            assignments = self._get_assignments(self.get_enabled_toons())
+        except Exception:
+            return None
+        if toon_index < 0 or toon_index >= len(assignments):
+            return None
+        set_idx = assignments[toon_index]
+        try:
+            forward = self.keymap_manager.get_key_for_action("cc", set_idx, "forward")
+        except Exception:
+            return None
+        if forward == "w":
+            return "wasd"
+        if forward == "Up":
+            return "arrows"
+        return None
+
+    def _on_active_window_changed_for_grabber(self, window_id: str) -> None:
+        """Slot for WindowManager.active_window_changed. Decides whether
+        the grabber should be Idle (no grabs) or Active(set) for the
+        focused CC toon's keyset.
+        """
+        if self._key_grabber is None:
+            return  # no grabber instantiated (CC not installed or prepare() failed)
+        if not window_id:
+            self._key_grabber.uninstall_grabs()
+            return
+        try:
+            from utils.game_registry import GameRegistry
+            game = GameRegistry.instance().get_game_for_window(str(window_id))
+        except Exception:
+            game = None
+        if game != "cc":
+            self._key_grabber.uninstall_grabs()
+            return
+        try:
+            window_ids = self.window_manager.get_window_ids()
+            toon_index = next(
+                (i for i, w in enumerate(window_ids) if str(w) == str(window_id)),
+                -1,
+            )
+        except Exception:
+            toon_index = -1
+        if toon_index < 0:
+            self._key_grabber.uninstall_grabs()
+            return
+        canonical = self._canonical_set_for_toon_index(toon_index)
+        if canonical is None:
+            self._key_grabber.uninstall_grabs()
+            return
+        passthrough = list(_passthrough_keysyms_for_canonical(canonical))
+        self._key_grabber.install_grabs(
+            canonical_set=canonical,
+            passthrough_keysyms=passthrough,
+        )
 
     def _on_grabbed_key(self, action: str, keysym: str) -> None:
         """Forward a consumed grab event into the same queue pynput uses."""
@@ -219,7 +292,7 @@ class InputService(QObject):
             from utils import wine_input_bridge
             wine_input_bridge.send_to_window(
                 str(active),
-                [str(w) for w in self.window_manager.get_window_ids()],
+                self._cc_window_ids(),
                 action,
                 keysym,
             )
@@ -319,12 +392,15 @@ class InputService(QObject):
     def _send_logical_action_km(self, action, key, enabled, assignments):
         """Route a movement-class action to toons.
 
-        CC: per-toon routing. Each enabled toon's assigned set is consulted
-        independently for the pressed key. When a toon's set binds the key,
-        TTMT emits CC's canonical key for that action to that toon's window.
-        For movement, canonical is the WASD that TTMT locks CC's prefs to
-        (utils/cc_isolation.py). For other actions, canonical is the toon's
-        own binding (mirrors CC Default which mirrors CC's prefs).
+        Strict per-toon routing: each toon responds only to keys that its
+        own assigned set binds. No cross-game broadcast fallback.
+
+        CC: each enabled toon's assigned set is consulted independently for
+        the pressed key. When a toon's set binds the key, TTMT emits CC's
+        canonical key for that action to that toon's window. For movement,
+        canonical is the WASD that TTMT locks CC's prefs to
+        (utils/cc_isolation.py). For other actions, canonical is CC's
+        default (set 0) binding.
 
         The foreground toon is skipped only when the pressed key already
         matches the canonical -- in that case the OS-delivered key reaches
@@ -332,8 +408,10 @@ class InputService(QObject):
         canonical (e.g. user pressed Up but CC's prefs lock means Up is
         ignored), the foreground also gets a bridge-sent canonical key.
 
-        TTR: unchanged broadcast-with-translation. Resolve via foreground
-        default; send toon-set[action] to each background toon.
+        TTR (and any future non-CC game): same strict per-toon rule. The
+        set is an input-translation layer only; outbound is always the
+        game's default (set 0) binding so the bg toon's settings.json
+        (the user's native customization) is honored.
         """
         if self.global_chat_active:
             return
@@ -351,8 +429,6 @@ class InputService(QObject):
         window_ids = self.window_manager.get_window_ids()
         registry = GameRegistry.instance()
 
-        legacy_logical = self._resolve_logical_action(key)
-
         for i, is_enabled in enumerate(enabled):
             if not is_enabled or i >= len(window_ids):
                 continue
@@ -364,6 +440,18 @@ class InputService(QObject):
 
             if toon_game == "cc":
                 toon_action = self.keymap_manager.get_action_in_set("cc", set_idx, key)
+                if toon_action is None and set_idx != 0:
+                    # The toon is on a non-default set that does not bind
+                    # this key. Sets in TTMT are movement-only overrides:
+                    # non-movement bindings (jump, sprint, map, etc.) live
+                    # only in the default set. Fall back to the default
+                    # set's binding -- but ONLY when the resolved action
+                    # is non-movement. Movement actions stay strict per-
+                    # toon so a key the toon's set explicitly does not
+                    # bind for movement is not forwarded as movement.
+                    default_action = self.keymap_manager.get_action_in_set("cc", 0, key)
+                    if default_action is not None and default_action not in _MOVEMENT_ACTIONS:
+                        toon_action = default_action
                 if toon_action is None:
                     continue
                 if not logical_actions.supports("cc", toon_action):
@@ -384,11 +472,23 @@ class InputService(QObject):
                             f"(cc action: {toon_action}, set {set_idx + 1})"
                         )
             else:
-                if legacy_logical is None or win == active_window:
+                # Strict per-toon for movement; default-set fallback for
+                # non-movement actions only. Sets in TTMT are movement-
+                # only overrides; non-movement bindings (jump, etc.) live
+                # only in the default set. Outbound stays sourced from
+                # set 0 (native binding).
+                toon_action = self.keymap_manager.get_action_in_set(toon_game, set_idx, key)
+                if toon_action is None and set_idx != 0:
+                    default_action = self.keymap_manager.get_action_in_set(toon_game, 0, key)
+                    if default_action is not None and default_action not in _MOVEMENT_ACTIONS:
+                        toon_action = default_action
+                if toon_action is None:
                     continue
-                if not logical_actions.supports(toon_game, legacy_logical):
+                if not logical_actions.supports(toon_game, toon_action):
                     continue
-                outbound = self.keymap_manager.get_key_for_action(toon_game, set_idx, legacy_logical)
+                if win == active_window:
+                    continue
+                outbound = self.keymap_manager.get_key_for_action(toon_game, 0, toon_action)
                 if outbound is None:
                     continue
                 keysym = self._resolve_keysym(outbound)
@@ -397,8 +497,34 @@ class InputService(QObject):
                     if self.logging_enabled and action == "keydown" and key != outbound:
                         self.input_log.emit(
                             f"[Input] '{key}' -> '{outbound}' "
-                            f"(action: {legacy_logical}, {toon_game} set {set_idx + 1})"
+                            f"(action: {toon_action}, {toon_game} set {set_idx + 1})"
                         )
+
+    def _dispatch_keyup(self, key, enabled, assignments) -> bool:
+        """Process a single keyup event.
+
+        Returns True if the released key was BackSpace (so the caller can
+        reset BackSpace repeat timing); False otherwise.
+
+        Check actual set membership rather than re-classifying, since chat
+        state may have changed between the original keydown and this keyup.
+        """
+        if key in self.modifiers_held:
+            self.modifiers_held.discard(key)
+            self._send_modifier_to_bg("keyup", key, enabled, assignments)
+            return False
+        if key in self.keys_held:
+            self.keys_held.discard(key)
+            self._log_key(key, "released")
+            self._send_logical_action_km("keyup", key, enabled, assignments)
+            return key == "BackSpace"
+        if key in self.action_held:
+            self.action_held.discard(key)
+            self._log_key(key, "released")
+            self._send_action_keyup_to_bg(key, enabled, assignments)
+            return False
+        self.bg_typing_held.discard(key)
+        return False
 
     def _send_modifier_to_bg(self, action, key, enabled, assignments):
         active_window = self.window_manager.get_active_window()
@@ -508,6 +634,7 @@ class InputService(QObject):
         event_queue    = self.get_event_queue()
         bs_press_time  = None
         bs_last_repeat = 0.0
+        pending_keyups: dict[str, float] = {}
 
         try:
             while self.running:
@@ -530,6 +657,7 @@ class InputService(QObject):
                         self.modifiers_held.clear()
                         self.action_held.clear()
                     self.bg_typing_held.clear()
+                    pending_keyups.clear()
                     self._phantom_reset()
                     if self.global_chat_active:
                         self._set_chat_active(False)
@@ -559,6 +687,22 @@ class InputService(QObject):
                         action, key = event_queue.get_nowait()
                     except queue.Empty:
                         break
+
+                    # Auto-repeat dedup: pynput delivers X11 auto-repeat as
+                    # KeyRelease+KeyPress pairs (XKB DetectableAutoRepeat is
+                    # off by default). Buffer each keyup; if a matching keydown
+                    # arrives within AUTO_REPEAT_DEDUP_WINDOW, drop both halves
+                    # (the key is still logically held). If no matching keydown
+                    # arrives in time, flush the keyup as a real release in the
+                    # post-drain block below. The grabber does this for grabbed
+                    # keys at the X level; this is the equivalent for keys that
+                    # reach InputService via pynput.
+                    if action == "keydown" and key in pending_keyups:
+                        del pending_keyups[key]
+                        continue
+                    if action == "keyup":
+                        pending_keyups[key] = now
+                        continue
 
                     if action == "keydown":
 
@@ -675,29 +819,15 @@ class InputService(QObject):
                                     self._log_key(key, "pressed")
                                     self._send_action_keydown_to_bg(key, enabled, assignments)
 
-                    elif action == "keyup":
-
-                        # Check actual membership rather than re-classifying, since
-                        # chat state may have changed between keydown and keyup.
-                        if key in self.modifiers_held:
-                            self.modifiers_held.discard(key)
-                            self._send_modifier_to_bg("keyup", key, enabled, assignments)
-
-                        elif key in self.keys_held:
-                            self.keys_held.discard(key)
-                            self._log_key(key, "released")
-                            if key == "BackSpace":
-                                bs_press_time  = None
-                                bs_last_repeat = 0.0
-                            self._send_logical_action_km("keyup", key, enabled, assignments)
-
-                        elif key in self.action_held:
-                            self.action_held.discard(key)
-                            self._log_key(key, "released")
-                            self._send_action_keyup_to_bg(key, enabled, assignments)
-
-                        else:
-                            self.bg_typing_held.discard(key)
+                # Flush keyups that have been buffered past the auto-repeat
+                # window. These are real releases — no matching keydown arrived
+                # in time, so the key was genuinely released.
+                for stale_key, buffered_at in list(pending_keyups.items()):
+                    if now - buffered_at >= self.AUTO_REPEAT_DEDUP_WINDOW:
+                        del pending_keyups[stale_key]
+                        if self._dispatch_keyup(stale_key, enabled, assignments):
+                            bs_press_time  = None
+                            bs_last_repeat = 0.0
 
                 if bs_press_time is not None and "BackSpace" in self.keys_held and not self._phantom_active:
                     held_for = now - bs_press_time
@@ -817,6 +947,34 @@ class InputService(QObject):
             return _KEYSYM_LOOKUP.get(key.lower())
         return None
 
+    def _cc_window_ids(self) -> list:
+        """Return the subset of managed windows that are CC windows.
+
+        The wine bridge's helper only knows about CC windows in its
+        prefix; passing the full window list (which may include TTR
+        windows in mixed layouts) makes cross_check_sort_order's length
+        comparison fail and forces a fallback to the xlib backend that
+        Wine ignores. This helper provides the CC-only subset the bridge
+        expects. Left-to-right sort order is preserved because the
+        original list is already sorted that way by
+        WindowManager.assign_windows.
+
+        Known limitation: when multiple CC installs are running from
+        different Wine prefixes (rare), the filter still returns all CC
+        windows across prefixes. The per-prefix helper would then see a
+        length mismatch. Out of scope for this fix; addressing it would
+        require per-window prefix resolution at the routing layer.
+        """
+        try:
+            from utils.game_registry import GameRegistry
+            registry = GameRegistry.instance()
+        except Exception:
+            return []
+        return [
+            str(w) for w in self.window_manager.get_window_ids()
+            if registry.get_game_for_window(str(w)) == "cc"
+        ]
+
     def _send_via_backend(self, action: str, win_id: str, keysym: str, modifiers: list = None):
         """Route input through Xlib or xdotool depending on USE_XLIB_BACKEND."""
         import sys
@@ -827,7 +985,7 @@ class InputService(QObject):
                     from utils import wine_input_bridge
                     if wine_input_bridge.send_to_window(
                         str(win_id),
-                        [str(w) for w in self.window_manager.get_window_ids()],
+                        self._cc_window_ids(),
                         action,
                         keysym,
                         modifiers,
@@ -876,19 +1034,8 @@ class InputService(QObject):
         active_window = self.window_manager.get_active_window()
         window_ids = self.window_manager.get_window_ids()
         registry = GameRegistry.instance()
-        fg_game = self._last_known_foreground_game
 
         for key in list(self.keys_held):
-            # Find the logical action under the last-known fg game's Default set.
-            logical = None
-            if fg_game is not None and self.keymap_manager:
-                default = self.keymap_manager.get_default(fg_game)
-                for action in logical_actions.actions_for(fg_game):
-                    if default.get(action) == key:
-                        logical = action
-                        break
-            if logical is None:
-                continue
             for i, is_enabled in enumerate(enabled):
                 if not (is_enabled and i < len(window_ids)):
                     continue
@@ -897,11 +1044,20 @@ class InputService(QObject):
                     continue
                 toon_game = registry.get_game_for_window(str(win))
                 if toon_game is None:
-                    toon_game = "ttr"  # Windows fallback: TTMT pre-dates CC support and TTR is the safe default
-                if not logical_actions.supports(toon_game, logical):
-                    continue
+                    toon_game = "ttr"  # Windows fallback: TTMT pre-dates CC support
                 set_idx = assignments[i] if i < len(assignments) else 0
-                outbound = self.keymap_manager.get_key_for_action(toon_game, set_idx, logical)
+                if self.keymap_manager is None:
+                    continue
+                toon_action = self.keymap_manager.get_action_in_set(toon_game, set_idx, key)
+                if toon_action is None and set_idx != 0:
+                    default_action = self.keymap_manager.get_action_in_set(toon_game, 0, key)
+                    if default_action is not None and default_action not in _MOVEMENT_ACTIONS:
+                        toon_action = default_action
+                if toon_action is None:
+                    continue
+                if not logical_actions.supports(toon_game, toon_action):
+                    continue
+                outbound = self.keymap_manager.get_key_for_action(toon_game, 0, toon_action)
                 keysym = self._resolve_keysym(outbound) if outbound else None
                 if keysym:
                     self._send_via_backend("keyup", win, keysym)
@@ -934,21 +1090,6 @@ class InputService(QObject):
             self._send_via_backend("keydown", win_id, keysym)
             time.sleep(0.05)
             self._send_via_backend("keyup", win_id, keysym)
-
-
-def _conflicting_canonical_keysyms(canonical: str) -> tuple[str, ...]:
-    """Return the keysyms in the OPPOSITE keyset from the canonical.
-
-    When canonical=wasd, the conflicting keyset is arrows; when canonical
-    =arrows, the conflicting keyset is WASD. The grabber suppresses the
-    conflicting set from reaching focused CC windows because CC accepts
-    both hardcoded regardless of its preferences.json keymap.
-    """
-    if canonical == "wasd":
-        return ("Up", "Down", "Left", "Right")
-    if canonical == "arrows":
-        return ("w", "a", "s", "d")
-    return ()
 
 
 def _passthrough_keysyms_for_canonical(canonical: str) -> tuple[str, ...]:

@@ -21,7 +21,7 @@ class TestSupports:
 
 class TestDefaultKey:
     def test_shared_action_has_per_game_default(self):
-        assert logical_actions.default_key("ttr", "forward") == "w"
+        assert logical_actions.default_key("ttr", "forward") == "Up"
         assert logical_actions.default_key("cc", "forward") == "w"
 
     def test_book_default_differs_per_game(self):
@@ -67,3 +67,30 @@ class TestActionsFor:
 
     def test_actions_for_unknown_game_is_empty(self):
         assert logical_actions.actions_for("xyz") == []
+
+
+class TestTtrMovementDefaults:
+    """TTR fresh-install ships arrow keys for movement, not WASD.
+    The registry is the source of truth for the legacy routing fallback,
+    so getting this wrong breaks _resolve_logical_action for the typical
+    TTR user."""
+
+    def test_forward_default_is_up(self):
+        assert logical_actions.default_key("ttr", "forward") == "Up"
+
+    def test_reverse_default_is_down(self):
+        assert logical_actions.default_key("ttr", "reverse") == "Down"
+
+    def test_left_default_is_left(self):
+        assert logical_actions.default_key("ttr", "left") == "Left"
+
+    def test_right_default_is_right(self):
+        assert logical_actions.default_key("ttr", "right") == "Right"
+
+    def test_cc_movement_defaults_unchanged(self):
+        # CC defaults are WASD (the canonical we lock prefs to). Regression
+        # guard so a future edit doesn't break the CC side while fixing TTR.
+        assert logical_actions.default_key("cc", "forward") == "w"
+        assert logical_actions.default_key("cc", "reverse") == "s"
+        assert logical_actions.default_key("cc", "left") == "a"
+        assert logical_actions.default_key("cc", "right") == "d"

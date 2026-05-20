@@ -1,9 +1,11 @@
 """Per-toon CC routing tests for _send_logical_action_km.
 
-The function now has two paths:
+The function uses strict per-toon routing: each toon responds only to
+keys that its own assigned set binds. No cross-game broadcast fallback.
+
 - CC toons: per-toon set lookup; canonical key emitted to target window;
   foreground skipped only if pressed key already matches canonical.
-- TTR toons: unchanged legacy broadcast-with-translation.
+- TTR toons: same strict per-toon rule; outbound from default set (set 0).
 """
 
 from unittest.mock import MagicMock
@@ -147,8 +149,20 @@ def test_non_movement_action_uses_cc_default_binding_as_canonical(cc_setup):
     assert sent == [("keydown", "w2", "space")]
 
 
-def test_ttr_routing_unchanged(monkeypatch):
-    """TTR toons keep legacy resolve-via-foreground-default + send toon-set[action] to bg."""
+def test_ttr_routing_per_toon_strict_same_game(monkeypatch):
+    """TTR1 (set 0, WASD) focused, TTR2 (set 1, arrows) background. Press W.
+    Per-toon lookup: TTR2's arrows set does not bind W. Foreground is TTR
+    (same-game) -> strict skip; no legacy fallback. TTR2 receives nothing.
+
+    This verifies the strict-same-game rule: non-matching-set TTR toons are
+    independent when the foreground toon is also TTR. The set is an
+    input-translation layer; a bg toon that hasn't assigned that key does not
+    move.
+
+    Previously this test asserted the old buggy behavior: legacy_logical was
+    used verbatim and outbound was emitted from set_idx (the toon's own set)
+    rather than from the default (set 0). That was incorrect per the design
+    clarification that the set is an input-translation layer only."""
     keymap = _FakeKeymap({
         "cc": [
             {"forward": "w", "reverse": "s", "left": "a", "right": "d"},
@@ -175,9 +189,9 @@ def test_ttr_routing_unchanged(monkeypatch):
     monkeypatch.setattr(svc, "_send_via_backend", lambda action, win, keysym, modifiers=None: sent.append((action, win, keysym)))
     monkeypatch.setattr(svc, "_foreground_game", lambda: "ttr")
 
-    # Legacy: press w on foreground → resolve via TTR Default (w=forward) → for bg toon 2 send set[forward]=Up.
+    # TTR2's arrows set doesn't bind W; same-game strict rule skips it.
     svc._send_logical_action_km("keydown", "w", [True, True], [0, 1])
-    assert sent == [("keydown", "w2", "Up")]
+    assert sent == []
 
 
 def test_global_chat_active_suppresses_all_routing(cc_setup):
@@ -186,3 +200,140 @@ def test_global_chat_active_suppresses_all_routing(cc_setup):
     svc._send_logical_action_km("keydown", "w", [True, True], [1, 2])
     svc._send_logical_action_km("keydown", "Up", [True, True], [1, 2])
     assert sent == []
+
+
+class TestHybridRoutingMixed:
+    """The routing matrix from the spec, exercised against
+    _send_logical_action_km. Each test sets up a 2-toon layout, simulates
+    a single keydown, and asserts which toons receive bridge sends."""
+
+    def _build_svc(self, monkeypatch, registry_mapping, focus_window_id, assignments):
+        wm = _FakeWindowManager(list(registry_mapping.keys()), focus_window_id)
+        fake_registry = _FakeRegistry(registry_mapping)
+        monkeypatch.setattr(
+            "utils.game_registry.GameRegistry.instance", lambda: fake_registry
+        )
+        sent = []
+        svc = InputService(
+            window_manager=wm,
+            get_enabled_toons=lambda: [True] * len(registry_mapping),
+            get_movement_modes=lambda: ["both"] * len(registry_mapping),
+            get_event_queue_func=lambda: None,
+            settings_manager=MagicMock(),
+            get_keymap_assignments=lambda: list(assignments),
+            keymap_manager=_FakeKeymap({
+                "ttr": [
+                    {"forward": "Up", "reverse": "Down", "left": "Left", "right": "Right"},
+                    {"forward": "w",  "reverse": "s",    "left": "a",    "right": "d"},
+                ],
+                "cc": [
+                    {"forward": "w",  "reverse": "s",    "left": "a",    "right": "d"},
+                    {"forward": "Up", "reverse": "Down", "left": "Left", "right": "Right"},
+                ],
+            }),
+        )
+        svc._send_via_backend = lambda action, win, keysym, mods=None: sent.append(
+            (action, win, keysym)
+        )
+        svc._resolve_keysym = lambda k: k  # passthrough
+        return svc, sent
+
+    def test_ttr_focused_arrow_press_does_not_broadcast_to_cc(self, monkeypatch):
+        """TTR1=arrows focused, CC2=WASD background, press Up.
+        Strict per-toon: CC2's WASD set (set 0) does not bind Up.
+        No fallback fires. CC2 receives nothing."""
+        svc, sent = self._build_svc(
+            monkeypatch,
+            registry_mapping={"100": "ttr", "200": "cc"},
+            focus_window_id="100",
+            assignments=[0, 0],  # TTR1 set 0 (arrows), CC2 set 0 (WASD)
+        )
+        svc._send_logical_action_km(
+            "keydown", "Up", [True, True], [0, 0]
+        )
+        assert sent == []
+
+    def test_cc_focused_other_keyset_press_skips_cc_strict(self, monkeypatch):
+        """CC1=WASD focused, CC2=arrows background, press W.
+        Per-toon CC lookup on W binds 'forward' for CC1 (focused, skipped
+        by key==canonical guard) and returns None for CC2 (arrows set
+        doesn't bind W). Foreground IS CC -> no legacy fallback -> CC2
+        is skipped. Only CC1 (focused, native) moves."""
+        svc, sent = self._build_svc(
+            monkeypatch,
+            registry_mapping={"100": "cc", "200": "cc"},
+            focus_window_id="100",
+            assignments=[0, 1],  # CC1 WASD, CC2 arrows
+        )
+        svc._send_logical_action_km(
+            "keydown", "w", [True, True], [0, 1]
+        )
+        sent_for_cc2 = [s for s in sent if s[1] == "200"]
+        assert sent_for_cc2 == []
+
+    def test_cc_focused_arrow_press_routes_cc_arrows_toon(self, monkeypatch):
+        """CC1=WASD focused, CC2=arrows background, press Up.
+        Per-toon CC lookup on Up returns None for CC1 (WASD set), returns
+        'forward' for CC2 (arrows set, binds Up). CC2 gets canonical 'w'
+        via bridge."""
+        svc, sent = self._build_svc(
+            monkeypatch,
+            registry_mapping={"100": "cc", "200": "cc"},
+            focus_window_id="100",
+            assignments=[0, 1],
+        )
+        svc._send_logical_action_km(
+            "keydown", "Up", [True, True], [0, 1]
+        )
+        assert ("keydown", "200", "w") in sent
+        assert not any(s for s in sent if s[1] == "100")
+
+    def test_ttr_focused_arrow_press_does_not_broadcast_to_any_bg(self, monkeypatch):
+        """TTR1=arrows focused, TTR2=WASD bg, CC3=WASD bg, press Up.
+        TTR1 native (handled outside this function).
+        TTR2: per-toon lookup -- TTR2's set 1 (WASD) doesn't bind Up -> skip.
+        CC3: per-toon lookup -- CC3's WASD set (set 0) doesn't bind Up -> skip.
+        No cross-game fallback. Neither bg toon receives anything."""
+        svc, sent = self._build_svc(
+            monkeypatch,
+            registry_mapping={"100": "ttr", "200": "ttr", "300": "cc"},
+            focus_window_id="100",
+            assignments=[0, 1, 0],  # TTR1 arrows, TTR2 WASD, CC3 WASD
+        )
+        svc._send_logical_action_km(
+            "keydown", "Up", [True, True, True], [0, 1, 0]
+        )
+        assert ("keydown", "200", "w") not in sent  # TTR2 strict-skipped (WASD doesn't bind Up)
+        assert ("keydown", "300", "w") not in sent  # CC3 strict-skipped (WASD doesn't bind Up)
+
+    def test_cc_focused_native_press_does_not_route_to_ttr_bg(self, monkeypatch):
+        """TTR1=arrows + CC2=WASD, focus CC2, press W (CC2's canonical).
+        CC2 (focused) skipped by key==canonical guard.
+        TTR1 (background): strict per-toon -- TTR1's arrows set (set 0)
+        does not bind W. No fallback. TTR1 receives nothing."""
+        svc, sent = self._build_svc(
+            monkeypatch,
+            registry_mapping={"100": "ttr", "200": "cc"},
+            focus_window_id="200",
+            assignments=[0, 0],  # TTR1 arrows (set 0), CC2 WASD (set 0)
+        )
+        svc._send_logical_action_km(
+            "keydown", "w", [True, True], [0, 0]
+        )
+        assert sent == []
+
+    def test_ttr_focused_arrow_press_routes_arrows_cc_via_per_toon(self, monkeypatch):
+        """TTR1=arrows + CC2=arrows, TTR1 focused, press Up.
+        Per-toon CC lookup for CC2: get_action_in_set('cc', arrows, Up)
+        = 'forward' (binds Up). So the per-toon match path fires (NOT the
+        hybrid fallback). canonical='w'. Send 'w' to CC2 via bridge."""
+        svc, sent = self._build_svc(
+            monkeypatch,
+            registry_mapping={"100": "ttr", "200": "cc"},
+            focus_window_id="100",
+            assignments=[0, 1],  # TTR1 arrows (set 0), CC2 arrows (set 1)
+        )
+        svc._send_logical_action_km(
+            "keydown", "Up", [True, True], [0, 1]
+        )
+        assert ("keydown", "200", "w") in sent

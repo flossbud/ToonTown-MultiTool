@@ -121,15 +121,19 @@ class TestSendLogicalActionKm:
         assert ("keydown", "bg-0", "w") in sent_to  # TTR Default forward=w
         assert ("keydown", "bg-1", "w") in sent_to  # CC Default forward=w
 
-    def test_press_sprint_with_cc_fg_skips_ttr_toon(self, monkeypatch, tmp_path):
+    def test_press_action_key_routes_per_toons_own_set(self, monkeypatch, tmp_path):
+        """Strict per-toon: each background toon evaluates Shift_L against
+        its OWN set's binding, not the foreground game's. TTR's default
+        binds Shift_L to map; CC's default binds it to sprint. Both
+        receive Shift_L (each interprets it natively per its set)."""
         svc, km, sent = self._setup_with_two_toons(monkeypatch, tmp_path,
                                                    toon0_game="ttr", toon1_game="cc",
                                                    fg_game="cc")
         enabled = [True, True]
         svc._send_logical_action_km("keydown", "Shift_L", enabled, [0, 0])
         sent_wids = {s[1] for s in sent}
-        assert "bg-0" not in sent_wids  # TTR doesn't support sprint
-        assert "bg-1" in sent_wids       # CC does
+        assert "bg-0" in sent_wids  # TTR: Shift_L=map under its default set
+        assert "bg-1" in sent_wids  # CC:  Shift_L=sprint under its default set
 
     def test_press_unknown_key_no_send(self, monkeypatch, tmp_path):
         svc, km, sent = self._setup_with_two_toons(monkeypatch, tmp_path,

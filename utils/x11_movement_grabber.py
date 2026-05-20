@@ -25,6 +25,7 @@ native Wayland windows are out of scope and unaffected.
 
 from __future__ import annotations
 
+import queue as _queue
 import threading
 from typing import Callable, Optional
 
@@ -75,130 +76,87 @@ def xlib_available() -> bool:
 
 
 class MovementKeyGrabber:
-    """Lifecycle: construct, call start() once with the keysyms + callbacks,
-    call stop() before exit. Idempotent: start() while running is a no-op,
-    stop() while stopped is a no-op."""
+    """Lifecycle:
+      construct -> prepare() -> install_grabs(set) [...-> uninstall/install_grabs()] -> stop()
+
+    All Xlib mutations happen on the event-loop thread via an internal
+    action queue; install_grabs() and uninstall_grabs() are safe to call
+    from any thread (typically Qt main thread from the active_window
+    signal slot)."""
 
     def __init__(self):
         self._display = None
         self._root = None
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
+        self._actions: "_queue.Queue[tuple]" = _queue.Queue()
         self._grabbed: list[tuple[int, int]] = []
-        # Map keycode -> (kind, keysym_name) where kind is "grabbed"
-        # (events get consumed and routed via on_key) or "passthrough"
-        # (events arrive at our grab during the active-grab window and
-        # we hand them to on_passthrough so the focused window doesn't
-        # lose control of WASD/modifiers/etc. while an arrow is held).
-        # XK.keysym_to_string would return None for non-printable
-        # keysyms like Up/Down/Left/Right, so we build this map at
-        # start() from the keysyms we explicitly register.
         self._keycode_to_name: dict[int, tuple[str, str]] = {}
+        self._current_canonical: Optional[str] = None
         self._on_key: Optional[Callable[[str, str], None]] = None
         self._on_passthrough: Optional[Callable[[str, str], None]] = None
         self._should_consume: Optional[Callable[[str], bool]] = None
 
-    def start(
+    def prepare(
         self,
-        keysyms: list[str],
         on_key: Callable[[str, str], None],
         should_consume: Callable[[str], bool],
-        passthrough_keysyms: Optional[list[str]] = None,
         on_passthrough: Optional[Callable[[str, str], None]] = None,
     ) -> bool:
-        """Register passive grabs for each keysym and start the event-loop
-        thread. Returns True on success, False if xlib is unavailable, the
-        display can't be opened, or the grabber is already running.
-
-        passthrough_keysyms is the list of OTHER keys we want to recognize
-        when they arrive at our grab during the active-grab window (e.g.
-        WASD pressed while an arrow is held). For those we don't establish
-        a passive grab, but we DO record their keycode so the event loop
-        can route them via on_passthrough. Without this the user loses
-        control of the focused window while an arrow is held because the
-        X server redirects all keyboard events to the grabbing client
-        during the active grab, and AllowEvents(ReplayKeyboard) is a no-op
-        when keyboard_mode is Async.
-        """
+        """Open the Xlib display and start the event-loop thread.
+        Installs zero grabs. Returns True on success, False if Xlib is
+        unavailable or the display can't be opened."""
         if not _HAS_XLIB:
             return False
         if self._thread is not None and self._thread.is_alive():
             return True
-
         try:
             self._display = _xlib_display.Display()
         except Exception as e:  # noqa: BLE001
             print(f"[x11_movement_grabber] cannot open display: {e}")
             return False
-
         self._root = self._display.screen().root
         self._on_key = on_key
         self._on_passthrough = on_passthrough
         self._should_consume = should_consume
-
-        registered = 0
-        for keysym_name in keysyms:
-            ks = XK.string_to_keysym(keysym_name)
-            if ks == 0:
-                print(f"[x11_movement_grabber] unknown keysym {keysym_name!r}; skipped")
-                continue
-            keycode = self._display.keysym_to_keycode(ks)
-            if keycode == 0:
-                continue
-            self._keycode_to_name[keycode] = ("grabbed", keysym_name)
-            for mod in _LOCK_MODIFIERS:
-                try:
-                    self._root.grab_key(
-                        keycode, mod, True,
-                        X.GrabModeAsync, X.GrabModeAsync,
-                    )
-                    self._grabbed.append((keycode, mod))
-                    registered += 1
-                except BadAccess:
-                    # Another client already grabbed this combo. Not fatal -
-                    # we just won't suppress that exact key+mod combo.
-                    pass
-
-        for keysym_name in passthrough_keysyms or []:
-            ks = XK.string_to_keysym(keysym_name)
-            if ks == 0:
-                continue
-            keycode = self._display.keysym_to_keycode(ks)
-            if keycode == 0:
-                continue
-            # Don't overwrite a grabbed entry if it happens to share a keycode.
-            self._keycode_to_name.setdefault(keycode, ("passthrough", keysym_name))
-
-        try:
-            self._display.sync()
-        except Exception as e:  # noqa: BLE001
-            print(f"[x11_movement_grabber] sync after grab failed: {e}")
-
-        if registered == 0:
-            self._cleanup_display()
-            return False
-
         self._stop.clear()
+        # Flush any actions that were enqueued after the previous stop() but
+        # before this prepare(). Without this, a stale install_grabs() would
+        # be picked up by the new thread and silently install grabs on behalf
+        # of the previous caller.
+        self._actions = _queue.Queue()
         self._thread = threading.Thread(
             target=self._run, daemon=True, name="MovementKeyGrabber"
         )
         self._thread.start()
         return True
 
+    def install_grabs(
+        self,
+        canonical_set: str,
+        passthrough_keysyms: Optional[list[str]] = None,
+    ) -> None:
+        """Register passive grabs on the OPPOSITE of canonical_set.
+        Idempotent if the requested set is already active. Safe to call
+        from any thread."""
+        self._actions.put(("install", canonical_set, list(passthrough_keysyms or [])))
+
+    def uninstall_grabs(self) -> None:
+        """Remove all currently-installed passive grabs. Safe to call
+        from any thread. No-op if no grabs are installed."""
+        self._actions.put(("uninstall",))
+
     def stop(self) -> None:
-        self._stop.set()
         if self._thread is not None and self._thread.is_alive():
+            self._actions.put(("uninstall",))
+            self._actions.put(("shutdown",))
+            self._stop.set()
             self._thread.join(timeout=2.0)
         self._thread = None
         self._cleanup_display()
 
     def _cleanup_display(self) -> None:
         if self._display is not None:
-            for keycode, mod in self._grabbed:
-                try:
-                    self._root.ungrab_key(keycode, mod)
-                except Exception:
-                    pass
             try:
                 self._display.sync()
             except Exception:
@@ -211,9 +169,97 @@ class MovementKeyGrabber:
             self._root = None
             self._grabbed = []
             self._keycode_to_name = {}
+            self._current_canonical = None
+        # Discard any pending actions so a subsequent prepare() starts with a
+        # clean queue. Without this, an install_grabs() enqueued between
+        # stop() and the thread's exit would survive into the next lifecycle
+        # and silently install grabs the new caller didn't ask for.
+        self._actions = _queue.Queue()
+
+    def _conflicting_keysyms(self, canonical_set: str) -> tuple[str, ...]:
+        if canonical_set == "wasd":
+            return ("Up", "Down", "Left", "Right")
+        if canonical_set == "arrows":
+            return ("w", "a", "s", "d")
+        return ()
+
+    def _install_grabs_inline(self, canonical_set: str, passthrough_keysyms: list[str]) -> None:
+        if self._current_canonical == canonical_set:
+            return  # idempotent
+        if self._grabbed:
+            self._uninstall_grabs_inline()
+        keysyms = self._conflicting_keysyms(canonical_set)
+        for keysym_name in keysyms:
+            ks = XK.string_to_keysym(keysym_name)
+            if ks == 0:
+                continue
+            keycode = self._display.keysym_to_keycode(ks)
+            if keycode == 0:
+                continue
+            self._keycode_to_name[keycode] = ("grabbed", keysym_name)
+            for mod in _LOCK_MODIFIERS:
+                try:
+                    self._root.grab_key(
+                        keycode, mod, True,
+                        X.GrabModeAsync, X.GrabModeSync,
+                    )
+                    self._grabbed.append((keycode, mod))
+                except BadAccess:
+                    pass
+        for keysym_name in passthrough_keysyms:
+            ks = XK.string_to_keysym(keysym_name)
+            if ks == 0:
+                continue
+            keycode = self._display.keysym_to_keycode(ks)
+            if keycode == 0:
+                continue
+            self._keycode_to_name.setdefault(keycode, ("passthrough", keysym_name))
+        try:
+            self._display.sync()
+        except Exception:
+            pass
+        self._current_canonical = canonical_set
+
+    def _uninstall_grabs_inline(self) -> None:
+        for keycode, mod in self._grabbed:
+            try:
+                self._root.ungrab_key(keycode, mod)
+            except Exception:
+                pass
+        try:
+            self._display.sync()
+        except Exception:
+            pass
+        self._grabbed = []
+        self._keycode_to_name = {}
+        self._current_canonical = None
+
+    def _drain_actions(self) -> bool:
+        """Process queued install/uninstall actions. Returns True if a
+        shutdown action was seen."""
+        try:
+            while True:
+                action = self._actions.get_nowait()
+                try:
+                    if action[0] == "install":
+                        _, canonical_set, passthrough = action
+                        self._install_grabs_inline(canonical_set, passthrough)
+                    elif action[0] == "uninstall":
+                        self._uninstall_grabs_inline()
+                    elif action[0] == "shutdown":
+                        return True
+                except Exception as e:  # noqa: BLE001
+                    print(f"[x11_movement_grabber] action {action[0]!r} raised: {e}")
+        except _queue.Empty:
+            pass
+        return False
 
     def _run(self) -> None:
-        while not self._stop.is_set():
+        while True:
+            if self._drain_actions():
+                break
+            if self._stop.is_set():
+                break
             try:
                 pending = self._display.pending_events()
             except Exception:
@@ -301,14 +347,15 @@ class MovementKeyGrabber:
                 self._on_key(action, keysym_name)
             except Exception as e:  # noqa: BLE001
                 print(f"[x11_movement_grabber] on_key raised: {e}")
-        elif keysym_name and self._on_passthrough is not None:
-            # Fall through to passthrough for two cases:
-            #  - kind == "passthrough" (key registered as passthrough only)
-            #  - kind == "grabbed" but should_consume returned False (e.g.
-            #    chat is active so arrows should reach the focused chat
-            #    box for cursor movement). ReplayKeyboard is a no-op in
-            #    GrabModeAsync, so without this hand-off the key would
-            #    vanish.
+        elif kind == "passthrough" and keysym_name and self._on_passthrough is not None:
+            # Passthrough keys are not in a passive grab. They reach the
+            # grabber only because the active grab activated by a grabbed
+            # key redirects all keyboard events here; we hand them to the
+            # focused window via the bridge. Grabbed keys with consume=
+            # False (e.g. chat is active) are NOT routed here: under
+            # GrabModeSync, AllowEvents(ReplayKeyboard) already re-delivers
+            # them to the focused window. Calling on_passthrough for that
+            # case would double-deliver.
             try:
                 self._on_passthrough(action, keysym_name)
             except Exception as e:  # noqa: BLE001

@@ -30,57 +30,182 @@ def fake_display(monkeypatch):
     return d, root
 
 
-def test_start_returns_false_when_xlib_unavailable(monkeypatch):
+def test_prepare_returns_false_when_xlib_unavailable(monkeypatch):
     monkeypatch.setattr(grabber_mod, "_HAS_XLIB", False)
     g = grabber_mod.MovementKeyGrabber()
-    assert g.start(["Up"], on_key=lambda *_: None, should_consume=lambda _: True) is False
+    assert g.prepare(on_key=lambda *_: None, should_consume=lambda _: True) is False
 
 
-def test_start_grabs_each_keysym_with_lock_modifier_permutations(fake_display):
+def test_prepare_opens_display_but_does_not_install_grabs(fake_display):
+    """prepare() establishes the Xlib connection and starts the event
+    loop, but installs zero grabs. install_grabs() must be called next."""
     d, root = fake_display
     g = grabber_mod.MovementKeyGrabber()
     try:
-        ok = g.start(
-            keysyms=["Up", "Down"],
+        ok = g.prepare(
+            on_key=lambda *_: None,
+            should_consume=lambda _: True,
+            on_passthrough=lambda *_: None,
+        )
+        assert ok
+        # No grabs yet.
+        assert root.grab_key.call_count == 0
+    finally:
+        g.stop()
+
+
+def test_install_grabs_wasd_grabs_arrow_keys(fake_display):
+    """install_grabs('wasd') registers passive grabs on Up/Down/Left/Right
+    (the conflicting keyset when canonical=WASD). 4 keysyms x 64 modifier
+    combos = 256 grab_key calls."""
+    d, root = fake_display
+    g = grabber_mod.MovementKeyGrabber()
+    try:
+        g.prepare(
+            on_key=lambda *_: None,
+            should_consume=lambda _: True,
+            on_passthrough=lambda *_: None,
+        )
+        g.install_grabs(canonical_set="wasd", passthrough_keysyms=["w", "a", "s", "d"])
+        # Drain the action queue: event thread polls; give it a beat.
+        import time; time.sleep(0.1)
+        assert root.grab_key.call_count == 4 * len(grabber_mod._LOCK_MODIFIERS)
+    finally:
+        g.stop()
+
+
+def test_install_grabs_arrows_grabs_wasd_keys(fake_display):
+    """install_grabs('arrows') grabs WASD instead (focused toon is on the
+    arrows set, so suppress the WASD bleed-through)."""
+    d, root = fake_display
+    g = grabber_mod.MovementKeyGrabber()
+    try:
+        g.prepare(
+            on_key=lambda *_: None,
+            should_consume=lambda _: True,
+            on_passthrough=lambda *_: None,
+        )
+        g.install_grabs(canonical_set="arrows", passthrough_keysyms=["Up", "Down", "Left", "Right"])
+        import time; time.sleep(0.1)
+        assert root.grab_key.call_count == 4 * len(grabber_mod._LOCK_MODIFIERS)
+    finally:
+        g.stop()
+
+
+def test_uninstall_grabs_releases_every_registered_combo(fake_display):
+    d, root = fake_display
+    g = grabber_mod.MovementKeyGrabber()
+    try:
+        g.prepare(
+            on_key=lambda *_: None,
+            should_consume=lambda _: True,
+            on_passthrough=lambda *_: None,
+        )
+        g.install_grabs(canonical_set="wasd", passthrough_keysyms=[])
+        import time; time.sleep(0.1)
+        grabbed = root.grab_key.call_count
+        g.uninstall_grabs()
+        import time; time.sleep(0.1)
+        assert root.ungrab_key.call_count == grabbed
+    finally:
+        g.stop()
+
+
+def test_install_then_install_different_set_swaps_grabs(fake_display):
+    """Changing canonical_set from wasd to arrows uninstalls the old grabs
+    and installs the new ones."""
+    d, root = fake_display
+    g = grabber_mod.MovementKeyGrabber()
+    try:
+        g.prepare(
+            on_key=lambda *_: None,
+            should_consume=lambda _: True,
+            on_passthrough=lambda *_: None,
+        )
+        g.install_grabs(canonical_set="wasd", passthrough_keysyms=[])
+        import time; time.sleep(0.1)
+        first = root.grab_key.call_count
+        g.install_grabs(canonical_set="arrows", passthrough_keysyms=[])
+        import time; time.sleep(0.1)
+        # All old grabs ungrabbed, new set installed (same count).
+        assert root.ungrab_key.call_count == first
+        assert root.grab_key.call_count == 2 * first
+    finally:
+        g.stop()
+
+
+def test_install_same_set_twice_is_noop(fake_display):
+    d, root = fake_display
+    g = grabber_mod.MovementKeyGrabber()
+    try:
+        g.prepare(
+            on_key=lambda *_: None,
+            should_consume=lambda _: True,
+            on_passthrough=lambda *_: None,
+        )
+        g.install_grabs(canonical_set="wasd", passthrough_keysyms=[])
+        import time; time.sleep(0.1)
+        first = root.grab_key.call_count
+        g.install_grabs(canonical_set="wasd", passthrough_keysyms=[])
+        import time; time.sleep(0.1)
+        assert root.grab_key.call_count == first
+        assert root.ungrab_key.call_count == 0
+    finally:
+        g.stop()
+
+
+def test_grab_uses_all_keysyms_in_canonical_set(fake_display):
+    """prepare() + install_grabs('wasd') grabs exactly 4 keysyms
+    (Up/Down/Left/Right) each with the full modifier permutation set."""
+    d, root = fake_display
+    g = grabber_mod.MovementKeyGrabber()
+    try:
+        g.prepare(
             on_key=lambda *_: None,
             should_consume=lambda _: True,
         )
-        assert ok
-        # 2 keysyms x 8 lock-combinations = 16 grabs.
+        g.install_grabs(canonical_set="wasd", passthrough_keysyms=[])
+        import time; time.sleep(0.1)
+        # 4 keysyms x 64 modifier combos = 256 grabs.
+        assert root.grab_key.call_count == 4 * len(grabber_mod._LOCK_MODIFIERS)
+    finally:
+        g.stop()
+
+
+def test_keysym_with_zero_keycode_is_skipped(fake_display):
+    """If keysym_to_keycode returns 0 for a keysym, that keysym is skipped
+    and does not produce any grab_key calls. The grabber still works for
+    any keysyms that have valid keycodes."""
+    d, root = fake_display
+    from Xlib import XK
+    # Return 0 for Up and Down, valid codes for Left and Right.
+    up_ks = XK.string_to_keysym("Up")
+    down_ks = XK.string_to_keysym("Down")
+
+    def kc_side_effect(ks):
+        if ks in (up_ks, down_ks):
+            return 0
+        return 100 + (ks % 50)
+
+    d.keysym_to_keycode.side_effect = kc_side_effect
+
+    g = grabber_mod.MovementKeyGrabber()
+    try:
+        g.prepare(on_key=lambda *_: None, should_consume=lambda _: True)
+        g.install_grabs(canonical_set="wasd", passthrough_keysyms=[])
+        import time; time.sleep(0.1)
+        # Only Left and Right have valid keycodes.
         assert root.grab_key.call_count == 2 * len(grabber_mod._LOCK_MODIFIERS)
     finally:
         g.stop()
 
 
-def test_start_skips_unknown_keysyms(fake_display, capsys):
-    d, root = fake_display
-    # XK.string_to_keysym returns 0 for unknown names.
-    from Xlib import XK
-    real = XK.string_to_keysym
-    def fake_string_to_keysym(name):
-        if name == "Unknownnnnn":
-            return 0
-        return real(name)
-    import utils.x11_movement_grabber as gm
-    gm.XK.string_to_keysym = fake_string_to_keysym
-
-    g = grabber_mod.MovementKeyGrabber()
-    try:
-        ok = g.start(keysyms=["Unknownnnnn", "Up"], on_key=lambda *_: None, should_consume=lambda _: True)
-        assert ok
-        # Only Up gets grabbed (8 combos).
-        assert root.grab_key.call_count == len(grabber_mod._LOCK_MODIFIERS)
-        out = capsys.readouterr().out
-        assert "unknown keysym" in out
-    finally:
-        g.stop()
-        gm.XK.string_to_keysym = real
-
-
 def test_stop_ungrabs_each_registered_combo(fake_display):
     d, root = fake_display
     g = grabber_mod.MovementKeyGrabber()
-    g.start(keysyms=["Up"], on_key=lambda *_: None, should_consume=lambda _: True)
+    g.prepare(on_key=lambda *_: None, should_consume=lambda _: True)
+    g.install_grabs(canonical_set="wasd", passthrough_keysyms=[])
+    import time; time.sleep(0.05)
     grabbed_count = root.grab_key.call_count
     g.stop()
     assert root.ungrab_key.call_count == grabbed_count
@@ -114,11 +239,14 @@ def test_event_consume_path_calls_on_key_and_async_allow(fake_display):
     event.detail = 111
     event.time = 1234
 
-    pending_seq = iter([1, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+    # Start with 0 so the event thread drains the install action first,
+    # then return 1 to deliver the event once grabs are registered.
+    pending_seq = iter([0, 1, 0, 0, 0, 0, 0, 0, 0, 0])
     d.pending_events.side_effect = lambda: next(pending_seq, 0)
     d.next_event.return_value = event
 
-    g.start(keysyms=["Up"], on_key=on_key, should_consume=should_consume)
+    g.prepare(on_key=on_key, should_consume=should_consume)
+    g.install_grabs(canonical_set="wasd", passthrough_keysyms=[])
     # Let the thread run briefly.
     import time
     time.sleep(0.1)
@@ -145,15 +273,16 @@ def test_event_replay_path_does_not_call_on_key(fake_display):
     event.detail = 111
     event.time = 1234
 
-    pending_seq = iter([1, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+    # Start with 0 so the event thread drains the install action first.
+    pending_seq = iter([0, 1, 0, 0, 0, 0, 0, 0, 0, 0])
     d.pending_events.side_effect = lambda: next(pending_seq, 0)
     d.next_event.return_value = event
 
-    g.start(
-        keysyms=["Up"],
+    g.prepare(
         on_key=lambda a, k: on_key_calls.append((a, k)),
         should_consume=lambda _: False,
     )
+    g.install_grabs(canonical_set="wasd", passthrough_keysyms=[])
     import time
     time.sleep(0.1)
     g.stop()
@@ -163,12 +292,17 @@ def test_event_replay_path_does_not_call_on_key(fake_display):
     assert X.ReplayKeyboard in modes_used
 
 
-def test_double_start_is_idempotent(fake_display):
+def test_double_prepare_is_idempotent(fake_display):
     d, root = fake_display
     g = grabber_mod.MovementKeyGrabber()
-    g.start(keysyms=["Up"], on_key=lambda *_: None, should_consume=lambda _: True)
+    g.prepare(on_key=lambda *_: None, should_consume=lambda _: True)
+    g.install_grabs(canonical_set="wasd", passthrough_keysyms=[])
+    import time; time.sleep(0.05)
     first_grab_count = root.grab_key.call_count
-    g.start(keysyms=["Up"], on_key=lambda *_: None, should_consume=lambda _: True)
+    # Second prepare while running should be a no-op.
+    g.prepare(on_key=lambda *_: None, should_consume=lambda _: True)
+    g.install_grabs(canonical_set="wasd", passthrough_keysyms=[])
+    import time; time.sleep(0.05)
     assert root.grab_key.call_count == first_grab_count
     g.stop()
 
@@ -176,7 +310,7 @@ def test_double_start_is_idempotent(fake_display):
 def test_double_stop_is_idempotent(fake_display):
     d, root = fake_display
     g = grabber_mod.MovementKeyGrabber()
-    g.start(keysyms=["Up"], on_key=lambda *_: None, should_consume=lambda _: True)
+    g.prepare(on_key=lambda *_: None, should_consume=lambda _: True)
     g.stop()
     g.stop()  # must not raise
 
@@ -210,11 +344,11 @@ def test_autorepeat_pair_is_dropped(fake_display):
     # next_event returns release first, then press.
     d.next_event.side_effect = [release, press]
 
-    g.start(
-        keysyms=["Up"],
+    g.prepare(
         on_key=lambda a, k: on_key_calls.append((a, k)),
         should_consume=lambda _: True,
     )
+    g.install_grabs(canonical_set="wasd", passthrough_keysyms=[])
     import time
     time.sleep(0.1)
     g.stop()
@@ -245,15 +379,16 @@ def test_release_not_auto_repeat_is_processed_normally(fake_display):
     other.detail = 999
     other.time = 6000
 
-    pending_seq = iter([1, 1, 0, 0, 0, 0, 0, 0, 0, 0])
+    # Start with 0 so the event thread drains the install action first.
+    pending_seq = iter([0, 1, 1, 0, 0, 0, 0, 0, 0, 0])
     d.pending_events.side_effect = lambda: next(pending_seq, 0)
     d.next_event.side_effect = [release, other]
 
-    g.start(
-        keysyms=["Up"],
+    g.prepare(
         on_key=lambda a, k: on_key_calls.append((a, k)),
         should_consume=lambda _: True,
     )
+    g.install_grabs(canonical_set="wasd", passthrough_keysyms=[])
     import time
     time.sleep(0.1)
     g.stop()
@@ -279,16 +414,17 @@ def test_release_with_no_pending_is_processed_normally(fake_display):
     release.detail = 111
     release.time = 5000
 
-    # pending_events: 1 (the release), then 0 (no peek-target), then 0...
-    pending_seq = iter([1, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+    # Start with 0 so the event thread drains the install action first,
+    # then 1 (the release), then 0 (no peek-target).
+    pending_seq = iter([0, 1, 0, 0, 0, 0, 0, 0, 0, 0])
     d.pending_events.side_effect = lambda: next(pending_seq, 0)
     d.next_event.return_value = release
 
-    g.start(
-        keysyms=["Up"],
+    g.prepare(
         on_key=lambda a, k: on_key_calls.append((a, k)),
         should_consume=lambda _: True,
     )
+    g.install_grabs(canonical_set="wasd", passthrough_keysyms=[])
     import time
     time.sleep(0.1)
     g.stop()
@@ -298,20 +434,24 @@ def test_release_with_no_pending_is_processed_normally(fake_display):
 
 def test_passthrough_keysyms_register_but_dont_install_grabs(fake_display):
     """Passthrough keysyms get a keycode mapping but no XGrabKey calls.
-    A grabbed key still gets its 8 lock-modifier combos."""
+    The grabbed keysyms (the conflicting set) get the full modifier
+    permutation grabs."""
     d, root = fake_display
     g = grabber_mod.MovementKeyGrabber()
     try:
-        ok = g.start(
-            keysyms=["Up"],
-            passthrough_keysyms=["w", "a"],
+        g.prepare(
             on_key=lambda *_: None,
             on_passthrough=lambda *_: None,
             should_consume=lambda _: True,
         )
-        assert ok
-        # Only Up gets grabbed (1 keysym * 8 lock combos), w/a get no grabs.
-        assert root.grab_key.call_count == len(grabber_mod._LOCK_MODIFIERS)
+        g.install_grabs(
+            canonical_set="wasd",
+            passthrough_keysyms=["w", "a"],
+        )
+        import time; time.sleep(0.1)
+        # Only the 4 conflicting keys (Up/Down/Left/Right) get grabs.
+        # w and a are passthrough-only - no XGrabKey for them.
+        assert root.grab_key.call_count == 4 * len(grabber_mod._LOCK_MODIFIERS)
     finally:
         g.stop()
 
@@ -336,17 +476,17 @@ def test_passthrough_event_fires_on_passthrough_not_on_key(fake_display):
     event.detail = 25
     event.time = 1234
 
-    pending_seq = iter([1, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+    # Start with 0 so the event thread drains the install action first.
+    pending_seq = iter([0, 1, 0, 0, 0, 0, 0, 0, 0, 0])
     d.pending_events.side_effect = lambda: next(pending_seq, 0)
     d.next_event.return_value = event
 
-    g.start(
-        keysyms=["Up"],
-        passthrough_keysyms=["w"],
+    g.prepare(
         on_key=lambda a, k: on_key_calls.append((a, k)),
         on_passthrough=lambda a, k: on_passthrough_calls.append((a, k)),
         should_consume=lambda _: True,
     )
+    g.install_grabs(canonical_set="wasd", passthrough_keysyms=["w"])
     import time
     time.sleep(0.1)
     g.stop()
@@ -374,10 +514,13 @@ def test_modifier_combos_has_64_entries(fake_display):
     assert len(grabber_mod._LOCK_MODIFIERS) == 64
 
 
-def test_grabbed_key_with_consume_false_falls_through_to_passthrough(fake_display):
+def test_grabbed_key_with_consume_false_does_not_call_passthrough(fake_display):
     """When should_consume returns False for a grabbed key (e.g. chat is
-    active), the event should still fire on_passthrough so the focused
-    window's chat box receives the arrow for cursor movement."""
+    active and arrows should reach the focused chat box for cursor
+    movement), the grabber must NOT call on_passthrough. Under
+    GrabModeSync, allow_events(ReplayKeyboard) re-delivers the original
+    event to the focused window naturally; calling on_passthrough would
+    double-deliver via the bridge."""
     d, root = fake_display
     g = grabber_mod.MovementKeyGrabber()
 
@@ -392,27 +535,55 @@ def test_grabbed_key_with_consume_false_falls_through_to_passthrough(fake_displa
     event.detail = 111
     event.time = 1234
 
-    pending_seq = iter([1, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+    # Start with 0 so the event thread drains the install action first.
+    pending_seq = iter([0, 1, 0, 0, 0, 0, 0, 0, 0, 0])
     d.pending_events.side_effect = lambda: next(pending_seq, 0)
     d.next_event.return_value = event
 
-    g.start(
-        keysyms=["Up"],
+    g.prepare(
         on_key=lambda a, k: on_key_calls.append((a, k)),
         on_passthrough=lambda a, k: on_passthrough_calls.append((a, k)),
-        should_consume=lambda _: False,  # e.g. chat active
+        should_consume=lambda _: False,
     )
+    g.install_grabs(canonical_set="wasd", passthrough_keysyms=[])
     import time
     time.sleep(0.1)
     g.stop()
 
     assert on_key_calls == []
-    assert on_passthrough_calls == [("keydown", "Up")]
+    assert on_passthrough_calls == []
+    # Replay was requested so the focused window receives the event.
+    modes_used = [c.args[0] for c in d.allow_events.call_args_list]
+    assert X.ReplayKeyboard in modes_used
+
+
+def test_grab_key_uses_sync_keyboard_mode(fake_display):
+    """ReplayKeyboard is a no-op under GrabModeAsync. The grabber MUST
+    register with GrabModeSync so the non-consume path actually re-delivers
+    arrow events to the focused window (TTR, Firefox, terminals, etc.)."""
+    d, root = fake_display
+    g = grabber_mod.MovementKeyGrabber()
+    try:
+        g.prepare(
+            on_key=lambda *_: None,
+            should_consume=lambda _: True,
+        )
+        g.install_grabs(canonical_set="wasd", passthrough_keysyms=[])
+        import time; time.sleep(0.1)
+        # grab_key positional args: keycode, modifiers, owner_events,
+        # pointer_mode, keyboard_mode. We care about keyboard_mode.
+        for call in root.grab_key.call_args_list:
+            args = call.args
+            assert args[4] == X.GrabModeSync, (
+                f"keyboard_mode must be GrabModeSync, got {args[4]}"
+            )
+    finally:
+        g.stop()
 
 
 def test_passthrough_event_uses_replay_keyboard_mode(fake_display):
-    """Passthrough events should use ReplayKeyboard so X is told to let
-    the event flow normally (even though Replay is a no-op in async)."""
+    """Passthrough events should use ReplayKeyboard so X re-delivers
+    the event to the focused window."""
     d, root = fake_display
     g = grabber_mod.MovementKeyGrabber()
 
@@ -424,20 +595,99 @@ def test_passthrough_event_uses_replay_keyboard_mode(fake_display):
     event.detail = 25
     event.time = 1234
 
-    pending_seq = iter([1, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+    # Start with 0 so the event thread drains the install action first.
+    pending_seq = iter([0, 1, 0, 0, 0, 0, 0, 0, 0, 0])
     d.pending_events.side_effect = lambda: next(pending_seq, 0)
     d.next_event.return_value = event
 
-    g.start(
-        keysyms=["Up"],
-        passthrough_keysyms=["w"],
+    g.prepare(
         on_key=lambda *_: None,
         on_passthrough=lambda *_: None,
         should_consume=lambda _: True,
     )
+    g.install_grabs(canonical_set="wasd", passthrough_keysyms=["w"])
     import time
     time.sleep(0.1)
     g.stop()
 
     modes = [c.args[0] for c in d.allow_events.call_args_list]
     assert X.ReplayKeyboard in modes
+
+
+def test_stale_install_action_does_not_survive_stop_and_prepare(fake_display):
+    """Regression: stop() enqueues uninstall + shutdown, but a caller may
+    have enqueued an install_grabs() between stop() and the thread draining.
+    That stale install must NOT fire after a subsequent prepare() call.
+
+    Reproduces the scenario described in the code review:
+      prepare() -> install_grabs() -> stop() [thread still draining]
+      -> install_grabs() [stale, enqueued after stop]
+      -> prepare() [fresh start]
+    The fresh prepare must not see the stale install action and must not
+    call grab_key on behalf of the previous caller."""
+    import time
+    d, root = fake_display
+
+    g = grabber_mod.MovementKeyGrabber()
+
+    # First lifecycle: prepare -> install -> stop.
+    g.prepare(on_key=lambda *_: None, should_consume=lambda _: True)
+    g.install_grabs(canonical_set="wasd", passthrough_keysyms=[])
+    time.sleep(0.05)
+    g.stop()
+
+    # Enqueue a stale install AFTER stop() returns (thread already exited).
+    g._actions.put(("install", "arrows", []))
+
+    # Second lifecycle: prepare should start clean.
+    d.reset_mock()
+    root.reset_mock()
+
+    g.prepare(on_key=lambda *_: None, should_consume=lambda _: True)
+    # Give the thread time to drain any stale actions.
+    time.sleep(0.1)
+
+    # No grab_key calls: the stale "install" must have been cleared.
+    assert root.grab_key.call_count == 0, (
+        f"Stale install action survived stop+prepare: {root.grab_key.call_count} grabs fired"
+    )
+
+    g.stop()
+
+
+def test_per_action_exception_does_not_kill_thread(fake_display):
+    """Regression: if _install_grabs_inline raises (e.g., Xlib error not
+    covered by the inner BadAccess catch), the exception must NOT propagate
+    through _drain_actions to _run and silently kill the daemon thread.
+
+    After the exception the thread must still be alive, and a subsequent
+    uninstall_grabs() action must be processed normally."""
+    import time
+    d, root = fake_display
+
+    # Make keysym_to_keycode raise to trigger an exception inside
+    # _install_grabs_inline (specifically during the grabbed-keysym loop).
+    d.keysym_to_keycode.side_effect = RuntimeError("Xlib exploded")
+
+    g = grabber_mod.MovementKeyGrabber()
+    g.prepare(on_key=lambda *_: None, should_consume=lambda _: True)
+
+    assert g._thread is not None and g._thread.is_alive()
+
+    # This install will raise inside _install_grabs_inline.
+    g.install_grabs(canonical_set="wasd", passthrough_keysyms=[])
+    time.sleep(0.1)
+
+    # Thread must still be alive after the exception.
+    assert g._thread.is_alive(), "Thread died after exception in _install_grabs_inline"
+
+    # Restore normal behaviour and enqueue an uninstall to prove the thread
+    # can still process actions.
+    d.keysym_to_keycode.side_effect = lambda ks: 100 + (ks % 50)
+    g.uninstall_grabs()
+    time.sleep(0.1)
+
+    # Thread must still be alive after the uninstall action.
+    assert g._thread.is_alive(), "Thread died after processing uninstall action"
+
+    g.stop()
