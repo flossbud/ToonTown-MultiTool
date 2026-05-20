@@ -853,7 +853,7 @@ def build_launch_command(
     raise ValueError(f"Unsupported launcher: {install.launcher}")
 
 
-_LAUNCHER_PRIORITY = ["bottles", "lutris", "steam-proton", "wine", "native"]
+_LAUNCHER_PRIORITY = ["bottles", "lutris", "faugus", "steam-proton", "wine", "native"]
 
 
 def _host_command_exists(name: str) -> bool:
@@ -1128,11 +1128,12 @@ def ensure_bottle_env_allowlist(prefix_path: str, required_keys: list[str]) -> b
 
 def discover_cc_installs() -> list[WineInstall]:
     """Return all detected CC installs, deduped by realpath, sorted by
-    launcher preference: bottles > lutris > steam-proton > wine > native.
+    launcher preference: bottles > lutris > faugus > steam-proton > wine > native.
     """
     discoveries = [
         *discover_bottles(),
         *discover_lutris(),
+        *discover_faugus(),
         *discover_steam_proton(),
         *discover_plain_wine(),
         *discover_native_windows(),

@@ -251,3 +251,30 @@ def test_scan_does_not_run_when_catalog_has_cc(tmp_path, monkeypatch):
     installs = discover_faugus()
     assert len(installs) == 1
     assert installs[0].prefix_path == str(catalog_prefix)
+
+
+def test_discover_cc_installs_includes_faugus(tmp_path, monkeypatch):
+    from services.wine_runtimes import discover_cc_installs
+    home = tmp_path / "home"
+    home.mkdir()
+    prefix = home / "Faugus/corporate-clash"
+    prefix.mkdir(parents=True)
+    _make_prefix_with_cc(str(prefix))
+    _write_flatpak_catalog(home, [{
+        "gameid": "corporate-clash",
+        "title": "Corporate Clash",
+        "prefix": str(prefix),
+        "path": f"{prefix}/drive_c/Program Files/Corporate Clash/new_launcher.exe",
+        "runner": "Proton",
+    }])
+    _patch_home(monkeypatch, home)
+    installs = discover_cc_installs()
+    faugus_installs = [i for i in installs if i.launcher == "faugus"]
+    assert len(faugus_installs) == 1
+    assert faugus_installs[0].prefix_path == str(prefix)
+
+
+def test_launcher_priority_places_faugus_between_lutris_and_steam():
+    from services.wine_runtimes import _LAUNCHER_PRIORITY
+    assert _LAUNCHER_PRIORITY.index("faugus") == _LAUNCHER_PRIORITY.index("lutris") + 1
+    assert _LAUNCHER_PRIORITY.index("steam-proton") == _LAUNCHER_PRIORITY.index("faugus") + 1
