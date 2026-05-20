@@ -64,6 +64,92 @@ def test_ttr_default_jump_fires_space_to_both(stub_input_service, stub_window_ma
     assert ("w2", "space") in stub_input_service.calls
 
 
+def test_custom_set_falls_back_to_default(stub_input_service, stub_window_manager,
+                                           real_keymap, patch_registry):
+    """Toon on a custom set with no binding for the action falls back to set 0."""
+    from tabs.multitoon._tab import _dispatch_keep_alive_cycle
+    real_keymap.add_set("ttr", name="Minimal")
+    # Wipe the 'book' binding on the new set so set 1 has no book key.
+    real_keymap.update_set_key("ttr", 1, "book", "")
+    patch_registry({"w1": "ttr"})
+    _dispatch_keep_alive_cycle(
+        action="book",
+        fire_toons=[0],
+        window_manager=stub_window_manager(["w1"]),
+        keymap_manager=real_keymap,
+        assignments=[1],
+        input_service=stub_input_service,
+    )
+    assert ("w1", "Alt_L") in stub_input_service.calls  # fell back to set 0
+
+
+def test_unclassified_window_skipped(stub_input_service, stub_window_manager,
+                                      real_keymap, patch_registry):
+    from tabs.multitoon._tab import _dispatch_keep_alive_cycle
+    patch_registry({"w1": "ttr"})  # w2 is intentionally not classified
+    fired = _dispatch_keep_alive_cycle(
+        action="jump",
+        fire_toons=[0, 1],
+        window_manager=stub_window_manager(["w1", "w2"]),
+        keymap_manager=real_keymap,
+        assignments=[0, 0],
+        input_service=stub_input_service,
+    )
+    assert fired == 1
+    assert ("w1", "space") in stub_input_service.calls
+    assert ("w2", "space") not in stub_input_service.calls
+
+
+def test_missing_window_slot_skipped(stub_input_service, stub_window_manager,
+                                      real_keymap, patch_registry):
+    from tabs.multitoon._tab import _dispatch_keep_alive_cycle
+    patch_registry({"w1": "ttr"})
+    fired = _dispatch_keep_alive_cycle(
+        action="jump",
+        fire_toons=[0, 1, 2],
+        window_manager=stub_window_manager(["w1"]),
+        keymap_manager=real_keymap,
+        assignments=[0, 0, 0],
+        input_service=stub_input_service,
+    )
+    assert fired == 1
+    assert stub_input_service.calls == [("w1", "space")]
+
+
+def test_up_alias_resolves_to_forward(stub_input_service, stub_window_manager,
+                                       real_keymap, patch_registry):
+    """Settings UI stores the 'Move Forward' action as 'up'; the dispatcher
+    must alias it to the logical action 'forward'."""
+    from tabs.multitoon._tab import _dispatch_keep_alive_cycle
+    patch_registry({"w1": "ttr"})
+    _dispatch_keep_alive_cycle(
+        action="up",
+        fire_toons=[0],
+        window_manager=stub_window_manager(["w1"]),
+        keymap_manager=real_keymap,
+        assignments=[0],
+        input_service=stub_input_service,
+    )
+    assert ("w1", "Up") in stub_input_service.calls  # TTR default forward = Up
+
+
+def test_zero_matches_returns_zero(stub_input_service, stub_window_manager,
+                                    real_keymap, patch_registry):
+    """All candidates unclassified -> dispatcher returns 0, no calls made."""
+    from tabs.multitoon._tab import _dispatch_keep_alive_cycle
+    patch_registry({})  # neither window is classified
+    fired = _dispatch_keep_alive_cycle(
+        action="jump",
+        fire_toons=[0, 1],
+        window_manager=stub_window_manager(["w1", "w2"]),
+        keymap_manager=real_keymap,
+        assignments=[0, 0],
+        input_service=stub_input_service,
+    )
+    assert fired == 0
+    assert stub_input_service.calls == []
+
+
 def test_ttr_mixed_sets_forward(stub_input_service, stub_window_manager,
                                  real_keymap, patch_registry):
     from tabs.multitoon._tab import _dispatch_keep_alive_cycle
