@@ -235,4 +235,144 @@ def test_start_key_grabber_instantiates_when_cc_installs_present(monkeypatch, sv
     svc._start_key_grabber()
     assert svc._key_grabber is fake_instance
     fake_instance.prepare.assert_called_once()
-    fake_instance.install_grabs.assert_called_once()
+    # install_grabs is now focus-aware: it is called only when the focused
+    # window is a CC window. The svc fixture's wm has no CC window registered
+    # so the seed call in _on_active_window_changed_for_grabber resolves to
+    # a non-CC game and the grabber stays idle (uninstalled) at startup.
+    # install_grabs call count is tested in the focused-svc lifecycle tests.
+
+
+def _make_focused_svc(monkeypatch, focus_window_id, registry_mapping, assignments):
+    """Helper: build an InputService whose WindowManager reports the
+    given focused window and whose GameRegistry returns the given games.
+    Returns (svc, fake_grabber_instance)."""
+    monkeypatch.setattr(
+        "services.wine_runtimes.discover_cc_installs", lambda: ["fake-install"]
+    )
+    fake_instance = MagicMock()
+    fake_instance.prepare.return_value = True
+    fake_grabber_cls = MagicMock(return_value=fake_instance)
+    monkeypatch.setattr(
+        "utils.x11_movement_grabber.MovementKeyGrabber", fake_grabber_cls
+    )
+    monkeypatch.setattr(
+        "utils.x11_movement_grabber.xlib_available", lambda: True
+    )
+
+    fake_registry = MagicMock()
+    fake_registry.get_game_for_window.side_effect = lambda wid: registry_mapping.get(str(wid))
+    monkeypatch.setattr(
+        "utils.game_registry.GameRegistry.instance", lambda: fake_registry
+    )
+
+    wm = MagicMock()
+    wm.get_active_window.return_value = focus_window_id
+    wm.get_window_ids.return_value = list(registry_mapping.keys())
+
+    fake_km = MagicMock()
+    # Set 0 forward=w (WASD); Set 1 forward=Up (arrows). Used by
+    # _canonical_set_for_toon_index to decide which keyset to suppress.
+    def get_key_for_action(game, set_idx, action):
+        if action != "forward":
+            return None
+        return "w" if set_idx == 0 else "Up"
+    fake_km.get_key_for_action.side_effect = get_key_for_action
+
+    svc = InputService(
+        window_manager=wm,
+        get_enabled_toons=lambda: [True] * len(registry_mapping),
+        get_movement_modes=lambda: ["both"] * len(registry_mapping),
+        get_event_queue_func=lambda: queue.Queue(),
+        settings_manager=MagicMock(),
+        get_keymap_assignments=lambda: assignments,
+        keymap_manager=fake_km,
+    )
+    return svc, fake_instance
+
+
+def test_no_install_when_no_cc_window_focused(monkeypatch):
+    """At startup, if a TTR window is focused, install_grabs is not called."""
+    svc, grabber = _make_focused_svc(
+        monkeypatch,
+        focus_window_id="100",
+        registry_mapping={"100": "ttr", "200": "cc"},
+        assignments=[0, 0],
+    )
+    svc._start_key_grabber()
+    grabber.install_grabs.assert_not_called()
+
+
+def test_install_wasd_canonical_when_wasd_cc_focused(monkeypatch):
+    """CC window on WASD set (set_idx=0) is focused -> install_grabs('wasd')."""
+    svc, grabber = _make_focused_svc(
+        monkeypatch,
+        focus_window_id="200",
+        registry_mapping={"100": "ttr", "200": "cc"},
+        assignments=[0, 0],
+    )
+    svc._start_key_grabber()
+    args, kwargs = grabber.install_grabs.call_args
+    canonical = kwargs.get("canonical_set", args[0] if args else None)
+    assert canonical == "wasd"
+
+
+def test_install_arrows_canonical_when_arrows_cc_focused(monkeypatch):
+    """CC window on arrows set (set_idx=1) is focused -> install_grabs('arrows')."""
+    svc, grabber = _make_focused_svc(
+        monkeypatch,
+        focus_window_id="200",
+        registry_mapping={"100": "ttr", "200": "cc"},
+        assignments=[0, 1],
+    )
+    svc._start_key_grabber()
+    args, kwargs = grabber.install_grabs.call_args
+    canonical = kwargs.get("canonical_set", args[0] if args else None)
+    assert canonical == "arrows"
+
+
+def test_focus_change_to_non_cc_uninstalls(monkeypatch):
+    """Focus moves from CC to TTR -> uninstall_grabs called."""
+    svc, grabber = _make_focused_svc(
+        monkeypatch,
+        focus_window_id="200",
+        registry_mapping={"100": "ttr", "200": "cc"},
+        assignments=[0, 0],
+    )
+    svc._start_key_grabber()
+    grabber.install_grabs.reset_mock()
+    grabber.uninstall_grabs.reset_mock()
+    svc.window_manager.get_active_window.return_value = "100"
+    svc._on_active_window_changed_for_grabber("100")
+    grabber.uninstall_grabs.assert_called_once()
+    grabber.install_grabs.assert_not_called()
+
+
+def test_focus_change_between_different_set_cc_swaps_canonical(monkeypatch):
+    """Focus moves from CC-WASD to CC-arrows -> install with new canonical."""
+    svc, grabber = _make_focused_svc(
+        monkeypatch,
+        focus_window_id="200",
+        registry_mapping={"200": "cc", "201": "cc"},
+        assignments=[0, 1],
+    )
+    svc._start_key_grabber()
+    grabber.install_grabs.reset_mock()
+    svc.window_manager.get_active_window.return_value = "201"
+    svc._on_active_window_changed_for_grabber("201")
+    args, kwargs = grabber.install_grabs.call_args
+    canonical = kwargs.get("canonical_set", args[0] if args else None)
+    assert canonical == "arrows"
+
+
+def test_focus_change_to_empty_window_id_uninstalls(monkeypatch):
+    """Defensive: empty active_window_changed payload -> uninstall, no crash."""
+    svc, grabber = _make_focused_svc(
+        monkeypatch,
+        focus_window_id="200",
+        registry_mapping={"200": "cc"},
+        assignments=[0],
+    )
+    svc._start_key_grabber()
+    grabber.uninstall_grabs.reset_mock()
+    svc._on_active_window_changed_for_grabber("")
+    grabber.uninstall_grabs.assert_called_once()

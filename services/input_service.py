@@ -140,15 +140,15 @@ class InputService(QObject):
         self._start_key_grabber()
 
     def _start_key_grabber(self) -> None:
-        """Install the X11 passive grab on the conflicting CC keyset.
+        """Install the X11 grabber in focus-aware mode.
 
-        Gated on CC install detection: if zero CC installs are detected
-        on disk, the grabber is not instantiated and TTMT touches no X
-        server state for grab purposes. Reuses discover_cc_installs()
-        which main.py also uses for the CC prefs autolock.
+        Gate: skip entirely when no CC install detected.
+        Lifecycle: prepare() at startup, install_grabs only while a CC
+        window has focus, uninstall on focus-change away from CC.
+        Canonical set is the focused CC toon's assigned set.
         """
         try:
-            from utils import cc_isolation
+            from utils import cc_isolation  # noqa: F401
             from utils.x11_movement_grabber import MovementKeyGrabber, xlib_available
             from services.wine_runtimes import discover_cc_installs
         except ImportError as e:
@@ -163,7 +163,6 @@ class InputService(QObject):
             installs = []
         if not installs:
             return  # no CC detected (or detection failed); no grabber
-        passthrough_keysyms = list(_passthrough_keysyms_for_canonical(cc_isolation.DEFAULT_CANONICAL))
         self._key_grabber = MovementKeyGrabber()
         ok = self._key_grabber.prepare(
             on_key=self._on_grabbed_key,
@@ -173,9 +172,82 @@ class InputService(QObject):
         if not ok:
             self._key_grabber = None
             return
+        # Subscribe to focus changes; seed with current focus.
+        try:
+            self.window_manager.active_window_changed.connect(
+                self._on_active_window_changed_for_grabber
+            )
+        except Exception as e:  # noqa: BLE001
+            print(f"[InputService] active_window_changed connect failed: {e}")
+        try:
+            seed = self.window_manager.get_active_window()
+        except Exception:
+            seed = None
+        self._on_active_window_changed_for_grabber(seed or "")
+
+    def _canonical_set_for_toon_index(self, toon_index: int) -> str | None:
+        """Return 'wasd' or 'arrows' for the keyset assigned to a CC toon.
+
+        Resolves the assigned set's forward binding: 'w' -> WASD;
+        'Up' -> arrows. Returns None if the index is out of range or the
+        keymap manager isn't wired.
+        """
+        if self.keymap_manager is None:
+            return None
+        try:
+            assignments = self._get_assignments(self.get_enabled_toons())
+        except Exception:
+            return None
+        if toon_index < 0 or toon_index >= len(assignments):
+            return None
+        set_idx = assignments[toon_index]
+        try:
+            forward = self.keymap_manager.get_key_for_action("cc", set_idx, "forward")
+        except Exception:
+            return None
+        if forward == "w":
+            return "wasd"
+        if forward == "Up":
+            return "arrows"
+        return None
+
+    def _on_active_window_changed_for_grabber(self, window_id: str) -> None:
+        """Slot for WindowManager.active_window_changed. Decides whether
+        the grabber should be Idle (no grabs) or Active(set) for the
+        focused CC toon's keyset.
+        """
+        if self._key_grabber is None:
+            return
+        if not window_id:
+            self._key_grabber.uninstall_grabs()
+            return
+        try:
+            from utils.game_registry import GameRegistry
+            game = GameRegistry.instance().get_game_for_window(str(window_id))
+        except Exception:
+            game = None
+        if game != "cc":
+            self._key_grabber.uninstall_grabs()
+            return
+        try:
+            window_ids = self.window_manager.get_window_ids()
+            toon_index = next(
+                (i for i, w in enumerate(window_ids) if str(w) == str(window_id)),
+                -1,
+            )
+        except Exception:
+            toon_index = -1
+        if toon_index < 0:
+            self._key_grabber.uninstall_grabs()
+            return
+        canonical = self._canonical_set_for_toon_index(toon_index)
+        if canonical is None:
+            self._key_grabber.uninstall_grabs()
+            return
+        passthrough = list(_passthrough_keysyms_for_canonical(canonical))
         self._key_grabber.install_grabs(
-            canonical_set=cc_isolation.DEFAULT_CANONICAL,
-            passthrough_keysyms=passthrough_keysyms,
+            canonical_set=canonical,
+            passthrough_keysyms=passthrough,
         )
 
     def _on_grabbed_key(self, action: str, keysym: str) -> None:
