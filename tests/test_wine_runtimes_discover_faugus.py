@@ -185,3 +185,69 @@ def test_both_catalogs_present_dedupes_to_one(tmp_path, monkeypatch):
     assert len(installs) == 1
     # Flatpak is probed first in _FAUGUS_GAMES_JSON_PATHS, so Flatpak wins.
     assert installs[0].metadata["faugus_install_kind"] == "flatpak"
+
+
+def test_scan_fallback_finds_cc_when_no_catalog(tmp_path, monkeypatch):
+    """No games.json anywhere. ~/Faugus/<slug>/ contains a prefix-shaped
+    directory with CC.exe. Discovery still finds it; runner is empty."""
+    from services.wine_runtimes import discover_faugus
+    home = tmp_path / "home"
+    home.mkdir()
+    prefix = home / "Faugus/corporate-clash"
+    prefix.mkdir(parents=True)
+    # Mark prefix-shaped:
+    (prefix / "drive_c").mkdir()
+    (prefix / "config_info").write_text("Proton-CachyOS-Whatever\n")
+    _make_prefix_with_cc(str(prefix))
+    _patch_home(monkeypatch, home)
+    installs = discover_faugus()
+    assert len(installs) == 1
+    inst = installs[0]
+    assert inst.launcher == "faugus"
+    assert inst.prefix_path == str(prefix)
+    assert inst.metadata["faugus_install_kind"] == "scan"
+    assert inst.metadata["faugus_runner"] == ""
+
+
+def test_scan_skips_non_prefix_shaped_dirs(tmp_path, monkeypatch):
+    """A random folder in ~/Faugus that isn't a prefix is ignored."""
+    from services.wine_runtimes import discover_faugus
+    home = tmp_path / "home"
+    home.mkdir()
+    not_a_prefix = home / "Faugus/notes"
+    not_a_prefix.mkdir(parents=True)
+    (not_a_prefix / "README.txt").write_text("hi")
+    _patch_home(monkeypatch, home)
+    assert discover_faugus() == []
+
+
+def test_scan_does_not_run_when_catalog_has_cc(tmp_path, monkeypatch):
+    """If the catalog already lists CC, the scan fallback is skipped --
+    no duplicate entries even when ~/Faugus/<other-slug>/ also has CC."""
+    from services.wine_runtimes import discover_faugus
+    home = tmp_path / "home"
+    home.mkdir()
+
+    # Catalog entry pointing at one prefix.
+    catalog_prefix = home / "Faugus/corporate-clash"
+    catalog_prefix.mkdir(parents=True)
+    _make_prefix_with_cc(str(catalog_prefix))
+    _write_flatpak_catalog(home, [{
+        "gameid": "corporate-clash",
+        "title": "Corporate Clash",
+        "prefix": str(catalog_prefix),
+        "path": f"{catalog_prefix}/drive_c/Program Files/Corporate Clash/new_launcher.exe",
+        "runner": "Proton",
+    }])
+
+    # Separate prefix-shaped dir the scan WOULD find -- must NOT be picked up.
+    scan_prefix = home / "Faugus/old-install"
+    scan_prefix.mkdir(parents=True)
+    (scan_prefix / "drive_c").mkdir()
+    (scan_prefix / "config_info").write_text("Proton-Old\n")
+    _make_prefix_with_cc(str(scan_prefix))
+
+    _patch_home(monkeypatch, home)
+    installs = discover_faugus()
+    assert len(installs) == 1
+    assert installs[0].prefix_path == str(catalog_prefix)

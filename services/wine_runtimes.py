@@ -465,6 +465,61 @@ _FAUGUS_GAMES_JSON_PATHS = [
     "~/.config/faugus-launcher/games.json",
 ]
 
+_FAUGUS_DEFAULT_PREFIX_ROOTS = ["~/Faugus"]
+
+
+def _faugus_prefix_shaped(path: str) -> bool:
+    """True iff `path` looks like a Wine/Proton prefix.
+
+    Faugus prefixes follow Proton's compatdata shape: drive_c plus
+    config_info (Proton's record of which runner created the prefix) or
+    a pfx self-symlink. We require drive_c plus one of those two so a
+    stray `~/Faugus/notes` directory doesn't get scanned.
+    """
+    return (
+        os.path.isdir(os.path.join(path, "drive_c"))
+        and (
+            os.path.exists(os.path.join(path, "config_info"))
+            or os.path.exists(os.path.join(path, "pfx"))
+        )
+    )
+
+
+def _discover_faugus_scan() -> list[WineInstall]:
+    """Walk default-prefix roots for CC-containing Faugus prefixes."""
+    if sys.platform == "win32":
+        return []
+    results: list[WineInstall] = []
+    seen: set[str] = set()
+    for root_template in _FAUGUS_DEFAULT_PREFIX_ROOTS:
+        root = os.path.expanduser(root_template)
+        if not os.path.isdir(root):
+            continue
+        for slug in sorted(os.listdir(root)):
+            prefix = os.path.join(root, slug)
+            if not _faugus_prefix_shaped(prefix):
+                continue
+            for exe in _find_cc_in_prefix(prefix):
+                real = os.path.realpath(exe)
+                if real in seen:
+                    continue
+                seen.add(real)
+                title = slug.replace("-", " ").replace("_", " ").title()
+                results.append(
+                    WineInstall(
+                        exe_path=exe,
+                        launcher="faugus",
+                        prefix_path=prefix,
+                        display_name=f"Faugus · {title}",
+                        metadata={
+                            "faugus_runner": "",
+                            "faugus_install_kind": "scan",
+                            "faugus_gameid": slug,
+                        },
+                    )
+                )
+    return results
+
 
 def _is_cc_entry(entry: dict) -> bool:
     title = (entry.get("title") or "").lower()
@@ -533,7 +588,9 @@ def discover_faugus() -> list[WineInstall]:
                         },
                     )
                 )
-    return results
+    if results:
+        return results
+    return _discover_faugus_scan()
 
 
 def _ancestor_with_marker(start: str, marker_basename: str) -> str | None:
