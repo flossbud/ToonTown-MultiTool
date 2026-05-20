@@ -1219,20 +1219,31 @@ def _run_self_check_keyring() -> int:
         return 1
 
 
-def _should_prompt_for_cc_install(installs, stored_signature: str) -> bool:
+def _should_prompt_for_cc_install(
+    installs, stored_signature: str, stored_set_hash: str
+) -> bool:
     """Return True when the boot prompt should fire.
 
-    True only when there are multiple installs AND no stored signature
-    matches any discovered install.
+    Fires when there are multiple installs AND any of:
+      - no stored signature
+      - stored signature doesn't match any discovered install
+      - the install set has changed since last seen (catches "user installed
+        a new launcher while we already had a satisfying pick")
+
+    A missing ``stored_set_hash`` (empty string) is treated as a hash
+    mismatch so users upgrading from a TTMT build without this feature
+    see the picker once on their first boot in multi-install state.
     """
     if len(installs) <= 1:
         return False
+    from services.wine_runtimes import install_signature, install_set_hash
     if not stored_signature:
         return True
-    from services.wine_runtimes import install_signature
-    return not any(
-        install_signature(i) == stored_signature for i in installs
-    )
+    if not any(install_signature(i) == stored_signature for i in installs):
+        return True
+    if stored_set_hash != install_set_hash(installs):
+        return True
+    return False
 
 
 def _lock_cc_prefs_silently():
@@ -1264,39 +1275,57 @@ def _lock_cc_prefs_silently():
 
 
 def _maybe_prompt_for_cc_install(main_window, settings_manager):
-    """Show the picker on boot when multiple CC installs are ambiguous."""
-    from services.wine_runtimes import discover_cc_installs, install_signature
+    """Show the picker on boot when multiple CC installs are ambiguous.
+
+    Records the current install-set hash at the end (whether or not the
+    prompt fired or the user picked) so the next boot can detect "the set
+    has changed" by comparing the freshly-computed hash against the stored
+    one. Idempotent when the set is unchanged.
+    """
+    from services.wine_runtimes import (
+        discover_cc_installs, install_signature, install_set_hash,
+    )
     from utils.widgets.cc_install_picker import CCInstallPickerDialog
-    from utils.settings_keys import CC_ENGINE_INSTALL_SIGNATURE
+    from utils.settings_keys import (
+        CC_ENGINE_INSTALL_SIGNATURE, CC_ENGINE_INSTALL_SET_HASH,
+    )
 
     installs = discover_cc_installs()
     stored = settings_manager.get(CC_ENGINE_INSTALL_SIGNATURE, "")
-    if not _should_prompt_for_cc_install(installs, stored):
-        return
-    dlg = CCInstallPickerDialog(
-        installs, parent=main_window, active_signature=stored or None,
-    )
-    if dlg.exec() == dlg.Accepted:
-        picked = dlg.selected_install()
-        if picked is not None:
-            settings_manager.set("cc_engine_dir", os.path.dirname(picked.exe_path))
-            settings_manager.set(CC_ENGINE_INSTALL_SIGNATURE, install_signature(picked))
-            settings_manager.set("cc_engine_dir_approved_custom_dir", "")
-            # Refresh the open SettingsTab's CC row so the orange glow clears
-            # and the path text turns green-on-success. Without this the
-            # already-constructed GamePathRow still believes it's in the
-            # ambiguous-needs-pick state captured at __init__ time.
-            cc_row = getattr(
-                getattr(main_window, "settings_tab", None),
-                "cc_path_row",
-                None,
-            )
-            if cc_row is not None:
-                try:
-                    cc_row._apply_picked_install(picked)
-                except Exception as e:
-                    from utils.credentials_manager import _dbg
-                    _dbg(f"[CC] boot-pick row refresh failed: {e}")
+    stored_set_hash = settings_manager.get(CC_ENGINE_INSTALL_SET_HASH, "")
+    current_set_hash = install_set_hash(installs)
+
+    if _should_prompt_for_cc_install(installs, stored, stored_set_hash):
+        dlg = CCInstallPickerDialog(
+            installs, parent=main_window, active_signature=stored or None,
+        )
+        if dlg.exec() == dlg.Accepted:
+            picked = dlg.selected_install()
+            if picked is not None:
+                settings_manager.set("cc_engine_dir", os.path.dirname(picked.exe_path))
+                settings_manager.set(CC_ENGINE_INSTALL_SIGNATURE, install_signature(picked))
+                settings_manager.set("cc_engine_dir_approved_custom_dir", "")
+                # Refresh the open SettingsTab's CC row so the orange glow clears
+                # and the path text turns green-on-success. Without this the
+                # already-constructed GamePathRow still believes it's in the
+                # ambiguous-needs-pick state captured at __init__ time.
+                cc_row = getattr(
+                    getattr(main_window, "settings_tab", None),
+                    "cc_path_row",
+                    None,
+                )
+                if cc_row is not None:
+                    try:
+                        cc_row._apply_picked_install(picked)
+                    except Exception as e:
+                        from utils.credentials_manager import _dbg
+                        _dbg(f"[CC] boot-pick row refresh failed: {e}")
+
+    # Record the current install-set hash so subsequent boots can detect
+    # changes. Written even when no prompt fired so the hash always
+    # reflects the most-recently-observed set.
+    if current_set_hash != stored_set_hash:
+        settings_manager.set(CC_ENGINE_INSTALL_SET_HASH, current_set_hash)
 
 
 if __name__ == "__main__":

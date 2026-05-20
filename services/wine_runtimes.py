@@ -97,6 +97,21 @@ def install_signature(install: WineInstall) -> str:
     return hashlib.sha256(raw).hexdigest()[:16]
 
 
+def install_set_hash(installs: list[WineInstall]) -> str:
+    """Return a stable hash of the *set* of discovered installs.
+
+    Used by the boot prompt to detect "install set has changed since last
+    seen" — e.g. user added or removed a CC install between TTMT launches.
+    Order-independent (signatures are sorted before hashing). Empty list
+    returns "" so callers can use a falsy check for "no set recorded yet".
+    """
+    if not installs:
+        return ""
+    sigs = sorted(install_signature(i) for i in installs)
+    raw = "\x00".join(sigs).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()[:16]
+
+
 def host_to_windows_path(host_path: str, prefix_path: str) -> str:
     """Translate a host path inside a Wine prefix to its Windows equivalent.
 
