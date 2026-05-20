@@ -9,31 +9,31 @@ from PySide6.QtWidgets import (
     QListWidget, QListWidgetItem, QWidget,
 )
 
-from services.wine_runtimes import WineInstall
+from services.wine_runtimes import WineInstall, install_signature
+from utils.launcher_chip import LAUNCHER_CHIP_LABEL
 
 
-_LAUNCHER_CHIP_LABEL = {
-    "bottles": "BOTTLES",
-    "lutris": "LUTRIS",
-    "steam-proton": "STEAM",
-    "wine": "WINE",
-    "native": "NATIVE",
-}
+_CONFIRM_KEEP = "Keep this install"
+_CONFIRM_USE = "Use this install"
 
 
 class CCInstallPickerDialog(QDialog):
     """Modal dialog listing detected Corporate Clash installs.
 
-    Visual style matches the surrounding settings tab (subtle border, themed
-    surface). The active theme is applied via apply_theme() in the parent.
+    When ``active_signature`` is provided and matches one of the installs,
+    that row is marked with a ``(currently active)`` suffix and pre-
+    selected; the confirm button reads "Keep this install" while the
+    active row stays selected, "Use this install" otherwise.
     """
 
-    def __init__(self, installs: list[WineInstall], parent=None):
+    def __init__(self, installs: list[WineInstall], parent=None,
+                 active_signature: str | None = None):
         super().__init__(parent)
         self.setWindowTitle("Choose Corporate Clash install")
         self.setModal(True)
         self._installs = installs
         self._selected: WineInstall | None = None
+        self._active_signature = active_signature or None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 16, 16, 16)
@@ -48,15 +48,19 @@ class CCInstallPickerDialog(QDialog):
 
         self.list_widget = QListWidget()
         self.list_widget.setObjectName("cc_install_picker_list")
-        for inst in installs:
-            chip = _LAUNCHER_CHIP_LABEL.get(inst.launcher, inst.launcher.upper())
+        active_row: int | None = None
+        for i, inst in enumerate(installs):
+            chip = LAUNCHER_CHIP_LABEL.get(inst.launcher, inst.launcher.upper())
             home = os.path.expanduser("~")
             short_path = inst.exe_path
             if short_path.startswith(home):
                 short_path = "~" + short_path[len(home):]
-            text = f"[{chip}]  {inst.display_name}\n         {short_path}"
-            item = QListWidgetItem(text)
-            self.list_widget.addItem(item)
+            suffix = ""
+            if self._active_signature and install_signature(inst) == self._active_signature:
+                suffix = "  (currently active)"
+                active_row = i
+            text = f"[{chip}]  {inst.display_name}{suffix}\n         {short_path}"
+            self.list_widget.addItem(QListWidgetItem(text))
         self.list_widget.itemDoubleClicked.connect(self._on_double_click)
         self.list_widget.currentRowChanged.connect(self._on_row_changed)
         layout.addWidget(self.list_widget)
@@ -67,7 +71,7 @@ class CCInstallPickerDialog(QDialog):
         self.cancel_btn.clicked.connect(self.reject)
         btn_row.addWidget(self.cancel_btn)
 
-        self.confirm_btn = QPushButton("Use this install")
+        self.confirm_btn = QPushButton(_CONFIRM_USE)
         self.confirm_btn.setDefault(True)
         self.confirm_btn.setEnabled(False)
         self.confirm_btn.clicked.connect(self._confirm)
@@ -76,12 +80,14 @@ class CCInstallPickerDialog(QDialog):
         layout.addLayout(btn_row)
         self.resize(520, 320)
 
-    def select_index(self, idx: int):
-        """Programmatically pick a row (used in tests and the boot prompt).
+        if active_row is not None:
+            # Pre-select the active row AFTER signals are connected so the
+            # row-changed hook flips the button label and resolves _selected.
+            self.list_widget.setCurrentRow(active_row)
+            self._selected = self._installs[active_row]
 
-        Sets both the visible selection and the resolved selection so callers
-        can read selected_install() without driving the confirm button.
-        """
+    def select_index(self, idx: int):
+        """Programmatically pick a row (used in tests and the boot prompt)."""
         if 0 <= idx < self.list_widget.count():
             self.list_widget.setCurrentRow(idx)
             if 0 <= idx < len(self._installs):
@@ -92,6 +98,14 @@ class CCInstallPickerDialog(QDialog):
 
     def _on_row_changed(self, row: int):
         self.confirm_btn.setEnabled(row >= 0)
+        if (
+            self._active_signature
+            and 0 <= row < len(self._installs)
+            and install_signature(self._installs[row]) == self._active_signature
+        ):
+            self.confirm_btn.setText(_CONFIRM_KEEP)
+        else:
+            self.confirm_btn.setText(_CONFIRM_USE)
 
     def _on_double_click(self, _item):
         self._confirm()

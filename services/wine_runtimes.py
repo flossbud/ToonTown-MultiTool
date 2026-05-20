@@ -65,7 +65,7 @@ class WineInstall:
     exe_path : str
         Absolute host path to CorporateClash.exe.
     launcher : str
-        One of: "bottles", "lutris", "steam-proton", "wine", "native".
+        One of: "bottles", "lutris", "faugus", "steam-proton", "wine", "native".
     prefix_path : str | None
         Wine prefix root. None for the "native" Windows case.
     display_name : str
@@ -460,6 +460,139 @@ def discover_steam_proton() -> list[WineInstall]:
     return results
 
 
+_FAUGUS_GAMES_JSON_PATHS = [
+    "~/.var/app/io.github.Faugus.faugus-launcher/config/faugus-launcher/games.json",
+    "~/.config/faugus-launcher/games.json",
+]
+
+_FAUGUS_DEFAULT_PREFIX_ROOTS = ["~/Faugus"]
+
+
+def _faugus_prefix_shaped(path: str) -> bool:
+    """True iff `path` looks like a Wine/Proton prefix.
+
+    Faugus prefixes follow Proton's compatdata shape: drive_c plus
+    config_info (Proton's record of which runner created the prefix) or
+    a pfx self-symlink. We require drive_c plus one of those two so a
+    stray `~/Faugus/notes` directory doesn't get scanned.
+    """
+    return (
+        os.path.isdir(os.path.join(path, "drive_c"))
+        and (
+            os.path.exists(os.path.join(path, "config_info"))
+            or os.path.exists(os.path.join(path, "pfx"))
+        )
+    )
+
+
+def _discover_faugus_scan() -> list[WineInstall]:
+    """Walk default-prefix roots for CC-containing Faugus prefixes."""
+    if sys.platform == "win32":
+        return []
+    results: list[WineInstall] = []
+    seen: set[str] = set()
+    for root_template in _FAUGUS_DEFAULT_PREFIX_ROOTS:
+        root = os.path.expanduser(root_template)
+        if not os.path.isdir(root):
+            continue
+        for slug in sorted(os.listdir(root)):
+            prefix = os.path.join(root, slug)
+            if not _faugus_prefix_shaped(prefix):
+                continue
+            for exe in _find_cc_in_prefix(prefix):
+                real = os.path.realpath(exe)
+                if real in seen:
+                    continue
+                seen.add(real)
+                title = slug.replace("-", " ").replace("_", " ").title()
+                results.append(
+                    WineInstall(
+                        exe_path=exe,
+                        launcher="faugus",
+                        prefix_path=prefix,
+                        display_name=f"Faugus · {title}",
+                        metadata={
+                            "faugus_runner": "",
+                            "faugus_install_kind": "scan",
+                            "faugus_gameid": slug,
+                        },
+                    )
+                )
+    return results
+
+
+def _is_cc_entry(entry: dict) -> bool:
+    title = (entry.get("title") or "").lower()
+    path = (entry.get("path") or "").lower()
+    return (
+        "corporate clash" in title
+        or path.endswith("corporateclash.exe")
+        or "corporate clash" in path
+    )
+
+
+def _parse_faugus_games_json(path: str) -> list:
+    """Return the games list from a Faugus games.json, or [] on any read /
+    parse failure. Malformed catalogs log one line and return []."""
+    import json
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except json.JSONDecodeError as e:
+        print(f"[wine_runtimes] discover_faugus: malformed catalog at {path}: {e}")
+        return []
+    except OSError:
+        return []
+    return data if isinstance(data, list) else []
+
+
+def discover_faugus() -> list[WineInstall]:
+    """Find CC inside Faugus-managed prefixes via games.json catalogs.
+
+    Probes Flatpak first (~/.var/app/io.github.Faugus.faugus-launcher/...)
+    then native (~/.config/faugus-launcher/games.json). Entries are deduped
+    by realpath of CorporateClash.exe; the first probe wins.
+    """
+    if sys.platform == "win32":
+        return []
+    results: list[WineInstall] = []
+    seen: set[str] = set()
+    for path_template in _FAUGUS_GAMES_JSON_PATHS:
+        path = os.path.expanduser(path_template)
+        if not os.path.isfile(path):
+            continue
+        install_kind = "flatpak" if ".var/app/" in path else "native"
+        for entry in _parse_faugus_games_json(path):
+            if not isinstance(entry, dict) or not _is_cc_entry(entry):
+                continue
+            prefix = entry.get("prefix") or ""
+            if not prefix or not os.path.isdir(prefix):
+                continue
+            title = entry.get("title") or os.path.basename(prefix.rstrip(os.sep))
+            runner = entry.get("runner") or ""
+            for exe in _find_cc_in_prefix(prefix):
+                real = os.path.realpath(exe)
+                if real in seen:
+                    continue
+                seen.add(real)
+                results.append(
+                    WineInstall(
+                        exe_path=exe,
+                        launcher="faugus",
+                        prefix_path=prefix,
+                        display_name=f"Faugus · {title}",
+                        metadata={
+                            "faugus_runner": runner,
+                            "faugus_install_kind": install_kind,
+                            "faugus_gameid": entry.get("gameid") or "",
+                        },
+                    )
+                )
+    if results:
+        return results
+    return _discover_faugus_scan()
+
+
 def _ancestor_with_marker(start: str, marker_basename: str) -> str | None:
     """Walk up from start, return the first ancestor containing marker_basename."""
     current = os.path.realpath(start)
@@ -537,6 +670,37 @@ def classify_path(exe_path: str) -> WineInstall | None:
                     prefix_path=prefix,
                     display_name=f"Lutris · {display}",
                     metadata={"lutris_slug": slug, "lutris_name": name},
+                )
+
+    # Faugus: cross-reference games.json catalog
+    for path_template in _FAUGUS_GAMES_JSON_PATHS:
+        catalog = os.path.expanduser(path_template)
+        if not os.path.isfile(catalog):
+            continue
+        install_kind = "flatpak" if ".var/app/" in catalog else "native"
+        for entry in _parse_faugus_games_json(catalog):
+            if not isinstance(entry, dict):
+                continue
+            prefix = entry.get("prefix") or ""
+            if not prefix:
+                continue
+            try:
+                prefix_real = os.path.realpath(prefix)
+            except OSError:
+                continue
+            if real.startswith(prefix_real + os.sep):
+                title = entry.get("title") or os.path.basename(prefix.rstrip(os.sep))
+                runner = entry.get("runner") or ""
+                return WineInstall(
+                    exe_path=exe_path,
+                    launcher="faugus",
+                    prefix_path=prefix,
+                    display_name=f"Faugus · {title}",
+                    metadata={
+                        "faugus_runner": runner,
+                        "faugus_install_kind": install_kind,
+                        "faugus_gameid": entry.get("gameid") or "",
+                    },
                 )
 
     # Plain Wine: ancestor with a dosdevices/c: marker
@@ -617,6 +781,28 @@ def build_launch_command(
             return [runtime, f"--verb={verb}", "--", *proton_argv], env
         return proton_argv, env
 
+    if install.launcher == "faugus":
+        if not install.prefix_path:
+            raise ValueError("faugus launcher requires prefix_path")
+        install_kind = install.metadata.get("faugus_install_kind", "native")
+        if install_kind == "flatpak":
+            base = [
+                "flatpak", "run", "--command=faugus-run",
+                "io.github.Faugus.faugus-launcher",
+            ]
+        else:
+            base = ["faugus-run"]
+        runner = install.metadata.get("faugus_runner") or ""
+        runner_args = ["-r", runner] if runner else []
+        cmd = [
+            *base,
+            "-e", install.exe_path,
+            "-p", install.prefix_path,
+            *runner_args,
+            *args,
+        ]
+        return cmd, env
+
     if install.launcher == "bottles":
         if not install.prefix_path:
             raise ValueError("bottles launcher requires prefix_path")
@@ -667,7 +853,7 @@ def build_launch_command(
     raise ValueError(f"Unsupported launcher: {install.launcher}")
 
 
-_LAUNCHER_PRIORITY = ["bottles", "lutris", "steam-proton", "wine", "native"]
+_LAUNCHER_PRIORITY = ["bottles", "lutris", "faugus", "steam-proton", "wine", "native"]
 
 
 def _host_command_exists(name: str) -> bool:
@@ -786,6 +972,71 @@ def is_launcher_available(launcher: str) -> bool:
 
         print("[wine_runtimes] is_launcher_available: bottles -> all probes failed: False")
         return False
+    if launcher == "faugus":
+        print("[wine_runtimes] is_launcher_available: faugus probing…")
+        if _host_command_exists("faugus-run"):
+            print("[wine_runtimes] is_launcher_available: faugus -> faugus-run on PATH: True")
+            return True
+        if not _host_command_exists("flatpak"):
+            print("[wine_runtimes] is_launcher_available: faugus -> no faugus-run, "
+                  "no flatpak; trying filesystem evidence")
+            user_app_dir = os.path.expanduser(
+                "~/.var/app/io.github.Faugus.faugus-launcher"
+            )
+            if os.path.isdir(user_app_dir):
+                print(f"[wine_runtimes] is_launcher_available: faugus -> "
+                      f"{user_app_dir} present: True")
+                return True
+            print("[wine_runtimes] is_launcher_available: faugus -> all probes failed: False")
+            return False
+        from utils.host_spawn import host_run
+
+        def _decode(b):
+            if b is None:
+                return ""
+            if isinstance(b, bytes):
+                b = b.decode("utf-8", "replace")
+            return b.strip()
+
+        try:
+            res = host_run(
+                ["flatpak", "info", "io.github.Faugus.faugus-launcher"],
+                capture_output=True,
+                timeout=10,
+            )
+            print(f"[wine_runtimes] is_launcher_available: faugus -> "
+                  f"flatpak info rc={res.returncode} "
+                  f"stderr={_decode(res.stderr)!r}")
+            if res.returncode == 0:
+                return True
+        except Exception as e:
+            print(f"[wine_runtimes] is_launcher_available: faugus -> "
+                  f"flatpak info raised {type(e).__name__}: {e}")
+        for scope in ("--user", "--system"):
+            try:
+                res = host_run(
+                    ["flatpak", "info", scope,
+                     "io.github.Faugus.faugus-launcher"],
+                    capture_output=True,
+                    timeout=10,
+                )
+                print(f"[wine_runtimes] is_launcher_available: faugus -> "
+                      f"flatpak info {scope} rc={res.returncode} "
+                      f"stderr={_decode(res.stderr)!r}")
+                if res.returncode == 0:
+                    return True
+            except Exception as e:
+                print(f"[wine_runtimes] is_launcher_available: faugus -> "
+                      f"flatpak info {scope} raised {type(e).__name__}: {e}")
+        user_app_dir = os.path.expanduser(
+            "~/.var/app/io.github.Faugus.faugus-launcher"
+        )
+        if os.path.isdir(user_app_dir):
+            print(f"[wine_runtimes] is_launcher_available: faugus -> "
+                  f"{user_app_dir} present: True")
+            return True
+        print("[wine_runtimes] is_launcher_available: faugus -> all probes failed: False")
+        return False
     if launcher == "steam-proton":
         # Availability is per-install (proton_dir from metadata); generic
         # check just verifies steam exists somewhere.
@@ -877,11 +1128,12 @@ def ensure_bottle_env_allowlist(prefix_path: str, required_keys: list[str]) -> b
 
 def discover_cc_installs() -> list[WineInstall]:
     """Return all detected CC installs, deduped by realpath, sorted by
-    launcher preference: bottles > lutris > steam-proton > wine > native.
+    launcher preference: bottles > lutris > faugus > steam-proton > wine > native.
     """
     discoveries = [
         *discover_bottles(),
         *discover_lutris(),
+        *discover_faugus(),
         *discover_steam_proton(),
         *discover_plain_wine(),
         *discover_native_windows(),

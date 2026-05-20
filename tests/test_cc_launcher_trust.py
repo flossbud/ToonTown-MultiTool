@@ -66,3 +66,13 @@ def test_native_install_trusted_when_approved_custom(tmp_path):
         {"cc_engine_dir_approved_custom_dir": str(tmp_path / "custom")}
     )
     assert _is_trusted(_mk("native", str(exe)), settings) is True
+
+
+def test_faugus_install_auto_trusted():
+    assert _is_trusted(_mk("faugus", "/x", "/p"), _SettingsStub()) is True
+
+
+def test_availability_error_message_includes_faugus():
+    from services.cc_launcher import CCLauncher
+    msg = CCLauncher._availability_error_message("faugus")
+    assert "faugus" in msg.lower() or "Faugus" in msg

@@ -41,6 +41,7 @@ from services.wine_runtimes import (
 from utils.settings_keys import CC_ENGINE_INSTALL_SIGNATURE
 from utils.shared_widgets import PulsingDot
 from utils.widgets import install_modern_scrollbar
+from utils.widgets.cc_install_picker import CCInstallPickerDialog  # noqa: F401
 
 
 # ── Status colors ──────────────────────────────────────────────────────────
@@ -96,17 +97,16 @@ LINUX_KEYRING_HELP_URL = "https://wiki.archlinux.org/title/Secret_Service"
 def _cc_launch_gate(settings_manager, parent) -> bool:
     """Decide whether a CC launch can proceed.
 
-    Returns True if the launch may proceed. Returns False after showing a
-    blocking dialog when multiple installs are detected and no valid pick
-    has been recorded.
+    Returns True if the launch may proceed. Returns False when multiple
+    installs are detected and the user did not pick one via the inline
+    picker.
     """
     installs = discover_cc_installs()
     stored_sig = settings_manager.get(CC_ENGINE_INSTALL_SIGNATURE, "")
     if len(installs) > 1:
         sig_match = any(install_signature(i) == stored_sig for i in installs)
         if not sig_match:
-            _show_multi_install_block(parent, settings_manager)
-            return False
+            return _prompt_inline_picker(parent, installs, settings_manager)
     elif len(installs) == 1:
         expected = install_signature(installs[0])
         if stored_sig != expected:
@@ -114,53 +114,25 @@ def _cc_launch_gate(settings_manager, parent) -> bool:
     return True
 
 
-def _show_multi_install_block(parent, settings_manager):
-    """Show a themed modal explaining the block and offering to open Settings."""
-    from PySide6.QtWidgets import QMessageBox
-    box = QMessageBox(parent)
-    box.setIcon(QMessageBox.Warning)
-    box.setWindowTitle("Choose Corporate Clash install")
-    box.setText(
-        "Multiple Corporate Clash installs were detected.\n\n"
-        "Choose one in Settings to launch."
+def _prompt_inline_picker(parent, installs, settings_manager) -> bool:
+    """Open the install picker directly. Persist the user's choice on
+    accept and return True; return False on cancel."""
+    stored = settings_manager.get(CC_ENGINE_INSTALL_SIGNATURE, "")
+    dlg = CCInstallPickerDialog(
+        installs, parent=parent, active_signature=stored or None,
     )
-    open_btn = box.addButton("Open Settings", QMessageBox.AcceptRole)
-    box.addButton("Cancel", QMessageBox.RejectRole)
-    box.exec()
-    if box.clickedButton() is open_btn:
-        _switch_to_cc_settings(parent)
-
-
-def _switch_to_cc_settings(parent):
-    """Best-effort: navigate the user to the Settings tab.
-
-    Walks the parent widget tree looking for an object that exposes
-    `nav_select` (the main window's tab-navigation method). Settings is
-    at index 3 in the main tab stack.
-
-    The CC row is the only one in Settings with an orange-glowing
-    Auto-detect button (per Task 19), so the user will immediately see
-    where to click after the tab switch.
-    """
-    w = parent
-    while w is not None:
-        if hasattr(w, "nav_select"):
-            try:
-                w.nav_select(3)
-            except Exception as e:
-                from utils.credentials_manager import _dbg
-                _dbg(f"[CC] switch_to_cc_settings: nav_select(3) raised {e}")
-            return
-        if hasattr(w, "parent"):
-            try:
-                next_w = w.parent()
-            except Exception:
-                next_w = None
-            if next_w is None or next_w is w:
-                return
-            w = next_w
-        else:
-            return
+    if dlg.exec() != dlg.Accepted:
+        return False
+    picked = dlg.selected_install()
+    if picked is None:
+        return False
+    settings_manager.set("cc_engine_dir", os.path.dirname(picked.exe_path))
+    settings_manager.set(
+        CC_ENGINE_INSTALL_SIGNATURE,
+        install_signature(picked),
+    )
+    settings_manager.set("cc_engine_dir_approved_custom_dir", "")
+    return True
 
 
 # ── Animated Edit Panel ───────────────────────────────────────────────────

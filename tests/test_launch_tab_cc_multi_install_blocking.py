@@ -1,8 +1,8 @@
-"""Tests for launch blocking when multiple CC installs are ambiguous."""
+"""Tests for the CC launch gate's multi-install inline picker flow."""
 
 import os
 import pytest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QDialog
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -23,36 +23,100 @@ def _install(name, launcher="bottles"):
     )
 
 
-def test_launch_blocked_when_multi_install_no_pick(qapp, monkeypatch):
+class _SettingsStub:
+    def __init__(self, d=None):
+        self._d = d or {}
+    def get(self, key, default=""):
+        return self._d.get(key, default)
+    def set(self, key, value):
+        self._d[key] = value
+
+
+def test_launch_blocked_when_picker_cancelled(qapp, monkeypatch):
+    """User declines the inline picker — gate returns False."""
     from tabs import launch_tab
     installs = [_install("A"), _install("B")]
     monkeypatch.setattr(launch_tab, "discover_cc_installs", lambda: installs)
-    blocked = []
     monkeypatch.setattr(
-        launch_tab, "_show_multi_install_block",
-        lambda parent, settings_manager: blocked.append(True),
+        launch_tab, "_prompt_inline_picker",
+        lambda parent, installs, sm: False,
     )
     proceed = launch_tab._cc_launch_gate(
-        settings_manager=type("S", (), {"get": staticmethod(lambda k, d="": "")})(),
-        parent=None,
+        settings_manager=_SettingsStub(), parent=None,
     )
     assert proceed is False
-    assert blocked == [True]
+
+
+def test_launch_proceeds_when_picker_accepted(qapp, monkeypatch):
+    """User picks an install in the inline picker — gate returns True."""
+    from tabs import launch_tab
+    installs = [_install("A"), _install("B")]
+    monkeypatch.setattr(launch_tab, "discover_cc_installs", lambda: installs)
+    monkeypatch.setattr(
+        launch_tab, "_prompt_inline_picker",
+        lambda parent, installs, sm: True,
+    )
+    proceed = launch_tab._cc_launch_gate(
+        settings_manager=_SettingsStub(), parent=None,
+    )
+    assert proceed is True
+
+
+def test_prompt_inline_picker_persists_signature_on_accept(qapp, monkeypatch):
+    """When the picker accepts, the gate helper writes cc_engine_dir +
+    signature + clears approved_custom_dir."""
+    from tabs import launch_tab
+    from services.wine_runtimes import install_signature
+    installs = [_install("A"), _install("B")]
+
+    class _FakeDialog:
+        Accepted = QDialog.Accepted
+        def __init__(self, installs, parent=None, active_signature=None):
+            self._installs = installs
+        def exec(self):
+            return QDialog.Accepted
+        def selected_install(self):
+            return self._installs[1]
+
+    monkeypatch.setattr(launch_tab, "CCInstallPickerDialog", _FakeDialog)
+    settings = _SettingsStub()
+    result = launch_tab._prompt_inline_picker(None, installs, settings)
+    assert result is True
+    assert settings.get("cc_engine_dir") == "/x/B"
+    assert settings.get("cc_engine_install_signature") == install_signature(installs[1])
+    assert settings.get("cc_engine_dir_approved_custom_dir") == ""
+
+
+def test_prompt_inline_picker_returns_false_on_reject(qapp, monkeypatch):
+    from tabs import launch_tab
+    installs = [_install("A"), _install("B")]
+
+    class _FakeDialog:
+        Accepted = QDialog.Accepted
+        def __init__(self, installs, parent=None, active_signature=None):
+            pass
+        def exec(self):
+            return QDialog.Rejected
+        def selected_install(self):
+            return None
+
+    monkeypatch.setattr(launch_tab, "CCInstallPickerDialog", _FakeDialog)
+    settings = _SettingsStub()
+    assert launch_tab._prompt_inline_picker(None, installs, settings) is False
+    assert settings.get("cc_engine_dir", None) is None
 
 
 def test_launch_proceeds_when_signature_matches(qapp, monkeypatch):
+    """Stored signature matches one of the installs — no picker, no block."""
     from tabs import launch_tab
     from services.wine_runtimes import install_signature
     installs = [_install("A"), _install("B")]
     sig = install_signature(installs[0])
     monkeypatch.setattr(launch_tab, "discover_cc_installs", lambda: installs)
-
-    class _S:
-        def get(self, k, d=""):
-            return sig if k == "cc_engine_install_signature" else d
-        def set(self, k, v): pass
-
-    proceed = launch_tab._cc_launch_gate(settings_manager=_S(), parent=None)
+    proceed = launch_tab._cc_launch_gate(
+        settings_manager=_SettingsStub({"cc_engine_install_signature": sig}),
+        parent=None,
+    )
     assert proceed is True
 
 
@@ -61,66 +125,7 @@ def test_launch_proceeds_and_updates_sig_when_only_one_install(qapp, monkeypatch
     from services.wine_runtimes import install_signature
     installs = [_install("only")]
     monkeypatch.setattr(launch_tab, "discover_cc_installs", lambda: installs)
-    stored = {}
-
-    class _S:
-        def get(self, k, d=""):
-            return stored.get(k, d)
-        def set(self, k, v):
-            stored[k] = v
-
-    proceed = launch_tab._cc_launch_gate(settings_manager=_S(), parent=None)
+    settings = _SettingsStub()
+    proceed = launch_tab._cc_launch_gate(settings_manager=settings, parent=None)
     assert proceed is True
-    assert stored["cc_engine_install_signature"] == install_signature(installs[0])
-
-
-def test_switch_to_cc_settings_calls_nav_select_direct(qapp):
-    """Direct hit: parent itself exposes nav_select."""
-    from tabs.launch_tab import _switch_to_cc_settings
-
-    class _Parent:
-        def __init__(self):
-            self.calls = []
-        def nav_select(self, idx):
-            self.calls.append(idx)
-
-    p = _Parent()
-    _switch_to_cc_settings(p)
-    assert p.calls == [3]
-
-
-def test_switch_to_cc_settings_walks_parent_tree(qapp):
-    """Walks up parent() chain until it finds nav_select."""
-    from tabs.launch_tab import _switch_to_cc_settings
-
-    class _Root:
-        def __init__(self):
-            self.calls = []
-        def nav_select(self, idx):
-            self.calls.append(idx)
-        def parent(self):
-            return None
-
-    class _Child:
-        def __init__(self, root):
-            self._root = root
-        def parent(self):
-            return self._root
-
-    root = _Root()
-    child = _Child(root)
-    _switch_to_cc_settings(child)
-    assert root.calls == [3]
-
-
-def test_switch_to_cc_settings_no_nav_select_no_crash(qapp):
-    """Graceful no-op if nothing in the tree exposes nav_select."""
-    from tabs.launch_tab import _switch_to_cc_settings
-
-    class _Orphan:
-        def parent(self):
-            return None
-
-    # Should not raise.
-    _switch_to_cc_settings(_Orphan())
-    _switch_to_cc_settings(None)
+    assert settings.get("cc_engine_install_signature") == install_signature(installs[0])

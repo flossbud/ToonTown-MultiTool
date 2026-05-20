@@ -47,7 +47,7 @@ def _is_trusted(install: WineInstall, settings_manager) -> bool:
     discover_* only build a non-native WineInstall after observing
     structural markers (bottle.yml, compatdata layout, dosdevices/c:, etc.).
     """
-    if install.launcher in ("bottles", "lutris", "steam-proton", "wine"):
+    if install.launcher in ("bottles", "lutris", "faugus", "steam-proton", "wine"):
         return True
     if install.launcher == "native":
         engine_dir = os.path.realpath(os.path.dirname(install.exe_path))
@@ -342,7 +342,7 @@ class CCLauncher(QObject):
                 # waitforexitandrun then blocks in fcntl_setlk on the
                 # prefix lock and the launch hangs forever. Drain the
                 # bridge before spawn so the prefix is free.
-                if install.launcher in ("steam-proton", "bottles", "lutris", "wine") and install.prefix_path:
+                if install.launcher in ("steam-proton", "bottles", "lutris", "wine", "faugus") and install.prefix_path:
                     try:
                         from utils import wine_input_bridge
                         wine_input_bridge.shutdown_for_prefix(install.prefix_path)
@@ -406,7 +406,7 @@ class CCLauncher(QObject):
                 # pre-launch sweep above. Without this, the bridge
                 # outlives CC, pins wineserver, and the next launch
                 # blocks in fcntl_setlk on the prefix lock.
-                if install.launcher in ("steam-proton", "bottles", "lutris", "wine") and install.prefix_path:
+                if install.launcher in ("steam-proton", "bottles", "lutris", "wine", "faugus") and install.prefix_path:
                     try:
                         from utils import wine_input_bridge
                         wine_input_bridge.shutdown_for_prefix(install.prefix_path)
@@ -439,6 +439,11 @@ class CCLauncher(QObject):
                 "Detected Corporate Clash inside Bottles, but bottles-cli is "
                 "not available on this system. Install Bottles or pick a "
                 "different install in Settings."
+            ),
+            "faugus": (
+                "Detected Corporate Clash in a Faugus prefix, but Faugus "
+                "is not available. Install Faugus (Flatpak, AUR, or COPR) "
+                "or pick a different install in Settings."
             ),
             "lutris": (
                 "Detected Corporate Clash in a Lutris-managed prefix, but the "
