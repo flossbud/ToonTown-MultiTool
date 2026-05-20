@@ -2576,21 +2576,21 @@ class MultitoonTab(QWidget):
                     continue
 
                 action = self.settings_manager.get("keep_alive_action", "jump") if self.settings_manager else "jump"
-                key = None
-                if self.keymap_manager:
-                    key = self.keymap_manager.get_key_for_direction(0, action)
-                if not key:
-                    continue
-
-                for i in fire_toons:
-                    if i < len(self.window_manager.ttr_window_ids):
-                        self.input_service.send_keep_alive_to_window(
-                            self.window_manager.ttr_window_ids[i], key
-                        )
+                fired = _dispatch_keep_alive_cycle(
+                    action=action,
+                    fire_toons=fire_toons,
+                    window_manager=self.window_manager,
+                    keymap_manager=self.keymap_manager,
+                    assignments=self.get_keymap_assignments(),
+                    input_service=self.input_service,
+                )
 
                 action_labels = {"jump": "Jump", "book": "Book", "up": "Move Forward"}
                 label = action_labels.get(action, action)
-                self.log(f"[KeepAlive] Sent '{label}' ({key}) to {len(fire_toons)} toon(s)")
+                if fired > 0:
+                    self.log(f"[KeepAlive] Sent '{label}' to {fired} toon(s)")
+                elif fire_toons:
+                    self.log(f"[KeepAlive] no toons matched action '{action}' this cycle")
         except Exception as e:
             self.log(f"[KeepAlive] Error: {e}")
 
