@@ -153,7 +153,6 @@ class InputService(QObject):
         if self._key_grabber is not None:
             return  # already initialized; stop()/start() cycle preserves the grabber
         try:
-            from utils import cc_isolation  # noqa: F401
             from utils.x11_movement_grabber import MovementKeyGrabber, xlib_available
             from services.wine_runtimes import discover_cc_installs
         except ImportError as e:
@@ -1091,21 +1090,6 @@ class InputService(QObject):
             self._send_via_backend("keydown", win_id, keysym)
             time.sleep(0.05)
             self._send_via_backend("keyup", win_id, keysym)
-
-
-def _conflicting_canonical_keysyms(canonical: str) -> tuple[str, ...]:
-    """Return the keysyms in the OPPOSITE keyset from the canonical.
-
-    When canonical=wasd, the conflicting keyset is arrows; when canonical
-    =arrows, the conflicting keyset is WASD. The grabber suppresses the
-    conflicting set from reaching focused CC windows because CC accepts
-    both hardcoded regardless of its preferences.json keymap.
-    """
-    if canonical == "wasd":
-        return ("Up", "Down", "Left", "Right")
-    if canonical == "arrows":
-        return ("w", "a", "s", "d")
-    return ()
 
 
 def _passthrough_keysyms_for_canonical(canonical: str) -> tuple[str, ...]:

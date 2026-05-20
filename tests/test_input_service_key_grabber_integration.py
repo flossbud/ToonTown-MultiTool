@@ -1,6 +1,5 @@
 """Tests for InputService's wiring of the X11 movement grabber:
-the should_consume callback, the conflicting-keysyms helper, and
-the lifecycle hooks."""
+the should_consume callback and the lifecycle hooks."""
 
 import queue
 from unittest.mock import MagicMock
@@ -10,21 +9,8 @@ import pytest
 from services import input_service
 from services.input_service import (
     InputService,
-    _conflicting_canonical_keysyms,
     _passthrough_keysyms_for_canonical,
 )
-
-
-def test_conflicting_keysyms_wasd_canonical_returns_arrows():
-    assert _conflicting_canonical_keysyms("wasd") == ("Up", "Down", "Left", "Right")
-
-
-def test_conflicting_keysyms_arrows_canonical_returns_wasd():
-    assert _conflicting_canonical_keysyms("arrows") == ("w", "a", "s", "d")
-
-
-def test_conflicting_keysyms_unknown_canonical_returns_empty():
-    assert _conflicting_canonical_keysyms("ijkl") == ()
 
 
 @pytest.fixture
