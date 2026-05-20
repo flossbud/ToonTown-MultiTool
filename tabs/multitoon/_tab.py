@@ -2622,5 +2622,31 @@ def _dispatch_keep_alive_cycle(action, fire_toons, window_manager, keymap_manage
     per-toon game / set / binding resolution). A return of 0 with a non-empty
     fire_toons list means every candidate was skipped.
     """
-    return 0
+    logical = "forward" if action == "up" else action
+    window_ids = window_manager.get_window_ids()
+    fired = 0
+    for i in fire_toons:
+        if i >= len(window_ids):
+            continue
+        wid = window_ids[i]
+        try:
+            game = GameRegistry.instance().get_game_for_window(str(wid))
+        except Exception:
+            game = None
+        if game not in ("ttr", "cc"):
+            continue
+        if not logical_actions.supports(game, logical):
+            continue
+        set_idx = assignments[i] if i < len(assignments) else 0
+        key = keymap_manager.get_key_for_action(game, set_idx, logical)
+        # Fall back to set 0 when the toon's set has no binding for this
+        # action. `update_set_key` stores empty strings rather than deleting
+        # the entry, so treat falsy values (None or "") as missing.
+        if not key and set_idx != 0:
+            key = keymap_manager.get_key_for_action(game, 0, logical)
+        if not key:
+            continue
+        input_service.send_keep_alive_to_window(wid, key)
+        fired += 1
+    return fired
 
