@@ -6,7 +6,6 @@ real Qt event loop or wine bridge is exercised.
 """
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock
 
 import pytest
 
