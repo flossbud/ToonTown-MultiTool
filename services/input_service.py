@@ -142,26 +142,10 @@ class InputService(QObject):
     def _start_key_grabber(self) -> None:
         """Install the X11 passive grab on the conflicting CC keyset.
 
-        Why: CC accepts both WASD and arrows hardcoded; locking
-        preferences.json to WASD does not actually disable arrows in
-        the running game. To stop the focused CC window from catching
-        the OTHER keyset (which TTMT routes to background toons), we
-        XGrabKey the conflicting keys and decide per-event whether to
-        consume or replay.
-
-        Passthrough: while an arrow is held, the X server's active
-        keyboard grab redirects ALL keyboard events to TTMT, including
-        WASD/modifiers/etc. that should reach the focused CC window.
-        AllowEvents(ReplayKeyboard) is a no-op in GrabModeAsync, so
-        the events would otherwise be lost. We register WASD + common
-        action keys as "passthrough" keysyms so the grabber recognizes
-        them and routes them via on_passthrough to the focused CC HWND
-        through the wine bridge.
-
-        Silent failure: if Xlib is missing or the display can't be
-        opened, the grabber simply doesn't run. Per-toon routing for
-        background toons still works; only the focused-window cross
-        talk persists.
+        Detailed lifecycle (focus-aware install, CC-install gate, etc.)
+        is layered on in subsequent tasks. For now this preserves the
+        pre-refactor behavior: open display + install grabs unconditionally
+        for the canonical set.
         """
         try:
             from utils import cc_isolation
@@ -171,20 +155,20 @@ class InputService(QObject):
             return
         if not xlib_available():
             return
-        keysyms = list(_conflicting_canonical_keysyms(cc_isolation.DEFAULT_CANONICAL))
-        if not keysyms:
-            return
         passthrough_keysyms = list(_passthrough_keysyms_for_canonical(cc_isolation.DEFAULT_CANONICAL))
         self._key_grabber = MovementKeyGrabber()
-        ok = self._key_grabber.start(
-            keysyms=keysyms,
+        ok = self._key_grabber.prepare(
             on_key=self._on_grabbed_key,
             should_consume=self._should_consume_grabbed_key,
-            passthrough_keysyms=passthrough_keysyms,
             on_passthrough=self._on_passthrough_key,
         )
         if not ok:
             self._key_grabber = None
+            return
+        self._key_grabber.install_grabs(
+            canonical_set=cc_isolation.DEFAULT_CANONICAL,
+            passthrough_keysyms=passthrough_keysyms,
+        )
 
     def _on_grabbed_key(self, action: str, keysym: str) -> None:
         """Forward a consumed grab event into the same queue pynput uses."""

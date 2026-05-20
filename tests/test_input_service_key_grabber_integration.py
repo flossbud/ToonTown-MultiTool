@@ -103,14 +103,14 @@ def test_start_key_grabber_skipped_when_xlib_unavailable(svc, monkeypatch):
     assert svc._key_grabber is None
 
 
-def test_start_key_grabber_skipped_when_grabber_start_returns_false(svc, monkeypatch):
-    """Grabber instantiated but start() fails (e.g. cannot open display);
+def test_start_key_grabber_skipped_when_grabber_prepare_returns_false(svc, monkeypatch):
+    """Grabber instantiated but prepare() fails (e.g. cannot open display);
     InputService clears the attribute."""
     import utils.x11_movement_grabber as gm
     monkeypatch.setattr(gm, "xlib_available", lambda: True)
 
     class FakeGrabber:
-        def start(self, **_):
+        def prepare(self, **_):
             return False
         def stop(self):
             pass
