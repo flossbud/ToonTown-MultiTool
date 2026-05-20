@@ -142,19 +142,27 @@ class InputService(QObject):
     def _start_key_grabber(self) -> None:
         """Install the X11 passive grab on the conflicting CC keyset.
 
-        Detailed lifecycle (focus-aware install, CC-install gate, etc.)
-        is layered on in subsequent tasks. For now this preserves the
-        pre-refactor behavior: open display + install grabs unconditionally
-        for the canonical set.
+        Gated on CC install detection: if zero CC installs are detected
+        on disk, the grabber is not instantiated and TTMT touches no X
+        server state for grab purposes. Reuses discover_cc_installs()
+        which main.py also uses for the CC prefs autolock.
         """
         try:
             from utils import cc_isolation
             from utils.x11_movement_grabber import MovementKeyGrabber, xlib_available
+            from services.wine_runtimes import discover_cc_installs
         except ImportError as e:
             print(f"[InputService] key grabber unavailable: {e}")
             return
         if not xlib_available():
             return
+        try:
+            installs = discover_cc_installs()
+        except Exception as e:  # noqa: BLE001
+            print(f"[InputService] CC install detection failed: {e}")
+            installs = []
+        if not installs:
+            return  # uninitialized state: no CC, no grabber
         passthrough_keysyms = list(_passthrough_keysyms_for_canonical(cc_isolation.DEFAULT_CANONICAL))
         self._key_grabber = MovementKeyGrabber()
         ok = self._key_grabber.prepare(

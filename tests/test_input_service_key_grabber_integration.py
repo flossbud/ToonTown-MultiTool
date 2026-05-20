@@ -199,3 +199,38 @@ def test_on_passthrough_key_swallows_bridge_exceptions(svc, monkeypatch):
 
     # Must not raise.
     svc._on_passthrough_key("keydown", "w")
+
+
+def test_start_key_grabber_skips_when_no_cc_installs(monkeypatch, svc):
+    """When discover_cc_installs() returns empty, the grabber is never
+    instantiated. TTMT opens zero Xlib connections for grab purposes."""
+    monkeypatch.setattr(
+        "services.wine_runtimes.discover_cc_installs", lambda: []
+    )
+    fake_grabber_cls = MagicMock()
+    monkeypatch.setattr(
+        "utils.x11_movement_grabber.MovementKeyGrabber", fake_grabber_cls
+    )
+    svc._start_key_grabber()
+    assert svc._key_grabber is None
+    assert fake_grabber_cls.call_count == 0
+
+
+def test_start_key_grabber_instantiates_when_cc_installs_present(monkeypatch, svc):
+    """When CC is detected on disk, the grabber is instantiated and
+    prepare() is called."""
+    monkeypatch.setattr(
+        "services.wine_runtimes.discover_cc_installs", lambda: ["fake-install"]
+    )
+    fake_instance = MagicMock()
+    fake_instance.prepare.return_value = True
+    fake_grabber_cls = MagicMock(return_value=fake_instance)
+    monkeypatch.setattr(
+        "utils.x11_movement_grabber.MovementKeyGrabber", fake_grabber_cls
+    )
+    monkeypatch.setattr(
+        "utils.x11_movement_grabber.xlib_available", lambda: True
+    )
+    svc._start_key_grabber()
+    assert svc._key_grabber is fake_instance
+    fake_instance.prepare.assert_called_once()
