@@ -87,6 +87,7 @@ class InputService(QObject):
 
     BACKSPACE_REPEAT_DELAY    = 0.4
     BACKSPACE_REPEAT_INTERVAL = 0.05
+    AUTO_REPEAT_DEDUP_WINDOW  = 0.015
 
     def __init__(self, window_manager, get_enabled_toons, get_movement_modes, get_event_queue_func,
                  get_chat_enabled=None, settings_manager=None,
@@ -485,6 +486,32 @@ class InputService(QObject):
                             f"(action: {legacy_logical}, {toon_game} set {set_idx + 1})"
                         )
 
+    def _dispatch_keyup(self, key, enabled, assignments) -> bool:
+        """Process a single keyup event.
+
+        Returns True if the released key was BackSpace (so the caller can
+        reset BackSpace repeat timing); False otherwise.
+
+        Check actual set membership rather than re-classifying, since chat
+        state may have changed between the original keydown and this keyup.
+        """
+        if key in self.modifiers_held:
+            self.modifiers_held.discard(key)
+            self._send_modifier_to_bg("keyup", key, enabled, assignments)
+            return False
+        if key in self.keys_held:
+            self.keys_held.discard(key)
+            self._log_key(key, "released")
+            self._send_logical_action_km("keyup", key, enabled, assignments)
+            return key == "BackSpace"
+        if key in self.action_held:
+            self.action_held.discard(key)
+            self._log_key(key, "released")
+            self._send_action_keyup_to_bg(key, enabled, assignments)
+            return False
+        self.bg_typing_held.discard(key)
+        return False
+
     def _send_modifier_to_bg(self, action, key, enabled, assignments):
         active_window = self.window_manager.get_active_window()
         keysym = self._resolve_keysym(key)
@@ -593,6 +620,7 @@ class InputService(QObject):
         event_queue    = self.get_event_queue()
         bs_press_time  = None
         bs_last_repeat = 0.0
+        pending_keyups: dict[str, float] = {}
 
         try:
             while self.running:
@@ -615,6 +643,7 @@ class InputService(QObject):
                         self.modifiers_held.clear()
                         self.action_held.clear()
                     self.bg_typing_held.clear()
+                    pending_keyups.clear()
                     self._phantom_reset()
                     if self.global_chat_active:
                         self._set_chat_active(False)
@@ -644,6 +673,22 @@ class InputService(QObject):
                         action, key = event_queue.get_nowait()
                     except queue.Empty:
                         break
+
+                    # Auto-repeat dedup: pynput delivers X11 auto-repeat as
+                    # KeyRelease+KeyPress pairs (XKB DetectableAutoRepeat is
+                    # off by default). Buffer each keyup; if a matching keydown
+                    # arrives within AUTO_REPEAT_DEDUP_WINDOW, drop both halves
+                    # (the key is still logically held). If no matching keydown
+                    # arrives in time, flush the keyup as a real release in the
+                    # post-drain block below. The grabber does this for grabbed
+                    # keys at the X level; this is the equivalent for keys that
+                    # reach InputService via pynput.
+                    if action == "keydown" and key in pending_keyups:
+                        del pending_keyups[key]
+                        continue
+                    if action == "keyup":
+                        pending_keyups[key] = now
+                        continue
 
                     if action == "keydown":
 
@@ -760,29 +805,15 @@ class InputService(QObject):
                                     self._log_key(key, "pressed")
                                     self._send_action_keydown_to_bg(key, enabled, assignments)
 
-                    elif action == "keyup":
-
-                        # Check actual membership rather than re-classifying, since
-                        # chat state may have changed between keydown and keyup.
-                        if key in self.modifiers_held:
-                            self.modifiers_held.discard(key)
-                            self._send_modifier_to_bg("keyup", key, enabled, assignments)
-
-                        elif key in self.keys_held:
-                            self.keys_held.discard(key)
-                            self._log_key(key, "released")
-                            if key == "BackSpace":
-                                bs_press_time  = None
-                                bs_last_repeat = 0.0
-                            self._send_logical_action_km("keyup", key, enabled, assignments)
-
-                        elif key in self.action_held:
-                            self.action_held.discard(key)
-                            self._log_key(key, "released")
-                            self._send_action_keyup_to_bg(key, enabled, assignments)
-
-                        else:
-                            self.bg_typing_held.discard(key)
+                # Flush keyups that have been buffered past the auto-repeat
+                # window. These are real releases — no matching keydown arrived
+                # in time, so the key was genuinely released.
+                for stale_key, buffered_at in list(pending_keyups.items()):
+                    if now - buffered_at >= self.AUTO_REPEAT_DEDUP_WINDOW:
+                        del pending_keyups[stale_key]
+                        if self._dispatch_keyup(stale_key, enabled, assignments):
+                            bs_press_time  = None
+                            bs_last_repeat = 0.0
 
                 if bs_press_time is not None and "BackSpace" in self.keys_held and not self._phantom_active:
                     held_for = now - bs_press_time
