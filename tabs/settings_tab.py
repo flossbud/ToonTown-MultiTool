@@ -315,6 +315,12 @@ class GamePathRow(SettingsRow):
         btn_container.setLayout(btn_lay)
         self.add_control(btn_container)
 
+        current_path = self.settings_manager.get(self._settings_key, "")
+        if not current_path:
+            self._auto_detect()
+        else:
+            self._refresh_display(current_path)
+
         self.needs_pick: bool = False
         self._cc_installs: list = []
         if settings_key == "cc_engine_dir":
@@ -328,12 +334,10 @@ class GamePathRow(SettingsRow):
             ) if stored_sig else False
             if len(self._cc_installs) > 1 and not sig_match:
                 self.needs_pick = True
-
-        current_path = self.settings_manager.get(self._settings_key, "")
-        if not current_path:
-            self._auto_detect()
-        else:
-            self._refresh_display(current_path)
+            # Re-render now that _cc_installs reflects the resolved set so
+            # the active-install chip suffix can be appended to the subtitle.
+            if current_path:
+                self._refresh_display(current_path)
 
     def apply_theme(self, c, is_dark):
         super().apply_theme(c, is_dark)
