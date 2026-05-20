@@ -391,12 +391,15 @@ class InputService(QObject):
     def _send_logical_action_km(self, action, key, enabled, assignments):
         """Route a movement-class action to toons.
 
-        CC: per-toon routing. Each enabled toon's assigned set is consulted
-        independently for the pressed key. When a toon's set binds the key,
-        TTMT emits CC's canonical key for that action to that toon's window.
-        For movement, canonical is the WASD that TTMT locks CC's prefs to
-        (utils/cc_isolation.py). For other actions, canonical is the toon's
-        own binding (mirrors CC Default which mirrors CC's prefs).
+        Strict per-toon routing: each toon responds only to keys that its
+        own assigned set binds. No cross-game broadcast fallback.
+
+        CC: each enabled toon's assigned set is consulted independently for
+        the pressed key. When a toon's set binds the key, TTMT emits CC's
+        canonical key for that action to that toon's window. For movement,
+        canonical is the WASD that TTMT locks CC's prefs to
+        (utils/cc_isolation.py). For other actions, canonical is CC's
+        default (set 0) binding.
 
         The foreground toon is skipped only when the pressed key already
         matches the canonical -- in that case the OS-delivered key reaches
@@ -404,8 +407,10 @@ class InputService(QObject):
         canonical (e.g. user pressed Up but CC's prefs lock means Up is
         ignored), the foreground also gets a bridge-sent canonical key.
 
-        TTR: unchanged broadcast-with-translation. Resolve via foreground
-        default; send toon-set[action] to each background toon.
+        TTR (and any future non-CC game): same strict per-toon rule. The
+        set is an input-translation layer only; outbound is always the
+        game's default (set 0) binding so the bg toon's settings.json
+        (the user's native customization) is honored.
         """
         if self.global_chat_active:
             return
@@ -420,11 +425,8 @@ class InputService(QObject):
         )
 
         active_window = self.window_manager.get_active_window()
-        foreground_game = self._foreground_game()
         window_ids = self.window_manager.get_window_ids()
         registry = GameRegistry.instance()
-
-        legacy_logical = self._resolve_logical_action(key)
 
         for i, is_enabled in enumerate(enabled):
             if not is_enabled or i >= len(window_ids):
@@ -438,22 +440,9 @@ class InputService(QObject):
             if toon_game == "cc":
                 toon_action = self.keymap_manager.get_action_in_set("cc", set_idx, key)
                 if toon_action is None:
-                    # Hybrid fallback: when foreground is non-CC (typically
-                    # TTR), use the foreground-derived legacy logical action
-                    # so a single keypress broadcasts to background CC toons
-                    # the way TTR multi-toon does. When foreground IS CC,
-                    # stay strict so two CC toons with conflicting keysets
-                    # remain independent.
-                    if foreground_game in (None, "cc"):
-                        continue
-                    if legacy_logical is None:
-                        continue
-                    if not logical_actions.supports("cc", legacy_logical):
-                        continue
-                    toon_action = legacy_logical
-                else:
-                    if not logical_actions.supports("cc", toon_action):
-                        continue
+                    continue
+                if not logical_actions.supports("cc", toon_action):
+                    continue
                 canonical = cc_canonical_movement.get(toon_action)
                 if canonical is None:
                     canonical = self.keymap_manager.get_key_for_action("cc", 0, toon_action)
@@ -470,33 +459,16 @@ class InputService(QObject):
                             f"(cc action: {toon_action}, set {set_idx + 1})"
                         )
             else:
-                # TTR (and any future non-CC game). Symmetric to the CC
-                # branch's hybrid: try per-toon set matching first; if the
-                # toon's set does not bind the pressed key AND the
-                # foreground game is different from this toon's game,
-                # fall back to the legacy foreground-derived action so
-                # cross-game broadcast still works. When foreground is the
-                # same game as the toon, stay strict so non-default-set
-                # toons remain independent (mirrors the same-game strict
-                # rule in the CC branch).
-                #
-                # Outbound is always the game's default (set 0) binding.
-                # The set is an input-translation layer only -- the bg
-                # toon's settings.json is the user's customized default,
-                # so the bg toon must receive its NATIVE binding for the
-                # action, not the assigned set's binding for the action.
+                # Strict per-toon: route only when the toon's assigned
+                # set binds the pressed key. The set is an input layer;
+                # outbound goes to the game's default (native) binding
+                # because the bg toon's settings.json reflects the user's
+                # default, not their TTMT-side set choice.
                 toon_action = self.keymap_manager.get_action_in_set(toon_game, set_idx, key)
                 if toon_action is None:
-                    if foreground_game in (None, toon_game):
-                        continue
-                    if legacy_logical is None:
-                        continue
-                    if not logical_actions.supports(toon_game, legacy_logical):
-                        continue
-                    toon_action = legacy_logical
-                else:
-                    if not logical_actions.supports(toon_game, toon_action):
-                        continue
+                    continue
+                if not logical_actions.supports(toon_game, toon_action):
+                    continue
                 if win == active_window:
                     continue
                 outbound = self.keymap_manager.get_key_for_action(toon_game, 0, toon_action)
@@ -1045,19 +1017,8 @@ class InputService(QObject):
         active_window = self.window_manager.get_active_window()
         window_ids = self.window_manager.get_window_ids()
         registry = GameRegistry.instance()
-        fg_game = self._last_known_foreground_game
 
         for key in list(self.keys_held):
-            # Find the logical action under the last-known fg game's Default set.
-            logical = None
-            if fg_game is not None and self.keymap_manager:
-                default = self.keymap_manager.get_default(fg_game)
-                for action in logical_actions.actions_for(fg_game):
-                    if default.get(action) == key:
-                        logical = action
-                        break
-            if logical is None:
-                continue
             for i, is_enabled in enumerate(enabled):
                 if not (is_enabled and i < len(window_ids)):
                     continue
@@ -1066,11 +1027,16 @@ class InputService(QObject):
                     continue
                 toon_game = registry.get_game_for_window(str(win))
                 if toon_game is None:
-                    toon_game = "ttr"  # Windows fallback: TTMT pre-dates CC support and TTR is the safe default
-                if not logical_actions.supports(toon_game, logical):
-                    continue
+                    toon_game = "ttr"  # Windows fallback: TTMT pre-dates CC support
                 set_idx = assignments[i] if i < len(assignments) else 0
-                outbound = self.keymap_manager.get_key_for_action(toon_game, set_idx, logical)
+                if self.keymap_manager is None:
+                    continue
+                toon_action = self.keymap_manager.get_action_in_set(toon_game, set_idx, key)
+                if toon_action is None:
+                    continue
+                if not logical_actions.supports(toon_game, toon_action):
+                    continue
+                outbound = self.keymap_manager.get_key_for_action(toon_game, 0, toon_action)
                 keysym = self._resolve_keysym(outbound) if outbound else None
                 if keysym:
                     self._send_via_backend("keyup", win, keysym)

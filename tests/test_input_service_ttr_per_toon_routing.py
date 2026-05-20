@@ -1,10 +1,8 @@
 """TTR per-toon routing tests.
 
-The TTR else-branch in _send_logical_action_km mirrors the CC branch's
-hybrid pattern: per-toon set lookup first; legacy broadcast fallback
-when the foreground game is different from the bg toon's game (cross-
-game routing); strict skip when foreground is same-game and per-toon
-does not match.
+The TTR else-branch in _send_logical_action_km uses strict per-toon
+routing: each toon responds only to keys that its own assigned set
+binds. No cross-game broadcast fallback.
 
 Critically, the OUTBOUND key is always the game's default (set 0)
 binding for the resolved action -- NOT the toon's assigned set's
@@ -156,11 +154,10 @@ class TestTtrPerToonRouting:
         svc._send_logical_action_km("keydown", "Up", [True, True], [0, 1])
         assert ("keydown", "200", "w") in sent
 
-    def test_cc_focused_wasd_press_routes_ttr_bg_via_legacy_fallback(self, monkeypatch):
+    def test_cc_focused_wasd_press_does_not_route_to_ttr_arrows_bg(self, monkeypatch):
         """CC1 default + TTR2 arrows. Press W (in CC's default).
-        TTR2's arrows set doesn't bind W. Foreground is cross-game
-        (CC) so the fallback to legacy_logical fires. Outbound is
-        TTR's default forward (W)."""
+        TTR2's arrows set doesn't bind W. Strict per-toon: no fallback.
+        TTR2 receives nothing."""
         svc, sent = _build_svc(
             monkeypatch,
             registry_mapping={"100": "cc", "200": "ttr"},
@@ -168,7 +165,9 @@ class TestTtrPerToonRouting:
             assignments=[0, 1],
         )
         svc._send_logical_action_km("keydown", "w", [True, True], [0, 1])
-        assert ("keydown", "200", "w") in sent
+        assert ("keydown", "200", "w") not in sent
+        sent_for_ttr2 = [c for c in sent if c[1] == "200"]
+        assert sent_for_ttr2 == []
 
     def test_ttr_focused_skipped_when_focused(self, monkeypatch):
         """The focused TTR toon is never routed to (it gets native
