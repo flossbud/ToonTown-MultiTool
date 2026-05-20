@@ -672,6 +672,37 @@ def classify_path(exe_path: str) -> WineInstall | None:
                     metadata={"lutris_slug": slug, "lutris_name": name},
                 )
 
+    # Faugus: cross-reference games.json catalog
+    for path_template in _FAUGUS_GAMES_JSON_PATHS:
+        catalog = os.path.expanduser(path_template)
+        if not os.path.isfile(catalog):
+            continue
+        install_kind = "flatpak" if ".var/app/" in catalog else "native"
+        for entry in _parse_faugus_games_json(catalog):
+            if not isinstance(entry, dict):
+                continue
+            prefix = entry.get("prefix") or ""
+            if not prefix:
+                continue
+            try:
+                prefix_real = os.path.realpath(prefix)
+            except OSError:
+                continue
+            if real.startswith(prefix_real + os.sep):
+                title = entry.get("title") or os.path.basename(prefix.rstrip(os.sep))
+                runner = entry.get("runner") or ""
+                return WineInstall(
+                    exe_path=exe_path,
+                    launcher="faugus",
+                    prefix_path=prefix,
+                    display_name=f"Faugus · {title}",
+                    metadata={
+                        "faugus_runner": runner,
+                        "faugus_install_kind": install_kind,
+                        "faugus_gameid": entry.get("gameid") or "",
+                    },
+                )
+
     # Plain Wine: ancestor with a dosdevices/c: marker
     dosdevices_root = _ancestor_with_marker(os.path.dirname(real), "dosdevices")
     if dosdevices_root:
