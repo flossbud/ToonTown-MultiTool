@@ -781,6 +781,28 @@ def build_launch_command(
             return [runtime, f"--verb={verb}", "--", *proton_argv], env
         return proton_argv, env
 
+    if install.launcher == "faugus":
+        if not install.prefix_path:
+            raise ValueError("faugus launcher requires prefix_path")
+        install_kind = install.metadata.get("faugus_install_kind", "native")
+        if install_kind == "flatpak":
+            base = [
+                "flatpak", "run", "--command=faugus-run",
+                "io.github.Faugus.faugus-launcher",
+            ]
+        else:
+            base = ["faugus-run"]
+        runner = install.metadata.get("faugus_runner") or ""
+        runner_args = ["-r", runner] if runner else []
+        cmd = [
+            *base,
+            "-e", install.exe_path,
+            "-p", install.prefix_path,
+            *runner_args,
+            *args,
+        ]
+        return cmd, env
+
     if install.launcher == "bottles":
         if not install.prefix_path:
             raise ValueError("bottles launcher requires prefix_path")

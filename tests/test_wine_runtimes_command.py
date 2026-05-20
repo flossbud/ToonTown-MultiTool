@@ -281,3 +281,77 @@ def test_bottles_raises_when_bottle_name_missing(tmp_path):
     )
     with pytest.raises(ValueError):
         build_launch_command(install, [], {})
+
+
+def test_faugus_flatpak_uses_flatpak_run_wrapper():
+    from services.wine_runtimes import WineInstall, build_launch_command
+    install = WineInstall(
+        exe_path="/home/u/Faugus/corporate-clash/drive_c/users/steamuser/AppData/Local/Corporate Clash/CorporateClash.exe",
+        launcher="faugus",
+        prefix_path="/home/u/Faugus/corporate-clash",
+        display_name="Faugus · Corporate Clash",
+        metadata={
+            "faugus_runner": "Proton-CachyOS Latest",
+            "faugus_install_kind": "flatpak",
+            "faugus_gameid": "corporate-clash",
+        },
+    )
+    cmd, env = build_launch_command(install, [], {"TT_PLAYCOOKIE": "t", "REALM": "production"})
+    assert cmd == [
+        "flatpak", "run", "--command=faugus-run",
+        "io.github.Faugus.faugus-launcher",
+        "-e", install.exe_path,
+        "-p", install.prefix_path,
+        "-r", "Proton-CachyOS Latest",
+    ]
+    assert env == {"TT_PLAYCOOKIE": "t", "REALM": "production"}
+    assert "WINEPREFIX" not in env  # faugus-run sets it from -p
+
+
+def test_faugus_native_uses_bare_faugus_run():
+    from services.wine_runtimes import WineInstall, build_launch_command
+    install = WineInstall(
+        exe_path="/x/CorporateClash.exe",
+        launcher="faugus",
+        prefix_path="/p",
+        display_name="Faugus · CC",
+        metadata={
+            "faugus_runner": "GE-Proton9-1",
+            "faugus_install_kind": "native",
+        },
+    )
+    cmd, env = build_launch_command(install, [], {"TT_PLAYCOOKIE": "t"})
+    assert cmd == [
+        "faugus-run",
+        "-e", "/x/CorporateClash.exe",
+        "-p", "/p",
+        "-r", "GE-Proton9-1",
+    ]
+
+
+def test_faugus_omits_runner_arg_when_empty():
+    """Scan-fallback installs have no runner -- fall through to faugus-run's
+    default-runner from config.ini by omitting the -r flag."""
+    from services.wine_runtimes import WineInstall, build_launch_command
+    install = WineInstall(
+        exe_path="/x/CorporateClash.exe",
+        launcher="faugus",
+        prefix_path="/p",
+        display_name="Faugus · CC",
+        metadata={"faugus_runner": "", "faugus_install_kind": "scan"},
+    )
+    cmd, env = build_launch_command(install, [], {})
+    assert cmd == ["faugus-run", "-e", "/x/CorporateClash.exe", "-p", "/p"]
+
+
+def test_faugus_requires_prefix_path():
+    from services.wine_runtimes import WineInstall, build_launch_command
+    install = WineInstall(
+        exe_path="/x/CorporateClash.exe",
+        launcher="faugus",
+        prefix_path=None,
+        display_name="Faugus · CC",
+        metadata={"faugus_runner": "Proton"},
+    )
+    with pytest.raises(ValueError):
+        build_launch_command(install, [], {})
