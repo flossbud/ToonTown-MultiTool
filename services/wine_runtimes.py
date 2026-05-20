@@ -972,6 +972,70 @@ def is_launcher_available(launcher: str) -> bool:
 
         print("[wine_runtimes] is_launcher_available: bottles -> all probes failed: False")
         return False
+    if launcher == "faugus":
+        print("[wine_runtimes] is_launcher_available: faugus probing…")
+        if _host_command_exists("faugus-run"):
+            print("[wine_runtimes] is_launcher_available: faugus -> faugus-run on PATH: True")
+            return True
+        if not _host_command_exists("flatpak"):
+            print("[wine_runtimes] is_launcher_available: faugus -> no faugus-run, "
+                  "no flatpak; trying filesystem evidence")
+            user_app_dir = os.path.expanduser(
+                "~/.var/app/io.github.Faugus.faugus-launcher"
+            )
+            if os.path.isdir(user_app_dir):
+                print(f"[wine_runtimes] is_launcher_available: faugus -> "
+                      f"{user_app_dir} present: True")
+                return True
+            print("[wine_runtimes] is_launcher_available: faugus -> all probes failed: False")
+            return False
+        from utils.host_spawn import host_run
+
+        def _decode(b):
+            if b is None:
+                return ""
+            if isinstance(b, bytes):
+                b = b.decode("utf-8", "replace")
+            return b.strip()
+
+        try:
+            res = host_run(
+                ["flatpak", "info", "io.github.Faugus.faugus-launcher"],
+                capture_output=True,
+                timeout=10,
+            )
+            print(f"[wine_runtimes] is_launcher_available: faugus -> "
+                  f"flatpak info rc={res.returncode} "
+                  f"stderr={_decode(res.stderr)!r}")
+            if res.returncode == 0:
+                return True
+        except Exception as e:
+            print(f"[wine_runtimes] is_launcher_available: faugus -> "
+                  f"flatpak info raised {type(e).__name__}: {e}")
+        for scope in ("--user", "--system"):
+            try:
+                res = host_run(
+                    ["flatpak", "info", scope,
+                     "io.github.Faugus.faugus-launcher"],
+                    capture_output=True,
+                    timeout=10,
+                )
+                if res.returncode == 0:
+                    print(f"[wine_runtimes] is_launcher_available: faugus -> "
+                          f"flatpak info {scope} rc=0: True")
+                    return True
+            except Exception as e:
+                print(f"[wine_runtimes] is_launcher_available: faugus -> "
+                      f"flatpak info {scope} raised {type(e).__name__}: {e}")
+        user_app_dir = os.path.expanduser(
+            "~/.var/app/io.github.Faugus.faugus-launcher"
+        )
+        if os.path.isdir(user_app_dir):
+            print(f"[wine_runtimes] is_launcher_available: faugus -> "
+                  f"{user_app_dir} present: True")
+            return True
+        print("[wine_runtimes] is_launcher_available: faugus -> all probes failed: False")
+        return False
     if launcher == "steam-proton":
         # Availability is per-install (proton_dir from metadata); generic
         # check just verifies steam exists somewhere.

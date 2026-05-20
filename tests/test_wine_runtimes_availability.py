@@ -104,3 +104,66 @@ def test_discover_cc_installs_dedupes_and_sorts(tmp_path, monkeypatch):
     installs = discover_cc_installs()
     assert len(installs) == 1
     assert installs[0].launcher == "bottles"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Linux only")
+def test_faugus_availability_true_when_faugus_run_on_path(monkeypatch):
+    calls = []
+
+    def fake_exists(name):
+        calls.append(name)
+        return name == "faugus-run"
+
+    monkeypatch.setattr(
+        "services.wine_runtimes._host_command_exists", fake_exists
+    )
+    assert is_launcher_available("faugus") is True
+    assert calls == ["faugus-run"]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Linux only")
+def test_faugus_availability_falls_back_to_flatpak_info(monkeypatch):
+    def fake_exists(name):
+        return name == "flatpak"
+
+    monkeypatch.setattr(
+        "services.wine_runtimes._host_command_exists", fake_exists
+    )
+
+    class _Res:
+        def __init__(self, rc=0):
+            self.returncode = rc
+            self.stdout = b""
+            self.stderr = b""
+
+    def fake_host_run(argv, **kw):
+        if "io.github.Faugus.faugus-launcher" in argv:
+            return _Res(0)
+        return _Res(1)
+
+    monkeypatch.setattr("utils.host_spawn.host_run", fake_host_run)
+    assert is_launcher_available("faugus") is True
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Linux only")
+def test_faugus_availability_filesystem_fallback(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "services.wine_runtimes._host_command_exists", lambda n: False
+    )
+    home = tmp_path / "home"
+    (home / ".var/app/io.github.Faugus.faugus-launcher").mkdir(parents=True)
+    monkeypatch.setattr("os.path.expanduser",
+                        lambda p: p.replace("~", str(home)))
+    assert is_launcher_available("faugus") is True
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Linux only")
+def test_faugus_availability_false_when_nothing_present(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "services.wine_runtimes._host_command_exists", lambda n: False
+    )
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr("os.path.expanduser",
+                        lambda p: p.replace("~", str(home)))
+    assert is_launcher_available("faugus") is False
