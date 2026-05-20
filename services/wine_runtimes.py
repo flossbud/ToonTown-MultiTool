@@ -65,7 +65,7 @@ class WineInstall:
     exe_path : str
         Absolute host path to CorporateClash.exe.
     launcher : str
-        One of: "bottles", "lutris", "steam-proton", "wine", "native".
+        One of: "bottles", "lutris", "faugus", "steam-proton", "wine", "native".
     prefix_path : str | None
         Wine prefix root. None for the "native" Windows case.
     display_name : str
@@ -1020,9 +1020,10 @@ def is_launcher_available(launcher: str) -> bool:
                     capture_output=True,
                     timeout=10,
                 )
+                print(f"[wine_runtimes] is_launcher_available: faugus -> "
+                      f"flatpak info {scope} rc={res.returncode} "
+                      f"stderr={_decode(res.stderr)!r}")
                 if res.returncode == 0:
-                    print(f"[wine_runtimes] is_launcher_available: faugus -> "
-                          f"flatpak info {scope} rc=0: True")
                     return True
             except Exception as e:
                 print(f"[wine_runtimes] is_launcher_available: faugus -> "
