@@ -147,8 +147,20 @@ def test_non_movement_action_uses_cc_default_binding_as_canonical(cc_setup):
     assert sent == [("keydown", "w2", "space")]
 
 
-def test_ttr_routing_unchanged(monkeypatch):
-    """TTR toons keep legacy resolve-via-foreground-default + send toon-set[action] to bg."""
+def test_ttr_routing_per_toon_strict_same_game(monkeypatch):
+    """TTR1 (set 0, WASD) focused, TTR2 (set 1, arrows) background. Press W.
+    Per-toon lookup: TTR2's arrows set does not bind W. Foreground is TTR
+    (same-game) -> strict skip; no legacy fallback. TTR2 receives nothing.
+
+    This verifies the strict-same-game rule: non-matching-set TTR toons are
+    independent when the foreground toon is also TTR. The set is an
+    input-translation layer; a bg toon that hasn't assigned that key does not
+    move.
+
+    Previously this test asserted the old buggy behavior: legacy_logical was
+    used verbatim and outbound was emitted from set_idx (the toon's own set)
+    rather than from the default (set 0). That was incorrect per the design
+    clarification that the set is an input-translation layer only."""
     keymap = _FakeKeymap({
         "cc": [
             {"forward": "w", "reverse": "s", "left": "a", "right": "d"},
@@ -175,9 +187,9 @@ def test_ttr_routing_unchanged(monkeypatch):
     monkeypatch.setattr(svc, "_send_via_backend", lambda action, win, keysym, modifiers=None: sent.append((action, win, keysym)))
     monkeypatch.setattr(svc, "_foreground_game", lambda: "ttr")
 
-    # Legacy: press w on foreground → resolve via TTR Default (w=forward) → for bg toon 2 send set[forward]=Up.
+    # TTR2's arrows set doesn't bind W; same-game strict rule skips it.
     svc._send_logical_action_km("keydown", "w", [True, True], [0, 1])
-    assert sent == [("keydown", "w2", "Up")]
+    assert sent == []
 
 
 def test_global_chat_active_suppresses_all_routing(cc_setup):
@@ -275,12 +287,21 @@ class TestHybridRoutingMixed:
         assert ("keydown", "200", "w") in sent
         assert not any(s for s in sent if s[1] == "100")
 
-    def test_ttr_focused_ttr_default_press_broadcasts_to_all(self, monkeypatch):
+    def test_ttr_focused_ttr_default_press_broadcasts_to_cc_only(self, monkeypatch):
         """TTR1=arrows focused, TTR2=WASD bg, CC3=WASD bg, press Up.
         TTR1 native (handled outside this function).
-        TTR2: legacy_logical=forward -> outbound='w' -> send.
-        CC3: per-toon Up->None on WASD set; foreground=TTR -> fallback
-        legacy=forward -> canonical='w' -> send."""
+        TTR2: per-toon lookup -- TTR2's set 1 (WASD) doesn't bind Up.
+        Foreground is TTR (same-game) -> strict skip; TTR2 receives nothing.
+        CC3: per-toon Up->None on WASD set; foreground=TTR (cross-game for
+        CC) -> legacy fallback: legacy_logical=forward -> canonical='w' ->
+        send.
+
+        Previously this test asserted TTR2 also received 'w', which was the
+        old buggy behavior where legacy_logical was used verbatim for any
+        background TTR toon regardless of its assigned set and foreground
+        game. The strict-same-game rule now matches the CC branch's pattern:
+        same-game bg toons are independent when their set doesn't bind the
+        pressed key."""
         svc, sent = self._build_svc(
             monkeypatch,
             registry_mapping={"100": "ttr", "200": "ttr", "300": "cc"},
@@ -290,8 +311,8 @@ class TestHybridRoutingMixed:
         svc._send_logical_action_km(
             "keydown", "Up", [True, True, True], [0, 1, 0]
         )
-        assert ("keydown", "200", "w") in sent  # TTR2 bridged W
-        assert ("keydown", "300", "w") in sent  # CC3 bridged via hybrid
+        assert ("keydown", "200", "w") not in sent  # TTR2 strict-skipped (same-game, mismatched set)
+        assert ("keydown", "300", "w") in sent  # CC3 bridged via hybrid cross-game fallback
 
     def test_cc_focused_native_press_routes_ttr_bg_via_legacy(self, monkeypatch):
         """TTR1=arrows + CC2=WASD, focus CC2, press W (CC2's canonical).

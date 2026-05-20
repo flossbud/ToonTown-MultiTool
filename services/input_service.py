@@ -470,11 +470,36 @@ class InputService(QObject):
                             f"(cc action: {toon_action}, set {set_idx + 1})"
                         )
             else:
-                if legacy_logical is None or win == active_window:
+                # TTR (and any future non-CC game). Symmetric to the CC
+                # branch's hybrid: try per-toon set matching first; if the
+                # toon's set does not bind the pressed key AND the
+                # foreground game is different from this toon's game,
+                # fall back to the legacy foreground-derived action so
+                # cross-game broadcast still works. When foreground is the
+                # same game as the toon, stay strict so non-default-set
+                # toons remain independent (mirrors the same-game strict
+                # rule in the CC branch).
+                #
+                # Outbound is always the game's default (set 0) binding.
+                # The set is an input-translation layer only -- the bg
+                # toon's settings.json is the user's customized default,
+                # so the bg toon must receive its NATIVE binding for the
+                # action, not the assigned set's binding for the action.
+                toon_action = self.keymap_manager.get_action_in_set(toon_game, set_idx, key)
+                if toon_action is None:
+                    if foreground_game in (None, toon_game):
+                        continue
+                    if legacy_logical is None:
+                        continue
+                    if not logical_actions.supports(toon_game, legacy_logical):
+                        continue
+                    toon_action = legacy_logical
+                else:
+                    if not logical_actions.supports(toon_game, toon_action):
+                        continue
+                if win == active_window:
                     continue
-                if not logical_actions.supports(toon_game, legacy_logical):
-                    continue
-                outbound = self.keymap_manager.get_key_for_action(toon_game, set_idx, legacy_logical)
+                outbound = self.keymap_manager.get_key_for_action(toon_game, 0, toon_action)
                 if outbound is None:
                     continue
                 keysym = self._resolve_keysym(outbound)
@@ -483,7 +508,7 @@ class InputService(QObject):
                     if self.logging_enabled and action == "keydown" and key != outbound:
                         self.input_log.emit(
                             f"[Input] '{key}' -> '{outbound}' "
-                            f"(action: {legacy_logical}, {toon_game} set {set_idx + 1})"
+                            f"(action: {toon_action}, {toon_game} set {set_idx + 1})"
                         )
 
     def _dispatch_keyup(self, key, enabled, assignments) -> bool:
