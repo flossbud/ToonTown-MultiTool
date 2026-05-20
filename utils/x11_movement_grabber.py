@@ -120,6 +120,11 @@ class MovementKeyGrabber:
         self._on_passthrough = on_passthrough
         self._should_consume = should_consume
         self._stop.clear()
+        # Flush any actions that were enqueued after the previous stop() but
+        # before this prepare(). Without this, a stale install_grabs() would
+        # be picked up by the new thread and silently install grabs on behalf
+        # of the previous caller.
+        self._actions = _queue.Queue()
         self._thread = threading.Thread(
             target=self._run, daemon=True, name="MovementKeyGrabber"
         )
@@ -165,6 +170,11 @@ class MovementKeyGrabber:
             self._grabbed = []
             self._keycode_to_name = {}
             self._current_canonical = None
+        # Discard any pending actions so a subsequent prepare() starts with a
+        # clean queue. Without this, an install_grabs() enqueued between
+        # stop() and the thread's exit would survive into the next lifecycle
+        # and silently install grabs the new caller didn't ask for.
+        self._actions = _queue.Queue()
 
     def _conflicting_keysyms(self, canonical_set: str) -> tuple[str, ...]:
         if canonical_set == "wasd":
@@ -230,13 +240,16 @@ class MovementKeyGrabber:
         try:
             while True:
                 action = self._actions.get_nowait()
-                if action[0] == "install":
-                    _, canonical_set, passthrough = action
-                    self._install_grabs_inline(canonical_set, passthrough)
-                elif action[0] == "uninstall":
-                    self._uninstall_grabs_inline()
-                elif action[0] == "shutdown":
-                    return True
+                try:
+                    if action[0] == "install":
+                        _, canonical_set, passthrough = action
+                        self._install_grabs_inline(canonical_set, passthrough)
+                    elif action[0] == "uninstall":
+                        self._uninstall_grabs_inline()
+                    elif action[0] == "shutdown":
+                        return True
+                except Exception as e:  # noqa: BLE001
+                    print(f"[x11_movement_grabber] action {action[0]!r} raised: {e}")
         except _queue.Empty:
             pass
         return False

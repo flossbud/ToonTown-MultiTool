@@ -612,3 +612,82 @@ def test_passthrough_event_uses_replay_keyboard_mode(fake_display):
 
     modes = [c.args[0] for c in d.allow_events.call_args_list]
     assert X.ReplayKeyboard in modes
+
+
+def test_stale_install_action_does_not_survive_stop_and_prepare(fake_display):
+    """Regression: stop() enqueues uninstall + shutdown, but a caller may
+    have enqueued an install_grabs() between stop() and the thread draining.
+    That stale install must NOT fire after a subsequent prepare() call.
+
+    Reproduces the scenario described in the code review:
+      prepare() -> install_grabs() -> stop() [thread still draining]
+      -> install_grabs() [stale, enqueued after stop]
+      -> prepare() [fresh start]
+    The fresh prepare must not see the stale install action and must not
+    call grab_key on behalf of the previous caller."""
+    import time
+    d, root = fake_display
+
+    g = grabber_mod.MovementKeyGrabber()
+
+    # First lifecycle: prepare -> install -> stop.
+    g.prepare(on_key=lambda *_: None, should_consume=lambda _: True)
+    g.install_grabs(canonical_set="wasd", passthrough_keysyms=[])
+    time.sleep(0.05)
+    g.stop()
+
+    # Enqueue a stale install AFTER stop() returns (thread already exited).
+    g._actions.put(("install", "arrows", []))
+
+    # Second lifecycle: prepare should start clean.
+    d.reset_mock()
+    root.reset_mock()
+
+    g.prepare(on_key=lambda *_: None, should_consume=lambda _: True)
+    # Give the thread time to drain any stale actions.
+    time.sleep(0.1)
+
+    # No grab_key calls: the stale "install" must have been cleared.
+    assert root.grab_key.call_count == 0, (
+        f"Stale install action survived stop+prepare: {root.grab_key.call_count} grabs fired"
+    )
+
+    g.stop()
+
+
+def test_per_action_exception_does_not_kill_thread(fake_display):
+    """Regression: if _install_grabs_inline raises (e.g., Xlib error not
+    covered by the inner BadAccess catch), the exception must NOT propagate
+    through _drain_actions to _run and silently kill the daemon thread.
+
+    After the exception the thread must still be alive, and a subsequent
+    uninstall_grabs() action must be processed normally."""
+    import time
+    d, root = fake_display
+
+    # Make keysym_to_keycode raise to trigger an exception inside
+    # _install_grabs_inline (specifically during the grabbed-keysym loop).
+    d.keysym_to_keycode.side_effect = RuntimeError("Xlib exploded")
+
+    g = grabber_mod.MovementKeyGrabber()
+    g.prepare(on_key=lambda *_: None, should_consume=lambda _: True)
+
+    assert g._thread is not None and g._thread.is_alive()
+
+    # This install will raise inside _install_grabs_inline.
+    g.install_grabs(canonical_set="wasd", passthrough_keysyms=[])
+    time.sleep(0.1)
+
+    # Thread must still be alive after the exception.
+    assert g._thread.is_alive(), "Thread died after exception in _install_grabs_inline"
+
+    # Restore normal behaviour and enqueue an uninstall to prove the thread
+    # can still process actions.
+    d.keysym_to_keycode.side_effect = lambda ks: 100 + (ks % 50)
+    g.uninstall_grabs()
+    time.sleep(0.1)
+
+    # Thread must still be alive after the uninstall action.
+    assert g._thread.is_alive(), "Thread died after processing uninstall action"
+
+    g.stop()
