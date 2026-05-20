@@ -410,6 +410,29 @@ def test_grabbed_key_with_consume_false_falls_through_to_passthrough(fake_displa
     assert on_passthrough_calls == [("keydown", "Up")]
 
 
+def test_grab_key_uses_sync_keyboard_mode(fake_display):
+    """ReplayKeyboard is a no-op under GrabModeAsync. The grabber MUST
+    register with GrabModeSync so the non-consume path actually re-delivers
+    arrow events to the focused window (TTR, Firefox, terminals, etc.)."""
+    d, root = fake_display
+    g = grabber_mod.MovementKeyGrabber()
+    try:
+        g.start(
+            keysyms=["Up"],
+            on_key=lambda *_: None,
+            should_consume=lambda _: True,
+        )
+        # grab_key positional args: keycode, modifiers, owner_events,
+        # pointer_mode, keyboard_mode. We care about keyboard_mode.
+        for call in root.grab_key.call_args_list:
+            args = call.args
+            assert args[4] == X.GrabModeSync, (
+                f"keyboard_mode must be GrabModeSync, got {args[4]}"
+            )
+    finally:
+        g.stop()
+
+
 def test_passthrough_event_uses_replay_keyboard_mode(fake_display):
     """Passthrough events should use ReplayKeyboard so X is told to let
     the event flow normally (even though Replay is a no-op in async)."""

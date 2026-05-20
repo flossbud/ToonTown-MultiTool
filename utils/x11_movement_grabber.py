@@ -150,7 +150,7 @@ class MovementKeyGrabber:
                 try:
                     self._root.grab_key(
                         keycode, mod, True,
-                        X.GrabModeAsync, X.GrabModeAsync,
+                        X.GrabModeAsync, X.GrabModeSync,
                     )
                     self._grabbed.append((keycode, mod))
                     registered += 1
