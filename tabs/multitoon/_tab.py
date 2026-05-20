@@ -23,6 +23,7 @@ from utils.symbols import S
 from utils.ttr_api import get_toon_names_by_slot, invalidate_port_to_wid_cache, clear_stale_names
 from utils import cc_api
 from utils.game_registry import GameRegistry
+from utils import logical_actions
 from tabs.multitoon._keep_alive_help_button import KeepAliveHelpButton
 
 
@@ -2575,21 +2576,21 @@ class MultitoonTab(QWidget):
                     continue
 
                 action = self.settings_manager.get("keep_alive_action", "jump") if self.settings_manager else "jump"
-                key = None
-                if self.keymap_manager:
-                    key = self.keymap_manager.get_key_for_direction(0, action)
-                if not key:
-                    continue
-
-                for i in fire_toons:
-                    if i < len(self.window_manager.ttr_window_ids):
-                        self.input_service.send_keep_alive_to_window(
-                            self.window_manager.ttr_window_ids[i], key
-                        )
+                fired = _dispatch_keep_alive_cycle(
+                    action=action,
+                    fire_toons=fire_toons,
+                    window_manager=self.window_manager,
+                    keymap_manager=self.keymap_manager,
+                    assignments=self.get_keymap_assignments(),
+                    input_service=self.input_service,
+                )
 
                 action_labels = {"jump": "Jump", "book": "Book", "up": "Move Forward"}
                 label = action_labels.get(action, action)
-                self.log(f"[KeepAlive] Sent '{label}' ({key}) to {len(fire_toons)} toon(s)")
+                if fired > 0:
+                    self.log(f"[KeepAlive] Sent '{label}' to {fired} toon(s)")
+                elif fire_toons:
+                    self.log(f"[KeepAlive] no toons matched action '{action}' this cycle")
         except Exception as e:
             self.log(f"[KeepAlive] Error: {e}")
 
@@ -2611,3 +2612,41 @@ class MultitoonTab(QWidget):
             except Exception:
                 pass
         self.input_service.shutdown()
+
+
+def _dispatch_keep_alive_cycle(action, fire_toons, window_manager, keymap_manager,
+                                assignments, input_service):
+    """Dispatch one keep-alive cycle to the requested toon slots.
+
+    Returns the number of toons that actually received a keypress (after
+    per-toon game / set / binding resolution). A return of 0 with a non-empty
+    fire_toons list means every candidate was skipped.
+    """
+    logical = "forward" if action == "up" else action
+    window_ids = window_manager.get_window_ids()
+    fired = 0
+    for i in fire_toons:
+        if i >= len(window_ids):
+            continue
+        wid = window_ids[i]
+        try:
+            game = GameRegistry.instance().get_game_for_window(str(wid))
+        except Exception:
+            game = None
+        if game not in ("ttr", "cc"):
+            continue
+        if not logical_actions.supports(game, logical):
+            continue
+        set_idx = assignments[i] if i < len(assignments) else 0
+        key = keymap_manager.get_key_for_action(game, set_idx, logical)
+        # Fall back to set 0 when the toon's set has no binding for this
+        # action. `update_set_key` stores empty strings rather than deleting
+        # the entry, so treat falsy values (None or "") as missing.
+        if not key and set_idx != 0:
+            key = keymap_manager.get_key_for_action(game, 0, logical)
+        if not key:
+            continue
+        input_service.send_keep_alive_to_window(wid, key)
+        fired += 1
+    return fired
+
