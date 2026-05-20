@@ -162,7 +162,7 @@ class InputService(QObject):
             print(f"[InputService] CC install detection failed: {e}")
             installs = []
         if not installs:
-            return  # uninitialized state: no CC, no grabber
+            return  # no CC detected (or detection failed); no grabber
         passthrough_keysyms = list(_passthrough_keysyms_for_canonical(cc_isolation.DEFAULT_CANONICAL))
         self._key_grabber = MovementKeyGrabber()
         ok = self._key_grabber.prepare(

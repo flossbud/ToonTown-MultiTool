@@ -108,6 +108,7 @@ def test_start_key_grabber_skipped_when_grabber_prepare_returns_false(svc, monke
     InputService clears the attribute."""
     import utils.x11_movement_grabber as gm
     monkeypatch.setattr(gm, "xlib_available", lambda: True)
+    monkeypatch.setattr("services.wine_runtimes.discover_cc_installs", lambda: ["fake-install"])
 
     class FakeGrabber:
         def prepare(self, **_):
@@ -234,3 +235,4 @@ def test_start_key_grabber_instantiates_when_cc_installs_present(monkeypatch, sv
     svc._start_key_grabber()
     assert svc._key_grabber is fake_instance
     fake_instance.prepare.assert_called_once()
+    fake_instance.install_grabs.assert_called_once()
