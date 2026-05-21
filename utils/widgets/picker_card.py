@@ -92,4 +92,4 @@ class ElidedLabel(QLabel):
         fm = QFontMetrics(self.font())
         elided = fm.elidedText(self._full_text, Qt.ElideMiddle, self.width())
         painter.setPen(self.palette().color(self.foregroundRole()))
-        painter.drawText(self.rect(), int(Qt.AlignLeft | Qt.AlignVCenter), elided)
+        painter.drawText(self.rect(), Qt.AlignLeft | Qt.AlignVCenter, elided)
