@@ -333,8 +333,8 @@ class MultiToonTool(QMainWindow):
 
         self.stack = QStackedWidget()
         self.stack.addWidget(self.multitoon_tab)   # 0
-        self.stack.addWidget(self.keymap_tab)       # 1
-        self.stack.addWidget(self.launch_tab)       # 2
+        self.stack.addWidget(self.launch_tab)       # 1
+        self.stack.addWidget(self.keymap_tab)       # 2
         self.stack.addWidget(self.settings_tab)     # 3
         self.stack.addWidget(self.debug_tab)        # 4
         self.stack.addWidget(self.credits_tab)      # 5
