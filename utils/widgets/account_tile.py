@@ -125,7 +125,9 @@ class AccountTile(QFrame):
         )
         head.addWidget(self.badge)
         self.name_label = QLabel("")
-        self.name_label.setStyleSheet("color: #fff; font-weight: 600; font-size: 13px;")
+        self.name_label.setStyleSheet(
+            "color: #fff; font-weight: 600; font-size: 13px; background: transparent;"
+        )
         self.name_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         head.addWidget(self.name_label)
         outer.addLayout(head)
