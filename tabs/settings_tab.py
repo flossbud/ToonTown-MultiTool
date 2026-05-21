@@ -1528,6 +1528,18 @@ class SettingsTab(QWidget):
         )
         group.add_row(self.compat_runtime_row)
 
+        # Hide-CC-console opt-out. Default ON; user can turn off when
+        # debugging launch failures to see CC's TTCCLauncher stdout.
+        from utils.settings_keys import CC_HIDE_LAUNCH_CONSOLE
+        self.hide_cc_console_row = ToggleRow(
+            "Hide CC launch console",
+            self.settings_manager.get(CC_HIDE_LAUNCH_CONSOLE, True),
+        )
+        self.hide_cc_console_row.toggled.connect(
+            lambda v: self.settings_manager.set(CC_HIDE_LAUNCH_CONSOLE, v)
+        )
+        group.add_row(self.hide_cc_console_row)
+
         self._main_layout.addWidget(group)
 
     def _build_keepalive_group(self):
