@@ -1367,6 +1367,12 @@ class MultitoonTab(QWidget):
                 f"font-size: 10px; font-weight: 600; "
                 f"color: {c['text_muted']}; letter-spacing: 0.8px;"
             )
+        # CC subtitle (Compact-only) tracks the theme's muted text color.
+        for sub in getattr(self, "_compact_cc_subtitles", []):
+            sub.setStyleSheet(
+                f"color: {c['text_muted']}; font-size: 10px; "
+                f"font-style: italic; background: transparent; border: none;"
+            )
         self._update_pill_styles()
         self.refresh_button.setStyleSheet(f"""
             QPushButton {{
@@ -2267,7 +2273,6 @@ class MultitoonTab(QWidget):
                 # data path (_apply_merged_toon_data -> _refresh_toon_stats_labels)
                 # will re-show the laff/bean labels on the next poll cycle.
                 self.toon_names[global_idx] = None
-                self._refresh_toon_name_labels()
                 if global_idx < len(self.laff_labels):
                     self.laff_labels[global_idx].hide()
                 if global_idx < len(self.bean_labels):
@@ -2283,13 +2288,18 @@ class MultitoonTab(QWidget):
             self.toon_names[global_idx] = info.name
 
             # Apply portrait (CC paint mode in both layouts since the
-            # widget is shared between them).
-            if global_idx < len(self.slot_badges) and info.dna_colors:
-                skin, gloves, shirt, _shorts, accent = info.dna_colors
-                self.slot_badges[global_idx].set_cc_mode(
-                    skin_rgb=skin, accent_rgb=accent, gloves_rgb=gloves,
-                    emoji=info.species_emoji or "❓",
-                )
+            # widget is shared between them). If colors missing, fall
+            # back to plain mode so a previously-set CC paint doesn't
+            # linger.
+            if global_idx < len(self.slot_badges):
+                if info.dna_colors:
+                    skin, gloves, shirt, _shorts, accent = info.dna_colors
+                    self.slot_badges[global_idx].set_cc_mode(
+                        skin_rgb=skin, accent_rgb=accent, gloves_rgb=gloves,
+                        emoji=info.species_emoji or "❓",
+                    )
+                else:
+                    self.slot_badges[global_idx].set_cc_mode(None, None, None, None)
 
             # Compact subtitle
             self.set_compact_cc_subtitle(

@@ -72,7 +72,7 @@ _logged_unknowns: set[str] = set()
 def lookup(head_letter: str) -> Tuple[Optional[str], str]:
     """Return (species_name, emoji) for a head-code first letter.
 
-    Unknown letters return (None, "?") and log once per letter per process.
+    Unknown letters return (None, "❓") and log once per letter per process.
     """
     species = HEAD_LETTER_TO_SPECIES.get(head_letter)
     if species is None:

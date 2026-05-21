@@ -414,6 +414,8 @@ class _FullToonCard(QFrame):
         self._apply_scaled_styles()
         # Theme reset _dot_color_active to theme green; restore state-driven color.
         self._apply_status_state()
+        # Re-color CC chips with the new theme's chip tones.
+        self._apply_cc_chip_styles()
 
     def set_cc_mode(self, playground: Optional[str], zone_name: Optional[str]) -> None:
         """Show or hide the CC chip row based on data availability.
