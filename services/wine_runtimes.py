@@ -8,6 +8,7 @@ from __future__ import annotations
 import glob
 import hashlib
 import os
+import shlex
 import shutil
 import sys
 import threading
@@ -800,22 +801,49 @@ def build_launch_command(
         if not install.prefix_path:
             raise ValueError("faugus launcher requires prefix_path")
         install_kind = install.metadata.get("faugus_install_kind", "native")
+        gameid = install.metadata.get("faugus_gameid") or "corporate-clash"
+        runner = install.metadata.get("faugus_runner") or ""
+
+        # faugus-run does NOT accept -e/-p/-r flags. Its CLI is:
+        #   faugus-run [--game GAME] [message] [command]
+        # In "message" mode, the message is a shell-style string from which
+        # faugus.runner.extract_env_from_message() pulls KEY=VAL tokens into
+        # os.environ, then Popen's the remainder. This is the same shape
+        # faugus.runner.build_launch_command(game) produces from games.json,
+        # except we substitute CorporateClash.exe for the catalog's new_launcher.exe
+        # so the CC API token flow (TT_PLAYCOOKIE et al.) reaches the game.
         if install_kind == "flatpak":
-            base = [
+            # The user-data dir is identically mounted inside the sandbox
+            # at the same path, so this works as both host and sandbox path.
+            umu_run = os.path.expanduser(
+                "~/.var/app/io.github.Faugus.faugus-launcher"
+                "/data/faugus-launcher/umu-run"
+            )
+        else:
+            umu_run = os.path.expanduser(
+                "~/.local/share/faugus-launcher/umu-run"
+            )
+
+        msg_parts = [
+            f"LOG_DIR={shlex.quote(gameid)}",
+            f"GAMEID={gameid}",
+            f"WINEPREFIX={shlex.quote(install.prefix_path)}",
+        ]
+        if runner:
+            msg_parts.append(f"PROTONPATH={shlex.quote(runner)}")
+        msg_parts.append(shlex.quote(umu_run))
+        msg_parts.append(shlex.quote(install.exe_path))
+        msg_parts.extend(shlex.quote(a) for a in args)
+        message = " ".join(msg_parts)
+
+        if install_kind == "flatpak":
+            cmd = [
                 "flatpak", "run", "--command=faugus-run",
                 "io.github.Faugus.faugus-launcher",
+                message,
             ]
         else:
-            base = ["faugus-run"]
-        runner = install.metadata.get("faugus_runner") or ""
-        runner_args = ["-r", runner] if runner else []
-        cmd = [
-            *base,
-            "-e", install.exe_path,
-            "-p", install.prefix_path,
-            *runner_args,
-            *args,
-        ]
+            cmd = ["faugus-run", message]
         return cmd, env
 
     if install.launcher == "bottles":
