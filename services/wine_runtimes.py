@@ -738,6 +738,7 @@ def build_launch_command(
     install: WineInstall,
     args: list[str],
     extra_env: dict[str, str],
+    target_exe: str | None = None,
 ) -> tuple[list[str], dict[str, str]]:
     """Return (argv, env_overrides) suitable for subprocess.Popen.
 
@@ -745,23 +746,29 @@ def build_launch_command(
     TT_GAMESERVER, LAUNCHER_USER, REALM under the new CC launcher
     protocol). It is merged into the result; the caller is responsible
     for passing this dict to build_launcher_env().
+
+    target_exe, when provided, overrides install.exe_path as the binary
+    that gets launched. Used by services.launcher_runners to spawn the
+    official TTCCLauncher.exe instead of CorporateClash.exe through the
+    same Wine/Bottles/Lutris/Faugus dispatch.
     """
     env: dict[str, str] = dict(extra_env)
+    exe = target_exe if target_exe is not None else install.exe_path
 
     if install.launcher == "native":
-        return [install.exe_path, *args], env
+        return [exe, *args], env
 
     if install.launcher == "wine":
         if not install.prefix_path:
             raise ValueError("wine launcher requires prefix_path")
         env["WINEPREFIX"] = install.prefix_path
-        return ["wine", install.exe_path, *args], env
+        return ["wine", exe, *args], env
 
     if install.launcher == "lutris":
         if not install.prefix_path:
             raise ValueError("lutris launcher requires prefix_path")
         env["WINEPREFIX"] = install.prefix_path
-        return ["wine", install.exe_path, *args], env
+        return ["wine", exe, *args], env
 
     if install.launcher == "steam-proton":
         if not install.prefix_path:
@@ -783,7 +790,7 @@ def build_launch_command(
         # the existing wineserver as a normal additional client.
         compatdata = env["STEAM_COMPAT_DATA_PATH"]
         verb = "run" if is_proton_compatdata_active(compatdata) else "waitforexitandrun"
-        proton_argv = [proton_bin, verb, install.exe_path, *args]
+        proton_argv = [proton_bin, verb, exe, *args]
         # Modern Protons (Proton 8+, Proton-CachyOS, etc.) are compiled
         # against a specific Steam Linux Runtime's libc; outside the SLR
         # pressure-vessel container their wine binary fails to start
@@ -832,7 +839,7 @@ def build_launch_command(
         if runner:
             msg_parts.append(f"PROTONPATH={shlex.quote(runner)}")
         msg_parts.append(shlex.quote(umu_run))
-        msg_parts.append(shlex.quote(install.exe_path))
+        msg_parts.append(shlex.quote(exe))
         msg_parts.extend(shlex.quote(a) for a in args)
         message = " ".join(msg_parts)
 
@@ -890,7 +897,7 @@ def build_launch_command(
         # flag parser and forwards everything afterward to the executable
         # verbatim. (Under the new CC launcher protocol args is empty —
         # credentials go via env vars — but keep the `--` for safety.)
-        cmd = [*base, "run", "-b", bottle_name, "-e", install.exe_path, "--", *args]
+        cmd = [*base, "run", "-b", bottle_name, "-e", exe, "--", *args]
         return cmd, env
 
     raise ValueError(f"Unsupported launcher: {install.launcher}")
