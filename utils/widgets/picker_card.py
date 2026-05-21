@@ -50,17 +50,18 @@ class PickerChip:
         Used by Settings CC row (GamePathRow._refresh_display) when the
         active install matches a discovered one. The QLabel hosting the
         snippet must have setTextFormat(Qt.RichText).
+
+        QLabel's rich-text subset does not support `qlineargradient(...)`
+        or `linear-gradient(...)`, so the inline chip uses the gradient's
+        start color as a solid background. At this small size (~18px tall)
+        the gradient depth is barely perceptible anyway.
         """
         from utils.launcher_chip import LAUNCHER_CHIP_COLOR, _FALLBACK_PAIR
-        start, end = LAUNCHER_CHIP_COLOR.get(slug, _FALLBACK_PAIR)
+        start, _end = LAUNCHER_CHIP_COLOR.get(slug, _FALLBACK_PAIR)
         label = PickerChip.label_for(slug)
-        # Inline-block span with background gradient, white text, padding.
-        # QLabel's rich text supports a subset of HTML; gradient backgrounds
-        # work via CSS `background: linear-gradient(...)` in the style attr.
         return (
             f'<span style="'
-            f'background: qlineargradient(x1:0, y1:0, x2:1, y2:1, '
-            f'stop:0 {start}, stop:1 {end}); '
+            f'background-color:{start}; '
             f'color:#fff; font-weight:800; letter-spacing:0.5px; '
             f'padding:2px 6px; border-radius:5px; '
             f'font-size:10px; line-height:{height_px}px;'

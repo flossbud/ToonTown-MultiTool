@@ -51,9 +51,11 @@ def test_cc_row_subtitle_includes_faugus_chip_when_signature_matches(qapp, monke
         label="Corporate Clash Path",
     )
     text = row.sub_widget.text()
-    # New rendering: HTML chip span containing the uppercase label.
+    # New rendering: HTML chip span with a solid background-color (gradients
+    # are not supported in QLabel rich-text) containing the uppercase label.
     assert "FAUGUS" in text
-    assert "qlineargradient" in text
+    assert "<span" in text
+    assert "background-color:" in text
     assert "Faugus · Corporate Clash" in text
 
 
@@ -72,7 +74,7 @@ def test_cc_row_subtitle_plain_path_when_no_signature_match(qapp, monkeypatch):
     )
     text = row.sub_widget.text()
     # No HTML chip span and no FAUGUS label when there is no signature match.
-    assert "qlineargradient" not in text
+    assert "<span" not in text
     assert "FAUGUS" not in text
     assert "/some/path" in text or "~/some/path" in text
 
@@ -90,5 +92,5 @@ def test_ttr_row_subtitle_unaffected(qapp, monkeypatch):
     )
     text = row.sub_widget.text()
     # No HTML chip, no FAUGUS label.
-    assert "qlineargradient" not in text
+    assert "<span" not in text
     assert "FAUGUS" not in text

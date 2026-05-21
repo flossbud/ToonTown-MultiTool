@@ -34,14 +34,16 @@ _FALLBACK_PAIR = ("#6a7280", "#4b5563")
 
 
 def chip_style_for(slug: str) -> str:
-    """Return a QSS background-image string for the chip of `slug`.
+    """Return a QSS background-gradient string for the chip of `slug`.
 
     Used by PickerCard's chip QLabel. Falls back to a neutral gray pair so
-    a new launcher slug never crashes the picker.
+    a new launcher slug never crashes the picker. Uses the `background:`
+    shorthand because Qt QSS's `background-image:` property only accepts
+    URL-based images, not gradients.
     """
     start, end = LAUNCHER_CHIP_COLOR.get(slug, _FALLBACK_PAIR)
     return (
-        f"background-image: qlineargradient("
+        f"background: qlineargradient("
         f"x1:0, y1:0, x2:1, y2:1, "
         f"stop:0 {start}, stop:1 {end});"
     )

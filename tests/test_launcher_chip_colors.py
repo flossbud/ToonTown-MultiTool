@@ -41,3 +41,16 @@ def test_chip_style_for_unknown_slug_returns_fallback_gray():
     assert "qlineargradient" in qss
     # Fallback uses a neutral mid-gray pair.
     assert "#4b5563" in qss or "#6a7280" in qss
+
+
+def test_chip_style_for_uses_background_shorthand_not_background_image():
+    """Qt QSS's `background-image:` property does NOT accept gradients (only
+    URL-based images), so the chip helper must use the `background:` shorthand.
+    Caught a real bug where chips silently rendered as the global QWidget
+    background color instead of the brand gradient."""
+    qss = chip_style_for("wine")
+    assert qss.startswith("background:"), (
+        f"chip_style_for output must use `background:` shorthand for the gradient "
+        f"to render; `background-image:` only accepts URLs in Qt QSS. Got: {qss!r}"
+    )
+    assert "background-image" not in qss
