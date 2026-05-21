@@ -349,7 +349,7 @@ class MultiToonTool(QMainWindow):
         # Demo mode (TTMT_DEMO_LAUNCH_TAB) jumps directly to the Launch tab so
         # the visual verification script can capture it without synthesizing
         # clicks through xdotool.
-        _initial_tab = 2 if os.environ.get("TTMT_DEMO_LAUNCH_TAB") else 0
+        _initial_tab = 1 if os.environ.get("TTMT_DEMO_LAUNCH_TAB") else 0
         self.nav_select(_initial_tab)
         self._setup_update_checker()
         self._maybe_kick_off_startup_check()
@@ -377,7 +377,7 @@ class MultiToonTool(QMainWindow):
             self._on_keep_alive_help_requested
         )
         self.multitoon_tab.launch_tab_requested.connect(
-            lambda: self.nav_select(2)
+            lambda: self.nav_select(1)
         )
 
         self.log(f"[Debug] {app_name()} launched.")
