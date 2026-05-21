@@ -407,6 +407,11 @@ class LaunchTab(QWidget):
         # Optional injection point for tests; defaults to a fresh manager.
         self.cred_manager = credentials_manager or CredentialsManager()
 
+        from services.wine_console_hider import WineConsoleHider
+        self._wine_console_hider = WineConsoleHider(
+            self.settings_manager, parent=self
+        )
+
         # Per-game workers and launchers
         self._workers = {"ttr": [None] * MAX_PER_GAME, "cc": [None] * MAX_PER_GAME}
         self._launchers = {"ttr": [None] * MAX_PER_GAME, "cc": [None] * MAX_PER_GAME}
@@ -996,27 +1001,8 @@ class LaunchTab(QWidget):
             self._disconnect_launcher_signals(launcher)
             self._launchers[game][section_index] = None
 
-        # Create game-specific worker and launcher
-        if game == "ttr":
-            worker = TTRLoginWorker(self)
-            launcher = TTRLauncher(self, settings_manager=self.settings_manager)
-        else:
-            worker = CCLoginWorker(self)
-            launcher = CCLauncher(self, settings_manager=self.settings_manager)
-
-        self._workers[game][section_index] = worker
-        self._launchers[game][section_index] = launcher
-
-        # Connect signals
-        worker.state_changed.connect(lambda s, m, g=game, si=section_index: self._update_status(g, si, s, m))
-        worker.queue_update.connect(lambda p, e, g=game, si=section_index: self._update_queue(g, si, p, e))
-        worker.need_2fa.connect(lambda banner, g=game, si=section_index: self._prompt_2fa(g, si, banner))
-        worker.login_success.connect(lambda gs, ck, g=game, si=section_index: self._on_login_success(g, si, gs, ck))
-        worker.login_failed.connect(lambda msg, g=game, si=section_index: self._on_login_failed(g, si, msg))
-
-        launcher.game_launched.connect(lambda pid, g=game, si=section_index: self._on_game_launched(g, si, pid))
-        launcher.game_exited.connect(lambda rc, g=game, si=section_index: self._on_game_exited(g, si, rc))
-        launcher.launch_failed.connect(lambda msg, g=game, si=section_index: self._on_launcher_failed(g, si, msg))
+        # Create game-specific worker and launcher, wire signals.
+        worker, launcher = self._make_launchers(game, section_index)
 
         # Start login
         if game == "ttr":
@@ -1046,6 +1032,41 @@ class LaunchTab(QWidget):
                 return
         game_label = "TTR" if game == "ttr" else "CC"
         self.log(f"[Launch] Logging in {game_label} account {section_index + 1}…")
+
+    def _make_launchers(self, game: str, section_index: int):
+        """Create a fresh worker/launcher pair for *game* at *section_index*,
+        store them in the internal registries, connect their signals, and
+        return ``(worker, launcher)``.
+
+        For CC launches the new launcher is also attached to the shared
+        ``_wine_console_hider`` so the console-hiding feature can track the
+        process after it starts.
+        """
+        if game == "ttr":
+            worker = TTRLoginWorker(self)
+            launcher = TTRLauncher(self, settings_manager=self.settings_manager)
+        else:
+            worker = CCLoginWorker(self)
+            launcher = CCLauncher(self, settings_manager=self.settings_manager)
+
+        if game == "cc":
+            self._wine_console_hider.attach(launcher)
+
+        self._workers[game][section_index] = worker
+        self._launchers[game][section_index] = launcher
+
+        # Connect signals
+        worker.state_changed.connect(lambda s, m, g=game, si=section_index: self._update_status(g, si, s, m))
+        worker.queue_update.connect(lambda p, e, g=game, si=section_index: self._update_queue(g, si, p, e))
+        worker.need_2fa.connect(lambda banner, g=game, si=section_index: self._prompt_2fa(g, si, banner))
+        worker.login_success.connect(lambda gs, ck, g=game, si=section_index: self._on_login_success(g, si, gs, ck))
+        worker.login_failed.connect(lambda msg, g=game, si=section_index: self._on_login_failed(g, si, msg))
+
+        launcher.game_launched.connect(lambda pid, g=game, si=section_index: self._on_game_launched(g, si, pid))
+        launcher.game_exited.connect(lambda rc, g=game, si=section_index: self._on_game_exited(g, si, rc))
+        launcher.launch_failed.connect(lambda msg, g=game, si=section_index: self._on_launcher_failed(g, si, msg))
+
+        return worker, launcher
 
     def _persist_launcher_token(self, account_id: str, token: str) -> None:
         """Save a CC launcher token to keyring AND clear the now-redundant
