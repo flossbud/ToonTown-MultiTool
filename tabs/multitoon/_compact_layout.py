@@ -99,6 +99,15 @@ class _CompactLayout(QWidget):
 
         layout.addLayout(top_row)
 
+        # CC subtitle slot — populated in populate() with the shared
+        # subtitle widget. Sits between top_row (name/badge/stats) and
+        # ctrl_row (enable/chat/ka/selector). Hidden by default so
+        # non-CC slots have zero visual change.
+        cc_subtitle_row = QHBoxLayout()
+        cc_subtitle_row.setContentsMargins(0, 0, 0, 0)
+        cc_subtitle_row.setSpacing(0)
+        layout.addLayout(cc_subtitle_row)
+
         ctrl_row = QHBoxLayout()
         ctrl_row.setSpacing(8)
 
@@ -125,6 +134,7 @@ class _CompactLayout(QWidget):
             "top_row": top_row,
             "stats_row": stats_row,
             "ctrl_row": ctrl_row,
+            "cc_subtitle_row": cc_subtitle_row,  # NEW
             "middle": middle,
             "ka_group": ka_group,
             "ka_group_layout": ka_group_layout,
@@ -230,6 +240,15 @@ class _CompactLayout(QWidget):
         slot["stats_row"].addWidget(self._tab.laff_labels[i])
         slot["stats_row"].addWidget(self._tab.bean_labels[i])
         slot["top_row"].addLayout(slot["stats_row"])
+
+        # CC subtitle (Compact-only enrichment). The shared widget sits
+        # in a row of its own; hidden unless set_compact_cc_subtitle has
+        # populated it.
+        clear_layout(slot["cc_subtitle_row"])
+        slot["cc_subtitle_row"].addWidget(
+            self._tab._compact_cc_subtitles[i],
+            alignment=Qt.AlignLeft,
+        )
 
         # ctrl_row: toon_button | middle (ka_group + addStretch) | set_selector
         clear_layout(slot["ctrl_row"])

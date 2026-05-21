@@ -824,6 +824,7 @@ class MultitoonTab(QWidget):
         self.set_selectors = []     # replaces movement_dropdowns
         self.toon_cards = []
         self.profile_pills = []     # list of QPushButton pills
+        self._compact_cc_subtitles: list[QLabel] = []
         self.enabled_toons = [False] * 4
         self.chat_enabled  = [True]  * 4
         self.keep_alive_enabled = [False] * 4
@@ -948,6 +949,15 @@ class MultitoonTab(QWidget):
             badge = ToonPortraitWidget(i + 1)
             badge.clicked.connect(lambda idx=i: self._on_portrait_clicked(idx))
             self.slot_badges.append(badge)
+
+            cc_subtitle = QLabel("")
+            cc_subtitle.setObjectName("cc_compact_subtitle")
+            cc_subtitle.setStyleSheet(
+                "color: #9a9aa8; font-size: 10px; font-style: italic; "
+                "background: transparent; border: none;"
+            )
+            cc_subtitle.hide()
+            self._compact_cc_subtitles.append(cc_subtitle)
 
             name_label = ElidingLabel(f"Toon {i + 1}")
             status_dot = PulsingDot(10)
@@ -2315,6 +2325,22 @@ class MultitoonTab(QWidget):
         if self._mode == "full" and hasattr(self, "_full") and self._full is not None:
             for card in self._full._cards:
                 card._apply_scaled_styles()
+
+    def set_compact_cc_subtitle(self, slot: int, playground, zone_name):
+        """Update the Compact UI subtitle for a CC slot. Hides if both
+        playground and zone are None."""
+        if slot >= len(self._compact_cc_subtitles):
+            return
+        sub = self._compact_cc_subtitles[slot]
+        if not playground:
+            sub.setText("")
+            sub.hide()
+            return
+        if zone_name:
+            sub.setText(f"\U0001f4cd {playground} \xb7 {zone_name}")
+        else:
+            sub.setText(f"\U0001f4cd {playground}")
+        sub.show()
 
     # ── Accessors ──────────────────────────────────────────────────────────
 
