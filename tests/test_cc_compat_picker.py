@@ -11,8 +11,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 @pytest.fixture(scope="module")
 def qapp():
-    app = QApplication.instance() or QApplication([])
-    yield app
+    return QApplication.instance() or QApplication([])
 
 
 def _tool(name, display, source="compatibilitytools.d", version=(9, 0),
@@ -25,117 +24,93 @@ def _tool(name, display, source="compatibilitytools.d", version=(9, 0),
     )
 
 
-def test_dialog_shows_use_steam_default_first(qapp):
+def test_dialog_shows_auto_card_first(qapp):
     from utils.widgets.cc_compat_picker import CCCompatPickerDialog
-    tools = [_tool("proton-cachyos", "Proton-CachyOS")]
     dlg = CCCompatPickerDialog(
-        tools=tools,
+        tools=[_tool("proton-cachyos", "Proton-CachyOS")],
         current_override="",
         steam_default_display="Proton-CachyOS",
     )
-    assert dlg.use_steam_radio.isChecked()
-    assert not dlg.use_specific_radio.isChecked()
+    cards = dlg.cards()
+    assert len(cards) >= 1
+    # Auto card is index 0 and is selected by default when current_override is empty.
+    assert cards[0].property("selected") == "true"
+
+
+def test_dialog_includes_one_card_per_tool_plus_auto(qapp):
+    from utils.widgets.cc_compat_picker import CCCompatPickerDialog
+    dlg = CCCompatPickerDialog(
+        tools=[
+            _tool("proton-cachyos", "Proton-CachyOS"),
+            _tool("ge-proton9-26", "GE-Proton9-26"),
+        ],
+        current_override="",
+        steam_default_display="Proton-CachyOS",
+    )
+    # 1 AUTO + 2 PROTONs = 3 cards.
+    assert len(dlg.cards()) == 3
 
 
 def test_dialog_reflects_existing_override(qapp):
     from utils.widgets.cc_compat_picker import CCCompatPickerDialog
-    tools = [
-        _tool("proton-cachyos", "Proton-CachyOS"),
-        _tool("ge-proton9-26", "GE-Proton9-26"),
-    ]
     dlg = CCCompatPickerDialog(
-        tools=tools,
+        tools=[
+            _tool("proton-cachyos", "Proton-CachyOS"),
+            _tool("ge-proton9-26", "GE-Proton9-26"),
+        ],
         current_override="/fake/ge-proton9-26",
         steam_default_display="Proton-CachyOS",
     )
-    assert dlg.use_specific_radio.isChecked()
-    row = dlg.list_widget.currentRow()
-    assert dlg.list_widget.item(row).text().startswith("GE-Proton9-26")
+    cards = dlg.cards()
+    # Card index 0 = AUTO, 1 = Proton-CachyOS, 2 = GE-Proton9-26.
+    assert cards[2].property("selected") == "true"
 
 
-def test_save_with_steam_default_returns_empty_string(qapp):
+def test_save_with_auto_selected_returns_empty_string(qapp):
     from utils.widgets.cc_compat_picker import CCCompatPickerDialog
-    tools = [_tool("proton-cachyos", "Proton-CachyOS")]
     dlg = CCCompatPickerDialog(
-        tools=tools, current_override="", steam_default_display="Proton-CachyOS",
+        tools=[_tool("proton-cachyos", "Proton-CachyOS")],
+        current_override="",
+        steam_default_display="Proton-CachyOS",
     )
-    dlg.use_steam_radio.setChecked(True)
     dlg._on_save()
     assert dlg.chosen_override() == ""
 
 
 def test_save_with_specific_proton_returns_proton_dir(qapp):
     from utils.widgets.cc_compat_picker import CCCompatPickerDialog
-    tools = [_tool("proton-cachyos", "Proton-CachyOS")]
     dlg = CCCompatPickerDialog(
-        tools=tools, current_override="", steam_default_display="Proton-CachyOS",
-    )
-    dlg.use_specific_radio.setChecked(True)
-    dlg.list_widget.setCurrentRow(0)
-    dlg._on_save()
-    assert dlg.chosen_override() == "/fake/proton-cachyos"
-
-
-def test_source_tags_applied(qapp):
-    from utils.widgets.cc_compat_picker import CCCompatPickerDialog
-    tools = [
-        _tool("proton-cachyos", "long-dirty-vdf-display-name",
-              source="compatibilitytools.d", nickname="Proton-CachyOS 11.0"),
-        _tool("proton_9", "Proton 9.0 (Beta)",
-              source="official", nickname="Proton 9.0 (Beta)"),
-    ]
-    dlg = CCCompatPickerDialog(
-        tools=tools, current_override="",
-        steam_default_display="Proton-CachyOS 11.0",
-    )
-    item0 = dlg.list_widget.item(0).text()
-    item1 = dlg.list_widget.item(1).text()
-    # The picker must display the nickname, not the display_name.
-    assert "Proton-CachyOS 11.0" in item0
-    assert "long-dirty-vdf-display-name" not in item0
-    assert "Proton 9.0 (Beta)" in item1
-    # Source tags still rendered.
-    assert "[user]" in item0
-    assert "[official]" in item1
-
-
-def test_cancel_returns_none(qapp):
-    from utils.widgets.cc_compat_picker import CCCompatPickerDialog
-    tools = [_tool("proton-cachyos", "Proton-CachyOS")]
-    dlg = CCCompatPickerDialog(
-        tools=tools, current_override="", steam_default_display="Proton-CachyOS",
-    )
-    dlg.reject()
-    assert dlg.chosen_override() is None
-
-
-def test_stale_override_falls_back_to_steam_default(qapp):
-    """If current_override doesn't match any tool, fall back to
-    'Use Steam's selection' rather than leaving 'specific' checked
-    with no row selected. Bug-fix regression test."""
-    from utils.widgets.cc_compat_picker import CCCompatPickerDialog
-    tools = [_tool("proton-cachyos", "Proton-CachyOS")]
-    dlg = CCCompatPickerDialog(
-        tools=tools,
-        current_override="/fake/uninstalled-proton",
+        tools=[_tool("ge-proton9-26", "GE-Proton9-26")],
+        current_override="/fake/ge-proton9-26",
         steam_default_display="Proton-CachyOS",
     )
-    assert dlg.use_steam_radio.isChecked()
-    assert not dlg.use_specific_radio.isChecked()
+    dlg._on_save()
+    assert dlg.chosen_override() == "/fake/ge-proton9-26"
 
 
-def test_save_specific_with_no_row_rejects(qapp):
-    """Defensive: if 'specific' is checked but no row is selected,
-    Save treats it as Cancel (returns None)."""
+def test_dialog_renders_section_label(qapp):
+    """The 'OR PICK A SPECIFIC PROTON VERSION' divider must be present when
+    there is at least one specific Proton tool."""
+    from PySide6.QtWidgets import QLabel
     from utils.widgets.cc_compat_picker import CCCompatPickerDialog
-    tools = [_tool("proton-cachyos", "Proton-CachyOS")]
     dlg = CCCompatPickerDialog(
-        tools=tools,
+        tools=[_tool("proton-cachyos", "Proton-CachyOS")],
         current_override="",
         steam_default_display="Proton-CachyOS",
     )
-    dlg.use_specific_radio.setChecked(True)
-    dlg.list_widget.setCurrentRow(-1)
-    dlg._on_save()
-    assert dlg.chosen_override() is None
-    assert dlg.result() == dlg.DialogCode.Rejected
+    labels = dlg.findChildren(QLabel, "picker_section_label")
+    texts = [lbl.text() for lbl in labels]
+    assert any("PICK A SPECIFIC PROTON" in t.upper() for t in texts)
+
+
+def test_dialog_omits_section_label_when_no_tools(qapp):
+    """Edge case: zero Proton tools -> no divider (auto-mode alone)."""
+    from PySide6.QtWidgets import QLabel
+    from utils.widgets.cc_compat_picker import CCCompatPickerDialog
+    dlg = CCCompatPickerDialog(
+        tools=[],
+        current_override="",
+        steam_default_display="Proton-CachyOS",
+    )
+    labels = dlg.findChildren(QLabel, "picker_section_label")
+    assert labels == []

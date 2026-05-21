@@ -394,18 +394,28 @@ class GamePathRow(SettingsRow):
         home = os.path.expanduser("~")
         display = path.replace(home, "~") if path.startswith(home) else path
         subtitle = display
+        has_chip = False
         if self._settings_key == "cc_engine_dir":
             chip_suffix = self._active_install_chip()
             if chip_suffix:
                 subtitle = f"{display}  ·  {chip_suffix}"
+                has_chip = True
+        # Rich text for chip-containing subtitles; plain text otherwise so
+        # paths with literal `<` or `>` characters render correctly.
+        from PySide6.QtCore import Qt as _Qt
+        self.sub_widget.setTextFormat(_Qt.RichText if has_chip else _Qt.PlainText)
         self.sub_widget.setText(subtitle)
         self.sub_widget.setStyleSheet(
             "font-size: 12px; color: #56c856; background: transparent; border: none;"
         )
 
     def _active_install_chip(self) -> str:
-        """Return '[CHIP] Display Name' for the install matching the stored
-        signature, or '' if no match or anything goes wrong."""
+        """Return an inline HTML chip + display name for the install matching
+        the stored signature, or '' if no match or anything goes wrong.
+
+        The returned string is intended to be embedded in a rich-text QLabel.
+        Callers that show it must `setTextFormat(Qt.RichText)` on the label.
+        """
         try:
             sig = self.settings_manager.get(
                 CC_ENGINE_INSTALL_SIGNATURE, ""
@@ -415,13 +425,12 @@ class GamePathRow(SettingsRow):
             installs = getattr(self, "_cc_installs", None)
             if not installs:
                 return ""
-            from utils.launcher_chip import LAUNCHER_CHIP_LABEL
+            from utils.widgets.picker_card import PickerChip
             for inst in installs:
                 if install_signature(inst) == sig:
-                    chip = LAUNCHER_CHIP_LABEL.get(
-                        inst.launcher, inst.launcher.upper()
-                    )
-                    return f"[{chip}] {inst.display_name}"
+                    chip_html = PickerChip.inline_html(inst.launcher)
+                    # display_name is plain text; safe to interpolate.
+                    return f"{chip_html} {inst.display_name}"
         except Exception:
             return ""
         return ""

@@ -5,66 +5,118 @@ from __future__ import annotations
 import os
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QListWidget, QListWidgetItem, QWidget,
+    QDialog, QHBoxLayout, QLabel, QPushButton, QScrollArea,
+    QVBoxLayout, QWidget,
 )
 
 from services.wine_runtimes import WineInstall, install_signature
-from utils.launcher_chip import LAUNCHER_CHIP_LABEL
+from utils.widgets.picker_card import PickerCard
 
 
 _CONFIRM_KEEP = "Keep this install"
 _CONFIRM_USE = "Use this install"
 
 
+def _short_path(p: str) -> str:
+    home = os.path.expanduser("~")
+    if p == home:
+        return "~"
+    if p.startswith(home + os.sep):
+        return "~" + p[len(home):]
+    return p
+
+
 class CCInstallPickerDialog(QDialog):
     """Modal dialog listing detected Corporate Clash installs.
 
-    When ``active_signature`` is provided and matches one of the installs,
-    that row is marked with a ``(currently active)`` suffix and pre-
-    selected; the confirm button reads "Keep this install" while the
-    active row stays selected, "Use this install" otherwise.
+    When ``active_signature`` is provided and matches one of the (non-stale)
+    installs, that row is rendered with active=True and pre-selected; the
+    confirm button reads "Keep this install" while the active row stays
+    selected, "Use this install" otherwise.
+
+    Stale handling: installs whose exe_path no longer exists on disk are
+    filtered out unless their signature matches ``active_signature``, in
+    which case they render with stale=True and are un-pickable so the
+    user can see why their last pick is no longer launchable.
     """
 
-    def __init__(self, installs: list[WineInstall], parent=None,
-                 active_signature: str | None = None):
+    def __init__(
+        self,
+        installs: list[WineInstall],
+        parent: QWidget | None = None,
+        active_signature: str | None = None,
+    ) -> None:
         super().__init__(parent)
+        self.setObjectName("picker_dialog")
         self.setWindowTitle("Choose Corporate Clash install")
         self.setModal(True)
-        self._installs = installs
-        self._selected: WineInstall | None = None
         self._active_signature = active_signature or None
+        self._cards: list[PickerCard] = []
+        self._card_installs: list[WineInstall] = []
+        self._card_is_stale: list[bool] = []
+        self._selected: WineInstall | None = None
+        self._selected_index: int = -1
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(10)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(18, 18, 18, 18)
+        outer.setSpacing(12)
 
         intro = QLabel(
             "Multiple Corporate Clash installs were detected. "
             "Choose which one to use."
         )
+        intro.setObjectName("picker_intro")
         intro.setWordWrap(True)
-        layout.addWidget(intro)
+        outer.addWidget(intro)
 
-        self.list_widget = QListWidget()
-        self.list_widget.setObjectName("cc_install_picker_list")
-        active_row: int | None = None
-        for i, inst in enumerate(installs):
-            chip = LAUNCHER_CHIP_LABEL.get(inst.launcher, inst.launcher.upper())
-            home = os.path.expanduser("~")
-            short_path = inst.exe_path
-            if short_path.startswith(home):
-                short_path = "~" + short_path[len(home):]
-            suffix = ""
-            if self._active_signature and install_signature(inst) == self._active_signature:
-                suffix = "  (currently active)"
-                active_row = i
-            text = f"[{chip}]  {inst.display_name}{suffix}\n         {short_path}"
-            self.list_widget.addItem(QListWidgetItem(text))
-        self.list_widget.itemDoubleClicked.connect(self._on_double_click)
-        self.list_widget.currentRowChanged.connect(self._on_row_changed)
-        layout.addWidget(self.list_widget)
+        # Card column inside a scroll area for overflow.
+        self._scroll = QScrollArea()
+        self._scroll.setObjectName("picker_card_list")
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._scroll.setFrameShape(QScrollArea.NoFrame)
+        try:
+            from utils.widgets.auto_hide_scrollbar import install_modern_scrollbar
+            from utils.theme_manager import is_dark_palette
+            install_modern_scrollbar(self._scroll, is_dark=is_dark_palette())
+        except Exception:
+            # Auto-hide scrollbar is a polish nicety; fall back to Qt default.
+            pass
 
+        card_holder = QWidget()
+        self._card_layout = QVBoxLayout(card_holder)
+        self._card_layout.setContentsMargins(0, 0, 0, 0)
+        self._card_layout.setSpacing(8)
+
+        for inst in installs:
+            exists = os.path.exists(inst.exe_path)
+            is_active = bool(
+                self._active_signature
+                and install_signature(inst) == self._active_signature
+            )
+            if not exists and not is_active:
+                # Truly orphaned: drop entirely.
+                continue
+            i = len(self._cards)
+            card = PickerCard(
+                chip_slug=inst.launcher,
+                name=inst.display_name,
+                path=_short_path(inst.exe_path),
+                active=is_active,
+                stale=(not exists),
+            )
+            card.clicked.connect(lambda i=i: self._on_card_clicked(i))
+            card.doubleClicked.connect(lambda i=i: self._on_card_double_clicked(i))
+            self._card_layout.addWidget(card)
+            self._cards.append(card)
+            self._card_installs.append(inst)
+            self._card_is_stale.append(not exists)
+
+        self._card_layout.addStretch(1)
+        self._scroll.setWidget(card_holder)
+        outer.addWidget(self._scroll, 1)
+
+        # Buttons.
         btn_row = QHBoxLayout()
         btn_row.addStretch(1)
         self.cancel_btn = QPushButton("Cancel")
@@ -72,46 +124,69 @@ class CCInstallPickerDialog(QDialog):
         btn_row.addWidget(self.cancel_btn)
 
         self.confirm_btn = QPushButton(_CONFIRM_USE)
+        self.confirm_btn.setObjectName("picker_primary_btn")
         self.confirm_btn.setDefault(True)
         self.confirm_btn.setEnabled(False)
         self.confirm_btn.clicked.connect(self._confirm)
         btn_row.addWidget(self.confirm_btn)
+        outer.addLayout(btn_row)
 
-        layout.addLayout(btn_row)
-        self.resize(520, 320)
+        self.resize(640, 480)
+        self.setMinimumSize(560, 360)
+        self.setMaximumWidth(820)
 
-        if active_row is not None:
-            # Pre-select the active row AFTER signals are connected so the
-            # row-changed hook flips the button label and resolves _selected.
-            self.list_widget.setCurrentRow(active_row)
-            self._selected = self._installs[active_row]
+        # Pre-select the active row if it's a non-stale card.
+        for i, inst in enumerate(self._card_installs):
+            if (
+                self._active_signature
+                and install_signature(inst) == self._active_signature
+                and not self._card_is_stale[i]
+            ):
+                self.select_index(i)
+                break
 
-    def select_index(self, idx: int):
+    # ── Public API (preserved) ──────────────────────────────────────────
+    def cards(self) -> list[PickerCard]:
+        return list(self._cards)
+
+    def select_index(self, idx: int) -> None:
         """Programmatically pick a row (used in tests and the boot prompt)."""
-        if 0 <= idx < self.list_widget.count():
-            self.list_widget.setCurrentRow(idx)
-            if 0 <= idx < len(self._installs):
-                self._selected = self._installs[idx]
+        if not (0 <= idx < len(self._cards)):
+            return
+        if self._card_is_stale[idx]:
+            return  # Stale rows are un-pickable.
+        if self._selected_index >= 0:
+            self._cards[self._selected_index].set_selected(False)
+        self._selected_index = idx
+        self._cards[idx].set_selected(True)
+        self._selected = self._card_installs[idx]
+        self._update_confirm_button()
 
     def selected_install(self) -> WineInstall | None:
         return self._selected
 
-    def _on_row_changed(self, row: int):
-        self.confirm_btn.setEnabled(row >= 0)
+    # ── Internal ────────────────────────────────────────────────────────
+    def _on_card_clicked(self, idx: int) -> None:
+        self.select_index(idx)
+
+    def _on_card_double_clicked(self, idx: int) -> None:
+        self.select_index(idx)
+        self._confirm()
+
+    def _update_confirm_button(self) -> None:
+        idx = self._selected_index
+        self.confirm_btn.setEnabled(idx >= 0)
         if (
             self._active_signature
-            and 0 <= row < len(self._installs)
-            and install_signature(self._installs[row]) == self._active_signature
+            and 0 <= idx < len(self._card_installs)
+            and install_signature(self._card_installs[idx]) == self._active_signature
         ):
             self.confirm_btn.setText(_CONFIRM_KEEP)
         else:
             self.confirm_btn.setText(_CONFIRM_USE)
 
-    def _on_double_click(self, _item):
-        self._confirm()
-
-    def _confirm(self):
-        row = self.list_widget.currentRow()
-        if 0 <= row < len(self._installs):
-            self._selected = self._installs[row]
+    def _confirm(self) -> None:
+        idx = self._selected_index
+        if 0 <= idx < len(self._card_installs) and not self._card_is_stale[idx]:
+            self._selected = self._card_installs[idx]
             self.accept()
