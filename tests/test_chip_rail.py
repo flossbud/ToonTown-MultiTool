@@ -113,7 +113,7 @@ def test_chip_rail_has_four_nav_chips_in_order(chip_rail_with_nav):
     instance, rail = chip_rail_with_nav
     chips = [c for c in rail.findChildren(QToolButton) if c.objectName().startswith("chip_")]
     labels = [c.text() for c in chips]
-    assert labels == ["Multitoon", "Keysets", "Launcher", "Settings"]
+    assert labels == ["Multitoon", "Launcher", "Keysets", "Settings"]
 
 
 def test_chips_use_text_under_icon_style(chip_rail_with_nav):
@@ -480,3 +480,17 @@ def test_overflow_button_click_invokes_pop_menu(qapp, monkeypatch):
     assert calls[0][0] == "show"
     assert calls[0][2] is instance.overflow_btn
     _ = rail  # prevent GC of Qt widget tree before assertions
+
+
+def test_chip_rail_nav_items_order(qapp):
+    """Pin the chip rail label order. The order is part of the UX contract -
+    Launch must be index 1 (immediately after Multitoon) and Keysets must be
+    index 2 (immediately before Settings), so Keysets groups with Settings as
+    control-settings instead of sitting between Multitoon and Launch."""
+    from main import MultiToonTool
+    instance = MultiToonTool.__new__(MultiToonTool)
+    instance.settings_manager = _StubSettings(hints_enabled=True, show_debug_tab=False)
+    instance.nav_select = lambda i: None
+    rail = instance._build_chip_rail()
+    labels = [c.text() for c in instance.chip_buttons]
+    assert labels == ["Multitoon", "Launcher", "Keysets", "Settings"]

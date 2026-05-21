@@ -333,8 +333,8 @@ class MultiToonTool(QMainWindow):
 
         self.stack = QStackedWidget()
         self.stack.addWidget(self.multitoon_tab)   # 0
-        self.stack.addWidget(self.keymap_tab)       # 1
-        self.stack.addWidget(self.launch_tab)       # 2
+        self.stack.addWidget(self.launch_tab)       # 1
+        self.stack.addWidget(self.keymap_tab)       # 2
         self.stack.addWidget(self.settings_tab)     # 3
         self.stack.addWidget(self.debug_tab)        # 4
         self.stack.addWidget(self.credits_tab)      # 5
@@ -349,7 +349,7 @@ class MultiToonTool(QMainWindow):
         # Demo mode (TTMT_DEMO_LAUNCH_TAB) jumps directly to the Launch tab so
         # the visual verification script can capture it without synthesizing
         # clicks through xdotool.
-        _initial_tab = 2 if os.environ.get("TTMT_DEMO_LAUNCH_TAB") else 0
+        _initial_tab = 1 if os.environ.get("TTMT_DEMO_LAUNCH_TAB") else 0
         self.nav_select(_initial_tab)
         self._setup_update_checker()
         self._maybe_kick_off_startup_check()
@@ -377,7 +377,7 @@ class MultiToonTool(QMainWindow):
             self._on_keep_alive_help_requested
         )
         self.multitoon_tab.launch_tab_requested.connect(
-            lambda: self.nav_select(2)
+            lambda: self.nav_select(1)
         )
 
         self.log(f"[Debug] {app_name()} launched.")
@@ -659,8 +659,8 @@ class MultiToonTool(QMainWindow):
         self.chip_buttons = []
         nav_items = [
             ("Multitoon", 0),
-            ("Keysets",   1),
-            ("Launcher",  2),
+            ("Launcher",  1),
+            ("Keysets",   2),
             ("Settings",  3),
         ]
         # 10pt explicitly so chips fit in CHIP_RAIL_H without Qt clipping the
@@ -832,8 +832,8 @@ class MultiToonTool(QMainWindow):
         """
         c = self._theme_colors()
         icon_factories = [
-            make_nav_gamepad, make_nav_keyboard,
-            make_nav_power, make_nav_gear,
+            make_nav_gamepad, make_nav_power,
+            make_nav_keyboard, make_nav_gear,
         ]
         # Update the pill border color from the current theme accent.
         if hasattr(self, "chip_pill"):
