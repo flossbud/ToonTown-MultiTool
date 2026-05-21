@@ -90,3 +90,13 @@ Targeted repros for the issues fixed in `2026-05-07-input-forwarding-fixes.md`.
 ### Mod-key sanity (no regressions)
 - [ ] **Letter hotkeys still forward (custom WASD config):** Configure TTR for WASD movement in-game, click `Detect Game Settings`. Press W/A/S/D in foreground TTR. Background toons must move.
 - [ ] **Chat-aware key blocking still gates correctly:** Toggle chat off on a background toon under default arrow TTR config. Type letters in foreground; background chat must NOT reopen.
+
+## CC Full-UI card (2026-05-21)
+- [ ] Launch CC via TTMT, pick a toon, walk into a hood → toon's name appears, species emoji on portrait, playground chip (📍 Toontown Central) in Full UI card
+- [ ] Same as above but walk into a specific street → zone chip (Loopy Lane) appears next to the playground chip
+- [ ] Resize window above the Full UI breakpoint → CC chip row stays visible, stats rows do NOT render for the CC slot
+- [ ] Resize window back to Compact → italic subtitle "📍 Playground · Zone" appears under the toon name, species emoji on the badge
+- [ ] Launch CC externally (Steam shortcut / double-click) → window detected, controls work, but no chips/emoji/name (empty fallback rendered)
+- [ ] Run 4 CC toons simultaneously in different zones → each card shows its own playground+zone, no cross-contamination
+- [ ] Pick a toon whose species we haven't mapped (e.g., a CC turkey) → portrait shows ❓ emoji, no crash, debug log contains "[cc_species] unknown head letter: <letter>"
+- [ ] Restart TTMT while CC is still running → CC card degrades to empty-fallback state (same as external launch); no crash
