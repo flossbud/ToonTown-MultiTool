@@ -28,7 +28,7 @@ from utils.version_compare import (
 )
 
 
-GITHUB_API = "https://api.github.com/repos/flossbud/ToonTownMultiTool-v2/releases"
+GITHUB_API = "https://api.github.com/repos/flossbud/ToonTown-MultiTool/releases"
 CACHE_TTL_SECONDS = 6 * 60 * 60  # 6 hours
 HTTP_TIMEOUT = 5.0
 
