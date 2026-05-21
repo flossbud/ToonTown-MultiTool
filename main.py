@@ -659,8 +659,8 @@ class MultiToonTool(QMainWindow):
         self.chip_buttons = []
         nav_items = [
             ("Multitoon", 0),
-            ("Keysets",   1),
-            ("Launcher",  2),
+            ("Launcher",  1),
+            ("Keysets",   2),
             ("Settings",  3),
         ]
         # 10pt explicitly so chips fit in CHIP_RAIL_H without Qt clipping the
