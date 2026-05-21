@@ -70,7 +70,7 @@ def test_prompt_inline_picker_persists_signature_on_accept(qapp, monkeypatch):
     installs = [_install("A"), _install("B")]
 
     class _FakeDialog:
-        Accepted = QDialog.Accepted
+        DialogCode = QDialog.DialogCode
         def __init__(self, installs, parent=None, active_signature=None):
             self._installs = installs
         def exec(self):
@@ -92,7 +92,7 @@ def test_prompt_inline_picker_returns_false_on_reject(qapp, monkeypatch):
     installs = [_install("A"), _install("B")]
 
     class _FakeDialog:
-        Accepted = QDialog.Accepted
+        DialogCode = QDialog.DialogCode
         def __init__(self, installs, parent=None, active_signature=None):
             pass
         def exec(self):

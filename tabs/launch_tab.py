@@ -121,7 +121,7 @@ def _prompt_inline_picker(parent, installs, settings_manager) -> bool:
     dlg = CCInstallPickerDialog(
         installs, parent=parent, active_signature=stored or None,
     )
-    if dlg.exec() != dlg.Accepted:
+    if dlg.exec() != dlg.DialogCode.Accepted:
         return False
     picked = dlg.selected_install()
     if picked is None:

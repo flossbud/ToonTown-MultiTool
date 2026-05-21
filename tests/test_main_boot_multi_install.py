@@ -93,9 +93,10 @@ def test_maybe_prompt_writes_settings_on_accept(monkeypatch):
     )
 
     class _FakeDialog:
-        Accepted = 1
+        from PySide6.QtWidgets import QDialog as _QD
+        DialogCode = _QD.DialogCode
         def __init__(self, *a, **kw): pass
-        def exec(self): return self.Accepted
+        def exec(self): return self.DialogCode.Accepted
         def selected_install(self): return installs[1]
 
     monkeypatch.setattr(
@@ -132,9 +133,10 @@ def test_maybe_prompt_writes_set_hash_after_acceptance(monkeypatch):
     )
 
     class _FakeDialog:
-        Accepted = 1
+        from PySide6.QtWidgets import QDialog as _QD
+        DialogCode = _QD.DialogCode
         def __init__(self, *a, **kw): pass
-        def exec(self): return self.Accepted
+        def exec(self): return self.DialogCode.Accepted
         def selected_install(self): return installs[0]
 
     monkeypatch.setattr(

@@ -488,7 +488,7 @@ class GamePathRow(SettingsRow):
         dlg = CCInstallPickerDialog(
             installs, parent=self.window(), active_signature=stored or None,
         )
-        if dlg.exec() == dlg.Accepted:
+        if dlg.exec() == dlg.DialogCode.Accepted:
             picked = dlg.selected_install()
             if picked:
                 self._apply_picked_install(picked)

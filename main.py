@@ -1299,7 +1299,7 @@ def _maybe_prompt_for_cc_install(main_window, settings_manager):
         dlg = CCInstallPickerDialog(
             installs, parent=main_window, active_signature=stored or None,
         )
-        if dlg.exec() == dlg.Accepted:
+        if dlg.exec() == dlg.DialogCode.Accepted:
             picked = dlg.selected_install()
             if picked is not None:
                 settings_manager.set("cc_engine_dir", os.path.dirname(picked.exe_path))

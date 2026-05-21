@@ -144,6 +144,18 @@ def test_stale_card_does_not_become_selected_on_click(qapp, tmp_path):
     assert dlg.selected_install() is None
 
 
+def test_dialog_code_accepted_resolves_on_instance(qapp, tmp_path):
+    """PySide6 6.10+ removed the legacy `dlg.Accepted` instance alias on
+    QDialog, but callers still use `dlg.DialogCode.Accepted` to compare
+    against the result of `dlg.exec()`. Regression guard for the boot-prompt
+    AttributeError when accepting the picker."""
+    from utils.widgets.cc_install_picker import CCInstallPickerDialog
+    dlg = CCInstallPickerDialog(_installs(tmp_path))
+    # Must resolve without AttributeError; value is the int 1.
+    assert int(dlg.DialogCode.Accepted) == 1
+    assert int(dlg.DialogCode.Rejected) == 0
+
+
 def test_short_path_does_not_collapse_strict_prefix(qapp, monkeypatch, tmp_path):
     """If $HOME is /home/jaret, a path under /home/jaret2 must NOT be
     rendered as ~2/... - only $HOME-rooted paths get the ~ collapse."""
