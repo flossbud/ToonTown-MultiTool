@@ -346,7 +346,11 @@ class MultiToonTool(QMainWindow):
 
         self._apply_full_theme()
         self._refresh_header_session_status()
-        self.nav_select(0)
+        # Demo mode (TTMT_DEMO_LAUNCH_TAB) jumps directly to the Launch tab so
+        # the visual verification script can capture it without synthesizing
+        # clicks through xdotool.
+        _initial_tab = 2 if os.environ.get("TTMT_DEMO_LAUNCH_TAB") else 0
+        self.nav_select(_initial_tab)
         self._setup_update_checker()
         self._maybe_kick_off_startup_check()
         self._update_hint_icon()
