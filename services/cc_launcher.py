@@ -17,6 +17,7 @@ import subprocess
 import sys
 import threading
 from dataclasses import replace
+from pathlib import Path
 from PySide6.QtCore import QObject, Signal
 from services.cc_login_service import CC_DEFAULT_REALM, CC_ENGINE_SEARCH_PATHS
 from services.launcher_env import build_launcher_env
@@ -29,6 +30,37 @@ from services.steam_proton_tools import enumerate_proton_tools
 from services.wine_runtimes import WineInstall
 from utils.game_registry import GameRegistry
 from utils.host_spawn import host_popen
+
+# ── PID → stdout-path registry ────────────────────────────────────────
+# Populated by `_run` when a CC process is spawned, popped in its
+# `finally`. Used by `utils.cc_api._resolve_stdout_path` to locate the
+# captured log file for a given CC window's PID. Externally-launched
+# CC processes are absent from this dict, which is the correct
+# degradation signal (no stdout available → no enriched data).
+
+_pid_to_stdout: dict[int, Path] = {}
+_pid_to_stdout_lock = threading.Lock()
+
+
+def _register_stdout_path(pid: int, path: Path) -> None:
+    with _pid_to_stdout_lock:
+        _pid_to_stdout[pid] = path
+
+
+def _unregister_stdout_path(pid: int) -> None:
+    with _pid_to_stdout_lock:
+        _pid_to_stdout.pop(pid, None)
+
+
+def get_stdout_path_for_pid(pid: int) -> Path | None:
+    """Return the captured-stdout file path for a CC PID we launched.
+
+    Returns None for externally-launched CC processes (or after we've
+    cleaned up a finished one).
+    """
+    with _pid_to_stdout_lock:
+        return _pid_to_stdout.get(pid)
+
 
 _CUSTOM_APPROVAL_KEY = "cc_engine_dir_approved_custom_dir"
 
@@ -316,6 +348,7 @@ class CCLauncher(QObject):
             stdout_fh = os.fdopen(stdout_fd, "w+b")
             stderr_fh = os.fdopen(stderr_fd, "w+b")
             retcode = None
+            pid = None  # Set after successful spawn; used in finally to unregister
             proton_compatdata = None  # Set after successful spawn for steam-proton
             try:
                 kwargs = {}
@@ -359,6 +392,7 @@ class CCLauncher(QObject):
                     self._game_process = _spawn()
                 pid = self._game_process.pid
                 print(f"[CCLauncher] _run: spawned pid={pid}")
+                _register_stdout_path(pid, Path(stdout_path))
                 # Track this compatdata as active so subsequent CC launches
                 # against the same prefix switch from 'waitforexitandrun'
                 # (which blocks on the existing wineserver's flock) to 'run'.
@@ -399,6 +433,8 @@ class CCLauncher(QObject):
                 print(f"[CCLauncher] _run: error {type(e).__name__}: {e}")
                 self.launch_failed.emit(f"Launch error: {e}")
             finally:
+                if pid is not None:
+                    _unregister_stdout_path(pid)
                 if proton_compatdata is not None:
                     unregister_active_proton_compatdata(proton_compatdata)
                 # Post-exit cleanup: drain the bridge for this prefix

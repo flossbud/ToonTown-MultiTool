@@ -130,6 +130,12 @@ def get_theme_colors(is_dark: bool) -> dict:
             "text_muted":     "#888888",
             "text_disabled":  "#666666",
 
+            # CC Full-UI chip row tones (playground = blue, zone = green).
+            "cc_chip_playground_bg": "#1f2a3a",
+            "cc_chip_playground_fg": "#9fb8d6",
+            "cc_chip_zone_bg":       "#1f2f24",
+            "cc_chip_zone_fg":       "#8fcca5",
+
             # Text/icon paired with accent surfaces. White on saturated accents
             # is what the v2.0.3 dark theme used; matches the Compact button look.
             "text_on_accent": "#ffffff",
@@ -255,6 +261,12 @@ def get_theme_colors(is_dark: bool) -> dict:
             "text_secondary": "#334155",
             "text_muted":     "#475569",
             "text_disabled":  "#64748b",
+
+            # CC Full-UI chip row tones (playground = blue, zone = green).
+            "cc_chip_playground_bg": "#dbeafe",
+            "cc_chip_playground_fg": "#1e40af",
+            "cc_chip_zone_bg":       "#dcfce7",
+            "cc_chip_zone_fg":       "#166534",
 
             # On-accent text/icon — universal pair for every text-bearing accent
             # surface in the light palette (white on green-700/blue-600/orange-700/

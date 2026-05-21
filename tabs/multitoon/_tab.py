@@ -93,6 +93,11 @@ class ToonPortraitWidget(QWidget):
         self._dna     = None
         self._fetch_token = 0
         self._cancelled = False
+        self._cc_mode = False
+        self._cc_skin: QColor | None = None
+        self._cc_accent: QColor | None = None
+        self._cc_gloves: QColor | None = None
+        self._cc_emoji: str = ""
         self.setMinimumSize(38, 38)
         self.setMaximumSize(64, 64)
         self.setCursor(Qt.PointingHandCursor)
@@ -135,6 +140,25 @@ class ToonPortraitWidget(QWidget):
         self.update()
         token = self._fetch_token
         threading.Thread(target=self._fetch, args=(dna, token), daemon=True).start()
+
+    def set_cc_mode(self, skin_rgb, accent_rgb, gloves_rgb, emoji):
+        """Enable CC paint mode (skin-color fill + bottom flag stripe +
+        centered emoji). Pass None for any arg to disable CC mode and
+        fall back to today's colored-circle rendering."""
+        if not skin_rgb or not emoji:
+            self._cc_mode = False
+            self._cc_skin = None
+            self._cc_accent = None
+            self._cc_gloves = None
+            self._cc_emoji = ""
+            self.update()
+            return
+        self._cc_mode = True
+        self._cc_skin = QColor.fromRgbF(*skin_rgb)
+        self._cc_accent = QColor.fromRgbF(*(accent_rgb or skin_rgb))
+        self._cc_gloves = QColor.fromRgbF(*(gloves_rgb or (1.0, 1.0, 1.0)))
+        self._cc_emoji = emoji
+        self.update()
 
     def cancel(self):
         self._cancelled = True
@@ -189,6 +213,38 @@ class ToonPortraitWidget(QWidget):
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
+        p.setPen(Qt.NoPen)
+        rect = self.rect()
+        size = min(rect.width(), rect.height())
+
+        if self._cc_mode and self._cc_skin is not None:
+            # CC paint: rounded-rect skin fill, bottom stripe with gloves
+            # (left third) + accent (right two-thirds), big emoji centered.
+            radius = max(6, round(size * 0.13))
+            p.setBrush(self._cc_skin)
+            p.drawRoundedRect(rect, radius, radius)
+
+            # Bottom flag stripe (~12% of height)
+            stripe_h = max(3, round(size * 0.12))
+            stripe_top = rect.bottom() - stripe_h + 1
+            split = rect.left() + round(rect.width() / 3)
+            p.setBrush(self._cc_gloves or QColor("#ffffff"))
+            p.drawRect(rect.left(), stripe_top, split - rect.left(), stripe_h)
+            p.setBrush(self._cc_accent or self._cc_skin)
+            p.drawRect(split, stripe_top, rect.right() - split + 1, stripe_h)
+
+            # Emoji centered. Use a font size proportional to the box.
+            font = p.font()
+            font.setPixelSize(max(14, round(size * 0.55)))
+            p.setFont(font)
+            p.setPen(Qt.SolidLine)
+            p.setPen(QColor("#000000"))  # text needs a pen; emojis draw their own colors on most platforms
+            p.drawText(rect, Qt.AlignCenter, self._cc_emoji)
+            p.end()
+            return
+
+        # Restore pen/brush state for non-CC paint path
+        p.setPen(Qt.NoPen)
         cx = self.width() / 2.0
         cy = self.height() / 2.0
         r  = min(cx, cy) - 2.0  # leave room for a 2px border
@@ -741,6 +797,7 @@ class MultitoonTab(QWidget):
     _toon_max_laffs_ready = Signal(list)
     _toon_beans_ready  = Signal(list)
     _toon_data_merge_ready = Signal(list, list, list, list, list, list, list)
+    _cc_toon_info_ready = Signal(list, list)  # (window_ids, list[CCToonInfo | None])
     keep_alive_updated = Signal()
     dot_state_changed = Signal(int, str)
     keep_alive_help_requested = Signal()
@@ -768,11 +825,13 @@ class MultitoonTab(QWidget):
         self.set_selectors = []     # replaces movement_dropdowns
         self.toon_cards = []
         self.profile_pills = []     # list of QPushButton pills
+        self._compact_cc_subtitles: list[QLabel] = []
         self.enabled_toons = [False] * 4
         self.chat_enabled  = [True]  * 4
         self.keep_alive_enabled = [False] * 4
         self.rapid_fire_enabled = [False] * 4
         self.toon_names       = [None] * 4
+        self._cc_toon_infos   = [None] * 4
         self.toon_styles      = [None] * 4
         self.toon_colors      = [None] * 4
         self.toon_laffs       = [None] * 4
@@ -816,6 +875,7 @@ class MultitoonTab(QWidget):
         self._toon_max_laffs_ready.connect(self._apply_toon_max_laffs)
         self._toon_beans_ready.connect(self._apply_toon_beans)
         self._toon_data_merge_ready.connect(self._apply_merged_toon_data)
+        self._cc_toon_info_ready.connect(self._apply_cc_toon_info)
 
         self.refresh_timer = QTimer(self)
         self.refresh_timer.setInterval(5000)
@@ -892,6 +952,15 @@ class MultitoonTab(QWidget):
             badge = ToonPortraitWidget(i + 1)
             badge.clicked.connect(lambda idx=i: self._on_portrait_clicked(idx))
             self.slot_badges.append(badge)
+
+            cc_subtitle = QLabel("")
+            cc_subtitle.setObjectName("cc_compact_subtitle")
+            cc_subtitle.setStyleSheet(
+                "color: #9a9aa8; font-size: 10px; font-style: italic; "
+                "background: transparent; border: none;"
+            )
+            cc_subtitle.hide()
+            self._compact_cc_subtitles.append(cc_subtitle)
 
             name_label = ElidingLabel(f"Toon {i + 1}")
             status_dot = PulsingDot(10)
@@ -1121,6 +1190,18 @@ class MultitoonTab(QWidget):
                 card.set_status_state(state_str)
                 card._apply_game_pill_style()
 
+        # Sync CC-specific chip row state for slots whose game is CC.
+        # populate_active() unconditionally hides the chip row container, so
+        # we must re-call set_cc_mode after every layout swap to restore it.
+        for index in range(min(4, len(self._full._cards))):
+            info = self._cc_toon_infos[index] if index < len(self._cc_toon_infos) else None
+            if info is not None and info.playground is not None:
+                self._full._cards[index].set_cc_mode(
+                    info.playground, info.zone_name,
+                )
+            else:
+                self._full._cards[index].set_cc_mode(None, None)
+
     # ── Set selector rebuild ───────────────────────────────────────────────
 
     # ── Profile methods ────────────────────────────────────────────────────
@@ -1285,6 +1366,12 @@ class MultitoonTab(QWidget):
             self.profile_pills_label.setStyleSheet(
                 f"font-size: 10px; font-weight: 600; "
                 f"color: {c['text_muted']}; letter-spacing: 0.8px;"
+            )
+        # CC subtitle (Compact-only) tracks the theme's muted text color.
+        for sub in getattr(self, "_compact_cc_subtitles", []):
+            sub.setStyleSheet(
+                f"color: {c['text_muted']}; font-size: 10px; "
+                f"font-style: italic; background: transparent; border: none;"
             )
         self._update_pill_styles()
         self.refresh_button.setStyleSheet(f"""
@@ -1852,10 +1939,10 @@ class MultitoonTab(QWidget):
                         self._toon_data_merge_ready.emit(list(ttr_wids), list(names), list(styles), list(colors), list(laffs), list(max_laffs), list(beans))
 
                 if cc_wids and cc_enabled:
-                    def _cc_callback(names, styles, colors, laffs, max_laffs, beans):
+                    def _cc_data_callback(infos):
                         if gen == self._refresh_gen:
-                            self._toon_data_merge_ready.emit(list(cc_wids), list(names), list(styles), list(colors), list(laffs), list(max_laffs), list(beans))
-                    cc_api.get_toon_names_threaded(len(cc_wids), _cc_callback, cc_wids)
+                            self._cc_toon_info_ready.emit(list(cc_wids), list(infos))
+                    cc_api.get_toon_data_threaded(len(cc_wids), cc_wids, _cc_data_callback)
             finally:
                 self._toon_fetch_inflight_keys.discard(request_key)
 
@@ -2165,6 +2252,68 @@ class MultitoonTab(QWidget):
         self._refresh_toon_name_labels()
         self._refresh_toon_stats_labels()
 
+    @Slot(list, list)
+    def _apply_cc_toon_info(self, target_wids, infos):
+        """Fan out CCToonInfo per slot into name, portrait, chip row,
+        compact subtitle."""
+        wids = list(self.window_manager.ttr_window_ids) if hasattr(self, 'window_manager') and self.window_manager else []
+        for source_idx, wid in enumerate(target_wids):
+            if wid not in wids:
+                continue
+            global_idx = wids.index(wid)
+            if global_idx >= 4:
+                continue
+            info = infos[source_idx] if source_idx < len(infos) else None
+            self._cc_toon_infos[global_idx] = info
+
+            if info is None or info.name is None:
+                # Empty state: clear name, hide laff/bean (CC slots have no
+                # laff/bean stats), hide chips, plain badge.
+                # Note: if a slot later switches from CC back to TTR, the TTR
+                # data path (_apply_merged_toon_data -> _refresh_toon_stats_labels)
+                # will re-show the laff/bean labels on the next poll cycle.
+                self.toon_names[global_idx] = None
+                if global_idx < len(self.laff_labels):
+                    self.laff_labels[global_idx].hide()
+                if global_idx < len(self.bean_labels):
+                    self.bean_labels[global_idx].hide()
+                if global_idx < len(self.slot_badges):
+                    self.slot_badges[global_idx].set_cc_mode(None, None, None, None)
+                self.set_compact_cc_subtitle(global_idx, None, None)
+                if self._mode == "full" and global_idx < len(self._full._cards):
+                    self._full._cards[global_idx].set_cc_mode(None, None)
+                continue
+
+            # Apply name
+            self.toon_names[global_idx] = info.name
+
+            # Apply portrait (CC paint mode in both layouts since the
+            # widget is shared between them). If colors missing, fall
+            # back to plain mode so a previously-set CC paint doesn't
+            # linger.
+            if global_idx < len(self.slot_badges):
+                if info.dna_colors:
+                    skin, gloves, shirt, _shorts, accent = info.dna_colors
+                    self.slot_badges[global_idx].set_cc_mode(
+                        skin_rgb=skin, accent_rgb=accent, gloves_rgb=gloves,
+                        emoji=info.species_emoji or "❓",
+                    )
+                else:
+                    self.slot_badges[global_idx].set_cc_mode(None, None, None, None)
+
+            # Compact subtitle
+            self.set_compact_cc_subtitle(
+                global_idx, info.playground, info.zone_name,
+            )
+
+            # Full chip row
+            if self._mode == "full" and global_idx < len(self._full._cards):
+                self._full._cards[global_idx].set_cc_mode(
+                    info.playground, info.zone_name,
+                )
+
+        self._refresh_toon_name_labels()
+
     def _on_toon_names_received(self, names, styles, colors, laffs, max_laffs, beans):
         self._toon_names_ready.emit(list(names))
         self._toon_styles_ready.emit(list(styles))
@@ -2259,6 +2408,22 @@ class MultitoonTab(QWidget):
         if self._mode == "full" and hasattr(self, "_full") and self._full is not None:
             for card in self._full._cards:
                 card._apply_scaled_styles()
+
+    def set_compact_cc_subtitle(self, slot: int, playground, zone_name):
+        """Update the Compact UI subtitle for a CC slot. Hides if both
+        playground and zone are None."""
+        if slot >= len(self._compact_cc_subtitles):
+            return
+        sub = self._compact_cc_subtitles[slot]
+        if not playground:
+            sub.setText("")
+            sub.hide()
+            return
+        if zone_name:
+            sub.setText(f"\U0001f4cd {playground} \xb7 {zone_name}")
+        else:
+            sub.setText(f"\U0001f4cd {playground}")
+        sub.show()
 
     # ── Accessors ──────────────────────────────────────────────────────────
 

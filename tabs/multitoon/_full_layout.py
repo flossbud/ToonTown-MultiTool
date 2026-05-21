@@ -4,6 +4,8 @@ The Full UI is a 2x2 card grid with large portraits and a Discord-style status
 indicator (background-colored ring overlapping the portrait + colored dot inside).
 """
 
+from typing import Optional
+
 from PySide6.QtCore import Qt, Property, QPropertyAnimation, QEasingCurve, QRect, QSize, QTimer
 from PySide6.QtGui import QColor, QFont, QPainter
 from PySide6.QtWidgets import (
@@ -153,6 +155,14 @@ class _FullToonCard(QFrame):
         self._game_pill = None  # set on first populate_active
         self._inactive_empty_area = None
 
+        # CC chip row — sibling to laff/bean labels, shown only when slot
+        # is CC and playground data is available. See spec section 5
+        # (empty / transitional states) for visibility rules.
+        self._cc_chip_row_container = None
+        self._cc_playground_chip = None
+        self._cc_zone_chip = None
+        self._cc_active = False
+
         self._build_active_structure()
         self._build_inactive_view()
         self.populate_active()
@@ -200,6 +210,26 @@ class _FullToonCard(QFrame):
             _detach_from_layouts(widget)
             widget.setParent(self._active_root)
             widget.show()
+
+        # Build CC chip row if not already built. Reparent each time so
+        # layout-mode swaps don't strand widgets in the wrong tree.
+        if self._cc_chip_row_container is None:
+            self._cc_chip_row_container = QWidget(self._active_root)
+            row = QHBoxLayout(self._cc_chip_row_container)
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(6)
+
+            self._cc_playground_chip = QLabel(self._cc_chip_row_container)
+            self._cc_playground_chip.setObjectName("cc_playground_chip")
+            self._cc_zone_chip = QLabel(self._cc_chip_row_container)
+            self._cc_zone_chip.setObjectName("cc_zone_chip")
+            row.addWidget(self._cc_playground_chip)
+            row.addWidget(self._cc_zone_chip)
+            row.addStretch(1)
+        else:
+            self._cc_chip_row_container.setParent(self._active_root)
+
+        self._cc_chip_row_container.hide()  # default hidden; set_cc_mode toggles
 
         # TTR/CC pill — parented to card frame, positioned in resizeEvent
         self._game_pill = self._tab.game_badges[self._slot]
@@ -384,6 +414,66 @@ class _FullToonCard(QFrame):
         self._apply_scaled_styles()
         # Theme reset _dot_color_active to theme green; restore state-driven color.
         self._apply_status_state()
+        # Re-color CC chips with the new theme's chip tones.
+        self._apply_cc_chip_styles()
+
+    def set_cc_mode(self, playground: Optional[str], zone_name: Optional[str]) -> None:
+        """Show or hide the CC chip row based on data availability.
+
+        Visibility rules:
+          - playground None: hide both chips; laff/bean rows stay
+            untouched (caller separately controls those for TTR slots).
+          - playground only: show playground chip, hide zone chip.
+          - playground + zone: show both.
+        """
+        self._cc_active = playground is not None
+        if not self._cc_active:
+            if self._cc_chip_row_container is not None:
+                self._cc_chip_row_container.hide()
+            # Restore laff/bean visibility — they were hidden by the
+            # caller for CC slots; if we're flipping back to "no data"
+            # they remain hidden until _tab.py decides otherwise.
+            return
+
+        # Showing chip row: hide the laff/bean labels (they're CC's
+        # not-available stand-ins anyway, but make it explicit).
+        self._tab.laff_labels[self._slot].hide()
+        self._tab.bean_labels[self._slot].hide()
+
+        self._cc_playground_chip.setText(f"\U0001f4cd {playground}")
+        self._cc_playground_chip.show()
+        if zone_name:
+            self._cc_zone_chip.setText(zone_name)
+            self._cc_zone_chip.show()
+        else:
+            self._cc_zone_chip.hide()
+        self._cc_chip_row_container.show()
+        self._apply_cc_chip_styles()
+        self._layout_active_content()
+
+    def _apply_cc_chip_styles(self) -> None:
+        """Apply scaled font + colored background to the CC chips. Called
+        on every layout pass so font scales with the card."""
+        if self._cc_playground_chip is None:
+            return
+        s = self._scale if self._is_active else 1.0
+        font_px = max(10, round(13 * s))
+        c = self._theme_colors or {}
+        # Two distinct chip tones: blue for playground, green for zone.
+        # Fall back to neutral grays if theme not applied yet.
+        pg_bg = c.get("cc_chip_playground_bg", "#1f2a3a")
+        pg_fg = c.get("cc_chip_playground_fg", "#9fb8d6")
+        zn_bg = c.get("cc_chip_zone_bg", "#1f2f24")
+        zn_fg = c.get("cc_chip_zone_fg", "#8fcca5")
+        for lbl, bg, fg in (
+            (self._cc_playground_chip, pg_bg, pg_fg),
+            (self._cc_zone_chip, zn_bg, zn_fg),
+        ):
+            lbl.setStyleSheet(
+                f"background: {bg}; color: {fg}; "
+                f"padding: 3px 9px; border-radius: 11px; "
+                f"font-size: {font_px}px;"
+            )
 
     def _apply_game_pill_style(self) -> None:
         if self._theme_colors is None or self._game_pill is None:
@@ -477,6 +567,17 @@ class _FullToonCard(QFrame):
         name_label.setGeometry(self._scaled_rect(self._REF_NAME))
         self._tab.laff_labels[self._slot].setGeometry(self._scaled_rect(self._REF_LAFF))
         self._tab.bean_labels[self._slot].setGeometry(self._scaled_rect(self._REF_BEANS))
+
+        # CC chip row occupies the laff+bean stack area when visible.
+        # Same reference rect as laff (top) extended through bean (bottom).
+        if self._cc_chip_row_container is not None and self._cc_active:
+            laff = self._scaled_rect(self._REF_LAFF)
+            bean = self._scaled_rect(self._REF_BEANS)
+            self._cc_chip_row_container.setGeometry(
+                QRect(laff.x(), laff.y(), bean.right() - laff.x() + 1,
+                      bean.bottom() - laff.y() + 1)
+            )
+            self._apply_cc_chip_styles()
 
         self._place_fixed(self._tab.toon_buttons[self._slot], self._scaled_rect(self._REF_ENABLE))
         self._place_fixed(self._tab.chat_buttons[self._slot], self._scaled_rect(self._REF_CHAT))
