@@ -61,12 +61,9 @@ UnmapperFn = Callable[[int], None]
 
 
 def _real_enumerator() -> list[tuple[int, str]]:
-    """Walk the X11 window tree and yield (wid, title) for every window
-    that has a title set. Title resolution prefers _NET_WM_NAME with
-    WM_NAME fallback, mirroring utils.x11_discovery._walk_collect.
-
-    Returns an empty list if Xlib can't open a display (headless test box,
-    Windows host, etc.); never raises.
+    """Walk the X11 window tree and collect (wid, title) for every window
+    that has WM_NAME set. Returns an empty list if Xlib can't open a
+    display (headless test box, Windows host, etc.); never raises.
     """
     try:
         from Xlib import display as xdisplay  # type: ignore
