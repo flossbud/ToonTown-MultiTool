@@ -91,11 +91,16 @@ class AccountEditor(QDialog):
                 " color: #fff; font-size: 12px; }"
             )
             box.addWidget(inp)
-            return box, inp
+            err = QLabel("")
+            err.setStyleSheet("color: #ff7575; font-size: 10px; font-weight: 600;")
+            err.setVisible(False)
+            box.addWidget(err)
+            inp.textChanged.connect(lambda _: err.setVisible(False))
+            return box, inp, err
 
-        lay_lbl, self.label_input = labeled_input("Label", initial_label)
-        lay_usr, self.username_input = labeled_input("Username", initial_username)
-        lay_pwd, self.password_input = labeled_input("Password", initial_password, password=True)
+        lay_lbl, self.label_input, self.label_error = labeled_input("Label", initial_label)
+        lay_usr, self.username_input, self.username_error = labeled_input("Username", initial_username)
+        lay_pwd, self.password_input, self.password_error = labeled_input("Password", initial_password, password=True)
         body_lay.addLayout(lay_lbl)
         body_lay.addLayout(lay_usr)
         body_lay.addLayout(lay_pwd)
@@ -124,6 +129,18 @@ class AccountEditor(QDialog):
         self.setStyleSheet("QDialog { background: #1a2236; }")
 
     def _on_save(self) -> None:
+        if self._mode == "add":
+            ok = True
+            if not self.username_input.text().strip():
+                self.username_error.setText("Username is required")
+                self.username_error.setVisible(True)
+                ok = False
+            if not self.password_input.text().strip():
+                self.password_error.setText("Password is required")
+                self.password_error.setVisible(True)
+                ok = False
+            if not ok:
+                return
         self.account_saved.emit(
             self.label_input.text(),
             self.username_input.text(),

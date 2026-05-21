@@ -45,3 +45,56 @@ def test_save_emits_values(qapp):
     dlg.account_saved.connect(lambda lab, user, pw: captured.update({"lab": lab, "u": user, "p": pw}))
     dlg.save_btn.click()
     assert captured == {"lab": "New", "u": "new@example", "p": "pw"}
+
+
+def test_add_mode_empty_username_blocks_save(qapp):
+    dlg = AccountEditor(game="ttr", mode="add")
+    dlg.show()  # so isVisible() reflects child-widget state
+    dlg.password_input.setText("pw")  # password set, username blank
+    captured = []
+    dlg.account_saved.connect(lambda *a: captured.append(a))
+    dlg.save_btn.click()
+    assert captured == []  # no emit
+    assert dlg.username_error.isVisible()
+    assert not dlg.password_error.isVisible()
+
+
+def test_add_mode_empty_password_blocks_save(qapp):
+    dlg = AccountEditor(game="ttr", mode="add")
+    dlg.show()
+    dlg.username_input.setText("user")
+    captured = []
+    dlg.account_saved.connect(lambda *a: captured.append(a))
+    dlg.save_btn.click()
+    assert captured == []
+    assert dlg.password_error.isVisible()
+    assert not dlg.username_error.isVisible()
+
+
+def test_add_mode_both_empty_shows_both_errors(qapp):
+    dlg = AccountEditor(game="ttr", mode="add")
+    dlg.show()
+    captured = []
+    dlg.account_saved.connect(lambda *a: captured.append(a))
+    dlg.save_btn.click()
+    assert captured == []
+    assert dlg.username_error.isVisible()
+    assert dlg.password_error.isVisible()
+
+
+def test_edit_mode_allows_empty_save(qapp):
+    # Edit mode: user can deliberately clear fields. No validation.
+    dlg = AccountEditor(game="ttr", mode="edit", initial_label="X")
+    captured = []
+    dlg.account_saved.connect(lambda *a: captured.append(a))
+    dlg.save_btn.click()
+    assert len(captured) == 1  # emit happened
+
+
+def test_typing_clears_error(qapp):
+    dlg = AccountEditor(game="ttr", mode="add")
+    dlg.show()
+    dlg.save_btn.click()  # triggers error
+    assert dlg.username_error.isVisible()
+    dlg.username_input.setText("x")
+    assert not dlg.username_error.isVisible()
