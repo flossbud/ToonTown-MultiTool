@@ -408,6 +408,94 @@ DARK_THEME = """
         selection-background-color: #3a3a3a;
         color: white;
     }
+    /* ── Picker dialog (cc_install_picker, cc_compat_picker) ───────── */
+    QDialog#picker_dialog {
+        background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+            stop:0 #1a1a1f, stop:1 #161620);
+        border: 1px solid #2a2a2a;
+    }
+    QScrollArea#picker_card_list,
+    QScrollArea#picker_card_list > QWidget > QWidget {
+        background: transparent;
+        border: none;
+    }
+    QFrame#picker_card {
+        background-color: rgba(255, 255, 255, 8);
+        border: 1px solid rgba(255, 255, 255, 13);
+        border-radius: 12px;
+    }
+    QFrame#picker_card:hover {
+        background-color: rgba(255, 255, 255, 15);
+        border: 1px solid rgba(255, 255, 255, 25);
+    }
+    QFrame#picker_card[selected="true"] {
+        background-color: rgba(0, 119, 255, 26);
+        border: 1px solid rgba(0, 119, 255, 115);
+    }
+    QFrame#picker_card[stale="true"] QLabel#picker_card_name,
+    QFrame#picker_card[stale="true"] QLabel#picker_card_path {
+        color: #888888;
+    }
+    QLabel#picker_card_name {
+        color: #f0f0f0;
+        font-size: 13px;
+        font-weight: 600;
+        background: transparent;
+    }
+    QLabel#picker_card_path,
+    QLabel#picker_card_sub {
+        color: #888888;
+        font-size: 11px;
+        font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+        background: transparent;
+    }
+    QLabel#picker_active_pill {
+        background-color: #0077ff;
+        color: #ffffff;
+        font-size: 10px;
+        font-weight: 700;
+        padding: 4px 10px;
+        border-radius: 9px;
+    }
+    QLabel#picker_missing_pill {
+        background-color: rgba(251, 191, 36, 25);
+        border: 1px solid rgba(251, 191, 36, 89);
+        color: #fbbf24;
+        font-size: 10px;
+        font-weight: 700;
+        padding: 4px 10px;
+        border-radius: 9px;
+    }
+    QLabel#picker_section_label {
+        color: #888888;
+        font-size: 10px;
+        font-weight: 700;
+        padding: 16px 0 8px 4px;
+        background: transparent;
+    }
+    QLabel#picker_intro {
+        color: #cfcfcf;
+        font-size: 13px;
+        background: transparent;
+    }
+    QPushButton#picker_primary_btn {
+        background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+            stop:0 #1a88ff, stop:1 #0077ff);
+        color: #ffffff;
+        border: 1px solid #3399ff;
+        border-radius: 8px;
+        padding: 7px 16px;
+        font-weight: 600;
+    }
+    QPushButton#picker_primary_btn:hover {
+        background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+            stop:0 #2e94ff, stop:1 #1a88ff);
+    }
+    QPushButton#picker_primary_btn:disabled {
+        background: #1f2533;
+        color: #5a6680;
+        border: 1px solid #2a3344;
+    }
 """
 
 LIGHT_THEME = """
@@ -462,6 +550,94 @@ LIGHT_THEME = """
         background-color: #f8fafc;
         selection-background-color: #e2e8f0;
         color: #0f172a;
+    }
+    /* ── Picker dialog (cc_install_picker, cc_compat_picker) ───────── */
+    QDialog#picker_dialog {
+        background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+            stop:0 #f8fafc, stop:1 #eef2f7);
+        border: 1px solid #cbd5e1;
+    }
+    QScrollArea#picker_card_list,
+    QScrollArea#picker_card_list > QWidget > QWidget {
+        background: transparent;
+        border: none;
+    }
+    QFrame#picker_card {
+        background-color: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+    }
+    QFrame#picker_card:hover {
+        background-color: #f1f5f9;
+        border: 1px solid #cbd5e1;
+    }
+    QFrame#picker_card[selected="true"] {
+        background-color: #eff6ff;
+        border: 1px solid #2563eb;
+    }
+    QFrame#picker_card[stale="true"] QLabel#picker_card_name,
+    QFrame#picker_card[stale="true"] QLabel#picker_card_path {
+        color: #94a3b8;
+    }
+    QLabel#picker_card_name {
+        color: #0f172a;
+        font-size: 13px;
+        font-weight: 600;
+        background: transparent;
+    }
+    QLabel#picker_card_path,
+    QLabel#picker_card_sub {
+        color: #64748b;
+        font-size: 11px;
+        font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+        background: transparent;
+    }
+    QLabel#picker_active_pill {
+        background-color: #2563eb;
+        color: #ffffff;
+        font-size: 10px;
+        font-weight: 700;
+        padding: 4px 10px;
+        border-radius: 9px;
+    }
+    QLabel#picker_missing_pill {
+        background-color: #fef3c7;
+        border: 1px solid #f59e0b;
+        color: #b45309;
+        font-size: 10px;
+        font-weight: 700;
+        padding: 4px 10px;
+        border-radius: 9px;
+    }
+    QLabel#picker_section_label {
+        color: #64748b;
+        font-size: 10px;
+        font-weight: 700;
+        padding: 16px 0 8px 4px;
+        background: transparent;
+    }
+    QLabel#picker_intro {
+        color: #334155;
+        font-size: 13px;
+        background: transparent;
+    }
+    QPushButton#picker_primary_btn {
+        background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+            stop:0 #3b82f6, stop:1 #2563eb);
+        color: #ffffff;
+        border: 1px solid #2563eb;
+        border-radius: 8px;
+        padding: 7px 16px;
+        font-weight: 600;
+    }
+    QPushButton#picker_primary_btn:hover {
+        background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+            stop:0 #60a5fa, stop:1 #3b82f6);
+    }
+    QPushButton#picker_primary_btn:disabled {
+        background: #e2e8f0;
+        color: #94a3b8;
+        border: 1px solid #cbd5e1;
     }
 """
 
