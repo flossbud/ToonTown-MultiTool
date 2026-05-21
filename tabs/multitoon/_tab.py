@@ -93,6 +93,11 @@ class ToonPortraitWidget(QWidget):
         self._dna     = None
         self._fetch_token = 0
         self._cancelled = False
+        self._cc_mode = False
+        self._cc_skin: QColor | None = None
+        self._cc_accent: QColor | None = None
+        self._cc_gloves: QColor | None = None
+        self._cc_emoji: str = ""
         self.setMinimumSize(38, 38)
         self.setMaximumSize(64, 64)
         self.setCursor(Qt.PointingHandCursor)
@@ -135,6 +140,25 @@ class ToonPortraitWidget(QWidget):
         self.update()
         token = self._fetch_token
         threading.Thread(target=self._fetch, args=(dna, token), daemon=True).start()
+
+    def set_cc_mode(self, skin_rgb, accent_rgb, gloves_rgb, emoji):
+        """Enable CC paint mode (skin-color fill + bottom flag stripe +
+        centered emoji). Pass None for any arg to disable CC mode and
+        fall back to today's colored-circle rendering."""
+        if not skin_rgb or not emoji:
+            self._cc_mode = False
+            self._cc_skin = None
+            self._cc_accent = None
+            self._cc_gloves = None
+            self._cc_emoji = ""
+            self.update()
+            return
+        self._cc_mode = True
+        self._cc_skin = QColor.fromRgbF(*skin_rgb)
+        self._cc_accent = QColor.fromRgbF(*(accent_rgb or skin_rgb))
+        self._cc_gloves = QColor.fromRgbF(*(gloves_rgb or (1.0, 1.0, 1.0)))
+        self._cc_emoji = emoji
+        self.update()
 
     def cancel(self):
         self._cancelled = True
@@ -189,6 +213,38 @@ class ToonPortraitWidget(QWidget):
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
+        p.setPen(Qt.NoPen)
+        rect = self.rect()
+        size = min(rect.width(), rect.height())
+
+        if self._cc_mode and self._cc_skin is not None:
+            # CC paint: rounded-rect skin fill, bottom stripe with gloves
+            # (left third) + accent (right two-thirds), big emoji centered.
+            radius = max(6, round(size * 0.13))
+            p.setBrush(self._cc_skin)
+            p.drawRoundedRect(rect, radius, radius)
+
+            # Bottom flag stripe (~12% of height)
+            stripe_h = max(3, round(size * 0.12))
+            stripe_top = rect.bottom() - stripe_h + 1
+            split = rect.left() + round(rect.width() / 3)
+            p.setBrush(self._cc_gloves or QColor("#ffffff"))
+            p.drawRect(rect.left(), stripe_top, split - rect.left(), stripe_h)
+            p.setBrush(self._cc_accent or self._cc_skin)
+            p.drawRect(split, stripe_top, rect.right() - split + 1, stripe_h)
+
+            # Emoji centered. Use a font size proportional to the box.
+            font = p.font()
+            font.setPixelSize(max(14, round(size * 0.55)))
+            p.setFont(font)
+            p.setPen(Qt.SolidLine)
+            p.setPen(QColor("#000000"))  # text needs a pen; emojis draw their own colors on most platforms
+            p.drawText(rect, Qt.AlignCenter, self._cc_emoji)
+            p.end()
+            return
+
+        # Restore pen/brush state for non-CC paint path
+        p.setPen(Qt.NoPen)
         cx = self.width() / 2.0
         cy = self.height() / 2.0
         r  = min(cx, cy) - 2.0  # leave room for a 2px border
