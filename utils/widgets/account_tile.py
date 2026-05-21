@@ -103,7 +103,7 @@ class AccountTile(QFrame):
         accent = GAME_ACCENT[game]
         self.setStyleSheet(
             f"QFrame#account_tile {{"
-            f" background: #232c44;"
+            f" background: #252525;"
             f" border-radius: 10px;"
             f" border-top: 3px solid {accent};"
             f"}}"
