@@ -476,12 +476,24 @@ class LaunchTab(QWidget):
 
     def _on_launcher_clicked(self, game: str) -> None:
         """Invoke the runner for the section-header 'Launch X Launcher' button.
-        Resolved through the module namespace so tests can monkeypatch it."""
+        Resolved through the module namespace so tests can monkeypatch it.
+
+        For CC, run the same multi-install gate used by per-account launches so
+        the button respects the user's chosen install method
+        (Faugus/Bottles/Wine/Lutris/Steam-Proton/Native) instead of always
+        picking the first discovered install."""
         import tabs.launch_tab as _m
-        runner = _m.run_official_ttr_launcher if game == "ttr" else _m.run_official_cc_launcher
+        if game == "cc":
+            if not _m._cc_launch_gate(self.settings_manager, parent=self.window()):
+                return
+            runner = _m.run_official_cc_launcher
+            runner_kwargs = {"settings_manager": self.settings_manager}
+        else:
+            runner = _m.run_official_ttr_launcher
+            runner_kwargs = {}
         ok = False
         try:
-            ok = bool(runner())
+            ok = bool(runner(**runner_kwargs))
         except Exception as exc:  # noqa: BLE001
             self.log(f"[Launch] launcher_runner({game}) raised: {exc!r}")
         if not ok:

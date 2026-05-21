@@ -56,3 +56,21 @@ def test_demo_mode_empty_shows_empty_state(qapp):
         assert tab.cc_section.empty_state.isVisible()
     finally:
         del os.environ["TTMT_DEMO_LAUNCH_TAB"]
+
+
+def test_cc_launcher_btn_gates_then_calls_runner(qapp):
+    tab = _make_tab(qapp)
+    with patch("tabs.launch_tab._cc_launch_gate", return_value=True) as gate, \
+         patch("tabs.launch_tab.run_official_cc_launcher", return_value=True) as runner:
+        tab.cc_section.launcher_btn.click()
+    gate.assert_called_once()
+    runner.assert_called_once()
+
+
+def test_cc_launcher_btn_skips_runner_when_gate_cancelled(qapp):
+    tab = _make_tab(qapp)
+    with patch("tabs.launch_tab._cc_launch_gate", return_value=False) as gate, \
+         patch("tabs.launch_tab.run_official_cc_launcher") as runner:
+        tab.cc_section.launcher_btn.click()
+    gate.assert_called_once()
+    runner.assert_not_called()

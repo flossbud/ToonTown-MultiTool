@@ -61,14 +61,25 @@ def _cc_launcher_exe_path(install) -> str:
     return os.path.join(install_dir, "TTCCLauncher.exe")
 
 
-def run_official_cc_launcher() -> bool:
+def run_official_cc_launcher(settings_manager=None) -> bool:
     """Open the official CC launcher (TTCCLauncher.exe) via the same
-    Wine/Bottles/Lutris/Faugus dispatch used for account launches.
-    Returns True if a process was spawned."""
+    Wine/Bottles/Lutris/Faugus/Steam-Proton dispatch used for account
+    launches. Returns True if a process was spawned.
+
+    When settings_manager is provided, the install matching
+    CC_ENGINE_INSTALL_SIGNATURE is used. When multiple installs are
+    detected and no signature is stored (or it doesn't match any
+    discovered install), returns False so the caller can prompt the
+    install picker. Pass None for backward-compatible single-install
+    behavior."""
     installs = discover_cc_installs()
     if not installs:
         return False
-    install = installs[0]
+
+    install = _select_install(installs, settings_manager)
+    if install is None:
+        return False
+
     launcher_path = _cc_launcher_exe_path(install)
     try:
         argv, env_overrides = build_launch_command(
@@ -82,3 +93,26 @@ def run_official_cc_launcher() -> bool:
         return True
     except (FileNotFoundError, OSError):
         return False
+
+
+def _select_install(installs, settings_manager):
+    """Resolve which install to use.
+
+    - 1 install: use it (regardless of stored signature).
+    - Multiple installs + settings_manager provided + stored signature matches one: use that.
+    - Multiple installs + no settings_manager: use first (backward compat).
+    - Multiple installs + settings_manager but no match: return None (caller should prompt picker).
+    """
+    if len(installs) == 1:
+        return installs[0]
+    if settings_manager is None:
+        return installs[0]
+    from utils.settings_keys import CC_ENGINE_INSTALL_SIGNATURE
+    from services.wine_runtimes import install_signature
+    stored = settings_manager.get(CC_ENGINE_INSTALL_SIGNATURE, "")
+    if not stored:
+        return None
+    for i in installs:
+        if install_signature(i) == stored:
+            return i
+    return None
