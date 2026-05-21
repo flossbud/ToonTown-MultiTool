@@ -283,7 +283,12 @@ def test_bottles_raises_when_bottle_name_missing(tmp_path):
         build_launch_command(install, [], {})
 
 
-def test_faugus_flatpak_uses_flatpak_run_wrapper():
+def test_faugus_flatpak_emits_message_string_for_runner_py():
+    """faugus-run's CLI is `[--game GAME] [message] [command]`, not -e/-p/-r.
+    The message is a shell-style string from which Faugus's runner.py
+    extract_env_from_message() pulls KEY=VAL tokens into os.environ and
+    Popens the remainder. This mirrors faugus.runner.build_launch_command(game).
+    Regression for the launch error 'unrecognized arguments: -e -p -r'."""
     from services.wine_runtimes import WineInstall, build_launch_command
     install = WineInstall(
         exe_path="/home/u/Faugus/corporate-clash/drive_c/users/steamuser/AppData/Local/Corporate Clash/CorporateClash.exe",
@@ -297,18 +302,33 @@ def test_faugus_flatpak_uses_flatpak_run_wrapper():
         },
     )
     cmd, env = build_launch_command(install, [], {"TT_PLAYCOOKIE": "t", "REALM": "production"})
-    assert cmd == [
+    # cmd is [flatpak, run, --command=faugus-run, <app-id>, <message>] — exactly 5 items.
+    assert cmd[:4] == [
         "flatpak", "run", "--command=faugus-run",
         "io.github.Faugus.faugus-launcher",
-        "-e", install.exe_path,
-        "-p", install.prefix_path,
-        "-r", "Proton-CachyOS Latest",
     ]
+    assert len(cmd) == 5, f"expected exactly one message arg, got {cmd}"
+    msg = cmd[4]
+    # No -e/-p/-r flags — those crash runner.py.
+    assert " -e " not in f" {msg} "
+    assert " -p " not in f" {msg} "
+    assert " -r " not in f" {msg} "
+    # Env-prefix tokens that runner.py will lift into os.environ.
+    assert "LOG_DIR=corporate-clash" in msg
+    assert "GAMEID=corporate-clash" in msg
+    assert "WINEPREFIX=/home/u/Faugus/corporate-clash" in msg
+    assert "PROTONPATH='Proton-CachyOS Latest'" in msg
+    # umu-run path inside the Flatpak user-data tree (same path on host and sandbox).
+    assert "/.var/app/io.github.Faugus.faugus-launcher/data/faugus-launcher/umu-run" in msg
+    # The target exe (quoted because it contains spaces).
+    assert (
+        "'/home/u/Faugus/corporate-clash/drive_c/users/steamuser/AppData/Local/Corporate Clash/CorporateClash.exe'"
+        in msg
+    )
     assert env == {"TT_PLAYCOOKIE": "t", "REALM": "production"}
-    assert "WINEPREFIX" not in env  # faugus-run sets it from -p
 
 
-def test_faugus_native_uses_bare_faugus_run():
+def test_faugus_native_uses_bare_faugus_run_with_message():
     from services.wine_runtimes import WineInstall, build_launch_command
     install = WineInstall(
         exe_path="/x/CorporateClash.exe",
@@ -318,20 +338,23 @@ def test_faugus_native_uses_bare_faugus_run():
         metadata={
             "faugus_runner": "GE-Proton9-1",
             "faugus_install_kind": "native",
+            "faugus_gameid": "corporate-clash",
         },
     )
     cmd, env = build_launch_command(install, [], {"TT_PLAYCOOKIE": "t"})
-    assert cmd == [
-        "faugus-run",
-        "-e", "/x/CorporateClash.exe",
-        "-p", "/p",
-        "-r", "GE-Proton9-1",
-    ]
+    assert cmd[0] == "faugus-run"
+    assert len(cmd) == 2, f"expected exactly one message arg, got {cmd}"
+    msg = cmd[1]
+    assert "GAMEID=corporate-clash" in msg
+    assert "WINEPREFIX=/p" in msg
+    assert "PROTONPATH=GE-Proton9-1" in msg
+    assert "/.local/share/faugus-launcher/umu-run" in msg
+    assert "/x/CorporateClash.exe" in msg
 
 
-def test_faugus_omits_runner_arg_when_empty():
-    """Scan-fallback installs have no runner -- fall through to faugus-run's
-    default-runner from config.ini by omitting the -r flag."""
+def test_faugus_omits_protonpath_when_runner_empty():
+    """Scan-fallback installs have no captured runner; omit PROTONPATH so
+    umu-launcher falls through to its default."""
     from services.wine_runtimes import WineInstall, build_launch_command
     install = WineInstall(
         exe_path="/x/CorporateClash.exe",
@@ -341,7 +364,32 @@ def test_faugus_omits_runner_arg_when_empty():
         metadata={"faugus_runner": "", "faugus_install_kind": "scan"},
     )
     cmd, env = build_launch_command(install, [], {})
-    assert cmd == ["faugus-run", "-e", "/x/CorporateClash.exe", "-p", "/p"]
+    assert cmd[0] == "faugus-run"
+    msg = cmd[1]
+    assert "PROTONPATH" not in msg
+    assert "WINEPREFIX=/p" in msg
+
+
+def test_faugus_appends_game_args_to_message():
+    """Args passed to build_launch_command are CLI args for the .exe and must
+    land after the exe path inside the message, not as flags to faugus-run."""
+    from services.wine_runtimes import WineInstall, build_launch_command
+    install = WineInstall(
+        exe_path="/x/CorporateClash.exe",
+        launcher="faugus",
+        prefix_path="/p",
+        display_name="Faugus · CC",
+        metadata={"faugus_install_kind": "native", "faugus_gameid": "cc"},
+    )
+    cmd, _env = build_launch_command(install, ["-g", "newgame", "--realm", "prod"], {})
+    msg = cmd[1]
+    # exe must come before the game args.
+    exe_pos = msg.index("/x/CorporateClash.exe")
+    arg_pos = msg.index("-g")
+    assert exe_pos < arg_pos
+    assert "newgame" in msg
+    assert "--realm" in msg
+    assert "prod" in msg
 
 
 def test_faugus_requires_prefix_path():
