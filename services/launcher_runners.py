@@ -7,6 +7,7 @@ CC: reuses the existing wine_runtimes dispatch path but targets the
 TTCCLauncher.exe instead of CorporateClash.exe."""
 from __future__ import annotations
 
+import glob
 import os
 import subprocess
 
@@ -54,11 +55,45 @@ def run_official_ttr_launcher() -> bool:
     return _xdg_open_desktop_file()
 
 
-def _cc_launcher_exe_path(install) -> str:
-    """Derive TTCCLauncher.exe path from the game exe path.
-    CC's launcher binary lives next to the game binary."""
+# Launcher binary names, in preference order. Modern CC ships as
+# `new_launcher.exe`; `TTCCLauncher.exe` is the pre-rename legacy name we
+# still see on older installs.
+_CC_LAUNCHER_NAMES = ("new_launcher.exe", "TTCCLauncher.exe")
+
+# Standard Wine-prefix locations to probe. CC's launcher and game live in
+# DIFFERENT subtrees (launcher in Program Files, game in
+# users/<u>/AppData/Local), so deriving the launcher path from the game
+# dirname misses the common case.
+_CC_LAUNCHER_PREFIX_GLOBS = (
+    "drive_c/Program Files/Corporate Clash/{name}",
+    "drive_c/Program Files (x86)/Corporate Clash/{name}",
+    "drive_c/users/*/AppData/Local/Corporate Clash/{name}",
+)
+
+
+def _cc_launcher_exe_path(install) -> str | None:
+    """Locate the CC launcher .exe inside the install's Wine prefix.
+
+    Tries the modern `new_launcher.exe` first, falls back to legacy
+    `TTCCLauncher.exe`. Searches the standard Wine-prefix subtrees, then
+    the game's own directory as a last resort for unusual co-located
+    installs. Returns None when no binary is found, in which case the
+    caller should treat the launch as failed.
+    """
+    candidates: list[str] = []
+    prefix = install.prefix_path
+    if prefix:
+        for name in _CC_LAUNCHER_NAMES:
+            for tpl in _CC_LAUNCHER_PREFIX_GLOBS:
+                pattern = os.path.join(prefix, tpl.format(name=name))
+                candidates.extend(glob.glob(pattern))
     install_dir = os.path.dirname(install.exe_path)
-    return os.path.join(install_dir, "TTCCLauncher.exe")
+    for name in _CC_LAUNCHER_NAMES:
+        candidates.append(os.path.join(install_dir, name))
+    for c in candidates:
+        if os.path.isfile(c):
+            return c
+    return None
 
 
 def run_official_cc_launcher(settings_manager=None) -> bool:
@@ -81,6 +116,8 @@ def run_official_cc_launcher(settings_manager=None) -> bool:
         return False
 
     launcher_path = _cc_launcher_exe_path(install)
+    if launcher_path is None:
+        return False
     try:
         argv, env_overrides = build_launch_command(
             install, args=[], extra_env={}, target_exe=launcher_path,
