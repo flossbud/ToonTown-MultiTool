@@ -3,12 +3,36 @@ swaps label, color, and enabled flag based on the account's current
 LoginState. Emits a distinct signal per state-specific click."""
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QByteArray, Qt, QSize, Signal
+from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
+from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
     QFrame, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget,
 )
 
 from utils.shared_widgets import PulsingDot
+from utils.theme_manager import make_edit_icon, make_trash_icon
+
+
+def _hamburger_icon(color: str, size: int = 12) -> QIcon:
+    """Three-line 'expand details' icon. Qt's text engine can't render the
+    `☰` glyph at small button sizes under our stylesheet, so we rasterize."""
+    svg_bytes = QByteArray((
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"'
+        f' fill="none" stroke="{color}" stroke-width="2.5"'
+        f' stroke-linecap="round" stroke-linejoin="round">'
+        f'<line x1="4" y1="7" x2="20" y2="7"/>'
+        f'<line x1="4" y1="12" x2="20" y2="12"/>'
+        f'<line x1="4" y1="17" x2="20" y2="17"/>'
+        f'</svg>'
+    ).encode("utf-8"))
+    renderer = QSvgRenderer(svg_bytes)
+    pm = QPixmap(size, size)
+    pm.fill(Qt.transparent)
+    painter = QPainter(pm)
+    renderer.render(painter)
+    painter.end()
+    return QIcon(pm)
 
 
 GAME_ACCENT = {"ttr": "#4A8FE7", "cc": "#F26D21"}
@@ -118,8 +142,9 @@ class AccountTile(QFrame):
         self.status_label = QLabel("")
         self.status_label.setStyleSheet("font-size: 11px; font-weight: 600;")
         band_lay.addWidget(self.status_label, 1)
-        self.expand_btn = QPushButton("☰")
+        self.expand_btn = QPushButton()
         self.expand_btn.setFixedSize(20, 20)
+        self.expand_btn.setIconSize(QSize(12, 12))
         self.expand_btn.setVisible(False)
         self.expand_btn.setStyleSheet(
             "QPushButton { background: transparent; border: none; color: inherit; }"
@@ -135,7 +160,10 @@ class AccountTile(QFrame):
         self.primary_button.setMinimumHeight(28)
         self.primary_button.setCursor(Qt.PointingHandCursor)
         acts.addWidget(self.primary_button, 1)
-        self.edit_btn = QPushButton("✎")
+        _muted = QColor("#8a9bb8")
+        self.edit_btn = QPushButton()
+        self.edit_btn.setIcon(make_edit_icon(14, _muted))
+        self.edit_btn.setIconSize(QSize(14, 14))
         self.edit_btn.setFixedSize(26, 26)
         self.edit_btn.setCursor(Qt.PointingHandCursor)
         self.edit_btn.setStyleSheet(
@@ -144,7 +172,9 @@ class AccountTile(QFrame):
         )
         self.edit_btn.clicked.connect(self.edit_clicked.emit)
         acts.addWidget(self.edit_btn)
-        self.delete_btn = QPushButton("🗑")
+        self.delete_btn = QPushButton()
+        self.delete_btn.setIcon(make_trash_icon(14, _muted))
+        self.delete_btn.setIconSize(QSize(14, 14))
         self.delete_btn.setFixedSize(26, 26)
         self.delete_btn.setCursor(Qt.PointingHandCursor)
         self.delete_btn.setStyleSheet(
@@ -200,6 +230,8 @@ class AccountTile(QFrame):
         if state == "running":
             self.status_dot.set_color("#56c856", pulse=True)
         self.expand_btn.setVisible(state == "failed")
+        if state == "failed":
+            self.expand_btn.setIcon(_hamburger_icon(fg, 12))
         self.expand_btn.setStyleSheet(
             f"QPushButton {{ background: transparent; border: none; color: {fg}; }}"
         )

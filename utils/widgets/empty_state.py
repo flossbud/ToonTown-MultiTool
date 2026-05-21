@@ -1,7 +1,9 @@
 """Section empty-state placeholder shown when a game has zero accounts."""
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QByteArray, Qt, Signal
+from PySide6.QtGui import QPainter, QPixmap
+from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import QLabel, QPushButton, QVBoxLayout, QWidget
 
 
@@ -11,14 +13,24 @@ _ICON_TINT = {"ttr": ("rgba(74,143,231,0.12)", "rgba(74,143,231,0.25)", "#88c0d0
 _SHORT = {"ttr": "TTR", "cc": "CC"}
 
 
-_PERSON_SVG = (
-    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"'
-    ' stroke="currentColor" stroke-width="2" stroke-linecap="round"'
-    ' stroke-linejoin="round" width="30" height="30">'
-    '<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>'
-    '<circle cx="12" cy="7" r="4"></circle>'
-    '</svg>'
-)
+def _person_pixmap(color: str, size: int = 30) -> QPixmap:
+    """Render the person silhouette to a QPixmap via QSvgRenderer.
+    Qt's QLabel rich-text engine does not honour inline SVG, so we rasterize."""
+    svg_bytes = QByteArray((
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"'
+        f' fill="none" stroke="{color}" stroke-width="2"'
+        f' stroke-linecap="round" stroke-linejoin="round">'
+        f'<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>'
+        f'<circle cx="12" cy="7" r="4"/>'
+        f'</svg>'
+    ).encode("utf-8"))
+    renderer = QSvgRenderer(svg_bytes)
+    pm = QPixmap(size, size)
+    pm.fill(Qt.transparent)
+    painter = QPainter(pm)
+    renderer.render(painter)
+    painter.end()
+    return pm
 
 
 class EmptyState(QWidget):
@@ -34,8 +46,8 @@ class EmptyState(QWidget):
         outer.setSpacing(0)
         outer.setAlignment(Qt.AlignHCenter)
 
-        icon = QLabel(_PERSON_SVG)
-        icon.setTextFormat(Qt.RichText)
+        icon = QLabel()
+        icon.setPixmap(_person_pixmap(fg))
         icon.setAlignment(Qt.AlignCenter)
         icon.setFixedSize(56, 56)
         icon.setStyleSheet(
