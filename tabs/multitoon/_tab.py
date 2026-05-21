@@ -797,6 +797,7 @@ class MultitoonTab(QWidget):
     _toon_max_laffs_ready = Signal(list)
     _toon_beans_ready  = Signal(list)
     _toon_data_merge_ready = Signal(list, list, list, list, list, list, list)
+    _cc_toon_info_ready = Signal(list, list)  # (window_ids, list[CCToonInfo | None])
     keep_alive_updated = Signal()
     dot_state_changed = Signal(int, str)
     keep_alive_help_requested = Signal()
@@ -830,6 +831,7 @@ class MultitoonTab(QWidget):
         self.keep_alive_enabled = [False] * 4
         self.rapid_fire_enabled = [False] * 4
         self.toon_names       = [None] * 4
+        self._cc_toon_infos   = [None] * 4
         self.toon_styles      = [None] * 4
         self.toon_colors      = [None] * 4
         self.toon_laffs       = [None] * 4
@@ -873,6 +875,7 @@ class MultitoonTab(QWidget):
         self._toon_max_laffs_ready.connect(self._apply_toon_max_laffs)
         self._toon_beans_ready.connect(self._apply_toon_beans)
         self._toon_data_merge_ready.connect(self._apply_merged_toon_data)
+        self._cc_toon_info_ready.connect(self._apply_cc_toon_info)
 
         self.refresh_timer = QTimer(self)
         self.refresh_timer.setInterval(5000)
@@ -1186,6 +1189,18 @@ class MultitoonTab(QWidget):
             if window_available:
                 card.set_status_state(state_str)
                 card._apply_game_pill_style()
+
+        # Sync CC-specific chip row state for slots whose game is CC.
+        # populate_active() unconditionally hides the chip row container, so
+        # we must re-call set_cc_mode after every layout swap to restore it.
+        for index in range(min(4, len(self._full._cards))):
+            info = self._cc_toon_infos[index] if index < len(self._cc_toon_infos) else None
+            if info is not None and info.playground is not None:
+                self._full._cards[index].set_cc_mode(
+                    info.playground, info.zone_name,
+                )
+            else:
+                self._full._cards[index].set_cc_mode(None, None)
 
     # ── Set selector rebuild ───────────────────────────────────────────────
 
@@ -1918,10 +1933,10 @@ class MultitoonTab(QWidget):
                         self._toon_data_merge_ready.emit(list(ttr_wids), list(names), list(styles), list(colors), list(laffs), list(max_laffs), list(beans))
 
                 if cc_wids and cc_enabled:
-                    def _cc_callback(names, styles, colors, laffs, max_laffs, beans):
+                    def _cc_data_callback(infos):
                         if gen == self._refresh_gen:
-                            self._toon_data_merge_ready.emit(list(cc_wids), list(names), list(styles), list(colors), list(laffs), list(max_laffs), list(beans))
-                    cc_api.get_toon_names_threaded(len(cc_wids), _cc_callback, cc_wids)
+                            self._cc_toon_info_ready.emit(list(cc_wids), list(infos))
+                    cc_api.get_toon_data_threaded(len(cc_wids), cc_wids, _cc_data_callback)
             finally:
                 self._toon_fetch_inflight_keys.discard(request_key)
 
@@ -2230,6 +2245,64 @@ class MultitoonTab(QWidget):
                             self.slot_badges[global_idx].set_dna(styles[source_idx] if styles and source_idx < len(styles) else None)
         self._refresh_toon_name_labels()
         self._refresh_toon_stats_labels()
+
+    @Slot(list, list)
+    def _apply_cc_toon_info(self, target_wids, infos):
+        """Fan out CCToonInfo per slot into name, portrait, chip row,
+        compact subtitle."""
+        wids = list(self.window_manager.ttr_window_ids) if hasattr(self, 'window_manager') and self.window_manager else []
+        for source_idx, wid in enumerate(target_wids):
+            if wid not in wids:
+                continue
+            global_idx = wids.index(wid)
+            if global_idx >= 4:
+                continue
+            info = infos[source_idx] if source_idx < len(infos) else None
+            self._cc_toon_infos[global_idx] = info
+
+            if info is None or info.name is None:
+                # Empty state: clear name, hide laff/bean (CC slots have no
+                # laff/bean stats), hide chips, plain badge.
+                # Note: if a slot later switches from CC back to TTR, the TTR
+                # data path (_apply_merged_toon_data -> _refresh_toon_stats_labels)
+                # will re-show the laff/bean labels on the next poll cycle.
+                self.toon_names[global_idx] = None
+                self._refresh_toon_name_labels()
+                if global_idx < len(self.laff_labels):
+                    self.laff_labels[global_idx].hide()
+                if global_idx < len(self.bean_labels):
+                    self.bean_labels[global_idx].hide()
+                if global_idx < len(self.slot_badges):
+                    self.slot_badges[global_idx].set_cc_mode(None, None, None, None)
+                self.set_compact_cc_subtitle(global_idx, None, None)
+                if self._mode == "full" and global_idx < len(self._full._cards):
+                    self._full._cards[global_idx].set_cc_mode(None, None)
+                continue
+
+            # Apply name
+            self.toon_names[global_idx] = info.name
+
+            # Apply portrait (CC paint mode in both layouts since the
+            # widget is shared between them).
+            if global_idx < len(self.slot_badges) and info.dna_colors:
+                skin, gloves, shirt, _shorts, accent = info.dna_colors
+                self.slot_badges[global_idx].set_cc_mode(
+                    skin_rgb=skin, accent_rgb=accent, gloves_rgb=gloves,
+                    emoji=info.species_emoji or "❓",
+                )
+
+            # Compact subtitle
+            self.set_compact_cc_subtitle(
+                global_idx, info.playground, info.zone_name,
+            )
+
+            # Full chip row
+            if self._mode == "full" and global_idx < len(self._full._cards):
+                self._full._cards[global_idx].set_cc_mode(
+                    info.playground, info.zone_name,
+                )
+
+        self._refresh_toon_name_labels()
 
     def _on_toon_names_received(self, names, styles, colors, laffs, max_laffs, beans):
         self._toon_names_ready.emit(list(names))
