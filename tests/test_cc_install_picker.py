@@ -142,3 +142,14 @@ def test_stale_card_does_not_become_selected_on_click(qapp, tmp_path):
     # selected_install starts None (stale row doesn't preselect even though
     # active_signature matches it).
     assert dlg.selected_install() is None
+
+
+def test_short_path_does_not_collapse_strict_prefix(qapp, monkeypatch, tmp_path):
+    """If $HOME is /home/jaret, a path under /home/jaret2 must NOT be
+    rendered as ~2/... - only $HOME-rooted paths get the ~ collapse."""
+    from utils.widgets.cc_install_picker import _short_path
+    monkeypatch.setenv("HOME", "/home/jaret")
+    assert _short_path("/home/jaret2/CorporateClash.exe") == "/home/jaret2/CorporateClash.exe"
+    assert _short_path("/home/jaret/CorporateClash.exe") == "~/CorporateClash.exe"
+    assert _short_path("/home/jaret") == "~"
+    assert _short_path("/var/other/CorporateClash.exe") == "/var/other/CorporateClash.exe"

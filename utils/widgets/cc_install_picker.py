@@ -19,7 +19,11 @@ _CONFIRM_USE = "Use this install"
 
 def _short_path(p: str) -> str:
     home = os.path.expanduser("~")
-    return ("~" + p[len(home):]) if p.startswith(home) else p
+    if p == home:
+        return "~"
+    if p.startswith(home + os.sep):
+        return "~" + p[len(home):]
+    return p
 
 
 class CCInstallPickerDialog(QDialog):
