@@ -127,9 +127,10 @@ class PickerCard(QFrame):
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
+        self._pressed: bool = False
         self._stale = stale
         self.setObjectName("picker_card")
-        # Dynamic properties drive the QSS rules added in Task 5.
+        # Dynamic properties drive the QSS rules added in Task 4.
         self.setProperty("selected", "false")
         self.setProperty("active", "true" if active else "false")
         self.setProperty("stale", "true" if stale else "false")
@@ -231,6 +232,9 @@ class PickerCard(QFrame):
         if self._stale or event.button() != Qt.LeftButton:
             super().mouseDoubleClickEvent(event)
             return
+        # Qt's double-click sequence ends with a trailing Release; clear the
+        # press flag so that release doesn't re-emit `clicked`.
+        self._pressed = False
         self.doubleClicked.emit()
         event.accept()
 

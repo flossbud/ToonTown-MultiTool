@@ -56,20 +56,22 @@ def test_set_selected_flips_property_and_repolishes(qapp):
 
 
 def test_clicked_signal_fires_on_mouse_release(qapp):
-    from PySide6.QtCore import QPoint, Qt as QtNs
-    from PySide6.QtGui import QMouseEvent
+    from PySide6.QtCore import QPointF, Qt as QtNs
+    from PySide6.QtGui import QMouseEvent, QPointingDevice
     from utils.widgets.picker_card import PickerCard
     card = PickerCard(chip_slug="wine", name="X", path="/x")
     fired = []
     card.clicked.connect(lambda: fired.append(True))
+    p = QPointF(10.0, 10.0)
+    dev = QPointingDevice.primaryPointingDevice()
     # Simulate a left-click on the card.
     press = QMouseEvent(
-        QMouseEvent.MouseButtonPress, QPoint(10, 10),
-        QtNs.LeftButton, QtNs.LeftButton, QtNs.NoModifier,
+        QMouseEvent.Type.MouseButtonPress, p, p,
+        QtNs.LeftButton, QtNs.LeftButton, QtNs.NoModifier, dev,
     )
     release = QMouseEvent(
-        QMouseEvent.MouseButtonRelease, QPoint(10, 10),
-        QtNs.LeftButton, QtNs.LeftButton, QtNs.NoModifier,
+        QMouseEvent.Type.MouseButtonRelease, p, p,
+        QtNs.LeftButton, QtNs.LeftButton, QtNs.NoModifier, dev,
     )
     QApplication.sendEvent(card, press)
     QApplication.sendEvent(card, release)
@@ -77,19 +79,21 @@ def test_clicked_signal_fires_on_mouse_release(qapp):
 
 
 def test_stale_card_suppresses_clicked(qapp):
-    from PySide6.QtCore import QPoint, Qt as QtNs
-    from PySide6.QtGui import QMouseEvent
+    from PySide6.QtCore import QPointF, Qt as QtNs
+    from PySide6.QtGui import QMouseEvent, QPointingDevice
     from utils.widgets.picker_card import PickerCard
     card = PickerCard(chip_slug="wine", name="X", path="/x", stale=True)
     fired = []
     card.clicked.connect(lambda: fired.append(True))
+    p = QPointF(10.0, 10.0)
+    dev = QPointingDevice.primaryPointingDevice()
     press = QMouseEvent(
-        QMouseEvent.MouseButtonPress, QPoint(10, 10),
-        QtNs.LeftButton, QtNs.LeftButton, QtNs.NoModifier,
+        QMouseEvent.Type.MouseButtonPress, p, p,
+        QtNs.LeftButton, QtNs.LeftButton, QtNs.NoModifier, dev,
     )
     release = QMouseEvent(
-        QMouseEvent.MouseButtonRelease, QPoint(10, 10),
-        QtNs.LeftButton, QtNs.LeftButton, QtNs.NoModifier,
+        QMouseEvent.Type.MouseButtonRelease, p, p,
+        QtNs.LeftButton, QtNs.LeftButton, QtNs.NoModifier, dev,
     )
     QApplication.sendEvent(card, press)
     QApplication.sendEvent(card, release)
@@ -103,15 +107,45 @@ def test_stale_card_property_is_true(qapp):
 
 
 def test_doubleclick_signal_fires(qapp):
-    from PySide6.QtCore import QPoint, Qt as QtNs
-    from PySide6.QtGui import QMouseEvent
+    from PySide6.QtCore import QPointF, Qt as QtNs
+    from PySide6.QtGui import QMouseEvent, QPointingDevice
     from utils.widgets.picker_card import PickerCard
     card = PickerCard(chip_slug="wine", name="X", path="/x")
     dbl = []
     card.doubleClicked.connect(lambda: dbl.append(True))
+    p = QPointF(10.0, 10.0)
+    dev = QPointingDevice.primaryPointingDevice()
     event = QMouseEvent(
-        QMouseEvent.MouseButtonDblClick, QPoint(10, 10),
-        QtNs.LeftButton, QtNs.LeftButton, QtNs.NoModifier,
+        QMouseEvent.Type.MouseButtonDblClick, p, p,
+        QtNs.LeftButton, QtNs.LeftButton, QtNs.NoModifier, dev,
     )
     QApplication.sendEvent(card, event)
     assert dbl == [True]
+
+
+def test_doubleclick_does_not_spuriously_emit_clicked(qapp):
+    """Full Qt double-click sequence: Press, Release, Press, DblClick, Release.
+    Must emit `clicked` exactly once (the first Release) and `doubleClicked`
+    exactly once."""
+    from PySide6.QtCore import QPointF, Qt as QtNs
+    from PySide6.QtGui import QMouseEvent, QPointingDevice
+    from utils.widgets.picker_card import PickerCard
+    card = PickerCard(chip_slug="wine", name="X", path="/x")
+    clicked: list[int] = []
+    dbl: list[int] = []
+    card.clicked.connect(lambda: clicked.append(1))
+    card.doubleClicked.connect(lambda: dbl.append(1))
+    p = QPointF(10.0, 10.0)
+    dev = QPointingDevice.primaryPointingDevice()
+    for typ in (
+        QMouseEvent.Type.MouseButtonPress,
+        QMouseEvent.Type.MouseButtonRelease,
+        QMouseEvent.Type.MouseButtonPress,
+        QMouseEvent.Type.MouseButtonDblClick,
+        QMouseEvent.Type.MouseButtonRelease,
+    ):
+        QApplication.sendEvent(card, QMouseEvent(
+            typ, p, p, QtNs.LeftButton, QtNs.LeftButton, QtNs.NoModifier, dev,
+        ))
+    assert clicked == [1]
+    assert dbl == [1]
