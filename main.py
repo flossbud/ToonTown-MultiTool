@@ -832,8 +832,8 @@ class MultiToonTool(QMainWindow):
         """
         c = self._theme_colors()
         icon_factories = [
-            make_nav_gamepad, make_nav_keyboard,
-            make_nav_power, make_nav_gear,
+            make_nav_gamepad, make_nav_power,
+            make_nav_keyboard, make_nav_gear,
         ]
         # Update the pill border color from the current theme accent.
         if hasattr(self, "chip_pill"):
