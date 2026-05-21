@@ -126,7 +126,13 @@ def run_official_cc_launcher(settings_manager=None) -> bool:
         return False
     try:
         merged_env = {**os.environ, **env_overrides}
-        subprocess.Popen(argv, env=merged_env)
+        # cwd MUST be the launcher's own directory. The launcher (PyInstaller
+        # windowed Python build) loads resources and writes its bootstrap log
+        # relative to cwd; with a foreign cwd it dies inside Wine and only
+        # surfaces a generic "sys.stderr is None" RuntimeError. Faugus's own
+        # Play button sets the same cwd (see faugus.launcher.on_button_play_
+        # clicked) -- that's why it works and a bare Popen does not.
+        subprocess.Popen(argv, env=merged_env, cwd=os.path.dirname(launcher_path))
         return True
     except (FileNotFoundError, OSError):
         return False

@@ -186,3 +186,21 @@ def test_cc_run_returns_false_when_launcher_binary_missing():
         ok = launcher_runners.run_official_cc_launcher()
     assert ok is False
     popen.assert_not_called()
+
+
+def test_cc_run_passes_cwd_as_launcher_directory():
+    """The launcher needs cwd set to its own directory; without it, the
+    PyInstaller-frozen binary crashes inside Wine (sys.stderr is None
+    surfaces, but the underlying issue is resource lookup relative to cwd).
+    Faugus's own Play button does this; we must too."""
+    install = _make_install("/fake/CorporateClash.exe", prefix_path="/fake/prefix")
+    launcher_path = "/fake/prefix/drive_c/Program Files/Corporate Clash/new_launcher.exe"
+    with patch("services.launcher_runners.discover_cc_installs", return_value=[install]), \
+         patch("services.launcher_runners._cc_launcher_exe_path", return_value=launcher_path), \
+         patch("services.launcher_runners.build_launch_command",
+               return_value=(["echo", "ok"], {})), \
+         patch.object(launcher_runners.subprocess, "Popen") as popen:
+        popen.return_value = MagicMock()
+        ok = launcher_runners.run_official_cc_launcher()
+    assert ok is True
+    assert popen.call_args.kwargs["cwd"] == os.path.dirname(launcher_path)
