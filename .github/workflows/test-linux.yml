@@ -57,7 +57,15 @@ jobs:
           # older base set, and `pacman -Sy <pkg>` installs the *latest* pkg
           # against it -- a partial upgrade that breaks sonames (e.g. the new
           # xorg-server-xvfb needing libnettle.so.9 the stale nettle lacks).
-          pacman -Syu --noconfirm python python-pip xorg-server-xvfb xorg-fonts-misc \
+          #
+          # base-devel (gcc + binutils + make + ...) is required because Arch
+          # rolling-release ships Python 3.14, and several pip deps in
+          # requirements.txt (notably evdev) lack 3.14 wheels and must be
+          # built from source. Without a toolchain, pip's source-build
+          # fallback dies with `error: command 'gcc' failed: No such file
+          # or directory`.
+          pacman -Syu --noconfirm --needed base-devel python python-pip \
+            xorg-server-xvfb xorg-fonts-misc \
             glib2 libglvnd dbus fontconfig freetype2 libx11 libxext libxrender \
             libxi libsm libice libxcb xcb-util-cursor xcb-util-image \
             xcb-util-keysyms xcb-util-renderutil xcb-util-wm libxkbcommon \

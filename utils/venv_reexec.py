@@ -41,13 +41,19 @@ EARLY_CRASH_WINDOW_SEC = 3.0
 MAX_LAUNCH_ATTEMPTS = 3
 
 # Exit codes that subprocess returns when the child died via signal.
-# Linux: returncode == -signum. Windows doesn't expose SIGBUS/SIGSEGV
-# the same way, but the supervisor only triggers on Linux/macOS anyway
-# (the system-Qt crash family is Linux-specific).
+# Linux: returncode == -signum. Windows doesn't expose SIGBUS/SIGSEGV the
+# same way, and `signal.SIGBUS` is simply absent on win32 so a bare
+# attribute reference raises AttributeError at module import time. The
+# supervisor only triggers on Linux/macOS anyway (the system-Qt crash
+# family is Linux-specific), so missing signals are filtered out rather
+# than guarded inline.
 _RETRYABLE_FATAL_SIGNALS = {
-    -signal.SIGSEGV,
-    -signal.SIGBUS,
-    -signal.SIGABRT,
+    -sig for sig in (
+        getattr(signal, "SIGSEGV", None),
+        getattr(signal, "SIGBUS", None),
+        getattr(signal, "SIGABRT", None),
+    )
+    if sig is not None
 }
 
 
