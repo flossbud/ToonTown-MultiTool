@@ -179,3 +179,38 @@ def test_set_accounts_after_scale_applies_to_new_tiles(qapp):
     # the original Task 11 implementation).
     assert sec.add_tile is not None
     assert sec.add_tile.minimumHeight() == int(130 * sec._content_scale)
+
+
+def test_set_layout_mode_runs_reveal_animation(qapp, monkeypatch):
+    """After set_layout_mode, every tile ends at opacity 1.0 once animations settle.
+    With TTMT_TEST_DURATION_SCALE=0 the animation resolves in one event-loop tick."""
+    import utils.motion as motion
+    monkeypatch.setattr(motion, "_TEST_DURATION_SCALE", 0.0)
+    from utils.widgets.launch_section import LaunchSection
+    sec = LaunchSection(game="ttr", icon_path="")
+    sec.set_accounts([
+        {"label": "a", "username": "u1"},
+        {"label": "b", "username": "u2"},
+    ])
+    # Force opacity to 0 to prove the reveal pushes it back to 1.0.
+    for tile in sec.tiles:
+        tile.tile_opacity = 0.0
+    sec.set_layout_mode("full")
+    qapp.processEvents()
+    qapp.processEvents()  # pump again for staggered QTimer.singleShot starts
+    for tile in sec.tiles:
+        assert tile.tile_opacity == 1.0
+
+
+def test_set_layout_mode_reduced_motion_snaps_opacity(qapp, monkeypatch):
+    """With reduced motion, tiles snap to opacity 1.0 immediately."""
+    import utils.motion as motion
+    monkeypatch.setattr(motion, "is_reduced", lambda: True)
+    from utils.widgets.launch_section import LaunchSection
+    sec = LaunchSection(game="ttr", icon_path="")
+    sec.set_accounts([{"label": "a", "username": "u"}])
+    for tile in sec.tiles:
+        tile.tile_opacity = 0.0
+    sec.set_layout_mode("full")
+    for tile in sec.tiles:
+        assert tile.tile_opacity == 1.0

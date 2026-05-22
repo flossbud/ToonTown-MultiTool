@@ -3,12 +3,13 @@ button) + 2-column tile grid + empty-state fallback. Owns the per-tile
 widgets and re-emits their signals with the section_index attached."""
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QPropertyAnimation, QTimer, Qt, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QFrame, QGridLayout, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget,
 )
 
+import utils.motion as motion
 from utils.widgets.account_tile import AccountTile
 from utils.widgets.chip_button import QuietChipButton
 from utils.widgets.empty_state import EmptyState
@@ -45,6 +46,9 @@ class _AddTile(QuietChipButton):
 
 
 class LaunchSection(QWidget):
+    REVEAL_STAGGER_MS = 30
+    REVEAL_DURATION_MS = 150
+
     launcher_clicked       = Signal()
     add_account_clicked    = Signal()
     tile_launch            = Signal(int)
@@ -239,6 +243,40 @@ class LaunchSection(QWidget):
         self.setMaximumWidth(self._max_width)
         self._layout_mode = mode
         self._recompute_content_scale()
+        self._run_reveal_animation()
+
+    def _run_reveal_animation(self) -> None:
+        """Stagger-fade each tile from 0.0 to 1.0 opacity. Honors
+        motion.is_reduced(): under reduced motion, opacities snap to 1.0.
+        Per-tile animation via QPropertyAnimation on tile_opacity — does NOT
+        use QGraphicsOpacityEffect (see main.py:819-825 for why)."""
+        tiles = list(self.tiles)
+        if not tiles:
+            return
+        if motion.is_reduced():
+            for t in tiles:
+                t.tile_opacity = 1.0
+            return
+        raw = self.REVEAL_DURATION_MS * motion._TEST_DURATION_SCALE
+        duration = 0 if raw == 0.0 else max(1, int(raw))
+        stagger_raw = self.REVEAL_STAGGER_MS * motion._TEST_DURATION_SCALE
+        stagger = 0 if stagger_raw == 0.0 else max(1, int(stagger_raw))
+        self._reveal_anims: list[QPropertyAnimation] = []
+        for i, tile in enumerate(tiles):
+            tile.tile_opacity = 0.0
+            anim = QPropertyAnimation(tile, b"tile_opacity")
+            anim.setDuration(duration)
+            anim.setEasingCurve(motion.EASE_STANDARD)
+            anim.setStartValue(0.0)
+            anim.setEndValue(1.0)
+            # IMPORTANT: snap to exactly 1.0 in finished handler. Easing
+            # curves can leave a tile at 0.9999 due to float drift, which
+            # would permanently bypass AccountTile's painter fast path
+            # (the fast path requires _paint_scale == 1.0 AND
+            # _tile_opacity == 1.0).
+            anim.finished.connect(lambda t=tile: setattr(t, "tile_opacity", 1.0))
+            self._reveal_anims.append(anim)
+            QTimer.singleShot(i * stagger, anim.start)
 
     def _wire_tile(self, tile: AccountTile, index: int) -> None:
         tile.launch_clicked.connect(lambda i=index: self.tile_launch.emit(i))
