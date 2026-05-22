@@ -98,7 +98,7 @@ class AccountEditor(QDialog):
             inp.textChanged.connect(lambda _: err.setVisible(False))
             return box, inp, err
 
-        lay_lbl, self.label_input, self.label_error = labeled_input("Label", initial_label)
+        lay_lbl, self.label_input, self.label_error = labeled_input("Label (optional)", initial_label)
         lay_usr, self.username_input, self.username_error = labeled_input("Username", initial_username)
         lay_pwd, self.password_input, self.password_error = labeled_input("Password", initial_password, password=True)
         body_lay.addLayout(lay_lbl)
@@ -113,6 +113,10 @@ class AccountEditor(QDialog):
             "QPushButton { background: transparent; border: 1px solid rgba(255,255,255,0.15);"
             " color: #cfd6e6; border-radius: 5px; padding: 6px 14px; font-size: 12px; }"
         )
+        # Qt's default autoDefault=True on every QPushButton in a QDialog can
+        # hijack Enter so pressing Return in a QLineEdit triggers Cancel
+        # rather than the Save button marked setDefault(True).
+        self.cancel_btn.setAutoDefault(False)
         self.cancel_btn.clicked.connect(self.reject)
         acts.addWidget(self.cancel_btn)
         self.save_btn = QPushButton("Save")
@@ -120,6 +124,7 @@ class AccountEditor(QDialog):
             "QPushButton { background: #0077ff; color: white; border: none;"
             " border-radius: 5px; padding: 6px 14px; font-size: 12px; font-weight: 600; }"
         )
+        self.save_btn.setAutoDefault(True)
         self.save_btn.setDefault(True)
         self.save_btn.clicked.connect(self._on_save)
         acts.addWidget(self.save_btn)

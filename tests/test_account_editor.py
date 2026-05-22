@@ -1,5 +1,7 @@
 """AccountEditor modal: Add and Edit modes share one component."""
 import pytest
+from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 from utils.widgets.account_editor import AccountEditor
 
@@ -98,3 +100,28 @@ def test_typing_clears_error(qapp):
     assert dlg.username_error.isVisible()
     dlg.username_input.setText("x")
     assert not dlg.username_error.isVisible()
+
+
+def test_cancel_button_does_not_steal_enter_key(qapp):
+    # Qt's default autoDefault=True on Cancel can hijack Enter even when
+    # Save is setDefault(True). Verify Cancel is opted out so Enter routes
+    # to Save.
+    dlg = AccountEditor(game="ttr", mode="add")
+    assert dlg.cancel_btn.autoDefault() is False
+    assert dlg.save_btn.isDefault() is True
+
+
+@pytest.mark.parametrize("field", ["label_input", "username_input", "password_input"])
+def test_enter_key_in_input_triggers_save(qapp, field):
+    dlg = AccountEditor(game="ttr", mode="add")
+    dlg.show()
+    QTest.qWaitForWindowExposed(dlg)
+    dlg.label_input.setText("My Toon")
+    dlg.username_input.setText("user@example")
+    dlg.password_input.setText("pw")
+    captured = []
+    dlg.account_saved.connect(lambda *a: captured.append(a))
+    target = getattr(dlg, field)
+    target.setFocus()
+    QTest.keyClick(target, Qt.Key_Return)
+    assert captured == [("My Toon", "user@example", "pw")]
