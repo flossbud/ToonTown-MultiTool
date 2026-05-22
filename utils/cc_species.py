@@ -4,19 +4,34 @@ The 3-char head DNA code's first letter encodes species. CC uses its own
 letter map (not identical to classic TTR). Verified mappings live in
 HEAD_LETTER_TO_SPECIES; unknown letters surface via once-per-letter log.
 
-Verified entries are sourced from user-confirmed observations against
-__handleAvatarChooserDone log lines:
-  - d -> DOG (Flossbud, Incredible Dog)
-  - f -> DUCK (Hector Pepperroni)
-  - m -> MOUSE (Soupy)
-  - e -> KOALA (Rowdy Koala)
-  - t -> RACCOON (Grumpy Biscuit)
+All 20 entries verified via __handleAvatarChooserDone log lines from the
+in-game avatar chooser (sessions on 2026-05-22):
+  - a -> CROCODILE  (Little Zippy)
+  - b -> BEAR       (Loony Paddlemooch)
+  - c -> CAT        (Stylish Cat)
+  - d -> DOG        (Flossbud, Incredible Dog)
+  - e -> KOALA      (Rowdy Koala)
+  - f -> DUCK       (Hector Pepperroni)
+  - g -> TURKEY     (Rhinoknees)
+  - h -> HORSE      (Peppy Gumdropfink)
+  - j -> KANGAROO   (Grumpy Slumpy Fumblecrash)
+  - k -> KIWI       (Giggles Weaseltwist)
+  - l -> ARMADILLO  (Cookie Jiffycrump)
+  - m -> MOUSE      (Soupy)
+  - n -> BAT        (Coach Paddlebrains)
+  - p -> MONKEY     (Deputy Loony)
+  - r -> RABBIT     (Coach Beanscreech)
+  - s -> PIG        (Murky Frinkelmarble)
+  - t -> RACCOON    (Grumpy Biscuit)
+  - v -> FOX        (Lucky Stubby)
+  - x -> DEER       (Yippie Poodlethud)
+  - z -> BEAVER     (Grouchy Grumblestink)
 
-CC's binary also names BEAR, CROCODILE, DEER, FISH, FROG, GORILLA, HORSE,
-KOALA, MONKEY, MOUSE, ORANGUTAN, OTTER, PANDA, RABBIT, RACCOON, SHEEP,
-SWAN, TIGER, TURKEY, WHALE (via `strings`). Their letter mappings are
-not verified yet -- letters surface in production via the unknown-letter
-log and get added here once a known toon confirms them.
+Unassigned letters (i, o, q, u, w, y) currently have no playable species
+in CC. CC's binary also references FISH, FROG, GORILLA, ORANGUTAN, OTTER,
+PANDA, SHEEP, SWAN, TIGER, WHALE via `strings`, but those species are
+NOT implemented in-game; their head letters do not appear in real toon
+DNA, so they remain unmapped here.
 """
 
 from __future__ import annotations
@@ -27,13 +42,29 @@ from typing import Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-# Verified head-letter -> species name. Add entries here as users confirm.
+# Verified head-letter -> species name. All 20 entries confirmed via
+# __handleAvatarChooserDone log lines (see module docstring for provenance).
 HEAD_LETTER_TO_SPECIES: dict[str, str] = {
+    "a": "CROCODILE",
+    "b": "BEAR",
+    "c": "CAT",
     "d": "DOG",
-    "f": "DUCK",
-    "m": "MOUSE",
     "e": "KOALA",
+    "f": "DUCK",
+    "g": "TURKEY",
+    "h": "HORSE",
+    "j": "KANGAROO",
+    "k": "KIWI",
+    "l": "ARMADILLO",
+    "m": "MOUSE",
+    "n": "BAT",
+    "p": "MONKEY",
+    "r": "RABBIT",
+    "s": "PIG",
     "t": "RACCOON",
+    "v": "FOX",
+    "x": "DEER",
+    "z": "BEAVER",
 }
 
 # Species -> emoji. Covers every species name CC's binary references, so
