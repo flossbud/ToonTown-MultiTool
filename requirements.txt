@@ -43,9 +43,13 @@ PyYAML>=6.0; sys_platform == "linux"
 # Windows only — Win32 input backend and window management
 pywin32>=306; sys_platform == "win32"
 
-# Windows only — port->PID enumeration without spawning netstat
-# (avoids Smart App Control / Defender heuristics on the unsigned EXE)
-psutil>=5.9; sys_platform == "win32"
+# Cross-platform process/file/network introspection. Used by:
+#   - Windows: port->PID enumeration without spawning netstat (avoids
+#     Smart App Control / Defender heuristics on the unsigned EXE).
+#   - Linux: CC log discovery (utils/cc_log_discovery.py uses
+#     process_iter + Process.open_files to find an externally-launched
+#     CC log) and the settings-tab Detect button.
+psutil>=5.9
 
 # Build-time dependency for PyInstaller-based packaging (Linux AppImage + Windows EXE).
 pyinstaller>=6.0,<7
