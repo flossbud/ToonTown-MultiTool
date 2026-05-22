@@ -83,12 +83,12 @@ def test_clamp_ceiling_at_near_black_chromatic_skin():
 
 
 def test_saturation_multiplier_is_consistent():
-    """Chromatic bg saturation is always skin saturation * 0.60."""
+    """Chromatic bg saturation (HSL) is always skin saturation * 0.60."""
     for skin_sat in (0.30, 0.50, 0.80):
         skin = QColor.fromHslF(0.0, skin_sat, 0.50)
         bg = cc_badge_paint.complementary_bg_color(skin)
+        _, bg_s, _, _ = bg.getHslF()
         expected = skin_sat * 0.60
-        assert abs(bg.saturationF() - expected) < 0.02, (
-            f"skin sat {skin_sat} -> expected bg sat {expected}, "
-            f"got {bg.saturationF()}"
+        assert abs(bg_s - expected) < 0.02, (
+            f"skin sat {skin_sat} -> expected bg sat {expected}, got {bg_s}"
         )

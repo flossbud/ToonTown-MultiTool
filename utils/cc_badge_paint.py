@@ -18,47 +18,34 @@ from PySide6.QtGui import QColor, QFont, QPainter, QPixmap
 from utils import cc_race_assets
 
 
-# Saturation below this threshold is treated as achromatic. The threshold
-# is the boundary between "this toon has a hue" and "this toon is grayscale".
-_ACHROMATIC_SAT_THRESHOLD = 0.15
-
-# Chromatic bg formula: (hue+180, sat*0.25, 0.85). Yields a soft pastel
-# complement; lightness ~0.85 keeps it lighter than any natural skin color.
-# The design choice is uniform light-pastel for ALL chromatic toons; this
-# trades strict WCAG 3:1 contrast for visual uniformity across the grid.
-_CHROMATIC_SAT_MULT = 0.25
-_CHROMATIC_LIGHTNESS = 0.85
-
-# Achromatic bg lightness flip targets. ~65pp delta from input lightness.
-_ACHROMATIC_DARK_THRESHOLD = 0.50  # input lightness below this -> light bg
-_ACHROMATIC_LIGHT_BG = 0.90
-_ACHROMATIC_DARK_BG = 0.25
+# bg = (skin hue + 180 deg, skin sat * 0.60, clamp(1 - skin L, 0.18, 0.85)).
+# One adaptive-lightness rule for every skin: pale skins get a darker bg,
+# dark skins get a lighter bg. The clamp keeps the extremes from inverting
+# to pure black or pure white. Achromatic skins use the same formula; their
+# near-zero saturation collapses the bg saturation to near-zero, so the bg
+# is effectively a neutral grey at the inverted lightness.
+_SAT_MULT = 0.60
+_L_CLAMP_MIN = 0.18
+_L_CLAMP_MAX = 0.85
 
 
 def complementary_bg_color(skin: QColor) -> QColor:
     """Return the badge background color for a given skin color.
 
-    Chromatic skins (sat > threshold): soft pastel complementary hue at
-    L=0.85 -- uniform light-pastel for all chromatic toons.
-    Achromatic skins: grayscale lightness flip (dark skin -> light bg,
-    light skin -> dark bg).
+    One adaptive-lightness rule: complement hue, sat * 0.60, L clamped to
+    the opposite end of the lightness axis from the skin. Pale skins get a
+    darker bg; dark skins get a lighter bg. Achromatic skins inherit the
+    same rule (their near-zero saturation collapses the bg saturation).
     """
     h, s, l, _ = skin.getHslF()
     # QColor.getHslF returns hue = -1 for achromatic colors. Normalize.
     if h < 0:
         h = 0.0
 
-    if s <= _ACHROMATIC_SAT_THRESHOLD:
-        bg_light = (
-            _ACHROMATIC_LIGHT_BG
-            if l < _ACHROMATIC_DARK_THRESHOLD
-            else _ACHROMATIC_DARK_BG
-        )
-        return QColor.fromHslF(0.0, 0.0, bg_light)
-
     new_h = (h + 0.5) % 1.0  # +180 degrees in [0,1] space
-    new_s = s * _CHROMATIC_SAT_MULT
-    return QColor.fromHslF(new_h, new_s, _CHROMATIC_LIGHTNESS)
+    new_s = s * _SAT_MULT
+    new_l = max(_L_CLAMP_MIN, min(_L_CLAMP_MAX, 1.0 - l))
+    return QColor.fromHslF(new_h, new_s, new_l)
 
 
 # ---------------------------------------------------------------------------
