@@ -320,6 +320,20 @@ class InputService(QObject):
         except Exception:
             return False
 
+    def _suppress_predicate(self, keysym: str) -> bool:
+        """Bridge from HotkeyManager's pynput callback to the platform
+        grabber's should_suppress query. Returns False when no grabber
+        is installed or the grabber doesn't expose should_suppress
+        (Linux's MovementKeyGrabber does its own X-level suppression
+        and has no should_suppress method)."""
+        grabber = self._key_grabber
+        if grabber is None:
+            return False
+        should_suppress = getattr(grabber, "should_suppress", None)
+        if should_suppress is None:
+            return False
+        return bool(should_suppress(keysym))
+
     def _apply_backend_setting(self):
         """Connect or disconnect backend based on platform and current settings."""
         import sys
