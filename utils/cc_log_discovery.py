@@ -67,6 +67,37 @@ def _layer1_psutil(pid: int, manual_dir: Optional[Path]) -> Optional[Path]:
     return None
 
 
+# Process name that identifies a real CC process on the host. Case-insensitive
+# substring match against the process's `name` attribute. Robust across
+# launchers because every Wine/Proton wrapper eventually exec's the actual
+# binary, and that binary's process name is "CorporateClash.exe" regardless
+# of how it was started.
+_CC_PROCESS_NAME_NEEDLE = "corporateclash"
+
+
+def _layer1_5_process_scan(manual_dir: Optional[Path]) -> Optional[Path]:
+    """When the input PID doesn't yield a CC log (typical of sandboxed
+    launchers like Faugus/Bottles/Proton, where the X11 _NET_WM_PID points
+    into a different PID namespace than the host), scan host processes for
+    one whose name matches CorporateClash.exe and run Layer 1 against it.
+
+    Returns the first matching log path. Multi-instance external CC is
+    best-effort and may return the wrong instance's log; documented in the
+    spec.
+    """
+    try:
+        for proc in psutil.process_iter(attrs=["pid", "name"]):
+            name = (proc.info.get("name") or "").lower()
+            if _CC_PROCESS_NAME_NEEDLE not in name:
+                continue
+            path = _layer1_psutil(proc.info["pid"], manual_dir)
+            if path is not None:
+                return path
+    except psutil.Error as exc:
+        logger.warning("[cc_log_discovery] L1.5 process scan failed: %s", exc)
+    return None
+
+
 def _read_proc_environ(pid: int) -> bytes:
     """Return /proc/$PID/environ on Linux, or b'' on failure / non-Linux."""
     if sys.platform != "linux":
@@ -168,6 +199,9 @@ def find_log_for_pid(
     fail.
     """
     path = _layer1_psutil(pid, manual_dir)
+    if path is not None:
+        return path
+    path = _layer1_5_process_scan(manual_dir)
     if path is not None:
         return path
     path = _layer2_prefix(pid, manual_dir)

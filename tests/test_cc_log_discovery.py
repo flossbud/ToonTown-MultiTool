@@ -167,6 +167,54 @@ def test_layer3_does_not_fire_when_manual_dir_is_none():
     assert result is None
 
 
+def test_layer1_5_process_scan_finds_cc_when_input_pid_is_wrong(monkeypatch):
+    """When the input PID is a sandbox-namespace PID that doesn't map to
+    the actual CC process on the host (Faugus / Bottles / Proton case),
+    a process-name scan should find the real CC process and return its
+    log file."""
+    target = "/home/u/Faugus/corporate-clash/drive_c/users/steamuser/AppData/Local/Corporate Clash/logs/corporateclash-05-22-2026-11-43-36.log"
+
+    # Input PID has no matching open files (sandbox-namespace mismatch).
+    input_proc = _fake_proc([])
+    input_proc.pid = 7914
+
+    # The real CC process on the host has the log file open.
+    real_proc = _fake_proc([target])
+    real_proc.pid = 52146
+    real_proc.info = {"pid": 52146, "name": "CorporateClash.exe"}
+
+    # Unrelated host processes that must be filtered out.
+    other = MagicMock(spec=psutil.Process)
+    other.info = {"pid": 1, "name": "systemd"}
+
+    def _process_factory(pid):
+        if pid == 7914:
+            return input_proc
+        if pid == 52146:
+            return real_proc
+        raise psutil.NoSuchProcess(pid)
+
+    monkeypatch.setattr(psutil, "Process", _process_factory)
+    monkeypatch.setattr(psutil, "process_iter", lambda attrs=None: [other, real_proc])
+
+    result = cc_log_discovery.find_log_for_pid(7914)
+    assert result == Path(target)
+
+
+def test_layer1_5_skips_processes_with_non_cc_name(monkeypatch):
+    """Process-scan only considers CorporateClash-named processes."""
+    not_cc = _fake_proc(["/tmp/Corporate Clash/logs/foo.log"])
+    not_cc.info = {"pid": 1, "name": "systemd"}
+
+    def _process_factory(pid):
+        raise psutil.NoSuchProcess(pid)
+
+    monkeypatch.setattr(psutil, "Process", _process_factory)
+    monkeypatch.setattr(psutil, "process_iter", lambda attrs=None: [not_cc])
+
+    assert cc_log_discovery.find_log_for_pid(999) is None
+
+
 def test_layer1_respects_manual_dir_scope_filter(tmp_path):
     # manual_dir is interpreted as the "logs" dir itself (shallow glob in
     # Layer 3), so put the in-scope log file directly under tmp_path.
