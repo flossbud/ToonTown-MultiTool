@@ -117,3 +117,14 @@ Targeted repros for the issues fixed in `2026-05-07-input-forwarding-fixes.md`.
 - [ ] Launch a CC toon with a species CC names but no asset (e.g. a FROG once observed in the wild): badge shows the slot-number fallback in the complement-bg circle; picker can still be opened to manually assign an icon.
 - [ ] Achromatic toon (a black or near-white skin): badge silhouette stays visible thanks to the lightness-flip bg formula. Picker tiles for that toon also render readably.
 - [ ] Pale-skin CC toon (e.g. near-white or pale-pink): the bg circle is clearly darker than the silhouette, not a near-white-on-white badge. (2026-05-22 recolor fix.)
+
+## External CC detection (2026-05-22)
+
+- [ ] TTMT-spawned CC: launch CC via TTMT, walk into a hood. Badge populates as before (regression check).
+- [ ] Externally-launched via manual Wine (`~/.wine`): with TTMT already open, run CC from a terminal (`wine "<prefix>/drive_c/Program Files/Corporate Clash/CorporateClash.exe"`), log in, walk into a hood. Badge populates within one poll cycle (about 1-2 seconds).
+- [ ] Externally-launched via Bottles or Faugus: with TTMT already open, launch CC through the third-party tool. Badge populates within one poll cycle.
+- [ ] Externally-launched via Steam/Proton: with TTMT already open, launch CC via Steam. Badge populates within one poll cycle.
+- [ ] Settings "Detect" button with one CC running: opens an info dialog listing the PID and resolved log path.
+- [ ] Settings "Detect" button with no CC running: opens an info dialog saying "No running CC processes detected."
+- [ ] Settings "External CC log directory" set to a wrong path: badge does NOT populate for externally-launched CC (filter is honored).
+- [ ] Settings "External CC log directory" cleared after a bad set: badge populates again on the next poll.
