@@ -321,6 +321,8 @@ class LaunchTab(QWidget):
             parent=self._scroll_widget,
         )
         self._sections = {"ttr": self.ttr_section, "cc": self.cc_section}
+        self._layout_mode = "compact"
+        self._sections_container: QWidget | None = None
 
         self._wire_section(self.ttr_section, "ttr")
         self._wire_section(self.cc_section, "cc")
@@ -507,10 +509,13 @@ class LaunchTab(QWidget):
             w = item.widget()
             if w is None:
                 continue
-            if w is self.ttr_section or w is self.cc_section:
-                # Re-parent the sections back to the layout below; don't
-                # delete them or external attribute references break.
-                w.setParent(None)
+            if w is self._sections_container:
+                # Detach sections from the old container before it is
+                # destroyed, so external attribute references survive.
+                self.ttr_section.setParent(None)
+                self.cc_section.setParent(None)
+                w.deleteLater()
+                self._sections_container = None
             else:
                 w.deleteLater()
         self._cards = {"ttr": [], "cc": []}
@@ -532,7 +537,6 @@ class LaunchTab(QWidget):
                 accounts = demo.get(game, [])
                 section = self._sections[game]
                 section.set_accounts(accounts)
-                self._layout.addWidget(section)
                 # Build _cards mirror so update_dot_state / etc don't blow
                 # up, even though demo mode never runs the launch flow.
                 self._cards[game] = []
@@ -551,6 +555,7 @@ class LaunchTab(QWidget):
                         "launch_btn": tile.primary_button,
                         "state": state,
                     })
+            self._rebuild_sections_container()
             self._layout.addStretch()
             return
 
@@ -565,7 +570,6 @@ class LaunchTab(QWidget):
                     "username": getattr(acct, "username", "") or "",
                 })
             section.set_accounts(account_dicts)
-            self._layout.addWidget(section)
 
             for section_idx, (global_idx, acct) in enumerate(accounts):
                 tile = section.tile_at(section_idx)
@@ -579,6 +583,7 @@ class LaunchTab(QWidget):
                     "state": LoginState.IDLE,
                 })
 
+        self._rebuild_sections_container()
         self._layout.addStretch()
 
         # Re-apply the RUNNING state to any slot whose launcher is still
@@ -593,6 +598,57 @@ class LaunchTab(QWidget):
                 if section_idx >= len(self._cards[game]):
                     continue
                 self._update_status(game, section_idx, LoginState.RUNNING, "Game running")
+
+    # ── Layout mode ────────────────────────────────────────────────────────
+
+    def set_layout_mode(self, mode: str) -> None:
+        """Switch between compact (stacked) and full (side-by-side) layouts.
+        Cheap to call repeatedly: if mode matches the current state, no-op.
+        """
+        if mode not in ("compact", "full"):
+            return
+        if mode == self._layout_mode and self._sections_container is not None:
+            return
+        self._layout_mode = mode
+        self.ttr_section.set_layout_mode(mode)
+        self.cc_section.set_layout_mode(mode)
+        self._rebuild_sections_container()
+
+    def _rebuild_sections_container(self) -> None:
+        """(Re)build the widget that holds the two sections. In compact
+        mode it's a QVBoxLayout; in full mode it's a QHBoxLayout. We
+        re-parent the section widgets without destroying them, so all
+        signals and child-tile state survive the swap."""
+        from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
+        # Find the current position of the container in self._layout so we
+        # can re-insert the replacement at the same slot. Default to the
+        # current count (appended) when no container exists yet; addStretch
+        # hasn't been called yet during the _build_ui first-init path.
+        insert_index = self._layout.count()
+        if self._sections_container is not None:
+            insert_index = self._layout.indexOf(self._sections_container)
+            self._sections_container.setParent(None)
+            self._sections_container.deleteLater()
+            self._sections_container = None
+        # Detach sections from their current parent before adopting them.
+        self.ttr_section.setParent(None)
+        self.cc_section.setParent(None)
+
+        container = QWidget()
+        if self._layout_mode == "full":
+            lay = QHBoxLayout(container)
+            lay.setContentsMargins(0, 0, 0, 0)
+            lay.setSpacing(12)
+            lay.addWidget(self.ttr_section, 1)
+            lay.addWidget(self.cc_section, 1)
+        else:
+            lay = QVBoxLayout(container)
+            lay.setContentsMargins(0, 0, 0, 0)
+            lay.setSpacing(12)
+            lay.addWidget(self.ttr_section, alignment=Qt.AlignHCenter)
+            lay.addWidget(self.cc_section, alignment=Qt.AlignHCenter)
+        self._sections_container = container
+        self._layout.insertWidget(insert_index, container)
 
     # ── Account actions ────────────────────────────────────────────────────
 
