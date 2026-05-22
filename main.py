@@ -825,6 +825,8 @@ class MultiToonTool(QMainWindow):
         # warm cache. Instant snap matches the rest of the resize feel.
         self._layout_mode = target
         self.multitoon_tab.set_layout_mode(target)
+        if hasattr(self, "launch_tab") and self.launch_tab is not None:
+            self.launch_tab.set_layout_mode(target)
 
     def _apply_chip_styles(self):
         """Apply theme-aware QSS + icon rendering to the chip rail's nav chips.

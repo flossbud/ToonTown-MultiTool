@@ -38,3 +38,17 @@ def test_decide_swaps_to_compact_when_either_dimension_drops():
     assert _decide_layout_mode("full", W_FULL - DEADBAND_W, H_FULL + 100) == "compact"
     # Height drops, width stays high
     assert _decide_layout_mode("full", W_FULL + 100, H_FULL - DEADBAND_H) == "compact"
+
+
+def test_main_set_layout_mode_propagates_to_launch_tab():
+    """When main._set_layout_mode flips modes, launch_tab is updated too."""
+    from unittest.mock import MagicMock
+    from main import MultiToonTool
+    instance = MultiToonTool.__new__(MultiToonTool)
+    instance._layout_mode = "compact"
+    instance.multitoon_tab = MagicMock()
+    instance.launch_tab = MagicMock()
+    MultiToonTool._set_layout_mode(instance, "full")
+    instance.multitoon_tab.set_layout_mode.assert_called_once_with("full")
+    instance.launch_tab.set_layout_mode.assert_called_once_with("full")
+    assert instance._layout_mode == "full"
