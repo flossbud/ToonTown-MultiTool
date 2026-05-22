@@ -12,7 +12,8 @@ import os
 import sys
 import threading
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QLabel, QFrame, QScrollArea, QLineEdit, QInputDialog,
+    QFrame, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QScrollArea,
+    QVBoxLayout, QWidget,
 )
 from PySide6.QtCore import Qt, QObject, Signal, QThread, Slot
 
@@ -619,7 +620,6 @@ class LaunchTab(QWidget):
         mode it's a QVBoxLayout; in full mode it's a QHBoxLayout. We
         re-parent the section widgets without destroying them, so all
         signals and child-tile state survive the swap."""
-        from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
         # Find the current position of the container in self._layout so we
         # can re-insert the replacement at the same slot. Default to the
         # current count (appended) when no container exists yet; addStretch
@@ -627,12 +627,18 @@ class LaunchTab(QWidget):
         insert_index = self._layout.count()
         if self._sections_container is not None:
             insert_index = self._layout.indexOf(self._sections_container)
+            # Rescue the sections from the about-to-be-destroyed container
+            # BEFORE scheduling the container's deleteLater, matching the
+            # ordering used in _build_ui's cleanup loop.
+            self.ttr_section.setParent(None)
+            self.cc_section.setParent(None)
             self._sections_container.setParent(None)
             self._sections_container.deleteLater()
             self._sections_container = None
-        # Detach sections from their current parent before adopting them.
-        self.ttr_section.setParent(None)
-        self.cc_section.setParent(None)
+        else:
+            # First-init path: sections still have their original parent.
+            self.ttr_section.setParent(None)
+            self.cc_section.setParent(None)
 
         container = QWidget()
         if self._layout_mode == "full":
