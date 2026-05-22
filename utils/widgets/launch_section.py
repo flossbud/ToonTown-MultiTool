@@ -6,10 +6,10 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
-    QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget,
+    QFrame, QGridLayout, QHBoxLayout, QLabel, QVBoxLayout, QWidget,
 )
 
-from utils.widgets.account_tile import AccountTile
+from utils.widgets.account_tile import AccountTile, _QuietChipButton
 from utils.widgets.empty_state import EmptyState
 
 
@@ -17,17 +17,19 @@ _GAME_NAMES = {"ttr": "Toontown Rewritten", "cc": "Corporate Clash"}
 _GAME_SHORT = {"ttr": "TTR", "cc": "CC"}
 
 
-class _AddTile(QPushButton):
-    """Dashed-outline "+ Add Account" tile, matches grid cell size."""
+class _AddTile(_QuietChipButton):
+    """Dashed-outline "+ Add Account" tile, matches grid cell size.
+    Uses _QuietChipButton (no hover upscale, 0.96 press scale)."""
     def __init__(self, game: str, parent=None):
-        super().__init__(f"+ Add {_GAME_SHORT[game]} Account", parent)
+        super().__init__(parent)
+        self.setText(f"+ Add {_GAME_SHORT[game]} Account")
         self.setMinimumHeight(130)
         self.setCursor(Qt.PointingHandCursor)
         self.setStyleSheet(
-            "QPushButton { background: transparent; border: 2px dashed"
+            "QToolButton { background: transparent; border: 2px dashed"
             " rgba(255,255,255,0.12); border-radius: 10px; color: #8a9bb8;"
             " font-size: 13px; }"
-            "QPushButton:hover { border-color: rgba(255,255,255,0.25);"
+            "QToolButton:hover { border-color: rgba(255,255,255,0.25);"
             " color: #cfd6e6; background: rgba(255,255,255,0.02); }"
         )
 
@@ -97,13 +99,14 @@ class LaunchSection(QWidget):
         head_lay.addLayout(title_col)
         head_lay.addStretch()
 
-        self.launcher_btn = QPushButton(f"↗ Launch {_GAME_SHORT[game]} Launcher")
+        self.launcher_btn = _QuietChipButton()
+        self.launcher_btn.setText(f"↗ Launch {_GAME_SHORT[game]} Launcher")
         self.launcher_btn.setCursor(Qt.PointingHandCursor)
         self.launcher_btn.setStyleSheet(
-            "QPushButton { background: transparent; border: 1px solid rgba(255,255,255,0.18);"
+            "QToolButton { background: transparent; border: 1px solid rgba(255,255,255,0.18);"
             " color: #cfd6e6; border-radius: 8px; padding: 8px 14px; font-size: 12px;"
             " font-weight: 600; }"
-            "QPushButton:hover { background: rgba(255,255,255,0.06);"
+            "QToolButton:hover { background: rgba(255,255,255,0.06);"
             " border-color: rgba(255,255,255,0.3); }"
         )
         self.launcher_btn.clicked.connect(self.launcher_clicked.emit)

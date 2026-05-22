@@ -87,3 +87,21 @@ def test_section_header_has_tinted_band_cc(qapp):
     assert "rgba(242,109,33" in qss or "rgba(242, 109, 33" in qss
     assert "border-bottom" in qss
     assert "rgba(255,255,255,0.06" in qss or "rgba(255, 255, 255, 0.06" in qss
+
+
+def test_section_launcher_button_is_chipbutton(qapp):
+    from utils.widgets.launch_section import LaunchSection
+    from utils.widgets.chip_button import ChipButton
+    sec = LaunchSection(game="ttr", icon_path="")
+    assert isinstance(sec.launcher_btn, ChipButton)
+
+
+def test_add_tile_is_chipbutton(qapp):
+    """The '+ Add Account' tile inherits from ChipButton, so pressing it
+    runs the same paint_scale animation."""
+    from utils.widgets.launch_section import LaunchSection
+    from utils.widgets.chip_button import ChipButton
+    sec = LaunchSection(game="ttr", icon_path="")
+    sec.set_accounts([{"label": "x", "username": "y"}])
+    assert sec.add_tile is not None
+    assert isinstance(sec.add_tile, ChipButton)
