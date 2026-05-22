@@ -6,7 +6,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
-    QGridLayout, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget,
+    QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget,
 )
 
 from utils.widgets.account_tile import AccountTile
@@ -56,7 +56,24 @@ class LaunchSection(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
-        header = QWidget()
+        # Tinted accent band wrapping the header strip. The gradient fades
+        # from a 10%-opacity game-accent tint at the top to transparent at
+        # the bottom; the hairline below the band acts as the section-
+        # boundary divider so the header reads as a labeled region rather
+        # than floating text.
+        _accent_rgba = (
+            "rgba(74,143,231,0.10)" if game == "ttr"
+            else "rgba(242,109,33,0.10)"
+        )
+        header = QFrame()
+        header.setObjectName("section_header")
+        header.setStyleSheet(
+            f"QFrame#section_header {{"
+            f" background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
+            f" stop:0 {_accent_rgba}, stop:1 transparent);"
+            f" border-bottom: 1px solid rgba(255,255,255,0.06);"
+            f"}}"
+        )
         head_lay = QHBoxLayout(header)
         head_lay.setContentsMargins(18, 14, 18, 14)
         head_lay.setSpacing(12)
@@ -96,7 +113,7 @@ class LaunchSection(QWidget):
 
         self.grid_container = QWidget()
         self.grid = QGridLayout(self.grid_container)
-        self.grid.setContentsMargins(14, 0, 14, 14)
+        self.grid.setContentsMargins(14, 14, 14, 14)
         self.grid.setSpacing(10)
         outer.addWidget(self.grid_container)
 

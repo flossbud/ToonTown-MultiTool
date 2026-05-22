@@ -1,6 +1,6 @@
 """LaunchSection: section header + 2-col grid of AccountTiles + empty state."""
 import pytest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QFrame
 from utils.widgets.launch_section import LaunchSection
 
 
@@ -65,3 +65,24 @@ def test_max_accounts_hides_add_tile(qapp):
     sec.set_accounts([{"label": "A", "username": "a"}, {"label": "B", "username": "b"}])
     sec.show()  # required for isVisible to mean anything
     assert not sec.add_tile.isVisible()
+
+
+def test_section_header_has_tinted_band_ttr(qapp):
+    sec = LaunchSection(game="ttr", icon_path="")
+    header_frame = sec.findChild(QFrame, "section_header")
+    assert header_frame is not None
+    qss = header_frame.styleSheet()
+    # TTR accent color in the gradient
+    assert "rgba(74,143,231" in qss or "rgba(74, 143, 231" in qss
+    # Hairline divider
+    assert "border-bottom" in qss
+    assert "rgba(255,255,255,0.06" in qss or "rgba(255, 255, 255, 0.06" in qss
+
+
+def test_section_header_has_tinted_band_cc(qapp):
+    sec = LaunchSection(game="cc", icon_path="")
+    header_frame = sec.findChild(QFrame, "section_header")
+    assert header_frame is not None
+    qss = header_frame.styleSheet()
+    assert "rgba(242,109,33" in qss or "rgba(242, 109, 33" in qss
+    assert "border-bottom" in qss
