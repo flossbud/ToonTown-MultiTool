@@ -143,6 +143,30 @@ def test_candidate_logs_dirs_uses_manual_dir_when_set(tmp_path, monkeypatch):
     assert dirs == [manual]
 
 
+def test_layer3_scans_manual_dir_when_set(tmp_path):
+    """When Layer 1 and 2 miss but manual_dir is set, Layer 3 scans it
+    and returns the newest .log file regardless of mtime/create-time."""
+    manual = tmp_path / "manual_logs"
+    manual.mkdir()
+    older = manual / "corporateclash-old.log"
+    newer = manual / "corporateclash-new.log"
+    older.write_text("x")
+    newer.write_text("y")
+    os.utime(older, (1000, 1000))
+    os.utime(newer, (2000, 2000))
+
+    with patch.object(psutil, "Process", return_value=_fake_proc([])):
+        result = cc_log_discovery.find_log_for_pid(123, manual_dir=manual)
+    assert result == newer
+
+
+def test_layer3_does_not_fire_when_manual_dir_is_none():
+    """When manual_dir is None, Layer 3 must not run -- no inadvertent scans."""
+    with patch.object(psutil, "Process", return_value=_fake_proc([])):
+        result = cc_log_discovery.find_log_for_pid(123, manual_dir=None)
+    assert result is None
+
+
 def test_layer1_respects_manual_dir_scope_filter(tmp_path):
     # manual_dir is interpreted as the "logs" dir itself (shallow glob in
     # Layer 3), so put the in-scope log file directly under tmp_path.

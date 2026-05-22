@@ -141,6 +141,22 @@ def _layer2_prefix(pid: int, manual_dir: Optional[Path]) -> Optional[Path]:
     return best
 
 
+def _layer3_manual_dir(manual_dir: Optional[Path]) -> Optional[Path]:
+    if manual_dir is None or not manual_dir.is_dir():
+        return None
+    best: Optional[Path] = None
+    best_mtime = 0.0
+    for log_path in manual_dir.glob("*.log"):
+        try:
+            mtime = log_path.stat().st_mtime
+        except OSError:
+            continue
+        if mtime > best_mtime:
+            best_mtime = mtime
+            best = log_path
+    return best
+
+
 def find_log_for_pid(
     pid: int,
     manual_dir: Optional[Path] = None,
@@ -155,6 +171,9 @@ def find_log_for_pid(
     if path is not None:
         return path
     path = _layer2_prefix(pid, manual_dir)
+    if path is not None:
+        return path
+    path = _layer3_manual_dir(manual_dir)
     if path is not None:
         return path
     return None
