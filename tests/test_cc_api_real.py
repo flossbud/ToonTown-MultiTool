@@ -107,3 +107,58 @@ def test_zone_name_resolves_when_zone_table_has_entry(tmp_path, monkeypatch):
     infos = _sync_threaded_call(1, ["window_e"])
     assert infos[0].playground == "Toontown Central"
     assert infos[0].zone_name == "Loopy Lane"
+
+
+def test_get_stdout_path_for_pid_falls_through_to_discovery(monkeypatch, tmp_path):
+    """When TTMT-spawned registry has no entry, fall through to
+    cc_log_discovery.find_log_for_pid and cache the result."""
+    from utils import cc_log_discovery
+    from services import cc_launcher
+
+    target = tmp_path / "corporateclash-05-22-2026.log"
+    target.write_text("x")
+
+    monkeypatch.setattr(cc_launcher, "get_stdout_path_for_pid", lambda pid: None)
+    monkeypatch.setattr(cc_api, "_get_cc_manual_log_dir", lambda: None)
+    monkeypatch.setattr(cc_log_discovery, "find_log_for_pid",
+                        lambda pid, manual_dir: target)
+
+    registered = {}
+    monkeypatch.setattr(cc_launcher, "_register_stdout_path",
+                        lambda pid, path: registered.setdefault(pid, path))
+
+    result = cc_api._get_stdout_path_for_pid(12345)
+    assert result == target
+    assert registered.get(12345) == target
+
+
+def test_get_stdout_path_for_pid_returns_none_when_both_miss(monkeypatch):
+    from utils import cc_log_discovery
+    from services import cc_launcher
+
+    monkeypatch.setattr(cc_launcher, "get_stdout_path_for_pid", lambda pid: None)
+    monkeypatch.setattr(cc_api, "_get_cc_manual_log_dir", lambda: None)
+    monkeypatch.setattr(cc_log_discovery, "find_log_for_pid",
+                        lambda pid, manual_dir: None)
+
+    assert cc_api._get_stdout_path_for_pid(12345) is None
+
+
+def test_get_stdout_path_for_pid_registry_short_circuits_discovery(monkeypatch, tmp_path):
+    """When the TTMT-spawned registry has a path, discovery is not called."""
+    from utils import cc_log_discovery
+    from services import cc_launcher
+
+    cached = tmp_path / "ttmt-cc-stdout-abc.log"
+    cached.write_text("y")
+
+    monkeypatch.setattr(cc_launcher, "get_stdout_path_for_pid", lambda pid: cached)
+
+    called = {"discovery": False}
+    def _discovery(*args, **kwargs):
+        called["discovery"] = True
+        return None
+    monkeypatch.setattr(cc_log_discovery, "find_log_for_pid", _discovery)
+
+    assert cc_api._get_stdout_path_for_pid(12345) == cached
+    assert called["discovery"] is False
