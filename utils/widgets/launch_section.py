@@ -61,18 +61,18 @@ class LaunchSection(QWidget):
         # the bottom; the hairline below the band acts as the section-
         # boundary divider so the header reads as a labeled region rather
         # than floating text.
-        _accent_rgba = (
+        accent_rgba = (
             "rgba(74,143,231,0.10)" if game == "ttr"
             else "rgba(242,109,33,0.10)"
         )
         header = QFrame()
         header.setObjectName("section_header")
         header.setStyleSheet(
-            f"QFrame#section_header {{"
-            f" background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
-            f" stop:0 {_accent_rgba}, stop:1 transparent);"
-            f" border-bottom: 1px solid rgba(255,255,255,0.06);"
-            f"}}"
+            "QFrame#section_header {"
+            " background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
+            f" stop:0 {accent_rgba}, stop:1 transparent);"
+            " border-bottom: 1px solid rgba(255,255,255,0.06);"
+            "}"
         )
         head_lay = QHBoxLayout(header)
         head_lay.setContentsMargins(18, 14, 18, 14)

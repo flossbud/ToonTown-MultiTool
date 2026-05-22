@@ -86,3 +86,4 @@ def test_section_header_has_tinted_band_cc(qapp):
     qss = header_frame.styleSheet()
     assert "rgba(242,109,33" in qss or "rgba(242, 109, 33" in qss
     assert "border-bottom" in qss
+    assert "rgba(255,255,255,0.06" in qss or "rgba(255, 255, 255, 0.06" in qss
