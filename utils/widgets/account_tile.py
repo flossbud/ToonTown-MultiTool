@@ -36,6 +36,8 @@ def _hamburger_icon(color: str, size: int = 12) -> QIcon:
 
 
 GAME_ACCENT = {"ttr": "#4A8FE7", "cc": "#F26D21"}
+# Slightly-brightened accents used for the :hover border-top color.
+GAME_ACCENT_HOVER = {"ttr": "#6aa4ee", "cc": "#f48748"}
 
 # Status -> (band_bg, band_fg, band_label)
 _STATUS_VISUALS = {
@@ -101,12 +103,17 @@ class AccountTile(QFrame):
         self.setMinimumHeight(130)
 
         accent = GAME_ACCENT[game]
+        accent_hover = GAME_ACCENT_HOVER[game]
         self.setStyleSheet(
-            f"QFrame#account_tile {{"
-            f" background: #252525;"
-            f" border-radius: 10px;"
+            "QFrame#account_tile {"
+            " background: #252525;"
+            " border-radius: 10px;"
             f" border-top: 3px solid {accent};"
-            f"}}"
+            "}"
+            "QFrame#account_tile:hover {"
+            " background: #2e2e2e;"
+            f" border-top: 3px solid {accent_hover};"
+            "}"
         )
 
         outer = QVBoxLayout(self)

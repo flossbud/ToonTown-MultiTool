@@ -126,3 +126,22 @@ def test_summarize_error_33_chars_truncates_with_ellipsis():
 
 def test_summarize_error_unmatched_short_message_returned_as_is():
     assert summarize_error("Some plain error") == "Some plain error"
+
+
+def test_account_tile_has_hover_qss(qapp):
+    """Hovering the tile brightens its background and accent border-top."""
+    from utils.widgets.account_tile import AccountTile
+    tile = AccountTile(game="ttr", slot_index=0)
+    qss = tile.styleSheet()
+    assert "QFrame#account_tile:hover" in qss
+    # Brighter background and brighter TTR accent border on hover.
+    assert "#2e2e2e" in qss
+    assert "#6aa4ee" in qss  # brightened TTR accent
+
+
+def test_account_tile_has_hover_qss_cc(qapp):
+    from utils.widgets.account_tile import AccountTile
+    tile = AccountTile(game="cc", slot_index=0)
+    qss = tile.styleSheet()
+    assert "QFrame#account_tile:hover" in qss
+    assert "#f48748" in qss  # brightened CC accent
