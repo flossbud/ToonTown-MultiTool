@@ -17,6 +17,14 @@ from utils.widgets.empty_state import EmptyState
 _GAME_NAMES = {"ttr": "Toontown Rewritten", "cc": "Corporate Clash"}
 _GAME_SHORT = {"ttr": "TTR", "cc": "CC"}
 _LAYOUT_MAX_WIDTH = {"compact": 720, "full": 860}
+# Reference widths for content-scale calc. At reference width, scale=1.0.
+# Below reference, scale=1.0 (we never shrink content). Above reference,
+# scale grows linearly with width, clamped to [1.0, 1.4] so that fonts
+# don't grow absurdly on 4K monitors.
+# Reference is lower than the mode's max-width so there is headroom for
+# the scale to exceed 1.0 before the widget hits its maximum-width cap.
+_REF_WIDTH = {"compact": 540, "full": 720}
+_SCALE_CLAMP_MAX = 1.4
 
 
 class _AddTile(QuietChipButton):
@@ -56,6 +64,8 @@ class LaunchSection(QWidget):
         self._max_width = 720
         self.setMaximumWidth(self._max_width)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self._layout_mode = "compact"
+        self._content_scale = 1.0
         assert game in ("ttr", "cc")
         self._game = game
         self._max = max_accounts
@@ -175,6 +185,31 @@ class LaunchSection(QWidget):
             return self.tiles[section_index]
         return None
 
+    def _recompute_content_scale(self) -> None:
+        """Compute scale factor from current width vs. the mode's reference width.
+        Update tile min-heights and section-header font sizes in lockstep.
+        """
+        ref = _REF_WIDTH.get(self._layout_mode, 720)
+        if ref <= 0:
+            return
+        raw = self.width() / ref
+        scale = max(1.0, min(raw, _SCALE_CLAMP_MAX))
+        if abs(scale - self._content_scale) < 0.01:
+            return
+        self._content_scale = scale
+        # Apply to existing tiles' min-height. Base tile minHeight is 130.
+        for tile in self.tiles:
+            tile.setMinimumHeight(int(130 * scale))
+        # Header title font size scales too (15 base -> up to 21).
+        self.title_label.setStyleSheet(
+            f"color: #fff; font-weight: 700;"
+            f" font-size: {int(15 * scale)}px;"
+        )
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._recompute_content_scale()
+
     def set_layout_mode(self, mode: str) -> None:
         """Apply per-section sizing for the app-wide layout mode.
 
@@ -186,6 +221,8 @@ class LaunchSection(QWidget):
             return
         self._max_width = _LAYOUT_MAX_WIDTH[mode]
         self.setMaximumWidth(self._max_width)
+        self._layout_mode = mode
+        self._recompute_content_scale()
 
     def _wire_tile(self, tile: AccountTile, index: int) -> None:
         tile.launch_clicked.connect(lambda i=index: self.tile_launch.emit(i))

@@ -132,3 +132,31 @@ def test_set_layout_mode_unknown_is_noop(qapp):
     before = sec.maximumWidth()
     sec.set_layout_mode("invalid")
     assert sec.maximumWidth() == before
+
+
+def test_section_resize_scales_tile_minheight(qapp):
+    """At wider widths, tile min-height grows proportionally (within clamps)."""
+    from utils.widgets.launch_section import LaunchSection
+    sec = LaunchSection(game="ttr", icon_path="")
+    sec.set_accounts([{"label": "a", "username": "u"}])
+    tile = sec.tile_at(0)
+    base_h = tile.minimumHeight()
+    # Full-mode reference is 720px; max-width is 860. Resize to 860 gives
+    # scale=860/720~=1.19>1.0 (well within the 1.4 clamp). Widget must be
+    # shown so that subsequent resize() calls trigger resizeEvent.
+    sec.show()
+    sec.set_layout_mode("full")
+    sec.resize(860, sec.height())
+    # After resize, the scale factor should be > 1.0, so min-height bumps.
+    assert tile.minimumHeight() > base_h
+
+
+def test_section_resize_scale_factor_clamped(qapp):
+    """Resize-driven scale clamps at 1.4 even on absurdly wide screens."""
+    from utils.widgets.launch_section import LaunchSection
+    sec = LaunchSection(game="ttr", icon_path="")
+    sec.show()
+    sec.set_layout_mode("full")
+    sec.resize(4000, sec.height())
+    assert sec._content_scale <= 1.4
+    assert sec._content_scale >= 1.0
