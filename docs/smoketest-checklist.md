@@ -116,3 +116,4 @@ Targeted repros for the issues fixed in `2026-05-07-input-forwarding-fixes.md`.
 - [ ] Launch a TTR toon. No pencil overlay; click on the badge fires the existing `clicked` behaviour. Picker not accessible.
 - [ ] Launch a CC toon with a species CC names but no asset (e.g. a FROG once observed in the wild): badge shows the slot-number fallback in the complement-bg circle; picker can still be opened to manually assign an icon.
 - [ ] Achromatic toon (a black or near-white skin): badge silhouette stays visible thanks to the lightness-flip bg formula. Picker tiles for that toon also render readably.
+- [ ] Pale-skin CC toon (e.g. near-white or pale-pink): the bg circle is clearly darker than the silhouette, not a near-white-on-white badge. (2026-05-22 recolor fix.)
