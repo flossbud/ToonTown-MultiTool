@@ -160,3 +160,22 @@ def test_section_resize_scale_factor_clamped(qapp):
     sec.resize(4000, sec.height())
     assert sec._content_scale <= 1.4
     assert sec._content_scale >= 1.0
+
+
+def test_set_accounts_after_scale_applies_to_new_tiles(qapp):
+    """If accounts are (re)loaded after a window resize has bumped scale
+    above 1.0, the fresh tiles must inherit the current scaled min-height
+    rather than the AccountTile default of 130."""
+    from utils.widgets.launch_section import LaunchSection
+    sec = LaunchSection(game="ttr", icon_path="")
+    sec.show()
+    sec.set_layout_mode("full")
+    sec.resize(860, sec.height())  # bumps scale to ~1.19
+    assert sec._content_scale > 1.0
+    sec.set_accounts([{"label": "a", "username": "u"}])
+    tile = sec.tile_at(0)
+    assert tile.minimumHeight() == int(130 * sec._content_scale)
+    # add_tile should also be scaled (it was excluded from the loop in
+    # the original Task 11 implementation).
+    assert sec.add_tile is not None
+    assert sec.add_tile.minimumHeight() == int(130 * sec._content_scale)

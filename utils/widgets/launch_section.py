@@ -179,6 +179,11 @@ class LaunchSection(QWidget):
             self.add_tile.setVisible(False)
 
         self.subline.setText(f"{len(accounts)} account" + ("s" if len(accounts) != 1 else ""))
+        # New tiles are born at AccountTile's default minHeight=130; if the
+        # section is currently scaled (e.g. account refresh after a window
+        # resize bumped scale above 1.0), bring the fresh tiles up to the
+        # current scale so they don't render at the wrong height.
+        self._apply_content_scale_to_tiles()
 
     def tile_at(self, section_index: int) -> AccountTile | None:
         if 0 <= section_index < len(self.tiles):
@@ -197,14 +202,25 @@ class LaunchSection(QWidget):
         if abs(scale - self._content_scale) < 0.01:
             return
         self._content_scale = scale
-        # Apply to existing tiles' min-height. Base tile minHeight is 130.
-        for tile in self.tiles:
-            tile.setMinimumHeight(int(130 * scale))
-        # Header title font size scales too (15 base -> up to 21).
+        self._apply_content_scale_to_tiles()
+        # Header title font size scales too (15 base -> up to 21). NOTE:
+        # this replaces the full stylesheet; if you add other QSS rules to
+        # title_label, include them here or they'll be silently dropped on
+        # the next resize.
         self.title_label.setStyleSheet(
             f"color: #fff; font-weight: 700;"
-            f" font-size: {int(15 * scale)}px;"
+            f" font-size: {int(15 * self._content_scale)}px;"
         )
+
+    def _apply_content_scale_to_tiles(self) -> None:
+        """Apply the current _content_scale to every tile and add_tile.
+        Called from _recompute_content_scale and from set_accounts (after
+        new tiles are constructed at their default 130 minHeight)."""
+        scaled_h = int(130 * self._content_scale)
+        for tile in self.tiles:
+            tile.setMinimumHeight(scaled_h)
+        if self.add_tile is not None:
+            self.add_tile.setMinimumHeight(scaled_h)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
