@@ -205,3 +205,12 @@ def test_account_tile_leave_while_pressed_resets_state(qapp):
     tile.leaveEvent(leave)
     assert tile._is_pressed is False
     assert tile._target_scale() == AccountTile.NORMAL_SCALE
+
+
+def test_account_tile_opacity_property(qapp):
+    """tile_opacity is an animatable Qt Property defaulting to 1.0."""
+    from utils.widgets.account_tile import AccountTile
+    tile = AccountTile(game="ttr", slot_index=0)
+    assert tile.tile_opacity == 1.0
+    tile.tile_opacity = 0.5
+    assert tile.tile_opacity == 0.5

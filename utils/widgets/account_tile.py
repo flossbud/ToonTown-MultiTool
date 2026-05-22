@@ -107,6 +107,7 @@ class AccountTile(QFrame):
         self._state = "idle"
         self.raw_error_message = ""
         self._paint_scale = 1.0
+        self._tile_opacity = 1.0
         self._is_pressed = False
         self._scale_anim: QPropertyAnimation | None = None
 
@@ -290,6 +291,16 @@ class AccountTile(QFrame):
 
     paint_scale = Property(float, _get_paint_scale, _set_paint_scale)
 
+    # ── tile_opacity Qt property ─────────────────────────────────────────
+    def _get_tile_opacity(self) -> float:
+        return self._tile_opacity
+
+    def _set_tile_opacity(self, value: float) -> None:
+        self._tile_opacity = float(value)
+        self.update()
+
+    tile_opacity = Property(float, _get_tile_opacity, _set_tile_opacity)
+
     # ── Press state ──────────────────────────────────────────────────────
     def _target_scale(self) -> float:
         return self.PRESS_SCALE if self._is_pressed else self.NORMAL_SCALE
@@ -343,26 +354,30 @@ class AccountTile(QFrame):
 
     # ── Painting: scale the entire tile via QPainter ────────────────────
     def paintEvent(self, event) -> None:
-        # Fast path: at NORMAL_SCALE we have nothing to transform; let
-        # QFrame's own paintEvent handle the QSS background and border.
-        if self._paint_scale == 1.0:
+        # Fast path: at NORMAL_SCALE with full opacity we have nothing to
+        # transform; let QFrame's own paintEvent handle the QSS background
+        # and border.
+        if self._paint_scale == 1.0 and self._tile_opacity == 1.0:
             super().paintEvent(event)
             return
-        # During the press animation we cannot delegate to super().paintEvent
-        # through our painter — QFrame.paintEvent grabs its own QPainter on
-        # the same paint device and Qt rejects the recursive begin(). So we
-        # render the QSS-styled background manually via QStyle.PE_Widget,
-        # with the painter pre-scaled around the widget center. Child
+        # During the press animation OR a reveal fade we cannot delegate
+        # to super().paintEvent through our painter — QFrame.paintEvent
+        # grabs its own QPainter on the same paint device and Qt rejects
+        # the recursive begin(). So we render the QSS-styled background
+        # manually via QStyle.PE_Widget, with the painter pre-scaled
+        # around the widget center and tinted by tile_opacity. Child
         # widgets (buttons, labels) paint themselves through Qt's normal
-        # widget tree and are NOT scaled by this transform — that mirrors
-        # the same tradeoff ChipButton accepts.
+        # widget tree and are NOT scaled or opacity-tinted by this
+        # transform — that mirrors the same tradeoff ChipButton accepts.
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing, True)
         p.setRenderHint(QPainter.SmoothPixmapTransform, True)
-        cx, cy = self.width() / 2.0, self.height() / 2.0
-        p.translate(cx, cy)
-        p.scale(self._paint_scale, self._paint_scale)
-        p.translate(-cx, -cy)
+        p.setOpacity(self._tile_opacity)
+        if self._paint_scale != 1.0:
+            cx, cy = self.width() / 2.0, self.height() / 2.0
+            p.translate(cx, cy)
+            p.scale(self._paint_scale, self._paint_scale)
+            p.translate(-cx, -cy)
         opt = QStyleOption()
         opt.initFrom(self)
         self.style().drawPrimitive(QStyle.PE_Widget, opt, p, self)
