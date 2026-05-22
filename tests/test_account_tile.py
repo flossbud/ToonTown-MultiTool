@@ -140,8 +140,10 @@ def test_account_tile_has_hover_qss(qapp):
 
 
 def test_account_tile_has_hover_qss_cc(qapp):
+    """CC tiles get the brightened orange accent and shared brighter background."""
     from utils.widgets.account_tile import AccountTile
     tile = AccountTile(game="cc", slot_index=0)
     qss = tile.styleSheet()
     assert "QFrame#account_tile:hover" in qss
+    assert "#2e2e2e" in qss
     assert "#f48748" in qss  # brightened CC accent
