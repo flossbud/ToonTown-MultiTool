@@ -3,13 +3,17 @@ swaps label, color, and enabled flag based on the account's current
 LoginState. Emits a distinct signal per state-specific click."""
 from __future__ import annotations
 
-from PySide6.QtCore import QByteArray, Qt, QSize, Signal
+from PySide6.QtCore import (
+    QAbstractAnimation, Property, QByteArray, QPropertyAnimation, Qt, QSize,
+    QTimer, Signal,
+)
 from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
     QFrame, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget,
 )
 
+import utils.motion as motion
 from utils.shared_widgets import PulsingDot
 from utils.theme_manager import make_edit_icon, make_trash_icon
 
@@ -82,6 +86,10 @@ def summarize_error(raw_message: str) -> str:
 
 
 class AccountTile(QFrame):
+    NORMAL_SCALE = 1.0
+    PRESS_SCALE = 0.96  # gentler than ChipButton's 0.88 — tile is a larger surface
+    DURATION_PRESS_MS = 130
+
     launch_clicked       = Signal()
     quit_clicked         = Signal()
     cancel_clicked       = Signal()
@@ -97,6 +105,9 @@ class AccountTile(QFrame):
         self._slot_index = slot_index
         self._state = "idle"
         self.raw_error_message = ""
+        self._paint_scale = 1.0
+        self._is_pressed = False
+        self._scale_anim: QPropertyAnimation | None = None
 
         self.setObjectName("account_tile")
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
@@ -267,3 +278,75 @@ class AccountTile(QFrame):
             sig = getattr(self, signal_name)
             self.primary_button.clicked.connect(sig.emit)
         self._connected_signal = signal_name
+
+    # ── paint_scale Qt property ──────────────────────────────────────────
+    def _get_paint_scale(self) -> float:
+        return self._paint_scale
+
+    def _set_paint_scale(self, value: float) -> None:
+        self._paint_scale = float(value)
+        self.update()
+
+    paint_scale = Property(float, _get_paint_scale, _set_paint_scale)
+
+    # ── Press state ──────────────────────────────────────────────────────
+    def _target_scale(self) -> float:
+        return self.PRESS_SCALE if self._is_pressed else self.NORMAL_SCALE
+
+    def _animate_to(self, target: float) -> None:
+        if motion.is_reduced():
+            self._set_paint_scale(target)
+            return
+        if (
+            self._scale_anim is not None
+            and self._scale_anim.state() == QAbstractAnimation.Running
+        ):
+            self._scale_anim.stop()
+        raw = self.DURATION_PRESS_MS * motion._TEST_DURATION_SCALE
+        duration = 0 if raw == 0.0 else max(1, int(raw))
+        anim = QPropertyAnimation(self, b"paint_scale")
+        anim.setDuration(duration)
+        anim.setEasingCurve(motion.EASE_STANDARD)
+        anim.setStartValue(self._paint_scale)
+        anim.setEndValue(target)
+        anim.finished.connect(lambda t=target: self._set_paint_scale(t))
+        self._scale_anim = anim
+        timer = QTimer(self)
+        timer.setSingleShot(True)
+        timer.timeout.connect(anim.start)
+        timer.start(0)
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.LeftButton and not self._is_pressed:
+            self._is_pressed = True
+            self._animate_to(self._target_scale())
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:
+        if event.button() == Qt.LeftButton and self._is_pressed:
+            self._is_pressed = False
+            self._animate_to(self._target_scale())
+        super().mouseReleaseEvent(event)
+
+    # ── Painting: scale the entire tile via QPainter ────────────────────
+    def paintEvent(self, event) -> None:
+        if self._paint_scale == 1.0:
+            super().paintEvent(event)
+            return
+        # Render at the scaled transform. QFrame's default paintEvent
+        # renders via the active QStyle, which honors the QSS background
+        # + border. We scale the painter, then call super() to let Qt's
+        # style routine do the actual draw through our transformed painter.
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        cx, cy = self.width() / 2.0, self.height() / 2.0
+        p.translate(cx, cy)
+        p.scale(self._paint_scale, self._paint_scale)
+        p.translate(-cx, -cy)
+        # We cannot call super().paintEvent through our painter; QFrame's
+        # paintEvent grabs its own QPainter. So render the styled background
+        # manually via QStyle.
+        from PySide6.QtWidgets import QStyle, QStyleOption
+        opt = QStyleOption()
+        opt.initFrom(self)
+        self.style().drawPrimitive(QStyle.PE_Widget, opt, p, self)

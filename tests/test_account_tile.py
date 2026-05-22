@@ -147,3 +147,40 @@ def test_account_tile_has_hover_qss_cc(qapp):
     assert "QFrame#account_tile:hover" in qss
     assert "#2e2e2e" in qss
     assert "#f48748" in qss  # brightened CC accent
+
+
+def test_account_tile_press_drives_paint_scale(qapp):
+    """Pressing the tile flips _is_pressed and targets PRESS_SCALE.
+    Mirrors tests/test_chip_rail.py::test_chip_press_drives_chipbutton_paint_scale."""
+    from PySide6.QtCore import QEvent, QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+    from utils.widgets.account_tile import AccountTile
+
+    tile = AccountTile(game="ttr", slot_index=0)
+    assert tile._is_pressed is False
+    assert tile._target_scale() == AccountTile.NORMAL_SCALE
+
+    press = QMouseEvent(
+        QEvent.MouseButtonPress, QPointF(5, 5),
+        Qt.LeftButton, Qt.LeftButton, Qt.NoModifier,
+    )
+    tile.mousePressEvent(press)
+    assert tile._is_pressed is True
+    assert tile._target_scale() == AccountTile.PRESS_SCALE
+
+    release = QMouseEvent(
+        QEvent.MouseButtonRelease, QPointF(5, 5),
+        Qt.LeftButton, Qt.NoButton, Qt.NoModifier,
+    )
+    tile.mouseReleaseEvent(release)
+    assert tile._is_pressed is False
+    assert tile._target_scale() == AccountTile.NORMAL_SCALE
+
+
+def test_account_tile_paint_scale_property_exists(qapp):
+    """paint_scale is a writable Qt Property for QPropertyAnimation."""
+    from utils.widgets.account_tile import AccountTile
+    tile = AccountTile(game="ttr", slot_index=0)
+    assert tile.paint_scale == 1.0
+    tile.paint_scale = 0.96
+    assert tile.paint_scale == 0.96
