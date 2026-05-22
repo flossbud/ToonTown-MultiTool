@@ -103,6 +103,7 @@ class ToonPortraitWidget(QWidget):
         self._toon_name: str | None = None
         self._cc_auto_species: str | None = None
         self._hovered = False
+        self._press_consumed_by_pencil = False
         self.setMinimumSize(38, 38)
         self.setMaximumSize(64, 64)
         self.setCursor(Qt.PointingHandCursor)
@@ -113,15 +114,30 @@ class ToonPortraitWidget(QWidget):
         super().mousePressEvent(event)
         if event.button() != Qt.LeftButton:
             return
+        # The pencil overlay is its own affordance: a press inside it fires
+        # the edit signal (no need to wait for release, since this opens a
+        # modal anyway). Returning early ensures mouseReleaseEvent will not
+        # ALSO emit `clicked` for the same gesture.
         if self._can_show_pencil():
             from utils.cc_badge_paint import pencil_rect_for
             if pencil_rect_for(self.rect()).contains(event.position().toPoint()):
                 self.edit_icon_requested.emit()
+                self._press_consumed_by_pencil = True
                 return
-        self.clicked.emit()
+        self._press_consumed_by_pencil = False
 
     def mouseReleaseEvent(self, event):
         super().mouseReleaseEvent(event)
+        if event.button() != Qt.LeftButton:
+            return
+        # Standard Qt button convention: emit on release, only if release
+        # lands inside the widget. Skip if the press was already handled
+        # by the pencil overlay.
+        if getattr(self, "_press_consumed_by_pencil", False):
+            self._press_consumed_by_pencil = False
+            return
+        if self.rect().contains(event.position().toPoint()):
+            self.clicked.emit()
 
     def set_colors(self, bg: str, text: str):
         self._bg   = QColor(bg)

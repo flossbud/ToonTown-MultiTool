@@ -22,13 +22,19 @@ def qt_app():
 
 
 def _send_left_click(widget, local_pos: QPoint) -> None:
-    """Synthesize a left-button press at local_pos and dispatch it."""
+    """Synthesize a left-button press + release at local_pos and dispatch."""
     press = QMouseEvent(
         QMouseEvent.MouseButtonPress,
         QPointF(local_pos),
         Qt.LeftButton, Qt.LeftButton, Qt.NoModifier,
     )
+    release = QMouseEvent(
+        QMouseEvent.MouseButtonRelease,
+        QPointF(local_pos),
+        Qt.LeftButton, Qt.NoButton, Qt.NoModifier,
+    )
     widget.mousePressEvent(press)
+    widget.mouseReleaseEvent(release)
 
 
 @pytest.fixture
@@ -73,8 +79,9 @@ def test_click_in_pencil_rect_does_not_emit_clicked(cc_widget):
 def test_click_outside_pencil_emits_clicked(cc_widget):
     received = []
     cc_widget.clicked.connect(lambda: received.append(True))
-    # Top-right area, far from bottom-left pencil rect.
-    _send_left_click(cc_widget, QPoint(80, 16))
+    # Top-right area (50, 10), inside the 64x64 widget, far from the
+    # bottom-left pencil rect at (4, 44, 16, 16).
+    _send_left_click(cc_widget, QPoint(50, 10))
     assert received == [True]
 
 
@@ -98,6 +105,26 @@ def test_pencil_only_appears_in_cc_mode(qt_app, monkeypatch, tmp_path):
     _send_left_click(w, rect.center())
     assert edits == []
     assert clicks == [True]
+
+
+def test_press_drag_outside_does_not_emit_clicked(cc_widget):
+    """Press inside the widget, release outside -> no clicked."""
+    received = []
+    cc_widget.clicked.connect(lambda: received.append(True))
+    press = QMouseEvent(
+        QMouseEvent.MouseButtonPress,
+        QPointF(50, 10),  # top-right area inside widget, outside pencil
+        Qt.LeftButton, Qt.LeftButton, Qt.NoModifier,
+    )
+    # Release at a position OUTSIDE the widget bounds.
+    release = QMouseEvent(
+        QMouseEvent.MouseButtonRelease,
+        QPointF(-50, -50),
+        Qt.LeftButton, Qt.NoButton, Qt.NoModifier,
+    )
+    cc_widget.mousePressEvent(press)
+    cc_widget.mouseReleaseEvent(release)
+    assert received == [], "drag-away gesture should not fire clicked"
 
 
 def test_pencil_requires_toon_name(qt_app, monkeypatch, tmp_path):
