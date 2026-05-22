@@ -105,3 +105,23 @@ def test_cancel_returns_cancel_action(qt_app):
     )
     dlg.reject()
     assert dlg.result_action() == ("cancel", None)
+
+
+def test_use_auto_button_disabled_when_no_auto_stem(qt_app):
+    dlg = RacePickerDialog(
+        toon_name="Mystery",
+        current_override_stem=None,
+        auto_detected_stem=None,
+        skin_color=QColor(154, 154, 154),
+    )
+    assert dlg._use_auto_button.isEnabled() is False
+
+
+def test_use_auto_button_enabled_when_auto_stem_present(qt_app):
+    dlg = RacePickerDialog(
+        toon_name="Flossbud",
+        current_override_stem=None,
+        auto_detected_stem="dog",
+        skin_color=QColor(214, 49, 49),
+    )
+    assert dlg._use_auto_button.isEnabled() is True

@@ -197,7 +197,13 @@ class RacePickerDialog(QDialog):
         use_auto = QPushButton("Use auto-detected (clears override)")
         use_auto.setFlat(True)
         use_auto.setStyleSheet("color: #8aa3d6;")
+        use_auto.setEnabled(self._auto_stem is not None)
+        if self._auto_stem is None:
+            use_auto.setToolTip(
+                "No auto-detected race for this toon yet"
+            )
         use_auto.clicked.connect(self.accept_use_auto)
+        self._use_auto_button = use_auto  # for testability
         footer.addWidget(use_auto)
         footer.addStretch(1)
         cancel = QPushButton("Cancel")
