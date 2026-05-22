@@ -18,24 +18,37 @@ from PySide6.QtGui import QColor, QFont, QPainter, QPixmap
 from utils import cc_race_assets
 
 
-# bg = (skin hue + 180 deg, skin sat * 0.60, clamp(1 - skin L, 0.18, 0.85)).
-# One adaptive-lightness rule for every skin: pale skins get a darker bg,
-# dark skins get a lighter bg. The clamp keeps the extremes from inverting
-# to pure black or pure white. Achromatic skins use the same formula; their
-# near-zero saturation collapses the bg saturation to near-zero, so the bg
-# is effectively a neutral grey at the inverted lightness.
+# bg = (skin hue + 180 deg, skin sat * 0.60, adaptive-lightness):
+#   - Naive case: clamp(1 - skin L, 0.18, 0.85). Pale skins get a darker
+#     bg, dark skins get a lighter bg.
+#   - Mid-L case (|1 - 2L| < _MIN_L_DELTA, i.e. skin L approx in [0.35,
+#     0.65]): the naive inversion lands too close to the skin lightness,
+#     so the silhouette would vanish into the bg. Instead, push bg L to
+#     whichever clamp endpoint is furthest from the skin L.
+# Achromatic skins follow the same rule; their near-zero saturation
+# collapses the bg saturation, so the bg is effectively a neutral grey
+# at the chosen lightness.
 _SAT_MULT = 0.60
 _L_CLAMP_MIN = 0.18
 _L_CLAMP_MAX = 0.85
+_MIN_L_DELTA = 0.30  # naive inversion must differ from skin L by at least this
 
 
 def complementary_bg_color(skin: QColor) -> QColor:
     """Return the badge background color for a given skin color.
 
-    One adaptive-lightness rule: complement hue, sat * 0.60, L clamped to
-    the opposite end of the lightness axis from the skin. Pale skins get a
-    darker bg; dark skins get a lighter bg. Achromatic skins inherit the
-    same rule (their near-zero saturation collapses the bg saturation).
+    Naive rule: complement hue, sat * 0.60, L = clamp(1 - skin L,
+    _L_CLAMP_MIN, _L_CLAMP_MAX). Pale skins get a darker bg, dark skins
+    get a lighter bg.
+
+    Mid-L skins (L approx 0.5) would have a naive bg L approx 0.5 too,
+    losing the silhouette in the background. The mid-L branch detects
+    this case (`abs(1 - L - L) < _MIN_L_DELTA`) and pushes bg L to
+    whichever clamp endpoint is furthest from the skin L, restoring
+    luminance contrast.
+
+    Achromatic skins follow the same rule; their near-zero saturation
+    collapses the bg saturation.
     """
     h, s, l, _ = skin.getHslF()
     # QColor.getHslF returns hue = -1 for achromatic colors. Normalize.
@@ -44,7 +57,18 @@ def complementary_bg_color(skin: QColor) -> QColor:
 
     new_h = (h + 0.5) % 1.0  # +180 degrees in [0,1] space
     new_s = s * _SAT_MULT
-    new_l = max(_L_CLAMP_MIN, min(_L_CLAMP_MAX, 1.0 - l))
+
+    inverted_l = 1.0 - l
+    if abs(inverted_l - l) < _MIN_L_DELTA:
+        # Mid-L case: pick the clamp endpoint furthest from skin L.
+        new_l = (
+            _L_CLAMP_MIN
+            if (l - _L_CLAMP_MIN) > (_L_CLAMP_MAX - l)
+            else _L_CLAMP_MAX
+        )
+    else:
+        new_l = max(_L_CLAMP_MIN, min(_L_CLAMP_MAX, inverted_l))
+
     return QColor.fromHslF(new_h, new_s, new_l)
 
 

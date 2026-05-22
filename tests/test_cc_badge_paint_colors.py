@@ -2,31 +2,40 @@
 
 from __future__ import annotations
 
+import pytest
 from PySide6.QtGui import QColor
 
 from utils import cc_badge_paint
 
 
-def test_chromatic_red_complement_uses_adaptive_lightness():
-    """Mid-L red skin: bg is cyan (complement) with sat*0.60 and L = 1 - skin_L."""
+def test_chromatic_red_complement_pushes_to_dark_clamp_at_mid_lightness():
+    """Mid-L red skin (L ~ 0.52) triggers the mid-L branch: bg goes to
+    the dark clamp (0.18) so the silhouette stays visible against the
+    background instead of vanishing into a same-L cyan."""
     skin = QColor(214, 49, 49)  # vivid red, L ~ 0.52
     bg = cc_badge_paint.complementary_bg_color(skin)
     _, skin_s, skin_l, _ = skin.getHslF()
     h, s, l, _ = bg.getHslF()
     assert 0.45 < h < 0.55, f"expected hue near 0.5 (cyan), got {h}"
     assert abs(s - skin_s * 0.60) < 0.02, f"expected sat = skin_s * 0.60, got {s}"
-    assert abs(l - (1.0 - skin_l)) < 0.02, f"expected L = 1 - skin_L, got {l}"
+    assert 0.17 < l < 0.20, (
+        f"mid-L skin should push bg L to the dark clamp, got {l:.3f}"
+    )
 
 
-def test_chromatic_blue_complement_uses_adaptive_lightness():
-    """Mid-L blue skin: bg is orange (complement) with adaptive L."""
+def test_chromatic_blue_complement_pushes_to_light_clamp_at_mid_lightness():
+    """Mid-L blue skin (L ~ 0.42) is in the lower half of the clamp
+    range, so the mid-L branch pushes bg to the bright clamp (0.85)."""
     skin = QColor(31, 78, 184)  # vivid blue, L ~ 0.42
     bg = cc_badge_paint.complementary_bg_color(skin)
     _, _, skin_l, _ = skin.getHslF()
     h, _, l, _ = bg.getHslF()
     # Blue hue ~0.6, complement ~0.1 (orange).
     assert 0.05 < h < 0.20, f"expected hue near 0.1 (orange), got {h}"
-    assert abs(l - (1.0 - skin_l)) < 0.02, f"expected L = 1 - skin_L, got {l}"
+    assert 0.84 < l < 0.86, (
+        f"mid-L skin in lower clamp half should push bg L to the bright "
+        f"clamp, got {l:.3f}"
+    )
 
 
 def test_pale_pink_uses_dark_complement_regression():
@@ -92,3 +101,18 @@ def test_saturation_multiplier_is_consistent():
         assert abs(bg_s - expected) < 0.02, (
             f"skin sat {skin_sat} -> expected bg sat {expected}, got {bg_s}"
         )
+
+
+@pytest.mark.parametrize("skin_l", [0.40, 0.45, 0.50, 0.55, 0.60])
+def test_mid_lightness_skin_produces_minimum_delta(skin_l):
+    """For any skin whose lightness lies in the mid range, the bg must
+    have at least 0.25 lightness delta from the skin so the silhouette
+    stays visible against the circle."""
+    skin = QColor.fromHslF(0.0, 0.6, skin_l)  # red-ish chromatic
+    bg = cc_badge_paint.complementary_bg_color(skin)
+    _, _, bg_l, _ = bg.getHslF()
+    delta = abs(skin_l - bg_l)
+    assert delta >= 0.25, (
+        f"mid-L skin L={skin_l:.2f} produced bg L={bg_l:.3f} (delta={delta:.3f}); "
+        f"want delta >= 0.25 for visible silhouette"
+    )
