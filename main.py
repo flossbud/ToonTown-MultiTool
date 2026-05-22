@@ -359,7 +359,11 @@ class MultiToonTool(QMainWindow):
         QApplication.instance().installEventFilter(self)
 
         from services.hotkey_manager import HotkeyManager
-        self.hotkey_manager = HotkeyManager(self.window_manager, self.multitoon_tab.key_event_queue)
+        self.hotkey_manager = HotkeyManager(
+            self.window_manager,
+            self.multitoon_tab.key_event_queue,
+            suppress_predicate=self.multitoon_tab.input_service._suppress_predicate,
+        )
         self.hotkey_manager.profile_load_requested.connect(self.load_profile_slot)
         self.hotkey_manager.start()
 

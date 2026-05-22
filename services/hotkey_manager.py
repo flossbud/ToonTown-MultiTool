@@ -73,15 +73,16 @@ class HotkeyManager(QObject):
         "f9":  "F9",  "f10": "F10", "f11": "F11", "f12": "F12",
     }
 
-    def __init__(self, window_manager, key_event_queue):
+    def __init__(self, window_manager, key_event_queue, suppress_predicate=None):
         super().__init__()
         self.window_manager = window_manager
         self.key_event_queue = key_event_queue
-        
+        self.suppress_predicate = suppress_predicate
+
         self.pressed_keys = set()
         self.listener = None
         self.is_listening = False
-        
+
         # We hook into active window changes to start/stop the listener dynamically
         self.window_manager.active_window_changed.connect(self._on_active_window_changed)
 
@@ -149,8 +150,9 @@ class HotkeyManager(QObject):
     def on_global_key_press(self, key):
         # Even though we stop the listener, double check capturing rules
         if not self.window_manager.should_capture_input():
-            return
-            
+            return None
+
+        normalized = None
         try:
             keyboard_module = _keyboard_module()
             if key in [keyboard_module.Key.ctrl_l, keyboard_module.Key.ctrl_r]:
@@ -161,7 +163,7 @@ class HotkeyManager(QObject):
                     idx = int(key.char) - 1
                     # Emit signal on the main thread via Qt
                     self.profile_load_requested.emit(idx)
-                    
+
             normalized = self.normalize_key(key)
             if normalized:
                 try:
@@ -171,14 +173,23 @@ class HotkeyManager(QObject):
         except Exception as e:
             print(f"[HotkeyManager] Keydown handler error: {e}")
 
+        if normalized and self.suppress_predicate is not None:
+            try:
+                if self.suppress_predicate(normalized):
+                    return False
+            except Exception as e:
+                print(f"[HotkeyManager] suppress_predicate keydown error: {e}")
+        return None
+
     def on_global_key_release(self, key):
+        normalized = None
         try:
             keyboard_module = _keyboard_module()
             if key in [keyboard_module.Key.ctrl_l, keyboard_module.Key.ctrl_r]:
                 self.pressed_keys.discard("ctrl")
             elif hasattr(key, 'char') and key.char:
                 self.pressed_keys.discard(key.char)
-                
+
             normalized = self.normalize_key(key)
             if normalized:
                 try:
@@ -187,3 +198,11 @@ class HotkeyManager(QObject):
                     print("[HotkeyManager] Warning: key event queue full after timeout, dropping keyup event.")
         except Exception as e:
             print(f"[HotkeyManager] Keyup handler error: {e}")
+
+        if normalized and self.suppress_predicate is not None:
+            try:
+                if self.suppress_predicate(normalized):
+                    return False
+            except Exception as e:
+                print(f"[HotkeyManager] suppress_predicate keyup error: {e}")
+        return None

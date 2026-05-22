@@ -143,40 +143,63 @@ class InputService(QObject):
         self._start_key_grabber()
 
     def _start_key_grabber(self) -> None:
-        """Install the X11 grabber in focus-aware mode.
+        """Install the platform-appropriate movement key grabber in
+        focus-aware mode.
 
-        Gate: skip entirely when no CC install detected.
-        Lifecycle: prepare() at startup, install_grabs only while a CC
-        window has focus, uninstall on focus-change away from CC.
-        Canonical set is the focused CC toon's assigned set.
+        Linux gate: only when an X11 display is available AND a CC install
+        is detected. The Linux grabber needs the display to install passive
+        XGrabKeys; without CC there's no use for those grabs.
+
+        Windows gate: only the platform check. The Win32 grabber is purely
+        a state machine queried by HotkeyManager's pynput hook; there is
+        nothing to install at the OS level, so the CC-install gate would
+        only delay arming until CC is detected with no benefit.
+
+        Common lifecycle: prepare() at startup, install_grabs only while a
+        CC window has focus, uninstall on focus-change away from CC. The
+        canonical set is the focused CC toon's assigned set.
         """
         if self._key_grabber is not None:
             return  # already initialized; stop()/start() cycle preserves the grabber
-        try:
-            from utils.x11_movement_grabber import MovementKeyGrabber, xlib_available
-            from services.wine_runtimes import discover_cc_installs
-        except ImportError as e:
-            print(f"[InputService] key grabber unavailable: {e}")
-            return
-        if not xlib_available():
-            return
-        try:
-            installs = discover_cc_installs()
-        except Exception as e:  # noqa: BLE001
-            print(f"[InputService] CC install detection failed: {e}")
-            installs = []
-        if not installs:
-            return  # no CC detected (or detection failed); no grabber
-        self._key_grabber = MovementKeyGrabber()
-        ok = self._key_grabber.prepare(
-            on_key=self._on_grabbed_key,
-            should_consume=self._should_consume_grabbed_key,
-            on_passthrough=self._on_passthrough_key,
-        )
-        if not ok:
-            self._key_grabber = None
-            return
-        # Subscribe to focus changes; seed with current focus.
+
+        import sys as _sys
+
+        if _sys.platform == "win32":
+            from utils.win32_movement_grabber import Win32MovementKeyGrabber
+            grabber = Win32MovementKeyGrabber()
+            ok = grabber.prepare(should_consume=self._should_consume_grabbed_key)
+            if not ok:
+                return
+            self._key_grabber = grabber
+        else:
+            try:
+                from utils.x11_movement_grabber import MovementKeyGrabber, xlib_available
+                from services.wine_runtimes import discover_cc_installs
+            except ImportError as e:
+                print(f"[InputService] key grabber unavailable: {e}")
+                return
+            if not xlib_available():
+                return
+            try:
+                installs = discover_cc_installs()
+            except Exception as e:  # noqa: BLE001
+                print(f"[InputService] CC install detection failed: {e}")
+                installs = []
+            if not installs:
+                return  # no CC detected (or detection failed); no grabber
+            grabber = MovementKeyGrabber()
+            ok = grabber.prepare(
+                on_key=self._on_grabbed_key,
+                should_consume=self._should_consume_grabbed_key,
+                on_passthrough=self._on_passthrough_key,
+            )
+            if not ok:
+                return
+            self._key_grabber = grabber
+
+        # Subscribe to focus changes; seed with current focus. (Both
+        # platforms share this wiring because both grabbers honor
+        # install_grabs/uninstall_grabs.)
         try:
             self.window_manager.active_window_changed.connect(
                 self._on_active_window_changed_for_grabber
@@ -319,6 +342,20 @@ class InputService(QObject):
             return GameRegistry.instance().get_game_for_window(str(active)) == "cc"
         except Exception:
             return False
+
+    def _suppress_predicate(self, keysym: str) -> bool:
+        """Bridge from HotkeyManager's pynput callback to the platform
+        grabber's should_suppress query. Returns False when no grabber
+        is installed or the grabber doesn't expose should_suppress
+        (Linux's MovementKeyGrabber does its own X-level suppression
+        and has no should_suppress method)."""
+        grabber = self._key_grabber
+        if grabber is None:
+            return False
+        should_suppress = getattr(grabber, "should_suppress", None)
+        if should_suppress is None:
+            return False
+        return bool(should_suppress(keysym))
 
     def _apply_backend_setting(self):
         """Connect or disconnect backend based on platform and current settings."""
