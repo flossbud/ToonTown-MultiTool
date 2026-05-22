@@ -98,6 +98,10 @@ class ToonPortraitWidget(QWidget):
         self._cc_accent: QColor | None = None
         self._cc_gloves: QColor | None = None
         self._cc_emoji: str = ""
+        self._overrides_manager = None         # CCRaceOverridesManager
+        self._toon_name: str | None = None
+        self._cc_auto_species: str | None = None
+        self._hovered = False
         self.setMinimumSize(38, 38)
         self.setMaximumSize(64, 64)
         self.setCursor(Qt.PointingHandCursor)
@@ -142,10 +146,18 @@ class ToonPortraitWidget(QWidget):
         threading.Thread(target=self._fetch, args=(dna, token), daemon=True).start()
 
     def set_cc_mode(self, skin_rgb, accent_rgb, gloves_rgb, emoji):
-        """Enable CC paint mode (skin-color fill + bottom flag stripe +
-        centered emoji). Pass None for any arg to disable CC mode and
-        fall back to today's colored-circle rendering."""
-        if not skin_rgb or not emoji:
+        """Enable CC paint mode for this badge.
+
+        Pass `skin_rgb=None` to disable CC mode and fall back to the
+        default colored-circle rendering.
+
+        Paint now delegates to `utils.cc_badge_paint.paint_cc_badge`,
+        which uses only `skin_rgb` plus the resolved asset (from the
+        overrides manager or auto-detected species). The `accent_rgb`,
+        `gloves_rgb`, and `emoji` parameters are kept on the signature
+        for call-site compatibility but are no longer used; remove in
+        a follow-up cleanup."""
+        if not skin_rgb:
             self._cc_mode = False
             self._cc_skin = None
             self._cc_accent = None
@@ -159,6 +171,31 @@ class ToonPortraitWidget(QWidget):
         self._cc_gloves = QColor.fromRgbF(*(gloves_rgb or (1.0, 1.0, 1.0)))
         self._cc_emoji = emoji
         self.update()
+
+    def set_overrides_manager(self, manager) -> None:
+        """Inject the CCRaceOverridesManager. Call once after construction."""
+        self._overrides_manager = manager
+
+    def set_toon_name(self, name: str | None) -> None:
+        """Set the toon name used as the override key. Triggers a repaint."""
+        if self._toon_name != name:
+            self._toon_name = name
+            self.update()
+
+    def set_cc_auto_species(self, species_name: str | None) -> None:
+        """Set the auto-detected CC species name (e.g. 'DOG'). Triggers a repaint."""
+        if self._cc_auto_species != species_name:
+            self._cc_auto_species = species_name
+            self.update()
+
+    def _resolve_asset_stem(self) -> str | None:
+        """Resolve which asset stem to render: manual override > auto > None."""
+        from utils import cc_race_assets
+        if self._overrides_manager is not None and self._toon_name:
+            override = self._overrides_manager.get(self._toon_name)
+            if override:
+                return override
+        return cc_race_assets.asset_stem_for_species(self._cc_auto_species)
 
     def cancel(self):
         self._cancelled = True
@@ -218,28 +255,11 @@ class ToonPortraitWidget(QWidget):
         size = min(rect.width(), rect.height())
 
         if self._cc_mode and self._cc_skin is not None:
-            # CC paint: rounded-rect skin fill, bottom stripe with gloves
-            # (left third) + accent (right two-thirds), big emoji centered.
-            radius = max(6, round(size * 0.13))
-            p.setBrush(self._cc_skin)
-            p.drawRoundedRect(rect, radius, radius)
-
-            # Bottom flag stripe (~12% of height)
-            stripe_h = max(3, round(size * 0.12))
-            stripe_top = rect.bottom() - stripe_h + 1
-            split = rect.left() + round(rect.width() / 3)
-            p.setBrush(self._cc_gloves or QColor("#ffffff"))
-            p.drawRect(rect.left(), stripe_top, split - rect.left(), stripe_h)
-            p.setBrush(self._cc_accent or self._cc_skin)
-            p.drawRect(split, stripe_top, rect.right() - split + 1, stripe_h)
-
-            # Emoji centered. Use a font size proportional to the box.
-            font = p.font()
-            font.setPixelSize(max(14, round(size * 0.55)))
-            p.setFont(font)
-            p.setPen(Qt.SolidLine)
-            p.setPen(QColor("#000000"))  # text needs a pen; emojis draw their own colors on most platforms
-            p.drawText(rect, Qt.AlignCenter, self._cc_emoji)
+            from utils.cc_badge_paint import paint_cc_badge
+            stem = self._resolve_asset_stem()
+            paint_cc_badge(
+                p, rect, self._cc_skin, stem, self._slot
+            )
             p.end()
             return
 
