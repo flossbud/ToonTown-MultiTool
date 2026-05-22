@@ -81,6 +81,7 @@ class ToonPortraitWidget(QWidget):
     # safe off the GUI thread; QPixmap creation stays on the GUI thread.
     _image_ready = Signal(str, object)
     clicked = Signal()
+    edit_icon_requested = Signal()
 
     def __init__(self, slot: int, parent=None):
         super().__init__(parent)
@@ -98,18 +99,45 @@ class ToonPortraitWidget(QWidget):
         self._cc_accent: QColor | None = None
         self._cc_gloves: QColor | None = None
         self._cc_emoji: str = ""
+        self._overrides_manager = None         # CCRaceOverridesManager
+        self._toon_name: str | None = None
+        self._cc_auto_species: str | None = None
+        self._hovered = False
+        self._press_consumed_by_pencil = False
         self.setMinimumSize(38, 38)
         self.setMaximumSize(64, 64)
         self.setCursor(Qt.PointingHandCursor)
         self._image_ready.connect(self._on_image_ready)
+        self.setMouseTracking(True)
 
     def mousePressEvent(self, event):
         super().mousePressEvent(event)
+        if event.button() != Qt.LeftButton:
+            return
+        # The pencil overlay is its own affordance: a press inside it fires
+        # the edit signal (no need to wait for release, since this opens a
+        # modal anyway). Returning early ensures mouseReleaseEvent will not
+        # ALSO emit `clicked` for the same gesture.
+        if self._can_show_pencil():
+            from utils.cc_badge_paint import pencil_rect_for
+            if pencil_rect_for(self.rect()).contains(event.position().toPoint()):
+                self.edit_icon_requested.emit()
+                self._press_consumed_by_pencil = True
+                return
+        self._press_consumed_by_pencil = False
 
     def mouseReleaseEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            self.clicked.emit()
         super().mouseReleaseEvent(event)
+        if event.button() != Qt.LeftButton:
+            return
+        # Standard Qt button convention: emit on release, only if release
+        # lands inside the widget. Skip if the press was already handled
+        # by the pencil overlay.
+        if getattr(self, "_press_consumed_by_pencil", False):
+            self._press_consumed_by_pencil = False
+            return
+        if self.rect().contains(event.position().toPoint()):
+            self.clicked.emit()
 
     def set_colors(self, bg: str, text: str):
         self._bg   = QColor(bg)
@@ -142,10 +170,18 @@ class ToonPortraitWidget(QWidget):
         threading.Thread(target=self._fetch, args=(dna, token), daemon=True).start()
 
     def set_cc_mode(self, skin_rgb, accent_rgb, gloves_rgb, emoji):
-        """Enable CC paint mode (skin-color fill + bottom flag stripe +
-        centered emoji). Pass None for any arg to disable CC mode and
-        fall back to today's colored-circle rendering."""
-        if not skin_rgb or not emoji:
+        """Enable CC paint mode for this badge.
+
+        Pass `skin_rgb=None` to disable CC mode and fall back to the
+        default colored-circle rendering.
+
+        Paint now delegates to `utils.cc_badge_paint.paint_cc_badge`,
+        which uses only `skin_rgb` plus the resolved asset (from the
+        overrides manager or auto-detected species). The `accent_rgb`,
+        `gloves_rgb`, and `emoji` parameters are kept on the signature
+        for call-site compatibility but are no longer used; remove in
+        a follow-up cleanup."""
+        if not skin_rgb:
             self._cc_mode = False
             self._cc_skin = None
             self._cc_accent = None
@@ -160,10 +196,81 @@ class ToonPortraitWidget(QWidget):
         self._cc_emoji = emoji
         self.update()
 
+    def set_overrides_manager(self, manager) -> None:
+        """Inject the CCRaceOverridesManager. Call once after construction."""
+        self._overrides_manager = manager
+
+    def set_toon_name(self, name: str | None) -> None:
+        """Set the toon name used as the override key. Triggers a repaint."""
+        if self._toon_name != name:
+            self._toon_name = name
+            self.update()
+
+    def set_cc_auto_species(self, species_name: str | None) -> None:
+        """Set the auto-detected CC species name (e.g. 'DOG'). Triggers a repaint."""
+        if self._cc_auto_species != species_name:
+            self._cc_auto_species = species_name
+            self.update()
+
+    @property
+    def toon_name(self) -> str | None:
+        return self._toon_name
+
+    @property
+    def cc_auto_species(self) -> str | None:
+        return self._cc_auto_species
+
+    @property
+    def cc_skin(self):
+        return self._cc_skin
+
+    def _resolve_asset_stem(self) -> str | None:
+        """Resolve which asset stem to render: manual override > auto > None."""
+        from utils import cc_race_assets
+        if self._overrides_manager is not None and self._toon_name:
+            override = self._overrides_manager.get(self._toon_name)
+            if override:
+                return override
+        return cc_race_assets.asset_stem_for_species(self._cc_auto_species)
+
+    def _paint_pencil_overlay(self, painter, rect) -> None:
+        """Draw the hover-revealed pencil icon at the given rect."""
+        from utils.icon_factory import make_edit_icon
+        # White circular background with subtle shadow.
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(0, 0, 0, 60))
+        shadow = rect.adjusted(1, 1, 1, 1)
+        painter.drawEllipse(shadow)
+        painter.setBrush(QColor(255, 255, 255, 240))
+        painter.drawEllipse(rect)
+        # Pencil icon centered, ~60% of pencil diameter.
+        # Reuses the existing make_edit_icon factory (no duplicate icon).
+        icon_size = int(rect.width() * 0.6)
+        icon = make_edit_icon(icon_size, color=QColor(40, 50, 70))
+        pm = icon.pixmap(icon_size, icon_size)
+        x = rect.x() + (rect.width() - icon_size) // 2
+        y = rect.y() + (rect.height() - icon_size) // 2
+        painter.drawPixmap(x, y, pm)
+
     def cancel(self):
         self._cancelled = True
         self._fetch_token += 1
         self._loading = False
+
+    def enterEvent(self, event):
+        self._hovered = True
+        if self._can_show_pencil():
+            self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._hovered = False
+        if self._can_show_pencil():
+            self.update()
+        super().leaveEvent(event)
+
+    def _can_show_pencil(self) -> bool:
+        return bool(self._cc_mode and self._toon_name)
 
     def _fetch(self, dna: str, token: int):
         """Background thread — fetch and decode the portrait off the GUI thread."""
@@ -218,28 +325,13 @@ class ToonPortraitWidget(QWidget):
         size = min(rect.width(), rect.height())
 
         if self._cc_mode and self._cc_skin is not None:
-            # CC paint: rounded-rect skin fill, bottom stripe with gloves
-            # (left third) + accent (right two-thirds), big emoji centered.
-            radius = max(6, round(size * 0.13))
-            p.setBrush(self._cc_skin)
-            p.drawRoundedRect(rect, radius, radius)
-
-            # Bottom flag stripe (~12% of height)
-            stripe_h = max(3, round(size * 0.12))
-            stripe_top = rect.bottom() - stripe_h + 1
-            split = rect.left() + round(rect.width() / 3)
-            p.setBrush(self._cc_gloves or QColor("#ffffff"))
-            p.drawRect(rect.left(), stripe_top, split - rect.left(), stripe_h)
-            p.setBrush(self._cc_accent or self._cc_skin)
-            p.drawRect(split, stripe_top, rect.right() - split + 1, stripe_h)
-
-            # Emoji centered. Use a font size proportional to the box.
-            font = p.font()
-            font.setPixelSize(max(14, round(size * 0.55)))
-            p.setFont(font)
-            p.setPen(Qt.SolidLine)
-            p.setPen(QColor("#000000"))  # text needs a pen; emojis draw their own colors on most platforms
-            p.drawText(rect, Qt.AlignCenter, self._cc_emoji)
+            from utils.cc_badge_paint import paint_cc_badge, pencil_rect_for
+            stem = self._resolve_asset_stem()
+            paint_cc_badge(
+                p, rect, self._cc_skin, stem, self._slot
+            )
+            if self._hovered and self._can_show_pencil():
+                self._paint_pencil_overlay(p, pencil_rect_for(rect))
             p.end()
             return
 
@@ -814,6 +906,8 @@ class MultitoonTab(QWidget):
         self.toon_labels = []       # list of (name_label, status_dot)
         self.laff_labels = []       # list of QLabels showing laff
         self.bean_labels = []       # list of QLabels showing beans
+        from utils.cc_race_overrides_manager import CCRaceOverridesManager
+        self.cc_overrides = CCRaceOverridesManager()
         self.slot_badges = []       # list of QLabel badges
         self.game_badges = []       # list of QLabel game badges
         self.toon_buttons = []
@@ -950,7 +1044,11 @@ class MultitoonTab(QWidget):
         # Per-slot widgets
         for i in range(4):
             badge = ToonPortraitWidget(i + 1)
+            badge.set_overrides_manager(self.cc_overrides)
             badge.clicked.connect(lambda idx=i: self._on_portrait_clicked(idx))
+            badge.edit_icon_requested.connect(
+                lambda idx=i: self._open_race_picker(idx)
+            )
             self.slot_badges.append(badge)
 
             cc_subtitle = QLabel("")
@@ -1961,6 +2059,9 @@ class MultitoonTab(QWidget):
         for i in range(4):
             if i < len(self.slot_badges):
                 self.slot_badges[i].set_dna(None)
+                self.slot_badges[i].set_toon_name(None)
+                self.slot_badges[i].set_cc_auto_species(None)
+                self.slot_badges[i].set_cc_mode(None, None, None, None)
         self._last_window_ids = []
         self._refresh_toon_name_labels()
         self._refresh_toon_stats_labels()
@@ -2056,6 +2157,9 @@ class MultitoonTab(QWidget):
             self.toon_colors[i]   = None
             if i < len(self.slot_badges):
                 self.slot_badges[i].set_dna(None)
+                self.slot_badges[i].set_toon_name(None)
+                self.slot_badges[i].set_cc_auto_species(None)
+                self.slot_badges[i].set_cc_mode(None, None, None, None)
             self.apply_visual_state(i)
         self._update_glow_timer()
         self._refresh_toon_name_labels()
@@ -2210,6 +2314,9 @@ class MultitoonTab(QWidget):
                 self.toon_styles[i] = None
                 if i < len(self.slot_badges):
                     self.slot_badges[i].set_dna(None)
+                    self.slot_badges[i].set_toon_name(None)
+                    self.slot_badges[i].set_cc_auto_species(None)
+                    self.slot_badges[i].set_cc_mode(None, None, None, None)
                 self.toon_colors[i] = None
                 self.toon_laffs[i] = None
                 self.toon_max_laffs[i] = None
@@ -2278,6 +2385,8 @@ class MultitoonTab(QWidget):
                 if global_idx < len(self.bean_labels):
                     self.bean_labels[global_idx].hide()
                 if global_idx < len(self.slot_badges):
+                    self.slot_badges[global_idx].set_toon_name(None)
+                    self.slot_badges[global_idx].set_cc_auto_species(None)
                     self.slot_badges[global_idx].set_cc_mode(None, None, None, None)
                 self.set_compact_cc_subtitle(global_idx, None, None)
                 if self._mode == "full" and global_idx < len(self._full._cards):
@@ -2292,14 +2401,19 @@ class MultitoonTab(QWidget):
             # back to plain mode so a previously-set CC paint doesn't
             # linger.
             if global_idx < len(self.slot_badges):
+                badge = self.slot_badges[global_idx]
                 if info.dna_colors:
-                    skin, gloves, shirt, _shorts, accent = info.dna_colors
-                    self.slot_badges[global_idx].set_cc_mode(
-                        skin_rgb=skin, accent_rgb=accent, gloves_rgb=gloves,
+                    badge.set_toon_name(info.name)
+                    badge.set_cc_auto_species(info.species_name)
+                    _arms, gloves, _legs, head, accent = info.dna_colors
+                    badge.set_cc_mode(
+                        skin_rgb=head, accent_rgb=accent, gloves_rgb=gloves,
                         emoji=info.species_emoji or "❓",
                     )
                 else:
-                    self.slot_badges[global_idx].set_cc_mode(None, None, None, None)
+                    badge.set_toon_name(None)
+                    badge.set_cc_auto_species(None)
+                    badge.set_cc_mode(None, None, None, None)
 
             # Compact subtitle
             self.set_compact_cc_subtitle(
@@ -2408,6 +2522,54 @@ class MultitoonTab(QWidget):
         if self._mode == "full" and hasattr(self, "_full") and self._full is not None:
             for card in self._full._cards:
                 card._apply_scaled_styles()
+
+    def _open_race_picker(self, slot: int) -> None:
+        """Open RacePickerDialog for the given slot's badge."""
+        from utils.widgets.race_picker_dialog import RacePickerDialog
+        from utils import cc_race_assets
+
+        if slot >= len(self.slot_badges):
+            return
+        badge = self.slot_badges[slot]
+        toon_name = badge.toon_name
+        if not toon_name:
+            return
+        auto_stem = cc_race_assets.asset_stem_for_species(
+            badge.cc_auto_species
+        )
+        current = self.cc_overrides.get(toon_name)
+        skin = badge.cc_skin
+        if skin is None:
+            return
+        dlg = RacePickerDialog(
+            toon_name=toon_name,
+            current_override_stem=current,
+            auto_detected_stem=auto_stem,
+            skin_color=skin,
+            parent=self,
+        )
+        dlg.exec()
+        self._apply_picker_result(slot, dlg.result_action())
+
+    def _apply_picker_result(self, slot: int, result) -> None:
+        """Apply a (action, value) tuple from RacePickerDialog.
+
+        Expected shape: action in {"set", "clear", "cancel"}; value is the
+        asset stem when action=="set", None otherwise. Anything else is a
+        contract violation from the dialog and is silently ignored.
+        """
+        action, value = result
+        if action == "cancel":
+            return
+        badge = self.slot_badges[slot]
+        toon_name = badge.toon_name
+        if not toon_name:
+            return
+        if action == "set" and value:
+            self.cc_overrides.set(toon_name, value)
+        elif action == "clear":
+            self.cc_overrides.clear(toon_name)
+        badge.update()
 
     def set_compact_cc_subtitle(self, slot: int, playground, zone_name):
         """Update the Compact UI subtitle for a CC slot. Hides if both

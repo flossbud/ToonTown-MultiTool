@@ -100,3 +100,20 @@ Targeted repros for the issues fixed in `2026-05-07-input-forwarding-fixes.md`.
 - [ ] Run 4 CC toons simultaneously in different zones → each card shows its own playground+zone, no cross-contamination
 - [ ] Pick a toon whose species we haven't mapped (e.g., a CC turkey) → portrait shows ❓ emoji, no crash, debug log contains "[cc_species] unknown head letter: <letter>"
 - [ ] Restart TTMT while CC is still running → CC card degrades to empty-fallback state (same as external launch); no crash
+
+## CC race icon picker (2026-05-21)
+
+- [ ] Launch a CC toon. In **Full UI**, the badge shows a tinted race silhouette on a complementary-hue circle (no bottom flag stripe, no centered emoji).
+- [ ] Switch to **Compact UI** without relaunching. Same toon's badge in the compact form uses the same silhouette + complement bg, scaled down.
+- [ ] Hover the CC badge in Full UI. A pencil icon fades in at the bottom-left of the circle.
+- [ ] Hover the CC badge in Compact UI. Pencil appears, scaled smaller proportionally.
+- [ ] Click the pencil. RacePickerDialog opens. Title reads `Set icon for <ToonName>`. Subtitle shows the auto-detected race when one is mapped (e.g. `(auto-detected: dog)`).
+- [ ] Grid shows all 20 race tiles, each pre-rendered with this toon's skin color on the complement bg. The auto-detected tile has an "auto" corner marker.
+- [ ] Pick a different race, click **Save**. Badge updates immediately to the chosen icon.
+- [ ] Restart the app. Override persists; badge for that toon shows the saved icon.
+- [ ] Reopen the picker. Click **Use auto-detected (clears override)**. Badge reverts to the auto-detected race (or to slot-number fallback if no auto mapping exists).
+- [ ] Restart the app. Override is gone; badge uses auto/fallback again.
+- [ ] Launch a TTR toon. No pencil overlay; click on the badge fires the existing `clicked` behaviour. Picker not accessible.
+- [ ] Launch a CC toon with a species CC names but no asset (e.g. a FROG once observed in the wild): badge shows the slot-number fallback in the complement-bg circle; picker can still be opened to manually assign an icon.
+- [ ] Achromatic toon (a black or near-white skin): badge silhouette stays visible thanks to the lightness-flip bg formula. Picker tiles for that toon also render readably.
+- [ ] Pale-skin CC toon (e.g. near-white or pale-pink): the bg circle is clearly darker than the silhouette, not a near-white-on-white badge. (2026-05-22 recolor fix.)

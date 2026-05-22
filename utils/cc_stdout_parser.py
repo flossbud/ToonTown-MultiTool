@@ -3,7 +3,7 @@
 Two record types:
   - AvatarRecord: emitted by `__handleAvatarChooserDone`, once per session
     when the user picks an avatar. Carries name, head DNA code, and the
-    5 RGB color tuples (skin, gloves, shirt, shorts, accent).
+    5 RGB color tuples (arms, gloves, legs, head, accent).
   - ZoneRecord: emitted by `enterPlayGame` on each hood/zone transition.
     Carries hood_id (playground), zone_id (street), and av_id (avatar this
     refers to; -1 for pre-pick screens).
@@ -24,7 +24,7 @@ class AvatarRecord:
     doid: int
     name: str
     head_code: str  # 3-char string like 'dss'
-    dna_colors: Tuple[Tuple[float, float, float], ...]  # 5 tuples (skin, gloves, shirt, shorts, accent)
+    dna_colors: Tuple[Tuple[float, float, float], ...]  # 5 tuples (arms, gloves, legs, head, accent)
 
 
 @dataclass
@@ -37,8 +37,9 @@ class ZoneRecord:
 # Avatar chooser line. Layout (per captured logs):
 #   __handleAvatarChooserDone: <doid>, '<name>', (<dna_tuple>), <slot_idx>
 # Inside dna_tuple, the first 4 entries are strings ('dss', 'ls', 'm', 'f'),
-# then 4 RGBA tuples (skin/gloves/shirt/shorts), then 6 ints (clothing),
-# then 1 more RGBA tuple (accent), then 2 ints.
+# then 4 RGBA tuples (arms/gloves/legs/head), then 6 ints (clothing),
+# then 1 more RGBA tuple (accent), then 2 ints. The color slot order was
+# verified against a toon (Grumpy Biscuit) with five distinct body colors.
 _AVATAR_RE = re.compile(
     r"__handleAvatarChooserDone:\s*"
     r"(?P<doid>\d+),\s*"

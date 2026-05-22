@@ -3,14 +3,16 @@ from utils import cc_species
 
 def test_known_letters_resolve_to_species_and_emoji():
     # Verified from user-confirmed observations:
-    #   d→DOG (Flossbud, Incredible Dog)
-    #   f→DUCK (Hector Pepperroni)
-    #   m→MOUSE (Soupy)
-    #   e→KOALA (Rowdy Koala)
+    #   d -> DOG (Flossbud, Incredible Dog)
+    #   f -> DUCK (Hector Pepperroni)
+    #   m -> MOUSE (Soupy)
+    #   e -> KOALA (Rowdy Koala)
+    #   t -> RACCOON (Grumpy Biscuit)
     assert cc_species.lookup("d") == ("DOG", "🐶")
     assert cc_species.lookup("f") == ("DUCK", "🦆")
     assert cc_species.lookup("m") == ("MOUSE", "🐭")
     assert cc_species.lookup("e") == ("KOALA", "🐨")
+    assert cc_species.lookup("t") == ("RACCOON", "🦝")
 
 
 def test_unknown_letter_returns_question_emoji():

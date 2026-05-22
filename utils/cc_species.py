@@ -10,6 +10,7 @@ __handleAvatarChooserDone log lines:
   - f -> DUCK (Hector Pepperroni)
   - m -> MOUSE (Soupy)
   - e -> KOALA (Rowdy Koala)
+  - t -> RACCOON (Grumpy Biscuit)
 
 CC's binary also names BEAR, CROCODILE, DEER, FISH, FROG, GORILLA, HORSE,
 KOALA, MONKEY, MOUSE, ORANGUTAN, OTTER, PANDA, RABBIT, RACCOON, SHEEP,
@@ -32,6 +33,7 @@ HEAD_LETTER_TO_SPECIES: dict[str, str] = {
     "f": "DUCK",
     "m": "MOUSE",
     "e": "KOALA",
+    "t": "RACCOON",
 }
 
 # Species -> emoji. Covers every species name CC's binary references, so
