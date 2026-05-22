@@ -196,6 +196,18 @@ class ToonPortraitWidget(QWidget):
             self._cc_auto_species = species_name
             self.update()
 
+    @property
+    def toon_name(self) -> str | None:
+        return self._toon_name
+
+    @property
+    def cc_auto_species(self) -> str | None:
+        return self._cc_auto_species
+
+    @property
+    def cc_skin(self):
+        return self._cc_skin
+
     def _resolve_asset_stem(self) -> str | None:
         """Resolve which asset stem to render: manual override > auto > None."""
         from utils import cc_race_assets
@@ -878,6 +890,8 @@ class MultitoonTab(QWidget):
         self.toon_labels = []       # list of (name_label, status_dot)
         self.laff_labels = []       # list of QLabels showing laff
         self.bean_labels = []       # list of QLabels showing beans
+        from utils.cc_race_overrides_manager import CCRaceOverridesManager
+        self.cc_overrides = CCRaceOverridesManager()
         self.slot_badges = []       # list of QLabel badges
         self.game_badges = []       # list of QLabel game badges
         self.toon_buttons = []
@@ -1014,7 +1028,11 @@ class MultitoonTab(QWidget):
         # Per-slot widgets
         for i in range(4):
             badge = ToonPortraitWidget(i + 1)
+            badge.set_overrides_manager(self.cc_overrides)
             badge.clicked.connect(lambda idx=i: self._on_portrait_clicked(idx))
+            badge.edit_icon_requested.connect(
+                lambda idx=i: self._open_race_picker(idx)
+            )
             self.slot_badges.append(badge)
 
             cc_subtitle = QLabel("")
@@ -2342,6 +2360,8 @@ class MultitoonTab(QWidget):
                 if global_idx < len(self.bean_labels):
                     self.bean_labels[global_idx].hide()
                 if global_idx < len(self.slot_badges):
+                    self.slot_badges[global_idx].set_toon_name(None)
+                    self.slot_badges[global_idx].set_cc_auto_species(None)
                     self.slot_badges[global_idx].set_cc_mode(None, None, None, None)
                 self.set_compact_cc_subtitle(global_idx, None, None)
                 if self._mode == "full" and global_idx < len(self._full._cards):
@@ -2356,14 +2376,19 @@ class MultitoonTab(QWidget):
             # back to plain mode so a previously-set CC paint doesn't
             # linger.
             if global_idx < len(self.slot_badges):
+                badge = self.slot_badges[global_idx]
                 if info.dna_colors:
+                    badge.set_toon_name(info.name)
+                    badge.set_cc_auto_species(info.species_name)
                     skin, gloves, shirt, _shorts, accent = info.dna_colors
-                    self.slot_badges[global_idx].set_cc_mode(
+                    badge.set_cc_mode(
                         skin_rgb=skin, accent_rgb=accent, gloves_rgb=gloves,
                         emoji=info.species_emoji or "❓",
                     )
                 else:
-                    self.slot_badges[global_idx].set_cc_mode(None, None, None, None)
+                    badge.set_toon_name(None)
+                    badge.set_cc_auto_species(None)
+                    badge.set_cc_mode(None, None, None, None)
 
             # Compact subtitle
             self.set_compact_cc_subtitle(
@@ -2472,6 +2497,54 @@ class MultitoonTab(QWidget):
         if self._mode == "full" and hasattr(self, "_full") and self._full is not None:
             for card in self._full._cards:
                 card._apply_scaled_styles()
+
+    def _open_race_picker(self, slot: int) -> None:
+        """Open RacePickerDialog for the given slot's badge."""
+        from utils.widgets.race_picker_dialog import RacePickerDialog
+        from utils import cc_race_assets
+
+        if slot >= len(self.slot_badges):
+            return
+        badge = self.slot_badges[slot]
+        toon_name = badge.toon_name
+        if not toon_name:
+            return
+        auto_stem = cc_race_assets.asset_stem_for_species(
+            badge.cc_auto_species
+        )
+        current = self.cc_overrides.get(toon_name)
+        skin = badge.cc_skin
+        if skin is None:
+            return
+        dlg = RacePickerDialog(
+            toon_name=toon_name,
+            current_override_stem=current,
+            auto_detected_stem=auto_stem,
+            skin_color=skin,
+            parent=self,
+        )
+        dlg.exec()
+        self._apply_picker_result(slot, dlg.result_action())
+
+    def _apply_picker_result(self, slot: int, result) -> None:
+        """Apply a (action, value) tuple from RacePickerDialog.
+
+        Expected shape: action in {"set", "clear", "cancel"}; value is the
+        asset stem when action=="set", None otherwise. Anything else is a
+        contract violation from the dialog and is silently ignored.
+        """
+        action, value = result
+        if action == "cancel":
+            return
+        badge = self.slot_badges[slot]
+        toon_name = badge.toon_name
+        if not toon_name:
+            return
+        if action == "set" and value:
+            self.cc_overrides.set(toon_name, value)
+        elif action == "clear":
+            self.cc_overrides.clear(toon_name)
+        badge.update()
 
     def set_compact_cc_subtitle(self, slot: int, playground, zone_name):
         """Update the Compact UI subtitle for a CC slot. Hides if both
