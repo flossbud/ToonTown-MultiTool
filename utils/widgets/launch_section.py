@@ -16,6 +16,7 @@ from utils.widgets.empty_state import EmptyState
 
 _GAME_NAMES = {"ttr": "Toontown Rewritten", "cc": "Corporate Clash"}
 _GAME_SHORT = {"ttr": "TTR", "cc": "CC"}
+_LAYOUT_MAX_WIDTH = {"compact": 720, "full": 860}
 
 
 class _AddTile(QuietChipButton):
@@ -173,6 +174,18 @@ class LaunchSection(QWidget):
         if 0 <= section_index < len(self.tiles):
             return self.tiles[section_index]
         return None
+
+    def set_layout_mode(self, mode: str) -> None:
+        """Apply per-section sizing for the app-wide layout mode.
+
+        Compact: capped at 720px so the section fills-then-centers.
+        Full: capped at 860px so two sections sit side-by-side comfortably
+        on a 1280-1720 wide window without each tile growing absurdly.
+        """
+        if mode not in _LAYOUT_MAX_WIDTH:
+            return
+        self._compact_max_width = _LAYOUT_MAX_WIDTH[mode]
+        self.setMaximumWidth(self._compact_max_width)
 
     def _wire_tile(self, tile: AccountTile, index: int) -> None:
         tile.launch_clicked.connect(lambda i=index: self.tile_launch.emit(i))

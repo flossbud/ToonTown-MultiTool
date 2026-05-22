@@ -114,3 +114,21 @@ def test_section_has_compact_max_width(qapp):
     sec = LaunchSection(game="ttr", icon_path="")
     assert sec.maximumWidth() == 720
     assert sec.sizePolicy().horizontalPolicy() == QSizePolicy.Expanding
+
+
+def test_set_layout_mode_toggles_max_width(qapp):
+    from utils.widgets.launch_section import LaunchSection
+    sec = LaunchSection(game="ttr", icon_path="")
+    assert sec.maximumWidth() == 720
+    sec.set_layout_mode("full")
+    assert sec.maximumWidth() == 860
+    sec.set_layout_mode("compact")
+    assert sec.maximumWidth() == 720
+
+
+def test_set_layout_mode_unknown_is_noop(qapp):
+    from utils.widgets.launch_section import LaunchSection
+    sec = LaunchSection(game="ttr", icon_path="")
+    before = sec.maximumWidth()
+    sec.set_layout_mode("invalid")
+    assert sec.maximumWidth() == before
