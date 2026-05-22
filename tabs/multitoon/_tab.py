@@ -2059,6 +2059,9 @@ class MultitoonTab(QWidget):
         for i in range(4):
             if i < len(self.slot_badges):
                 self.slot_badges[i].set_dna(None)
+                self.slot_badges[i].set_toon_name(None)
+                self.slot_badges[i].set_cc_auto_species(None)
+                self.slot_badges[i].set_cc_mode(None, None, None, None)
         self._last_window_ids = []
         self._refresh_toon_name_labels()
         self._refresh_toon_stats_labels()
@@ -2154,6 +2157,9 @@ class MultitoonTab(QWidget):
             self.toon_colors[i]   = None
             if i < len(self.slot_badges):
                 self.slot_badges[i].set_dna(None)
+                self.slot_badges[i].set_toon_name(None)
+                self.slot_badges[i].set_cc_auto_species(None)
+                self.slot_badges[i].set_cc_mode(None, None, None, None)
             self.apply_visual_state(i)
         self._update_glow_timer()
         self._refresh_toon_name_labels()
@@ -2308,6 +2314,9 @@ class MultitoonTab(QWidget):
                 self.toon_styles[i] = None
                 if i < len(self.slot_badges):
                     self.slot_badges[i].set_dna(None)
+                    self.slot_badges[i].set_toon_name(None)
+                    self.slot_badges[i].set_cc_auto_species(None)
+                    self.slot_badges[i].set_cc_mode(None, None, None, None)
                 self.toon_colors[i] = None
                 self.toon_laffs[i] = None
                 self.toon_max_laffs[i] = None
