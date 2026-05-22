@@ -2333,6 +2333,11 @@ class MultitoonTab(QWidget):
         self.update_status_label()
         self.schedule_toon_data_fetch(1200)
         self._update_glow_timer()
+        # Refresh name labels AFTER the for-loop above clears toon_names
+        # for slots whose windows disappeared. The earlier refresh inside
+        # `if ids_changed:` ran before those clears, so without this call
+        # closed-game slots keep showing the old toon name.
+        self._refresh_toon_name_labels()
         self._refresh_toon_stats_labels()
         if not any(self.keep_alive_enabled):
             self._stop_keep_alive()

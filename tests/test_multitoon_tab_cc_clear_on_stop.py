@@ -115,3 +115,26 @@ def test_manual_refresh_clears_cc_paint(qt_app, monkeypatch, tmp_path):
     assert b._cc_mode is False, "slot 0 CC paint still on after manual refresh"
     assert b._toon_name is None
     assert b._cc_auto_species is None
+
+
+def test_update_toon_controls_clears_name_label_when_window_disappears(
+    qt_app, monkeypatch, tmp_path,
+):
+    """When a CC window closes, the slot's NAME LABEL (visible in compact UI
+    next to the badge) must update to the placeholder, not keep showing the
+    old toon name."""
+    tab = _make_tab(monkeypatch, tmp_path)
+    # Simulate a previous state where Hiro was active in slot 0.
+    tab._last_window_ids = [12345]
+    tab.toon_names[0] = "Hiro"
+    tab._refresh_toon_name_labels()
+    name_label, _ = tab.toon_labels[0]
+    assert name_label.text() == "Hiro", "precondition: label shows Hiro"
+
+    # New poll: window list is now empty (game closed).
+    tab.update_toon_controls([])
+
+    assert name_label.text() == "Toon 1", (
+        f"slot 0 name label still shows {name_label.text()!r} after window "
+        "disappeared; expected placeholder 'Toon 1'"
+    )
