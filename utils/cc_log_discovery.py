@@ -85,16 +85,17 @@ def _layer1_5_process_scan(manual_dir: Optional[Path]) -> Optional[Path]:
     best-effort and may return the wrong instance's log; documented in the
     spec.
     """
-    try:
-        for proc in psutil.process_iter(attrs=["pid", "name"]):
+    for proc in psutil.process_iter(attrs=["pid", "name"]):
+        try:
             name = (proc.info.get("name") or "").lower()
             if _CC_PROCESS_NAME_NEEDLE not in name:
                 continue
             path = _layer1_psutil(proc.info["pid"], manual_dir)
             if path is not None:
                 return path
-    except psutil.Error as exc:
-        logger.warning("[cc_log_discovery] L1.5 process scan failed: %s", exc)
+        except psutil.Error as exc:
+            logger.debug("[cc_log_discovery] L1.5 skipping pid: %s", exc)
+            continue
     return None
 
 
@@ -194,9 +195,17 @@ def find_log_for_pid(
 ) -> Optional[Path]:
     """Resolve the CC log file path for the given PID.
 
-    Tries Layer 1 (psutil), then Layer 2 (prefix glob), then Layer 3
-    (manual_dir scan, only if manual_dir is set). Returns None if all
-    fail.
+    Tries Layer 1 (psutil), then Layer 1.5 (host process-name scan,
+    needed when the input PID is a sandbox alias and doesn't match the
+    real CC process on the host), then Layer 2 (prefix glob), then
+    Layer 3 (manual_dir scan, only if manual_dir is set). Returns None
+    if all fail.
+
+    Multi-instance external CC caveat: if the input PID is a sandbox
+    alias and Layer 1.5 fires, the returned log may belong to a
+    different CC instance than the one the caller meant. Single-instance
+    external CC is unambiguous; multi-instance Steam/Proton/Bottles
+    setups are best-effort.
     """
     path = _layer1_psutil(pid, manual_dir)
     if path is not None:

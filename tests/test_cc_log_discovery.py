@@ -215,6 +215,42 @@ def test_layer1_5_skips_processes_with_non_cc_name(monkeypatch):
     assert cc_log_discovery.find_log_for_pid(999) is None
 
 
+class _RaisingProc:
+    """Stand-in for a psutil.Process whose .info access raises, simulating
+    a process that exited between process_iter() yielding it and our
+    later access of its info dict."""
+
+    @property
+    def info(self):
+        raise psutil.NoSuchProcess(99)
+
+
+def test_layer1_5_continues_past_transient_process_errors(monkeypatch):
+    """A transient psutil.NoSuchProcess on one process in the iter
+    must not abort the whole L1.5 scan. The next process named
+    CorporateClash.exe should still be discovered."""
+    target = "/home/u/.wine/drive_c/users/u/AppData/Local/Corporate Clash/logs/corporateclash-X.log"
+
+    # First proc: accessing .info raises NoSuchProcess.
+    bad_proc = _RaisingProc()
+
+    # Second proc: a valid CC process with an open log file.
+    good_proc = _fake_proc([target])
+    good_proc.info = {"pid": 52146, "name": "CorporateClash.exe"}
+
+    def _process_factory(pid):
+        if pid == 52146:
+            return good_proc
+        raise psutil.NoSuchProcess(pid)
+
+    monkeypatch.setattr(psutil, "Process", _process_factory)
+    monkeypatch.setattr(psutil, "process_iter",
+                        lambda attrs=None: iter([bad_proc, good_proc]))
+
+    result = cc_log_discovery.find_log_for_pid(7914)
+    assert result == Path(target)
+
+
 def test_layer1_respects_manual_dir_scope_filter(tmp_path):
     # manual_dir is interpreted as the "logs" dir itself (shallow glob in
     # Layer 3), so put the in-scope log file directly under tmp_path.
