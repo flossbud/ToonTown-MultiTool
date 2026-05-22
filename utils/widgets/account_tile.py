@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
 import utils.motion as motion
 from utils.shared_widgets import PulsingDot
 from utils.theme_manager import make_edit_icon, make_trash_icon
-from utils.widgets.chip_button import ChipButton
+from utils.widgets.chip_button import ChipButton, QuietChipButton
 
 
 def _hamburger_icon(color: str, size: int = 12) -> QIcon:
@@ -65,15 +65,6 @@ _BUTTON_MAP = {
     "running":    ("Quit",         "#b34848", True,  "quit_clicked"),
     "failed":     ("Retry",        "#c84e34", True,  "retry_clicked"),
 }
-
-
-class _QuietChipButton(ChipButton):
-    """ChipButton tuned for the larger launch-tab surfaces: no upscale on
-    hover (option B is color-shift-only) and a gentler 0.96 press scale.
-    Hover background change is owned by per-instance QSS, not by the
-    paint_scale animation."""
-    HOVER_SCALE = 1.0
-    PRESS_SCALE = 0.96
 
 
 def summarize_error(raw_message: str) -> str:
@@ -176,7 +167,7 @@ class AccountTile(QFrame):
         band_lay.addWidget(self.status_label, 1)
         # expand_btn stays a plain QPushButton: it's a tiny status-band
         # chevron that doesn't need the press-scale feedback the action-row
-        # buttons get from _QuietChipButton.
+        # buttons get from QuietChipButton.
         self.expand_btn = QPushButton()
         self.expand_btn.setFixedSize(20, 20)
         self.expand_btn.setIconSize(QSize(12, 12))
@@ -191,13 +182,13 @@ class AccountTile(QFrame):
         # Action row
         acts = QHBoxLayout()
         acts.setSpacing(6)
-        self.primary_button = _QuietChipButton()
+        self.primary_button = QuietChipButton()
         self.primary_button.setText("Launch")
         self.primary_button.setMinimumHeight(28)
         self.primary_button.setCursor(Qt.PointingHandCursor)
         acts.addWidget(self.primary_button, 1)
         _muted = QColor("#8a9bb8")
-        self.edit_btn = _QuietChipButton()
+        self.edit_btn = QuietChipButton()
         self.edit_btn.setIcon(make_edit_icon(14, _muted))
         self.edit_btn.setIconSize(QSize(14, 14))
         self.edit_btn.setFixedSize(26, 26)
@@ -208,7 +199,7 @@ class AccountTile(QFrame):
         )
         self.edit_btn.clicked.connect(self.edit_clicked.emit)
         acts.addWidget(self.edit_btn)
-        self.delete_btn = _QuietChipButton()
+        self.delete_btn = QuietChipButton()
         self.delete_btn.setIcon(make_trash_icon(14, _muted))
         self.delete_btn.setIconSize(QSize(14, 14))
         self.delete_btn.setFixedSize(26, 26)

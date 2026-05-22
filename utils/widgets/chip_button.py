@@ -154,3 +154,13 @@ class ChipButton(QToolButton):
         option = QStyleOptionToolButton()
         self.initStyleOption(option)
         p.drawComplexControl(QStyle.CC_ToolButton, option)
+
+
+class QuietChipButton(ChipButton):
+    """ChipButton tuned for the larger launch-tab surfaces: no upscale on
+    hover (color-shift on hover is owned by per-instance QSS) and a gentler
+    0.96 press scale. ChipButton's defaults (1.06 hover, 0.88 press) suit
+    the 22px nav chips; those values overshoot on full-size tiles and
+    buttons."""
+    HOVER_SCALE = 1.0
+    PRESS_SCALE = 0.96

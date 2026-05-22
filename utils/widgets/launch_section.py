@@ -9,7 +9,8 @@ from PySide6.QtWidgets import (
     QFrame, QGridLayout, QHBoxLayout, QLabel, QVBoxLayout, QWidget,
 )
 
-from utils.widgets.account_tile import AccountTile, _QuietChipButton
+from utils.widgets.account_tile import AccountTile
+from utils.widgets.chip_button import QuietChipButton
 from utils.widgets.empty_state import EmptyState
 
 
@@ -17,9 +18,9 @@ _GAME_NAMES = {"ttr": "Toontown Rewritten", "cc": "Corporate Clash"}
 _GAME_SHORT = {"ttr": "TTR", "cc": "CC"}
 
 
-class _AddTile(_QuietChipButton):
+class _AddTile(QuietChipButton):
     """Dashed-outline "+ Add Account" tile, matches grid cell size.
-    Uses _QuietChipButton (no hover upscale, 0.96 press scale)."""
+    Uses QuietChipButton (no hover upscale, 0.96 press scale)."""
     def __init__(self, game: str, parent=None):
         super().__init__(parent)
         self.setText(f"+ Add {_GAME_SHORT[game]} Account")
@@ -99,7 +100,7 @@ class LaunchSection(QWidget):
         head_lay.addLayout(title_col)
         head_lay.addStretch()
 
-        self.launcher_btn = _QuietChipButton()
+        self.launcher_btn = QuietChipButton()
         self.launcher_btn.setText(f"↗ Launch {_GAME_SHORT[game]} Launcher")
         self.launcher_btn.setCursor(Qt.PointingHandCursor)
         self.launcher_btn.setStyleSheet(
