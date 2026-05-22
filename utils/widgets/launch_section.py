@@ -6,7 +6,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
-    QFrame, QGridLayout, QHBoxLayout, QLabel, QVBoxLayout, QWidget,
+    QFrame, QGridLayout, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget,
 )
 
 from utils.widgets.account_tile import AccountTile
@@ -49,6 +49,12 @@ class LaunchSection(QWidget):
 
     def __init__(self, game: str, icon_path: str, max_accounts: int = 8, parent=None):
         super().__init__(parent)
+        # Compact-mode horizontal cap. Mirrors tabs/multitoon/_compact_layout.py:38-44.
+        # In full mode (set via set_layout_mode), the cap is lifted so the
+        # two sections can sit side-by-side and each fill ~half the window.
+        self._compact_max_width = 720
+        self.setMaximumWidth(self._compact_max_width)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         assert game in ("ttr", "cc")
         self._game = game
         self._max = max_accounts

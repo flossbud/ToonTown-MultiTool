@@ -105,3 +105,12 @@ def test_add_tile_is_chipbutton(qapp):
     sec.set_accounts([{"label": "x", "username": "y"}])
     assert sec.add_tile is not None
     assert isinstance(sec.add_tile, ChipButton)
+
+
+def test_section_has_compact_max_width(qapp):
+    """Sections cap at 720px wide (MultiToon compact-card parity)."""
+    from PySide6.QtWidgets import QSizePolicy
+    from utils.widgets.launch_section import LaunchSection
+    sec = LaunchSection(game="ttr", icon_path="")
+    assert sec.maximumWidth() == 720
+    assert sec.sizePolicy().horizontalPolicy() == QSizePolicy.Expanding
