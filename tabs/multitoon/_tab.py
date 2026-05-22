@@ -2396,9 +2396,9 @@ class MultitoonTab(QWidget):
                 if info.dna_colors:
                     badge.set_toon_name(info.name)
                     badge.set_cc_auto_species(info.species_name)
-                    skin, gloves, shirt, _shorts, accent = info.dna_colors
+                    _arms, gloves, _legs, head, accent = info.dna_colors
                     badge.set_cc_mode(
-                        skin_rgb=skin, accent_rgb=accent, gloves_rgb=gloves,
+                        skin_rgb=head, accent_rgb=accent, gloves_rgb=gloves,
                         emoji=info.species_emoji or "❓",
                     )
                 else:

@@ -18,7 +18,7 @@ def test_parse_avatar_record_extracts_fields():
     assert rec.doid == 101194667
     assert rec.name == "Flossbud"
     assert rec.head_code == "dss"
-    # 5 RGB tuples (skin, gloves, shirt, shorts, accent)
+    # 5 RGB tuples (arms, gloves, legs, head, accent)
     assert len(rec.dna_colors) == 5
     assert rec.dna_colors[0] == (0.0, 0.403921, 0.647058)
 
