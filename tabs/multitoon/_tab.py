@@ -81,6 +81,7 @@ class ToonPortraitWidget(QWidget):
     # safe off the GUI thread; QPixmap creation stays on the GUI thread.
     _image_ready = Signal(str, object)
     clicked = Signal()
+    edit_icon_requested = Signal()
 
     def __init__(self, slot: int, parent=None):
         super().__init__(parent)
@@ -106,13 +107,20 @@ class ToonPortraitWidget(QWidget):
         self.setMaximumSize(64, 64)
         self.setCursor(Qt.PointingHandCursor)
         self._image_ready.connect(self._on_image_ready)
+        self.setMouseTracking(True)
 
     def mousePressEvent(self, event):
         super().mousePressEvent(event)
+        if event.button() != Qt.LeftButton:
+            return
+        if self._can_show_pencil():
+            from utils.cc_badge_paint import pencil_rect_for
+            if pencil_rect_for(self.rect()).contains(event.position().toPoint()):
+                self.edit_icon_requested.emit()
+                return
+        self.clicked.emit()
 
     def mouseReleaseEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            self.clicked.emit()
         super().mouseReleaseEvent(event)
 
     def set_colors(self, bg: str, text: str):
@@ -197,10 +205,44 @@ class ToonPortraitWidget(QWidget):
                 return override
         return cc_race_assets.asset_stem_for_species(self._cc_auto_species)
 
+    def _paint_pencil_overlay(self, painter, rect) -> None:
+        """Draw the hover-revealed pencil icon at the given rect."""
+        from utils.icon_factory import make_edit_icon
+        # White circular background with subtle shadow.
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(0, 0, 0, 60))
+        shadow = rect.adjusted(1, 1, 1, 1)
+        painter.drawEllipse(shadow)
+        painter.setBrush(QColor(255, 255, 255, 240))
+        painter.drawEllipse(rect)
+        # Pencil icon centered, ~60% of pencil diameter.
+        # Reuses the existing make_edit_icon factory (no duplicate icon).
+        icon_size = int(rect.width() * 0.6)
+        icon = make_edit_icon(icon_size, color=QColor(40, 50, 70))
+        pm = icon.pixmap(icon_size, icon_size)
+        x = rect.x() + (rect.width() - icon_size) // 2
+        y = rect.y() + (rect.height() - icon_size) // 2
+        painter.drawPixmap(x, y, pm)
+
     def cancel(self):
         self._cancelled = True
         self._fetch_token += 1
         self._loading = False
+
+    def enterEvent(self, event):
+        self._hovered = True
+        if self._can_show_pencil():
+            self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._hovered = False
+        if self._can_show_pencil():
+            self.update()
+        super().leaveEvent(event)
+
+    def _can_show_pencil(self) -> bool:
+        return bool(self._cc_mode and self._toon_name)
 
     def _fetch(self, dna: str, token: int):
         """Background thread — fetch and decode the portrait off the GUI thread."""
@@ -255,11 +297,13 @@ class ToonPortraitWidget(QWidget):
         size = min(rect.width(), rect.height())
 
         if self._cc_mode and self._cc_skin is not None:
-            from utils.cc_badge_paint import paint_cc_badge
+            from utils.cc_badge_paint import paint_cc_badge, pencil_rect_for
             stem = self._resolve_asset_stem()
             paint_cc_badge(
                 p, rect, self._cc_skin, stem, self._slot
             )
+            if self._hovered and self._can_show_pencil():
+                self._paint_pencil_overlay(p, pencil_rect_for(rect))
             p.end()
             return
 
