@@ -107,3 +107,44 @@ def test_cc_empty_state_hides_chat(qt_app, monkeypatch, tmp_path):
     tab._apply_cc_toon_info([wid], [None])
 
     assert tab.chat_buttons[0].isHidden(), "chat must hide for CC empty slot"
+
+
+def test_cc_to_ttr_transition_restores_chat(qt_app, monkeypatch, tmp_path):
+    """When a slot was hosting a CC toon (chat hidden) and then a TTR
+    toon takes over that slot, the chat button must come back."""
+    tab = _make_tab(monkeypatch, tmp_path)
+    wid = 12345
+    tab.window_manager.ttr_window_ids = [wid]
+
+    # Paint CC on slot 0 to hide the chat button.
+    cc_info = CCToonInfo(
+        name="Gecko",
+        head_code="rls",
+        species_letter="r",
+        species_name="RABBIT",
+        species_emoji="❓",
+        dna_colors=(
+            (0.4, 0.6, 0.3),
+            (1.0, 1.0, 1.0),
+            (0.4, 0.6, 0.3),
+            (0.4, 0.6, 0.3),
+            (0.4, 0.6, 0.3),
+        ),
+    )
+    tab._apply_cc_toon_info([wid], [cc_info])
+    assert tab.chat_buttons[0].isHidden(), "precondition: chat hidden by CC paint"
+
+    # TTR data arrives for the same window id.
+    tab._apply_merged_toon_data(
+        [wid],
+        ["Flossbud"],          # names
+        [None],                # styles
+        [None],                # colors
+        [50],                  # laffs
+        [100],                 # max_laffs
+        [25],                  # beans
+    )
+
+    assert not tab.chat_buttons[0].isHidden(), (
+        "chat button must re-show after CC -> TTR transition"
+    )
