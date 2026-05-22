@@ -10,7 +10,8 @@ from PySide6.QtCore import (
 from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
-    QFrame, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget,
+    QFrame, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QStyle,
+    QStyleOption, QVBoxLayout, QWidget,
 )
 
 import utils.motion as motion
@@ -328,25 +329,40 @@ class AccountTile(QFrame):
             self._animate_to(self._target_scale())
         super().mouseReleaseEvent(event)
 
+    def leaveEvent(self, event) -> None:
+        # Reset press state when the cursor leaves while still held. Qt
+        # does not deliver mouseReleaseEvent to a widget when the release
+        # happens outside its bounds (and we have not grabbed the mouse),
+        # so without this reset a press-then-drag-out leaves the tile
+        # stuck at PRESS_SCALE. Mirrors the leaveEvent pattern at
+        # utils/widgets/chip_button.py:133-135.
+        if self._is_pressed:
+            self._is_pressed = False
+            self._animate_to(self.NORMAL_SCALE)
+        super().leaveEvent(event)
+
     # ── Painting: scale the entire tile via QPainter ────────────────────
     def paintEvent(self, event) -> None:
+        # Fast path: at NORMAL_SCALE we have nothing to transform; let
+        # QFrame's own paintEvent handle the QSS background and border.
         if self._paint_scale == 1.0:
             super().paintEvent(event)
             return
-        # Render at the scaled transform. QFrame's default paintEvent
-        # renders via the active QStyle, which honors the QSS background
-        # + border. We scale the painter, then call super() to let Qt's
-        # style routine do the actual draw through our transformed painter.
+        # During the press animation we cannot delegate to super().paintEvent
+        # through our painter — QFrame.paintEvent grabs its own QPainter on
+        # the same paint device and Qt rejects the recursive begin(). So we
+        # render the QSS-styled background manually via QStyle.PE_Widget,
+        # with the painter pre-scaled around the widget center. Child
+        # widgets (buttons, labels) paint themselves through Qt's normal
+        # widget tree and are NOT scaled by this transform — that mirrors
+        # the same tradeoff ChipButton accepts.
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing, True)
+        p.setRenderHint(QPainter.SmoothPixmapTransform, True)
         cx, cy = self.width() / 2.0, self.height() / 2.0
         p.translate(cx, cy)
         p.scale(self._paint_scale, self._paint_scale)
         p.translate(-cx, -cy)
-        # We cannot call super().paintEvent through our painter; QFrame's
-        # paintEvent grabs its own QPainter. So render the styled background
-        # manually via QStyle.
-        from PySide6.QtWidgets import QStyle, QStyleOption
         opt = QStyleOption()
         opt.initFrom(self)
         self.style().drawPrimitive(QStyle.PE_Widget, opt, p, self)

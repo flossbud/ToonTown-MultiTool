@@ -184,3 +184,24 @@ def test_account_tile_paint_scale_property_exists(qapp):
     assert tile.paint_scale == 1.0
     tile.paint_scale = 0.96
     assert tile.paint_scale == 0.96
+
+
+def test_account_tile_leave_while_pressed_resets_state(qapp):
+    """Press then drag out: leaveEvent must reset _is_pressed so the tile
+    does not stick at PRESS_SCALE when the release happens outside bounds."""
+    from PySide6.QtCore import QEvent, QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+    from utils.widgets.account_tile import AccountTile
+
+    tile = AccountTile(game="ttr", slot_index=0)
+    press = QMouseEvent(
+        QEvent.MouseButtonPress, QPointF(5, 5),
+        Qt.LeftButton, Qt.LeftButton, Qt.NoModifier,
+    )
+    tile.mousePressEvent(press)
+    assert tile._is_pressed is True
+
+    leave = QEvent(QEvent.Leave)
+    tile.leaveEvent(leave)
+    assert tile._is_pressed is False
+    assert tile._target_scale() == AccountTile.NORMAL_SCALE
