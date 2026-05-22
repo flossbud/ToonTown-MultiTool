@@ -214,3 +214,18 @@ def test_set_layout_mode_reduced_motion_snaps_opacity(qapp, monkeypatch):
     sec.set_layout_mode("full")
     for tile in sec.tiles:
         assert tile.tile_opacity == 1.0
+
+
+def test_set_layout_mode_same_mode_does_not_reflash(qapp):
+    """Calling set_layout_mode with the current mode is a no-op — must not
+    zero opacities and re-run the reveal."""
+    from utils.widgets.launch_section import LaunchSection
+    sec = LaunchSection(game="ttr", icon_path="")
+    sec.set_accounts([{"label": "a", "username": "u"}])
+    sec.set_layout_mode("full")
+    for tile in sec.tiles:
+        tile.tile_opacity = 1.0  # baseline
+    # Same-mode call should not touch opacity at all.
+    sec.set_layout_mode("full")
+    for tile in sec.tiles:
+        assert tile.tile_opacity == 1.0

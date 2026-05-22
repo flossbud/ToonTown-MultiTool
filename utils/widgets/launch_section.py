@@ -236,8 +236,14 @@ class LaunchSection(QWidget):
         Compact: capped at 720px so the section fills-then-centers.
         Full: capped at 860px so two sections sit side-by-side comfortably
         on a 1280-1720 wide window without each tile growing absurdly.
+
+        No-op if the mode is unknown or already current — same-mode calls
+        avoid both a redundant reveal flash and a redundant content-scale
+        recompute.
         """
         if mode not in _LAYOUT_MAX_WIDTH:
+            return
+        if mode == self._layout_mode:
             return
         self._max_width = _LAYOUT_MAX_WIDTH[mode]
         self.setMaximumWidth(self._max_width)
@@ -257,6 +263,13 @@ class LaunchSection(QWidget):
             for t in tiles:
                 t.tile_opacity = 1.0
             return
+        # Stop any in-flight reveal animations from a prior set_layout_mode
+        # call BEFORE replacing the list — QPropertyAnimation has no C++
+        # parent here, so its only liveness anchor is _reveal_anims. Drop
+        # the list without stopping and PySide6 will GC running animations
+        # mid-flight, leaving tiles stuck at partial opacity.
+        for old in getattr(self, "_reveal_anims", []):
+            old.stop()
         raw = self.REVEAL_DURATION_MS * motion._TEST_DURATION_SCALE
         duration = 0 if raw == 0.0 else max(1, int(raw))
         stagger_raw = self.REVEAL_STAGGER_MS * motion._TEST_DURATION_SCALE
