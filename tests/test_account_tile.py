@@ -214,3 +214,37 @@ def test_account_tile_opacity_property(qapp):
     assert tile.tile_opacity == 1.0
     tile.tile_opacity = 0.5
     assert tile.tile_opacity == 0.5
+
+
+def test_in_tile_buttons_are_chipbuttons(qapp):
+    """primary_button, edit_btn, delete_btn are ChipButton instances so
+    they participate in the app-wide press-scale animation pattern."""
+    from utils.widgets.account_tile import AccountTile
+    from utils.widgets.chip_button import ChipButton
+    tile = AccountTile(game="ttr", slot_index=0)
+    assert isinstance(tile.primary_button, ChipButton)
+    assert isinstance(tile.edit_btn, ChipButton)
+    assert isinstance(tile.delete_btn, ChipButton)
+
+
+def test_in_tile_primary_button_press_targets_quiet_press_scale(qapp):
+    """Pressing the Launch button flips its ChipButton _is_pressed state and
+    targets the gentler 0.96 press scale (not ChipButton's default 0.88)."""
+    from utils.widgets.account_tile import AccountTile
+    tile = AccountTile(game="ttr", slot_index=0)
+    btn = tile.primary_button
+    assert btn._is_pressed is False
+    btn.pressed.emit()
+    assert btn._is_pressed is True
+    assert btn._target_scale() == 0.96
+    btn.released.emit()
+    assert btn._is_pressed is False
+
+
+def test_in_tile_buttons_have_no_hover_upscale(qapp):
+    """Hover does NOT upscale these buttons (option B: no movement on hover)."""
+    from utils.widgets.account_tile import AccountTile
+    tile = AccountTile(game="ttr", slot_index=0)
+    assert tile.primary_button.HOVER_SCALE == 1.0
+    assert tile.edit_btn.HOVER_SCALE == 1.0
+    assert tile.delete_btn.HOVER_SCALE == 1.0

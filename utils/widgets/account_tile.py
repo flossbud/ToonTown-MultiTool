@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 import utils.motion as motion
 from utils.shared_widgets import PulsingDot
 from utils.theme_manager import make_edit_icon, make_trash_icon
+from utils.widgets.chip_button import ChipButton
 
 
 def _hamburger_icon(color: str, size: int = 12) -> QIcon:
@@ -64,6 +65,15 @@ _BUTTON_MAP = {
     "running":    ("Quit",         "#b34848", True,  "quit_clicked"),
     "failed":     ("Retry",        "#c84e34", True,  "retry_clicked"),
 }
+
+
+class _QuietChipButton(ChipButton):
+    """ChipButton tuned for the larger launch-tab surfaces: no upscale on
+    hover (option B is color-shift-only) and a gentler 0.96 press scale.
+    Hover background change is owned by per-instance QSS, not by the
+    paint_scale animation."""
+    HOVER_SCALE = 1.0
+    PRESS_SCALE = 0.96
 
 
 def summarize_error(raw_message: str) -> str:
@@ -178,29 +188,30 @@ class AccountTile(QFrame):
         # Action row
         acts = QHBoxLayout()
         acts.setSpacing(6)
-        self.primary_button = QPushButton("Launch")
+        self.primary_button = _QuietChipButton()
+        self.primary_button.setText("Launch")
         self.primary_button.setMinimumHeight(28)
         self.primary_button.setCursor(Qt.PointingHandCursor)
         acts.addWidget(self.primary_button, 1)
         _muted = QColor("#8a9bb8")
-        self.edit_btn = QPushButton()
+        self.edit_btn = _QuietChipButton()
         self.edit_btn.setIcon(make_edit_icon(14, _muted))
         self.edit_btn.setIconSize(QSize(14, 14))
         self.edit_btn.setFixedSize(26, 26)
         self.edit_btn.setCursor(Qt.PointingHandCursor)
         self.edit_btn.setStyleSheet(
-            "QPushButton { background: transparent; border: 1px solid rgba(255,255,255,0.1);"
+            "QToolButton { background: transparent; border: 1px solid rgba(255,255,255,0.1);"
             " color: #8a9bb8; border-radius: 6px; }"
         )
         self.edit_btn.clicked.connect(self.edit_clicked.emit)
         acts.addWidget(self.edit_btn)
-        self.delete_btn = QPushButton()
+        self.delete_btn = _QuietChipButton()
         self.delete_btn.setIcon(make_trash_icon(14, _muted))
         self.delete_btn.setIconSize(QSize(14, 14))
         self.delete_btn.setFixedSize(26, 26)
         self.delete_btn.setCursor(Qt.PointingHandCursor)
         self.delete_btn.setStyleSheet(
-            "QPushButton { background: transparent; border: 1px solid rgba(255,255,255,0.1);"
+            "QToolButton { background: transparent; border: 1px solid rgba(255,255,255,0.1);"
             " color: #8a9bb8; border-radius: 6px; }"
         )
         self.delete_btn.clicked.connect(self.delete_clicked.emit)
@@ -264,11 +275,11 @@ class AccountTile(QFrame):
         self.primary_button.setEnabled(enabled)
         text_color = "white" if enabled else "#5d6a82"
         self.primary_button.setStyleSheet(
-            f"QPushButton {{"
+            f"QToolButton {{"
             f" background: {bg}; color: {text_color}; border: none;"
             f" border-radius: 6px; padding: 7px; font-size: 12px; font-weight: 600;"
             f"}}"
-            f"QPushButton:disabled {{ background: rgba(255,255,255,0.06); color: #5d6a82; }}"
+            f"QToolButton:disabled {{ background: rgba(255,255,255,0.06); color: #5d6a82; }}"
         )
         # Disconnect prior handler (if any) before connecting the new one.
         if self._connected_signal is not None:
