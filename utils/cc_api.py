@@ -95,9 +95,35 @@ def _resolve_pid_for_window(window_id) -> Optional[int]:
         return None
 
 
+def _get_cc_manual_log_dir() -> Optional[Path]:
+    """Read CC_EXTERNAL_LOG_DIR from settings. Returns None when unset/blank.
+
+    Indirection so tests can patch without touching SettingsManager.
+    """
+    from utils.settings_manager import SettingsManager
+    from utils.settings_keys import CC_EXTERNAL_LOG_DIR
+    raw = SettingsManager().get(CC_EXTERNAL_LOG_DIR, "") or ""
+    raw = raw.strip()
+    return Path(raw) if raw else None
+
+
 def _get_stdout_path_for_pid(pid: int) -> Optional[Path]:
-    """Indirection over cc_launcher.get_stdout_path_for_pid for test mocking."""
-    return cc_launcher.get_stdout_path_for_pid(pid)
+    """Resolve the CC stdout/log path for a given CC PID.
+
+    1. TTMT-spawned registry (cc_launcher._pid_to_stdout). Untouched.
+    2. Fall through to cc_log_discovery for externally-launched CC.
+       Cache the discovered path in the registry so subsequent calls
+       skip discovery until the PID exits.
+    """
+    path = cc_launcher.get_stdout_path_for_pid(pid)
+    if path is not None:
+        return path
+    from utils import cc_log_discovery
+    manual_dir = _get_cc_manual_log_dir()
+    path = cc_log_discovery.find_log_for_pid(pid, manual_dir=manual_dir)
+    if path is not None:
+        cc_launcher._register_stdout_path(pid, path)
+    return path
 
 
 def _resolve_one(window_id) -> CCToonInfo:

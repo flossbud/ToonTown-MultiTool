@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
+
+import psutil
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QComboBox, QApplication, QMessageBox, QFrame,
@@ -1530,7 +1533,10 @@ class SettingsTab(QWidget):
 
         # Hide-CC-console opt-out. Default ON; user can turn off when
         # debugging launch failures to see CC's TTCCLauncher stdout.
-        from utils.settings_keys import CC_HIDE_LAUNCH_CONSOLE
+        from utils.settings_keys import (
+            CC_HIDE_LAUNCH_CONSOLE,
+            CC_EXTERNAL_LOG_DIR,
+        )
         self.hide_cc_console_row = ToggleRow(
             "Hide CC launch console",
             self.settings_manager.get(CC_HIDE_LAUNCH_CONSOLE, True),
@@ -1539,6 +1545,90 @@ class SettingsTab(QWidget):
             lambda v: self.settings_manager.set(CC_HIDE_LAUNCH_CONSOLE, v)
         )
         group.add_row(self.hide_cc_console_row)
+
+        # External CC log directory (advanced). Constrains auto-discovery
+        # of CC log files when CC was launched outside TTMT. Blank = full
+        # auto-discovery via psutil / Wine-prefix glob.
+        self.cc_external_log_row = SettingsRow(
+            "External CC log directory (advanced)",
+            "Leave blank for auto-detection.",
+        )
+        log_dir_lay = QHBoxLayout()
+        log_dir_lay.setContentsMargins(0, 0, 0, 0)
+        log_dir_lay.setSpacing(6)
+
+        self.cc_external_log_label = QLabel(
+            self.settings_manager.get(CC_EXTERNAL_LOG_DIR, "") or "(auto)"
+        )
+        self.cc_external_log_label.setStyleSheet("color: rgba(255,255,255,0.65);")
+        log_dir_lay.addWidget(self.cc_external_log_label, 1)
+
+        self.cc_external_log_browse = QPushButton("Browse")
+        self.cc_external_log_browse.setCursor(Qt.PointingHandCursor)
+        self.cc_external_log_browse.setFixedHeight(28)
+
+        def _browse_external_log_dir():
+            current = self.settings_manager.get(CC_EXTERNAL_LOG_DIR, "") or ""
+            picked = QFileDialog.getExistingDirectory(
+                self, "Select Corporate Clash logs directory", current,
+            )
+            if picked:
+                self.settings_manager.set(CC_EXTERNAL_LOG_DIR, picked)
+                self.cc_external_log_label.setText(picked)
+
+        self.cc_external_log_browse.clicked.connect(_browse_external_log_dir)
+        log_dir_lay.addWidget(self.cc_external_log_browse)
+
+        self.cc_external_log_clear = QPushButton("Clear")
+        self.cc_external_log_clear.setCursor(Qt.PointingHandCursor)
+        self.cc_external_log_clear.setFixedHeight(28)
+
+        def _clear_external_log_dir():
+            self.settings_manager.set(CC_EXTERNAL_LOG_DIR, "")
+            self.cc_external_log_label.setText("(auto)")
+
+        self.cc_external_log_clear.clicked.connect(_clear_external_log_dir)
+        log_dir_lay.addWidget(self.cc_external_log_clear)
+
+        self.cc_external_log_detect = QPushButton("Detect")
+        self.cc_external_log_detect.setCursor(Qt.PointingHandCursor)
+        self.cc_external_log_detect.setFixedHeight(28)
+        self.cc_external_log_detect.setToolTip(
+            "Walk currently-running CC processes and report what discovery finds."
+        )
+
+        def _run_detect():
+            from utils import cc_log_discovery
+            manual_raw = self.settings_manager.get(CC_EXTERNAL_LOG_DIR, "") or ""
+            manual_dir = Path(manual_raw.strip()) if manual_raw.strip() else None
+            results: list[str] = []
+            for proc in psutil.process_iter(attrs=["pid", "name"]):
+                name = (proc.info.get("name") or "").lower()
+                if "corporateclash" not in name:
+                    continue
+                pid = proc.info["pid"]
+                try:
+                    path = cc_log_discovery.find_log_for_pid(pid, manual_dir=manual_dir)
+                except Exception as exc:  # noqa: BLE001
+                    results.append(f"pid {pid}: error {exc!r}")
+                    continue
+                results.append(
+                    f"pid {pid}: {'(found) ' + str(path) if path else '(not found)'}"
+                )
+            if not results:
+                results.append("No running CC processes detected.")
+            QMessageBox.information(
+                self, "External CC log discovery",
+                "\n".join(results),
+            )
+
+        self.cc_external_log_detect.clicked.connect(_run_detect)
+        log_dir_lay.addWidget(self.cc_external_log_detect)
+
+        log_dir_widget = QWidget()
+        log_dir_widget.setLayout(log_dir_lay)
+        self.cc_external_log_row.add_control(log_dir_widget)
+        group.add_row(self.cc_external_log_row)
 
         self._main_layout.addWidget(group)
 
