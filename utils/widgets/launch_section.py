@@ -53,8 +53,8 @@ class LaunchSection(QWidget):
         # Compact-mode horizontal cap. Mirrors tabs/multitoon/_compact_layout.py:38-44.
         # In full mode (set via set_layout_mode), the cap is lifted so the
         # two sections can sit side-by-side and each fill ~half the window.
-        self._compact_max_width = 720
-        self.setMaximumWidth(self._compact_max_width)
+        self._max_width = 720
+        self.setMaximumWidth(self._max_width)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         assert game in ("ttr", "cc")
         self._game = game
@@ -184,8 +184,8 @@ class LaunchSection(QWidget):
         """
         if mode not in _LAYOUT_MAX_WIDTH:
             return
-        self._compact_max_width = _LAYOUT_MAX_WIDTH[mode]
-        self.setMaximumWidth(self._compact_max_width)
+        self._max_width = _LAYOUT_MAX_WIDTH[mode]
+        self.setMaximumWidth(self._max_width)
 
     def _wire_tile(self, tile: AccountTile, index: int) -> None:
         tile.launch_clicked.connect(lambda i=index: self.tile_launch.emit(i))
