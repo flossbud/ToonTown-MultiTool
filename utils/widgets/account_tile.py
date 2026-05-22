@@ -174,6 +174,9 @@ class AccountTile(QFrame):
         self.status_label = QLabel("")
         self.status_label.setStyleSheet("font-size: 11px; font-weight: 600;")
         band_lay.addWidget(self.status_label, 1)
+        # expand_btn stays a plain QPushButton: it's a tiny status-band
+        # chevron that doesn't need the press-scale feedback the action-row
+        # buttons get from _QuietChipButton.
         self.expand_btn = QPushButton()
         self.expand_btn.setFixedSize(20, 20)
         self.expand_btn.setIconSize(QSize(12, 12))
