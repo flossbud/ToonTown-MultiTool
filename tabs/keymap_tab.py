@@ -25,6 +25,17 @@ from utils.widgets import install_modern_scrollbar
 
 from utils import logical_actions
 
+
+def _asset_path(name: str) -> str:
+    """Resolve a bundled asset relative to the repo root / PyInstaller _MEIPASS.
+    Mirrors the same pattern in tabs/launch_tab.py and tabs/credits_tab.py."""
+    base = getattr(
+        sys, "_MEIPASS",
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    )
+    return os.path.join(base, "assets", name)
+
+
 ACTION_LABELS = {
     "forward": "Forward",
     "reverse": "Reverse",
@@ -292,12 +303,12 @@ class SetCard(QFrame):
         self.index = index
         self.set_data = set_data
         self.setAttribute(Qt.WA_StyledBackground, True)
-        # Reserve 4px at top so child widgets sit below the painted stripe.
-        self.setContentsMargins(0, self.STRIPE_HEIGHT, 0, 0)
-        from utils.theme_manager import get_set_card_styles, make_trash_icon
         self._styles = get_set_card_styles(index, is_dark=True)
         self._header = None  # set before installEventFilter so eventFilter is safe
 
+        # Reserve STRIPE_HEIGHT at the top via the layout margin so child
+        # widgets sit below the painted stripe. Setting both QWidget AND
+        # layout contents-margins stacks the inset (double-margin bug).
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, self.STRIPE_HEIGHT, 0, 0)
         outer.setSpacing(0)
@@ -570,14 +581,13 @@ class _SegmentedSwitch(QFrame):
         bar_lay.setContentsMargins(4, 4, 4, 4)
         bar_lay.setSpacing(4)
 
-        from tabs.launch_tab import _asset_path as launch_asset_path
         self._icons: dict[str, dict[str, QIcon]] = {}
         for game in ("ttr", "cc"):
             b = QPushButton()
             b.setFixedSize(56, 40)
             b.setCursor(Qt.PointingHandCursor)
             b.setToolTip(self._TITLES[game])
-            pm = QPixmap(launch_asset_path(f"{game}.png"))
+            pm = QPixmap(_asset_path(f"{game}.png"))
             if not pm.isNull():
                 self._icons[game] = {
                     "active":   QIcon(pm),

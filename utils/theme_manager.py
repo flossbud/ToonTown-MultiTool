@@ -94,8 +94,11 @@ def get_set_card_styles(index: int, is_dark: bool) -> dict:
     Pure read-side function. Returns a dict of CSS-ready strings (rgba(...) /
     #rrggbb) computed from get_set_color(index). Used by tabs/keymap_tab.py
     to render one set's card without scattering rgba arithmetic inline.
+
+    `is_dark` is reserved for a future light-mode contrast fallback (see
+    the design spec's Risks section). Currently unused; all returned values
+    work against either theme background.
     """
-    from PySide6.QtGui import QColor
     bg_hex, _ = get_set_color(index)
     base = QColor(bg_hex)
     r, g, b = base.red(), base.green(), base.blue()
