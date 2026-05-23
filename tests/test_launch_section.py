@@ -67,26 +67,51 @@ def test_max_accounts_hides_add_tile(qapp):
     assert not sec.add_tile.isVisible()
 
 
-def test_section_header_has_tinted_band_ttr(qapp):
+def test_section_card_carries_accent_tint_ttr(qapp):
+    """Per-game card wraps header + grid in a faint accent-tinted region.
+    The previous design tinted only the header strip; the card design
+    moves the tint to the wrapping container so the empty state and the
+    full content read as one TTR region."""
+    sec = LaunchSection(game="ttr", icon_path="")
+    card = sec.findChild(QFrame, "section_card")
+    assert card is not None
+    qss = card.styleSheet()
+    # TTR accent in the gradient + faint accent border around the card.
+    assert "rgba(74,143,231" in qss or "rgba(74, 143, 231" in qss
+    assert "border-radius" in qss
+
+
+def test_section_card_carries_accent_tint_cc(qapp):
+    sec = LaunchSection(game="cc", icon_path="")
+    card = sec.findChild(QFrame, "section_card")
+    assert card is not None
+    qss = card.styleSheet()
+    assert "rgba(242,109,33" in qss or "rgba(242, 109, 33" in qss
+    assert "border-radius" in qss
+
+
+def test_section_header_keeps_hairline_divider(qapp):
+    """Header still has the hairline below it (separating header content
+    from the tile region) — only the gradient moved out to the card."""
     sec = LaunchSection(game="ttr", icon_path="")
     header_frame = sec.findChild(QFrame, "section_header")
     assert header_frame is not None
     qss = header_frame.styleSheet()
-    # TTR accent color in the gradient
-    assert "rgba(74,143,231" in qss or "rgba(74, 143, 231" in qss
-    # Hairline divider
     assert "border-bottom" in qss
     assert "rgba(255,255,255,0.06" in qss or "rgba(255, 255, 255, 0.06" in qss
 
 
-def test_section_header_has_tinted_band_cc(qapp):
+def test_empty_state_lives_inside_card(qapp):
+    """Empty state must be a descendant of section_card so it can't float
+    outside the card bounds (the bug from the screenshot)."""
     sec = LaunchSection(game="cc", icon_path="")
-    header_frame = sec.findChild(QFrame, "section_header")
-    assert header_frame is not None
-    qss = header_frame.styleSheet()
-    assert "rgba(242,109,33" in qss or "rgba(242, 109, 33" in qss
-    assert "border-bottom" in qss
-    assert "rgba(255,255,255,0.06" in qss or "rgba(255, 255, 255, 0.06" in qss
+    card = sec.findChild(QFrame, "section_card")
+    assert sec.empty_state is not None
+    # Walk up the parent chain; we should pass through the card.
+    parent = sec.empty_state.parentWidget()
+    while parent is not None and parent is not card:
+        parent = parent.parentWidget()
+    assert parent is card, "empty_state must be a descendant of section_card"
 
 
 def test_section_launcher_button_is_chipbutton(qapp):

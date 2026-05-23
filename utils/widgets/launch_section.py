@@ -80,21 +80,47 @@ class LaunchSection(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
-        # Tinted accent band wrapping the header strip. The gradient fades
-        # from a 10%-opacity game-accent tint at the top to transparent at
-        # the bottom; the hairline below the band acts as the section-
-        # boundary divider so the header reads as a labeled region rather
-        # than floating text.
-        accent_rgba = (
-            "rgba(74,143,231,0.10)" if game == "ttr"
-            else "rgba(242,109,33,0.10)"
+        # Per-game card: a single accent-tinted container that wraps the
+        # header AND the tile grid (or empty state) so the section reads
+        # as a unified "TTR region" or "CC region" rather than a floating
+        # header strip plus a separate grid. The faint accent gradient
+        # gives each card its game identity without competing with the
+        # per-tile accent borders inside.
+        accent_top = (
+            "rgba(74,143,231,0.06)" if game == "ttr"
+            else "rgba(242,109,33,0.06)"
         )
+        accent_bottom = (
+            "rgba(74,143,231,0.02)" if game == "ttr"
+            else "rgba(242,109,33,0.02)"
+        )
+        accent_border = (
+            "rgba(74,143,231,0.15)" if game == "ttr"
+            else "rgba(242,109,33,0.15)"
+        )
+        self.card = QFrame()
+        self.card.setObjectName("section_card")
+        self.card.setAttribute(Qt.WA_StyledBackground, True)
+        self.card.setStyleSheet(
+            "QFrame#section_card {"
+            " background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
+            f" stop:0 {accent_top}, stop:1 {accent_bottom});"
+            f" border: 1px solid {accent_border};"
+            " border-radius: 10px;"
+            "}"
+        )
+        card_lay = QVBoxLayout(self.card)
+        card_lay.setContentsMargins(0, 0, 0, 0)
+        card_lay.setSpacing(0)
+        outer.addWidget(self.card)
+
+        # Header strip — sits inside the card. No gradient of its own (the
+        # card carries that); only a hairline below to separate it from
+        # the tile region.
         header = QFrame()
         header.setObjectName("section_header")
         header.setStyleSheet(
             "QFrame#section_header {"
-            " background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
-            f" stop:0 {accent_rgba}, stop:1 transparent);"
             " border-bottom: 1px solid rgba(255,255,255,0.06);"
             "}"
         )
@@ -134,17 +160,17 @@ class LaunchSection(QWidget):
         self.launcher_btn.clicked.connect(self.launcher_clicked.emit)
         head_lay.addWidget(self.launcher_btn)
 
-        outer.addWidget(header)
+        card_lay.addWidget(header)
 
         self.grid_container = QWidget()
         self.grid = QGridLayout(self.grid_container)
         self.grid.setContentsMargins(14, 14, 14, 14)
         self.grid.setSpacing(10)
-        outer.addWidget(self.grid_container)
+        card_lay.addWidget(self.grid_container)
 
         self.empty_state = EmptyState(game=game)
         self.empty_state.add_clicked.connect(self.add_account_clicked.emit)
-        outer.addWidget(self.empty_state)
+        card_lay.addWidget(self.empty_state)
 
         self.set_accounts([])
 
