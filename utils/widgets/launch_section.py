@@ -493,7 +493,9 @@ class LaunchSection(QWidget):
         anim.setEasingCurve(motion.EASE_STANDARD)
         anim.setStartValue(start)
         anim.setEndValue(end)
-        anim.finished.connect(lambda v=value: self._on_collapse_anim_finished(v))
+        anim.finished.connect(
+            lambda v=value, a=anim: self._on_collapse_anim_finished(v, a)
+        )
         self._collapse_anim = anim
         anim.start()
 
@@ -508,14 +510,19 @@ class LaunchSection(QWidget):
             self._body_wrap.setMaximumHeight(QWIDGETSIZE_MAX)
             self.setMinimumHeight(380)
 
-    def _on_collapse_anim_finished(self, collapsed_target: bool) -> None:
+    def _on_collapse_anim_finished(
+        self, collapsed_target: bool, anim: QPropertyAnimation
+    ) -> None:
         """After-animation cleanup: hide _body_wrap when collapsed, reset
         maximumHeight to unlimited when expanded so future content
-        (new tiles, scale bumps) isn't capped at the snapshot value."""
-        # Guard against stale signals: a newer animation may have been
-        # started before this one's finished slot fired. Only act if the
-        # current animation IS the one that finished.
-        if self.sender() is not self._collapse_anim:
+        (new tiles, scale bumps) isn't capped at the snapshot value.
+
+        The `anim` argument is the specific animation object that fired.
+        Compare against `self._collapse_anim` directly — `self.sender()`
+        returns None when the slot is reached through a Python lambda,
+        so we cannot use it for the stale-signal guard.
+        """
+        if anim is not self._collapse_anim:
             return
         if collapsed_target:
             self._body_wrap.setVisible(False)

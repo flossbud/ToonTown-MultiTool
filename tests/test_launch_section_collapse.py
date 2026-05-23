@@ -175,3 +175,32 @@ def test_mid_animation_toggle_starts_from_current_height(qapp, monkeypatch):
     assert second is not first  # new animation created
     assert first.state() == QAbstractAnimation.Stopped  # original stopped
     assert second.startValue() == 40
+
+
+def test_animation_finished_runs_cleanup(qapp, monkeypatch):
+    """After the height tween completes, _on_collapse_anim_finished must
+    run its cleanup body: hide _body_wrap on collapse, restore unlimited
+    maximumHeight on expand, and clear _collapse_anim. Without the
+    cleanup, expanding a section after collapsing it would leave
+    maximumHeight pinned at the start-of-animation sizeHint, clipping
+    any later content additions (new tiles, scale bumps).
+
+    Setting motion._TEST_DURATION_SCALE = 0.0 makes the QPropertyAnimation
+    finish synchronously inside set_collapsed — its finished signal fires
+    before the next line of test code runs."""
+    import utils.motion as motion
+    from utils.widgets.launch_section import QWIDGETSIZE_MAX
+    monkeypatch.setattr(motion, "is_reduced", lambda: False)
+    monkeypatch.setattr(motion, "_TEST_DURATION_SCALE", 0.0)
+
+    sec = LaunchSection(game="ttr", icon_path="assets/ttr.png")
+    sec.show()
+
+    sec.set_collapsed(True, animate=True)
+    assert sec._collapse_anim is None  # cleared by cleanup
+    assert sec._body_wrap.isHidden()   # hidden by cleanup
+
+    sec.set_collapsed(False, animate=True)
+    assert sec._collapse_anim is None
+    assert not sec._body_wrap.isHidden()
+    assert sec._body_wrap.maximumHeight() == QWIDGETSIZE_MAX  # NOT capped
