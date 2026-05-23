@@ -285,6 +285,14 @@ class LaunchSection(QWidget):
             f" border-color: {c['border_card']};"
             "}"
         )
+        self._chev.setStyleSheet(
+            "QLabel#section_chev {"
+            " background: transparent;"
+            f" color: {c['text_secondary']};"
+            " font-size: 14px;"
+            " padding: 4px 6px;"
+            "}"
+        )
         # Propagate to children that own their own QSS.
         for tile in self.tiles:
             if hasattr(tile, "apply_theme"):
