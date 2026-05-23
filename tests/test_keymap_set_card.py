@@ -245,3 +245,10 @@ def test_setcard_header_has_fixed_height(qapp):
     # Header should be locked: min == max == natural sizeHint.
     assert h.minimumHeight() > 0
     assert h.minimumHeight() == h.maximumHeight()
+
+
+def test_movementkeyfield_has_pointer_cursor(qapp):
+    from tabs.keymap_tab import MovementKeyField
+    from PySide6.QtCore import Qt
+    field = MovementKeyField("Up")
+    assert field.cursor().shape() == Qt.PointingHandCursor

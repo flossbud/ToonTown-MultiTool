@@ -94,6 +94,7 @@ class MovementKeyField(QLineEdit):
         self.setMinimumHeight(28)
         self.setFixedWidth(88)
         self.setAlignment(Qt.AlignCenter)
+        self.setCursor(Qt.PointingHandCursor)
         self._update_display()
 
     def _update_display(self):
