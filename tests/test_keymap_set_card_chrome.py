@@ -180,14 +180,15 @@ def test_detect_button_qss_is_token_driven(qapp):
     tab = KeymapTab(KeymapManager(), settings_manager=_FakeSettings())
     tab.refresh_theme()
     c = get_theme_colors(True)
-    btns = tab.findChildren(QPushButton, "detect_btn")
+    # Scope to the TTR page since both pages now have a detect button.
+    btns = tab._pages["ttr"].findChildren(QPushButton, "detect_btn")
     assert len(btns) >= 1
     qss = btns[0].styleSheet()
     assert "background: transparent" in qss
     assert f"border: 1px solid {c['border_muted']}" in qss
     assert f"color: {c['text_secondary']}" in qss
-    # Hover accent must be game-scoped: blue for TTR, orange for CC.
-    # _FakeSettings forces TTR detection above; assert TTR accent here.
+    # Hover accent is per-page: TTR detect button uses blue regardless of
+    # which game is currently active.
     assert f"border: 1px solid {c['accent_blue_btn']}" in qss
     assert f"color: {c['accent_blue_btn']}" in qss
 
@@ -215,7 +216,8 @@ def test_detect_button_uses_cc_accent_when_active(qapp, monkeypatch):
     tab = KeymapTab(KeymapManager(), settings_manager=_FakeSettings())
     tab.refresh_theme()
     c = get_theme_colors(True)
-    btns = tab.findChildren(QPushButton, "detect_btn")
+    # Scope to the CC page; both pages now have a detect button.
+    btns = tab._pages["cc"].findChildren(QPushButton, "detect_btn")
     assert len(btns) >= 1
     qss = btns[0].styleSheet()
     assert f"border: 1px solid {c['accent_orange_border']}" in qss

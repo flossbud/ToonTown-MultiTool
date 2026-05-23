@@ -1153,10 +1153,6 @@ class KeymapTab(QWidget):
 
     # ── Game detection + segmented control ────────────────────────────────
 
-    def _both_games_detected(self) -> bool:
-        """True when both TTR and CC are findable on this machine."""
-        return self._ttr_detected() and self._cc_detected()
-
     def _ttr_detected(self) -> bool:
         if self.settings_manager is None:
             return False
@@ -1423,25 +1419,28 @@ class KeymapTab(QWidget):
                     f"}}"
                 )
 
-        hover_accent = (
-            c['accent_blue_btn'] if self._active_game == "ttr"
-            else c['accent_orange_border']
-        )
-        for btn in self.findChildren(QPushButton, "detect_btn"):
-            btn.setStyleSheet(
-                "QPushButton#detect_btn {"
-                " background: transparent;"
-                f" border: 1px solid {c['border_muted']};"
-                f" color: {c['text_secondary']};"
-                " border-radius: 8px; padding: 0 14px;"
-                " font-weight: 600; font-size: 11px;"
-                "}"
-                "QPushButton#detect_btn:hover {"
-                f" background: {c['bg_card_inner_hover']};"
-                f" border: 1px solid {hover_accent};"
-                f" color: {hover_accent};"
-                "}"
+        # Detect button hover accent is per-page (TTR=blue, CC=orange) so
+        # the inactive page's detect button keeps its own game's tint.
+        for game in ("ttr", "cc"):
+            hover_accent = (
+                c['accent_blue_btn'] if game == "ttr"
+                else c['accent_orange_border']
             )
+            for btn in self._pages[game].findChildren(QPushButton, "detect_btn"):
+                btn.setStyleSheet(
+                    "QPushButton#detect_btn {"
+                    " background: transparent;"
+                    f" border: 1px solid {c['border_muted']};"
+                    f" color: {c['text_secondary']};"
+                    " border-radius: 8px; padding: 0 14px;"
+                    " font-weight: 600; font-size: 11px;"
+                    "}"
+                    "QPushButton#detect_btn:hover {"
+                    f" background: {c['bg_card_inner_hover']};"
+                    f" border: 1px solid {hover_accent};"
+                    f" color: {hover_accent};"
+                    "}"
+                )
 
     # ── Visibility refresh (Task 6 stub) ────────────────────────────────────
 
