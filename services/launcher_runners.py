@@ -10,7 +10,10 @@ from __future__ import annotations
 import glob
 import os
 import subprocess
+import sys
+from dataclasses import replace
 
+from services.cc_launcher import resolve_effective_proton
 from services.wine_runtimes import discover_cc_installs, build_launch_command
 
 
@@ -118,6 +121,19 @@ def run_official_cc_launcher(settings_manager=None) -> bool:
     launcher_path = _cc_launcher_exe_path(install)
     if launcher_path is None:
         return False
+
+    # Mirror CCLauncher.launch's Proton-resolution cascade
+    # (override -> CompatToolMapping -> config_info -> enumerated newest).
+    # Without this, build_launch_command's steam-proton branch raises
+    # ValueError whenever metadata['proton_dir'] is None (e.g., shortcut
+    # never actually run through Steam), and the runner silently returns
+    # False with no user feedback.
+    if sys.platform != "win32" and install.launcher == "steam-proton":
+        chosen = resolve_effective_proton(install, settings_manager)
+        if chosen is None:
+            return False
+        install = replace(install, metadata={**install.metadata, "proton_dir": chosen})
+
     try:
         argv, env_overrides = build_launch_command(
             install, args=[], extra_env={}, target_exe=launcher_path,

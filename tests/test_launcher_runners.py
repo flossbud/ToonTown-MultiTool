@@ -204,3 +204,86 @@ def test_cc_run_passes_cwd_as_launcher_directory():
         ok = launcher_runners.run_official_cc_launcher()
     assert ok is True
     assert popen.call_args.kwargs["cwd"] == os.path.dirname(launcher_path)
+
+
+# ── Steam-Proton resolution cascade ─────────────────────────────────────────
+
+
+def test_cc_steam_proton_runs_resolver_cascade_before_build(tmp_path):
+    """For steam-proton installs the runner must call resolve_effective_proton
+    to fill in metadata['proton_dir'] before build_launch_command sees the
+    install. Without this, build_launch_command raises ValueError when
+    config_info is missing and the runner silently returns False."""
+    from services.wine_runtimes import WineInstall
+
+    prefix = tmp_path / "prefix"
+    game_dir = prefix / "drive_c" / "users" / "steamuser" / "AppData" / "Local" / "Corporate Clash"
+    game_dir.mkdir(parents=True)
+    (game_dir / "CorporateClash.exe").write_bytes(b"")
+    pf_dir = prefix / "drive_c" / "Program Files" / "Corporate Clash"
+    pf_dir.mkdir(parents=True)
+    launcher_exe = pf_dir / "new_launcher.exe"
+    launcher_exe.write_bytes(b"")
+
+    install = WineInstall(
+        exe_path=str(game_dir / "CorporateClash.exe"),
+        launcher="steam-proton",
+        prefix_path=str(prefix),
+        display_name="Steam · Corporate Clash",
+        metadata={
+            "appid": "12345",
+            "steam_root": str(tmp_path / "steam_root"),
+            "proton_dir": None,
+        },
+    )
+    settings = MagicMock()
+    settings.get.return_value = ""  # no stored install signature -> single-install path
+
+    seen_install = {}
+
+    def fake_build(install, args, extra_env, target_exe=None):
+        seen_install["it"] = install
+        return (["fake-cmd"], {})
+
+    with patch("services.launcher_runners.discover_cc_installs", return_value=[install]), \
+         patch("services.launcher_runners.resolve_effective_proton",
+               return_value="/fake/proton/dir") as resolver, \
+         patch("services.launcher_runners.build_launch_command",
+               side_effect=fake_build), \
+         patch.object(launcher_runners.subprocess, "Popen") as popen:
+        popen.return_value = MagicMock()
+        ok = launcher_runners.run_official_cc_launcher(settings_manager=settings)
+
+    assert ok is True
+    resolver.assert_called_once_with(install, settings)
+    patched = seen_install["it"]
+    assert patched.metadata["proton_dir"] == "/fake/proton/dir"
+
+
+def test_cc_steam_proton_returns_false_when_resolver_empty():
+    """If resolve_effective_proton returns None (no Proton installed at all),
+    the runner must return False instead of letting ValueError surface."""
+    from services.wine_runtimes import WineInstall
+
+    install = WineInstall(
+        exe_path="/fake/CorporateClash.exe",
+        launcher="steam-proton",
+        prefix_path="/fake/prefix",
+        display_name="Steam · Corporate Clash",
+        metadata={"appid": "12345", "steam_root": "/fake/steam", "proton_dir": None},
+    )
+    settings = MagicMock()
+    settings.get.return_value = ""
+
+    with patch("services.launcher_runners.discover_cc_installs", return_value=[install]), \
+         patch("services.launcher_runners._cc_launcher_exe_path",
+               return_value="/fake/launcher.exe"), \
+         patch("services.launcher_runners.resolve_effective_proton",
+               return_value=None), \
+         patch("services.launcher_runners.build_launch_command") as build, \
+         patch.object(launcher_runners.subprocess, "Popen") as popen:
+        ok = launcher_runners.run_official_cc_launcher(settings_manager=settings)
+
+    assert ok is False
+    build.assert_not_called()
+    popen.assert_not_called()
