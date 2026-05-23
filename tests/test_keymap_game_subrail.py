@@ -92,3 +92,27 @@ def test_pill_color_matches_active_game(qapp):
 
     rail.set_active("cc")
     assert rail._pill._border_color.name().lower() == c["game_pill_cc"].lower()
+
+
+def test_keymap_tab_uses_game_sub_rail_when_both_detected(qapp, monkeypatch):
+    from tabs.keymap_tab import KeymapTab, _GameSubRail
+    from utils.keymap_manager import KeymapManager
+
+    class _FakeSettings:
+        def __init__(self):
+            self._d = {"ttr_engine_dir": "", "cc_engine_dir": "", "theme": "dark"}
+        def get(self, k, default=None):
+            return self._d.get(k, default)
+        def set(self, k, v):
+            self._d[k] = v
+        def on_change(self, cb):
+            pass
+
+    # Force both-games-detected so the sub-rail is built.
+    monkeypatch.setattr(KeymapTab, "_ttr_detected", lambda self: True)
+    monkeypatch.setattr(KeymapTab, "_cc_detected", lambda self: True)
+
+    tab = KeymapTab(KeymapManager(), settings_manager=_FakeSettings())
+    assert isinstance(tab._segmented, _GameSubRail), (
+        f"expected _GameSubRail, got {type(tab._segmented).__name__}"
+    )
