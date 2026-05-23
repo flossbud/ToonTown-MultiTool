@@ -623,16 +623,16 @@ LIGHT_THEME = """
     }
     QFrame#picker_card {
         background-color: #ffffff;
-        border: 1px solid #e2e8f0;
+        border: 2px solid #e2e8f0;
         border-radius: 12px;
     }
     QFrame#picker_card:hover {
         background-color: #f1f5f9;
-        border: 1px solid #cbd5e1;
+        border: 2px solid #cbd5e1;
     }
     QFrame#picker_card[selected="true"] {
-        background-color: #eff6ff;
-        border: 1px solid #2563eb;
+        background-color: #dbeafe;
+        border: 2px solid #2563eb;
     }
     QFrame#picker_card[stale="true"] QLabel#picker_card_name,
     QFrame#picker_card[stale="true"] QLabel#picker_card_path {
@@ -679,6 +679,18 @@ LIGHT_THEME = """
         color: #334155;
         font-size: 13px;
         background: transparent;
+    }
+    QDialog#picker_dialog QPushButton {
+        background: transparent;
+        color: #334155;
+        border: 1px solid #cbd5e1;
+        border-radius: 8px;
+        padding: 7px 16px;
+        font-weight: 500;
+    }
+    QDialog#picker_dialog QPushButton:hover {
+        background-color: #f1f5f9;
+        border-color: #94a3b8;
     }
     QPushButton#picker_primary_btn {
         background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
