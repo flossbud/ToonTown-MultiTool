@@ -316,6 +316,10 @@ class SetCard(QFrame):
     CORNER_RADIUS = 10
     STRIPE_HEIGHT = 4
 
+    toggle_requested = Signal()
+    name_changed     = Signal(str)
+    delete_requested = Signal()
+
     def __init__(self, index: int, set_data: dict, parent=None):
         super().__init__(parent)
         self.index = index
@@ -323,8 +327,58 @@ class SetCard(QFrame):
         self.setAttribute(Qt.WA_StyledBackground, True)
         # Reserve 4px at top so child widgets sit below the painted stripe.
         self.setContentsMargins(0, self.STRIPE_HEIGHT, 0, 0)
+        from utils.theme_manager import get_set_card_styles, make_trash_icon
         self._styles = get_set_card_styles(index, is_dark=True)
-        self.setMinimumHeight(self.STRIPE_HEIGHT + 50)
+        self._header = None  # set before installEventFilter so eventFilter is safe
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, self.STRIPE_HEIGHT, 0, 0)
+        outer.setSpacing(0)
+
+        # ── Header row (badge + name + chevron + [delete]) ──────────
+        header = QFrame()
+        header.setObjectName("set_card_header")
+        header.setCursor(Qt.PointingHandCursor)
+        header.installEventFilter(self)  # forwards clicks to mousePressEvent
+        hl = QHBoxLayout(header)
+        hl.setContentsMargins(14, 12, 14, 12)
+        hl.setSpacing(10)
+
+        badge = QLabel(f"SET {index + 1}")
+        badge.setObjectName("set_card_badge")
+        badge.setStyleSheet(self._badge_qss())
+        hl.addWidget(badge)
+
+        if index == 0:
+            name_widget = QLabel(set_data.get("name", "Default"))
+            name_widget.setObjectName("set_name_label")
+        else:
+            name_widget = QLineEdit(set_data.get("name", f"Set {index + 1}"))
+            name_widget.setObjectName("set_name_edit")
+            name_widget.editingFinished.connect(
+                lambda w=name_widget: self.name_changed.emit(w.text())
+            )
+        name_widget.setStyleSheet(self._name_qss())
+        hl.addWidget(name_widget, 1)
+
+        self._chevron = QLabel(S("▼", "v"))
+        self._chevron.setStyleSheet("color: rgba(255,255,255,0.7); font-size: 13px;")
+        hl.addWidget(self._chevron)
+
+        if index > 0:
+            del_btn = QPushButton()
+            del_btn.setFixedSize(28, 28)
+            del_btn.setToolTip("Delete this movement set")
+            del_btn.setCursor(Qt.PointingHandCursor)
+            del_btn.setIcon(make_trash_icon(16, QColor("#8a9bb8")))
+            del_btn.setStyleSheet(self._delete_qss())
+            del_btn.clicked.connect(self.delete_requested.emit)
+            hl.addWidget(del_btn)
+
+        outer.addWidget(header)
+        self._header = header
+        self._name_widget = name_widget
+        self.setMinimumHeight(self.STRIPE_HEIGHT + header.sizeHint().height())
 
     def paintEvent(self, event):
         p = QPainter(self)
@@ -368,6 +422,61 @@ class SetCard(QFrame):
         r, g, b = (int(parts[0]), int(parts[1]), int(parts[2]))
         a = int(float(parts[3]) * 255)
         return QColor(r, g, b, a)
+
+    def eventFilter(self, obj, ev):
+        # Header row click toggles. Clicks on the name QLineEdit / delete
+        # button propagate naturally and DON'T reach this filter.
+        from PySide6.QtCore import QEvent
+        if self._header is not None and obj is self._header and ev.type() == QEvent.Type.MouseButtonPress:
+            self.toggle_requested.emit()
+            return True
+        return super().eventFilter(obj, ev)
+
+    def mousePressEvent(self, ev):
+        # Direct click on the card (e.g. from tests). Forwarded to toggle.
+        self.toggle_requested.emit()
+        super().mousePressEvent(ev)
+
+    def _badge_qss(self) -> str:
+        s = self._styles
+        return (
+            f"QLabel#set_card_badge {{ "
+            f"background: {s['badge_bg']}; color: {s['badge_text']}; "
+            f"font-size: 9px; font-weight: 700; letter-spacing: 0.5px; "
+            f"border-radius: 4px; padding: 3px 8px; "
+            f"border: 1px solid {s['badge_ring']}; "
+            f"}}"
+        )
+
+    def _name_qss(self) -> str:
+        s = self._styles
+        if self.index == 0:
+            return (
+                f"QLabel#set_name_label {{ "
+                f"color: {s['name_color']}; font-size: 14px; font-weight: 800; "
+                f"letter-spacing: 0.2px; background: transparent; "
+                f"}}"
+            )
+        return (
+            f"QLineEdit#set_name_edit {{ "
+            f"color: {s['name_color']}; font-size: 14px; font-weight: 800; "
+            f"letter-spacing: 0.2px; background: transparent; border: none; padding: 2px 4px; "
+            f"}}"
+            f"QLineEdit#set_name_edit:focus {{ "
+            f"background: rgba(255,255,255,0.06); "
+            f"border-bottom: 1px solid {s['head_divider']}; "
+            f"}}"
+        )
+
+    def _delete_qss(self) -> str:
+        s = self._styles
+        return (
+            f"QPushButton {{ background: rgba(255,255,255,0.04); "
+            f"border: 1px solid rgba(255,255,255,0.12); border-radius: 6px; "
+            f"color: #8a9bb8; }} "
+            f"QPushButton:hover {{ background: rgba(255,255,255,0.08); "
+            f"color: {s['name_color']}; border-color: rgba(255,255,255,0.25); }}"
+        )
 
 
 # ── Main Tab ───────────────────────────────────────────────────────────────
