@@ -267,8 +267,8 @@ def get_theme_colors(is_dark: bool) -> dict:
             # consistency and AA contrast with text_on_accent = white).
             "status_dot_active": "#56c856",   # matches segment_active green
             "status_dot_idle":   "#555555",   # matches border_light
-            "game_pill_ttr":     "#7e57c2",   # deeper violet, ~4.6:1 with white (AA)
-            "game_pill_cc":      "#0077ff",   # matches accent_blue_btn for consistency
+            "game_pill_ttr":     "#4A8FE7",   # TTR brand blue (shared with launch tab section stripe)
+            "game_pill_cc":      "#F26D21",   # CC brand orange (shared with launch tab section stripe)
         }
     else:
         return {
@@ -417,8 +417,8 @@ def get_theme_colors(is_dark: bool) -> dict:
             # Full UI tokens
             "status_dot_active": "#16a34a",
             "status_dot_idle":   "#cbd5e1",
-            "game_pill_ttr":     "#7c3aed",
-            "game_pill_cc":      "#2563eb",
+            "game_pill_ttr":     "#4A8FE7",   # TTR brand blue (matches dark palette)
+            "game_pill_cc":      "#F26D21",   # CC brand orange (matches dark palette)
         }
 
 
