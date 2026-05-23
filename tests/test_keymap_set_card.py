@@ -182,3 +182,22 @@ def test_bodyclip_set_content_widget_reparents(qapp):
     assert content.parent() is clip
     # Natural height reflects the content's layout minimumSize().
     assert clip.natural_height() > 0
+
+
+def test_bodyclip_content_height_property(qapp):
+    from tabs.keymap_tab import _BodyClip
+    from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel
+    clip = _BodyClip()
+    content = QWidget()
+    lay = QVBoxLayout(content)
+    lay.addWidget(QLabel("a"))
+    lay.addWidget(QLabel("b"))
+    clip.set_content_widget(content)
+    # Setting content_height should clamp the clip's effective height.
+    clip.setProperty("content_height", 12)
+    assert clip.minimumHeight() == 12
+    assert clip.maximumHeight() == 12
+    # Setting to 0 collapses.
+    clip.setProperty("content_height", 0)
+    assert clip.minimumHeight() == 0
+    assert clip.maximumHeight() == 0

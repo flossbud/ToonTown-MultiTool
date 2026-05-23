@@ -291,6 +291,46 @@ class _BodyClip(QWidget):
         height = max(self.natural_height(), self.height(), self._height_hint())
         self._content.setGeometry(0, 0, self.width(), height)
 
+    def _set_forced_height(self, height: int) -> None:
+        self._forced_height = max(0, int(height))
+        self.setMinimumHeight(self._forced_height)
+        self.setMaximumHeight(self._forced_height)
+        self._sync_content_geometry()
+        self.updateGeometry()
+
+    def _release_forced_height(self) -> None:
+        self._forced_height = None
+        self.setMinimumHeight(0)
+        self.setMaximumHeight(16777215)
+        self._sync_content_geometry()
+        self.updateGeometry()
+
+    def _get_content_height(self) -> int:
+        return self._animated_height
+
+    def _set_content_height(self, value: int) -> None:
+        self._animated_height = max(0, int(value))
+        self._set_forced_height(self._animated_height)
+
+    content_height = Property(int, _get_content_height, _set_content_height)
+
+    def show_instant(self) -> None:
+        """Snap the clip to full natural height without animating.
+        Used for restoring persisted expand state on first render."""
+        if self._content is None:
+            return
+        self._content.setVisible(True)
+        target = self.natural_height()
+        self._animated_height = target
+        self._release_forced_height()
+
+    def hide_instant(self) -> None:
+        """Snap the clip to zero height without animating."""
+        self._animated_height = 0
+        self._set_forced_height(0)
+        if self._content is not None:
+            self._content.setVisible(False)
+
 
 # ── Animated body (slides open / closed) ───────────────────────────────────
 
