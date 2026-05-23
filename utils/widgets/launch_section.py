@@ -164,6 +164,16 @@ class LaunchSection(QWidget):
 
         card_lay.addWidget(header)
 
+        # _body_wrap holds everything that collapses (grid + empty state).
+        # Lives between the header and the bottom stretch. Transparent so the
+        # card surface paints through; otherwise QWidget's default opaque
+        # background would cover the card's bg_card fill.
+        self._body_wrap = QWidget()
+        self._body_wrap.setAttribute(Qt.WA_TranslucentBackground, True)
+        body_lay = QVBoxLayout(self._body_wrap)
+        body_lay.setContentsMargins(0, 0, 0, 0)
+        body_lay.setSpacing(0)
+
         # Make grid_container transparent so the flat card surface shows
         # through behind the tiles (otherwise QWidget paints its default
         # solid bg and covers the card's bg_card fill).
@@ -172,12 +182,14 @@ class LaunchSection(QWidget):
         self.grid = QGridLayout(self.grid_container)
         self.grid.setContentsMargins(14, 14, 14, 14)
         self.grid.setSpacing(10)
-        card_lay.addWidget(self.grid_container)
+        body_lay.addWidget(self.grid_container)
 
         self.empty_state = EmptyState(game=game)
         self.empty_state.setAttribute(Qt.WA_TranslucentBackground, True)
         self.empty_state.add_clicked.connect(self.add_account_clicked.emit)
-        card_lay.addWidget(self.empty_state)
+        body_lay.addWidget(self.empty_state)
+
+        card_lay.addWidget(self._body_wrap)
 
         # A bottom stretch absorbs slack so the card keeps the header +
         # content at the TOP and any extra vertical space (e.g. when a
