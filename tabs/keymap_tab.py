@@ -322,11 +322,25 @@ class _BodyClip(QWidget):
 
     content_height = Property(int, _get_content_height, _set_content_height)
 
+    def _detach_finished_handlers(self) -> None:
+        """Disconnect both expand and collapse finished handlers from the
+        animation's finished signal. Uses slot-specific disconnect so a
+        fresh _BodyClip (no handler connected yet) doesn't emit the spurious
+        'Failed to disconnect (None)' RuntimeWarning that the no-arg
+        .disconnect() emits."""
+        for handler in (self._on_expand_finished, self._on_collapse_finished):
+            try:
+                self._anim.finished.disconnect(handler)
+            except (RuntimeError, TypeError):
+                pass
+
     def show_instant(self) -> None:
         """Snap the clip to full natural height without animating.
         Used for restoring persisted expand state on first render."""
         if self._content is None:
             return
+        # Stop any in-flight animation so its tick can't override our snap.
+        self._anim.stop()
         self._content.setVisible(True)
         target = self.natural_height()
         self._animated_height = target
@@ -334,6 +348,8 @@ class _BodyClip(QWidget):
 
     def hide_instant(self) -> None:
         """Snap the clip to zero height without animating."""
+        # Stop any in-flight animation so its tick can't override our snap.
+        self._anim.stop()
         self._animated_height = 0
         self._set_forced_height(0)
         if self._content is not None:
@@ -360,10 +376,7 @@ class _BodyClip(QWidget):
         self._anim.stop()
         self._anim.setStartValue(self._animated_height)
         self._anim.setEndValue(target)
-        try:
-            self._anim.finished.disconnect()
-        except (RuntimeError, TypeError):
-            pass
+        self._detach_finished_handlers()
         self._anim.finished.connect(self._on_expand_finished)
         self._anim.start()
 
@@ -385,10 +398,7 @@ class _BodyClip(QWidget):
         self._anim.stop()
         self._anim.setStartValue(self._animated_height)
         self._anim.setEndValue(0)
-        try:
-            self._anim.finished.disconnect()
-        except (RuntimeError, TypeError):
-            pass
+        self._detach_finished_handlers()
         self._anim.finished.connect(self._on_collapse_finished)
         self._anim.start()
 
