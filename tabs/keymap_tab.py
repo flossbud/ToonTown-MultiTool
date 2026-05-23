@@ -1,11 +1,11 @@
 """
-Keymap Tab — UI for creating and editing movement sets.
+Keysets Tab — UI for creating and editing per-game movement sets.
 
-Each set is two sibling widgets in the scroll layout:
-  1. A ClickableHeader (fully-rounded colored bar, always static)
-  2. An AnimatedBody (the gray key-mapping panel that slides open/closed)
-
-The header never moves, resizes, or changes shape.  Only the body animates.
+Each set is one SetCard(QFrame) that paints its own rounded card background
+gradient and 4px top stripe in a single paintEvent, and owns its header
+(badge + name + chevron + delete) and an AnimatedBody (key-mapping grid)
+internally. The active game is selected via an icon-only _SegmentedSwitch
+when both TTR and CC are detected.
 """
 
 from __future__ import annotations
@@ -218,41 +218,6 @@ class MovementKeyField(QLineEdit):
         if self._awaiting:
             self._awaiting = False
             self._update_display()
-
-
-# ── Clickable header (hover highlight, always fully rounded) ───────────────
-
-
-class ClickableHeader(QFrame):
-    clicked = Signal()
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._hover = False
-
-    def enterEvent(self, event):
-        self._hover = True
-        self.update()
-
-    def leaveEvent(self, event):
-        self._hover = False
-        self.update()
-
-    def paintEvent(self, event):
-        super().paintEvent(event)
-        if self._hover:
-            p = QPainter(self)
-            p.setRenderHint(QPainter.Antialiasing)
-            p.setPen(Qt.NoPen)
-            p.setBrush(QColor(255, 255, 255, 22))
-            p.drawRoundedRect(self.rect(), 10, 10)
-            p.end()
-
-    def mousePressEvent(self, event):
-        child = self.childAt(event.pos())
-        if child and not isinstance(child, QLabel):
-            return super().mousePressEvent(event)
-        self.clicked.emit()
 
 
 # ── Animated body (slides open / closed) ───────────────────────────────────
@@ -791,185 +756,6 @@ class KeymapTab(QWidget):
 
         self._refresh_default_conflict_markers()
 
-    def _make_pair(self, index, set_data):
-        """Return (header, body, chevron) as independent widgets."""
-        bg, text = get_set_color(index)
-
-        # ── Header ─────────────────────────────────────────────────────
-        header = ClickableHeader()
-        header.setObjectName("card_header_bar")
-        header.setMinimumHeight(28)
-        header.setCursor(Qt.PointingHandCursor)
-        hl = QHBoxLayout(header)
-        hl.setContentsMargins(14, 0, 14, 0)
-        hl.setSpacing(10)
-
-        chevron = QLabel(S("▼", "v"))
-        chevron.setObjectName("chevron")
-        chevron.setFixedWidth(18)
-        chevron.setAlignment(Qt.AlignCenter)
-        chevron.setStyleSheet(
-            f"font-size: 14px; color: rgba(255,255,255,0.6); background: none; border: none;"
-        )
-        hl.addWidget(chevron)
-
-        badge = QLabel(f"SET {index + 1}")
-        badge.setFixedHeight(20)
-        badge.setAlignment(Qt.AlignCenter)
-        badge.setStyleSheet(f"""
-            QLabel {{
-                background: rgba(255,255,255,0.25); color: {text};
-                font-size: 9px; font-weight: bold;
-                padding: 2px 8px; border-radius: 4px; border: none;
-            }}
-        """)
-        hl.addWidget(badge)
-
-        if index == 0:
-            title = QLabel("Default")
-            title.setStyleSheet(
-                f"font-size: 14px; font-weight: bold; color: {text}; background: none; border: none;"
-            )
-            hl.addWidget(title)
-        else:
-            name_edit = QLineEdit(set_data.get("name", f"Set {index + 1}"))
-            name_edit.setObjectName("card_name_edit")
-            name_edit.setFixedHeight(28)
-            name_edit.setStyleSheet(f"""
-                QLineEdit {{
-                    background: transparent; color: {text};
-                    border: none; border-radius: 0;
-                    padding: 2px 4px; font-size: 14px; font-weight: bold;
-                }}
-                QLineEdit:focus {{
-                    border-bottom: 1px solid rgba(255,255,255,0.5);
-                    background: rgba(255,255,255,0.08);
-                }}
-            """)
-
-            def _resize_to_text(w=name_edit):
-                fm = w.fontMetrics()
-                text_w = fm.horizontalAdvance(w.text() or "W") + 20  # padding
-                w.setFixedWidth(max(40, min(text_w, 180)))
-
-            def _on_finish(idx=index, w=name_edit):
-                t = w.text().strip()
-                if not t:
-                    t = self.keymap_manager.next_default_name(self._active_game, exclude_index=idx)
-                    w.setText(t)
-                self._on_name_changed(idx, t)
-                _resize_to_text(w)
-
-            name_edit.textChanged.connect(lambda _, w=name_edit: _resize_to_text(w))
-            name_edit.editingFinished.connect(_on_finish)
-            _resize_to_text()
-            hl.addWidget(name_edit)
-
-        hl.addStretch()
-
-        if index > 0:
-            del_btn = QPushButton()
-            del_btn.setFixedSize(32, 32)
-            del_btn.setIcon(make_trash_icon(20, QColor(text)))
-            del_btn.setToolTip("Delete this movement set")
-            del_btn.setCursor(Qt.PointingHandCursor)
-            del_btn.setStyleSheet(f"""
-                QPushButton {{
-                    background: rgba(255,255,255,0.08);
-                    border: 1px solid rgba(255,255,255,0.12);
-                    border-radius: 6px;
-                }}
-                QPushButton:hover {{
-                    background: rgba(0,0,0,0.25);
-                    border: 1px solid rgba(255,255,255,0.25);
-                }}
-            """)
-            del_btn.clicked.connect(lambda _, idx=index: self._on_delete_set(idx))
-            hl.addWidget(del_btn)
-
-        header.setStyleSheet(f"""
-            QFrame#card_header_bar {{
-                background: {bg};
-                border-radius: 10px;
-                border: none;
-            }}
-        """)
-
-        # ── Body ───────────────────────────────────────────────────────
-        body = AnimatedBody()
-        body.setObjectName("card_body")
-        bl = QVBoxLayout(body)
-        bl.setContentsMargins(12, 12, 12, 12)
-        bl.setSpacing(8)
-
-        if index == 0:
-            hint = QLabel("These keys are what is sent to all game windows for input.\nMake sure these match with your in-game settings.")
-            hint.setObjectName("body_hint")
-            hint.setWordWrap(True)
-            hint.setStyleSheet("font-size: 11px; color: rgba(255,255,255,0.45); background: none; border: none; padding: 0 0 4px 0;")
-            bl.addWidget(hint)
-
-        two_col = QHBoxLayout()
-        two_col.setSpacing(20)
-
-        def _make_key_row(action):
-            row = QHBoxLayout()
-            row.setSpacing(8)
-            lbl = QLabel(ACTION_LABELS.get(action, action.title()))
-            lbl.setObjectName("direction_label")
-            lbl.setFixedWidth(40)
-            row.addWidget(lbl)
-            field = MovementKeyField(set_data.get(action, ""))
-            field.setObjectName(f"key_field_{action}")
-            field.key_captured.connect(
-                lambda key, idx=index, d=action: self._on_key_changed(idx, d, key)
-            )
-            row.addWidget(field)
-            row.addStretch()
-            return row
-
-        actions = logical_actions.actions_for(self._active_game)
-        move_col = QVBoxLayout()
-        move_col.setSpacing(6)
-        for action in actions:
-            if action in ("forward", "reverse", "left", "right", "jump"):
-                move_col.addLayout(_make_key_row(action))
-
-        aux_col = QVBoxLayout()
-        aux_col.setSpacing(6)
-        for action in actions:
-            if action in ("book", "gags", "tasks", "map", "sprint"):
-                aux_col.addLayout(_make_key_row(action))
-        aux_col.addStretch()
-
-        two_col.addLayout(move_col)
-        two_col.addLayout(aux_col)
-        two_col.addStretch()
-        bl.addLayout(two_col)
-
-        if index == 0:
-            label = "Detect TTR Settings" if self._active_game == "ttr" else "Detect CC Settings"
-            detect_btn = QPushButton(f"{S('🔍 ', '')}{label}")
-            detect_btn.setFixedHeight(30)
-            detect_btn.setCursor(Qt.PointingHandCursor)
-            detect_btn.setToolTip(
-                "Read current settings from Toontown Rewritten configuration"
-                if self._active_game == "ttr"
-                else "Read current settings from Corporate Clash preferences"
-            )
-            detect_btn.setObjectName("detect_btn")
-            detect_btn.clicked.connect(self._on_detect_settings)
-
-            btn_row = QHBoxLayout()
-            btn_row.addStretch()
-            btn_row.addWidget(detect_btn)
-            bl.addLayout(btn_row)
-
-        # Connect header to toggle this entry
-        header.clicked.connect(lambda idx=index: self._toggle(idx))
-
-        return header, body, chevron
-
     # ── Game detection + segmented control ────────────────────────────────
 
     def _both_games_detected(self) -> bool:
@@ -1169,56 +955,12 @@ class KeymapTab(QWidget):
         if bar is not None:
             bar.set_theme(is_dark)
 
+        # SetCard manages its own styling internally; refresh_theme only needs
+        # to nudge it so it picks up the current dark/light variant if any of
+        # its styles become theme-aware in future.
         for entry in self._entries:
-            idx = entry["index"]
-            set_bg, _ = get_set_color(idx)
-            body = entry.get("body") or getattr(entry.get("card"), "_body", None)
-            expanded = entry["expanded"]
-
-            if body is None:
-                continue
-
-            # Header is always fully rounded — style set at creation, no change needed
-
-            # Body
-            if not expanded:
-                body.setVisible(False)
-            body.setStyleSheet(f"""
-                AnimatedBody {{
-                    background: {c['bg_card_inner']};
-                    border: 1px solid {c['border_muted']};
-                    border-radius: 10px;
-                }}
-            """)
-
-            for lbl in body.findChildren(QLabel, "direction_label"):
-                lbl.setStyleSheet(
-                    f"font-size: 12px; font-weight: 600; color: {c['text_secondary']};"
-                    f" background: none; border: none;"
-                )
-
-            for field in body.findChildren(MovementKeyField):
-                field.setStyleSheet(f"""
-                    QLineEdit {{
-                        background: {c['bg_input']};
-                        color: {c['text_primary']};
-                        border: 1px solid {c['border_input']};
-                        border-radius: 6px;
-                        font-size: 12px; font-weight: 600;
-                    }}
-                    QLineEdit:focus {{
-                        border: 1px solid {set_bg};
-                    }}
-                    QLineEdit[awaiting="true"] {{
-                        background: {set_bg}18;
-                        border: 1px solid {set_bg};
-                        color: {c['text_muted']};
-                    }}
-                    QLineEdit[conflict="true"] {{
-                        border: 1px solid #d04040;
-                        background: rgba(208, 64, 64, 0.10);
-                    }}
-                """)
+            card = entry["card"]
+            card.update()
 
         if hasattr(self, "_add_btn"):
             self._add_btn.setStyleSheet(f"""
@@ -1248,41 +990,5 @@ class KeymapTab(QWidget):
                     background: {c['accent_blue_btn']};
                     color: {c['text_on_accent']};
                     border: 1px solid {c['accent_blue_btn_border']};
-                }}
-            """)
-
-        # Segmented control (visible only when both games are detected)
-        if getattr(self, "_segmented", None) is not None:
-            self._segmented.setStyleSheet(f"""
-                QFrame#keymap_segmented_wrap {{
-                    background: transparent;
-                    border: none;
-                }}
-                QFrame#keymap_segmented_wrap QPushButton {{
-                    background: {c['bg_card_inner']};
-                    color: {c['text_secondary']};
-                    border: 1px solid {c['border_muted']};
-                    border-radius: 0;
-                    font-weight: 600;
-                    font-size: 12px;
-                    padding: 4px 0;
-                }}
-                QFrame#keymap_segmented_wrap QPushButton:first-child {{
-                    border-top-left-radius: 8px;
-                    border-bottom-left-radius: 8px;
-                    border-right: none;
-                }}
-                QFrame#keymap_segmented_wrap QPushButton:last-child {{
-                    border-top-right-radius: 8px;
-                    border-bottom-right-radius: 8px;
-                }}
-                QFrame#keymap_segmented_wrap QPushButton:hover {{
-                    background: {c['bg_input']};
-                    color: {c['text_primary']};
-                }}
-                QFrame#keymap_segmented_wrap QPushButton:checked {{
-                    background: {c['accent_blue_btn']};
-                    color: {c['text_on_accent']};
-                    border-color: {c['accent_blue_btn_border']};
                 }}
             """)
