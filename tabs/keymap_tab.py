@@ -1241,17 +1241,17 @@ class KeymapTab(QWidget):
             """)
 
         for btn in self.findChildren(QPushButton, "detect_btn"):
-            btn.setStyleSheet(f"""
-                QPushButton {{
-                    background: {c['btn_bg']};
-                    color: {c['text_primary']};
-                    border: 1px solid {c['btn_border']};
-                    border-radius: 6px; font-weight: bold; font-size: 11px;
-                    padding: 0 12px;
-                }}
-                QPushButton:hover {{
-                    background: {c['accent_blue_btn']};
-                    color: {c['text_on_accent']};
-                    border: 1px solid {c['accent_blue_btn_border']};
-                }}
-            """)
+            btn.setStyleSheet(
+                "QPushButton#detect_btn {"
+                " background: transparent;"
+                f" border: 1px solid {c['border_muted']};"
+                f" color: {c['text_secondary']};"
+                " border-radius: 8px; padding: 0 14px;"
+                " font-weight: 600; font-size: 11px;"
+                "}"
+                "QPushButton#detect_btn:hover {"
+                f" background: {c['bg_card_inner_hover']};"
+                f" border: 1px solid {c['border_card']};"
+                f" color: {c['text_primary']};"
+                "}"
+            )

@@ -159,3 +159,30 @@ def test_no_shadow_on_card_after_build(qapp, monkeypatch):
         assert card.graphicsEffect() is None, (
             "SetCard should not have a QGraphicsDropShadowEffect attached"
         )
+
+
+def test_detect_button_qss_is_token_driven(qapp):
+    from tabs.keymap_tab import KeymapTab
+    from utils.keymap_manager import KeymapManager
+    from utils.theme_manager import get_theme_colors
+    from PySide6.QtWidgets import QPushButton
+
+    class _FakeSettings:
+        def __init__(self):
+            self._d = {"ttr_engine_dir": "", "cc_engine_dir": "", "theme": "dark"}
+        def get(self, k, default=None):
+            return self._d.get(k, default)
+        def set(self, k, v):
+            self._d[k] = v
+        def on_change(self, cb):
+            pass
+
+    tab = KeymapTab(KeymapManager(), settings_manager=_FakeSettings())
+    tab.refresh_theme()
+    c = get_theme_colors(True)
+    btns = tab.findChildren(QPushButton, "detect_btn")
+    assert len(btns) >= 1
+    qss = btns[0].styleSheet()
+    assert "background: transparent" in qss
+    assert f"border: 1px solid {c['border_muted']}" in qss
+    assert f"color: {c['text_secondary']}" in qss
