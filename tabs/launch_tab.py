@@ -44,6 +44,8 @@ from services.launcher_runners import (
 from utils.settings_keys import (
     CC_ENGINE_INSTALL_SIGNATURE,
     LAUNCH_QUIT_CONFIRM_DISMISSED,
+    LAUNCH_SECTION_TTR_COLLAPSED,
+    LAUNCH_SECTION_CC_COLLAPSED,
 )
 from utils.widgets import install_modern_scrollbar
 from utils.widgets.cc_install_picker import CCInstallPickerDialog  # noqa: F401
@@ -346,6 +348,18 @@ class LaunchTab(QWidget):
 
         self._build_ui()
         self.refresh_theme()
+        # Restore persisted collapsed state. animate=False to avoid a flash
+        # on startup. set_collapsed is a no-op when the value already
+        # matches the section's default (expanded), so this is cheap.
+        if self.settings_manager is not None:
+            self.ttr_section.set_collapsed(
+                bool(self.settings_manager.get(LAUNCH_SECTION_TTR_COLLAPSED, False)),
+                animate=False,
+            )
+            self.cc_section.set_collapsed(
+                bool(self.settings_manager.get(LAUNCH_SECTION_CC_COLLAPSED, False)),
+                animate=False,
+            )
         # Diagnostics are logged from _on_keyring_probe_complete after the
         # timed/threaded probe has finished. Calling them here would hit
         # format_backend_diagnostics on the main thread before app.exec(),
@@ -497,6 +511,24 @@ class LaunchTab(QWidget):
         # heights in compact mode so the populated card doesn't outgrow
         # the empty card.
         section.content_size_changed.connect(self._sync_compact_section_heights)
+        # Persist collapsed-state changes triggered by the user clicking
+        # the header. set_collapsed(...) calls from this tab's own
+        # restore-on-init path do NOT emit, so the loop is one-directional.
+        section.collapsed_changed.connect(
+            lambda v, g=game: self._on_section_collapsed_changed(g, v)
+        )
+
+    def _on_section_collapsed_changed(self, game: str, value: bool) -> None:
+        """Persist the section's new collapsed state. Triggered by the
+        section emitting `collapsed_changed` on a user header click."""
+        if self.settings_manager is None:
+            return
+        key = (LAUNCH_SECTION_TTR_COLLAPSED if game == "ttr"
+               else LAUNCH_SECTION_CC_COLLAPSED)
+        self.settings_manager.set(key, value)
+        # Collapsed sections must drop out of the compact-mode height match
+        # so a populated sibling can take its natural taller height.
+        self._sync_compact_section_heights()
 
     def _on_launcher_clicked(self, game: str) -> None:
         """Invoke the runner for the section-header 'Launch X Launcher' button.
