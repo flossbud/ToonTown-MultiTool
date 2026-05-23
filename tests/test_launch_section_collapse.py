@@ -1,0 +1,254 @@
+"""LaunchSection collapse state, click handling, and animation behavior."""
+import pytest
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QApplication
+from utils.widgets.launch_section import LaunchSection
+
+
+@pytest.fixture(scope="module")
+def qapp():
+    app = QApplication.instance() or QApplication([])
+    yield app
+
+
+def test_default_state_is_expanded(qapp):
+    sec = LaunchSection(game="ttr", icon_path="assets/ttr.png")
+    assert sec.is_collapsed is False
+    assert sec._body_wrap.isVisibleTo(sec) or not sec._body_wrap.isHidden()
+
+
+def test_set_collapsed_true_hides_body_wrap(qapp):
+    sec = LaunchSection(game="ttr", icon_path="assets/ttr.png")
+    sec.show()
+    sec.set_collapsed(True, animate=False)
+    assert sec.is_collapsed is True
+    assert sec._body_wrap.isHidden()
+    assert sec.minimumHeight() == 0
+
+
+def test_set_collapsed_false_shows_body_wrap(qapp):
+    sec = LaunchSection(game="ttr", icon_path="assets/ttr.png")
+    sec.show()
+    sec.set_collapsed(True, animate=False)
+    sec.set_collapsed(False, animate=False)
+    assert sec.is_collapsed is False
+    assert not sec._body_wrap.isHidden()
+    assert sec.minimumHeight() == 380
+
+
+def test_set_collapsed_redundant_call_is_noop(qapp):
+    """Calling set_collapsed(False) on an already-expanded section must not
+    twiddle visibility or min-height (which would clobber height-sync from
+    LaunchTab)."""
+    sec = LaunchSection(game="ttr", icon_path="assets/ttr.png")
+    sec.setMinimumHeight(500)  # simulate a height-sync override
+    sec.set_collapsed(False, animate=False)
+    assert sec.minimumHeight() == 500  # not overwritten
+
+
+def test_set_collapsed_does_not_emit_signal(qapp):
+    """Programmatic set_collapsed must NOT emit collapsed_changed.
+    Only user header clicks do (tested in a later task)."""
+    sec = LaunchSection(game="ttr", icon_path="assets/ttr.png")
+    received = []
+    sec.collapsed_changed.connect(lambda v: received.append(v))
+    sec.set_collapsed(True, animate=False)
+    sec.set_collapsed(False, animate=False)
+    assert received == []
+
+
+def test_chevron_text_reflects_state(qapp):
+    sec = LaunchSection(game="ttr", icon_path="assets/ttr.png")
+    assert sec._chev.text() == "▾"  # ▾
+    sec.set_collapsed(True, animate=False)
+    assert sec._chev.text() == "▸"  # ▸
+    sec.set_collapsed(False, animate=False)
+    assert sec._chev.text() == "▾"
+
+
+def test_header_click_toggles_state_and_emits_signal(qapp):
+    from PySide6.QtCore import QEvent, QPoint
+    from PySide6.QtGui import QMouseEvent
+
+    sec = LaunchSection(game="ttr", icon_path="assets/ttr.png")
+    sec.show()
+    received = []
+    sec.collapsed_changed.connect(lambda v: received.append(v))
+
+    # Simulate a left-click on the header frame itself (not on a child).
+    # Click well to the left of where the launcher button sits so the
+    # event resolves to the QFrame, not the QToolButton.
+    pos = QPoint(80, sec._header_frame.height() // 2)
+    press = QMouseEvent(QEvent.MouseButtonPress, pos, Qt.LeftButton,
+                        Qt.LeftButton, Qt.NoModifier)
+    QApplication.sendEvent(sec._header_frame, press)
+
+    assert sec.is_collapsed is True
+    assert received == [True]
+
+    # Second click toggles back.
+    QApplication.sendEvent(sec._header_frame, QMouseEvent(
+        QEvent.MouseButtonPress, pos, Qt.LeftButton, Qt.LeftButton,
+        Qt.NoModifier))
+    assert sec.is_collapsed is False
+    assert received == [True, False]
+
+
+def test_launcher_button_click_does_not_toggle(qapp):
+    """The QToolButton absorbs its click before the header frame sees it."""
+    sec = LaunchSection(game="ttr", icon_path="assets/ttr.png")
+    sec.show()
+    launcher_received = []
+    sec.launcher_clicked.connect(lambda: launcher_received.append(True))
+    section_received = []
+    sec.collapsed_changed.connect(lambda v: section_received.append(v))
+
+    sec.launcher_btn.click()
+    assert launcher_received == [True]
+    assert section_received == []
+    assert sec.is_collapsed is False
+
+
+def test_right_click_does_not_toggle(qapp):
+    """Only left-click toggles. Right-click is ignored (Qt context-menu
+    convention)."""
+    from PySide6.QtCore import QEvent, QPoint
+    from PySide6.QtGui import QMouseEvent
+
+    sec = LaunchSection(game="ttr", icon_path="assets/ttr.png")
+    sec.show()
+    received = []
+    sec.collapsed_changed.connect(lambda v: received.append(v))
+    pos = QPoint(80, sec._header_frame.height() // 2)
+    QApplication.sendEvent(sec._header_frame, QMouseEvent(
+        QEvent.MouseButtonPress, pos, Qt.RightButton, Qt.RightButton,
+        Qt.NoModifier))
+    assert sec.is_collapsed is False
+    assert received == []
+
+
+def test_animate_true_creates_property_animation(qapp, monkeypatch):
+    """When animate=True and reduce-motion is off, set_collapsed kicks off
+    a QPropertyAnimation rather than snapping."""
+    from PySide6.QtCore import QAbstractAnimation
+    import utils.motion as motion
+    monkeypatch.setattr(motion, "is_reduced", lambda: False)
+
+    sec = LaunchSection(game="ttr", icon_path="assets/ttr.png")
+    sec.show()
+    assert sec._collapse_anim is None
+    sec.set_collapsed(True, animate=True)
+    assert sec._collapse_anim is not None
+    # Animation should be running.
+    assert sec._collapse_anim.state() == QAbstractAnimation.Running
+
+
+def test_reduce_motion_snaps_instead_of_animates(qapp, monkeypatch):
+    """When reduce-motion is on, set_collapsed must NOT create a
+    QPropertyAnimation — it should snap directly to the target state."""
+    import utils.motion as motion
+    monkeypatch.setattr(motion, "is_reduced", lambda: True)
+
+    sec = LaunchSection(game="ttr", icon_path="assets/ttr.png")
+    sec.show()
+    sec.set_collapsed(True, animate=True)
+    assert sec._collapse_anim is None  # no animation created
+    assert sec._body_wrap.isHidden()
+
+
+def test_mid_animation_toggle_starts_from_current_height(qapp, monkeypatch):
+    """Clicking the header during a running collapse must stop the in-flight
+    animation and start a new expand from the current (partway) maximumHeight,
+    not from 0 or the original full height."""
+    from PySide6.QtCore import QAbstractAnimation
+    import utils.motion as motion
+    monkeypatch.setattr(motion, "is_reduced", lambda: False)
+
+    sec = LaunchSection(game="ttr", icon_path="assets/ttr.png")
+    sec.show()
+    sec.set_collapsed(True, animate=True)
+    first = sec._collapse_anim
+    # Force the animation partway: set current value directly.
+    sec._body_wrap.setMaximumHeight(40)
+    sec.set_collapsed(False, animate=True)
+    second = sec._collapse_anim
+    assert second is not first  # new animation created
+    assert first.state() == QAbstractAnimation.Stopped  # original stopped
+    assert second.startValue() == 40
+
+
+def test_animation_finished_runs_cleanup(qapp, monkeypatch):
+    """After the height tween completes, _on_collapse_anim_finished must
+    run its cleanup body: hide _body_wrap on collapse, restore unlimited
+    maximumHeight on expand, and clear _collapse_anim. Without the
+    cleanup, expanding a section after collapsing it would leave
+    maximumHeight pinned at the start-of-animation sizeHint, clipping
+    any later content additions (new tiles, scale bumps).
+
+    Setting motion._TEST_DURATION_SCALE = 0.0 makes the QPropertyAnimation
+    finish synchronously inside set_collapsed — its finished signal fires
+    before the next line of test code runs."""
+    import utils.motion as motion
+    from utils.widgets.launch_section import QWIDGETSIZE_MAX
+    monkeypatch.setattr(motion, "is_reduced", lambda: False)
+    monkeypatch.setattr(motion, "_TEST_DURATION_SCALE", 0.0)
+
+    sec = LaunchSection(game="ttr", icon_path="assets/ttr.png")
+    sec.show()
+
+    sec.set_collapsed(True, animate=True)
+    assert sec._collapse_anim is None  # cleared by cleanup
+    assert sec._body_wrap.isHidden()   # hidden by cleanup
+
+    sec.set_collapsed(False, animate=True)
+    assert sec._collapse_anim is None
+    assert not sec._body_wrap.isHidden()
+    assert sec._body_wrap.maximumHeight() == QWIDGETSIZE_MAX  # NOT capped
+
+
+def test_apply_theme_styles_chevron(qapp):
+    """apply_theme must restyle the chevron so light/dark switches work.
+    Asserting on the QSS string (rather than rendered color) so the test
+    survives theme-dict reorganization."""
+    sec = LaunchSection(game="ttr", icon_path="assets/ttr.png")
+    # Hand a fake theme with a sentinel color so we can search for it.
+    fake_theme = {
+        "bg_card":             "#000000",
+        "bg_card_inner_hover": "#111111",
+        "border_card":         "#222222",
+        "border_muted":        "#333333",
+        "border_light":        "#444444",
+        "game_pill_ttr":       "#555555",
+        "game_pill_cc":        "#666666",
+        "text_primary":        "#777777",
+        "text_secondary":      "#abcdef",  # sentinel
+        "text_muted":          "#888888",
+    }
+    sec.apply_theme(fake_theme)
+    assert "#abcdef" in sec._chev.styleSheet()
+
+
+def test_full_mode_collapsed_section_uses_preferred_vertical_policy(qapp):
+    """In full (side-by-side) mode, an expanded section stretches vertically
+    (Expanding) but a collapsed section must NOT stretch — it should sit at
+    the top of its column with empty space below. Verified by inspecting
+    the section's vertical size policy."""
+    from PySide6.QtWidgets import QSizePolicy
+    sec = LaunchSection(game="ttr", icon_path="assets/ttr.png")
+    sec.set_layout_mode("full")
+    assert sec.sizePolicy().verticalPolicy() == QSizePolicy.Expanding
+    sec.set_collapsed(True, animate=False)
+    assert sec.sizePolicy().verticalPolicy() == QSizePolicy.Preferred
+    sec.set_collapsed(False, animate=False)
+    assert sec.sizePolicy().verticalPolicy() == QSizePolicy.Expanding
+
+
+def test_compact_mode_size_policy_unchanged_by_collapse(qapp):
+    """In compact mode, the section's vertical policy is Preferred at all
+    times — collapsing doesn't change that."""
+    from PySide6.QtWidgets import QSizePolicy
+    sec = LaunchSection(game="ttr", icon_path="assets/ttr.png")
+    # Compact is the default layout mode set in __init__.
+    assert sec.sizePolicy().verticalPolicy() == QSizePolicy.Preferred
+    sec.set_collapsed(True, animate=False)
+    assert sec.sizePolicy().verticalPolicy() == QSizePolicy.Preferred

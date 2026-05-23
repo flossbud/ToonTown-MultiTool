@@ -16,6 +16,9 @@ from utils.widgets.chip_button import QuietChipButton
 from utils.widgets.empty_state import EmptyState
 
 
+# Qt constant for unlimited size (QWidget default maximumHeight/Width).
+QWIDGETSIZE_MAX = 16777215
+
 _GAME_NAMES = {"ttr": "Toontown Rewritten", "cc": "Corporate Clash"}
 _GAME_SHORT = {"ttr": "TTR", "cc": "CC"}
 _LAYOUT_MAX_WIDTH = {"compact": 720, "full": 860}
@@ -27,6 +30,22 @@ _LAYOUT_MAX_WIDTH = {"compact": 720, "full": 860}
 # the scale to exceed 1.0 before the widget hits its maximum-width cap.
 _REF_WIDTH = {"compact": 540, "full": 720}
 _SCALE_CLAMP_MAX = 1.4
+
+
+class _ClickableFrame(QFrame):
+    """A QFrame that emits `clicked` on left mouse press. Used as the
+    LaunchSection header so the user can click anywhere on the bar to
+    toggle collapse. Children that consume their own mouse events
+    (e.g. the QToolButton launcher_btn) are not affected — Qt only
+    forwards a press to the parent when no child accepts it."""
+    clicked = Signal()
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit()
+            event.accept()
+            return
+        super().mousePressEvent(event)
 
 
 class _AddTile(QuietChipButton):
@@ -59,6 +78,7 @@ class _AddTile(QuietChipButton):
 class LaunchSection(QWidget):
     REVEAL_STAGGER_MS = 30
     REVEAL_DURATION_MS = 150
+    COLLAPSE_DURATION_MS = 180
 
     launcher_clicked       = Signal()
     add_account_clicked    = Signal()
@@ -74,6 +94,10 @@ class LaunchSection(QWidget):
     # bump on resize, account list change). LaunchTab listens so it can
     # re-equalize sibling section heights in compact mode.
     content_size_changed   = Signal()
+    # Emitted when the user toggles via a header click. Programmatic
+    # set_collapsed(...) calls do NOT emit. Keeps the persistence write
+    # loop in LaunchTab one-directional.
+    collapsed_changed      = Signal(bool)
 
     def __init__(self, game: str, icon_path: str, max_accounts: int = 8, parent=None):
         super().__init__(parent)
@@ -94,6 +118,8 @@ class LaunchSection(QWidget):
         self._max = max_accounts
         self.tiles: list[AccountTile] = []
         self.add_tile: _AddTile | None = None
+        self.is_collapsed: bool = False
+        self._collapse_anim: QPropertyAnimation | None = None
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -124,7 +150,9 @@ class LaunchSection(QWidget):
         # Header strip — sits inside the card. Transparent background with
         # a hairline below to separate it from the tile region. QSS applied
         # via apply_theme so theme switches work.
-        header = QFrame()
+        header = _ClickableFrame()
+        header.setCursor(Qt.PointingHandCursor)
+        header.clicked.connect(self._on_header_clicked)
         header.setObjectName("section_header")
         header.setAttribute(Qt.WA_StyledBackground, True)
         # QSS applied via apply_theme.
@@ -162,7 +190,26 @@ class LaunchSection(QWidget):
         self.launcher_btn.clicked.connect(self.launcher_clicked.emit)
         head_lay.addWidget(self.launcher_btn)
 
+        # Chevron state indicator. Text is swapped between ▾ (expanded)
+        # and ▸ (collapsed); no rotation animation — the height tween
+        # carries the motion. Styled in apply_theme.
+        self._chev = QLabel("▾")
+        self._chev.setObjectName("section_chev")
+        self._chev.setAlignment(Qt.AlignCenter)
+        self._chev.setFixedWidth(22)
+        head_lay.addWidget(self._chev)
+
         card_lay.addWidget(header)
+
+        # _body_wrap holds everything that collapses (grid + empty state).
+        # Lives between the header and the bottom stretch. Transparent so the
+        # card surface paints through; otherwise QWidget's default opaque
+        # background would cover the card's bg_card fill.
+        self._body_wrap = QWidget()
+        self._body_wrap.setAttribute(Qt.WA_TranslucentBackground, True)
+        body_lay = QVBoxLayout(self._body_wrap)
+        body_lay.setContentsMargins(0, 0, 0, 0)
+        body_lay.setSpacing(0)
 
         # Make grid_container transparent so the flat card surface shows
         # through behind the tiles (otherwise QWidget paints its default
@@ -172,12 +219,14 @@ class LaunchSection(QWidget):
         self.grid = QGridLayout(self.grid_container)
         self.grid.setContentsMargins(14, 14, 14, 14)
         self.grid.setSpacing(10)
-        card_lay.addWidget(self.grid_container)
+        body_lay.addWidget(self.grid_container)
 
         self.empty_state = EmptyState(game=game)
         self.empty_state.setAttribute(Qt.WA_TranslucentBackground, True)
         self.empty_state.add_clicked.connect(self.add_account_clicked.emit)
-        card_lay.addWidget(self.empty_state)
+        body_lay.addWidget(self.empty_state)
+
+        card_lay.addWidget(self._body_wrap)
 
         # A bottom stretch absorbs slack so the card keeps the header +
         # content at the TOP and any extra vertical space (e.g. when a
@@ -234,6 +283,14 @@ class LaunchSection(QWidget):
             "QToolButton:hover {"
             f" background: {c['bg_card_inner_hover']};"
             f" border-color: {c['border_card']};"
+            "}"
+        )
+        self._chev.setStyleSheet(
+            "QLabel#section_chev {"
+            " background: transparent;"
+            f" color: {c['text_secondary']};"
+            " font-size: 14px;"
+            " padding: 4px 6px;"
             "}"
         )
         # Propagate to children that own their own QSS.
@@ -345,16 +402,8 @@ class LaunchSection(QWidget):
             return
         self._max_width = _LAYOUT_MAX_WIDTH[mode]
         self.setMaximumWidth(self._max_width)
-        # Full mode: both cards must match heights so a populated TTR
-        # card and an empty CC card don't look uneven side-by-side. Let
-        # the QHBoxLayout stretch each card vertically; the bottom
-        # stretch inside card_lay keeps content anchored at the top.
-        # Compact mode: cards stack vertically, each at its natural size.
-        if mode == "full":
-            self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        else:
-            self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self._layout_mode = mode
+        self._refresh_vertical_size_policy()
         self._recompute_content_scale()
         self._run_reveal_animation()
 
@@ -397,6 +446,107 @@ class LaunchSection(QWidget):
             anim.finished.connect(lambda t=tile: setattr(t, "tile_opacity", 1.0))
             self._reveal_anims.append(anim)
             QTimer.singleShot(i * stagger, anim.start)
+
+    def set_collapsed(self, value: bool, animate: bool = True) -> None:
+        """Set the section's collapsed state.
+
+        animate=False snaps instantly; used by LaunchTab on startup to
+        restore persisted state without a flash. animate=True runs a
+        height tween — unless reduce-motion is enabled, in which case
+        the animated path also snaps.
+
+        No-op when `value` already matches `is_collapsed`. Programmatic
+        calls do NOT emit `collapsed_changed`; only user header clicks
+        emit (see _on_header_clicked).
+        """
+        if value == self.is_collapsed:
+            return
+        self.is_collapsed = value
+        self._chev.setText("▸" if value else "▾")
+        self._refresh_vertical_size_policy()
+
+        if not animate or motion.is_reduced():
+            self._apply_collapsed_snap(value)
+            return
+
+        # Stop any in-flight animation. A mid-animation toggle reverses
+        # from the current (partway) maximumHeight so the motion looks
+        # continuous instead of jumping.
+        if self._collapse_anim is not None:
+            self._collapse_anim.stop()
+        if value:
+            start = self._body_wrap.height()
+            end = 0
+            self.setMinimumHeight(0)
+        else:
+            self._body_wrap.setVisible(True)
+            self.setMinimumHeight(380)
+            start = self._body_wrap.maximumHeight()
+            if start == QWIDGETSIZE_MAX:
+                start = 0
+            end = self._body_wrap.sizeHint().height()
+
+        raw = self.COLLAPSE_DURATION_MS * motion._TEST_DURATION_SCALE
+        duration = 0 if raw == 0.0 else max(1, int(raw))
+
+        anim = QPropertyAnimation(self._body_wrap, b"maximumHeight")
+        anim.setDuration(duration)
+        anim.setEasingCurve(motion.EASE_STANDARD)
+        anim.setStartValue(start)
+        anim.setEndValue(end)
+        anim.finished.connect(
+            lambda v=value, a=anim: self._on_collapse_anim_finished(v, a)
+        )
+        self._collapse_anim = anim
+        anim.start()
+
+    def _apply_collapsed_snap(self, value: bool) -> None:
+        """Snap path used when animate=False or reduce-motion is on."""
+        if value:
+            self._body_wrap.setVisible(False)
+            self._body_wrap.setMaximumHeight(0)
+            self.setMinimumHeight(0)
+        else:
+            self._body_wrap.setVisible(True)
+            self._body_wrap.setMaximumHeight(QWIDGETSIZE_MAX)
+            self.setMinimumHeight(380)
+        self._refresh_vertical_size_policy()
+
+    def _refresh_vertical_size_policy(self) -> None:
+        """In full layout mode, vertical policy depends on collapse state:
+        Expanding when expanded (stretch to fill), Preferred when collapsed
+        (anchor to top with empty space below). In compact mode, vertical
+        policy is always Preferred — sections stack with natural heights."""
+        if self._layout_mode == "full" and not self.is_collapsed:
+            self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        else:
+            self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+
+    def _on_collapse_anim_finished(
+        self, collapsed_target: bool, anim: QPropertyAnimation
+    ) -> None:
+        """After-animation cleanup: hide _body_wrap when collapsed, reset
+        maximumHeight to unlimited when expanded so future content
+        (new tiles, scale bumps) isn't capped at the snapshot value.
+
+        The `anim` argument is the specific animation object that fired.
+        Compare against `self._collapse_anim` directly — `self.sender()`
+        returns None when the slot is reached through a Python lambda,
+        so we cannot use it for the stale-signal guard.
+        """
+        if anim is not self._collapse_anim:
+            return
+        if collapsed_target:
+            self._body_wrap.setVisible(False)
+        else:
+            self._body_wrap.setMaximumHeight(QWIDGETSIZE_MAX)
+        self._collapse_anim = None
+
+    def _on_header_clicked(self) -> None:
+        """Slot for the header frame's `clicked` signal. Toggles state
+        and emits `collapsed_changed` so LaunchTab can persist."""
+        self.set_collapsed(not self.is_collapsed, animate=True)
+        self.collapsed_changed.emit(self.is_collapsed)
 
     def _wire_tile(self, tile: AccountTile, index: int) -> None:
         tile.launch_clicked.connect(lambda i=index: self.tile_launch.emit(i))

@@ -44,6 +44,8 @@ from services.launcher_runners import (
 from utils.settings_keys import (
     CC_ENGINE_INSTALL_SIGNATURE,
     LAUNCH_QUIT_CONFIRM_DISMISSED,
+    LAUNCH_SECTION_TTR_COLLAPSED,
+    LAUNCH_SECTION_CC_COLLAPSED,
 )
 from utils.widgets import install_modern_scrollbar
 from utils.widgets.cc_install_picker import CCInstallPickerDialog  # noqa: F401
@@ -346,6 +348,18 @@ class LaunchTab(QWidget):
 
         self._build_ui()
         self.refresh_theme()
+        # Restore persisted collapsed state. animate=False to avoid a flash
+        # on startup. set_collapsed is a no-op when the value already
+        # matches the section's default (expanded), so this is cheap.
+        if self.settings_manager is not None:
+            self.ttr_section.set_collapsed(
+                bool(self.settings_manager.get(LAUNCH_SECTION_TTR_COLLAPSED, False)),
+                animate=False,
+            )
+            self.cc_section.set_collapsed(
+                bool(self.settings_manager.get(LAUNCH_SECTION_CC_COLLAPSED, False)),
+                animate=False,
+            )
         # Diagnostics are logged from _on_keyring_probe_complete after the
         # timed/threaded probe has finished. Calling them here would hit
         # format_backend_diagnostics on the main thread before app.exec(),
@@ -497,6 +511,24 @@ class LaunchTab(QWidget):
         # heights in compact mode so the populated card doesn't outgrow
         # the empty card.
         section.content_size_changed.connect(self._sync_compact_section_heights)
+        # Persist collapsed-state changes triggered by the user clicking
+        # the header. set_collapsed(...) calls from this tab's own
+        # restore-on-init path do NOT emit, so the loop is one-directional.
+        section.collapsed_changed.connect(
+            lambda v, g=game: self._on_section_collapsed_changed(g, v)
+        )
+
+    def _on_section_collapsed_changed(self, game: str, value: bool) -> None:
+        """Persist the section's new collapsed state. Triggered by the
+        section emitting `collapsed_changed` on a user header click."""
+        if self.settings_manager is None:
+            return
+        key = (LAUNCH_SECTION_TTR_COLLAPSED if game == "ttr"
+               else LAUNCH_SECTION_CC_COLLAPSED)
+        self.settings_manager.set(key, value)
+        # Collapsed sections must drop out of the compact-mode height match
+        # so a populated sibling can take its natural taller height.
+        self._sync_compact_section_heights()
 
     def _on_launcher_clicked(self, game: str) -> None:
         """Invoke the runner for the section-header 'Launch X Launcher' button.
@@ -666,8 +698,15 @@ class LaunchTab(QWidget):
             lay = QHBoxLayout(container)
             lay.setContentsMargins(0, 0, 0, 0)
             lay.setSpacing(12)
-            lay.addWidget(self.ttr_section, 1)
-            lay.addWidget(self.cc_section, 1)
+            # AlignTop on each section prevents Qt's QHBoxLayout default
+            # of vertically centering items whose sizeHint is smaller
+            # than the row height. Without it, a collapsed section (which
+            # has vertical sizePolicy=Preferred and sizeHint=header_height)
+            # would float in the middle of its column, making the collapse
+            # animation appear to grow/shrink from the center instead of
+            # downward from the header.
+            lay.addWidget(self.ttr_section, 1, Qt.AlignTop)
+            lay.addWidget(self.cc_section, 1, Qt.AlignTop)
         else:
             # Compact: sections stack vertically. Use a centered max-width
             # inner wrapper so both sections fill the SAME width (the
@@ -687,6 +726,13 @@ class LaunchTab(QWidget):
             inner_lay.setSpacing(12)
             inner_lay.addWidget(self.ttr_section)
             inner_lay.addWidget(self.cc_section)
+            # Terminal stretch absorbs any spare vertical space in the
+            # viewport. Without it, both sections (Preferred vertical
+            # policy) share the extra space equally — so when one section
+            # grows during the collapse animation, the other gets squeezed
+            # to maintain the split. The stretch keeps both cards at their
+            # natural sizeHint and parks empty space below.
+            inner_lay.addStretch(1)
             # Stretch factor 100 vs side stretches 1 lets the inner card
             # column fill almost all available space until it hits its
             # 720 cap, then the side stretches absorb the remainder and
@@ -700,23 +746,33 @@ class LaunchTab(QWidget):
         self._sync_compact_section_heights()
 
     def _sync_compact_section_heights(self) -> None:
-        """In compact mode, both stacked cards must share a height so a
+        """In compact mode, expanded cards must share a height so a
         populated TTR card and an empty CC card don't look uneven.
+        Collapsed cards are excluded from the match — they shrink to
+        their header bar (min-height 0).
 
         QVBoxLayout with alignment=AlignHCenter gives each section its
         own sizeHint, so without intervention the empty card collapses
         to its content height while the populated card grows. Force
-        both sections' min-height up to the taller sibling's hint (or
-        the per-section absolute floor, whichever is greater)."""
+        expanded sections' min-height up to the taller expanded
+        sibling's hint (or the per-section absolute floor of 380,
+        whichever is greater)."""
         if self._layout_mode != "compact":
             return
-        target = max(
-            self.ttr_section.sizeHint().height(),
-            self.cc_section.sizeHint().height(),
-            380,  # absolute floor — matches LaunchSection's own minimum
-        )
-        self.ttr_section.setMinimumHeight(target)
-        self.cc_section.setMinimumHeight(target)
+        expanded = [s for s in (self.ttr_section, self.cc_section)
+                    if not s.is_collapsed]
+        if expanded:
+            target = max(
+                max(s.sizeHint().height() for s in expanded),
+                380,
+            )
+        else:
+            target = 0
+        for s in (self.ttr_section, self.cc_section):
+            if s.is_collapsed:
+                s.setMinimumHeight(0)
+            else:
+                s.setMinimumHeight(target)
 
     # ── Account actions ────────────────────────────────────────────────────
 

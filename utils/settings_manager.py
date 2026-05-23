@@ -22,6 +22,8 @@ class SettingsManager:
             "reduce_motion":                 False,
             "reduce_motion_set_explicitly":  False,
             "advanced_collapsed":            True,
+            "launch_section_ttr_collapsed":  False,
+            "launch_section_cc_collapsed":   False,
         }
         self._callbacks = []
         self._load()
