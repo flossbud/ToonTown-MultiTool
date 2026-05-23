@@ -3,7 +3,7 @@ Keysets Tab — UI for creating and editing per-game movement sets.
 
 Each set is one SetCard(QFrame) that paints its own rounded card background
 gradient and a thin top stripe in a single paintEvent, and owns its header
-(badge + name + chevron + delete) and an AnimatedBody (key-mapping grid)
+(badge + name + chevron + delete) and a _BodyClip-wrapped key grid
 internally. The active game is selected via an icon-only _SegmentedSwitch
 when both TTR and CC are detected.
 """
@@ -404,53 +404,6 @@ class _BodyClip(QWidget):
         self.collapse_finished.emit()
 
 
-# ── Animated body (slides open / closed) ───────────────────────────────────
-
-
-class AnimatedBody(QFrame):
-    expand_finished = Signal()
-    collapse_finished = Signal()
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._anim = QPropertyAnimation(self, b"maximumHeight")
-        self._anim.setDuration(200)
-        self._anim.setEasingCurve(QEasingCurve.OutCubic)
-
-    def expand(self):
-        self.setVisible(True)
-        target = self.sizeHint().height()
-        self._anim.stop()
-        self._anim.setStartValue(0)
-        self._anim.setEndValue(target)
-        self._anim.finished.connect(self._on_expand_done)
-        self._anim.start()
-
-    def _on_expand_done(self):
-        try:
-            self._anim.finished.disconnect(self._on_expand_done)
-        except RuntimeError:
-            pass
-        self.setMaximumHeight(16777215)
-        self.expand_finished.emit()
-
-    def collapse(self):
-        self._anim.stop()
-        self._anim.setStartValue(self.height())
-        self._anim.setEndValue(0)
-        self._anim.finished.connect(self._on_collapse_done)
-        self._anim.start()
-
-    def _on_collapse_done(self):
-        try:
-            self._anim.finished.disconnect(self._on_collapse_done)
-        except RuntimeError:
-            pass
-        self.setVisible(False)
-        self.setMaximumHeight(16777215)
-        self.collapse_finished.emit()
-
-
 # ── Chevron arrow (vector-painted, font-independent) ─────────────────────
 
 
@@ -511,7 +464,7 @@ class SetCard(QFrame):
     """One movement set rendered as a single card. Owns its own paintEvent
     (rounded background + STRIPE_HEIGHT-px top stripe inside one QPainterPath) so the
     stripe rounds with the card without manual masking. Owns the body
-    (AnimatedBody) and the header row internally; consumers wire signals
+    (_BodyClip) and the header row internally; consumers wire signals
     instead of poking widget internals.
     """
 
