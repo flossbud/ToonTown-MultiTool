@@ -111,6 +111,17 @@ def test_summarize_error_runtime_routes():
     assert summarize_error("umu-run exited 1") == "Runtime error"
 
 
+def test_summarize_error_not_installed_routes_to_runtime_missing():
+    """Bottles flatpak / Steam / Lutris 'X not installed' stderr should
+    map to 'Runtime missing' on the band. Reported in the wild as
+    'error: app/com.usebottles.bottles/x86_64/master not installed' when
+    the user has only the host-native Bottles but TTMT tries flatpak."""
+    assert summarize_error(
+        "error: app/com.usebottles.bottles/x86_64/master not installed"
+    ) == "Runtime missing"
+    assert summarize_error("Proton runtime is not installed") == "Runtime missing"
+
+
 def test_summarize_error_exact_32_chars_no_truncation():
     msg = "x" * 32
     assert summarize_error(msg) == msg

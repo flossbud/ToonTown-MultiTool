@@ -996,7 +996,7 @@ class LaunchTab(QWidget):
         worker.login_failed.connect(lambda msg, g=game, si=section_index: self._on_login_failed(g, si, msg))
 
         launcher.game_launched.connect(lambda pid, g=game, si=section_index: self._on_game_launched(g, si, pid))
-        launcher.game_exited.connect(lambda rc, g=game, si=section_index: self._on_game_exited(g, si, rc))
+        launcher.game_exited.connect(lambda rc, raw, g=game, si=section_index: self._on_game_exited(g, si, rc, raw))
         launcher.launch_failed.connect(lambda msg, g=game, si=section_index: self._on_launcher_failed(g, si, msg))
 
         return worker, launcher
@@ -1089,12 +1089,21 @@ class LaunchTab(QWidget):
         self.log(f"[Launch] {game_label} account {section_index + 1} game running (PID {pid})")
         self._update_status(game, section_index, LoginState.RUNNING, "Game running")
 
-    def _on_game_exited(self, game, section_index, retcode):
+    def _on_game_exited(self, game, section_index, retcode, raw_log=""):
         game_label = "TTR" if game == "ttr" else "CC"
         self.log(f"[Launch] {game_label} account {section_index + 1} game exited (code {retcode})")
         # game crash / kill: status band carries the exit code; no login-failure dialog (post-launch is out of scope)
         if retcode not in (0, -9, -15, None):
-            self._update_status(game, section_index, LoginState.FAILED, f"Failed: code {retcode}")
+            # Pass raw_log as BOTH the band message and the modal raw:
+            # the band's summarize_error() heuristics ("not installed" →
+            # "Runtime missing", "network" → "Network error", etc.)
+            # categorize the failure for the user, and the modal shows
+            # the full stderr/stdout tail for diagnosis. When the launcher
+            # has no captured log (TTRLauncher uses DEVNULL), fall back
+            # to the bare "Failed: code N" string.
+            payload = raw_log or f"Failed: code {retcode}"
+            self._update_status(game, section_index, LoginState.FAILED,
+                                payload, raw=payload)
         else:
             self._update_status(game, section_index, LoginState.IDLE, "")
 
@@ -1135,7 +1144,7 @@ class LaunchTab(QWidget):
 
     # ── Status updates ─────────────────────────────────────────────────────
 
-    def _update_status(self, game, section_index, state, message):
+    def _update_status(self, game, section_index, state, message, raw=None):
         cards = self._cards[game]
         if section_index >= len(cards):
             return
@@ -1147,7 +1156,8 @@ class LaunchTab(QWidget):
         # AccountTile expects the same lowercase string used by LoginState's
         # class attributes (idle/logging_in/queued/launching/running/failed/
         # need_2fa).
-        raw = message if state == LoginState.FAILED else ""
+        if raw is None:
+            raw = message if state == LoginState.FAILED else ""
         tile.set_state(state, message or "", raw)
 
     def update_dot_state(self, index: int, state_str: str):

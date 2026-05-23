@@ -62,6 +62,36 @@ def get_stdout_path_for_pid(pid: int) -> Path | None:
         return _pid_to_stdout.get(pid)
 
 
+_LOG_TAIL_LINES = 50
+_LOG_TAIL_TOTAL_BYTES = 4000
+
+
+def _build_log_tail(stderr_text: str, stdout_text: str) -> str:
+    """Build the (stderr-tail + stdout-tail) payload emitted on game_exited.
+
+    Keep this small enough to render inside the expanded error modal:
+    last `_LOG_TAIL_LINES` lines of each stream, joined with section
+    headers, capped at `_LOG_TAIL_TOTAL_BYTES` so a runaway stderr can't
+    blow up the Qt clipboard."""
+    def _tail(text: str) -> str:
+        if not text:
+            return ""
+        lines = text.splitlines()
+        return "\n".join(lines[-_LOG_TAIL_LINES:])
+
+    parts: list[str] = []
+    err_tail = _tail(stderr_text)
+    out_tail = _tail(stdout_text)
+    if err_tail:
+        parts.append("=== stderr ===\n" + err_tail)
+    if out_tail:
+        parts.append("=== stdout ===\n" + out_tail)
+    combined = "\n\n".join(parts)
+    if len(combined) > _LOG_TAIL_TOTAL_BYTES:
+        combined = combined[:_LOG_TAIL_TOTAL_BYTES] + "\n…(truncated)"
+    return combined
+
+
 _CUSTOM_APPROVAL_KEY = "cc_engine_dir_approved_custom_dir"
 
 
@@ -180,7 +210,7 @@ def resolve_effective_proton(install: WineInstall, settings_manager) -> str | No
 
 class CCLauncher(QObject):
     game_launched = Signal(int)     # (pid)
-    game_exited = Signal(int)       # (return_code)
+    game_exited = Signal(int, str)  # (return_code, raw_log_tail)
     launch_failed = Signal(str)     # (error_message)
 
     def __init__(self, parent=None, settings_manager=None):
@@ -406,13 +436,15 @@ class CCLauncher(QObject):
                 retcode = self._game_process.wait()
                 print(f"[CCLauncher] _run: child exited rc={retcode}")
 
-                def _dump(label, fh, path):
+                def _read_capture(fh):
                     try:
                         fh.flush()
                         fh.seek(0)
-                        content = fh.read().decode("utf-8", "replace").strip()
+                        return fh.read().decode("utf-8", "replace").strip()
                     except Exception as e:
-                        content = f"<failed to read {label} capture: {e}>"
+                        return f"<failed to read capture: {e}>"
+
+                def _dump(label, content, path):
                     if not content:
                         print(f"[CCLauncher] _run: {label} from child (rc={retcode}): <empty>")
                         return
@@ -421,13 +453,24 @@ class CCLauncher(QObject):
                         snippet = snippet[:4000] + f"\n…(+{len(content)-4000} more bytes; full at {path})"
                     print(f"[CCLauncher] _run: {label} from child (rc={retcode}):\n{snippet}\n[CCLauncher] _run: --- end {label} ---")
 
-                # Dump both streams regardless of exit code so we can
+                # Read both streams regardless of exit code so we can
                 # diagnose silent exits where rc=0 but nothing happens.
-                _dump("stdout", stdout_fh, stdout_path)
-                _dump("stderr", stderr_fh, stderr_path)
+                stdout_content = _read_capture(stdout_fh)
+                stderr_content = _read_capture(stderr_fh)
+                _dump("stdout", stdout_content, stdout_path)
+                _dump("stderr", stderr_content, stderr_path)
+
+                # Build a tail-of-streams payload for game_exited(raw_text).
+                # The Launch tab pipes this into the expanded error modal so
+                # users can see WHY a launch failed without grepping /tmp.
+                # Empty on rc == 0 to keep the success path quiet.
+                raw_log = ""
+                if retcode != 0:
+                    raw_log = _build_log_tail(stderr_content, stdout_content)
+
                 GameRegistry.instance().unregister(pid)
                 self._game_process = None
-                self.game_exited.emit(retcode)
+                self.game_exited.emit(retcode, raw_log)
 
             except Exception as e:
                 print(f"[CCLauncher] _run: error {type(e).__name__}: {e}")

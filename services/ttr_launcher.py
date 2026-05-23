@@ -41,7 +41,7 @@ def _is_trusted_engine_path(engine_path: str, settings_manager=None) -> bool:
 
 class TTRLauncher(QObject):
     game_launched = Signal(int)     # (pid)
-    game_exited = Signal(int)       # (return_code)
+    game_exited = Signal(int, str)  # (return_code, raw_log_tail)
     launch_failed = Signal(str)     # (error_message)
 
     def __init__(self, parent=None, settings_manager=None):
@@ -116,7 +116,11 @@ class TTRLauncher(QObject):
                 retcode = self._game_process.wait()
                 GameRegistry.instance().unregister(pid)
                 self._game_process = None
-                self.game_exited.emit(retcode)
+                # TTR redirects stdout/stderr to DEVNULL so there is no
+                # captured log tail to surface. Emit an empty string for
+                # raw_log_tail to keep the signal shape uniform with
+                # CCLauncher.game_exited.
+                self.game_exited.emit(retcode, "")
 
             except Exception as e:
                 self.launch_failed.emit(f"Launch error: {e}")

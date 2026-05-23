@@ -255,6 +255,58 @@ def test_bottles_native_invocation(tmp_path):
     assert "run" in cmd
 
 
+def test_bottles_missing_distribution_falls_back_to_native_when_cli_present(
+    tmp_path, monkeypatch,
+):
+    """If metadata lacks 'distribution' (e.g., a WineInstall built by
+    classify_path before the distribution-detection fix shipped, or a
+    future caller that constructs WineInstall by hand), build must probe
+    bottles-cli on PATH and prefer the native form. Otherwise users with
+    only the RPM/AUR Bottles get a flatpak run that errors with
+    'app/com.usebottles.bottles not installed'."""
+    import services.wine_runtimes as wr
+    bottle = tmp_path / "MyBottle"
+    exe = bottle / "drive_c/users/steamuser/AppData/Local/Corporate Clash/CorporateClash.exe"
+    exe.parent.mkdir(parents=True)
+    exe.write_text("")
+    install = WineInstall(
+        exe_path=str(exe),
+        launcher="bottles",
+        prefix_path=str(bottle),
+        display_name="x",
+        metadata={"bottle_name": "MyBottle"},  # no 'distribution'
+    )
+    monkeypatch.setattr(wr, "_host_command_exists",
+                        lambda name: name == "bottles-cli")
+    cmd, _env = build_launch_command(install, [], {})
+    assert cmd[0] == "bottles-cli"
+    assert "flatpak" not in cmd
+
+
+def test_bottles_missing_distribution_falls_back_to_flatpak_when_no_cli(
+    tmp_path, monkeypatch,
+):
+    """Inverse of the above: when 'distribution' is unset and bottles-cli
+    is NOT on PATH, fall back to the flatpak form. Only flatpak Bottles
+    installed → flatpak invocation."""
+    import services.wine_runtimes as wr
+    bottle = tmp_path / "MyBottle"
+    exe = bottle / "drive_c/users/steamuser/AppData/Local/Corporate Clash/CorporateClash.exe"
+    exe.parent.mkdir(parents=True)
+    exe.write_text("")
+    install = WineInstall(
+        exe_path=str(exe),
+        launcher="bottles",
+        prefix_path=str(bottle),
+        display_name="x",
+        metadata={"bottle_name": "MyBottle"},  # no 'distribution'
+    )
+    monkeypatch.setattr(wr, "_host_command_exists", lambda name: False)
+    cmd, _env = build_launch_command(install, [], {})
+    assert cmd[0] == "flatpak"
+    assert "com.usebottles.bottles" in cmd
+
+
 def test_bottles_raises_when_prefix_path_missing():
     install = WineInstall(
         exe_path="/x.exe",
