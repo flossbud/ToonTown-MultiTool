@@ -16,6 +16,9 @@ from utils.widgets.chip_button import QuietChipButton
 from utils.widgets.empty_state import EmptyState
 
 
+# Qt constant for unlimited size (QWidget default maximumHeight/Width).
+QWIDGETSIZE_MAX = 16777215
+
 _GAME_NAMES = {"ttr": "Toontown Rewritten", "cc": "Corporate Clash"}
 _GAME_SHORT = {"ttr": "TTR", "cc": "CC"}
 _LAYOUT_MAX_WIDTH = {"compact": 720, "full": 860}
@@ -75,6 +78,7 @@ class _AddTile(QuietChipButton):
 class LaunchSection(QWidget):
     REVEAL_STAGGER_MS = 30
     REVEAL_DURATION_MS = 150
+    COLLAPSE_DURATION_MS = 180
 
     launcher_clicked       = Signal()
     add_account_clicked    = Signal()
@@ -115,6 +119,7 @@ class LaunchSection(QWidget):
         self.tiles: list[AccountTile] = []
         self.add_tile: _AddTile | None = None
         self.is_collapsed: bool = False
+        self._collapse_anim: QPropertyAnimation | None = None
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -447,7 +452,8 @@ class LaunchSection(QWidget):
 
         animate=False snaps instantly; used by LaunchTab on startup to
         restore persisted state without a flash. animate=True runs a
-        height tween (see Task 5 — currently snap-only).
+        height tween — unless reduce-motion is enabled, in which case
+        the animated path also snaps.
 
         No-op when `value` already matches `is_collapsed`. Programmatic
         calls do NOT emit `collapsed_changed`; only user header clicks
@@ -457,12 +463,65 @@ class LaunchSection(QWidget):
             return
         self.is_collapsed = value
         self._chev.setText("▸" if value else "▾")
+
+        if not animate or motion.is_reduced():
+            self._apply_collapsed_snap(value)
+            return
+
+        # Stop any in-flight animation. A mid-animation toggle reverses
+        # from the current (partway) maximumHeight so the motion looks
+        # continuous instead of jumping.
+        if self._collapse_anim is not None:
+            self._collapse_anim.stop()
         if value:
-            self._body_wrap.setVisible(False)
+            start = self._body_wrap.height()
+            end = 0
             self.setMinimumHeight(0)
         else:
             self._body_wrap.setVisible(True)
             self.setMinimumHeight(380)
+            start = self._body_wrap.maximumHeight()
+            if start == QWIDGETSIZE_MAX:
+                start = 0
+            end = self._body_wrap.sizeHint().height()
+
+        raw = self.COLLAPSE_DURATION_MS * motion._TEST_DURATION_SCALE
+        duration = 0 if raw == 0.0 else max(1, int(raw))
+
+        anim = QPropertyAnimation(self._body_wrap, b"maximumHeight")
+        anim.setDuration(duration)
+        anim.setEasingCurve(motion.EASE_STANDARD)
+        anim.setStartValue(start)
+        anim.setEndValue(end)
+        anim.finished.connect(lambda v=value: self._on_collapse_anim_finished(v))
+        self._collapse_anim = anim
+        anim.start()
+
+    def _apply_collapsed_snap(self, value: bool) -> None:
+        """Snap path used when animate=False or reduce-motion is on."""
+        if value:
+            self._body_wrap.setVisible(False)
+            self._body_wrap.setMaximumHeight(0)
+            self.setMinimumHeight(0)
+        else:
+            self._body_wrap.setVisible(True)
+            self._body_wrap.setMaximumHeight(QWIDGETSIZE_MAX)
+            self.setMinimumHeight(380)
+
+    def _on_collapse_anim_finished(self, collapsed_target: bool) -> None:
+        """After-animation cleanup: hide _body_wrap when collapsed, reset
+        maximumHeight to unlimited when expanded so future content
+        (new tiles, scale bumps) isn't capped at the snapshot value."""
+        # Guard against stale signals: a newer animation may have been
+        # started before this one's finished slot fired. Only act if the
+        # current animation IS the one that finished.
+        if self.sender() is not self._collapse_anim:
+            return
+        if collapsed_target:
+            self._body_wrap.setVisible(False)
+        else:
+            self._body_wrap.setMaximumHeight(QWIDGETSIZE_MAX)
+        self._collapse_anim = None
 
     def _on_header_clicked(self) -> None:
         """Slot for the header frame's `clicked` signal. Toggles state

@@ -125,3 +125,53 @@ def test_right_click_does_not_toggle(qapp):
         Qt.NoModifier))
     assert sec.is_collapsed is False
     assert received == []
+
+
+def test_animate_true_creates_property_animation(qapp, monkeypatch):
+    """When animate=True and reduce-motion is off, set_collapsed kicks off
+    a QPropertyAnimation rather than snapping."""
+    from PySide6.QtCore import QAbstractAnimation
+    import utils.motion as motion
+    monkeypatch.setattr(motion, "is_reduced", lambda: False)
+
+    sec = LaunchSection(game="ttr", icon_path="assets/ttr.png")
+    sec.show()
+    assert sec._collapse_anim is None
+    sec.set_collapsed(True, animate=True)
+    assert sec._collapse_anim is not None
+    # Animation should be running.
+    assert sec._collapse_anim.state() == QAbstractAnimation.Running
+
+
+def test_reduce_motion_snaps_instead_of_animates(qapp, monkeypatch):
+    """When reduce-motion is on, set_collapsed must NOT create a
+    QPropertyAnimation — it should snap directly to the target state."""
+    import utils.motion as motion
+    monkeypatch.setattr(motion, "is_reduced", lambda: True)
+
+    sec = LaunchSection(game="ttr", icon_path="assets/ttr.png")
+    sec.show()
+    sec.set_collapsed(True, animate=True)
+    assert sec._collapse_anim is None  # no animation created
+    assert sec._body_wrap.isHidden()
+
+
+def test_mid_animation_toggle_starts_from_current_height(qapp, monkeypatch):
+    """Clicking the header during a running collapse must stop the in-flight
+    animation and start a new expand from the current (partway) maximumHeight,
+    not from 0 or the original full height."""
+    from PySide6.QtCore import QAbstractAnimation
+    import utils.motion as motion
+    monkeypatch.setattr(motion, "is_reduced", lambda: False)
+
+    sec = LaunchSection(game="ttr", icon_path="assets/ttr.png")
+    sec.show()
+    sec.set_collapsed(True, animate=True)
+    first = sec._collapse_anim
+    # Force the animation partway: set current value directly.
+    sec._body_wrap.setMaximumHeight(40)
+    sec.set_collapsed(False, animate=True)
+    second = sec._collapse_anim
+    assert second is not first  # new animation created
+    assert first.state() == QAbstractAnimation.Stopped  # original stopped
+    assert second.startValue() == 40
