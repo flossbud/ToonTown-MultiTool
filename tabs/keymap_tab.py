@@ -15,9 +15,9 @@ import os
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QFrame, QScrollArea, QLineEdit,
+    QFrame, QScrollArea, QLineEdit, QSizePolicy,
 )
-from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve, QSize, QPointF
+from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve, QSize, QPointF, Property
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QBrush, QLinearGradient, QPen, QIcon, QPixmap, QPolygonF
 from utils.theme_manager import resolve_theme, get_theme_colors, apply_card_shadow, get_set_color, make_trash_icon, get_set_card_styles
 from utils.symbols import S
@@ -229,6 +229,67 @@ class MovementKeyField(QLineEdit):
         if self._awaiting:
             self._awaiting = False
             self._update_display()
+
+
+# ── Clipping viewport for body content ────────────────────────────────────
+
+
+class _BodyClip(QWidget):
+    """Clipping viewport for a SetCard's body content.
+
+    Holds a content widget at full natural geometry at all times, and
+    exposes a content_height Qt Property that clamps the clip's effective
+    height. Only the top content_height pixels of the content widget are
+    visible. Modeled on tabs/settings_tab.py:_CollapsibleContentClip;
+    eliminates the overshoot bug that AnimatedBody had from animating
+    maximumHeight while the content's sizeHint was drifting underneath.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._content: QWidget | None = None
+        self._animated_height: int = 0
+        self._forced_height: int | None = None
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.setAutoFillBackground(False)
+        self.setAttribute(Qt.WA_NoSystemBackground, True)
+        self.setStyleSheet("background: transparent; border: none;")
+
+    def set_content_widget(self, widget: QWidget) -> None:
+        """Parent the body content widget and lay it out at full natural size."""
+        self._content = widget
+        widget.setParent(self)
+        self._sync_content_geometry()
+
+    def natural_height(self) -> int:
+        """Return the content widget's layout minimumSize().height(), or 0."""
+        if self._content is None or self._content.layout() is None:
+            return 0
+        return self._content.layout().minimumSize().height()
+
+    def sizeHint(self) -> QSize:
+        return QSize(0, self._height_hint())
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(0, self._height_hint())
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self._sync_content_geometry()
+
+    def _height_hint(self) -> int:
+        if self._forced_height is not None:
+            return self._forced_height
+        return self.natural_height()
+
+    def _sync_content_geometry(self) -> None:
+        if self._content is None:
+            return
+        # Lay the content out at full natural size, regardless of how much
+        # the clip is currently showing. The clip's own size limits how
+        # much of the content is actually visible.
+        height = max(self.natural_height(), self.height(), self._height_hint())
+        self._content.setGeometry(0, 0, self.width(), height)
 
 
 # ── Animated body (slides open / closed) ───────────────────────────────────

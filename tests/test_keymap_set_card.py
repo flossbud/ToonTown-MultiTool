@@ -159,3 +159,26 @@ def test_setcard_paints_in_both_themes(qapp):
         pm = QPixmap(card.size())
         pm.fill()
         card.render(pm)
+
+
+def test_bodyclip_constructs(qapp):
+    from tabs.keymap_tab import _BodyClip
+    clip = _BodyClip()
+    assert clip is not None
+    # No content set yet -> natural_height returns 0
+    assert clip.natural_height() == 0
+
+
+def test_bodyclip_set_content_widget_reparents(qapp):
+    from tabs.keymap_tab import _BodyClip
+    from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel
+    clip = _BodyClip()
+    content = QWidget()
+    lay = QVBoxLayout(content)
+    lay.setContentsMargins(0, 0, 0, 0)
+    lay.addWidget(QLabel("hello world line one"))
+    lay.addWidget(QLabel("hello world line two"))
+    clip.set_content_widget(content)
+    assert content.parent() is clip
+    # Natural height reflects the content's layout minimumSize().
+    assert clip.natural_height() > 0
