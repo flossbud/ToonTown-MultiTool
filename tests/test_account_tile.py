@@ -305,3 +305,66 @@ def test_in_tile_buttons_have_no_hover_upscale(qapp):
     assert tile.primary_button.HOVER_SCALE == 1.0
     assert tile.edit_btn.HOVER_SCALE == 1.0
     assert tile.delete_btn.HOVER_SCALE == 1.0
+
+
+def test_status_band_running_uses_success_tokens(qapp):
+    from utils.theme_manager import get_theme_colors
+    c = get_theme_colors(True)
+    tile = AccountTile(game="ttr", slot_index=0)
+    tile.set_state("running")
+    band_qss = tile.status_band.styleSheet()
+    assert c["status_success_bg"] in band_qss
+    assert c["status_success_text"] in band_qss
+
+
+def test_status_band_queued_uses_warning_tokens(qapp):
+    from utils.theme_manager import get_theme_colors
+    c = get_theme_colors(True)
+    tile = AccountTile(game="ttr", slot_index=0)
+    tile.set_state("queued", "pos 5")
+    band_qss = tile.status_band.styleSheet()
+    assert c["status_warning_bg"] in band_qss
+    assert c["status_warning_text"] in band_qss
+
+
+def test_status_band_failed_uses_error_tokens(qapp):
+    from utils.theme_manager import get_theme_colors
+    c = get_theme_colors(True)
+    tile = AccountTile(game="ttr", slot_index=0)
+    tile.set_state("failed", "Bad credentials")
+    band_qss = tile.status_band.styleSheet()
+    assert c["status_error_bg"] in band_qss
+    assert c["status_error_text"] in band_qss
+
+
+def test_status_band_need_2fa_uses_info_tokens(qapp):
+    from utils.theme_manager import get_theme_colors
+    c = get_theme_colors(True)
+    tile = AccountTile(game="cc", slot_index=1)
+    tile.set_state("need_2fa")
+    band_qss = tile.status_band.styleSheet()
+    assert c["status_info_bg"] in band_qss
+    assert c["status_info_text"] in band_qss
+
+
+def test_status_band_rethemes_on_apply_theme(qapp):
+    """End-to-end re-theming: a tile in 'running' state must update its
+    band QSS to light-mode tokens when apply_theme(light) is called.
+
+    Verifies the _current_state cache + _refresh_status_band -> set_state
+    re-call chain that exists specifically for theme switches."""
+    from utils.theme_manager import get_theme_colors
+    light = get_theme_colors(False)
+    dark = get_theme_colors(True)
+    tile = AccountTile(game="ttr", slot_index=0)
+    tile.set_state("running")
+    # Sanity: starts in dark.
+    assert dark["status_success_bg"] in tile.status_band.styleSheet()
+    # Switch theme.
+    tile.apply_theme(light)
+    band_qss = tile.status_band.styleSheet()
+    assert light["status_success_bg"] in band_qss
+    assert light["status_success_text"] in band_qss
+    # Dark values must no longer appear (if they differ).
+    if dark["status_success_bg"] != light["status_success_bg"]:
+        assert dark["status_success_bg"] not in band_qss

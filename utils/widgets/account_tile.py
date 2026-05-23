@@ -41,14 +41,14 @@ def _hamburger_icon(color: str, size: int = 12) -> QIcon:
     return QIcon(pm)
 
 
-# Status -> (band_bg, band_fg, band_label)
+# Status -> (bg_token_key, fg_token_key, label)
 _STATUS_VISUALS = {
-    "logging_in": ("rgba(232,168,56,0.15)", "#E8A838", "Logging in…"),
-    "launching":  ("rgba(232,168,56,0.15)", "#E8A838", "Launching…"),
-    "queued":     ("rgba(232,168,56,0.15)", "#E8A838", "In queue"),
-    "need_2fa":   ("rgba(200,126,232,0.15)", "#C87EE8", "2FA Required"),
-    "running":    ("rgba(86,200,86,0.15)",  "#6fdf6f", "Running"),
-    "failed":     ("rgba(224,82,82,0.18)",  "#ff7575", ""),  # set per-message
+    "logging_in": ("status_warning_bg", "status_warning_text", "Logging in…"),
+    "launching":  ("status_warning_bg", "status_warning_text", "Launching…"),
+    "queued":     ("status_warning_bg", "status_warning_text", "In queue"),
+    "need_2fa":   ("status_info_bg",    "status_info_text",    "2FA Required"),
+    "running":    ("status_success_bg", "status_success_text", "Running"),
+    "failed":     ("status_error_bg",   "status_error_text",   ""),  # set per-message
 }
 
 # Status -> (button_label, button_bg, enabled, signal_name)
@@ -236,14 +236,12 @@ class AccountTile(QFrame):
         self._refresh_status_band()
 
     def _refresh_status_band(self) -> None:
-        """Re-apply the status band QSS for the current state.
-
-        Task 3 implementation: stub — the existing `set_state()` codepath
-        still owns band styling for now. Task 4 replaces the stub with a
-        token-driven lookup so this method actually re-themes the band on
-        theme switch.
-        """
-        return
+        """Re-apply the status band QSS for the current state, used by
+        apply_theme() on theme switch."""
+        if self._current_state and self._current_state != "idle":
+            # Re-run set_state with the cached state + message so band
+            # styling re-resolves against the new theme dict.
+            self.set_state(self._current_state, self._current_status_message)
 
     # ── public API ─────────────────────────────────────────────────
 
@@ -254,6 +252,8 @@ class AccountTile(QFrame):
         self.name_label.setText(display)
 
     def set_state(self, state: str, message: str = "", raw_message: str = "") -> None:
+        self._current_state = state
+        self._current_status_message = message
         self._state = state
         if state == "failed" and raw_message:
             self.raw_error_message = raw_message
@@ -268,11 +268,15 @@ class AccountTile(QFrame):
         if state == "idle" or state not in _STATUS_VISUALS:
             self.status_band.setVisible(False)
             return
-        bg, fg, default_label = _STATUS_VISUALS[state]
+        bg_key, fg_key, default_label = _STATUS_VISUALS[state]
+        c = self._current_theme
+        bg = c[bg_key]
+        fg = c[fg_key]
         self.status_band.setStyleSheet(
             f"background: {bg}; border-radius: 5px;"
+            f" color: {fg};"  # written on band so token appears in status_band.styleSheet() for tests
         )
-        self.status_label.setStyleSheet(f"color: {fg}; font-size: 11px; font-weight: 600;")
+        self.status_label.setStyleSheet(f"font-size: 11px; font-weight: 600; color: {fg};")
         if state == "failed":
             text = "⚠ " + summarize_error(message)
         elif state == "queued" and message:
