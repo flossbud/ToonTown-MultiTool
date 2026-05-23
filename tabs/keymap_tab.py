@@ -920,10 +920,12 @@ class _GameSubRail(QFrame):
 
 
 class KeymapTab(QWidget):
-    def __init__(self, keymap_manager, settings_manager=None, parent=None):
+    def __init__(self, keymap_manager, settings_manager=None,
+                 credentials_manager=None, parent=None):
         super().__init__(parent)
         self.keymap_manager = keymap_manager
         self.settings_manager = settings_manager
+        self.credentials_manager = credentials_manager
         self._entries = []  # list of {"card", "index", "expanded"}
 
         outer = QVBoxLayout(self)
@@ -1058,6 +1060,25 @@ class KeymapTab(QWidget):
             return bool(discover_cc_installs())
         except Exception:
             return False
+
+    def _has_accounts(self, game: str) -> bool:
+        """True when credentials_manager reports at least one account for
+        the given game. Returns False when no credentials_manager is wired
+        (e.g., tests that don't pass one)."""
+        if self.credentials_manager is None:
+            return False
+        return bool(self.credentials_manager.get_accounts_metadata(game=game))
+
+    def _active_games(self) -> set:
+        """The set of games to expose in the keysets tab. A game is active
+        when its install is detected OR the user has any accounts for it.
+        Drives sub-rail visibility via _refresh_visibility."""
+        games = set()
+        if self._ttr_detected() or self._has_accounts("ttr"):
+            games.add("ttr")
+        if self._cc_detected() or self._has_accounts("cc"):
+            games.add("cc")
+        return games
 
     def _on_segment_clicked(self, game: str):
         if game == self._active_game:
