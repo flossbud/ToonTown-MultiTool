@@ -1088,7 +1088,7 @@ class KeymapTab(QWidget):
             f"}}"
         )
         page_layout.addWidget(header_label, alignment=Qt.AlignHCenter)
-        page_layout.addSpacing(6)
+        page_layout.addSpacing(3)
 
         header_divider = QFrame()
         header_divider.setObjectName(f"header_divider_{game}")
