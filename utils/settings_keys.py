@@ -23,3 +23,7 @@ CHECK_FOR_UPDATES_AT_STARTUP = "check_for_updates_at_startup"
 UPDATE_SKIPPED_VERSION = "update_skipped_version"
 UPDATE_LAST_CHECK_AT = "update_last_check_at"
 UPDATE_LAST_CHECK_RESULT = "update_last_check_result"
+
+# Launch tab section collapse (added 2026-05-23)
+LAUNCH_SECTION_TTR_COLLAPSED = "launch_section_ttr_collapsed"
+LAUNCH_SECTION_CC_COLLAPSED  = "launch_section_cc_collapsed"
