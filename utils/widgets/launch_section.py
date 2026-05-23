@@ -402,16 +402,8 @@ class LaunchSection(QWidget):
             return
         self._max_width = _LAYOUT_MAX_WIDTH[mode]
         self.setMaximumWidth(self._max_width)
-        # Full mode: both cards must match heights so a populated TTR
-        # card and an empty CC card don't look uneven side-by-side. Let
-        # the QHBoxLayout stretch each card vertically; the bottom
-        # stretch inside card_lay keeps content anchored at the top.
-        # Compact mode: cards stack vertically, each at its natural size.
-        if mode == "full":
-            self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        else:
-            self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self._layout_mode = mode
+        self._refresh_vertical_size_policy()
         self._recompute_content_scale()
         self._run_reveal_animation()
 
@@ -471,6 +463,7 @@ class LaunchSection(QWidget):
             return
         self.is_collapsed = value
         self._chev.setText("▸" if value else "▾")
+        self._refresh_vertical_size_policy()
 
         if not animate or motion.is_reduced():
             self._apply_collapsed_snap(value)
@@ -517,6 +510,17 @@ class LaunchSection(QWidget):
             self._body_wrap.setVisible(True)
             self._body_wrap.setMaximumHeight(QWIDGETSIZE_MAX)
             self.setMinimumHeight(380)
+        self._refresh_vertical_size_policy()
+
+    def _refresh_vertical_size_policy(self) -> None:
+        """In full layout mode, vertical policy depends on collapse state:
+        Expanding when expanded (stretch to fill), Preferred when collapsed
+        (anchor to top with empty space below). In compact mode, vertical
+        policy is always Preferred — sections stack with natural heights."""
+        if self._layout_mode == "full" and not self.is_collapsed:
+            self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        else:
+            self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
 
     def _on_collapse_anim_finished(
         self, collapsed_target: bool, anim: QPropertyAnimation

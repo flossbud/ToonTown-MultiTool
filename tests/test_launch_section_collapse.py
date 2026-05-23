@@ -226,3 +226,29 @@ def test_apply_theme_styles_chevron(qapp):
     }
     sec.apply_theme(fake_theme)
     assert "#abcdef" in sec._chev.styleSheet()
+
+
+def test_full_mode_collapsed_section_uses_preferred_vertical_policy(qapp):
+    """In full (side-by-side) mode, an expanded section stretches vertically
+    (Expanding) but a collapsed section must NOT stretch — it should sit at
+    the top of its column with empty space below. Verified by inspecting
+    the section's vertical size policy."""
+    from PySide6.QtWidgets import QSizePolicy
+    sec = LaunchSection(game="ttr", icon_path="assets/ttr.png")
+    sec.set_layout_mode("full")
+    assert sec.sizePolicy().verticalPolicy() == QSizePolicy.Expanding
+    sec.set_collapsed(True, animate=False)
+    assert sec.sizePolicy().verticalPolicy() == QSizePolicy.Preferred
+    sec.set_collapsed(False, animate=False)
+    assert sec.sizePolicy().verticalPolicy() == QSizePolicy.Expanding
+
+
+def test_compact_mode_size_policy_unchanged_by_collapse(qapp):
+    """In compact mode, the section's vertical policy is Preferred at all
+    times — collapsing doesn't change that."""
+    from PySide6.QtWidgets import QSizePolicy
+    sec = LaunchSection(game="ttr", icon_path="assets/ttr.png")
+    # Compact is the default layout mode set in __init__.
+    assert sec.sizePolicy().verticalPolicy() == QSizePolicy.Preferred
+    sec.set_collapsed(True, animate=False)
+    assert sec.sizePolicy().verticalPolicy() == QSizePolicy.Preferred
