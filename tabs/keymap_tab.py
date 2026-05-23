@@ -298,12 +298,13 @@ class SetCard(QFrame):
     key_changed       = Signal(str, str)   # (action_name, captured_key)
     detect_requested  = Signal()
 
-    def __init__(self, index: int, set_data: dict, active_game: str = "ttr", parent=None):
+    def __init__(self, index: int, set_data: dict, active_game: str = "ttr", is_dark: bool = True, parent=None):
         super().__init__(parent)
         self.index = index
         self.set_data = set_data
         self.setAttribute(Qt.WA_StyledBackground, True)
         self._styles = get_set_card_styles(index, is_dark=True)
+        self._is_dark = is_dark
         self._header = None  # set before installEventFilter so eventFilter is safe
 
         # Reserve STRIPE_HEIGHT at the top via the layout margin so child
@@ -449,7 +450,14 @@ class SetCard(QFrame):
         path.addRoundedRect(rect, self.CORNER_RADIUS, self.CORNER_RADIUS)
         p.setClipPath(path)
 
-        # 1) Card background gradient (top stop -> bottom stop)
+        # 0) Base card surface -- solid theme-aware fill so the card has
+        #    visible body pixels and the drop shadow has something to cast
+        #    from. The launch-style tint above is too low-opacity to do
+        #    either on its own.
+        c = get_theme_colors(self._is_dark)
+        p.fillPath(path, QBrush(QColor(c["bg_card"])))
+
+        # 1) Card background tint -- set-color wash over the base surface.
         bg_grad = QLinearGradient(0, 0, 0, rect.height())
         bg_grad.setColorAt(0, self._rgba_to_qcolor(self._styles["card_grad_top"]))
         bg_grad.setColorAt(1, self._rgba_to_qcolor(self._styles["card_grad_bottom"]))
@@ -474,6 +482,14 @@ class SetCard(QFrame):
         p.setBrush(Qt.NoBrush)
         p.drawPath(path)
         p.end()
+
+    def set_theme(self, is_dark: bool):
+        """Update which theme this card paints against. Triggers a repaint
+        when the value actually changes."""
+        if is_dark == self._is_dark:
+            return
+        self._is_dark = is_dark
+        self.update()
 
     @staticmethod
     def _rgba_to_qcolor(rgba: str) -> QColor:
@@ -745,7 +761,8 @@ class KeymapTab(QWidget):
         for idx, s in enumerate(sets):
             if idx > 0:
                 self._scroll_layout.addSpacing(10)
-            card = SetCard(index=idx, set_data=s, active_game=self._active_game, parent=self)
+            card = SetCard(index=idx, set_data=s, active_game=self._active_game,
+                           is_dark=is_dark, parent=self)
             card.toggle_requested.connect(lambda i=idx: self._toggle(i))
             card.name_changed.connect(lambda name, i=idx: self._on_name_changed(i, name))
             card.key_changed.connect(lambda action, key, i=idx: self._on_key_changed(i, action, key))
@@ -985,7 +1002,7 @@ class KeymapTab(QWidget):
         for hint in self.findChildren(QLabel, "set_body_hint"):
             hint.setStyleSheet(hint_qss)
         for entry in self._entries:
-            entry["card"].update()
+            entry["card"].set_theme(is_dark)
 
         if hasattr(self, "_add_btn"):
             self._add_btn.setStyleSheet(f"""

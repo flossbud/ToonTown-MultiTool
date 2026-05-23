@@ -131,3 +131,31 @@ def test_key_field_for_action_exists(qapp):
     fwd = card.findChild(MovementKeyField, "key_field_forward")
     assert fwd is not None
     assert fwd.get_key() == "Up"
+
+
+def test_setcard_accepts_is_dark_kwarg(qapp):
+    from tabs.keymap_tab import SetCard
+    card_dark = SetCard(index=0, set_data={"name": "Default"}, is_dark=True)
+    card_light = SetCard(index=0, set_data={"name": "Default"}, is_dark=False)
+    assert card_dark._is_dark is True
+    assert card_light._is_dark is False
+
+
+def test_setcard_set_theme_updates_internal_state(qapp):
+    from tabs.keymap_tab import SetCard
+    card = SetCard(index=0, set_data={"name": "Default"}, is_dark=True)
+    assert card._is_dark is True
+    card.set_theme(is_dark=False)
+    assert card._is_dark is False
+
+
+def test_setcard_paints_in_both_themes(qapp):
+    """paintEvent must not raise in either theme."""
+    from PySide6.QtGui import QPixmap
+    from tabs.keymap_tab import SetCard
+    for is_dark in (True, False):
+        card = SetCard(index=0, set_data={"name": "Default"}, is_dark=is_dark)
+        card.resize(400, 80)
+        pm = QPixmap(card.size())
+        pm.fill()
+        card.render(pm)
