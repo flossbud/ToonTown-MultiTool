@@ -74,6 +74,10 @@ class LaunchSection(QWidget):
     # bump on resize, account list change). LaunchTab listens so it can
     # re-equalize sibling section heights in compact mode.
     content_size_changed   = Signal()
+    # Emitted when the user toggles via a header click. Programmatic
+    # set_collapsed(...) calls do NOT emit. Keeps the persistence write
+    # loop in LaunchTab one-directional.
+    collapsed_changed      = Signal(bool)
 
     def __init__(self, game: str, icon_path: str, max_accounts: int = 8, parent=None):
         super().__init__(parent)
@@ -94,6 +98,7 @@ class LaunchSection(QWidget):
         self._max = max_accounts
         self.tiles: list[AccountTile] = []
         self.add_tile: _AddTile | None = None
+        self.is_collapsed: bool = False
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -409,6 +414,27 @@ class LaunchSection(QWidget):
             anim.finished.connect(lambda t=tile: setattr(t, "tile_opacity", 1.0))
             self._reveal_anims.append(anim)
             QTimer.singleShot(i * stagger, anim.start)
+
+    def set_collapsed(self, value: bool, animate: bool = True) -> None:
+        """Set the section's collapsed state.
+
+        animate=False snaps instantly; used by LaunchTab on startup to
+        restore persisted state without a flash. animate=True runs a
+        height tween (see Task 5 — currently snap-only).
+
+        No-op when `value` already matches `is_collapsed`. Programmatic
+        calls do NOT emit `collapsed_changed`; only user header clicks
+        emit (see Task 4).
+        """
+        if value == self.is_collapsed:
+            return
+        self.is_collapsed = value
+        if value:
+            self._body_wrap.setVisible(False)
+            self.setMinimumHeight(0)
+        else:
+            self._body_wrap.setVisible(True)
+            self.setMinimumHeight(380)
 
     def _wire_tile(self, tile: AccountTile, index: int) -> None:
         tile.launch_clicked.connect(lambda i=index: self.tile_launch.emit(i))
