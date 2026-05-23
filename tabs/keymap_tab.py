@@ -771,7 +771,7 @@ class KeymapTab(QWidget):
 
             expanded = prev_states.get(idx, False)
             card.set_expanded(expanded, animate=False)
-            apply_card_shadow(card, is_dark, blur=14, offset_y=4)
+            apply_card_shadow(card, is_dark, blur=22, offset_y=6)
 
             self._scroll_layout.addWidget(card)
             self._entries.append({
