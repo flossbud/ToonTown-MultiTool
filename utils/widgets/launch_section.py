@@ -67,6 +67,12 @@ class LaunchSection(QWidget):
         # two sections can sit side-by-side and each fill ~half the window.
         self._max_width = 720
         self.setMaximumWidth(self._max_width)
+        # Static min-height so empty cards in compact mode don't shrink
+        # smaller than populated ones, keeping the stacked layout visually
+        # balanced. 380 covers a 2-row populated card (header + 2 * 130 tile
+        # rows + padding + gutters) without forcing extra space when more
+        # rows are present.
+        self.setMinimumHeight(380)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self._layout_mode = "compact"
         self._content_scale = 1.0
@@ -148,7 +154,10 @@ class LaunchSection(QWidget):
 
         icon_box = QLabel()
         icon_box.setFixedSize(40, 40)
-        icon_box.setStyleSheet("border-radius: 8px;")
+        # background: transparent so the card's accent tint shows through
+        # behind the icon (without it, Qt paints QLabel's default opaque
+        # bg as soon as ANY QSS is applied, cutting out a rectangle).
+        icon_box.setStyleSheet("background: transparent; border-radius: 8px;")
         pm = QPixmap(icon_path)
         if not pm.isNull():
             icon_box.setPixmap(pm.scaled(40, 40, Qt.KeepAspectRatio, Qt.SmoothTransformation))
@@ -157,10 +166,16 @@ class LaunchSection(QWidget):
         title_col = QVBoxLayout()
         title_col.setSpacing(0)
         self.title_label = QLabel(_GAME_NAMES[game])
-        self.title_label.setStyleSheet("color: #fff; font-weight: 700; font-size: 15px;")
+        # background: transparent on header labels so the card's accent
+        # tint shows through (see icon_box above for the rationale).
+        self.title_label.setStyleSheet(
+            "background: transparent; color: #fff; font-weight: 700; font-size: 15px;"
+        )
         title_col.addWidget(self.title_label)
         self.subline = QLabel("No accounts yet")
-        self.subline.setStyleSheet("color: #8a9bb8; font-size: 12px;")
+        self.subline.setStyleSheet(
+            "background: transparent; color: #8a9bb8; font-size: 12px;"
+        )
         title_col.addWidget(self.subline)
         head_lay.addLayout(title_col)
         head_lay.addStretch()
@@ -265,9 +280,10 @@ class LaunchSection(QWidget):
         # Header title font size scales too (15 base -> up to 21). NOTE:
         # this replaces the full stylesheet; if you add other QSS rules to
         # title_label, include them here or they'll be silently dropped on
-        # the next resize.
+        # the next resize. background:transparent is required so the
+        # card's accent tint shows through behind the title.
         self.title_label.setStyleSheet(
-            f"color: #fff; font-weight: 700;"
+            f"background: transparent; color: #fff; font-weight: 700;"
             f" font-size: {int(15 * self._content_scale)}px;"
         )
 
