@@ -523,7 +523,7 @@ class SetCard(QFrame):
         color_band.setColorAt(1.0, QColor(self._styles["stripe_edge"]))
         p.fillRect(stripe_rect, QBrush(color_band))
         gloss = QLinearGradient(0, stripe_rect.top(), 0, stripe_rect.bottom())
-        gloss.setColorAt(0.0, QColor(255, 255, 255, 90))   # ~0.35 alpha
+        gloss.setColorAt(0.0, QColor(255, 255, 255, 60))   # ~0.24 alpha
         gloss.setColorAt(1.0, QColor(255, 255, 255, 0))
         p.fillRect(stripe_rect, QBrush(gloss))
 
