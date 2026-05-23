@@ -369,10 +369,11 @@ class SettingsPanel(QFrame):
 class _SidebarItem(QFrame):
     """One clickable row in the sidebar."""
 
+    clicked = Signal(str)  # emits self.key
+
     def __init__(self, key: str, label: str, parent=None):
         super().__init__(parent)
         self.key = key
-        self._label = label
         self._active = False
         self._hovered = False
         self.setAttribute(Qt.WA_Hover)
@@ -380,7 +381,6 @@ class _SidebarItem(QFrame):
         self.setFixedHeight(36)
         self._c = None
         self._is_dark = True
-        self._on_click_callback = None
 
         lay = QHBoxLayout(self)
         lay.setContentsMargins(16, 0, 16, 0)
@@ -398,13 +398,6 @@ class _SidebarItem(QFrame):
             self._apply_styles()
         self.update()
 
-    def set_on_clicked(self, callback) -> None:
-        self._on_click_callback = callback
-
-    def _on_clicked(self) -> None:
-        if self._on_click_callback is not None:
-            self._on_click_callback(self.key)
-
     def enterEvent(self, e):
         self._hovered = True
         if self._c is not None:
@@ -419,7 +412,7 @@ class _SidebarItem(QFrame):
 
     def mousePressEvent(self, e):
         if e.button() == Qt.LeftButton:
-            self._on_clicked()
+            self.clicked.emit(self.key)
             e.accept()
             return
         super().mousePressEvent(e)
@@ -442,14 +435,12 @@ class _SidebarItem(QFrame):
     def paintEvent(self, e):
         if self._c is None:
             return
-        from PySide6.QtGui import QColor, QPainter
         p = QPainter(self)
         # Active background
         if self._active:
             p.fillRect(self.rect(), QColor(self._c["sidebar_btn_sel"]))
         elif self._hovered:
-            from PySide6.QtGui import QColor as _C
-            hover = _C("#ffffff" if self._is_dark else "#0f172a")
+            hover = QColor("#ffffff" if self._is_dark else "#0f172a")
             hover.setAlpha(10 if self._is_dark else 12)
             p.fillRect(self.rect(), hover)
         # Active left border accent (2px)
@@ -477,7 +468,7 @@ class Sidebar(QFrame):
 
         for key, label in categories:
             item = _SidebarItem(key, label, self)
-            item.set_on_clicked(self._on_item_clicked)
+            item.clicked.connect(self._on_item_clicked)
             self.items.append(item)
             lay.addWidget(item)
 

@@ -55,7 +55,7 @@ def test_sidebar_click_emits_category_selected(qapp):
     received = []
     sb.category_selected.connect(received.append)
     games_item = next(i for i in sb.items if i.key == "games")
-    games_item._on_clicked()
+    games_item.clicked.emit(games_item.key)
     assert received == ["games"]
     assert sb.active_key == "games"
 
@@ -66,5 +66,6 @@ def test_sidebar_clicking_active_item_does_not_re_emit(qapp):
     received = []
     sb.category_selected.connect(received.append)
     general_item = next(i for i in sb.items if i.key == "general")
-    general_item._on_clicked()
+    general_item.clicked.emit(general_item.key)
     assert received == []
+    assert sb.active_key == "general"
