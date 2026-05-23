@@ -1088,13 +1088,14 @@ class KeymapTab(QWidget):
             f"}}"
         )
         page_layout.addWidget(header_label, alignment=Qt.AlignHCenter)
+        page_layout.addSpacing(6)
 
         header_divider = QFrame()
         header_divider.setObjectName(f"header_divider_{game}")
-        header_divider.setFixedHeight(2)
+        header_divider.setFixedHeight(1)
         # Fixed width (not max) so AlignHCenter doesn't collapse to sizeHint
         # width 0 when the page is wider than the divider's cap.
-        header_divider.setFixedWidth(320)
+        header_divider.setFixedWidth(200)
         header_divider.setStyleSheet(
             f"QFrame#header_divider_{game} {{"
             f" background: {c[accent_token]};"
