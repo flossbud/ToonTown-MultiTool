@@ -82,3 +82,52 @@ def test_toggle_signal_fires_on_header_click(qapp):
                      Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
     card.mousePressEvent(ev)
     assert received == [True]
+
+
+def test_default_set_has_hint_label(qapp):
+    from tabs.keymap_tab import SetCard
+    from PySide6.QtWidgets import QLabel
+    card = SetCard(index=0, set_data={"name": "Default", "forward": "Up"})
+    hints = [w for w in card.findChildren(QLabel)
+             if w.objectName() == "set_body_hint"]
+    assert len(hints) == 1
+
+
+def test_alternate_set_has_no_hint(qapp):
+    from tabs.keymap_tab import SetCard
+    from PySide6.QtWidgets import QLabel
+    card = SetCard(index=1, set_data={"name": "Alt", "forward": "w"})
+    hints = [w for w in card.findChildren(QLabel)
+             if w.objectName() == "set_body_hint"]
+    assert hints == []
+
+
+def test_default_set_has_detect_button(qapp):
+    from tabs.keymap_tab import SetCard
+    from PySide6.QtWidgets import QPushButton
+    card = SetCard(index=0, set_data={"name": "Default"}, active_game="ttr")
+    detect = [b for b in card.findChildren(QPushButton)
+              if b.objectName() == "detect_btn"]
+    assert len(detect) == 1
+    assert "TTR" in detect[0].text()
+
+
+def test_default_set_cc_detect_button_label(qapp):
+    from tabs.keymap_tab import SetCard
+    from PySide6.QtWidgets import QPushButton
+    card = SetCard(index=0, set_data={"name": "Default"}, active_game="cc")
+    detect = [b for b in card.findChildren(QPushButton)
+              if b.objectName() == "detect_btn"]
+    assert "CC" in detect[0].text()
+
+
+def test_key_field_for_action_exists(qapp):
+    from tabs.keymap_tab import SetCard, MovementKeyField
+    card = SetCard(index=0, set_data={
+        "name": "Default", "forward": "Up", "reverse": "Down",
+        "left": "Left", "right": "Right", "jump": "space",
+        "book": "Alt_L", "gags": "g", "tasks": "t", "map": "Shift_L",
+    }, active_game="ttr")
+    fwd = card.findChild(MovementKeyField, "key_field_forward")
+    assert fwd is not None
+    assert fwd.get_key() == "Up"

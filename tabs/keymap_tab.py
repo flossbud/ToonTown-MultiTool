@@ -319,8 +319,10 @@ class SetCard(QFrame):
     toggle_requested = Signal()
     name_changed     = Signal(str)
     delete_requested = Signal()
+    key_changed       = Signal(str, str)   # (action_name, captured_key)
+    detect_requested  = Signal()
 
-    def __init__(self, index: int, set_data: dict, parent=None):
+    def __init__(self, index: int, set_data: dict, active_game: str = "ttr", parent=None):
         super().__init__(parent)
         self.index = index
         self.set_data = set_data
@@ -378,6 +380,82 @@ class SetCard(QFrame):
         outer.addWidget(header)
         self._header = header
         self._name_widget = name_widget
+
+        # ── Body (AnimatedBody — same animation as today's pattern) ──
+        self._active_game = active_game
+        self._body = AnimatedBody()
+        self._body.setObjectName("set_card_body")
+        bl = QVBoxLayout(self._body)
+        bl.setContentsMargins(14, 12, 14, 14)
+        bl.setSpacing(8)
+
+        if index == 0:
+            hint = QLabel(
+                "These keys are what is sent to all game windows for input.\n"
+                "Make sure these match with your in-game settings."
+            )
+            hint.setObjectName("set_body_hint")
+            hint.setWordWrap(True)
+            hint.setStyleSheet(
+                "font-size: 11px; color: rgba(255,255,255,0.45); "
+                "background: none; border: none; padding: 0 0 4px 0;"
+            )
+            bl.addWidget(hint)
+
+        two_col = QHBoxLayout()
+        two_col.setSpacing(20)
+        move_col = QVBoxLayout()
+        move_col.setSpacing(6)
+        aux_col = QVBoxLayout()
+        aux_col.setSpacing(6)
+
+        def _make_key_row(action):
+            row = QHBoxLayout()
+            row.setSpacing(8)
+            lbl = QLabel(ACTION_LABELS.get(action, action.title()))
+            lbl.setObjectName("direction_label")
+            lbl.setFixedWidth(50)
+            row.addWidget(lbl)
+            field = MovementKeyField(set_data.get(action, ""))
+            field.setObjectName(f"key_field_{action}")
+            field.key_captured.connect(
+                lambda key, a=action: self.key_changed.emit(a, key)
+            )
+            row.addWidget(field)
+            row.addStretch()
+            return row
+
+        actions = logical_actions.actions_for(active_game)
+        for action in actions:
+            if action in ("forward", "reverse", "left", "right", "jump"):
+                move_col.addLayout(_make_key_row(action))
+        for action in actions:
+            if action in ("book", "gags", "tasks", "map", "sprint"):
+                aux_col.addLayout(_make_key_row(action))
+        aux_col.addStretch()
+        two_col.addLayout(move_col)
+        two_col.addLayout(aux_col)
+        two_col.addStretch()
+        bl.addLayout(two_col)
+
+        if index == 0:
+            label = "Detect TTR Settings" if active_game == "ttr" else "Detect CC Settings"
+            detect_btn = QPushButton(f"{S('🔍 ', '')}{label}")
+            detect_btn.setObjectName("detect_btn")
+            detect_btn.setFixedHeight(30)
+            detect_btn.setCursor(Qt.PointingHandCursor)
+            detect_btn.setToolTip(
+                "Read current settings from Toontown Rewritten configuration"
+                if active_game == "ttr"
+                else "Read current settings from Corporate Clash preferences"
+            )
+            detect_btn.clicked.connect(self.detect_requested.emit)
+            btn_row = QHBoxLayout()
+            btn_row.addStretch()
+            btn_row.addWidget(detect_btn)
+            bl.addLayout(btn_row)
+
+        outer.addWidget(self._body)
         self.setMinimumHeight(self.STRIPE_HEIGHT + header.sizeHint().height())
 
     def paintEvent(self, event):
@@ -478,6 +556,20 @@ class SetCard(QFrame):
             f"color: {s['name_color']}; border-color: rgba(255,255,255,0.25); }}"
         )
 
+    def set_expanded(self, expanded: bool, *, animate: bool = True):
+        if expanded:
+            if animate:
+                self._body.expand()
+            else:
+                self._body.setVisible(True)
+            self._chevron.setText(S("▼", "v"))
+        else:
+            if animate:
+                self._body.collapse()
+            else:
+                self._body.setVisible(False)
+            self._chevron.setText(S("▶", ">"))
+
 
 # ── Main Tab ───────────────────────────────────────────────────────────────
 
@@ -548,38 +640,37 @@ class KeymapTab(QWidget):
         else:
             prev_states = {entry["index"]: entry["expanded"] for entry in self._entries}
 
-        # Tear down old widgets
         for entry in self._entries:
-            entry["header"].deleteLater()
-            entry["body"].deleteLater()
+            entry["card"].deleteLater()
         self._entries.clear()
 
-        # Remove spacers and add button
         while self._scroll_layout.count():
             item = self._scroll_layout.takeAt(0)
             w = item.widget()
             if w:
                 w.deleteLater()
 
+        from utils.theme_manager import apply_card_shadow, resolve_theme
+        is_dark = resolve_theme(self.settings_manager) == "dark"
+
         sets = self.keymap_manager.get_sets(self._active_game)
         for idx, s in enumerate(sets):
             if idx > 0:
-                self._scroll_layout.addSpacing(12)
+                self._scroll_layout.addSpacing(10)
+            card = SetCard(index=idx, set_data=s, active_game=self._active_game, parent=self)
+            card.toggle_requested.connect(lambda i=idx: self._toggle(i))
+            card.name_changed.connect(lambda name, i=idx: self._on_name_changed(i, name))
+            card.key_changed.connect(lambda action, key, i=idx: self._on_key_changed(i, action, key))
+            card.delete_requested.connect(lambda i=idx: self._on_delete_set(i))
+            card.detect_requested.connect(self._on_detect_settings)
 
             expanded = prev_states.get(idx, False)
+            card.set_expanded(expanded, animate=False)
+            apply_card_shadow(card, is_dark, blur=14, offset_y=4)
 
-            header, body, chevron = self._make_pair(idx, s)
-            self._scroll_layout.addWidget(header)
-            self._scroll_layout.addSpacing(4)
-            self._scroll_layout.addWidget(body)
-
-            if not expanded:
-                body.setVisible(False)
-                chevron.setText(S("▶", ">"))
-
+            self._scroll_layout.addWidget(card)
             self._entries.append({
-                "header": header, "body": body, "chevron": chevron,
-                "index": idx, "expanded": expanded,
+                "card": card, "index": idx, "expanded": expanded,
             })
 
         self._scroll_layout.addSpacing(16)
@@ -842,13 +933,7 @@ class KeymapTab(QWidget):
         entry = self._entries[index]
         expanded = not entry["expanded"]
         entry["expanded"] = expanded
-
-        entry["chevron"].setText(S("▼", "v") if expanded else S("▶", ">"))
-
-        if expanded:
-            entry["body"].expand()
-        else:
-            entry["body"].collapse()
+        entry["card"].set_expanded(expanded, animate=True)
 
         if self.settings_manager:
             key = f"keymap_expanded_states_{self._active_game}"
@@ -865,7 +950,9 @@ class KeymapTab(QWidget):
         if not self._entries:
             return
         default_entry = self._entries[0]
-        body = default_entry["body"]
+        body = default_entry.get("body") or getattr(default_entry.get("card"), "_body", None)
+        if body is None:
+            return
         has, pairs = self.keymap_manager.has_conflicts(self._active_game, 0)
         conflicting_actions: set[str] = set()
         for a, b in pairs:
@@ -1004,8 +1091,11 @@ class KeymapTab(QWidget):
         for entry in self._entries:
             idx = entry["index"]
             set_bg, _ = get_set_color(idx)
-            body = entry["body"]
+            body = entry.get("body") or getattr(entry.get("card"), "_body", None)
             expanded = entry["expanded"]
+
+            if body is None:
+                continue
 
             # Header is always fully rounded — style set at creation, no change needed
 
