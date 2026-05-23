@@ -145,19 +145,25 @@ class KeyringPendingBanner(QFrame):
         self.body_label.setWordWrap(True)
         layout.addWidget(self.body_label)
 
-    def refresh_theme(self, c, is_dark: bool):
-        bg = "#1e1e2e" if is_dark else "#f0f0f0"
-        border = "#888888"
+        self.apply_theme(get_theme_colors(True))
+
+    def apply_theme(self, c: dict) -> None:
+        """Rebuild QSS from the theme dict `c`."""
         self.setStyleSheet(
-            f"QFrame#keyring_pending_banner {{ background: {bg}; border-left: 3px solid {border}; "
-            f"border-top: 1px solid {border}55; border-right: 1px solid {border}55; "
-            f"border-bottom: 1px solid {border}55; border-radius: 8px; }}"
+            "QFrame#keyring_pending_banner {"
+            f" background: {c['bg_card']};"
+            f" border: 1px solid {c['border_card']};"
+            f" border-left: 3px solid {c['accent_blue']};"
+            " border-radius: 10px;"
+            "}"
         )
         self.header_label.setStyleSheet(
-            f"font-size: 13px; font-weight: 700; color: {c['text_secondary']}; background: transparent; border: none;"
+            f"font-size: 13px; font-weight: 700; color: {c['text_primary']};"
+            " background: transparent; border: none;"
         )
         self.body_label.setStyleSheet(
-            f"font-size: 11px; color: {c['text_primary']}; background: transparent; border: none;"
+            f"font-size: 11px; color: {c['text_secondary']};"
+            " background: transparent; border: none;"
         )
 
 
@@ -204,6 +210,8 @@ class KeyringWarningBanner(QFrame):
         if self.legacy_label.isVisible():
             layout.addWidget(self.legacy_label)
 
+        self.apply_theme(get_theme_colors(True))
+
     def _instruction_text(self) -> str:
         if sys.platform == "win32":
             return (
@@ -224,28 +232,36 @@ class KeyringWarningBanner(QFrame):
             "                or Seahorse (GNOME Passwords & Keys)"
         )
 
-    def refresh_theme(self, c, is_dark: bool):
-        bg = "#3D2800" if is_dark else "#FFF3CD"
-        border = "#E8A838"
+    def apply_theme(self, c: dict) -> None:
+        """Rebuild QSS from the theme dict `c`."""
         self.setStyleSheet(
-            f"QFrame#keyring_warning_banner {{ background: {bg}; border-left: 3px solid {border}; "
-            f"border-top: 1px solid {border}55; border-right: 1px solid {border}55; "
-            f"border-bottom: 1px solid {border}55; border-radius: 8px; }}"
+            "QFrame#keyring_warning_banner {"
+            f" background: {c['bg_card']};"
+            f" border: 1px solid {c['border_card']};"
+            f" border-left: 3px solid {c['accent_orange_border']};"
+            " border-radius: 10px;"
+            "}"
         )
         self.header_label.setStyleSheet(
-            f"font-size: 13px; font-weight: 700; color: {border}; background: transparent; border: none;"
+            f"font-size: 13px; font-weight: 700;"
+            f" color: {c['accent_orange_border']};"
+            " background: transparent; border: none;"
         )
         self.body_label.setStyleSheet(
-            f"font-size: 11px; color: {c['text_primary']}; background: transparent; border: none;"
+            f"font-size: 11px; color: {c['text_primary']};"
+            " background: transparent; border: none;"
         )
         self.fix_label.setStyleSheet(
-            f"font-size: 11px; color: {c['text_secondary']}; background: transparent; border: none;"
+            f"font-size: 11px; color: {c['text_secondary']};"
+            " background: transparent; border: none;"
         )
         self.link_label.setStyleSheet(
-            f"font-size: 10px; color: {c['accent_blue_btn']}; background: transparent; border: none;"
+            f"font-size: 10px; color: {c['accent_blue_btn']};"
+            " background: transparent; border: none;"
         )
         self.legacy_label.setStyleSheet(
-            f"font-size: 10px; color: {c['text_muted']}; background: transparent; border: none;"
+            f"font-size: 10px; color: {c['text_muted']};"
+            " background: transparent; border: none;"
         )
 
 
@@ -1223,8 +1239,8 @@ class LaunchTab(QWidget):
         self._scroll_widget.setStyleSheet(f"background: {c['bg_app']};")
 
         if self._keyring_banner is not None:
-            if hasattr(self._keyring_banner, "refresh_theme"):
-                self._keyring_banner.refresh_theme(c, is_dark)
+            if hasattr(self._keyring_banner, "apply_theme"):
+                self._keyring_banner.apply_theme(c)
 
     # ── Logging ────────────────────────────────────────────────────────────
 
