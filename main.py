@@ -277,7 +277,11 @@ class MultiToonTool(QMainWindow):
             window_manager=self.window_manager,
         )
         self.launch_tab = LaunchTab(settings_manager=self.settings_manager, logger=self.logger)
-        self.keymap_tab = KeymapTab(self.keymap_manager, self.settings_manager)
+        self.keymap_tab = KeymapTab(
+            self.keymap_manager,
+            self.settings_manager,
+            credentials_manager=self.launch_tab.cred_manager,
+        )
         self.settings_tab = SettingsTab(self.settings_manager)
         self.credits_tab = CreditsTab(self.settings_manager)
 

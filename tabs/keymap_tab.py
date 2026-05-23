@@ -25,6 +25,11 @@ from utils.widgets import install_modern_scrollbar
 
 from utils import logical_actions
 
+_GAME_INDEX = {"ttr": 0, "cc": 1}
+"""Stack page index per game. TTR sits on the left page, CC on the right,
+so push_slide_pages with axis='h' naturally slides TTR out left on a
+TTR -> CC switch."""
+
 
 def _asset_path(name: str) -> str:
     """Resolve a bundled asset relative to the repo root / PyInstaller _MEIPASS.
@@ -926,7 +931,6 @@ class KeymapTab(QWidget):
         self.keymap_manager = keymap_manager
         self.settings_manager = settings_manager
         self.credentials_manager = credentials_manager
-        self._entries = []  # list of {"card", "index", "expanded"}
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -942,94 +946,210 @@ class KeymapTab(QWidget):
         install_modern_scrollbar(self._scroll, is_dark=is_dark)
 
         from utils.layout import clamp_centered
+        from PySide6.QtWidgets import QStackedWidget
 
         scroll_inner = QWidget()
         scroll_inner_layout = QHBoxLayout(scroll_inner)
         scroll_inner_layout.setContentsMargins(0, 0, 0, 0)
 
-        self._scroll_widget = QWidget()
-        self._scroll_layout = QVBoxLayout(self._scroll_widget)
-        self._scroll_layout.setContentsMargins(24, 20, 24, 20)
-        self._scroll_layout.setSpacing(0)
-        self._scroll_layout.setAlignment(Qt.AlignTop)
+        # One QStackedWidget with one page per game. push_slide_pages
+        # animates between pages using grabbed pixmaps so no layout
+        # reflow happens during the slide.
+        self._game_stack = QStackedWidget()
 
-        clamp_centered(scroll_inner_layout, self._scroll_widget, 720)
+        # Per-game page widgets, layouts, and bookkeeping. Built later
+        # via _build_page_for_game.
+        self._pages: dict[str, QWidget] = {}
+        self._page_layouts: dict[str, QVBoxLayout] = {}
+        self._add_btns: dict[str, QPushButton] = {}
+        self._entries_by_game: dict[str, list] = {"ttr": [], "cc": []}
+        self._expansion_initialized_for: set = set()
+
+        for game in ("ttr", "cc"):
+            page = QWidget()
+            page_layout = QVBoxLayout(page)
+            page_layout.setContentsMargins(24, 20, 24, 20)
+            page_layout.setSpacing(0)
+            page_layout.setAlignment(Qt.AlignTop)
+            self._game_stack.insertWidget(_GAME_INDEX[game], page)
+            self._pages[game] = page
+            self._page_layouts[game] = page_layout
+
+        clamp_centered(scroll_inner_layout, self._game_stack, 720)
 
         self._scroll.setWidget(scroll_inner)
         outer.addWidget(self._scroll)
 
-        # Scope to the first detected game; default to TTR if neither or both are detected.
-        if self._cc_detected() and not self._ttr_detected():
+        # Active game starts at the first member of _active_games. When both
+        # are active, default to TTR (matches the pre-existing behavior).
+        active = self._active_games()
+        if active == {"cc"}:
             self._active_game: str = "cc"
         else:
             self._active_game: str = "ttr"
-        self._segmented = None
-        # Detection is intentionally cached at construction. Live re-evaluation on
-        # settings_manager.on_change is queued as a v2 followup; users currently
-        # need to restart TTMT after adding a game install path in Settings.
-        self._show_segmented = self._both_games_detected()
-        if self._show_segmented:
-            self._segmented = _GameSubRail(self._active_game, parent=self)
-            self._segmented.game_changed.connect(self._on_segment_clicked)
-            outer.insertWidget(0, self._segmented)
 
-        self._build_cards()
+        # Sub-rail lives in `outer` ABOVE the scroll area. Built lazily on
+        # first 2-active transition; toggled via setVisible thereafter so
+        # 2 -> 1 -> 2 sequences don't rebuild it.
+        self._segmented = None
+
+        # Cache the prior active set + sub-rail visibility for the no-change
+        # short-circuit in _refresh_visibility.
+        self._prev_active_games: set = set()
+        self._prev_segmented_visible: bool = False
+
+        # Build both pages eagerly so the animation source-pixmaps are
+        # always available and the inactive page doesn't flash on first
+        # switch.
+        self._build_cards_for_game("ttr")
+        self._build_cards_for_game("cc")
+
+        # Initial stack page is the active game.
+        self._game_stack.setCurrentIndex(_GAME_INDEX[self._active_game])
+
+        # Build / show the sub-rail iff both games are active right now.
+        # Subscribe to settings + credentials changes for live updates.
+        self._refresh_visibility()
+        if self.settings_manager is not None:
+            self.settings_manager.on_change(self._on_settings_change)
+        if self.credentials_manager is not None:
+            self.credentials_manager.on_change(self._refresh_visibility)
+
         self.refresh_theme()
 
     # ── Build ──────────────────────────────────────────────────────────────
 
-    def _build_cards(self):
-        if not hasattr(self, "_initialized_expansion") or not self._initialized_expansion:
-            self._initialized_expansion = True
-            key = f"keymap_expanded_states_{self._active_game}"
-            legacy = self.settings_manager.get("keymap_expanded_states", None) if self.settings_manager else None
-            expanded_list = self.settings_manager.get(key, legacy if legacy is not None else [0]) if self.settings_manager else [0]
+    @property
+    def _entries(self) -> list:
+        """Active game's entries list. Most read sites use this; writes
+        target self._entries_by_game[game] directly so each callback is
+        explicit about which game it touches."""
+        return self._entries_by_game[self._active_game]
+
+    def _build_cards_for_game(self, game: str) -> None:
+        """Rebuild the card list (header + cards + add button + stretch)
+        for one game's page. Idempotent: clears the page layout first.
+        Targets self._page_layouts[game] and self._entries_by_game[game].
+        Signal bindings carry the game name so cards on the inactive page
+        still write to the correct game's data if invoked."""
+        page_layout = self._page_layouts[game]
+
+        # Read prior expand state (from settings on first build, from
+        # in-memory entries on subsequent rebuilds).
+        if game not in self._expansion_initialized_for:
+            self._expansion_initialized_for.add(game)
+            key = f"keymap_expanded_states_{game}"
+            legacy = (
+                self.settings_manager.get("keymap_expanded_states", None)
+                if self.settings_manager else None
+            )
+            expanded_list = (
+                self.settings_manager.get(key, legacy if legacy is not None else [0])
+                if self.settings_manager else [0]
+            )
             prev_states = {i: (i in expanded_list) for i in range(16)}
         else:
-            prev_states = {entry["index"]: entry["expanded"] for entry in self._entries}
+            prev_states = {
+                entry["index"]: entry["expanded"]
+                for entry in self._entries_by_game[game]
+            }
 
-        for entry in self._entries:
+        # Tear down existing cards + layout items.
+        for entry in self._entries_by_game[game]:
             entry["card"].deleteLater()
-        self._entries.clear()
+        self._entries_by_game[game].clear()
 
-        while self._scroll_layout.count():
-            item = self._scroll_layout.takeAt(0)
+        while page_layout.count():
+            item = page_layout.takeAt(0)
             w = item.widget()
             if w:
                 w.deleteLater()
 
         is_dark = resolve_theme(self.settings_manager) == "dark"
+        c = get_theme_colors(is_dark)
 
-        sets = self.keymap_manager.get_sets(self._active_game)
+        # ── Per-game header (label + divider) ──────────────────────────
+        title = (
+            "ToonTown Rewritten Keysets" if game == "ttr"
+            else "Corporate Clash Keysets"
+        )
+        accent_token = "game_pill_ttr" if game == "ttr" else "game_pill_cc"
+        header_label = QLabel(title)
+        header_label.setObjectName(f"header_label_{game}")
+        header_label.setStyleSheet(
+            f"QLabel#header_label_{game} {{"
+            f" font-size: 10px;"
+            f" font-weight: 600;"
+            f" color: {c[accent_token]};"
+            f" background: transparent;"
+            f" letter-spacing: 0.8px;"
+            f" border: none;"
+            f"}}"
+        )
+        page_layout.addWidget(header_label)
+
+        header_divider = QFrame()
+        header_divider.setObjectName(f"header_divider_{game}")
+        header_divider.setFixedHeight(2)
+        header_divider.setMaximumWidth(320)
+        header_divider.setStyleSheet(
+            f"QFrame#header_divider_{game} {{"
+            f" background: {c[accent_token]};"
+            f" border: none;"
+            f" border-radius: 1px;"
+            f"}}"
+        )
+        page_layout.addWidget(header_divider)
+        page_layout.addSpacing(10)
+
+        # ── SetCards ───────────────────────────────────────────────────
+        sets = self.keymap_manager.get_sets(game)
         for idx, s in enumerate(sets):
             if idx > 0:
-                self._scroll_layout.addSpacing(10)
-            card = SetCard(index=idx, set_data=s, active_game=self._active_game,
-                           is_dark=is_dark, parent=self)
-            card.toggle_requested.connect(lambda i=idx: self._toggle(i))
-            card.name_changed.connect(lambda name, i=idx: self._on_name_changed(i, name))
-            card.key_changed.connect(lambda action, key, i=idx: self._on_key_changed(i, action, key))
-            card.delete_requested.connect(lambda i=idx: self._on_delete_set(i))
-            card.detect_requested.connect(self._on_detect_settings)
+                page_layout.addSpacing(10)
+            card = SetCard(index=idx, set_data=s, active_game=game,
+                           is_dark=is_dark, parent=self._pages[game])
+            card.toggle_requested.connect(
+                lambda i=idx, g=game: self._toggle_for_game(g, i)
+            )
+            card.name_changed.connect(
+                lambda name, i=idx, g=game: self._on_name_changed_for_game(g, i, name)
+            )
+            card.key_changed.connect(
+                lambda action, key, i=idx, g=game: self._on_key_changed_for_game(g, i, action, key)
+            )
+            card.delete_requested.connect(
+                lambda i=idx, g=game: self._on_delete_set_for_game(g, i)
+            )
+            card.detect_requested.connect(
+                lambda g=game: self._on_detect_settings_for_game(g)
+            )
 
             expanded = prev_states.get(idx, False)
             card.set_expanded(expanded, animate=False)
-            self._scroll_layout.addWidget(card)
-            self._entries.append({
+
+            page_layout.addWidget(card)
+            self._entries_by_game[game].append({
                 "card": card, "index": idx, "expanded": expanded,
             })
 
-        self._scroll_layout.addSpacing(16)
-        self._add_btn = QPushButton(f"{S('➕', '+')} Add Movement Set")
-        self._add_btn.setMinimumHeight(28)
-        self._add_btn.setMaximumWidth(260)
-        self._add_btn.setCursor(Qt.PointingHandCursor)
-        self._add_btn.clicked.connect(self._on_add_set)
-        self._add_btn.setVisible(len(sets) < self.keymap_manager.MAX_SETS_PER_GAME)
-        self._scroll_layout.addWidget(self._add_btn, alignment=Qt.AlignHCenter)
-        self._scroll_layout.addStretch()
+        page_layout.addSpacing(16)
+        add_btn = QPushButton(f"{S('➕', '+')} Add Movement Set")
+        add_btn.setObjectName(f"add_btn_{game}")
+        add_btn.setMinimumHeight(28)
+        add_btn.setMaximumWidth(260)
+        add_btn.setCursor(Qt.PointingHandCursor)
+        add_btn.clicked.connect(lambda g=game: self._on_add_set_for_game(g))
+        add_btn.setVisible(len(sets) < self.keymap_manager.MAX_SETS_PER_GAME)
+        page_layout.addWidget(add_btn, alignment=Qt.AlignHCenter)
+        page_layout.addStretch()
+        self._add_btns[game] = add_btn
 
-        self._refresh_default_conflict_markers()
+        # Refresh conflict markers only for the active game's page (cheap
+        # and idempotent; safe to skip for inactive pages until they
+        # become active).
+        if game == self._active_game:
+            self._refresh_default_conflict_markers()
 
     # ── Game detection + segmented control ────────────────────────────────
 
@@ -1086,27 +1206,48 @@ class KeymapTab(QWidget):
         self._active_game = game
         if self._segmented is not None:
             self._segmented.set_active(game)
-        self._initialized_expansion = False  # re-read expand state for new game
-        self._build_cards()
-        self.refresh_theme()
+        # Animation comes in Task 5; for now, snap to the page.
+        self._game_stack.setCurrentIndex(_GAME_INDEX[game])
+        self._refresh_default_conflict_markers()
 
-    # ── Toggle ─────────────────────────────────────────────────────────────
+    # ── Per-game callbacks ─────────────────────────────────────────────────
 
-    def _toggle(self, index):
-        entry = self._entries[index]
+    def _toggle_for_game(self, game: str, index: int) -> None:
+        entry = self._entries_by_game[game][index]
         expanded = not entry["expanded"]
         entry["expanded"] = expanded
         entry["card"].set_expanded(expanded, animate=True)
-
         if self.settings_manager:
-            key = f"keymap_expanded_states_{self._active_game}"
-            expanded_list = [e["index"] for e in self._entries if e["expanded"]]
+            key = f"keymap_expanded_states_{game}"
+            expanded_list = [
+                e["index"] for e in self._entries_by_game[game] if e["expanded"]
+            ]
             self.settings_manager.set(key, expanded_list)
 
-    # ── Callbacks ──────────────────────────────────────────────────────────
+    def _on_name_changed_for_game(self, game: str, index: int, name: str) -> None:
+        self.keymap_manager.update_set_name(game, index, name)
 
-    def _on_name_changed(self, index, name):
-        self.keymap_manager.update_set_name(self._active_game, index, name)
+    def _on_key_changed_for_game(self, game: str, set_index: int, action: str, key: str) -> None:
+        self.keymap_manager.update_set_key(game, set_index, action, key)
+        if game == self._active_game:
+            self._refresh_default_conflict_markers()
+
+    def _on_add_set_for_game(self, game: str) -> None:
+        self.keymap_manager.add_set(game)
+        self._build_cards_for_game(game)
+
+    def _on_delete_set_for_game(self, game: str, index: int) -> None:
+        self.keymap_manager.delete_set(game, index)
+        self._build_cards_for_game(game)
+
+    def _on_detect_settings_for_game(self, game: str) -> None:
+        """Dispatch to the per-game detect routine. The existing
+        _on_detect_settings read self._active_game; here the game arrives
+        via the signal-binding-with-game-name lambda."""
+        if game == "ttr":
+            self._on_detect_ttr_settings()
+        else:
+            self._on_detect_cc_settings()
 
     def _refresh_default_conflict_markers(self):
         """Recompute conflicts in this game's Default set and paint affected fields red."""
@@ -1139,26 +1280,6 @@ class KeymapTab(QWidget):
             else:
                 field.setToolTip("")
 
-    def _on_key_changed(self, set_index, action, key):
-        self.keymap_manager.update_set_key(self._active_game, set_index, action, key)
-        self._refresh_default_conflict_markers()
-
-    def _on_add_set(self):
-        self.keymap_manager.add_set(self._active_game)
-        self._build_cards()
-        self.refresh_theme()
-
-    def _on_delete_set(self, index):
-        self.keymap_manager.delete_set(self._active_game, index)
-        self._build_cards()
-        self.refresh_theme()
-
-    def _on_detect_settings(self):
-        if self._active_game == "ttr":
-            self._on_detect_ttr_settings()
-        else:
-            self._on_detect_cc_settings()
-
     def _on_detect_ttr_settings(self):
         from utils.ttr_settings import locate_settings_file, parse_ttr_settings, apply_ttr_controls_to_set
         from services.ttr_login_service import find_engine_path
@@ -1182,7 +1303,7 @@ class KeymapTab(QWidget):
 
         updates = apply_ttr_controls_to_set(self.keymap_manager, 0, settings.controls)
         if updates > 0:
-            self._build_cards()
+            self._build_cards_for_game("ttr")
             self.refresh_theme()
             print(f"[KeymapTab] Detected {updates} TTR settings from {path}")
 
@@ -1228,7 +1349,7 @@ class KeymapTab(QWidget):
 
         updates = apply_cc_controls_to_set(self.keymap_manager, 0, settings)
         if updates > 0:
-            self._build_cards()
+            self._build_cards_for_game("cc")
             self.refresh_theme()
             print(f"[KeymapTab] Detected {updates} CC settings from {path}")
 
@@ -1243,7 +1364,9 @@ class KeymapTab(QWidget):
 
         self.setStyleSheet(f"background: {c['bg_app']}; color: {c['text_primary']};")
         self._scroll.setStyleSheet(f"background: {c['bg_app']};")
-        self._scroll_widget.setStyleSheet(f"background: {c['bg_app']};")
+        for game in ("ttr", "cc"):
+            if game in self._pages:
+                self._pages[game].setStyleSheet(f"background: {c['bg_app']};")
 
         bar = getattr(self._scroll, "_auto_hide_scrollbar", None)
         if bar is not None:
@@ -1252,23 +1375,53 @@ class KeymapTab(QWidget):
         # SetCard._apply_chrome owns badge, name, hint, direction-label,
         # MovementKeyField, and delete-button QSS. Calling set_theme on each
         # card re-invokes _apply_chrome with the new is_dark value.
-        for entry in self._entries:
-            entry["card"].set_theme(is_dark)
+        for game in ("ttr", "cc"):
+            for entry in self._entries_by_game[game]:
+                entry["card"].set_theme(is_dark)
 
-        if hasattr(self, "_add_btn"):
-            self._add_btn.setStyleSheet(f"""
-                QPushButton {{
-                    background: transparent;
-                    color: {c['text_muted']};
-                    border: 2px dashed {c['border_muted']};
-                    border-radius: 10px; font-weight: 600; font-size: 12px;
-                }}
-                QPushButton:hover {{
-                    color: {c['text_primary']};
-                    border-color: {c['text_secondary']};
-                    background: {c['bg_card_inner']};
-                }}
-            """)
+        # Per-game add buttons.
+        add_btn_qss = f"""
+            QPushButton {{
+                background: transparent;
+                color: {c['text_muted']};
+                border: 2px dashed {c['border_muted']};
+                border-radius: 10px; font-weight: 600; font-size: 12px;
+            }}
+            QPushButton:hover {{
+                color: {c['text_primary']};
+                border-color: {c['text_secondary']};
+                background: {c['bg_card_inner']};
+            }}
+        """
+        for game in ("ttr", "cc"):
+            btn = self._add_btns.get(game)
+            if btn is not None:
+                btn.setStyleSheet(add_btn_qss)
+
+        # Per-game header banners (one per page, always present).
+        for game in ("ttr", "cc"):
+            accent_token = "game_pill_ttr" if game == "ttr" else "game_pill_cc"
+            lbl = self.findChild(QLabel, f"header_label_{game}")
+            if lbl is not None:
+                lbl.setStyleSheet(
+                    f"QLabel#header_label_{game} {{"
+                    f" font-size: 10px;"
+                    f" font-weight: 600;"
+                    f" color: {c[accent_token]};"
+                    f" background: transparent;"
+                    f" letter-spacing: 0.8px;"
+                    f" border: none;"
+                    f"}}"
+                )
+            div = self.findChild(QFrame, f"header_divider_{game}")
+            if div is not None:
+                div.setStyleSheet(
+                    f"QFrame#header_divider_{game} {{"
+                    f" background: {c[accent_token]};"
+                    f" border: none;"
+                    f" border-radius: 1px;"
+                    f"}}"
+                )
 
         hover_accent = (
             c['accent_blue_btn'] if self._active_game == "ttr"
@@ -1289,3 +1442,21 @@ class KeymapTab(QWidget):
                 f" color: {hover_accent};"
                 "}"
             )
+
+    # ── Visibility refresh (Task 6 stub) ────────────────────────────────────
+
+    def _refresh_visibility(self) -> None:
+        """Sub-rail visibility + page-validity refresh. Full body in Task 6.
+        Stub here builds sub-rail when both games are active."""
+        active = self._active_games()
+        if len(active) == 2 and self._segmented is None:
+            self._segmented = _GameSubRail(self._active_game, parent=self)
+            self._segmented.game_changed.connect(self._on_segment_clicked)
+            self.layout().insertWidget(0, self._segmented)
+        if self._segmented is not None:
+            self._segmented.setVisible(len(active) == 2)
+
+    def _on_settings_change(self, key: str, value) -> None:
+        """Refresh on engine-dir changes. Full body in Task 6."""
+        if key in ("ttr_engine_dir", "cc_engine_dir"):
+            self._refresh_visibility()
