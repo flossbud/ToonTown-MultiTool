@@ -18,8 +18,8 @@ from PySide6.QtWidgets import (
     QFrame, QScrollArea, QLineEdit, QSizePolicy,
 )
 from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve
-from PySide6.QtGui import QColor, QPainter
-from utils.theme_manager import resolve_theme, get_theme_colors, apply_card_shadow, get_set_color, make_trash_icon
+from PySide6.QtGui import QColor, QPainter, QPainterPath, QBrush, QLinearGradient, QPen
+from utils.theme_manager import resolve_theme, get_theme_colors, apply_card_shadow, get_set_color, make_trash_icon, get_set_card_styles
 from utils.symbols import S
 from utils.widgets import install_modern_scrollbar
 
@@ -300,6 +300,74 @@ class AnimatedBody(QFrame):
         self.setVisible(False)
         self.setMaximumHeight(16777215)
         self.collapse_finished.emit()
+
+
+# ── SetCard widget ─────────────────────────────────────────────────────────
+
+
+class SetCard(QFrame):
+    """One movement set rendered as a single card. Owns its own paintEvent
+    (rounded background + 4px top stripe inside one QPainterPath) so the
+    stripe rounds with the card without manual masking. Owns the body
+    (AnimatedBody) and the header row internally; consumers wire signals
+    instead of poking widget internals.
+    """
+
+    CORNER_RADIUS = 10
+    STRIPE_HEIGHT = 4
+
+    def __init__(self, index: int, set_data: dict, parent=None):
+        super().__init__(parent)
+        self.index = index
+        self.set_data = set_data
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        # Reserve 4px at top so child widgets sit below the painted stripe.
+        self.setContentsMargins(0, self.STRIPE_HEIGHT, 0, 0)
+        self._styles = get_set_card_styles(index, is_dark=True)
+        self.setMinimumHeight(self.STRIPE_HEIGHT + 50)
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        rect = self.rect().adjusted(0, 0, -1, -1)
+        path = QPainterPath()
+        path.addRoundedRect(rect, self.CORNER_RADIUS, self.CORNER_RADIUS)
+        p.setClipPath(path)
+
+        # 1) Card background gradient (top stop -> bottom stop)
+        bg_grad = QLinearGradient(0, 0, 0, rect.height())
+        bg_grad.setColorAt(0, self._rgba_to_qcolor(self._styles["card_grad_top"]))
+        bg_grad.setColorAt(1, self._rgba_to_qcolor(self._styles["card_grad_bottom"]))
+        p.fillPath(path, QBrush(bg_grad))
+
+        # 2) 4px top stripe with white-edge gloss + horizontal color band
+        stripe_rect = rect.adjusted(0, 0, 0, -(rect.height() - self.STRIPE_HEIGHT))
+        color_band = QLinearGradient(stripe_rect.left(), 0, stripe_rect.right(), 0)
+        color_band.setColorAt(0.0, QColor(self._styles["stripe_edge"]))
+        color_band.setColorAt(0.5, QColor(self._styles["stripe_center"]))
+        color_band.setColorAt(1.0, QColor(self._styles["stripe_edge"]))
+        p.fillRect(stripe_rect, QBrush(color_band))
+        gloss = QLinearGradient(0, stripe_rect.top(), 0, stripe_rect.bottom())
+        gloss.setColorAt(0.0, QColor(255, 255, 255, 76))   # 0.30 alpha
+        gloss.setColorAt(1.0, QColor(255, 255, 255, 0))
+        p.fillRect(stripe_rect, QBrush(gloss))
+
+        # 3) Card border (matches stylesheet rgba pattern)
+        pen = QPen(self._rgba_to_qcolor(self._styles["card_border"]))
+        pen.setWidth(1)
+        p.setPen(pen)
+        p.setBrush(Qt.NoBrush)
+        p.drawPath(path)
+        p.end()
+
+    @staticmethod
+    def _rgba_to_qcolor(rgba: str) -> QColor:
+        """Parse our `rgba(r, g, b, a)` style strings into a QColor."""
+        inner = rgba[rgba.index("(") + 1: rgba.rindex(")")]
+        parts = [s.strip() for s in inner.split(",")]
+        r, g, b = (int(parts[0]), int(parts[1]), int(parts[2]))
+        a = int(float(parts[3]) * 255)
+        return QColor(r, g, b, a)
 
 
 # ── Main Tab ───────────────────────────────────────────────────────────────
