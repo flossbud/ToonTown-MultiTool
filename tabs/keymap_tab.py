@@ -1,11 +1,11 @@
 """
 Keysets Tab — UI for creating and editing per-game movement sets.
 
-Each set is one SetCard(QFrame) that paints its own rounded card background
-gradient and a thin top stripe in a single paintEvent, and owns its header
-(badge + name + chevron + delete) and a _BodyClip-wrapped key grid
-internally. The active game is selected via an icon-only _SegmentedSwitch
-when both TTR and CC are detected.
+Each set is one SetCard(QFrame) that uses token-driven QSS for its chrome
+(flat bg_card fill, 1 px border_card on L/R/B, 2 px top stripe in the set's
+identity color, 10 px radius), and owns its header (badge + name + chevron +
+delete) and a _BodyClip-wrapped key grid internally. The active game is
+selected via an icon-only _GameSubRail when both TTR and CC are detected.
 """
 
 from __future__ import annotations
@@ -15,15 +15,21 @@ import os
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QFrame, QScrollArea, QLineEdit, QSizePolicy,
+    QFrame, QScrollArea, QLineEdit, QSizePolicy, QStackedWidget,
 )
-from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve, QSize, QPointF, Property
-from PySide6.QtGui import QColor, QPainter, QPainterPath, QBrush, QLinearGradient, QPen, QIcon, QPixmap, QPolygonF
-from utils.theme_manager import resolve_theme, get_theme_colors, apply_card_shadow, get_set_color, make_trash_icon, get_set_card_styles
+from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve, QSize, QPointF, Property, QRectF
+from PySide6.QtGui import QColor, QPainter, QIcon, QPixmap, QPolygonF
+from utils.theme_manager import resolve_theme, get_theme_colors, get_set_color, make_trash_icon
 from utils.symbols import S
 from utils.widgets import install_modern_scrollbar
+from utils.motion import push_slide_pages
 
 from utils import logical_actions
+
+_GAME_INDEX = {"ttr": 0, "cc": 1}
+"""Stack page index per game. TTR sits on the left page, CC on the right,
+so push_slide_pages with axis='h' naturally slides TTR out left on a
+TTR -> CC switch."""
 
 
 def _asset_path(name: str) -> str:
@@ -480,15 +486,12 @@ class _ChevronArrow(QWidget):
 
 
 class SetCard(QFrame):
-    """One movement set rendered as a single card. Owns its own paintEvent
-    (rounded background + STRIPE_HEIGHT-px top stripe inside one QPainterPath) so the
-    stripe rounds with the card without manual masking. Owns the body
+    """One movement set rendered as a single card. Token-driven QSS provides
+    the card surface (flat bg_card fill, 1 px border_card on L/R/B, 2 px top
+    stripe in the set's identity color, 10 px radius). Owns the body
     (_BodyClip) and the header row internally; consumers wire signals
     instead of poking widget internals.
     """
-
-    CORNER_RADIUS = 10
-    STRIPE_HEIGHT = 6
 
     toggle_requested = Signal()
     name_changed     = Signal(str)
@@ -500,25 +503,22 @@ class SetCard(QFrame):
         super().__init__(parent)
         self.index = index
         self.set_data = set_data
+        self.setObjectName("set_card")
         self.setAttribute(Qt.WA_StyledBackground, True)
-        self._styles = get_set_card_styles(index, is_dark=True)
         self._is_dark = is_dark
+        self._set_bg, self._set_text = get_set_color(index)
         self._header = None  # set before installEventFilter so eventFilter is safe
+        self._del_btn = None  # set in __init__ for alternate sets; stays None for the default set
 
-        # Reserve STRIPE_HEIGHT at the top via the layout margin so child
-        # widgets sit below the painted stripe. Setting both QWidget AND
-        # layout contents-margins stacks the inset (double-margin bug).
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, self.STRIPE_HEIGHT, 0, 0)
+        outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
         # ── Header row (badge + name + chevron + [delete]) ──────────
         header = QFrame()
         header.setObjectName("set_card_header")
         header.setCursor(Qt.PointingHandCursor)
-        # Transparent bg so the SetCard's painted gradient shows through.
-        # Without this, Qt fills the QFrame opaquely from the palette window
-        # color and covers the painted card body.
+        # Transparent initial state; _apply_chrome will set the final header QSS.
         header.setStyleSheet("QFrame#set_card_header { background: transparent; border: none; }")
         header.installEventFilter(self)  # forwards clicks to mousePressEvent
         hl = QHBoxLayout(header)
@@ -527,7 +527,8 @@ class SetCard(QFrame):
 
         badge = QLabel(f"SET {index + 1}")
         badge.setObjectName("set_card_badge")
-        badge.setStyleSheet(self._badge_qss())
+        # QSS applied via _apply_chrome.
+        self._badge = badge
         badge.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         hl.addWidget(badge)
 
@@ -540,7 +541,6 @@ class SetCard(QFrame):
             name_widget.editingFinished.connect(
                 lambda w=name_widget: self.name_changed.emit(w.text())
             )
-        name_widget.setStyleSheet(self._name_qss())
         hl.addWidget(name_widget, 1)
 
         self._chevron = _ChevronArrow()
@@ -548,13 +548,15 @@ class SetCard(QFrame):
 
         if index > 0:
             del_btn = QPushButton()
+            del_btn.setObjectName("set_card_delete")
             del_btn.setFixedSize(28, 28)
             del_btn.setToolTip("Delete this movement set")
             del_btn.setCursor(Qt.PointingHandCursor)
-            del_btn.setIcon(make_trash_icon(16, QColor("#8a9bb8")))
-            del_btn.setStyleSheet(self._delete_qss())
+            del_btn.setIcon(make_trash_icon(16, QColor("#888888")))
+            # QSS applied via _apply_chrome.
             del_btn.clicked.connect(self.delete_requested.emit)
             hl.addWidget(del_btn)
+            self._del_btn = del_btn
 
         outer.addWidget(header)
         # Lock the header's height to its natural sizeHint AFTER it's been
@@ -570,7 +572,6 @@ class SetCard(QFrame):
         self._active_game = active_game
         body_content = QWidget()
         body_content.setObjectName("set_card_body")
-        # Transparent so the SetCard's painted gradient shows through.
         body_content.setStyleSheet("QWidget#set_card_body { background: transparent; border: none; }")
         bl = QVBoxLayout(body_content)
         bl.setContentsMargins(14, 12, 14, 14)
@@ -583,10 +584,6 @@ class SetCard(QFrame):
             )
             hint.setObjectName("set_body_hint")
             hint.setWordWrap(True)
-            hint.setStyleSheet(
-                "font-size: 11px; color: rgba(255,255,255,0.45); "
-                "background: none; border: none; padding: 0 0 4px 0;"
-            )
             bl.addWidget(hint)
 
         two_col = QHBoxLayout()
@@ -645,65 +642,129 @@ class SetCard(QFrame):
         self._body = _BodyClip()
         self._body.set_content_widget(body_content)
         outer.addWidget(self._body)
-        self.setMinimumHeight(self.STRIPE_HEIGHT + header.sizeHint().height())
+        self.setMinimumHeight(header.sizeHint().height())
+        self._apply_chrome()
 
-    def paintEvent(self, event):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
-        rect = self.rect().adjusted(0, 0, -1, -1)
-        path = QPainterPath()
-        path.addRoundedRect(rect, self.CORNER_RADIUS, self.CORNER_RADIUS)
-        p.setClipPath(path)
-
-        # 0) Base card surface -- solid theme-aware fill so the card has
-        #    visible body pixels and the drop shadow has something to cast
-        #    from. The launch-style tint above is too low-opacity to do
-        #    either on its own.
+    def _apply_chrome(self) -> None:
+        """Build and apply token-driven QSS for the card surface, header,
+        badge, name, chevron, delete button, and contained MovementKeyFields.
+        Called once on construction and on every theme switch via
+        `set_theme(is_dark)`."""
         c = get_theme_colors(self._is_dark)
-        p.fillPath(path, QBrush(QColor(c["bg_card"])))
-
-        # 1) Card background tint -- set-color wash over the base surface.
-        bg_grad = QLinearGradient(0, 0, 0, rect.height())
-        bg_grad.setColorAt(0, self._rgba_to_qcolor(self._styles["card_grad_top"]))
-        bg_grad.setColorAt(1, self._rgba_to_qcolor(self._styles["card_grad_bottom"]))
-        p.fillPath(path, QBrush(bg_grad))
-
-        # 2) Top stripe (STRIPE_HEIGHT px) with white-edge gloss + horizontal color band
-        stripe_rect = rect.adjusted(0, 0, 0, -(rect.height() - self.STRIPE_HEIGHT))
-        color_band = QLinearGradient(stripe_rect.left(), 0, stripe_rect.right(), 0)
-        color_band.setColorAt(0.0, QColor(self._styles["stripe_edge"]))
-        color_band.setColorAt(0.5, QColor(self._styles["stripe_center"]))
-        color_band.setColorAt(1.0, QColor(self._styles["stripe_edge"]))
-        p.fillRect(stripe_rect, QBrush(color_band))
-        gloss = QLinearGradient(0, stripe_rect.top(), 0, stripe_rect.bottom())
-        gloss.setColorAt(0.0, QColor(255, 255, 255, 60))   # ~0.24 alpha
-        gloss.setColorAt(1.0, QColor(255, 255, 255, 0))
-        p.fillRect(stripe_rect, QBrush(gloss))
-
-        # 3) Card border (matches stylesheet rgba pattern)
-        pen = QPen(self._rgba_to_qcolor(self._styles["card_border"]))
-        pen.setWidth(1)
-        p.setPen(pen)
-        p.setBrush(Qt.NoBrush)
-        p.drawPath(path)
-        p.end()
+        # ── Card surface ──────────────────────────────────────────
+        self.setStyleSheet(
+            "QFrame#set_card {"
+            f" background: {c['bg_card']};"
+            f" border-left: 1px solid {c['border_card']};"
+            f" border-right: 1px solid {c['border_card']};"
+            f" border-bottom: 1px solid {c['border_card']};"
+            f" border-top: 2px solid {self._set_bg};"
+            " border-radius: 10px;"
+            "}"
+        )
+        # ── Header divider ────────────────────────────────────────
+        if self._header is not None:
+            self._header.setStyleSheet(
+                "QFrame#set_card_header {"
+                " background: transparent;"
+                f" border-bottom: 1px solid {c['border_muted']};"
+                "}"
+            )
+        # ── Badge ─────────────────────────────────────────────────
+        self._badge.setStyleSheet(
+            "QLabel#set_card_badge {"
+            f" background: {self._set_bg};"
+            f" color: {self._set_text};"
+            " font-size: 11px; font-weight: 700;"
+            " border-radius: 8px; padding: 4px 8px;"
+            "}"
+        )
+        # ── Name (QLabel for default set, QLineEdit for others) ───
+        name_qss = (
+            f"color: {c['text_primary']};"
+            " font-size: 15px; font-weight: 700;"
+            " background: transparent;"
+        )
+        if self.index == 0:
+            self._name_widget.setStyleSheet(
+                f"QLabel#set_name_label {{ {name_qss} }}"
+            )
+        else:
+            self._name_widget.setStyleSheet(
+                f"QLineEdit#set_name_edit {{ {name_qss} border: none; padding: 2px 4px; }}"
+                f"QLineEdit#set_name_edit:focus {{"
+                f" background: {c['bg_card_inner_hover']};"
+                f" border: 1px solid {c['border_card']};"
+                f" border-radius: 6px;"
+                f"}}"
+            )
+        # ── Chevron color ─────────────────────────────────────────
+        self._chevron.setColor(QColor(c['text_muted']))
+        # ── Delete button (alternate sets only) ───────────────────
+        if self._del_btn is not None:
+            self._del_btn.setStyleSheet(
+                "QPushButton#set_card_delete {"
+                " background: transparent;"
+                f" border: 1px solid {c['border_muted']};"
+                " border-radius: 6px;"
+                f" color: {c['text_muted']};"
+                "}"
+                "QPushButton#set_card_delete:hover {"
+                f" background: {c['bg_card_inner_hover']};"
+                f" border: 1px solid {c['border_card']};"
+                f" color: {c['accent_red_border']};"
+                "}"
+            )
+        # ── Default-set hint label ────────────────────────────────
+        for hint in self.findChildren(QLabel, "set_body_hint"):
+            hint.setStyleSheet(
+                f"font-size: 11px; color: {c['text_muted']};"
+                f" background: none; border: none; padding: 0 0 4px 0;"
+            )
+        # ── Direction labels (Forward / Reverse / Left / etc) ────
+        direction_qss = (
+            f"QLabel#direction_label {{"
+            f" color: {c['text_secondary']};"
+            f" font-size: 12px;"
+            f" background: transparent;"
+            f"}}"
+        )
+        for lbl in self.findChildren(QLabel, "direction_label"):
+            lbl.setStyleSheet(direction_qss)
+        # ── MovementKeyFields (default + awaiting per-set color) ──
+        field_qss = (
+            f"QLineEdit {{"
+            f" background: transparent;"
+            f" border: 1px solid {c['border_muted']};"
+            f" border-radius: 6px;"
+            f" color: {c['text_primary']};"
+            f" padding: 0 8px;"
+            f" font-weight: 600; font-size: 11.5px;"
+            f"}}"
+            f"QLineEdit:hover {{"
+            f" background: {c['bg_card_inner_hover']};"
+            f" border: 1px solid {c['border_card']};"
+            f"}}"
+            f"QLineEdit[awaiting=\"true\"] {{"
+            f" background: {c['bg_card_inner_hover']};"
+            f" border: 1px solid {self._set_bg};"
+            f" color: {self._set_bg};"
+            f"}}"
+            f"QLineEdit[conflict=\"true\"] {{"
+            f" border: 1px solid {c['accent_red_border']};"
+            f" background: rgba(208, 64, 64, 0.10);"
+            f"}}"
+        )
+        for field in self.findChildren(MovementKeyField):
+            field.setStyleSheet(field_qss)
 
     def set_theme(self, is_dark: bool):
-        """Update which theme this card paints against. Triggers a repaint
-        when the value actually changes."""
+        """Update which theme this card paints against. Re-applies QSS so the
+        chrome retints. Idempotent on no-op."""
         if is_dark == self._is_dark:
             return
         self._is_dark = is_dark
-        self.update()
-
-    @staticmethod
-    def _rgba_to_qcolor(rgba: str) -> QColor:
-        """Parse our `rgba(r, g, b, a)` style strings into a QColor."""
-        inner = rgba[rgba.index("(") + 1: rgba.rindex(")")]
-        parts = [s.strip() for s in inner.split(",")]
-        r, g, b = (int(parts[0]), int(parts[1]), int(parts[2]))
-        a = int(float(parts[3]) * 255)
-        return QColor(r, g, b, a)
+        self._apply_chrome()
 
     def eventFilter(self, obj, ev):
         # Header row click toggles. Clicks on the name QLineEdit / delete
@@ -719,47 +780,6 @@ class SetCard(QFrame):
         self.toggle_requested.emit()
         super().mousePressEvent(ev)
 
-    def _badge_qss(self) -> str:
-        s = self._styles
-        return (
-            f"QLabel#set_card_badge {{ "
-            f"background: {s['badge_bg']}; color: {s['badge_text']}; "
-            f"font-size: 9px; font-weight: 700; letter-spacing: 0.5px; "
-            f"border-radius: 4px; padding: 3px 8px; "
-            f"border: 1px solid {s['badge_ring']}; "
-            f"}}"
-        )
-
-    def _name_qss(self) -> str:
-        s = self._styles
-        if self.index == 0:
-            return (
-                f"QLabel#set_name_label {{ "
-                f"color: {s['name_color']}; font-size: 14px; font-weight: 800; "
-                f"letter-spacing: 0.2px; background: transparent; "
-                f"}}"
-            )
-        return (
-            f"QLineEdit#set_name_edit {{ "
-            f"color: {s['name_color']}; font-size: 14px; font-weight: 800; "
-            f"letter-spacing: 0.2px; background: transparent; border: none; padding: 2px 4px; "
-            f"}}"
-            f"QLineEdit#set_name_edit:focus {{ "
-            f"background: rgba(255,255,255,0.06); "
-            f"border-bottom: 1px solid {s['head_divider']}; "
-            f"}}"
-        )
-
-    def _delete_qss(self) -> str:
-        s = self._styles
-        return (
-            f"QPushButton {{ background: rgba(255,255,255,0.04); "
-            f"border: 1px solid rgba(255,255,255,0.12); border-radius: 6px; "
-            f"color: #8a9bb8; }} "
-            f"QPushButton:hover {{ background: rgba(255,255,255,0.08); "
-            f"color: {s['name_color']}; border-color: rgba(255,255,255,0.25); }}"
-        )
-
     def set_expanded(self, expanded: bool, *, animate: bool = True):
         self._chevron.set_expanded(expanded)
         if expanded:
@@ -774,120 +794,144 @@ class SetCard(QFrame):
                 self._body.hide_instant()
 
 
-class _SegmentedSwitch(QFrame):
-    """Icon-only TTR/CC switch. Inactive buttons are dimmed; active button
-    is tinted by per-game accent (TTR blue, CC orange) to match the
-    Launch tab's per-game card identity colors."""
+# -- TTR / CC game sub-rail ────────────────────────────────────────────────
+
+
+class _GameSubRail(QFrame):
+    """TTR/CC switch as a small chip rail.
+
+    Built from the same primitives the top app chip_rail uses:
+    `ChipButton` instances for the two icons + a `PillIndicator` overlay
+    that slides between them on switch and retints its border per game
+    accent (TTR blue, CC orange).
+    """
 
     game_changed = Signal(str)
 
-    _ACTIVE_BG = {
-        "ttr": "rgba(74, 143, 231, 0.18)",
-        "cc":  "rgba(242, 109, 33, 0.18)",
+    _BORDER_FOR = {
+        "ttr": "game_pill_ttr",   # theme token, resolved in _apply_pill_color
+        "cc":  "game_pill_cc",
     }
-    _ACTIVE_RING = {
-        "ttr": "rgba(74, 143, 231, 0.45)",
-        "cc":  "rgba(242, 109, 33, 0.45)",
-    }
-    _TITLES = {"ttr": "Toontown Rewritten", "cc": "Corporate Clash"}
 
     def __init__(self, active_game: str, parent=None):
         super().__init__(parent)
-        self.setObjectName("seg_switch_wrap")
+        self.setObjectName("game_sub_rail")
         self._active = active_game
-        self._buttons: dict[str, QPushButton] = {}
+
+        from utils.widgets.chip_button import ChipButton
+        from utils.widgets.pill_indicator import PillIndicator
+        from PySide6.QtCore import QEvent, QObject
 
         outer = QHBoxLayout(self)
         outer.setContentsMargins(0, 4, 0, 4)
         outer.setSpacing(0)
         outer.addStretch()
 
-        bar = QFrame()
-        bar.setObjectName("seg_switch_bar")
+        bar = QFrame(self)
+        bar.setObjectName("game_sub_rail_bar")
         bar_lay = QHBoxLayout(bar)
         bar_lay.setContentsMargins(4, 4, 4, 4)
         bar_lay.setSpacing(4)
 
-        self._icons: dict[str, dict[str, QIcon]] = {}
+        # Pill overlay parented to the bar (so its coordinates match the
+        # chips inside the bar, not the outer stretched layout).
+        self._pill = PillIndicator(bar)
+        self._pill.lower()
+
+        self._buttons: dict[str, ChipButton] = {}
         for game in ("ttr", "cc"):
-            b = QPushButton()
-            b.setFixedSize(56, 40)
-            b.setCursor(Qt.PointingHandCursor)
-            b.setToolTip(self._TITLES[game])
+            chip = ChipButton(bar)
+            chip.setObjectName(f"game_sub_rail_chip_{game}")
+            chip.setToolButtonStyle(Qt.ToolButtonIconOnly)
+            chip.setMinimumSize(QSize(56, 40))
+            chip.setMaximumSize(QSize(56, 40))
+            chip.setCheckable(True)
+            chip.setCursor(Qt.PointingHandCursor)
             pm = QPixmap(_asset_path(f"{game}.png"))
             if not pm.isNull():
-                self._icons[game] = {
-                    "active":   QIcon(pm),
-                    "inactive": QIcon(self._dim_pixmap(pm, 0.55)),
-                }
-                b.setIconSize(QSize(28, 28))
-            b.clicked.connect(lambda _, g=game: self._on_click(g))
-            bar_lay.addWidget(b)
-            self._buttons[game] = b
+                chip.setIcon(QIcon(pm))
+                chip.setIconSize(QSize(28, 28))
+            # Transparent background so the PillIndicator (parented to `bar`
+            # and lowered to the back) is visible through the chip rect.
+            # Matches main.py._apply_chip_styles' transparent-chip recipe.
+            chip.setStyleSheet(
+                f"QToolButton#{chip.objectName()} {{"
+                f" background: transparent;"
+                f" border: 1px solid transparent;"
+                f" border-radius: 8px;"
+                f"}}"
+                f"QToolButton#{chip.objectName()}:focus {{"
+                f" outline: none;"
+                f"}}"
+            )
+            chip.clicked.connect(lambda _checked, g=game: self._on_click(g))
+            bar_lay.addWidget(chip)
+            self._buttons[game] = chip
+
+        # Resize filter so the pill matches the bar size and snaps onto the
+        # active chip whenever layout changes. Same pattern main.py uses for
+        # the top chip rail.
+        pill_ref = self._pill
+        outer_self = self
+
+        class _RailResizeFilter(QObject):
+            def eventFilter(self_, watched, event):  # noqa: N805
+                if event.type() == QEvent.Type.Resize:
+                    pill_ref.resize(watched.size())
+                    active_btn = outer_self._buttons.get(outer_self._active)
+                    if active_btn is not None and not active_btn.geometry().isEmpty():
+                        pill_ref.cancel_animation()
+                        pill_ref.set_pill_rect(QRectF(active_btn.geometry()))
+                return False
+
+        self._resize_filter = _RailResizeFilter(bar)
+        bar.installEventFilter(self._resize_filter)
 
         outer.addWidget(bar)
         outer.addStretch()
-        self._apply_styles()
 
-    @staticmethod
-    def _dim_pixmap(pm: QPixmap, opacity: float) -> QPixmap:
-        """Return a copy of `pm` rendered at the given opacity (0.0-1.0)."""
-        out = QPixmap(pm.size())
-        out.fill(Qt.transparent)
-        p = QPainter(out)
-        p.setOpacity(opacity)
-        p.drawPixmap(0, 0, pm)
-        p.end()
-        return out
+        self._buttons[self._active].setChecked(True)
+        self._apply_pill_color()
 
-    def _on_click(self, game: str):
+    def _on_click(self, game: str) -> None:
         if game == self._active:
+            # Re-check it (click toggled it off).
+            self._buttons[game].setChecked(True)
             return
-        self._active = game
-        self._apply_styles()
+        self.set_active(game)
         self.game_changed.emit(game)
 
-    def set_active(self, game: str):
+    def set_active(self, game: str) -> None:
         if game == self._active:
             return
         self._active = game
-        self._apply_styles()
+        for g, btn in self._buttons.items():
+            btn.setChecked(g == game)
+        target = self._buttons[game].geometry()
+        if not target.isEmpty():
+            self._pill.slide_to(QRectF(target))
+        self._apply_pill_color()
 
-    def _apply_styles(self):
-        wrap_qss = (
-            "QFrame#seg_switch_bar { background: rgba(255,255,255,0.04); "
-            "border: 1px solid rgba(255,255,255,0.10); border-radius: 10px; }"
-        )
-        for game, btn in self._buttons.items():
-            icons = self._icons.get(game)
-            if game == self._active:
-                if icons is not None:
-                    btn.setIcon(icons["active"])
-                btn.setStyleSheet(
-                    f"QPushButton {{ background: {self._ACTIVE_BG[game]}; "
-                    f"border: 1px solid {self._ACTIVE_RING[game]}; "
-                    f"border-radius: 7px; }}"
-                )
-            else:
-                if icons is not None:
-                    btn.setIcon(icons["inactive"])
-                btn.setStyleSheet(
-                    "QPushButton { background: transparent; border: none; "
-                    "border-radius: 7px; } "
-                    "QPushButton:hover { background: rgba(255,255,255,0.04); }"
-                )
-        self.setStyleSheet(wrap_qss)
+    def _apply_pill_color(self) -> None:
+        from utils.theme_manager import get_theme_colors
+        # Theme accessor lives at module level; using the dark default here is
+        # safe because the pill color is set per-active-game from the theme
+        # tokens (game_pill_ttr / game_pill_cc) which are identical in both
+        # light and dark themes (same brand hex).
+        c = get_theme_colors(True)
+        self._pill.set_colors(border_hex=c[self._BORDER_FOR[self._active]])
 
 
 # ── Main Tab ───────────────────────────────────────────────────────────────
 
 
 class KeymapTab(QWidget):
-    def __init__(self, keymap_manager, settings_manager=None, parent=None):
+    def __init__(self, keymap_manager, settings_manager=None,
+                 credentials_manager=None, parent=None):
         super().__init__(parent)
         self.keymap_manager = keymap_manager
         self.settings_manager = settings_manager
-        self._entries = []  # list of {"card", "index", "expanded"}
+        self.credentials_manager = credentials_manager
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -908,97 +952,210 @@ class KeymapTab(QWidget):
         scroll_inner_layout = QHBoxLayout(scroll_inner)
         scroll_inner_layout.setContentsMargins(0, 0, 0, 0)
 
-        self._scroll_widget = QWidget()
-        self._scroll_layout = QVBoxLayout(self._scroll_widget)
-        self._scroll_layout.setContentsMargins(24, 20, 24, 20)
-        self._scroll_layout.setSpacing(0)
-        self._scroll_layout.setAlignment(Qt.AlignTop)
+        # One QStackedWidget with one page per game. push_slide_pages
+        # animates between pages using grabbed pixmaps so no layout
+        # reflow happens during the slide.
+        self._game_stack = QStackedWidget()
 
-        clamp_centered(scroll_inner_layout, self._scroll_widget, 720)
+        # Per-game page widgets, layouts, and bookkeeping. Built later
+        # via _build_page_for_game.
+        self._pages: dict[str, QWidget] = {}
+        self._page_layouts: dict[str, QVBoxLayout] = {}
+        self._add_btns: dict[str, QPushButton] = {}
+        self._entries_by_game: dict[str, list] = {"ttr": [], "cc": []}
+        self._expansion_initialized_for: set = set()
+
+        for game in ("ttr", "cc"):
+            page = QWidget()
+            page_layout = QVBoxLayout(page)
+            page_layout.setContentsMargins(24, 20, 24, 20)
+            page_layout.setSpacing(0)
+            page_layout.setAlignment(Qt.AlignTop)
+            self._game_stack.insertWidget(_GAME_INDEX[game], page)
+            self._pages[game] = page
+            self._page_layouts[game] = page_layout
+
+        clamp_centered(scroll_inner_layout, self._game_stack, 720)
 
         self._scroll.setWidget(scroll_inner)
         outer.addWidget(self._scroll)
 
-        # Scope to the first detected game; default to TTR if neither or both are detected.
-        if self._cc_detected() and not self._ttr_detected():
+        # Active game starts at the first member of _active_games. When both
+        # are active, default to TTR (matches the pre-existing behavior).
+        active = self._active_games()
+        if active == {"cc"}:
             self._active_game: str = "cc"
         else:
             self._active_game: str = "ttr"
-        self._segmented = None
-        # Detection is intentionally cached at construction. Live re-evaluation on
-        # settings_manager.on_change is queued as a v2 followup; users currently
-        # need to restart TTMT after adding a game install path in Settings.
-        self._show_segmented = self._both_games_detected()
-        if self._show_segmented:
-            self._segmented = _SegmentedSwitch(self._active_game, parent=self)
-            self._segmented.game_changed.connect(self._on_segment_clicked)
-            outer.insertWidget(0, self._segmented)
 
-        self._build_cards()
+        # Sub-rail lives in `outer` ABOVE the scroll area. Built lazily on
+        # first 2-active transition; toggled via setVisible thereafter so
+        # 2 -> 1 -> 2 sequences don't rebuild it.
+        self._segmented = None
+
+        # Cache the prior active set + sub-rail visibility for the no-change
+        # short-circuit in _refresh_visibility.
+        self._prev_active_games: set = set()
+        self._prev_segmented_visible: bool = False
+
+        # Build both pages eagerly so the animation source-pixmaps are
+        # always available and the inactive page doesn't flash on first
+        # switch.
+        self._build_cards_for_game("ttr")
+        self._build_cards_for_game("cc")
+
+        # Initial stack page is the active game.
+        self._game_stack.setCurrentIndex(_GAME_INDEX[self._active_game])
+
+        # Build / show the sub-rail iff both games are active right now.
+        # Subscribe to settings + credentials changes for live updates.
+        self._refresh_visibility()
+        if self.settings_manager is not None:
+            self.settings_manager.on_change(self._on_settings_change)
+        if self.credentials_manager is not None:
+            self.credentials_manager.on_change(self._refresh_visibility)
+
         self.refresh_theme()
 
     # ── Build ──────────────────────────────────────────────────────────────
 
-    def _build_cards(self):
-        if not hasattr(self, "_initialized_expansion") or not self._initialized_expansion:
-            self._initialized_expansion = True
-            key = f"keymap_expanded_states_{self._active_game}"
-            legacy = self.settings_manager.get("keymap_expanded_states", None) if self.settings_manager else None
-            expanded_list = self.settings_manager.get(key, legacy if legacy is not None else [0]) if self.settings_manager else [0]
+    @property
+    def _entries(self) -> list:
+        """Active game's entries list. Most read sites use this; writes
+        target self._entries_by_game[game] directly so each callback is
+        explicit about which game it touches."""
+        return self._entries_by_game[self._active_game]
+
+    def _build_cards_for_game(self, game: str) -> None:
+        """Rebuild the card list (header + cards + add button + stretch)
+        for one game's page. Idempotent: clears the page layout first.
+        Targets self._page_layouts[game] and self._entries_by_game[game].
+        Signal bindings carry the game name so cards on the inactive page
+        still write to the correct game's data if invoked."""
+        page_layout = self._page_layouts[game]
+
+        # Read prior expand state (from settings on first build, from
+        # in-memory entries on subsequent rebuilds).
+        if game not in self._expansion_initialized_for:
+            self._expansion_initialized_for.add(game)
+            key = f"keymap_expanded_states_{game}"
+            legacy = (
+                self.settings_manager.get("keymap_expanded_states", None)
+                if self.settings_manager else None
+            )
+            expanded_list = (
+                self.settings_manager.get(key, legacy if legacy is not None else [0])
+                if self.settings_manager else [0]
+            )
             prev_states = {i: (i in expanded_list) for i in range(16)}
         else:
-            prev_states = {entry["index"]: entry["expanded"] for entry in self._entries}
+            prev_states = {
+                entry["index"]: entry["expanded"]
+                for entry in self._entries_by_game[game]
+            }
 
-        for entry in self._entries:
+        # Tear down existing cards + layout items.
+        for entry in self._entries_by_game[game]:
             entry["card"].deleteLater()
-        self._entries.clear()
+        self._entries_by_game[game].clear()
 
-        while self._scroll_layout.count():
-            item = self._scroll_layout.takeAt(0)
+        while page_layout.count():
+            item = page_layout.takeAt(0)
             w = item.widget()
             if w:
                 w.deleteLater()
 
         is_dark = resolve_theme(self.settings_manager) == "dark"
+        c = get_theme_colors(is_dark)
 
-        sets = self.keymap_manager.get_sets(self._active_game)
+        # ── Per-game header (label + divider) ──────────────────────────
+        title = (
+            "TOONTOWN REWRITTEN KEYSETS" if game == "ttr"
+            else "CORPORATE CLASH KEYSETS"
+        )
+        accent_token = "game_pill_ttr" if game == "ttr" else "game_pill_cc"
+        header_label = QLabel(title)
+        header_label.setObjectName(f"header_label_{game}")
+        header_label.setAlignment(Qt.AlignCenter)
+        header_label.setStyleSheet(
+            f"QLabel#header_label_{game} {{"
+            f" font-size: 10px;"
+            f" font-weight: 600;"
+            f" color: {c[accent_token]};"
+            f" background: transparent;"
+            f" letter-spacing: 0.8px;"
+            f" border: none;"
+            f"}}"
+        )
+        page_layout.addWidget(header_label, alignment=Qt.AlignHCenter)
+        page_layout.addSpacing(3)
+
+        header_divider = QFrame()
+        header_divider.setObjectName(f"header_divider_{game}")
+        header_divider.setFixedHeight(1)
+        # Fixed width (not max) so AlignHCenter doesn't collapse to sizeHint
+        # width 0 when the page is wider than the divider's cap.
+        header_divider.setFixedWidth(200)
+        header_divider.setStyleSheet(
+            f"QFrame#header_divider_{game} {{"
+            f" background: {c[accent_token]};"
+            f" border: none;"
+            f" border-radius: 1px;"
+            f"}}"
+        )
+        page_layout.addWidget(header_divider, alignment=Qt.AlignHCenter)
+        page_layout.addSpacing(10)
+
+        # ── SetCards ───────────────────────────────────────────────────
+        sets = self.keymap_manager.get_sets(game)
         for idx, s in enumerate(sets):
             if idx > 0:
-                self._scroll_layout.addSpacing(10)
-            card = SetCard(index=idx, set_data=s, active_game=self._active_game,
-                           is_dark=is_dark, parent=self)
-            card.toggle_requested.connect(lambda i=idx: self._toggle(i))
-            card.name_changed.connect(lambda name, i=idx: self._on_name_changed(i, name))
-            card.key_changed.connect(lambda action, key, i=idx: self._on_key_changed(i, action, key))
-            card.delete_requested.connect(lambda i=idx: self._on_delete_set(i))
-            card.detect_requested.connect(self._on_detect_settings)
+                page_layout.addSpacing(10)
+            card = SetCard(index=idx, set_data=s, active_game=game,
+                           is_dark=is_dark, parent=self._pages[game])
+            card.toggle_requested.connect(
+                lambda i=idx, g=game: self._toggle_for_game(g, i)
+            )
+            card.name_changed.connect(
+                lambda name, i=idx, g=game: self._on_name_changed_for_game(g, i, name)
+            )
+            card.key_changed.connect(
+                lambda action, key, i=idx, g=game: self._on_key_changed_for_game(g, i, action, key)
+            )
+            card.delete_requested.connect(
+                lambda i=idx, g=game: self._on_delete_set_for_game(g, i)
+            )
+            card.detect_requested.connect(
+                lambda g=game: self._on_detect_settings_for_game(g)
+            )
 
             expanded = prev_states.get(idx, False)
             card.set_expanded(expanded, animate=False)
-            apply_card_shadow(card, is_dark, blur=22, offset_y=6)
 
-            self._scroll_layout.addWidget(card)
-            self._entries.append({
+            page_layout.addWidget(card)
+            self._entries_by_game[game].append({
                 "card": card, "index": idx, "expanded": expanded,
             })
 
-        self._scroll_layout.addSpacing(16)
-        self._add_btn = QPushButton(f"{S('➕', '+')} Add Movement Set")
-        self._add_btn.setMinimumHeight(28)
-        self._add_btn.setMaximumWidth(260)
-        self._add_btn.setCursor(Qt.PointingHandCursor)
-        self._add_btn.clicked.connect(self._on_add_set)
-        self._add_btn.setVisible(len(sets) < self.keymap_manager.MAX_SETS_PER_GAME)
-        self._scroll_layout.addWidget(self._add_btn, alignment=Qt.AlignHCenter)
-        self._scroll_layout.addStretch()
+        page_layout.addSpacing(16)
+        add_btn = QPushButton(f"{S('➕', '+')} Add Movement Set")
+        add_btn.setObjectName(f"add_btn_{game}")
+        add_btn.setMinimumHeight(28)
+        add_btn.setMaximumWidth(260)
+        add_btn.setCursor(Qt.PointingHandCursor)
+        add_btn.clicked.connect(lambda g=game: self._on_add_set_for_game(g))
+        add_btn.setVisible(len(sets) < self.keymap_manager.MAX_SETS_PER_GAME)
+        page_layout.addWidget(add_btn, alignment=Qt.AlignHCenter)
+        page_layout.addStretch()
+        self._add_btns[game] = add_btn
 
-        self._refresh_default_conflict_markers()
+        # Refresh conflict markers only for the active game's page (cheap
+        # and idempotent; safe to skip for inactive pages until they
+        # become active).
+        if game == self._active_game:
+            self._refresh_default_conflict_markers()
 
     # ── Game detection + segmented control ────────────────────────────────
-
-    def _both_games_detected(self) -> bool:
-        """True when both TTR and CC are findable on this machine."""
-        return self._ttr_detected() and self._cc_detected()
 
     def _ttr_detected(self) -> bool:
         if self.settings_manager is None:
@@ -1024,33 +1181,74 @@ class KeymapTab(QWidget):
         except Exception:
             return False
 
+    def _has_accounts(self, game: str) -> bool:
+        """True when credentials_manager reports at least one account for
+        the given game. Returns False when no credentials_manager is wired
+        (e.g., tests that don't pass one)."""
+        if self.credentials_manager is None:
+            return False
+        return bool(self.credentials_manager.get_accounts_metadata(game=game))
+
+    def _active_games(self) -> set:
+        """The set of games to expose in the keysets tab. A game is active
+        when its install is detected OR the user has any accounts for it.
+        Drives sub-rail visibility via _refresh_visibility."""
+        games = set()
+        if self._ttr_detected() or self._has_accounts("ttr"):
+            games.add("ttr")
+        if self._cc_detected() or self._has_accounts("cc"):
+            games.add("cc")
+        return games
+
     def _on_segment_clicked(self, game: str):
         if game == self._active_game:
             return
+        prev_idx = _GAME_INDEX[self._active_game]
+        new_idx = _GAME_INDEX[game]
         self._active_game = game
         if self._segmented is not None:
             self._segmented.set_active(game)
-        self._initialized_expansion = False  # re-read expand state for new game
-        self._build_cards()
-        self.refresh_theme()
+        push_slide_pages(self._game_stack, prev_idx, new_idx, axis="h")
+        self._refresh_default_conflict_markers()
 
-    # ── Toggle ─────────────────────────────────────────────────────────────
+    # ── Per-game callbacks ─────────────────────────────────────────────────
 
-    def _toggle(self, index):
-        entry = self._entries[index]
+    def _toggle_for_game(self, game: str, index: int) -> None:
+        entry = self._entries_by_game[game][index]
         expanded = not entry["expanded"]
         entry["expanded"] = expanded
         entry["card"].set_expanded(expanded, animate=True)
-
         if self.settings_manager:
-            key = f"keymap_expanded_states_{self._active_game}"
-            expanded_list = [e["index"] for e in self._entries if e["expanded"]]
+            key = f"keymap_expanded_states_{game}"
+            expanded_list = [
+                e["index"] for e in self._entries_by_game[game] if e["expanded"]
+            ]
             self.settings_manager.set(key, expanded_list)
 
-    # ── Callbacks ──────────────────────────────────────────────────────────
+    def _on_name_changed_for_game(self, game: str, index: int, name: str) -> None:
+        self.keymap_manager.update_set_name(game, index, name)
 
-    def _on_name_changed(self, index, name):
-        self.keymap_manager.update_set_name(self._active_game, index, name)
+    def _on_key_changed_for_game(self, game: str, set_index: int, action: str, key: str) -> None:
+        self.keymap_manager.update_set_key(game, set_index, action, key)
+        if game == self._active_game:
+            self._refresh_default_conflict_markers()
+
+    def _on_add_set_for_game(self, game: str) -> None:
+        self.keymap_manager.add_set(game)
+        self._build_cards_for_game(game)
+
+    def _on_delete_set_for_game(self, game: str, index: int) -> None:
+        self.keymap_manager.delete_set(game, index)
+        self._build_cards_for_game(game)
+
+    def _on_detect_settings_for_game(self, game: str) -> None:
+        """Dispatch to the per-game detect routine. The existing
+        _on_detect_settings read self._active_game; here the game arrives
+        via the signal-binding-with-game-name lambda."""
+        if game == "ttr":
+            self._on_detect_ttr_settings()
+        else:
+            self._on_detect_cc_settings()
 
     def _refresh_default_conflict_markers(self):
         """Recompute conflicts in this game's Default set and paint affected fields red."""
@@ -1083,26 +1281,6 @@ class KeymapTab(QWidget):
             else:
                 field.setToolTip("")
 
-    def _on_key_changed(self, set_index, action, key):
-        self.keymap_manager.update_set_key(self._active_game, set_index, action, key)
-        self._refresh_default_conflict_markers()
-
-    def _on_add_set(self):
-        self.keymap_manager.add_set(self._active_game)
-        self._build_cards()
-        self.refresh_theme()
-
-    def _on_delete_set(self, index):
-        self.keymap_manager.delete_set(self._active_game, index)
-        self._build_cards()
-        self.refresh_theme()
-
-    def _on_detect_settings(self):
-        if self._active_game == "ttr":
-            self._on_detect_ttr_settings()
-        else:
-            self._on_detect_cc_settings()
-
     def _on_detect_ttr_settings(self):
         from utils.ttr_settings import locate_settings_file, parse_ttr_settings, apply_ttr_controls_to_set
         from services.ttr_login_service import find_engine_path
@@ -1126,7 +1304,7 @@ class KeymapTab(QWidget):
 
         updates = apply_ttr_controls_to_set(self.keymap_manager, 0, settings.controls)
         if updates > 0:
-            self._build_cards()
+            self._build_cards_for_game("ttr")
             self.refresh_theme()
             print(f"[KeymapTab] Detected {updates} TTR settings from {path}")
 
@@ -1172,7 +1350,7 @@ class KeymapTab(QWidget):
 
         updates = apply_cc_controls_to_set(self.keymap_manager, 0, settings)
         if updates > 0:
-            self._build_cards()
+            self._build_cards_for_game("cc")
             self.refresh_theme()
             print(f"[KeymapTab] Detected {updates} CC settings from {path}")
 
@@ -1187,88 +1365,138 @@ class KeymapTab(QWidget):
 
         self.setStyleSheet(f"background: {c['bg_app']}; color: {c['text_primary']};")
         self._scroll.setStyleSheet(f"background: {c['bg_app']};")
-        self._scroll_widget.setStyleSheet(f"background: {c['bg_app']};")
+        for game in ("ttr", "cc"):
+            if game in self._pages:
+                self._pages[game].setStyleSheet(f"background: {c['bg_app']};")
 
         bar = getattr(self._scroll, "_auto_hide_scrollbar", None)
         if bar is not None:
             bar.set_theme(is_dark)
 
-        # SetCard owns its background, stripe, badge, name, and delete-button
-        # styling — those work against either theme by design (RGBA against
-        # the underlying bg). The Default set's hint label uses a palette
-        # token, so it must be re-styled here on theme change. The detect
-        # and add-set buttons further below are re-styled the same way.
-        hint_qss = (
-            "font-size: 11px; "
-            f"color: {c['text_muted']}; "
-            "background: none; border: none; padding: 0 0 4px 0;"
-        )
-        for hint in self.findChildren(QLabel, "set_body_hint"):
-            hint.setStyleSheet(hint_qss)
-        for entry in self._entries:
-            entry["card"].set_theme(is_dark)
+        # SetCard._apply_chrome owns badge, name, hint, direction-label,
+        # MovementKeyField, and delete-button QSS. Calling set_theme on each
+        # card re-invokes _apply_chrome with the new is_dark value.
+        for game in ("ttr", "cc"):
+            for entry in self._entries_by_game[game]:
+                entry["card"].set_theme(is_dark)
 
-        # Re-apply MovementKeyField styling on every theme refresh. The
-        # per-field loop was dropped by an earlier refresh_theme cleanup,
-        # which left the chips without border/hover/cursor cues and made
-        # them look non-interactive. The attribute selectors below
-        # ([awaiting], [conflict]) override :hover by QSS specificity, so
-        # conflict markers stay red and the mid-capture state stays
-        # highlighted regardless of mouse position.
-        field_qss = f"""
-            QLineEdit {{
-                background: {c['bg_input']};
-                color: {c['text_primary']};
-                border: 1px solid {c['border_input']};
-                border-radius: 6px;
-                font-size: 11.5px;
-                font-weight: 600;
-                padding: 0;
+        # Per-game add buttons.
+        add_btn_qss = f"""
+            QPushButton {{
+                background: transparent;
+                color: {c['text_muted']};
+                border: 2px dashed {c['border_muted']};
+                border-radius: 10px; font-weight: 600; font-size: 12px;
             }}
-            QLineEdit:hover {{
-                border: 1px solid rgba(74, 143, 231, 0.7);
+            QPushButton:hover {{
+                color: {c['text_primary']};
+                border-color: {c['text_secondary']};
                 background: {c['bg_card_inner']};
             }}
-            QLineEdit[awaiting="true"] {{
-                background: rgba(74, 143, 231, 0.15);
-                border: 1px solid rgba(74, 143, 231, 0.7);
-                color: {c['text_muted']};
-            }}
-            QLineEdit[conflict="true"] {{
-                border: 1px solid #d04040;
-                background: rgba(208, 64, 64, 0.10);
-            }}
         """
-        for field in self.findChildren(MovementKeyField):
-            field.setStyleSheet(field_qss)
+        for game in ("ttr", "cc"):
+            btn = self._add_btns.get(game)
+            if btn is not None:
+                btn.setStyleSheet(add_btn_qss)
 
-        if hasattr(self, "_add_btn"):
-            self._add_btn.setStyleSheet(f"""
-                QPushButton {{
-                    background: transparent;
-                    color: {c['text_muted']};
-                    border: 2px dashed {c['border_muted']};
-                    border-radius: 10px; font-weight: 600; font-size: 12px;
-                }}
-                QPushButton:hover {{
-                    color: {c['text_primary']};
-                    border-color: {c['text_secondary']};
-                    background: {c['bg_card_inner']};
-                }}
-            """)
+        # Per-game header banners (one per page, always present).
+        for game in ("ttr", "cc"):
+            accent_token = "game_pill_ttr" if game == "ttr" else "game_pill_cc"
+            lbl = self.findChild(QLabel, f"header_label_{game}")
+            if lbl is not None:
+                lbl.setStyleSheet(
+                    f"QLabel#header_label_{game} {{"
+                    f" font-size: 10px;"
+                    f" font-weight: 600;"
+                    f" color: {c[accent_token]};"
+                    f" background: transparent;"
+                    f" letter-spacing: 0.8px;"
+                    f" border: none;"
+                    f"}}"
+                )
+            div = self.findChild(QFrame, f"header_divider_{game}")
+            if div is not None:
+                div.setStyleSheet(
+                    f"QFrame#header_divider_{game} {{"
+                    f" background: {c[accent_token]};"
+                    f" border: none;"
+                    f" border-radius: 1px;"
+                    f"}}"
+                )
 
-        for btn in self.findChildren(QPushButton, "detect_btn"):
-            btn.setStyleSheet(f"""
-                QPushButton {{
-                    background: {c['btn_bg']};
-                    color: {c['text_primary']};
-                    border: 1px solid {c['btn_border']};
-                    border-radius: 6px; font-weight: bold; font-size: 11px;
-                    padding: 0 12px;
-                }}
-                QPushButton:hover {{
-                    background: {c['accent_blue_btn']};
-                    color: {c['text_on_accent']};
-                    border: 1px solid {c['accent_blue_btn_border']};
-                }}
-            """)
+        # Detect button hover accent is per-page (TTR=blue, CC=orange) so
+        # the inactive page's detect button keeps its own game's tint.
+        for game in ("ttr", "cc"):
+            hover_accent = (
+                c['accent_blue_btn'] if game == "ttr"
+                else c['accent_orange_border']
+            )
+            for btn in self._pages[game].findChildren(QPushButton, "detect_btn"):
+                btn.setStyleSheet(
+                    "QPushButton#detect_btn {"
+                    " background: transparent;"
+                    f" border: 1px solid {c['border_muted']};"
+                    f" color: {c['text_secondary']};"
+                    " border-radius: 8px; padding: 0 14px;"
+                    " font-weight: 600; font-size: 11px;"
+                    "}"
+                    "QPushButton#detect_btn:hover {"
+                    f" background: {c['bg_card_inner_hover']};"
+                    f" border: 1px solid {hover_accent};"
+                    f" color: {hover_accent};"
+                    "}"
+                )
+
+    # ── Visibility refresh ───────────────────────────────────────────────────
+
+    def _refresh_visibility(self) -> None:
+        """Recompute active games and update sub-rail visibility + current
+        page. Called on construction, on settings_manager.on_change for
+        engine-dir keys, and on credentials_manager.on_change.
+
+        - Sub-rail is hide-don't-destroy: built lazily on first 2-active
+          transition, toggled via setVisible thereafter.
+        - If the current page is no longer in the active set, animate to
+          the remaining game.
+        - Short-circuits when nothing relevant changed (renames, etc).
+        """
+        active = self._active_games()
+        want_subrail_visible = len(active) == 2
+
+        # ── Build sub-rail lazily on first need ─────────────────────────
+        if want_subrail_visible and self._segmented is None:
+            self._segmented = _GameSubRail(self._active_game, parent=self)
+            self._segmented.game_changed.connect(self._on_segment_clicked)
+            self.layout().insertWidget(0, self._segmented)
+
+        # ── Page-validity check ─────────────────────────────────────────
+        # If current active game is no longer in `active`, pick the
+        # remaining game. Only fires when active is non-empty AND current
+        # is not in it (a game just became inactive).
+        if active and self._active_game not in active:
+            new_game = next(iter(active))
+            prev_idx = _GAME_INDEX[self._active_game]
+            new_idx = _GAME_INDEX[new_game]
+            self._active_game = new_game
+            if self._segmented is not None:
+                self._segmented.set_active(new_game)
+            push_slide_pages(self._game_stack, prev_idx, new_idx, axis="h")
+
+        # ── No-change short-circuit ─────────────────────────────────────
+        # Visibility hasn't changed AND active set is the same => done.
+        if (active == self._prev_active_games
+                and want_subrail_visible == self._prev_segmented_visible):
+            return
+
+        # ── Apply visibility ────────────────────────────────────────────
+        if self._segmented is not None:
+            self._segmented.setVisible(want_subrail_visible)
+
+        # ── Update caches ───────────────────────────────────────────────
+        self._prev_active_games = active
+        self._prev_segmented_visible = want_subrail_visible
+
+    def _on_settings_change(self, key: str, value) -> None:
+        """Re-evaluate active games when an engine-dir setting changes."""
+        if key in ("ttr_engine_dir", "cc_engine_dir"):
+            self._refresh_visibility()

@@ -16,6 +16,7 @@ import stat
 import time
 import uuid
 import threading
+from collections.abc import Callable
 from datetime import datetime
 import keyring
 import keyring.backend
@@ -100,12 +101,32 @@ class CredentialsManager:
         self._legacy_fallback_deleted = False
         self._deferred_v1_migration = False
         self._primary_backend_name = None
+        self._change_callbacks: list[Callable[[], None]] = []  # subscribers fired on add/delete/clear_all
 
         self._cleanup_legacy_fallback_file()
 
         self._migrate_from_v1(config_dir)
         self._load()
         _dbg(f"[CredentialsManager] Loaded {len(self._accounts)} accounts from {self._path}")
+
+    # ── Change notifications ───────────────────────────────────────────────
+
+    def on_change(self, callback: Callable[[], None]) -> None:
+        """Register a callback fired after add_account / delete_account /
+        clear_all. Callbacks take no arguments. Exceptions inside callbacks
+        are caught and logged, never propagated.
+
+        Mirrors SettingsManager.on_change so KeymapTab and other consumers
+        can subscribe to account-roster changes without a Qt signal.
+        """
+        self._change_callbacks.append(callback)
+
+    def _emit_change(self) -> None:
+        for cb in self._change_callbacks:
+            try:
+                cb()
+            except Exception as e:
+                _dbg(f"[CredentialsManager] on_change callback raised: {e}")
 
     # ── Persistence ────────────────────────────────────────────────────────
 
@@ -610,6 +631,10 @@ class CredentialsManager:
     def _set_password(self, account_id: str, password: str) -> bool:
         if not account_id:
             return False
+        if not self._use_keyring:
+            with self._fallback_lock:
+                self._fallback_passwords[account_id] = (password or "", time.monotonic())
+            return True
         ok, _ = self._try_keyring_call(keyring.set_password, keyring_service(), account_id, password, timeout=1.5)
         if ok:
             with self._fallback_lock:
@@ -809,6 +834,7 @@ class CredentialsManager:
             "game": game,
         })
         self._save()
+        self._emit_change()
         return True
 
     def update_account(self, index: int, label: str = None, username: str = None, password: str = None):
@@ -879,6 +905,7 @@ class CredentialsManager:
         if account_id:
             self._delete_password(account_id)
         self._save()
+        self._emit_change()
         return (account_id or "", token)
 
     def reorder(self, old_index: int, new_index: int):
@@ -908,4 +935,5 @@ class CredentialsManager:
                 self._delete_password(account_id)
         self._accounts = []
         self._save()
+        self._emit_change()
         return tokens
