@@ -1444,20 +1444,56 @@ class KeymapTab(QWidget):
                     "}"
                 )
 
-    # ── Visibility refresh (Task 6 stub) ────────────────────────────────────
+    # ── Visibility refresh ───────────────────────────────────────────────────
 
     def _refresh_visibility(self) -> None:
-        """Sub-rail visibility + page-validity refresh. Full body in Task 6.
-        Stub here builds sub-rail when both games are active."""
+        """Recompute active games and update sub-rail visibility + current
+        page. Called on construction, on settings_manager.on_change for
+        engine-dir keys, and on credentials_manager.on_change.
+
+        - Sub-rail is hide-don't-destroy: built lazily on first 2-active
+          transition, toggled via setVisible thereafter.
+        - If the current page is no longer in the active set, animate to
+          the remaining game.
+        - Short-circuits when nothing relevant changed (renames, etc).
+        """
         active = self._active_games()
-        if len(active) == 2 and self._segmented is None:
+        want_subrail_visible = len(active) == 2
+
+        # ── Build sub-rail lazily on first need ─────────────────────────
+        if want_subrail_visible and self._segmented is None:
             self._segmented = _GameSubRail(self._active_game, parent=self)
             self._segmented.game_changed.connect(self._on_segment_clicked)
             self.layout().insertWidget(0, self._segmented)
+
+        # ── Page-validity check ─────────────────────────────────────────
+        # If current active game is no longer in `active`, pick the
+        # remaining game. Only fires when active is non-empty AND current
+        # is not in it (a game just became inactive).
+        if active and self._active_game not in active:
+            new_game = next(iter(active))
+            prev_idx = _GAME_INDEX[self._active_game]
+            new_idx = _GAME_INDEX[new_game]
+            self._active_game = new_game
+            if self._segmented is not None:
+                self._segmented.set_active(new_game)
+            push_slide_pages(self._game_stack, prev_idx, new_idx, axis="h")
+
+        # ── No-change short-circuit ─────────────────────────────────────
+        # Visibility hasn't changed AND active set is the same => done.
+        if (active == self._prev_active_games
+                and want_subrail_visible == self._prev_segmented_visible):
+            return
+
+        # ── Apply visibility ────────────────────────────────────────────
         if self._segmented is not None:
-            self._segmented.setVisible(len(active) == 2)
+            self._segmented.setVisible(want_subrail_visible)
+
+        # ── Update caches ───────────────────────────────────────────────
+        self._prev_active_games = active
+        self._prev_segmented_visible = want_subrail_visible
 
     def _on_settings_change(self, key: str, value) -> None:
-        """Refresh on engine-dir changes. Full body in Task 6."""
+        """Re-evaluate active games when an engine-dir setting changes."""
         if key in ("ttr_engine_dir", "cc_engine_dir"):
             self._refresh_visibility()
