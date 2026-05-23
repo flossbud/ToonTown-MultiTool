@@ -133,6 +133,7 @@ def get_theme_colors(is_dark: bool) -> dict:
             "bg_app":        "#1a1a1a",
             "bg_card":       "#252525",
             "bg_card_inner": "#2e2e2e",
+            "bg_card_inner_hover": "#363636",
             "bg_input":      "#1e1e1e",
             "bg_input_dark": "#141414",
             "bg_status":     "#1e1e1e",
@@ -214,6 +215,16 @@ def get_theme_colors(is_dark: bool) -> dict:
             "status_idle_text":   "#cccccc",
             "status_idle_border": "#555555",
 
+            # Status strip — error (Failed state)
+            "status_error_bg":     "#3d2a2a",
+            "status_error_text":   "#ff7575",
+            "status_error_border": "#e05252",
+
+            # Status strip — info (2FA Required violet)
+            "status_info_bg":      "#2e2440",
+            "status_info_text":    "#c87ee8",
+            "status_info_border":  "#a763d8",
+
             # Buttons
             "btn_bg":       "#333333",
             "btn_border":   "#444444",
@@ -256,8 +267,8 @@ def get_theme_colors(is_dark: bool) -> dict:
             # consistency and AA contrast with text_on_accent = white).
             "status_dot_active": "#56c856",   # matches segment_active green
             "status_dot_idle":   "#555555",   # matches border_light
-            "game_pill_ttr":     "#7e57c2",   # deeper violet, ~4.6:1 with white (AA)
-            "game_pill_cc":      "#0077ff",   # matches accent_blue_btn for consistency
+            "game_pill_ttr":     "#4A8FE7",   # TTR brand blue (shared with launch tab section stripe)
+            "game_pill_cc":      "#F26D21",   # CC brand orange (shared with launch tab section stripe)
         }
     else:
         return {
@@ -265,6 +276,7 @@ def get_theme_colors(is_dark: bool) -> dict:
             "bg_app":        "#f8fafc",
             "bg_card":       "#ffffff",
             "bg_card_inner": "#f1f5f9",
+            "bg_card_inner_hover": "#e2e8f0",
             "bg_input":      "#ffffff",
             "bg_input_dark": "#e8ecf1",
             "bg_status":     "#f8fafc",
@@ -349,6 +361,16 @@ def get_theme_colors(is_dark: bool) -> dict:
             "status_idle_text":   "#334155",
             "status_idle_border": "#cbd5e1",
 
+            # Status strip — error (Failed state)
+            "status_error_bg":     "#fee2e2",
+            "status_error_text":   "#991b1b",
+            "status_error_border": "#fca5a5",
+
+            # Status strip — info (2FA Required violet)
+            "status_info_bg":      "#ede9fe",
+            "status_info_text":    "#6d28d9",
+            "status_info_border":  "#c4b5fd",
+
             # Buttons
             "btn_bg":       "#e8ecf1",
             "btn_border":   "#cbd5e1",
@@ -395,8 +417,8 @@ def get_theme_colors(is_dark: bool) -> dict:
             # Full UI tokens
             "status_dot_active": "#16a34a",
             "status_dot_idle":   "#cbd5e1",
-            "game_pill_ttr":     "#7c3aed",
-            "game_pill_cc":      "#2563eb",
+            "game_pill_ttr":     "#4A8FE7",   # TTR brand blue (matches dark palette)
+            "game_pill_cc":      "#F26D21",   # CC brand orange (matches dark palette)
         }
 
 

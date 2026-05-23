@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
 )
 
 import utils.motion as motion
+from utils.theme_manager import get_theme_colors
 from utils.widgets.account_tile import AccountTile
 from utils.widgets.chip_button import QuietChipButton
 from utils.widgets.empty_state import EmptyState
@@ -33,15 +34,25 @@ class _AddTile(QuietChipButton):
     Uses QuietChipButton (no hover upscale, 0.96 press scale)."""
     def __init__(self, game: str, parent=None):
         super().__init__(parent)
+        self._game = game
         self.setText(f"+ Add {_GAME_SHORT[game]} Account")
         self.setMinimumHeight(130)
         self.setCursor(Qt.PointingHandCursor)
+        self.apply_theme(get_theme_colors(True))
+
+    def apply_theme(self, c: dict) -> None:
+        """Rebuild QSS from the theme dict `c`."""
         self.setStyleSheet(
-            "QToolButton { background: transparent; border: 2px dashed"
-            " rgba(255,255,255,0.12); border-radius: 10px; color: #8a9bb8;"
+            "QToolButton { background: transparent;"
+            f" border: 2px dashed {c['border_card']};"
+            " border-radius: 10px;"
+            f" color: {c['text_muted']};"
             " font-size: 13px; }"
-            "QToolButton:hover { border-color: rgba(255,255,255,0.25);"
-            " color: #cfd6e6; background: rgba(255,255,255,0.02); }"
+            "QToolButton:hover {"
+            f" border-color: {c['border_light']};"
+            f" color: {c['text_secondary']};"
+            f" background: {c['bg_card_inner_hover']};"
+            " }"
         )
 
 
@@ -88,35 +99,10 @@ class LaunchSection(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
-        # Per-game card: a single accent-tinted container that wraps the
-        # header AND the tile grid (or empty state) so the section reads
-        # as a unified "TTR region" or "CC region" rather than a floating
-        # header strip plus a separate grid. The faint accent gradient
-        # gives each card its game identity without competing with the
-        # per-tile accent borders inside.
-        # Card + header tints. The card carries a vertical accent fade
-        # across the whole region (so the empty state, the tile grid, and
-        # the header all read as one game-colored area). The header
-        # additionally carries a stronger top-down accent fade so the
-        # header strip is clearly the labeled boundary of the card, with
-        # a hairline beneath it. Children below the header are explicitly
-        # transparent so the card's gradient shows through.
-        accent_card_top = (
-            "rgba(74,143,231,0.10)" if game == "ttr"
-            else "rgba(242,109,33,0.10)"
-        )
-        accent_card_bottom = (
-            "rgba(74,143,231,0.03)" if game == "ttr"
-            else "rgba(242,109,33,0.03)"
-        )
-        accent_border = (
-            "rgba(74,143,231,0.35)" if game == "ttr"
-            else "rgba(242,109,33,0.35)"
-        )
-        accent_header = (
-            "rgba(74,143,231,0.12)" if game == "ttr"
-            else "rgba(242,109,33,0.12)"
-        )
+        # Per-game card: a flat neutral container that wraps the header AND
+        # the tile grid (or empty state) so the section reads as a unified
+        # region. A 2 px coloured top stripe identifies the game without a
+        # gradient wash competing with per-tile accent borders inside.
         self.card = QFrame()
         self.card.setObjectName("section_card")
         self.card.setAttribute(Qt.WA_StyledBackground, True)
@@ -126,14 +112,7 @@ class LaunchSection(QWidget):
         # bottom of the section bare and producing visibly uneven cards
         # when one section is populated and another is empty.
         self.card.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
-        self.card.setStyleSheet(
-            "QFrame#section_card {"
-            " background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
-            f" stop:0 {accent_card_top}, stop:1 {accent_card_bottom});"
-            f" border: 1px solid {accent_border};"
-            " border-radius: 10px;"
-            "}"
-        )
+        # QSS applied via apply_theme(...) below so theme switches work.
         card_lay = QVBoxLayout(self.card)
         # 1px inset prevents children from overpainting the card's
         # rounded corners + border. The card's QSS bg fills the inset
@@ -142,27 +121,21 @@ class LaunchSection(QWidget):
         card_lay.setSpacing(0)
         outer.addWidget(self.card)
 
-        # Header strip — sits inside the card. Carries its own accent
-        # fade on TOP of the card's gradient (the two combine for a
-        # stronger header look), plus a hairline below to separate it
-        # from the tile region.
+        # Header strip — sits inside the card. Transparent background with
+        # a hairline below to separate it from the tile region. QSS applied
+        # via apply_theme so theme switches work.
         header = QFrame()
         header.setObjectName("section_header")
         header.setAttribute(Qt.WA_StyledBackground, True)
-        header.setStyleSheet(
-            "QFrame#section_header {"
-            " background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
-            f" stop:0 {accent_header}, stop:1 transparent);"
-            " border-bottom: 1px solid rgba(255,255,255,0.06);"
-            "}"
-        )
+        # QSS applied via apply_theme.
+        self._header_frame = header  # save reference for re-styling
         head_lay = QHBoxLayout(header)
         head_lay.setContentsMargins(18, 14, 18, 14)
         head_lay.setSpacing(12)
 
         icon_box = QLabel()
         icon_box.setFixedSize(40, 40)
-        # background: transparent so the card's accent tint shows through
+        # background: transparent so the flat card surface shows through
         # behind the icon (without it, Qt paints QLabel's default opaque
         # bg as soon as ANY QSS is applied, cutting out a rectangle).
         icon_box.setStyleSheet("background: transparent; border-radius: 8px;")
@@ -174,16 +147,10 @@ class LaunchSection(QWidget):
         title_col = QVBoxLayout()
         title_col.setSpacing(0)
         self.title_label = QLabel(_GAME_NAMES[game])
-        # background: transparent on header labels so the card's accent
-        # tint shows through (see icon_box above for the rationale).
-        self.title_label.setStyleSheet(
-            "background: transparent; color: #fff; font-weight: 700; font-size: 15px;"
-        )
+        # QSS applied via apply_theme.
         title_col.addWidget(self.title_label)
         self.subline = QLabel("No accounts yet")
-        self.subline.setStyleSheet(
-            "background: transparent; color: #8a9bb8; font-size: 12px;"
-        )
+        # QSS applied via apply_theme.
         title_col.addWidget(self.subline)
         head_lay.addLayout(title_col)
         head_lay.addStretch()
@@ -191,21 +158,15 @@ class LaunchSection(QWidget):
         self.launcher_btn = QuietChipButton()
         self.launcher_btn.setText(f"↗ Launch {_GAME_SHORT[game]} Launcher")
         self.launcher_btn.setCursor(Qt.PointingHandCursor)
-        self.launcher_btn.setStyleSheet(
-            "QToolButton { background: transparent; border: 1px solid rgba(255,255,255,0.18);"
-            " color: #cfd6e6; border-radius: 8px; padding: 8px 14px; font-size: 12px;"
-            " font-weight: 600; }"
-            "QToolButton:hover { background: rgba(255,255,255,0.06);"
-            " border-color: rgba(255,255,255,0.3); }"
-        )
+        # QSS applied via apply_theme.
         self.launcher_btn.clicked.connect(self.launcher_clicked.emit)
         head_lay.addWidget(self.launcher_btn)
 
         card_lay.addWidget(header)
 
-        # Make grid_container transparent so the card's accent gradient
-        # shows through behind the tiles (otherwise QWidget paints its
-        # default solid bg and the gradient is hidden).
+        # Make grid_container transparent so the flat card surface shows
+        # through behind the tiles (otherwise QWidget paints its default
+        # solid bg and covers the card's bg_card fill).
         self.grid_container = QWidget()
         self.grid_container.setAttribute(Qt.WA_TranslucentBackground, True)
         self.grid = QGridLayout(self.grid_container)
@@ -224,7 +185,65 @@ class LaunchSection(QWidget):
         # at the bottom rather than vertically-stretching the content.
         card_lay.addStretch(1)
 
+        # Cache dark default before apply_theme so _current_theme exists
+        # even if anything triggers a recompute before apply_theme runs.
+        self._current_theme = get_theme_colors(True)
+        # Initial styling: dark default. LaunchTab.apply_theme() overrides
+        # immediately with the user's actual theme.
+        self.apply_theme(self._current_theme)
+
         self.set_accounts([])
+
+    def apply_theme(self, c: dict) -> None:
+        """Rebuild every QSS string against the theme dict `c`.
+        Called on construction (dark default) and on every theme switch."""
+        self._current_theme = c
+        stripe = c["game_pill_ttr"] if self._game == "ttr" else c["game_pill_cc"]
+        self.card.setStyleSheet(
+            "QFrame#section_card {"
+            f" background: {c['bg_card']};"
+            f" border-left: 1px solid {c['border_card']};"
+            f" border-right: 1px solid {c['border_card']};"
+            f" border-bottom: 1px solid {c['border_card']};"
+            f" border-top: 2px solid {stripe};"
+            " border-radius: 10px;"
+            "}"
+        )
+        self._header_frame.setStyleSheet(
+            "QFrame#section_header {"
+            " background: transparent;"
+            f" border-bottom: 1px solid {c['border_muted']};"
+            "}"
+        )
+        base_font_px = int(15 * self._content_scale)
+        self.title_label.setStyleSheet(
+            f"background: transparent; color: {c['text_primary']};"
+            f" font-weight: 700; font-size: {base_font_px}px;"
+        )
+        self.subline.setStyleSheet(
+            f"background: transparent; color: {c['text_muted']}; font-size: 12px;"
+        )
+        self.launcher_btn.setStyleSheet(
+            "QToolButton {"
+            " background: transparent;"
+            f" border: 1px solid {c['border_muted']};"
+            f" color: {c['text_secondary']};"
+            " border-radius: 8px; padding: 8px 14px; font-size: 12px;"
+            " font-weight: 600;"
+            "}"
+            "QToolButton:hover {"
+            f" background: {c['bg_card_inner_hover']};"
+            f" border-color: {c['border_card']};"
+            "}"
+        )
+        # Propagate to children that own their own QSS.
+        for tile in self.tiles:
+            if hasattr(tile, "apply_theme"):
+                tile.apply_theme(c)
+        if self.add_tile is not None and hasattr(self.add_tile, "apply_theme"):
+            self.add_tile.apply_theme(c)
+        if hasattr(self.empty_state, "apply_theme"):
+            self.empty_state.apply_theme(c)
 
     def set_accounts(self, accounts: list[dict]) -> None:
         while self.grid.count():
@@ -266,6 +285,9 @@ class LaunchSection(QWidget):
         # resize bumped scale above 1.0), bring the fresh tiles up to the
         # current scale so they don't render at the wrong height.
         self._apply_content_scale_to_tiles()
+        # Newly-created tiles default to dark theme via their own __init__.
+        # Re-apply the section's current theme so they match light mode etc.
+        self.apply_theme(self._current_theme)
 
     def tile_at(self, section_index: int) -> AccountTile | None:
         if 0 <= section_index < len(self.tiles):
@@ -289,15 +311,8 @@ class LaunchSection(QWidget):
         # too. Notify any listener (LaunchTab) that may need to re-sync
         # sibling-section heights.
         self.content_size_changed.emit()
-        # Header title font size scales too (15 base -> up to 21). NOTE:
-        # this replaces the full stylesheet; if you add other QSS rules to
-        # title_label, include them here or they'll be silently dropped on
-        # the next resize. background:transparent is required so the
-        # card's accent tint shows through behind the title.
-        self.title_label.setStyleSheet(
-            f"background: transparent; color: #fff; font-weight: 700;"
-            f" font-size: {int(15 * self._content_scale)}px;"
-        )
+        # Title font size baked into apply_theme(...) via self._content_scale.
+        self.apply_theme(self._current_theme)
 
     def _apply_content_scale_to_tiles(self) -> None:
         """Apply the current _content_scale to every tile and add_tile.

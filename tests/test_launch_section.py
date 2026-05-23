@@ -67,38 +67,69 @@ def test_max_accounts_hides_add_tile(qapp):
     assert not sec.add_tile.isVisible()
 
 
-def test_section_card_carries_accent_tint_ttr(qapp):
-    """Per-game card wraps header + grid in a faint accent-tinted region.
-    The previous design tinted only the header strip; the card design
-    moves the tint to the wrapping container so the empty state and the
-    full content read as one TTR region."""
+def test_section_card_is_flat_with_ttr_top_stripe(qapp):
+    """Section card is a flat bg_card surface with a 2 px coloured stripe
+    along the top edge (replaces the gradient wash). TTR uses the
+    game_pill_ttr violet."""
+    from utils.theme_manager import get_theme_colors
     sec = LaunchSection(game="ttr", icon_path="")
     card = sec.findChild(QFrame, "section_card")
     assert card is not None
     qss = card.styleSheet()
-    # TTR accent in the gradient + faint accent border around the card.
-    assert "rgba(74,143,231" in qss or "rgba(74, 143, 231" in qss
-    assert "border-radius" in qss
+    c = get_theme_colors(True)  # widget builds against dark by default
+
+    # Regression guard: no gradient wash anywhere on the card.
+    assert "qlineargradient" not in qss, "card must be flat, not a gradient"
+    # Flat bg + hairline border + 2 px coloured top stripe.
+    assert c["bg_card"] in qss
+    assert c["border_card"] in qss
+    assert "border-top: 2px" in qss
+    assert c["game_pill_ttr"] in qss
 
 
-def test_section_card_carries_accent_tint_cc(qapp):
+def test_section_card_is_flat_with_cc_top_stripe(qapp):
+    from utils.theme_manager import get_theme_colors
     sec = LaunchSection(game="cc", icon_path="")
     card = sec.findChild(QFrame, "section_card")
     assert card is not None
     qss = card.styleSheet()
-    assert "rgba(242,109,33" in qss or "rgba(242, 109, 33" in qss
-    assert "border-radius" in qss
+    c = get_theme_colors(True)
+    assert "qlineargradient" not in qss
+    assert c["bg_card"] in qss
+    assert c["border_card"] in qss
+    assert "border-top: 2px" in qss
+    assert c["game_pill_cc"] in qss
 
 
 def test_section_header_keeps_hairline_divider(qapp):
-    """Header still has the hairline below it (separating header content
-    from the tile region) — only the gradient moved out to the card."""
+    """Header still has the hairline below it, but the divider color now
+    comes from the border_muted theme token (was a hardcoded rgba literal)."""
+    from utils.theme_manager import get_theme_colors
     sec = LaunchSection(game="ttr", icon_path="")
     header_frame = sec.findChild(QFrame, "section_header")
     assert header_frame is not None
     qss = header_frame.styleSheet()
     assert "border-bottom" in qss
-    assert "rgba(255,255,255,0.06" in qss or "rgba(255, 255, 255, 0.06" in qss
+    # Header itself is transparent; the bottom divider is the only QSS rule.
+    assert "qlineargradient" not in qss
+    c = get_theme_colors(True)
+    assert c["border_muted"] in qss
+
+
+def test_apply_theme_rebuilds_card_qss(qapp):
+    """apply_theme(light_dict) must swap the card QSS to use light tokens."""
+    from utils.theme_manager import get_theme_colors
+    sec = LaunchSection(game="ttr", icon_path="")
+    light = get_theme_colors(False)
+    sec.apply_theme(light)
+    card = sec.findChild(QFrame, "section_card")
+    qss = card.styleSheet()
+    assert light["bg_card"] in qss
+    assert light["border_card"] in qss
+    # Dark bg_card (#252525) must no longer appear if it differs from light.
+    dark = get_theme_colors(True)
+    if dark["bg_card"] != light["bg_card"]:
+        assert dark["bg_card"] not in qss
 
 
 def test_empty_state_lives_inside_card(qapp):
@@ -254,3 +285,32 @@ def test_set_layout_mode_same_mode_does_not_reflash(qapp):
     sec.set_layout_mode("full")
     for tile in sec.tiles:
         assert tile.tile_opacity == 1.0
+
+
+def test_add_tile_uses_theme_tokens(qapp):
+    """The '+ Add Account' dashed tile must use theme tokens, not literals,
+    so it switches palettes correctly."""
+    from utils.theme_manager import get_theme_colors
+    sec = LaunchSection(game="ttr", icon_path="")
+    sec.set_accounts([{"label": "x", "username": "y"}])  # ensures add_tile is built
+    assert sec.add_tile is not None
+    c = get_theme_colors(True)
+    qss = sec.add_tile.styleSheet()
+    assert c["border_card"] in qss
+    assert c["text_muted"] in qss
+    # Regression guards: no dark-only literals.
+    assert "rgba(255,255,255,0.12)" not in qss
+    assert "#8a9bb8" not in qss
+    assert "#cfd6e6" not in qss
+
+
+def test_add_tile_apply_theme_swaps_palettes(qapp):
+    """LaunchSection.apply_theme must propagate to add_tile."""
+    from utils.theme_manager import get_theme_colors
+    sec = LaunchSection(game="cc", icon_path="")
+    sec.set_accounts([{"label": "x", "username": "y"}])
+    light = get_theme_colors(False)
+    sec.apply_theme(light)
+    qss = sec.add_tile.styleSheet()
+    assert light["border_card"] in qss
+    assert light["text_muted"] in qss

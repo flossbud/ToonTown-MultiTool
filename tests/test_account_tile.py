@@ -140,24 +140,70 @@ def test_summarize_error_unmatched_short_message_returned_as_is():
 
 
 def test_account_tile_has_hover_qss(qapp):
-    """Hovering the tile brightens its background and accent border-top."""
-    from utils.widgets.account_tile import AccountTile
+    """Hovering the tile lifts background from bg_card_inner to
+    bg_card_inner_hover. No more accent border-top brightening."""
+    from utils.theme_manager import get_theme_colors
     tile = AccountTile(game="ttr", slot_index=0)
     qss = tile.styleSheet()
+    c = get_theme_colors(True)
     assert "QFrame#account_tile:hover" in qss
-    # Brighter background and brighter TTR accent border on hover.
-    assert "#2e2e2e" in qss
-    assert "#6aa4ee" in qss  # brightened TTR accent
+    # Structural guard: in dark mode bg_card_inner_hover happens to equal
+    # border_card (#363636), so a substring match on the color alone is
+    # satisfied by the border rule. Assert the :hover BLOCK exists so a
+    # refactor that accidentally drops the hover rule can't pass this test.
+    hover_block_start = qss.find("QFrame#account_tile:hover")
+    assert hover_block_start != -1
+    hover_block = qss[hover_block_start:]
+    assert c["bg_card_inner_hover"] in hover_block, \
+        "bg_card_inner_hover token must appear inside the :hover block, not just in border"
+    # Regression guard: no per-game border-top accent line.
+    assert "border-top: 3px" not in qss
+    assert "border-top: 4px" not in qss
 
 
 def test_account_tile_has_hover_qss_cc(qapp):
-    """CC tiles get the brightened orange accent and shared brighter background."""
-    from utils.widgets.account_tile import AccountTile
+    """CC tiles share the same neutral hover; identity carried by section
+    card stripe, not by per-tile accent."""
+    from utils.theme_manager import get_theme_colors
     tile = AccountTile(game="cc", slot_index=0)
     qss = tile.styleSheet()
+    c = get_theme_colors(True)
     assert "QFrame#account_tile:hover" in qss
-    assert "#2e2e2e" in qss
-    assert "#f48748" in qss  # brightened CC accent
+    # Structural guard: in dark mode bg_card_inner_hover happens to equal
+    # border_card (#363636), so a substring match on the color alone is
+    # satisfied by the border rule. Assert the :hover BLOCK exists so a
+    # refactor that accidentally drops the hover rule can't pass this test.
+    hover_block_start = qss.find("QFrame#account_tile:hover")
+    assert hover_block_start != -1
+    hover_block = qss[hover_block_start:]
+    assert c["bg_card_inner_hover"] in hover_block, \
+        "bg_card_inner_hover token must appear inside the :hover block, not just in border"
+    assert "border-top: 3px" not in qss
+
+
+def test_slot_badge_uses_game_pill_color(qapp):
+    """Slot index badge uses the game pill token (same color as the section
+    card top stripe) so identity-source colors stay in lockstep."""
+    from utils.theme_manager import get_theme_colors
+    c = get_theme_colors(True)
+    ttr_tile = AccountTile(game="ttr", slot_index=0)
+    assert c["game_pill_ttr"].lower() in ttr_tile.badge.styleSheet().lower()
+    cc_tile = AccountTile(game="cc", slot_index=0)
+    assert c["game_pill_cc"].lower() in cc_tile.badge.styleSheet().lower()
+
+
+def test_account_tile_apply_theme_rebuilds_qss(qapp):
+    """apply_theme(light) must swap the tile to light-mode tokens."""
+    from utils.theme_manager import get_theme_colors
+    tile = AccountTile(game="ttr", slot_index=0)
+    light = get_theme_colors(False)
+    tile.apply_theme(light)
+    qss = tile.styleSheet()
+    assert light["bg_card_inner"] in qss
+    assert light["bg_card_inner_hover"] in qss
+    dark = get_theme_colors(True)
+    if dark["bg_card_inner"] != light["bg_card_inner"]:
+        assert dark["bg_card_inner"] not in qss
 
 
 def test_account_tile_press_drives_paint_scale(qapp):
@@ -259,3 +305,66 @@ def test_in_tile_buttons_have_no_hover_upscale(qapp):
     assert tile.primary_button.HOVER_SCALE == 1.0
     assert tile.edit_btn.HOVER_SCALE == 1.0
     assert tile.delete_btn.HOVER_SCALE == 1.0
+
+
+def test_status_band_running_uses_success_tokens(qapp):
+    from utils.theme_manager import get_theme_colors
+    c = get_theme_colors(True)
+    tile = AccountTile(game="ttr", slot_index=0)
+    tile.set_state("running")
+    band_qss = tile.status_band.styleSheet()
+    assert c["status_success_bg"] in band_qss
+    assert c["status_success_text"] in band_qss
+
+
+def test_status_band_queued_uses_warning_tokens(qapp):
+    from utils.theme_manager import get_theme_colors
+    c = get_theme_colors(True)
+    tile = AccountTile(game="ttr", slot_index=0)
+    tile.set_state("queued", "pos 5")
+    band_qss = tile.status_band.styleSheet()
+    assert c["status_warning_bg"] in band_qss
+    assert c["status_warning_text"] in band_qss
+
+
+def test_status_band_failed_uses_error_tokens(qapp):
+    from utils.theme_manager import get_theme_colors
+    c = get_theme_colors(True)
+    tile = AccountTile(game="ttr", slot_index=0)
+    tile.set_state("failed", "Bad credentials")
+    band_qss = tile.status_band.styleSheet()
+    assert c["status_error_bg"] in band_qss
+    assert c["status_error_text"] in band_qss
+
+
+def test_status_band_need_2fa_uses_info_tokens(qapp):
+    from utils.theme_manager import get_theme_colors
+    c = get_theme_colors(True)
+    tile = AccountTile(game="cc", slot_index=1)
+    tile.set_state("need_2fa")
+    band_qss = tile.status_band.styleSheet()
+    assert c["status_info_bg"] in band_qss
+    assert c["status_info_text"] in band_qss
+
+
+def test_status_band_rethemes_on_apply_theme(qapp):
+    """End-to-end re-theming: a tile in 'running' state must update its
+    band QSS to light-mode tokens when apply_theme(light) is called.
+
+    Verifies the _current_state cache + _refresh_status_band -> set_state
+    re-call chain that exists specifically for theme switches."""
+    from utils.theme_manager import get_theme_colors
+    light = get_theme_colors(False)
+    dark = get_theme_colors(True)
+    tile = AccountTile(game="ttr", slot_index=0)
+    tile.set_state("running")
+    # Sanity: starts in dark.
+    assert dark["status_success_bg"] in tile.status_band.styleSheet()
+    # Switch theme.
+    tile.apply_theme(light)
+    band_qss = tile.status_band.styleSheet()
+    assert light["status_success_bg"] in band_qss
+    assert light["status_success_text"] in band_qss
+    # Dark values must no longer appear (if they differ).
+    if dark["status_success_bg"] != light["status_success_bg"]:
+        assert dark["status_success_bg"] not in band_qss

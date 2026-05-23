@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from utils.theme_manager import font_role, TYPOGRAPHY, LIGHT_THEME, should_set_xdg_portal_platformtheme
+from utils.theme_manager import font_role, get_theme_colors, TYPOGRAPHY, LIGHT_THEME, should_set_xdg_portal_platformtheme
 from utils import theme_manager
 
 
@@ -135,3 +135,32 @@ def test_detect_system_color_scheme_cache_expires_after_ttl():
         theme_manager.detect_system_color_scheme()
 
     assert call_count["n"] == 2, f"expected re-resolve after TTL, got {call_count['n']}"
+
+
+# ── launch-tab-design-alignment token tests ───────────────────────────────
+
+_NEW_TOKENS = [
+    "status_error_bg", "status_error_text", "status_error_border",
+    "status_info_bg",  "status_info_text",  "status_info_border",
+    "bg_card_inner_hover",
+]
+
+
+@pytest.mark.parametrize("is_dark", [True, False])
+def test_new_launch_tab_alignment_tokens_present(is_dark):
+    """Every new token from the launch-tab-design-alignment spec must be
+    present in both palettes so light-mode QSS doesn't KeyError."""
+    c = get_theme_colors(is_dark)
+    missing = [k for k in _NEW_TOKENS if k not in c]
+    assert not missing, f"missing tokens for is_dark={is_dark}: {missing}"
+
+
+@pytest.mark.parametrize("is_dark", [True, False])
+def test_new_token_values_are_color_strings(is_dark):
+    """Each token resolves to a non-empty hex or rgba string."""
+    c = get_theme_colors(is_dark)
+    for k in _NEW_TOKENS:
+        v = c[k]
+        assert isinstance(v, str) and len(v) > 0, f"{k} is not a string"
+        assert v.startswith("#") or v.startswith("rgba("), \
+            f"{k}={v!r} must be #hex or rgba(...)"
