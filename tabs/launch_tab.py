@@ -732,23 +732,33 @@ class LaunchTab(QWidget):
         self._sync_compact_section_heights()
 
     def _sync_compact_section_heights(self) -> None:
-        """In compact mode, both stacked cards must share a height so a
+        """In compact mode, expanded cards must share a height so a
         populated TTR card and an empty CC card don't look uneven.
+        Collapsed cards are excluded from the match — they shrink to
+        their header bar (min-height 0).
 
         QVBoxLayout with alignment=AlignHCenter gives each section its
         own sizeHint, so without intervention the empty card collapses
         to its content height while the populated card grows. Force
-        both sections' min-height up to the taller sibling's hint (or
-        the per-section absolute floor, whichever is greater)."""
+        expanded sections' min-height up to the taller expanded
+        sibling's hint (or the per-section absolute floor of 380,
+        whichever is greater)."""
         if self._layout_mode != "compact":
             return
-        target = max(
-            self.ttr_section.sizeHint().height(),
-            self.cc_section.sizeHint().height(),
-            380,  # absolute floor — matches LaunchSection's own minimum
-        )
-        self.ttr_section.setMinimumHeight(target)
-        self.cc_section.setMinimumHeight(target)
+        expanded = [s for s in (self.ttr_section, self.cc_section)
+                    if not s.is_collapsed]
+        if expanded:
+            target = max(
+                max(s.sizeHint().height() for s in expanded),
+                380,
+            )
+        else:
+            target = 0
+        for s in (self.ttr_section, self.cc_section):
+            if s.is_collapsed:
+                s.setMinimumHeight(0)
+            else:
+                s.setMinimumHeight(target)
 
     # ── Account actions ────────────────────────────────────────────────────
 

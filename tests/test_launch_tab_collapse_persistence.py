@@ -87,3 +87,30 @@ def test_user_toggle_writes_cc_setting_independently(qapp):
     tab.cc_section.collapsed_changed.emit(True)
     assert settings.get("launch_section_cc_collapsed") is True
     assert settings.get("launch_section_ttr_collapsed") is None
+
+
+def test_compact_height_sync_excludes_collapsed_sections(qapp):
+    """When one section is collapsed in compact mode, the other should
+    be allowed to take its natural sizeHint and the collapsed section's
+    min-height must be 0 (so it can shrink to the header bar)."""
+    settings = _FakeSettings()
+    tab = _make_tab(qapp, settings)
+    tab.set_layout_mode("compact")
+    tab.ttr_section.set_collapsed(True, animate=False)
+    tab._sync_compact_section_heights()
+    assert tab.ttr_section.minimumHeight() == 0
+    # cc_section's minimumHeight should be max(its sizeHint, 380),
+    # not max(ttr's, cc's, 380).
+    cc_hint = tab.cc_section.sizeHint().height()
+    assert tab.cc_section.minimumHeight() == max(cc_hint, 380)
+
+
+def test_compact_height_sync_both_collapsed(qapp):
+    settings = _FakeSettings()
+    tab = _make_tab(qapp, settings)
+    tab.set_layout_mode("compact")
+    tab.ttr_section.set_collapsed(True, animate=False)
+    tab.cc_section.set_collapsed(True, animate=False)
+    tab._sync_compact_section_heights()
+    assert tab.ttr_section.minimumHeight() == 0
+    assert tab.cc_section.minimumHeight() == 0
