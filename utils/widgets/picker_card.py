@@ -139,7 +139,7 @@ class PickerCard(QFrame):
         self.setFocusPolicy(Qt.StrongFocus)
 
         outer = QHBoxLayout(self)
-        outer.setContentsMargins(16, 14, 16, 14)
+        outer.setContentsMargins(15, 13, 15, 13)
         outer.setSpacing(14)
 
         chip = QLabel(PickerChip.label_for(chip_slug))
