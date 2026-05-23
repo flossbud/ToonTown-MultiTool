@@ -9,9 +9,16 @@ window whose title (case- and slash-normalized) ends with the CC exe
 basename. The console process remains alive (CC's stdout keeps flowing);
 only its X11 surface vanishes.
 
-Single-shot per launch. Gated by the CC_HIDE_LAUNCH_CONSOLE setting
-(default True). See docs/superpowers/specs/2026-05-21-hide-cc-launch-
-console-design.md for the full design rationale.
+XUnmapWindow is called every tick the title matches, not just the first
+time. Under Proton, wineserver intermittently re-maps the console after
+our unmap (its internal mapped-state model isn't invalidated by external
+XUnmapWindow). A once-only unmap would let wine re-map and never recover;
+repeated unmap calls suppress the re-map loop. An X11 unmap on an
+already-unmapped window is a no-op, so this is cheap.
+
+Gated by the CC_HIDE_LAUNCH_CONSOLE setting (default True). See
+docs/superpowers/specs/2026-05-21-hide-cc-launch-console-design.md for
+the full design rationale.
 """
 
 from __future__ import annotations
@@ -162,6 +169,10 @@ class WineConsoleHider(QObject):
         self._max_ticks = WATCH_DURATION_MS // WATCH_INTERVAL_MS
         self._tick_count = 0
         self._already_unmapped: set[int] = set()
+        # Per-wid count of "we see this window again after a prior unmap" -
+        # i.e., wine re-mapped it. Reset at on_game_launched, summarized at
+        # the end of each watch window for diagnostic visibility.
+        self._remap_count: dict[int, int] = {}
 
     def attach(self, cc_launcher) -> None:
         """Connect to a CCLauncher's game_launched signal. Idempotent at
@@ -178,11 +189,20 @@ class WineConsoleHider(QObject):
         # all get the full 15s coverage.
         self._tick_count = 0
         self._already_unmapped.clear()
+        self._remap_count.clear()
         self._timer.start()
 
     def _tick(self) -> None:
-        """Polling tick: enumerate windows, unmap any new matches, stop
-        the timer after _max_ticks."""
+        """Polling tick: enumerate windows, unmap any matches, stop the
+        timer after _max_ticks.
+
+        No once-only short-circuit: we re-XUnmapWindow on every tick the
+        title matches because wineserver under Proton intermittently
+        re-maps the console after our unmap (tracked in its internal
+        mapped-state model, not invalidated by external XUnmapWindow).
+        Repeated unmap calls suppress the re-map loop; an X11 unmap on an
+        already-unmapped window is a no-op, so this is cheap.
+        """
         self._tick_count += 1
         try:
             windows = list(self._enumerate())
@@ -190,21 +210,32 @@ class WineConsoleHider(QObject):
             print(f"[WineConsoleHider] enumerator error: {e}")
             windows = []
         for wid, title in windows:
-            if wid in self._already_unmapped:
-                continue
             if not _title_matches(title):
                 continue
             try:
                 self._unmap(wid)
-                print(
-                    f"[WineConsoleHider] hid console "
-                    f"wid={hex(wid)} title={title!r}"
-                )
+                if wid in self._already_unmapped:
+                    # Re-map detected: wine put the window back since our
+                    # last unmap. Count it so we can characterize re-map
+                    # frequency from the per-launch summary.
+                    self._remap_count[wid] = self._remap_count.get(wid, 0) + 1
+                else:
+                    print(
+                        f"[WineConsoleHider] hid console "
+                        f"wid={hex(wid)} title={title!r}"
+                    )
             except Exception as e:
                 print(f"[WineConsoleHider] unmap error wid={hex(wid)}: {e}")
-            # Record even on failure so we don't retry the same wid every tick.
             self._already_unmapped.add(wid)
         if self._tick_count >= self._max_ticks:
             self._timer.stop()
             if not self._already_unmapped:
                 print("[WineConsoleHider] no console seen in 15s; giving up")
+            else:
+                total_remaps = sum(self._remap_count.values())
+                print(
+                    f"[WineConsoleHider] summary "
+                    f"hidden_wids={len(self._already_unmapped)} "
+                    f"total_remaps={total_remaps} "
+                    f"per_wid_remaps={ {hex(k): v for k, v in self._remap_count.items()} }"
+                )
