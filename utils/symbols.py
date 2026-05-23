@@ -38,10 +38,26 @@ def S(emoji: str, fallback: str) -> str:
     return emoji if _USE_EMOJI else fallback
 
 
-def M(symbol: str, fallback: str) -> str:
-    """Return symbol if misc BMP symbols render, else fallback.
-    Use for non-emoji unicode like arrows (↻ ↺ ⟳ etc)."""
-    global _USE_MISC
-    if _USE_MISC is None:
-        _USE_MISC = _misc_supported()
-    return symbol if _USE_MISC else fallback
+_USE_TRIANGLE = None
+
+
+def _triangle_supported() -> bool:
+    """Test that BMP geometric triangles like ▶ render with the current font.
+    These are widely supported in basic Unicode fonts (DejaVu, Liberation,
+    Noto) so this returns True even on systems where emoji color fonts
+    aren't installed."""
+    return _can_render("▶")
+
+
+def M(misc: str, fallback: str) -> str:
+    """Return `misc` if the system can render BMP arrow/triangle symbols,
+    else `fallback`.
+
+    Unlike `S()`, this does NOT require emoji-codepoint support — it gates
+    only on basic BMP geometric shape support (U+25B6 family). Use this for
+    chevrons, arrows, and other glyphs that should render even on systems
+    without an emoji color font."""
+    global _USE_TRIANGLE
+    if _USE_TRIANGLE is None:
+        _USE_TRIANGLE = _triangle_supported()
+    return misc if _USE_TRIANGLE else fallback

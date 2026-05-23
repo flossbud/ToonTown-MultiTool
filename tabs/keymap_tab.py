@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve, QSize
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QBrush, QLinearGradient, QPen, QIcon, QPixmap
 from utils.theme_manager import resolve_theme, get_theme_colors, apply_card_shadow, get_set_color, make_trash_icon, get_set_card_styles
-from utils.symbols import S
+from utils.symbols import S, M
 from utils.widgets import install_modern_scrollbar
 
 from utils import logical_actions
@@ -343,7 +343,7 @@ class SetCard(QFrame):
         name_widget.setStyleSheet(self._name_qss())
         hl.addWidget(name_widget, 1)
 
-        self._chevron = QLabel(S("▼", "v"))
+        self._chevron = QLabel(M("▼", "v"))
         self._chevron.setStyleSheet("color: rgba(255,255,255,0.7); font-size: 13px;")
         hl.addWidget(self._chevron)
 
@@ -545,13 +545,13 @@ class SetCard(QFrame):
                 self._body.expand()
             else:
                 self._body.setVisible(True)
-            self._chevron.setText(S("▼", "v"))
+            self._chevron.setText(M("▼", "v"))
         else:
             if animate:
                 self._body.collapse()
             else:
                 self._body.setVisible(False)
-            self._chevron.setText(S("▶", ">"))
+            self._chevron.setText(M("▶", ">"))
 
 
 class _SegmentedSwitch(QFrame):
