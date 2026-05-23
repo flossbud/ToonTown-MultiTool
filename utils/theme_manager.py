@@ -537,7 +537,10 @@ DARK_THEME = """
         background-color: rgba(255, 255, 255, 15);
         border-color: #4d4d62;
     }
-    QPushButton#picker_primary_btn {
+    /* Scoped under #picker_dialog so this rule outweighs the generic
+       dialog-button rule above (otherwise descendant specificity wins
+       and the primary button loses its gradient). */
+    QDialog#picker_dialog QPushButton#picker_primary_btn {
         background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
             stop:0 #1a88ff, stop:1 #0077ff);
         color: #ffffff;
@@ -546,11 +549,11 @@ DARK_THEME = """
         padding: 7px 16px;
         font-weight: 600;
     }
-    QPushButton#picker_primary_btn:hover {
+    QDialog#picker_dialog QPushButton#picker_primary_btn:hover {
         background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
             stop:0 #2e94ff, stop:1 #1a88ff);
     }
-    QPushButton#picker_primary_btn:disabled {
+    QDialog#picker_dialog QPushButton#picker_primary_btn:disabled {
         background: #1f2533;
         color: #5a6680;
         border: 1px solid #2a3344;
@@ -692,7 +695,10 @@ LIGHT_THEME = """
         background-color: #f1f5f9;
         border-color: #94a3b8;
     }
-    QPushButton#picker_primary_btn {
+    /* Scoped under #picker_dialog so this rule outweighs the generic
+       dialog-button rule above (otherwise descendant specificity wins
+       and the primary button loses its gradient). */
+    QDialog#picker_dialog QPushButton#picker_primary_btn {
         background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
             stop:0 #3b82f6, stop:1 #2563eb);
         color: #ffffff;
@@ -701,11 +707,11 @@ LIGHT_THEME = """
         padding: 7px 16px;
         font-weight: 600;
     }
-    QPushButton#picker_primary_btn:hover {
+    QDialog#picker_dialog QPushButton#picker_primary_btn:hover {
         background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
             stop:0 #60a5fa, stop:1 #3b82f6);
     }
-    QPushButton#picker_primary_btn:disabled {
+    QDialog#picker_dialog QPushButton#picker_primary_btn:disabled {
         background: #e2e8f0;
         color: #94a3b8;
         border: 1px solid #cbd5e1;
