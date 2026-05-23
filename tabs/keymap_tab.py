@@ -1,11 +1,11 @@
 """
 Keysets Tab — UI for creating and editing per-game movement sets.
 
-Each set is one SetCard(QFrame) that paints its own rounded card background
-gradient and a thin top stripe in a single paintEvent, and owns its header
-(badge + name + chevron + delete) and a _BodyClip-wrapped key grid
-internally. The active game is selected via an icon-only _GameSubRail
-when both TTR and CC are detected.
+Each set is one SetCard(QFrame) that uses token-driven QSS for its chrome
+(flat bg_card fill, 1 px border_card on L/R/B, 2 px top stripe in the set's
+identity color, 10 px radius), and owns its header (badge + name + chevron +
+delete) and a _BodyClip-wrapped key grid internally. The active game is
+selected via an icon-only _GameSubRail when both TTR and CC are detected.
 """
 
 from __future__ import annotations
@@ -18,8 +18,8 @@ from PySide6.QtWidgets import (
     QFrame, QScrollArea, QLineEdit, QSizePolicy,
 )
 from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve, QSize, QPointF, Property, QRectF
-from PySide6.QtGui import QColor, QPainter, QPainterPath, QBrush, QLinearGradient, QPen, QIcon, QPixmap, QPolygonF
-from utils.theme_manager import resolve_theme, get_theme_colors, apply_card_shadow, get_set_color, make_trash_icon, get_set_card_styles
+from PySide6.QtGui import QColor, QPainter, QBrush, QIcon, QPixmap, QPolygonF
+from utils.theme_manager import resolve_theme, get_theme_colors, get_set_color, make_trash_icon, get_set_card_styles
 from utils.symbols import S
 from utils.widgets import install_modern_scrollbar
 
@@ -480,15 +480,12 @@ class _ChevronArrow(QWidget):
 
 
 class SetCard(QFrame):
-    """One movement set rendered as a single card. Owns its own paintEvent
-    (rounded background + STRIPE_HEIGHT-px top stripe inside one QPainterPath) so the
-    stripe rounds with the card without manual masking. Owns the body
+    """One movement set rendered as a single card. Token-driven QSS provides
+    the card surface (flat bg_card fill, 1 px border_card on L/R/B, 2 px top
+    stripe in the set's identity color, 10 px radius). Owns the body
     (_BodyClip) and the header row internally; consumers wire signals
     instead of poking widget internals.
     """
-
-    CORNER_RADIUS = 10
-    STRIPE_HEIGHT = 6
 
     toggle_requested = Signal()
     name_changed     = Signal(str)
@@ -500,25 +497,22 @@ class SetCard(QFrame):
         super().__init__(parent)
         self.index = index
         self.set_data = set_data
+        self.setObjectName("set_card")
         self.setAttribute(Qt.WA_StyledBackground, True)
-        self._styles = get_set_card_styles(index, is_dark=True)
         self._is_dark = is_dark
+        self._set_bg, self._set_text = get_set_color(index)
         self._header = None  # set before installEventFilter so eventFilter is safe
+        self._del_btn = None  # set in __init__ for alternate sets; stays None for the default set
 
-        # Reserve STRIPE_HEIGHT at the top via the layout margin so child
-        # widgets sit below the painted stripe. Setting both QWidget AND
-        # layout contents-margins stacks the inset (double-margin bug).
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, self.STRIPE_HEIGHT, 0, 0)
+        outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
         # ── Header row (badge + name + chevron + [delete]) ──────────
         header = QFrame()
         header.setObjectName("set_card_header")
         header.setCursor(Qt.PointingHandCursor)
-        # Transparent bg so the SetCard's painted gradient shows through.
-        # Without this, Qt fills the QFrame opaquely from the palette window
-        # color and covers the painted card body.
+        # Transparent initial state; _apply_chrome will set the final header QSS.
         header.setStyleSheet("QFrame#set_card_header { background: transparent; border: none; }")
         header.installEventFilter(self)  # forwards clicks to mousePressEvent
         hl = QHBoxLayout(header)
@@ -527,7 +521,8 @@ class SetCard(QFrame):
 
         badge = QLabel(f"SET {index + 1}")
         badge.setObjectName("set_card_badge")
-        badge.setStyleSheet(self._badge_qss())
+        # QSS applied via _apply_chrome.
+        self._badge = badge
         badge.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         hl.addWidget(badge)
 
@@ -540,7 +535,6 @@ class SetCard(QFrame):
             name_widget.editingFinished.connect(
                 lambda w=name_widget: self.name_changed.emit(w.text())
             )
-        name_widget.setStyleSheet(self._name_qss())
         hl.addWidget(name_widget, 1)
 
         self._chevron = _ChevronArrow()
@@ -548,13 +542,15 @@ class SetCard(QFrame):
 
         if index > 0:
             del_btn = QPushButton()
+            del_btn.setObjectName("set_card_delete")
             del_btn.setFixedSize(28, 28)
             del_btn.setToolTip("Delete this movement set")
             del_btn.setCursor(Qt.PointingHandCursor)
-            del_btn.setIcon(make_trash_icon(16, QColor("#8a9bb8")))
-            del_btn.setStyleSheet(self._delete_qss())
+            del_btn.setIcon(make_trash_icon(16, QColor("#888888")))
+            # QSS applied via _apply_chrome.
             del_btn.clicked.connect(self.delete_requested.emit)
             hl.addWidget(del_btn)
+            self._del_btn = del_btn
 
         outer.addWidget(header)
         # Lock the header's height to its natural sizeHint AFTER it's been
@@ -570,7 +566,6 @@ class SetCard(QFrame):
         self._active_game = active_game
         body_content = QWidget()
         body_content.setObjectName("set_card_body")
-        # Transparent so the SetCard's painted gradient shows through.
         body_content.setStyleSheet("QWidget#set_card_body { background: transparent; border: none; }")
         bl = QVBoxLayout(body_content)
         bl.setContentsMargins(14, 12, 14, 14)
@@ -645,65 +640,129 @@ class SetCard(QFrame):
         self._body = _BodyClip()
         self._body.set_content_widget(body_content)
         outer.addWidget(self._body)
-        self.setMinimumHeight(self.STRIPE_HEIGHT + header.sizeHint().height())
+        self.setMinimumHeight(header.sizeHint().height())
+        self._apply_chrome()
 
-    def paintEvent(self, event):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
-        rect = self.rect().adjusted(0, 0, -1, -1)
-        path = QPainterPath()
-        path.addRoundedRect(rect, self.CORNER_RADIUS, self.CORNER_RADIUS)
-        p.setClipPath(path)
-
-        # 0) Base card surface -- solid theme-aware fill so the card has
-        #    visible body pixels and the drop shadow has something to cast
-        #    from. The launch-style tint above is too low-opacity to do
-        #    either on its own.
+    def _apply_chrome(self) -> None:
+        """Build and apply token-driven QSS for the card surface, header,
+        badge, name, chevron, delete button, and contained MovementKeyFields.
+        Called once on construction and on every theme switch via
+        `set_theme(is_dark)`."""
         c = get_theme_colors(self._is_dark)
-        p.fillPath(path, QBrush(QColor(c["bg_card"])))
-
-        # 1) Card background tint -- set-color wash over the base surface.
-        bg_grad = QLinearGradient(0, 0, 0, rect.height())
-        bg_grad.setColorAt(0, self._rgba_to_qcolor(self._styles["card_grad_top"]))
-        bg_grad.setColorAt(1, self._rgba_to_qcolor(self._styles["card_grad_bottom"]))
-        p.fillPath(path, QBrush(bg_grad))
-
-        # 2) Top stripe (STRIPE_HEIGHT px) with white-edge gloss + horizontal color band
-        stripe_rect = rect.adjusted(0, 0, 0, -(rect.height() - self.STRIPE_HEIGHT))
-        color_band = QLinearGradient(stripe_rect.left(), 0, stripe_rect.right(), 0)
-        color_band.setColorAt(0.0, QColor(self._styles["stripe_edge"]))
-        color_band.setColorAt(0.5, QColor(self._styles["stripe_center"]))
-        color_band.setColorAt(1.0, QColor(self._styles["stripe_edge"]))
-        p.fillRect(stripe_rect, QBrush(color_band))
-        gloss = QLinearGradient(0, stripe_rect.top(), 0, stripe_rect.bottom())
-        gloss.setColorAt(0.0, QColor(255, 255, 255, 60))   # ~0.24 alpha
-        gloss.setColorAt(1.0, QColor(255, 255, 255, 0))
-        p.fillRect(stripe_rect, QBrush(gloss))
-
-        # 3) Card border (matches stylesheet rgba pattern)
-        pen = QPen(self._rgba_to_qcolor(self._styles["card_border"]))
-        pen.setWidth(1)
-        p.setPen(pen)
-        p.setBrush(Qt.NoBrush)
-        p.drawPath(path)
-        p.end()
+        # ── Card surface ──────────────────────────────────────────
+        self.setStyleSheet(
+            "QFrame#set_card {"
+            f" background: {c['bg_card']};"
+            f" border-left: 1px solid {c['border_card']};"
+            f" border-right: 1px solid {c['border_card']};"
+            f" border-bottom: 1px solid {c['border_card']};"
+            f" border-top: 2px solid {self._set_bg};"
+            " border-radius: 10px;"
+            "}"
+        )
+        # ── Header divider ────────────────────────────────────────
+        if self._header is not None:
+            self._header.setStyleSheet(
+                "QFrame#set_card_header {"
+                " background: transparent;"
+                f" border-bottom: 1px solid {c['border_muted']};"
+                "}"
+            )
+        # ── Badge ─────────────────────────────────────────────────
+        self._badge.setStyleSheet(
+            "QLabel#set_card_badge {"
+            f" background: {self._set_bg};"
+            f" color: {self._set_text};"
+            " font-size: 11px; font-weight: 700;"
+            " border-radius: 8px; padding: 4px 8px;"
+            "}"
+        )
+        # ── Name (QLabel for default set, QLineEdit for others) ───
+        name_qss = (
+            f"color: {c['text_primary']};"
+            " font-size: 15px; font-weight: 700;"
+            " background: transparent;"
+        )
+        if self.index == 0:
+            self._name_widget.setStyleSheet(
+                f"QLabel#set_name_label {{ {name_qss} }}"
+            )
+        else:
+            self._name_widget.setStyleSheet(
+                f"QLineEdit#set_name_edit {{ {name_qss} border: none; padding: 2px 4px; }}"
+                f"QLineEdit#set_name_edit:focus {{"
+                f" background: {c['bg_card_inner_hover']};"
+                f" border: 1px solid {c['border_card']};"
+                f" border-radius: 6px;"
+                f"}}"
+            )
+        # ── Chevron color ─────────────────────────────────────────
+        self._chevron.setColor(QColor(c['text_muted']))
+        # ── Delete button (alternate sets only) ───────────────────
+        if self._del_btn is not None:
+            self._del_btn.setStyleSheet(
+                "QPushButton#set_card_delete {"
+                " background: transparent;"
+                f" border: 1px solid {c['border_muted']};"
+                " border-radius: 6px;"
+                f" color: {c['text_muted']};"
+                "}"
+                "QPushButton#set_card_delete:hover {"
+                f" background: {c['bg_card_inner_hover']};"
+                f" border: 1px solid {c['border_card']};"
+                f" color: {c['accent_red_border']};"
+                "}"
+            )
+        # ── Default-set hint label ────────────────────────────────
+        for hint in self.findChildren(QLabel, "set_body_hint"):
+            hint.setStyleSheet(
+                f"font-size: 11px; color: {c['text_muted']};"
+                f" background: none; border: none; padding: 0 0 4px 0;"
+            )
+        # ── Direction labels (Forward / Reverse / Left / etc) ────
+        direction_qss = (
+            f"QLabel#direction_label {{"
+            f" color: {c['text_secondary']};"
+            f" font-size: 12px;"
+            f" background: transparent;"
+            f"}}"
+        )
+        for lbl in self.findChildren(QLabel, "direction_label"):
+            lbl.setStyleSheet(direction_qss)
+        # ── MovementKeyFields (default + awaiting per-set color) ──
+        field_qss = (
+            f"QLineEdit {{"
+            f" background: transparent;"
+            f" border: 1px solid {c['border_muted']};"
+            f" border-radius: 6px;"
+            f" color: {c['text_primary']};"
+            f" padding: 0 8px;"
+            f" font-weight: 600; font-size: 11.5px;"
+            f"}}"
+            f"QLineEdit:hover {{"
+            f" background: {c['bg_card_inner_hover']};"
+            f" border: 1px solid {c['border_card']};"
+            f"}}"
+            f"QLineEdit[awaiting=\"true\"] {{"
+            f" background: {c['bg_card_inner_hover']};"
+            f" border: 1px solid {self._set_bg};"
+            f" color: {self._set_bg};"
+            f"}}"
+            f"QLineEdit[conflict=\"true\"] {{"
+            f" border: 1px solid {c['accent_red_border']};"
+            f" background: rgba(208, 64, 64, 0.10);"
+            f"}}"
+        )
+        for field in self.findChildren(MovementKeyField):
+            field.setStyleSheet(field_qss)
 
     def set_theme(self, is_dark: bool):
-        """Update which theme this card paints against. Triggers a repaint
-        when the value actually changes."""
+        """Update which theme this card paints against. Re-applies QSS so the
+        chrome retints. Idempotent on no-op."""
         if is_dark == self._is_dark:
             return
         self._is_dark = is_dark
-        self.update()
-
-    @staticmethod
-    def _rgba_to_qcolor(rgba: str) -> QColor:
-        """Parse our `rgba(r, g, b, a)` style strings into a QColor."""
-        inner = rgba[rgba.index("(") + 1: rgba.rindex(")")]
-        parts = [s.strip() for s in inner.split(",")]
-        r, g, b = (int(parts[0]), int(parts[1]), int(parts[2]))
-        a = int(float(parts[3]) * 255)
-        return QColor(r, g, b, a)
+        self._apply_chrome()
 
     def eventFilter(self, obj, ev):
         # Header row click toggles. Clicks on the name QLineEdit / delete
@@ -718,47 +777,6 @@ class SetCard(QFrame):
         # Direct click on the card (e.g. from tests). Forwarded to toggle.
         self.toggle_requested.emit()
         super().mousePressEvent(ev)
-
-    def _badge_qss(self) -> str:
-        s = self._styles
-        return (
-            f"QLabel#set_card_badge {{ "
-            f"background: {s['badge_bg']}; color: {s['badge_text']}; "
-            f"font-size: 9px; font-weight: 700; letter-spacing: 0.5px; "
-            f"border-radius: 4px; padding: 3px 8px; "
-            f"border: 1px solid {s['badge_ring']}; "
-            f"}}"
-        )
-
-    def _name_qss(self) -> str:
-        s = self._styles
-        if self.index == 0:
-            return (
-                f"QLabel#set_name_label {{ "
-                f"color: {s['name_color']}; font-size: 14px; font-weight: 800; "
-                f"letter-spacing: 0.2px; background: transparent; "
-                f"}}"
-            )
-        return (
-            f"QLineEdit#set_name_edit {{ "
-            f"color: {s['name_color']}; font-size: 14px; font-weight: 800; "
-            f"letter-spacing: 0.2px; background: transparent; border: none; padding: 2px 4px; "
-            f"}}"
-            f"QLineEdit#set_name_edit:focus {{ "
-            f"background: rgba(255,255,255,0.06); "
-            f"border-bottom: 1px solid {s['head_divider']}; "
-            f"}}"
-        )
-
-    def _delete_qss(self) -> str:
-        s = self._styles
-        return (
-            f"QPushButton {{ background: rgba(255,255,255,0.04); "
-            f"border: 1px solid rgba(255,255,255,0.12); border-radius: 6px; "
-            f"color: #8a9bb8; }} "
-            f"QPushButton:hover {{ background: rgba(255,255,255,0.08); "
-            f"color: {s['name_color']}; border-color: rgba(255,255,255,0.25); }}"
-        )
 
     def set_expanded(self, expanded: bool, *, animate: bool = True):
         self._chevron.set_expanded(expanded)
@@ -985,8 +1003,6 @@ class KeymapTab(QWidget):
 
             expanded = prev_states.get(idx, False)
             card.set_expanded(expanded, animate=False)
-            apply_card_shadow(card, is_dark, blur=22, offset_y=6)
-
             self._scroll_layout.addWidget(card)
             self._entries.append({
                 "card": card, "index": idx, "expanded": expanded,
@@ -1203,54 +1219,11 @@ class KeymapTab(QWidget):
         if bar is not None:
             bar.set_theme(is_dark)
 
-        # SetCard owns its background, stripe, badge, name, and delete-button
-        # styling — those work against either theme by design (RGBA against
-        # the underlying bg). The Default set's hint label uses a palette
-        # token, so it must be re-styled here on theme change. The detect
-        # and add-set buttons further below are re-styled the same way.
-        hint_qss = (
-            "font-size: 11px; "
-            f"color: {c['text_muted']}; "
-            "background: none; border: none; padding: 0 0 4px 0;"
-        )
-        for hint in self.findChildren(QLabel, "set_body_hint"):
-            hint.setStyleSheet(hint_qss)
+        # SetCard._apply_chrome owns badge, name, hint, direction-label,
+        # MovementKeyField, and delete-button QSS. Calling set_theme on each
+        # card re-invokes _apply_chrome with the new is_dark value.
         for entry in self._entries:
             entry["card"].set_theme(is_dark)
-
-        # Re-apply MovementKeyField styling on every theme refresh. The
-        # per-field loop was dropped by an earlier refresh_theme cleanup,
-        # which left the chips without border/hover/cursor cues and made
-        # them look non-interactive. The attribute selectors below
-        # ([awaiting], [conflict]) override :hover by QSS specificity, so
-        # conflict markers stay red and the mid-capture state stays
-        # highlighted regardless of mouse position.
-        field_qss = f"""
-            QLineEdit {{
-                background: {c['bg_input']};
-                color: {c['text_primary']};
-                border: 1px solid {c['border_input']};
-                border-radius: 6px;
-                font-size: 11.5px;
-                font-weight: 600;
-                padding: 0;
-            }}
-            QLineEdit:hover {{
-                border: 1px solid rgba(74, 143, 231, 0.7);
-                background: {c['bg_card_inner']};
-            }}
-            QLineEdit[awaiting="true"] {{
-                background: rgba(74, 143, 231, 0.15);
-                border: 1px solid rgba(74, 143, 231, 0.7);
-                color: {c['text_muted']};
-            }}
-            QLineEdit[conflict="true"] {{
-                border: 1px solid #d04040;
-                background: rgba(208, 64, 64, 0.10);
-            }}
-        """
-        for field in self.findChildren(MovementKeyField):
-            field.setStyleSheet(field_qss)
 
         if hasattr(self, "_add_btn"):
             self._add_btn.setStyleSheet(f"""
