@@ -16,6 +16,7 @@ import stat
 import time
 import uuid
 import threading
+from collections.abc import Callable
 from datetime import datetime
 import keyring
 import keyring.backend
@@ -100,7 +101,7 @@ class CredentialsManager:
         self._legacy_fallback_deleted = False
         self._deferred_v1_migration = False
         self._primary_backend_name = None
-        self._change_callbacks: list = []  # subscribers fired on add/delete/clear_all
+        self._change_callbacks: list[Callable[[], None]] = []  # subscribers fired on add/delete/clear_all
 
         self._cleanup_legacy_fallback_file()
 
@@ -108,9 +109,9 @@ class CredentialsManager:
         self._load()
         _dbg(f"[CredentialsManager] Loaded {len(self._accounts)} accounts from {self._path}")
 
-    # -- Change notifications --------------------------------------------------
+    # ── Change notifications ───────────────────────────────────────────────
 
-    def on_change(self, callback) -> None:
+    def on_change(self, callback: Callable[[], None]) -> None:
         """Register a callback fired after add_account / delete_account /
         clear_all. Callbacks take no arguments. Exceptions inside callbacks
         are caught and logged, never propagated.
