@@ -458,7 +458,7 @@ DARK_THEME = """
     /* ── Picker dialog (cc_install_picker, cc_compat_picker) ───────── */
     QDialog#picker_dialog {
         background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-            stop:0 #1a1a1f, stop:1 #161620);
+            stop:0 #1f1f1f, stop:1 #181818);
         border: 1px solid #2a2a2a;
     }
     QScrollArea#picker_card_list,
