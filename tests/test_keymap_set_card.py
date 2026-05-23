@@ -277,3 +277,31 @@ def test_direction_label_width_fits_forward(qapp):
         f"direction_label width {forward_label.width()} is too narrow for "
         f"'Forward' text width {advance} (need {advance + 4})"
     )
+
+
+def test_movementkeyfield_has_stylesheet_after_refresh(qapp):
+    from tabs.keymap_tab import KeymapTab, MovementKeyField
+    from utils.keymap_manager import KeymapManager
+
+    class _FakeSettings:
+        def __init__(self):
+            self._d = {"ttr_engine_dir": "", "cc_engine_dir": "", "theme": "dark"}
+        def get(self, k, default=None):
+            return self._d.get(k, default)
+        def set(self, k, v):
+            self._d[k] = v
+        def on_change(self, cb):
+            pass
+
+    tab = KeymapTab(KeymapManager(), settings_manager=_FakeSettings())
+    tab.refresh_theme()
+    fields = tab.findChildren(MovementKeyField)
+    assert len(fields) > 0, "expected at least one MovementKeyField in the tab"
+    for f in fields:
+        assert f.styleSheet() != "", (
+            "MovementKeyField has no stylesheet after refresh_theme - the "
+            "per-field QSS loop is missing or broken"
+        )
+        # Specific tokens we expect in the rendered QSS
+        assert "QLineEdit" in f.styleSheet()
+        assert ":hover" in f.styleSheet()

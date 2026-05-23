@@ -1200,6 +1200,40 @@ class KeymapTab(QWidget):
         for entry in self._entries:
             entry["card"].set_theme(is_dark)
 
+        # Re-apply MovementKeyField styling on every theme refresh. The
+        # per-field loop was dropped by an earlier refresh_theme cleanup,
+        # which left the chips without border/hover/cursor cues and made
+        # them look non-interactive. The attribute selectors below
+        # ([awaiting], [conflict]) override :hover by QSS specificity, so
+        # conflict markers stay red and the mid-capture state stays
+        # highlighted regardless of mouse position.
+        field_qss = f"""
+            QLineEdit {{
+                background: {c['bg_input']};
+                color: {c['text_primary']};
+                border: 1px solid {c['border_input']};
+                border-radius: 6px;
+                font-size: 11.5px;
+                font-weight: 600;
+                padding: 0;
+            }}
+            QLineEdit:hover {{
+                border: 1px solid rgba(74, 143, 231, 0.7);
+                background: {c['bg_card_inner']};
+            }}
+            QLineEdit[awaiting="true"] {{
+                background: rgba(74, 143, 231, 0.15);
+                border: 1px solid rgba(74, 143, 231, 0.7);
+                color: {c['text_muted']};
+            }}
+            QLineEdit[conflict="true"] {{
+                border: 1px solid #d04040;
+                background: rgba(208, 64, 64, 0.10);
+            }}
+        """
+        for field in self.findChildren(MovementKeyField):
+            field.setStyleSheet(field_qss)
+
         if hasattr(self, "_add_btn"):
             self._add_btn.setStyleSheet(f"""
                 QPushButton {{
