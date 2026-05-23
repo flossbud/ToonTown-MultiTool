@@ -366,6 +366,153 @@ class SettingsPanel(QFrame):
         p.end()
 
 
+class _SidebarItem(QFrame):
+    """One clickable row in the sidebar."""
+
+    def __init__(self, key: str, label: str, parent=None):
+        super().__init__(parent)
+        self.key = key
+        self._label = label
+        self._active = False
+        self._hovered = False
+        self.setAttribute(Qt.WA_Hover)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFixedHeight(36)
+        self._c = None
+        self._is_dark = True
+        self._on_click_callback = None
+
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(16, 0, 16, 0)
+        self.label_widget = QLabel(label)
+        self.label_widget.setStyleSheet("background: transparent; border: none;")
+        lay.addWidget(self.label_widget, 1)
+
+    def set_active(self, active: bool) -> None:
+        self._active = bool(active)
+        # When active, leave room for the 2px left accent border by reducing
+        # left padding from 16 to 14.
+        margins = (14 if self._active else 16, 0, 16, 0)
+        self.layout().setContentsMargins(*margins)
+        if self._c is not None:
+            self._apply_styles()
+        self.update()
+
+    def set_on_clicked(self, callback) -> None:
+        self._on_click_callback = callback
+
+    def _on_clicked(self) -> None:
+        if self._on_click_callback is not None:
+            self._on_click_callback(self.key)
+
+    def enterEvent(self, e):
+        self._hovered = True
+        if self._c is not None:
+            self._apply_styles()
+        self.update()
+
+    def leaveEvent(self, e):
+        self._hovered = False
+        if self._c is not None:
+            self._apply_styles()
+        self.update()
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            self._on_clicked()
+            e.accept()
+            return
+        super().mousePressEvent(e)
+
+    def apply_theme(self, c, is_dark: bool) -> None:
+        self._c = c
+        self._is_dark = is_dark
+        self._apply_styles()
+        self.update()
+
+    def _apply_styles(self) -> None:
+        c = self._c
+        text_color = c["sidebar_text_sel"] if self._active else c["sidebar_text"]
+        weight = "600" if self._active else "400"
+        self.label_widget.setStyleSheet(
+            f"font-size: 12.5px; font-weight: {weight}; "
+            f"color: {text_color}; background: transparent; border: none;"
+        )
+
+    def paintEvent(self, e):
+        if self._c is None:
+            return
+        from PySide6.QtGui import QColor, QPainter
+        p = QPainter(self)
+        # Active background
+        if self._active:
+            p.fillRect(self.rect(), QColor(self._c["sidebar_btn_sel"]))
+        elif self._hovered:
+            from PySide6.QtGui import QColor as _C
+            hover = _C("#ffffff" if self._is_dark else "#0f172a")
+            hover.setAlpha(10 if self._is_dark else 12)
+            p.fillRect(self.rect(), hover)
+        # Active left border accent (2px)
+        if self._active:
+            p.fillRect(0, 0, 2, self.height(), QColor(self._c["accent_blue_btn"]))
+        p.end()
+
+
+class Sidebar(QFrame):
+    """Vertical category rail. Emits `category_selected(str)` on click."""
+
+    category_selected = Signal(str)
+
+    def __init__(self, categories: list[tuple[str, str]], parent=None):
+        super().__init__(parent)
+        self.items: list[_SidebarItem] = []
+        self.active_key: str = categories[0][0] if categories else ""
+        self._c = None
+        self._is_dark = True
+        self.setFixedWidth(170)
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 14, 0, 14)
+        lay.setSpacing(0)
+
+        for key, label in categories:
+            item = _SidebarItem(key, label, self)
+            item.set_on_clicked(self._on_item_clicked)
+            self.items.append(item)
+            lay.addWidget(item)
+
+        lay.addStretch(1)
+
+        if self.items:
+            self.items[0].set_active(True)
+
+    def set_active_category(self, key: str) -> None:
+        keys = [item.key for item in self.items]
+        if key not in keys:
+            key = "general"
+            if key not in keys:
+                return
+        self.active_key = key
+        for item in self.items:
+            item.set_active(item.key == key)
+
+    def _on_item_clicked(self, key: str) -> None:
+        if key == self.active_key:
+            return
+        self.set_active_category(key)
+        self.category_selected.emit(key)
+
+    def apply_theme(self, c, is_dark: bool) -> None:
+        self._c = c
+        self._is_dark = is_dark
+        self.setStyleSheet(
+            f"background: {c['sidebar_bg']}; "
+            f"border-right: 1px solid {c['sidebar_border']};"
+        )
+        for item in self.items:
+            item.apply_theme(c, is_dark)
+
+
 # ── Settings Row Types ─────────────────────────────────────────────────────────
 
 class SettingsRow(QFrame):
