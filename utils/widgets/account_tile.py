@@ -81,6 +81,8 @@ def summarize_error(raw_message: str) -> str:
         return "Network error"
     if "engine not found" in lower or "ttrengine" in lower:
         return "Engine not found"
+    if "not installed" in lower:
+        return "Runtime missing"
     if "wine" in lower or "proton" in lower or "umu" in lower:
         return "Runtime error"
     # Default: truncate to ~32 chars.

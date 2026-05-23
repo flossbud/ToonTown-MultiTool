@@ -30,6 +30,30 @@ def test_classifies_bottle(tmp_path, monkeypatch):
     assert inst is not None
     assert inst.launcher == "bottles"
     assert inst.prefix_path == str(bottle)
+    # Bottle lives under the flatpak root, so classify_path must tag it.
+    # Without this, build_launch_command's distribution-missing fallback
+    # has to guess and can pick the wrong invocation form.
+    assert inst.metadata.get("distribution") == "flatpak"
+
+
+def test_classifies_native_bottle_sets_distribution_native(tmp_path, monkeypatch):
+    """A bottle under ~/.local/share/bottles/bottles (host-native Bottles
+    install) must be tagged distribution='native' so build_launch_command
+    invokes the native bottles-cli directly rather than the flatpak app.
+    Regression for: 'error: app/com.usebottles.bottles/x86_64/master not
+    installed' when the user only has the RPM/AUR Bottles, no flatpak."""
+    home = tmp_path / "home"
+    bottles_root = home / ".local/share/bottles/bottles"
+    bottles_root.mkdir(parents=True)
+    exe, bottle = _make_bottle(bottles_root, "Corporate-Clash")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr("os.path.expanduser",
+                        lambda p: p.replace("~", str(home)))
+    inst = classify_path(str(exe))
+    assert inst is not None
+    assert inst.launcher == "bottles"
+    assert inst.prefix_path == str(bottle)
+    assert inst.metadata.get("distribution") == "native"
 
 
 def test_classifies_steam_proton(tmp_path, monkeypatch):

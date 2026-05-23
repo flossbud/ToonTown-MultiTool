@@ -247,6 +247,19 @@ _BOTTLES_ROOTS = [
 ]
 
 
+def _detect_bottle_distribution(bottle_root: str) -> str:
+    """Infer whether a bottle is owned by the flatpak Bottles or the
+    host-native Bottles by checking which `_BOTTLES_ROOTS` prefix the
+    bottle lives under. Falls back to a runtime probe of `bottles-cli`
+    on host PATH for bottles outside the conventional roots."""
+    bottle_real = os.path.realpath(bottle_root)
+    for root_template, distribution in _BOTTLES_ROOTS:
+        root_real = os.path.realpath(os.path.expanduser(root_template))
+        if bottle_real == root_real or bottle_real.startswith(root_real + os.sep):
+            return distribution
+    return "native" if _host_command_exists("bottles-cli") else "flatpak"
+
+
 def _read_bottle_name(bottle_dir: str) -> str | None:
     """Parse bottle.yml's Name field. Returns None if unreadable."""
     bottle_yml = os.path.join(bottle_dir, "bottle.yml")
@@ -637,6 +650,11 @@ def classify_path(exe_path: str) -> WineInstall | None:
     bottle_root = _ancestor_with_marker(os.path.dirname(real), "bottle.yml")
     if bottle_root:
         bottle_name = _read_bottle_name(bottle_root) or os.path.basename(bottle_root)
+        # Tag the distribution (flatpak vs native) so build_launch_command
+        # picks the right invocation form. Without this, the consumer's
+        # fallback has to guess and can produce `flatpak run ...` for a
+        # user whose only Bottles install is the host-native one.
+        distribution = _detect_bottle_distribution(bottle_root)
         return WineInstall(
             exe_path=exe_path,
             launcher="bottles",
@@ -645,6 +663,7 @@ def classify_path(exe_path: str) -> WineInstall | None:
             metadata={
                 "bottle_name": os.path.basename(bottle_root),
                 "bottle_display_name": bottle_name,
+                "distribution": distribution,
             },
         )
 
@@ -882,7 +901,15 @@ def build_launch_command(
         #      __get_cwd skips the broken slice entirely.
         #   2. Unix paths trigger the `is_unix` branch in start.py, which
         #      uses `start /unix /wait <path>` — fine for our purposes.
-        distribution = install.metadata.get("distribution", "flatpak")
+        # Defense-in-depth: classify_path / discover_bottles tag the
+        # WineInstall with the distribution. If a hand-constructed
+        # WineInstall reaches us without that key, probe the host PATH
+        # rather than blindly defaulting to flatpak — a flatpak invocation
+        # against a host where only the native bottles-cli is installed
+        # errors with `app/com.usebottles.bottles ... not installed`.
+        distribution = install.metadata.get("distribution")
+        if distribution is None:
+            distribution = "native" if _host_command_exists("bottles-cli") else "flatpak"
         if distribution == "flatpak":
             base = [
                 "flatpak", "run",

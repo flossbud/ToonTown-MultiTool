@@ -279,6 +279,90 @@ def test_launch_tears_down_bridge_after_cc_exits(qapp, monkeypatch, tmp_path):
     )
 
 
+def test_game_exited_emits_with_stderr_tail_on_nonzero_exit(qapp, tmp_path, monkeypatch):
+    """When the child exits with a nonzero code, the launcher must emit
+    game_exited(retcode, raw_text) where raw_text contains the captured
+    stderr (and stdout). The Launch tab uses raw_text to populate the
+    expanded error modal — without it, the modal shows only the bare
+    'Failed: code N' summary, useless for diagnosing a real failure.
+
+    The Direct connection is required because game_exited is emitted
+    from the launcher's background _run thread; without an event loop
+    running in the test, a queued connection would never fire.
+    """
+    import threading
+    from PySide6.QtCore import Qt
+    from services.cc_launcher import CCLauncher
+    from services.wine_runtimes import WineInstall
+    from utils import wine_input_bridge
+
+    prefix = tmp_path / "pfx"
+    exe = prefix / "drive_c" / "users" / "steamuser" / "AppData" / "Local" / "Corporate Clash" / "CorporateClash.exe"
+    exe.parent.mkdir(parents=True)
+    exe.write_bytes(b"")
+    (prefix / "bottle.yml").write_text("Name: Test\n")
+    install = WineInstall(
+        exe_path=str(exe),
+        launcher="bottles",
+        prefix_path=str(prefix),
+        display_name="Test",
+        metadata={"bottle_name": "Test", "bottle_display_name": "Test",
+                  "distribution": "native"},
+    )
+
+    monkeypatch.setattr(wine_input_bridge, "shutdown_for_prefix", lambda p: None)
+
+    class FakeProc:
+        pid = 99999
+        def wait(self):
+            return 1
+
+    def fake_host_popen(*args, **kwargs):
+        # Write a known stderr payload to the launcher's capture file so
+        # the dump path threads it into game_exited(raw).
+        stderr_fh = kwargs.get("stderr")
+        if stderr_fh is not None and hasattr(stderr_fh, "write"):
+            stderr_fh.write(
+                b"error: app/com.usebottles.bottles/x86_64/master not installed\n"
+            )
+        return FakeProc()
+
+    monkeypatch.setattr("services.cc_launcher.host_popen", fake_host_popen)
+    monkeypatch.setattr("services.cc_launcher._is_trusted", lambda *a, **kw: True)
+    monkeypatch.setattr("services.wine_runtimes.is_launcher_available", lambda _l: True)
+    monkeypatch.setattr(
+        "services.wine_runtimes.build_launch_command",
+        lambda install, args, extra_env: (["fake"], dict(extra_env)),
+    )
+    monkeypatch.setattr("services.cc_launcher.build_launcher_env",
+                        lambda overrides: dict(overrides))
+    monkeypatch.setattr("services.wine_runtimes.ensure_bottle_env_allowlist",
+                        lambda *a, **kw: None)
+
+    captured = []
+    exited_event = threading.Event()
+
+    def on_exit(rc, raw):
+        captured.append((rc, raw))
+        exited_event.set()
+
+    launcher = CCLauncher(settings_manager=None)
+    launcher.game_exited.connect(on_exit, Qt.DirectConnection)
+    launcher.launch(
+        gameserver="gs-test",
+        game_token="t" * 64,
+        install=install,
+        username="u",
+        realm_slug="production",
+    )
+
+    assert exited_event.wait(timeout=2.0), "game_exited never fired"
+    assert len(captured) == 1
+    rc, raw = captured[0]
+    assert rc == 1
+    assert "not installed" in raw
+
+
 def test_register_unregister_idempotent_and_isolated(tmp_path):
     from services.wine_runtimes import (
         register_active_proton_compatdata,
