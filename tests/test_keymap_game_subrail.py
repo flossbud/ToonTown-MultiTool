@@ -62,3 +62,33 @@ def test_clicking_active_chip_does_not_re_emit(qapp):
     rail.game_changed.connect(fired.append)
     rail._buttons["ttr"].click()
     assert fired == []
+
+
+def test_set_active_updates_internal(qapp):
+    from tabs.keymap_tab import _GameSubRail
+    rail = _GameSubRail(active_game="ttr")
+    rail.set_active("cc")
+    assert rail._active == "cc"
+    assert rail._buttons["cc"].isChecked()
+    assert not rail._buttons["ttr"].isChecked()
+
+
+def test_set_active_is_idempotent(qapp):
+    from tabs.keymap_tab import _GameSubRail
+    rail = _GameSubRail(active_game="ttr")
+    fired = []
+    rail.game_changed.connect(fired.append)
+    rail.set_active("ttr")
+    assert fired == []
+
+
+def test_pill_color_matches_active_game(qapp):
+    from tabs.keymap_tab import _GameSubRail
+    from utils.theme_manager import get_theme_colors
+    c = get_theme_colors(True)
+
+    rail = _GameSubRail(active_game="ttr")
+    assert rail._pill._border_color.name().lower() == c["game_pill_ttr"].lower()
+
+    rail.set_active("cc")
+    assert rail._pill._border_color.name().lower() == c["game_pill_cc"].lower()
