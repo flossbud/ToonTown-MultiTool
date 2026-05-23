@@ -317,6 +317,10 @@ class SetCard(QFrame):
         header = QFrame()
         header.setObjectName("set_card_header")
         header.setCursor(Qt.PointingHandCursor)
+        # Transparent bg so the SetCard's painted gradient shows through.
+        # Without this, Qt fills the QFrame opaquely from the palette window
+        # color and covers the painted card body.
+        header.setStyleSheet("QFrame#set_card_header { background: transparent; border: none; }")
         header.installEventFilter(self)  # forwards clicks to mousePressEvent
         hl = QHBoxLayout(header)
         hl.setContentsMargins(14, 12, 14, 12)
@@ -361,6 +365,9 @@ class SetCard(QFrame):
         self._active_game = active_game
         self._body = AnimatedBody()
         self._body.setObjectName("set_card_body")
+        # Transparent for the same reason as the header above — otherwise
+        # the body's opaque QFrame paint covers the card gradient when expanded.
+        self._body.setStyleSheet("QFrame#set_card_body { background: transparent; border: none; }")
         bl = QVBoxLayout(self._body)
         bl.setContentsMargins(14, 12, 14, 14)
         bl.setSpacing(8)
