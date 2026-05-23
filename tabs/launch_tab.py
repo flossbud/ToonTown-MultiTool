@@ -476,6 +476,11 @@ class LaunchTab(QWidget):
         section.tile_edit.connect(lambda i, g=game: self._on_tile_edit(g, i))
         section.tile_delete.connect(lambda i, g=game: self._on_delete(g, i))
         section.tile_expand_error.connect(lambda i, g=game: self._on_tile_expand_error(g, i))
+        # When a section's natural size changes (e.g. resize bumped its
+        # content_scale and grew tile min-heights), re-equalize sibling
+        # heights in compact mode so the populated card doesn't outgrow
+        # the empty card.
+        section.content_size_changed.connect(self._sync_compact_section_heights)
 
     def _on_launcher_clicked(self, game: str) -> None:
         """Invoke the runner for the section-header 'Launch X Launcher' button.

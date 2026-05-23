@@ -59,6 +59,10 @@ class LaunchSection(QWidget):
     tile_edit              = Signal(int)
     tile_delete            = Signal(int)
     tile_expand_error      = Signal(int)
+    # Fires when the section's natural sizeHint changes (content scale
+    # bump on resize, account list change). LaunchTab listens so it can
+    # re-equalize sibling section heights in compact mode.
+    content_size_changed   = Signal()
 
     def __init__(self, game: str, icon_path: str, max_accounts: int = 8, parent=None):
         super().__init__(parent)
@@ -283,6 +287,10 @@ class LaunchSection(QWidget):
             return
         self._content_scale = scale
         self._apply_content_scale_to_tiles()
+        # Tile min-heights just changed, so the section's sizeHint did
+        # too. Notify any listener (LaunchTab) that may need to re-sync
+        # sibling-section heights.
+        self.content_size_changed.emit()
         # Header title font size scales too (15 base -> up to 21). NOTE:
         # this replaces the full stylesheet; if you add other QSS rules to
         # title_label, include them here or they'll be silently dropped on
