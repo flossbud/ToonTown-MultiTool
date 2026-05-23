@@ -593,7 +593,7 @@ class SetCard(QFrame):
             row.setSpacing(8)
             lbl = QLabel(ACTION_LABELS.get(action, action.title()))
             lbl.setObjectName("direction_label")
-            lbl.setFixedWidth(50)
+            lbl.setFixedWidth(72)
             row.addWidget(lbl)
             field = MovementKeyField(set_data.get(action, ""))
             field.setObjectName(f"key_field_{action}")

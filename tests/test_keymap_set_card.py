@@ -252,3 +252,28 @@ def test_movementkeyfield_has_pointer_cursor(qapp):
     from PySide6.QtCore import Qt
     field = MovementKeyField("Up")
     assert field.cursor().shape() == Qt.PointingHandCursor
+
+
+def test_direction_label_width_fits_forward(qapp):
+    from tabs.keymap_tab import SetCard
+    from PySide6.QtWidgets import QLabel
+    from PySide6.QtGui import QFontMetrics
+    card = SetCard(index=0, set_data={
+        "name": "Default", "forward": "Up", "reverse": "Down",
+        "left": "Left", "right": "Right", "jump": "space",
+        "book": "Alt_L", "gags": "g", "tasks": "t", "map": "Shift_L",
+    }, active_game="ttr")
+    forward_label = None
+    for lbl in card.findChildren(QLabel, "direction_label"):
+        if lbl.text() == "Forward":
+            forward_label = lbl
+            break
+    assert forward_label is not None, "could not find the Forward direction_label"
+    fm = QFontMetrics(forward_label.font())
+    advance = fm.horizontalAdvance("Forward")
+    # +4 px slack for Qt's text-rendering padding (label width is a fixed
+    # box, the rendered text needs a tiny bit of room inside).
+    assert forward_label.width() >= advance + 4, (
+        f"direction_label width {forward_label.width()} is too narrow for "
+        f"'Forward' text width {advance} (need {advance + 4})"
+    )
