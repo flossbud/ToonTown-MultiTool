@@ -22,6 +22,7 @@ from PySide6.QtGui import QColor, QPainter, QIcon, QPixmap, QPolygonF
 from utils.theme_manager import resolve_theme, get_theme_colors, get_set_color, make_trash_icon
 from utils.symbols import S
 from utils.widgets import install_modern_scrollbar
+from utils.motion import push_slide_pages
 
 from utils import logical_actions
 
@@ -1199,11 +1200,12 @@ class KeymapTab(QWidget):
     def _on_segment_clicked(self, game: str):
         if game == self._active_game:
             return
+        prev_idx = _GAME_INDEX[self._active_game]
+        new_idx = _GAME_INDEX[game]
         self._active_game = game
         if self._segmented is not None:
             self._segmented.set_active(game)
-        # Animation comes in Task 5; for now, snap to the page.
-        self._game_stack.setCurrentIndex(_GAME_INDEX[game])
+        push_slide_pages(self._game_stack, prev_idx, new_idx, axis="h")
         self._refresh_default_conflict_markers()
 
     # ── Per-game callbacks ─────────────────────────────────────────────────
