@@ -17,8 +17,8 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFrame, QScrollArea, QLineEdit, QSizePolicy,
 )
-from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve
-from PySide6.QtGui import QColor, QPainter, QPainterPath, QBrush, QLinearGradient, QPen
+from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve, QSize
+from PySide6.QtGui import QColor, QPainter, QPainterPath, QBrush, QLinearGradient, QPen, QIcon, QPixmap
 from utils.theme_manager import resolve_theme, get_theme_colors, apply_card_shadow, get_set_color, make_trash_icon, get_set_card_styles
 from utils.symbols import S
 from utils.widgets import install_modern_scrollbar
@@ -571,6 +571,93 @@ class SetCard(QFrame):
             self._chevron.setText(S("▶", ">"))
 
 
+class _SegmentedSwitch(QFrame):
+    """Icon-only TTR/CC switch. Inactive buttons are dimmed; active button
+    is tinted by per-game accent (TTR blue, CC orange) to match the
+    Launch tab's per-game card identity colors."""
+
+    game_changed = Signal(str)
+
+    _ACTIVE_BG = {
+        "ttr": "rgba(74, 143, 231, 0.18)",
+        "cc":  "rgba(242, 109, 33, 0.18)",
+    }
+    _ACTIVE_RING = {
+        "ttr": "rgba(74, 143, 231, 0.45)",
+        "cc":  "rgba(242, 109, 33, 0.45)",
+    }
+    _TITLES = {"ttr": "Toontown Rewritten", "cc": "Corporate Clash"}
+
+    def __init__(self, active_game: str, parent=None):
+        super().__init__(parent)
+        self.setObjectName("seg_switch_wrap")
+        self._active = active_game
+        self._buttons: dict[str, QPushButton] = {}
+
+        outer = QHBoxLayout(self)
+        outer.setContentsMargins(0, 4, 0, 4)
+        outer.setSpacing(0)
+        outer.addStretch()
+
+        bar = QFrame()
+        bar.setObjectName("seg_switch_bar")
+        bar_lay = QHBoxLayout(bar)
+        bar_lay.setContentsMargins(4, 4, 4, 4)
+        bar_lay.setSpacing(4)
+
+        for game in ("ttr", "cc"):
+            b = QPushButton()
+            b.setFixedSize(56, 40)
+            b.setCursor(Qt.PointingHandCursor)
+            b.setToolTip(self._TITLES[game])
+            from tabs.launch_tab import _asset_path as launch_asset_path
+            pm = QPixmap(launch_asset_path(f"{game}.png"))
+            if not pm.isNull():
+                icon = QIcon(pm)
+                b.setIcon(icon)
+                b.setIconSize(QSize(28, 28))
+            b.clicked.connect(lambda _, g=game: self._on_click(g))
+            bar_lay.addWidget(b)
+            self._buttons[game] = b
+
+        outer.addWidget(bar)
+        outer.addStretch()
+        self._apply_styles()
+
+    def _on_click(self, game: str):
+        if game == self._active:
+            return
+        self._active = game
+        self._apply_styles()
+        self.game_changed.emit(game)
+
+    def set_active(self, game: str):
+        if game == self._active:
+            return
+        self._active = game
+        self._apply_styles()
+
+    def _apply_styles(self):
+        wrap_qss = (
+            "QFrame#seg_switch_bar { background: rgba(255,255,255,0.04); "
+            "border: 1px solid rgba(255,255,255,0.10); border-radius: 10px; }"
+        )
+        for game, btn in self._buttons.items():
+            if game == self._active:
+                btn.setStyleSheet(
+                    f"QPushButton {{ background: {self._ACTIVE_BG[game]}; "
+                    f"border: 1px solid {self._ACTIVE_RING[game]}; "
+                    f"border-radius: 7px; }}"
+                )
+            else:
+                btn.setStyleSheet(
+                    "QPushButton { background: transparent; border: none; "
+                    "border-radius: 7px; color: rgba(255,255,255,0.55); } "
+                    "QPushButton:hover { background: rgba(255,255,255,0.04); }"
+                )
+        self.setStyleSheet(wrap_qss)
+
+
 # ── Main Tab ───────────────────────────────────────────────────────────────
 
 
@@ -622,7 +709,8 @@ class KeymapTab(QWidget):
         # need to restart TTMT after adding a game install path in Settings.
         self._show_segmented = self._both_games_detected()
         if self._show_segmented:
-            self._segmented = self._build_segmented_control()
+            self._segmented = _SegmentedSwitch(self._active_game, parent=self)
+            self._segmented.game_changed.connect(self._on_segment_clicked)
             outer.insertWidget(0, self._segmented)
 
         self._build_cards()
@@ -893,35 +981,12 @@ class KeymapTab(QWidget):
         except Exception:
             return False
 
-    def _build_segmented_control(self):
-        from PySide6.QtWidgets import QPushButton, QHBoxLayout, QFrame
-        wrap = QFrame()
-        wrap.setObjectName("keymap_segmented_wrap")
-        wrap.setFixedHeight(36)
-        row = QHBoxLayout(wrap)
-        row.setContentsMargins(24, 4, 24, 4)
-        row.setSpacing(0)
-        row.addStretch()
-        self._seg_buttons: dict[str, QPushButton] = {}
-        for game, label in (("ttr", "TTR"), ("cc", "CC")):
-            b = QPushButton(label)
-            b.setCheckable(True)
-            b.setFixedWidth(80)
-            b.setCursor(Qt.PointingHandCursor)
-            b.clicked.connect(lambda _, g=game: self._on_segment_clicked(g))
-            self._seg_buttons[game] = b
-            row.addWidget(b)
-        self._seg_buttons[self._active_game].setChecked(True)
-        row.addStretch()
-        return wrap
-
     def _on_segment_clicked(self, game: str):
         if game == self._active_game:
-            self._seg_buttons[game].setChecked(True)
             return
         self._active_game = game
-        for g, btn in self._seg_buttons.items():
-            btn.setChecked(g == game)
+        if self._segmented is not None:
+            self._segmented.set_active(game)
         self._initialized_expansion = False  # re-read expand state for new game
         self._build_cards()
         self.refresh_theme()
