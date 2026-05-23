@@ -13,7 +13,7 @@ import sys
 import threading
 from PySide6.QtWidgets import (
     QFrame, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QScrollArea,
-    QVBoxLayout, QWidget,
+    QSizePolicy, QVBoxLayout, QWidget,
 )
 from PySide6.QtCore import Qt, QObject, Signal, QThread, Slot
 
@@ -653,11 +653,32 @@ class LaunchTab(QWidget):
             lay.addWidget(self.ttr_section, 1)
             lay.addWidget(self.cc_section, 1)
         else:
-            lay = QVBoxLayout(container)
-            lay.setContentsMargins(0, 0, 0, 0)
-            lay.setSpacing(12)
-            lay.addWidget(self.ttr_section, alignment=Qt.AlignHCenter)
-            lay.addWidget(self.cc_section, alignment=Qt.AlignHCenter)
+            # Compact: sections stack vertically. Use a centered max-width
+            # inner wrapper so both sections fill the SAME width (the
+            # wrapper's width, capped at 720). Without the wrapper, adding
+            # sections with alignment=Qt.AlignHCenter would give each
+            # section its own sizeHint width — and since populated +
+            # empty sections have different content, their hints differ,
+            # producing visibly different card widths.
+            outer_lay = QHBoxLayout(container)
+            outer_lay.setContentsMargins(0, 0, 0, 0)
+            outer_lay.setSpacing(0)
+            inner = QWidget()
+            inner.setMaximumWidth(720)
+            inner.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+            inner_lay = QVBoxLayout(inner)
+            inner_lay.setContentsMargins(0, 0, 0, 0)
+            inner_lay.setSpacing(12)
+            inner_lay.addWidget(self.ttr_section)
+            inner_lay.addWidget(self.cc_section)
+            # Stretch factor 100 vs side stretches 1 lets the inner card
+            # column fill almost all available space until it hits its
+            # 720 cap, then the side stretches absorb the remainder and
+            # the inner is centered. Same pattern used by MultiToon's
+            # compact layout (_compact_layout.py:71-79).
+            outer_lay.addStretch(1)
+            outer_lay.addWidget(inner, 100)
+            outer_lay.addStretch(1)
         self._sections_container = container
         self._layout.insertWidget(insert_index, container)
         self._sync_compact_section_heights()

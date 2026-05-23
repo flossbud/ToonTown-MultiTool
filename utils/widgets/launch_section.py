@@ -71,11 +71,9 @@ class LaunchSection(QWidget):
         # two sections can sit side-by-side and each fill ~half the window.
         self._max_width = 720
         self.setMaximumWidth(self._max_width)
-        # Static min-height so empty cards in compact mode don't shrink
-        # smaller than populated ones, keeping the stacked layout visually
-        # balanced. 380 covers a 2-row populated card (header + 2 * 130 tile
-        # rows + padding + gutters) without forcing extra space when more
-        # rows are present.
+        # Floor min-height keeps a card from collapsing visually when
+        # empty; the actual matched-height enforcement is done at the
+        # LaunchTab level via _sync_compact_section_heights.
         self.setMinimumHeight(380)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self._layout_mode = "compact"
