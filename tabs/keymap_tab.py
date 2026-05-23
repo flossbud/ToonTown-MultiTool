@@ -949,16 +949,14 @@ class KeymapTab(QWidget):
         if not self._entries:
             return
         default_entry = self._entries[0]
-        body = default_entry.get("body") or getattr(default_entry.get("card"), "_body", None)
-        if body is None:
-            return
+        card = default_entry["card"]
         has, pairs = self.keymap_manager.has_conflicts(self._active_game, 0)
         conflicting_actions: set[str] = set()
         for a, b in pairs:
             conflicting_actions.add(a)
             conflicting_actions.add(b)
         for action in logical_actions.actions_for(self._active_game):
-            field = body.findChild(MovementKeyField, f"key_field_{action}")
+            field = card.findChild(MovementKeyField, f"key_field_{action}")
             if field is None:
                 continue
             in_conflict = action in conflicting_actions
