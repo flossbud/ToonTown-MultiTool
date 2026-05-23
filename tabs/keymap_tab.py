@@ -15,7 +15,7 @@ import os
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QFrame, QScrollArea, QLineEdit, QSizePolicy,
+    QFrame, QScrollArea, QLineEdit,
 )
 from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve, QSize
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QBrush, QLinearGradient, QPen, QIcon, QPixmap
@@ -955,12 +955,20 @@ class KeymapTab(QWidget):
         if bar is not None:
             bar.set_theme(is_dark)
 
-        # SetCard manages its own styling internally; refresh_theme only needs
-        # to nudge it so it picks up the current dark/light variant if any of
-        # its styles become theme-aware in future.
+        # SetCard owns its background, stripe, badge, name, and delete-button
+        # styling — those work against either theme by design (RGBA against
+        # the underlying bg). The Default set's hint label uses a palette
+        # token, so it must be re-styled here on theme change. The detect
+        # and add-set buttons further below are re-styled the same way.
+        hint_qss = (
+            "font-size: 11px; "
+            f"color: {c['text_muted']}; "
+            "background: none; border: none; padding: 0 0 4px 0;"
+        )
+        for hint in self.findChildren(QLabel, "set_body_hint"):
+            hint.setStyleSheet(hint_qss)
         for entry in self._entries:
-            card = entry["card"]
-            card.update()
+            entry["card"].update()
 
         if hasattr(self, "_add_btn"):
             self._add_btn.setStyleSheet(f"""
