@@ -15,7 +15,7 @@ import os
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QFrame, QScrollArea, QLineEdit, QSizePolicy,
+    QFrame, QScrollArea, QLineEdit, QSizePolicy, QStackedWidget,
 )
 from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve, QSize, QPointF, Property, QRectF
 from PySide6.QtGui import QColor, QPainter, QIcon, QPixmap, QPolygonF
@@ -947,7 +947,6 @@ class KeymapTab(QWidget):
         install_modern_scrollbar(self._scroll, is_dark=is_dark)
 
         from utils.layout import clamp_centered
-        from PySide6.QtWidgets import QStackedWidget
 
         scroll_inner = QWidget()
         scroll_inner_layout = QHBoxLayout(scroll_inner)
