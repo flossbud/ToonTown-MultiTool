@@ -114,6 +114,120 @@ class IOSToggle(QWidget):
         p.end()
 
 
+# ── Accent-blue Switch ───────────────────────────────────────────────────────
+
+class Switch(QWidget):
+    """Accent-blue pill toggle. Drop-in replacement for IOSToggle in Settings.
+
+    Visually identical proportions to IOSToggle but uses the app's accent-blue
+    palette for the on state (instead of iOS green) and exposes set_theme_colors
+    so refresh_theme can re-tint both the track and the thumb for light/dark.
+    """
+
+    toggled = Signal(bool)
+
+    TRACK_W = 38
+    TRACK_H = 20
+    THUMB_D = 16
+    PADDING = 2
+
+    def __init__(self, checked: bool = False, parent=None):
+        super().__init__(parent)
+        self._checked = bool(checked)
+        self._thumb_x = float(
+            self.PADDING if not self._checked
+            else self.TRACK_W - self.THUMB_D - self.PADDING
+        )
+        self._track_on = "#0077ff"
+        self._track_off = "#3a3a3a"
+        self._thumb_color = "#ffffff"
+
+        self.setFixedSize(self.TRACK_W, self.TRACK_H)
+        self.setCursor(Qt.PointingHandCursor)
+
+        self._anim = QPropertyAnimation(self, b"thumbX")
+        self._anim.setDuration(180)
+        self._anim.setEasingCurve(QEasingCurve.OutCubic)
+
+    # ── public API (mirrors IOSToggle) ──────────────────────────────────
+
+    def isChecked(self) -> bool:
+        return self._checked
+
+    def setChecked(self, value: bool) -> None:
+        value = bool(value)
+        if value == self._checked:
+            return
+        self._checked = value
+        self._animate_to_state()
+        self.toggled.emit(value)
+
+    def set_theme_colors(self, *, track_on: str, track_off: str, thumb: str) -> None:
+        self._track_on = track_on
+        self._track_off = track_off
+        self._thumb_color = thumb
+        self.update()
+
+    # ── animation property ──────────────────────────────────────────────
+
+    def _get_thumb_x(self):
+        return self._thumb_x
+
+    def _set_thumb_x(self, val):
+        self._thumb_x = float(val)
+        self.update()
+
+    thumbX = Property(float, _get_thumb_x, _set_thumb_x)
+
+    def _animate_to_state(self) -> None:
+        import utils.motion as motion
+        target = (
+            self.TRACK_W - self.THUMB_D - self.PADDING
+            if self._checked else self.PADDING
+        )
+        if motion.is_reduced():
+            self._thumb_x = float(target)
+            self.update()
+            return
+        self._anim.stop()
+        self._anim.setStartValue(self._thumb_x)
+        self._anim.setEndValue(float(target))
+        self._anim.start()
+
+    # ── input ───────────────────────────────────────────────────────────
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._checked = not self._checked
+            self._animate_to_state()
+            self.toggled.emit(self._checked)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    # ── paint ───────────────────────────────────────────────────────────
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+
+        # Track
+        track = QColor(self._track_on if self._checked else self._track_off)
+        p.setPen(Qt.NoPen)
+        p.setBrush(track)
+        radius = self.TRACK_H / 2
+        p.drawRoundedRect(self.rect(), radius, radius)
+
+        # Thumb
+        thumb = QColor(self._thumb_color)
+        p.setBrush(thumb)
+        p.drawEllipse(
+            int(self._thumb_x), self.PADDING,
+            self.THUMB_D, self.THUMB_D,
+        )
+        p.end()
+
+
 # ── iOS Segmented Control ────────────────────────────────────────────────────
 
 class IOSSegmentedControl(QWidget):
