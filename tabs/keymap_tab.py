@@ -2,7 +2,7 @@
 Keysets Tab — UI for creating and editing per-game movement sets.
 
 Each set is one SetCard(QFrame) that paints its own rounded card background
-gradient and 5px top stripe in a single paintEvent, and owns its header
+gradient and a thin top stripe in a single paintEvent, and owns its header
 (badge + name + chevron + delete) and an AnimatedBody (key-mapping grid)
 internally. The active game is selected via an icon-only _SegmentedSwitch
 when both TTR and CC are detected.
@@ -17,10 +17,10 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFrame, QScrollArea, QLineEdit,
 )
-from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve, QSize
-from PySide6.QtGui import QColor, QPainter, QPainterPath, QBrush, QLinearGradient, QPen, QIcon, QPixmap
+from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve, QSize, QPointF
+from PySide6.QtGui import QColor, QPainter, QPainterPath, QBrush, QLinearGradient, QPen, QIcon, QPixmap, QPolygonF
 from utils.theme_manager import resolve_theme, get_theme_colors, apply_card_shadow, get_set_color, make_trash_icon, get_set_card_styles
-from utils.symbols import S, M
+from utils.symbols import S
 from utils.widgets import install_modern_scrollbar
 
 from utils import logical_actions
@@ -278,19 +278,72 @@ class AnimatedBody(QFrame):
         self.collapse_finished.emit()
 
 
+# ── Chevron arrow (vector-painted, font-independent) ─────────────────────
+
+
+class _ChevronArrow(QWidget):
+    """Small vector-painted chevron arrow for expand/collapse indication.
+
+    Painted via QPainter so it doesn't depend on the system font having BMP
+    triangle glyphs. The previous QLabel-text approach was vulnerable to
+    fonts that render missing glyphs as a 'tofu' box, which `_can_render`
+    can't reliably detect.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._expanded = False
+        self._color = QColor(255, 255, 255, 220)
+        self.setFixedSize(14, 14)
+
+    def set_expanded(self, expanded: bool) -> None:
+        if expanded == self._expanded:
+            return
+        self._expanded = expanded
+        self.update()
+
+    def setColor(self, color: QColor) -> None:
+        self._color = color
+        self.update()
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setPen(Qt.NoPen)
+        p.setBrush(self._color)
+        r = self.rect()
+        cx, cy = r.width() / 2.0, r.height() / 2.0
+        if self._expanded:
+            # Down-pointing triangle.
+            poly = QPolygonF([
+                QPointF(cx - 4.5, cy - 2.5),
+                QPointF(cx + 4.5, cy - 2.5),
+                QPointF(cx, cy + 3.5),
+            ])
+        else:
+            # Right-pointing triangle.
+            poly = QPolygonF([
+                QPointF(cx - 2.5, cy - 4.5),
+                QPointF(cx - 2.5, cy + 4.5),
+                QPointF(cx + 3.5, cy),
+            ])
+        p.drawPolygon(poly)
+        p.end()
+
+
 # ── SetCard widget ─────────────────────────────────────────────────────────
 
 
 class SetCard(QFrame):
     """One movement set rendered as a single card. Owns its own paintEvent
-    (rounded background + 5px top stripe inside one QPainterPath) so the
+    (rounded background + STRIPE_HEIGHT-px top stripe inside one QPainterPath) so the
     stripe rounds with the card without manual masking. Owns the body
     (AnimatedBody) and the header row internally; consumers wire signals
     instead of poking widget internals.
     """
 
     CORNER_RADIUS = 10
-    STRIPE_HEIGHT = 5
+    STRIPE_HEIGHT = 6
 
     toggle_requested = Signal()
     name_changed     = Signal(str)
@@ -344,8 +397,7 @@ class SetCard(QFrame):
         name_widget.setStyleSheet(self._name_qss())
         hl.addWidget(name_widget, 1)
 
-        self._chevron = QLabel(M("▼", "v"))
-        self._chevron.setStyleSheet("color: rgba(255,255,255,0.7); font-size: 13px;")
+        self._chevron = _ChevronArrow()
         hl.addWidget(self._chevron)
 
         if index > 0:
@@ -471,7 +523,7 @@ class SetCard(QFrame):
         color_band.setColorAt(1.0, QColor(self._styles["stripe_edge"]))
         p.fillRect(stripe_rect, QBrush(color_band))
         gloss = QLinearGradient(0, stripe_rect.top(), 0, stripe_rect.bottom())
-        gloss.setColorAt(0.0, QColor(255, 255, 255, 76))   # 0.30 alpha
+        gloss.setColorAt(0.0, QColor(255, 255, 255, 128))  # ~0.50 alpha
         gloss.setColorAt(1.0, QColor(255, 255, 255, 0))
         p.fillRect(stripe_rect, QBrush(gloss))
 
@@ -561,13 +613,12 @@ class SetCard(QFrame):
                 self._body.expand()
             else:
                 self._body.setVisible(True)
-            self._chevron.setText(M("▼", "v"))
         else:
             if animate:
                 self._body.collapse()
             else:
                 self._body.setVisible(False)
-            self._chevron.setText(M("▶", ">"))
+        self._chevron.set_expanded(expanded)
 
 
 class _SegmentedSwitch(QFrame):
@@ -771,7 +822,13 @@ class KeymapTab(QWidget):
 
             expanded = prev_states.get(idx, False)
             card.set_expanded(expanded, animate=False)
-            apply_card_shadow(card, is_dark, blur=22, offset_y=6)
+            apply_card_shadow(card, is_dark, blur=16, offset_y=10)
+            _shadow_fx = card.graphicsEffect()
+            if _shadow_fx is not None:
+                # apply_card_shadow defaults the alpha to ~90/255; deepen it
+                # so the shadow reads as a directional offset under the card
+                # rather than a soft halo around it.
+                _shadow_fx.setColor(QColor(0, 0, 0, 160))
 
             self._scroll_layout.addWidget(card)
             self._entries.append({
