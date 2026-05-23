@@ -2,7 +2,7 @@
 Keysets Tab — UI for creating and editing per-game movement sets.
 
 Each set is one SetCard(QFrame) that paints its own rounded card background
-gradient and 4px top stripe in a single paintEvent, and owns its header
+gradient and 5px top stripe in a single paintEvent, and owns its header
 (badge + name + chevron + delete) and an AnimatedBody (key-mapping grid)
 internally. The active game is selected via an icon-only _SegmentedSwitch
 when both TTR and CC are detected.
@@ -283,7 +283,7 @@ class AnimatedBody(QFrame):
 
 class SetCard(QFrame):
     """One movement set rendered as a single card. Owns its own paintEvent
-    (rounded background + 4px top stripe inside one QPainterPath) so the
+    (rounded background + 5px top stripe inside one QPainterPath) so the
     stripe rounds with the card without manual masking. Owns the body
     (AnimatedBody) and the header row internally; consumers wire signals
     instead of poking widget internals.
@@ -463,7 +463,7 @@ class SetCard(QFrame):
         bg_grad.setColorAt(1, self._rgba_to_qcolor(self._styles["card_grad_bottom"]))
         p.fillPath(path, QBrush(bg_grad))
 
-        # 2) 4px top stripe with white-edge gloss + horizontal color band
+        # 2) Top stripe (STRIPE_HEIGHT px) with white-edge gloss + horizontal color band
         stripe_rect = rect.adjusted(0, 0, 0, -(rect.height() - self.STRIPE_HEIGHT))
         color_band = QLinearGradient(stripe_rect.left(), 0, stripe_rect.right(), 0)
         color_band.setColorAt(0.0, QColor(self._styles["stripe_edge"]))

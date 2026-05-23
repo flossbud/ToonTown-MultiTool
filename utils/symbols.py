@@ -2,7 +2,6 @@ from PySide6.QtGui import QPixmap, QPainter, QFont, QColor
 from PySide6.QtWidgets import QApplication
 
 _USE_EMOJI = None
-_USE_MISC  = None
 
 
 def _can_render(char: str) -> bool:
@@ -23,11 +22,6 @@ def _can_render(char: str) -> bool:
 
 def _emoji_supported() -> bool:
     return _can_render("✅")
-
-
-def _misc_supported() -> bool:
-    """Test BMP misc/arrow symbols like ↻ that may not be in all fonts."""
-    return _can_render("↻")
 
 
 def S(emoji: str, fallback: str) -> str:
