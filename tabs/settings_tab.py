@@ -59,6 +59,312 @@ def _elevated_control_palette(c: dict, is_dark: bool) -> dict:
     }
 
 
+# ── New primitives (Settings tab redesign 2026-05-23) ─────────────────────────
+
+class SettingsField(QFrame):
+    """One labelled control row inside a SettingsPanel.
+
+    label + optional helper (left), arbitrary control widget (right),
+    1px hairline divider painted at the bottom unless `is_last` is True.
+    """
+
+    HEIGHT_NO_HELPER = 44
+    HEIGHT_WITH_HELPER = 60
+
+    def __init__(self, label: str, helper: str | None = None, parent=None):
+        super().__init__(parent)
+        self._is_last = False
+        self.control_widget = None
+        self.setMinimumHeight(
+            self.HEIGHT_WITH_HELPER if helper else self.HEIGHT_NO_HELPER
+        )
+
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(16, 12, 16, 12)
+        lay.setSpacing(14)
+
+        text_col = QVBoxLayout()
+        text_col.setSpacing(2)
+        text_col.setContentsMargins(0, 0, 0, 0)
+
+        self.label_widget = QLabel(label)
+        self.label_widget.setStyleSheet("background: transparent; border: none;")
+        text_col.addWidget(self.label_widget)
+
+        if helper:
+            self.helper_widget = QLabel(helper)
+            self.helper_widget.setStyleSheet(
+                "background: transparent; border: none;"
+            )
+            self.helper_widget.setWordWrap(True)
+            text_col.addWidget(self.helper_widget)
+        else:
+            self.helper_widget = None
+
+        lay.addLayout(text_col, 1)
+        self._control_slot = QHBoxLayout()
+        self._control_slot.setContentsMargins(0, 0, 0, 0)
+        self._control_slot.setSpacing(6)
+        lay.addLayout(self._control_slot)
+
+        self._c = None
+        self._is_dark = True
+
+    @property
+    def is_last(self) -> bool:
+        return self._is_last
+
+    def set_is_last(self, value: bool) -> None:
+        self._is_last = bool(value)
+        self.update()
+
+    def set_control(self, widget) -> None:
+        """Replace any existing control with the given widget."""
+        while self._control_slot.count():
+            item = self._control_slot.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.setParent(None)
+        self.control_widget = widget
+        widget.setParent(self)
+        self._control_slot.addWidget(widget)
+
+    def add_control(self, widget) -> None:
+        """Append an additional control widget to the right side (multi-button rows)."""
+        widget.setParent(self)
+        self._control_slot.addWidget(widget)
+        if self.control_widget is None:
+            self.control_widget = widget
+
+    def apply_theme(self, c, is_dark: bool) -> None:
+        self._c = c
+        self._is_dark = is_dark
+        self.label_widget.setStyleSheet(
+            f"font-size: 12.5px; font-weight: 500; color: {c['text_primary']}; "
+            "background: transparent; border: none;"
+        )
+        if self.helper_widget is not None:
+            self.helper_widget.setStyleSheet(
+                f"font-size: 11px; color: {c['text_muted']}; "
+                "background: transparent; border: none;"
+            )
+        self.update()
+
+    def paintEvent(self, event):
+        if self._c is None or self._is_last:
+            return
+        p = QPainter(self)
+        p.setPen(QColor(self._c.get("border_muted", "#2e2e2e")))
+        w = self.width()
+        h = self.height()
+        p.drawLine(16, h - 1, w - 16, h - 1)
+        p.end()
+
+
+class SettingsPanel(QFrame):
+    """Bordered card with a brand-colored top stripe, header (logo + title +
+    sub + optional buttons), and a body of SettingsFields.
+
+    `stripe` is one of "ttr", "cc", or "neutral" -- the value is resolved to
+    a theme token in apply_theme.
+    """
+
+    STRIPE_HEIGHT = 3
+    HEADER_HEIGHT_WITH_LOGO = 56
+    HEADER_HEIGHT_NEUTRAL = 44
+
+    def __init__(
+        self,
+        title: str,
+        sub: str | None = None,
+        stripe: str = "neutral",
+        logo_path: str | None = None,
+        parent=None,
+    ):
+        super().__init__(parent)
+        assert stripe in ("ttr", "cc", "neutral"), f"unknown stripe kind: {stripe!r}"
+        self.stripe_kind = stripe
+        self.fields: list[SettingsField] = []
+        self.header_buttons: list = []
+        self._c = None
+        self._is_dark = True
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        # ── header ──
+        self.header_widget = QWidget(self)
+        head_lay = QHBoxLayout(self.header_widget)
+        head_lay.setContentsMargins(16, 10, 16, 10)
+        head_lay.setSpacing(12)
+
+        if logo_path is not None:
+            from PySide6.QtGui import QPixmap
+            self.logo_label = QLabel()
+            self.logo_label.setFixedSize(40, 40)
+            self.logo_label.setAttribute(Qt.WA_TranslucentBackground)
+            self.logo_label.setStyleSheet(
+                "background: transparent; border-radius: 8px;"
+            )
+            pm = QPixmap(logo_path)
+            if not pm.isNull():
+                self.logo_label.setPixmap(
+                    pm.scaled(40, 40, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                )
+            head_lay.addWidget(self.logo_label)
+            self.header_widget.setFixedHeight(self.HEADER_HEIGHT_WITH_LOGO)
+        else:
+            self.logo_label = None
+            self.header_widget.setFixedHeight(self.HEADER_HEIGHT_NEUTRAL)
+
+        text_col = QVBoxLayout()
+        text_col.setSpacing(2)
+        text_col.setContentsMargins(0, 0, 0, 0)
+        self.title_label = QLabel(title)
+        self.title_label.setStyleSheet("background: transparent; border: none;")
+        text_col.addWidget(self.title_label)
+        if sub:
+            self.sub_label = QLabel(sub)
+            self.sub_label.setStyleSheet("background: transparent; border: none;")
+            self.sub_label.setWordWrap(True)
+            text_col.addWidget(self.sub_label)
+        else:
+            self.sub_label = None
+        head_lay.addLayout(text_col, 1)
+
+        self._header_button_slot = QHBoxLayout()
+        self._header_button_slot.setContentsMargins(0, 0, 0, 0)
+        self._header_button_slot.setSpacing(6)
+        head_lay.addLayout(self._header_button_slot)
+
+        outer.addWidget(self.header_widget)
+
+        # ── body ──
+        self._body_widget = QWidget(self)
+        self._body_layout = QVBoxLayout(self._body_widget)
+        self._body_layout.setContentsMargins(0, 0, 0, 0)
+        self._body_layout.setSpacing(0)
+        outer.addWidget(self._body_widget)
+
+    # ── public API ────────────────────────────────────────────────────────
+
+    def add_field(self, field: SettingsField) -> None:
+        self.fields.append(field)
+        self._body_layout.addWidget(field)
+        self._refresh_last_flag()
+
+    def add_header_button(self, button) -> None:
+        button.setParent(self.header_widget)
+        self._header_button_slot.addWidget(button)
+        self.header_buttons.append(button)
+
+    def set_sub(
+        self,
+        text: str,
+        *,
+        color_override: str | None = None,
+        rich_text: bool = False,
+    ) -> None:
+        """Replace the sub-label text. If the panel was constructed without
+        a sub, create one in-place so live status text (paths, errors) can
+        render there without restructuring the panel.
+
+        Pass `rich_text=True` for HTML content (e.g. the CC active-install
+        chip suffix); otherwise paths containing literal `<` / `>` would be
+        interpreted as markup.
+        """
+        if self.sub_label is None:
+            self.sub_label = QLabel(self.header_widget)
+            self.sub_label.setWordWrap(True)
+            self.sub_label.setStyleSheet("background: transparent; border: none;")
+            head_lay = self.header_widget.layout()
+            for i in range(head_lay.count()):
+                item = head_lay.itemAt(i)
+                child_layout = item.layout()
+                if child_layout is not None and child_layout.indexOf(self.title_label) != -1:
+                    child_layout.addWidget(self.sub_label)
+                    break
+        self.sub_label.setTextFormat(Qt.RichText if rich_text else Qt.PlainText)
+        self.sub_label.setText(text)
+        if color_override is not None:
+            self.sub_label.setStyleSheet(
+                f"font-size: 11px; color: {color_override}; "
+                "background: transparent; border: none;"
+            )
+        elif self._c is not None:
+            self.sub_label.setStyleSheet(
+                f"font-size: 11px; color: {self._c['text_muted']}; "
+                "background: transparent; border: none;"
+            )
+
+    def _refresh_last_flag(self) -> None:
+        for i, f in enumerate(self.fields):
+            f.set_is_last(i == len(self.fields) - 1)
+
+    # ── theming + paint ───────────────────────────────────────────────────
+
+    def apply_theme(self, c, is_dark: bool) -> None:
+        self._c = c
+        self._is_dark = is_dark
+        self.title_label.setStyleSheet(
+            f"font-size: 14px; font-weight: 700; color: {c['text_primary']}; "
+            "background: transparent; border: none;"
+        )
+        if self.sub_label is not None:
+            self.sub_label.setStyleSheet(
+                f"font-size: 11px; color: {c['text_muted']}; "
+                "background: transparent; border: none;"
+            )
+        for f in self.fields:
+            f.apply_theme(c, is_dark)
+        self.update()
+
+    def _stripe_color(self):
+        if self._c is None:
+            return "#888888"
+        token = {
+            "ttr": "game_pill_ttr",
+            "cc": "game_pill_cc",
+            "neutral": "border_light",
+        }[self.stripe_kind]
+        return self._c.get(token, "#888888")
+
+    def paintEvent(self, event):
+        if self._c is None:
+            return
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        radius = 10.0
+        rect = QRectF(0.5, 0.5, self.width() - 1, self.height() - 1)
+
+        # Body fill + outer border.
+        p.setPen(QPen(QColor(self._c.get("border_card", "#363636")), 1))
+        p.setBrush(QColor(self._c.get("bg_card", "#252525")))
+        p.drawRoundedRect(rect, radius, radius)
+
+        # Top stripe -- drawn as a filled rect along the top edge, clipped to
+        # the rounded silhouette by drawing inside the border.
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(self._stripe_color()))
+        # Round only the top corners -- paint a rounded rect that extends past
+        # the bottom of the stripe so the bottom edge sits inside the panel.
+        p.drawRoundedRect(
+            QRectF(1, 1, self.width() - 2, self.STRIPE_HEIGHT + radius),
+            radius, radius,
+        )
+        # Cover the lower half of that rounded rect (so only the top remains).
+        p.setBrush(QColor(self._c.get("bg_card", "#252525")))
+        p.drawRect(QRectF(1, self.STRIPE_HEIGHT + 1, self.width() - 2, radius))
+
+        # Header-bottom divider (drawn at the bottom of the header_widget).
+        p.setPen(QColor(self._c.get("border_muted", "#2e2e2e")))
+        y = self.header_widget.geometry().bottom()
+        p.drawLine(0, y, self.width(), y)
+
+        p.end()
+
+
 # ── Settings Row Types ─────────────────────────────────────────────────────────
 
 class SettingsRow(QFrame):
