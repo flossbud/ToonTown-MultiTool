@@ -726,6 +726,13 @@ class LaunchTab(QWidget):
             inner_lay.setSpacing(12)
             inner_lay.addWidget(self.ttr_section)
             inner_lay.addWidget(self.cc_section)
+            # Terminal stretch absorbs any spare vertical space in the
+            # viewport. Without it, both sections (Preferred vertical
+            # policy) share the extra space equally — so when one section
+            # grows during the collapse animation, the other gets squeezed
+            # to maintain the split. The stretch keeps both cards at their
+            # natural sizeHint and parks empty space below.
+            inner_lay.addStretch(1)
             # Stretch factor 100 vs side stretches 1 lets the inner card
             # column fill almost all available space until it hits its
             # 720 cap, then the side stretches absorb the remainder and
