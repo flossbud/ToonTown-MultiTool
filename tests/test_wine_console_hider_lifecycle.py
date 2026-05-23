@@ -93,13 +93,15 @@ def test_setting_on_starts_timer_with_expected_interval():
     assert timer.interval == WATCH_INTERVAL_MS
 
 
-def test_tick_unmaps_matching_window_and_keeps_running():
-    """Match on tick 1; timer keeps running (in case more consoles appear),
-    but the same wid is not re-unmapped."""
+def test_tick_re_unmaps_matching_window_every_tick():
+    """Wine intermittently re-maps the console window after our XUnmapWindow.
+    To counter that, unmap on EVERY tick the window is visible. A once-only
+    short-circuit would let wine re-map and never recover."""
     hider, rec, timer = _make_hider(setting=True, windows=[
         [],  # tick 0: nothing
-        [(0x100, r"C:\foo\CorporateClash.exe")],  # tick 1: match
-        [(0x100, r"C:\foo\CorporateClash.exe")],  # tick 2: same wid again (should not re-unmap)
+        [(0x100, r"C:\foo\CorporateClash.exe")],  # tick 1: first appear
+        [(0x100, r"C:\foo\CorporateClash.exe")],  # tick 2: wine re-mapped, unmap again
+        [(0x100, r"C:\foo\CorporateClash.exe")],  # tick 3: still mapped, unmap again
     ])
     hider.on_game_launched(pid=1234)
     timer.fire()  # tick 0
@@ -107,7 +109,9 @@ def test_tick_unmaps_matching_window_and_keeps_running():
     timer.fire()  # tick 1
     assert rec.unmapped == [0x100]
     timer.fire()  # tick 2
-    assert rec.unmapped == [0x100]  # NOT [0x100, 0x100]
+    assert rec.unmapped == [0x100, 0x100]
+    timer.fire()  # tick 3
+    assert rec.unmapped == [0x100, 0x100, 0x100]
     # Timer is still active (it stops only on timeout, not on first hide).
     assert timer.isActive()
 
