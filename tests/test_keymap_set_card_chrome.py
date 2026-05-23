@@ -136,8 +136,8 @@ def test_movementkeyfield_awaiting_uses_set_color(qapp):
     assert bg_hex.lower() in qss.lower()
 
 
-def test_no_shadow_on_card_after_build(qapp, monkeypatch):
-    """The shadow drop is intentional in the redesign; LaunchSection
+def test_no_shadow_on_card_after_build(qapp):
+    """Drop shadow is intentionally absent in the redesign; LaunchSection
     cards do not shadow either."""
     from tabs.keymap_tab import KeymapTab, SetCard
     from utils.keymap_manager import KeymapManager

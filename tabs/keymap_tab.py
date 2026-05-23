@@ -18,8 +18,8 @@ from PySide6.QtWidgets import (
     QFrame, QScrollArea, QLineEdit, QSizePolicy,
 )
 from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve, QSize, QPointF, Property, QRectF
-from PySide6.QtGui import QColor, QPainter, QBrush, QIcon, QPixmap, QPolygonF
-from utils.theme_manager import resolve_theme, get_theme_colors, get_set_color, make_trash_icon, get_set_card_styles
+from PySide6.QtGui import QColor, QPainter, QIcon, QPixmap, QPolygonF
+from utils.theme_manager import resolve_theme, get_theme_colors, get_set_color, make_trash_icon
 from utils.symbols import S
 from utils.widgets import install_modern_scrollbar
 
@@ -578,10 +578,6 @@ class SetCard(QFrame):
             )
             hint.setObjectName("set_body_hint")
             hint.setWordWrap(True)
-            hint.setStyleSheet(
-                "font-size: 11px; color: rgba(255,255,255,0.45); "
-                "background: none; border: none; padding: 0 0 4px 0;"
-            )
             bl.addWidget(hint)
 
         two_col = QHBoxLayout()
