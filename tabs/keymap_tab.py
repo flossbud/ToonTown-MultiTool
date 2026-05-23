@@ -605,16 +605,19 @@ class _SegmentedSwitch(QFrame):
         bar_lay.setContentsMargins(4, 4, 4, 4)
         bar_lay.setSpacing(4)
 
+        from tabs.launch_tab import _asset_path as launch_asset_path
+        self._icons: dict[str, dict[str, QIcon]] = {}
         for game in ("ttr", "cc"):
             b = QPushButton()
             b.setFixedSize(56, 40)
             b.setCursor(Qt.PointingHandCursor)
             b.setToolTip(self._TITLES[game])
-            from tabs.launch_tab import _asset_path as launch_asset_path
             pm = QPixmap(launch_asset_path(f"{game}.png"))
             if not pm.isNull():
-                icon = QIcon(pm)
-                b.setIcon(icon)
+                self._icons[game] = {
+                    "active":   QIcon(pm),
+                    "inactive": QIcon(self._dim_pixmap(pm, 0.55)),
+                }
                 b.setIconSize(QSize(28, 28))
             b.clicked.connect(lambda _, g=game: self._on_click(g))
             bar_lay.addWidget(b)
@@ -623,6 +626,17 @@ class _SegmentedSwitch(QFrame):
         outer.addWidget(bar)
         outer.addStretch()
         self._apply_styles()
+
+    @staticmethod
+    def _dim_pixmap(pm: QPixmap, opacity: float) -> QPixmap:
+        """Return a copy of `pm` rendered at the given opacity (0.0-1.0)."""
+        out = QPixmap(pm.size())
+        out.fill(Qt.transparent)
+        p = QPainter(out)
+        p.setOpacity(opacity)
+        p.drawPixmap(0, 0, pm)
+        p.end()
+        return out
 
     def _on_click(self, game: str):
         if game == self._active:
@@ -643,16 +657,21 @@ class _SegmentedSwitch(QFrame):
             "border: 1px solid rgba(255,255,255,0.10); border-radius: 10px; }"
         )
         for game, btn in self._buttons.items():
+            icons = self._icons.get(game)
             if game == self._active:
+                if icons is not None:
+                    btn.setIcon(icons["active"])
                 btn.setStyleSheet(
                     f"QPushButton {{ background: {self._ACTIVE_BG[game]}; "
                     f"border: 1px solid {self._ACTIVE_RING[game]}; "
                     f"border-radius: 7px; }}"
                 )
             else:
+                if icons is not None:
+                    btn.setIcon(icons["inactive"])
                 btn.setStyleSheet(
                     "QPushButton { background: transparent; border: none; "
-                    "border-radius: 7px; color: rgba(255,255,255,0.55); } "
+                    "border-radius: 7px; } "
                     "QPushButton:hover { background: rgba(255,255,255,0.04); }"
                 )
         self.setStyleSheet(wrap_qss)
