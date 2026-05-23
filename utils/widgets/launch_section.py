@@ -118,6 +118,12 @@ class LaunchSection(QWidget):
         self.card = QFrame()
         self.card.setObjectName("section_card")
         self.card.setAttribute(Qt.WA_StyledBackground, True)
+        # Vertical Expanding so the card fills the section's allocated
+        # height instead of shrinking to content. Without this the card
+        # border ends just below the empty-state content, leaving the
+        # bottom of the section bare and producing visibly uneven cards
+        # when one section is populated and another is empty.
+        self.card.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         self.card.setStyleSheet(
             "QFrame#section_card {"
             " background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"

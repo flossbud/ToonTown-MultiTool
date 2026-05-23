@@ -655,6 +655,26 @@ class LaunchTab(QWidget):
             lay.addWidget(self.cc_section, alignment=Qt.AlignHCenter)
         self._sections_container = container
         self._layout.insertWidget(insert_index, container)
+        self._sync_compact_section_heights()
+
+    def _sync_compact_section_heights(self) -> None:
+        """In compact mode, both stacked cards must share a height so a
+        populated TTR card and an empty CC card don't look uneven.
+
+        QVBoxLayout with alignment=AlignHCenter gives each section its
+        own sizeHint, so without intervention the empty card collapses
+        to its content height while the populated card grows. Force
+        both sections' min-height up to the taller sibling's hint (or
+        the per-section absolute floor, whichever is greater)."""
+        if self._layout_mode != "compact":
+            return
+        target = max(
+            self.ttr_section.sizeHint().height(),
+            self.cc_section.sizeHint().height(),
+            380,  # absolute floor — matches LaunchSection's own minimum
+        )
+        self.ttr_section.setMinimumHeight(target)
+        self.cc_section.setMinimumHeight(target)
 
     # ── Account actions ────────────────────────────────────────────────────
 
