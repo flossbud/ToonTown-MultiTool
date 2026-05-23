@@ -201,3 +201,32 @@ def test_bodyclip_content_height_property(qapp):
     clip.setProperty("content_height", 0)
     assert clip.minimumHeight() == 0
     assert clip.maximumHeight() == 0
+
+
+def test_bodyclip_expand_emits_signal(qapp):
+    from tabs.keymap_tab import _BodyClip
+    from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel
+    from PySide6.QtCore import QEventLoop, QTimer
+    import utils.motion as motion
+
+    clip = _BodyClip()
+    content = QWidget()
+    lay = QVBoxLayout(content)
+    lay.addWidget(QLabel("row a"))
+    lay.addWidget(QLabel("row b"))
+    clip.set_content_widget(content)
+
+    # Force reduced-motion path so expand() resolves synchronously.
+    original_scale = motion._TEST_DURATION_SCALE
+    motion._TEST_DURATION_SCALE = 0.0
+    try:
+        fired = []
+        clip.expand_finished.connect(lambda: fired.append(True))
+        clip.expand()
+        # Pump the event loop briefly so the 0-duration animation finishes.
+        loop = QEventLoop()
+        QTimer.singleShot(20, loop.quit)
+        loop.exec()
+        assert fired == [True]
+    finally:
+        motion._TEST_DURATION_SCALE = original_scale

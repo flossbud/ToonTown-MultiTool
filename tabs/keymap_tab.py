@@ -245,6 +245,11 @@ class _BodyClip(QWidget):
     maximumHeight while the content's sizeHint was drifting underneath.
     """
 
+    expand_finished = Signal()
+    collapse_finished = Signal()
+
+    DURATION_MS = 200
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._content: QWidget | None = None
@@ -254,6 +259,9 @@ class _BodyClip(QWidget):
         self.setAutoFillBackground(False)
         self.setAttribute(Qt.WA_NoSystemBackground, True)
         self.setStyleSheet("background: transparent; border: none;")
+        self._anim = QPropertyAnimation(self, b"content_height")
+        self._anim.setDuration(self.DURATION_MS)
+        self._anim.setEasingCurve(QEasingCurve.OutCubic)
 
     def set_content_widget(self, widget: QWidget) -> None:
         """Parent the body content widget and lay it out at full natural size."""
@@ -330,6 +338,70 @@ class _BodyClip(QWidget):
         self._set_forced_height(0)
         if self._content is not None:
             self._content.setVisible(False)
+
+    def expand(self) -> None:
+        """Animate from the current content_height to natural_height.
+
+        If reduced-motion is active OR the test-only duration scale is 0,
+        snap to the target without animating.
+        """
+        if self._content is None:
+            return
+        self._content.setVisible(True)
+        target = self.natural_height()
+        import utils.motion as motion
+        scaled_duration = self.DURATION_MS * motion._TEST_DURATION_SCALE
+        if motion.is_reduced() or scaled_duration == 0:
+            self._anim.stop()
+            self._animated_height = target
+            self._release_forced_height()
+            self.expand_finished.emit()
+            return
+        self._anim.stop()
+        self._anim.setStartValue(self._animated_height)
+        self._anim.setEndValue(target)
+        try:
+            self._anim.finished.disconnect()
+        except (RuntimeError, TypeError):
+            pass
+        self._anim.finished.connect(self._on_expand_finished)
+        self._anim.start()
+
+    def collapse(self) -> None:
+        """Animate from the current content_height to 0.
+
+        Reduced-motion path snaps to 0 without animating.
+        """
+        import utils.motion as motion
+        scaled_duration = self.DURATION_MS * motion._TEST_DURATION_SCALE
+        if motion.is_reduced() or scaled_duration == 0:
+            self._anim.stop()
+            self._animated_height = 0
+            self._set_forced_height(0)
+            if self._content is not None:
+                self._content.setVisible(False)
+            self.collapse_finished.emit()
+            return
+        self._anim.stop()
+        self._anim.setStartValue(self._animated_height)
+        self._anim.setEndValue(0)
+        try:
+            self._anim.finished.disconnect()
+        except (RuntimeError, TypeError):
+            pass
+        self._anim.finished.connect(self._on_collapse_finished)
+        self._anim.start()
+
+    def _on_expand_finished(self) -> None:
+        # Release the height clamp so the body can settle to whatever
+        # natural height the layout produces post-animation.
+        self._release_forced_height()
+        self.expand_finished.emit()
+
+    def _on_collapse_finished(self) -> None:
+        if self._content is not None:
+            self._content.setVisible(False)
+        self.collapse_finished.emit()
 
 
 # ── Animated body (slides open / closed) ───────────────────────────────────
