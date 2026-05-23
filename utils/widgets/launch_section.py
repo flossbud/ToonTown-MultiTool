@@ -86,17 +86,28 @@ class LaunchSection(QWidget):
         # header strip plus a separate grid. The faint accent gradient
         # gives each card its game identity without competing with the
         # per-tile accent borders inside.
-        accent_top = (
-            "rgba(74,143,231,0.06)" if game == "ttr"
-            else "rgba(242,109,33,0.06)"
+        # Card + header tints. The card carries a vertical accent fade
+        # across the whole region (so the empty state, the tile grid, and
+        # the header all read as one game-colored area). The header
+        # additionally carries a stronger top-down accent fade so the
+        # header strip is clearly the labeled boundary of the card, with
+        # a hairline beneath it. Children below the header are explicitly
+        # transparent so the card's gradient shows through.
+        accent_card_top = (
+            "rgba(74,143,231,0.10)" if game == "ttr"
+            else "rgba(242,109,33,0.10)"
         )
-        accent_bottom = (
-            "rgba(74,143,231,0.02)" if game == "ttr"
-            else "rgba(242,109,33,0.02)"
+        accent_card_bottom = (
+            "rgba(74,143,231,0.03)" if game == "ttr"
+            else "rgba(242,109,33,0.03)"
         )
         accent_border = (
-            "rgba(74,143,231,0.15)" if game == "ttr"
-            else "rgba(242,109,33,0.15)"
+            "rgba(74,143,231,0.35)" if game == "ttr"
+            else "rgba(242,109,33,0.35)"
+        )
+        accent_header = (
+            "rgba(74,143,231,0.12)" if game == "ttr"
+            else "rgba(242,109,33,0.12)"
         )
         self.card = QFrame()
         self.card.setObjectName("section_card")
@@ -104,23 +115,30 @@ class LaunchSection(QWidget):
         self.card.setStyleSheet(
             "QFrame#section_card {"
             " background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
-            f" stop:0 {accent_top}, stop:1 {accent_bottom});"
+            f" stop:0 {accent_card_top}, stop:1 {accent_card_bottom});"
             f" border: 1px solid {accent_border};"
             " border-radius: 10px;"
             "}"
         )
         card_lay = QVBoxLayout(self.card)
-        card_lay.setContentsMargins(0, 0, 0, 0)
+        # 1px inset prevents children from overpainting the card's
+        # rounded corners + border. The card's QSS bg fills the inset
+        # gap so the border is visible all the way around.
+        card_lay.setContentsMargins(1, 1, 1, 1)
         card_lay.setSpacing(0)
         outer.addWidget(self.card)
 
-        # Header strip — sits inside the card. No gradient of its own (the
-        # card carries that); only a hairline below to separate it from
-        # the tile region.
+        # Header strip — sits inside the card. Carries its own accent
+        # fade on TOP of the card's gradient (the two combine for a
+        # stronger header look), plus a hairline below to separate it
+        # from the tile region.
         header = QFrame()
         header.setObjectName("section_header")
+        header.setAttribute(Qt.WA_StyledBackground, True)
         header.setStyleSheet(
             "QFrame#section_header {"
+            " background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
+            f" stop:0 {accent_header}, stop:1 transparent);"
             " border-bottom: 1px solid rgba(255,255,255,0.06);"
             "}"
         )
@@ -162,15 +180,26 @@ class LaunchSection(QWidget):
 
         card_lay.addWidget(header)
 
+        # Make grid_container transparent so the card's accent gradient
+        # shows through behind the tiles (otherwise QWidget paints its
+        # default solid bg and the gradient is hidden).
         self.grid_container = QWidget()
+        self.grid_container.setAttribute(Qt.WA_TranslucentBackground, True)
         self.grid = QGridLayout(self.grid_container)
         self.grid.setContentsMargins(14, 14, 14, 14)
         self.grid.setSpacing(10)
         card_lay.addWidget(self.grid_container)
 
         self.empty_state = EmptyState(game=game)
+        self.empty_state.setAttribute(Qt.WA_TranslucentBackground, True)
         self.empty_state.add_clicked.connect(self.add_account_clicked.emit)
         card_lay.addWidget(self.empty_state)
+
+        # A bottom stretch absorbs slack so the card keeps the header +
+        # content at the TOP and any extra vertical space (e.g. when a
+        # sibling card in full mode is taller) becomes empty card area
+        # at the bottom rather than vertically-stretching the content.
+        card_lay.addStretch(1)
 
         self.set_accounts([])
 
@@ -273,6 +302,15 @@ class LaunchSection(QWidget):
             return
         self._max_width = _LAYOUT_MAX_WIDTH[mode]
         self.setMaximumWidth(self._max_width)
+        # Full mode: both cards must match heights so a populated TTR
+        # card and an empty CC card don't look uneven side-by-side. Let
+        # the QHBoxLayout stretch each card vertically; the bottom
+        # stretch inside card_lay keeps content anchored at the top.
+        # Compact mode: cards stack vertically, each at its natural size.
+        if mode == "full":
+            self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        else:
+            self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self._layout_mode = mode
         self._recompute_content_scale()
         self._run_reveal_animation()
