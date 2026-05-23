@@ -277,10 +277,18 @@ class _BodyClip(QWidget):
         return self._content.layout().minimumSize().height()
 
     def sizeHint(self) -> QSize:
-        return QSize(0, self._height_hint())
+        # Propagate the content widget's natural width so the SetCard's
+        # own sizeHint (max of header and body widths) reflects what the
+        # body needs. Without this, _BodyClip reported width=0 and the
+        # scroll widget's clamp_centered sized everything to the header
+        # width alone - leaving the two-column key grid no room and
+        # spilling chips past the card's right edge.
+        width = self._content.sizeHint().width() if self._content is not None else 0
+        return QSize(width, self._height_hint())
 
     def minimumSizeHint(self) -> QSize:
-        return QSize(0, self._height_hint())
+        width = self._content.minimumSizeHint().width() if self._content is not None else 0
+        return QSize(width, self._height_hint())
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
