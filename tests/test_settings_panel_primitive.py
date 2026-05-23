@@ -156,3 +156,49 @@ def test_panel_apply_theme_does_not_crash(qapp):
     panel.add_field(SettingsField("Field A"))
     panel.add_field(SettingsField("Field B", helper="helper"))
     panel.apply_theme(c, is_dark=True)
+
+
+# ── SettingsPanel.set_sub ────────────────────────────────────────────────
+
+
+def test_panel_set_sub_creates_label_when_absent(qapp):
+    from tabs.settings_tab import SettingsPanel
+    panel = SettingsPanel(title="TTR", stripe="ttr")
+    assert panel.sub_label is None
+    panel.set_sub("~/games/ttr")
+    assert panel.sub_label is not None
+    assert panel.sub_label.text() == "~/games/ttr"
+
+
+def test_panel_set_sub_replaces_existing_text(qapp):
+    from tabs.settings_tab import SettingsPanel
+    panel = SettingsPanel(title="TTR", stripe="ttr", sub="initial")
+    panel.set_sub("updated")
+    assert panel.sub_label.text() == "updated"
+
+
+def test_panel_set_sub_rich_text_format(qapp):
+    from PySide6.QtCore import Qt as _Qt
+    from tabs.settings_tab import SettingsPanel
+    panel = SettingsPanel(title="CC", stripe="cc", sub=" ")
+    panel.set_sub("<span style='color:red'>x</span>", rich_text=True)
+    assert panel.sub_label.textFormat() == _Qt.RichText
+    panel.set_sub("plain path", rich_text=False)
+    assert panel.sub_label.textFormat() == _Qt.PlainText
+
+
+def test_panel_set_sub_color_override_applied(qapp):
+    from tabs.settings_tab import SettingsPanel
+    panel = SettingsPanel(title="X", stripe="neutral", sub="x")
+    panel.set_sub("error path", color_override="#E05252")
+    assert "#E05252" in panel.sub_label.styleSheet()
+
+
+def test_panel_set_sub_runtime_create_resizes_header(qapp):
+    """Regression: a panel built without sub must grow its header when set_sub
+    is later called, so the sub label is not visually clipped."""
+    from tabs.settings_tab import SettingsPanel
+    panel = SettingsPanel(title="X", stripe="neutral")  # no sub
+    initial_height = panel.header_widget.height()
+    panel.set_sub("late-added sub")
+    assert panel.header_widget.height() > initial_height

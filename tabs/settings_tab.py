@@ -231,6 +231,7 @@ class SettingsPanel(QFrame):
             text_col.addWidget(self.sub_label)
         else:
             self.sub_label = None
+        self._text_col = text_col
         head_lay.addLayout(text_col, 1)
 
         self._header_button_slot = QHBoxLayout()
@@ -274,17 +275,17 @@ class SettingsPanel(QFrame):
         chip suffix); otherwise paths containing literal `<` / `>` would be
         interpreted as markup.
         """
+        needs_resize = self.sub_label is None
         if self.sub_label is None:
             self.sub_label = QLabel(self.header_widget)
             self.sub_label.setWordWrap(True)
             self.sub_label.setStyleSheet("background: transparent; border: none;")
-            head_lay = self.header_widget.layout()
-            for i in range(head_lay.count()):
-                item = head_lay.itemAt(i)
-                child_layout = item.layout()
-                if child_layout is not None and child_layout.indexOf(self.title_label) != -1:
-                    child_layout.addWidget(self.sub_label)
-                    break
+            self._text_col.addWidget(self.sub_label)
+        if needs_resize:
+            new_height = (
+                self.HEADER_HEIGHT_WITH_LOGO if self.logo_label is not None else 60
+            )
+            self.header_widget.setFixedHeight(new_height)
         self.sub_label.setTextFormat(Qt.RichText if rich_text else Qt.PlainText)
         self.sub_label.setText(text)
         if color_override is not None:
