@@ -94,6 +94,18 @@ def test_pill_color_matches_active_game(qapp):
     assert rail._pill._border_color.name().lower() == c["game_pill_cc"].lower()
 
 
+def test_chips_have_transparent_background(qapp):
+    """Without transparent chip backgrounds, the lowered PillIndicator is
+    hidden behind the opaque system-style fill, defeating the slide animation."""
+    from tabs.keymap_tab import _GameSubRail
+    rail = _GameSubRail(active_game="ttr")
+    for game, btn in rail._buttons.items():
+        qss = btn.styleSheet()
+        assert "background: transparent" in qss, (
+            f"{game} chip has no transparent-bg QSS; pill is hidden"
+        )
+
+
 def test_keymap_tab_uses_game_sub_rail_when_both_detected(qapp, monkeypatch):
     from tabs.keymap_tab import KeymapTab, _GameSubRail
     from utils.keymap_manager import KeymapManager

@@ -845,6 +845,19 @@ class _GameSubRail(QFrame):
             if not pm.isNull():
                 chip.setIcon(QIcon(pm))
                 chip.setIconSize(QSize(28, 28))
+            # Transparent background so the PillIndicator (parented to `bar`
+            # and lowered to the back) is visible through the chip rect.
+            # Matches main.py._apply_chip_styles' transparent-chip recipe.
+            chip.setStyleSheet(
+                f"QToolButton#{chip.objectName()} {{"
+                f" background: transparent;"
+                f" border: 1px solid transparent;"
+                f" border-radius: 8px;"
+                f"}}"
+                f"QToolButton#{chip.objectName()}:focus {{"
+                f" outline: none;"
+                f"}}"
+            )
             chip.clicked.connect(lambda _checked, g=game: self._on_click(g))
             bar_lay.addWidget(chip)
             self._buttons[game] = chip
