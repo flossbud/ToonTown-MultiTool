@@ -124,7 +124,7 @@ def test_per_game_header_divider_color_ttr(qapp, monkeypatch):
     tab = _make_tab(qapp, monkeypatch)
     div = tab.findChild(QFrame, "header_divider_ttr")
     assert div is not None
-    assert div.height() == 2 or div.minimumHeight() == 2
+    assert div.height() == 1 or div.minimumHeight() == 1
     qss = div.styleSheet()
     assert c["game_pill_ttr"].lower() in qss.lower()
 
