@@ -579,7 +579,7 @@ class KeymapTab(QWidget):
         super().__init__(parent)
         self.keymap_manager = keymap_manager
         self.settings_manager = settings_manager
-        self._entries = []  # list of {"header", "body", "chevron", "index", "expanded"}
+        self._entries = []  # list of {"card", "index", "expanded"}
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -650,7 +650,6 @@ class KeymapTab(QWidget):
             if w:
                 w.deleteLater()
 
-        from utils.theme_manager import apply_card_shadow, resolve_theme
         is_dark = resolve_theme(self.settings_manager) == "dark"
 
         sets = self.keymap_manager.get_sets(self._active_game)
