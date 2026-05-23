@@ -523,7 +523,7 @@ class SetCard(QFrame):
         color_band.setColorAt(1.0, QColor(self._styles["stripe_edge"]))
         p.fillRect(stripe_rect, QBrush(color_band))
         gloss = QLinearGradient(0, stripe_rect.top(), 0, stripe_rect.bottom())
-        gloss.setColorAt(0.0, QColor(255, 255, 255, 128))  # ~0.50 alpha
+        gloss.setColorAt(0.0, QColor(255, 255, 255, 90))   # ~0.35 alpha
         gloss.setColorAt(1.0, QColor(255, 255, 255, 0))
         p.fillRect(stripe_rect, QBrush(gloss))
 
@@ -822,13 +822,7 @@ class KeymapTab(QWidget):
 
             expanded = prev_states.get(idx, False)
             card.set_expanded(expanded, animate=False)
-            apply_card_shadow(card, is_dark, blur=16, offset_y=10)
-            _shadow_fx = card.graphicsEffect()
-            if _shadow_fx is not None:
-                # apply_card_shadow defaults the alpha to ~90/255; deepen it
-                # so the shadow reads as a directional offset under the card
-                # rather than a soft halo around it.
-                _shadow_fx.setColor(QColor(0, 0, 0, 160))
+            apply_card_shadow(card, is_dark, blur=22, offset_y=6)
 
             self._scroll_layout.addWidget(card)
             self._entries.append({
