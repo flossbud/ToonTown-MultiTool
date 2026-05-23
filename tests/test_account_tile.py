@@ -140,24 +140,70 @@ def test_summarize_error_unmatched_short_message_returned_as_is():
 
 
 def test_account_tile_has_hover_qss(qapp):
-    """Hovering the tile brightens its background and accent border-top."""
-    from utils.widgets.account_tile import AccountTile
+    """Hovering the tile lifts background from bg_card_inner to
+    bg_card_inner_hover. No more accent border-top brightening."""
+    from utils.theme_manager import get_theme_colors
     tile = AccountTile(game="ttr", slot_index=0)
     qss = tile.styleSheet()
+    c = get_theme_colors(True)
     assert "QFrame#account_tile:hover" in qss
-    # Brighter background and brighter TTR accent border on hover.
-    assert "#2e2e2e" in qss
-    assert "#6aa4ee" in qss  # brightened TTR accent
+    # Structural guard: in dark mode bg_card_inner_hover happens to equal
+    # border_card (#363636), so a substring match on the color alone is
+    # satisfied by the border rule. Assert the :hover BLOCK exists so a
+    # refactor that accidentally drops the hover rule can't pass this test.
+    hover_block_start = qss.find("QFrame#account_tile:hover")
+    assert hover_block_start != -1
+    hover_block = qss[hover_block_start:]
+    assert c["bg_card_inner_hover"] in hover_block, \
+        "bg_card_inner_hover token must appear inside the :hover block, not just in border"
+    # Regression guard: no per-game border-top accent line.
+    assert "border-top: 3px" not in qss
+    assert "border-top: 4px" not in qss
 
 
 def test_account_tile_has_hover_qss_cc(qapp):
-    """CC tiles get the brightened orange accent and shared brighter background."""
-    from utils.widgets.account_tile import AccountTile
+    """CC tiles share the same neutral hover; identity carried by section
+    card stripe, not by per-tile accent."""
+    from utils.theme_manager import get_theme_colors
     tile = AccountTile(game="cc", slot_index=0)
     qss = tile.styleSheet()
+    c = get_theme_colors(True)
     assert "QFrame#account_tile:hover" in qss
-    assert "#2e2e2e" in qss
-    assert "#f48748" in qss  # brightened CC accent
+    # Structural guard: in dark mode bg_card_inner_hover happens to equal
+    # border_card (#363636), so a substring match on the color alone is
+    # satisfied by the border rule. Assert the :hover BLOCK exists so a
+    # refactor that accidentally drops the hover rule can't pass this test.
+    hover_block_start = qss.find("QFrame#account_tile:hover")
+    assert hover_block_start != -1
+    hover_block = qss[hover_block_start:]
+    assert c["bg_card_inner_hover"] in hover_block, \
+        "bg_card_inner_hover token must appear inside the :hover block, not just in border"
+    assert "border-top: 3px" not in qss
+
+
+def test_slot_badge_uses_game_pill_color(qapp):
+    """Slot index badge uses the game pill token (same color as the section
+    card top stripe) so identity-source colors stay in lockstep."""
+    from utils.theme_manager import get_theme_colors
+    c = get_theme_colors(True)
+    ttr_tile = AccountTile(game="ttr", slot_index=0)
+    assert c["game_pill_ttr"].lower() in ttr_tile.badge.styleSheet().lower()
+    cc_tile = AccountTile(game="cc", slot_index=0)
+    assert c["game_pill_cc"].lower() in cc_tile.badge.styleSheet().lower()
+
+
+def test_account_tile_apply_theme_rebuilds_qss(qapp):
+    """apply_theme(light) must swap the tile to light-mode tokens."""
+    from utils.theme_manager import get_theme_colors
+    tile = AccountTile(game="ttr", slot_index=0)
+    light = get_theme_colors(False)
+    tile.apply_theme(light)
+    qss = tile.styleSheet()
+    assert light["bg_card_inner"] in qss
+    assert light["bg_card_inner_hover"] in qss
+    dark = get_theme_colors(True)
+    if dark["bg_card_inner"] != light["bg_card_inner"]:
+        assert dark["bg_card_inner"] not in qss
 
 
 def test_account_tile_press_drives_paint_scale(qapp):

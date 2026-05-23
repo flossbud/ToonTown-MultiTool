@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
 
 import utils.motion as motion
 from utils.shared_widgets import PulsingDot
-from utils.theme_manager import make_edit_icon, make_trash_icon
+from utils.theme_manager import get_theme_colors, make_edit_icon, make_trash_icon
 from utils.widgets.chip_button import ChipButton, QuietChipButton
 
 
@@ -40,10 +40,6 @@ def _hamburger_icon(color: str, size: int = 12) -> QIcon:
     painter.end()
     return QIcon(pm)
 
-
-GAME_ACCENT = {"ttr": "#4A8FE7", "cc": "#F26D21"}
-# Slightly-brightened accents used for the :hover border-top color.
-GAME_ACCENT_HOVER = {"ttr": "#6aa4ee", "cc": "#f48748"}
 
 # Status -> (band_bg, band_fg, band_label)
 _STATUS_VISUALS = {
@@ -118,20 +114,6 @@ class AccountTile(QFrame):
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self.setMinimumHeight(130)
 
-        accent = GAME_ACCENT[game]
-        accent_hover = GAME_ACCENT_HOVER[game]
-        self.setStyleSheet(
-            "QFrame#account_tile {"
-            " background: #252525;"
-            " border-radius: 10px;"
-            f" border-top: 3px solid {accent};"
-            "}"
-            "QFrame#account_tile:hover {"
-            " background: #2e2e2e;"
-            f" border-top: 3px solid {accent_hover};"
-            "}"
-        )
-
         outer = QVBoxLayout(self)
         outer.setContentsMargins(12, 12, 12, 12)
         outer.setSpacing(8)
@@ -142,15 +124,8 @@ class AccountTile(QFrame):
         self.badge = QLabel(str(slot_index + 1))
         self.badge.setFixedSize(22, 22)
         self.badge.setAlignment(Qt.AlignCenter)
-        self.badge.setStyleSheet(
-            f"background: {accent}; color: white; border-radius: 11px;"
-            f" font-weight: 700; font-size: 11px;"
-        )
         head.addWidget(self.badge)
         self.name_label = QLabel("")
-        self.name_label.setStyleSheet(
-            "color: #fff; font-weight: 600; font-size: 13px; background: transparent;"
-        )
         self.name_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         head.addWidget(self.name_label)
         outer.addLayout(head)
@@ -195,10 +170,6 @@ class AccountTile(QFrame):
         self.edit_btn.setIconSize(QSize(14, 14))
         self.edit_btn.setFixedSize(26, 26)
         self.edit_btn.setCursor(Qt.PointingHandCursor)
-        self.edit_btn.setStyleSheet(
-            "QToolButton { background: transparent; border: 1px solid rgba(255,255,255,0.1);"
-            " color: #8a9bb8; border-radius: 6px; }"
-        )
         self.edit_btn.clicked.connect(self.edit_clicked.emit)
         acts.addWidget(self.edit_btn)
         self.delete_btn = QuietChipButton()
@@ -206,16 +177,73 @@ class AccountTile(QFrame):
         self.delete_btn.setIconSize(QSize(14, 14))
         self.delete_btn.setFixedSize(26, 26)
         self.delete_btn.setCursor(Qt.PointingHandCursor)
-        self.delete_btn.setStyleSheet(
-            "QToolButton { background: transparent; border: 1px solid rgba(255,255,255,0.1);"
-            " color: #8a9bb8; border-radius: 6px; }"
-        )
         self.delete_btn.clicked.connect(self.delete_clicked.emit)
         acts.addWidget(self.delete_btn)
         outer.addLayout(acts)
 
+        # State cache for Task 4's _refresh_status_band implementation. `_current_theme`
+        # is also used here by apply_theme; the state/message fields are set ahead of
+        # time so the Task 3 stub doesn't need a guard.
+        self._current_theme = get_theme_colors(True)  # dark default; overridden immediately by apply_theme
+        self._current_state = "idle"
+        self._current_status_message = ""
+
         self._connected_signal = None
         self._apply_button_for_state("idle")
+        self.apply_theme(self._current_theme)
+
+    def apply_theme(self, c: dict) -> None:
+        """Rebuild every QSS string from the theme dict `c`. Called by the
+        constructor (dark default) and by LaunchSection.apply_theme on
+        every theme switch."""
+        self._current_theme = c
+        self.setStyleSheet(
+            "QFrame#account_tile {"
+            f" background: {c['bg_card_inner']};"
+            " border-radius: 10px;"
+            f" border: 1px solid {c['border_card']};"
+            "}"
+            "QFrame#account_tile:hover {"
+            f" background: {c['bg_card_inner_hover']};"
+            "}"
+        )
+        badge_bg = (
+            c["game_pill_ttr"] if self._game == "ttr"
+            else c["game_pill_cc"]
+        )
+        self.badge.setStyleSheet(
+            f"background: {badge_bg}; color: {c['text_on_accent']};"
+            " border-radius: 11px; min-width: 22px; min-height: 22px;"
+            " font-weight: 700; font-size: 11px;"
+        )
+        self.name_label.setStyleSheet(
+            f"color: {c['text_primary']}; font-weight: 600; font-size: 13px;"
+            " background: transparent;"
+        )
+        chip_qss = (
+            "QToolButton { background: transparent;"
+            f" border: 1px solid {c['border_muted']};"
+            f" color: {c['text_muted']};"
+            " border-radius: 6px; }"
+            "QToolButton:hover {"
+            f" background: {c['bg_card_inner_hover']};"
+            f" color: {c['text_secondary']};"
+            "}"
+        )
+        self.edit_btn.setStyleSheet(chip_qss)
+        self.delete_btn.setStyleSheet(chip_qss)
+        # Re-apply status band styling for the current state (no-op if idle).
+        self._refresh_status_band()
+
+    def _refresh_status_band(self) -> None:
+        """Re-apply the status band QSS for the current state.
+
+        Task 3 implementation: stub — the existing `set_state()` codepath
+        still owns band styling for now. Task 4 replaces the stub with a
+        token-driven lookup so this method actually re-themes the band on
+        theme switch.
+        """
+        return
 
     # ── public API ─────────────────────────────────────────────────
 
