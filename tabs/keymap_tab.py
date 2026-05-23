@@ -556,6 +556,7 @@ class SetCard(QFrame):
         badge = QLabel(f"SET {index + 1}")
         badge.setObjectName("set_card_badge")
         badge.setStyleSheet(self._badge_qss())
+        badge.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         hl.addWidget(badge)
 
         if index == 0:
@@ -584,6 +585,12 @@ class SetCard(QFrame):
             hl.addWidget(del_btn)
 
         outer.addWidget(header)
+        # Lock the header's height to its natural sizeHint AFTER it's been
+        # laid out (children added + parent layout assigned). Without this,
+        # Qt redistributes vertical space among children when the card's
+        # total height fluctuates during body animations, briefly stretching
+        # the header (and the SET # badge inside it) before snapping back.
+        header.setFixedHeight(header.sizeHint().height())
         self._header = header
         self._name_widget = name_widget
 

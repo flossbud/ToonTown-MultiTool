@@ -236,3 +236,12 @@ def test_setcard_body_is_bodyclip(qapp):
     from tabs.keymap_tab import SetCard, _BodyClip
     card = SetCard(index=0, set_data={"name": "Default"})
     assert isinstance(card._body, _BodyClip)
+
+
+def test_setcard_header_has_fixed_height(qapp):
+    from tabs.keymap_tab import SetCard
+    card = SetCard(index=0, set_data={"name": "Default"})
+    h = card._header
+    # Header should be locked: min == max == natural sizeHint.
+    assert h.minimumHeight() > 0
+    assert h.minimumHeight() == h.maximumHeight()
