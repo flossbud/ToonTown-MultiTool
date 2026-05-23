@@ -29,6 +29,22 @@ _REF_WIDTH = {"compact": 540, "full": 720}
 _SCALE_CLAMP_MAX = 1.4
 
 
+class _ClickableFrame(QFrame):
+    """A QFrame that emits `clicked` on left mouse press. Used as the
+    LaunchSection header so the user can click anywhere on the bar to
+    toggle collapse. Children that consume their own mouse events
+    (e.g. the QToolButton launcher_btn) are not affected — Qt only
+    forwards a press to the parent when no child accepts it."""
+    clicked = Signal()
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+
 class _AddTile(QuietChipButton):
     """Dashed-outline "+ Add Account" tile, matches grid cell size.
     Uses QuietChipButton (no hover upscale, 0.96 press scale)."""
@@ -129,7 +145,9 @@ class LaunchSection(QWidget):
         # Header strip — sits inside the card. Transparent background with
         # a hairline below to separate it from the tile region. QSS applied
         # via apply_theme so theme switches work.
-        header = QFrame()
+        header = _ClickableFrame()
+        header.setCursor(Qt.PointingHandCursor)
+        header.clicked.connect(self._on_header_clicked)
         header.setObjectName("section_header")
         header.setAttribute(Qt.WA_StyledBackground, True)
         # QSS applied via apply_theme.
@@ -166,6 +184,15 @@ class LaunchSection(QWidget):
         # QSS applied via apply_theme.
         self.launcher_btn.clicked.connect(self.launcher_clicked.emit)
         head_lay.addWidget(self.launcher_btn)
+
+        # Chevron state indicator. Text is swapped between ▾ (expanded)
+        # and ▸ (collapsed); no rotation animation — the height tween
+        # carries the motion. Styled in apply_theme.
+        self._chev = QLabel("▾")
+        self._chev.setObjectName("section_chev")
+        self._chev.setAlignment(Qt.AlignCenter)
+        self._chev.setFixedWidth(22)
+        head_lay.addWidget(self._chev)
 
         card_lay.addWidget(header)
 
@@ -424,17 +451,24 @@ class LaunchSection(QWidget):
 
         No-op when `value` already matches `is_collapsed`. Programmatic
         calls do NOT emit `collapsed_changed`; only user header clicks
-        emit (see Task 4).
+        emit (see _on_header_clicked).
         """
         if value == self.is_collapsed:
             return
         self.is_collapsed = value
+        self._chev.setText("▸" if value else "▾")
         if value:
             self._body_wrap.setVisible(False)
             self.setMinimumHeight(0)
         else:
             self._body_wrap.setVisible(True)
             self.setMinimumHeight(380)
+
+    def _on_header_clicked(self) -> None:
+        """Slot for the header frame's `clicked` signal. Toggles state
+        and emits `collapsed_changed` so LaunchTab can persist."""
+        self.set_collapsed(not self.is_collapsed, animate=True)
+        self.collapsed_changed.emit(self.is_collapsed)
 
     def _wire_tile(self, tile: AccountTile, index: int) -> None:
         tile.launch_clicked.connect(lambda i=index: self.tile_launch.emit(i))
