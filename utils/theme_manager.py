@@ -467,17 +467,17 @@ DARK_THEME = """
         border: none;
     }
     QFrame#picker_card {
-        background-color: rgba(255, 255, 255, 8);
-        border: 1px solid rgba(255, 255, 255, 13);
+        background-color: rgba(255, 255, 255, 15);
+        border: 2px solid rgba(255, 255, 255, 26);
         border-radius: 12px;
     }
     QFrame#picker_card:hover {
-        background-color: rgba(255, 255, 255, 15);
-        border: 1px solid rgba(255, 255, 255, 25);
+        background-color: rgba(255, 255, 255, 26);
+        border: 2px solid rgba(255, 255, 255, 41);
     }
     QFrame#picker_card[selected="true"] {
-        background-color: rgba(0, 119, 255, 26);
-        border: 1px solid rgba(0, 119, 255, 115);
+        background-color: rgba(59, 130, 246, 46);
+        border: 2px solid #3b82f6;
     }
     QFrame#picker_card[stale="true"] QLabel#picker_card_name,
     QFrame#picker_card[stale="true"] QLabel#picker_card_path {
@@ -524,6 +524,18 @@ DARK_THEME = """
         color: #cfcfcf;
         font-size: 13px;
         background: transparent;
+    }
+    QDialog#picker_dialog QPushButton {
+        background: transparent;
+        color: #cfcfcf;
+        border: 1px solid #3a3a48;
+        border-radius: 8px;
+        padding: 7px 16px;
+        font-weight: 500;
+    }
+    QDialog#picker_dialog QPushButton:hover {
+        background-color: rgba(255, 255, 255, 15);
+        border-color: #4d4d62;
     }
     QPushButton#picker_primary_btn {
         background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
