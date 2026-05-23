@@ -285,3 +285,32 @@ def test_set_layout_mode_same_mode_does_not_reflash(qapp):
     sec.set_layout_mode("full")
     for tile in sec.tiles:
         assert tile.tile_opacity == 1.0
+
+
+def test_add_tile_uses_theme_tokens(qapp):
+    """The '+ Add Account' dashed tile must use theme tokens, not literals,
+    so it switches palettes correctly."""
+    from utils.theme_manager import get_theme_colors
+    sec = LaunchSection(game="ttr", icon_path="")
+    sec.set_accounts([{"label": "x", "username": "y"}])  # ensures add_tile is built
+    assert sec.add_tile is not None
+    c = get_theme_colors(True)
+    qss = sec.add_tile.styleSheet()
+    assert c["border_card"] in qss
+    assert c["text_muted"] in qss
+    # Regression guards: no dark-only literals.
+    assert "rgba(255,255,255,0.12)" not in qss
+    assert "#8a9bb8" not in qss
+    assert "#cfd6e6" not in qss
+
+
+def test_add_tile_apply_theme_swaps_palettes(qapp):
+    """LaunchSection.apply_theme must propagate to add_tile."""
+    from utils.theme_manager import get_theme_colors
+    sec = LaunchSection(game="cc", icon_path="")
+    sec.set_accounts([{"label": "x", "username": "y"}])
+    light = get_theme_colors(False)
+    sec.apply_theme(light)
+    qss = sec.add_tile.styleSheet()
+    assert light["border_card"] in qss
+    assert light["text_muted"] in qss

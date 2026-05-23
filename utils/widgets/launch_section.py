@@ -34,15 +34,25 @@ class _AddTile(QuietChipButton):
     Uses QuietChipButton (no hover upscale, 0.96 press scale)."""
     def __init__(self, game: str, parent=None):
         super().__init__(parent)
+        self._game = game
         self.setText(f"+ Add {_GAME_SHORT[game]} Account")
         self.setMinimumHeight(130)
         self.setCursor(Qt.PointingHandCursor)
+        self.apply_theme(get_theme_colors(True))
+
+    def apply_theme(self, c: dict) -> None:
+        """Rebuild QSS from the theme dict `c`."""
         self.setStyleSheet(
-            "QToolButton { background: transparent; border: 2px dashed"
-            " rgba(255,255,255,0.12); border-radius: 10px; color: #8a9bb8;"
+            "QToolButton { background: transparent;"
+            f" border: 2px dashed {c['border_card']};"
+            " border-radius: 10px;"
+            f" color: {c['text_muted']};"
             " font-size: 13px; }"
-            "QToolButton:hover { border-color: rgba(255,255,255,0.25);"
-            " color: #cfd6e6; background: rgba(255,255,255,0.02); }"
+            "QToolButton:hover {"
+            f" border-color: {c['border_light']};"
+            f" color: {c['text_secondary']};"
+            f" background: {c['bg_card_inner_hover']};"
+            " }"
         )
 
 
@@ -230,6 +240,8 @@ class LaunchSection(QWidget):
         for tile in self.tiles:
             if hasattr(tile, "apply_theme"):
                 tile.apply_theme(c)
+        if self.add_tile is not None and hasattr(self.add_tile, "apply_theme"):
+            self.add_tile.apply_theme(c)
         if hasattr(self.empty_state, "apply_theme"):
             self.empty_state.apply_theme(c)
 
