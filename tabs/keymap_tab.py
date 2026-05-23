@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFrame, QScrollArea, QLineEdit, QSizePolicy,
 )
-from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve, QSize, QPointF, Property
+from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve, QSize, QPointF, Property, QRectF
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QBrush, QLinearGradient, QPen, QIcon, QPixmap, QPolygonF
 from utils.theme_manager import resolve_theme, get_theme_colors, apply_card_shadow, get_set_color, make_trash_icon, get_set_card_styles
 from utils.symbols import S
@@ -772,6 +772,121 @@ class SetCard(QFrame):
                 self._body.collapse()
             else:
                 self._body.hide_instant()
+
+
+# -- TTR / CC game sub-rail ────────────────────────────────────────────────
+
+
+class _GameSubRail(QFrame):
+    """TTR/CC switch as a small chip rail.
+
+    Built from the same primitives the top app chip_rail uses:
+    `ChipButton` instances for the two icons + a `PillIndicator` overlay
+    that slides between them on switch and retints its border per game
+    accent (TTR blue, CC orange).
+    """
+
+    game_changed = Signal(str)
+
+    _BORDER_FOR = {
+        "ttr": "game_pill_ttr",   # theme token, resolved in _apply_pill_color
+        "cc":  "game_pill_cc",
+    }
+
+    def __init__(self, active_game: str, parent=None):
+        super().__init__(parent)
+        self.setObjectName("game_sub_rail")
+        self._active = active_game
+
+        from utils.widgets.chip_button import ChipButton
+        from utils.widgets.pill_indicator import PillIndicator
+        from PySide6.QtCore import QEvent, QObject
+
+        outer = QHBoxLayout(self)
+        outer.setContentsMargins(0, 4, 0, 4)
+        outer.setSpacing(0)
+        outer.addStretch()
+
+        bar = QFrame(self)
+        bar.setObjectName("game_sub_rail_bar")
+        bar_lay = QHBoxLayout(bar)
+        bar_lay.setContentsMargins(4, 4, 4, 4)
+        bar_lay.setSpacing(4)
+
+        # Pill overlay parented to the bar (so its coordinates match the
+        # chips inside the bar, not the outer stretched layout).
+        self._pill = PillIndicator(bar)
+        self._pill.lower()
+
+        self._buttons: dict[str, ChipButton] = {}
+        for game in ("ttr", "cc"):
+            chip = ChipButton(bar)
+            chip.setObjectName(f"game_sub_rail_chip_{game}")
+            chip.setToolButtonStyle(Qt.ToolButtonIconOnly)
+            chip.setMinimumSize(QSize(56, 40))
+            chip.setMaximumSize(QSize(56, 40))
+            chip.setCheckable(True)
+            chip.setCursor(Qt.PointingHandCursor)
+            pm = QPixmap(_asset_path(f"{game}.png"))
+            if not pm.isNull():
+                chip.setIcon(QIcon(pm))
+                chip.setIconSize(QSize(28, 28))
+            chip.clicked.connect(lambda _checked, g=game: self._on_click(g))
+            bar_lay.addWidget(chip)
+            self._buttons[game] = chip
+
+        # Resize filter so the pill matches the bar size and snaps onto the
+        # active chip whenever layout changes. Same pattern main.py uses for
+        # the top chip rail.
+        pill_ref = self._pill
+        outer_self = self
+
+        class _RailResizeFilter(QObject):
+            def eventFilter(self_, watched, event):  # noqa: N805
+                if event.type() == QEvent.Type.Resize:
+                    pill_ref.resize(watched.size())
+                    active_btn = outer_self._buttons.get(outer_self._active)
+                    if active_btn is not None and not active_btn.geometry().isEmpty():
+                        pill_ref.cancel_animation()
+                        pill_ref.set_pill_rect(QRectF(active_btn.geometry()))
+                return False
+
+        self._resize_filter = _RailResizeFilter(bar)
+        bar.installEventFilter(self._resize_filter)
+
+        outer.addWidget(bar)
+        outer.addStretch()
+
+        self._buttons[self._active].setChecked(True)
+        self._apply_pill_color()
+
+    def _on_click(self, game: str) -> None:
+        if game == self._active:
+            # Re-check it (click toggled it off).
+            self._buttons[game].setChecked(True)
+            return
+        self.set_active(game)
+        self.game_changed.emit(game)
+
+    def set_active(self, game: str) -> None:
+        if game == self._active:
+            return
+        self._active = game
+        for g, btn in self._buttons.items():
+            btn.setChecked(g == game)
+        target = self._buttons[game].geometry()
+        if not target.isEmpty():
+            self._pill.slide_to(QRectF(target))
+        self._apply_pill_color()
+
+    def _apply_pill_color(self) -> None:
+        from utils.theme_manager import get_theme_colors
+        # Theme accessor lives at module level; using the dark default here is
+        # safe because the pill color is set per-active-game from the theme
+        # tokens (game_pill_ttr / game_pill_cc) which are identical in both
+        # light and dark themes (same brand hex).
+        c = get_theme_colors(True)
+        self._pill.set_colors(border_hex=c[self._BORDER_FOR[self._active]])
 
 
 class _SegmentedSwitch(QFrame):
