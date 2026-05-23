@@ -88,6 +88,38 @@ def get_set_color(index: int) -> tuple:
     return ("#666666", "#ffffff")
 
 
+def get_set_card_styles(index: int, is_dark: bool) -> dict:
+    """Derived style values for a SetCard at this set index.
+
+    Pure read-side function. Returns a dict of CSS-ready strings (rgba(...) /
+    #rrggbb) computed from get_set_color(index). Used by tabs/keymap_tab.py
+    to render one set's card without scattering rgba arithmetic inline.
+    """
+    from PySide6.QtGui import QColor
+    bg_hex, _ = get_set_color(index)
+    base = QColor(bg_hex)
+    r, g, b = base.red(), base.green(), base.blue()
+
+    def rgba(alpha: float) -> str:
+        return f"rgba({r}, {g}, {b}, {alpha})"
+
+    name_color = base.lighter(135).name()
+    stripe_edge = base.darker(120).name()
+    stripe_center = base.lighter(135).name()
+    return {
+        "card_border":      rgba(0.30),
+        "card_grad_top":    rgba(0.07),
+        "card_grad_bottom": rgba(0.015),
+        "stripe_edge":      stripe_edge,
+        "stripe_center":    stripe_center,
+        "name_color":       name_color,
+        "badge_bg":         rgba(0.20),
+        "badge_text":       name_color,
+        "badge_ring":       rgba(0.30),
+        "head_divider":     rgba(0.15),
+    }
+
+
 # ── Theme Colors ───────────────────────────────────────────────────────────
 
 def get_theme_colors(is_dark: bool) -> dict:
