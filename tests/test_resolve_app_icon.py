@@ -55,3 +55,32 @@ def test_resolve_app_icon_beta_returns_non_null(qapp, monkeypatch):
     icon = main._resolve_app_icon()
     assert not icon.isNull()
     assert not icon.pixmap(40, 40).isNull()
+
+
+def test_resolve_app_icon_skips_theme_when_not_packaged(qapp, monkeypatch):
+    """Dev runs (not packaged) must not consult QIcon.fromTheme. A previously
+    installed packaged version of ourselves (e.g. coexisting Flatpak) registers
+    its icon under our canonical app id in the XDG theme; trusting that lookup
+    in dev would surface the stale icon instead of the bundled one."""
+    import main
+    from PySide6.QtGui import QIcon
+    monkeypatch.setattr(main, "is_beta", lambda: False)
+    monkeypatch.setattr(main, "_is_packaged_install", lambda: False, raising=False)
+    calls = []
+    monkeypatch.setattr(QIcon, "fromTheme", lambda name: calls.append(name) or QIcon())
+    main._resolve_app_icon()
+    assert calls == [], f"theme lookups should be skipped in dev runs, but got: {calls}"
+
+
+def test_resolve_app_icon_consults_theme_when_packaged(qapp, monkeypatch):
+    """Packaged installs (AppImage/Flatpak/PyInstaller/AUR) keep the existing
+    behaviour: prefer the system XDG theme, since it carries the multi-size
+    icon set the WM expects."""
+    import main
+    from PySide6.QtGui import QIcon
+    monkeypatch.setattr(main, "is_beta", lambda: False)
+    monkeypatch.setattr(main, "_is_packaged_install", lambda: True, raising=False)
+    calls = []
+    monkeypatch.setattr(QIcon, "fromTheme", lambda name: calls.append(name) or QIcon())
+    main._resolve_app_icon()
+    assert calls == [main.APP_DESKTOP_ID]

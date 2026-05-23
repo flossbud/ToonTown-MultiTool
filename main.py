@@ -202,6 +202,23 @@ def _desktop_file_exists(desktop_id: str) -> bool:
     )
 
 
+def _is_packaged_install() -> bool:
+    """True when the running process is a packaged install whose XDG theme /
+    .desktop registrations belong to *this* instance. False for from-source dev
+    runs, where those registrations may belong to a different (e.g. previously
+    installed) copy of ourselves and must not be trusted."""
+    if getattr(sys, "frozen", False):
+        return True
+    if os.environ.get("APPIMAGE"):
+        return True
+    if os.environ.get("FLATPAK_ID") in (APP_DESKTOP_ID, BETA_DESKTOP_ID):
+        return True
+    # OS package install (AUR/.deb/RPM): script lives in a system path, not $HOME.
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    home = os.path.expanduser("~")
+    return not (script_dir + os.sep).startswith(home + os.sep)
+
+
 def _select_desktop_file_name() -> str | None:
     override = os.environ.get("TTMT_DESKTOP_FILE_NAME")
     if override:
@@ -213,11 +230,15 @@ def _select_desktop_file_name() -> str | None:
 
     if sys.platform != "linux":
         return canonical_id
-    if _desktop_file_exists(canonical_id):
-        return canonical_id
-    if not is_beta() and _desktop_file_exists(LEGACY_DESKTOP_ID):
-        return LEGACY_DESKTOP_ID
-    if getattr(sys, "frozen", False) or os.environ.get("FLATPAK_ID") == APP_DESKTOP_ID:
+    # Only trust a system-installed .desktop if we are a packaged install.
+    # Otherwise the entry may be from a coexisting Flatpak/AUR/etc. install
+    # of ourselves, and using it as the Wayland app_id makes the WM render
+    # that foreign install's icon in the taskbar.
+    if _is_packaged_install():
+        if _desktop_file_exists(canonical_id):
+            return canonical_id
+        if not is_beta() and _desktop_file_exists(LEGACY_DESKTOP_ID):
+            return LEGACY_DESKTOP_ID
         return canonical_id
     return None
 
@@ -1109,10 +1130,14 @@ def _resolve_app_icon() -> QIcon:
     # Linux: AppImage/Flatpak register the icon in the XDG theme.
     # Windows has no theme system, so fromTheme returns a null icon there;
     # fall back to the bundled file so setWindowIcon has something to use.
-    theme_id = BETA_DESKTOP_ID if is_beta() else APP_DESKTOP_ID
-    themed = QIcon.fromTheme(theme_id)
-    if not themed.isNull():
-        return themed
+    # Dev-from-source intentionally skips the theme lookup: a coexisting
+    # packaged install of ourselves may have registered an older icon under
+    # the same id, which would otherwise shadow the bundled new one.
+    if _is_packaged_install():
+        theme_id = BETA_DESKTOP_ID if is_beta() else APP_DESKTOP_ID
+        themed = QIcon.fromTheme(theme_id)
+        if not themed.isNull():
+            return themed
     return QIcon(_resolve_icon_path())
 
 
