@@ -239,8 +239,21 @@ def _wine_bin_for_pid(pid: int, env: dict[str, str]) -> str | None:
     (e.g. wine64-preloader installed by the distro at /usr/lib/wine/).
     Resolve the user-facing wine binary via shutil.which('wine').
 
+    Bottles / Lutris / Faugus path: WINELOADER in the game's env is the
+    canonical wine binary that started the running wineserver. Prefer it
+    over every other heuristic, since it is the only binary guaranteed
+    ABI-compatible with the wineserver this bridge needs to talk to.
+    (System wine resolved by shutil.which can disagree on protocol
+    version: e.g. wine 11.0 client speaks 931, Bottles soda-9.0 runner
+    speaks 787, and the connection aborts with "wine client error:0:
+    version mismatch".)
+
     Returns None for non-wine processes; caller falls back to Xlib.
     """
+    loader = env.get("WINELOADER")
+    if loader and os.access(loader, os.X_OK):
+        return loader
+
     try:
         exe = os.readlink(f"/proc/{pid}/exe")
     except OSError:

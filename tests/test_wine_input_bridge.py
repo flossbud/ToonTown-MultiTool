@@ -453,3 +453,62 @@ def test_wine_bin_for_pid_proton_winedllpath_fallback(monkeypatch):
     winedll = f"{proton_root}/files/lib/wine:/some/other/lib"
     result = wib._wine_bin_for_pid(99999, {"WINEDLLPATH": winedll})
     assert result == f"{proton_root}/files/bin/wine"
+
+
+def test_wine_bin_for_pid_prefers_WINELOADER(monkeypatch, tmp_path):
+    """When WINELOADER points at an executable wine binary, prefer it
+    over Proton-marker derivation and shutil.which('wine').
+
+    Bottles, Lutris, Faugus, and plain wine all set WINELOADER to the
+    exact wine binary that started the running wineserver. That binary
+    is the only one guaranteed ABI-compatible with the wineserver this
+    bridge needs to talk to. Falling through to shutil.which('wine') on
+    a Bottles-launched process resolves to system wine -- which may be a
+    different major/minor version and produces:
+
+        wine client error:0: version mismatch <server>/<client>
+
+    Empirically observed: system wine 11.0 (Staging) speaks protocol 931,
+    Bottles soda-9.0-1 runner speaks 787. The bridge cannot run csc.exe
+    inside that prefix until we use the runner's wine binary.
+    """
+    import shutil
+
+    loader = tmp_path / "wine64"
+    loader.write_text("#!/bin/sh\nexit 0\n")
+    loader.chmod(0o755)
+
+    # /proc/<pid>/exe looks like a bottles runner preloader -- without
+    # the WINELOADER check, this would route to shutil.which('wine').
+    monkeypatch.setattr(
+        wine_input_bridge.os,
+        "readlink",
+        lambda _p: "/home/u/.local/share/bottles/runners/soda-9.0-1/bin/wine64-preloader",
+    )
+    monkeypatch.setattr(
+        shutil, "which", lambda name: "/usr/bin/wine" if name == "wine" else None
+    )
+
+    env = {"WINELOADER": str(loader)}
+    result = wine_input_bridge._wine_bin_for_pid(99999, env)
+    assert result == str(loader)
+
+
+def test_wine_bin_for_pid_WINELOADER_not_executable_falls_through(monkeypatch):
+    """A WINELOADER pointing at a missing/non-executable path must not
+    short-circuit resolution. Fall back to the existing Proton + plain-wine
+    layout checks so a corrupted env doesn't disable the bridge."""
+    import shutil
+
+    monkeypatch.setattr(
+        wine_input_bridge.os,
+        "readlink",
+        lambda _p: "/usr/lib/wine/wine64-preloader",
+    )
+    monkeypatch.setattr(
+        shutil, "which", lambda name: "/usr/bin/wine" if name == "wine" else None
+    )
+
+    env = {"WINELOADER": "/path/that/does/not/exist/wine64"}
+    result = wine_input_bridge._wine_bin_for_pid(99999, env)
+    assert result == "/usr/bin/wine"
