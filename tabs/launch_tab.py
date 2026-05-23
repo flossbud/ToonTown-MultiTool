@@ -1238,6 +1238,11 @@ class LaunchTab(QWidget):
             bar.set_theme(is_dark)
         self._scroll_widget.setStyleSheet(f"background: {c['bg_app']};")
 
+        # Propagate the theme dict to every theme-aware child.
+        for section in (self.ttr_section, self.cc_section):
+            if section is not None and hasattr(section, "apply_theme"):
+                section.apply_theme(c)
+
         if self._keyring_banner is not None:
             if hasattr(self._keyring_banner, "apply_theme"):
                 self._keyring_banner.apply_theme(c)
