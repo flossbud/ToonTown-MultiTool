@@ -111,16 +111,22 @@ def run_official_cc_launcher(settings_manager=None) -> bool:
     install picker. Pass None for backward-compatible single-install
     behavior."""
     installs = discover_cc_installs()
+    print(f"[CCLauncherBtn] discover_cc_installs -> {len(installs)} install(s)")
     if not installs:
         return False
 
     install = _select_install(installs, settings_manager)
     if install is None:
+        print("[CCLauncherBtn] _select_install -> None (multi-install w/o matching signature)")
         return False
+    print(f"[CCLauncherBtn] selected install launcher={install.launcher!r}")
 
     launcher_path = _cc_launcher_exe_path(install)
     if launcher_path is None:
+        print(f"[CCLauncherBtn] no launcher exe (new_launcher.exe / TTCCLauncher.exe) "
+              f"in prefix {install.prefix_path!r}")
         return False
+    print(f"[CCLauncherBtn] launcher exe={launcher_path!r}")
 
     # Mirror CCLauncher.launch's Proton-resolution cascade
     # (override -> CompatToolMapping -> config_info -> enumerated newest).
@@ -131,6 +137,7 @@ def run_official_cc_launcher(settings_manager=None) -> bool:
     if sys.platform != "win32" and install.launcher == "steam-proton":
         chosen = resolve_effective_proton(install, settings_manager)
         if chosen is None:
+            print("[CCLauncherBtn] resolve_effective_proton -> None (no Proton installed)")
             return False
         install = replace(install, metadata={**install.metadata, "proton_dir": chosen})
 
@@ -138,7 +145,8 @@ def run_official_cc_launcher(settings_manager=None) -> bool:
         argv, env_overrides = build_launch_command(
             install, args=[], extra_env={}, target_exe=launcher_path,
         )
-    except (ValueError, KeyError):
+    except (ValueError, KeyError) as e:
+        print(f"[CCLauncherBtn] build_launch_command raised {type(e).__name__}: {e}")
         return False
     try:
         merged_env = {**os.environ, **env_overrides}
@@ -149,8 +157,10 @@ def run_official_cc_launcher(settings_manager=None) -> bool:
         # Play button sets the same cwd (see faugus.launcher.on_button_play_
         # clicked) -- that's why it works and a bare Popen does not.
         subprocess.Popen(argv, env=merged_env, cwd=os.path.dirname(launcher_path))
+        print(f"[CCLauncherBtn] spawned cmd[0]={argv[0]!r}")
         return True
-    except (FileNotFoundError, OSError):
+    except (FileNotFoundError, OSError) as e:
+        print(f"[CCLauncherBtn] subprocess.Popen raised {type(e).__name__}: {e}")
         return False
 
 
