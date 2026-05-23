@@ -230,3 +230,9 @@ def test_bodyclip_expand_emits_signal(qapp):
         assert fired == [True]
     finally:
         motion._TEST_DURATION_SCALE = original_scale
+
+
+def test_setcard_body_is_bodyclip(qapp):
+    from tabs.keymap_tab import SetCard, _BodyClip
+    card = SetCard(index=0, set_data={"name": "Default"})
+    assert isinstance(card._body, _BodyClip)

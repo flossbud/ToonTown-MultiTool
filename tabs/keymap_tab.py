@@ -587,14 +587,13 @@ class SetCard(QFrame):
         self._header = header
         self._name_widget = name_widget
 
-        # ── Body (AnimatedBody — same animation as today's pattern) ──
+        # ── Body content widget (held inside _BodyClip for animation) ──
         self._active_game = active_game
-        self._body = AnimatedBody()
-        self._body.setObjectName("set_card_body")
-        # Transparent for the same reason as the header above — otherwise
-        # the body's opaque QFrame paint covers the card gradient when expanded.
-        self._body.setStyleSheet("QFrame#set_card_body { background: transparent; border: none; }")
-        bl = QVBoxLayout(self._body)
+        body_content = QWidget()
+        body_content.setObjectName("set_card_body")
+        # Transparent so the SetCard's painted gradient shows through.
+        body_content.setStyleSheet("QWidget#set_card_body { background: transparent; border: none; }")
+        bl = QVBoxLayout(body_content)
         bl.setContentsMargins(14, 12, 14, 14)
         bl.setSpacing(8)
 
@@ -664,6 +663,8 @@ class SetCard(QFrame):
             btn_row.addWidget(detect_btn)
             bl.addLayout(btn_row)
 
+        self._body = _BodyClip()
+        self._body.set_content_widget(body_content)
         outer.addWidget(self._body)
         self.setMinimumHeight(self.STRIPE_HEIGHT + header.sizeHint().height())
 
@@ -781,17 +782,17 @@ class SetCard(QFrame):
         )
 
     def set_expanded(self, expanded: bool, *, animate: bool = True):
+        self._chevron.set_expanded(expanded)
         if expanded:
             if animate:
                 self._body.expand()
             else:
-                self._body.setVisible(True)
+                self._body.show_instant()
         else:
             if animate:
                 self._body.collapse()
             else:
-                self._body.setVisible(False)
-        self._chevron.set_expanded(expanded)
+                self._body.hide_instant()
 
 
 class _SegmentedSwitch(QFrame):
