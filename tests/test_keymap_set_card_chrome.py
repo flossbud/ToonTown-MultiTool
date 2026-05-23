@@ -186,3 +186,37 @@ def test_detect_button_qss_is_token_driven(qapp):
     assert "background: transparent" in qss
     assert f"border: 1px solid {c['border_muted']}" in qss
     assert f"color: {c['text_secondary']}" in qss
+    # Hover accent must be game-scoped: blue for TTR, orange for CC.
+    # _FakeSettings forces TTR detection above; assert TTR accent here.
+    assert f"border: 1px solid {c['accent_blue_btn']}" in qss
+    assert f"color: {c['accent_blue_btn']}" in qss
+
+
+def test_detect_button_uses_cc_accent_when_active(qapp, monkeypatch):
+    from tabs.keymap_tab import KeymapTab
+    from utils.keymap_manager import KeymapManager
+    from utils.theme_manager import get_theme_colors
+    from PySide6.QtWidgets import QPushButton
+
+    class _FakeSettings:
+        def __init__(self):
+            self._d = {"ttr_engine_dir": "", "cc_engine_dir": "", "theme": "dark"}
+        def get(self, k, default=None):
+            return self._d.get(k, default)
+        def set(self, k, v):
+            self._d[k] = v
+        def on_change(self, cb):
+            pass
+
+    # Force CC-only detection so _active_game becomes "cc".
+    monkeypatch.setattr(KeymapTab, "_ttr_detected", lambda self: False)
+    monkeypatch.setattr(KeymapTab, "_cc_detected", lambda self: True)
+
+    tab = KeymapTab(KeymapManager(), settings_manager=_FakeSettings())
+    tab.refresh_theme()
+    c = get_theme_colors(True)
+    btns = tab.findChildren(QPushButton, "detect_btn")
+    assert len(btns) >= 1
+    qss = btns[0].styleSheet()
+    assert f"border: 1px solid {c['accent_orange_border']}" in qss
+    assert f"color: {c['accent_orange_border']}" in qss

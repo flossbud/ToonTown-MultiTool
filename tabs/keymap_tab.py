@@ -1236,6 +1236,10 @@ class KeymapTab(QWidget):
                 }}
             """)
 
+        hover_accent = (
+            c['accent_blue_btn'] if self._active_game == "ttr"
+            else c['accent_orange_border']
+        )
         for btn in self.findChildren(QPushButton, "detect_btn"):
             btn.setStyleSheet(
                 "QPushButton#detect_btn {"
@@ -1247,7 +1251,7 @@ class KeymapTab(QWidget):
                 "}"
                 "QPushButton#detect_btn:hover {"
                 f" background: {c['bg_card_inner_hover']};"
-                f" border: 1px solid {c['border_card']};"
-                f" color: {c['text_primary']};"
+                f" border: 1px solid {hover_accent};"
+                f" color: {hover_accent};"
                 "}"
             )
