@@ -81,14 +81,14 @@ def test_per_game_header_label_text_ttr(qapp, monkeypatch):
     tab = _make_tab(qapp, monkeypatch)
     label = tab.findChild(QLabel, "header_label_ttr")
     assert label is not None
-    assert label.text() == "ToonTown Rewritten Keysets"
+    assert label.text() == "TOONTOWN REWRITTEN KEYSETS"
 
 
 def test_per_game_header_label_text_cc(qapp, monkeypatch):
     tab = _make_tab(qapp, monkeypatch)
     label = tab.findChild(QLabel, "header_label_cc")
     assert label is not None
-    assert label.text() == "Corporate Clash Keysets"
+    assert label.text() == "CORPORATE CLASH KEYSETS"
 
 
 def test_per_game_header_label_color_ttr(qapp, monkeypatch):

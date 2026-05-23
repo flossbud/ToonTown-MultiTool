@@ -1070,12 +1070,13 @@ class KeymapTab(QWidget):
 
         # ── Per-game header (label + divider) ──────────────────────────
         title = (
-            "ToonTown Rewritten Keysets" if game == "ttr"
-            else "Corporate Clash Keysets"
+            "TOONTOWN REWRITTEN KEYSETS" if game == "ttr"
+            else "CORPORATE CLASH KEYSETS"
         )
         accent_token = "game_pill_ttr" if game == "ttr" else "game_pill_cc"
         header_label = QLabel(title)
         header_label.setObjectName(f"header_label_{game}")
+        header_label.setAlignment(Qt.AlignCenter)
         header_label.setStyleSheet(
             f"QLabel#header_label_{game} {{"
             f" font-size: 10px;"
@@ -1086,7 +1087,7 @@ class KeymapTab(QWidget):
             f" border: none;"
             f"}}"
         )
-        page_layout.addWidget(header_label)
+        page_layout.addWidget(header_label, alignment=Qt.AlignHCenter)
 
         header_divider = QFrame()
         header_divider.setObjectName(f"header_divider_{game}")
@@ -1099,7 +1100,7 @@ class KeymapTab(QWidget):
             f" border-radius: 1px;"
             f"}}"
         )
-        page_layout.addWidget(header_divider)
+        page_layout.addWidget(header_divider, alignment=Qt.AlignHCenter)
         page_layout.addSpacing(10)
 
         # ── SetCards ───────────────────────────────────────────────────
