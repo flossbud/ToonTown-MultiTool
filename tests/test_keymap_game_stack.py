@@ -165,9 +165,14 @@ def test_add_button_per_page(qapp, monkeypatch):
     assert btn_ttr is not btn_cc
 
 
-def test_signal_binding_targets_correct_game(qapp, monkeypatch):
+def test_signal_binding_targets_correct_game(qapp, monkeypatch, tmp_path):
     """The signal-binding-with-game-name shift: a card on the CC page
-    that emits name_changed must persist to CC's keymap, not TTR's."""
+    that emits name_changed must persist to CC's keymap, not TTR's.
+
+    Sandboxes XDG_CONFIG_HOME to tmp_path so the rename doesn't write
+    to the user's real ~/.config/toontown_multitool/keymaps.json.
+    """
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     tab = _make_tab(qapp, monkeypatch)
     # Find a SetCard on the CC page (index > 0 so it's a renameable one).
     from tabs.keymap_tab import SetCard
@@ -176,9 +181,9 @@ def test_signal_binding_targets_correct_game(qapp, monkeypatch):
     assert len(cc_cards) >= 1
     cc_card_default = cc_cards[0]
     # Emit name_changed from the CC default-set card.
-    cc_card_default.name_changed.emit("Renamed-CC-Default")
+    cc_card_default.name_changed.emit("test-cc-rename-probe")
     # Active game is TTR; if the binding leaked, the rename would land on TTR's manager state.
     ttr_set = tab.keymap_manager.get_sets("ttr")[0]
     cc_set = tab.keymap_manager.get_sets("cc")[0]
-    assert ttr_set["name"] != "Renamed-CC-Default"
-    assert cc_set["name"] == "Renamed-CC-Default"
+    assert ttr_set["name"] != "test-cc-rename-probe"
+    assert cc_set["name"] == "test-cc-rename-probe"
