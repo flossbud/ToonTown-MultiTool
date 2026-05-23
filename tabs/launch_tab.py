@@ -698,8 +698,15 @@ class LaunchTab(QWidget):
             lay = QHBoxLayout(container)
             lay.setContentsMargins(0, 0, 0, 0)
             lay.setSpacing(12)
-            lay.addWidget(self.ttr_section, 1)
-            lay.addWidget(self.cc_section, 1)
+            # AlignTop on each section prevents Qt's QHBoxLayout default
+            # of vertically centering items whose sizeHint is smaller
+            # than the row height. Without it, a collapsed section (which
+            # has vertical sizePolicy=Preferred and sizeHint=header_height)
+            # would float in the middle of its column, making the collapse
+            # animation appear to grow/shrink from the center instead of
+            # downward from the header.
+            lay.addWidget(self.ttr_section, 1, Qt.AlignTop)
+            lay.addWidget(self.cc_section, 1, Qt.AlignTop)
         else:
             # Compact: sections stack vertically. Use a centered max-width
             # inner wrapper so both sections fill the SAME width (the
