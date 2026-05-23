@@ -107,8 +107,8 @@ def get_set_card_styles(index: int, is_dark: bool) -> dict:
         return f"rgba({r}, {g}, {b}, {alpha})"
 
     name_color = base.lighter(135).name()
-    stripe_edge = base.darker(120).name()
-    stripe_center = base.lighter(135).name()
+    stripe_edge = base.darker(135).name()
+    stripe_center = base.lighter(155).name()
     return {
         "card_border":      rgba(0.30),
         "card_grad_top":    rgba(0.07),

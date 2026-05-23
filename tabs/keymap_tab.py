@@ -290,7 +290,7 @@ class SetCard(QFrame):
     """
 
     CORNER_RADIUS = 10
-    STRIPE_HEIGHT = 4
+    STRIPE_HEIGHT = 5
 
     toggle_requested = Signal()
     name_changed     = Signal(str)
