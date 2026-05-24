@@ -53,10 +53,9 @@ class _CompactLayout(QWidget):
         self._service_layout.setSpacing(6)
         card_layout.addLayout(self._service_layout)
 
-        # Section divider (no shared widgets — added directly here)
-        card_layout.addSpacing(6)
-        card_layout.addWidget(self._tab._section_divider, alignment=Qt.AlignHCenter)
-        card_layout.addSpacing(6)
+        # (Section divider removed - the status bar carries enough visual
+        # weight as the separator between service controls and the
+        # configuration row.)
 
         # Config row slot — empty until populate()
         self._config_row = QHBoxLayout()
@@ -147,12 +146,13 @@ class _CompactLayout(QWidget):
     def populate(self):
         """Clear slot layouts and re-add shared widgets in the correct order.
         Idempotent: safe to call after a layout-mode swap or theme refresh."""
-        # Service controls
+        # Service status bar (3-state). Replaces the legacy
+        # toggle_service_button + StatusBar pair.
         clear_layout(self._service_layout)
-        self._service_layout.addWidget(self._tab.toggle_service_button)
-        self._service_layout.addWidget(self._tab.status_bar)
+        self._service_layout.addWidget(self._tab.service_status_bar)
 
-        # Config row
+        # Config row. Refresh button moved into the status bar; the
+        # profile-save button slot is filled in Task 5.
         clear_layout(self._config_row)
         self._config_row.addWidget(self._tab.config_label)
         self._config_row.addStretch()
@@ -160,8 +160,8 @@ class _CompactLayout(QWidget):
         self._config_row.addSpacing(8)
         for pill in self._tab.profile_pills:
             self._config_row.addWidget(pill)
-        self._config_row.addSpacing(4)
-        self._config_row.addWidget(self._tab.refresh_button)
+        # Save button slot - added in Task 5. For now the row ends at the
+        # last profile pill.
 
         # Each card slot
         for i, slot in enumerate(self._card_slots):
