@@ -75,10 +75,11 @@ class _CompactLayout(QWidget):
         card = QFrame()
         card.setObjectName(f"toon_card_{i}")
         layout = QVBoxLayout(card)
-        # Tall header (13 px top) + tighter body (9 px bottom). Header
-        # padding sits above the hairline divider; body row gets the
-        # smaller padding.
-        layout.setContentsMargins(14, 13, 14, 9)
+        # Bottom margin reduced from 9 to 5 to compensate for the
+        # +4 px addSpacing inserted above the body row (see further
+        # down). Net: card height unchanged, body row shifted 4 px
+        # down for a touch more space below the hairline divider.
+        layout.setContentsMargins(14, 13, 14, 5)
         layout.setSpacing(0)
 
         top_row = QHBoxLayout()
@@ -126,6 +127,10 @@ class _CompactLayout(QWidget):
         ka_group_layout.setContentsMargins(4, 4, 4, 4)
         ka_group_layout.setSpacing(4)
 
+        # Small breathing room between the hairline divider and the
+        # body row. Paired with a 4 px reduction in the card's bottom
+        # contentsMargin so total card height stays the same.
+        layout.addSpacing(4)
         layout.addLayout(ctrl_row)
 
         # Cache slot refs for populate()
