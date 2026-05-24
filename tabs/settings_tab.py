@@ -42,13 +42,21 @@ class SettingsField(QFrame):
         super().__init__(parent)
         self._is_last = False
         self.control_widget = None
+        self._controls: list = []
         self.setMinimumHeight(
             self.HEIGHT_WITH_HELPER if helper else self.HEIGHT_NO_HELPER
         )
 
-        lay = QHBoxLayout(self)
-        lay.setContentsMargins(16, 12, 16, 12)
-        lay.setSpacing(14)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(16, 12, 16, 12)
+        outer.setSpacing(8)
+
+        # Top row -- text column on the left, single control (or empty slot)
+        # on the right. When two or more controls are added, they migrate
+        # to bottom_row instead and this slot collapses.
+        top_row = QHBoxLayout()
+        top_row.setContentsMargins(0, 0, 0, 0)
+        top_row.setSpacing(14)
 
         text_col = QVBoxLayout()
         text_col.setSpacing(2)
@@ -68,11 +76,22 @@ class SettingsField(QFrame):
         else:
             self.helper_widget = None
 
-        lay.addLayout(text_col, 1)
-        self._control_slot = QHBoxLayout()
-        self._control_slot.setContentsMargins(0, 0, 0, 0)
-        self._control_slot.setSpacing(6)
-        lay.addLayout(self._control_slot)
+        top_row.addLayout(text_col, 1)
+        self._top_control_slot = QHBoxLayout()
+        self._top_control_slot.setContentsMargins(0, 0, 0, 0)
+        self._top_control_slot.setSpacing(6)
+        top_row.addLayout(self._top_control_slot)
+        outer.addLayout(top_row)
+
+        # Bottom row -- hidden by default; populated when 2+ controls exist.
+        self._bottom_row = QWidget(self)
+        self._bottom_row.setStyleSheet("background: transparent;")
+        self._bottom_control_slot = QHBoxLayout(self._bottom_row)
+        self._bottom_control_slot.setContentsMargins(0, 0, 0, 0)
+        self._bottom_control_slot.setSpacing(6)
+        self._bottom_control_slot.addStretch(1)  # buttons hug the right
+        self._bottom_row.hide()
+        outer.addWidget(self._bottom_row)
 
         self._c = None
         self._is_dark = True
@@ -86,22 +105,63 @@ class SettingsField(QFrame):
         self.update()
 
     def set_control(self, widget) -> None:
-        """Replace any existing control with the given widget."""
-        while self._control_slot.count():
-            item = self._control_slot.takeAt(0)
-            w = item.widget()
-            if w is not None:
-                w.setParent(None)
-        self.control_widget = widget
+        """Replace any existing control with the given widget.
+
+        Single-control fields put the control on the top row (right side).
+        Calling this on a field that already has multiple controls collapses
+        back to single-control mode.
+        """
+        # Clear all existing controls from both slots.
+        for ctrl in self._controls:
+            ctrl.setParent(None)
+        self._controls = []
+        while self._top_control_slot.count():
+            self._top_control_slot.takeAt(0)
+        while self._bottom_control_slot.count():
+            self._bottom_control_slot.takeAt(0)
+        # Re-add trailing stretch on bottom row.
+        self._bottom_control_slot.addStretch(1)
+        self._bottom_row.hide()
+
         widget.setParent(self)
-        self._control_slot.addWidget(widget)
+        self.control_widget = widget
+        self._controls.append(widget)
+        self._top_control_slot.addWidget(widget)
 
     def add_control(self, widget) -> None:
-        """Append an additional control widget to the right side (multi-button rows)."""
+        """Append an additional control. With 2+ controls, all migrate to
+        a row below the label/helper so they cannot be pushed off-screen
+        at narrow viewport widths.
+        """
         widget.setParent(self)
-        self._control_slot.addWidget(widget)
+        self._controls.append(widget)
         if self.control_widget is None:
             self.control_widget = widget
+
+        if len(self._controls) == 1:
+            # First control -- keep on top row (right side).
+            self._top_control_slot.addWidget(widget)
+        elif len(self._controls) == 2:
+            # Transition to bottom row: move the first control off the
+            # top row into the bottom row, then add the new one.
+            first = self._controls[0]
+            self._top_control_slot.removeWidget(first)
+            first.setParent(self._bottom_row)
+            # Insert before the trailing stretch.
+            self._bottom_control_slot.insertWidget(
+                self._bottom_control_slot.count() - 1, first,
+            )
+            widget.setParent(self._bottom_row)
+            self._bottom_control_slot.insertWidget(
+                self._bottom_control_slot.count() - 1, widget,
+            )
+            self._bottom_row.show()
+        else:
+            # Subsequent controls -- add to bottom row before the stretch.
+            widget.setParent(self._bottom_row)
+            self._bottom_control_slot.insertWidget(
+                self._bottom_control_slot.count() - 1, widget,
+            )
 
     def apply_theme(self, c, is_dark: bool) -> None:
         self._c = c
@@ -337,18 +397,26 @@ class SettingsPanel(QFrame):
         return self._c.get(token, "#888888")
 
     def paintEvent(self, event):
-        # Let Qt's stylesheet machinery paint the body fill + border + radius
-        # first (via the standard QFrame paintEvent), then overlay the brand
-        # stripe and the header-bottom divider on top.
-        super().paintEvent(event)
-        if self._c is None:
-            return
+        # Explicitly invoke the QStyle to render the QSS-defined background,
+        # border, and border-radius. super().paintEvent() on a QFrame does
+        # not trigger this -- see Qt docs on "Customizing QWidget" subclasses
+        # at https://doc.qt.io/qt-6/stylesheet-reference.html. Without this
+        # the QSS rule we set in apply_theme is silently ignored at paint
+        # time and the panel appears chrome-less.
         from PySide6.QtCore import QRectF
         from PySide6.QtGui import QColor, QPainter
+        from PySide6.QtWidgets import QStyle, QStyleOption
+        opt = QStyleOption()
+        opt.initFrom(self)
         p = QPainter(self)
+        self.style().drawPrimitive(QStyle.PE_Widget, opt, p, self)
+
+        if self._c is None:
+            p.end()
+            return
         p.setRenderHint(QPainter.Antialiasing)
 
-        # Top stripe - paint a rounded rect that extends past the visible
+        # Top stripe -- paint a rounded rect that extends past the visible
         # stripe height, then erase its lower half with bg_card so only the
         # top corners are rounded.
         p.setPen(Qt.NoPen)
@@ -361,7 +429,7 @@ class SettingsPanel(QFrame):
         p.setBrush(QColor(self._c.get("bg_card", "#252525")))
         p.drawRect(QRectF(1, self.STRIPE_HEIGHT + 1, self.width() - 2, radius))
 
-        # Header-bottom divider - 1px line under the header_widget.
+        # Header-bottom divider -- 1px line under the header_widget.
         p.setPen(QColor(self._c.get("border_muted", "#2e2e2e")))
         y = self.header_widget.geometry().bottom()
         p.drawLine(0, y, self.width(), y)
@@ -468,7 +536,7 @@ class Sidebar(QFrame):
         self.active_key: str = categories[0][0] if categories else ""
         self._c = None
         self._is_dark = True
-        self.setFixedWidth(170)
+        self.setFixedWidth(130)
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 14, 0, 14)

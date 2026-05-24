@@ -126,3 +126,11 @@ def test_sidebar_active_item_paints_accent_left_border(qapp):
     assert abs(sample.red() - accent.red()) < 30
     assert abs(sample.green() - accent.green()) < 30
     assert abs(sample.blue() - accent.blue()) < 30
+
+
+def test_sidebar_width_is_compact_friendly(qapp):
+    """Sidebar fixed width should be 130px -- leaves more content room for
+    the right pane at the 575px app min width."""
+    from tabs.settings_tab import Sidebar
+    sb = Sidebar(CATEGORIES)
+    assert sb.width() == 130

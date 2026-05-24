@@ -163,7 +163,7 @@ def test_panel_add_header_button_renders_in_button_row(qapp):
 
 
 def test_panel_header_button_row_fits_in_compact_width(qapp):
-    """At the compact content width (349 px = 575 main min - 170 sidebar
+    """At the compact content width (389 px = 575 main min - 130 sidebar
     - 56 page margins), both header buttons must fit inside the panel
     rather than extending past its right edge."""
     from tabs.settings_tab import SettingsPanel
@@ -329,3 +329,52 @@ def test_panel_body_fill_distinguishable_from_app_bg(qapp):
         f"body pixel {sample.getRgb()} not perceptibly brighter than "
         f"bg_app {bg_app.getRgb()}"
     )
+
+
+def test_field_two_controls_stack_in_bottom_row(qapp):
+    """When add_control is called twice, both controls migrate to the
+    bottom row so they cannot be clipped by narrow viewport widths."""
+    from tabs.settings_tab import SettingsField
+    from PySide6.QtWidgets import QPushButton
+    field = SettingsField("X")
+    b1 = QPushButton("A")
+    b2 = QPushButton("B")
+    field.add_control(b1)
+    field.add_control(b2)
+    # Both buttons in the controls list.
+    assert b1 in field._controls
+    assert b2 in field._controls
+    # Bottom row is visible once 2+ controls exist.
+    assert field._bottom_row.isVisible() or not field._bottom_row.isHidden()
+    # Parent of both buttons is the bottom_row widget.
+    assert b1.parentWidget() is field._bottom_row
+    assert b2.parentWidget() is field._bottom_row
+
+
+def test_field_three_controls_all_in_bottom_row(qapp):
+    """External CC log dir uses 3 buttons -- verify all three land in the
+    bottom row."""
+    from tabs.settings_tab import SettingsField
+    from PySide6.QtWidgets import QPushButton
+    field = SettingsField("External log")
+    b1 = QPushButton("Browse")
+    b2 = QPushButton("Clear")
+    b3 = QPushButton("Detect")
+    field.add_control(b1)
+    field.add_control(b2)
+    field.add_control(b3)
+    for b in (b1, b2, b3):
+        assert b.parentWidget() is field._bottom_row
+
+
+def test_field_single_control_stays_on_top_row(qapp):
+    """A field with only one control (like a Switch toggle) keeps it
+    inline on the top row to the right of the label/helper."""
+    from tabs.settings_tab import SettingsField
+    from PySide6.QtWidgets import QPushButton
+    field = SettingsField("Theme")
+    btn = QPushButton("Browse")
+    field.set_control(btn)
+    assert btn.parentWidget() is field
+    # Bottom row stays hidden.
+    assert field._bottom_row.isHidden()
