@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPen
 from utils.theme_manager import apply_theme, get_theme_colors, resolve_theme
-from utils.shared_widgets import SettingsComboBox, Switch
+from utils.shared_widgets import MENU_TEXT_ROLE, SettingsComboBox, Switch
 from utils.widgets import install_modern_scrollbar
 from services.ttr_login_service import find_engine_path, get_engine_executable_name
 from services.cc_login_service import (
@@ -725,7 +725,10 @@ class SettingsTab(QWidget):
             ),
         )
         rm_combo = SettingsComboBox()
-        rm_combo.addItems(["System default", "On", "Off"])
+        rm_combo.addItems(["System", "On", "Off"])
+        # Menu shows the descriptive "System default"; closed state keeps
+        # the terser "System" so the 150px fixed width doesn't truncate.
+        rm_combo.setItemData(0, "System default", MENU_TEXT_ROLE)
         rm_combo.setCurrentIndex(rm_idx)
         rm_combo.setFixedWidth(150)
         rm_combo.currentIndexChanged.connect(self._on_reduce_motion_changed)

@@ -493,10 +493,22 @@ class SettingsComboBox(QComboBox):
 
 # ── Current Value Delegate ───────────────────────────────────────────────────
 
+# Optional per-item role: when set, the delegate paints this string in the
+# menu instead of the item's DisplayRole. The closed-state display (which
+# Qt reads from currentText() = DisplayRole) is unaffected. Lets a combo
+# show a terser label when selected than the descriptive label it offers
+# in the menu — see Reduce motion's "System" (closed) vs "System default"
+# (menu) where the 150px fixed width truncates the long form.
+MENU_TEXT_ROLE = Qt.UserRole + 1
+
+
 class _CurrentValueDelegate(QStyledItemDelegate):
     """Paints a small accent-blue dot on the currently-selected row of a
     QComboBox's dropdown menu. Idle/hover backgrounds come from QSS; the
     dot is the 'you are here' indicator that QSS can't express.
+
+    Also honors MENU_TEXT_ROLE: items that set this role get their
+    long-form text rendered in the menu via an initStyleOption override.
 
     The combo is read from self.parent() at paint time so the delegate
     follows whichever combo it's installed on.
@@ -504,6 +516,12 @@ class _CurrentValueDelegate(QStyledItemDelegate):
 
     def __init__(self, combo):
         super().__init__(combo)
+
+    def initStyleOption(self, option, index):
+        super().initStyleOption(option, index)
+        long_text = index.data(MENU_TEXT_ROLE)
+        if long_text:
+            option.text = str(long_text)
 
     def paint(self, painter, option, index):
         super().paint(painter, option, index)

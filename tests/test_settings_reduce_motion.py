@@ -58,8 +58,11 @@ def test_reduce_motion_combo_has_three_options(qapp, monkeypatch):
     tab = _build_tab(stub)
     combo = _find_reduce_motion_combo(tab)
     assert combo is not None
+    # Closed state uses short "System" (avoids truncation at 150px); the
+    # menu retains "System default" via MENU_TEXT_ROLE — see
+    # test_reduce_motion_combo_uses_short_closed_text for that path.
     options = [combo.itemText(i) for i in range(combo.count())]
-    assert options == ["System default", "On", "Off"]
+    assert options == ["System", "On", "Off"]
 
 
 def test_selecting_system_default_clears_explicit(qapp, monkeypatch):

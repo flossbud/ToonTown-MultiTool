@@ -290,3 +290,67 @@ def _find_combo_by_label(tab, label_text):
             for child in field.findChildren(QComboBox):
                 return child
     return None
+
+
+def test_menu_text_role_overrides_painted_menu_item_text(app):
+    """If an item has MENU_TEXT_ROLE data, the delegate paints that long-form
+    text in the menu, while the closed state (currentText) keeps the short
+    DisplayRole value. Used by Reduce motion: closed shows "System",
+    menu shows "System default"."""
+    from PySide6.QtGui import QPixmap, QPainter, QColor
+    from PySide6.QtCore import QRect, Qt
+    from PySide6.QtWidgets import QStyleOptionViewItem
+    from utils.shared_widgets import SettingsComboBox, MENU_TEXT_ROLE
+
+    cb = SettingsComboBox()
+    cb.addItems(["System", "On", "Off"])
+    cb.setItemData(0, "System default", MENU_TEXT_ROLE)
+    cb.setCurrentIndex(0)
+
+    # Closed-state representation: currentText reflects the DisplayRole only.
+    assert cb.currentText() == "System", (
+        f"closed state must show short text; got {cb.currentText()!r}"
+    )
+
+    # Menu rendering goes through the delegate. initStyleOption must swap
+    # option.text to the long-form when MENU_TEXT_ROLE is set.
+    delegate = cb.itemDelegate()
+    option = QStyleOptionViewItem()
+    option.rect = QRect(0, 0, 200, 28)
+    delegate.initStyleOption(option, cb.model().index(0, 0))
+    assert option.text == "System default", (
+        f"menu must show long-form text; got {option.text!r}"
+    )
+
+    # Items without the role keep their DisplayRole text unchanged.
+    option2 = QStyleOptionViewItem()
+    option2.rect = QRect(0, 0, 200, 28)
+    delegate.initStyleOption(option2, cb.model().index(1, 0))
+    assert option2.text == "On", (
+        f"non-overridden item must keep DisplayRole; got {option2.text!r}"
+    )
+
+
+def test_reduce_motion_combo_uses_short_closed_text(app, settings_manager):
+    """The Reduce motion dropdown's first option must show "System" in the
+    closed state (not the truncated "System d") while still offering
+    "System default" in the open menu."""
+    from utils.shared_widgets import SettingsComboBox, MENU_TEXT_ROLE
+    from tabs.settings_tab import SettingsTab
+
+    tab = SettingsTab(settings_manager)
+    combo = _find_combo_by_label(tab, "Reduce motion")
+    assert combo is not None, "could not find Reduce motion dropdown"
+
+    # itemText(0) reflects what's drawn in the closed state.
+    short_text = combo.itemText(0)
+    # itemData with MENU_TEXT_ROLE is what the menu shows.
+    long_text = combo.itemData(0, MENU_TEXT_ROLE)
+    tab.deleteLater()
+
+    assert short_text == "System", (
+        f"closed-state text must be 'System' (no truncation); got {short_text!r}"
+    )
+    assert long_text == "System default", (
+        f"menu text must remain descriptive; got {long_text!r}"
+    )
