@@ -157,17 +157,20 @@ class ServiceStatusBar(QFrame):
             "broadcasting": (
                 "rgba(255,255,255,46)",    # off (~18% white)
                 "rgba(255,255,255,115)",   # found (~45% white)
-                "#ffffff",                 # active (full white + dot's own glow)
+                "#ffffff",                 # active (full white)
+                2,                         # halo on the active dots
             ),
             "idle": (
                 c.get("segment_off",    "#333333"),
                 c.get("segment_found",  "#555555"),
                 c.get("segment_active", "#56c856"),
+                None,                      # no halo in idle
             ),
             "stopped": (
                 "rgba(255,255,255,36)",
                 "rgba(255,255,255,90)",
                 "rgba(255,255,255,200)",
+                None,                      # no halo in stopped
             ),
         }
         # QSS rules - the [svc_state="..."] selectors cascade off the Qt
@@ -226,8 +229,10 @@ class ServiceStatusBar(QFrame):
         the dots widget. Called by apply_theme() and set_state()."""
         if not self._dot_palette:
             return
-        off, found, active = self._dot_palette.get(self.state, self._dot_palette["idle"])
-        self.dots.set_colors(off, found, active)
+        off, found, active, glow_state = self._dot_palette.get(
+            self.state, self._dot_palette["idle"]
+        )
+        self.dots.set_colors(off, found, active, glow_state=glow_state)
 
     # -- Slots -------------------------------------------------------------
 

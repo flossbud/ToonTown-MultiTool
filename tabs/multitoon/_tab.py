@@ -386,6 +386,11 @@ class StatusDots(QWidget):
         self.setFixedSize(66, 16)
         self._states = [0, 0, 0, 0]
         self._colors = {0: QColor("#333"), 1: QColor("#555"), 2: QColor("#56c856")}
+        # When set to 0/1/2, dots painted in that state get a soft white
+        # halo (matches the mockup's `box-shadow: 0 0 6px ...` on
+        # `.status-dot.active` inside the broadcasting bar). None means
+        # no halo on any dot (the default for the Idle palette).
+        self._glow_state: int | None = None
 
     def set_states(self, states: list):
         self._states = (states or [0, 0, 0, 0])[:4]
@@ -393,11 +398,15 @@ class StatusDots(QWidget):
             self._states.append(0)
         self.update()
 
-    def set_colors(self, off: str, found: str, active: str):
+    def set_colors(self, off: str, found: str, active: str, glow_state: int | None = None):
+        """`glow_state` selects which dot state (0=off, 1=found, 2=active)
+        gets the soft halo. None disables the halo entirely."""
         self._colors = {0: QColor(off), 1: QColor(found), 2: QColor(active)}
+        self._glow_state = glow_state
         self.update()
 
     def paintEvent(self, event):
+        from PySide6.QtGui import QRadialGradient
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         p.setPen(Qt.NoPen)
@@ -406,9 +415,26 @@ class StatusDots(QWidget):
         total_w = diameter * 4 + gap * 3
         x0 = (self.width() - total_w) / 2.0
         y = (self.height() - diameter) / 2.0
+        r = diameter / 2.0
         for i in range(4):
             x = x0 + i * (diameter + gap)
-            p.setBrush(self._colors.get(self._states[i], self._colors[0]))
+            cx = x + r
+            cy = y + r
+            state = self._states[i]
+            # Soft halo behind any dot whose state matches glow_state.
+            # Matches the mockup's `box-shadow: 0 0 6px rgba(255,255,255,0.6)`
+            # on `.status-dot.active`.
+            if self._glow_state is not None and state == self._glow_state:
+                halo_r = r + 4
+                grad = QRadialGradient(cx, cy, halo_r)
+                halo = QColor(255, 255, 255, 153)  # ~60% white at centre
+                grad.setColorAt(0.0, halo)
+                halo_edge = QColor(255, 255, 255, 0)
+                grad.setColorAt(1.0, halo_edge)
+                p.setBrush(grad)
+                p.drawEllipse(QRectF(cx - halo_r, cy - halo_r, halo_r * 2, halo_r * 2))
+            # Core dot.
+            p.setBrush(self._colors.get(state, self._colors[0]))
             p.drawEllipse(QRectF(x, y, diameter, diameter))
         p.end()
 
