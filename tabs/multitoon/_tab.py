@@ -985,16 +985,24 @@ class MultitoonTab(QWidget):
         self.service_status_bar.play_requested.connect(self._on_service_play_requested)
         self.service_status_bar.refresh_requested.connect(self._on_refresh_requested)
 
-        # Compatibility alias: any remaining code that calls
-        # `self.status_bar.set_status_text(...)` etc still works because
-        # ServiceStatusBar exposes the same setters.
+        # Compatibility alias for the WHOLE bar widget - shared between
+        # Compact and Full layouts (Full uses it as its status display).
+        # Qt reparents the bar as a unit so this is safe.
         self.status_bar = self.service_status_bar
 
-        # Compatibility aliases for Full UI layout which still directly
-        # references these attributes. Full UI is out of scope for the compact
-        # redesign; aliases keep it from crashing during incremental migration.
-        self.refresh_button = self.service_status_bar.refresh_button
-        self.toggle_service_button = self.service_status_bar.stop_play_button
+        # Full-UI-only service toggle and refresh. Compact uses the
+        # ServiceStatusBar's internal stop/play + refresh instead. These
+        # are kept as independent widgets so Full can addWidget them
+        # without stealing children from the bar.
+        self.toggle_service_button = QPushButton(f"{S(chr(9654), chr(9654))} Start Service")
+        self.toggle_service_button.setCheckable(True)
+        self.toggle_service_button.clicked.connect(self.toggle_service)
+        self.toggle_service_button.setFixedHeight(48)
+
+        self.refresh_button = QPushButton()
+        self.refresh_button.setIcon(make_refresh_icon(14))
+        self.refresh_button.setFixedSize(26, 26)
+        self.refresh_button.clicked.connect(self.manual_refresh)
 
         # Toon config row widgets
         self.config_label = QLabel("TOON CONFIGURATION")
@@ -1892,10 +1900,21 @@ class MultitoonTab(QWidget):
     # ── Service button style ───────────────────────────────────────────────
 
     def update_service_button_style(self):
-        """Carry-over from legacy: callers used to invoke this to refresh
-        the service toggle's visuals. With ServiceStatusBar the visual
-        state is driven by service_running + enabled-toons count, so this
-        becomes a thin dispatcher into the bar's state machine."""
+        """Updates BOTH the Full-UI legacy toggle button visuals AND the
+        Compact ServiceStatusBar state. Callers don't know which layout
+        is active; each layout shows the widget that's currently parented
+        under it."""
+        # Legacy big-button visuals (Full UI only). Just toggle text + a
+        # neutral style; the old elaborate styling lived in
+        # _full_layout.py / theme_manager and gets reapplied on refresh.
+        if self.service_running:
+            self.toggle_service_button.setText(f"{S(chr(9632), chr(9632))} Stop Service")
+            self.toggle_service_button.setToolTip("Stop the multitoon input service")
+        else:
+            self.toggle_service_button.setText(f"{S(chr(9654), chr(9654))} Start Service")
+            self.toggle_service_button.setToolTip("Start the multitoon input service")
+
+        # Compact ServiceStatusBar (3-state) dispatcher
         if not self.service_running:
             self.service_status_bar.set_state("stopped")
             self.service_status_bar.set_status_text(

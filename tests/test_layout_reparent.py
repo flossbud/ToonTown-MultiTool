@@ -91,10 +91,15 @@ def _is_descendant_of(widget, ancestor) -> bool:
 def test_compact_owns_shared_widgets_at_startup(tab):
     assert tab._mode == "compact"
 
-    # Toggle service button should be parented somewhere under _compact
-    assert _is_descendant_of(tab.toggle_service_button, tab._compact)
-    # And NOT under _full (Full's items, if any, must be stale)
-    assert not _is_descendant_of(tab.toggle_service_button, tab._full)
+    # ServiceStatusBar (Compact's service UI) lives under _compact.
+    assert _is_descendant_of(tab.service_status_bar, tab._compact)
+    assert not _is_descendant_of(tab.service_status_bar, tab._full)
+
+    # toggle_service_button is Full-UI-only after the Direction D redesign;
+    # it should be under _full (populated during Full's __init__), not
+    # under _compact.
+    assert _is_descendant_of(tab.toggle_service_button, tab._full)
+    assert not _is_descendant_of(tab.toggle_service_button, tab._compact)
 
     # Each per-slot shared widget should also live under _compact
     for i in range(4):
@@ -138,13 +143,24 @@ def test_config_label_reparented_to_full(tab):
 
 
 def test_swap_back_to_compact_reparents_again(tab):
+    # In compact mode, service_status_bar lives under compact
+    assert _is_descendant_of(tab.service_status_bar, tab._compact)
+
     tab.set_layout_mode("full")
+    # In full mode, service_status_bar moves to full (Full uses status_bar alias)
+    assert _is_descendant_of(tab.service_status_bar, tab._full)
+
     tab.set_layout_mode("compact")
     assert tab._mode == "compact"
 
-    # Widgets should now live under _compact again
-    assert _is_descendant_of(tab.toggle_service_button, tab._compact)
-    assert not _is_descendant_of(tab.toggle_service_button, tab._full)
+    # Back in compact: service_status_bar is under compact again
+    assert _is_descendant_of(tab.service_status_bar, tab._compact)
+    assert not _is_descendant_of(tab.service_status_bar, tab._full)
+
+    # toggle_service_button is Full-UI-only; it stays under _full regardless of mode
+    assert _is_descendant_of(tab.toggle_service_button, tab._full)
+    assert not _is_descendant_of(tab.toggle_service_button, tab._compact)
+
     for i in range(4):
         assert _is_descendant_of(tab.toon_buttons[i], tab._compact)
 
@@ -157,7 +173,10 @@ def test_prewarm_full_layout_restores_compact_ownership(qapp, tab):
     assert tab._mode == "compact"
     assert tab._stack.currentWidget() is tab._compact
     assert "inactive" in tab._full_layout_prewarmed_states
-    assert _is_descendant_of(tab.toggle_service_button, tab._compact)
+    # service_status_bar (Compact's service UI) must remain under compact after prewarm
+    assert _is_descendant_of(tab.service_status_bar, tab._compact)
+    # toggle_service_button is Full-UI-only; lives under _full even in compact mode
+    assert _is_descendant_of(tab.toggle_service_button, tab._full)
     for i in range(4):
         assert _is_descendant_of(tab.toon_buttons[i], tab._compact)
         assert _is_descendant_of(tab.slot_badges[i], tab._compact)
@@ -304,7 +323,9 @@ def test_set_layout_mode_idempotent(tab):
     """Calling set_layout_mode with the current mode should be a no-op."""
     tab.set_layout_mode("compact")  # already compact
     assert tab._mode == "compact"
-    assert _is_descendant_of(tab.toggle_service_button, tab._compact)
+    # service_status_bar owns compact's service row; toggle_service_button is Full-only
+    assert _is_descendant_of(tab.service_status_bar, tab._compact)
+    assert _is_descendant_of(tab.toggle_service_button, tab._full)
 
 
 def test_set_layout_mode_flips_mode_before_setCurrentWidget(tab):
@@ -448,17 +469,19 @@ def test_stats_labels_keep_icons_in_full_mode(tab):
 
 
 def test_compact_startup_uses_original_widget_sizes(tab):
-    """Regression: at startup, shared widgets must keep their constructor-time
-    constraints in Compact mode. _FullLayout.populate_active runs during init
-    and mutates badge → 104x104 and ka_bar → 90x8; Compact's populate must
-    restore the original 38-64 badge bounds and 7px-tall ka_bar."""
-    # Badge: ToonPortraitWidget defaults are setMinimumSize(38, 38) + setMaximumSize(64, 64)
+    """Regression: at startup, shared widgets must keep Compact's expected
+    constraints. Direction D Compact sets the badge to a fixed 50x50
+    (Task 7), and Compact's populate must restore that after any Full
+    layout pass that mutates it."""
+    # Badge: Compact sets setMinimumSize(50, 50) + setMaximumSize(50, 50) per
+    # Direction D design. Full mutates this to 104x104+ during active layout;
+    # Compact's populate must restore 50x50.
     badge = tab.slot_badges[0]
-    assert badge.minimumSize().width() == 38 and badge.minimumSize().height() == 38, (
-        f"badge min should be (38, 38); got {badge.minimumSize()}"
+    assert badge.minimumSize().width() == 50 and badge.minimumSize().height() == 50, (
+        f"badge min should be (50, 50); got {badge.minimumSize()}"
     )
-    assert badge.maximumSize().width() == 64 and badge.maximumSize().height() == 64, (
-        f"badge max should be (64, 64); got {badge.maximumSize()}"
+    assert badge.maximumSize().width() == 50 and badge.maximumSize().height() == 50, (
+        f"badge max should be (50, 50); got {badge.maximumSize()}"
     )
     # ka_bar: SmoothProgressBar defaults are setFixedHeight(7) + setMinimumWidth(40)
     ka_bar = tab.ka_progress_bars[0]
@@ -554,31 +577,42 @@ def test_full_layout_uses_full_surface_colors(tab):
 
 
 def test_compact_light_layout_uses_full_card_surface_colors(tab):
-    """Compact light mode should match Full's card surface colors."""
+    """Compact light mode: Direction D brand-stripe chrome uses bg_card as
+    the card background in both light and dark modes. Empty slots get a
+    dashed border using border_light."""
     tab.settings_manager.set("theme", "light")
     tab.set_layout_mode("compact")
     tab.refresh_theme()
     c = tab._c()
 
     card_sheet = tab.toon_cards[0].styleSheet()
-    assert c["bg_card"] in card_sheet
-    assert c["border_card"] in card_sheet
-    assert c["bg_card_inner"] not in card_sheet
-    assert c["border_muted"] not in card_sheet
+    # Direction D always uses bg_card as the card background surface
+    assert c["bg_card"] in card_sheet, (
+        f"light card should use bg_card ({c['bg_card']}); got {card_sheet!r}"
+    )
+    # The old inner-card surface token must not appear (it's for ka_group insets)
+    assert c["bg_card_inner"] not in card_sheet, (
+        f"light card should not use bg_card_inner; got {card_sheet!r}"
+    )
 
 
 def test_compact_dark_layout_keeps_original_card_surface_colors(tab):
-    """Dark mode should keep Compact's existing card colors unchanged."""
+    """Dark mode: Direction D brand-stripe chrome uses bg_card as the card
+    background. The old bg_card_inner token is for ka_group insets, not cards."""
     tab.settings_manager.set("theme", "dark")
     tab.set_layout_mode("compact")
     tab.refresh_theme()
     c = tab._c()
 
     card_sheet = tab.toon_cards[0].styleSheet()
-    assert c["bg_card_inner"] in card_sheet
-    assert c["border_muted"] in card_sheet
-    assert c["bg_card"] not in card_sheet
-    assert c["border_card"] not in card_sheet
+    # Direction D always uses bg_card as the card background surface
+    assert c["bg_card"] in card_sheet, (
+        f"dark card should use bg_card ({c['bg_card']}); got {card_sheet!r}"
+    )
+    # The old bg_card_inner and border_muted tokens are for ka_group insets
+    assert c["bg_card_inner"] not in card_sheet, (
+        f"dark card should not use bg_card_inner; got {card_sheet!r}"
+    )
 
 
 def test_full_controls_scaled(tab):

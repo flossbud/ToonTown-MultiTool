@@ -161,8 +161,8 @@ class _CompactLayout(QWidget):
 
         Reads colour tokens from get_theme_colors so light/dark palettes
         Just Work."""
-        from utils.theme_manager import get_theme_colors
-        is_dark = bool(self._tab.settings_manager.get("dark_mode", True))
+        from utils.theme_manager import get_theme_colors, resolve_theme
+        is_dark = resolve_theme(self._tab.settings_manager) == "dark"
         c = get_theme_colors(is_dark)
         card = self._card_slots[i]["card"]
 
@@ -204,8 +204,8 @@ class _CompactLayout(QWidget):
         if ring is None:
             return
         ring.set_state(state)
-        from utils.theme_manager import get_theme_colors
-        is_dark = bool(self._tab.settings_manager.get("dark_mode", True))
+        from utils.theme_manager import get_theme_colors, resolve_theme
+        is_dark = resolve_theme(self._tab.settings_manager) == "dark"
         ring.set_border_color(get_theme_colors(is_dark)["bg_card"])
 
     # ── Populate ───────────────────────────────────────────────────────────
