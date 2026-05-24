@@ -2513,7 +2513,132 @@ class SettingsTab(QWidget):
         self.settings_manager.set("keep_alive_delay", delay)
 
     def _build_advanced_page(self, page):
-        pass
+        page._title_label.setText("Advanced")
+        page._sub_label.setText(
+            "Lower-level controls. Most users should not need to change these."
+        )
+
+        lay = page._panel_layout
+        insert_at = lay.count() - 1
+
+        # ── Diagnostics & input ──────────────────────────────────────────
+        diag = SettingsPanel(title="Diagnostics & input")
+        self._panels.append(diag)
+
+        log_field = SettingsField("Enable Logging")
+        log_switch = Switch(self.settings_manager.get("show_debug_tab", False))
+        log_switch.toggled.connect(self._on_logging_toggled)
+        log_field.set_control(log_switch)
+        diag.add_field(log_field)
+
+        # Input backend
+        if sys.platform == "win32":
+            backend_options = ["Windows API (recommended)"]
+            self.settings_manager.set("input_backend", "win32")
+            backend_idx = 0
+            backend_helper = "Native Windows Input"
+        else:
+            backend_options = ["Xlib (recommended)", "xdotool"]
+            current_backend = self.settings_manager.get("input_backend", "xlib")
+            if current_backend not in ("xlib", "xdotool"):
+                current_backend = "xlib"
+                self.settings_manager.set("input_backend", "xlib")
+            backend_idx = 0 if current_backend == "xlib" else 1
+            backend_helper = "Restart required on change."
+        backend_field = SettingsField("Input Backend", helper=backend_helper)
+        backend_combo = QComboBox()
+        backend_combo.addItems(backend_options)
+        backend_combo.setCurrentIndex(backend_idx)
+        backend_combo.setFixedWidth(220)
+        backend_combo.currentIndexChanged.connect(self._on_input_backend_changed)
+        backend_field.set_control(backend_combo)
+        self._backend_combo = backend_combo
+        diag.add_field(backend_field)
+
+        lay.insertWidget(insert_at, diag)
+        insert_at += 1
+
+        # ── Maintenance ──────────────────────────────────────────────────
+        maint = SettingsPanel(title="Maintenance")
+        self._panels.append(maint)
+
+        clr_field = SettingsField(
+            "Clear Stored Credentials",
+            helper="Delete all saved TTR and CC passwords from Keyring and session memory.",
+        )
+        clr_btn = QPushButton("Clear")
+        clr_btn.setCursor(Qt.PointingHandCursor)
+        clr_btn.setFixedHeight(28)
+        clr_btn.clicked.connect(self._on_clear_credentials_clicked)
+        # Destructive styling — red outline.
+        clr_btn.setStyleSheet("""
+            QPushButton {
+                color: #ff3b30;
+                font-weight: bold;
+                background: transparent;
+                border: 1px solid #ff3b30;
+                border-radius: 6px;
+                padding: 4px 12px;
+            }
+            QPushButton:hover {
+                background: rgba(255, 59, 48, 0.1);
+            }
+        """)
+        clr_field.set_control(clr_btn)
+        maint.add_field(clr_field)
+
+        lay.insertWidget(insert_at, maint)
+
+    # ── Advanced handlers ─────────────────────────────────────────────────
+
+    def _on_logging_toggled(self, val: bool):
+        self.settings_manager.set("show_debug_tab", val)
+        self.debug_visibility_changed.emit(val)
+
+    def _on_input_backend_changed(self, idx: int):
+        if sys.platform == "win32":
+            self.settings_manager.set("input_backend", "win32")
+            self.input_backend_changed.emit()
+            return
+        backend = "xlib" if idx == 0 else "xdotool"
+        if backend == "xdotool" and self._is_gnome_wayland():
+            dlg = QMessageBox(self)
+            dlg.setWindowTitle("Warning: xdotool on GNOME Wayland")
+            dlg.setIcon(QMessageBox.Warning)
+            dlg.setText(
+                "xdotool on GNOME Wayland will trigger repeated Remote Desktop "
+                "authorization prompts and will likely break input sending.\n\n"
+                "Xlib is strongly recommended for GNOME Wayland.\n\n"
+                "This will restart the service.\n\nSwitch to xdotool anyway?"
+            )
+            dlg.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
+            dlg.setDefaultButton(QMessageBox.Cancel)
+            if dlg.exec() != QMessageBox.Ok:
+                self._backend_combo.blockSignals(True)
+                self._backend_combo.setCurrentIndex(0)
+                self._backend_combo.blockSignals(False)
+                return
+        self.settings_manager.set("input_backend", backend)
+        self.input_backend_changed.emit()
+
+    def _is_gnome_wayland(self) -> bool:
+        return (
+            os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland"
+            and "GNOME" in os.environ.get("XDG_CURRENT_DESKTOP", "").upper()
+        )
+
+    def _on_clear_credentials_clicked(self):
+        dlg = QMessageBox(self)
+        dlg.setWindowTitle("Clear Stored Credentials")
+        dlg.setIcon(QMessageBox.Warning)
+        dlg.setText(
+            "Are you sure you want to clear all stored TTR and Corporate Clash "
+            "account credentials? This will delete them from your system keyring permanently."
+        )
+        dlg.setStandardButtons(QMessageBox.Yes | QMessageBox.Cancel)
+        dlg.setDefaultButton(QMessageBox.Cancel)
+        if dlg.exec() == QMessageBox.Yes:
+            self.clear_credentials_requested.emit()
 
     # ── Category routing ──────────────────────────────────────────────────
     def _on_category_selected(self, key: str):
