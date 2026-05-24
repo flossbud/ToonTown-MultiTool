@@ -2383,7 +2383,134 @@ class SettingsTab(QWidget):
         )
 
     def _build_keep_alive_page(self, page):
-        pass
+        page._title_label.setText("Keep-Alive")
+        page._sub_label.setText(
+            "Periodically send a keystroke to keep toons logged in. "
+            "See the warning before enabling."
+        )
+
+        lay = page._panel_layout
+        insert_at = lay.count() - 1
+
+        panel = SettingsPanel(title="Keep-Alive")
+        self._panels.append(panel)
+        self._keep_alive_panel = panel
+
+        # Master toggle
+        master_initial = bool(self.settings_manager.get("keep_alive_enabled", False))
+        master_field = SettingsField(
+            "Enable Keep-Alive",
+            helper=(
+                "Disabled by default. Both games' Terms of Service prohibit "
+                "automation tools. Your previous per-toon Keep-Alive selections "
+                "are preserved."
+            ),
+        )
+        master_switch = Switch(master_initial)
+        master_switch.toggled.connect(self._on_keep_alive_master_toggle)
+        master_field.set_control(master_switch)
+        self._ka_master_switch = master_switch
+        panel.add_field(master_field)
+
+        # Action
+        self._ka_actions = [
+            ("Jump", "jump"),
+            ("Open / Close Book", "book"),
+            ("Move Forward", "up"),
+        ]
+        saved_action = self.settings_manager.get("keep_alive_action", "jump")
+        action_idx = next(
+            (i for i, (_, v) in enumerate(self._ka_actions) if v == saved_action), 0,
+        )
+        action_field = SettingsField("Action")
+        action_combo = QComboBox()
+        action_combo.addItems([d for d, _ in self._ka_actions])
+        action_combo.setCurrentIndex(action_idx)
+        action_combo.setFixedWidth(180)
+        action_combo.currentIndexChanged.connect(self._on_keep_alive_action_changed)
+        action_field.set_control(action_combo)
+        self._ka_action_field = action_field
+        panel.add_field(action_field)
+
+        # Interval
+        delay_options = [
+            "Rapid Fire", "1 sec", "5 sec", "10 sec", "30 sec",
+            "1 min", "3 min", "5 min", "10 min",
+        ]
+        saved_delay = self.settings_manager.get("keep_alive_delay", "30 sec")
+        delay_idx = delay_options.index(saved_delay) if saved_delay in delay_options else 4
+        delay_field = SettingsField("Interval")
+        delay_combo = QComboBox()
+        delay_combo.addItems(delay_options)
+        delay_combo.setCurrentIndex(delay_idx)
+        delay_combo.setFixedWidth(180)
+        delay_combo.currentIndexChanged.connect(self._on_keep_alive_delay_changed)
+        delay_field.set_control(delay_combo)
+        self._ka_delay_field = delay_field
+        self._ka_delay_combo = delay_combo
+        panel.add_field(delay_field)
+
+        self._refresh_keep_alive_enabled_state(master_initial)
+
+        lay.insertWidget(insert_at, panel)
+
+    # ── Keep-Alive handlers ───────────────────────────────────────────────
+
+    def _refresh_keep_alive_enabled_state(self, enabled: bool):
+        self._ka_action_field.control_widget.setEnabled(enabled)
+        self._ka_delay_field.control_widget.setEnabled(enabled)
+
+    def _on_keep_alive_master_toggle(self, checked: bool):
+        if not checked:
+            self.settings_manager.set("keep_alive_enabled", False)
+            self._refresh_keep_alive_enabled_state(False)
+            return
+        if self.settings_manager.get("keep_alive_consent_acknowledged", False):
+            self.settings_manager.set("keep_alive_enabled", True)
+            self._refresh_keep_alive_enabled_state(True)
+            return
+        if self._show_keep_alive_warning_dialog():
+            self.settings_manager.set("keep_alive_enabled", True)
+            self._refresh_keep_alive_enabled_state(True)
+        else:
+            # Revert visual without re-firing toggled.
+            sw = self._ka_master_switch
+            sw.blockSignals(True)
+            sw.setChecked(False)
+            sw.blockSignals(False)
+
+    def _show_keep_alive_warning_dialog(self) -> bool:
+        """Returns True if the user clicked Enable, False otherwise. Factored
+        so tests can monkeypatch."""
+        box = QMessageBox(self.window())
+        box.setIcon(QMessageBox.Warning)
+        box.setWindowTitle("Enable Keep-Alive?")
+        box.setText(
+            "Keep-Alive sends periodic input to your toon windows even while "
+            "you are not actively playing.\n\n"
+            "Both Toontown Rewritten and Corporate Clash prohibit automation "
+            "tools of this kind in their Terms of Service. Use of Keep-Alive, "
+            "particularly in public areas of either game, may result in "
+            "warnings, account suspension, or permanent termination at the "
+            "discretion of those games' moderation teams.\n\n"
+            "ToonTown MultiTool is provided as-is and accepts no responsibility "
+            "for any consequences arising from its use."
+        )
+        enable_btn = box.addButton("Enable", QMessageBox.DestructiveRole)
+        cancel_btn = box.addButton("Cancel", QMessageBox.RejectRole)
+        box.setDefaultButton(cancel_btn)
+        box.setEscapeButton(cancel_btn)
+        box.exec()
+        return box.clickedButton() is enable_btn
+
+    def _on_keep_alive_action_changed(self, i: int):
+        if i < len(self._ka_actions):
+            _, value = self._ka_actions[i]
+            self.settings_manager.set("keep_alive_action", value)
+
+    def _on_keep_alive_delay_changed(self, i: int):
+        delay = self._ka_delay_combo.itemText(i)
+        self.settings_manager.set("keep_alive_delay", delay)
 
     def _build_advanced_page(self, page):
         pass
@@ -2474,12 +2601,46 @@ class SettingsTab(QWidget):
         checker.check_failed.connect(self._on_check_complete_failed)
 
     def highlight_keep_alive_group(self):
-        # Implementation completed in Task 7 (Keep-Alive page).
+        """Switch to the Keep-Alive page and run a one-shot accent pulse on
+        its panel widget. Called by Launch-tab's per-slot help affordance."""
+        from PySide6.QtCore import QEasingCurve, QPropertyAnimation
+        from PySide6.QtWidgets import QGraphicsColorizeEffect
+        from PySide6.QtGui import QColor
         self._show_category("keep_alive")
+        self.settings_manager.set(SETTINGS_ACTIVE_CATEGORY, "keep_alive")
+        panel = getattr(self, "_keep_alive_panel", None)
+        if panel is None:
+            return
+        prior = getattr(self, "_keep_alive_highlight_anim", None)
+        if prior is not None:
+            try:
+                prior.stop()
+            except RuntimeError:
+                pass
+        from utils.theme_manager import get_theme_colors, is_dark_palette
+        c = get_theme_colors(is_dark_palette())
+        accent = QColor(c.get("accent_blue_btn", "#0077ff"))
+        effect = QGraphicsColorizeEffect(panel)
+        effect.setColor(accent)
+        effect.setStrength(0.0)
+        panel.setGraphicsEffect(effect)
+        anim = QPropertyAnimation(effect, b"strength", panel)
+        anim.setDuration(600)
+        anim.setStartValue(0.30)
+        anim.setEndValue(0.0)
+        anim.setEasingCurve(QEasingCurve.OutCubic)
+        anim.finished.connect(lambda: panel.setGraphicsEffect(None))
+        anim.start(QPropertyAnimation.DeleteWhenStopped)
+        self._keep_alive_highlight_anim = anim
 
     def get_keep_alive_delay_seconds(self) -> float:
-        # Filled in Task 7 once the delay row is built.
-        return 60.0
+        if not hasattr(self, "_ka_delay_combo"):
+            return 60.0
+        return {
+            "Rapid Fire": 0.25, "1 sec": 1, "5 sec": 5, "10 sec": 10,
+            "30 sec": 30, "1 min": 60, "3 min": 180, "5 min": 300,
+            "10 min": 600,
+        }.get(self._ka_delay_combo.currentText(), 60.0)
 
     # ── Theming ───────────────────────────────────────────────────────────
     def refresh_theme(self):
