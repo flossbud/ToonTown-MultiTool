@@ -413,37 +413,6 @@ class StatusDots(QWidget):
         p.end()
 
 
-class StatusBar(QFrame):
-    """Service status bar with slot dots and status text."""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setObjectName("ServiceStatusBar")
-        self.setFixedHeight(34)
-        lay = QHBoxLayout(self)
-        lay.setContentsMargins(12, 8, 12, 8)
-        lay.setSpacing(8)
-        self.dots = StatusDots(self)
-        lay.addWidget(self.dots)
-        self.label = QLabel("Service idle")
-        self.label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
-        lay.addWidget(self.label, 1)
-
-    def set_dot_states(self, states: list):
-        self.dots.set_states(states)
-
-    def set_dot_colors(self, off: str, found: str, active: str):
-        self.dots.set_colors(off, found, active)
-
-    def set_status_text(self, text: str):
-        self.label.setText(text)
-
-    def set_text_color(self, color: str):
-        self.label.setStyleSheet(
-            f"font-size: 13px; font-weight: 500; color: {color}; background: transparent; border: none;"
-        )
-
-
 class KeepAliveBtn(QPushButton):
     """Keep-alive toggle button with a progress ring.
 
