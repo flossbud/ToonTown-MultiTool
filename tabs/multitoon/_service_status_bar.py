@@ -125,6 +125,14 @@ class ServiceStatusBar(QFrame):
     def set_dot_colors(self, off: str, found: str, active: str) -> None:
         self.dots.set_colors(off, found, active)
 
+    def set_text_color(self, color: str) -> None:
+        """Compatibility shim: matches legacy StatusBar.set_text_color so
+        callers that set colour via the status_bar alias still work."""
+        self.label.setStyleSheet(
+            f"font-size: 13px; font-weight: 500; color: {color}; "
+            "background: transparent; border: none;"
+        )
+
     # -- Slots -------------------------------------------------------------
 
     def _on_stop_play_clicked(self) -> None:

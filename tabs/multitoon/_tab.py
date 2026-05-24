@@ -1007,18 +1007,25 @@ class MultitoonTab(QWidget):
     def _build_shared_widgets(self):
         """Construct every per-slot widget once. Both Compact and Full layouts
         consume the resulting dict-of-lists so widget state survives a layout swap."""
-        # Service controls
-        self.toggle_service_button = QPushButton(f"{S(chr(9654), chr(9654))} Start Service")
-        self.toggle_service_button.setCheckable(True)
-        self.toggle_service_button.clicked.connect(self.toggle_service)
-        self.toggle_service_button.setFixedHeight(48)
+        # Service status bar - 3-state (broadcasting/idle/stopped) with
+        # inline stop/play and refresh. Replaces the legacy
+        # toggle_service_button + StatusBar + section_divider trio.
+        from tabs.multitoon._service_status_bar import ServiceStatusBar
+        self.service_status_bar = ServiceStatusBar()
+        self.service_status_bar.stop_requested.connect(self._on_service_stop_requested)
+        self.service_status_bar.play_requested.connect(self._on_service_play_requested)
+        self.service_status_bar.refresh_requested.connect(self._on_refresh_requested)
 
-        self.status_bar = StatusBar()
+        # Compatibility alias: any remaining code that calls
+        # `self.status_bar.set_status_text(...)` etc still works because
+        # ServiceStatusBar exposes the same setters.
+        self.status_bar = self.service_status_bar
 
-        self._section_divider = QFrame()
-        self._section_divider.setFixedHeight(2)
-        self._section_divider.setMaximumWidth(320)
-        self._section_divider.setObjectName("section_divider")
+        # Compatibility aliases for Full UI layout which still directly
+        # references these attributes. Full UI is out of scope for the compact
+        # redesign; aliases keep it from crashing during incremental migration.
+        self.refresh_button = self.service_status_bar.refresh_button
+        self.toggle_service_button = self.service_status_bar.stop_play_button
 
         # Toon config row widgets
         self.config_label = QLabel("TOON CONFIGURATION")
@@ -1034,12 +1041,6 @@ class MultitoonTab(QWidget):
         # numeric chips. Reused across compact and full layouts.
         self.profile_pills_label = QLabel("PROFILE")
         self.profile_pills_label.setObjectName("profile_pills_label")
-
-        self.refresh_button = QPushButton()
-        self.refresh_button.setIcon(make_refresh_icon(14))
-        self.refresh_button.setFixedSize(26, 26)
-        self.refresh_button.setToolTip("Refresh toon windows and configuration")
-        self.refresh_button.clicked.connect(self.manual_refresh)
 
         # Per-slot widgets
         for i in range(4):
@@ -1442,19 +1443,6 @@ class MultitoonTab(QWidget):
         is_dark = resolve_theme(self.settings_manager) == "dark"
 
         self.outer_card.setStyleSheet("QFrame { background: transparent; border: none; }")
-        if is_dark:
-            # Etched look: darker groove on top, lighter highlight below
-            self._section_divider.setStyleSheet(
-                "border: none; border-radius: 2px; "
-                "background: qlineargradient(x1:0,y1:0,x2:0,y2:1, "
-                "stop:0 #333333, stop:0.49 #333333, stop:0.51 #555555, stop:1 #555555);"
-            )
-        else:
-            self._section_divider.setStyleSheet(
-                "border: none; border-radius: 2px; "
-                "background: qlineargradient(x1:0,y1:0,x2:0,y2:1, "
-                "stop:0 #c0c0c0, stop:0.49 #c0c0c0, stop:0.51 #ffffff, stop:1 #ffffff);"
-            )
 
         self.config_label.setStyleSheet(
             f"font-size: 10px; font-weight: 600; color: {c['text_muted']}; "
@@ -1472,19 +1460,6 @@ class MultitoonTab(QWidget):
                 f"font-style: italic; background: transparent; border: none;"
             )
         self._update_pill_styles()
-        self.refresh_button.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {c['btn_bg']};
-                color: {c['text_secondary']};
-                border: 1px solid {c['btn_border']};
-                border-radius: 6px;
-                font-size: 14px;
-            }}
-            QPushButton:hover {{
-                background-color: {c['toon_btn_inactive_hover']};
-                border: 1px solid {c['accent_blue']};
-            }}
-        """)
 
         self.status_bar.set_dot_colors(c['segment_off'], c['segment_found'], c['segment_active'])
         self.status_bar.setStyleSheet(f"""
@@ -1917,50 +1892,27 @@ class MultitoonTab(QWidget):
     # ── Service button style ───────────────────────────────────────────────
 
     def update_service_button_style(self):
-        if self.service_running:
-            self.toggle_service_button.setText(f"{S(chr(9632), chr(9632))} Stop Service")
-            self.toggle_service_button.setToolTip("Stop the multitoon input service")
-            self.toggle_service_button.setStyleSheet("""
-                QPushButton {
-                    background-color: #b34848;
-                    color: white;
-                    font-size: 14px;
-                    font-weight: bold;
-                    border: 2px solid #d95757;
-                    border-radius: 8px;
-                }
-                QPushButton:hover {
-                    background-color: #cc5e5e;
-                    border-color: #e06a6a;
-                }
-                QPushButton:pressed {
-                    background-color: #993d3d;
-                    border-color: #c04e4e;
-                }
-            """)
+        """Carry-over from legacy: callers used to invoke this to refresh
+        the service toggle's visuals. With ServiceStatusBar the visual
+        state is driven by service_running + enabled-toons count, so this
+        becomes a thin dispatcher into the bar's state machine."""
+        if not self.service_running:
+            self.service_status_bar.set_state("stopped")
+            self.service_status_bar.set_status_text(
+                "Stopped - click play to resume broadcasting"
+            )
+            return
+        enabled_count = sum(1 for v in self.enabled_toons if v) if hasattr(self, "enabled_toons") else 0
+        if enabled_count == 0:
+            self.service_status_bar.set_state("idle")
+            self.service_status_bar.set_status_text(
+                "Idle - enable a toon below to start broadcasting"
+            )
         else:
-            self.toggle_service_button.setText(f"{S(chr(9654), chr(9654))} Start Service")
-            self.toggle_service_button.setToolTip("Start the multitoon input service")
-            self.toggle_service_button.setStyleSheet("""
-                QPushButton {
-                    background-color: #0077ff;
-                    color: white;
-                    font-size: 14px;
-                    font-weight: bold;
-                    border: 2px solid #3399ff;
-                    border-radius: 8px;
-                }
-                QPushButton:hover {
-                    background-color: #1a88ff;
-                    border-color: #55aaff;
-                }
-                QPushButton:pressed {
-                    background-color: #0066dd;
-                    border-color: #2288ee;
-                }
-            """)
-        self.toggle_service_button.setGraphicsEffect(None)
-        self.toggle_service_button.update()
+            self.service_status_bar.set_state("broadcasting")
+            self.service_status_bar.set_status_text(
+                f"Broadcasting - {enabled_count} of 4 toons"
+            )
 
     def apply_all_visual_states(self):
         for i in range(4):
@@ -2091,6 +2043,21 @@ class MultitoonTab(QWidget):
         self._fetch_names_if_enabled(len(self.window_manager.ttr_window_ids))
 
     # ── Service lifecycle ──────────────────────────────────────────────────
+
+    def _on_service_stop_requested(self) -> None:
+        """Wired to ServiceStatusBar.stop_requested. Idempotent stop."""
+        if self.service_running:
+            self.toggle_service()
+
+    def _on_service_play_requested(self) -> None:
+        """Wired to ServiceStatusBar.play_requested. Idempotent start."""
+        if not self.service_running:
+            self.toggle_service()
+
+    def _on_refresh_requested(self) -> None:
+        """Wired to ServiceStatusBar.refresh_requested. Same as the old
+        refresh_button click handler."""
+        self.manual_refresh()
 
     def toggle_service(self):
         self.service_running = not self.service_running
