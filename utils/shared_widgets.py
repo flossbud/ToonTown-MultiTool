@@ -10,7 +10,7 @@ ElidingLabel        — QLabel that truncates long text with an ellipsis
 
 import math
 
-from PySide6.QtWidgets import QWidget, QLabel, QSizePolicy
+from PySide6.QtWidgets import QWidget, QLabel, QSizePolicy, QStyledItemDelegate
 from PySide6.QtCore import (
     Qt, Signal, QPropertyAnimation, QEasingCurve, QVariantAnimation,
     Property, QRectF, QSize,
@@ -413,3 +413,22 @@ class ElidingLabel(QLabel):
         else:
             super().setText(fm.elidedText(self._full_text, self._elide_mode, available))
         self.setToolTip(self._full_text if self.text() != self._full_text else "")
+
+
+# ── Current Value Delegate ───────────────────────────────────────────────────
+
+class _CurrentValueDelegate(QStyledItemDelegate):
+    """Paints a small accent-blue dot on the currently-selected row of a
+    QComboBox's dropdown menu. Idle/hover backgrounds come from QSS; the
+    dot is the 'you are here' indicator that QSS can't express.
+
+    The combo is read from self.parent() at paint time so the delegate
+    follows whichever combo it's installed on.
+    """
+
+    def __init__(self, combo):
+        super().__init__(combo)
+
+    def paint(self, painter, option, index):
+        super().paint(painter, option, index)
+        # dot painting added in a later task
