@@ -1907,38 +1907,16 @@ class MultitoonTab(QWidget):
     # ── Service button style ───────────────────────────────────────────────
 
     def update_service_button_style(self):
-        """Updates BOTH the Full-UI legacy toggle button visuals AND the
-        Compact ServiceStatusBar state. Callers don't know which layout
-        is active; each layout shows the widget that's currently parented
-        under it."""
-        # Legacy big-button visuals (Full UI only). Just toggle text + a
-        # neutral style; the old elaborate styling lived in
-        # _full_layout.py / theme_manager and gets reapplied on refresh.
+        """Compatibility wrapper. update_status_label is the source of
+        truth for the bar; this delegates so existing callers keep
+        working."""
         if self.service_running:
             self.toggle_service_button.setText(f"{S(chr(9632), chr(9632))} Stop Service")
             self.toggle_service_button.setToolTip("Stop the multitoon input service")
         else:
             self.toggle_service_button.setText(f"{S(chr(9654), chr(9654))} Start Service")
             self.toggle_service_button.setToolTip("Start the multitoon input service")
-
-        # Compact ServiceStatusBar (3-state) dispatcher
-        if not self.service_running:
-            self.service_status_bar.set_state("stopped")
-            self.service_status_bar.set_status_text(
-                "Stopped - click play to resume broadcasting"
-            )
-            return
-        enabled_count = sum(1 for v in self.enabled_toons if v) if hasattr(self, "enabled_toons") else 0
-        if enabled_count == 0:
-            self.service_status_bar.set_state("idle")
-            self.service_status_bar.set_status_text(
-                "Idle - enable a toon below to start broadcasting"
-            )
-        else:
-            self.service_status_bar.set_state("broadcasting")
-            self.service_status_bar.set_status_text(
-                f"Broadcasting - {enabled_count} of 4 toons"
-            )
+        self.update_status_label()
 
     def apply_all_visual_states(self):
         for i in range(4):
@@ -1947,36 +1925,44 @@ class MultitoonTab(QWidget):
     # ── Status label + segment bar ─────────────────────────────────────────
 
     def update_status_label(self):
-        c = self._c()
-        count = sum(self.enabled_toons)
-
-        segments = []
+        """Source of truth for the ServiceStatusBar - drives bar state
+        (broadcasting / idle / stopped), the status text, and the per-slot
+        dot states (active / found / off) in one pass."""
+        # Per-slot dot states (legacy behaviour kept verbatim).
         wids = self.window_manager.ttr_window_ids if hasattr(self, 'input_service') else []
+        segments = []
         for i in range(4):
             window_available = i < len(wids)
             if window_available and self.enabled_toons[i] and self.service_running:
-                segments.append(2)
+                segments.append(2)   # active
             elif window_available:
-                segments.append(1)
+                segments.append(1)   # found
             else:
-                segments.append(0)
+                segments.append(0)   # off
         self.status_bar.set_dot_states(segments)
 
-        if self.service_running and count > 0:
-            text = f"Sending input to {count} toon{'s' if count != 1 else ''}"
-            self.status_bar.set_status_text(text)
-            self.status_bar.set_text_color(c['text_primary'])
-        elif self.service_running:
-            ka_count = sum(self.keep_alive_enabled)
-            if ka_count > 0:
-                text = f"Keep-alive sending to {ka_count} toon{'s' if ka_count != 1 else ''}"
-            else:
-                text = "No toons enabled"
-            self.status_bar.set_status_text(text)
-            self.status_bar.set_text_color(c['status_warning_text'])
+        # Bar state + text. Same 3-state machine the Direction D mockup
+        # documents: Stopped (user pressed stop), Broadcasting (service
+        # on AND at least one toon enabled), Idle (service on, no toons
+        # enabled).
+        if not self.service_running:
+            self.status_bar.set_state("stopped")
+            self.status_bar.set_status_text(
+                "Stopped - click play to resume broadcasting"
+            )
+            return
+
+        enabled_count = sum(1 for v in self.enabled_toons if v)
+        if enabled_count == 0:
+            self.status_bar.set_state("idle")
+            self.status_bar.set_status_text(
+                "Idle - enable a toon below to start broadcasting"
+            )
         else:
-            self.status_bar.set_status_text("Service idle")
-            self.status_bar.set_text_color(c['status_idle_text'])
+            self.status_bar.set_state("broadcasting")
+            self.status_bar.set_status_text(
+                f"Broadcasting - {enabled_count} of 4 toons"
+            )
 
     # ── Name fetching ──────────────────────────────────────────────────────
 
