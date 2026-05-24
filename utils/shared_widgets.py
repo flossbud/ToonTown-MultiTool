@@ -452,4 +452,34 @@ class _CurrentValueDelegate(QStyledItemDelegate):
 
     def paint(self, painter, option, index):
         super().paint(painter, option, index)
-        # dot painting added in a later task
+
+        combo = self.parent()
+        if not isinstance(combo, QComboBox):
+            return
+        if index.row() != combo.currentIndex():
+            return
+
+        # Resolve accent color from the theme palette so light/dark both work.
+        # Falls back to the brand-blue hex if the palette is unavailable
+        # (e.g., during early init or in isolated tests).
+        try:
+            from utils.theme_manager import get_theme_colors, resolve_theme
+            is_dark = resolve_theme() != "light"
+            colors = get_theme_colors(is_dark)
+            accent_hex = colors.get("accent_blue_btn", "#0077ff")
+        except Exception:
+            accent_hex = "#0077ff"
+
+        # Paint a 6px-diameter dot, right-aligned 12px from the right edge,
+        # vertically centered in the row.
+        rect = option.rect
+        dot_d = 6
+        dot_x = rect.right() - 12 - dot_d
+        dot_y = rect.top() + (rect.height() - dot_d) // 2
+
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(accent_hex))
+        painter.drawEllipse(dot_x, dot_y, dot_d, dot_d)
+        painter.restore()
