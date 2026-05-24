@@ -1700,16 +1700,6 @@ class MultitoonTab(QWidget):
             """)
             selector.setEnabled(False)
 
-        # Status ring on portrait: green when broadcasting, muted when
-        # toon is detected-not-enabled, dark when slot is empty.
-        if not window_available:
-            ring_state = "off"
-        elif self.enabled_toons[index] and self.service_running:
-            ring_state = "enabled"
-        else:
-            ring_state = "found"
-        self._set_card_state_for_slot(index, ring_state)
-
     def _apply_chat_btn_style(self, index, c):
         chat_btn = self.chat_buttons[index]
         chat_btn.setEnabled(True)
@@ -2048,18 +2038,6 @@ class MultitoonTab(QWidget):
         set_brand = getattr(compact, "set_card_brand", None)
         if callable(set_brand):
             set_brand(index, game)
-
-    def _set_card_state_for_slot(self, index: int, state: str) -> None:
-        """Forward to the compact layout's set_card_state. No-op when
-        the Full layout is active or compact isn't built yet.
-
-        state in {'enabled', 'found', 'off'}"""
-        compact = getattr(self, "_compact", None)
-        if compact is None:
-            return
-        set_state = getattr(compact, "set_card_state", None)
-        if callable(set_state):
-            set_state(index, state)
 
     def manual_refresh(self):
         self.log("[Service] Manual refresh triggered.")

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QFont
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFrame, QApplication
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFrame
 
 from utils.theme_manager import make_heart_icon, make_jellybean_icon
 from tabs.multitoon._layout_utils import clear_layout
@@ -155,11 +155,12 @@ class _CompactLayout(QWidget):
         self._tab.toon_cards.append(card)
         self._tab.ka_groups.append(ka_group)
 
-        # Status ring overlay - positioned relative to slot_badge after
-        # the layout has settled. See _position_status_rings().
-        ring = _StatusRing(card)
-        ring.hide()  # shown once positioned
-        self._card_slots[-1]["status_ring"] = ring
+        # Status ring overlay - reuses the existing PulsingDot from
+        # `toon_labels[i][1]` so it inherits the legacy pulse+glow
+        # behaviour. Reparenting + positioning happens in populate()
+        # / _position_status_rings(). The slot dict's "status_ring"
+        # entry is left as a placeholder; populated in _populate_card.
+        self._card_slots[-1]["status_ring"] = None
 
         return card
 
@@ -210,18 +211,6 @@ class _CompactLayout(QWidget):
         divider = self._card_slots[i].get("header_divider")
         if divider is not None:
             divider.setStyleSheet(f"background: {c['border_muted']}; border: none;")
-
-    def set_card_state(self, i: int, state: str) -> None:
-        """Update card `i`'s portrait status ring.
-        state in {'enabled', 'found', 'off'}"""
-        slot = self._card_slots[i]
-        ring = slot.get("status_ring")
-        if ring is None:
-            return
-        ring.set_state(state)
-        from utils.theme_manager import get_theme_colors, resolve_theme
-        is_dark = resolve_theme(self._tab.settings_manager) == "dark"
-        ring.set_border_color(get_theme_colors(is_dark)["bg_card"])
 
     # ── Populate ───────────────────────────────────────────────────────────
     def populate(self):
@@ -332,13 +321,18 @@ class _CompactLayout(QWidget):
         self._tab.bean_labels[i].setFont(stats_font)
 
         # ── existing populate logic continues below ──
-        # top_row: badge | name | status_dot | game_badge | <stretch> | stats_row(laff bean)
+        # top_row: badge | name | game_badge | <stretch> | stats_row(laff bean)
         clear_layout(slot["top_row"])
         clear_layout(slot["stats_row"])
         slot["top_row"].addWidget(self._tab.slot_badges[i])
         name_label, status_dot = self._tab.toon_labels[i]
         slot["top_row"].addWidget(name_label)
-        slot["top_row"].addWidget(status_dot)
+        # PulsingDot is no longer added next to the name. Instead it
+        # becomes the portrait status ring overlay (reparented to the
+        # card; positioned in _position_status_rings()). Stash it in
+        # the slot dict so the position helper can find it.
+        status_dot.setParent(slot["card"])
+        slot["status_ring"] = status_dot
         slot["top_row"].addWidget(self._tab.game_badges[i])
         slot["top_row"].addStretch()
         slot["stats_row"].addWidget(self._tab.laff_labels[i])
@@ -380,9 +374,11 @@ class _CompactLayout(QWidget):
                 continue
             # Convert badge's bottom-right corner into card-local coords.
             br = badge.mapTo(slot["card"], badge.rect().bottomRight())
-            # Ring is 16 px; offset so it sits slightly outside the
-            # badge's bottom-right edge (matches design mockup).
-            ring.move(br.x() - 14, br.y() - 14)
+            # PulsingDot is sized (size + 8) per side - default size 10
+            # gives an 18 px widget. Centre the dot at the badge's
+            # bottom-right corner: subtract half the widget's width.
+            half = ring.width() // 2
+            ring.move(br.x() - half, br.y() - half)
             ring.show()
             ring.raise_()
 
@@ -609,65 +605,3 @@ class _CompactLayout(QWidget):
                 self._ka_anims.append(width_anim)
 
 
-class _StatusRing(QWidget):
-    """Small coloured dot overlaid on the bottom-right of a portrait.
-    Shows enabled/found/empty state without needing a second label.
-
-    Token semantics (read live from get_theme_colors so theme swaps
-    re-tint immediately):
-        enabled -> status_dot_active (typically green)
-        found   -> text_muted
-        off     -> border_light
-    The outer ring uses bg_card so the dot reads as a 'cut out' from
-    the portrait edge."""
-
-    def __init__(self, parent: QWidget):
-        super().__init__(parent)
-        self.setFixedSize(16, 16)
-        self._state = "off"
-        self._border_color = "#252525"  # gets repainted via set_border_color
-        self.setAttribute(Qt.WA_TranslucentBackground)
-
-    def set_state(self, state: str) -> None:
-        if state not in ("enabled", "found", "off"):
-            raise ValueError(f"_StatusRing.set_state: unknown state {state!r}")
-        if state == self._state:
-            return
-        self._state = state
-        self.update()
-
-    def set_border_color(self, color: str) -> None:
-        if color == self._border_color:
-            return
-        self._border_color = color
-        self.update()
-
-    def paintEvent(self, event):
-        from PySide6.QtCore import QRectF
-        from PySide6.QtGui import QPainter, QColor
-        from utils.theme_manager import get_theme_colors
-
-        # Live theme lookup. We reach the QApplication palette as a proxy
-        # for "is the app currently in dark mode" so the ring re-tints
-        # on theme change without explicit plumbing.
-        app = QApplication.instance()
-        is_dark = (app.palette().window().color().lightness() < 128) if app else True
-        c = get_theme_colors(is_dark)
-
-        fill_map = {
-            "enabled": c.get("status_dot_active", "#56c856"),
-            "found":   c.get("text_muted", "#888"),
-            "off":     c.get("border_light", "#555"),
-        }
-        fill = fill_map.get(self._state, fill_map["off"])
-
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
-        p.setPen(Qt.NoPen)
-        # Outer border (matches card bg) creates the cut-out look.
-        p.setBrush(QColor(self._border_color))
-        p.drawEllipse(QRectF(0, 0, 16, 16))
-        # Inner colored dot.
-        p.setBrush(QColor(fill))
-        p.drawEllipse(QRectF(2.5, 2.5, 11, 11))
-        p.end()
