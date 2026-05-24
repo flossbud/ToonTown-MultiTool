@@ -62,6 +62,8 @@ class ServiceStatusBar(QFrame):
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         self.state = "idle"
+        self._theme = None
+        self._dot_palette = None
 
         lay = QHBoxLayout(self)
         lay.setContentsMargins(12, 0, 4, 0)
@@ -117,9 +119,11 @@ class ServiceStatusBar(QFrame):
             self.stop_play_button.setToolTip("Stop broadcasting")
             self.stop_play_button.setProperty("role", "stop")
 
-        # Force a style recompute so QSS rules keyed on `svc_state` apply.
+        # Force a style recompute so [svc_state="..."] QSS rules apply.
         self.style().unpolish(self)
         self.style().polish(self)
+        # Dots are painted by Python; push the per-state palette now.
+        self._apply_dot_palette()
         self.update()
 
     def set_status_text(self, text: str) -> None:
@@ -138,6 +142,92 @@ class ServiceStatusBar(QFrame):
             f"font-size: 13px; font-weight: 500; color: {color}; "
             "background: transparent; border: none;"
         )
+
+    def apply_theme(self, c: dict) -> None:
+        """Apply the active theme's colours to the bar across all 3 states.
+        Caller passes the dict from utils.theme_manager.get_theme_colors.
+
+        Stores per-state dot colours and the per-state QSS, then re-applies
+        the current state's dot colours immediately."""
+        self._theme = c
+        # Per-state dot palettes. Broadcasting puts the bar on blue, so
+        # dots are white shades for contrast. Stopped goes red, same idea.
+        # Idle (the default neutral) uses the standard segment tokens.
+        self._dot_palette = {
+            "broadcasting": (
+                "rgba(255,255,255,46)",    # off (~18% white)
+                "rgba(255,255,255,115)",   # found (~45% white)
+                "#ffffff",                 # active (full white + dot's own glow)
+            ),
+            "idle": (
+                c.get("segment_off",    "#333333"),
+                c.get("segment_found",  "#555555"),
+                c.get("segment_active", "#56c856"),
+            ),
+            "stopped": (
+                "rgba(255,255,255,36)",
+                "rgba(255,255,255,90)",
+                "rgba(255,255,255,200)",
+            ),
+        }
+        # QSS rules - the [svc_state="..."] selectors cascade off the Qt
+        # property set in set_state(). The neutral block runs first as a
+        # default; state-specific blocks override.
+        self.setStyleSheet(f"""
+            QFrame#ServiceStatusBar {{
+                background-color: {c['bg_card_inner']};
+                border-radius: 8px;
+                border: 1px solid {c['border_card']};
+            }}
+            QFrame#ServiceStatusBar[svc_state="broadcasting"] {{
+                background-color: {c['accent_blue_dim']};
+                border: 1px solid {c['accent_blue']};
+            }}
+            QFrame#ServiceStatusBar[svc_state="stopped"] {{
+                background-color: {c['red_dim']};
+                border: 1px solid {c['accent_red_border']};
+            }}
+
+            QFrame#ServiceStatusBar QLabel#svc_label {{
+                color: {c['text_secondary']};
+                font-size: 12.5px;
+                font-weight: 600;
+                background: transparent;
+                border: none;
+            }}
+            QFrame#ServiceStatusBar[svc_state="broadcasting"] QLabel#svc_label,
+            QFrame#ServiceStatusBar[svc_state="stopped"] QLabel#svc_label {{
+                color: #ffffff;
+            }}
+
+            QFrame#ServiceStatusBar QPushButton#svc_stop_play,
+            QFrame#ServiceStatusBar QPushButton#svc_refresh {{
+                background: transparent;
+                border: none;
+                color: {c['text_secondary']};
+            }}
+            QFrame#ServiceStatusBar QPushButton#svc_stop_play:hover,
+            QFrame#ServiceStatusBar QPushButton#svc_refresh:hover {{
+                background: rgba(255,255,255,18);
+                border-radius: 6px;
+            }}
+            QFrame#ServiceStatusBar[svc_state="broadcasting"] QPushButton#svc_stop_play,
+            QFrame#ServiceStatusBar[svc_state="broadcasting"] QPushButton#svc_refresh,
+            QFrame#ServiceStatusBar[svc_state="stopped"] QPushButton#svc_stop_play,
+            QFrame#ServiceStatusBar[svc_state="stopped"] QPushButton#svc_refresh {{
+                color: #ffffff;
+            }}
+        """)
+        # Re-apply current state's dot colours immediately.
+        self._apply_dot_palette()
+
+    def _apply_dot_palette(self) -> None:
+        """Internal: push the dot palette appropriate for self.state into
+        the dots widget. Called by apply_theme() and set_state()."""
+        if not self._dot_palette:
+            return
+        off, found, active = self._dot_palette.get(self.state, self._dot_palette["idle"])
+        self.dots.set_colors(off, found, active)
 
     # -- Slots -------------------------------------------------------------
 

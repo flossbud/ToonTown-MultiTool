@@ -1475,14 +1475,9 @@ class MultitoonTab(QWidget):
             )
         self._update_pill_styles()
 
-        self.status_bar.set_dot_colors(c['segment_off'], c['segment_found'], c['segment_active'])
-        self.status_bar.setStyleSheet(f"""
-            QFrame#ServiceStatusBar {{
-                background-color: {c['bg_card_inner']};
-                border-radius: 8px;
-                border: 1px solid {c['border_muted']};
-            }}
-        """)
+        # ServiceStatusBar manages its own per-state QSS + dot palette;
+        # we just hand it the current theme.
+        self.status_bar.apply_theme(c)
         self.update_service_button_style()
 
         if is_dark:
