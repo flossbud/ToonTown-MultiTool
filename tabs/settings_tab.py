@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Property, QPointF, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPen, QPolygonF
 from utils.theme_manager import apply_theme, get_theme_colors, resolve_theme
-from utils.shared_widgets import IOSToggle
+from utils.shared_widgets import IOSToggle, Switch
 from utils.widgets import install_modern_scrollbar
 from services.ttr_login_service import find_engine_path, get_engine_executable_name
 from services.cc_login_service import (
@@ -1749,769 +1749,163 @@ class _CollapsibleHeader(QFrame):
 # ── Main Settings Tab ──────────────────────────────────────────────────────────
 
 class SettingsTab(QWidget):
+    # ── Public signals (unchanged contract) ───────────────────────────────
     debug_visibility_changed = Signal(bool)
     theme_changed = Signal()
     input_backend_changed = Signal()
     clear_credentials_requested = Signal()
     max_accounts_changed = Signal(int)
 
+    CATEGORIES = [
+        ("general", "General"),
+        ("games", "Games"),
+        ("keep_alive", "Keep-Alive"),
+        ("advanced", "Advanced"),
+    ]
+
     def __init__(self, settings_manager):
         super().__init__()
         self.settings_manager = settings_manager
-        self._groups = []
+        self.pages: dict[str, QWidget] = {}
+        self._panels: list[SettingsPanel] = []
+        self._current_page_key: str = "general"
+        self._update_checker = None
 
-        # Scroll area wrapping everything
-        outer = QVBoxLayout(self)
+        outer = QHBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
 
-        scroll = QScrollArea()
-        self._scroll = scroll
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        outer.addWidget(scroll)
+        self.sidebar = Sidebar(self.CATEGORIES)
+        outer.addWidget(self.sidebar)
 
-        is_dark = resolve_theme(self.settings_manager) == "dark"
-        install_modern_scrollbar(scroll, is_dark=is_dark)
+        # Content stack: a single QStackedWidget holding one scroll-area per page.
+        from PySide6.QtWidgets import QStackedWidget
+        self._stack = QStackedWidget(self)
+        outer.addWidget(self._stack, 1)
 
-        scroll.verticalScrollBar().valueChanged.connect(
-            self._maybe_clear_advanced_scroll_reserve
-        )
+        for key, _label in self.CATEGORIES:
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setFrameShape(QFrame.NoFrame)
+            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            install_modern_scrollbar(
+                scroll,
+                is_dark=resolve_theme(self.settings_manager) == "dark",
+            )
 
-        scroll_inner = QWidget()
-        scroll_inner_layout = QHBoxLayout(scroll_inner)
-        scroll_inner_layout.setContentsMargins(0, 0, 0, 0)
+            page = QWidget()
+            page_lay = QVBoxLayout(page)
+            page_lay.setContentsMargins(28, 22, 28, 28)
+            page_lay.setSpacing(14)
+            page_lay.setAlignment(Qt.AlignTop)
 
-        content = QWidget()
-        content.setMaximumWidth(880)
-        # Inline the centering pattern: stretches absorb extra space when the
-        # window is wider than 880; the high stretch factor on the content
-        # widget makes it claim available width up to its maxWidth. Doing
-        # this manually instead of via clamp_centered() because that helper
-        # uses Qt.AlignHCenter, which makes Qt honor the widget's sizeHint
-        # and ignore size policy — fine for the Launch tab whose content
-        # has a meaningful sizeHint, but it leaves Settings rows collapsed
-        # to ~400px in a 720px window.
-        scroll_inner_layout.addStretch(1)
-        scroll_inner_layout.addWidget(content, 1000)
-        scroll_inner_layout.addStretch(1)
-        scroll.setWidget(scroll_inner)
+            # Page title + subtitle scaffolding (text filled by category builder).
+            title = QLabel()
+            title.setObjectName("settings_page_title")
+            page_lay.addWidget(title)
+            sub = QLabel()
+            sub.setObjectName("settings_page_subtitle")
+            sub.setWordWrap(True)
+            page_lay.addWidget(sub)
+            # Builder methods populate panels below the subtitle; we expose
+            # the layout via attribute so they can append to it.
+            page._title_label = title  # type: ignore[attr-defined]
+            page._sub_label = sub      # type: ignore[attr-defined]
+            page._panel_layout = page_lay  # type: ignore[attr-defined]
+            page_lay.addStretch(1)
 
-        self._main_layout = QVBoxLayout(content)
-        self._main_layout.setContentsMargins(20, 24, 20, 24)
-        # Section blocks have internal bottom padding (~18px) for the painted
-        # shadow; reduce the layout-level spacing so the visual gap between
-        # sections stays similar to before the shadow pass.
-        self._main_layout.setSpacing(12)
-        self._main_layout.setAlignment(Qt.AlignTop)
+            scroll.setWidget(page)
+            self.pages[key] = page
+            self._stack.addWidget(scroll)
 
-        self._build_general_group()
-        self._build_updates_group()
-        self._build_games_group()
-        self._build_keepalive_group()
-        self._build_advanced_group()
+        # Builder methods fill each page in. (Stubs in this task — Tasks 5-8 fill
+        # the real content.)
+        self._build_general_page(self.pages["general"])
+        self._build_games_page(self.pages["games"])
+        self._build_keep_alive_page(self.pages["keep_alive"])
+        self._build_advanced_page(self.pages["advanced"])
 
-        self._main_layout.addStretch()
+        # Restore persisted category.
+        persisted = self.settings_manager.get("settings_active_category", "general")
+        self._show_category(persisted)
+        self.sidebar.category_selected.connect(self._on_category_selected)
 
         self.refresh_theme()
 
-    def _build_general_group(self):
-        group = SettingsGroup("General")
-        self._groups.append(group)
+    # ── Stub page builders (Tasks 5-8 replace these) ──────────────────────
+    def _build_general_page(self, page):
+        pass
 
-        # Theme row
-        current = self.settings_manager.get("theme", "system")
-        theme_idx = ["system", "light", "dark"].index(current)
-        self.theme_row = DropdownRow(
-            "Appearance",
-            ["System", "Light", "Dark"],
-            theme_idx
-        )
-        self.theme_row.index_changed.connect(self.change_theme)
-        group.add_row(self.theme_row)
+    def _build_games_page(self, page):
+        pass
 
-        # Max accounts per game
-        saved_max = self.settings_manager.get("max_accounts_per_game", 4)
-        max_options = ["4", "5", "6", "7", "8"]
-        max_idx = max(0, min(saved_max - 4, len(max_options) - 1))
-        self.max_accounts_row = DropdownRow(
-            "Max Accounts Per Game",
-            max_options,
-            max_idx,
-            sublabel="How many account slots per game (TTR / CC)"
-        )
-        self.max_accounts_row.index_changed.connect(self._on_max_accounts_changed)
-        group.add_row(self.max_accounts_row)
+    def _build_keep_alive_page(self, page):
+        pass
 
-        # Reduce-motion row (tri-state, behavior unchanged from current code)
-        import utils.motion as motion
-        motion.set_settings_manager(self.settings_manager)
-        explicit = self.settings_manager.get("reduce_motion_set_explicitly", False)
-        if not explicit:
-            initial_idx = 0  # System default
-        elif self.settings_manager.get("reduce_motion", False):
-            initial_idx = 1  # On
-        else:
-            initial_idx = 2  # Off
-        sublabel = (
-            "System default follows your desktop's reduce-motion setting. "
-            "Choose On or Off to override."
-        )
-        self.reduce_motion_row = DropdownRow(
-            "Reduce Motion",
-            ["System default", "On", "Off"],
-            initial_idx,
-            sublabel=sublabel,
-        )
-        self.reduce_motion_row.index_changed.connect(self._on_reduce_motion_changed)
-        group.add_row(self.reduce_motion_row)
+    def _build_advanced_page(self, page):
+        pass
 
-        self._main_layout.addWidget(group)
+    # ── Category routing ──────────────────────────────────────────────────
+    def _on_category_selected(self, key: str):
+        self._show_category(key)
+        self.settings_manager.set("settings_active_category", key)
 
-    def _build_updates_group(self):
-        from utils import build_info
-        group = SettingsGroup("Updates")
-        self._groups.append(group)
+    def _show_category(self, key: str):
+        keys = [k for k, _ in self.CATEGORIES]
+        if key not in keys:
+            key = "general"
+        self._current_page_key = key
+        self.sidebar.set_active_category(key)
+        idx = keys.index(key)
+        self._stack.setCurrentIndex(idx)
 
-        # Toggle row — ToggleRow exposes a `toggled(bool)` signal
-        # (tabs/settings_tab.py:161); use it directly.
-        enabled = bool(self.settings_manager.get("check_for_updates_at_startup", False))
-        self.update_check_toggle = ToggleRow(
-            "Check for updates on startup",
-            enabled,
-            sublabel="Look for new releases when the app launches.",
-        )
-        self.update_check_toggle.toggled.connect(self._on_check_for_updates_toggled)
-        group.add_row(self.update_check_toggle)
-
-        # Button row + version display in the sublabel
-        self.update_check_now_btn = ButtonRow(
-            "Check for updates now",
-            sublabel=f"Current build: {build_info.version_string()}",
-            button_text="Check now",
-        )
-        self.update_check_now_btn.button.clicked.connect(self._on_check_now_clicked)
-        group.add_row(self.update_check_now_btn)
-
-        self._main_layout.addWidget(group)
-
-    def _on_check_for_updates_toggled(self, checked: bool):
-        self.settings_manager.set("check_for_updates_at_startup", checked)
-
-    def _on_check_now_clicked(self):
-        # Wired up by main.py via `set_update_checker(checker)`; if not yet
-        # connected we no-op safely.
-        if hasattr(self, "_update_checker") and self._update_checker is not None:
-            self.update_check_now_btn.button.setEnabled(False)
-            self.update_check_now_btn.button.setText("Checking...")
-            self._update_checker.check_async(manual=True)
-
+    # ── Public API placeholders (replaced/filled in later tasks) ──────────
     def set_update_checker(self, checker):
-        """Wire the checker so the manual button can dispatch and the
-        feedback row updates on result signals."""
         self._update_checker = checker
-        checker.update_available.connect(self._on_check_complete_update)
-        checker.no_update.connect(self._on_check_complete_no_update)
-        checker.check_failed.connect(self._on_check_complete_failed)
-
-    def _restore_check_button(self):
-        self.update_check_now_btn.button.setEnabled(True)
-        self.update_check_now_btn.button.setText("Check now")
-
-    def _on_check_complete_update(self, info):
-        self._restore_check_button()
-        # main.py is the canonical signal owner for showing the dialog --
-        # we just restore the button state here.
-
-    def _on_check_complete_no_update(self):
-        self._restore_check_button()
-        # Show "You're on the latest version." inline for ~5 seconds.
-        from PySide6.QtCore import QTimer
-        from utils import build_info
-        sub = getattr(self.update_check_now_btn, "sub_widget", None)
-        if sub is not None:
-            sub.setText("You're on the latest version.")
-            default_text = f"Current build: {build_info.version_string()}"
-            QTimer.singleShot(5000, lambda: sub.setText(default_text))
-
-    def _on_check_complete_failed(self, reason):
-        self._restore_check_button()
-        from PySide6.QtCore import QTimer
-        from utils import build_info
-        sub = getattr(self.update_check_now_btn, "sub_widget", None)
-        if sub is not None:
-            short = reason[:80]
-            sub.setText(f"Couldn't reach GitHub: {short}")
-            default_text = f"Current build: {build_info.version_string()}"
-            QTimer.singleShot(10000, lambda: sub.setText(default_text))
-
-    def _build_games_group(self):
-        group = SettingsGroup("Games")
-        self._groups.append(group)
-
-        self.ttr_path_row = GamePathRow(
-            self.settings_manager,
-            settings_key="ttr_engine_dir",
-            exe_name_fn=get_engine_executable_name,
-            find_path_fn=find_engine_path,
-            label="Toontown Rewritten",
-        )
-        group.add_row(self.ttr_path_row)
-
-        self.cc_path_row = GamePathRow(
-            self.settings_manager,
-            settings_key="cc_engine_dir",
-            exe_name_fn=get_cc_engine_executable_name,
-            find_path_fn=find_cc_engine_path,
-            label="Corporate Clash",
-        )
-        group.add_row(self.cc_path_row)
-
-        # Compatibility runtime row — visible only when CC install is
-        # configured (read-only) or steam-proton (with Change button).
-        # Hidden entirely on Windows.
-        self.compat_runtime_row = CompatRuntimeRow(
-            settings_manager=self.settings_manager,
-            get_active_install=self._get_active_cc_install,
-        )
-        group.add_row(self.compat_runtime_row)
-
-        # Hide-CC-console opt-out. Default ON; user can turn off when
-        # debugging launch failures to see CC's TTCCLauncher stdout.
-        from utils.settings_keys import (
-            CC_HIDE_LAUNCH_CONSOLE,
-            CC_EXTERNAL_LOG_DIR,
-        )
-        self.hide_cc_console_row = ToggleRow(
-            "Hide CC launch console",
-            self.settings_manager.get(CC_HIDE_LAUNCH_CONSOLE, True),
-        )
-        self.hide_cc_console_row.toggled.connect(
-            lambda v: self.settings_manager.set(CC_HIDE_LAUNCH_CONSOLE, v)
-        )
-        group.add_row(self.hide_cc_console_row)
-
-        # External CC log directory (advanced). Constrains auto-discovery
-        # of CC log files when CC was launched outside TTMT. Blank = full
-        # auto-discovery via psutil / Wine-prefix glob.
-        self.cc_external_log_row = SettingsRow(
-            "External CC log directory (advanced)",
-            "Leave blank for auto-detection.",
-        )
-        log_dir_lay = QHBoxLayout()
-        log_dir_lay.setContentsMargins(0, 0, 0, 0)
-        log_dir_lay.setSpacing(6)
-
-        self.cc_external_log_label = QLabel(
-            self.settings_manager.get(CC_EXTERNAL_LOG_DIR, "") or "(auto)"
-        )
-        self.cc_external_log_label.setStyleSheet("color: rgba(255,255,255,0.65);")
-        log_dir_lay.addWidget(self.cc_external_log_label, 1)
-
-        self.cc_external_log_browse = QPushButton("Browse")
-        self.cc_external_log_browse.setCursor(Qt.PointingHandCursor)
-        self.cc_external_log_browse.setFixedHeight(28)
-
-        def _browse_external_log_dir():
-            current = self.settings_manager.get(CC_EXTERNAL_LOG_DIR, "") or ""
-            picked = QFileDialog.getExistingDirectory(
-                self, "Select Corporate Clash logs directory", current,
-            )
-            if picked:
-                self.settings_manager.set(CC_EXTERNAL_LOG_DIR, picked)
-                self.cc_external_log_label.setText(picked)
-
-        self.cc_external_log_browse.clicked.connect(_browse_external_log_dir)
-        log_dir_lay.addWidget(self.cc_external_log_browse)
-
-        self.cc_external_log_clear = QPushButton("Clear")
-        self.cc_external_log_clear.setCursor(Qt.PointingHandCursor)
-        self.cc_external_log_clear.setFixedHeight(28)
-
-        def _clear_external_log_dir():
-            self.settings_manager.set(CC_EXTERNAL_LOG_DIR, "")
-            self.cc_external_log_label.setText("(auto)")
-
-        self.cc_external_log_clear.clicked.connect(_clear_external_log_dir)
-        log_dir_lay.addWidget(self.cc_external_log_clear)
-
-        self.cc_external_log_detect = QPushButton("Detect")
-        self.cc_external_log_detect.setCursor(Qt.PointingHandCursor)
-        self.cc_external_log_detect.setFixedHeight(28)
-        self.cc_external_log_detect.setToolTip(
-            "Walk currently-running CC processes and report what discovery finds."
-        )
-
-        def _run_detect():
-            from utils import cc_log_discovery
-            manual_raw = self.settings_manager.get(CC_EXTERNAL_LOG_DIR, "") or ""
-            manual_dir = Path(manual_raw.strip()) if manual_raw.strip() else None
-            results: list[str] = []
-            for proc in psutil.process_iter(attrs=["pid", "name"]):
-                name = (proc.info.get("name") or "").lower()
-                if "corporateclash" not in name:
-                    continue
-                pid = proc.info["pid"]
-                try:
-                    path = cc_log_discovery.find_log_for_pid(pid, manual_dir=manual_dir)
-                except Exception as exc:  # noqa: BLE001
-                    results.append(f"pid {pid}: error {exc!r}")
-                    continue
-                results.append(
-                    f"pid {pid}: {'(found) ' + str(path) if path else '(not found)'}"
-                )
-            if not results:
-                results.append("No running CC processes detected.")
-            QMessageBox.information(
-                self, "External CC log discovery",
-                "\n".join(results),
-            )
-
-        self.cc_external_log_detect.clicked.connect(_run_detect)
-        log_dir_lay.addWidget(self.cc_external_log_detect)
-
-        log_dir_widget = QWidget()
-        log_dir_widget.setLayout(log_dir_lay)
-        self.cc_external_log_row.add_control(log_dir_widget)
-        group.add_row(self.cc_external_log_row)
-
-        self._main_layout.addWidget(group)
-
-    def _build_keepalive_group(self):
-        group = SettingsGroup("Keep-Alive")
-        self._keepalive_group = group
-        self._groups.append(group)
-
-        # Master opt-in toggle — disabled by default. Enabling fires a
-        # consent dialog (Task 10) before committing the True value.
-        master_initial = bool(self.settings_manager.get("keep_alive_enabled", False))
-        self.ka_master_row = ToggleRow(
-            "Enable Keep-Alive",
-            master_initial,
-            sublabel=(
-                "Periodically sends a keystroke to keep toons logged in. "
-                "Disabled by default. See warning before enabling. "
-                "Your previous per-toon Keep-Alive selections are preserved."
-            ),
-        )
-        self.ka_master_row.toggled.connect(self._on_keep_alive_master_toggle)
-        group.add_row(self.ka_master_row)
-
-        self._ka_actions = [
-            ("Jump", "jump"),
-            ("Open / Close Book", "book"),
-            ("Move Forward", "up"),
-        ]
-        saved_action = self.settings_manager.get("keep_alive_action", "jump")
-        action_idx = next((i for i, (_, v) in enumerate(self._ka_actions) if v == saved_action), 0)
-        self.ka_action_row = DropdownRow(
-            "Action",
-            [d for d, _ in self._ka_actions],
-            action_idx
-        )
-        self.ka_action_row.index_changed.connect(self._on_keep_alive_action_changed)
-        group.add_row(self.ka_action_row)
-
-        delay_options = ["Rapid Fire", "1 sec", "5 sec", "10 sec", "30 sec", "1 min", "3 min", "5 min", "10 min"]
-        saved_delay = self.settings_manager.get("keep_alive_delay", "30 sec")
-        delay_idx = delay_options.index(saved_delay) if saved_delay in delay_options else 4
-        self.ka_delay_row = DropdownRow(
-            "Interval",
-            delay_options,
-            delay_idx,
-        )
-        self.ka_delay_row.index_changed.connect(self._on_keep_alive_delay_changed)
-        group.add_row(self.ka_delay_row)
-
-        # Apply initial ghost state.
-        self._refresh_keep_alive_row_enabled_state(master_initial)
-
-        self._main_layout.addWidget(group)
-
-    def _refresh_keep_alive_row_enabled_state(self, master_enabled: bool):
-        """Ghost (or un-ghost) the action and interval rows based on the
-        master toggle state."""
-        self.ka_action_row.setEnabled(master_enabled)
-        self.ka_delay_row.setEnabled(master_enabled)
-
-    def _on_keep_alive_master_toggle(self, checked: bool):
-        """Handler for the master toggle. On flip-to-on, fire the consent
-        dialog and only commit the True value if the user confirms. If the
-        user already acknowledged TOS consent during installer setup
-        (keep_alive_consent_acknowledged=true), skip the dialog and commit
-        directly."""
-        if not checked:
-            self.settings_manager.set("keep_alive_enabled", False)
-            self._refresh_keep_alive_row_enabled_state(False)
-            return
-        # Toggle was flipped on — confirm before committing, unless the
-        # installer already captured informed consent.
-        if self.settings_manager.get("keep_alive_consent_acknowledged", False):
-            self.settings_manager.set("keep_alive_enabled", True)
-            self._refresh_keep_alive_row_enabled_state(True)
-            return
-        if self._show_keep_alive_warning_dialog():
-            self.settings_manager.set("keep_alive_enabled", True)
-            self._refresh_keep_alive_row_enabled_state(True)
-        else:
-            # User cancelled — revert visual without re-firing toggled.
-            self.ka_master_row.toggle.blockSignals(True)
-            self.ka_master_row.setChecked(False)
-            self.ka_master_row.toggle.blockSignals(False)
-            # Setting was never written; ghost state stays as it was.
-
-    def _show_keep_alive_warning_dialog(self) -> bool:
-        """Show the TOS-aware consent dialog. Returns True if the user
-        clicked Enable, False on Cancel/Esc/close.
-
-        Factored as a method so tests can monkeypatch it without invoking
-        the real modal."""
-        from PySide6.QtWidgets import QMessageBox
-
-        box = QMessageBox(self.window())
-        box.setIcon(QMessageBox.Warning)
-        box.setWindowTitle("Enable Keep-Alive?")
-        box.setText(
-            "Keep-Alive sends periodic input to your toon windows even while "
-            "you are not actively playing.\n\n"
-            "Both Toontown Rewritten and Corporate Clash prohibit automation "
-            "tools of this kind in their Terms of Service. Use of Keep-Alive, "
-            "particularly in public areas of either game, may result in "
-            "warnings, account suspension, or permanent termination at the "
-            "discretion of those games' moderation teams.\n\n"
-            "ToonTown MultiTool is provided as-is and accepts no responsibility "
-            "for any consequences arising from its use."
-        )
-        enable_btn = box.addButton("Enable", QMessageBox.DestructiveRole)
-        cancel_btn = box.addButton("Cancel", QMessageBox.RejectRole)
-        box.setDefaultButton(cancel_btn)
-        box.setEscapeButton(cancel_btn)
-        box.exec()
-        return box.clickedButton() is enable_btn
-
-    def _get_active_cc_install(self):
-        """Return the currently-resolved WineInstall for CC, or None.
-
-        cc_engine_dir stores the install *directory*; classify_path expects
-        the *exe path*. Mirror tabs/launch_tab._build_cc_install: append the
-        engine executable name and verify the file exists before classifying.
-        """
-        from services.cc_login_service import get_cc_engine_executable_name
-        from services.wine_runtimes import WineInstall, classify_path
-        engine_dir = self.settings_manager.get("cc_engine_dir", "") if self.settings_manager else ""
-        if not engine_dir:
-            return None
-        exe = os.path.join(engine_dir, get_cc_engine_executable_name())
-        if not os.path.isfile(exe):
-            return None
-        try:
-            classified = classify_path(exe)
-        except Exception as e:
-            print(f"[settings_tab] classify_path({exe!r}) failed: {e}")
-            return None
-        if classified is not None:
-            return classified
-        # Fall back to a native install record so the row still renders
-        # (read-only label path); matches _build_cc_install's behavior.
-        return WineInstall(
-            exe_path=exe,
-            launcher="native",
-            prefix_path=None,
-            display_name="Corporate Clash",
-            metadata={},
-        )
-
-    def _build_advanced_group(self):
-        self.advanced_group = CollapsibleSettingsGroup(
-            "Advanced", self.settings_manager, "advanced_collapsed"
-        )
-        self.advanced_group.scroll_reserve_changed.connect(
-            self._set_advanced_scroll_reserve
-        )
-        self._groups.append(self.advanced_group)
-
-        self.companion_row = ToggleRow(
-            "TTR Companion App",
-            self.settings_manager.get("enable_companion_app", True),
-            sublabel="Show toon names and portraits (TTR only)"
-        )
-        self.companion_row.toggled.connect(self.toggle_companion_app)
-        self.advanced_group.add_row(self.companion_row)
-
-        self.debug_row = ToggleRow(
-            "Enable Logging",
-            self.settings_manager.get("show_debug_tab", False),
-        )
-        self.debug_row.toggled.connect(self.toggle_debug_tab)
-        self.advanced_group.add_row(self.debug_row)
-
-        import sys
-        if sys.platform == "win32":
-            backend_options = ["Windows API (recommended)"]
-            self.settings_manager.set("input_backend", "win32")
-            backend_idx = 0
-            sublabel = "Native Windows Input"
-        else:
-            backend_options = ["Xlib (recommended)", "xdotool"]
-            current_backend = self.settings_manager.get("input_backend", "xlib")
-            if current_backend not in ("xlib", "xdotool"):
-                current_backend = "xlib"
-                self.settings_manager.set("input_backend", "xlib")
-            backend_idx = 0 if current_backend == "xlib" else 1
-            sublabel = "Restart required on change"
-
-        self.backend_row = DropdownRow(
-            "Input Backend",
-            backend_options,
-            backend_idx,
-            sublabel=sublabel
-        )
-        self.backend_row.index_changed.connect(self.change_input_backend)
-        self.advanced_group.add_row(self.backend_row)
-
-        self.clear_credentials_row = ButtonRow(
-            "Clear Stored Credentials",
-            sublabel="Delete all saved TTR and CC passwords from Keyring and session memory",
-            button_text="Clear",
-            destructive=True,
-        )
-        self.clear_credentials_row.clicked.connect(self._on_clear_credentials_clicked)
-        self.advanced_group.add_row(self.clear_credentials_row)
-
-        self._main_layout.addWidget(self.advanced_group)
-        self._advanced_scroll_reserve = QWidget()
-        self._advanced_scroll_reserve_active = False
-        self._advanced_scroll_reserve.setFixedHeight(0)
-        self._advanced_scroll_reserve.setStyleSheet(
-            "background: transparent; border: none;"
-        )
-        self._main_layout.addWidget(self._advanced_scroll_reserve)
-
-    def _set_advanced_scroll_reserve(self, height: int):
-        if not hasattr(self, "_advanced_scroll_reserve"):
-            return
-        height = max(0, int(height))
-        bar = self._scroll.verticalScrollBar()
-
-        if height > 0:
-            if not self._advanced_scroll_reserve_active:
-                self._advanced_scroll_reserve_active = (
-                    bar.value() >= bar.maximum() - 2
-                )
-            if self._advanced_scroll_reserve_active:
-                self._advanced_scroll_reserve.setFixedHeight(height)
-            return
-
-        # When collapse starts at the very bottom, keep the reserve after the
-        # body finishes closing. Removing it immediately makes Qt clamp the
-        # scrollbar maximum on the final frame, which reads as a judder.
-        if (
-            self._advanced_scroll_reserve_active
-            and self.advanced_group.is_collapsed()
-            and self._advanced_scroll_reserve.height() > 0
-        ):
-            return
-        self._clear_advanced_scroll_reserve()
-
-    def _maybe_clear_advanced_scroll_reserve(self):
-        if not getattr(self, "_advanced_scroll_reserve_active", False):
-            return
-        if self.advanced_group._collapse_anim is not None:
-            return
-        bar = self._scroll.verticalScrollBar()
-        if bar.value() < bar.maximum() - 2:
-            self._clear_advanced_scroll_reserve()
-
-    def _clear_advanced_scroll_reserve(self):
-        if not hasattr(self, "_advanced_scroll_reserve"):
-            return
-        self._advanced_scroll_reserve_active = False
-        self._advanced_scroll_reserve.setFixedHeight(0)
-
-    # ── Handlers ──────────────────────────────────────────────────────────────
-
-    def _on_keep_alive_action_changed(self, i):
-        if i < len(self._ka_actions):
-            _, value = self._ka_actions[i]
-            self.settings_manager.set("keep_alive_action", value)
-
-    def _on_keep_alive_delay_changed(self, i):
-        delay = self.ka_delay_row.combo.itemText(i)
-        self.settings_manager.set("keep_alive_delay", delay)
-
-    def get_keep_alive_delay_seconds(self) -> float:
-        return {
-            "Rapid Fire": 0.25, "1 sec": 1, "5 sec": 5, "10 sec": 10, "30 sec": 30,
-            "1 min": 60, "3 min": 180, "5 min": 300, "10 min": 600
-        }.get(self.ka_delay_row.combo.currentText(), 60)
 
     def highlight_keep_alive_group(self):
-        """Scroll the Keep-Alive group into view and run a one-shot pulse
-        animation so a user arriving here from the per-slot help affordance
-        immediately sees what they came for.
+        # Implementation completed in Task 7 (Keep-Alive page).
+        self._show_category("keep_alive")
 
-        Safe to call before the tab has been shown — the scroll is a best-
-        effort no-op if no enclosing QScrollArea is visible yet, and the
-        pulse animation runs on the group widget regardless.
-        """
-        from PySide6.QtCore import QEasingCurve, QPropertyAnimation
-        from PySide6.QtWidgets import QGraphicsColorizeEffect, QScrollArea
-        from PySide6.QtGui import QColor
+    def get_keep_alive_delay_seconds(self) -> float:
+        # Filled in Task 7 once the delay row is built.
+        return 60.0
 
-        group = getattr(self, "_keepalive_group", None)
-        if group is None:
-            return
-
-        # If a previous pulse is still running, stop it first. Otherwise the
-        # old animation's `finished` lambda would fire `setGraphicsEffect(None)`
-        # on the new effect, killing the new pulse before it starts.
-        prior = getattr(self, "_keepalive_highlight_anim", None)
-        if prior is not None:
-            try:
-                prior.stop()
-            except RuntimeError:
-                # Animation's underlying C++ object may already be deleted
-                # via DeleteWhenStopped from a fully-finished previous run.
-                pass
-
-        # Best-effort scroll: walk up to the nearest QScrollArea and ensure
-        # the group is visible. If no scroll area is found, skip silently.
-        widget = group
-        while widget is not None:
-            parent = widget.parentWidget()
-            if isinstance(parent, QScrollArea):
-                parent.ensureWidgetVisible(group, 0, 24)
-                break
-            widget = parent
-
-        # 600 ms one-shot accent-blue wash via QGraphicsColorizeEffect.
-        from utils.theme_manager import get_theme_colors, is_dark_palette
-        c = get_theme_colors(is_dark_palette())
-        accent = QColor(c.get("accent_blue_btn", "#0077ff"))
-
-        effect = QGraphicsColorizeEffect(group)
-        effect.setColor(accent)
-        effect.setStrength(0.0)
-        group.setGraphicsEffect(effect)
-
-        anim = QPropertyAnimation(effect, b"strength", group)
-        anim.setDuration(600)
-        anim.setStartValue(0.30)
-        anim.setEndValue(0.0)
-        anim.setEasingCurve(QEasingCurve.OutCubic)
-
-        def _cleanup():
-            # Drop the effect after the animation so subsequent renders are
-            # unmodified.
-            group.setGraphicsEffect(None)
-
-        anim.finished.connect(_cleanup)
-        anim.start(QPropertyAnimation.DeleteWhenStopped)
-        # Hold a temporary reference so the animation isn't garbage-collected
-        # before it finishes — the animation is parented to `group`, but the
-        # extra reference makes the lifetime obvious in code review.
-        self._keepalive_highlight_anim = anim
-
-    def change_theme(self, index):
-        theme = ["system", "light", "dark"][index]
-        self.settings_manager.set("theme", theme)
-        apply_theme(QApplication.instance(), resolve_theme(self.settings_manager))
-        self.theme_changed.emit()
-
-    def toggle_companion_app(self, val: bool):
-        self.settings_manager.set("enable_companion_app", val)
-
-    def change_input_backend(self, index):
-        import sys
-        if sys.platform == "win32":
-            self.settings_manager.set("input_backend", "win32")
-            self.input_backend_changed.emit()
-            return
-
-        backend = "xlib" if index == 0 else "xdotool"
-        if backend == "xdotool" and self._is_gnome_wayland():
-            dlg = QMessageBox(self)
-            dlg.setWindowTitle("Warning: xdotool on GNOME Wayland")
-            dlg.setIcon(QMessageBox.Warning)
-            dlg.setText(
-                "xdotool on GNOME Wayland will trigger repeated Remote Desktop "
-                "authorization prompts and will likely break input sending.\n\n"
-                "Xlib is strongly recommended for GNOME Wayland.\n\n"
-                "This will restart the service.\n\nSwitch to xdotool anyway?"
-            )
-            dlg.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
-            dlg.setDefaultButton(QMessageBox.Cancel)
-            if dlg.exec() != QMessageBox.Ok:
-                self.backend_row.combo.blockSignals(True)
-                self.backend_row.combo.setCurrentIndex(0)
-                self.backend_row.combo.blockSignals(False)
-                return
-        self.settings_manager.set("input_backend", backend)
-        self.input_backend_changed.emit()
-
-    def _is_gnome_wayland(self) -> bool:
-        import os
-        return (os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland"
-                and "GNOME" in os.environ.get("XDG_CURRENT_DESKTOP", "").upper())
-
-    def toggle_debug_tab(self, val: bool):
-        self.settings_manager.set("show_debug_tab", val)
-        self.debug_visibility_changed.emit(val)
-
-    def _on_max_accounts_changed(self, i):
-        value = i + 4  # dropdown index 0 = "4", index 4 = "8"
-        self.settings_manager.set("max_accounts_per_game", value)
-        self.max_accounts_changed.emit(value)
-
-    def _on_reduce_motion_changed(self, idx: int) -> None:
-        """Tri-state reduce-motion handler.
-
-        idx 0 → "System default" — clear the explicit override, fall
-                back to OS preference.
-        idx 1 → "On"  — explicit override, animations always snap.
-        idx 2 → "Off" — explicit override, animations always run.
-        """
-        if idx == 0:
-            self.settings_manager.set("reduce_motion_set_explicitly", False)
-            self.settings_manager.set("reduce_motion", False)
-        elif idx == 1:
-            self.settings_manager.set("reduce_motion_set_explicitly", True)
-            self.settings_manager.set("reduce_motion", True)
-        else:  # idx == 2
-            self.settings_manager.set("reduce_motion_set_explicitly", True)
-            self.settings_manager.set("reduce_motion", False)
-
-    def _on_clear_credentials_clicked(self):
-        dlg = QMessageBox(self)
-        dlg.setWindowTitle("Clear Stored Credentials")
-        dlg.setIcon(QMessageBox.Warning)
-        dlg.setText(
-            "Are you sure you want to clear all stored TTR and Corporate Clash "
-            "account credentials? This will delete them from your system keyring permanently."
-        )
-        dlg.setStandardButtons(QMessageBox.Yes | QMessageBox.Cancel)
-        dlg.setDefaultButton(QMessageBox.Cancel)
-        if dlg.exec() == QMessageBox.Yes:
-            self.clear_credentials_requested.emit()
-
+    # ── Theming ───────────────────────────────────────────────────────────
     def refresh_theme(self):
         is_dark = resolve_theme(self.settings_manager) == "dark"
         c = get_theme_colors(is_dark)
         self.setStyleSheet(f"background: {c['bg_app']}; color: {c['text_primary']};")
-
-        # Scroll area background + scrollbar theme.
+        # Scroll areas + scrollbars
         for child in self.findChildren(QScrollArea):
-            child.setStyleSheet(f"QScrollArea {{ background: {c['bg_app']}; border: none; }}")
+            child.setStyleSheet(
+                f"QScrollArea {{ background: {c['bg_app']}; border: none; }}"
+            )
             if child.widget():
                 child.widget().setStyleSheet(f"background: {c['bg_app']};")
             bar = getattr(child, "_auto_hide_scrollbar", None)
             if bar is not None:
                 bar.set_theme(is_dark)
+        # Sidebar
+        self.sidebar.apply_theme(c, is_dark)
+        # Page headers (title + subtitle for every page)
+        for page in self.pages.values():
+            page._title_label.setStyleSheet(
+                f"font-size: 18px; font-weight: 700; color: {c['text_primary']}; "
+                "background: transparent;"
+            )
+            page._sub_label.setStyleSheet(
+                f"font-size: 12px; color: {c['text_muted']}; "
+                "background: transparent; margin-bottom: 6px;"
+            )
+        # Panels
+        for panel in self._panels:
+            panel.apply_theme(c, is_dark)
+        # Switches
+        for s in self.findChildren(Switch):
+            s.set_theme_colors(
+                track_on=c["accent_blue_btn"],
+                track_off=c["border_input"] if is_dark else "#d1d1d6",
+                thumb="#ffffff",
+            )
 
-        for group in self._groups:
-            group.apply_theme(c, is_dark)
-
-        # Theme custom-painted widgets
-        toggle_off = c['bg_input'] if is_dark else '#d1d1d6'
-        for toggle in self.findChildren(IOSToggle):
-            toggle.set_theme_colors(toggle_off)
