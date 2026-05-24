@@ -212,6 +212,12 @@ class _CompactLayout(QWidget):
         if divider is not None:
             divider.setStyleSheet(f"background: {c['border_muted']}; border: none;")
 
+        # Refresh the portrait-overlay dot's cut-out ring so it matches
+        # the current card backdrop.
+        dot = self._card_slots[i].get("status_ring")
+        if dot is not None and hasattr(dot, "set_cutout_border"):
+            dot.set_cutout_border(c["bg_card"], width=2.5)
+
     # ── Populate ───────────────────────────────────────────────────────────
     def populate(self):
         """Clear slot layouts and re-add shared widgets in the correct order.
@@ -363,8 +369,9 @@ class _CompactLayout(QWidget):
         slot["ctrl_row"].addWidget(self._tab.set_selectors[i])
 
     def _position_status_rings(self) -> None:
-        """Re-position the status-ring overlays after Qt has resolved
-        layout. Called from showEvent / resizeEvent / populate()."""
+        """Re-position the portrait status-dot overlays after Qt has
+        resolved layout. Called from showEvent / resizeEvent /
+        populate()."""
         for i, slot in enumerate(self._card_slots):
             ring = slot.get("status_ring")
             if ring is None:
@@ -372,13 +379,13 @@ class _CompactLayout(QWidget):
             badge = self._tab.slot_badges[i]
             if not badge.isVisible():
                 continue
-            # Convert badge's bottom-right corner into card-local coords.
+            # Convert badge bottom-right corner into card-local coords,
+            # then offset so the visible dot cluster (10 px core + 2.5 px
+            # cut-out ring on each side = 15 px) extends 2 px past the
+            # corner, matching the design mockup's
+            # `right: -2px; bottom: -2px`.
             br = badge.mapTo(slot["card"], badge.rect().bottomRight())
-            # PulsingDot is sized (size + 8) per side - default size 10
-            # gives an 18 px widget. Centre the dot at the badge's
-            # bottom-right corner: subtract half the widget's width.
-            half = ring.width() // 2
-            ring.move(br.x() - half, br.y() - half)
+            ring.move(br.x() - 14, br.y() - 14)
             ring.show()
             ring.raise_()
 
