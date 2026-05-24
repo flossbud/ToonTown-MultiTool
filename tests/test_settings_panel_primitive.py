@@ -432,3 +432,22 @@ def test_panel_no_paintevent_override(qapp):
         "SettingsPanel must not override paintEvent; use QSS chrome only "
         "(see launch_section.py for the reference pattern)"
     )
+
+
+def test_field_has_transparent_background_to_let_panel_chrome_show(qapp):
+    """SettingsField must declare transparent bg so the panel's body
+    chrome (bg_card fill + left/right/bottom borders) shows through.
+    Without this, the page widget's `background: bg_app` cascade leaks
+    in and SettingsField paints opaque bg_app over the panel chrome.
+    See utils/widgets/launch_section.py:166-168 for the same comment."""
+    from PySide6.QtCore import Qt
+    from tabs.settings_tab import SettingsField
+    field = SettingsField("X")
+    assert field.objectName() == "settings_field"
+    assert field.testAttribute(Qt.WA_StyledBackground)
+    # apply_theme must produce a stylesheet with transparent bg.
+    from utils.theme_manager import get_theme_colors
+    field.apply_theme(get_theme_colors(is_dark=True), is_dark=True)
+    qss = field.styleSheet()
+    assert "QFrame#settings_field" in qss
+    assert "background: transparent" in qss

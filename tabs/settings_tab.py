@@ -40,6 +40,8 @@ class SettingsField(QFrame):
 
     def __init__(self, label: str, helper: str | None = None, parent=None):
         super().__init__(parent)
+        self.setObjectName("settings_field")
+        self.setAttribute(Qt.WA_StyledBackground, True)
         self._is_last = False
         self.control_widget = None
         self._controls: list = []
@@ -166,6 +168,13 @@ class SettingsField(QFrame):
     def apply_theme(self, c, is_dark: bool) -> None:
         self._c = c
         self._is_dark = is_dark
+        # Explicit transparent bg via QSS — required to stop the page
+        # widget's cascaded `background: bg_app` from leaking in and
+        # covering the panel's chrome behind this row. Same pattern as
+        # header_widget and _body_widget in SettingsPanel.
+        self.setStyleSheet(
+            "QFrame#settings_field { background: transparent; }"
+        )
         self.label_widget.setStyleSheet(
             f"font-size: 12.5px; font-weight: 500; color: {c['text_primary']}; "
             "background: transparent; border: none;"
