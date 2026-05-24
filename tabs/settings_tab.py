@@ -1938,7 +1938,438 @@ class SettingsTab(QWidget):
         lay.insertWidget(insert_at, updates)
 
     def _build_games_page(self, page):
-        pass
+        from utils.settings_keys import (
+            CC_ENGINE_INSTALL_SIGNATURE,
+            CC_HIDE_LAUNCH_CONSOLE,
+            CC_EXTERNAL_LOG_DIR,
+        )
+        page._title_label.setText("Games")
+        page._sub_label.setText("Locations and runtime settings for each game.")
+
+        lay = page._panel_layout
+        insert_at = lay.count() - 1
+
+        # ── TTR ──────────────────────────────────────────────────────────
+        ttr_logo = self._asset_path("ttr.png")
+        ttr_panel = SettingsPanel(
+            title="Toontown Rewritten", stripe="ttr",
+            sub=" ", logo_path=ttr_logo,
+        )
+        self._panels.append(ttr_panel)
+        self._ttr_panel = ttr_panel
+
+        # Header buttons: Browse + Auto-detect (path-row pattern).
+        ttr_browse = QPushButton("Browse")
+        ttr_browse.setCursor(Qt.PointingHandCursor)
+        ttr_browse.setFixedHeight(28)
+        ttr_browse.clicked.connect(lambda: self._game_path_browse("ttr"))
+        ttr_panel.add_header_button(ttr_browse)
+
+        ttr_detect = QPushButton("Auto-detect")
+        ttr_detect.setCursor(Qt.PointingHandCursor)
+        ttr_detect.setFixedHeight(28)
+        ttr_detect.clicked.connect(lambda: self._game_path_auto_detect("ttr"))
+        ttr_panel.add_header_button(ttr_detect)
+
+        # Companion app body row.
+        comp_field = SettingsField(
+            "TTR Companion App",
+            helper="Show toon names and portraits (TTR only).",
+        )
+        comp_switch = Switch(self.settings_manager.get("enable_companion_app", True))
+        comp_switch.toggled.connect(self._on_companion_toggled)
+        comp_field.set_control(comp_switch)
+        ttr_panel.add_field(comp_field)
+
+        lay.insertWidget(insert_at, ttr_panel)
+        insert_at += 1
+
+        # Resolve TTR path on first display.
+        current_ttr = self.settings_manager.get("ttr_engine_dir", "")
+        if not current_ttr:
+            self._game_path_auto_detect("ttr", silent=True)
+        else:
+            self._refresh_game_path_display("ttr", current_ttr)
+
+        # ── CC ───────────────────────────────────────────────────────────
+        cc_logo = self._asset_path("cc.png")
+        cc_panel = SettingsPanel(
+            title="Corporate Clash", stripe="cc",
+            sub=" ", logo_path=cc_logo,
+        )
+        self._panels.append(cc_panel)
+        self._cc_panel = cc_panel
+
+        cc_browse = QPushButton("Browse")
+        cc_browse.setCursor(Qt.PointingHandCursor)
+        cc_browse.setFixedHeight(28)
+        cc_browse.clicked.connect(lambda: self._game_path_browse("cc"))
+        cc_panel.add_header_button(cc_browse)
+
+        cc_detect = QPushButton("Auto-detect")
+        cc_detect.setCursor(Qt.PointingHandCursor)
+        cc_detect.setFixedHeight(28)
+        cc_detect.clicked.connect(lambda: self._game_path_auto_detect("cc"))
+        cc_panel.add_header_button(cc_detect)
+
+        # Compatibility runtime body row.
+        compat_field = SettingsField(
+            "Compatibility runtime", helper=" ",
+        )
+        compat_change_btn = QPushButton("Change…")
+        compat_change_btn.setCursor(Qt.PointingHandCursor)
+        compat_change_btn.setFixedHeight(28)
+        compat_change_btn.clicked.connect(self._on_compat_change_clicked)
+        compat_field.set_control(compat_change_btn)
+        self._compat_field = compat_field
+        self._compat_change_btn = compat_change_btn
+        if sys.platform != "win32":
+            cc_panel.add_field(compat_field)
+            self._refresh_compat_runtime_row()
+            self.settings_manager.on_change(self._on_setting_changed_compat)
+
+        # Hide CC launch console
+        hide_field = SettingsField(
+            "Hide CC launch console",
+            helper="Turn off to see TTCCLauncher stdout when debugging.",
+        )
+        hide_switch = Switch(self.settings_manager.get(CC_HIDE_LAUNCH_CONSOLE, True))
+        hide_switch.toggled.connect(
+            lambda v: self.settings_manager.set(CC_HIDE_LAUNCH_CONSOLE, v)
+        )
+        hide_field.set_control(hide_switch)
+        cc_panel.add_field(hide_field)
+
+        # External CC log directory (advanced)
+        ext_field = SettingsField(
+            "External CC log directory (advanced)",
+            helper="Leave blank for auto-detection.",
+        )
+        self._ext_log_label = QLabel(
+            self.settings_manager.get(CC_EXTERNAL_LOG_DIR, "") or "(auto)"
+        )
+        ext_browse = QPushButton("Browse")
+        ext_browse.setFixedHeight(28)
+        ext_browse.setCursor(Qt.PointingHandCursor)
+        ext_browse.clicked.connect(self._on_ext_log_browse)
+        ext_clear = QPushButton("Clear")
+        ext_clear.setFixedHeight(28)
+        ext_clear.setCursor(Qt.PointingHandCursor)
+        ext_clear.clicked.connect(self._on_ext_log_clear)
+        ext_detect = QPushButton("Detect")
+        ext_detect.setFixedHeight(28)
+        ext_detect.setCursor(Qt.PointingHandCursor)
+        ext_detect.setToolTip(
+            "Walk currently-running CC processes and report what discovery finds."
+        )
+        ext_detect.clicked.connect(self._on_ext_log_detect)
+        ext_field.add_control(ext_browse)
+        ext_field.add_control(ext_clear)
+        ext_field.add_control(ext_detect)
+        cc_panel.add_field(ext_field)
+
+        lay.insertWidget(insert_at, cc_panel)
+
+        # Resolve CC path on first display BEFORE populating _cc_installs.
+        # Order matters: _game_path_auto_detect opens the install picker when
+        # len(_cc_installs) > 1; running the first resolution with the attr
+        # unset short-circuits that branch on construction so the dialog only
+        # opens when the user actually clicks Auto-detect. See commit 2358572.
+        current_cc = self.settings_manager.get("cc_engine_dir", "")
+        if not current_cc:
+            self._game_path_auto_detect("cc", silent=True)
+        # Now populate the install set so the chip suffix + needs-pick state
+        # are available for subsequent interactions.
+        self._cc_installs: list = []
+        from services.cc_login_service import discover_cc_installs
+        try:
+            self._cc_installs = discover_cc_installs()
+        except Exception:
+            self._cc_installs = []
+        stored_sig = self.settings_manager.get(CC_ENGINE_INSTALL_SIGNATURE, "")
+        from services.wine_runtimes import install_signature
+        sig_match = (
+            any(install_signature(i) == stored_sig for i in self._cc_installs)
+            if stored_sig else False
+        )
+        self._cc_needs_pick = bool(
+            len(self._cc_installs) > 1 and not sig_match
+        )
+        # Re-render now that _cc_installs reflects the resolved set so the
+        # active-install chip suffix can be appended to the subtitle.
+        if current_cc:
+            self._refresh_game_path_display("cc", current_cc)
+
+    # ── Game path helpers ─────────────────────────────────────────────────
+
+    def _asset_path(self, name: str) -> str:
+        """Resolve a bundled asset relative to repo root / PyInstaller _MEIPASS."""
+        base = getattr(
+            sys, "_MEIPASS",
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        )
+        return os.path.join(base, "assets", name)
+
+    def _exe_name(self, game: str) -> str:
+        if game == "ttr":
+            return get_engine_executable_name()
+        return get_cc_engine_executable_name()
+
+    def _find_path(self, game: str):
+        if game == "ttr":
+            return find_engine_path()
+        return find_cc_engine_path()
+
+    def _settings_key_for(self, game: str) -> str:
+        return "ttr_engine_dir" if game == "ttr" else "cc_engine_dir"
+
+    def _approval_key_for(self, game: str) -> str:
+        return f"{self._settings_key_for(game)}_approved_custom_dir"
+
+    def _panel_for(self, game: str) -> SettingsPanel:
+        return self._ttr_panel if game == "ttr" else self._cc_panel
+
+    def _refresh_game_path_display(self, game: str, path: str, error: bool = False):
+        from utils.settings_keys import CC_ENGINE_INSTALL_SIGNATURE
+        from services.wine_runtimes import install_signature
+        panel = self._panel_for(game)
+        if not path:
+            panel.set_sub("Not found. Click Browse or Auto-detect.", color_override="#E05252")
+            return
+        if error:
+            panel.set_sub(path, color_override="#E05252")
+            return
+        home = os.path.expanduser("~")
+        display = path.replace(home, "~") if path.startswith(home) else path
+        subtitle = display
+        has_chip = False
+        if game == "cc":
+            stored_sig = self.settings_manager.get(CC_ENGINE_INSTALL_SIGNATURE, "")
+            for inst in getattr(self, "_cc_installs", []):
+                if install_signature(inst) == stored_sig:
+                    from utils.widgets.picker_card import PickerChip
+                    chip_html = PickerChip.inline_html(inst.launcher)
+                    subtitle = f"{display}  ·  {chip_html} {inst.display_name}"
+                    has_chip = True
+                    break
+        panel.set_sub(subtitle, color_override="#56c856", rich_text=has_chip)
+
+    def _game_path_browse(self, game: str):
+        exe_name = self._exe_name(game)
+        dir_path = QFileDialog.getExistingDirectory(
+            self, f"Select {exe_name} Folder",
+            os.path.expanduser("~"),
+            QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks,
+        )
+        if not dir_path:
+            return
+        engine = os.path.join(dir_path, exe_name)
+        if os.path.isfile(engine):
+            self.settings_manager.set(self._settings_key_for(game), dir_path)
+            self.settings_manager.set(self._approval_key_for(game), os.path.realpath(dir_path))
+            self._refresh_game_path_display(game, dir_path)
+        else:
+            self._refresh_game_path_display(
+                game, f"{exe_name} not found in that folder", error=True,
+            )
+
+    def _game_path_auto_detect(self, game: str, silent: bool = False):
+        from utils.settings_keys import CC_ENGINE_INSTALL_SIGNATURE
+        from services.wine_runtimes import install_signature
+        if game == "cc":
+            cc_installs = getattr(self, "_cc_installs", None) or []
+            if len(cc_installs) > 1:
+                self._open_cc_install_picker(cc_installs)
+                return
+        path = self._find_path(game)
+        if path:
+            self.settings_manager.set(self._settings_key_for(game), path)
+            self.settings_manager.set(self._approval_key_for(game), "")
+            if game == "cc":
+                cc_installs = getattr(self, "_cc_installs", None) or []
+                if len(cc_installs) == 1:
+                    self.settings_manager.set(
+                        CC_ENGINE_INSTALL_SIGNATURE,
+                        install_signature(cc_installs[0]),
+                    )
+            self._refresh_game_path_display(game, path)
+        elif not silent:
+            self._refresh_game_path_display(
+                game, "Could not auto-detect. Click Browse.", error=True,
+            )
+
+    def _open_cc_install_picker(self, installs):
+        from utils.settings_keys import CC_ENGINE_INSTALL_SIGNATURE
+        from services.wine_runtimes import install_signature
+        from utils.widgets.cc_install_picker import CCInstallPickerDialog
+        stored = self.settings_manager.get(CC_ENGINE_INSTALL_SIGNATURE, "")
+        dlg = CCInstallPickerDialog(
+            installs, parent=self.window(), active_signature=stored or None,
+        )
+        if dlg.exec() != dlg.DialogCode.Accepted:
+            return
+        picked = dlg.selected_install()
+        if picked is None:
+            return
+        path = os.path.dirname(picked.exe_path)
+        self.settings_manager.set("cc_engine_dir", path)
+        self.settings_manager.set("cc_engine_dir_approved_custom_dir", "")
+        self.settings_manager.set(CC_ENGINE_INSTALL_SIGNATURE, install_signature(picked))
+        try:
+            from services.cc_login_service import discover_cc_installs
+            self._cc_installs = discover_cc_installs()
+        except Exception:
+            pass
+        self._cc_needs_pick = False
+        self._refresh_game_path_display("cc", path)
+
+    # ── Compat runtime helpers ────────────────────────────────────────────
+
+    def _get_active_cc_install(self):
+        from services.cc_login_service import get_cc_engine_executable_name
+        from services.wine_runtimes import WineInstall, classify_path
+        engine_dir = self.settings_manager.get("cc_engine_dir", "")
+        if not engine_dir:
+            return None
+        exe = os.path.join(engine_dir, get_cc_engine_executable_name())
+        if not os.path.isfile(exe):
+            return None
+        try:
+            classified = classify_path(exe)
+        except Exception:
+            return None
+        if classified is not None:
+            return classified
+        return WineInstall(
+            exe_path=exe, launcher="native", prefix_path=None,
+            display_name="Corporate Clash", metadata={},
+        )
+
+    def _refresh_compat_runtime_row(self):
+        if not hasattr(self, "_compat_field"):
+            return
+        install = self._get_active_cc_install()
+        if install is None:
+            self._compat_field.hide()
+            return
+        self._compat_field.show()
+        if install.launcher != "steam-proton":
+            self._compat_field.helper_widget.setText(self._compat_readonly_label(install))
+            self._compat_change_btn.hide()
+            return
+        self._compat_change_btn.show()
+        from services.cc_launcher import resolve_effective_proton
+        chosen = resolve_effective_proton(install, self.settings_manager)
+        if chosen is None:
+            self._compat_field.helper_widget.setText("No Steam Proton found")
+            self._compat_change_btn.setEnabled(False)
+            return
+        self._compat_change_btn.setEnabled(True)
+        nickname = self._compat_nickname_for(chosen)
+        override = self.settings_manager.get("cc_steam_proton_override", "")
+        suffix = "custom" if override else "default"
+        self._compat_field.helper_widget.setText(f"{nickname} · {suffix}")
+
+    @staticmethod
+    def _compat_readonly_label(install):
+        if install.launcher == "bottles":
+            runner = (install.metadata.get("bottle_display_name")
+                      or install.metadata.get("bottle_name") or "(unknown)")
+            return f"Bottles · {runner}"
+        if install.launcher == "lutris":
+            name = (install.metadata.get("lutris_name")
+                    or install.metadata.get("lutris_slug") or "(unknown)")
+            return f"Lutris · {name}"
+        if install.launcher == "wine":
+            return "Wine · system wine"
+        if install.launcher == "native":
+            return "Native (no compatibility layer)"
+        return install.launcher
+
+    @staticmethod
+    def _compat_nickname_for(proton_dir: str) -> str:
+        from services.steam_proton_tools import enumerate_proton_tools
+        for tool in enumerate_proton_tools():
+            if tool.proton_dir == proton_dir:
+                return tool.nickname
+        return os.path.basename(proton_dir.rstrip(os.sep))
+
+    def _on_setting_changed_compat(self, key, _value):
+        if key in ("cc_steam_proton_override", "cc_engine_dir"):
+            self._refresh_compat_runtime_row()
+
+    def _on_compat_change_clicked(self):
+        from services.steam_proton_tools import enumerate_proton_tools
+        from utils.widgets.cc_compat_picker import CCCompatPickerDialog
+        install = self._get_active_cc_install()
+        if install is None or install.launcher != "steam-proton":
+            return
+        tools = enumerate_proton_tools()
+        override = self.settings_manager.get("cc_steam_proton_override", "")
+        from services.cc_launcher import resolve_effective_proton
+        resolved = resolve_effective_proton(install, self.settings_manager) or ""
+        default_display = (
+            self._compat_nickname_for(resolved) if resolved else "(none installed)"
+        )
+        dlg = CCCompatPickerDialog(
+            tools=tools, current_override=override,
+            steam_default_display=default_display, parent=self,
+        )
+        if dlg.exec() != dlg.DialogCode.Accepted:
+            return
+        chosen = dlg.chosen_override()
+        if chosen is None:
+            return
+        self.settings_manager.set("cc_steam_proton_override", chosen)
+        self._refresh_compat_runtime_row()
+
+    # ── External CC log dir handlers ──────────────────────────────────────
+
+    def _on_ext_log_browse(self):
+        from utils.settings_keys import CC_EXTERNAL_LOG_DIR
+        current = self.settings_manager.get(CC_EXTERNAL_LOG_DIR, "") or ""
+        picked = QFileDialog.getExistingDirectory(
+            self, "Select Corporate Clash logs directory", current,
+        )
+        if picked:
+            self.settings_manager.set(CC_EXTERNAL_LOG_DIR, picked)
+            if hasattr(self, "_ext_log_label"):
+                self._ext_log_label.setText(picked)
+
+    def _on_ext_log_clear(self):
+        from utils.settings_keys import CC_EXTERNAL_LOG_DIR
+        self.settings_manager.set(CC_EXTERNAL_LOG_DIR, "")
+        if hasattr(self, "_ext_log_label"):
+            self._ext_log_label.setText("(auto)")
+
+    def _on_ext_log_detect(self):
+        from pathlib import Path
+        from utils import cc_log_discovery
+        from utils.settings_keys import CC_EXTERNAL_LOG_DIR
+        manual_raw = self.settings_manager.get(CC_EXTERNAL_LOG_DIR, "") or ""
+        manual_dir = Path(manual_raw.strip()) if manual_raw.strip() else None
+        results: list[str] = []
+        for proc in psutil.process_iter(attrs=["pid", "name"]):
+            name = (proc.info.get("name") or "").lower()
+            if "corporateclash" not in name:
+                continue
+            pid = proc.info["pid"]
+            try:
+                path = cc_log_discovery.find_log_for_pid(pid, manual_dir=manual_dir)
+            except Exception as exc:
+                results.append(f"pid {pid}: error {exc!r}")
+                continue
+            results.append(
+                f"pid {pid}: {'(found) ' + str(path) if path else '(not found)'}"
+            )
+        if not results:
+            results.append("No running CC processes detected.")
+        QMessageBox.information(
+            self, "External CC log discovery", "\n".join(results),
+        )
+
+    def _on_companion_toggled(self, val: bool):
+        self.settings_manager.set("enable_companion_app", val)
 
     def _build_keep_alive_page(self, page):
         pass
