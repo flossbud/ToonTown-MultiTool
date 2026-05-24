@@ -33,14 +33,14 @@ def make_chat_icon(size: int = 18) -> QIcon:
     return QIcon(pixmap)
 
 
-def make_refresh_icon(size: int = 14) -> QIcon:
+def make_refresh_icon(size: int = 14, color: QColor = None) -> QIcon:
     """Draw a circular refresh arrow using Qt primitives."""
     pixmap = QPixmap(size, size)
     pixmap.fill(QColor(0, 0, 0, 0))
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.Antialiasing)
 
-    pen_color = QColor(200, 200, 200)
+    pen_color = color or QColor(200, 200, 200)
     pen = QPen(pen_color, max(1.5, size / 10))
     pen.setCapStyle(Qt.RoundCap)
     painter.setPen(pen)

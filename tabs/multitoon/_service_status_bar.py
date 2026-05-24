@@ -109,17 +109,39 @@ class ServiceStatusBar(QFrame):
         self.state = state
         self.setProperty("svc_state", state)
 
-        from utils.icon_factory import make_stop_icon, make_play_icon
+        # Foreground (label text + icons) needs to be pure white when the
+        # bar is on a coloured fill (broadcasting/stopped), and the
+        # theme's muted-text colour when neutral (idle). QSS attribute
+        # selectors are unreliable for child QPushButtons and QIcons can't
+        # be tinted by stylesheet, so we set both explicitly here.
+        from PySide6.QtGui import QColor
+        from utils.icon_factory import (
+            make_stop_icon, make_play_icon, make_refresh_icon,
+        )
+        if state in ("broadcasting", "stopped"):
+            fg = QColor("#ffffff")
+        else:
+            fg_hex = (self._theme or {}).get("text_secondary", "#bbbbbb")
+            fg = QColor(fg_hex)
+
+        # Label colour (explicit per-instance stylesheet, beats QSS cascade).
+        self.label.setStyleSheet(
+            f"color: {fg.name()}; font-size: 12.5px; font-weight: 600; "
+            f"background: transparent; border: none;"
+        )
+
+        # Icons (re-rendered in the right colour for the current state).
         if state == "stopped":
-            self.stop_play_button.setIcon(make_play_icon(14))
+            self.stop_play_button.setIcon(make_play_icon(14, fg))
             self.stop_play_button.setToolTip("Start broadcasting")
             self.stop_play_button.setProperty("role", "play")
         else:
-            self.stop_play_button.setIcon(make_stop_icon(14))
+            self.stop_play_button.setIcon(make_stop_icon(14, fg))
             self.stop_play_button.setToolTip("Stop broadcasting")
             self.stop_play_button.setProperty("role", "stop")
+        self.refresh_button.setIcon(make_refresh_icon(14, fg))
 
-        # Force a style recompute so [svc_state="..."] QSS rules apply.
+        # Force a style recompute so the bar's fill/border QSS still cascades.
         self.style().unpolish(self)
         self.style().polish(self)
         # Dots are painted by Python; push the per-state palette now.
