@@ -871,7 +871,11 @@ class MultitoonTab(QWidget):
         self.keymap_manager = keymap_manager
         self.profile_manager = profile_manager
         self.window_manager = window_manager
-        self.service_running = False
+        # Service implicitly on per the Direction D redesign - the new
+        # ServiceStatusBar's play/stop button is the only explicit
+        # toggle. Idle state (grey bar) is shown when service is on but
+        # no toons are enabled.
+        self.service_running = True
         self.toon_labels = []       # list of (name_label, status_dot)
         self.laff_labels = []       # list of QLabels showing laff
         self.bean_labels = []       # list of QLabels showing beans
@@ -970,6 +974,20 @@ class MultitoonTab(QWidget):
 
         self.refresh_theme()
         self.apply_all_visual_states()
+
+        # Auto-start the service per the Direction D implicit-on design.
+        # Wraps the same startup sequence that the legacy toggle_service()
+        # path used: enable detection so the window manager polls + start
+        # the input service. Toons stay un-enabled until the user manually
+        # clicks Enable on each card; the bar will show Idle (grey) until
+        # then.
+        # NOTE: we bypass _start_service_internal() deliberately - that
+        # helper also auto-enables any detected toons, which contradicts
+        # the spec's "toons must be manually enabled" requirement.
+        self.input_service.window_manager.enable_detection()
+        self.input_service.start()
+        self.log("[Service] Multitoon service auto-started (implicit-on).")
+        self.update_service_button_style()
 
     # ── UI Construction ────────────────────────────────────────────────────
 
