@@ -14,7 +14,7 @@ from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPen, QPainterPath, Q
 from services.input_service import InputService
 from utils.theme_manager import (
     resolve_theme, get_theme_colors, apply_card_shadow,
-    make_chat_icon, make_refresh_icon, make_mouse_icon,
+    make_chat_icon, make_refresh_icon, make_lightning_icon,
     make_heart_icon, make_jellybean_icon,
     get_set_color, SmoothProgressBar, make_section_label,
 )
@@ -1110,7 +1110,7 @@ class MultitoonTab(QWidget):
             ka_btn.setChecked(False)
             ka_btn.setFixedHeight(32)
             ka_btn.setFixedWidth(32)
-            ka_btn.setIcon(make_mouse_icon(14))
+            ka_btn.setIcon(make_lightning_icon(14))
             ka_btn.setToolTip("Toggle keep-alive for this toon")
             ka_btn.clicked.connect(lambda checked, idx=i: self.toggle_keep_alive(idx))
             ka_btn.rapid_fire_toggled.connect(lambda state, idx=i: self.toggle_rapid_fire(idx, state))

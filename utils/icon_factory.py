@@ -179,6 +179,40 @@ def make_mouse_icon(size: int = 16) -> QIcon:
     return QIcon(pixmap)
 
 
+def make_lightning_icon(size: int = 14, color: QColor | None = None) -> QIcon:
+    """Draw a stylised lightning bolt for the keep-alive toggle."""
+    pixmap = QPixmap(size, size)
+    pixmap.fill(QColor(0, 0, 0, 0))
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing)
+
+    fill = color or QColor(220, 220, 220)
+    painter.setPen(Qt.NoPen)
+    painter.setBrush(fill)
+
+    # Classic zigzag bolt traced through 6 points. Coordinates are in
+    # normalized 0..1 space and scaled to `size`; tuned so the bolt
+    # reads at 14 px (the default for the Multitoon icon buttons).
+    norm_points = [
+        (0.55, 0.05),
+        (0.20, 0.55),
+        (0.45, 0.55),
+        (0.35, 0.95),
+        (0.80, 0.40),
+        (0.55, 0.40),
+    ]
+    path = QPainterPath()
+    px, py = norm_points[0]
+    path.moveTo(px * size, py * size)
+    for nx, ny in norm_points[1:]:
+        path.lineTo(nx * size, ny * size)
+    path.closeSubpath()
+    painter.drawPath(path)
+
+    painter.end()
+    return QIcon(pixmap)
+
+
 def _draw_nav_icon(size: int, color: QColor, draw_func) -> QIcon:
     """Helper: create a pixmap, set up painter, call draw_func, return icon."""
     pixmap = QPixmap(size, size)
