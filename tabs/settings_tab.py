@@ -1770,6 +1770,8 @@ class SettingsTab(QWidget):
         self._panels: list[SettingsPanel] = []
         self._current_page_key: str = "general"
         self._update_checker = None
+        self._check_now_field = None
+        self._check_now_btn = None
 
         outer = QHBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -1883,9 +1885,6 @@ class SettingsTab(QWidget):
         explicit = self.settings_manager.get("reduce_motion_set_explicitly", False)
         if not explicit:
             rm_idx = 0
-            # Write the canonical "system default" state so settings always
-            # reflect the UI, even when the combo hasn't been interacted with.
-            self.settings_manager.set("reduce_motion_set_explicitly", False)
         elif self.settings_manager.get("reduce_motion", False):
             rm_idx = 1
         else:
@@ -1985,13 +1984,15 @@ class SettingsTab(QWidget):
             self.settings_manager.set("reduce_motion", False)
 
     def _on_check_now_clicked(self):
-        if self._update_checker is None:
+        if self._update_checker is None or self._check_now_btn is None:
             return
         self._check_now_btn.setEnabled(False)
         self._check_now_btn.setText("Checking...")
         self._update_checker.check_async(manual=True)
 
     def _restore_check_button(self):
+        if self._check_now_btn is None:
+            return
         self._check_now_btn.setEnabled(True)
         self._check_now_btn.setText("Check now")
 
@@ -2002,6 +2003,8 @@ class SettingsTab(QWidget):
         from PySide6.QtCore import QTimer
         from utils import build_info
         self._restore_check_button()
+        if self._check_now_field is None:
+            return
         helper = self._check_now_field.helper_widget
         if helper is not None:
             helper.setText("You're on the latest version.")
@@ -2012,6 +2015,8 @@ class SettingsTab(QWidget):
         from PySide6.QtCore import QTimer
         from utils import build_info
         self._restore_check_button()
+        if self._check_now_field is None:
+            return
         helper = self._check_now_field.helper_widget
         if helper is not None:
             short = reason[:80]

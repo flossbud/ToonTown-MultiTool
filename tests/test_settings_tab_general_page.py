@@ -76,16 +76,17 @@ def test_general_page_reduce_motion_tri_state(qapp, settings_manager):
     from tabs.settings_tab import SettingsTab
     tab = SettingsTab(settings_manager)
     field = _find_field(tab, "general", "Reduce motion")
-    # System default
-    field.control_widget.setCurrentIndex(0)
-    assert settings_manager.get("reduce_motion_set_explicitly") is False
-    # On
+    # On: explicit=True, reduce_motion=True
     field.control_widget.setCurrentIndex(1)
     assert settings_manager.get("reduce_motion_set_explicitly") is True
     assert settings_manager.get("reduce_motion") is True
-    # Off
+    # Off: explicit=True, reduce_motion=False
     field.control_widget.setCurrentIndex(2)
     assert settings_manager.get("reduce_motion_set_explicitly") is True
+    assert settings_manager.get("reduce_motion") is False
+    # System default: explicit=False, reduce_motion=False
+    field.control_widget.setCurrentIndex(0)
+    assert settings_manager.get("reduce_motion_set_explicitly") is False
     assert settings_manager.get("reduce_motion") is False
 
 
