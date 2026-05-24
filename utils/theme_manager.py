@@ -154,6 +154,14 @@ def get_theme_colors(is_dark: bool) -> dict:
             "accent_blue_btn":        "#0077ff",
             "accent_blue_btn_border": "#3399ff",
             "accent_blue_btn_hover":  "#1a88ff",
+            # Status-bar Broadcasting state fill. Paired with accent_blue
+            # (#0077ff) as the border. Sits at ~50% lightness to read against
+            # the white status text.
+            "accent_blue_dim":        "#1f5fb8",
+            # Status-bar Stopped state fill. Paired with `red` (#e84141) as
+            # the border. Sits at ~40% lightness so the red is unambiguous
+            # without being aggressive.
+            "red_dim":                "#a83232",
 
             # Accent — red
             "accent_red":        "#b34848",
@@ -303,6 +311,8 @@ def get_theme_colors(is_dark: bool) -> dict:
             "accent_blue_btn":        "#2563eb",
             "accent_blue_btn_border": "#1d4ed8",
             "accent_blue_btn_hover":  "#1e40af",
+            "accent_blue_dim":        "#3b82f6",   # lighter blue for light theme
+            "red_dim":                "#dc2626",   # lighter red for light theme
 
             # Accent — red
             "accent_red":        "#b91c1c",
