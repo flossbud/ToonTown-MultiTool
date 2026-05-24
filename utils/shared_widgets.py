@@ -10,7 +10,7 @@ ElidingLabel        — QLabel that truncates long text with an ellipsis
 
 import math
 
-from PySide6.QtWidgets import QWidget, QLabel, QSizePolicy, QStyledItemDelegate
+from PySide6.QtWidgets import QWidget, QLabel, QSizePolicy, QStyledItemDelegate, QComboBox
 from PySide6.QtCore import (
     Qt, Signal, QPropertyAnimation, QEasingCurve, QVariantAnimation,
     Property, QRectF, QSize,
@@ -413,6 +413,27 @@ class ElidingLabel(QLabel):
         else:
             super().setText(fm.elidedText(self._full_text, self._elide_mode, available))
         self.setToolTip(self._full_text if self.text() != self._full_text else "")
+
+
+# ── Settings ComboBox ─────────────────────────────────────────────────────────
+
+class SettingsComboBox(QComboBox):
+    """QComboBox subclass for the Settings tab dropdowns.
+
+    Wraps QComboBox with:
+      * A _CurrentValueDelegate auto-installed so the open menu shows a
+        blue dot on the currently-selected row.
+      * A custom chevron painted in paintEvent (added in a later task) so
+        the closed-state arrow follows hover/focus/disabled state without
+        shipping image assets.
+
+    All other styling (outer box, caret cell bg, menu container) comes
+    from the global QComboBox QSS rule in utils/theme_manager.py.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setItemDelegate(_CurrentValueDelegate(self))
 
 
 # ── Current Value Delegate ───────────────────────────────────────────────────
