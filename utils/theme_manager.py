@@ -451,7 +451,7 @@ DARK_THEME = """
     QComboBox::drop-down {
         subcontrol-origin: padding;
         subcontrol-position: top right;
-        width: 30px;
+        width: 30px;  /* must match SettingsComboBox._DROPAREA_WIDTH in utils/shared_widgets.py */
         background-color: #232323;
         border-left: 1px solid #3a3a3a;
         border-top-right-radius: 8px;
@@ -657,7 +657,7 @@ LIGHT_THEME = """
     QComboBox::drop-down {
         subcontrol-origin: padding;
         subcontrol-position: top right;
-        width: 30px;
+        width: 30px;  /* must match SettingsComboBox._DROPAREA_WIDTH in utils/shared_widgets.py */
         background-color: #f1f5f9;
         border-left: 1px solid #cbd5e1;
         border-top-right-radius: 8px;
