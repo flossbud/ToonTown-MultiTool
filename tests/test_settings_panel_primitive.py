@@ -138,14 +138,61 @@ def test_panel_add_field_appends_and_marks_last(qapp):
     assert f2.is_last is True
 
 
-def test_panel_add_header_button_renders_on_right(qapp):
+def test_panel_add_header_button_renders_in_button_row(qapp):
+    """Header buttons live on their own row inside the header so they
+    cannot be pushed off-screen by the title/sub column in compact mode."""
     from tabs.settings_tab import SettingsPanel
+    from PySide6.QtWidgets import QPushButton
     panel = SettingsPanel(title="TTR", stripe="ttr")
     browse = QPushButton("Browse")
+    detect = QPushButton("Auto-detect")
     panel.add_header_button(browse)
-    # Header button is reachable for theming.
+    panel.add_header_button(detect)
+    # Both reachable for theming.
     assert browse in panel.header_buttons
-    assert browse.parentWidget() is panel.header_widget
+    assert detect in panel.header_buttons
+    # Both attached to the panel widget tree (parent chain reaches the panel).
+    p = browse
+    while p is not None and p is not panel:
+        p = p.parentWidget()
+    assert p is panel
+    # Header height now includes the buttons row — force a layout pass first.
+    panel.show()
+    panel.adjustSize()
+    assert panel.header_widget.height() >= SettingsPanel.HEADER_HEIGHT_WITH_LOGO
+
+
+def test_panel_header_button_row_fits_in_compact_width(qapp):
+    """At the compact content width (349 px = 575 main min - 170 sidebar
+    - 56 page margins), both header buttons must fit inside the panel
+    rather than extending past its right edge."""
+    from tabs.settings_tab import SettingsPanel
+    from PySide6.QtWidgets import QPushButton
+    from utils.theme_manager import get_theme_colors
+
+    panel = SettingsPanel(
+        title="Toontown Rewritten", stripe="ttr", sub="~/games/ttr",
+    )
+    browse = QPushButton("Browse")
+    browse.setFixedHeight(28)
+    detect = QPushButton("Auto-detect")
+    detect.setFixedHeight(28)
+    panel.add_header_button(browse)
+    panel.add_header_button(detect)
+    panel.apply_theme(get_theme_colors(is_dark=True), is_dark=True)
+    panel.resize(349, 200)
+    # Force layout flush.
+    panel.adjustSize()
+    panel.resize(349, panel.sizeHint().height())
+    panel.show()
+
+    # Each button's right edge in panel-local coordinates must be inside
+    # the panel's width.
+    for btn in (browse, detect):
+        right = btn.mapTo(panel, btn.rect().bottomRight()).x()
+        assert right <= panel.width(), (
+            f"{btn.text()!r} extends to x={right} but panel is {panel.width()} wide"
+        )
 
 
 def test_panel_apply_theme_does_not_crash(qapp):

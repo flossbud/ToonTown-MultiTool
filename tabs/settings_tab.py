@@ -162,10 +162,19 @@ class SettingsPanel(QFrame):
         outer.setSpacing(0)
 
         # ── header ──
+        # Two stacked rows inside the header widget:
+        # 1. Top row: logo + title/sub text column (full width)
+        # 2. Bottom row: header buttons (created lazily by add_header_button)
+        # This keeps buttons from getting clipped at compact widths
+        # (~349 px usable content area).
         self.header_widget = QWidget(self)
-        head_lay = QHBoxLayout(self.header_widget)
-        head_lay.setContentsMargins(16, 10, 16, 10)
-        head_lay.setSpacing(12)
+        head_outer = QVBoxLayout(self.header_widget)
+        head_outer.setContentsMargins(16, 10, 16, 10)
+        head_outer.setSpacing(8)
+
+        head_top = QHBoxLayout()
+        head_top.setContentsMargins(0, 0, 0, 0)
+        head_top.setSpacing(12)
 
         if logo_path is not None:
             from PySide6.QtGui import QPixmap
@@ -180,15 +189,14 @@ class SettingsPanel(QFrame):
                 self.logo_label.setPixmap(
                     pm.scaled(40, 40, Qt.KeepAspectRatio, Qt.SmoothTransformation)
                 )
-            head_lay.addWidget(self.logo_label)
-            self.header_widget.setFixedHeight(self.HEADER_HEIGHT_WITH_LOGO)
+            head_top.addWidget(self.logo_label)
         else:
             self.logo_label = None
-            self.header_widget.setFixedHeight(self.HEADER_HEIGHT_NEUTRAL)
 
         text_col = QVBoxLayout()
         text_col.setSpacing(2)
         text_col.setContentsMargins(0, 0, 0, 0)
+        self._text_col = text_col
         self.title_label = QLabel(title)
         self.title_label.setStyleSheet("background: transparent; border: none;")
         text_col.addWidget(self.title_label)
@@ -199,13 +207,26 @@ class SettingsPanel(QFrame):
             text_col.addWidget(self.sub_label)
         else:
             self.sub_label = None
-        self._text_col = text_col
-        head_lay.addLayout(text_col, 1)
+        head_top.addLayout(text_col, 1)
 
-        self._header_button_slot = QHBoxLayout()
+        head_outer.addLayout(head_top)
+
+        # Buttons row — populated by add_header_button. Hidden when empty.
+        self._header_button_row = QWidget(self.header_widget)
+        self._header_button_row.setStyleSheet("background: transparent;")
+        self._header_button_slot = QHBoxLayout(self._header_button_row)
         self._header_button_slot.setContentsMargins(0, 0, 0, 0)
         self._header_button_slot.setSpacing(6)
-        head_lay.addLayout(self._header_button_slot)
+        self._header_button_slot.addStretch(1)  # buttons hug the right edge
+        self._header_button_row.hide()
+        head_outer.addWidget(self._header_button_row)
+
+        # Header height now expands automatically — no fixed height. Set a
+        # minimum so the top row always has room for a 40 px logo.
+        if logo_path is not None:
+            self.header_widget.setMinimumHeight(self.HEADER_HEIGHT_WITH_LOGO)
+        else:
+            self.header_widget.setMinimumHeight(self.HEADER_HEIGHT_NEUTRAL)
 
         outer.addWidget(self.header_widget)
 
@@ -224,9 +245,13 @@ class SettingsPanel(QFrame):
         self._refresh_last_flag()
 
     def add_header_button(self, button) -> None:
-        button.setParent(self.header_widget)
-        self._header_button_slot.addWidget(button)
+        button.setParent(self._header_button_row)
+        # Insert before the trailing stretch so buttons stay flush-right.
+        self._header_button_slot.insertWidget(
+            self._header_button_slot.count() - 1, button,
+        )
         self.header_buttons.append(button)
+        self._header_button_row.show()
 
     def set_sub(
         self,
@@ -253,7 +278,7 @@ class SettingsPanel(QFrame):
             new_height = (
                 self.HEADER_HEIGHT_WITH_LOGO if self.logo_label is not None else 60
             )
-            self.header_widget.setFixedHeight(new_height)
+            self.header_widget.setMinimumHeight(new_height)
         self.sub_label.setTextFormat(Qt.RichText if rich_text else Qt.PlainText)
         self.sub_label.setText(text)
         if color_override is not None:
