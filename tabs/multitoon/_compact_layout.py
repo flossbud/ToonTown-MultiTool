@@ -87,8 +87,11 @@ class _CompactLayout(QWidget):
         card = QFrame()
         card.setObjectName(f"toon_card_{i}")
         layout = QVBoxLayout(card)
-        layout.setContentsMargins(12, 10, 12, 10)
-        layout.setSpacing(8)
+        # Tall header (13 px top) + tighter body (9 px bottom). Header
+        # padding sits above the hairline divider; body row gets the
+        # smaller padding.
+        layout.setContentsMargins(14, 13, 14, 9)
+        layout.setSpacing(0)
 
         top_row = QHBoxLayout()
         top_row.setSpacing(10)
@@ -107,6 +110,15 @@ class _CompactLayout(QWidget):
         cc_subtitle_row.setContentsMargins(0, 0, 0, 0)
         cc_subtitle_row.setSpacing(0)
         layout.addLayout(cc_subtitle_row)
+
+        # Hairline between the header (portrait + name + stats + CC chips)
+        # and the body (Enable + chat + KA + bar + selector). Colour is
+        # set in set_card_brand so theme swaps re-tint it.
+        header_divider = QFrame()
+        header_divider.setFrameShape(QFrame.HLine)
+        header_divider.setObjectName(f"toon_card_divider_{i}")
+        header_divider.setFixedHeight(1)
+        layout.addWidget(header_divider)
 
         ctrl_row = QHBoxLayout()
         ctrl_row.setSpacing(8)
@@ -134,10 +146,11 @@ class _CompactLayout(QWidget):
             "top_row": top_row,
             "stats_row": stats_row,
             "ctrl_row": ctrl_row,
-            "cc_subtitle_row": cc_subtitle_row,  # NEW
+            "cc_subtitle_row": cc_subtitle_row,
             "middle": middle,
             "ka_group": ka_group,
             "ka_group_layout": ka_group_layout,
+            "header_divider": header_divider,
         })
         self._tab.toon_cards.append(card)
         self._tab.ka_groups.append(ka_group)
@@ -184,6 +197,9 @@ class _CompactLayout(QWidget):
             f"  border-radius: 9px;"
             f"}}"
         )
+        divider = self._card_slots[i].get("header_divider")
+        if divider is not None:
+            divider.setStyleSheet(f"background: {c['border_muted']}; border: none;")
 
     # ── Populate ───────────────────────────────────────────────────────────
     def populate(self):
@@ -232,13 +248,10 @@ class _CompactLayout(QWidget):
         if hasattr(self._tab.set_selectors[i], "set_paint_scale"):
             self._tab.set_selectors[i].set_paint_scale(1.0)
 
-        # slot_badge: Full scales dynamically; ToonPortraitWidget's
-        # constructor defaults are setMinimumSize(38, 38) + setMaximumSize(64, 64).
-        # Without this reset the badge stays at 104x104 in Compact, which makes
-        # the cards ~45px taller than designed.
+        # Direction D portrait sizing: tall-header design wants a fixed 50 px.
         badge = self._tab.slot_badges[i]
-        badge.setMinimumSize(38, 38)
-        badge.setMaximumSize(64, 64)
+        badge.setMinimumSize(50, 50)
+        badge.setMaximumSize(50, 50)
 
         # ka_bar: Full scales dynamically; SmoothProgressBar's constructor
         # defaults are setFixedHeight(7) + setMinimumWidth(40), elastic max width.
@@ -257,8 +270,13 @@ class _CompactLayout(QWidget):
         game_badge.setMinimumSize(0, 0)
         game_badge.setMaximumSize(16777215, 16777215)
 
+        # Direction D header: name uses an 11 pt (about 15 px on most DPI)
+        # bold font for hierarchy against the smaller stats text.
         name_label, _ = self._tab.toon_labels[i]
-        name_label.setFont(QFont())
+        name_font = QFont()
+        name_font.setPointSize(11)
+        name_font.setBold(True)
+        name_label.setFont(name_font)
 
         # Buttons: Full scales dynamically; constructor defaults are
         # 88×32 enable, 32×32 chat/KA/help, 14px icons.
@@ -280,6 +298,14 @@ class _CompactLayout(QWidget):
         self._tab.help_buttons[i].setIconSize(QSize(14, 14))
         self._tab.laff_labels[i].setIconSize(QSize(16, 16))
         self._tab.bean_labels[i].setIconSize(QSize(16, 16))
+
+        # Direction D stats font: 10 pt (about 12.5 px) Medium weight to
+        # balance the larger name above.
+        stats_font = QFont()
+        stats_font.setPointSize(10)
+        stats_font.setWeight(QFont.Medium)
+        self._tab.laff_labels[i].setFont(stats_font)
+        self._tab.bean_labels[i].setFont(stats_font)
 
         # ── existing populate logic continues below ──
         # top_row: badge | name | status_dot | game_badge | <stretch> | stats_row(laff bean)

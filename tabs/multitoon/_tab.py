@@ -1506,12 +1506,14 @@ class MultitoonTab(QWidget):
                 }}
             """)
             name_label, status_dot = self.toon_labels[i]
+            # Direction D compact header: 11 pt bold name, 10 pt medium stats.
+            # Using pt units so QFont.pointSize() is queryable in tests.
             name_label.setStyleSheet(
-                f"font-size: 14px; font-weight: bold; color: {c['text_primary']}; background: none; border: none;"
+                f"font-size: 11pt; font-weight: bold; color: {c['text_primary']}; background: none; border: none;"
             )
             stat_style = (
-                f"border: none; background: transparent; font-weight: bold; "
-                f"font-size: 13px; color: {c['text_primary']};"
+                f"border: none; background: transparent; font-weight: 500; "
+                f"font-size: 10pt; color: {c['text_primary']};"
             )
             self.laff_labels[i].setStyleSheet(stat_style)
             self.bean_labels[i].setStyleSheet(stat_style)
