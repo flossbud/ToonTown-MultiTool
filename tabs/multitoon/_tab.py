@@ -1589,12 +1589,15 @@ class MultitoonTab(QWidget):
                 self.game_badges[index].setText("CC")
                 self.game_badges[index].setStyleSheet(f"background-color: #F26D21; color: white; border-radius: 4px; padding: 2px 6px; font-weight: bold; font-size: 10px; border: 1px solid {c['border_muted']};")
                 self.game_badges[index].show()
+                self._set_card_brand_for_slot(index, "cc")
             elif game_tag == "ttr":
                 self.game_badges[index].setText("TTR")
                 self.game_badges[index].setStyleSheet(f"background-color: #4A8FE7; color: white; border-radius: 4px; padding: 2px 6px; font-weight: bold; font-size: 10px; border: 1px solid {c['border_muted']};")
                 self.game_badges[index].show()
+                self._set_card_brand_for_slot(index, "ttr")
             else:
                 self.game_badges[index].hide()
+                self._set_card_brand_for_slot(index, None)
             if self._mode == "full" and hasattr(self, "_full") and index < len(self._full._cards):
                 self._full._cards[index]._apply_game_pill_style()
             # Keep this toon's set selector scoped to its game's set list.
@@ -1602,6 +1605,7 @@ class MultitoonTab(QWidget):
                 self.set_selectors[index].set_toon_game(game_tag)
         else:
             self.game_badges[index].hide()
+            self._set_card_brand_for_slot(index, None)
 
         # -- Slot badge --
         if window_available and self.service_running:
@@ -2014,6 +2018,16 @@ class MultitoonTab(QWidget):
                 self._toon_fetch_inflight_keys.discard(request_key)
 
         threading.Thread(target=_run_fetch, daemon=True).start()
+
+    def _set_card_brand_for_slot(self, index: int, game: str | None) -> None:
+        """Forward to the compact layout's set_card_brand. No-op when the
+        Full layout is active or when compact isn't built yet."""
+        compact = getattr(self, "_compact", None)
+        if compact is None:
+            return
+        set_brand = getattr(compact, "set_card_brand", None)
+        if callable(set_brand):
+            set_brand(index, game)
 
     def manual_refresh(self):
         self.log("[Service] Manual refresh triggered.")

@@ -85,6 +85,7 @@ class _CompactLayout(QWidget):
         """Build the persistent QFrame + sub-layouts for one card slot.
         Sub-layouts stay empty until populate() runs."""
         card = QFrame()
+        card.setObjectName(f"toon_card_{i}")
         layout = QVBoxLayout(card)
         layout.setContentsMargins(12, 10, 12, 10)
         layout.setSpacing(8)
@@ -142,6 +143,48 @@ class _CompactLayout(QWidget):
         self._tab.ka_groups.append(ka_group)
         return card
 
+    def set_card_brand(self, i: int, game: str | None) -> None:
+        """Apply Direction D chrome to card `i` for the given game.
+
+        game in {"ttr", "cc", None}
+            "ttr"  -> blue top stripe (game_pill_ttr)
+            "cc"   -> orange top stripe (game_pill_cc)
+            None   -> empty slot: dashed grey stripe + dashed L/R/B borders
+
+        Reads colour tokens from get_theme_colors so light/dark palettes
+        Just Work."""
+        from utils.theme_manager import get_theme_colors
+        is_dark = bool(self._tab.settings_manager.get("dark_mode", True))
+        c = get_theme_colors(is_dark)
+        card = self._card_slots[i]["card"]
+
+        if game == "ttr":
+            stripe = c["game_pill_ttr"]
+            stripe_style = "solid"
+            side_style = "solid"
+            side_color = c["border_card"]
+        elif game == "cc":
+            stripe = c["game_pill_cc"]
+            stripe_style = "solid"
+            side_style = "solid"
+            side_color = c["border_card"]
+        else:
+            stripe = c["border_light"]
+            stripe_style = "dashed"
+            side_style = "dashed"
+            side_color = c["border_light"]
+
+        card.setStyleSheet(
+            f"#toon_card_{i} {{"
+            f"  background: {c['bg_card']};"
+            f"  border-top: 3px {stripe_style} {stripe};"
+            f"  border-left: 1px {side_style} {side_color};"
+            f"  border-right: 1px {side_style} {side_color};"
+            f"  border-bottom: 1px {side_style} {side_color};"
+            f"  border-radius: 9px;"
+            f"}}"
+        )
+
     # ── Populate ───────────────────────────────────────────────────────────
     def populate(self):
         """Clear slot layouts and re-add shared widgets in the correct order.
@@ -166,6 +209,17 @@ class _CompactLayout(QWidget):
         # Each card slot
         for i, slot in enumerate(self._card_slots):
             self._populate_card(i, slot)
+
+        # Apply initial brand chrome based on each slot's currently-known
+        # game (None for empty slots until the window manager assigns
+        # them). The detection loop in _tab.py calls set_card_brand again
+        # whenever a slot's game changes.
+        for i in range(4):
+            game = None
+            badge = self._tab.game_badges[i] if i < len(self._tab.game_badges) else None
+            if badge is not None and badge.isVisible():
+                game = "cc" if badge.text() == "CC" else "ttr"
+            self.set_card_brand(i, game)
 
     def _populate_card(self, i: int, slot: dict):
         # Reset shared-widget sizes/styles that _FullLayout.populate_active
