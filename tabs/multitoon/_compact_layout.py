@@ -36,6 +36,11 @@ class _CompactLayout(QWidget):
         self._service_layout = None
         self._config_row = None
         self._card_slots = []  # list of dicts per card with sub-layout refs
+        # During the cold-start window, set_card_brand still updates each
+        # card's chrome QSS but holds the stripe at its seeded grey state
+        # so the deferred brand pass can animate the fill once. Cleared
+        # by _exit_cold_start_and_apply_brands.
+        self._cold_start_in_progress = False
         self._build_structure()
         self.populate()
 
@@ -224,7 +229,13 @@ class _CompactLayout(QWidget):
             f"}}"
         )
 
-        stripe.set_color(target)
+        # Drive the animated stripe. Held back during the cold-start
+        # window so all four stripes can animate together when the
+        # deferred brand pass fires (otherwise early game-detection
+        # would race ahead and complete the fill before the 1 s delay
+        # had even elapsed).
+        if not self._cold_start_in_progress:
+            stripe.set_color(target)
 
         # Refresh the portrait-overlay dot's cut-out ring so it matches
         # the current card backdrop.
@@ -284,15 +295,25 @@ class _CompactLayout(QWidget):
         self._position_stripes()
 
         # Apply initial brand chrome based on each slot's currently-known
-        # game. On the very first populate (app launch) delay 1 second so
-        # the user sees the cold-start fill animation. Subsequent
-        # populate calls (layout-mode swap, theme refresh) run the brand
-        # pass immediately.
+        # game. On the very first populate (app launch) hold the stripe
+        # at grey for 1 s so the user sees the cold-start fill animation
+        # play. During that window set_card_brand still updates each
+        # card's chrome (background, borders) but the stripe is gated
+        # off so early game-detection updates from the window-manager
+        # poll do not race ahead.
         if not getattr(self, "_initial_brand_done", False):
             self._initial_brand_done = True
-            QTimer.singleShot(1000, self._apply_initial_brands)
+            self._cold_start_in_progress = True
+            QTimer.singleShot(1000, self._exit_cold_start_and_apply_brands)
         else:
             self._apply_initial_brands()
+
+    def _exit_cold_start_and_apply_brands(self) -> None:
+        """End of the cold-start delay: re-enable stripe updates and run
+        the initial brand pass so all four stripes animate from grey to
+        their target colour together."""
+        self._cold_start_in_progress = False
+        self._apply_initial_brands()
 
     def _apply_initial_brands(self) -> None:
         """Run the initial set_card_brand pass over all 4 slots. Reads
