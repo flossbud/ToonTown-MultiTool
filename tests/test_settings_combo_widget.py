@@ -132,3 +132,71 @@ def test_current_value_delegate_does_not_paint_dot_on_non_current_row(app):
     sample = img.pixelColor(120 - 15, 14)
     # No dot — should still be background-ish (low blue).
     assert sample.blue() < 100, f"expected no dot, got B={sample.blue()}"
+
+
+def test_settings_combobox_paints_chevron_in_droparea(app):
+    """After paintEvent, the right edge (where the chevron lives) should
+    have non-background pixels in roughly the idle-gray range."""
+    from PySide6.QtGui import QPixmap, QColor
+    from utils.shared_widgets import SettingsComboBox
+
+    cb = SettingsComboBox()
+    cb.addItems(["A"])
+    cb.resize(180, 30)
+    cb.show()
+    app.processEvents()
+
+    pm = cb.grab()
+    img = pm.toImage()
+    # Caret cell is the rightmost 30px; chevron center is ~15px from right edge.
+    cx = pm.width() - 15
+    cy = pm.height() // 2
+    # Look across a +-4px horizontal band for any stroke pixel (not background).
+    found_stroke = False
+    for dx in range(-4, 5):
+        c = img.pixelColor(cx + dx, cy)
+        # Idle chevron is dark gray (#aaaaaa). Any pixel that's clearly
+        # not background and has roughly equal RGB (gray, not blue) counts.
+        if 100 < c.red() < 220 and abs(c.red() - c.green()) < 25 and abs(c.red() - c.blue()) < 25:
+            found_stroke = True
+            break
+    cb.hide()
+    assert found_stroke, "expected idle gray chevron strokes in drop-down area"
+
+
+def test_settings_combobox_chevron_color_follows_is_dark_flag(app):
+    """Light theme's hover chevron is #475569 (darkish gray), dark theme's
+    is #dddddd. The flag must change what's painted."""
+    from PySide6.QtGui import QPixmap, QColor
+    from utils.shared_widgets import SettingsComboBox
+
+    # Light theme combo
+    cb_light = SettingsComboBox()
+    cb_light.addItems(["A"])
+    cb_light.set_theme_colors(accent="#2563eb", is_dark=False)
+    cb_light.resize(180, 30)
+    cb_light.show()
+    app.processEvents()
+
+    pm_l = cb_light.grab()
+    img_l = pm_l.toImage()
+    # Pick a pixel near the chevron center horizontally; sample several
+    # vertical positions to find a stroke pixel.
+    cx = pm_l.width() - 15
+    light_stroke = None
+    for cy in range(pm_l.height() // 2 - 3, pm_l.height() // 2 + 4):
+        for dx in range(-4, 5):
+            c = img_l.pixelColor(cx + dx, cy)
+            # Light idle chevron is #64748b (R=100, G=116, B=139) — dark grayish.
+            # On the typically-white light-theme bg, the stroke is the darker pixel.
+            if c.red() < 180:  # darker than bg
+                light_stroke = c
+                break
+        if light_stroke is not None:
+            break
+    cb_light.hide()
+    assert light_stroke is not None, "expected stroke pixel for light theme"
+    # Idle chevron for light is #64748b — R should be roughly < 130 at antialiased center
+    assert light_stroke.red() < 160, (
+        f"expected light-theme idle chevron near #64748b, got R={light_stroke.red()}"
+    )

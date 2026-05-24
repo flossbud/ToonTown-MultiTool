@@ -15,7 +15,7 @@ from PySide6.QtCore import (
     Qt, Signal, QPropertyAnimation, QEasingCurve, QVariantAnimation,
     Property, QRectF, QSize,
 )
-from PySide6.QtGui import QColor, QPainter, QFont, QRadialGradient, QFontMetrics
+from PySide6.QtGui import QColor, QPainter, QPen, QFont, QRadialGradient, QFontMetrics
 
 
 # ── Accent-blue Switch ───────────────────────────────────────────────────────
@@ -433,18 +433,60 @@ class SettingsComboBox(QComboBox):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        # Default accent: dark-theme brand blue. Overridden via
-        # set_theme_colors() once the SettingsTab applies theme to its
-        # children (see tabs/settings_tab.py findChildren propagation).
+        # Defaults: dark-theme palette. Overridden via set_theme_colors()
+        # once SettingsTab applies theme to its children (Task 6 wiring).
         self._dot_color = QColor("#0077ff")
+        self._is_dark = True
         self.setItemDelegate(_CurrentValueDelegate(self))
 
-    def set_theme_colors(self, *, accent: str) -> None:
-        """Set the accent color used for the current-value dot in the
-        dropdown menu. Called by SettingsTab during theme propagation
-        (Task 6 wires this; until then the constructor default applies)."""
+    def set_theme_colors(self, *, accent: str, is_dark: bool = True) -> None:
+        """Set the accent color (used for the current-value dot in the
+        dropdown menu AND for the chevron in :focus state) and theme
+        polarity (used to pick idle/hover chevron gray). Called by
+        SettingsTab during theme propagation (Task 6 wires this; until
+        then the constructor defaults apply)."""
         self._dot_color = QColor(accent)
-        self.update()  # repaint in case the menu is open
+        self._is_dark = is_dark
+        self.update()  # repaint in case the menu is open or the chevron color changed
+
+    # Width of the drop-down (caret) sub-control. Matches Task 5's QSS
+    # rule `QComboBox::drop-down { width: 30px; }`.
+    _DROPAREA_WIDTH = 30
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+
+        # Pick chevron color from current state. No theme-manager imports
+        # here — colors come from set_theme_colors() (Task 6 wires propagation;
+        # until then the constructor defaults apply).
+        if not self.isEnabled():
+            base = QColor("#aaaaaa") if self._is_dark else QColor("#64748b")
+            base.setAlpha(128)
+            color = base
+        elif self.hasFocus():
+            color = self._dot_color  # accent blue — ties closed and open states
+        elif self.underMouse():
+            color = QColor("#dddddd") if self._is_dark else QColor("#475569")
+        else:
+            color = QColor("#aaaaaa") if self._is_dark else QColor("#64748b")
+
+        # Center of the caret cell (rightmost _DROPAREA_WIDTH pixels).
+        w = self.width()
+        h = self.height()
+        cx = w - self._DROPAREA_WIDTH // 2
+        cy = h // 2
+
+        # Chevron: two strokes forming a downward "v", 8px wide x 4px tall.
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        pen = QPen(color)
+        pen.setWidthF(1.5)
+        pen.setCapStyle(Qt.RoundCap)
+        pen.setJoinStyle(Qt.RoundJoin)
+        painter.setPen(pen)
+        painter.drawLine(cx - 4, cy - 2, cx, cy + 2)
+        painter.drawLine(cx, cy + 2, cx + 4, cy - 2)
+        painter.end()
 
 
 # ── Current Value Delegate ───────────────────────────────────────────────────
