@@ -952,6 +952,30 @@ class SettingsTab(QWidget):
         self._cc_needs_pick = False
         self._refresh_game_path_display("cc", path)
 
+    def apply_picked_install(self, install) -> None:
+        """Refresh the CC panel after the boot-time picker has accepted an install.
+
+        Called by main.py when the CCInstallPickerDialog shown at startup is
+        accepted. Persists the relevant settings keys (idempotent with what
+        main.py already wrote), re-discovers installs so chip resolution stays
+        accurate, clears the needs-pick flag, and re-renders the sub-label and
+        chip via _refresh_game_path_display.
+        """
+        from utils.settings_keys import CC_ENGINE_INSTALL_SIGNATURE
+        from services.wine_runtimes import install_signature as _sig
+
+        path = os.path.dirname(install.exe_path)
+        self.settings_manager.set("cc_engine_dir", path)
+        self.settings_manager.set("cc_engine_dir_approved_custom_dir", "")
+        self.settings_manager.set(CC_ENGINE_INSTALL_SIGNATURE, _sig(install))
+        try:
+            from services.cc_login_service import discover_cc_installs
+            self._cc_installs = discover_cc_installs()
+        except Exception:
+            pass
+        self._cc_needs_pick = False
+        self._refresh_game_path_display("cc", path)
+
     # ── Compat runtime helpers ────────────────────────────────────────────
 
     def _get_active_cc_install(self):

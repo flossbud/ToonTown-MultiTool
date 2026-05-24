@@ -1344,21 +1344,16 @@ def _maybe_prompt_for_cc_install(main_window, settings_manager):
                 settings_manager.set("cc_engine_dir", os.path.dirname(picked.exe_path))
                 settings_manager.set(CC_ENGINE_INSTALL_SIGNATURE, install_signature(picked))
                 settings_manager.set("cc_engine_dir_approved_custom_dir", "")
-                # Refresh the open SettingsTab's CC row so the orange glow clears
-                # and the path text turns green-on-success. Without this the
-                # already-constructed GamePathRow still believes it's in the
-                # ambiguous-needs-pick state captured at __init__ time.
-                cc_row = getattr(
-                    getattr(main_window, "settings_tab", None),
-                    "cc_path_row",
-                    None,
-                )
-                if cc_row is not None:
+                # Refresh the open SettingsTab's CC panel so the chip/path text reflect
+                # the freshly-picked install. Without this the panel displays the
+                # construction-time state until the user navigates elsewhere.
+                settings_tab = getattr(main_window, "settings_tab", None)
+                if settings_tab is not None and hasattr(settings_tab, "apply_picked_install"):
                     try:
-                        cc_row._apply_picked_install(picked)
+                        settings_tab.apply_picked_install(picked)
                     except Exception as e:
                         from utils.credentials_manager import _dbg
-                        _dbg(f"[CC] boot-pick row refresh failed: {e}")
+                        _dbg(f"[CC] boot-pick refresh failed: {e}")
 
     # Record the current install-set hash so subsequent boots can detect
     # changes. Written even when no prompt fired so the hash always

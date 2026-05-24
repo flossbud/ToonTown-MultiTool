@@ -133,3 +133,36 @@ def test_ttr_panel_uses_brand_logo(qapp, settings_manager):
     assert ttr_panel.logo_label is not None
     pm = ttr_panel.logo_label.pixmap()
     assert pm is not None and not pm.isNull()
+
+
+def test_apply_picked_install_updates_cc_panel(qapp, settings_manager, monkeypatch):
+    """Boot-time CC picker accept should refresh CC panel sub-label + persist keys."""
+    from tabs.settings_tab import SettingsTab
+    from services.wine_runtimes import WineInstall
+    from utils.settings_keys import CC_ENGINE_INSTALL_SIGNATURE
+
+    tab = SettingsTab(settings_manager)
+
+    # Stub install matching what main.py would pass.
+    install = WineInstall(
+        exe_path="/tmp/fake/ttcc.exe",
+        launcher="steam-proton",
+        prefix_path="/tmp/prefix",
+        display_name="Fake CC Install",
+        metadata={},
+    )
+    # Make discover_cc_installs return our stub so the chip resolves.
+    monkeypatch.setattr(
+        "services.cc_login_service.discover_cc_installs",
+        lambda: [install],
+    )
+
+    tab.apply_picked_install(install)
+
+    assert settings_manager.get("cc_engine_dir") == "/tmp/fake"
+    assert settings_manager.get("cc_engine_dir_approved_custom_dir") == ""
+    assert settings_manager.get(CC_ENGINE_INSTALL_SIGNATURE) != ""
+    # Sub-label should now reflect the new path.
+    assert "/tmp/fake" in tab._cc_panel.sub_label.text() or "fake" in tab._cc_panel.sub_label.text()
+    # _cc_needs_pick cleared.
+    assert tab._cc_needs_pick is False

@@ -101,6 +101,9 @@ class Switch(QWidget):
     # ── input ───────────────────────────────────────────────────────────
 
     def mousePressEvent(self, event):
+        if not self.isEnabled():
+            super().mousePressEvent(event)
+            return
         if event.button() == Qt.LeftButton:
             self._checked = not self._checked
             self._animate_to_state()
@@ -115,15 +118,18 @@ class Switch(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
 
+        enabled = self.isEnabled()
         # Track
         track = QColor(self._track_on if self._checked else self._track_off)
+        if not enabled:
+            track.setAlphaF(0.4)
         p.setPen(Qt.NoPen)
         p.setBrush(track)
         radius = self.TRACK_H / 2
         p.drawRoundedRect(self.rect(), radius, radius)
 
         # Thumb
-        thumb = QColor(self._thumb_color)
+        thumb = QColor(self._thumb_color if enabled else "#cccccc")
         p.setBrush(thumb)
         p.drawEllipse(
             int(self._thumb_x), self.PADDING,

@@ -103,3 +103,23 @@ def test_switch_set_theme_colors_applies_palette(qapp):
     assert s._track_on == "#0077ff"
     assert s._track_off == "#3a3a3a"
     assert s._thumb_color == "#ffffff"
+
+
+def test_switch_click_ignored_when_disabled(qapp):
+    from utils.shared_widgets import Switch
+    s = Switch(checked=False)
+    s.setEnabled(False)
+    received = []
+    s.toggled.connect(received.append)
+    _click(s)
+    assert s.isChecked() is False
+    assert received == []
+
+
+def test_switch_setchecked_works_when_disabled(qapp):
+    """Programmatic setChecked should still work even when the widget is disabled."""
+    from utils.shared_widgets import Switch
+    s = Switch(checked=False)
+    s.setEnabled(False)
+    s.setChecked(True)
+    assert s.isChecked() is True
