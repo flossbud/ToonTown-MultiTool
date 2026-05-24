@@ -1036,6 +1036,16 @@ class MultitoonTab(QWidget):
             pill.clicked.connect(lambda checked, idx=i: self.load_profile(idx))
             self.profile_pills.append(pill)
 
+        # Profile save button - chrome only for now (behaviour pending the
+        # save-mechanics decision in the spec's "Deferred decisions"
+        # section). Sized to match the profile pill height for visual
+        # consistency.
+        self.profile_save_button = QPushButton("\U0001F4BE")  # 💾
+        self.profile_save_button.setFixedSize(28, 28)
+        self.profile_save_button.setObjectName("profile_save_button")
+        self.profile_save_button.setToolTip("Save profile (behavior pending)")
+        self.profile_save_button.clicked.connect(self._on_profile_save_clicked)
+
         # Profile-row label — sits just before the round 1-5 pills so the
         # affordance reads as "profile presets" rather than unattributed
         # numeric chips. Reused across compact and full layouts.
@@ -1418,6 +1428,13 @@ class MultitoonTab(QWidget):
                         border: 1px solid {color};
                     }}
                 """)
+
+    def _on_profile_save_clicked(self) -> None:
+        """Stub - profile save behaviour is deferred (see spec
+        2026-05-24-multitoon-tab-compact-redesign-design.md "Deferred
+        decisions"). Logs and no-ops for now."""
+        if self.logger:
+            self.logger.log("[multitoon] profile save clicked (no-op stub)")
 
     def _rebuild_set_selectors(self):
         """Refresh selectors when keymap sets change."""

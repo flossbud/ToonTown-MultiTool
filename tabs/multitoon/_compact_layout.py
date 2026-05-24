@@ -160,8 +160,8 @@ class _CompactLayout(QWidget):
         self._config_row.addSpacing(8)
         for pill in self._tab.profile_pills:
             self._config_row.addWidget(pill)
-        # Save button slot - added in Task 5. For now the row ends at the
-        # last profile pill.
+        self._config_row.addSpacing(6)
+        self._config_row.addWidget(self._tab.profile_save_button)
 
         # Each card slot
         for i, slot in enumerate(self._card_slots):
