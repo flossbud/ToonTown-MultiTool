@@ -75,13 +75,11 @@ class _CompactLayout(QWidget):
         card = QFrame()
         card.setObjectName(f"toon_card_{i}")
         layout = QVBoxLayout(card)
-        # Bottom margin compressed from the legacy 9 to 2 to compensate
-        # for the +4 px addSpacing above the body row PLUS the +3 px
-        # addSpacing above the header_divider. Net: card height
-        # unchanged, both the divider and the body row sit lower than
-        # they did at the start of the redesign, giving the header more
-        # vertical breathing room.
-        layout.setContentsMargins(14, 13, 14, 2)
+        # Top padding shaved from 13 to 11 to move the header content
+        # (portrait + name + stats) up 2 px. The 2 px is added back
+        # below in the addSpacing above the header_divider, so divider
+        # and body-row positions are unchanged.
+        layout.setContentsMargins(14, 11, 14, 2)
         layout.setSpacing(0)
 
         top_row = QHBoxLayout()
@@ -110,10 +108,12 @@ class _CompactLayout(QWidget):
         header_divider.setObjectName(f"toon_card_divider_{i}")
         header_divider.setFixedHeight(1)
 
-        # Push the header_divider (and everything below it) down 3 px.
-        # Paired with a corresponding 3 px reduction in the card's
-        # bottom contentsMargin so total card height stays the same.
-        layout.addSpacing(3)
+        # Push the header_divider (and everything below it) down. 3 px
+        # of this absorbs the reduced bottom contentsMargin (5 -> 2);
+        # the extra 2 px absorbs the reduced top contentsMargin
+        # (13 -> 11) so the divider and body row stay in place while
+        # the header content shifts up.
+        layout.addSpacing(5)
         layout.addWidget(header_divider)
 
         ctrl_row = QHBoxLayout()
