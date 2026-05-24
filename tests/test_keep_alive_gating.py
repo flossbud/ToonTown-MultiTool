@@ -276,8 +276,8 @@ def test_load_profile_respects_master_off(tab, monkeypatch):
 
 
 def test_settings_tab_master_toggle_present(qapp, tmp_path, monkeypatch):
-    """SettingsTab's Keep-Alive group has a master ToggleRow, and the
-    action/interval rows are disabled when the master is off."""
+    """SettingsTab's Keep-Alive page has a master Switch, and the
+    action/interval controls are disabled when the master is off."""
     monkeypatch.setenv("HOME", str(tmp_path))
     from utils.settings_manager import SettingsManager
     from tabs.settings_tab import SettingsTab
@@ -287,10 +287,10 @@ def test_settings_tab_master_toggle_present(qapp, tmp_path, monkeypatch):
 
     tab = SettingsTab(settings_manager=sm)
 
-    assert hasattr(tab, "ka_master_row")
-    assert tab.ka_master_row.isChecked() is False
-    assert tab.ka_action_row.isEnabled() is False
-    assert tab.ka_delay_row.isEnabled() is False
+    assert hasattr(tab, "_ka_master_switch")
+    assert tab._ka_master_switch.isChecked() is False
+    assert tab._ka_action_field.control_widget.isEnabled() is False
+    assert tab._ka_delay_field.control_widget.isEnabled() is False
 
 
 def test_settings_tab_master_on_unghosts_rows(qapp, tmp_path, monkeypatch):
@@ -303,14 +303,14 @@ def test_settings_tab_master_on_unghosts_rows(qapp, tmp_path, monkeypatch):
 
     tab = SettingsTab(settings_manager=sm)
 
-    assert tab.ka_master_row.isChecked() is True
-    assert tab.ka_action_row.isEnabled() is True
-    assert tab.ka_delay_row.isEnabled() is True
+    assert tab._ka_master_switch.isChecked() is True
+    assert tab._ka_action_field.control_widget.isEnabled() is True
+    assert tab._ka_delay_field.control_widget.isEnabled() is True
 
 
 def test_dialog_cancel_does_not_persist_setting(qapp, tmp_path, monkeypatch):
     """Cancelling the consent dialog must leave keep_alive_enabled False
-    and revert the toggle visual."""
+    and revert the master switch visual."""
     monkeypatch.setenv("HOME", str(tmp_path))
     from utils.settings_manager import SettingsManager
     from tabs.settings_tab import SettingsTab
@@ -319,12 +319,11 @@ def test_dialog_cancel_does_not_persist_setting(qapp, tmp_path, monkeypatch):
     tab = SettingsTab(settings_manager=sm)
     monkeypatch.setattr(tab, "_show_keep_alive_warning_dialog", lambda: False)
 
-    # Directly call the handler (IOSToggle doesn't emit toggled on programmatic setChecked)
-    tab.ka_master_row.toggle.setChecked(True)
+    # Directly drive the handler that the Switch.toggled signal connects to.
     tab._on_keep_alive_master_toggle(True)
-    # Dialog cancelled → setting still False, toggle reverted.
+    # Dialog cancelled → setting still False, switch reverted.
     assert sm.get("keep_alive_enabled") is False
-    assert tab.ka_master_row.isChecked() is False
+    assert tab._ka_master_switch.isChecked() is False
 
 
 def test_dialog_confirm_persists_setting(qapp, tmp_path, monkeypatch):
@@ -337,11 +336,13 @@ def test_dialog_confirm_persists_setting(qapp, tmp_path, monkeypatch):
     tab = SettingsTab(settings_manager=sm)
     monkeypatch.setattr(tab, "_show_keep_alive_warning_dialog", lambda: True)
 
-    # Directly call the handler
-    tab.ka_master_row.toggle.setChecked(True)
+    # Set the switch visually so the consent-path "persist True" branch is
+    # exercised end-to-end. The handler is also what the Switch.toggled
+    # signal would call in the live tab.
+    tab._ka_master_switch.setChecked(True)
     tab._on_keep_alive_master_toggle(True)
     assert sm.get("keep_alive_enabled") is True
-    assert tab.ka_master_row.isChecked() is True
+    assert tab._ka_master_switch.isChecked() is True
 
 
 def test_toggle_rapid_fire_no_op_when_master_off(tab):
