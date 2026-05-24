@@ -32,12 +32,16 @@ _BAR_HEIGHT_PX = 36
 
 
 class _IconButton(QPushButton):
-    """Transparent square button that inherits the bar's text colour."""
+    """Transparent square button. Icon-driven so glyphs render reliably
+    across platforms."""
 
-    def __init__(self, glyph: str, tooltip: str, parent=None):
-        super().__init__(glyph, parent)
+    def __init__(self, icon, tooltip: str, parent=None):
+        from PySide6.QtCore import QSize
+        super().__init__(parent)
         self.setFlat(True)
         self.setFixedSize(28, 28)
+        self.setIcon(icon)
+        self.setIconSize(QSize(14, 14))
         self.setToolTip(tooltip)
         self.setCursor(Qt.PointingHandCursor)
         self.setFocusPolicy(Qt.NoFocus)
@@ -71,7 +75,8 @@ class ServiceStatusBar(QFrame):
         self.label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
         lay.addWidget(self.label, 1)
 
-        self.stop_play_button = _IconButton("■", "Stop broadcasting")
+        from utils.icon_factory import make_stop_icon, make_refresh_icon
+        self.stop_play_button = _IconButton(make_stop_icon(14), "Stop broadcasting")
         self.stop_play_button.setObjectName("svc_stop_play")
         self.stop_play_button.setProperty("role", "stop")
         self.stop_play_button.clicked.connect(self._on_stop_play_clicked)
@@ -84,7 +89,7 @@ class ServiceStatusBar(QFrame):
         self._divider.setFixedHeight(15)
         lay.addWidget(self._divider)
 
-        self.refresh_button = _IconButton("⟳", "Refresh")
+        self.refresh_button = _IconButton(make_refresh_icon(14), "Refresh")
         self.refresh_button.setObjectName("svc_refresh")
         self.refresh_button.clicked.connect(self.refresh_requested.emit)
         lay.addWidget(self.refresh_button)
@@ -102,12 +107,13 @@ class ServiceStatusBar(QFrame):
         self.state = state
         self.setProperty("svc_state", state)
 
+        from utils.icon_factory import make_stop_icon, make_play_icon
         if state == "stopped":
-            self.stop_play_button.setText("▶")
+            self.stop_play_button.setIcon(make_play_icon(14))
             self.stop_play_button.setToolTip("Start broadcasting")
             self.stop_play_button.setProperty("role", "play")
         else:
-            self.stop_play_button.setText("■")
+            self.stop_play_button.setIcon(make_stop_icon(14))
             self.stop_play_button.setToolTip("Stop broadcasting")
             self.stop_play_button.setProperty("role", "stop")
 

@@ -157,7 +157,7 @@ class _CompactLayout(QWidget):
         game in {"ttr", "cc", None}
             "ttr"  -> blue top stripe (game_pill_ttr)
             "cc"   -> orange top stripe (game_pill_cc)
-            None   -> empty slot: dashed grey stripe + dashed L/R/B borders
+            None   -> empty slot: muted solid stripe + solid L/R/B borders
 
         Reads colour tokens from get_theme_colors so light/dark palettes
         Just Work."""
@@ -177,10 +177,13 @@ class _CompactLayout(QWidget):
             side_style = "solid"
             side_color = c["border_card"]
         else:
+            # Empty slot: muted colour but solid stroke. The dashed treatment
+            # added too much visual noise without enough payoff; the muted
+            # colour alone is enough to signal "no toon here".
             stripe = c["border_light"]
-            stripe_style = "dashed"
-            side_style = "dashed"
-            side_color = c["border_light"]
+            stripe_style = "solid"
+            side_style = "solid"
+            side_color = c["border_card"]
 
         card.setStyleSheet(
             f"#toon_card_{i} {{"

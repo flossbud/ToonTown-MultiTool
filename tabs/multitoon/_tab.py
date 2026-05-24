@@ -1017,7 +1017,11 @@ class MultitoonTab(QWidget):
         # save-mechanics decision in the spec's "Deferred decisions"
         # section). Sized to match the profile pill height for visual
         # consistency.
-        self.profile_save_button = QPushButton("\U0001F4BE")  # 💾
+        from utils.icon_factory import make_save_icon
+        from PySide6.QtCore import QSize
+        self.profile_save_button = QPushButton()
+        self.profile_save_button.setIcon(make_save_icon(14))
+        self.profile_save_button.setIconSize(QSize(14, 14))
         self.profile_save_button.setFixedSize(28, 28)
         self.profile_save_button.setObjectName("profile_save_button")
         self.profile_save_button.setToolTip("Save profile (behavior pending)")
