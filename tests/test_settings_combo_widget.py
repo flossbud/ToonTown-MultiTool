@@ -173,24 +173,26 @@ def test_settings_combobox_chevron_color_follows_is_dark_flag(app):
     from utils.shared_widgets import SettingsComboBox
 
     def _sample_stroke_pixel(cb):
-        """Return the brightest stroke pixel on the left arm of the chevron.
+        """Return the darkest stroke pixel on the left arm of the chevron.
 
-        The chevron left arm runs from (cx-4, cy-2) to (cx, cy+2).
-        We scan only dx in [-4, -1] to stay clear of the right-side
-        combo border/shadow pixels that appear at dx=0 and beyond.
-        Background is near-black (~R=32); stroke pixels are brighter."""
+        The chevron is drawn as a darker stroke over whatever the platform
+        renders as the combo background. On offscreen (CI) the bg is
+        near-white; on a dark theme/style the bg is dark — either way the
+        stroke is the darker pixel relative to bg, so we sample the
+        darkest pixel in a small window on the left arm of the chevron.
+        We scan only dx in [-4, -1] to stay clear of right-side combo
+        border/shadow pixels that appear at dx=0 and beyond."""
         pm = cb.grab()
         img = pm.toImage()
         cx = pm.width() - 15
         cy = pm.height() // 2
-        brightest = None
+        darkest = None
         for dy in range(-3, 4):
             for dx in range(-4, 0):  # left arm: stop before dx=0 (border zone)
                 c = img.pixelColor(cx + dx, cy + dy)
-                if c.red() > 50:  # background is ~R=32; strokes are much brighter
-                    if brightest is None or c.red() > brightest.red():
-                        brightest = c
-        return brightest
+                if darkest is None or c.red() < darkest.red():
+                    darkest = c
+        return darkest
 
     cb_dark = SettingsComboBox()
     cb_dark.addItems(["A"])
