@@ -2611,7 +2611,7 @@ class SettingsTab(QWidget):
         panel = getattr(self, "_keep_alive_panel", None)
         if panel is None:
             return
-        prior = getattr(self, "_keep_alive_highlight_anim", None)
+        prior = getattr(self, "_keepalive_highlight_anim", None)
         if prior is not None:
             try:
                 prior.stop()
@@ -2631,7 +2631,7 @@ class SettingsTab(QWidget):
         anim.setEasingCurve(QEasingCurve.OutCubic)
         anim.finished.connect(lambda: panel.setGraphicsEffect(None))
         anim.start(QPropertyAnimation.DeleteWhenStopped)
-        self._keep_alive_highlight_anim = anim
+        self._keepalive_highlight_anim = anim
 
     def get_keep_alive_delay_seconds(self) -> float:
         if not hasattr(self, "_ka_delay_combo"):
