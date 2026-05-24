@@ -4,7 +4,7 @@ vertically within the available tab content area via leading/trailing stretches.
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QSize, Property, QPropertyAnimation, QEasingCurve
+from PySide6.QtCore import Qt, QSize, Property, QPropertyAnimation, QEasingCurve, QTimer
 from PySide6.QtGui import QFont, QColor
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFrame
 
@@ -264,19 +264,47 @@ class _CompactLayout(QWidget):
         for i, slot in enumerate(self._card_slots):
             self._populate_card(i, slot)
 
+        # Seed each card stripe to the theme's empty colour BEFORE the
+        # initial brand pass. Two purposes: (1) the stripes paint
+        # immediately during the cold-start delay below, so the cards
+        # are not visually empty while we wait; (2) the initial brand
+        # pass then sees a valid current colour and animates the
+        # transition properly (without this seed, _CardStripe.set_color
+        # short-circuits its first call).
+        from utils.theme_manager import get_theme_colors, resolve_theme
+        is_dark = resolve_theme(self._tab.settings_manager) == "dark"
+        c = get_theme_colors(is_dark)
+        empty_color = QColor(c["border_light"])
+        for slot in self._card_slots:
+            stripe = slot.get("card_stripe")
+            if stripe is not None:
+                stripe.set_color(empty_color)
+
+        self._position_status_rings()
+        self._position_stripes()
+
         # Apply initial brand chrome based on each slot's currently-known
-        # game (None for empty slots until the window manager assigns
-        # them). The detection loop in _tab.py calls set_card_brand again
-        # whenever a slot's game changes.
+        # game. On the very first populate (app launch) delay 1 second so
+        # the user sees the cold-start fill animation. Subsequent
+        # populate calls (layout-mode swap, theme refresh) run the brand
+        # pass immediately.
+        if not getattr(self, "_initial_brand_done", False):
+            self._initial_brand_done = True
+            QTimer.singleShot(1000, self._apply_initial_brands)
+        else:
+            self._apply_initial_brands()
+
+    def _apply_initial_brands(self) -> None:
+        """Run the initial set_card_brand pass over all 4 slots. Reads
+        each slot's currently-known game from its game_badge. The
+        detection loop in _tab.py keeps calling set_card_brand again
+        whenever a slot's game changes."""
         for i in range(4):
             game = None
             badge = self._tab.game_badges[i] if i < len(self._tab.game_badges) else None
             if badge is not None and badge.isVisible():
                 game = "cc" if badge.text() == "CC" else "ttr"
             self.set_card_brand(i, game)
-
-        self._position_status_rings()
-        self._position_stripes()
 
     def _populate_card(self, i: int, slot: dict):
         # Reset shared-widget sizes/styles that _FullLayout.populate_active
