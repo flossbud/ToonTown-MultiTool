@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QFont
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFrame, QSizePolicy
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFrame, QSizePolicy, QApplication
 
 from utils.theme_manager import make_heart_icon, make_jellybean_icon
 from tabs.multitoon._layout_utils import clear_layout
@@ -154,6 +154,13 @@ class _CompactLayout(QWidget):
         })
         self._tab.toon_cards.append(card)
         self._tab.ka_groups.append(ka_group)
+
+        # Status ring overlay - positioned relative to slot_badge after
+        # the layout has settled. See _position_status_rings().
+        ring = _StatusRing(card)
+        ring.hide()  # shown once positioned
+        self._card_slots[-1]["status_ring"] = ring
+
         return card
 
     def set_card_brand(self, i: int, game: str | None) -> None:
@@ -201,6 +208,18 @@ class _CompactLayout(QWidget):
         if divider is not None:
             divider.setStyleSheet(f"background: {c['border_muted']}; border: none;")
 
+    def set_card_state(self, i: int, state: str) -> None:
+        """Update card `i`'s portrait status ring.
+        state in {'enabled', 'found', 'off'}"""
+        slot = self._card_slots[i]
+        ring = slot.get("status_ring")
+        if ring is None:
+            return
+        ring.set_state(state)
+        from utils.theme_manager import get_theme_colors
+        is_dark = bool(self._tab.settings_manager.get("dark_mode", True))
+        ring.set_border_color(get_theme_colors(is_dark)["bg_card"])
+
     # ── Populate ───────────────────────────────────────────────────────────
     def populate(self):
         """Clear slot layouts and re-add shared widgets in the correct order.
@@ -236,6 +255,8 @@ class _CompactLayout(QWidget):
             if badge is not None and badge.isVisible():
                 game = "cc" if badge.text() == "CC" else "ttr"
             self.set_card_brand(i, game)
+
+        self._position_status_rings()
 
     def _populate_card(self, i: int, slot: dict):
         # Reset shared-widget sizes/styles that _FullLayout.populate_active
@@ -343,6 +364,32 @@ class _CompactLayout(QWidget):
         slot["middle"].addStretch(1)
         slot["ctrl_row"].addLayout(slot["middle"], 1)
         slot["ctrl_row"].addWidget(self._tab.set_selectors[i])
+
+    def _position_status_rings(self) -> None:
+        """Re-position the status-ring overlays after Qt has resolved
+        layout. Called from showEvent / resizeEvent / populate()."""
+        for i, slot in enumerate(self._card_slots):
+            ring = slot.get("status_ring")
+            if ring is None:
+                continue
+            badge = self._tab.slot_badges[i]
+            if not badge.isVisible():
+                continue
+            # Convert badge's bottom-right corner into card-local coords.
+            br = badge.mapTo(slot["card"], badge.rect().bottomRight())
+            # Ring is 16 px; offset so it sits slightly outside the
+            # badge's bottom-right edge (matches design mockup).
+            ring.move(br.x() - 14, br.y() - 14)
+            ring.show()
+            ring.raise_()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._position_status_rings()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._position_status_rings()
 
     def _collapsed_ka_group_width(self, slot_index: int) -> int:
         """Width that ka_group must hold when KA is collapsed.
@@ -557,3 +604,67 @@ class _CompactLayout(QWidget):
                 )
                 QTimer.singleShot(80, width_anim.start)
                 self._ka_anims.append(width_anim)
+
+
+class _StatusRing(QWidget):
+    """Small coloured dot overlaid on the bottom-right of a portrait.
+    Shows enabled/found/empty state without needing a second label.
+
+    Token semantics (read live from get_theme_colors so theme swaps
+    re-tint immediately):
+        enabled -> status_dot_active (typically green)
+        found   -> text_muted
+        off     -> border_light
+    The outer ring uses bg_card so the dot reads as a 'cut out' from
+    the portrait edge."""
+
+    def __init__(self, parent: QWidget):
+        super().__init__(parent)
+        self.setFixedSize(16, 16)
+        self._state = "off"
+        self._border_color = "#252525"  # gets repainted via set_border_color
+        self.setAttribute(Qt.WA_TranslucentBackground)
+
+    def set_state(self, state: str) -> None:
+        if state not in ("enabled", "found", "off"):
+            raise ValueError(f"_StatusRing.set_state: unknown state {state!r}")
+        if state == self._state:
+            return
+        self._state = state
+        self.update()
+
+    def set_border_color(self, color: str) -> None:
+        if color == self._border_color:
+            return
+        self._border_color = color
+        self.update()
+
+    def paintEvent(self, event):
+        from PySide6.QtCore import QRectF
+        from PySide6.QtGui import QPainter, QColor
+        from utils.theme_manager import get_theme_colors
+
+        # Live theme lookup. We reach the QApplication palette as a proxy
+        # for "is the app currently in dark mode" so the ring re-tints
+        # on theme change without explicit plumbing.
+        app = QApplication.instance()
+        is_dark = (app.palette().window().color().lightness() < 128) if app else True
+        c = get_theme_colors(is_dark)
+
+        fill_map = {
+            "enabled": c.get("status_dot_active", "#56c856"),
+            "found":   c.get("text_muted", "#888"),
+            "off":     c.get("border_light", "#555"),
+        }
+        fill = fill_map.get(self._state, fill_map["off"])
+
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setPen(Qt.NoPen)
+        # Outer border (matches card bg) creates the cut-out look.
+        p.setBrush(QColor(self._border_color))
+        p.drawEllipse(QRectF(0, 0, 16, 16))
+        # Inner colored dot.
+        p.setBrush(QColor(fill))
+        p.drawEllipse(QRectF(2.5, 2.5, 11, 11))
+        p.end()
