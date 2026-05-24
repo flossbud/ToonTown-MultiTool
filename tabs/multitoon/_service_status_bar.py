@@ -153,24 +153,29 @@ class ServiceStatusBar(QFrame):
         # Per-state dot palettes. Broadcasting puts the bar on blue, so
         # dots are white shades for contrast. Stopped goes red, same idea.
         # Idle (the default neutral) uses the standard segment tokens.
+        # NOTE: dot colours go through QColor, which only accepts named
+        # colours or #RGB / #RRGGBB / #AARRGGBB hex. Qt's QColor does
+        # NOT parse the CSS rgba(...) function form, so use #AARRGGBB
+        # for translucent whites. Alpha bytes: 18%=0x2E, 36%=0x5A,
+        # 45%=0x73, 78%=0xC8 (rounding).
         self._dot_palette = {
             "broadcasting": (
-                "rgba(255,255,255,46)",    # off (~18% white)
-                "rgba(255,255,255,115)",   # found (~45% white)
-                "#ffffff",                 # active (full white)
-                2,                         # halo on the active dots
+                "#2EFFFFFF",   # off:   18% white
+                "#73FFFFFF",   # found: 45% white
+                "#FFFFFFFF",   # active: full white
+                2,             # halo on the active dots
             ),
             "idle": (
                 c.get("segment_off",    "#333333"),
                 c.get("segment_found",  "#555555"),
                 c.get("segment_active", "#56c856"),
-                None,                      # no halo in idle
+                None,
             ),
             "stopped": (
-                "rgba(255,255,255,36)",
-                "rgba(255,255,255,90)",
-                "rgba(255,255,255,200)",
-                None,                      # no halo in stopped
+                "#24FFFFFF",   # off:    14% white
+                "#5AFFFFFF",   # found:  35% white
+                "#C8FFFFFF",   # active: 78% white
+                None,
             ),
         }
         # QSS rules - the [svc_state="..."] selectors cascade off the Qt
