@@ -1831,9 +1831,112 @@ class SettingsTab(QWidget):
 
         self.refresh_theme()
 
-    # ── Stub page builders (Tasks 5-8 replace these) ──────────────────────
+    # ── Page builders ─────────────────────────────────────────────────────
     def _build_general_page(self, page):
-        pass
+        from utils import build_info
+        page._title_label.setText("General")
+        page._sub_label.setText("App-wide preferences.")
+
+        # Insertion point: the page layout currently has [title, sub, <stretch>].
+        # Insert panels at index 2 (just before the stretch).
+        lay = page._panel_layout
+        insert_at = lay.count() - 1  # before the stretch
+
+        # ── Appearance & behavior ────────────────────────────────────────
+        appearance = SettingsPanel(title="Appearance & behavior")
+        self._panels.append(appearance)
+
+        # Theme
+        theme_value = self.settings_manager.get("theme", "system")
+        theme_idx = (
+            ["system", "light", "dark"].index(theme_value)
+            if theme_value in ("system", "light", "dark")
+            else 0
+        )
+        theme_field = SettingsField("Appearance")
+        theme_combo = QComboBox()
+        theme_combo.addItems(["System", "Light", "Dark"])
+        theme_combo.setCurrentIndex(theme_idx)
+        theme_combo.setFixedWidth(150)
+        theme_combo.currentIndexChanged.connect(self._on_theme_changed)
+        theme_field.set_control(theme_combo)
+        appearance.add_field(theme_field)
+
+        # Max accounts per game
+        saved_max = self.settings_manager.get("max_accounts_per_game", 4)
+        max_idx = max(0, min(saved_max - 4, 4))
+        max_field = SettingsField(
+            "Max accounts per game",
+            helper="How many account slots per game (TTR / CC).",
+        )
+        max_combo = QComboBox()
+        max_combo.addItems(["4", "5", "6", "7", "8"])
+        max_combo.setCurrentIndex(max_idx)
+        max_combo.setFixedWidth(150)
+        max_combo.currentIndexChanged.connect(self._on_max_accounts_changed)
+        max_field.set_control(max_combo)
+        appearance.add_field(max_field)
+
+        # Reduce motion (tri-state)
+        import utils.motion as motion
+        motion.set_settings_manager(self.settings_manager)
+        explicit = self.settings_manager.get("reduce_motion_set_explicitly", False)
+        if not explicit:
+            rm_idx = 0
+            # Write the canonical "system default" state so settings always
+            # reflect the UI, even when the combo hasn't been interacted with.
+            self.settings_manager.set("reduce_motion_set_explicitly", False)
+        elif self.settings_manager.get("reduce_motion", False):
+            rm_idx = 1
+        else:
+            rm_idx = 2
+        rm_field = SettingsField(
+            "Reduce motion",
+            helper=(
+                "System default follows your desktop's reduce-motion setting. "
+                "Choose On or Off to override."
+            ),
+        )
+        rm_combo = QComboBox()
+        rm_combo.addItems(["System default", "On", "Off"])
+        rm_combo.setCurrentIndex(rm_idx)
+        rm_combo.setFixedWidth(150)
+        rm_combo.currentIndexChanged.connect(self._on_reduce_motion_changed)
+        rm_field.set_control(rm_combo)
+        appearance.add_field(rm_field)
+
+        lay.insertWidget(insert_at, appearance)
+        insert_at += 1
+
+        # ── Updates ──────────────────────────────────────────────────────
+        updates = SettingsPanel(title="Updates")
+        self._panels.append(updates)
+
+        upd_enabled = bool(self.settings_manager.get("check_for_updates_at_startup", False))
+        upd_field = SettingsField(
+            "Check for updates on startup",
+            helper="Look for new releases when the app launches.",
+        )
+        upd_switch = Switch(upd_enabled)
+        upd_switch.toggled.connect(
+            lambda v: self.settings_manager.set("check_for_updates_at_startup", v)
+        )
+        upd_field.set_control(upd_switch)
+        updates.add_field(upd_field)
+
+        check_now_field = SettingsField(
+            "Check for updates now",
+            helper=f"Current build: {build_info.version_string()}",
+        )
+        self._check_now_btn = QPushButton("Check now")
+        self._check_now_btn.setCursor(Qt.PointingHandCursor)
+        self._check_now_btn.setFixedHeight(28)
+        self._check_now_btn.clicked.connect(self._on_check_now_clicked)
+        check_now_field.set_control(self._check_now_btn)
+        self._check_now_field = check_now_field  # for completion handlers
+        updates.add_field(check_now_field)
+
+        lay.insertWidget(insert_at, updates)
 
     def _build_games_page(self, page):
         pass
@@ -1858,9 +1961,70 @@ class SettingsTab(QWidget):
         idx = keys.index(key)
         self._stack.setCurrentIndex(idx)
 
-    # ── Public API placeholders (replaced/filled in later tasks) ──────────
+    # ── General handlers ──────────────────────────────────────────────────
+    def _on_theme_changed(self, idx):
+        theme = ["system", "light", "dark"][idx]
+        self.settings_manager.set("theme", theme)
+        apply_theme(QApplication.instance(), resolve_theme(self.settings_manager))
+        self.theme_changed.emit()
+
+    def _on_max_accounts_changed(self, idx):
+        value = idx + 4
+        self.settings_manager.set("max_accounts_per_game", value)
+        self.max_accounts_changed.emit(value)
+
+    def _on_reduce_motion_changed(self, idx):
+        if idx == 0:
+            self.settings_manager.set("reduce_motion_set_explicitly", False)
+            self.settings_manager.set("reduce_motion", False)
+        elif idx == 1:
+            self.settings_manager.set("reduce_motion_set_explicitly", True)
+            self.settings_manager.set("reduce_motion", True)
+        else:
+            self.settings_manager.set("reduce_motion_set_explicitly", True)
+            self.settings_manager.set("reduce_motion", False)
+
+    def _on_check_now_clicked(self):
+        if self._update_checker is None:
+            return
+        self._check_now_btn.setEnabled(False)
+        self._check_now_btn.setText("Checking...")
+        self._update_checker.check_async(manual=True)
+
+    def _restore_check_button(self):
+        self._check_now_btn.setEnabled(True)
+        self._check_now_btn.setText("Check now")
+
+    def _on_check_complete_update(self, info):
+        self._restore_check_button()
+
+    def _on_check_complete_no_update(self):
+        from PySide6.QtCore import QTimer
+        from utils import build_info
+        self._restore_check_button()
+        helper = self._check_now_field.helper_widget
+        if helper is not None:
+            helper.setText("You're on the latest version.")
+            default_text = f"Current build: {build_info.version_string()}"
+            QTimer.singleShot(5000, lambda: helper.setText(default_text))
+
+    def _on_check_complete_failed(self, reason):
+        from PySide6.QtCore import QTimer
+        from utils import build_info
+        self._restore_check_button()
+        helper = self._check_now_field.helper_widget
+        if helper is not None:
+            short = reason[:80]
+            helper.setText(f"Couldn't reach GitHub: {short}")
+            default_text = f"Current build: {build_info.version_string()}"
+            QTimer.singleShot(10000, lambda: helper.setText(default_text))
+
+    # ── Public API ────────────────────────────────────────────────────────
     def set_update_checker(self, checker):
         self._update_checker = checker
+        checker.update_available.connect(self._on_check_complete_update)
+        checker.no_update.connect(self._on_check_complete_no_update)
+        checker.check_failed.connect(self._on_check_complete_failed)
 
     def highlight_keep_alive_group(self):
         # Implementation completed in Task 7 (Keep-Alive page).
