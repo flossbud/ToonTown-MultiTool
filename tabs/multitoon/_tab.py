@@ -1948,7 +1948,7 @@ class MultitoonTab(QWidget):
         if not self.service_running:
             self.status_bar.set_state("stopped")
             self.status_bar.set_status_text(
-                "Stopped - click play to resume broadcasting"
+                "Stopped · click play to resume broadcasting"
             )
             return
 
@@ -1956,12 +1956,12 @@ class MultitoonTab(QWidget):
         if enabled_count == 0:
             self.status_bar.set_state("idle")
             self.status_bar.set_status_text(
-                "Idle - enable a toon below to start broadcasting"
+                "Idle · enable a toon below to start broadcasting"
             )
         else:
             self.status_bar.set_state("broadcasting")
             self.status_bar.set_status_text(
-                f"Broadcasting - {enabled_count} of 4 toons"
+                f"Broadcasting · {enabled_count} of 4 toons"
             )
 
     # ── Name fetching ──────────────────────────────────────────────────────
