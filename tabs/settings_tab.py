@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QPushButton, QScrollArea, QFileDialog,
     QStackedWidget
 )
-from PySide6.QtCore import QRectF, Qt, Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPen
 from utils.theme_manager import apply_theme, get_theme_colors, resolve_theme
 from utils.shared_widgets import Switch
@@ -211,6 +211,7 @@ class SettingsPanel(QFrame):
         super().__init__(parent)
         assert stripe in ("ttr", "cc", "neutral"), f"unknown stripe kind: {stripe!r}"
         self.setObjectName("settings_panel")  # targets the QSS selector
+        self.setAttribute(Qt.WA_StyledBackground, True)
         self.stripe_kind = stripe
         self.fields: list[SettingsField] = []
         self.header_buttons: list = []
@@ -218,7 +219,7 @@ class SettingsPanel(QFrame):
         self._is_dark = True
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setContentsMargins(1, 1, 1, 1)
         outer.setSpacing(0)
 
         # ── header ──
@@ -228,6 +229,8 @@ class SettingsPanel(QFrame):
         # This keeps buttons from getting clipped at compact widths
         # (~349 px usable content area).
         self.header_widget = QWidget(self)
+        self.header_widget.setObjectName("settings_panel_header")
+        self.header_widget.setAttribute(Qt.WA_StyledBackground, True)
         head_outer = QVBoxLayout(self.header_widget)
         head_outer.setContentsMargins(16, 10, 16, 10)
         head_outer.setSpacing(8)
@@ -292,6 +295,8 @@ class SettingsPanel(QFrame):
 
         # ── body ──
         self._body_widget = QWidget(self)
+        self._body_widget.setObjectName("settings_panel_body")
+        self._body_widget.setAttribute(Qt.WA_StyledBackground, True)
         self._body_layout = QVBoxLayout(self._body_widget)
         self._body_layout.setContentsMargins(0, 0, 0, 0)
         self._body_layout.setSpacing(0)
@@ -361,16 +366,35 @@ class SettingsPanel(QFrame):
     def apply_theme(self, c, is_dark: bool) -> None:
         self._c = c
         self._is_dark = is_dark
-        # Body chrome via QSS - Qt's paint cascade reliably honors a stylesheet
-        # whose selector targets this widget by objectName, even when an
-        # ancestor sets a global background stylesheet. The original
-        # paintEvent-based approach was being shadowed by the page widget's
-        # cascaded `background: bg_app` rule, leaving panels chrome-less.
+        stripe = self._stripe_color()
+        # Panel chrome -- body fill, 3-sided border, and the brand stripe
+        # as the top border (different width). Pattern ported verbatim from
+        # utils/widgets/launch_section.py's section_card which was already
+        # battle-tested against the same parent-stylesheet cascade problem
+        # that breaks naive paintEvent-based chrome in this codebase.
         self.setStyleSheet(
             "QFrame#settings_panel {"
             f"background: {c.get('bg_card', '#252525')};"
-            f"border: 1px solid {c.get('border_card', '#363636')};"
+            f"border-left: 1px solid {c.get('border_card', '#363636')};"
+            f"border-right: 1px solid {c.get('border_card', '#363636')};"
+            f"border-bottom: 1px solid {c.get('border_card', '#363636')};"
+            f"border-top: 3px solid {stripe};"
             "border-radius: 10px;"
+            "}"
+        )
+        # Explicit transparent background on the header so the card surface
+        # shows through. Without this, Qt paints QWidget's default opaque
+        # bg (inherited from the parent's `background: bg_app` cascade) over
+        # the card body, hiding the rounded corners + border.
+        self.header_widget.setStyleSheet(
+            "QWidget#settings_panel_header {"
+            "background: transparent;"
+            f"border-bottom: 1px solid {c.get('border_muted', '#2e2e2e')};"
+            "}"
+        )
+        self._body_widget.setStyleSheet(
+            "QWidget#settings_panel_body {"
+            "background: transparent;"
             "}"
         )
         self.title_label.setStyleSheet(
@@ -395,45 +419,6 @@ class SettingsPanel(QFrame):
             "neutral": "border_light",
         }[self.stripe_kind]
         return self._c.get(token, "#888888")
-
-    def paintEvent(self, event):
-        # Explicitly invoke the QStyle to render the QSS-defined background,
-        # border, and border-radius. super().paintEvent() on a QFrame does
-        # not trigger this -- see Qt docs on "Customizing QWidget" subclasses
-        # at https://doc.qt.io/qt-6/stylesheet-reference.html. Without this
-        # the QSS rule we set in apply_theme is silently ignored at paint
-        # time and the panel appears chrome-less.
-        from PySide6.QtCore import QRectF
-        from PySide6.QtGui import QColor, QPainter
-        from PySide6.QtWidgets import QStyle, QStyleOption
-        opt = QStyleOption()
-        opt.initFrom(self)
-        p = QPainter(self)
-        self.style().drawPrimitive(QStyle.PE_Widget, opt, p, self)
-
-        if self._c is None:
-            p.end()
-            return
-        p.setRenderHint(QPainter.Antialiasing)
-
-        # Top stripe -- paint a rounded rect that extends past the visible
-        # stripe height, then erase its lower half with bg_card so only the
-        # top corners are rounded.
-        p.setPen(Qt.NoPen)
-        p.setBrush(QColor(self._stripe_color()))
-        radius = 10.0
-        p.drawRoundedRect(
-            QRectF(1, 1, self.width() - 2, self.STRIPE_HEIGHT + radius),
-            radius, radius,
-        )
-        p.setBrush(QColor(self._c.get("bg_card", "#252525")))
-        p.drawRect(QRectF(1, self.STRIPE_HEIGHT + 1, self.width() - 2, radius))
-
-        # Header-bottom divider -- 1px line under the header_widget.
-        p.setPen(QColor(self._c.get("border_muted", "#2e2e2e")))
-        y = self.header_widget.geometry().bottom()
-        p.drawLine(0, y, self.width(), y)
-        p.end()
 
 
 class _SidebarItem(QFrame):

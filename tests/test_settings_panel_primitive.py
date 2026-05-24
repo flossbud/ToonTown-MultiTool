@@ -378,3 +378,57 @@ def test_field_single_control_stays_on_top_row(qapp):
     assert btn.parentWidget() is field
     # Bottom row stays hidden.
     assert field._bottom_row.isHidden()
+
+
+def test_panel_uses_launch_section_card_pattern(qapp):
+    """Regression: SettingsPanel must mirror launch_section.py's proven
+    section_card pattern to survive Qt's parent-stylesheet cascade.
+    See utils/widgets/launch_section.py lines 132-148 for the reference.
+    """
+    from PySide6.QtCore import Qt
+    from tabs.settings_tab import SettingsPanel
+    panel = SettingsPanel(title="X", stripe="ttr")
+    # 1. WA_StyledBackground enabled -- required for QSS bg to render
+    assert panel.testAttribute(Qt.WA_StyledBackground), (
+        "panel needs WA_StyledBackground for QSS bg/border/radius to render"
+    )
+    # 2. Outer layout has 1px inset so children don't overpaint chrome
+    margins = panel.layout().contentsMargins()
+    assert (margins.left(), margins.top(), margins.right(), margins.bottom()) == (1, 1, 1, 1)
+    # 3. Header + body have explicit objectNames so they can be styled
+    assert panel.header_widget.objectName() == "settings_panel_header"
+    assert panel._body_widget.objectName() == "settings_panel_body"
+    # 4. Header + body have WA_StyledBackground for their transparent QSS
+    assert panel.header_widget.testAttribute(Qt.WA_StyledBackground)
+    assert panel._body_widget.testAttribute(Qt.WA_StyledBackground)
+
+
+def test_panel_stripe_lives_in_border_top_qss(qapp):
+    """The brand stripe must be encoded as the panel's CSS border-top
+    width/color. paintEvent-based stripes get clobbered by the parent
+    stylesheet cascade -- only the QSS border-top approach is robust."""
+    from utils.theme_manager import get_theme_colors
+    from tabs.settings_tab import SettingsPanel
+    panel = SettingsPanel(title="TTR", stripe="ttr")
+    panel.apply_theme(get_theme_colors(is_dark=True), is_dark=True)
+    qss = panel.styleSheet()
+    # Stripe color is in the border-top declaration.
+    assert "border-top:" in qss
+    # TTR brand color is #4A8FE7 -- check it shows up in the QSS.
+    assert "#4A8FE7" in qss or "#4a8fe7" in qss
+
+
+def test_panel_no_paintevent_override(qapp):
+    """SettingsPanel must NOT override paintEvent -- Qt's default QFrame
+    paintEvent + WA_StyledBackground correctly renders the QSS chrome.
+    Adding a custom paintEvent (even one that calls super) historically
+    caused chrome to disappear due to QPainter ordering issues with the
+    style cascade. The test guards against re-introducing that bug."""
+    from PySide6.QtWidgets import QFrame
+    from tabs.settings_tab import SettingsPanel
+    # SettingsPanel inherits paintEvent from QFrame -- it should not have
+    # its own override defined on the class itself.
+    assert "paintEvent" not in SettingsPanel.__dict__, (
+        "SettingsPanel must not override paintEvent; use QSS chrome only "
+        "(see launch_section.py for the reference pattern)"
+    )
