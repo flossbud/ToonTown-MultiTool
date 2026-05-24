@@ -180,7 +180,7 @@ class ServiceStatusBar(QFrame):
                 border: 1px solid {c['border_card']};
             }}
             QFrame#ServiceStatusBar[svc_state="broadcasting"] {{
-                background-color: {c['accent_blue_dim']};
+                background-color: {c['accent_blue']};
                 border: 1px solid {c['accent_blue']};
             }}
             QFrame#ServiceStatusBar[svc_state="stopped"] {{
