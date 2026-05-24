@@ -137,7 +137,7 @@ def test_current_value_delegate_does_not_paint_dot_on_non_current_row(app):
 def test_settings_combobox_paints_chevron_in_droparea(app):
     """After paintEvent, the right edge (where the chevron lives) should
     have non-background pixels in roughly the idle-gray range."""
-    from PySide6.QtGui import QPixmap, QColor
+    from PySide6.QtGui import QColor
     from utils.shared_widgets import SettingsComboBox
 
     cb = SettingsComboBox()
@@ -165,12 +165,40 @@ def test_settings_combobox_paints_chevron_in_droparea(app):
 
 
 def test_settings_combobox_chevron_color_follows_is_dark_flag(app):
-    """Light theme's hover chevron is #475569 (darkish gray), dark theme's
-    is #dddddd. The flag must change what's painted."""
-    from PySide6.QtGui import QPixmap, QColor
+    """Verify the is_dark flag actually changes what's painted by
+    comparing dark vs light renders. Dark idle stroke is #aaaaaa (R=170);
+    light idle stroke is #64748b (R=100). They must be distinguishably
+    different — a regression that ignored the flag would produce
+    identical pixels and fail this test."""
     from utils.shared_widgets import SettingsComboBox
 
-    # Light theme combo
+    def _sample_stroke_pixel(cb):
+        """Return the brightest stroke pixel on the left arm of the chevron.
+
+        The chevron left arm runs from (cx-4, cy-2) to (cx, cy+2).
+        We scan only dx in [-4, -1] to stay clear of the right-side
+        combo border/shadow pixels that appear at dx=0 and beyond.
+        Background is near-black (~R=32); stroke pixels are brighter."""
+        pm = cb.grab()
+        img = pm.toImage()
+        cx = pm.width() - 15
+        cy = pm.height() // 2
+        brightest = None
+        for dy in range(-3, 4):
+            for dx in range(-4, 0):  # left arm: stop before dx=0 (border zone)
+                c = img.pixelColor(cx + dx, cy + dy)
+                if c.red() > 50:  # background is ~R=32; strokes are much brighter
+                    if brightest is None or c.red() > brightest.red():
+                        brightest = c
+        return brightest
+
+    cb_dark = SettingsComboBox()
+    cb_dark.addItems(["A"])
+    cb_dark.set_theme_colors(accent="#0077ff", is_dark=True)
+    cb_dark.resize(180, 30)
+    cb_dark.show()
+    app.processEvents()
+
     cb_light = SettingsComboBox()
     cb_light.addItems(["A"])
     cb_light.set_theme_colors(accent="#2563eb", is_dark=False)
@@ -178,25 +206,17 @@ def test_settings_combobox_chevron_color_follows_is_dark_flag(app):
     cb_light.show()
     app.processEvents()
 
-    pm_l = cb_light.grab()
-    img_l = pm_l.toImage()
-    # Pick a pixel near the chevron center horizontally; sample several
-    # vertical positions to find a stroke pixel.
-    cx = pm_l.width() - 15
-    light_stroke = None
-    for cy in range(pm_l.height() // 2 - 3, pm_l.height() // 2 + 4):
-        for dx in range(-4, 5):
-            c = img_l.pixelColor(cx + dx, cy)
-            # Light idle chevron is #64748b (R=100, G=116, B=139) — dark grayish.
-            # On the typically-white light-theme bg, the stroke is the darker pixel.
-            if c.red() < 180:  # darker than bg
-                light_stroke = c
-                break
-        if light_stroke is not None:
-            break
+    dark_stroke = _sample_stroke_pixel(cb_dark)
+    light_stroke = _sample_stroke_pixel(cb_light)
+    cb_dark.hide()
     cb_light.hide()
-    assert light_stroke is not None, "expected stroke pixel for light theme"
-    # Idle chevron for light is #64748b — R should be roughly < 130 at antialiased center
-    assert light_stroke.red() < 160, (
-        f"expected light-theme idle chevron near #64748b, got R={light_stroke.red()}"
+
+    assert dark_stroke is not None, "no stroke pixel found in dark render"
+    assert light_stroke is not None, "no stroke pixel found in light render"
+    # Dark idle #aaaaaa (R=170) vs light idle #64748b (R=100): center
+    # pixels should differ by a lot (>30 even after antialiasing).
+    diff = abs(dark_stroke.red() - light_stroke.red())
+    assert diff > 30, (
+        f"expected dark and light chevron strokes to differ visibly; "
+        f"got dark R={dark_stroke.red()}, light R={light_stroke.red()}, diff={diff}"
     )

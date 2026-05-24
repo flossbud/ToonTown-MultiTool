@@ -478,15 +478,17 @@ class SettingsComboBox(QComboBox):
 
         # Chevron: two strokes forming a downward "v", 8px wide x 4px tall.
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing, True)
-        pen = QPen(color)
-        pen.setWidthF(1.5)
-        pen.setCapStyle(Qt.RoundCap)
-        pen.setJoinStyle(Qt.RoundJoin)
-        painter.setPen(pen)
-        painter.drawLine(cx - 4, cy - 2, cx, cy + 2)
-        painter.drawLine(cx, cy + 2, cx + 4, cy - 2)
-        painter.end()
+        try:
+            painter.setRenderHint(QPainter.Antialiasing, True)
+            pen = QPen(color)
+            pen.setWidthF(1.5)
+            pen.setCapStyle(Qt.RoundCap)
+            pen.setJoinStyle(Qt.RoundJoin)
+            painter.setPen(pen)
+            painter.drawLine(cx - 4, cy - 2, cx, cy + 2)
+            painter.drawLine(cx, cy + 2, cx + 4, cy - 2)
+        finally:
+            painter.end()
 
 
 # ── Current Value Delegate ───────────────────────────────────────────────────
