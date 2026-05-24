@@ -218,7 +218,10 @@ class SettingsPanel(QFrame):
         parent=None,
     ):
         super().__init__(parent)
-        assert stripe in ("ttr", "cc", "neutral"), f"unknown stripe kind: {stripe!r}"
+        assert stripe in (
+            "ttr", "cc", "neutral",
+            "blue", "yellow", "orange", "green", "red",
+        ), f"unknown stripe kind: {stripe!r}"
         self.setObjectName("settings_panel")  # targets the QSS selector
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.stripe_kind = stripe
@@ -426,6 +429,11 @@ class SettingsPanel(QFrame):
             "ttr": "game_pill_ttr",
             "cc": "game_pill_cc",
             "neutral": "border_light",
+            "blue": "accent_blue_btn",
+            "yellow": "accent_yellow",
+            "orange": "accent_orange",
+            "green": "accent_green",
+            "red": "accent_red",
         }[self.stripe_kind]
         return self._c.get(token, "#888888")
 
@@ -673,7 +681,7 @@ class SettingsTab(QWidget):
         insert_at = lay.count() - 1  # before the stretch
 
         # ── Appearance & behavior ────────────────────────────────────────
-        appearance = SettingsPanel(title="Appearance & behavior")
+        appearance = SettingsPanel(title="Appearance & behavior", stripe="blue")
         self._panels.append(appearance)
 
         # Theme
@@ -739,7 +747,7 @@ class SettingsTab(QWidget):
         insert_at += 1
 
         # ── Updates ──────────────────────────────────────────────────────
-        updates = SettingsPanel(title="Updates")
+        updates = SettingsPanel(title="Updates", stripe="yellow")
         self._panels.append(updates)
 
         upd_enabled = bool(self.settings_manager.get("check_for_updates_at_startup", False))
@@ -1247,7 +1255,7 @@ class SettingsTab(QWidget):
         lay = page._panel_layout
         insert_at = lay.count() - 1
 
-        panel = SettingsPanel(title="Keep-Alive")
+        panel = SettingsPanel(title="Keep-Alive", stripe="orange")
         self._panels.append(panel)
         self._keep_alive_panel = panel
 
@@ -1377,7 +1385,7 @@ class SettingsTab(QWidget):
         insert_at = lay.count() - 1
 
         # ── Diagnostics & input ──────────────────────────────────────────
-        diag = SettingsPanel(title="Diagnostics & input")
+        diag = SettingsPanel(title="Diagnostics & input", stripe="green")
         self._panels.append(diag)
 
         log_field = SettingsField("Enable Logging")
@@ -1413,8 +1421,8 @@ class SettingsTab(QWidget):
         lay.insertWidget(insert_at, diag)
         insert_at += 1
 
-        # ── Maintenance ──────────────────────────────────────────────────
-        maint = SettingsPanel(title="Maintenance")
+        # ── Storage ──────────────────────────────────────────────────────
+        maint = SettingsPanel(title="Storage", stripe="red")
         self._panels.append(maint)
 
         clr_field = SettingsField(

@@ -89,6 +89,30 @@ def test_panel_cc_stripe(qapp):
     assert panel.stripe_kind == "cc"
 
 
+@pytest.mark.parametrize("stripe,token", [
+    ("blue",   "accent_blue_btn"),
+    ("yellow", "accent_yellow"),
+    ("orange", "accent_orange"),
+    ("green",  "accent_green"),
+    ("red",    "accent_red"),
+])
+def test_panel_named_color_stripe_resolves_to_palette_token(qapp, stripe, token):
+    """Settings panels can use named accent stripes (blue/yellow/orange/
+    green/red). Each name must resolve to the matching palette token in
+    both themes so dark/light render consistently."""
+    from tabs.settings_tab import SettingsPanel
+    from utils.theme_manager import get_theme_colors
+    panel = SettingsPanel(title=stripe.title(), stripe=stripe)
+    assert panel.stripe_kind == stripe
+    for is_dark in (True, False):
+        panel.apply_theme(get_theme_colors(is_dark), is_dark)
+        expected = get_theme_colors(is_dark)[token]
+        assert panel._stripe_color() == expected, (
+            f"stripe={stripe} should resolve to {token} ({expected}) "
+            f"in {'dark' if is_dark else 'light'}; got {panel._stripe_color()}"
+        )
+
+
 def test_panel_header_renders_title_and_sub(qapp):
     from tabs.settings_tab import SettingsPanel
     panel = SettingsPanel(title="Games", sub="Subtitle here.")

@@ -166,6 +166,9 @@ def get_theme_colors(is_dark: bool) -> dict:
             "accent_orange_border": "#e0943a",
             "accent_orange_hover":  "#d48a34",
 
+            # Accent — yellow (settings panel stripe: Updates)
+            "accent_yellow":        "#d4a017",
+
             # Status strip — success
             "status_success_bg":     "#2c3f2c",
             "status_success_text":   "#ccffcc",
@@ -311,6 +314,9 @@ def get_theme_colors(is_dark: bool) -> dict:
             "accent_orange":        "#c2410c",
             "accent_orange_border": "#ea580c",
             "accent_orange_hover":  "#9a3412",
+
+            # Accent — yellow (settings panel stripe: Updates)
+            "accent_yellow":        "#a16207",
 
             # Status strip — success
             "status_success_bg":     "#dcfce7",
