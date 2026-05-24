@@ -124,7 +124,15 @@ class HotkeyManager(QObject):
         self.listener = None
         self.is_listening = False
         self.pressed_keys.clear()
-        listener.stop()
+        # Race guard: pynput's _stop_platform reaches for self._display_record
+        # which the worker thread sets early in _run(). If stop() is called
+        # before that line lands (very fast app launch + close cycle), pynput
+        # raises AttributeError. We swallow the known cases so closeEvent's
+        # remaining shutdown calls still run.
+        try:
+            listener.stop()
+        except AttributeError:
+            pass
         threading.Thread(
             target=lambda: _join_quietly(listener),
             daemon=True,

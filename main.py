@@ -1097,13 +1097,21 @@ class MultiToonTool(QMainWindow):
     # ── Lifecycle ──────────────────────────────────────────────────────────
 
     def closeEvent(self, event):
-        try:
-            self.hotkey_manager.stop()
-            self.launch_tab.shutdown()
-            self.multitoon_tab.shutdown()
-            self.window_manager.stop()
-        except Exception as e:
-            print(f"[CloseEvent] Error during shutdown: {e}")
+        # Each shutdown call is wrapped independently so a failure in one
+        # (e.g. pynput's listener.stop() racing its own initialization)
+        # does not prevent the others from running. Skipping
+        # window_manager.stop() leaves its poll thread alive and locks
+        # the terminal.
+        for label, fn in (
+            ("hotkey_manager", self.hotkey_manager.stop),
+            ("launch_tab",      self.launch_tab.shutdown),
+            ("multitoon_tab",   self.multitoon_tab.shutdown),
+            ("window_manager",  self.window_manager.stop),
+        ):
+            try:
+                fn()
+            except Exception as e:
+                print(f"[CloseEvent] {label} shutdown error: {e}")
         try:
             if hasattr(self, "update_checker"):
                 self.update_checker.shutdown()
