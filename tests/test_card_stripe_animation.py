@@ -99,11 +99,23 @@ def test_full_to_grey_crossfades(stripe):
 
 
 def test_same_color_short_circuits(stripe):
-    """Calling set_color with the current color is a no-op."""
+    """Calling set_color with the current color is a no-op (settled state)."""
     stripe.set_color(_ttr_full())
     _settle(stripe)
     stripe.set_color(_ttr_full())
     assert stripe._anim is None
+
+
+def test_same_color_while_animating_does_not_cancel(stripe, qapp):
+    """Calling set_color with the same destination while animating leaves
+    the in-flight animation untouched (idempotent re-brand calls)."""
+    stripe.set_color(_ttr_muted(qapp))
+    stripe.set_color(_ttr_full())
+    first_anim = stripe._anim
+    # Second call with the identical target: must be a pure no-op.
+    stripe.set_color(_ttr_full())
+    assert stripe._anim is first_anim
+    assert stripe._anim_kind == "forward"
 
 
 def test_set_color_aborts_in_flight(stripe, qapp):

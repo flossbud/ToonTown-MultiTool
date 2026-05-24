@@ -710,9 +710,10 @@ class _CardStripe(QFrame):
             self.update()
             return
 
-        # Same colour (and no in-flight transition pointing somewhere else):
-        # no work to do.
-        if self._anim is None and self._color == color:
+        # Already animating toward (or sitting at) this exact colour:
+        # no work to do. self._color always holds the destination, so the
+        # check is correct whether or not an animation is in flight.
+        if self._color == color:
             return
 
         # Cancel any in-flight animation before starting a new one. We

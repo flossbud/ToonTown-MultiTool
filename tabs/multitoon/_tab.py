@@ -1609,15 +1609,21 @@ class MultitoonTab(QWidget):
                 self.game_badges[index].setText("CC")
                 self.game_badges[index].setStyleSheet(f"background-color: #F26D21; color: white; border-radius: 4px; padding: 2px 6px; font-weight: bold; font-size: 10px; border: 1px solid {c['border_muted']};")
                 self.game_badges[index].show()
-                self._set_card_brand_for_slot(index, "cc")
+                self._set_card_brand_for_slot(
+                    index, "cc",
+                    enabled=self.enabled_toons[index] and self.service_running,
+                )
             elif game_tag == "ttr":
                 self.game_badges[index].setText("TTR")
                 self.game_badges[index].setStyleSheet(f"background-color: #4A8FE7; color: white; border-radius: 4px; padding: 2px 6px; font-weight: bold; font-size: 10px; border: 1px solid {c['border_muted']};")
                 self.game_badges[index].show()
-                self._set_card_brand_for_slot(index, "ttr")
+                self._set_card_brand_for_slot(
+                    index, "ttr",
+                    enabled=self.enabled_toons[index] and self.service_running,
+                )
             else:
                 self.game_badges[index].hide()
-                self._set_card_brand_for_slot(index, None)
+                self._set_card_brand_for_slot(index, None, enabled=False)
             if self._mode == "full" and hasattr(self, "_full") and index < len(self._full._cards):
                 self._full._cards[index]._apply_game_pill_style()
             # Keep this toon's set selector scoped to its game's set list.
@@ -1625,7 +1631,7 @@ class MultitoonTab(QWidget):
                 self.set_selectors[index].set_toon_game(game_tag)
         else:
             self.game_badges[index].hide()
-            self._set_card_brand_for_slot(index, None)
+            self._set_card_brand_for_slot(index, None, enabled=False)
 
         # -- Slot badge --
         if window_available and self.service_running:
@@ -1720,6 +1726,24 @@ class MultitoonTab(QWidget):
                 }}
             """)
             selector.setEnabled(False)
+
+        # Re-brand the card stripe (forward fill on enable, cross-fade
+        # back when disabled). Pulls game from the slot's visible game
+        # badge - same pattern as _CompactLayout.populate's initial pass.
+        compact = getattr(self, "_compact", None)
+        if compact is not None:
+            badge = (
+                self.game_badges[index]
+                if index < len(self.game_badges)
+                else None
+            )
+            game = None
+            if badge is not None and badge.isVisible():
+                game = "cc" if badge.text() == "CC" else "ttr"
+            self._set_card_brand_for_slot(
+                index, game,
+                enabled=self.enabled_toons[index] and self.service_running,
+            )
 
     def _apply_chat_btn_style(self, index, c):
         chat_btn = self.chat_buttons[index]
@@ -2036,7 +2060,9 @@ class MultitoonTab(QWidget):
 
         threading.Thread(target=_run_fetch, daemon=True).start()
 
-    def _set_card_brand_for_slot(self, index: int, game: str | None) -> None:
+    def _set_card_brand_for_slot(
+        self, index: int, game: str | None, enabled: bool = False
+    ) -> None:
         """Forward to the compact layout's set_card_brand. No-op when the
         Full layout is active or when compact isn't built yet."""
         compact = getattr(self, "_compact", None)
@@ -2044,7 +2070,7 @@ class MultitoonTab(QWidget):
             return
         set_brand = getattr(compact, "set_card_brand", None)
         if callable(set_brand):
-            set_brand(index, game)
+            set_brand(index, game, enabled=enabled)
 
     def manual_refresh(self):
         self.log("[Service] Manual refresh triggered.")
