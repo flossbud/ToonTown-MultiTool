@@ -51,18 +51,28 @@ def _settle(stripe):
         stripe._anim.setCurrentTime(stripe._anim.duration())
 
 
-def test_set_card_brand_drives_stripe_to_muted_ttr(qapp):
-    """End-to-end: set_card_brand('ttr', enabled=False) settles the
-    stripe at the muted TTR brand colour."""
+def _build_tab(qapp):
+    """Build a MultitoonTab and exit the cold-start delay so direct
+    set_card_brand calls drive the stripe immediately (the 1 s cold-
+    start hold is a UX feature for actual app launch, not relevant to
+    the wiring assertions here)."""
     from tabs.multitoon_tab import MultitoonTab
-    from tabs.multitoon._compact_layout import _muted_brand
 
     tab = MultitoonTab(settings_manager=_FakeSettings(), window_manager=_FakeWindow())
     tab.set_layout_mode("compact")
     tab.resize(549, 650)
     tab.show()
     qapp.processEvents()
+    tab._compact._cold_start_in_progress = False
+    return tab
 
+
+def test_set_card_brand_drives_stripe_to_muted_ttr(qapp):
+    """End-to-end: set_card_brand('ttr', enabled=False) settles the
+    stripe at the muted TTR brand colour."""
+    from tabs.multitoon._compact_layout import _muted_brand
+
+    tab = _build_tab(qapp)
     tab._compact.set_card_brand(0, "ttr", enabled=False)
     stripe = tab._compact._card_slots[0]["card_stripe"]
     _settle(stripe)
@@ -73,14 +83,7 @@ def test_set_card_brand_drives_stripe_to_muted_ttr(qapp):
 
 def test_set_card_brand_drives_stripe_to_full_cc(qapp):
     """End-to-end: set_card_brand('cc', enabled=True) settles at full CC."""
-    from tabs.multitoon_tab import MultitoonTab
-
-    tab = MultitoonTab(settings_manager=_FakeSettings(), window_manager=_FakeWindow())
-    tab.set_layout_mode("compact")
-    tab.resize(549, 650)
-    tab.show()
-    qapp.processEvents()
-
+    tab = _build_tab(qapp)
     tab._compact.set_card_brand(1, "cc", enabled=True)
     stripe = tab._compact._card_slots[1]["card_stripe"]
     _settle(stripe)
@@ -90,14 +93,7 @@ def test_set_card_brand_drives_stripe_to_full_cc(qapp):
 
 def test_set_card_brand_none_drives_stripe_to_empty(qapp):
     """End-to-end: set_card_brand(None) settles at the empty (grey) tier."""
-    from tabs.multitoon_tab import MultitoonTab
-
-    tab = MultitoonTab(settings_manager=_FakeSettings(), window_manager=_FakeWindow())
-    tab.set_layout_mode("compact")
-    tab.resize(549, 650)
-    tab.show()
-    qapp.processEvents()
-
+    tab = _build_tab(qapp)
     # Set it to TTR first, then back to None
     tab._compact.set_card_brand(2, "ttr", enabled=True)
     stripe = tab._compact._card_slots[2]["card_stripe"]
