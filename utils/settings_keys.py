@@ -27,3 +27,6 @@ UPDATE_LAST_CHECK_RESULT = "update_last_check_result"
 # Launch tab section collapse (added 2026-05-23)
 LAUNCH_SECTION_TTR_COLLAPSED = "launch_section_ttr_collapsed"
 LAUNCH_SECTION_CC_COLLAPSED  = "launch_section_cc_collapsed"
+
+# Settings tab navigation (added 2026-05-23)
+SETTINGS_ACTIVE_CATEGORY = "settings_active_category"

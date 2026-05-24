@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QComboBox, QApplication, QMessageBox, QFrame,
     QPushButton, QScrollArea, QSizePolicy, QFileDialog,
-    QGraphicsDropShadowEffect
+    QGraphicsDropShadowEffect, QStackedWidget
 )
 from PySide6.QtCore import Property, QPointF, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPen, QPolygonF
@@ -23,7 +23,7 @@ from services.cc_login_service import (
     discover_cc_installs,
 )
 from services.wine_runtimes import install_signature
-from utils.settings_keys import CC_ENGINE_INSTALL_SIGNATURE
+from utils.settings_keys import CC_ENGINE_INSTALL_SIGNATURE, SETTINGS_ACTIVE_CATEGORY
 
 SPECIAL_KEYS = {
     Qt.Key_Space: "space", Qt.Key_Return: "Return", Qt.Key_Enter: "Return",
@@ -1779,7 +1779,6 @@ class SettingsTab(QWidget):
         outer.addWidget(self.sidebar)
 
         # Content stack: a single QStackedWidget holding one scroll-area per page.
-        from PySide6.QtWidgets import QStackedWidget
         self._stack = QStackedWidget(self)
         outer.addWidget(self._stack, 1)
 
@@ -1826,7 +1825,7 @@ class SettingsTab(QWidget):
         self._build_advanced_page(self.pages["advanced"])
 
         # Restore persisted category.
-        persisted = self.settings_manager.get("settings_active_category", "general")
+        persisted = self.settings_manager.get(SETTINGS_ACTIVE_CATEGORY, "general")
         self._show_category(persisted)
         self.sidebar.category_selected.connect(self._on_category_selected)
 
@@ -1848,7 +1847,7 @@ class SettingsTab(QWidget):
     # ── Category routing ──────────────────────────────────────────────────
     def _on_category_selected(self, key: str):
         self._show_category(key)
-        self.settings_manager.set("settings_active_category", key)
+        self.settings_manager.set(SETTINGS_ACTIVE_CATEGORY, key)
 
     def _show_category(self, key: str):
         keys = [k for k, _ in self.CATEGORIES]

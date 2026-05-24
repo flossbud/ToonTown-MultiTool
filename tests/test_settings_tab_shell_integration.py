@@ -55,7 +55,7 @@ def test_settings_tab_initial_page_persisted(qapp, settings_manager):
     from tabs.settings_tab import SettingsTab
     tab = SettingsTab(settings_manager)
     assert tab.sidebar.active_key == "keep_alive"
-    assert tab.pages["keep_alive"].isVisible() or tab._current_page_key == "keep_alive"
+    assert tab._current_page_key == "keep_alive"
 
 
 def test_settings_tab_clicking_sidebar_swaps_page_and_persists(qapp, settings_manager):
