@@ -1,7 +1,7 @@
 """
 Shared custom widgets used across multiple tabs.
 
-IOSToggle           — Animated iOS-style toggle switch
+Switch              — Accent-blue pill toggle (Settings)
 IOSSegmentedControl — iOS-style segmented control for small option sets
 PulsingDot          — Animated status dot with optional breathing glow
 SmoothProgressBar   — Sub-pixel precision progress bar with rounded pill shape
@@ -16,102 +16,6 @@ from PySide6.QtCore import (
     Property, QRectF, QSize,
 )
 from PySide6.QtGui import QColor, QPainter, QFont, QRadialGradient, QFontMetrics
-
-
-# ── iOS Toggle Switch ────────────────────────────────────────────────────────
-
-class IOSToggle(QWidget):
-    """Animated iOS-style toggle switch."""
-    toggled = Signal(bool)
-
-    TRACK_W = 51
-    TRACK_H = 31
-    THUMB_D = 27
-    PADDING = 2
-
-    def __init__(self, checked=False, parent=None):
-        super().__init__(parent)
-        self._checked = checked
-        self._thumb_x = float(self.PADDING if not checked else self.TRACK_W - self.THUMB_D - self.PADDING)
-        self.setFixedSize(self.TRACK_W, self.TRACK_H)
-        self.setCursor(Qt.PointingHandCursor)
-
-        self._anim = QPropertyAnimation(self, b"thumbX")
-        self._anim.setDuration(180)
-        self._anim.setEasingCurve(QEasingCurve.OutCubic)
-
-    def _get_thumb_x(self):
-        return self._thumb_x
-
-    def _set_thumb_x(self, val):
-        self._thumb_x = val
-        self.update()
-
-    thumbX = Property(float, _get_thumb_x, _set_thumb_x)
-
-    def isChecked(self):
-        return self._checked
-
-    def setChecked(self, val: bool, animate=False):
-        if val == self._checked:
-            return
-        self._checked = val
-        target = float(self.TRACK_W - self.THUMB_D - self.PADDING) if val else float(self.PADDING)
-        if animate:
-            self._anim.stop()
-            self._anim.setStartValue(self._thumb_x)
-            self._anim.setEndValue(target)
-            self._anim.start()
-        else:
-            self._thumb_x = target
-            self.update()
-
-    def mousePressEvent(self, e):
-        self._checked = not self._checked
-        target = float(self.TRACK_W - self.THUMB_D - self.PADDING) if self._checked else float(self.PADDING)
-        self._anim.stop()
-        self._anim.setStartValue(self._thumb_x)
-        self._anim.setEndValue(target)
-        self._anim.start()
-        self.toggled.emit(self._checked)
-
-    def set_theme_colors(self, off_color: str):
-        """Set the off-track color from theme."""
-        self._off_color = off_color
-        self.update()
-
-    def paintEvent(self, e):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
-
-        # Track
-        r = self.TRACK_H / 2.0
-        off_hex = getattr(self, '_off_color', '#3a3a3a')
-        track_color = QColor("#34C759") if self._checked else QColor(off_hex)
-        # Interpolate color during animation
-        if self._thumb_x != self.PADDING and self._thumb_x != (self.TRACK_W - self.THUMB_D - self.PADDING):
-            t = (self._thumb_x - self.PADDING) / (self.TRACK_W - self.THUMB_D - 2 * self.PADDING)
-            t = max(0.0, min(1.0, t))
-            off = QColor(off_hex)
-            on  = QColor("#34C759")
-            track_color = QColor(
-                int(off.red()   + t * (on.red()   - off.red())),
-                int(off.green() + t * (on.green() - off.green())),
-                int(off.blue()  + t * (on.blue()  - off.blue())),
-            )
-
-        p.setPen(Qt.NoPen)
-        p.setBrush(track_color)
-        p.drawRoundedRect(QRectF(0, 0, self.TRACK_W, self.TRACK_H), r, r)
-
-        # Thumb shadow
-        p.setBrush(QColor(0, 0, 0, 40))
-        p.drawEllipse(QRectF(self._thumb_x + 1, self.PADDING + 2, self.THUMB_D, self.THUMB_D))
-
-        # Thumb
-        p.setBrush(QColor("#ffffff"))
-        p.drawEllipse(QRectF(self._thumb_x, self.PADDING, self.THUMB_D, self.THUMB_D))
-        p.end()
 
 
 # ── Accent-blue Switch ───────────────────────────────────────────────────────
