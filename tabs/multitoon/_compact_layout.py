@@ -660,8 +660,8 @@ class _CardStripe(QFrame):
         s >= 165 -> rank 2 (full brand)
     """
 
-    _DUR_FORWARD = 320
-    _DUR_BACKWARD = 220
+    _DUR_FORWARD = 600
+    _DUR_BACKWARD = 400
 
     def __init__(self, parent: QWidget):
         super().__init__(parent)
@@ -745,13 +745,13 @@ class _CardStripe(QFrame):
             self._progress = 0.0
             self._anim = QPropertyAnimation(self, b"progress")
             self._anim.setDuration(self._DUR_FORWARD)
-            self._anim.setEasingCurve(QEasingCurve.OutCubic)
+            self._anim.setEasingCurve(QEasingCurve.InOutQuad)
         else:
             self._anim_kind = "backward"
             self._blend = 0.0
             self._anim = QPropertyAnimation(self, b"blend")
             self._anim.setDuration(self._DUR_BACKWARD)
-            self._anim.setEasingCurve(QEasingCurve.InOutCubic)
+            self._anim.setEasingCurve(QEasingCurve.InOutQuad)
 
         self._anim.setStartValue(0.0)
         self._anim.setEndValue(1.0)

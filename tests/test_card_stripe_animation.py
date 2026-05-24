@@ -62,13 +62,13 @@ def test_first_set_color_seeds_without_animation(stripe):
 
 
 def test_grey_to_muted_animates_forward(stripe, qapp):
-    """Rank 0 -> Rank 1 = forward fill: _progress animates, 320 ms, OutCubic."""
+    """Rank 0 -> Rank 1 = forward fill: _progress animates, 600 ms, InOutQuad."""
     stripe.set_color(_grey())
     stripe.set_color(_ttr_muted(qapp))
     assert stripe._anim is not None
     assert stripe._anim_kind == "forward"
-    assert stripe._anim.duration() == 320
-    assert stripe._anim.easingCurve().type() == QEasingCurve.OutCubic
+    assert stripe._anim.duration() == 600
+    assert stripe._anim.easingCurve().type() == QEasingCurve.InOutQuad
     assert stripe._prev_color == _grey()
 
 
@@ -81,13 +81,13 @@ def test_muted_to_full_animates_forward(stripe, qapp):
 
 
 def test_full_to_muted_crossfades(stripe, qapp):
-    """Rank 2 -> Rank 1 = backward cross-fade: _blend animates, 220 ms, InOutCubic."""
+    """Rank 2 -> Rank 1 = backward cross-fade: _blend animates, 400 ms, InOutQuad."""
     stripe.set_color(_ttr_full())
     stripe.set_color(_ttr_muted(qapp))
     assert stripe._anim is not None
     assert stripe._anim_kind == "backward"
-    assert stripe._anim.duration() == 220
-    assert stripe._anim.easingCurve().type() == QEasingCurve.InOutCubic
+    assert stripe._anim.duration() == 400
+    assert stripe._anim.easingCurve().type() == QEasingCurve.InOutQuad
 
 
 def test_full_to_grey_crossfades(stripe):
