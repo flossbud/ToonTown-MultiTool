@@ -433,7 +433,18 @@ class SettingsComboBox(QComboBox):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        # Default accent: dark-theme brand blue. Overridden via
+        # set_theme_colors() once the SettingsTab applies theme to its
+        # children (see tabs/settings_tab.py findChildren propagation).
+        self._dot_color = QColor("#0077ff")
         self.setItemDelegate(_CurrentValueDelegate(self))
+
+    def set_theme_colors(self, *, accent: str) -> None:
+        """Set the accent color used for the current-value dot in the
+        dropdown menu. Called by SettingsTab during theme propagation
+        (Task 6 wires this; until then the constructor default applies)."""
+        self._dot_color = QColor(accent)
+        self.update()  # repaint in case the menu is open
 
 
 # ── Current Value Delegate ───────────────────────────────────────────────────
@@ -459,16 +470,10 @@ class _CurrentValueDelegate(QStyledItemDelegate):
         if index.row() != combo.currentIndex():
             return
 
-        # Resolve accent color from the theme palette so light/dark both work.
-        # Falls back to the brand-blue hex if the palette is unavailable
-        # (e.g., during early init or in isolated tests).
-        try:
-            from utils.theme_manager import get_theme_colors, resolve_theme
-            is_dark = resolve_theme() != "light"
-            colors = get_theme_colors(is_dark)
-            accent_hex = colors.get("accent_blue_btn", "#0077ff")
-        except Exception:
-            accent_hex = "#0077ff"
+        # Combo caches its accent color via set_theme_colors(); fall back
+        # to brand blue if the combo wasn't constructed by SettingsComboBox
+        # (defensive — _CurrentValueDelegate is private to SettingsComboBox).
+        dot_color = getattr(combo, "_dot_color", QColor("#0077ff"))
 
         # Paint a 6px-diameter dot, right-aligned 12px from the right edge,
         # vertically centered in the row.
@@ -480,6 +485,6 @@ class _CurrentValueDelegate(QStyledItemDelegate):
         painter.save()
         painter.setRenderHint(QPainter.Antialiasing, True)
         painter.setPen(Qt.NoPen)
-        painter.setBrush(QColor(accent_hex))
+        painter.setBrush(dot_color)
         painter.drawEllipse(dot_x, dot_y, dot_d, dot_d)
         painter.restore()
