@@ -1,12 +1,12 @@
-"""Compact UI layout for the Multitoon tab — the layout that ships at default
-window size. Below the Full UI breakpoint, the outer card clamps to 720 px and
-centers horizontally so wider windows do not stretch it."""
+"""Compact UI layout for the Multitoon tab - the layout that ships at default
+window size. Content sits directly on the tab background and is centered
+vertically within the available tab content area via leading/trailing stretches."""
 
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QFont
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFrame, QSizePolicy, QApplication
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFrame, QApplication
 
 from utils.theme_manager import make_heart_icon, make_jellybean_icon
 from tabs.multitoon._layout_utils import clear_layout
@@ -35,16 +35,11 @@ class _CompactLayout(QWidget):
         outer_layout.setContentsMargins(12, 6, 12, 6)
         outer_layout.setSpacing(0)
 
-        outer_card = QFrame()
-        outer_card.setMaximumWidth(720)
-        # Expand-to-fill horizontally up to maxWidth. Combined with the
-        # addStretch() pair below, this gives "fill when narrow, center
-        # when wider than 720" — what the v2.0.3 layout did naturally
-        # before the maxWidth clamp was introduced.
-        outer_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        self._tab.outer_card = outer_card
-        card_layout = QVBoxLayout(outer_card)
-        card_layout.setContentsMargins(16, 10, 16, 10)
+        # Direction D drops the grouped outer card. Pieces sit directly
+        # on the tab background; vertical centring is done by leading +
+        # trailing stretches added in the outer_layout below.
+        card_layout = QVBoxLayout()
+        card_layout.setContentsMargins(0, 0, 0, 0)
         card_layout.setSpacing(8)
 
         # Service controls slot — empty until populate()
@@ -66,20 +61,13 @@ class _CompactLayout(QWidget):
         for i in range(4):
             card_layout.addWidget(self._build_card_structure(i))
 
-        card_layout.addStretch()
-        # Layout pattern: stretches with factor 1 on each side, card with
-        # large factor (100). Qt distributes layout width by stretch factor
-        # — card gets ~98% (100/102), each stretch ~1%. When window is
-        # narrow the card fills nearly the full available width (matches
-        # v2.0.3); when window > 720 the card hits its maxWidth and the
-        # stretches absorb the leftover, centering the card.
-        center_row = QHBoxLayout()
-        center_row.setContentsMargins(0, 0, 0, 0)
-        center_row.addStretch(1)
-        center_row.addWidget(outer_card, 100)
-        center_row.addStretch(1)
-        outer_layout.addLayout(center_row)
-        outer_layout.addStretch()
+        # Vertical centring: a stretch above and below the content layout
+        # gives ~equal breathing room at the default window height. With
+        # ~24 px of slack in the 650 px tab content area, the content
+        # block ends up ~12 px from top and ~12 px from bottom.
+        outer_layout.addStretch(1)
+        outer_layout.addLayout(card_layout)
+        outer_layout.addStretch(1)
 
     def _build_card_structure(self, i: int) -> QFrame:
         """Build the persistent QFrame + sub-layouts for one card slot.

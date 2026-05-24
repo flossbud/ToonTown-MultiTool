@@ -1459,8 +1459,6 @@ class MultitoonTab(QWidget):
         c = self._c()
         is_dark = resolve_theme(self.settings_manager) == "dark"
 
-        self.outer_card.setStyleSheet("QFrame { background: transparent; border: none; }")
-
         self.config_label.setStyleSheet(
             f"font-size: 10px; font-weight: 600; color: {c['text_muted']}; "
             f"background: transparent; border: none; letter-spacing: 0.8px; margin-top: 4px;"

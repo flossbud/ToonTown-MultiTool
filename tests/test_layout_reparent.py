@@ -170,7 +170,7 @@ def test_position_cards_skips_label_when_reparented_to_compact(qapp, tab):
     so tests / hidden-widget callers can still trigger card positioning. During
     prewarm_full_layout, _full.resize(warm_size) queues that timer; the prewarm
     finally block then calls _compact.populate(), which reparents config_label
-    back to outer_card. When the queued timer fires AFTER prewarm returns,
+    back to _compact. When the queued timer fires AFTER prewarm returns,
     _position_cards still calls setGeometry(ox, oy, grid_w, label_h) on
     config_label — but the label is now in compact's layout, so the geometry
     clobbers compact's layout-managed position, leaving the label at y=0 with
@@ -184,7 +184,7 @@ def test_position_cards_skips_label_when_reparented_to_compact(qapp, tab):
     tab.prewarm_full_layout()
     qapp.processEvents()
     assert tab._mode == "compact"
-    assert tab.config_label.parentWidget() is tab.outer_card, (
+    assert tab.config_label.parentWidget() is tab._compact, (
         "precondition: compact.populate should have reclaimed config_label"
     )
 
