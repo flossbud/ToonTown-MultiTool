@@ -222,3 +222,71 @@ def test_settings_combobox_chevron_color_follows_is_dark_flag(app):
         f"expected dark and light chevron strokes to differ visibly; "
         f"got dark R={dark_stroke.red()}, light R={light_stroke.red()}, diff={diff}"
     )
+
+
+@pytest.fixture
+def settings_manager():
+    class _Stub:
+        def __init__(self):
+            self._d = {}
+            self._listeners = []
+
+        def get(self, key, default=None):
+            return self._d.get(key, default)
+
+        def set(self, key, value):
+            self._d[key] = value
+            for fn in list(self._listeners):
+                fn(key, value)
+
+        def on_change(self, fn):
+            self._listeners.append(fn)
+
+    return _Stub()
+
+
+def test_general_page_theme_dropdown_is_settings_combobox(app, settings_manager):
+    """The Appearance (theme) dropdown on the General page must be a SettingsComboBox
+    (not a plain QComboBox), so it gets the custom chevron + current-value
+    dot via inheritance."""
+    from utils.shared_widgets import SettingsComboBox
+    from tabs.settings_tab import SettingsTab
+    tab = SettingsTab(settings_manager)
+    combo = _find_combo_by_label(tab, "Appearance")
+    tab.deleteLater()
+    assert isinstance(combo, SettingsComboBox), (
+        f"Appearance dropdown is {type(combo).__name__}, expected SettingsComboBox"
+    )
+
+
+def test_all_settings_combos_are_settings_combobox(app, settings_manager):
+    """All 6 known Settings dropdowns must be SettingsComboBox instances."""
+    from PySide6.QtWidgets import QComboBox
+    from utils.shared_widgets import SettingsComboBox
+    from tabs.settings_tab import SettingsTab
+    tab = SettingsTab(settings_manager)
+    combos = tab.findChildren(QComboBox)
+    # Filter to direct settings combos (delegate may install a QComboBox-like
+    # internal somewhere, but the visible ones we set_control() into rows
+    # should all be SettingsComboBox).
+    non_settings = [c for c in combos if not isinstance(c, SettingsComboBox)]
+    tab.deleteLater()
+    assert not non_settings, (
+        f"Found {len(non_settings)} QComboBox(es) that are not SettingsComboBox: "
+        f"{[type(c).__name__ for c in non_settings]}"
+    )
+    assert len(combos) == 6, (
+        f"Expected exactly 6 dropdowns on the Settings tab, found {len(combos)}"
+    )
+
+
+def _find_combo_by_label(tab, label_text):
+    """Walk the tab's widget tree, find a SettingsField whose label matches,
+    return its control widget (a QComboBox or subclass)."""
+    from PySide6.QtWidgets import QLabel, QComboBox
+    for label in tab.findChildren(QLabel):
+        if label.text() == label_text:
+            field = label.parent()
+            for child in field.findChildren(QComboBox):
+                return child
+    return None

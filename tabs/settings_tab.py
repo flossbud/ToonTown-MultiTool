@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPen
 from utils.theme_manager import apply_theme, get_theme_colors, resolve_theme
-from utils.shared_widgets import Switch
+from utils.shared_widgets import SettingsComboBox, Switch
 from utils.widgets import install_modern_scrollbar
 from services.ttr_login_service import find_engine_path, get_engine_executable_name
 from services.cc_login_service import (
@@ -684,7 +684,7 @@ class SettingsTab(QWidget):
             else 0
         )
         theme_field = SettingsField("Appearance")
-        theme_combo = QComboBox()
+        theme_combo = SettingsComboBox()
         theme_combo.addItems(["System", "Light", "Dark"])
         theme_combo.setCurrentIndex(theme_idx)
         theme_combo.setFixedWidth(150)
@@ -699,7 +699,7 @@ class SettingsTab(QWidget):
             "Max accounts per game",
             helper="How many account slots per game (TTR / CC).",
         )
-        max_combo = QComboBox()
+        max_combo = SettingsComboBox()
         max_combo.addItems(["4", "5", "6", "7", "8"])
         max_combo.setCurrentIndex(max_idx)
         max_combo.setFixedWidth(150)
@@ -724,7 +724,7 @@ class SettingsTab(QWidget):
                 "Choose On or Off to override."
             ),
         )
-        rm_combo = QComboBox()
+        rm_combo = SettingsComboBox()
         rm_combo.addItems(["System default", "On", "Off"])
         rm_combo.setCurrentIndex(rm_idx)
         rm_combo.setFixedWidth(150)
@@ -1275,7 +1275,7 @@ class SettingsTab(QWidget):
             (i for i, (_, v) in enumerate(self._ka_actions) if v == saved_action), 0,
         )
         action_field = SettingsField("Action")
-        action_combo = QComboBox()
+        action_combo = SettingsComboBox()
         action_combo.addItems([d for d, _ in self._ka_actions])
         action_combo.setCurrentIndex(action_idx)
         action_combo.setFixedWidth(180)
@@ -1292,7 +1292,7 @@ class SettingsTab(QWidget):
         saved_delay = self.settings_manager.get("keep_alive_delay", "30 sec")
         delay_idx = delay_options.index(saved_delay) if saved_delay in delay_options else 4
         delay_field = SettingsField("Interval")
-        delay_combo = QComboBox()
+        delay_combo = SettingsComboBox()
         delay_combo.addItems(delay_options)
         delay_combo.setCurrentIndex(delay_idx)
         delay_combo.setFixedWidth(180)
@@ -1398,7 +1398,7 @@ class SettingsTab(QWidget):
             backend_idx = 0 if current_backend == "xlib" else 1
             backend_helper = "Restart required on change."
         backend_field = SettingsField("Input Backend", helper=backend_helper)
-        backend_combo = QComboBox()
+        backend_combo = SettingsComboBox()
         backend_combo.addItems(backend_options)
         backend_combo.setCurrentIndex(backend_idx)
         backend_combo.setFixedWidth(220)
@@ -1655,5 +1655,13 @@ class SettingsTab(QWidget):
                 track_on=c["accent_blue_btn"],
                 track_off=c["border_input"] if is_dark else "#d1d1d6",
                 thumb="#ffffff",
+            )
+        # SettingsComboBox dropdowns — propagate accent + theme polarity so
+        # the menu's current-value dot and the chevron color follow the
+        # active theme (matches the Switch propagation right above).
+        for combo in self.findChildren(SettingsComboBox):
+            combo.set_theme_colors(
+                accent=c["accent_blue_btn"],
+                is_dark=is_dark,
             )
 
