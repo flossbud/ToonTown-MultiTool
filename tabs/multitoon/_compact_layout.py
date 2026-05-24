@@ -126,6 +126,10 @@ class _CompactLayout(QWidget):
         layout.addSpacing(5)
         layout.addWidget(header_divider)
 
+        # 3 px animated top stripe. Position is set in _position_stripes().
+        card_stripe = _CardStripe(card)
+        card_stripe.hide()  # shown after the first position pass
+
         ctrl_row = QHBoxLayout()
         ctrl_row.setSpacing(8)
 
@@ -161,6 +165,7 @@ class _CompactLayout(QWidget):
             "ka_group": ka_group,
             "ka_group_layout": ka_group_layout,
             "header_divider": header_divider,
+            "card_stripe": card_stripe,
         })
         self._tab.toon_cards.append(card)
         self._tab.ka_groups.append(ka_group)
@@ -265,6 +270,7 @@ class _CompactLayout(QWidget):
             self.set_card_brand(i, game)
 
         self._position_status_rings()
+        self._position_stripes()
 
     def _populate_card(self, i: int, slot: dict):
         # Reset shared-widget sizes/styles that _FullLayout.populate_active
@@ -399,13 +405,27 @@ class _CompactLayout(QWidget):
             ring.show()
             ring.raise_()
 
+    def _position_stripes(self) -> None:
+        """Place each card's stripe widget at the top edge of the card.
+        Called from showEvent / resizeEvent and from populate()."""
+        for slot in self._card_slots:
+            stripe = slot.get("card_stripe")
+            if stripe is None:
+                continue
+            card = slot["card"]
+            stripe.setGeometry(0, 0, card.width(), 3)
+            stripe.show()
+            stripe.raise_()
+
     def showEvent(self, event):
         super().showEvent(event)
         self._position_status_rings()
+        self._position_stripes()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._position_status_rings()
+        self._position_stripes()
 
     def _collapsed_ka_group_width(self, slot_index: int) -> int:
         """Width that ka_group must hold when KA is collapsed.
