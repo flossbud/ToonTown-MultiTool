@@ -1977,7 +1977,9 @@ class SettingsTab(QWidget):
             helper="Show toon names and portraits (TTR only).",
         )
         comp_switch = Switch(self.settings_manager.get("enable_companion_app", True))
-        comp_switch.toggled.connect(self._on_companion_toggled)
+        comp_switch.toggled.connect(
+            lambda v: self.settings_manager.set("enable_companion_app", v)
+        )
         comp_field.set_control(comp_switch)
         ttr_panel.add_field(comp_field)
 
@@ -2045,8 +2047,10 @@ class SettingsTab(QWidget):
             "External CC log directory (advanced)",
             helper="Leave blank for auto-detection.",
         )
-        self._ext_log_label = QLabel(
-            self.settings_manager.get(CC_EXTERNAL_LOG_DIR, "") or "(auto)"
+        self._ext_log_field = ext_field
+        # Seed the helper with the current value so users see where logs come from.
+        self._set_ext_log_helper_with_path(
+            self.settings_manager.get(CC_EXTERNAL_LOG_DIR, "") or ""
         )
         ext_browse = QPushButton("Browse")
         ext_browse.setFixedHeight(28)
@@ -2170,7 +2174,7 @@ class SettingsTab(QWidget):
             self._refresh_game_path_display(game, dir_path)
         else:
             self._refresh_game_path_display(
-                game, f"{exe_name} not found in that folder", error=True,
+                game, f"{exe_name} not found in that folder. Try Auto-detect.", error=True,
             )
 
     def _game_path_auto_detect(self, game: str, silent: bool = False):
@@ -2325,6 +2329,18 @@ class SettingsTab(QWidget):
 
     # ── External CC log dir handlers ──────────────────────────────────────
 
+    def _set_ext_log_helper_with_path(self, path: str):
+        """Update the external-log-dir field's helper with the current path."""
+        if (
+            not hasattr(self, "_ext_log_field")
+            or self._ext_log_field.helper_widget is None
+        ):
+            return
+        display = path or "(auto)"
+        self._ext_log_field.helper_widget.setText(
+            f"Leave blank for auto-detection. Current: {display}"
+        )
+
     def _on_ext_log_browse(self):
         from utils.settings_keys import CC_EXTERNAL_LOG_DIR
         current = self.settings_manager.get(CC_EXTERNAL_LOG_DIR, "") or ""
@@ -2333,14 +2349,12 @@ class SettingsTab(QWidget):
         )
         if picked:
             self.settings_manager.set(CC_EXTERNAL_LOG_DIR, picked)
-            if hasattr(self, "_ext_log_label"):
-                self._ext_log_label.setText(picked)
+            self._set_ext_log_helper_with_path(picked)
 
     def _on_ext_log_clear(self):
         from utils.settings_keys import CC_EXTERNAL_LOG_DIR
         self.settings_manager.set(CC_EXTERNAL_LOG_DIR, "")
-        if hasattr(self, "_ext_log_label"):
-            self._ext_log_label.setText("(auto)")
+        self._set_ext_log_helper_with_path("")
 
     def _on_ext_log_detect(self):
         from pathlib import Path
@@ -2367,9 +2381,6 @@ class SettingsTab(QWidget):
         QMessageBox.information(
             self, "External CC log discovery", "\n".join(results),
         )
-
-    def _on_companion_toggled(self, val: bool):
-        self.settings_manager.set("enable_companion_app", val)
 
     def _build_keep_alive_page(self, page):
         pass

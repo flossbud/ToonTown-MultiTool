@@ -93,6 +93,38 @@ def test_cc_panel_external_log_directory_clear(qapp, settings_manager):
     assert settings_manager.get(CC_EXTERNAL_LOG_DIR) == ""
 
 
+def test_cc_panel_external_log_helper_updates_on_browse_and_clear(qapp, settings_manager, monkeypatch):
+    """Browse and Clear update the helper text so users see the current value."""
+    from tabs.settings_tab import SettingsTab, SettingsField
+    from utils.settings_keys import CC_EXTERNAL_LOG_DIR
+    from PySide6.QtWidgets import QFileDialog
+    settings_manager.set(CC_EXTERNAL_LOG_DIR, "")
+    tab = SettingsTab(settings_manager)
+    field = None
+    for f in tab.pages["games"].findChildren(SettingsField):
+        if f.label_widget.text() == "External CC log directory (advanced)":
+            field = f
+            break
+    assert field is not None and field.helper_widget is not None
+
+    # Initially shows the auto state.
+    assert "auto-detection" in field.helper_widget.text().lower()
+
+    # Stub QFileDialog to return a path.
+    monkeypatch.setattr(
+        QFileDialog, "getExistingDirectory",
+        lambda *args, **kwargs: "/tmp/cc-logs",
+    )
+    tab._on_ext_log_browse()
+    assert "/tmp/cc-logs" in field.helper_widget.text()
+    assert settings_manager.get(CC_EXTERNAL_LOG_DIR) == "/tmp/cc-logs"
+
+    # Clear restores the auto state.
+    tab._on_ext_log_clear()
+    assert "auto" in field.helper_widget.text().lower()
+    assert settings_manager.get(CC_EXTERNAL_LOG_DIR) == ""
+
+
 def test_ttr_panel_uses_brand_logo(qapp, settings_manager):
     from tabs.settings_tab import SettingsTab, SettingsPanel
     tab = SettingsTab(settings_manager)
