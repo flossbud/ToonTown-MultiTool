@@ -357,9 +357,9 @@ class _SidebarItem(QFrame):
 
     def set_active(self, active: bool) -> None:
         self._active = bool(active)
-        # When active, leave room for the 2px left accent border by reducing
-        # left padding from 16 to 14.
-        margins = (14 if self._active else 16, 0, 16, 0)
+        # When active, leave room for the 3px left accent border by reducing
+        # left padding from 16 to 13.
+        margins = (13 if self._active else 16, 0, 16, 0)
         self.layout().setContentsMargins(*margins)
         if self._c is not None:
             self._apply_styles()
@@ -403,16 +403,22 @@ class _SidebarItem(QFrame):
         if self._c is None:
             return
         p = QPainter(self)
-        # Active background
+        # Active background -- composite a stronger overlay so the selected
+        # item reads as selected, not as hovered. The token `sidebar_btn_sel`
+        # is shared with other tabs and tuned for chip-rail hover; the
+        # sidebar in this tab needs more weight.
         if self._active:
-            p.fillRect(self.rect(), QColor(self._c["sidebar_btn_sel"]))
+            overlay = QColor("#ffffff" if self._is_dark else "#0f172a")
+            overlay.setAlpha(28 if self._is_dark else 22)
+            p.fillRect(self.rect(), overlay)
         elif self._hovered:
             hover = QColor("#ffffff" if self._is_dark else "#0f172a")
             hover.setAlpha(10 if self._is_dark else 12)
             p.fillRect(self.rect(), hover)
-        # Active left border accent (2px)
+        # Active left border accent -- bump from 2px to 3px for visibility
+        # at desktop viewing distance.
         if self._active:
-            p.fillRect(0, 0, 2, self.height(), QColor(self._c["accent_blue_btn"]))
+            p.fillRect(0, 0, 3, self.height(), QColor(self._c["accent_blue_btn"]))
         p.end()
 
 
