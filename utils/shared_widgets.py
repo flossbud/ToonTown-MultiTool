@@ -1,7 +1,7 @@
 """
 Shared custom widgets used across multiple tabs.
 
-IOSToggle           — Animated iOS-style toggle switch
+Switch              — Accent-blue pill toggle (Settings)
 IOSSegmentedControl — iOS-style segmented control for small option sets
 PulsingDot          — Animated status dot with optional breathing glow
 SmoothProgressBar   — Sub-pixel precision progress bar with rounded pill shape
@@ -10,29 +10,42 @@ ElidingLabel        — QLabel that truncates long text with an ellipsis
 
 import math
 
-from PySide6.QtWidgets import QWidget, QLabel, QSizePolicy
+from PySide6.QtWidgets import QWidget, QLabel, QSizePolicy, QStyledItemDelegate, QComboBox
 from PySide6.QtCore import (
     Qt, Signal, QPropertyAnimation, QEasingCurve, QVariantAnimation,
     Property, QRectF, QSize,
 )
-from PySide6.QtGui import QColor, QPainter, QFont, QRadialGradient, QFontMetrics
+from PySide6.QtGui import QColor, QPainter, QPen, QFont, QRadialGradient, QFontMetrics
 
 
-# ── iOS Toggle Switch ────────────────────────────────────────────────────────
+# ── Accent-blue Switch ───────────────────────────────────────────────────────
 
-class IOSToggle(QWidget):
-    """Animated iOS-style toggle switch."""
+class Switch(QWidget):
+    """Accent-blue pill toggle. Drop-in replacement for IOSToggle in Settings.
+
+    Visually identical proportions to IOSToggle but uses the app's accent-blue
+    palette for the on state (instead of iOS green) and exposes set_theme_colors
+    so refresh_theme can re-tint both the track and the thumb for light/dark.
+    """
+
     toggled = Signal(bool)
 
-    TRACK_W = 51
-    TRACK_H = 31
-    THUMB_D = 27
+    TRACK_W = 38
+    TRACK_H = 20
+    THUMB_D = 16
     PADDING = 2
 
-    def __init__(self, checked=False, parent=None):
+    def __init__(self, checked: bool = False, parent=None):
         super().__init__(parent)
-        self._checked = checked
-        self._thumb_x = float(self.PADDING if not checked else self.TRACK_W - self.THUMB_D - self.PADDING)
+        self._checked = bool(checked)
+        self._thumb_x = float(
+            self.PADDING if not self._checked
+            else self.TRACK_W - self.THUMB_D - self.PADDING
+        )
+        self._track_on = "#0077ff"
+        self._track_off = "#3a3a3a"
+        self._thumb_color = "#ffffff"
+
         self.setFixedSize(self.TRACK_W, self.TRACK_H)
         self.setCursor(Qt.PointingHandCursor)
 
@@ -40,77 +53,88 @@ class IOSToggle(QWidget):
         self._anim.setDuration(180)
         self._anim.setEasingCurve(QEasingCurve.OutCubic)
 
+    # ── public API (mirrors IOSToggle) ──────────────────────────────────
+
+    def isChecked(self) -> bool:
+        return self._checked
+
+    def setChecked(self, value: bool) -> None:
+        value = bool(value)
+        if value == self._checked:
+            return
+        self._checked = value
+        self._animate_to_state()
+        self.toggled.emit(value)
+
+    def set_theme_colors(self, *, track_on: str, track_off: str, thumb: str) -> None:
+        self._track_on = track_on
+        self._track_off = track_off
+        self._thumb_color = thumb
+        self.update()
+
+    # ── animation property ──────────────────────────────────────────────
+
     def _get_thumb_x(self):
         return self._thumb_x
 
     def _set_thumb_x(self, val):
-        self._thumb_x = val
+        self._thumb_x = float(val)
         self.update()
 
     thumbX = Property(float, _get_thumb_x, _set_thumb_x)
 
-    def isChecked(self):
-        return self._checked
-
-    def setChecked(self, val: bool, animate=False):
-        if val == self._checked:
-            return
-        self._checked = val
-        target = float(self.TRACK_W - self.THUMB_D - self.PADDING) if val else float(self.PADDING)
-        if animate:
-            self._anim.stop()
-            self._anim.setStartValue(self._thumb_x)
-            self._anim.setEndValue(target)
-            self._anim.start()
-        else:
-            self._thumb_x = target
+    def _animate_to_state(self) -> None:
+        import utils.motion as motion
+        target = (
+            self.TRACK_W - self.THUMB_D - self.PADDING
+            if self._checked else self.PADDING
+        )
+        if motion.is_reduced():
+            self._thumb_x = float(target)
             self.update()
-
-    def mousePressEvent(self, e):
-        self._checked = not self._checked
-        target = float(self.TRACK_W - self.THUMB_D - self.PADDING) if self._checked else float(self.PADDING)
+            return
         self._anim.stop()
         self._anim.setStartValue(self._thumb_x)
-        self._anim.setEndValue(target)
+        self._anim.setEndValue(float(target))
         self._anim.start()
-        self.toggled.emit(self._checked)
 
-    def set_theme_colors(self, off_color: str):
-        """Set the off-track color from theme."""
-        self._off_color = off_color
-        self.update()
+    # ── input ───────────────────────────────────────────────────────────
 
-    def paintEvent(self, e):
+    def mousePressEvent(self, event):
+        if not self.isEnabled():
+            super().mousePressEvent(event)
+            return
+        if event.button() == Qt.LeftButton:
+            self._checked = not self._checked
+            self._animate_to_state()
+            self.toggled.emit(self._checked)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    # ── paint ───────────────────────────────────────────────────────────
+
+    def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
 
+        enabled = self.isEnabled()
         # Track
-        r = self.TRACK_H / 2.0
-        off_hex = getattr(self, '_off_color', '#3a3a3a')
-        track_color = QColor("#34C759") if self._checked else QColor(off_hex)
-        # Interpolate color during animation
-        if self._thumb_x != self.PADDING and self._thumb_x != (self.TRACK_W - self.THUMB_D - self.PADDING):
-            t = (self._thumb_x - self.PADDING) / (self.TRACK_W - self.THUMB_D - 2 * self.PADDING)
-            t = max(0.0, min(1.0, t))
-            off = QColor(off_hex)
-            on  = QColor("#34C759")
-            track_color = QColor(
-                int(off.red()   + t * (on.red()   - off.red())),
-                int(off.green() + t * (on.green() - off.green())),
-                int(off.blue()  + t * (on.blue()  - off.blue())),
-            )
-
+        track = QColor(self._track_on if self._checked else self._track_off)
+        if not enabled:
+            track.setAlphaF(0.4)
         p.setPen(Qt.NoPen)
-        p.setBrush(track_color)
-        p.drawRoundedRect(QRectF(0, 0, self.TRACK_W, self.TRACK_H), r, r)
-
-        # Thumb shadow
-        p.setBrush(QColor(0, 0, 0, 40))
-        p.drawEllipse(QRectF(self._thumb_x + 1, self.PADDING + 2, self.THUMB_D, self.THUMB_D))
+        p.setBrush(track)
+        radius = self.TRACK_H / 2
+        p.drawRoundedRect(self.rect(), radius, radius)
 
         # Thumb
-        p.setBrush(QColor("#ffffff"))
-        p.drawEllipse(QRectF(self._thumb_x, self.PADDING, self.THUMB_D, self.THUMB_D))
+        thumb = QColor(self._thumb_color if enabled else "#cccccc")
+        p.setBrush(thumb)
+        p.drawEllipse(
+            int(self._thumb_x), self.PADDING,
+            self.THUMB_D, self.THUMB_D,
+        )
         p.end()
 
 
@@ -389,3 +413,140 @@ class ElidingLabel(QLabel):
         else:
             super().setText(fm.elidedText(self._full_text, self._elide_mode, available))
         self.setToolTip(self._full_text if self.text() != self._full_text else "")
+
+
+# ── Settings ComboBox ─────────────────────────────────────────────────────────
+
+class SettingsComboBox(QComboBox):
+    """QComboBox subclass for the Settings tab dropdowns.
+
+    Wraps QComboBox with:
+      * A _CurrentValueDelegate auto-installed so the open menu shows a
+        blue dot on the currently-selected row.
+      * A custom chevron painted in paintEvent (added in a later task) so
+        the closed-state arrow follows hover/focus/disabled state without
+        shipping image assets.
+
+    All other styling (outer box, caret cell bg, menu container) comes
+    from the global QComboBox QSS rule in utils/theme_manager.py.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        # Defaults: dark-theme palette. Overridden via set_theme_colors()
+        # once SettingsTab applies theme to its children (Task 6 wiring).
+        self._dot_color = QColor("#0077ff")
+        self._is_dark = True
+        self.setItemDelegate(_CurrentValueDelegate(self))
+
+    def set_theme_colors(self, *, accent: str, is_dark: bool = True) -> None:
+        """Set the accent color (used for the current-value dot in the
+        dropdown menu AND for the chevron in :focus state) and theme
+        polarity (used to pick idle/hover chevron gray). Called by
+        SettingsTab during theme propagation (Task 6 wires this; until
+        then the constructor defaults apply)."""
+        self._dot_color = QColor(accent)
+        self._is_dark = is_dark
+        self.update()  # repaint in case the menu is open or the chevron color changed
+
+    # Width of the drop-down (caret) sub-control. Matches Task 5's QSS
+    # rule `QComboBox::drop-down { width: 30px; }`.
+    _DROPAREA_WIDTH = 30
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+
+        # Pick chevron color from current state. No theme-manager imports
+        # here — colors come from set_theme_colors() (Task 6 wires propagation;
+        # until then the constructor defaults apply).
+        if not self.isEnabled():
+            base = QColor("#aaaaaa") if self._is_dark else QColor("#64748b")
+            base.setAlpha(128)
+            color = base
+        elif self.hasFocus():
+            color = self._dot_color  # accent blue — ties closed and open states
+        elif self.underMouse():
+            color = QColor("#dddddd") if self._is_dark else QColor("#475569")
+        else:
+            color = QColor("#aaaaaa") if self._is_dark else QColor("#64748b")
+
+        # Center of the caret cell (rightmost _DROPAREA_WIDTH pixels).
+        w = self.width()
+        h = self.height()
+        cx = w - self._DROPAREA_WIDTH // 2
+        cy = h // 2
+
+        # Chevron: two strokes forming a downward "v", 8px wide x 4px tall.
+        painter = QPainter(self)
+        try:
+            painter.setRenderHint(QPainter.Antialiasing, True)
+            pen = QPen(color)
+            pen.setWidthF(1.5)
+            pen.setCapStyle(Qt.RoundCap)
+            pen.setJoinStyle(Qt.RoundJoin)
+            painter.setPen(pen)
+            painter.drawLine(cx - 4, cy - 2, cx, cy + 2)
+            painter.drawLine(cx, cy + 2, cx + 4, cy - 2)
+        finally:
+            painter.end()
+
+
+# ── Current Value Delegate ───────────────────────────────────────────────────
+
+# Optional per-item role: when set, the delegate paints this string in the
+# menu instead of the item's DisplayRole. The closed-state display (which
+# Qt reads from currentText() = DisplayRole) is unaffected. Lets a combo
+# show a terser label when selected than the descriptive label it offers
+# in the menu — see Reduce motion's "System" (closed) vs "System default"
+# (menu) where the 150px fixed width truncates the long form.
+MENU_TEXT_ROLE = Qt.UserRole + 1
+
+
+class _CurrentValueDelegate(QStyledItemDelegate):
+    """Paints a small accent-blue dot on the currently-selected row of a
+    QComboBox's dropdown menu. Idle/hover backgrounds come from QSS; the
+    dot is the 'you are here' indicator that QSS can't express.
+
+    Also honors MENU_TEXT_ROLE: items that set this role get their
+    long-form text rendered in the menu via an initStyleOption override.
+
+    The combo is read from self.parent() at paint time so the delegate
+    follows whichever combo it's installed on.
+    """
+
+    def __init__(self, combo):
+        super().__init__(combo)
+
+    def initStyleOption(self, option, index):
+        super().initStyleOption(option, index)
+        long_text = index.data(MENU_TEXT_ROLE)
+        if long_text:
+            option.text = str(long_text)
+
+    def paint(self, painter, option, index):
+        super().paint(painter, option, index)
+
+        combo = self.parent()
+        if not isinstance(combo, QComboBox):
+            return
+        if index.row() != combo.currentIndex():
+            return
+
+        # Combo caches its accent color via set_theme_colors(); fall back
+        # to brand blue if the combo wasn't constructed by SettingsComboBox
+        # (defensive — _CurrentValueDelegate is private to SettingsComboBox).
+        dot_color = getattr(combo, "_dot_color", QColor("#0077ff"))
+
+        # Paint a 6px-diameter dot, right-aligned 12px from the right edge,
+        # vertically centered in the row.
+        rect = option.rect
+        dot_d = 6
+        dot_x = rect.right() - 12 - dot_d
+        dot_y = rect.top() + (rect.height() - dot_d) // 2
+
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(dot_color)
+        painter.drawEllipse(dot_x, dot_y, dot_d, dot_d)
+        painter.restore()

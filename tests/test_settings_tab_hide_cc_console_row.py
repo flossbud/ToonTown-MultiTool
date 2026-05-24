@@ -1,4 +1,4 @@
-"""Tests for the 'Hide CC launch console' ToggleRow in Settings > Games."""
+"""Tests for the 'Hide CC launch console' field in Settings > Games."""
 
 import os
 import pytest
@@ -23,35 +23,44 @@ class _SettingsStub:
         pass
 
 
-def test_hide_cc_console_row_exists_and_defaults_on(qapp, monkeypatch):
+def _find_field(tab, label_text):
+    """Find a SettingsField on the Games page by its label text."""
+    from tabs.settings_tab import SettingsField
+    for f in tab.pages["games"].findChildren(SettingsField):
+        if f.label_widget.text() == label_text:
+            return f
+    return None
+
+
+def test_hide_cc_console_field_exists_and_defaults_on(qapp):
     """Defaults to ON when the key is missing from settings."""
     from tabs import settings_tab
-    monkeypatch.setattr(settings_tab, "discover_cc_installs", lambda: [])
-    settings = _SettingsStub({})  # no key stored
-    tab = settings_tab.SettingsTab(settings_manager=settings)
-    row = getattr(tab, "hide_cc_console_row", None)
-    assert row is not None, "expected SettingsTab to expose hide_cc_console_row"
-    # ToggleRow has a .toggle attribute (IOSToggle) with isChecked().
-    assert row.toggle.isChecked() is True
-
-
-def test_hide_cc_console_row_reflects_stored_off(qapp, monkeypatch):
-    from tabs import settings_tab
-    from utils.settings_keys import CC_HIDE_LAUNCH_CONSOLE
-    monkeypatch.setattr(settings_tab, "discover_cc_installs", lambda: [])
-    settings = _SettingsStub({CC_HIDE_LAUNCH_CONSOLE: False})
-    tab = settings_tab.SettingsTab(settings_manager=settings)
-    assert tab.hide_cc_console_row.toggle.isChecked() is False
-
-
-def test_hide_cc_console_row_toggling_writes_setting(qapp, monkeypatch):
-    from tabs import settings_tab
-    from utils.settings_keys import CC_HIDE_LAUNCH_CONSOLE
-    monkeypatch.setattr(settings_tab, "discover_cc_installs", lambda: [])
     settings = _SettingsStub({})
     tab = settings_tab.SettingsTab(settings_manager=settings)
-    # Simulate a user toggle to OFF.
-    tab.hide_cc_console_row.toggled.emit(False)
+    field = _find_field(tab, "Hide CC launch console")
+    assert field is not None
+    assert field.control_widget.isChecked() is True
+
+
+def test_hide_cc_console_field_reflects_stored_off(qapp):
+    from tabs import settings_tab
+    from utils.settings_keys import CC_HIDE_LAUNCH_CONSOLE
+    settings = _SettingsStub({CC_HIDE_LAUNCH_CONSOLE: False})
+    tab = settings_tab.SettingsTab(settings_manager=settings)
+    field = _find_field(tab, "Hide CC launch console")
+    assert field is not None
+    assert field.control_widget.isChecked() is False
+
+
+def test_hide_cc_console_field_toggling_writes_setting(qapp):
+    from tabs import settings_tab
+    from utils.settings_keys import CC_HIDE_LAUNCH_CONSOLE
+    settings = _SettingsStub({})
+    tab = settings_tab.SettingsTab(settings_manager=settings)
+    field = _find_field(tab, "Hide CC launch console")
+    assert field is not None
+    # Switch.setChecked(<different>) emits toggled, which writes the setting.
+    field.control_widget.setChecked(False)
     assert settings.get(CC_HIDE_LAUNCH_CONSOLE) is False
-    tab.hide_cc_console_row.toggled.emit(True)
+    field.control_widget.setChecked(True)
     assert settings.get(CC_HIDE_LAUNCH_CONSOLE) is True

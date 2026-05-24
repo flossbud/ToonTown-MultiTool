@@ -3,7 +3,8 @@
 PickerChip
     Namespace for chip rendering: QSS background gradient (used by
     PickerCard's chip QLabel) and inline HTML snippet (used by
-    tabs/settings_tab.py's GamePathRow when the active CC install matches).
+    tabs/settings_tab.py's SettingsPanel._refresh_game_path_display when the
+    active CC install matches).
 
 ElidedLabel
     QLabel subclass that paints middle-elided text and exposes the full
@@ -47,9 +48,9 @@ class PickerChip:
     def inline_html(slug: str, *, height_px: int = 18) -> str:
         """Render a chip as an inline HTML snippet for QLabel rich-text.
 
-        Used by Settings CC row (GamePathRow._refresh_display) when the
-        active install matches a discovered one. The QLabel hosting the
-        snippet must have setTextFormat(Qt.RichText).
+        Used by tabs/settings_tab.py's SettingsPanel._refresh_game_path_display
+        when the active CC install matches a discovered one. The QLabel hosting
+        the snippet must have setTextFormat(Qt.RichText).
 
         QLabel's rich-text subset does not support `qlineargradient(...)`
         or `linear-gradient(...)`, so the inline chip uses the gradient's
