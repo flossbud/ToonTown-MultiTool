@@ -150,6 +150,7 @@ class SettingsPanel(QFrame):
     ):
         super().__init__(parent)
         assert stripe in ("ttr", "cc", "neutral"), f"unknown stripe kind: {stripe!r}"
+        self.setObjectName("settings_panel")  # targets the QSS selector
         self.stripe_kind = stripe
         self.fields: list[SettingsField] = []
         self.header_buttons: list = []
@@ -275,6 +276,18 @@ class SettingsPanel(QFrame):
     def apply_theme(self, c, is_dark: bool) -> None:
         self._c = c
         self._is_dark = is_dark
+        # Body chrome via QSS - Qt's paint cascade reliably honors a stylesheet
+        # whose selector targets this widget by objectName, even when an
+        # ancestor sets a global background stylesheet. The original
+        # paintEvent-based approach was being shadowed by the page widget's
+        # cascaded `background: bg_app` rule, leaving panels chrome-less.
+        self.setStyleSheet(
+            "QFrame#settings_panel {"
+            f"background: {c.get('bg_card', '#252525')};"
+            f"border: 1px solid {c.get('border_card', '#363636')};"
+            "border-radius: 10px;"
+            "}"
+        )
         self.title_label.setStyleSheet(
             f"font-size: 14px; font-weight: 700; color: {c['text_primary']}; "
             "background: transparent; border: none;"
@@ -299,37 +312,34 @@ class SettingsPanel(QFrame):
         return self._c.get(token, "#888888")
 
     def paintEvent(self, event):
+        # Let Qt's stylesheet machinery paint the body fill + border + radius
+        # first (via the standard QFrame paintEvent), then overlay the brand
+        # stripe and the header-bottom divider on top.
+        super().paintEvent(event)
         if self._c is None:
             return
+        from PySide6.QtCore import QRectF
+        from PySide6.QtGui import QColor, QPainter
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        radius = 10.0
-        rect = QRectF(0.5, 0.5, self.width() - 1, self.height() - 1)
 
-        # Body fill + outer border.
-        p.setPen(QPen(QColor(self._c.get("border_card", "#363636")), 1))
-        p.setBrush(QColor(self._c.get("bg_card", "#252525")))
-        p.drawRoundedRect(rect, radius, radius)
-
-        # Top stripe -- drawn as a filled rect along the top edge, clipped to
-        # the rounded silhouette by drawing inside the border.
+        # Top stripe - paint a rounded rect that extends past the visible
+        # stripe height, then erase its lower half with bg_card so only the
+        # top corners are rounded.
         p.setPen(Qt.NoPen)
         p.setBrush(QColor(self._stripe_color()))
-        # Round only the top corners -- paint a rounded rect that extends past
-        # the bottom of the stripe so the bottom edge sits inside the panel.
+        radius = 10.0
         p.drawRoundedRect(
             QRectF(1, 1, self.width() - 2, self.STRIPE_HEIGHT + radius),
             radius, radius,
         )
-        # Cover the lower half of that rounded rect (so only the top remains).
         p.setBrush(QColor(self._c.get("bg_card", "#252525")))
         p.drawRect(QRectF(1, self.STRIPE_HEIGHT + 1, self.width() - 2, radius))
 
-        # Header-bottom divider (drawn at the bottom of the header_widget).
+        # Header-bottom divider - 1px line under the header_widget.
         p.setPen(QColor(self._c.get("border_muted", "#2e2e2e")))
         y = self.header_widget.geometry().bottom()
         p.drawLine(0, y, self.width(), y)
-
         p.end()
 
 

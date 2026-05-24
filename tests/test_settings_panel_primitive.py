@@ -202,3 +202,83 @@ def test_panel_set_sub_runtime_create_resizes_header(qapp):
     initial_height = panel.header_widget.height()
     panel.set_sub("late-added sub")
     assert panel.header_widget.height() > initial_height
+
+
+def test_panel_ttr_stripe_is_visible_after_apply_theme(qapp):
+    """Render the TTR panel offscreen and confirm a pixel inside the top
+    stripe area carries the TTR brand color. This is the regression test
+    for the missing-chrome bug found in the first smoke-test."""
+    from PySide6.QtGui import QColor, QImage
+    from utils.theme_manager import get_theme_colors
+    from tabs.settings_tab import SettingsPanel
+
+    panel = SettingsPanel(title="TTR", stripe="ttr", sub="path")
+    panel.apply_theme(get_theme_colors(is_dark=True), is_dark=True)
+    panel.resize(400, 120)
+
+    img = QImage(panel.size(), QImage.Format_ARGB32)
+    img.fill(0)
+    panel.render(img)
+
+    # The brand stripe sits in the top STRIPE_HEIGHT pixels. Sample at y=1
+    # to land squarely inside it, well away from the corner rounding.
+    sample = QColor(img.pixel(200, 1))
+    ttr = QColor("#4A8FE7")
+    # Allow modest tolerance for antialiasing and the rounded corners' AA
+    # bleed at y=1; the body of the stripe should still be close to brand.
+    assert abs(sample.red() - ttr.red()) < 40, (
+        f"stripe pixel {sample.getRgb()} not close to TTR brand {ttr.getRgb()}"
+    )
+    assert abs(sample.green() - ttr.green()) < 40
+    assert abs(sample.blue() - ttr.blue()) < 40
+
+
+def test_panel_neutral_stripe_does_not_use_brand_colors(qapp):
+    """A neutral panel must not paint TTR or CC brand colors anywhere
+    in its top stripe."""
+    from PySide6.QtGui import QColor, QImage
+    from utils.theme_manager import get_theme_colors
+    from tabs.settings_tab import SettingsPanel
+
+    panel = SettingsPanel(title="General")
+    panel.apply_theme(get_theme_colors(is_dark=True), is_dark=True)
+    panel.resize(400, 120)
+
+    img = QImage(panel.size(), QImage.Format_ARGB32)
+    img.fill(0)
+    panel.render(img)
+
+    sample = QColor(img.pixel(200, 1))
+    ttr = QColor("#4A8FE7")
+    cc = QColor("#F26D21")
+    # Neutral stripe uses border_light (#555555 in dark). Confirm we're not
+    # accidentally drawing a brand color.
+    assert abs(sample.red() - ttr.red()) > 40 or abs(sample.blue() - ttr.blue()) > 40
+    assert abs(sample.red() - cc.red()) > 40 or abs(sample.blue() - cc.blue()) > 40
+
+
+def test_panel_body_fill_distinguishable_from_app_bg(qapp):
+    """Panel body must be visibly distinct from the surrounding app bg,
+    so the card surface reads as elevated. Sample a pixel inside the
+    body area (below the stripe + header, above the bottom corner)."""
+    from PySide6.QtGui import QColor, QImage
+    from utils.theme_manager import get_theme_colors
+    from tabs.settings_tab import SettingsPanel, SettingsField
+
+    panel = SettingsPanel(title="General")
+    panel.add_field(SettingsField("X"))
+    panel.apply_theme(get_theme_colors(is_dark=True), is_dark=True)
+    panel.resize(400, 200)
+
+    img = QImage(panel.size(), QImage.Format_ARGB32)
+    img.fill(0)
+    panel.render(img)
+
+    # Sample a pixel inside the body area (away from header border + bottom edge).
+    sample = QColor(img.pixel(50, 80))
+    bg_app = QColor("#1a1a1a")
+    # Body should be bg_card (#252525) which is ~11 units brighter per channel.
+    assert sample.red() - bg_app.red() >= 5, (
+        f"body pixel {sample.getRgb()} not perceptibly brighter than "
+        f"bg_app {bg_app.getRgb()}"
+    )
