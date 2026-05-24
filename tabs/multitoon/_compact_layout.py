@@ -179,59 +179,65 @@ class _CompactLayout(QWidget):
 
         return card
 
-    def set_card_brand(self, i: int, game: str | None) -> None:
-        """Apply Direction D chrome to card `i` for the given game.
+    def set_card_brand(self, i: int, game: str | None, enabled: bool = False) -> None:
+        """Apply Direction D chrome to card `i`.
 
-        game in {"ttr", "cc", None}
-            "ttr"  -> blue top stripe (game_pill_ttr)
-            "cc"   -> orange top stripe (game_pill_cc)
-            None   -> empty slot: muted solid stripe + solid L/R/B borders
+        Stripe colour is driven by (game, enabled):
+            empty (game is None)            -> border_light  (rank 0)
+            found (game set, enabled False) -> _muted_brand  (rank 1)
+            enabled (game set, enabled True)-> full brand    (rank 2)
 
-        Reads colour tokens from get_theme_colors so light/dark palettes
-        Just Work."""
+        Card chrome QSS no longer writes a `border-top` - the painted
+        _CardStripe widget owns that 3 px region. We reserve the space
+        with `border-top: 3px solid transparent` so the card's interior
+        layout stays at its current dimensions.
+        """
         from utils.theme_manager import get_theme_colors, resolve_theme
         is_dark = resolve_theme(self._tab.settings_manager) == "dark"
         c = get_theme_colors(is_dark)
         card = self._card_slots[i]["card"]
+        stripe = self._card_slots[i]["card_stripe"]
 
         if game == "ttr":
-            stripe = c["game_pill_ttr"]
-            stripe_style = "solid"
+            brand = QColor(c["game_pill_ttr"])
+            target = brand if enabled else _muted_brand(brand)
             side_style = "solid"
             side_color = c["border_card"]
         elif game == "cc":
-            stripe = c["game_pill_cc"]
-            stripe_style = "solid"
+            brand = QColor(c["game_pill_cc"])
+            target = brand if enabled else _muted_brand(brand)
             side_style = "solid"
             side_color = c["border_card"]
         else:
-            # Empty slot: muted colour but solid stroke. The dashed treatment
-            # added too much visual noise without enough payoff; the muted
-            # colour alone is enough to signal "no toon here".
-            stripe = c["border_light"]
-            stripe_style = "solid"
+            target = QColor(c["border_light"])
             side_style = "solid"
             side_color = c["border_card"]
 
         card.setStyleSheet(
             f"#toon_card_{i} {{"
             f"  background: {c['bg_card']};"
-            f"  border-top: 3px {stripe_style} {stripe};"
+            f"  border-top: 3px solid transparent;"
             f"  border-left: 1px {side_style} {side_color};"
             f"  border-right: 1px {side_style} {side_color};"
             f"  border-bottom: 1px {side_style} {side_color};"
             f"  border-radius: 9px;"
             f"}}"
         )
-        divider = self._card_slots[i].get("header_divider")
-        if divider is not None:
-            divider.setStyleSheet(f"background: {c['border_muted']}; border: none;")
+
+        stripe.set_color(target)
 
         # Refresh the portrait-overlay dot's cut-out ring so it matches
         # the current card backdrop.
         dot = self._card_slots[i].get("status_ring")
         if dot is not None and hasattr(dot, "set_cutout_border"):
             dot.set_cutout_border(c["bg_card"], width=2.5)
+
+        # Header divider colour also picks up the theme.
+        divider = self._card_slots[i].get("header_divider")
+        if divider is not None:
+            divider.setStyleSheet(
+                f"background: {c['border_muted']}; border: none;"
+            )
 
     # ── Populate ───────────────────────────────────────────────────────────
     def populate(self):
