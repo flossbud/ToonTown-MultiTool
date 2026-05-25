@@ -13,10 +13,14 @@ Additionally, even with the venv's bundled Qt, ~20-25% of cold launches
 on current Arch + Wayland still hit an early-startup font-shaping crash
 deep in Qt's event-delivery path (something MultiToonTool.__init__
 triggers that minimal harnesses don't reproduce; the bisection isolated
-it to that __init__ but not to a specific line). To paper over that
-flakiness we supervise the child process: if it dies via SIGSEGV/SIGBUS/
-SIGABRT within the first ~3 seconds, we relaunch up to MAX_RETRIES more
-times. After that window, exits propagate unchanged.
+it to that __init__ but not to a specific line). And on Python 3.14 +
+PySide6 6.10 we additionally see paint-time GC-vs-Shiboken races (see
+project_py314_pyside6_gc_paint_race in agent memory) that the app-level
+fixes for x11_discovery/game_registry/ttr_api address but don't fully
+preclude. To paper over both classes we supervise the child process:
+if it dies via SIGSEGV/SIGBUS/SIGABRT at any point during the session,
+we relaunch up to MAX_LAUNCH_ATTEMPTS total. Persistent crashes still
+fail loudly once the cap is exhausted; the cap is the safety valve.
 
 This module is intentionally dependency-free (only stdlib) so it can
 run before any Qt or PySide6 import.
@@ -30,14 +34,12 @@ import sys
 import time
 
 
-# How long after spawning the child to treat a fatal-signal exit as a
-# retryable early-startup crash (vs. a real bug post-startup the user
-# would want to see, like a segfault during gameplay).
-EARLY_CRASH_WINDOW_SEC = 3.0
-
 # Total launch attempts including the first one. 3 means: original + 2
-# retries. Chosen because the empirical crash rate is ~25%, so
-# P(all three fail) = 0.25**3 ≈ 1.5%.
+# retries. Chosen because the empirical cold-launch crash rate is ~25%
+# (P(all three fail) = 0.25**3 ≈ 1.5%), and 3 also feels right as a
+# session-wide cap for paint-time / GC races: enough to absorb a
+# transient blip, few enough that a persistent bug exhausts the budget
+# and surfaces to the user instead of silently re-spawning forever.
 MAX_LAUNCH_ATTEMPTS = 3
 
 # Exit codes that subprocess returns when the child died via signal.
@@ -73,10 +75,10 @@ def reexec_into_venv(script_path: str) -> None:
 
     When conditions are met, this function spawns the venv interpreter
     as a subprocess and waits for it. If the child exits via a fatal
-    signal within EARLY_CRASH_WINDOW_SEC seconds, the supervisor
-    relaunches it (up to MAX_LAUNCH_ATTEMPTS total). When the child
-    finally exits, the supervisor exits with the same returncode and
-    this function never returns.
+    signal at any point, the supervisor relaunches it (up to
+    MAX_LAUNCH_ATTEMPTS total). When the child finally exits cleanly or
+    exhausts the retry budget, the supervisor exits with the same
+    returncode and this function never returns.
 
     script_path: the absolute or relative path to main.py. Used for
         two purposes: locating ./venv relative to it, and re-passing
@@ -110,9 +112,10 @@ def reexec_into_venv(script_path: str) -> None:
 
 
 def _supervise_with_retry(venv_python: str, script_abs: str, args: list[str]) -> int:
-    """Spawn the venv python repeatedly, retrying on early fatal-signal
-    exits. Returns the final returncode (to be passed to sys.exit by
-    the caller). Forwards SIGINT/SIGTERM to the child."""
+    """Spawn the venv python repeatedly, retrying on fatal-signal exits
+    regardless of when they happen in the session. Returns the final
+    returncode (to be passed to sys.exit by the caller). Forwards
+    SIGINT/SIGTERM to the child."""
     cmd = [venv_python, script_abs, *args]
     last_rc = 0
     for attempt in range(1, MAX_LAUNCH_ATTEMPTS + 1):
@@ -135,18 +138,19 @@ def _supervise_with_retry(venv_python: str, script_abs: str, args: list[str]) ->
         elapsed = time.monotonic() - start
         if last_rc == 0:
             return 0
-        # Retry only on fatal-signal exits during the early window.
+        # Retry on any fatal-signal exit (SIGSEGV/SIGBUS/SIGABRT). The
+        # MAX_LAUNCH_ATTEMPTS cap is the safety valve against persistent
+        # bugs masquerading as transient flakiness.
         is_fatal_signal = last_rc in _RETRYABLE_FATAL_SIGNALS
-        in_early_window = elapsed < EARLY_CRASH_WINDOW_SEC
-        if is_fatal_signal and in_early_window and attempt < MAX_LAUNCH_ATTEMPTS:
+        if is_fatal_signal and attempt < MAX_LAUNCH_ATTEMPTS:
             sig_name = signal.Signals(-last_rc).name
             print(
-                f"[ttmt] Early-startup crash ({sig_name} after {elapsed:.1f}s); "
+                f"[ttmt] Fatal-signal exit ({sig_name} after {elapsed:.1f}s); "
                 f"retrying ({attempt}/{MAX_LAUNCH_ATTEMPTS - 1}).",
                 file=sys.stderr,
             )
             continue
-        # Any other exit (clean failure, late crash, non-retryable signal)
-        # propagates immediately.
+        # Clean failure, exhausted retries, or non-retryable signal:
+        # propagate to the user.
         return last_rc
     return last_rc
