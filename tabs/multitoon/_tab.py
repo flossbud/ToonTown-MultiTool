@@ -1531,11 +1531,12 @@ class MultitoonTab(QWidget):
             # queryable in tests).
             name_label.setStyleSheet(
                 f"font-size: 21px; font-weight: bold; color: {c['text_primary']}; "
-                f"background: none; border: none; padding-left: 6px; padding-top: 10px;"
+                f"background: none; border: none; padding-left: 6px;"
             )
             stat_style = (
                 f"border: none; background: transparent; font-weight: 500; "
-                f"font-size: 14px; color: {c['text_primary']};"
+                f"font-size: 14px; color: {c['text_primary']}; "
+                f"padding: 0; min-height: 0;"
             )
             self.laff_labels[i].setStyleSheet(stat_style)
             self.bean_labels[i].setStyleSheet(stat_style)
@@ -1611,7 +1612,11 @@ class MultitoonTab(QWidget):
             game_tag = GameRegistry.instance().get_game_for_window(str(wids[index]))
             if game_tag == "cc":
                 self.game_badges[index].setText("CC")
-                self.game_badges[index].setStyleSheet(f"background-color: #F26D21; color: white; border-radius: 4px; padding: 2px 6px; font-weight: bold; font-size: 10px; border: 1px solid {c['border_muted']};")
+                self.game_badges[index].setStyleSheet(
+                    "background: transparent; color: #F26D21; "
+                    "border: 2px solid #F26D21; border-radius: 12px; "
+                    "padding: 3px 8px; font-weight: bold; font-size: 12px;"
+                )
                 self.game_badges[index].show()
                 self._set_card_brand_for_slot(
                     index, "cc",
@@ -1619,7 +1624,11 @@ class MultitoonTab(QWidget):
                 )
             elif game_tag == "ttr":
                 self.game_badges[index].setText("TTR")
-                self.game_badges[index].setStyleSheet(f"background-color: #4A8FE7; color: white; border-radius: 4px; padding: 2px 6px; font-weight: bold; font-size: 10px; border: 1px solid {c['border_muted']};")
+                self.game_badges[index].setStyleSheet(
+                    "background: transparent; color: #4A8FE7; "
+                    "border: 2px solid #4A8FE7; border-radius: 12px; "
+                    "padding: 3px 8px; font-weight: bold; font-size: 12px;"
+                )
                 self.game_badges[index].show()
                 self._set_card_brand_for_slot(
                     index, "ttr",
@@ -2583,7 +2592,7 @@ class MultitoonTab(QWidget):
             name_label.setText(display)
             name_label.setStyleSheet(
                 f"font-size: 21px; font-weight: bold; color: {c['text_primary']}; "
-                f"background: none; border: none; padding-left: 6px; padding-top: 10px;"
+                f"background: none; border: none; padding-left: 6px;"
             )
         if self._mode == "full" and hasattr(self, "_full") and self._full is not None:
             for card in self._full._cards:

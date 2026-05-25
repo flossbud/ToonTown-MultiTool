@@ -379,8 +379,17 @@ class _CompactLayout(QWidget):
         ka_bar.setMaximumWidth(16777215)  # QWIDGETSIZE_MAX
         ka_bar.setFixedHeight(7)
 
+        # Cap laff/bean QPushButton height so the sub_row fits inside
+        # the 50 px portrait placeholder. Without this the system style
+        # chrome inflates the button sizeHint to ~28-32 px in the real
+        # app (Fusion vertical padding), pushing meta_col content (name
+        # 29 px + button) past 50 and growing the card by ~11 px when
+        # laff data populates. Full layout re-asserts its own geometry
+        # via setGeometry in _full_card so this cap only affects compact.
         self._tab.laff_labels[i].setIcon(make_heart_icon(16))
         self._tab.bean_labels[i].setIcon(make_jellybean_icon(16))
+        self._tab.laff_labels[i].setFixedHeight(20)
+        self._tab.bean_labels[i].setFixedHeight(20)
 
         game_badge = self._tab.game_badges[i]
         game_badge.setMinimumSize(0, 0)
@@ -446,10 +455,17 @@ class _CompactLayout(QWidget):
         )
         slot["sub_row"].addStretch()
 
-        # meta_col: name on top, sub_row underneath.
+        # meta_col: name on top, sub_row underneath. Stretches above and
+        # below the content vertically center the block in the top_row's
+        # 50 px slot — when sub_row is empty (no laff data and no CC
+        # subtitle) the name alone sits between the card top and the
+        # divider; when sub_row has content the stretches collapse and
+        # the 2-line stack fills the row.
         name_label, status_dot = self._tab.toon_labels[i]
+        slot["meta_col"].addStretch()
         slot["meta_col"].addWidget(name_label)
         slot["meta_col"].addLayout(slot["sub_row"])
+        slot["meta_col"].addStretch()
 
         # top_row: portrait_placeholder | meta_col (stretch=1) | game_badge.
         # stretch on meta_col pushes the chip flush against the right

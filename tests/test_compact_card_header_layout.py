@@ -141,3 +141,20 @@ def test_cc_subtitle_row_slot_removed(qapp, tmp_path, monkeypatch):
     tab = _build_tab(qapp, tmp_path, monkeypatch)
     slot = _slot(tab, 0)
     assert "cc_subtitle_row" not in slot
+
+
+def test_laff_bean_height_capped_to_fit_placeholder(qapp, tmp_path, monkeypatch):
+    """Regression: laff/bean QPushButtons must be capped so meta_col
+    content (name 29 px + sub_row) stays within the 50 px portrait
+    placeholder. Without the cap the system style chrome inflates the
+    button sizeHint past 21 px, pushing the card height up by ~11 px
+    when laff data populates.
+
+    Note: only `maximumHeight` is checked - the stat_style QSS sets
+    `min-height: 0` to let the button shrink below its style default,
+    which overrides the Python-side `setMinimumHeight(20)` from
+    `setFixedHeight`. The cap on the max side is what prevents card
+    growth; the min side stays at 0 by design."""
+    tab = _build_tab(qapp, tmp_path, monkeypatch)
+    assert tab.laff_labels[0].maximumHeight() == 20
+    assert tab.bean_labels[0].maximumHeight() == 20
