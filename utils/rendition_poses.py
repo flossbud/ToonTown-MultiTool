@@ -25,11 +25,12 @@ cascade. Mitigations in this module:
 from __future__ import annotations
 
 import os
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import Final, Optional
 
 from PySide6.QtCore import QObject, Signal
-from PySide6.QtGui import QImage, QPixmap
+# QImage / QPixmap imports land in Task 2 where the GUI-thread decode happens.
 
 
 POSE_NAMES: Final = (
@@ -61,11 +62,15 @@ class RenditionPoseFetcher(QObject):
     pose_ready = Signal(str, str, object)  # (dna, pose, QPixmap | None)
 
     _instance: Optional["RenditionPoseFetcher"] = None
+    _instance_lock = threading.Lock()
 
     @classmethod
     def instance(cls) -> "RenditionPoseFetcher":
+        # Double-checked locking: matches utils/game_registry.py:43-57.
         if cls._instance is None:
-            cls._instance = cls()
+            with cls._instance_lock:
+                if cls._instance is None:
+                    cls._instance = cls()
         return cls._instance
 
     def __init__(self) -> None:
