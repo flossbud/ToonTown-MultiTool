@@ -104,3 +104,45 @@ def test_atomic_write_cleans_up_tmp_on_oserror(isolated_config, monkeypatch):
     # tmp file must be cleaned up
     tmp = isolated_config / "toon_customizations.json.tmp"
     assert not tmp.exists()
+
+
+def test_migration_from_legacy_file(isolated_config):
+    """Existing cc_race_overrides.json with flat name->stem migrates to
+    'cc::name' -> {'icon_stem': stem} and the old file is renamed .bak."""
+    import json
+    legacy = isolated_config / "cc_race_overrides.json"
+    legacy.write_text(json.dumps({"Flossbud": "DOG", "OtherToon": "CAT"}))
+    from utils.toon_customizations_manager import ToonCustomizationsManager
+    m = ToonCustomizationsManager()
+    assert m.get("cc", "Flossbud") == {"icon_stem": "DOG"}
+    assert m.get("cc", "OtherToon") == {"icon_stem": "CAT"}
+    assert not legacy.exists()
+    assert (isolated_config / "cc_race_overrides.json.bak").exists()
+
+
+def test_migration_idempotent_when_new_file_exists(isolated_config):
+    """If the new file already exists, migration must NOT run -- old file
+    stays untouched and existing entries are preserved."""
+    import json
+    legacy = isolated_config / "cc_race_overrides.json"
+    legacy.write_text(json.dumps({"Flossbud": "DOG"}))
+    new = isolated_config / "toon_customizations.json"
+    new.write_text(json.dumps({"ttr::Existing": {"accent": "#abcdef"}}))
+    from utils.toon_customizations_manager import ToonCustomizationsManager
+    m = ToonCustomizationsManager()
+    assert m.get("ttr", "Existing") == {"accent": "#abcdef"}
+    assert m.get("cc", "Flossbud") == {}  # not migrated
+    assert legacy.exists()                  # not renamed
+
+
+def test_migration_handles_corrupt_legacy_file(isolated_config):
+    """If the legacy file exists but is unreadable JSON, skip migration
+    silently and start with an empty store."""
+    legacy = isolated_config / "cc_race_overrides.json"
+    legacy.write_text("{not json")
+    from utils.toon_customizations_manager import ToonCustomizationsManager
+    m = ToonCustomizationsManager()
+    assert m.all() == {}
+    # Corrupt legacy is left alone -- no .bak rename when there was nothing
+    # to migrate.
+    assert legacy.exists()

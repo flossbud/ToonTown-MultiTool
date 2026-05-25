@@ -34,10 +34,55 @@ class ToonCustomizationsManager:
         os.makedirs(config_dir, exist_ok=True)
         os.chmod(config_dir, 0o700)
         self._path = os.path.join(config_dir, "toon_customizations.json")
+        self._legacy_path = os.path.join(config_dir, "cc_race_overrides.json")
         self._entries: dict[str, dict] = {}
+        self._migrate_legacy()
         self._load()
 
     # -- Persistence -----------------------------------------------------------
+
+    def _migrate_legacy(self) -> None:
+        """One-time migration from cc_race_overrides.json. Idempotent: if
+        the new file already exists, do nothing (the user has already been
+        migrated or is on a fresh install).
+        """
+        if os.path.exists(self._path):
+            return
+        if not os.path.exists(self._legacy_path):
+            return
+        try:
+            with open(self._legacy_path, "r") as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning("[ToonCustomizationsManager] legacy read failed: %s", e)
+            return
+        if not isinstance(data, dict):
+            return
+        migrated: dict[str, dict] = {}
+        for name, stem in data.items():
+            if isinstance(name, str) and isinstance(stem, str):
+                migrated[_key("cc", name)] = {"icon_stem": stem}
+        if not migrated:
+            return
+        # Write the new file via the same atomic dance the _save uses.
+        tmp = self._path + ".tmp"
+        try:
+            with open(tmp, "w") as f:
+                json.dump(migrated, f, indent=2, sort_keys=True)
+                f.flush()
+            os.replace(tmp, self._path)
+        except OSError as e:
+            logger.warning("[ToonCustomizationsManager] migrate write failed: %s", e)
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+            return
+        # Rename the legacy file so we never migrate twice.
+        try:
+            os.replace(self._legacy_path, self._legacy_path + ".bak")
+        except OSError as e:
+            logger.warning("[ToonCustomizationsManager] legacy rename failed: %s", e)
 
     def _load(self) -> None:
         if not os.path.exists(self._path):
