@@ -629,6 +629,14 @@ class _PoseAdjustView(QWidget):
         self._rot_value.setText("0°")
         self.transform_changed.emit()
         self.reset_requested.emit()
+        # Clear silhouette outline + shadow alongside the transform reset.
+        # The two silhouette pickers below the sliders also get cleared visually.
+        self._sil_outline_color_row.set_current(None)
+        self._sil_outline_chip.set_enabled_visual(False)
+        self._sil_shadow_color_row.set_current(None)
+        self._sil_shadow_chip.set_enabled_visual(False)
+        self.silhouette_outline_changed.emit(None, self._sil_outline_chip.current())
+        self.silhouette_shadow_changed.emit(None, self._sil_shadow_chip.current())
 
     def _on_sil_outline_color(self, hex_: Optional[str]) -> None:
         self._sil_outline_chip.set_enabled_visual(hex_ is not None)

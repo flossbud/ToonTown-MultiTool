@@ -680,3 +680,25 @@ def test_dialog_removing_shadow_preserves_existing_outline(qapp, monkeypatch, tm
     sil = dlg.draft()["portrait"]["silhouette"]
     assert "shadow" not in sil
     assert sil["outline"] == {"color": "#ffd84a", "width": "medium"}
+
+
+def test_adjust_view_reset_clears_silhouette_alongside_transform(qapp, monkeypatch, tmp_path):
+    """The in-Adjust-view Reset button must wipe both the transform AND
+    the silhouette outline/shadow under portrait."""
+    monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
+    _reset_singletons()
+    dlg, _ = _build(qapp, dna="dna-test-123", existing={
+        "portrait": {
+            "transform": {"zoom": 1.5, "offset_x": 0.1, "offset_y": 0.0, "rotate": 30.0},
+            "silhouette": {
+                "outline": {"color": "#fff", "width": "medium"},
+                "shadow":  {"color": "#000", "softness": "medium"},
+            },
+        },
+    })
+    sec = dlg.section("Toon")
+    sec._ensure_adjust_view()
+    sec._adjust_view.click_reset()
+    portrait = dlg.draft().get("portrait") or {}
+    assert "transform" not in portrait
+    assert "silhouette" not in portrait
