@@ -59,7 +59,7 @@ def test_cached_pixmap_returns_pixmap_for_fresh_disk_entry(qapp, isolated_cache)
     img = QImage(2, 2, QImage.Format_ARGB32)
     img.fill(QColor("#ff0000"))
     fetcher = RenditionPoseFetcher.instance()
-    path = os.path.join(fetcher.cache_dir(), "dna123__portrait.png")
+    path = fetcher._path_for("dna123", "portrait")
     img.save(path, "PNG")
 
     pm = fetcher.cached_pixmap("dna123", "portrait")
@@ -74,7 +74,7 @@ def test_cached_pixmap_returns_none_for_stale_entry(qapp, isolated_cache):
     from PySide6.QtGui import QImage, QColor
     from utils.rendition_poses import RenditionPoseFetcher, _TTL_SECONDS
     fetcher = RenditionPoseFetcher.instance()
-    path = os.path.join(fetcher.cache_dir(), "dna123__head.png")
+    path = fetcher._path_for("dna123", "head")
     img = QImage(2, 2, QImage.Format_ARGB32)
     img.fill(QColor("#00ff00"))
     img.save(path, "PNG")
@@ -92,7 +92,7 @@ def test_request_emits_pose_ready_for_fresh_disk_entry(qapp, isolated_cache):
     from PySide6.QtGui import QImage, QColor
     from utils.rendition_poses import RenditionPoseFetcher
     fetcher = RenditionPoseFetcher.instance()
-    path = os.path.join(fetcher.cache_dir(), "dna123__waving.png")
+    path = fetcher._path_for("dna123", "waving")
     img = QImage(2, 2, QImage.Format_ARGB32)
     img.fill(QColor("#0000ff"))
     img.save(path, "PNG")
@@ -167,7 +167,7 @@ def test_request_fetches_when_cache_miss(qapp, isolated_cache, monkeypatch):
     # urlopen captured a URL containing the requested pose name.
     assert any("portrait-grin" in u for u in captured_urls)
     # Bytes landed on disk.
-    expected_path = os.path.join(fetcher.cache_dir(), "dnaXYZ__portrait-grin.png")
+    expected_path = fetcher._path_for("dnaXYZ", "portrait-grin")
     assert os.path.isfile(expected_path)
 
 
@@ -201,9 +201,9 @@ def test_invalidate_dna_removes_matching_files(qapp, isolated_cache):
     for pose in ("portrait", "head", "waving"):
         img = QImage(1, 1, QImage.Format_ARGB32)
         img.fill(QColor("#ffffff"))
-        img.save(os.path.join(fetcher.cache_dir(), f"dnaABC__{pose}.png"), "PNG")
+        img.save(fetcher._path_for("dnaABC", pose), "PNG")
     # Different DNA should NOT be touched.
-    img.save(os.path.join(fetcher.cache_dir(), "otherDNA__portrait.png"), "PNG")
+    img.save(fetcher._path_for("otherDNA", "portrait"), "PNG")
 
     fetcher.invalidate_dna("dnaABC")
 
