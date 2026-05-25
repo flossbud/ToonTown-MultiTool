@@ -147,3 +147,113 @@ def test_card_preview_draws_circle_outline_when_set(qapp):
     assert px.alpha() > 0
     # Outline color is #ffd84a (very yellow). Tolerate AA.
     assert px.red() > 200 and px.green() > 180 and px.blue() < 120
+
+
+def test_card_preview_invokes_silhouette_builders_when_set(qapp, monkeypatch):
+    """When silhouette outline or shadow is set, the paint pipeline
+    calls the effect builders. Verified via monkeypatch spies."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QPixmap
+    from utils.widgets.card_preview_widget import CardPreviewWidget
+    import utils.portrait_effects as eff
+
+    outline_calls = []
+    shadow_calls = []
+
+    def fake_outline(pose, color, width):
+        outline_calls.append((color.name(), width))
+        out = QPixmap(pose.size())
+        out.fill(Qt.transparent)
+        return out
+
+    def fake_shadow(pose, color, blur):
+        shadow_calls.append((color.name(), blur))
+        out = QPixmap(pose.width() + 2 * blur, pose.height() + 2 * blur)
+        out.fill(Qt.transparent)
+        return out
+
+    monkeypatch.setattr(eff, "build_silhouette_outline_pixmap", fake_outline)
+    monkeypatch.setattr(eff, "build_silhouette_shadow_pixmap", fake_shadow)
+
+    draft = {"portrait": {
+        "silhouette": {
+            "outline": {"color": "#ffd84a", "width": "medium"},
+            "shadow": {"color": "#000000", "softness": "medium"},
+        },
+    }}
+    w = CardPreviewWidget("ttr", "Test", draft, dna="dna-1")
+    # Inject a fake source pose pixmap so the cache key is stable.
+    fake = QPixmap(40, 40)
+    fake.fill(Qt.red)
+    w._pose_pixmap = fake
+    w.show()
+    w.repaint()
+    qapp.processEvents()
+    assert outline_calls == [("#ffd84a", 2)]
+    assert shadow_calls == [("#000000", 4)]
+
+
+def test_card_preview_silhouette_cache_returns_same_pixmap(qapp, monkeypatch):
+    """Repainting without changing the draft should not re-invoke the
+    effect builders."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QPixmap
+    from utils.widgets.card_preview_widget import CardPreviewWidget
+    import utils.portrait_effects as eff
+
+    calls = []
+    monkeypatch.setattr(
+        eff, "build_silhouette_outline_pixmap",
+        lambda pm, c, w: (calls.append("out"), QPixmap(pm.size()))[1],
+    )
+    monkeypatch.setattr(
+        eff, "build_silhouette_shadow_pixmap",
+        lambda pm, c, b: (calls.append("shd"),
+                          QPixmap(pm.width() + 2 * b, pm.height() + 2 * b))[1],
+    )
+
+    draft = {"portrait": {"silhouette": {
+        "outline": {"color": "#fff", "width": "medium"},
+        "shadow":  {"color": "#000", "softness": "medium"},
+    }}}
+    w = CardPreviewWidget("ttr", "Test", draft, dna="dna-1")
+    fake = QPixmap(40, 40); fake.fill(Qt.red)
+    w._pose_pixmap = fake
+    w.show()
+    w.repaint(); qapp.processEvents()
+    initial = len(calls)
+    assert initial == 2
+    w.repaint(); qapp.processEvents()
+    assert len(calls) == initial  # cached, no new calls
+
+
+def test_card_preview_silhouette_cache_invalidated_when_pose_changes(qapp, monkeypatch):
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QPixmap
+    from utils.widgets.card_preview_widget import CardPreviewWidget
+    import utils.portrait_effects as eff
+    calls = []
+    monkeypatch.setattr(
+        eff, "build_silhouette_outline_pixmap",
+        lambda pm, c, w: (calls.append("out"), QPixmap(pm.size()))[1],
+    )
+    monkeypatch.setattr(
+        eff, "build_silhouette_shadow_pixmap",
+        lambda pm, c, b: (calls.append("shd"),
+                          QPixmap(pm.width() + 2 * b, pm.height() + 2 * b))[1],
+    )
+
+    draft = {"portrait": {"silhouette": {
+        "outline": {"color": "#fff", "width": "medium"},
+    }}}
+    w = CardPreviewWidget("ttr", "Test", draft, dna="dna-1")
+    pm1 = QPixmap(40, 40); pm1.fill(Qt.red)
+    w._pose_pixmap = pm1
+    w.show()
+    w.repaint(); qapp.processEvents()
+    assert calls == ["out"]
+    pm2 = QPixmap(40, 40); pm2.fill(Qt.blue)
+    w._pose_pixmap = pm2
+    w.repaint(); qapp.processEvents()
+    # Pose changed → cache key (id(pose_pm)) differs → builder invoked again.
+    assert calls == ["out", "out"]

@@ -16,8 +16,11 @@ from utils.toon_customization_resolve import (
     resolve_circle_outline,
     resolve_portrait_brush,
     resolve_portrait_pattern,
+    resolve_silhouette_outline,
+    resolve_silhouette_shadow,
 )
 from utils.toon_pattern_assets import tinted_pattern_pixmap
+import utils.portrait_effects as portrait_effects
 
 
 _PREVIEW_W = 360
@@ -56,6 +59,11 @@ class CardPreviewWidget(QWidget):
         self._draft: dict = dict(draft)
         self._dna = dna
         self._pose_pixmap: Optional[QPixmap] = None
+        self._silhouette_cache: dict[tuple, tuple] = {}
+        # key: (id(pose_pm), pose_size_tuple, outline_color or None, outline_width,
+        #       shadow_color or None, shadow_blur)
+        # value: (outline_pixmap or None, shadow_pixmap or None)
+        # bounded to 4 entries (drop oldest on insert).
         self.setMinimumSize(_PREVIEW_W, _PREVIEW_H)
         self.setMaximumSize(_PREVIEW_W, _PREVIEW_H)
 
@@ -98,6 +106,55 @@ class CardPreviewWidget(QWidget):
             self._pose_pixmap = None  # show spinner while refetching
             self._fetcher.request(self._dna, new_pose)
         self.update()
+
+    def _get_silhouette_bundle(
+        self, pose_pm: "QPixmap", scaled_size,
+    ) -> tuple:
+        """Look up or build outline + shadow pixmaps for the current
+        draft + supplied pose pixmap. Returns (outline_pm, shadow_pm,
+        shadow_offset_x, shadow_offset_y). Either pixmap may be None.
+        Cache is bounded to 4 entries (drop oldest)."""
+        outline = resolve_silhouette_outline(self._draft)
+        shadow = resolve_silhouette_shadow(self._draft)
+        if outline is None and shadow is None:
+            return (None, None, 0, 0)
+        ocol_name = outline[0].name() if outline else None
+        owidth = outline[1] if outline else 0
+        scol_name = shadow[0].name() if shadow else None
+        sblur = shadow[1] if shadow else 0
+        soff_x = shadow[2] if shadow else 0
+        soff_y = shadow[3] if shadow else 0
+        key = (
+            id(pose_pm),
+            (scaled_size.width(), scaled_size.height()),
+            ocol_name, owidth,
+            scol_name, sblur,
+        )
+        cached = self._silhouette_cache.get(key)
+        if cached is not None:
+            o_pm, s_pm = cached
+            return (o_pm, s_pm, soff_x, soff_y)
+        # Build fresh. Scale the pose pixmap to the same size as the
+        # rendered circle so effects align.
+        scaled = pose_pm.scaled(
+            scaled_size, Qt.KeepAspectRatio, Qt.SmoothTransformation,
+        )
+        outline_pm = None
+        shadow_pm = None
+        if outline is not None:
+            outline_pm = portrait_effects.build_silhouette_outline_pixmap(
+                scaled, outline[0], owidth,
+            )
+        if shadow is not None:
+            shadow_pm = portrait_effects.build_silhouette_shadow_pixmap(
+                scaled, shadow[0], sblur,
+            )
+        # Bounded LRU: drop oldest when full.
+        if len(self._silhouette_cache) >= 4:
+            oldest = next(iter(self._silhouette_cache))
+            self._silhouette_cache.pop(oldest)
+        self._silhouette_cache[key] = (outline_pm, shadow_pm)
+        return (outline_pm, shadow_pm, soff_x, soff_y)
 
     def _on_pose_ready(self, dna: str, pose: str, pixmap) -> None:
         if dna != self._dna:
@@ -176,6 +233,21 @@ class CardPreviewWidget(QWidget):
                 Qt.KeepAspectRatio,
                 Qt.SmoothTransformation,
             )
+            outline_pm, shadow_pm, sx, sy = self._get_silhouette_bundle(
+                self._pose_pixmap, circle_rect.size(),
+            )
+            if shadow_pm is not None and not shadow_pm.isNull():
+                pad_x = (shadow_pm.width() - scaled.width()) // 2
+                pad_y = (shadow_pm.height() - scaled.height()) // 2
+                p.drawPixmap(
+                    -scaled.width() // 2 - pad_x + sx,
+                    -scaled.height() // 2 - pad_y + sy,
+                    shadow_pm,
+                )
+            if outline_pm is not None and not outline_pm.isNull():
+                p.drawPixmap(
+                    -scaled.width() // 2, -scaled.height() // 2, outline_pm,
+                )
             p.drawPixmap(-scaled.width() // 2, -scaled.height() // 2, scaled)
             p.restore()
 
