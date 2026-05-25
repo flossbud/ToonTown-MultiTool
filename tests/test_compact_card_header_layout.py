@@ -90,6 +90,22 @@ def test_stats_labels_are_14_px(qapp, tmp_path, monkeypatch):
     assert tab.bean_labels[0].font().pixelSize() == 14
 
 
+def test_name_stylesheet_survives_refresh(qapp, tmp_path, monkeypatch):
+    """Regression: _refresh_toon_name_labels runs every time a toon name
+    is discovered (7 callsites in _tab.py) and re-applies the name
+    stylesheet. It must keep the 21 px size, otherwise the runtime font
+    visually reverts even though the construction-time QFont test still
+    passes."""
+    tab = _build_tab(qapp, tmp_path, monkeypatch)
+    tab.toon_names[0] = "Floss"
+    tab._refresh_toon_name_labels()
+    name_label, _ = tab.toon_labels[0]
+    assert "font-size: 21px" in name_label.styleSheet(), (
+        f"_refresh_toon_name_labels stripped the 21 px font-size. "
+        f"Got stylesheet: {name_label.styleSheet()!r}"
+    )
+
+
 def test_top_row_order_portrait_meta_chip(qapp, tmp_path, monkeypatch):
     tab = _build_tab(qapp, tmp_path, monkeypatch)
     slot = _slot(tab, 0)
