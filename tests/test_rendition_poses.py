@@ -285,3 +285,36 @@ def test_worker_emits_bytes_not_qimage(qapp, isolated_cache, monkeypatch):
     payload = spy.at(0)[2]
     # Must be raw bytes or None, never a Qt object.
     assert payload is None or isinstance(payload, (bytes, bytearray))
+
+
+def test_cleanup_legacy_cache_removes_old_format_keeps_new(qapp, isolated_cache):
+    from PySide6.QtGui import QImage
+    from utils.rendition_poses import RenditionPoseFetcher, _REQUEST_SIZE
+    fetcher = RenditionPoseFetcher.instance()
+    cache = fetcher.cache_dir()
+    # One old-format file (single `__` separator).
+    old = os.path.join(cache, "dnaA__portrait.png")
+    # One new-format file (double `__` with size suffix).
+    new = os.path.join(cache, f"dnaB__head__{_REQUEST_SIZE}.png")
+    img = QImage(2, 2, QImage.Format_ARGB32)
+    img.save(old, "PNG")
+    img.save(new, "PNG")
+    assert os.path.exists(old)
+    assert os.path.exists(new)
+    fetcher._cleanup_legacy_cache()
+    assert not os.path.exists(old), "old-format file should be removed"
+    assert os.path.exists(new), "new-format file must be preserved"
+
+
+def test_cleanup_legacy_cache_handles_missing_dir(qapp, tmp_path, monkeypatch):
+    """If the cache dir is unreadable, cleanup must not raise."""
+    monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
+    from utils import rendition_poses
+    rendition_poses.RenditionPoseFetcher._instance = None
+    fetcher = rendition_poses.RenditionPoseFetcher.instance()
+    # Remove the cache dir out from under the fetcher.
+    import shutil
+    shutil.rmtree(fetcher.cache_dir())
+    # Must not raise.
+    fetcher._cleanup_legacy_cache()
+    rendition_poses.RenditionPoseFetcher._instance = None

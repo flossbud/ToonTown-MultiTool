@@ -91,10 +91,30 @@ class RenditionPoseFetcher(QObject):
             os.chmod(self._cache_dir, 0o700)
         except OSError:
             pass
+        self._cleanup_legacy_cache()
         self._bytes_ready.connect(self._on_bytes_ready)
 
     def cache_dir(self) -> str:
         return self._cache_dir
+
+    def _cleanup_legacy_cache(self) -> None:
+        """Remove old-format cache entries (pre-size-suffix). New format
+        is <dna>__<pose>__<size>.png (two `__` separators); old format
+        is <dna>__<pose>.png (one). Runs once per process from __init__.
+        Touches only our own cache dir; failures are non-fatal."""
+        try:
+            names = os.listdir(self._cache_dir)
+        except OSError:
+            return
+        for name in names:
+            if not name.endswith(".png"):
+                continue
+            stem = name[:-4]
+            if stem.count("__") == 1:
+                try:
+                    os.remove(os.path.join(self._cache_dir, name))
+                except OSError:
+                    pass
 
     # -- Disk cache ----------------------------------------------------------
 
