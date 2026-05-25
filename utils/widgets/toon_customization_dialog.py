@@ -164,6 +164,7 @@ class _PortraitSection(QWidget):
         self._grad_toggle = QPushButton("Off")
         self._grad_toggle.setCheckable(True)
         self._grad_toggle.setFixedHeight(22)
+        self._grad_toggle.setMinimumWidth(60)
         self._grad_toggle.clicked.connect(self._on_gradient_toggle)
         grad_row.addWidget(self._grad_toggle)
         grad_row.addStretch(1)
@@ -188,15 +189,19 @@ class _PortraitSection(QWidget):
         none_btn = QPushButton("None")
         none_btn.setCheckable(True)
         none_btn.setFixedHeight(22)
+        fm = none_btn.fontMetrics()
+        none_btn.setMinimumWidth(fm.horizontalAdvance(none_btn.text()) + 24)
         none_btn.clicked.connect(lambda: self._select_pattern(None))
         pat_grid.addWidget(none_btn, 0, 0)
         self._pat_buttons[None] = none_btn
-        cols = 5
+        cols = 4
         cell = 1
         for name in PATTERN_NAMES:
             b = QPushButton(name.replace("_", " "))
             b.setCheckable(True)
             b.setFixedHeight(22)
+            fm = b.fontMetrics()
+            b.setMinimumWidth(fm.horizontalAdvance(b.text()) + 24)
             b.clicked.connect(lambda _=False, n=name: self._select_pattern(n))
             row, col = divmod(cell, cols)
             pat_grid.addWidget(b, row, col)
@@ -316,9 +321,10 @@ class ToonCustomizationDialog(QDialog):
         self._sections: dict[str, QWidget] = {}
 
         self.setWindowTitle(f"Customize {toon_name}")
-        self.setMinimumWidth(640)
-        self.setMinimumHeight(420)
+        self.setMinimumWidth(720)
+        self.setMinimumHeight(520)
         self._build_ui()
+        self.resize(760, 560)
 
     # -- Public test API -------------------------------------------------------
 
