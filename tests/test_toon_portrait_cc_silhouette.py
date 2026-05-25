@@ -56,8 +56,15 @@ def test_cc_mode_with_silhouette_paints_complement_bg(qt_app, overrides_manager)
         f"corner {corner.red()},{corner.green()},{corner.blue()} should differ from "
         f"center {center.red()},{center.green()},{center.blue()}"
     )
-    # Center pixel should be non-gray - either skin color or complement bg.
-    assert center.red() > 100 or center.green() > 100 or center.blue() > 100
+    # Center pixel should be visibly painted (skin via silhouette OR
+    # complement bg through a transparent silhouette region) - in any case
+    # it must differ noticeably from the unpainted gray widget bg at the
+    # corner. The earlier red/green-only heuristic happened to reject dark
+    # complement bgs like (29, 63, 63) that are obviously painted.
+    delta = (abs(center.red()   - corner.red())
+           + abs(center.green() - corner.green())
+           + abs(center.blue()  - corner.blue()))
+    assert delta > 100, f"center={center.getRgb()} corner={corner.getRgb()} (delta {delta})"
 
 
 def test_cc_mode_with_no_asset_falls_back_to_slot_number(qt_app, overrides_manager):

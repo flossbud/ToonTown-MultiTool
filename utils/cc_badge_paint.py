@@ -155,14 +155,21 @@ def paint_cc_badge(
     painter.setRenderHint(QPainter.Antialiasing)
     bg = complementary_bg_color(skin)
 
+    # Inset 2 px from each edge to match the non-CC paint path in
+    # ToonPortraitWidget.paintEvent (`r = min(cx, cy) - 2.0`). Without
+    # this, the CC bg circle is drawn on the full rect (diameter = rect
+    # width) while the non-CC circle is drawn at diameter = rect width - 4,
+    # making the badge appear to grow when CC data populates.
+    inner = rect.adjusted(2, 2, -2, -2)
+
     # Background circle
     painter.setPen(Qt.NoPen)
     painter.setBrush(bg)
-    painter.drawEllipse(rect)
+    painter.drawEllipse(inner)
 
-    if asset_stem is not None and _paint_silhouette(painter, rect, skin, asset_stem):
+    if asset_stem is not None and _paint_silhouette(painter, inner, skin, asset_stem):
         return
 
     # Fallback: slot number in white. Bg stays the complement so the badge
     # still feels CC-mode-styled even without a silhouette.
-    _paint_slot_number(painter, rect, slot_number)
+    _paint_slot_number(painter, inner, slot_number)
