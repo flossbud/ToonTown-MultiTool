@@ -282,6 +282,9 @@ class GameRegistry:
             else:
                 exe = os.readlink(f"/proc/{pid}/exe")
         except (OSError, FileNotFoundError) as e:
-            print(f"[GameRegistry] Process name lookup failed for PID {pid}: {e}")
+            if getattr(e, "errno", None) in (errno.EACCES, errno.EPERM):
+                logger.debug("Process name lookup failed for PID %d: %s", pid, e)
+            else:
+                logger.warning("Process name lookup failed for PID %d: %s", pid, e)
             return None
         return os.path.basename(exe).lower()
