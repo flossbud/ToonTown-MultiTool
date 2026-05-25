@@ -1146,6 +1146,11 @@ class MultitoonTab(QWidget):
             badge = ToonPortraitWidget(i + 1)
             badge.clicked.connect(lambda idx=i: self._on_portrait_clicked(idx))
             self.slot_badges.append(badge)
+            badge.set_customizations_manager(self.customizations)
+            badge.set_game(None)
+            badge.edit_icon_requested.connect(
+                lambda idx=i: self._open_customization_dialog(idx)
+            )
 
             cc_subtitle = QLabel("")
             cc_subtitle.setObjectName("cc_compact_subtitle")
@@ -2118,14 +2123,58 @@ class MultitoonTab(QWidget):
     def _set_card_brand_for_slot(
         self, index: int, game: str | None, enabled: bool = False
     ) -> None:
-        """Forward to the compact layout's set_card_brand. No-op when the
-        Full layout is active or when compact isn't built yet."""
+        """Forward to the compact layout's set_card_brand. Also teaches
+        the badge what game it represents so it can look up its
+        customization entry on next paint."""
+        if index < len(self.slot_badges):
+            self.slot_badges[index].set_game(game)
         compact = getattr(self, "_compact", None)
         if compact is None:
             return
         set_brand = getattr(compact, "set_card_brand", None)
         if callable(set_brand):
             set_brand(index, game, enabled=enabled)
+
+    def _open_customization_dialog(self, slot: int) -> None:
+        """Open ToonCustomizationDialog for the given slot's badge."""
+        from utils.widgets.toon_customization_dialog import ToonCustomizationDialog
+        from utils import cc_race_assets
+
+        if slot >= len(self.slot_badges):
+            return
+        badge = self.slot_badges[slot]
+        toon_name = badge.toon_name
+        game = badge.game
+        if not toon_name or game not in ("cc", "ttr"):
+            return
+        auto_stem = (
+            cc_race_assets.asset_stem_for_species(badge.cc_auto_species)
+            if game == "cc" else None
+        )
+        skin = badge.cc_skin if game == "cc" else None
+        dlg = ToonCustomizationDialog(
+            game=game,
+            toon_name=toon_name,
+            manager=self.customizations,
+            skin_color=skin,
+            auto_stem=auto_stem,
+            parent=self,
+        )
+        dlg.customization_changed.connect(
+            lambda s=slot, g=game: self._on_customization_saved(s, g)
+        )
+        dlg.exec()
+
+    def _on_customization_saved(self, slot: int, game: str) -> None:
+        """Re-apply chrome and repaint after a successful Save."""
+        self._apply_chip_for_slot(slot, game)
+        self._set_card_brand_for_slot(
+            slot, game,
+            enabled=bool(self.enabled_toons[slot]),
+        )
+        if slot < len(self.slot_badges):
+            self.slot_badges[slot].update()
+        self.apply_visual_state(slot)
 
     def _apply_chip_for_slot(self, index: int, game_tag: str | None) -> None:
         """Apply the CC/TTR chip stylesheet, consulting accent override."""
