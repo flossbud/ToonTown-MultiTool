@@ -76,11 +76,6 @@ class ToonPortraitWidget(QWidget):
     """Slot badge: shows a rendered toon portrait when available, otherwise
     falls back to a colored circle with the slot number."""
 
-    RENDITION_URL = "https://rendition.toontownrewritten.com/render/{dna}/portrait/128x128.png"
-
-    # Emitted from a worker thread with (dna, QImage_or_None). QImage decoding is
-    # safe off the GUI thread; QPixmap creation stays on the GUI thread.
-    _image_ready = Signal(str, object)
     clicked = Signal()
     edit_icon_requested = Signal()
 
@@ -93,8 +88,7 @@ class ToonPortraitWidget(QWidget):
         self._pixmap  = None
         self._loading = False
         self._dna     = None
-        self._fetch_token = 0
-        self._cancelled = False
+        self._pose: str = "portrait"
         self._cc_mode = False
         self._cc_skin: QColor | None = None
         self._cc_accent: QColor | None = None
@@ -109,7 +103,9 @@ class ToonPortraitWidget(QWidget):
         self.setMinimumSize(38, 38)
         self.setMaximumSize(64, 64)
         self.setCursor(Qt.PointingHandCursor)
-        self._image_ready.connect(self._on_image_ready)
+        from utils.rendition_poses import RenditionPoseFetcher
+        self._fetcher = RenditionPoseFetcher.instance()
+        self._fetcher.pose_ready.connect(self._on_pose_ready)
         self.setMouseTracking(True)
 
     def mousePressEvent(self, event):
@@ -154,22 +150,57 @@ class ToonPortraitWidget(QWidget):
         self.update()
 
     def set_dna(self, dna):
-        """Load portrait from Rendition. Pass None to revert to fallback circle."""
-        if dna == self._dna and not self._cancelled:
-            if not dna or self._loading or self._pixmap is not None:
-                return
-        self._fetch_token += 1
-        self._cancelled = False
-        self._dna = dna
+        """Load portrait from Rendition via the shared fetcher. Pass None
+        to revert to the fallback circle."""
         if not dna:
-            self._pixmap  = None
+            # Always clear when explicitly told to (even if dna was
+            # already None) so callers can use set_dna(None) to reset
+            # a stale pixmap left behind from a prior fetch.
+            self._dna = None
+            self._pixmap = None
             self._loading = False
             self.update()
             return
+        if dna == self._dna:
+            return
+        self._dna = dna
+        # Pick pose from the customizations manager if available.
+        self._pose = self._resolve_pose_from_manager()
         self._loading = True
         self.update()
-        token = self._fetch_token
-        threading.Thread(target=self._fetch, args=(dna, token), daemon=True).start()
+        self._fetcher.request(dna, self._pose)
+
+    def _resolve_pose_from_manager(self) -> str:
+        from utils.toon_customization_resolve import resolve_pose
+        if self._customizations is None or not self._toon_name or self._game not in ("cc", "ttr"):
+            return "portrait"
+        entry = self._customizations.get(self._game, self._toon_name)
+        return resolve_pose(entry, "portrait")
+
+    def set_pose(self, pose: str) -> None:
+        """Switch the rendered pose. Triggers a refetch through the
+        shared fetcher. Called by _tab.py after a customization Save."""
+        if pose == self._pose:
+            return
+        self._pose = pose
+        if self._dna:
+            self._pixmap = None
+            self._loading = True
+            self.update()
+            self._fetcher.request(self._dna, pose)
+
+    def _on_pose_ready(self, dna: str, pose: str, pixmap) -> None:
+        """Receives QPixmap or None from the shared fetcher on the GUI
+        thread. Filter by the widget's CURRENT (dna, pose) - stale
+        results from prior fetches must be ignored."""
+        if dna != self._dna or pose != self._pose:
+            return
+        self._loading = False
+        if pixmap is not None and not pixmap.isNull():
+            self._pixmap = pixmap
+        else:
+            self._pixmap = None
+        self.update()
 
     def set_cc_mode(self, skin_rgb, accent_rgb, gloves_rgb, emoji):
         """Enable CC paint mode for this badge.
@@ -274,11 +305,6 @@ class ToonPortraitWidget(QWidget):
         y = rect.y() + (rect.height() - icon_size) // 2
         painter.drawPixmap(x, y, pm)
 
-    def cancel(self):
-        self._cancelled = True
-        self._fetch_token += 1
-        self._loading = False
-
     def enterEvent(self, event):
         self._hovered = True
         if self._can_show_pencil():
@@ -293,51 +319,6 @@ class ToonPortraitWidget(QWidget):
 
     def _can_show_pencil(self) -> bool:
         return bool(self._toon_name) and self._game in ("cc", "ttr")
-
-    def _fetch(self, dna: str, token: int):
-        """Background thread — fetch and decode the portrait off the GUI thread."""
-        try:
-            import urllib.request
-            url = self.RENDITION_URL.format(dna=dna)
-            req = urllib.request.Request(url, headers={"User-Agent": "ToonTown MultiTool"})
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                data = resp.read()
-            if not self._cancelled:
-                image = QImage()
-                self._image_ready.emit(
-                    f"{dna}|{token}",
-                    image if image.loadFromData(data) else None,
-                )
-        except Exception as e:
-            print(f"[Portrait] Slot {self._slot}: fetch error — {e}")
-            if not self._cancelled:
-                self._image_ready.emit(f"{dna}|{token}", None)
-
-    @Slot(str, object)
-    def _on_image_ready(self, payload: str, image):
-        """Main thread — QPixmap must be constructed on the GUI thread."""
-        if "|" not in payload:
-            return
-        dna, token_str = payload.rsplit("|", 1)
-        try:
-            token = int(token_str)
-        except ValueError:
-            return
-        if self._cancelled or token != self._fetch_token:
-            return
-        if dna != self._dna:
-            return
-        self._loading = False
-        if isinstance(image, QImage) and not image.isNull():
-            pm = QPixmap.fromImage(image)
-            if not pm.isNull():
-                self._pixmap = pm
-                print(f"[Portrait] Slot {self._slot}: loaded OK")
-            else:
-                self._pixmap = None
-        else:
-            self._pixmap = None
-        self.update()
 
     def paintEvent(self, event):
         p = QPainter(self)
@@ -3122,11 +3103,9 @@ class MultitoonTab(QWidget):
         self._toon_fetch_timer.stop()
         self._glow_timer.stop()
         self._bar_timer.stop()
-        for badge in self.slot_badges:
-            try:
-                badge.cancel()
-            except Exception:
-                pass
+        # Rendition fetches now go through the shared RenditionPoseFetcher
+        # singleton; per-badge cancel() is no longer needed (stale results
+        # are filtered by (dna, pose) match on the GUI thread).
         self.input_service.shutdown()
 
 

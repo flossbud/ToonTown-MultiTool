@@ -138,3 +138,38 @@ def test_pencil_overlay_paints_for_ttr_on_hover(qt_app, monkeypatch, tmp_path):
         f"{center.getRgb()}"
     )
     w.hide()
+
+
+def test_widget_subscribes_to_fetcher_singleton(qt_app, monkeypatch, tmp_path):
+    monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
+    from utils.rendition_poses import RenditionPoseFetcher
+    RenditionPoseFetcher._instance = None
+    from tabs.multitoon._tab import ToonPortraitWidget
+    w = ToonPortraitWidget(1)
+    # The widget must hold a reference to the singleton.
+    assert w._fetcher is RenditionPoseFetcher.instance()
+
+
+def test_widget_filters_stale_pose_ready_by_dna(qt_app, monkeypatch, tmp_path):
+    monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
+    from PySide6.QtGui import QPixmap
+    from utils.rendition_poses import RenditionPoseFetcher
+    RenditionPoseFetcher._instance = None
+    monkeypatch.setattr(RenditionPoseFetcher, "request", lambda *a, **k: None)
+    from tabs.multitoon._tab import ToonPortraitWidget
+    from utils.toon_customizations_manager import ToonCustomizationsManager
+
+    w = ToonPortraitWidget(1)
+    w.set_customizations_manager(ToonCustomizationsManager())
+    w.set_game("ttr")
+    w.set_toon_name("Flossbud")
+    w.set_dna("dna-current")  # widget now tracks dna-current
+    pm = QPixmap(10, 10); pm.fill()
+
+    # Simulate a stale signal from a prior DNA.
+    w._on_pose_ready("dna-stale", "portrait", pm)
+    assert w._pixmap is None, "stale pose_ready must be dropped"
+
+    # Matching signal applies.
+    w._on_pose_ready("dna-current", "portrait", pm)
+    assert w._pixmap is not None

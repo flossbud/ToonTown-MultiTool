@@ -1,102 +1,109 @@
+"""Tests for ToonPortraitWidget's delegation to RenditionPoseFetcher.
+
+The widget no longer fetches Rendition pixmaps inline - it asks the
+shared RenditionPoseFetcher and consumes the public pose_ready signal."""
+
+from __future__ import annotations
+
 import os
+import sys
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+os.environ.setdefault("TTMT_NO_VENV_REEXEC", "1")
 
 import pytest
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtGui import QColor, QImage
-from PySide6.QtWidgets import QApplication
-
-
-@pytest.fixture(scope="module")
-def qapp():
-    app = QApplication.instance() or QApplication([])
-    yield app
+@pytest.fixture
+def qt_app():
+    from PySide6.QtWidgets import QApplication
+    return QApplication.instance() or QApplication(sys.argv)
 
 
-def _image(color="#ff0000"):
-    img = QImage(4, 4, QImage.Format_ARGB32)
-    img.fill(QColor(color))
-    return img
+def test_set_dna_requests_portrait_pose_when_no_override(qt_app, monkeypatch, tmp_path):
+    """Default behavior: set_dna asks the fetcher for the 'portrait' pose."""
+    monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
+    requested = []
+    from utils.rendition_poses import RenditionPoseFetcher
+    RenditionPoseFetcher._instance = None  # reset singleton
+    monkeypatch.setattr(
+        RenditionPoseFetcher,
+        "request",
+        lambda self, dna, pose: requested.append((dna, pose)),
+    )
+
+    from tabs.multitoon._tab import ToonPortraitWidget
+    from utils.toon_customizations_manager import ToonCustomizationsManager
+    w = ToonPortraitWidget(1)
+    w.resize(96, 96)
+    w.set_customizations_manager(ToonCustomizationsManager())
+    w.set_game("ttr")
+    w.set_toon_name("Flossbud")
+
+    requested.clear()
+    w.set_dna("dna-foo")
+    assert ("dna-foo", "portrait") in requested
 
 
-def test_portrait_ready_accepts_decoded_qimage(qapp):
+def test_set_dna_uses_pose_override_from_manager(qt_app, monkeypatch, tmp_path):
+    monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
+    requested = []
+    from utils.rendition_poses import RenditionPoseFetcher
+    RenditionPoseFetcher._instance = None
+    monkeypatch.setattr(
+        RenditionPoseFetcher,
+        "request",
+        lambda self, dna, pose: requested.append((dna, pose)),
+    )
+    from utils.toon_customizations_manager import ToonCustomizationsManager
+    from tabs.multitoon._tab import ToonPortraitWidget
+    mgr = ToonCustomizationsManager()
+    mgr.set("ttr", "Flossbud", {"pose": "portrait-grin"})
+
+    w = ToonPortraitWidget(1)
+    w.set_customizations_manager(mgr)
+    w.set_game("ttr")
+    w.set_toon_name("Flossbud")
+    requested.clear()
+    w.set_dna("dna-foo")
+
+    assert ("dna-foo", "portrait-grin") in requested
+
+
+def test_set_pose_triggers_refetch(qt_app, monkeypatch, tmp_path):
+    monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
+    requested = []
+    from utils.rendition_poses import RenditionPoseFetcher
+    RenditionPoseFetcher._instance = None
+    monkeypatch.setattr(
+        RenditionPoseFetcher,
+        "request",
+        lambda self, dna, pose: requested.append((dna, pose)),
+    )
+    from utils.toon_customizations_manager import ToonCustomizationsManager
     from tabs.multitoon._tab import ToonPortraitWidget
 
-    badge = ToonPortraitWidget(1)
-    badge._dna = "toon-dna"
-    badge._fetch_token = 7
-    badge._loading = True
-
-    badge._on_image_ready("toon-dna|7", _image())
-
-    assert badge._loading is False
-    assert badge._pixmap is not None
-    assert not badge._pixmap.isNull()
+    w = ToonPortraitWidget(1)
+    w.set_customizations_manager(ToonCustomizationsManager())
+    w.set_game("ttr")
+    w.set_toon_name("Flossbud")
+    w.set_dna("dna-foo")
+    requested.clear()
+    w.set_pose("waving")
+    assert ("dna-foo", "waving") in requested
 
 
-def test_portrait_ready_ignores_stale_token(qapp):
+def test_set_dna_none_clears_pixmap(qt_app, monkeypatch, tmp_path):
+    monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
+    from utils.rendition_poses import RenditionPoseFetcher
+    RenditionPoseFetcher._instance = None
+    monkeypatch.setattr(
+        RenditionPoseFetcher, "request", lambda *a, **k: None,
+    )
     from tabs.multitoon._tab import ToonPortraitWidget
-
-    badge = ToonPortraitWidget(1)
-    badge._dna = "new-dna"
-    badge._fetch_token = 2
-    badge._loading = True
-
-    badge._on_image_ready("old-dna|1", _image())
-
-    assert badge._loading is True
-    assert badge._pixmap is None
-
-
-def test_set_dna_does_not_cancel_matching_inflight_fetch(qapp):
-    from tabs.multitoon._tab import ToonPortraitWidget
-
-    badge = ToonPortraitWidget(1)
-    badge._dna = "toon-dna"
-    badge._fetch_token = 4
-    badge._loading = True
-
-    badge.set_dna("toon-dna")
-
-    assert badge._fetch_token == 4
-    badge._on_image_ready("toon-dna|4", _image())
-    assert badge._pixmap is not None
-    assert not badge._pixmap.isNull()
-
-
-def test_portrait_fetch_emits_decoded_image(monkeypatch, qapp):
-    from tabs.multitoon._tab import ToonPortraitWidget
-
-    png = QImage(4, 4, QImage.Format_ARGB32)
-    png.fill(QColor("#00ff00"))
-
-    from PySide6.QtCore import QBuffer, QByteArray, QIODevice
-
-    data = QByteArray()
-    buffer = QBuffer(data)
-    buffer.open(QIODevice.WriteOnly)
-    assert png.save(buffer, "PNG")
-
-    class _Response:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-        def read(self):
-            return bytes(data)
-
-    def _urlopen(_request, timeout=10):
-        return _Response()
-
-    monkeypatch.setattr("urllib.request.urlopen", _urlopen)
-
-    badge = ToonPortraitWidget(1)
-    badge._dna = "toon-dna"
-    badge._fetch_token = 3
-    badge._fetch("toon-dna", 3)
-
-    assert badge._pixmap is not None
-    assert not badge._pixmap.isNull()
+    from PySide6.QtGui import QPixmap
+    w = ToonPortraitWidget(1)
+    pm = QPixmap(10, 10); pm.fill()
+    w._pixmap = pm
+    w.set_dna(None)
+    assert w._pixmap is None
