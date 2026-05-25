@@ -431,3 +431,58 @@ def test_pose_adjust_view_reset_restores_defaults_and_emits(qapp):
     v.click_reset()
     assert v.transform() == (1.0, 0.0, 0.0, 0.0)
     assert spy.count() >= 1
+
+
+def test_pose_section_starts_in_grid_mode(qapp):
+    dlg, _ = _build(qapp, game="ttr", dna="dna-test")
+    sec = dlg.section("Toon")
+    assert sec.is_adjusting() is False
+
+
+def test_pose_section_adjust_button_switches_mode(qapp):
+    dlg, _ = _build(qapp, game="ttr", dna="dna-test")
+    sec = dlg.section("Toon")
+    sec.click_adjust()
+    assert sec.is_adjusting() is True
+
+
+def test_pose_section_back_returns_to_grid(qapp):
+    dlg, _ = _build(qapp, game="ttr", dna="dna-test")
+    sec = dlg.section("Toon")
+    sec.click_adjust()
+    assert sec.is_adjusting() is True
+    sec.click_back()
+    assert sec.is_adjusting() is False
+
+
+def test_pose_section_adjust_writes_transform_to_draft(qapp):
+    dlg, mgr = _build(qapp, game="ttr", dna="dna-test")
+    sec = dlg.section("Toon")
+    sec.click_adjust()
+    sec.adjust_view().set_zoom(1.5)
+    assert dlg.draft().get("portrait", {}).get("transform", {}).get("zoom") == 1.5
+    dlg.accept_save()
+    saved = mgr.get("ttr", "Flossbud")
+    assert saved["portrait"]["transform"]["zoom"] == 1.5
+
+
+def test_pose_section_reset_removes_transform_from_draft(qapp):
+    dlg, _ = _build(
+        qapp, game="ttr", dna="dna-test",
+        existing={"portrait": {"transform": {"zoom": 1.5, "offset_x": 0.2}}},
+    )
+    sec = dlg.section("Toon")
+    sec.click_adjust()
+    sec.adjust_view().click_reset()
+    # Reset writes defaults; defaults are NOT stored (kept entry minimal).
+    portrait = dlg.draft().get("portrait", {})
+    assert "transform" not in portrait
+
+
+def test_pose_section_adjust_button_disabled_without_dna(qapp):
+    dlg, _ = _build(qapp, game="ttr")  # dna=None
+    sec = dlg.section("Toon")
+    # Placeholder mode; adjust button is either hidden or disabled.
+    # The contract: click_adjust() is a no-op in that mode.
+    sec.click_adjust()
+    assert sec.is_adjusting() is False

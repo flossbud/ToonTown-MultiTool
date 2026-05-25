@@ -531,11 +531,12 @@ class _PoseAdjustView(QWidget):
 
 
 class _PoseSection(QWidget):
-    """Toon pose picker. Shows a 4-col grid of 13 _PoseTile widgets,
-    each filled lazily from RenditionPoseFetcher. Refresh button in the
-    header clears the cache for the current DNA and re-issues fetches."""
+    """Toon pose picker, 2-state. Page 0 = grid of 13 pose tiles. Page 1
+    = adjust view (drag + sliders + nudge). The user enters page 1 via
+    the 'Adjust' button in page 0's header; Back returns to page 0."""
 
     pose_changed = Signal(str)
+    transform_changed = Signal()  # emitted when adjust view writes to transform
 
     def __init__(self, dna: Optional[str], current_pose: str, parent=None):
         super().__init__(parent)
@@ -543,20 +544,53 @@ class _PoseSection(QWidget):
         self._current_pose = current_pose
         self._tiles: list[_PoseTile] = []
         self._placeholder_label: Optional[QLabel] = None
+        self._grid_page: Optional[QWidget] = None
+        self._adjust_view: Optional[_PoseAdjustView] = None
+        self._stack: Optional[QStackedWidget] = None
+        self._adjust_btn: Optional[QPushButton] = None
         self._refresh_btn: Optional[QPushButton] = None
+        self._grid_header: Optional[QWidget] = None
+        self._header_stack: Optional[QStackedWidget] = None
+        # Mirror of the transform values pushed into / out of the adjust
+        # view; the dialog reads via _PoseSection.transform().
+        self._transform: tuple[float, float, float, float] = (1.0, 0.0, 0.0, 0.0)
         self._build()
+
+    # -- Build ---------------------------------------------------------------
 
     def _build(self) -> None:
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(8, 8, 8, 8)
-        outer.setSpacing(6)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
 
-        # Header: "Pose" + refresh button
-        header = QHBoxLayout()
+        # Header is a QStackedWidget so we can swap "grid header"
+        # (Pose + Adjust + Refresh) and "adjust header" (Pose + Back +
+        # Reset) when the body page changes.
+        self._header_stack = QStackedWidget()
+        self._header_stack.addWidget(self._build_grid_header())
+        # adjust header is built lazily when the adjust view is created.
+        outer.addWidget(self._header_stack)
+
+        # Body stack
+        self._stack = QStackedWidget()
+        outer.addWidget(self._stack, 1)
+        self._grid_page = self._build_grid_page()
+        self._stack.addWidget(self._grid_page)
+
+    def _build_grid_header(self) -> QWidget:
+        header_w = QWidget()
+        header = QHBoxLayout(header_w)
+        header.setContentsMargins(8, 8, 8, 4)
         title = QLabel("Pose")
         title.setStyleSheet("color: #c8c8d8; font-weight: bold;")
         header.addWidget(title)
         header.addStretch(1)
+        self._adjust_btn = QPushButton("Adjust")
+        self._adjust_btn.setToolTip("Zoom / pan / rotate the toon inside the circle")
+        self._adjust_btn.clicked.connect(self.click_adjust)
+        if not self._dna:
+            self._adjust_btn.setEnabled(False)
+        header.addWidget(self._adjust_btn)
         self._refresh_btn = QPushButton("↻")
         self._refresh_btn.setToolTip("Refresh pose thumbnails")
         self._refresh_btn.setFixedWidth(32)
@@ -564,7 +598,14 @@ class _PoseSection(QWidget):
         if not self._dna:
             self._refresh_btn.setEnabled(False)
         header.addWidget(self._refresh_btn)
-        outer.addLayout(header)
+        self._grid_header = header_w
+        return header_w
+
+    def _build_grid_page(self) -> QWidget:
+        page = QWidget()
+        outer = QVBoxLayout(page)
+        outer.setContentsMargins(8, 0, 8, 8)
+        outer.setSpacing(6)
 
         if not self._dna:
             self._placeholder_label = QLabel(
@@ -573,7 +614,7 @@ class _PoseSection(QWidget):
             self._placeholder_label.setStyleSheet("color: #9a9aa8; padding: 24px;")
             self._placeholder_label.setAlignment(Qt.AlignCenter)
             outer.addWidget(self._placeholder_label, 1)
-            return
+            return page
 
         from utils.rendition_poses import POSE_NAMES, RenditionPoseFetcher
         grid = QGridLayout()
@@ -587,13 +628,25 @@ class _PoseSection(QWidget):
         outer.addLayout(grid)
         outer.addStretch(1)
 
-        # Subscribe to fetcher and issue initial requests.
         fetcher = RenditionPoseFetcher.instance()
         fetcher.pose_ready.connect(self._on_pose_ready)
         for pose in POSE_NAMES:
             fetcher.request(self._dna, pose)
+        return page
 
-    # -- Public test API -----------------------------------------------------
+    def _build_adjust_header(self) -> QWidget:
+        header_w = QWidget()
+        header = QHBoxLayout(header_w)
+        header.setContentsMargins(8, 8, 8, 4)
+        title = QLabel("Pose")
+        title.setStyleSheet("color: #c8c8d8; font-weight: bold;")
+        header.addWidget(title)
+        header.addStretch(1)
+        # The Back / Reset buttons live INSIDE _PoseAdjustView's own
+        # header row; we don't duplicate them here. Just a static label.
+        return header_w
+
+    # -- Public API ----------------------------------------------------------
 
     def tiles(self) -> list:
         return list(self._tiles)
@@ -604,6 +657,47 @@ class _PoseSection(QWidget):
     def click_refresh(self) -> None:
         self._on_refresh_clicked()
 
+    def is_adjusting(self) -> bool:
+        return self._stack is not None and self._stack.currentIndex() == 1
+
+    def click_adjust(self) -> None:
+        if not self._dna:
+            return
+        if self._adjust_view is None:
+            self._adjust_view = _PoseAdjustView(initial=self._transform)
+            # Push current pose pixmap into the preview if we have one.
+            for t in self._tiles:
+                if t.pose == self._current_pose and t.has_pixmap():
+                    self._adjust_view.set_pixmap(t._pixmap)
+                    break
+            self._adjust_view.transform_changed.connect(self._on_adjust_changed)
+            self._adjust_view.back_requested.connect(self.click_back)
+            self._stack.addWidget(self._adjust_view)
+            self._header_stack.addWidget(self._build_adjust_header())
+        self._stack.setCurrentIndex(1)
+        self._header_stack.setCurrentIndex(1)
+
+    def click_back(self) -> None:
+        if self._stack is None:
+            return
+        self._stack.setCurrentIndex(0)
+        self._header_stack.setCurrentIndex(0)
+
+    def adjust_view(self) -> Optional["_PoseAdjustView"]:
+        return self._adjust_view
+
+    def transform(self) -> tuple[float, float, float, float]:
+        return self._transform
+
+    def set_transform_from_draft(
+        self, transform: tuple[float, float, float, float],
+    ) -> None:
+        """Called by the dialog when the section is constructed with a
+        pre-existing draft transform."""
+        self._transform = transform
+        if self._adjust_view is not None:
+            self._adjust_view._preview.set_transform(*transform)
+
     # -- Signal handlers -----------------------------------------------------
 
     def _on_tile_clicked(self, pose: str) -> None:
@@ -612,6 +706,11 @@ class _PoseSection(QWidget):
         self._current_pose = pose
         for t in self._tiles:
             t.set_selected(t.pose == pose)
+        if self._adjust_view is not None:
+            for t in self._tiles:
+                if t.pose == pose and t.has_pixmap():
+                    self._adjust_view.set_pixmap(t._pixmap)
+                    break
         self.pose_changed.emit(pose)
 
     def _on_pose_ready(self, dna: str, pose: str, pixmap) -> None:
@@ -620,6 +719,8 @@ class _PoseSection(QWidget):
         for t in self._tiles:
             if t.pose == pose:
                 t.set_pixmap(pixmap)
+                if pose == self._current_pose and self._adjust_view is not None:
+                    self._adjust_view.set_pixmap(pixmap)
                 break
 
     def _on_refresh_clicked(self) -> None:
@@ -628,15 +729,16 @@ class _PoseSection(QWidget):
         from utils.rendition_poses import RenditionPoseFetcher, POSE_NAMES
         fetcher = RenditionPoseFetcher.instance()
         fetcher.invalidate_dna(self._dna)
-        # Drop existing pixmaps to show spinners during the refetch.
         for t in self._tiles:
             t.set_pixmap(None)
         for pose in POSE_NAMES:
             fetcher.request(self._dna, pose)
 
+    def _on_adjust_changed(self) -> None:
+        self._transform = self._adjust_view.transform()
+        self.transform_changed.emit()
+
     def closeEvent(self, event):
-        # Disconnect from fetcher to avoid stray slot calls after the
-        # dialog is destroyed.
         try:
             from utils.rendition_poses import RenditionPoseFetcher
             RenditionPoseFetcher.instance().pose_ready.disconnect(
@@ -975,10 +1077,15 @@ class ToonCustomizationDialog(QDialog):
 
         # Toon section (TTR only, first in sidebar for TTR)
         if self._game == "ttr":
-            from utils.toon_customization_resolve import resolve_pose
+            from utils.toon_customization_resolve import (
+                resolve_pose, resolve_portrait_transform,
+            )
             current_pose = resolve_pose(self._draft, "portrait")
             pose_section = _PoseSection(self._dna, current_pose)
             pose_section.pose_changed.connect(self._on_pose_changed)
+            pose_section.transform_changed.connect(self._on_transform_changed)
+            initial_transform = resolve_portrait_transform(self._draft)
+            pose_section.set_transform_from_draft(initial_transform)
             self._add_section("Toon", pose_section)
 
         # Portrait
@@ -1058,6 +1165,31 @@ class ToonCustomizationDialog(QDialog):
             self._draft.pop("pose", None)
         else:
             self._draft["pose"] = pose
+        self._preview.set_draft(self._draft)
+
+    def _on_transform_changed(self) -> None:
+        """The Toon section's adjust view changed the transform. Write
+        into _draft["portrait"]["transform"]; omit the sub-object when
+        at defaults so the saved entry stays minimal."""
+        sec = self._sections["Toon"]
+        zoom, off_x, off_y, rot = sec.transform()
+        portrait = self._draft.setdefault("portrait", {})
+        if (
+            abs(zoom - 1.0) < 1e-6
+            and abs(off_x) < 1e-6
+            and abs(off_y) < 1e-6
+            and abs(rot) < 1e-6
+        ):
+            portrait.pop("transform", None)
+        else:
+            portrait["transform"] = {
+                "zoom": zoom,
+                "offset_x": off_x,
+                "offset_y": off_y,
+                "rotate": rot,
+            }
+        if not self._draft.get("portrait"):
+            self._draft.pop("portrait", None)
         self._preview.set_draft(self._draft)
 
     # -- Portrait field handlers -----------------------------------------------
