@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QSlider,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -343,6 +344,190 @@ class _PoseAdjustPreview(QFrame):
             p.drawPixmap(-scaled.width() // 2, -scaled.height() // 2, scaled)
             p.restore()
         p.end()
+
+
+class _PoseAdjustView(QWidget):
+    """Adjust mode for the Toon section: drag-to-pan preview + zoom
+    slider + rotate slider + nudge arrow buttons + Back / Reset buttons
+    in the header. Emits transform_changed whenever any control changes
+    a value. Back / Reset have their own signals so _PoseSection can
+    drive the state transition."""
+
+    transform_changed = Signal()
+    back_requested = Signal()
+    reset_requested = Signal()
+
+    _NUDGE_STEP = 1.0 / 180.0  # one pixel in the 180 px adjust preview
+
+    def __init__(self, initial: tuple[float, float, float, float], parent=None):
+        super().__init__(parent)
+        zoom, off_x, off_y, rot = initial
+        self._build_ui(zoom, off_x, off_y, rot)
+
+    def _build_ui(
+        self, zoom: float, off_x: float, off_y: float, rot: float,
+    ) -> None:
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(8, 8, 8, 8)
+        outer.setSpacing(6)
+
+        # Header row: Back + Reset
+        header = QHBoxLayout()
+        self._back_btn = QPushButton("← Back")
+        self._back_btn.clicked.connect(self.back_requested.emit)
+        self._reset_btn = QPushButton("Reset")
+        self._reset_btn.clicked.connect(self._on_reset_clicked)
+        header.addStretch(1)
+        header.addWidget(self._back_btn)
+        header.addWidget(self._reset_btn)
+        outer.addLayout(header)
+
+        # Body: preview on the left, controls on the right
+        body = QHBoxLayout()
+        body.setSpacing(16)
+
+        # Left column: preview + nudge buttons
+        left = QVBoxLayout()
+        left.setSpacing(4)
+        self._preview = _PoseAdjustPreview()
+        self._preview.set_transform(zoom, off_x, off_y, rot)
+        self._preview.transform_changed.connect(self._on_preview_changed)
+        left.addWidget(self._preview, alignment=Qt.AlignHCenter)
+
+        nudge = QHBoxLayout()
+        nudge.setSpacing(2)
+        nudge.addStretch(1)
+        self._left_btn = QPushButton("←")
+        self._left_btn.setFixedWidth(28)
+        self._left_btn.clicked.connect(self.nudge_left)
+        self._up_btn = QPushButton("↑")
+        self._up_btn.setFixedWidth(28)
+        self._up_btn.clicked.connect(self.nudge_up)
+        self._down_btn = QPushButton("↓")
+        self._down_btn.setFixedWidth(28)
+        self._down_btn.clicked.connect(self.nudge_down)
+        self._right_btn = QPushButton("→")
+        self._right_btn.setFixedWidth(28)
+        self._right_btn.clicked.connect(self.nudge_right)
+        for btn in (self._left_btn, self._up_btn, self._down_btn, self._right_btn):
+            nudge.addWidget(btn)
+        nudge.addStretch(1)
+        left.addLayout(nudge)
+        body.addLayout(left)
+
+        # Right column: sliders + value labels
+        right = QVBoxLayout()
+        right.setSpacing(10)
+
+        zoom_label = QLabel("Zoom")
+        zoom_label.setStyleSheet("color: #9a9aa8; font-size: 10px;")
+        right.addWidget(zoom_label)
+        zoom_row = QHBoxLayout()
+        self._zoom_slider = QSlider(Qt.Horizontal)
+        self._zoom_slider.setRange(50, 300)  # 0.5x to 3.0x in 0.01 steps
+        self._zoom_slider.setValue(int(zoom * 100))
+        self._zoom_slider.valueChanged.connect(self._on_zoom_slider)
+        zoom_row.addWidget(self._zoom_slider)
+        self._zoom_value = QLabel(f"{zoom:.2f}x")
+        self._zoom_value.setFixedWidth(48)
+        zoom_row.addWidget(self._zoom_value)
+        right.addLayout(zoom_row)
+
+        rot_label = QLabel("Rotate")
+        rot_label.setStyleSheet("color: #9a9aa8; font-size: 10px;")
+        right.addWidget(rot_label)
+        rot_row = QHBoxLayout()
+        self._rot_slider = QSlider(Qt.Horizontal)
+        self._rot_slider.setRange(-180, 180)
+        self._rot_slider.setValue(int(rot))
+        self._rot_slider.valueChanged.connect(self._on_rot_slider)
+        rot_row.addWidget(self._rot_slider)
+        self._rot_value = QLabel(f"{int(rot)}°")
+        self._rot_value.setFixedWidth(48)
+        rot_row.addWidget(self._rot_value)
+        right.addLayout(rot_row)
+
+        right.addStretch(1)
+        body.addLayout(right, 1)
+
+        outer.addLayout(body)
+        outer.addStretch(1)
+
+    # -- Public API ----------------------------------------------------------
+
+    def transform(self) -> tuple[float, float, float, float]:
+        return self._preview.transform()
+
+    def set_pixmap(self, pm: Optional[QPixmap]) -> None:
+        self._preview.set_pixmap(pm)
+
+    def set_zoom(self, zoom: float) -> None:
+        """Programmatic setter (also drives the slider)."""
+        self._zoom_slider.setValue(int(zoom * 100))
+
+    def set_rotate(self, rot: float) -> None:
+        self._rot_slider.setValue(int(rot))
+
+    def nudge_left(self) -> None:
+        self._apply_nudge(-self._NUDGE_STEP, 0.0)
+
+    def nudge_right(self) -> None:
+        self._apply_nudge(self._NUDGE_STEP, 0.0)
+
+    def nudge_up(self) -> None:
+        self._apply_nudge(0.0, -self._NUDGE_STEP)
+
+    def nudge_down(self) -> None:
+        self._apply_nudge(0.0, self._NUDGE_STEP)
+
+    def click_back(self) -> None:
+        self.back_requested.emit()
+
+    def click_reset(self) -> None:
+        self._on_reset_clicked()
+
+    # -- Internal ------------------------------------------------------------
+
+    def _apply_nudge(self, dx: float, dy: float) -> None:
+        z, ox, oy, r = self._preview.transform()
+        self._preview.set_transform(z, ox + dx, oy + dy, r)
+        self.transform_changed.emit()
+
+    def _on_zoom_slider(self, value: int) -> None:
+        zoom = value / 100.0
+        z, ox, oy, r = self._preview.transform()
+        self._preview.set_transform(zoom, ox, oy, r)
+        self._zoom_value.setText(f"{zoom:.2f}x")
+        self.transform_changed.emit()
+
+    def _on_rot_slider(self, value: int) -> None:
+        z, ox, oy, _ = self._preview.transform()
+        self._preview.set_transform(z, ox, oy, float(value))
+        self._rot_value.setText(f"{value}°")
+        self.transform_changed.emit()
+
+    def _on_preview_changed(self) -> None:
+        """The preview emits this when the user drags or scrolls. Sync
+        sliders to the new values and re-emit upward."""
+        z, ox, oy, r = self._preview.transform()
+        self._zoom_slider.blockSignals(True)
+        self._zoom_slider.setValue(int(z * 100))
+        self._zoom_slider.blockSignals(False)
+        self._zoom_value.setText(f"{z:.2f}x")
+        self.transform_changed.emit()
+
+    def _on_reset_clicked(self) -> None:
+        self._preview.set_transform(1.0, 0.0, 0.0, 0.0)
+        self._zoom_slider.blockSignals(True)
+        self._zoom_slider.setValue(100)
+        self._zoom_slider.blockSignals(False)
+        self._rot_slider.blockSignals(True)
+        self._rot_slider.setValue(0)
+        self._rot_slider.blockSignals(False)
+        self._zoom_value.setText("1.00x")
+        self._rot_value.setText("0°")
+        self.transform_changed.emit()
+        self.reset_requested.emit()
 
 
 class _PoseSection(QWidget):

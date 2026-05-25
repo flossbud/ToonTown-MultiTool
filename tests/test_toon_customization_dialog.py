@@ -374,3 +374,60 @@ def test_pose_adjust_preview_wheel_changes_zoom(qapp):
     z, ox, oy, r = w.transform()
     assert abs(z - 1.05) < 1e-6
     assert spy.count() == 1
+
+
+def test_pose_adjust_view_initial_transform(qapp):
+    from utils.widgets.toon_customization_dialog import _PoseAdjustView
+    v = _PoseAdjustView(initial=(1.0, 0.0, 0.0, 0.0))
+    assert v.transform() == (1.0, 0.0, 0.0, 0.0)
+
+
+def test_pose_adjust_view_zoom_slider_emits(qapp):
+    from PySide6.QtTest import QSignalSpy
+    from utils.widgets.toon_customization_dialog import _PoseAdjustView
+    v = _PoseAdjustView(initial=(1.0, 0.0, 0.0, 0.0))
+    spy = QSignalSpy(v.transform_changed)
+    v.set_zoom(1.5)
+    assert v.transform()[0] == 1.5
+    assert spy.count() >= 1
+
+
+def test_pose_adjust_view_rotate_slider_emits(qapp):
+    from PySide6.QtTest import QSignalSpy
+    from utils.widgets.toon_customization_dialog import _PoseAdjustView
+    v = _PoseAdjustView(initial=(1.0, 0.0, 0.0, 0.0))
+    spy = QSignalSpy(v.transform_changed)
+    v.set_rotate(30.0)
+    assert v.transform()[3] == 30.0
+    assert spy.count() >= 1
+
+
+def test_pose_adjust_view_nudge_emits(qapp):
+    from PySide6.QtTest import QSignalSpy
+    from utils.widgets.toon_customization_dialog import _PoseAdjustView
+    v = _PoseAdjustView(initial=(1.0, 0.0, 0.0, 0.0))
+    spy = QSignalSpy(v.transform_changed)
+    v.nudge_right()
+    z, ox, oy, r = v.transform()
+    # One nudge = 1 / 180 ≈ 0.00556.
+    assert abs(ox - (1.0 / 180.0)) < 1e-6
+    assert spy.count() == 1
+
+
+def test_pose_adjust_view_back_button_emits_back_requested(qapp):
+    from PySide6.QtTest import QSignalSpy
+    from utils.widgets.toon_customization_dialog import _PoseAdjustView
+    v = _PoseAdjustView(initial=(1.0, 0.0, 0.0, 0.0))
+    spy = QSignalSpy(v.back_requested)
+    v.click_back()
+    assert spy.count() == 1
+
+
+def test_pose_adjust_view_reset_restores_defaults_and_emits(qapp):
+    from PySide6.QtTest import QSignalSpy
+    from utils.widgets.toon_customization_dialog import _PoseAdjustView
+    v = _PoseAdjustView(initial=(1.5, 0.3, -0.2, 45.0))
+    spy = QSignalSpy(v.transform_changed)
+    v.click_reset()
+    assert v.transform() == (1.0, 0.0, 0.0, 0.0)
+    assert spy.count() >= 1
