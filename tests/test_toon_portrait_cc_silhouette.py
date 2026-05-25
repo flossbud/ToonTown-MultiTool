@@ -22,11 +22,27 @@ def qt_app():
     yield app
 
 
+class _LegacyManagerStub:
+    """Mimics the old CCRaceOverridesManager surface that
+    ToonPortraitWidget._resolve_asset_stem expects (get(name) -> stem).
+    Task 13 will rewire the widget to consume the new
+    ToonCustomizationsManager; this stub keeps the silhouette test green
+    during the transition."""
+
+    def __init__(self):
+        self._overrides: dict[str, str] = {}
+
+    def get(self, name):
+        return self._overrides.get(name)
+
+    def set(self, name, stem):
+        self._overrides[name] = stem
+
+
 @pytest.fixture
 def overrides_manager(monkeypatch, tmp_path):
     monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
-    from utils.cc_race_overrides_manager import CCRaceOverridesManager
-    return CCRaceOverridesManager()
+    return _LegacyManagerStub()
 
 
 def _grab_image(widget, w: int, h: int) -> QImage:
