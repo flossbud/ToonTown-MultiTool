@@ -252,6 +252,15 @@ class ToonPortraitWidget(QWidget):
             entry = self._customizations.get(self._game, self._toon_name)
         return resolve_portrait_brush(entry, self._bg)
 
+    def current_portrait_transform(self):
+        """Test hook: returns the (zoom, off_x, off_y, rotate) tuple
+        the next paintEvent will apply to the pose pixmap."""
+        from utils.toon_customization_resolve import resolve_portrait_transform
+        entry = {}
+        if self._customizations is not None and self._toon_name and self._game:
+            entry = self._customizations.get(self._game, self._toon_name)
+        return resolve_portrait_transform(entry)
+
     def set_toon_name(self, name: str | None) -> None:
         """Set the toon name used as the override key. Triggers a repaint."""
         if self._toon_name != name:
@@ -390,16 +399,29 @@ class ToonPortraitWidget(QWidget):
                     p.restore()
 
             if self._pixmap and not self._pixmap.isNull():
+                from utils.toon_customization_resolve import resolve_portrait_transform
+                entry = {}
+                if self._customizations is not None and self._toon_name and self._game:
+                    entry = self._customizations.get(self._game, self._toon_name)
+                zoom, off_x, off_y, rot = resolve_portrait_transform(entry)
+                circle_w = int(r * 2)
+                ox = int(off_x * circle_w)
+                oy = int(off_y * circle_w)
                 path = QPainterPath()
                 path.addEllipse(QPointF(cx, cy), r, r)
+                p.save()
                 p.setClipPath(path)
-                target = max(1, int(r * 2))
+                p.translate(cx, cy)
+                p.rotate(rot)
+                p.scale(zoom, zoom)
+                p.translate(ox, oy)
+                target = max(1, circle_w)
                 pm = self._pixmap.scaled(
                     target, target, Qt.KeepAspectRatio, Qt.SmoothTransformation
                 )
                 ph, pw = pm.height(), pm.width()
-                p.drawPixmap(int(cx - pw / 2), int(cy - ph / 2), pm)
-                p.setClipping(False)
+                p.drawPixmap(int(-pw / 2), int(-ph / 2), pm)
+                p.restore()
             else:
                 font = QFont()
                 font.setPixelSize(14)

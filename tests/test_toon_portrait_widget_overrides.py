@@ -173,3 +173,34 @@ def test_widget_filters_stale_pose_ready_by_dna(qt_app, monkeypatch, tmp_path):
     # Matching signal applies.
     w._on_pose_ready("dna-current", "portrait", pm)
     assert w._pixmap is not None
+
+
+def test_widget_current_portrait_transform(qt_app, monkeypatch, tmp_path):
+    """Regression: the widget exposes its current portrait transform
+    via a test hook so paint-time behavior can be inspected without a
+    pixel-grab. Default = (1.0, 0.0, 0.0, 0.0)."""
+    monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
+    from utils.rendition_poses import RenditionPoseFetcher
+    RenditionPoseFetcher._instance = None
+    monkeypatch.setattr(RenditionPoseFetcher, "request", lambda *a, **k: None)
+    from tabs.multitoon._tab import ToonPortraitWidget
+    from utils.toon_customizations_manager import ToonCustomizationsManager
+    mgr = ToonCustomizationsManager()
+
+    w = ToonPortraitWidget(1)
+    w.set_customizations_manager(mgr)
+    w.set_game("ttr")
+    w.set_toon_name("Flossbud")
+    assert w.current_portrait_transform() == (1.0, 0.0, 0.0, 0.0)
+
+    mgr.set("ttr", "Flossbud", {
+        "portrait": {
+            "transform": {
+                "zoom": 1.5,
+                "offset_x": 0.2,
+                "offset_y": -0.1,
+                "rotate": 45.0,
+            }
+        }
+    })
+    assert w.current_portrait_transform() == (1.5, 0.2, -0.1, 45.0)
