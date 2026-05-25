@@ -4,8 +4,10 @@ resolver helpers, never touches the manager."""
 
 from __future__ import annotations
 
+from typing import Optional
+
 from PySide6.QtCore import QRect, Qt
-from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath
+from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPixmap
 from PySide6.QtWidgets import QWidget
 
 from utils.toon_customization_resolve import (
@@ -38,19 +40,64 @@ def _brand_fallback(game: str) -> QColor:
 
 
 class CardPreviewWidget(QWidget):
-    def __init__(self, game: str, toon_name: str, draft: dict, parent=None):
+    def __init__(
+        self,
+        game: str,
+        toon_name: str,
+        draft: dict,
+        parent=None,
+        *,
+        dna: Optional[str] = None,
+    ):
         super().__init__(parent)
         self._game = game
         self._toon_name = toon_name
         self._draft: dict = dict(draft)
+        self._dna = dna
+        self._pose_pixmap: Optional[QPixmap] = None
         self.setMinimumSize(_PREVIEW_W, _PREVIEW_H)
         self.setMaximumSize(_PREVIEW_W, _PREVIEW_H)
+
+        # Subscribe to the fetcher for this widget's lifetime.
+        if self._dna:
+            from utils.rendition_poses import RenditionPoseFetcher
+            self._fetcher = RenditionPoseFetcher.instance()
+            self._fetcher.pose_ready.connect(self._on_pose_ready)
+            # Kick off the initial fetch for the current draft pose.
+            self._request_current_pose()
+        else:
+            self._fetcher = None
 
     def draft(self) -> dict:
         return dict(self._draft)
 
+    def dna(self) -> Optional[str]:
+        return self._dna
+
+    def _current_pose(self) -> str:
+        from utils.toon_customization_resolve import resolve_pose
+        return resolve_pose(self._draft, "portrait")
+
+    def _request_current_pose(self) -> None:
+        if not self._dna or self._fetcher is None:
+            return
+        self._fetcher.request(self._dna, self._current_pose())
+
     def set_draft(self, draft: dict) -> None:
+        prev_pose = self._current_pose()
         self._draft = dict(draft)
+        new_pose = self._current_pose()
+        if new_pose != prev_pose and self._dna and self._fetcher is not None:
+            self._pose_pixmap = None  # show spinner while refetching
+            self._fetcher.request(self._dna, new_pose)
+        self.update()
+
+    def _on_pose_ready(self, dna: str, pose: str, pixmap) -> None:
+        if dna != self._dna:
+            return
+        if pose != self._current_pose():
+            return
+        self._pose_pixmap = pixmap
         self.update()
 
     def paintEvent(self, event):
@@ -102,6 +149,22 @@ class CardPreviewWidget(QWidget):
                     for x in range(circle_rect.left(), circle_rect.right() + 1, 24):
                         p.drawPixmap(x, y, pm)
                 p.restore()
+
+        # Pose pixmap layer (clipped to portrait circle).
+        if self._pose_pixmap is not None and not self._pose_pixmap.isNull():
+            path = QPainterPath()
+            path.addEllipse(circle_rect)
+            p.save()
+            p.setClipPath(path)
+            scaled = self._pose_pixmap.scaled(
+                circle_rect.size(),
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation,
+            )
+            dx = circle_rect.x() + (circle_rect.width() - scaled.width()) // 2
+            dy = circle_rect.y() + (circle_rect.height() - scaled.height()) // 2
+            p.drawPixmap(dx, dy, scaled)
+            p.restore()
 
         # Toon name
         p.setPen(QColor(_TEXT))

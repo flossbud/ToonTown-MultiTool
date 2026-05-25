@@ -60,3 +60,46 @@ def test_paint_does_not_crash_with_full_draft(qapp):
     w.show()
     qapp.processEvents()
     w.hide()
+
+
+def test_preview_constructs_with_dna(qapp):
+    from utils.widgets.card_preview_widget import CardPreviewWidget
+    w = CardPreviewWidget(
+        game="ttr", toon_name="Flossbud", draft={}, dna="dna-test-123",
+    )
+    assert w.dna() == "dna-test-123"
+
+
+def test_preview_set_draft_with_pose_requests_pixmap(qapp, monkeypatch):
+    """Setting a draft with a pose should ask the fetcher for that pose."""
+    requested = []
+
+    from utils.rendition_poses import RenditionPoseFetcher
+    monkeypatch.setattr(
+        RenditionPoseFetcher,
+        "request",
+        lambda self, dna, pose: requested.append((dna, pose)),
+    )
+
+    from utils.widgets.card_preview_widget import CardPreviewWidget
+    w = CardPreviewWidget(
+        game="ttr", toon_name="Flossbud", draft={}, dna="dna-test-123",
+    )
+    requested.clear()  # ignore constructor-time request
+    w.set_draft({"pose": "portrait-grin"})
+    assert ("dna-test-123", "portrait-grin") in requested
+
+
+def test_preview_without_dna_does_not_request(qapp, monkeypatch):
+    requested = []
+    from utils.rendition_poses import RenditionPoseFetcher
+    monkeypatch.setattr(
+        RenditionPoseFetcher,
+        "request",
+        lambda self, dna, pose: requested.append((dna, pose)),
+    )
+    from utils.widgets.card_preview_widget import CardPreviewWidget
+    w = CardPreviewWidget(
+        game="ttr", toon_name="Flossbud", draft={"pose": "portrait-grin"}, dna=None,
+    )
+    assert requested == []

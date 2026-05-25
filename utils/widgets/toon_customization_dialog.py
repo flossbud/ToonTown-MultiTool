@@ -635,7 +635,9 @@ class ToonCustomizationDialog(QDialog):
         outer.setSpacing(10)
 
         # Live preview at the top
-        self._preview = CardPreviewWidget(self._game, self._toon_name, self._draft)
+        self._preview = CardPreviewWidget(
+            self._game, self._toon_name, self._draft, dna=self._dna,
+        )
         preview_box = QVBoxLayout()
         preview_box.setContentsMargins(0, 0, 0, 0)
         preview_box.addWidget(self._preview, alignment=Qt.AlignHCenter)
