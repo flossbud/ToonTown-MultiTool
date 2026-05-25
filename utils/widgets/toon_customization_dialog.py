@@ -832,6 +832,7 @@ class _PortraitSection(QWidget):
     color_changed = Signal(object)         # str or None
     gradient_changed = Signal(object)      # {"start", "end"} or None
     pattern_changed = Signal(object, object)  # (name or None, color or None)
+    circle_outline_changed = Signal(object, object)  # (color hex or None, width key str)
 
     def __init__(self, current: dict, parent=None):
         super().__init__(parent)
@@ -897,6 +898,20 @@ class _PortraitSection(QWidget):
         )
         self._pat_color_row.color_picked.connect(lambda _: self._emit_pattern())
         outer.addWidget(self._pat_color_row)
+
+        outer.addWidget(self._label("Outline"))
+        outline_dict = current.get("outline") if isinstance(current.get("outline"), dict) else {}
+        self._outline_color_row = _SwatchRow(outline_dict.get("color"))
+        self._outline_color_row.color_picked.connect(self._on_outline_color_picked)
+        outer.addWidget(self._outline_color_row)
+
+        self._outline_chip_row = _ChipRow(
+            [("thin", "Thin"), ("medium", "Medium"), ("thick", "Thick")],
+            current=outline_dict.get("width", "medium"),
+        )
+        self._outline_chip_row.value_changed.connect(self._on_outline_width_picked)
+        outer.addWidget(self._outline_chip_row)
+        self._outline_chip_row.set_enabled_visual(bool(outline_dict.get("color")))
 
         outer.addStretch(1)
 
@@ -979,6 +994,28 @@ class _PortraitSection(QWidget):
         self._pat_color_row.setVisible(name is not None)
         if color is not None:
             self._pat_color_row.set_current(color)
+
+    def _on_outline_color_picked(self, hex_: Optional[str]) -> None:
+        self._outline_chip_row.set_enabled_visual(hex_ is not None)
+        self.circle_outline_changed.emit(hex_, self._outline_chip_row.current())
+
+    def _on_outline_width_picked(self, width_key: str) -> None:
+        self.circle_outline_changed.emit(
+            self._outline_color_row.current(), width_key,
+        )
+
+    def set_circle_outline(
+        self, hex_: Optional[str], width_key: Optional[str],
+    ) -> None:
+        """Programmatic setter (for tests)."""
+        self._outline_color_row.set_current(hex_)
+        if width_key is not None:
+            self._outline_chip_row.set_current(width_key)
+        self._outline_chip_row.set_enabled_visual(hex_ is not None)
+        self.circle_outline_changed.emit(hex_, self._outline_chip_row.current())
+
+    def current_circle_outline(self) -> tuple[Optional[str], str]:
+        return self._outline_color_row.current(), self._outline_chip_row.current()
 
 
 class ToonCustomizationDialog(QDialog):
@@ -1082,6 +1119,12 @@ class ToonCustomizationDialog(QDialog):
         sec.set_pattern(name, color)
         self._on_portrait_pattern(name, color)
 
+    def set_circle_outline(
+        self, hex_: Optional[str], width_key: Optional[str],
+    ) -> None:
+        sec: _PortraitSection = self._sections["Portrait"]
+        sec.set_circle_outline(hex_, width_key)
+
     def reset_all(self) -> None:
         self._draft = {}
         for name, w in self._sections.items():
@@ -1163,6 +1206,7 @@ class ToonCustomizationDialog(QDialog):
         portrait_section.color_changed.connect(self._on_portrait_color)
         portrait_section.gradient_changed.connect(self._on_portrait_gradient)
         portrait_section.pattern_changed.connect(self._on_portrait_pattern)
+        portrait_section.circle_outline_changed.connect(self._on_circle_outline)
         self._add_section("Portrait", portrait_section)
 
         # Accent
@@ -1295,5 +1339,16 @@ class ToonCustomizationDialog(QDialog):
             sub.pop("pattern", None)
         else:
             sub["pattern"] = {"name": name, "color": color or "#ffffff"}
+        self._prune_portrait()
+        self._preview.set_draft(self._draft)
+
+    def _on_circle_outline(
+        self, hex_: Optional[str], width_key: str,
+    ) -> None:
+        sub = self._portrait_subdict()
+        if hex_ is None:
+            sub.pop("outline", None)
+        else:
+            sub["outline"] = {"color": hex_, "width": width_key}
         self._prune_portrait()
         self._preview.set_draft(self._draft)

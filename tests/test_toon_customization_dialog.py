@@ -528,3 +528,55 @@ def test_chip_row_set_current_does_not_emit(qapp):
     row.set_current("thick")
     assert spy.count() == 0
     assert row.current() == "thick"
+
+
+def _reset_singletons():
+    """Reset module-level singletons for clean test fixtures."""
+    from utils.rendition_poses import RenditionPoseFetcher
+    RenditionPoseFetcher._instance = None
+
+
+def test_portrait_section_emits_circle_outline_changed_with_color_and_width(qapp):
+    from utils.widgets.toon_customization_dialog import _PortraitSection
+    from PySide6.QtTest import QSignalSpy
+    sec = _PortraitSection({})
+    spy = QSignalSpy(sec.circle_outline_changed)
+    sec.set_circle_outline("#ffd84a", "medium")
+    assert spy.count() == 1
+    args = spy.at(0)
+    assert args[0] == "#ffd84a"
+    assert args[1] == "medium"
+
+
+def test_portrait_section_set_circle_outline_to_none_clears_chip_state(qapp):
+    from utils.widgets.toon_customization_dialog import _PortraitSection
+    sec = _PortraitSection({"outline": {"color": "#ff0000", "width": "thick"}})
+    # Initial state from `current`
+    assert sec.current_circle_outline() == ("#ff0000", "thick")
+    sec.set_circle_outline(None, None)
+    assert sec.current_circle_outline() == (None, "thick")  # width retained
+
+
+def test_dialog_circle_outline_color_writes_to_draft(qapp, monkeypatch, tmp_path):
+    monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
+    _reset_singletons()
+    from utils.widgets.toon_customization_dialog import ToonCustomizationDialog
+    from utils.toon_customizations_manager import ToonCustomizationsManager
+    mgr = ToonCustomizationsManager()
+    dlg = ToonCustomizationDialog("ttr", "Test", mgr)
+    dlg.set_circle_outline("#ffd84a", "thick")
+    draft = dlg.draft()
+    assert draft["portrait"]["outline"] == {"color": "#ffd84a", "width": "thick"}
+
+
+def test_dialog_circle_outline_default_color_removes_outline_from_draft(qapp, monkeypatch, tmp_path):
+    monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
+    _reset_singletons()
+    from utils.widgets.toon_customization_dialog import ToonCustomizationDialog
+    from utils.toon_customizations_manager import ToonCustomizationsManager
+    mgr = ToonCustomizationsManager()
+    mgr.set("ttr", "Test", {"portrait": {"outline": {"color": "#fff", "width": "medium"}}})
+    dlg = ToonCustomizationDialog("ttr", "Test", mgr)
+    assert dlg.draft()["portrait"]["outline"]["color"] == "#fff"
+    dlg.set_circle_outline(None, None)
+    assert "outline" not in (dlg.draft().get("portrait") or {})
