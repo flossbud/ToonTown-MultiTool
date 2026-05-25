@@ -87,3 +87,66 @@ def test_build_silhouette_outline_pixmap_returns_transparent_when_source_empty(q
     for y in range(out.height()):
         for x in range(out.width()):
             assert img.pixelColor(x, y).alpha() == 0
+
+
+def test_build_silhouette_shadow_pixmap_returns_at_least_source_size(qt_app):
+    """Shadow pixmap is at least the source size; may grow to accommodate
+    blur padding."""
+    from PySide6.QtGui import QColor
+    from utils.portrait_effects import build_silhouette_shadow_pixmap
+    src = _make_disk_pixmap(32)
+    out = build_silhouette_shadow_pixmap(src, QColor("#000000"), 4)
+    assert out.width() >= src.width()
+    assert out.height() >= src.height()
+
+
+def test_build_silhouette_shadow_pixmap_uses_supplied_color(qt_app):
+    """The shadow body should be the supplied color, not black-by-default."""
+    from PySide6.QtGui import QColor
+    from utils.portrait_effects import build_silhouette_shadow_pixmap
+    src = _make_disk_pixmap(32)
+    out = build_silhouette_shadow_pixmap(src, QColor("#0000ff"), 0)
+    img = out.toImage()
+    # With blur=0 the shadow alpha matches the source disk exactly.
+    # Sample the center pixel which is inside the source disk.
+    cx = out.width() // 2
+    cy = out.height() // 2
+    px = img.pixelColor(cx, cy)
+    assert px.alpha() > 200
+    assert px.blue() > 200
+    assert px.red() < 80
+    assert px.green() < 80
+
+
+def test_build_silhouette_shadow_pixmap_has_alpha_falloff_with_blur(qt_app):
+    """With nonzero blur, alpha falls off outside the source's hard edge
+    instead of cutting cleanly to zero."""
+    from PySide6.QtGui import QColor
+    from utils.portrait_effects import build_silhouette_shadow_pixmap
+    src = _make_disk_pixmap(32)
+    out = build_silhouette_shadow_pixmap(src, QColor("#000000"), 6)
+    img = out.toImage()
+    # Find a pixel outside the source disk's bounds but within the blur
+    # radius. The disk lives at src coords (8..24); after the shadow
+    # builder centers the source in the larger output, the disk's left
+    # edge is at (out.width() - 32) / 2 + 8. Sample 4px to its left.
+    pad_x = (out.width() - 32) // 2
+    sample_x = pad_x + 8 - 4
+    sample_y = out.height() // 2
+    if 0 <= sample_x < out.width():
+        a = img.pixelColor(sample_x, sample_y).alpha()
+        assert 0 < a < 255  # softened, not fully opaque nor zero
+
+
+def test_build_silhouette_shadow_pixmap_returns_transparent_when_source_empty(qt_app):
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QColor, QPixmap
+    from utils.portrait_effects import build_silhouette_shadow_pixmap
+    pm = QPixmap(16, 16)
+    pm.fill(Qt.transparent)
+    out = build_silhouette_shadow_pixmap(pm, QColor("#000000"), 4)
+    img = out.toImage()
+    # Every pixel transparent.
+    for y in range(out.height()):
+        for x in range(out.width()):
+            assert img.pixelColor(x, y).alpha() == 0

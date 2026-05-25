@@ -14,6 +14,11 @@ from PySide6.QtGui import (
     QPainter,
     QPixmap,
 )
+from PySide6.QtWidgets import (
+    QGraphicsDropShadowEffect,
+    QGraphicsPixmapItem,
+    QGraphicsScene,
+)
 
 
 _RING_DIRECTIONS = (
@@ -53,5 +58,54 @@ def build_silhouette_outline_pixmap(
     # Punch out the original alpha so only the halo remains.
     p.setCompositionMode(QPainter.CompositionMode_DestinationOut)
     p.drawPixmap(0, 0, pose_pm)
+    p.end()
+    return out
+
+
+def build_silhouette_shadow_pixmap(
+    pose_pm: QPixmap, color: QColor, blur_px: int,
+) -> QPixmap:
+    """Returns a softly-blurred colored shadow of `pose_pm`'s alpha.
+
+    Implementation: wrap pose in a QGraphicsPixmapItem, attach a
+    QGraphicsDropShadowEffect with the requested color and blur, render
+    the resulting bounding rect (including blur padding) onto a fresh
+    transparent QPixmap. Output size is `pose_pm.size()` plus 2 * blur_px
+    on each axis so the soft edge isn't clipped."""
+    pad = max(0, blur_px)
+    out_w = pose_pm.width() + 2 * pad
+    out_h = pose_pm.height() + 2 * pad
+    out = QPixmap(out_w, out_h)
+    out.fill(Qt.transparent)
+
+    if pose_pm.isNull() or out_w == 0 or out_h == 0:
+        return out
+
+    # Build a solid-color version of the source (preserve alpha, replace RGB
+    # with shadow color). The scene item uses this so both the body and the
+    # blurred halo share the requested color.
+    colored = QPixmap(pose_pm.size())
+    colored.fill(Qt.transparent)
+    cp = QPainter(colored)
+    cp.drawPixmap(0, 0, pose_pm)
+    cp.setCompositionMode(QPainter.CompositionMode_SourceIn)
+    cp.fillRect(colored.rect(), color)
+    cp.end()
+
+    scene = QGraphicsScene()
+    item = QGraphicsPixmapItem(colored)
+    effect = QGraphicsDropShadowEffect()
+    effect.setColor(color)
+    effect.setBlurRadius(blur_px)
+    effect.setOffset(0, 0)
+    item.setGraphicsEffect(effect)
+    scene.addItem(item)
+
+    p = QPainter(out)
+    p.setRenderHint(QPainter.Antialiasing)
+    # Source is positioned at (pad, pad) in output coords.
+    source_rect = item.boundingRect()
+    target_rect = source_rect.translated(pad, pad)
+    scene.render(p, target_rect, source_rect)
     p.end()
     return out
