@@ -207,7 +207,7 @@ def test_request_emits_none_on_http_failure(qapp, isolated_cache, monkeypatch):
 
 def test_invalidate_dna_removes_matching_files(qapp, isolated_cache):
     from PySide6.QtGui import QImage, QColor
-    from utils.rendition_poses import RenditionPoseFetcher
+    from utils.rendition_poses import RenditionPoseFetcher, _REQUEST_SIZE
     fetcher = RenditionPoseFetcher.instance()
     for pose in ("portrait", "head", "waving"):
         img = QImage(1, 1, QImage.Format_ARGB32)
@@ -219,8 +219,15 @@ def test_invalidate_dna_removes_matching_files(qapp, isolated_cache):
     fetcher.invalidate_dna("dnaABC")
 
     files = set(os.listdir(fetcher.cache_dir()))
-    assert "otherDNA__portrait.png" in files
+    assert f"otherDNA__portrait__{_REQUEST_SIZE}.png" in files
     assert not any(f.startswith("dnaABC__") for f in files)
+
+
+def test_path_for_includes_request_size_suffix(qapp, isolated_cache):
+    from utils.rendition_poses import RenditionPoseFetcher, _REQUEST_SIZE
+    fetcher = RenditionPoseFetcher.instance()
+    path = fetcher._path_for("dna999", "portrait")
+    assert path.endswith(f"dna999__portrait__{_REQUEST_SIZE}.png")
 
 
 def test_max_workers_is_three_or_fewer(qapp, isolated_cache):

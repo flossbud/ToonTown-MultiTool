@@ -4,7 +4,7 @@ Verified pose names sourced from the TTR community wiki and probed
 against rendition.toontownrewritten.com (HTTP 500 with invalid DNA
 confirms the endpoint exists).
 
-Cache: <config_dir>/rendition_cache/<dna>__<pose>.png
+Cache: <config_dir>/rendition_cache/<dna>__<pose>__<size>.png
 TTL:   24 hours (mtime-based). Expired entries refetch on access.
 
 THREADING / PAINT-RACE NOTE
@@ -99,7 +99,9 @@ class RenditionPoseFetcher(QObject):
     # -- Disk cache ----------------------------------------------------------
 
     def _path_for(self, dna: str, pose: str) -> str:
-        return os.path.join(self._cache_dir, f"{dna}__{pose}.png")
+        return os.path.join(
+            self._cache_dir, f"{dna}__{pose}__{_REQUEST_SIZE}.png"
+        )
 
     def cached_pixmap(self, dna: str, pose: str) -> Optional[QPixmap]:
         """Sync read. Returns pixmap if disk entry exists AND is fresh.
