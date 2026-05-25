@@ -27,6 +27,17 @@ def isolated_cache(monkeypatch, tmp_path):
     rendition_poses.RenditionPoseFetcher._instance = None
 
 
+def test_url_template_uses_512_resolution():
+    from utils.rendition_poses import _URL
+    assert "/512x512.png" in _URL
+    assert "/128x128" not in _URL
+
+
+def test_request_size_constant_is_512():
+    from utils.rendition_poses import _REQUEST_SIZE
+    assert _REQUEST_SIZE == 512
+
+
 def test_pose_names_tuple_has_13_entries():
     from utils.rendition_poses import POSE_NAMES
     assert isinstance(POSE_NAMES, tuple)

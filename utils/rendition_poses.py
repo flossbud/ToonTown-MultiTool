@@ -51,7 +51,11 @@ POSE_NAMES: Final = (
 
 _TTL_SECONDS = 24 * 60 * 60
 _MAX_WORKERS = 3
-_URL = "https://rendition.toontownrewritten.com/render/{dna}/{pose}/128x128.png"
+_REQUEST_SIZE = 512
+_URL = (
+    "https://rendition.toontownrewritten.com/render/{dna}/{pose}/"
+    f"{_REQUEST_SIZE}x{_REQUEST_SIZE}.png"
+)
 
 
 class RenditionPoseFetcher(QObject):
