@@ -346,7 +346,7 @@ class ToonPortraitWidget(QWidget):
         size = min(rect.width(), rect.height())
 
         if self._cc_mode and self._cc_skin is not None:
-            from utils.cc_badge_paint import paint_cc_badge, pencil_rect_for
+            from utils.cc_badge_paint import paint_cc_badge
             from utils.toon_customization_resolve import (
                 resolve_portrait_brush, resolve_portrait_pattern,
             )
@@ -365,73 +365,79 @@ class ToonPortraitWidget(QWidget):
                 portrait_brush=brush,
                 pattern=resolve_portrait_pattern(entry),
             )
-            if self._hovered and self._can_show_pencil():
-                self._paint_pencil_overlay(p, pencil_rect_for(rect))
-            p.end()
-            return
-
-        # Restore pen/brush state for non-CC paint path
-        p.setPen(Qt.NoPen)
-        cx = self.width() / 2.0
-        cy = self.height() / 2.0
-        r  = min(cx, cy) - 2.0  # leave room for a 2px border
-
-        # Always draw colored circle background first
-        if self._border_color:
-            p.setPen(QPen(self._border_color, 2.0))
+            # Pencil overlay is drawn once at the end of paintEvent so it
+            # appears for both CC and TTR badges.
         else:
+            # Non-CC paint path (TTR / unknown game).
+            # Restore pen/brush state for non-CC paint path
             p.setPen(Qt.NoPen)
-        entry = {}
-        if self._customizations is not None and self._toon_name and self._game:
-            entry = self._customizations.get(self._game, self._toon_name)
-        from utils.toon_customization_resolve import (
-            resolve_portrait_brush, resolve_portrait_pattern,
-        )
-        p.setBrush(resolve_portrait_brush(entry, self._bg))
-        p.drawEllipse(QPointF(cx, cy), r, r)
+            cx = self.width() / 2.0
+            cy = self.height() / 2.0
+            r  = min(cx, cy) - 2.0  # leave room for a 2px border
 
-        pattern = resolve_portrait_pattern(entry)
-        if pattern is not None:
-            from utils.toon_pattern_assets import tinted_pattern_pixmap
-            name, color = pattern
-            pm = tinted_pattern_pixmap(name, color, tile_size=24)
-            if not pm.isNull():
+            # Always draw colored circle background first
+            if self._border_color:
+                p.setPen(QPen(self._border_color, 2.0))
+            else:
+                p.setPen(Qt.NoPen)
+            entry = {}
+            if self._customizations is not None and self._toon_name and self._game:
+                entry = self._customizations.get(self._game, self._toon_name)
+            from utils.toon_customization_resolve import (
+                resolve_portrait_brush, resolve_portrait_pattern,
+            )
+            p.setBrush(resolve_portrait_brush(entry, self._bg))
+            p.drawEllipse(QPointF(cx, cy), r, r)
+
+            pattern = resolve_portrait_pattern(entry)
+            if pattern is not None:
+                from utils.toon_pattern_assets import tinted_pattern_pixmap
+                name, color = pattern
+                pm = tinted_pattern_pixmap(name, color, tile_size=24)
+                if not pm.isNull():
+                    path = QPainterPath()
+                    path.addEllipse(QPointF(cx, cy), r, r)
+                    p.save()
+                    p.setClipPath(path)
+                    d = int(r * 2)
+                    top = int(cy - r)
+                    left = int(cx - r)
+                    for y in range(top, top + d + 1, 24):
+                        for x in range(left, left + d + 1, 24):
+                            p.drawPixmap(x, y, pm)
+                    p.restore()
+
+            if self._pixmap and not self._pixmap.isNull():
                 path = QPainterPath()
                 path.addEllipse(QPointF(cx, cy), r, r)
-                p.save()
                 p.setClipPath(path)
-                d = int(r * 2)
-                top = int(cy - r)
-                left = int(cx - r)
-                for y in range(top, top + d + 1, 24):
-                    for x in range(left, left + d + 1, 24):
-                        p.drawPixmap(x, y, pm)
-                p.restore()
-
-        if self._pixmap and not self._pixmap.isNull():
-            path = QPainterPath()
-            path.addEllipse(QPointF(cx, cy), r, r)
-            p.setClipPath(path)
-            target = max(1, int(r * 2))
-            pm = self._pixmap.scaled(
-                target, target, Qt.KeepAspectRatio, Qt.SmoothTransformation
-            )
-            ph, pw = pm.height(), pm.width()
-            p.drawPixmap(int(cx - pw / 2), int(cy - ph / 2), pm)
-            p.setClipping(False)
-        else:
-            font = QFont()
-            font.setPixelSize(14)
-            font.setBold(True)
-            if self._loading:
-                p.setPen(QColor(180, 180, 180))
-                font.setPixelSize(12)
-                p.setFont(font)
-                p.drawText(self.rect(), Qt.AlignCenter, "…")
+                target = max(1, int(r * 2))
+                pm = self._pixmap.scaled(
+                    target, target, Qt.KeepAspectRatio, Qt.SmoothTransformation
+                )
+                ph, pw = pm.height(), pm.width()
+                p.drawPixmap(int(cx - pw / 2), int(cy - ph / 2), pm)
+                p.setClipping(False)
             else:
-                p.setFont(font)
-                p.setPen(self._text)
-                p.drawText(self.rect(), Qt.AlignCenter, str(self._slot))
+                font = QFont()
+                font.setPixelSize(14)
+                font.setBold(True)
+                if self._loading:
+                    p.setPen(QColor(180, 180, 180))
+                    font.setPixelSize(12)
+                    p.setFont(font)
+                    p.drawText(self.rect(), Qt.AlignCenter, "…")
+                else:
+                    p.setFont(font)
+                    p.setPen(self._text)
+                    p.drawText(self.rect(), Qt.AlignCenter, str(self._slot))
+
+        # Unified pencil overlay: paints in any mode where _can_show_pencil
+        # is True (TTR + CC + future games).
+        if self._hovered and self._can_show_pencil():
+            from utils.cc_badge_paint import pencil_rect_for
+            self._paint_pencil_overlay(p, pencil_rect_for(rect))
+
         p.end()
 
 class StatusDots(QWidget):

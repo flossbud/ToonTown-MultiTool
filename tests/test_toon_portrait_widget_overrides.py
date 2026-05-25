@@ -108,3 +108,33 @@ def test_paint_picks_up_portrait_color_override(qt_app, monkeypatch, tmp_path):
     from PySide6.QtGui import QColor
     brush = w.current_portrait_brush()
     assert brush.color() == QColor("#abcdef")
+
+
+def test_pencil_overlay_paints_for_ttr_on_hover(qt_app, monkeypatch, tmp_path):
+    """Regression: when hovered, the pencil overlay must be drawn on the
+    TTR badge (not just on CC). Verified by grabbing the widget pixmap
+    and checking that the pencil region differs from the surrounding
+    circle - i.e. something was painted over the bg in that area."""
+    from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
+    from PySide6.QtGui import QEnterEvent
+    from utils.cc_badge_paint import pencil_rect_for
+
+    w, _ = _new_widget(qt_app, monkeypatch, tmp_path, game="ttr", toon_name="Flossbud")
+    # Force hover state on
+    enter = QEnterEvent(QPointF(50, 50), QPointF(50, 50), QPointF(50, 50))
+    w.enterEvent(enter)
+    w.show()
+    qt_app.processEvents()
+
+    pm = w.grab()
+    img = pm.toImage()
+    rect = pencil_rect_for(w.rect())
+    # Pencil overlay paints a near-white circle bg. Center pixel of the
+    # pencil rect should be near-white (R>200, G>200, B>200) when the
+    # overlay is rendered, vs the bg colour when it is not.
+    center = img.pixelColor(rect.center().x(), rect.center().y())
+    assert center.red() > 200 and center.green() > 200 and center.blue() > 200, (
+        f"Expected near-white pencil overlay bg at {rect.center()}, got "
+        f"{center.getRgb()}"
+    )
+    w.hide()
