@@ -1,6 +1,6 @@
 """utils.venv_reexec decision logic: when to spawn the venv interpreter,
-when to retry on early-startup fatal signals, and when to leave the
-current process alone.
+when to retry on fatal-signal exits, and when to leave the current
+process alone.
 
 Tests run inside a venv (the project's ./venv), so sys.prefix !=
 sys.base_prefix by default. Every test that expects spawn must
@@ -15,7 +15,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from utils.venv_reexec import (
-    EARLY_CRASH_WINDOW_SEC,
     MAX_LAUNCH_ATTEMPTS,
     _supervise_with_retry,
     reexec_into_venv,
@@ -175,8 +174,8 @@ def _run_supervisor_with_scripted_runs(monkeypatch, returncodes, durations):
 
 
 def test_retry_on_early_sigsegv(monkeypatch, capsys):
-    """SIGSEGV within the early-crash window triggers a retry. If the
-    retry succeeds, supervisor returns 0."""
+    """SIGSEGV at startup triggers a retry. If the retry succeeds,
+    supervisor returns 0."""
     rc, log = _run_supervisor_with_scripted_runs(
         monkeypatch,
         returncodes=[-signal.SIGSEGV, 0],
@@ -185,7 +184,7 @@ def test_retry_on_early_sigsegv(monkeypatch, capsys):
     assert rc == 0
     assert len(log) == 2
     err = capsys.readouterr().err
-    assert "Early-startup crash" in err
+    assert "Fatal-signal exit" in err
     assert "SIGSEGV" in err
 
 
@@ -201,16 +200,21 @@ def test_retry_on_early_sigbus(monkeypatch, capsys):
     assert "SIGBUS" in capsys.readouterr().err
 
 
-def test_no_retry_after_early_window(monkeypatch):
-    """A fatal signal AFTER EARLY_CRASH_WINDOW_SEC is treated as a real
-    bug (e.g. crash during gameplay) and propagates without retry."""
+def test_retry_on_late_sigsegv(monkeypatch, capsys):
+    """A fatal signal long after startup (e.g. paint-time GC race on
+    Python 3.14) also triggers a retry. The 3-second early-window
+    distinction was removed; retries are bounded by MAX_LAUNCH_ATTEMPTS
+    only."""
     rc, log = _run_supervisor_with_scripted_runs(
         monkeypatch,
-        returncodes=[-signal.SIGSEGV],
-        durations=[EARLY_CRASH_WINDOW_SEC + 1.0],
+        returncodes=[-signal.SIGSEGV, 0],
+        durations=[600.0, 5.0],
     )
-    assert rc == -signal.SIGSEGV
-    assert len(log) == 1  # exactly one spawn, no retry
+    assert rc == 0
+    assert len(log) == 2
+    err = capsys.readouterr().err
+    assert "Fatal-signal exit" in err
+    assert "SIGSEGV" in err
 
 
 def test_no_retry_on_clean_nonzero_exit(monkeypatch):
@@ -226,8 +230,8 @@ def test_no_retry_on_clean_nonzero_exit(monkeypatch):
 
 
 def test_gives_up_after_max_attempts(monkeypatch, capsys):
-    """If every attempt crashes early with a fatal signal, supervisor
-    returns the last failing returncode after MAX_LAUNCH_ATTEMPTS tries."""
+    """If every attempt crashes with a fatal signal, supervisor returns
+    the last failing returncode after MAX_LAUNCH_ATTEMPTS tries."""
     rc, log = _run_supervisor_with_scripted_runs(
         monkeypatch,
         returncodes=[-signal.SIGSEGV] * MAX_LAUNCH_ATTEMPTS,
@@ -237,7 +241,7 @@ def test_gives_up_after_max_attempts(monkeypatch, capsys):
     assert len(log) == MAX_LAUNCH_ATTEMPTS
     # Should have logged MAX_LAUNCH_ATTEMPTS - 1 retries
     err = capsys.readouterr().err
-    assert err.count("Early-startup crash") == MAX_LAUNCH_ATTEMPTS - 1
+    assert err.count("Fatal-signal exit") == MAX_LAUNCH_ATTEMPTS - 1
 
 
 def test_clean_zero_exit_returns_immediately(monkeypatch):

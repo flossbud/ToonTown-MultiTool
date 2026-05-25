@@ -107,28 +107,28 @@ def _get_window_pids_xres(window_ids: list) -> dict:
     if not window_ids:
         return {}
     try:
-        from Xlib import display as xdisplay
         from Xlib.ext import res as xres
-        d = xdisplay.Display()
-        try:
-            if not d.has_extension("X-Resource"):
-                return {}
-            result = {}
-            for wid_str in window_ids:
-                try:
-                    wid = int(wid_str)
-                    resp = d.res_query_client_ids(
-                        [{"client": wid, "mask": xres.LocalClientPIDMask}]
-                    )
-                    for cid in resp.ids:
-                        if cid.value:
-                            result[wid_str] = cid.value[0]
-                            break
-                except Exception:
-                    continue
-            return result
-        finally:
-            d.close()
+        from utils import x11_discovery
+
+        d = x11_discovery._open_display()
+        if d is None:
+            return {}
+        if not d.has_extension("X-Resource"):
+            return {}
+        result = {}
+        for wid_str in window_ids:
+            try:
+                wid = int(wid_str)
+                resp = d.res_query_client_ids(
+                    [{"client": wid, "mask": xres.LocalClientPIDMask}]
+                )
+                for cid in resp.ids:
+                    if cid.value:
+                        result[wid_str] = cid.value[0]
+                        break
+            except Exception:
+                continue
+        return result
     except Exception:
         return {}
 

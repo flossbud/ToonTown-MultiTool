@@ -8,30 +8,53 @@ ship xdotool by default (notably Fedora). python-Xlib is already a Linux
 dependency for the input backend and XRes PID resolution, so this is a
 dependency removal, not addition.
 
-All helpers open a fresh Xlib display per call and close it before returning.
-That matches the per-call cost of the xdotool subprocesses they replace and
-sidesteps thread-safety questions about sharing a Display across the polling
-threads.
+The Display is cached per-thread via threading.local and reused across calls
+within the same thread. The original design opened a fresh Display per call
+to match xdotool's per-subprocess cost, but Display()'s constructor runs a
+synchronous get_keyboard_mapping round-trip and allocates a large reply
+object graph, which is far heavier than xdotool's fork+exec. At 10 Hz
+polling on Python 3.14 that allocation rate fires the incremental GC
+constantly inside Xlib reply parsing, which races with Shiboken's
+GIL-release during Qt widget destruction in the paint thread and produces a
+mark_stacks SEGV (see [[project_py314_pyside6_gc_paint_race]]). Caching
+preserves the original no-cross-thread-sharing contract while removing the
+allocation storm.
+
+Callers MUST NOT call `.close()` on the returned Display; the cached
+connection lives for the calling thread's lifetime and is reclaimed when
+the thread dies (or when the process exits, for daemon threads).
 """
 
 from __future__ import annotations
 
 import sys
+import threading
+
+
+_thread_local = threading.local()
 
 
 def _open_display():
     """Return a connected Xlib Display or None on failure.
 
-    Centralized so platform/import guards live in one place; callers always
+    Cached per-thread: the first call from a given thread opens a real
+    Xlib connection and stashes it on a threading.local; subsequent calls
+    from the same thread return that same Display. Centralized so the
+    platform/import guard and the cache live in one place; callers always
     get either a usable Display or None, never an exception.
     """
     if sys.platform == "win32":
         return None
+    cached = getattr(_thread_local, "display", None)
+    if cached is not None:
+        return cached
     try:
         from Xlib import display as xdisplay  # type: ignore
-        return xdisplay.Display()
+        d = xdisplay.Display()
     except Exception:
         return None
+    _thread_local.display = d
+    return d
 
 
 def find_window_ids_by_class(
@@ -58,21 +81,15 @@ def find_window_ids_by_class(
     d = _open_display()
     if d is None:
         return []
+    results: list[str] = []
+    targets = tuple(class_names or ())
+    prefixes = tuple(title_prefixes or ())
     try:
-        results: list[str] = []
-        targets = tuple(class_names or ())
-        prefixes = tuple(title_prefixes or ())
-        try:
-            root = d.screen().root
-        except Exception:
-            return []
-        _walk_collect(root, targets, prefixes, results)
-        return results
-    finally:
-        try:
-            d.close()
-        except Exception:
-            pass
+        root = d.screen().root
+    except Exception:
+        return []
+    _walk_collect(root, targets, prefixes, results)
+    return results
 
 
 def _walk_collect(
@@ -119,18 +136,12 @@ def get_window_root_x(wid: str) -> int | None:
     if d is None:
         return None
     try:
-        try:
-            win = d.create_resource_object("window", int(wid))
-            root = d.screen().root
-            coords = root.translate_coords(win, 0, 0)
-            return int(coords.x)
-        except Exception:
-            return None
-    finally:
-        try:
-            d.close()
-        except Exception:
-            pass
+        win = d.create_resource_object("window", int(wid))
+        root = d.screen().root
+        coords = root.translate_coords(win, 0, 0)
+        return int(coords.x)
+    except Exception:
+        return None
 
 
 def get_active_window_id() -> str | None:
@@ -142,20 +153,14 @@ def get_active_window_id() -> str | None:
     if d is None:
         return None
     try:
-        try:
-            root = d.screen().root
-            atom = d.intern_atom("_NET_ACTIVE_WINDOW")
-            from Xlib import X  # type: ignore
-            prop = root.get_full_property(atom, X.AnyPropertyType)
-            if prop and prop.value:
-                return str(int(prop.value[0]))
-        except Exception:
-            return None
-    finally:
-        try:
-            d.close()
-        except Exception:
-            pass
+        root = d.screen().root
+        atom = d.intern_atom("_NET_ACTIVE_WINDOW")
+        from Xlib import X  # type: ignore
+        prop = root.get_full_property(atom, X.AnyPropertyType)
+        if prop and prop.value:
+            return str(int(prop.value[0]))
+    except Exception:
+        return None
     return None
 
 
@@ -168,18 +173,12 @@ def get_window_pid(wid: str) -> int | None:
     if d is None:
         return None
     try:
-        try:
-            win = d.create_resource_object("window", int(wid))
-            atom = d.intern_atom("_NET_WM_PID")
-            from Xlib import X  # type: ignore
-            prop = win.get_full_property(atom, X.AnyPropertyType)
-            if prop and prop.value:
-                return int(prop.value[0])
-        except Exception:
-            return None
-    finally:
-        try:
-            d.close()
-        except Exception:
-            pass
+        win = d.create_resource_object("window", int(wid))
+        atom = d.intern_atom("_NET_WM_PID")
+        from Xlib import X  # type: ignore
+        prop = win.get_full_property(atom, X.AnyPropertyType)
+        if prop and prop.value:
+            return int(prop.value[0])
+    except Exception:
+        return None
     return None

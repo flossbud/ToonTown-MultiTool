@@ -1,8 +1,8 @@
-"""Pin the compact multitoon layout to fit in the 640 px content budget
-(default 760-tall window minus 56 header minus 64 chip rail). The window
-and chip rail grew together by 12 px each after the first 52 px estimate
-proved too short to render chip labels — the content budget itself is
-unchanged."""
+"""Pin the compact multitoon layout to fit in the 650 px content budget
+(default 770-tall window minus 56 header minus 64 chip rail). The window
+default grew by 10 px during the Direction D redesign (per
+docs/superpowers/specs/2026-05-24-multitoon-tab-compact-redesign-design.md);
+the budget moved in lockstep."""
 
 import os
 
@@ -12,9 +12,13 @@ import pytest
 from PySide6.QtWidgets import QApplication
 
 
-CONTENT_BUDGET_PX = 640  # 760 default window - 56 header - 64 chip rail
-CONTENT_WIDTH_PX = 528   # default 560 window minus app left/right margins
-_PIN_HEIGHT_PX = 636     # measured natural height 634; 2px grace for measurement noise
+# Direction D redesign: budget bumped to 650 (770 default - 56 - 64) and
+# the natural height changed because we removed the outer card and grew
+# the per-card headers. See spec
+# docs/superpowers/specs/2026-05-24-multitoon-tab-compact-redesign-design.md
+CONTENT_BUDGET_PX = 650  # 770 default window - 56 header - 64 chip rail
+CONTENT_WIDTH_PX = 549   # default 575 min-width window minus 12+12 outer margins minus 2 border
+_PIN_HEIGHT_PX = 624     # measured natural height after the header-restack (21 px name); +4 px grace
 
 
 @pytest.fixture(scope="module")

@@ -10,9 +10,13 @@ to identify the game from the executable name.
 
 from __future__ import annotations
 
+import errno
+import logging
 import os
 import sys
 import threading
+
+logger = logging.getLogger(__name__)
 
 _KNOWN_PROCESSES = {
     "ttrengine64.exe": "ttr",
@@ -160,23 +164,29 @@ class GameRegistry:
 
     @staticmethod
     def _get_host_pid_for_window_xres(wid: str) -> int | None:
-        """Resolve a Linux window ID to host PID via XRes when available."""
-        try:
-            from Xlib import display as xdisplay
-            from Xlib.ext import res as xres
+        """Resolve a Linux window ID to host PID via XRes when available.
 
-            d = xdisplay.Display()
-            try:
-                if not d.has_extension("X-Resource"):
-                    return None
-                resp = d.res_query_client_ids(
-                    [{"client": int(wid), "mask": xres.LocalClientPIDMask}]
-                )
-                for cid in resp.ids:
-                    if cid.value:
-                        return int(cid.value[0])
-            finally:
-                d.close()
+        Uses x11_discovery's per-thread cached Display rather than opening
+        a fresh connection: callers include the WindowManager poll thread
+        (via classify_window_for_filtering, hit per candidate window per
+        2-second sweep) and constructing a Display per call hammered the
+        Python 3.14 GC. See [[project_py314_pyside6_gc_paint_race]].
+        """
+        try:
+            from Xlib.ext import res as xres
+            from utils import x11_discovery
+
+            d = x11_discovery._open_display()
+            if d is None:
+                return None
+            if not d.has_extension("X-Resource"):
+                return None
+            resp = d.res_query_client_ids(
+                [{"client": int(wid), "mask": xres.LocalClientPIDMask}]
+            )
+            for cid in resp.ids:
+                if cid.value:
+                    return int(cid.value[0])
         except Exception:
             return None
         return None
@@ -231,14 +241,13 @@ class GameRegistry:
         the class is missing/unknown.
         """
         try:
-            from Xlib import display as xdisplay
+            from utils import x11_discovery
 
-            d = xdisplay.Display()
-            try:
-                win = d.create_resource_object("window", int(wid))
-                wm_class = win.get_wm_class()
-            finally:
-                d.close()
+            d = x11_discovery._open_display()
+            if d is None:
+                return None
+            win = d.create_resource_object("window", int(wid))
+            wm_class = win.get_wm_class()
         except Exception:
             return None
         if not wm_class:
@@ -266,13 +275,16 @@ class GameRegistry:
                 try:
                     exe = win32process.GetModuleFileNameEx(handle, 0)
                 except (OSError, AttributeError) as e:
-                    print(f"[GameRegistry] Win32 process query failed for PID {pid}: {e}")
+                    logger.warning("Win32 process query failed for PID %d: %s", pid, e)
                     return None
                 finally:
                     win32api.CloseHandle(handle)
             else:
                 exe = os.readlink(f"/proc/{pid}/exe")
         except (OSError, FileNotFoundError) as e:
-            print(f"[GameRegistry] Process name lookup failed for PID {pid}: {e}")
+            if getattr(e, "errno", None) in (errno.EACCES, errno.EPERM):
+                logger.debug("Process name lookup failed for PID %d: %s", pid, e)
+            else:
+                logger.warning("Process name lookup failed for PID %d: %s", pid, e)
             return None
         return os.path.basename(exe).lower()

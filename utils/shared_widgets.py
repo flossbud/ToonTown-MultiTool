@@ -238,6 +238,13 @@ class PulsingDot(QWidget):
         self._pulse_val = 0.0
         self._pulsing = False
 
+        # Optional "cut-out" ring painted just outside the core dot.
+        # When set, gives the dot the look of being notched out of its
+        # backdrop (used by the Multitoon compact portrait overlay).
+        # None preserves the existing behaviour for other call sites.
+        self._cutout_color: QColor | None = None
+        self._cutout_width: float = 2.5
+
         self._anim = QVariantAnimation()
         self._anim.setStartValue(0.0)
         self._anim.setEndValue(1.0)
@@ -245,6 +252,15 @@ class PulsingDot(QWidget):
         self._anim.setLoopCount(-1)
         self._anim.setEasingCurve(QEasingCurve.Linear)
         self._anim.valueChanged.connect(self._on_pulse)
+
+    def set_cutout_border(self, color: str | None, width: float = 2.5) -> None:
+        """Paint a ring in `color` just outside the core dot. Use the
+        backdrop colour (e.g. card background) to create a 'notched
+        out' look when the dot overlays another widget. Pass None to
+        disable the ring."""
+        self._cutout_color = QColor(color) if color is not None else None
+        self._cutout_width = float(width)
+        self.update()
 
     def set_color(self, hex_color: str, pulse: bool = False):
         self._color = QColor(hex_color)
@@ -305,10 +321,17 @@ class PulsingDot(QWidget):
 
             # Core dot -- gentle brightness shift (only ~18% lighter at peak)
             core = QColor(self._color).lighter(100 + int(18 * self._pulse_val))
-            p.setBrush(core)
         else:
-            p.setBrush(QColor(self._color))
+            core = QColor(self._color)
 
+        # Cut-out border: hard ring in backdrop colour. Drawn between
+        # the glow and the core dot so the glow softly fades behind it.
+        if self._cutout_color is not None:
+            ring_r = r + self._cutout_width
+            p.setBrush(self._cutout_color)
+            p.drawEllipse(QRectF(cx - ring_r, cy - ring_r, ring_r * 2, ring_r * 2))
+
+        p.setBrush(core)
         p.drawEllipse(QRectF(cx - r, cy - r, r * 2, r * 2))
         p.end()
 

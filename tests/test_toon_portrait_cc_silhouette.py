@@ -22,11 +22,26 @@ def qt_app():
     yield app
 
 
+class _CustomizationsManagerStub:
+    """Mimics the ToonCustomizationsManager surface that
+    ToonPortraitWidget consults: get(game, name) -> dict, with optional
+    `icon_stem` for CC silhouette override."""
+
+    def __init__(self):
+        self._entries: dict[tuple[str, str], dict] = {}
+
+    def get(self, game, name):
+        return dict(self._entries.get((game, name), {}))
+
+    def set(self, name, stem):
+        # Convenience for silhouette tests: store CC icon override by name.
+        self._entries[("cc", name)] = {"icon_stem": stem}
+
+
 @pytest.fixture
 def overrides_manager(monkeypatch, tmp_path):
     monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
-    from utils.cc_race_overrides_manager import CCRaceOverridesManager
-    return CCRaceOverridesManager()
+    return _CustomizationsManagerStub()
 
 
 def _grab_image(widget, w: int, h: int) -> QImage:
@@ -37,7 +52,7 @@ def _grab_image(widget, w: int, h: int) -> QImage:
 
 def test_cc_mode_with_silhouette_paints_complement_bg(qt_app, overrides_manager):
     w = ToonPortraitWidget(1)
-    w.set_overrides_manager(overrides_manager)
+    w.set_customizations_manager(overrides_manager)
     w.set_toon_name("Flossbud")
     w.set_cc_auto_species("DOG")
     # CC mode: red skin - paint_cc_badge draws an ellipse, not a rectangle,
@@ -56,13 +71,20 @@ def test_cc_mode_with_silhouette_paints_complement_bg(qt_app, overrides_manager)
         f"corner {corner.red()},{corner.green()},{corner.blue()} should differ from "
         f"center {center.red()},{center.green()},{center.blue()}"
     )
-    # Center pixel should be non-gray - either skin color or complement bg.
-    assert center.red() > 100 or center.green() > 100 or center.blue() > 100
+    # Center pixel should be visibly painted (skin via silhouette OR
+    # complement bg through a transparent silhouette region) - in any case
+    # it must differ noticeably from the unpainted gray widget bg at the
+    # corner. The earlier red/green-only heuristic happened to reject dark
+    # complement bgs like (29, 63, 63) that are obviously painted.
+    delta = (abs(center.red()   - corner.red())
+           + abs(center.green() - corner.green())
+           + abs(center.blue()  - corner.blue()))
+    assert delta > 100, f"center={center.getRgb()} corner={corner.getRgb()} (delta {delta})"
 
 
 def test_cc_mode_with_no_asset_falls_back_to_slot_number(qt_app, overrides_manager):
     w = ToonPortraitWidget(7)
-    w.set_overrides_manager(overrides_manager)
+    w.set_customizations_manager(overrides_manager)
     w.set_toon_name("UnknownToon")
     w.set_cc_auto_species("FROG")  # no frog.png exists yet
     w.set_cc_mode(
@@ -82,7 +104,7 @@ def test_cc_mode_with_no_asset_falls_back_to_slot_number(qt_app, overrides_manag
 
 def test_override_wins_over_auto(qt_app, overrides_manager):
     w = ToonPortraitWidget(1)
-    w.set_overrides_manager(overrides_manager)
+    w.set_customizations_manager(overrides_manager)
     w.set_toon_name("Flossbud")
     w.set_cc_auto_species("DOG")
     overrides_manager.set("Flossbud", "cat")
@@ -92,7 +114,7 @@ def test_override_wins_over_auto(qt_app, overrides_manager):
 
 def test_auto_used_when_no_override(qt_app, overrides_manager):
     w = ToonPortraitWidget(1)
-    w.set_overrides_manager(overrides_manager)
+    w.set_customizations_manager(overrides_manager)
     w.set_toon_name("Soupy")
     w.set_cc_auto_species("MOUSE")
     assert w._resolve_asset_stem() == "mouse"
@@ -100,7 +122,7 @@ def test_auto_used_when_no_override(qt_app, overrides_manager):
 
 def test_returns_none_when_unmapped_and_no_override(qt_app, overrides_manager):
     w = ToonPortraitWidget(1)
-    w.set_overrides_manager(overrides_manager)
+    w.set_customizations_manager(overrides_manager)
     w.set_toon_name("Mystery")
     w.set_cc_auto_species(None)
     assert w._resolve_asset_stem() is None

@@ -12,8 +12,8 @@ from __future__ import annotations
 
 from typing import Optional
 
-from PySide6.QtCore import QRect, Qt
-from PySide6.QtGui import QColor, QFont, QPainter, QPixmap
+from PySide6.QtCore import QPointF, QRect, Qt
+from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPainterPath, QPixmap
 
 from utils import cc_race_assets
 
@@ -146,23 +146,90 @@ def paint_cc_badge(
     skin: QColor,
     asset_stem: Optional[str],
     slot_number: int,
+    *,
+    portrait_brush: Optional[QBrush] = None,
+    pattern: Optional[tuple[str, QColor]] = None,
+    circle_outline: Optional[tuple[QColor, int]] = None,
+    silhouette_outline_pixmap: Optional[QPixmap] = None,
+    silhouette_shadow_pixmap: Optional[QPixmap] = None,
+    silhouette_shadow_offset: tuple[int, int] = (0, 0),
 ) -> None:
-    """Paint a CC badge: complement bg circle, then either the race
-    silhouette in skin color or a slot-number fallback.
+    """Paint a CC badge: bg circle (skin-complement or override), optional
+    pattern overlay, then either the race silhouette in skin color or a
+    slot-number fallback, optional silhouette outline/shadow overlays, and
+    finally an optional circle outline on top.
 
-    Caller controls hover/pencil rendering separately (see pencil_rect_for).
+    `portrait_brush` overrides the bg fill. When None, fall back to the
+    historical complement-of-skin color.
+    `pattern` is an optional (name, color) tuple; when present, the
+    tinted pattern tile is tiled inside the inner circle, beneath the
+    silhouette.
+    `circle_outline` is an optional (QColor, width_px) tuple; when present,
+    a ring of that color and width is drawn last, on top of the silhouette
+    and pattern.
+    `silhouette_outline_pixmap` is an optional pre-built outline pixmap drawn
+    centered inside `inner`, after the silhouette/slot-number block.
+    `silhouette_shadow_pixmap` is an optional pre-built shadow pixmap drawn
+    centered inside `inner` with `silhouette_shadow_offset` applied.
+    `silhouette_shadow_offset` is a (dx, dy) pixel offset for the shadow.
     """
     painter.setRenderHint(QPainter.Antialiasing)
-    bg = complementary_bg_color(skin)
 
-    # Background circle
+    inner = rect.adjusted(2, 2, -2, -2)
+
+    bg_brush = portrait_brush if portrait_brush is not None else QBrush(
+        complementary_bg_color(skin)
+    )
     painter.setPen(Qt.NoPen)
-    painter.setBrush(bg)
-    painter.drawEllipse(rect)
+    painter.setBrush(bg_brush)
+    painter.drawEllipse(inner)
 
-    if asset_stem is not None and _paint_silhouette(painter, rect, skin, asset_stem):
-        return
+    if pattern is not None:
+        from utils.toon_pattern_assets import tinted_pattern_pixmap
+        name, color = pattern
+        pm = tinted_pattern_pixmap(name, color, tile_size=24)
+        if not pm.isNull():
+            path = QPainterPath()
+            path.addEllipse(inner)
+            painter.save()
+            painter.setClipPath(path)
+            for y in range(inner.top(), inner.bottom() + 1, 24):
+                for x in range(inner.left(), inner.right() + 1, 24):
+                    painter.drawPixmap(x, y, pm)
+            painter.restore()
 
-    # Fallback: slot number in white. Bg stays the complement so the badge
-    # still feels CC-mode-styled even without a silhouette.
-    _paint_slot_number(painter, rect, slot_number)
+    if asset_stem is not None and _paint_silhouette(painter, inner, skin, asset_stem):
+        pass  # silhouette painted
+    else:
+        _paint_slot_number(painter, inner, slot_number)
+
+    if silhouette_shadow_pixmap is not None and not silhouette_shadow_pixmap.isNull():
+        sx, sy = silhouette_shadow_offset
+        cx_inner = inner.center().x()
+        cy_inner = inner.center().y()
+        shadow_w = silhouette_shadow_pixmap.width()
+        shadow_h = silhouette_shadow_pixmap.height()
+        painter.drawPixmap(
+            cx_inner - shadow_w // 2 + sx,
+            cy_inner - shadow_h // 2 + sy,
+            silhouette_shadow_pixmap,
+        )
+    if silhouette_outline_pixmap is not None and not silhouette_outline_pixmap.isNull():
+        cx_inner = inner.center().x()
+        cy_inner = inner.center().y()
+        out_w = silhouette_outline_pixmap.width()
+        out_h = silhouette_outline_pixmap.height()
+        painter.drawPixmap(
+            cx_inner - out_w // 2,
+            cy_inner - out_h // 2,
+            silhouette_outline_pixmap,
+        )
+
+    # Circle outline (drawn last, on top of silhouette and pattern).
+    if circle_outline is not None:
+        from PySide6.QtGui import QPen
+        color, width = circle_outline
+        inset = max(0, width // 2)
+        painter.setPen(QPen(color, width))
+        painter.setBrush(Qt.NoBrush)
+        painter.drawEllipse(inner.adjusted(inset, inset, -inset, -inset))

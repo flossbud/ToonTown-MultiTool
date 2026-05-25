@@ -33,14 +33,14 @@ def make_chat_icon(size: int = 18) -> QIcon:
     return QIcon(pixmap)
 
 
-def make_refresh_icon(size: int = 14) -> QIcon:
+def make_refresh_icon(size: int = 14, color: QColor = None) -> QIcon:
     """Draw a circular refresh arrow using Qt primitives."""
     pixmap = QPixmap(size, size)
     pixmap.fill(QColor(0, 0, 0, 0))
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.Antialiasing)
 
-    pen_color = QColor(200, 200, 200)
+    pen_color = color or QColor(200, 200, 200)
     pen = QPen(pen_color, max(1.5, size / 10))
     pen.setCapStyle(Qt.RoundCap)
     painter.setPen(pen)
@@ -66,6 +66,81 @@ def make_refresh_icon(size: int = 14) -> QIcon:
     painter.setBrush(pen_color)
     painter.drawPath(path)
 
+    painter.end()
+    return QIcon(pixmap)
+
+
+def make_stop_icon(size: int = 14, color: QColor = None) -> QIcon:
+    """Draw a filled square stop icon."""
+    pixmap = QPixmap(size, size)
+    pixmap.fill(QColor(0, 0, 0, 0))
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing)
+
+    fill = color or QColor(220, 220, 220)
+    painter.setPen(Qt.NoPen)
+    painter.setBrush(fill)
+    # Centred square at ~70% of canvas.
+    inset = size * 0.18
+    painter.drawRect(QRectF(inset, inset, size - inset * 2, size - inset * 2))
+    painter.end()
+    return QIcon(pixmap)
+
+
+def make_play_icon(size: int = 14, color: QColor = None) -> QIcon:
+    """Draw a right-facing triangle play icon."""
+    pixmap = QPixmap(size, size)
+    pixmap.fill(QColor(0, 0, 0, 0))
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing)
+
+    fill = color or QColor(220, 220, 220)
+    painter.setPen(Qt.NoPen)
+    painter.setBrush(fill)
+
+    # Equilateral triangle pointing right, optical-centred (shifted ~1 px
+    # rightward to compensate for the visual weight bias of triangles).
+    inset = size * 0.22
+    path = QPainterPath()
+    path.moveTo(inset + size * 0.05, inset)
+    path.lineTo(inset + size * 0.05, size - inset)
+    path.lineTo(size - inset + size * 0.05, size / 2)
+    path.closeSubpath()
+    painter.drawPath(path)
+    painter.end()
+    return QIcon(pixmap)
+
+
+def make_save_icon(size: int = 14, color: QColor = None) -> QIcon:
+    """Draw a floppy-disk save icon (square body + notched top corner +
+    label rectangle)."""
+    pixmap = QPixmap(size, size)
+    pixmap.fill(QColor(0, 0, 0, 0))
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing)
+
+    fg = color or QColor(220, 220, 220)
+    pen = QPen(fg, max(1.0, size / 14))
+    pen.setJoinStyle(Qt.MiterJoin)
+    painter.setPen(pen)
+    painter.setBrush(Qt.NoBrush)
+
+    inset = size * 0.14
+    # Outer body with a small notch in the top-right corner.
+    notch = size * 0.20
+    body = QPainterPath()
+    body.moveTo(inset, inset)
+    body.lineTo(size - inset - notch, inset)
+    body.lineTo(size - inset, inset + notch)
+    body.lineTo(size - inset, size - inset)
+    body.lineTo(inset, size - inset)
+    body.closeSubpath()
+    painter.drawPath(body)
+
+    # Inner label rectangle (bottom half).
+    label_top = size * 0.55
+    label_inset = size * 0.28
+    painter.drawRect(QRectF(label_inset, label_top, size - label_inset * 2, size * 0.30))
     painter.end()
     return QIcon(pixmap)
 
@@ -99,6 +174,40 @@ def make_mouse_icon(size: int = 16) -> QIcon:
     painter.setBrush(line_color)
     painter.setPen(Qt.NoPen)
     painter.drawEllipse(QRectF(cx - wheel_w / 2, top + size * 0.16, wheel_w, wheel_h))
+
+    painter.end()
+    return QIcon(pixmap)
+
+
+def make_lightning_icon(size: int = 14, color: QColor | None = None) -> QIcon:
+    """Draw a stylised lightning bolt for the keep-alive toggle."""
+    pixmap = QPixmap(size, size)
+    pixmap.fill(QColor(0, 0, 0, 0))
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing)
+
+    fill = color or QColor(220, 220, 220)
+    painter.setPen(Qt.NoPen)
+    painter.setBrush(fill)
+
+    # Classic zigzag bolt traced through 6 points. Coordinates are in
+    # normalized 0..1 space and scaled to `size`; tuned so the bolt
+    # reads at 14 px (the default for the Multitoon icon buttons).
+    norm_points = [
+        (0.55, 0.05),
+        (0.20, 0.55),
+        (0.45, 0.55),
+        (0.35, 0.95),
+        (0.80, 0.40),
+        (0.55, 0.40),
+    ]
+    path = QPainterPath()
+    px, py = norm_points[0]
+    path.moveTo(px * size, py * size)
+    for nx, ny in norm_points[1:]:
+        path.lineTo(nx * size, ny * size)
+    path.closeSubpath()
+    painter.drawPath(path)
 
     painter.end()
     return QIcon(pixmap)

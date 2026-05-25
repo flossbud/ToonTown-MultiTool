@@ -14,7 +14,7 @@ from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPen, QPainterPath, Q
 from services.input_service import InputService
 from utils.theme_manager import (
     resolve_theme, get_theme_colors, apply_card_shadow,
-    make_chat_icon, make_refresh_icon, make_mouse_icon,
+    make_chat_icon, make_refresh_icon, make_lightning_icon,
     make_heart_icon, make_jellybean_icon,
     get_set_color, SmoothProgressBar, make_section_label,
 )
@@ -24,6 +24,7 @@ from utils.ttr_api import get_toon_names_by_slot, invalidate_port_to_wid_cache, 
 from utils import cc_api
 from utils.game_registry import GameRegistry
 from utils import logical_actions
+from utils.toon_customizations_manager import ToonCustomizationsManager
 from tabs.multitoon._keep_alive_help_button import KeepAliveHelpButton
 
 
@@ -75,11 +76,6 @@ class ToonPortraitWidget(QWidget):
     """Slot badge: shows a rendered toon portrait when available, otherwise
     falls back to a colored circle with the slot number."""
 
-    RENDITION_URL = "https://rendition.toontownrewritten.com/render/{dna}/portrait/128x128.png"
-
-    # Emitted from a worker thread with (dna, QImage_or_None). QImage decoding is
-    # safe off the GUI thread; QPixmap creation stays on the GUI thread.
-    _image_ready = Signal(str, object)
     clicked = Signal()
     edit_icon_requested = Signal()
 
@@ -90,24 +86,27 @@ class ToonPortraitWidget(QWidget):
         self._text    = QColor("#ffffff")
         self._border_color = None
         self._pixmap  = None
+        self._silhouette_cache: dict[tuple, tuple] = {}
         self._loading = False
         self._dna     = None
-        self._fetch_token = 0
-        self._cancelled = False
+        self._pose: str = "portrait"
         self._cc_mode = False
         self._cc_skin: QColor | None = None
         self._cc_accent: QColor | None = None
         self._cc_gloves: QColor | None = None
         self._cc_emoji: str = ""
-        self._overrides_manager = None         # CCRaceOverridesManager
+        self._customizations = None            # ToonCustomizationsManager
         self._toon_name: str | None = None
+        self._game: str | None = None
         self._cc_auto_species: str | None = None
         self._hovered = False
         self._press_consumed_by_pencil = False
         self.setMinimumSize(38, 38)
         self.setMaximumSize(64, 64)
         self.setCursor(Qt.PointingHandCursor)
-        self._image_ready.connect(self._on_image_ready)
+        from utils.rendition_poses import RenditionPoseFetcher
+        self._fetcher = RenditionPoseFetcher.instance()
+        self._fetcher.pose_ready.connect(self._on_pose_ready)
         self.setMouseTracking(True)
 
     def mousePressEvent(self, event):
@@ -152,22 +151,57 @@ class ToonPortraitWidget(QWidget):
         self.update()
 
     def set_dna(self, dna):
-        """Load portrait from Rendition. Pass None to revert to fallback circle."""
-        if dna == self._dna and not self._cancelled:
-            if not dna or self._loading or self._pixmap is not None:
-                return
-        self._fetch_token += 1
-        self._cancelled = False
-        self._dna = dna
+        """Load portrait from Rendition via the shared fetcher. Pass None
+        to revert to the fallback circle."""
         if not dna:
-            self._pixmap  = None
+            # Always clear when explicitly told to (even if dna was
+            # already None) so callers can use set_dna(None) to reset
+            # a stale pixmap left behind from a prior fetch.
+            self._dna = None
+            self._pixmap = None
             self._loading = False
             self.update()
             return
+        if dna == self._dna:
+            return
+        self._dna = dna
+        # Pick pose from the customizations manager if available.
+        self._pose = self._resolve_pose_from_manager()
         self._loading = True
         self.update()
-        token = self._fetch_token
-        threading.Thread(target=self._fetch, args=(dna, token), daemon=True).start()
+        self._fetcher.request(dna, self._pose)
+
+    def _resolve_pose_from_manager(self) -> str:
+        from utils.toon_customization_resolve import resolve_pose
+        if self._customizations is None or not self._toon_name or self._game not in ("cc", "ttr"):
+            return "portrait"
+        entry = self._customizations.get(self._game, self._toon_name)
+        return resolve_pose(entry, "portrait")
+
+    def set_pose(self, pose: str) -> None:
+        """Switch the rendered pose. Triggers a refetch through the
+        shared fetcher. Called by _tab.py after a customization Save."""
+        if pose == self._pose:
+            return
+        self._pose = pose
+        if self._dna:
+            self._pixmap = None
+            self._loading = True
+            self.update()
+            self._fetcher.request(self._dna, pose)
+
+    def _on_pose_ready(self, dna: str, pose: str, pixmap) -> None:
+        """Receives QPixmap or None from the shared fetcher on the GUI
+        thread. Filter by the widget's CURRENT (dna, pose) - stale
+        results from prior fetches must be ignored."""
+        if dna != self._dna or pose != self._pose:
+            return
+        self._loading = False
+        if pixmap is not None and not pixmap.isNull():
+            self._pixmap = pixmap
+        else:
+            self._pixmap = None
+        self.update()
 
     def set_cc_mode(self, skin_rgb, accent_rgb, gloves_rgb, emoji):
         """Enable CC paint mode for this badge.
@@ -196,15 +230,62 @@ class ToonPortraitWidget(QWidget):
         self._cc_emoji = emoji
         self.update()
 
-    def set_overrides_manager(self, manager) -> None:
-        """Inject the CCRaceOverridesManager. Call once after construction."""
-        self._overrides_manager = manager
+    def set_customizations_manager(self, manager) -> None:
+        """Inject the ToonCustomizationsManager. Call once after construction."""
+        self._customizations = manager
+
+    def set_game(self, game: str | None) -> None:
+        """Set the game tag ('cc', 'ttr', or None). Triggers a repaint
+        and re-resolves the pose against the manager if a DNA + name
+        are already known (same race fix as `set_toon_name`)."""
+        if self._game == game:
+            return
+        self._game = game
+        self.update()
+        if self._dna and self._toon_name and game in ("cc", "ttr"):
+            new_pose = self._resolve_pose_from_manager()
+            if new_pose != self._pose:
+                self.set_pose(new_pose)
+
+    @property
+    def game(self) -> str | None:
+        return self._game
+
+    def current_portrait_brush(self):
+        """Test hook: returns the QBrush the next paintEvent will use for
+        the portrait circle."""
+        from utils.toon_customization_resolve import resolve_portrait_brush
+        entry = {}
+        if self._customizations is not None and self._toon_name and self._game:
+            entry = self._customizations.get(self._game, self._toon_name)
+        return resolve_portrait_brush(entry, self._bg)
+
+    def current_portrait_transform(self):
+        """Test hook: returns the (zoom, off_x, off_y, rotate) tuple
+        the next paintEvent will apply to the pose pixmap."""
+        from utils.toon_customization_resolve import resolve_portrait_transform
+        entry = {}
+        if self._customizations is not None and self._toon_name and self._game:
+            entry = self._customizations.get(self._game, self._toon_name)
+        return resolve_portrait_transform(entry)
 
     def set_toon_name(self, name: str | None) -> None:
-        """Set the toon name used as the override key. Triggers a repaint."""
-        if self._toon_name != name:
-            self._toon_name = name
-            self.update()
+        """Set the toon name used as the override key. Triggers a repaint.
+
+        If a DNA is already known, re-resolve the pose against the
+        customizations manager - on initial load `set_dna` runs before
+        `set_toon_name` (see `_apply_merged_toon_data`), so the first
+        fetch always asks for the default "portrait". Once the name
+        lands here we re-check the manager and refetch the saved pose
+        if it differs."""
+        if self._toon_name == name:
+            return
+        self._toon_name = name
+        self.update()
+        if self._dna and name:
+            new_pose = self._resolve_pose_from_manager()
+            if new_pose != self._pose:
+                self.set_pose(new_pose)
 
     def set_cc_auto_species(self, species_name: str | None) -> None:
         """Set the auto-detected CC species name (e.g. 'DOG'). Triggers a repaint."""
@@ -224,12 +305,57 @@ class ToonPortraitWidget(QWidget):
     def cc_skin(self):
         return self._cc_skin
 
+    def _get_silhouette_bundle(self, pose_pm, scaled_size, entry):
+        from utils.toon_customization_resolve import (
+            resolve_silhouette_outline, resolve_silhouette_shadow,
+        )
+        import utils.portrait_effects as portrait_effects
+        outline = resolve_silhouette_outline(entry)
+        shadow = resolve_silhouette_shadow(entry)
+        if outline is None and shadow is None:
+            return (None, None, 0, 0)
+        ocol_name = outline[0].name() if outline else None
+        owidth = outline[1] if outline else 0
+        scol_name = shadow[0].name() if shadow else None
+        sblur = shadow[1] if shadow else 0
+        soff_x = shadow[2] if shadow else 0
+        soff_y = shadow[3] if shadow else 0
+        key = (
+            id(pose_pm),
+            (scaled_size.width(), scaled_size.height()),
+            ocol_name, owidth,
+            scol_name, sblur,
+        )
+        cached = self._silhouette_cache.get(key)
+        if cached is not None:
+            o_pm, s_pm = cached
+            return (o_pm, s_pm, soff_x, soff_y)
+        scaled = pose_pm.scaled(
+            scaled_size, Qt.KeepAspectRatio, Qt.SmoothTransformation,
+        )
+        outline_pm = None
+        shadow_pm = None
+        if outline is not None:
+            outline_pm = portrait_effects.build_silhouette_outline_pixmap(
+                scaled, outline[0], owidth,
+            )
+        if shadow is not None:
+            shadow_pm = portrait_effects.build_silhouette_shadow_pixmap(
+                scaled, shadow[0], sblur,
+            )
+        if len(self._silhouette_cache) >= 4:
+            oldest = next(iter(self._silhouette_cache))
+            self._silhouette_cache.pop(oldest)
+        self._silhouette_cache[key] = (outline_pm, shadow_pm)
+        return (outline_pm, shadow_pm, soff_x, soff_y)
+
     def _resolve_asset_stem(self) -> str | None:
         """Resolve which asset stem to render: manual override > auto > None."""
         from utils import cc_race_assets
-        if self._overrides_manager is not None and self._toon_name:
-            override = self._overrides_manager.get(self._toon_name)
-            if override:
+        if self._customizations is not None and self._toon_name:
+            entry = self._customizations.get("cc", self._toon_name)
+            override = entry.get("icon_stem")
+            if isinstance(override, str):
                 return override
         return cc_race_assets.asset_stem_for_species(self._cc_auto_species)
 
@@ -252,11 +378,6 @@ class ToonPortraitWidget(QWidget):
         y = rect.y() + (rect.height() - icon_size) // 2
         painter.drawPixmap(x, y, pm)
 
-    def cancel(self):
-        self._cancelled = True
-        self._fetch_token += 1
-        self._loading = False
-
     def enterEvent(self, event):
         self._hovered = True
         if self._can_show_pencil():
@@ -270,109 +391,176 @@ class ToonPortraitWidget(QWidget):
         super().leaveEvent(event)
 
     def _can_show_pencil(self) -> bool:
-        return bool(self._cc_mode and self._toon_name)
-
-    def _fetch(self, dna: str, token: int):
-        """Background thread — fetch and decode the portrait off the GUI thread."""
-        try:
-            import urllib.request
-            url = self.RENDITION_URL.format(dna=dna)
-            req = urllib.request.Request(url, headers={"User-Agent": "ToonTown MultiTool"})
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                data = resp.read()
-            if not self._cancelled:
-                image = QImage()
-                self._image_ready.emit(
-                    f"{dna}|{token}",
-                    image if image.loadFromData(data) else None,
-                )
-        except Exception as e:
-            print(f"[Portrait] Slot {self._slot}: fetch error — {e}")
-            if not self._cancelled:
-                self._image_ready.emit(f"{dna}|{token}", None)
-
-    @Slot(str, object)
-    def _on_image_ready(self, payload: str, image):
-        """Main thread — QPixmap must be constructed on the GUI thread."""
-        if "|" not in payload:
-            return
-        dna, token_str = payload.rsplit("|", 1)
-        try:
-            token = int(token_str)
-        except ValueError:
-            return
-        if self._cancelled or token != self._fetch_token:
-            return
-        if dna != self._dna:
-            return
-        self._loading = False
-        if isinstance(image, QImage) and not image.isNull():
-            pm = QPixmap.fromImage(image)
-            if not pm.isNull():
-                self._pixmap = pm
-                print(f"[Portrait] Slot {self._slot}: loaded OK")
-            else:
-                self._pixmap = None
-        else:
-            self._pixmap = None
-        self.update()
+        return bool(self._toon_name) and self._game in ("cc", "ttr")
 
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
+        p.setRenderHint(QPainter.SmoothPixmapTransform)
         p.setPen(Qt.NoPen)
         rect = self.rect()
         size = min(rect.width(), rect.height())
 
         if self._cc_mode and self._cc_skin is not None:
-            from utils.cc_badge_paint import paint_cc_badge, pencil_rect_for
+            from utils.cc_badge_paint import paint_cc_badge
+            from utils.toon_customization_resolve import (
+                resolve_portrait_brush, resolve_portrait_pattern,
+            )
             stem = self._resolve_asset_stem()
+            entry = {}
+            if self._customizations is not None and self._toon_name:
+                entry = self._customizations.get("cc", self._toon_name)
+            # CC fallback brush is the historic complement of skin color,
+            # so we pass None and let paint_cc_badge derive it.
+            brush = None
+            portrait = entry.get("portrait") if isinstance(entry, dict) else None
+            if isinstance(portrait, dict) and (portrait.get("color") or portrait.get("gradient")):
+                brush = resolve_portrait_brush(entry, self._cc_skin)
+            from utils.toon_customization_resolve import resolve_circle_outline
+            circle_outline = resolve_circle_outline(entry)
+            silhouette_outline_pm = None
+            silhouette_shadow_pm = None
+            silhouette_shadow_off = (0, 0)
+            if self._pixmap and not self._pixmap.isNull():
+                from PySide6.QtCore import QSize
+                bg_rect = rect.adjusted(2, 2, -2, -2)
+                target = min(bg_rect.width(), bg_rect.height())
+                outline_pm, shadow_pm, sx, sy = self._get_silhouette_bundle(
+                    self._pixmap, QSize(target, target), entry,
+                )
+                silhouette_outline_pm = outline_pm
+                silhouette_shadow_pm = shadow_pm
+                silhouette_shadow_off = (sx, sy)
             paint_cc_badge(
-                p, rect, self._cc_skin, stem, self._slot
+                p, rect, self._cc_skin, stem, self._slot,
+                portrait_brush=brush,
+                pattern=resolve_portrait_pattern(entry),
+                circle_outline=circle_outline,
+                silhouette_outline_pixmap=silhouette_outline_pm,
+                silhouette_shadow_pixmap=silhouette_shadow_pm,
+                silhouette_shadow_offset=silhouette_shadow_off,
             )
-            if self._hovered and self._can_show_pencil():
-                self._paint_pencil_overlay(p, pencil_rect_for(rect))
-            p.end()
-            return
-
-        # Restore pen/brush state for non-CC paint path
-        p.setPen(Qt.NoPen)
-        cx = self.width() / 2.0
-        cy = self.height() / 2.0
-        r  = min(cx, cy) - 2.0  # leave room for a 2px border
-
-        # Always draw colored circle background first
-        if self._border_color:
-            p.setPen(QPen(self._border_color, 2.0))
+            # Pencil overlay is drawn once at the end of paintEvent so it
+            # appears for both CC and TTR badges.
         else:
+            # Non-CC paint path (TTR / unknown game).
+            # Restore pen/brush state for non-CC paint path
             p.setPen(Qt.NoPen)
-        p.setBrush(self._bg)
-        p.drawEllipse(QPointF(cx, cy), r, r)
+            cx = self.width() / 2.0
+            cy = self.height() / 2.0
+            r  = min(cx, cy) - 2.0  # leave room for a 2px border
 
-        if self._pixmap and not self._pixmap.isNull():
-            path = QPainterPath()
-            path.addEllipse(QPointF(cx, cy), r, r)
-            p.setClipPath(path)
-            target = max(1, int(r * 2))
-            pm = self._pixmap.scaled(
-                target, target, Qt.KeepAspectRatio, Qt.SmoothTransformation
-            )
-            ph, pw = pm.height(), pm.width()
-            p.drawPixmap(int(cx - pw / 2), int(cy - ph / 2), pm)
-            p.setClipping(False)
-        else:
-            font = QFont()
-            font.setPixelSize(14)
-            font.setBold(True)
-            if self._loading:
-                p.setPen(QColor(180, 180, 180))
-                font.setPixelSize(12)
-                p.setFont(font)
-                p.drawText(self.rect(), Qt.AlignCenter, "…")
+            # Always draw colored circle background first
+            if self._border_color:
+                p.setPen(QPen(self._border_color, 2.0))
             else:
-                p.setFont(font)
-                p.setPen(self._text)
-                p.drawText(self.rect(), Qt.AlignCenter, str(self._slot))
+                p.setPen(Qt.NoPen)
+            entry = {}
+            if self._customizations is not None and self._toon_name and self._game:
+                entry = self._customizations.get(self._game, self._toon_name)
+            from utils.toon_customization_resolve import (
+                resolve_portrait_brush, resolve_portrait_pattern,
+            )
+            p.setBrush(resolve_portrait_brush(entry, self._bg))
+            p.drawEllipse(QPointF(cx, cy), r, r)
+
+            pattern = resolve_portrait_pattern(entry)
+            if pattern is not None:
+                from utils.toon_pattern_assets import tinted_pattern_pixmap
+                name, color = pattern
+                pm = tinted_pattern_pixmap(name, color, tile_size=24)
+                if not pm.isNull():
+                    path = QPainterPath()
+                    path.addEllipse(QPointF(cx, cy), r, r)
+                    p.save()
+                    p.setClipPath(path)
+                    d = int(r * 2)
+                    top = int(cy - r)
+                    left = int(cx - r)
+                    for y in range(top, top + d + 1, 24):
+                        for x in range(left, left + d + 1, 24):
+                            p.drawPixmap(x, y, pm)
+                    p.restore()
+
+            if self._pixmap and not self._pixmap.isNull():
+                from utils.toon_customization_resolve import resolve_portrait_transform
+                zoom, off_x, off_y, rot = resolve_portrait_transform(entry)
+                circle_w = int(r * 2)
+                ox = int(off_x * circle_w)
+                oy = int(off_y * circle_w)
+                path = QPainterPath()
+                path.addEllipse(QPointF(cx, cy), r, r)
+                p.save()
+                p.setClipPath(path)
+                p.translate(cx, cy)
+                p.rotate(rot)
+                # Offset is in unzoomed circle-fractions; scale by zoom so the
+                # pan-while-zoomed behavior matches the pre-refactor painter.scale path.
+                p.translate(ox * zoom, oy * zoom)
+                # Bake zoom into the downscale so the 512 source resamples once
+                # to its final visible size (no two-stage scale-then-zoom).
+                target = max(1, round(circle_w * zoom))
+                scaled = self._pixmap.scaled(
+                    target, target, Qt.KeepAspectRatio, Qt.SmoothTransformation,
+                )
+                from PySide6.QtCore import QSize
+                outline_pm, shadow_pm, sx, sy = self._get_silhouette_bundle(
+                    self._pixmap, QSize(target, target), entry,
+                )
+                if shadow_pm is not None and not shadow_pm.isNull():
+                    pad_x = (shadow_pm.width() - scaled.width()) // 2
+                    pad_y = (shadow_pm.height() - scaled.height()) // 2
+                    p.drawPixmap(
+                        int(-scaled.width() / 2) - pad_x + sx,
+                        int(-scaled.height() / 2) - pad_y + sy,
+                        shadow_pm,
+                    )
+                if outline_pm is not None and not outline_pm.isNull():
+                    p.drawPixmap(
+                        int(-scaled.width() / 2),
+                        int(-scaled.height() / 2),
+                        outline_pm,
+                    )
+                p.drawPixmap(
+                    int(-scaled.width() / 2),
+                    int(-scaled.height() / 2),
+                    scaled,
+                )
+                p.restore()
+            else:
+                font = QFont()
+                font.setPixelSize(14)
+                font.setBold(True)
+                if self._loading:
+                    p.setPen(QColor(180, 180, 180))
+                    font.setPixelSize(12)
+                    p.setFont(font)
+                    p.drawText(self.rect(), Qt.AlignCenter, "…")
+                else:
+                    p.setFont(font)
+                    p.setPen(self._text)
+                    p.drawText(self.rect(), Qt.AlignCenter, str(self._slot))
+
+            # Circle outline (drawn on top of pose, outside the clip).
+            from utils.toon_customization_resolve import resolve_circle_outline
+            outline = resolve_circle_outline(entry)
+            if outline is not None:
+                color, width = outline
+                inset = max(0, width / 2.0)
+                p.setPen(QPen(color, width))
+                p.setBrush(Qt.NoBrush)
+                p.drawEllipse(
+                    QPointF(cx, cy),
+                    r - inset,
+                    r - inset,
+                )
+
+        # Unified pencil overlay: paints in any mode where _can_show_pencil
+        # is True (TTR + CC + future games).
+        if self._hovered and self._can_show_pencil():
+            from utils.cc_badge_paint import pencil_rect_for
+            self._paint_pencil_overlay(p, pencil_rect_for(rect))
+
         p.end()
 
 class StatusDots(QWidget):
@@ -386,6 +574,11 @@ class StatusDots(QWidget):
         self.setFixedSize(66, 16)
         self._states = [0, 0, 0, 0]
         self._colors = {0: QColor("#333"), 1: QColor("#555"), 2: QColor("#56c856")}
+        # When set to 0/1/2, dots painted in that state get a soft white
+        # halo (matches the mockup's `box-shadow: 0 0 6px ...` on
+        # `.status-dot.active` inside the broadcasting bar). None means
+        # no halo on any dot (the default for the Idle palette).
+        self._glow_state: int | None = None
 
     def set_states(self, states: list):
         self._states = (states or [0, 0, 0, 0])[:4]
@@ -393,11 +586,15 @@ class StatusDots(QWidget):
             self._states.append(0)
         self.update()
 
-    def set_colors(self, off: str, found: str, active: str):
+    def set_colors(self, off: str, found: str, active: str, glow_state: int | None = None):
+        """`glow_state` selects which dot state (0=off, 1=found, 2=active)
+        gets the soft halo. None disables the halo entirely."""
         self._colors = {0: QColor(off), 1: QColor(found), 2: QColor(active)}
+        self._glow_state = glow_state
         self.update()
 
     def paintEvent(self, event):
+        from PySide6.QtGui import QRadialGradient
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         p.setPen(Qt.NoPen)
@@ -406,42 +603,28 @@ class StatusDots(QWidget):
         total_w = diameter * 4 + gap * 3
         x0 = (self.width() - total_w) / 2.0
         y = (self.height() - diameter) / 2.0
+        r = diameter / 2.0
         for i in range(4):
             x = x0 + i * (diameter + gap)
-            p.setBrush(self._colors.get(self._states[i], self._colors[0]))
+            cx = x + r
+            cy = y + r
+            state = self._states[i]
+            # Soft halo behind any dot whose state matches glow_state.
+            # Matches the mockup's `box-shadow: 0 0 6px rgba(255,255,255,0.6)`
+            # on `.status-dot.active`.
+            if self._glow_state is not None and state == self._glow_state:
+                halo_r = r + 4
+                grad = QRadialGradient(cx, cy, halo_r)
+                halo = QColor(255, 255, 255, 153)  # ~60% white at centre
+                grad.setColorAt(0.0, halo)
+                halo_edge = QColor(255, 255, 255, 0)
+                grad.setColorAt(1.0, halo_edge)
+                p.setBrush(grad)
+                p.drawEllipse(QRectF(cx - halo_r, cy - halo_r, halo_r * 2, halo_r * 2))
+            # Core dot.
+            p.setBrush(self._colors.get(state, self._colors[0]))
             p.drawEllipse(QRectF(x, y, diameter, diameter))
         p.end()
-
-
-class StatusBar(QFrame):
-    """Service status bar with slot dots and status text."""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setObjectName("ServiceStatusBar")
-        self.setFixedHeight(34)
-        lay = QHBoxLayout(self)
-        lay.setContentsMargins(12, 8, 12, 8)
-        lay.setSpacing(8)
-        self.dots = StatusDots(self)
-        lay.addWidget(self.dots)
-        self.label = QLabel("Service idle")
-        self.label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
-        lay.addWidget(self.label, 1)
-
-    def set_dot_states(self, states: list):
-        self.dots.set_states(states)
-
-    def set_dot_colors(self, off: str, found: str, active: str):
-        self.dots.set_colors(off, found, active)
-
-    def set_status_text(self, text: str):
-        self.label.setText(text)
-
-    def set_text_color(self, color: str):
-        self.label.setStyleSheet(
-            f"font-size: 13px; font-weight: 500; color: {color}; background: transparent; border: none;"
-        )
 
 
 class KeepAliveBtn(QPushButton):
@@ -902,12 +1085,14 @@ class MultitoonTab(QWidget):
         self.keymap_manager = keymap_manager
         self.profile_manager = profile_manager
         self.window_manager = window_manager
-        self.service_running = False
+        # Service implicitly on per the Direction D redesign - the new
+        # ServiceStatusBar's play/stop button is the only explicit
+        # toggle. Idle state (grey bar) is shown when service is on but
+        # no toons are enabled.
+        self.service_running = True
         self.toon_labels = []       # list of (name_label, status_dot)
         self.laff_labels = []       # list of QLabels showing laff
         self.bean_labels = []       # list of QLabels showing beans
-        from utils.cc_race_overrides_manager import CCRaceOverridesManager
-        self.cc_overrides = CCRaceOverridesManager()
         self.slot_badges = []       # list of QLabel badges
         self.game_badges = []       # list of QLabel game badges
         self.toon_buttons = []
@@ -935,6 +1120,7 @@ class MultitoonTab(QWidget):
         self._toon_fetch_inflight_keys = set()
         self._active_profile  = -1  # no profile active initially
         self._last_window_ids = []
+        self.customizations = ToonCustomizationsManager()
 
         self._keep_alive_running = False
         self._keep_alive_thread = None
@@ -1002,23 +1188,51 @@ class MultitoonTab(QWidget):
         self.refresh_theme()
         self.apply_all_visual_states()
 
+        # Auto-start the service per the Direction D implicit-on design.
+        # Mirror the legacy toggle_service() path so launch behaves the
+        # same as Stop+Play: enable detection, then call
+        # _start_service_internal which both starts the input service
+        # AND auto-enables any toons whose windows are already detected.
+        # Without the auto-enable, launch ends up with detected-but-
+        # not-enabled toons (stripes muted) while Stop+Play ends up with
+        # detected-AND-enabled toons (stripes full) - confusing
+        # inconsistency.
+        self.input_service.window_manager.enable_detection()
+        self._start_service_internal()
+        self.update_service_button_style()
+
     # ── UI Construction ────────────────────────────────────────────────────
 
     def _build_shared_widgets(self):
         """Construct every per-slot widget once. Both Compact and Full layouts
         consume the resulting dict-of-lists so widget state survives a layout swap."""
-        # Service controls
+        # Service status bar - 3-state (broadcasting/idle/stopped) with
+        # inline stop/play and refresh. Replaces the legacy
+        # toggle_service_button + StatusBar + section_divider trio.
+        from tabs.multitoon._service_status_bar import ServiceStatusBar
+        self.service_status_bar = ServiceStatusBar()
+        self.service_status_bar.stop_requested.connect(self._on_service_stop_requested)
+        self.service_status_bar.play_requested.connect(self._on_service_play_requested)
+        self.service_status_bar.refresh_requested.connect(self._on_refresh_requested)
+
+        # Compatibility alias for the WHOLE bar widget - shared between
+        # Compact and Full layouts (Full uses it as its status display).
+        # Qt reparents the bar as a unit so this is safe.
+        self.status_bar = self.service_status_bar
+
+        # Full-UI-only service toggle and refresh. Compact uses the
+        # ServiceStatusBar's internal stop/play + refresh instead. These
+        # are kept as independent widgets so Full can addWidget them
+        # without stealing children from the bar.
         self.toggle_service_button = QPushButton(f"{S(chr(9654), chr(9654))} Start Service")
         self.toggle_service_button.setCheckable(True)
         self.toggle_service_button.clicked.connect(self.toggle_service)
         self.toggle_service_button.setFixedHeight(48)
 
-        self.status_bar = StatusBar()
-
-        self._section_divider = QFrame()
-        self._section_divider.setFixedHeight(2)
-        self._section_divider.setMaximumWidth(320)
-        self._section_divider.setObjectName("section_divider")
+        self.refresh_button = QPushButton()
+        self.refresh_button.setIcon(make_refresh_icon(14))
+        self.refresh_button.setFixedSize(26, 26)
+        self.refresh_button.clicked.connect(self.manual_refresh)
 
         # Toon config row widgets
         self.config_label = QLabel("TOON CONFIGURATION")
@@ -1029,32 +1243,41 @@ class MultitoonTab(QWidget):
             pill.clicked.connect(lambda checked, idx=i: self.load_profile(idx))
             self.profile_pills.append(pill)
 
+        # Profile save button - chrome only for now (behaviour pending the
+        # save-mechanics decision in the spec's "Deferred decisions"
+        # section). Sized to match the profile pill height for visual
+        # consistency.
+        from utils.icon_factory import make_save_icon
+        from PySide6.QtCore import QSize
+        self.profile_save_button = QPushButton()
+        self.profile_save_button.setIcon(make_save_icon(14))
+        self.profile_save_button.setIconSize(QSize(14, 14))
+        self.profile_save_button.setFixedSize(28, 28)
+        self.profile_save_button.setObjectName("profile_save_button")
+        self.profile_save_button.setToolTip("Save profile (behavior pending)")
+        self.profile_save_button.clicked.connect(self._on_profile_save_clicked)
+
         # Profile-row label — sits just before the round 1-5 pills so the
         # affordance reads as "profile presets" rather than unattributed
         # numeric chips. Reused across compact and full layouts.
         self.profile_pills_label = QLabel("PROFILE")
         self.profile_pills_label.setObjectName("profile_pills_label")
 
-        self.refresh_button = QPushButton()
-        self.refresh_button.setIcon(make_refresh_icon(14))
-        self.refresh_button.setFixedSize(26, 26)
-        self.refresh_button.setToolTip("Refresh toon windows and configuration")
-        self.refresh_button.clicked.connect(self.manual_refresh)
-
         # Per-slot widgets
         for i in range(4):
             badge = ToonPortraitWidget(i + 1)
-            badge.set_overrides_manager(self.cc_overrides)
             badge.clicked.connect(lambda idx=i: self._on_portrait_clicked(idx))
-            badge.edit_icon_requested.connect(
-                lambda idx=i: self._open_race_picker(idx)
-            )
             self.slot_badges.append(badge)
+            badge.set_customizations_manager(self.customizations)
+            badge.set_game(None)
+            badge.edit_icon_requested.connect(
+                lambda idx=i: self._open_customization_dialog(idx)
+            )
 
             cc_subtitle = QLabel("")
             cc_subtitle.setObjectName("cc_compact_subtitle")
             cc_subtitle.setStyleSheet(
-                "color: #9a9aa8; font-size: 10px; font-style: italic; "
+                "color: #9a9aa8; font-size: 14px; font-style: normal; "
                 "background: transparent; border: none;"
             )
             cc_subtitle.hide()
@@ -1100,7 +1323,7 @@ class MultitoonTab(QWidget):
             ka_btn.setChecked(False)
             ka_btn.setFixedHeight(32)
             ka_btn.setFixedWidth(32)
-            ka_btn.setIcon(make_mouse_icon(14))
+            ka_btn.setIcon(make_lightning_icon(14))
             ka_btn.setToolTip("Toggle keep-alive for this toon")
             ka_btn.clicked.connect(lambda checked, idx=i: self.toggle_keep_alive(idx))
             ka_btn.rapid_fire_toggled.connect(lambda state, idx=i: self.toggle_rapid_fire(idx, state))
@@ -1418,6 +1641,13 @@ class MultitoonTab(QWidget):
                     }}
                 """)
 
+    def _on_profile_save_clicked(self) -> None:
+        """Stub - profile save behaviour is deferred (see spec
+        2026-05-24-multitoon-tab-compact-redesign-design.md "Deferred
+        decisions"). Logs and no-ops for now."""
+        if self.logger:
+            self.logger.log("[multitoon] profile save clicked (no-op stub)")
+
     def _rebuild_set_selectors(self):
         """Refresh selectors when keymap sets change."""
         if not self.keymap_manager:
@@ -1441,21 +1671,6 @@ class MultitoonTab(QWidget):
         c = self._c()
         is_dark = resolve_theme(self.settings_manager) == "dark"
 
-        self.outer_card.setStyleSheet("QFrame { background: transparent; border: none; }")
-        if is_dark:
-            # Etched look: darker groove on top, lighter highlight below
-            self._section_divider.setStyleSheet(
-                "border: none; border-radius: 2px; "
-                "background: qlineargradient(x1:0,y1:0,x2:0,y2:1, "
-                "stop:0 #333333, stop:0.49 #333333, stop:0.51 #555555, stop:1 #555555);"
-            )
-        else:
-            self._section_divider.setStyleSheet(
-                "border: none; border-radius: 2px; "
-                "background: qlineargradient(x1:0,y1:0,x2:0,y2:1, "
-                "stop:0 #c0c0c0, stop:0.49 #c0c0c0, stop:0.51 #ffffff, stop:1 #ffffff);"
-            )
-
         self.config_label.setStyleSheet(
             f"font-size: 10px; font-weight: 600; color: {c['text_muted']}; "
             f"background: transparent; border: none; letter-spacing: 0.8px; margin-top: 4px;"
@@ -1472,28 +1687,10 @@ class MultitoonTab(QWidget):
                 f"font-style: italic; background: transparent; border: none;"
             )
         self._update_pill_styles()
-        self.refresh_button.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {c['btn_bg']};
-                color: {c['text_secondary']};
-                border: 1px solid {c['btn_border']};
-                border-radius: 6px;
-                font-size: 14px;
-            }}
-            QPushButton:hover {{
-                background-color: {c['toon_btn_inactive_hover']};
-                border: 1px solid {c['accent_blue']};
-            }}
-        """)
 
-        self.status_bar.set_dot_colors(c['segment_off'], c['segment_found'], c['segment_active'])
-        self.status_bar.setStyleSheet(f"""
-            QFrame#ServiceStatusBar {{
-                background-color: {c['bg_card_inner']};
-                border-radius: 8px;
-                border: 1px solid {c['border_muted']};
-            }}
-        """)
+        # ServiceStatusBar manages its own per-state QSS + dot palette;
+        # we just hand it the current theme.
+        self.status_bar.apply_theme(c)
         self.update_service_button_style()
 
         if is_dark:
@@ -1514,12 +1711,20 @@ class MultitoonTab(QWidget):
                 }}
             """)
             name_label, status_dot = self.toon_labels[i]
+            # Direction D compact header: 21 px bold name, 14 px medium stats.
+            # px units match the setPixelSize() calls in _compact_layout.py so
+            # refresh_theme does not override those QFont objects with a
+            # pt-based font (Qt resolves pt and px font-size stylesheet rules
+            # into different QFont states; using px here keeps pixelSize()
+            # queryable in tests).
             name_label.setStyleSheet(
-                f"font-size: 14px; font-weight: bold; color: {c['text_primary']}; background: none; border: none;"
+                f"font-size: 21px; font-weight: bold; color: {c['text_primary']}; "
+                f"background: none; border: none; padding-left: 6px;"
             )
             stat_style = (
-                f"border: none; background: transparent; font-weight: bold; "
-                f"font-size: 13px; color: {c['text_primary']};"
+                f"border: none; background: transparent; font-weight: 500; "
+                f"font-size: 14px; color: {c['text_primary']}; "
+                f"padding: 0; min-height: 0;"
             )
             self.laff_labels[i].setStyleSheet(stat_style)
             self.bean_labels[i].setStyleSheet(stat_style)
@@ -1593,16 +1798,14 @@ class MultitoonTab(QWidget):
 
         if window_available:
             game_tag = GameRegistry.instance().get_game_for_window(str(wids[index]))
-            if game_tag == "cc":
-                self.game_badges[index].setText("CC")
-                self.game_badges[index].setStyleSheet(f"background-color: #F26D21; color: white; border-radius: 4px; padding: 2px 6px; font-weight: bold; font-size: 10px; border: 1px solid {c['border_muted']};")
-                self.game_badges[index].show()
-            elif game_tag == "ttr":
-                self.game_badges[index].setText("TTR")
-                self.game_badges[index].setStyleSheet(f"background-color: #4A8FE7; color: white; border-radius: 4px; padding: 2px 6px; font-weight: bold; font-size: 10px; border: 1px solid {c['border_muted']};")
-                self.game_badges[index].show()
+            self._apply_chip_for_slot(index, game_tag)
+            if game_tag in ("cc", "ttr"):
+                self._set_card_brand_for_slot(
+                    index, game_tag,
+                    enabled=self.enabled_toons[index] and self.service_running,
+                )
             else:
-                self.game_badges[index].hide()
+                self._set_card_brand_for_slot(index, None, enabled=False)
             if self._mode == "full" and hasattr(self, "_full") and index < len(self._full._cards):
                 self._full._cards[index]._apply_game_pill_style()
             # Keep this toon's set selector scoped to its game's set list.
@@ -1610,6 +1813,7 @@ class MultitoonTab(QWidget):
                 self.set_selectors[index].set_toon_game(game_tag)
         else:
             self.game_badges[index].hide()
+            self._set_card_brand_for_slot(index, None, enabled=False)
 
         # -- Slot badge --
         if window_available and self.service_running:
@@ -1704,6 +1908,24 @@ class MultitoonTab(QWidget):
                 }}
             """)
             selector.setEnabled(False)
+
+        # Re-brand the card stripe (forward fill on enable, cross-fade
+        # back when disabled). Pulls game from the slot's visible game
+        # badge - same pattern as _CompactLayout.populate's initial pass.
+        compact = getattr(self, "_compact", None)
+        if compact is not None:
+            badge = (
+                self.game_badges[index]
+                if index < len(self.game_badges)
+                else None
+            )
+            game = None
+            if badge is not None and not badge.isHidden():
+                game = "cc" if badge.text() == "CC" else "ttr"
+            self._set_card_brand_for_slot(
+                index, game,
+                enabled=self.enabled_toons[index] and self.service_running,
+            )
 
     def _apply_chat_btn_style(self, index, c):
         chat_btn = self.chat_buttons[index]
@@ -1917,50 +2139,16 @@ class MultitoonTab(QWidget):
     # ── Service button style ───────────────────────────────────────────────
 
     def update_service_button_style(self):
+        """Compatibility wrapper. update_status_label is the source of
+        truth for the bar; this delegates so existing callers keep
+        working."""
         if self.service_running:
             self.toggle_service_button.setText(f"{S(chr(9632), chr(9632))} Stop Service")
             self.toggle_service_button.setToolTip("Stop the multitoon input service")
-            self.toggle_service_button.setStyleSheet("""
-                QPushButton {
-                    background-color: #b34848;
-                    color: white;
-                    font-size: 14px;
-                    font-weight: bold;
-                    border: 2px solid #d95757;
-                    border-radius: 8px;
-                }
-                QPushButton:hover {
-                    background-color: #cc5e5e;
-                    border-color: #e06a6a;
-                }
-                QPushButton:pressed {
-                    background-color: #993d3d;
-                    border-color: #c04e4e;
-                }
-            """)
         else:
             self.toggle_service_button.setText(f"{S(chr(9654), chr(9654))} Start Service")
             self.toggle_service_button.setToolTip("Start the multitoon input service")
-            self.toggle_service_button.setStyleSheet("""
-                QPushButton {
-                    background-color: #0077ff;
-                    color: white;
-                    font-size: 14px;
-                    font-weight: bold;
-                    border: 2px solid #3399ff;
-                    border-radius: 8px;
-                }
-                QPushButton:hover {
-                    background-color: #1a88ff;
-                    border-color: #55aaff;
-                }
-                QPushButton:pressed {
-                    background-color: #0066dd;
-                    border-color: #2288ee;
-                }
-            """)
-        self.toggle_service_button.setGraphicsEffect(None)
-        self.toggle_service_button.update()
+        self.update_status_label()
 
     def apply_all_visual_states(self):
         for i in range(4):
@@ -1969,36 +2157,44 @@ class MultitoonTab(QWidget):
     # ── Status label + segment bar ─────────────────────────────────────────
 
     def update_status_label(self):
-        c = self._c()
-        count = sum(self.enabled_toons)
-
-        segments = []
+        """Source of truth for the ServiceStatusBar - drives bar state
+        (broadcasting / idle / stopped), the status text, and the per-slot
+        dot states (active / found / off) in one pass."""
+        # Per-slot dot states (legacy behaviour kept verbatim).
         wids = self.window_manager.ttr_window_ids if hasattr(self, 'input_service') else []
+        segments = []
         for i in range(4):
             window_available = i < len(wids)
             if window_available and self.enabled_toons[i] and self.service_running:
-                segments.append(2)
+                segments.append(2)   # active
             elif window_available:
-                segments.append(1)
+                segments.append(1)   # found
             else:
-                segments.append(0)
+                segments.append(0)   # off
         self.status_bar.set_dot_states(segments)
 
-        if self.service_running and count > 0:
-            text = f"Sending input to {count} toon{'s' if count != 1 else ''}"
-            self.status_bar.set_status_text(text)
-            self.status_bar.set_text_color(c['text_primary'])
-        elif self.service_running:
-            ka_count = sum(self.keep_alive_enabled)
-            if ka_count > 0:
-                text = f"Keep-alive sending to {ka_count} toon{'s' if ka_count != 1 else ''}"
-            else:
-                text = "No toons enabled"
-            self.status_bar.set_status_text(text)
-            self.status_bar.set_text_color(c['status_warning_text'])
+        # Bar state + text. Same 3-state machine the Direction D mockup
+        # documents: Stopped (user pressed stop), Broadcasting (service
+        # on AND at least one toon enabled), Idle (service on, no toons
+        # enabled).
+        if not self.service_running:
+            self.status_bar.set_state("stopped")
+            self.status_bar.set_status_text(
+                "Stopped · click play to resume broadcasting"
+            )
+            return
+
+        enabled_count = sum(1 for v in self.enabled_toons if v)
+        if enabled_count == 0:
+            self.status_bar.set_state("idle")
+            self.status_bar.set_status_text(
+                "Idle · enable a toon below to start broadcasting"
+            )
         else:
-            self.status_bar.set_status_text("Service idle")
-            self.status_bar.set_text_color(c['status_idle_text'])
+            self.status_bar.set_state("broadcasting")
+            self.status_bar.set_status_text(
+                f"Broadcasting · {enabled_count} of 4 toons"
+            )
 
     # ── Name fetching ──────────────────────────────────────────────────────
 
@@ -2046,6 +2242,104 @@ class MultitoonTab(QWidget):
 
         threading.Thread(target=_run_fetch, daemon=True).start()
 
+    def _set_card_brand_for_slot(
+        self, index: int, game: str | None, enabled: bool = False
+    ) -> None:
+        """Forward to the compact layout's set_card_brand. Also teaches
+        the badge what game it represents so it can look up its
+        customization entry on next paint."""
+        if index < len(self.slot_badges):
+            self.slot_badges[index].set_game(game)
+        compact = getattr(self, "_compact", None)
+        if compact is None:
+            return
+        set_brand = getattr(compact, "set_card_brand", None)
+        if callable(set_brand):
+            set_brand(index, game, enabled=enabled)
+
+    def _open_customization_dialog(self, slot: int) -> None:
+        """Open ToonCustomizationDialog for the given slot's badge."""
+        from utils.widgets.toon_customization_dialog import ToonCustomizationDialog
+        from utils import cc_race_assets
+
+        if slot >= len(self.slot_badges):
+            return
+        badge = self.slot_badges[slot]
+        toon_name = badge.toon_name
+        game = badge.game
+        if not toon_name or game not in ("cc", "ttr"):
+            return
+        auto_stem = (
+            cc_race_assets.asset_stem_for_species(badge.cc_auto_species)
+            if game == "cc" else None
+        )
+        skin = badge.cc_skin if game == "cc" else None
+        dlg = ToonCustomizationDialog(
+            game=game,
+            toon_name=toon_name,
+            manager=self.customizations,
+            skin_color=skin,
+            auto_stem=auto_stem,
+            dna=badge._dna,
+            parent=self,
+        )
+        dlg.customization_changed.connect(
+            lambda s=slot, g=game: self._on_customization_saved(s, g)
+        )
+        dlg.exec()
+
+    def _on_customization_saved(self, slot: int, game: str) -> None:
+        """Re-apply chrome and repaint after a successful Save."""
+        self._apply_chip_for_slot(slot, game)
+        self._set_card_brand_for_slot(
+            slot, game,
+            enabled=bool(self.enabled_toons[slot]),
+        )
+        # Propagate pose change to the badge so it refetches if needed.
+        if game == "ttr" and slot < len(self.slot_badges):
+            from utils.toon_customization_resolve import resolve_pose
+            toon_name = self.toon_names[slot] if slot < len(self.toon_names) else None
+            entry = (
+                self.customizations.get(game, toon_name) if toon_name else {}
+            )
+            new_pose = resolve_pose(entry, "portrait")
+            self.slot_badges[slot].set_pose(new_pose)
+        if slot < len(self.slot_badges):
+            self.slot_badges[slot].update()
+        self.apply_visual_state(slot)
+
+    def _apply_chip_for_slot(self, index: int, game_tag: str | None) -> None:
+        """Apply the CC/TTR chip stylesheet, consulting accent override."""
+        from utils.toon_customization_resolve import resolve_accent
+        from PySide6.QtGui import QColor
+        if index >= len(self.game_badges):
+            return
+        chip = self.game_badges[index]
+        toon_name = self.toon_names[index] if index < len(self.toon_names) else None
+        entry: dict = {}
+        if game_tag in ("cc", "ttr") and toon_name and self.customizations is not None:
+            entry = self.customizations.get(game_tag, toon_name)
+        if game_tag == "cc":
+            color = resolve_accent(entry, QColor("#F26D21")).name()
+            chip.setText("CC")
+            chip.setStyleSheet(
+                f"background: transparent; color: {color}; "
+                f"border: 2px solid {color}; border-radius: 12px; "
+                f"padding: 3px 8px; font-weight: bold; font-size: 12px;"
+            )
+            chip.show()
+        elif game_tag == "ttr":
+            color = resolve_accent(entry, QColor("#4A8FE7")).name()
+            chip.setText("TTR")
+            chip.setStyleSheet(
+                f"background: transparent; color: {color}; "
+                f"border: 2px solid {color}; border-radius: 12px; "
+                f"padding: 3px 8px; font-weight: bold; font-size: 12px;"
+            )
+            chip.show()
+        else:
+            chip.hide()
+
     def manual_refresh(self):
         self.log("[Service] Manual refresh triggered.")
         invalidate_port_to_wid_cache()
@@ -2091,6 +2385,21 @@ class MultitoonTab(QWidget):
         self._fetch_names_if_enabled(len(self.window_manager.ttr_window_ids))
 
     # ── Service lifecycle ──────────────────────────────────────────────────
+
+    def _on_service_stop_requested(self) -> None:
+        """Wired to ServiceStatusBar.stop_requested. Idempotent stop."""
+        if self.service_running:
+            self.toggle_service()
+
+    def _on_service_play_requested(self) -> None:
+        """Wired to ServiceStatusBar.play_requested. Idempotent start."""
+        if not self.service_running:
+            self.toggle_service()
+
+    def _on_refresh_requested(self) -> None:
+        """Wired to ServiceStatusBar.refresh_requested. Same as the old
+        refresh_button click handler."""
+        self.manual_refresh()
 
     def toggle_service(self):
         self.service_running = not self.service_running
@@ -2361,12 +2670,18 @@ class MultitoonTab(QWidget):
                         
                         if global_idx < len(self.slot_badges):
                             self.slot_badges[global_idx].set_dna(styles[source_idx] if styles and source_idx < len(styles) else None)
+                            self.slot_badges[global_idx].set_toon_name(
+                                names[source_idx] if source_idx < len(names) else None
+                            )
                         # CC -> TTR transition: a previous CC paint may have hidden the chat
                         # button. Restore visibility now that this slot is a TTR toon.
                         if global_idx < len(self.chat_buttons):
                             self.chat_buttons[global_idx].show()
         self._refresh_toon_name_labels()
         self._refresh_toon_stats_labels()
+        # Defer chrome refresh to the next event-loop tick so any in-progress
+        # paint/style cascade triggered by the name change finishes first.
+        QTimer.singleShot(0, self._refresh_chrome_after_name_change)
 
     @Slot(list, list)
     def _apply_cc_toon_info(self, target_wids, infos):
@@ -2461,7 +2776,40 @@ class MultitoonTab(QWidget):
         for i, name in enumerate(names):
             if i < len(self.toon_names):
                 self.toon_names[i] = name
+            if i < len(self.slot_badges):
+                self.slot_badges[i].set_toon_name(name)
         self._refresh_toon_name_labels()
+        # Defer chrome refresh to the next event-loop tick so any in-progress
+        # paint/style cascade triggered by the name change finishes first.
+        # The synchronous variant of this call (commit baae072) raced with
+        # Qt's paint pipeline and caused a SIGSEGV use-after-free.
+        QTimer.singleShot(0, self._refresh_chrome_after_name_change)
+
+    def _refresh_chrome_after_name_change(self) -> None:
+        """Re-run chip + card-brand for each slot whose badge has a game,
+        so customizations keyed by toon name get picked up once the names
+        have been populated.
+
+        Uses ``slot_badges[i].game`` as the source of truth rather than
+        ``apply_visual_state``, so we don't clobber brand state when the
+        window isn't yet associated with this slot. The enabled rank is
+        inferred from the stripe's current colour saturation so we
+        preserve whatever state the prior brand pass left in place
+        (full brand vs muted brand)."""
+        for i in range(len(self.toon_names)):
+            if i >= len(self.slot_badges):
+                continue
+            game = self.slot_badges[i].game
+            if game not in ("cc", "ttr"):
+                continue
+            enabled = bool(
+                i < len(self.enabled_toons)
+                and self.enabled_toons[i]
+                and self.service_running
+            )
+            self._apply_chip_for_slot(i, game)
+            self._set_card_brand_for_slot(i, game, enabled=enabled)
+            self.slot_badges[i].update()
 
     @Slot(list)
     def _apply_toon_styles(self, styles: list):
@@ -2537,59 +2885,12 @@ class MultitoonTab(QWidget):
             display = self.toon_names[i] if self.toon_names[i] else f"Toon {i + 1}"
             name_label.setText(display)
             name_label.setStyleSheet(
-                f"font-size: 14px; font-weight: bold; color: {c['text_primary']}; background: none; border: none;"
+                f"font-size: 21px; font-weight: bold; color: {c['text_primary']}; "
+                f"background: none; border: none; padding-left: 6px;"
             )
         if self._mode == "full" and hasattr(self, "_full") and self._full is not None:
             for card in self._full._cards:
                 card._apply_scaled_styles()
-
-    def _open_race_picker(self, slot: int) -> None:
-        """Open RacePickerDialog for the given slot's badge."""
-        from utils.widgets.race_picker_dialog import RacePickerDialog
-        from utils import cc_race_assets
-
-        if slot >= len(self.slot_badges):
-            return
-        badge = self.slot_badges[slot]
-        toon_name = badge.toon_name
-        if not toon_name:
-            return
-        auto_stem = cc_race_assets.asset_stem_for_species(
-            badge.cc_auto_species
-        )
-        current = self.cc_overrides.get(toon_name)
-        skin = badge.cc_skin
-        if skin is None:
-            return
-        dlg = RacePickerDialog(
-            toon_name=toon_name,
-            current_override_stem=current,
-            auto_detected_stem=auto_stem,
-            skin_color=skin,
-            parent=self,
-        )
-        dlg.exec()
-        self._apply_picker_result(slot, dlg.result_action())
-
-    def _apply_picker_result(self, slot: int, result) -> None:
-        """Apply a (action, value) tuple from RacePickerDialog.
-
-        Expected shape: action in {"set", "clear", "cancel"}; value is the
-        asset stem when action=="set", None otherwise. Anything else is a
-        contract violation from the dialog and is silently ignored.
-        """
-        action, value = result
-        if action == "cancel":
-            return
-        badge = self.slot_badges[slot]
-        toon_name = badge.toon_name
-        if not toon_name:
-            return
-        if action == "set" and value:
-            self.cc_overrides.set(toon_name, value)
-        elif action == "clear":
-            self.cc_overrides.clear(toon_name)
-        badge.update()
 
     def set_compact_cc_subtitle(self, slot: int, playground, zone_name):
         """Update the Compact UI subtitle for a CC slot. Hides if both
@@ -2953,11 +3254,9 @@ class MultitoonTab(QWidget):
         self._toon_fetch_timer.stop()
         self._glow_timer.stop()
         self._bar_timer.stop()
-        for badge in self.slot_badges:
-            try:
-                badge.cancel()
-            except Exception:
-                pass
+        # Rendition fetches now go through the shared RenditionPoseFetcher
+        # singleton; per-badge cancel() is no longer needed (stale results
+        # are filtered by (dna, pose) match on the GUI thread).
         self.input_service.shutdown()
 
 
