@@ -426,6 +426,7 @@ class _PoseAdjustView(QWidget):
     transform_changed = Signal()
     back_requested = Signal()
     reset_requested = Signal()
+    silhouette_outline_changed = Signal(object, object)  # (hex or None, width key)
 
     _NUDGE_STEP = 1.0 / 180.0  # one pixel in the 180 px adjust preview
 
@@ -517,6 +518,21 @@ class _PoseAdjustView(QWidget):
         rot_row.addWidget(self._rot_value)
         right.addLayout(rot_row)
 
+        # Silhouette outline sub-section
+        outline_label = QLabel("Outline (toon)")
+        outline_label.setStyleSheet("color: #9a9aa8; font-size: 10px;")
+        right.addWidget(outline_label)
+        self._sil_outline_color_row = _SwatchRow(None)
+        self._sil_outline_color_row.color_picked.connect(self._on_sil_outline_color)
+        right.addWidget(self._sil_outline_color_row)
+        self._sil_outline_chip = _ChipRow(
+            [("thin", "Thin"), ("medium", "Medium"), ("thick", "Thick")],
+            current="medium",
+        )
+        self._sil_outline_chip.value_changed.connect(self._on_sil_outline_width)
+        self._sil_outline_chip.set_enabled_visual(False)
+        right.addWidget(self._sil_outline_chip)
+
         right.addStretch(1)
         body.addLayout(right, 1)
 
@@ -599,6 +615,29 @@ class _PoseAdjustView(QWidget):
         self.transform_changed.emit()
         self.reset_requested.emit()
 
+    def _on_sil_outline_color(self, hex_: Optional[str]) -> None:
+        self._sil_outline_chip.set_enabled_visual(hex_ is not None)
+        self.silhouette_outline_changed.emit(hex_, self._sil_outline_chip.current())
+
+    def _on_sil_outline_width(self, width_key: str) -> None:
+        self.silhouette_outline_changed.emit(
+            self._sil_outline_color_row.current(), width_key,
+        )
+
+    def set_silhouette_outline_from_draft(
+        self, hex_: Optional[str], width_key: Optional[str],
+    ) -> None:
+        """Initial-state setter used by _PoseSection when entering the
+        Adjust view. Does NOT emit silhouette_outline_changed - the
+        dialog's draft already has this value."""
+        self._sil_outline_color_row.set_current(hex_)
+        if width_key:
+            self._sil_outline_chip.set_current(width_key)
+        self._sil_outline_chip.set_enabled_visual(hex_ is not None)
+
+    def silhouette_outline(self) -> tuple[Optional[str], str]:
+        return self._sil_outline_color_row.current(), self._sil_outline_chip.current()
+
 
 class _PoseSection(QWidget):
     """Toon pose picker, 2-state. Page 0 = grid of 13 pose tiles. Page 1
@@ -607,6 +646,7 @@ class _PoseSection(QWidget):
 
     pose_changed = Signal(str)
     transform_changed = Signal()  # emitted when adjust view writes to transform
+    silhouette_outline_changed = Signal(object, object)  # (hex or None, width key)
 
     def __init__(self, dna: Optional[str], current_pose: str, parent=None):
         super().__init__(parent)
@@ -730,20 +770,27 @@ class _PoseSection(QWidget):
     def is_adjusting(self) -> bool:
         return self._stack is not None and self._stack.currentIndex() == 1
 
+    def _ensure_adjust_view(self) -> None:
+        """Create the adjust view lazily on first access. Idempotent."""
+        if self._adjust_view is not None:
+            return
+        self._adjust_view = _PoseAdjustView(initial=self._transform)
+        for t in self._tiles:
+            if t.pose == self._current_pose and t.has_pixmap():
+                self._adjust_view.set_pixmap(t._pixmap)
+                break
+        self._adjust_view.transform_changed.connect(self._on_adjust_changed)
+        self._adjust_view.back_requested.connect(self.click_back)
+        self._adjust_view.silhouette_outline_changed.connect(
+            self.silhouette_outline_changed.emit
+        )
+        self._stack.addWidget(self._adjust_view)
+        self._header_stack.addWidget(self._build_adjust_header())
+
     def click_adjust(self) -> None:
         if not self._dna:
             return
-        if self._adjust_view is None:
-            self._adjust_view = _PoseAdjustView(initial=self._transform)
-            # Push current pose pixmap into the preview if we have one.
-            for t in self._tiles:
-                if t.pose == self._current_pose and t.has_pixmap():
-                    self._adjust_view.set_pixmap(t._pixmap)
-                    break
-            self._adjust_view.transform_changed.connect(self._on_adjust_changed)
-            self._adjust_view.back_requested.connect(self.click_back)
-            self._stack.addWidget(self._adjust_view)
-            self._header_stack.addWidget(self._build_adjust_header())
+        self._ensure_adjust_view()
         self._stack.setCurrentIndex(1)
         self._header_stack.setCurrentIndex(1)
 
@@ -767,6 +814,16 @@ class _PoseSection(QWidget):
         self._transform = transform
         if self._adjust_view is not None:
             self._adjust_view._preview.set_transform(*transform)
+
+    def set_silhouette_outline(
+        self, hex_: Optional[str], width_key: Optional[str],
+    ) -> None:
+        """Forwarded from the dialog setter. Pushes through to the adjust
+        view (creating it if needed) and re-emits so the dialog handler
+        writes to the draft."""
+        self._ensure_adjust_view()
+        self._adjust_view.set_silhouette_outline_from_draft(hex_, width_key)
+        self.silhouette_outline_changed.emit(hex_, width_key)
 
     # -- Signal handlers -----------------------------------------------------
 
@@ -1125,6 +1182,15 @@ class ToonCustomizationDialog(QDialog):
         sec: _PortraitSection = self._sections["Portrait"]
         sec.set_circle_outline(hex_, width_key)
 
+    def set_silhouette_outline(
+        self, hex_: Optional[str], width_key: Optional[str],
+    ) -> None:
+        if "Toon" in self._sections:
+            sec = self._sections["Toon"]
+            sec.set_silhouette_outline(hex_, width_key)
+        else:
+            self._on_silhouette_outline(hex_, width_key or "medium")
+
     def reset_all(self) -> None:
         self._draft = {}
         for name, w in self._sections.items():
@@ -1198,8 +1264,14 @@ class ToonCustomizationDialog(QDialog):
             pose_section = _PoseSection(self._dna, current_pose)
             pose_section.pose_changed.connect(self._on_pose_changed)
             pose_section.transform_changed.connect(self._on_transform_changed)
+            pose_section.silhouette_outline_changed.connect(self._on_silhouette_outline)
             initial_transform = resolve_portrait_transform(self._draft)
             pose_section.set_transform_from_draft(initial_transform)
+            sil = (self._draft.get("portrait") or {}).get("silhouette") or {}
+            outline = sil.get("outline") or {}
+            pose_section.set_silhouette_outline(
+                outline.get("color"), outline.get("width"),
+            )
             self._add_section("Toon", pose_section)
 
         # Portrait
@@ -1304,6 +1376,21 @@ class ToonCustomizationDialog(QDialog):
                 "rotate": rot,
             }
         if not self._draft.get("portrait"):
+            self._draft.pop("portrait", None)
+        self._preview.set_draft(self._draft)
+
+    def _on_silhouette_outline(
+        self, hex_: Optional[str], width_key: Optional[str],
+    ) -> None:
+        portrait = self._draft.setdefault("portrait", {})
+        sil = portrait.setdefault("silhouette", {})
+        if hex_ is None:
+            sil.pop("outline", None)
+        else:
+            sil["outline"] = {"color": hex_, "width": width_key}
+        if not sil:
+            portrait.pop("silhouette", None)
+        if not portrait:
             self._draft.pop("portrait", None)
         self._preview.set_draft(self._draft)
 

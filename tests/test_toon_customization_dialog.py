@@ -594,3 +594,38 @@ def test_dialog_circle_outline_default_color_removes_outline_from_draft(qapp, mo
     assert dlg.draft()["portrait"]["outline"]["color"] == "#fff"
     dlg.set_circle_outline(None, None)
     assert "outline" not in (dlg.draft().get("portrait") or {})
+
+
+def test_pose_section_emits_silhouette_outline_changed(qapp):
+    from utils.widgets.toon_customization_dialog import _PoseSection
+    from PySide6.QtTest import QSignalSpy
+    sec = _PoseSection(dna="dna-test", current_pose="portrait")
+    spy = QSignalSpy(sec.silhouette_outline_changed)
+    sec.set_silhouette_outline("#ffd84a", "thick")
+    assert spy.count() == 1
+    args = spy.at(0)
+    assert args[0] == "#ffd84a"
+    assert args[1] == "thick"
+
+
+def test_dialog_silhouette_outline_writes_to_draft(qapp, monkeypatch, tmp_path):
+    monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
+    _reset_singletons()
+    dlg, _ = _build(qapp, dna="dna-test-123")
+    dlg.set_silhouette_outline("#ffd84a", "medium")
+    draft = dlg.draft()
+    assert draft["portrait"]["silhouette"]["outline"] == {
+        "color": "#ffd84a", "width": "medium",
+    }
+
+
+def test_dialog_silhouette_outline_default_color_removes_subobject(qapp, monkeypatch, tmp_path):
+    monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
+    _reset_singletons()
+    dlg, _ = _build(qapp, dna="dna-test-123", existing={
+        "portrait": {"silhouette": {"outline": {"color": "#fff", "width": "thin"}}},
+    })
+    dlg.set_silhouette_outline(None, None)
+    portrait = dlg.draft().get("portrait") or {}
+    silhouette = portrait.get("silhouette") or {}
+    assert "outline" not in silhouette
