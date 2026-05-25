@@ -103,7 +103,6 @@ class ToonPortraitWidget(QWidget):
         self.setMinimumSize(38, 38)
         self.setMaximumSize(64, 64)
         self.setCursor(Qt.PointingHandCursor)
-        self.setAttribute(Qt.WA_TranslucentBackground)
         from utils.rendition_poses import RenditionPoseFetcher
         self._fetcher = RenditionPoseFetcher.instance()
         self._fetcher.pose_ready.connect(self._on_pose_ready)

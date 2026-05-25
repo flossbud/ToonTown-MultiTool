@@ -175,6 +175,12 @@ def test_set_game_after_set_dna_picks_up_saved_pose(qt_app, monkeypatch, tmp_pat
 
 
 def test_toon_portrait_widget_draws_circle_outline_when_set(qt_app, monkeypatch, tmp_path):
+    """The TTR portrait widget paints the circle outline when set.
+
+    Note: the widget hard-caps at 64x64 via setMaximumSize. Don't override.
+    With width=64, cx=cy=32, r=30, and outline thick (width=4, inset=2),
+    the outline ring is at radius 28..30 from center, so the leftmost
+    outline pixel is at x = cx - 30 = 2 (rect outer edge) through x = 4."""
     monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
     from utils.rendition_poses import RenditionPoseFetcher
     RenditionPoseFetcher._instance = None
@@ -192,21 +198,23 @@ def test_toon_portrait_widget_draws_circle_outline_when_set(qt_app, monkeypatch,
         },
     })
     w = ToonPortraitWidget(1)
-    w.setMaximumSize(16777215, 16777215)  # lift default 64×64 cap for this render test
-    w.resize(96, 96)
+    # Use the widget's actual size (64x64 - hard-capped).
     w.set_customizations_manager(mgr)
     w.set_game("ttr")
     w.set_toon_name("Flossbud")
     pm = w.grab()
     img = pm.toImage()
-    # Walk inward from the left edge at vertical center until alpha > 0;
-    # that should be the outline color.
-    cy = 48
-    for x in range(0, 12):
+    # Walk inward at vertical center looking for the FIRST YELLOW pixel.
+    # The widget background may paint solid pixels in the corners, so we
+    # filter for the outline color specifically rather than any opaque pixel.
+    cy = 32  # 64 / 2
+    found_yellow = False
+    for x in range(0, 10):
         px = img.pixelColor(x, cy)
-        if px.alpha() > 0:
-            assert px.red() > 200 and px.green() > 180 and px.blue() < 120, (
-                f"pixel ({x},{cy}) = {px.name()}, expected outline yellow"
-            )
-            return
-    raise AssertionError("Never saw an opaque pixel near the left edge")
+        if px.red() > 200 and px.green() > 180 and px.blue() < 120:
+            found_yellow = True
+            break
+    assert found_yellow, (
+        f"never saw a yellow outline pixel walking inward from x=0..9 at y={cy}. "
+        f"sampled colors: {[img.pixelColor(x, cy).name() for x in range(0, 10)]}"
+    )
