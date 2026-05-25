@@ -142,7 +142,7 @@ class _CompactLayout(QWidget):
 
         # Portrait placeholder: reserves the original 50x50 layout slot in
         # top_row so the row's geometry stays put while the real
-        # ToonPortraitWidget renders larger (56x56) as a free-floating
+        # ToonPortraitWidget renders larger (64x64) as a free-floating
         # overlay positioned manually in _position_portraits().
         # The transparent QSS overrides main.py's container-level
         # `QWidget { background: bg_app }` rule - without it the
