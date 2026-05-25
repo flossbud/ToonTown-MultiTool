@@ -13,12 +13,12 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QColorDialog,
     QDialog,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QListWidget,
     QListWidgetItem,
     QPushButton,
-    QSizePolicy,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -181,27 +181,28 @@ class _PortraitSection(QWidget):
         outer.addWidget(self._grad_end)
 
         outer.addWidget(self._label("Pattern"))
-        pat_row = QHBoxLayout()
+        pat_grid = QGridLayout()
+        pat_grid.setHorizontalSpacing(4)
+        pat_grid.setVerticalSpacing(4)
         self._pat_buttons: dict[Optional[str], QPushButton] = {}
         none_btn = QPushButton("None")
         none_btn.setCheckable(True)
         none_btn.setFixedHeight(22)
-        none_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        none_btn.adjustSize()
         none_btn.clicked.connect(lambda: self._select_pattern(None))
-        pat_row.addWidget(none_btn)
+        pat_grid.addWidget(none_btn, 0, 0)
         self._pat_buttons[None] = none_btn
+        cols = 5
+        cell = 1
         for name in PATTERN_NAMES:
             b = QPushButton(name.replace("_", " "))
             b.setCheckable(True)
             b.setFixedHeight(22)
-            b.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-            b.adjustSize()
             b.clicked.connect(lambda _=False, n=name: self._select_pattern(n))
-            pat_row.addWidget(b)
+            row, col = divmod(cell, cols)
+            pat_grid.addWidget(b, row, col)
             self._pat_buttons[name] = b
-        pat_row.addStretch(1)
-        outer.addLayout(pat_row)
+            cell += 1
+        outer.addLayout(pat_grid)
 
         outer.addWidget(self._label("Pattern color"))
         self._pat_color_row = _SwatchRow(
