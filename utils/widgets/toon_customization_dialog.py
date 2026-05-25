@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QSizePolicy,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -185,6 +186,8 @@ class _PortraitSection(QWidget):
         none_btn = QPushButton("None")
         none_btn.setCheckable(True)
         none_btn.setFixedHeight(22)
+        none_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        none_btn.adjustSize()
         none_btn.clicked.connect(lambda: self._select_pattern(None))
         pat_row.addWidget(none_btn)
         self._pat_buttons[None] = none_btn
@@ -192,6 +195,8 @@ class _PortraitSection(QWidget):
             b = QPushButton(name.replace("_", " "))
             b.setCheckable(True)
             b.setFixedHeight(22)
+            b.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+            b.adjustSize()
             b.clicked.connect(lambda _=False, n=name: self._select_pattern(n))
             pat_row.addWidget(b)
             self._pat_buttons[name] = b
