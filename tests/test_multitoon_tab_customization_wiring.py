@@ -181,6 +181,46 @@ def test_theme_switch_preserves_badge_game_state(qapp, tmp_path, monkeypatch):
     )
 
 
+def test_saved_customizations_apply_on_initial_name_arrival(qapp, tmp_path, monkeypatch):
+    """Regression: when names arrive AFTER game detection (typical
+    initial load), the stripe / chip / body should pick up the
+    customization from the manager without requiring a manual refresh.
+    """
+    from PySide6.QtGui import QColor
+    tab = _build_tab(qapp, tmp_path, monkeypatch)
+    # Bypass cold-start gate so stripe.set_color actually lands.
+    tab._compact._cold_start_in_progress = False
+
+    # Pre-seed the manager with a customization for Flossbud.
+    tab.customizations.set("ttr", "Flossbud", {"accent": "#56c856"})
+
+    # Simulate the typical initial-load order: game detection runs
+    # BEFORE names arrive.
+    # 1. Game detection fires _set_card_brand_for_slot with the right
+    #    game tag, but toon_names is still empty so the override lookup
+    #    returns {}.
+    tab._set_card_brand_for_slot(0, "ttr", enabled=True)
+    stripe = tab._compact._card_slots[0]["card_stripe"]
+    # At this point the stripe shows the brand default (no override).
+    from utils.theme_manager import get_theme_colors, resolve_theme
+    is_dark = resolve_theme(tab.settings_manager) == "dark"
+    brand = QColor(get_theme_colors(is_dark)["game_pill_ttr"])
+    assert stripe.target_color() == brand, (
+        "Sanity: pre-name stripe should be brand default"
+    )
+
+    # 2. Names arrive.
+    tab._apply_toon_names(["Flossbud", None, None, None])
+    qapp.processEvents()
+
+    # 3. Stripe should now reflect the saved customization without any
+    #    manual user intervention.
+    assert stripe.target_color() == QColor("#56c856"), (
+        "After name arrives, stripe should pick up the saved accent "
+        "override automatically"
+    )
+
+
 def test_customizations_keyed_by_game_isolate_cc_vs_ttr(qapp, tmp_path, monkeypatch):
     """Lock-in: a CC toon and a TTR toon with the same name keep
     independent customizations (namespaced keys)."""
