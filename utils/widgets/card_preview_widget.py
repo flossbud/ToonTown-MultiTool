@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from PySide6.QtCore import QRect, Qt
+from PySide6.QtCore import QRect, QSize, Qt
 from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import QWidget
 
@@ -167,6 +167,7 @@ class CardPreviewWidget(QWidget):
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
+        p.setRenderHint(QPainter.SmoothPixmapTransform)
         rect = self.rect()
 
         # Card background
@@ -220,21 +221,27 @@ class CardPreviewWidget(QWidget):
             zoom, off_x, off_y, rot = resolve_portrait_transform(self._draft)
             ox = int(off_x * circle_rect.width())
             oy = int(off_y * circle_rect.height())
+            # Bake zoom into the downscale so the 512 source resamples once
+            # to its final visible size (no two-stage scale-then-zoom).
+            final_w = max(1, round(circle_rect.width() * zoom))
+            final_h = max(1, round(circle_rect.height() * zoom))
+            final_size = QSize(final_w, final_h)
             path = QPainterPath()
             path.addEllipse(circle_rect)
             p.save()
             p.setClipPath(path)
             p.translate(circle_rect.center())
             p.rotate(rot)
-            p.scale(zoom, zoom)
-            p.translate(ox, oy)
+            # Offset is in unzoomed circle-fractions; scale by zoom so the
+            # pan-while-zoomed behavior matches the pre-refactor painter.scale path.
+            p.translate(ox * zoom, oy * zoom)
             scaled = self._pose_pixmap.scaled(
-                circle_rect.size(),
+                final_size,
                 Qt.KeepAspectRatio,
                 Qt.SmoothTransformation,
             )
             outline_pm, shadow_pm, sx, sy = self._get_silhouette_bundle(
-                self._pose_pixmap, circle_rect.size(),
+                self._pose_pixmap, final_size,
             )
             if shadow_pm is not None and not shadow_pm.isNull():
                 pad_x = (shadow_pm.width() - scaled.width()) // 2

@@ -396,6 +396,7 @@ class ToonPortraitWidget(QWidget):
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
+        p.setRenderHint(QPainter.SmoothPixmapTransform)
         p.setPen(Qt.NoPen)
         rect = self.rect()
         size = min(rect.width(), rect.height())
@@ -493,9 +494,12 @@ class ToonPortraitWidget(QWidget):
                 p.setClipPath(path)
                 p.translate(cx, cy)
                 p.rotate(rot)
-                p.scale(zoom, zoom)
-                p.translate(ox, oy)
-                target = max(1, circle_w)
+                # Offset is in unzoomed circle-fractions; scale by zoom so the
+                # pan-while-zoomed behavior matches the pre-refactor painter.scale path.
+                p.translate(ox * zoom, oy * zoom)
+                # Bake zoom into the downscale so the 512 source resamples once
+                # to its final visible size (no two-stage scale-then-zoom).
+                target = max(1, round(circle_w * zoom))
                 scaled = self._pixmap.scaled(
                     target, target, Qt.KeepAspectRatio, Qt.SmoothTransformation,
                 )
