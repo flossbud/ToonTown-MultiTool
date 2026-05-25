@@ -1089,7 +1089,7 @@ class MultitoonTab(QWidget):
             cc_subtitle = QLabel("")
             cc_subtitle.setObjectName("cc_compact_subtitle")
             cc_subtitle.setStyleSheet(
-                "color: #9a9aa8; font-size: 10px; font-style: italic; "
+                "color: #9a9aa8; font-size: 14px; font-style: normal; "
                 "background: transparent; border: none;"
             )
             cc_subtitle.hide()
