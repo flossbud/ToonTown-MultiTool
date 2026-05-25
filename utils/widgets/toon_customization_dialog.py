@@ -225,6 +225,123 @@ class _PoseTile(QFrame):
         p.end()
 
 
+class _PoseSection(QWidget):
+    """Toon pose picker. Shows a 4-col grid of 13 _PoseTile widgets,
+    each filled lazily from RenditionPoseFetcher. Refresh button in the
+    header clears the cache for the current DNA and re-issues fetches."""
+
+    pose_changed = Signal(str)
+
+    def __init__(self, dna: Optional[str], current_pose: str, parent=None):
+        super().__init__(parent)
+        self._dna = dna
+        self._current_pose = current_pose
+        self._tiles: list[_PoseTile] = []
+        self._placeholder_label: Optional[QLabel] = None
+        self._refresh_btn: Optional[QPushButton] = None
+        self._build()
+
+    def _build(self) -> None:
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(8, 8, 8, 8)
+        outer.setSpacing(6)
+
+        # Header: "Pose" + refresh button
+        header = QHBoxLayout()
+        title = QLabel("Pose")
+        title.setStyleSheet("color: #c8c8d8; font-weight: bold;")
+        header.addWidget(title)
+        header.addStretch(1)
+        self._refresh_btn = QPushButton("↻")
+        self._refresh_btn.setToolTip("Refresh pose thumbnails")
+        self._refresh_btn.setFixedWidth(32)
+        self._refresh_btn.clicked.connect(self._on_refresh_clicked)
+        if not self._dna:
+            self._refresh_btn.setEnabled(False)
+        header.addWidget(self._refresh_btn)
+        outer.addLayout(header)
+
+        if not self._dna:
+            self._placeholder_label = QLabel(
+                "Log into this toon to see pose options."
+            )
+            self._placeholder_label.setStyleSheet("color: #9a9aa8; padding: 24px;")
+            self._placeholder_label.setAlignment(Qt.AlignCenter)
+            outer.addWidget(self._placeholder_label, 1)
+            return
+
+        from utils.rendition_poses import POSE_NAMES, RenditionPoseFetcher
+        grid = QGridLayout()
+        grid.setSpacing(6)
+        for idx, pose in enumerate(POSE_NAMES):
+            tile = _PoseTile(pose)
+            tile.set_selected(pose == self._current_pose)
+            tile.clicked_pose.connect(self._on_tile_clicked)
+            grid.addWidget(tile, idx // 4, idx % 4)
+            self._tiles.append(tile)
+        outer.addLayout(grid)
+        outer.addStretch(1)
+
+        # Subscribe to fetcher and issue initial requests.
+        fetcher = RenditionPoseFetcher.instance()
+        fetcher.pose_ready.connect(self._on_pose_ready)
+        for pose in POSE_NAMES:
+            fetcher.request(self._dna, pose)
+
+    # -- Public test API -----------------------------------------------------
+
+    def tiles(self) -> list:
+        return list(self._tiles)
+
+    def has_placeholder(self) -> bool:
+        return self._placeholder_label is not None
+
+    def click_refresh(self) -> None:
+        self._on_refresh_clicked()
+
+    # -- Signal handlers -----------------------------------------------------
+
+    def _on_tile_clicked(self, pose: str) -> None:
+        if pose == self._current_pose:
+            return
+        self._current_pose = pose
+        for t in self._tiles:
+            t.set_selected(t.pose == pose)
+        self.pose_changed.emit(pose)
+
+    def _on_pose_ready(self, dna: str, pose: str, pixmap) -> None:
+        if dna != self._dna:
+            return
+        for t in self._tiles:
+            if t.pose == pose:
+                t.set_pixmap(pixmap)
+                break
+
+    def _on_refresh_clicked(self) -> None:
+        if not self._dna:
+            return
+        from utils.rendition_poses import RenditionPoseFetcher, POSE_NAMES
+        fetcher = RenditionPoseFetcher.instance()
+        fetcher.invalidate_dna(self._dna)
+        # Drop existing pixmaps to show spinners during the refetch.
+        for t in self._tiles:
+            t.set_pixmap(None)
+        for pose in POSE_NAMES:
+            fetcher.request(self._dna, pose)
+
+    def closeEvent(self, event):
+        # Disconnect from fetcher to avoid stray slot calls after the
+        # dialog is destroyed.
+        try:
+            from utils.rendition_poses import RenditionPoseFetcher
+            RenditionPoseFetcher.instance().pose_ready.disconnect(
+                self._on_pose_ready
+            )
+        except (RuntimeError, TypeError):
+            pass
+        super().closeEvent(event)
+
+
 class _PortraitSection(QWidget):
     """Portrait color + gradient + pattern controls.
 
@@ -397,6 +514,7 @@ class ToonCustomizationDialog(QDialog):
         manager,
         skin_color: Optional[QColor] = None,
         auto_stem: Optional[str] = None,
+        dna: Optional[str] = None,
         parent=None,
     ):
         super().__init__(parent)
@@ -405,6 +523,7 @@ class ToonCustomizationDialog(QDialog):
         self._manager = manager
         self._skin = skin_color
         self._auto_stem = auto_stem
+        self._dna = dna
         self._draft: dict = dict(manager.get(game, toon_name))
         self._sections: dict[str, QWidget] = {}
 
@@ -451,6 +570,24 @@ class ToonCustomizationDialog(QDialog):
         body_section.set_current(hex_)
         self._on_body_changed(hex_)
 
+    def set_pose(self, pose: str) -> None:
+        """Public test API: programmatically pick a pose."""
+        from utils.rendition_poses import POSE_NAMES
+        if pose not in POSE_NAMES:
+            return
+        if "Toon" in self._sections:
+            sec = self._sections["Toon"]
+            # Force the section to think the click is fresh by bypassing its
+            # short-circuit when pose == current_pose.
+            if pose == sec._current_pose:
+                # Default behaviour: if already selected, just rewrite draft
+                # explicitly (the spec test exercises a back-to-default flow).
+                self._on_pose_changed(pose)
+                return
+            sec._on_tile_clicked(pose)
+        else:
+            self._on_pose_changed(pose)
+
     # -- Portrait setters for tests --------------------------------------------
 
     def set_portrait_color(self, hex_: Optional[str]) -> None:
@@ -477,6 +614,10 @@ class ToonCustomizationDialog(QDialog):
                 w.set_color(None)
                 w.set_gradient(None)
                 w.set_pattern(None, None)
+            elif isinstance(w, _PoseSection):
+                for t in w.tiles():
+                    t.set_selected(t.pose == "portrait")
+                w._current_pose = "portrait"
             # RaceIconGridWidget keeps its visual selection; that's fine,
             # the draft no longer references it so save will skip it.
         self._preview.set_draft(self._draft)
@@ -524,6 +665,14 @@ class ToonCustomizationDialog(QDialog):
             )
             grid.selection_changed.connect(self._on_icon_stem)
             self._add_section("Icon", grid)
+
+        # Toon section (TTR only, first in sidebar for TTR)
+        if self._game == "ttr":
+            from utils.toon_customization_resolve import resolve_pose
+            current_pose = resolve_pose(self._draft, "portrait")
+            pose_section = _PoseSection(self._dna, current_pose)
+            pose_section.pose_changed.connect(self._on_pose_changed)
+            self._add_section("Toon", pose_section)
 
         # Portrait
         portrait_section = _PortraitSection(self._draft.get("portrait") or {})
@@ -594,6 +743,14 @@ class ToonCustomizationDialog(QDialog):
             self._draft.pop("body", None)
         else:
             self._draft["body"] = hex_
+        self._preview.set_draft(self._draft)
+
+    def _on_pose_changed(self, pose: str) -> None:
+        if pose == "portrait":
+            # Default - don't pollute the saved entry with the default.
+            self._draft.pop("pose", None)
+        else:
+            self._draft["pose"] = pose
         self._preview.set_draft(self._draft)
 
     # -- Portrait field handlers -----------------------------------------------

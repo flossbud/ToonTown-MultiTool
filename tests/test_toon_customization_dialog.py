@@ -37,13 +37,17 @@ class _FakeManager:
         self._store.pop((game, name), None)
 
 
-def _build(qapp, manager=None, game="ttr", existing=None):
+def _build(qapp, manager=None, game="ttr", existing=None, dna=None):
     from utils.widgets.toon_customization_dialog import ToonCustomizationDialog
+    from PySide6.QtGui import QColor
     mgr = manager or _FakeManager()
     if existing:
         mgr.set(game, "Flossbud", existing)
     dlg = ToonCustomizationDialog(
         game=game, toon_name="Flossbud", manager=mgr,
+        skin_color=QColor("#d9a04e") if game == "cc" else None,
+        auto_stem="dog" if game == "cc" else None,
+        dna=dna,
     )
     return dlg, mgr
 
@@ -222,3 +226,73 @@ def test_pose_tile_click_emits_pose(qapp):
     tile.mousePressEvent(press)
     assert spy.count() == 1
     assert spy.at(0)[0] == "portrait-sleep"
+
+
+def test_ttr_dialog_has_toon_section_first(qapp):
+    dlg, _ = _build(qapp, game="ttr")
+    names = dlg.section_names()
+    assert names[0] == "Toon"
+    # Order: Toon, Portrait, Accent, Body
+    assert names == ["Toon", "Portrait", "Accent", "Body"]
+
+
+def test_cc_dialog_has_no_toon_section(qapp):
+    dlg, _ = _build(qapp, game="cc")
+    assert "Toon" not in dlg.section_names()
+
+
+def test_set_pose_updates_draft_and_save_persists(qapp):
+    dlg, mgr = _build(qapp, dna="dna-test-123")
+    dlg.set_pose("portrait-grin")
+    assert dlg.draft().get("pose") == "portrait-grin"
+    dlg.accept_save()
+    assert mgr.get("ttr", "Flossbud").get("pose") == "portrait-grin"
+
+
+def test_set_pose_to_default_removes_field(qapp):
+    dlg, mgr = _build(qapp, existing={"pose": "portrait-grin"}, dna="dna-test-123")
+    dlg.set_pose("portrait")  # back to default
+    dlg.accept_save()
+    # "portrait" is the default; it does NOT need to be stored.
+    saved = mgr.get("ttr", "Flossbud")
+    assert "pose" not in saved
+
+
+def test_pose_section_dna_none_shows_placeholder(qapp):
+    """When the slot has no DNA, the Toon section shows a placeholder
+    message instead of the tile grid."""
+    dlg, _ = _build(qapp, game="ttr")  # _build passes dna=None
+    sec = dlg.section("Toon")
+    assert sec.has_placeholder() is True
+    assert sec.tiles() == []
+
+
+def test_pose_section_with_dna_builds_13_tiles(qapp):
+    dlg, _ = _build(qapp, game="ttr", dna="dna-test-123")
+    sec = dlg.section("Toon")
+    assert sec.has_placeholder() is False
+    tiles = sec.tiles()
+    assert len(tiles) == 13
+    poses = {t.pose for t in tiles}
+    assert "portrait" in poses
+    assert "portrait-grin" in poses
+
+
+def test_refresh_button_calls_invalidate_dna(qapp, monkeypatch):
+    """Clicking the section refresh button must invalidate cached
+    pixmaps for the current DNA."""
+    from utils.rendition_poses import RenditionPoseFetcher
+    calls = []
+    monkeypatch.setattr(
+        RenditionPoseFetcher,
+        "invalidate_dna",
+        lambda self, dna: calls.append(dna),
+    )
+    # Also stub `request` so we don't actually fetch.
+    monkeypatch.setattr(
+        RenditionPoseFetcher, "request", lambda self, dna, pose: None,
+    )
+    dlg, _ = _build(qapp, game="ttr", dna="dna-test-123")
+    sec = dlg.section("Toon")
+    sec.click_refresh()
+    assert "dna-test-123" in calls
