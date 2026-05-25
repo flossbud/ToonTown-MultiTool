@@ -153,9 +153,9 @@ def resolve_silhouette_outline(entry: dict) -> Optional[tuple[QColor, int]]:
 
 
 _SILHOUETTE_SHADOW_PRESETS = {
-    "subtle": (2, 1, 2),
-    "medium": (4, 2, 3),
-    "strong": (8, 3, 5),
+    "subtle": (6, 1, 2),
+    "medium": (12, 2, 3),
+    "strong": (20, 3, 5),
 }
 
 

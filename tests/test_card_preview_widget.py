@@ -190,7 +190,7 @@ def test_card_preview_invokes_silhouette_builders_when_set(qapp, monkeypatch):
     w.repaint()
     qapp.processEvents()
     assert outline_calls == [("#ffd84a", 2)]
-    assert shadow_calls == [("#000000", 4)]
+    assert shadow_calls == [("#000000", 12)]
 
 
 def test_card_preview_silhouette_cache_returns_same_pixmap(qapp, monkeypatch):

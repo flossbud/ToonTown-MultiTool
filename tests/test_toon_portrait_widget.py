@@ -256,7 +256,7 @@ def test_toon_portrait_invokes_silhouette_builders_when_set(qt_app, monkeypatch,
     w.repaint()
     qt_app.processEvents()
     assert ("out", "#ffd84a", 2) in calls
-    assert ("shd", "#000000", 4) in calls
+    assert ("shd", "#000000", 12) in calls
 
 
 def test_toon_portrait_silhouette_cache_hits_on_unchanged_repaint(qt_app, monkeypatch, tmp_path):
@@ -366,4 +366,4 @@ def test_cc_portrait_invokes_silhouette_builders_when_set(qt_app, monkeypatch, t
     w.show()
     w.repaint(); qt_app.processEvents()
     assert ("out", "#ffd84a", 1) in calls
-    assert ("shd", "#000000", 2) in calls
+    assert ("shd", "#000000", 6) in calls

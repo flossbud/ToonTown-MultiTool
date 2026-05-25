@@ -247,9 +247,9 @@ def test_resolve_silhouette_outline_falls_back_to_medium_for_unknown_width(qapp)
 # -- resolve_silhouette_shadow ---------------------------------------------
 
 @pytest.mark.parametrize("preset,blur,ox,oy", [
-    ("subtle", 2, 1, 2),
-    ("medium", 4, 2, 3),
-    ("strong", 8, 3, 5),
+    ("subtle", 6, 1, 2),
+    ("medium", 12, 2, 3),
+    ("strong", 20, 3, 5),
 ])
 def test_resolve_silhouette_shadow_bundles_blur_and_offset_per_softness(
     qapp, preset, blur, ox, oy,
@@ -279,4 +279,4 @@ def test_resolve_silhouette_shadow_falls_back_to_medium_for_unknown_softness(qap
     from utils.toon_customization_resolve import resolve_silhouette_shadow
     entry = {"portrait": {"silhouette": {"shadow": {"color": "#000", "softness": "huge"}}}}
     color, b, x, y = resolve_silhouette_shadow(entry)
-    assert (b, x, y) == (4, 2, 3)
+    assert (b, x, y) == (12, 2, 3)
