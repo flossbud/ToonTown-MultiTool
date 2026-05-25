@@ -2538,6 +2538,9 @@ class MultitoonTab(QWidget):
                         
                         if global_idx < len(self.slot_badges):
                             self.slot_badges[global_idx].set_dna(styles[source_idx] if styles and source_idx < len(styles) else None)
+                            self.slot_badges[global_idx].set_toon_name(
+                                names[source_idx] if source_idx < len(names) else None
+                            )
                         # CC -> TTR transition: a previous CC paint may have hidden the chat
                         # button. Restore visibility now that this slot is a TTR toon.
                         if global_idx < len(self.chat_buttons):
@@ -2638,6 +2641,8 @@ class MultitoonTab(QWidget):
         for i, name in enumerate(names):
             if i < len(self.toon_names):
                 self.toon_names[i] = name
+            if i < len(self.slot_badges):
+                self.slot_badges[i].set_toon_name(name)
         self._refresh_toon_name_labels()
 
     @Slot(list)

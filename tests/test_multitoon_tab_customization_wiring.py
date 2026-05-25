@@ -82,3 +82,25 @@ def test_open_customization_dialog_returns_early_without_game(qapp, tmp_path, mo
     tab.slot_badges[0].set_toon_name("Flossbud")
     tab.slot_badges[0].set_game(None)
     tab._open_customization_dialog(0)
+
+
+def test_ttr_name_propagates_to_badge_via_apply_toon_names(qapp, tmp_path, monkeypatch):
+    """Regression: when TTR toon names arrive via the signal-driven path,
+    the badge widget must receive the name so its pencil can show."""
+    tab = _build_tab(qapp, tmp_path, monkeypatch)
+    tab._apply_toon_names(["Flossbud", None, "Beanie", None])
+    qapp.processEvents()
+    assert tab.slot_badges[0].toon_name == "Flossbud"
+    assert tab.slot_badges[1].toon_name is None
+    assert tab.slot_badges[2].toon_name == "Beanie"
+    assert tab.slot_badges[3].toon_name is None
+
+
+def test_ttr_pencil_shows_after_apply_toon_names(qapp, tmp_path, monkeypatch):
+    """End-to-end: after apply_toon_names + set_card_brand for ttr,
+    _can_show_pencil returns True."""
+    tab = _build_tab(qapp, tmp_path, monkeypatch)
+    tab._apply_toon_names(["Flossbud", None, None, None])
+    tab._set_card_brand_for_slot(0, "ttr", enabled=True)
+    qapp.processEvents()
+    assert tab.slot_badges[0]._can_show_pencil() is True
