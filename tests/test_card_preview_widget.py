@@ -125,3 +125,25 @@ def test_preview_current_portrait_transform(qapp):
         }
     })
     assert w.current_portrait_transform() == (1.25, 0.1, 0.2, -15.0)
+
+
+def test_card_preview_draws_circle_outline_when_set(qapp):
+    """Painting with a circle outline set should produce a pixel ring
+    matching the outline color around the portrait circle's perimeter."""
+    from utils.widgets.card_preview_widget import CardPreviewWidget
+
+    draft = {"portrait": {
+        "color": "#000000",
+        "outline": {"color": "#ffd84a", "width": "thick"},
+    }}
+    w = CardPreviewWidget("ttr", "Test", draft)
+    w.resize(360, 72)
+    pm = w.grab()
+    img = pm.toImage()
+    # Portrait circle is at (10..50, 16..56) (40px diameter, centered
+    # vertically in 72px tall card with +1 offset).
+    # Sample a pixel right on the circle's left edge: (10, 36)
+    px = img.pixelColor(10, 36)
+    assert px.alpha() > 0
+    # Outline color is #ffd84a (very yellow). Tolerate AA.
+    assert px.red() > 200 and px.green() > 180 and px.blue() < 120

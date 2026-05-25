@@ -7,12 +7,13 @@ from __future__ import annotations
 from typing import Optional
 
 from PySide6.QtCore import QRect, Qt
-from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPixmap
+from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import QWidget
 
 from utils.toon_customization_resolve import (
     resolve_accent,
     resolve_body,
+    resolve_circle_outline,
     resolve_portrait_brush,
     resolve_portrait_pattern,
 )
@@ -177,6 +178,15 @@ class CardPreviewWidget(QWidget):
             )
             p.drawPixmap(-scaled.width() // 2, -scaled.height() // 2, scaled)
             p.restore()
+
+        # Circle outline (drawn on top of pose, outside the clip).
+        circle_outline = resolve_circle_outline(self._draft)
+        if circle_outline is not None:
+            color, width = circle_outline
+            inset = max(0, width // 2)
+            p.setPen(QPen(color, width))
+            p.setBrush(Qt.NoBrush)
+            p.drawEllipse(circle_rect.adjusted(inset, inset, -inset, -inset))
 
         # Toon name
         p.setPen(QColor(_TEXT))
