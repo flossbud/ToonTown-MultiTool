@@ -113,6 +113,12 @@ def test_customizations_follow_toon_name_across_slots(qapp, tmp_path, monkeypatc
     # Bypass the 1s cold-start delay so stripe.set_color() applies
     # immediately during the test (otherwise set_card_brand is gated off).
     tab._compact._cold_start_in_progress = False
+    # The deferred chrome refresh consults enabled_toons + service_running
+    # to decide full-brand vs muted; set both so the override applies at
+    # full saturation.
+    tab.enabled_toons[0] = True
+    tab.enabled_toons[2] = True
+    tab.service_running = True
     # Save a customization for "Flossbud" before placing the toon anywhere.
     tab.customizations.set("ttr", "Flossbud", {"accent": "#56c856"})
 
@@ -190,6 +196,10 @@ def test_saved_customizations_apply_on_initial_name_arrival(qapp, tmp_path, monk
     tab = _build_tab(qapp, tmp_path, monkeypatch)
     # Bypass cold-start gate so stripe.set_color actually lands.
     tab._compact._cold_start_in_progress = False
+    # Mirror the running-app state so the deferred refresh applies the
+    # override at full saturation, not muted.
+    tab.enabled_toons[0] = True
+    tab.service_running = True
 
     # Pre-seed the manager with a customization for Flossbud.
     tab.customizations.set("ttr", "Flossbud", {"accent": "#56c856"})
@@ -228,6 +238,8 @@ def test_customizations_keyed_by_game_isolate_cc_vs_ttr(qapp, tmp_path, monkeypa
     # Bypass the 1s cold-start delay so stripe.set_color() applies
     # immediately during the test.
     tab._compact._cold_start_in_progress = False
+    tab.enabled_toons[0] = True
+    tab.service_running = True
     tab.customizations.set("cc", "Flossbud", {"accent": "#e74a4a"})
     tab.customizations.set("ttr", "Flossbud", {"accent": "#56c856"})
 

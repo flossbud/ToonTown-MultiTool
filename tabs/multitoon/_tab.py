@@ -2547,11 +2547,9 @@ class MultitoonTab(QWidget):
                             self.chat_buttons[global_idx].show()
         self._refresh_toon_name_labels()
         self._refresh_toon_stats_labels()
-        # Names just landed; re-apply chrome for each slot so the chip /
-        # stripe / body-tint consult the customization manager with the
-        # now-populated name key (otherwise a previously-saved customization
-        # only appears after the user opens + saves the dialog).
-        self._refresh_chrome_after_name_change()
+        # Defer chrome refresh to the next event-loop tick so any in-progress
+        # paint/style cascade triggered by the name change finishes first.
+        QTimer.singleShot(0, self._refresh_chrome_after_name_change)
 
     @Slot(list, list)
     def _apply_cc_toon_info(self, target_wids, infos):
@@ -2649,11 +2647,11 @@ class MultitoonTab(QWidget):
             if i < len(self.slot_badges):
                 self.slot_badges[i].set_toon_name(name)
         self._refresh_toon_name_labels()
-        # Names just landed; re-apply chrome for each slot so the chip /
-        # stripe / body-tint consult the customization manager with the
-        # now-populated name key (otherwise a previously-saved customization
-        # only appears after the user opens + saves the dialog).
-        self._refresh_chrome_after_name_change()
+        # Defer chrome refresh to the next event-loop tick so any in-progress
+        # paint/style cascade triggered by the name change finishes first.
+        # The synchronous variant of this call (commit baae072) raced with
+        # Qt's paint pipeline and caused a SIGSEGV use-after-free.
+        QTimer.singleShot(0, self._refresh_chrome_after_name_change)
 
     def _refresh_chrome_after_name_change(self) -> None:
         """Re-run chip + card-brand for each slot whose badge has a game,
@@ -2666,25 +2664,17 @@ class MultitoonTab(QWidget):
         inferred from the stripe's current colour saturation so we
         preserve whatever state the prior brand pass left in place
         (full brand vs muted brand)."""
-        compact = getattr(self, "_compact", None)
         for i in range(len(self.toon_names)):
             if i >= len(self.slot_badges):
                 continue
             game = self.slot_badges[i].game
             if game not in ("cc", "ttr"):
                 continue
-            # Infer current enabled rank from the live stripe colour so
-            # we don't downgrade an active full-brand stripe to muted
-            # just because service_running flips during the rename.
-            enabled = False
-            if compact is not None and i < len(compact._card_slots):
-                stripe = compact._card_slots[i].get("card_stripe")
-                if stripe is not None:
-                    try:
-                        sat = stripe.target_color().hslSaturation()
-                    except Exception:
-                        sat = 0
-                    enabled = sat >= 165
+            enabled = bool(
+                i < len(self.enabled_toons)
+                and self.enabled_toons[i]
+                and self.service_running
+            )
             self._apply_chip_for_slot(i, game)
             self._set_card_brand_for_slot(i, game, enabled=enabled)
             self.slot_badges[i].update()
