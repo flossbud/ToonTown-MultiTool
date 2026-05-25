@@ -296,3 +296,81 @@ def test_refresh_button_calls_invalidate_dna(qapp, monkeypatch):
     sec = dlg.section("Toon")
     sec.click_refresh()
     assert "dna-test-123" in calls
+
+
+def test_pose_adjust_preview_initial_state(qapp):
+    from utils.widgets.toon_customization_dialog import _PoseAdjustPreview
+    w = _PoseAdjustPreview()
+    assert w.transform() == (1.0, 0.0, 0.0, 0.0)
+    assert w.pixmap() is None
+
+
+def test_pose_adjust_preview_set_pixmap(qapp):
+    from PySide6.QtGui import QPixmap
+    from utils.widgets.toon_customization_dialog import _PoseAdjustPreview
+    w = _PoseAdjustPreview()
+    pm = QPixmap(64, 64)
+    pm.fill()
+    w.set_pixmap(pm)
+    assert w.pixmap() is pm
+
+
+def test_pose_adjust_preview_set_transform(qapp):
+    from utils.widgets.toon_customization_dialog import _PoseAdjustPreview
+    w = _PoseAdjustPreview()
+    w.set_transform(1.5, 0.2, -0.1, 45.0)
+    assert w.transform() == (1.5, 0.2, -0.1, 45.0)
+
+
+def test_pose_adjust_preview_drag_updates_offset_and_emits(qapp):
+    from PySide6.QtCore import QPoint, QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+    from PySide6.QtTest import QSignalSpy
+    from utils.widgets.toon_customization_dialog import _PoseAdjustPreview
+    w = _PoseAdjustPreview()
+    w.resize(180, 180)
+    spy = QSignalSpy(w.transform_changed)
+
+    press = QMouseEvent(
+        QMouseEvent.MouseButtonPress, QPointF(90, 90),
+        Qt.LeftButton, Qt.LeftButton, Qt.NoModifier,
+    )
+    move = QMouseEvent(
+        QMouseEvent.MouseMove, QPointF(108, 90),
+        Qt.NoButton, Qt.LeftButton, Qt.NoModifier,
+    )
+    release = QMouseEvent(
+        QMouseEvent.MouseButtonRelease, QPointF(108, 90),
+        Qt.LeftButton, Qt.NoButton, Qt.NoModifier,
+    )
+    w.mousePressEvent(press)
+    w.mouseMoveEvent(move)
+    w.mouseReleaseEvent(release)
+
+    z, ox, oy, r = w.transform()
+    # 18 px drag in a 180 px preview = 0.1 fraction.
+    assert abs(ox - 0.1) < 1e-6
+    assert abs(oy - 0.0) < 1e-6
+    assert spy.count() >= 1
+
+
+def test_pose_adjust_preview_wheel_changes_zoom(qapp):
+    from PySide6.QtCore import QPoint, QPointF, Qt
+    from PySide6.QtGui import QWheelEvent
+    from PySide6.QtTest import QSignalSpy
+    from utils.widgets.toon_customization_dialog import _PoseAdjustPreview
+    w = _PoseAdjustPreview()
+    w.resize(180, 180)
+    spy = QSignalSpy(w.transform_changed)
+
+    # One wheel-up tick = +0.05 zoom.
+    event = QWheelEvent(
+        QPointF(90, 90), QPointF(90, 90),
+        QPoint(0, 0), QPoint(0, 120),  # angleDelta y=120 (one notch up)
+        Qt.NoButton, Qt.NoModifier, Qt.ScrollUpdate, False,
+    )
+    w.wheelEvent(event)
+
+    z, ox, oy, r = w.transform()
+    assert abs(z - 1.05) < 1e-6
+    assert spy.count() == 1

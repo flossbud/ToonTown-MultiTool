@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from PySide6.QtCore import QRect, QSize, Qt, Signal
+from PySide6.QtCore import QPoint, QRect, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPixmap
 from PySide6.QtWidgets import (
     QColorDialog,
@@ -224,6 +224,124 @@ class _PoseTile(QFrame):
         p.setPen(QColor("#c8c8d8"))
         label_rect = QRect(0, self._BOX + 2, self.width(), self.height() - self._BOX - 2)
         p.drawText(label_rect, Qt.AlignHCenter | Qt.AlignTop, self._pose)
+        p.end()
+
+
+class _PoseAdjustPreview(QFrame):
+    """Large circular preview that the user drags / scrolls to adjust
+    the toon's transform. ~180 px diameter. Emits transform_changed
+    whenever offset_x / offset_y / zoom changes via user interaction."""
+
+    transform_changed = Signal()
+
+    _SIZE = 180
+    _BACKDROP = QColor("#1a1d29")
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._pixmap: Optional[QPixmap] = None
+        self._zoom: float = 1.0
+        self._off_x: float = 0.0
+        self._off_y: float = 0.0
+        self._rotate: float = 0.0
+        self._dragging: bool = False
+        self._drag_anchor: Optional[QPoint] = None
+        self._drag_initial_off: tuple[float, float] = (0.0, 0.0)
+        self.setFixedSize(QSize(self._SIZE, self._SIZE))
+        self.setCursor(Qt.OpenHandCursor)
+        self.setFrameShape(QFrame.NoFrame)
+
+    # -- Public API ----------------------------------------------------------
+
+    def pixmap(self) -> Optional[QPixmap]:
+        return self._pixmap
+
+    def set_pixmap(self, pm: Optional[QPixmap]) -> None:
+        self._pixmap = pm
+        self.update()
+
+    def transform(self) -> tuple[float, float, float, float]:
+        return (self._zoom, self._off_x, self._off_y, self._rotate)
+
+    def set_transform(
+        self, zoom: float, off_x: float, off_y: float, rotate: float
+    ) -> None:
+        self._zoom = max(0.5, min(3.0, float(zoom)))
+        self._off_x = max(-1.0, min(1.0, float(off_x)))
+        self._off_y = max(-1.0, min(1.0, float(off_y)))
+        r = float(rotate)
+        while r > 180.0:
+            r -= 360.0
+        while r < -180.0:
+            r += 360.0
+        self._rotate = r
+        self.update()
+
+    # -- Mouse / wheel -------------------------------------------------------
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._dragging = True
+            self._drag_anchor = event.pos()
+            self._drag_initial_off = (self._off_x, self._off_y)
+            self.setCursor(Qt.ClosedHandCursor)
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._dragging and self._drag_anchor is not None:
+            dx = event.pos().x() - self._drag_anchor.x()
+            dy = event.pos().y() - self._drag_anchor.y()
+            new_x = self._drag_initial_off[0] + (dx / self._SIZE)
+            new_y = self._drag_initial_off[1] + (dy / self._SIZE)
+            self._off_x = max(-1.0, min(1.0, new_x))
+            self._off_y = max(-1.0, min(1.0, new_y))
+            self.update()
+            self.transform_changed.emit()
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._dragging = False
+            self._drag_anchor = None
+            self.setCursor(Qt.OpenHandCursor)
+        super().mouseReleaseEvent(event)
+
+    def wheelEvent(self, event):
+        # One notch (120 angleDelta units) = ±0.05 zoom.
+        delta = event.angleDelta().y() / 120.0
+        new_zoom = self._zoom + (0.05 * delta)
+        new_zoom = max(0.5, min(3.0, new_zoom))
+        if new_zoom != self._zoom:
+            self._zoom = new_zoom
+            self.update()
+            self.transform_changed.emit()
+        event.accept()
+
+    # -- Paint --------------------------------------------------------------
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        rect = self.rect()
+        p.setPen(Qt.NoPen)
+        p.setBrush(self._BACKDROP)
+        p.drawEllipse(rect)
+        if self._pixmap is not None and not self._pixmap.isNull():
+            ox = int(self._off_x * rect.width())
+            oy = int(self._off_y * rect.height())
+            path = QPainterPath()
+            path.addEllipse(rect)
+            p.save()
+            p.setClipPath(path)
+            p.translate(rect.center())
+            p.rotate(self._rotate)
+            p.scale(self._zoom, self._zoom)
+            p.translate(ox, oy)
+            scaled = self._pixmap.scaled(
+                rect.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation,
+            )
+            p.drawPixmap(-scaled.width() // 2, -scaled.height() // 2, scaled)
+            p.restore()
         p.end()
 
 
