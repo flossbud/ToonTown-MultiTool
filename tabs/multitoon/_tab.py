@@ -86,6 +86,7 @@ class ToonPortraitWidget(QWidget):
         self._text    = QColor("#ffffff")
         self._border_color = None
         self._pixmap  = None
+        self._silhouette_cache: dict[tuple, tuple] = {}
         self._loading = False
         self._dna     = None
         self._pose: str = "portrait"
@@ -304,6 +305,50 @@ class ToonPortraitWidget(QWidget):
     def cc_skin(self):
         return self._cc_skin
 
+    def _get_silhouette_bundle(self, pose_pm, scaled_size, entry):
+        from utils.toon_customization_resolve import (
+            resolve_silhouette_outline, resolve_silhouette_shadow,
+        )
+        import utils.portrait_effects as portrait_effects
+        outline = resolve_silhouette_outline(entry)
+        shadow = resolve_silhouette_shadow(entry)
+        if outline is None and shadow is None:
+            return (None, None, 0, 0)
+        ocol_name = outline[0].name() if outline else None
+        owidth = outline[1] if outline else 0
+        scol_name = shadow[0].name() if shadow else None
+        sblur = shadow[1] if shadow else 0
+        soff_x = shadow[2] if shadow else 0
+        soff_y = shadow[3] if shadow else 0
+        key = (
+            id(pose_pm),
+            (scaled_size.width(), scaled_size.height()),
+            ocol_name, owidth,
+            scol_name, sblur,
+        )
+        cached = self._silhouette_cache.get(key)
+        if cached is not None:
+            o_pm, s_pm = cached
+            return (o_pm, s_pm, soff_x, soff_y)
+        scaled = pose_pm.scaled(
+            scaled_size, Qt.KeepAspectRatio, Qt.SmoothTransformation,
+        )
+        outline_pm = None
+        shadow_pm = None
+        if outline is not None:
+            outline_pm = portrait_effects.build_silhouette_outline_pixmap(
+                scaled, outline[0], owidth,
+            )
+        if shadow is not None:
+            shadow_pm = portrait_effects.build_silhouette_shadow_pixmap(
+                scaled, shadow[0], sblur,
+            )
+        if len(self._silhouette_cache) >= 4:
+            oldest = next(iter(self._silhouette_cache))
+            self._silhouette_cache.pop(oldest)
+        self._silhouette_cache[key] = (outline_pm, shadow_pm)
+        return (outline_pm, shadow_pm, soff_x, soff_y)
+
     def _resolve_asset_stem(self) -> str | None:
         """Resolve which asset stem to render: manual override > auto > None."""
         from utils import cc_race_assets
@@ -422,9 +467,6 @@ class ToonPortraitWidget(QWidget):
 
             if self._pixmap and not self._pixmap.isNull():
                 from utils.toon_customization_resolve import resolve_portrait_transform
-                entry = {}
-                if self._customizations is not None and self._toon_name and self._game:
-                    entry = self._customizations.get(self._game, self._toon_name)
                 zoom, off_x, off_y, rot = resolve_portrait_transform(entry)
                 circle_w = int(r * 2)
                 ox = int(off_x * circle_w)
@@ -438,11 +480,32 @@ class ToonPortraitWidget(QWidget):
                 p.scale(zoom, zoom)
                 p.translate(ox, oy)
                 target = max(1, circle_w)
-                pm = self._pixmap.scaled(
-                    target, target, Qt.KeepAspectRatio, Qt.SmoothTransformation
+                scaled = self._pixmap.scaled(
+                    target, target, Qt.KeepAspectRatio, Qt.SmoothTransformation,
                 )
-                ph, pw = pm.height(), pm.width()
-                p.drawPixmap(int(-pw / 2), int(-ph / 2), pm)
+                from PySide6.QtCore import QSize
+                outline_pm, shadow_pm, sx, sy = self._get_silhouette_bundle(
+                    self._pixmap, QSize(target, target), entry,
+                )
+                if shadow_pm is not None and not shadow_pm.isNull():
+                    pad_x = (shadow_pm.width() - scaled.width()) // 2
+                    pad_y = (shadow_pm.height() - scaled.height()) // 2
+                    p.drawPixmap(
+                        int(-scaled.width() / 2) - pad_x + sx,
+                        int(-scaled.height() / 2) - pad_y + sy,
+                        shadow_pm,
+                    )
+                if outline_pm is not None and not outline_pm.isNull():
+                    p.drawPixmap(
+                        int(-scaled.width() / 2),
+                        int(-scaled.height() / 2),
+                        outline_pm,
+                    )
+                p.drawPixmap(
+                    int(-scaled.width() / 2),
+                    int(-scaled.height() / 2),
+                    scaled,
+                )
                 p.restore()
             else:
                 font = QFont()

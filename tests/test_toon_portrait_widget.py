@@ -220,6 +220,83 @@ def test_toon_portrait_widget_draws_circle_outline_when_set(qt_app, monkeypatch,
     )
 
 
+def test_toon_portrait_invokes_silhouette_builders_when_set(qt_app, monkeypatch, tmp_path):
+    monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QPixmap
+    from utils.rendition_poses import RenditionPoseFetcher
+    RenditionPoseFetcher._instance = None
+    monkeypatch.setattr(RenditionPoseFetcher, "request", lambda *a, **k: None)
+    import utils.portrait_effects as eff
+    calls = []
+    monkeypatch.setattr(
+        eff, "build_silhouette_outline_pixmap",
+        lambda pm, c, w: (calls.append(("out", c.name(), w)), QPixmap(pm.size()))[1],
+    )
+    monkeypatch.setattr(
+        eff, "build_silhouette_shadow_pixmap",
+        lambda pm, c, b: (calls.append(("shd", c.name(), b)),
+                          QPixmap(pm.width() + 2 * b, pm.height() + 2 * b))[1],
+    )
+    from tabs.multitoon._tab import ToonPortraitWidget
+    from utils.toon_customizations_manager import ToonCustomizationsManager
+    mgr = ToonCustomizationsManager()
+    mgr.set("ttr", "Flossbud", {"portrait": {"silhouette": {
+        "outline": {"color": "#ffd84a", "width": "medium"},
+        "shadow":  {"color": "#000000", "softness": "medium"},
+    }}})
+    w = ToonPortraitWidget(1)
+    w.set_customizations_manager(mgr)
+    w.set_game("ttr")
+    w.set_toon_name("Flossbud")
+    # Inject a fake pose pixmap so paint has something to draw.
+    fake = QPixmap(64, 64); fake.fill(Qt.red)
+    w._pixmap = fake
+    w.show()
+    w.repaint()
+    qt_app.processEvents()
+    assert ("out", "#ffd84a", 2) in calls
+    assert ("shd", "#000000", 4) in calls
+
+
+def test_toon_portrait_silhouette_cache_hits_on_unchanged_repaint(qt_app, monkeypatch, tmp_path):
+    monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QPixmap
+    from utils.rendition_poses import RenditionPoseFetcher
+    RenditionPoseFetcher._instance = None
+    monkeypatch.setattr(RenditionPoseFetcher, "request", lambda *a, **k: None)
+    import utils.portrait_effects as eff
+    calls = []
+    monkeypatch.setattr(
+        eff, "build_silhouette_outline_pixmap",
+        lambda pm, c, w: (calls.append("out"), QPixmap(pm.size()))[1],
+    )
+    monkeypatch.setattr(
+        eff, "build_silhouette_shadow_pixmap",
+        lambda pm, c, b: (calls.append("shd"),
+                          QPixmap(pm.width() + 2 * b, pm.height() + 2 * b))[1],
+    )
+    from tabs.multitoon._tab import ToonPortraitWidget
+    from utils.toon_customizations_manager import ToonCustomizationsManager
+    mgr = ToonCustomizationsManager()
+    mgr.set("ttr", "Flossbud", {"portrait": {"silhouette": {
+        "outline": {"color": "#ffd84a", "width": "medium"},
+    }}})
+    w = ToonPortraitWidget(1)
+    w.set_customizations_manager(mgr)
+    w.set_game("ttr")
+    w.set_toon_name("Flossbud")
+    fake = QPixmap(64, 64); fake.fill(Qt.red)
+    w._pixmap = fake
+    w.show()
+    w.repaint(); qt_app.processEvents()
+    n = len(calls)
+    assert n == 1
+    w.repaint(); qt_app.processEvents()
+    assert len(calls) == n  # cached
+
+
 def test_cc_portrait_draws_circle_outline_when_set(qt_app, monkeypatch, tmp_path):
     """CC mode renders via paint_cc_badge. The badge function must accept
     the new circle_outline kwarg and draw the ring on top."""
