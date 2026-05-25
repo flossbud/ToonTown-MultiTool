@@ -275,7 +275,7 @@ class GameRegistry:
                 try:
                     exe = win32process.GetModuleFileNameEx(handle, 0)
                 except (OSError, AttributeError) as e:
-                    print(f"[GameRegistry] Win32 process query failed for PID {pid}: {e}")
+                    logger.warning("Win32 process query failed for PID %d: %s", pid, e)
                     return None
                 finally:
                     win32api.CloseHandle(handle)
