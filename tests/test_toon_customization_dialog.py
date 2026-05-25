@@ -629,3 +629,36 @@ def test_dialog_silhouette_outline_default_color_removes_subobject(qapp, monkeyp
     portrait = dlg.draft().get("portrait") or {}
     silhouette = portrait.get("silhouette") or {}
     assert "outline" not in silhouette
+
+
+def test_dialog_silhouette_shadow_writes_to_draft(qapp, monkeypatch, tmp_path):
+    monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
+    _reset_singletons()
+    dlg, _ = _build(qapp, dna="dna-test-123")
+    dlg.set_silhouette_shadow("#000000", "strong")
+    draft = dlg.draft()
+    assert draft["portrait"]["silhouette"]["shadow"] == {
+        "color": "#000000", "softness": "strong",
+    }
+
+
+def test_dialog_silhouette_shadow_default_color_removes_subobject(qapp, monkeypatch, tmp_path):
+    monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
+    _reset_singletons()
+    dlg, _ = _build(qapp, dna="dna-test-123", existing={
+        "portrait": {"silhouette": {"shadow": {"color": "#000", "softness": "medium"}}},
+    })
+    dlg.set_silhouette_shadow(None, None)
+    sil = (dlg.draft().get("portrait") or {}).get("silhouette") or {}
+    assert "shadow" not in sil
+
+
+def test_dialog_silhouette_shadow_and_outline_coexist(qapp, monkeypatch, tmp_path):
+    monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
+    _reset_singletons()
+    dlg, _ = _build(qapp, dna="dna-test-123")
+    dlg.set_silhouette_outline("#ffd84a", "thin")
+    dlg.set_silhouette_shadow("#000000", "subtle")
+    sil = dlg.draft()["portrait"]["silhouette"]
+    assert sil["outline"] == {"color": "#ffd84a", "width": "thin"}
+    assert sil["shadow"] == {"color": "#000000", "softness": "subtle"}

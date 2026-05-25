@@ -427,6 +427,7 @@ class _PoseAdjustView(QWidget):
     back_requested = Signal()
     reset_requested = Signal()
     silhouette_outline_changed = Signal(object, object)  # (hex or None, width key)
+    silhouette_shadow_changed = Signal(object, object)  # (hex or None, softness key)
 
     _NUDGE_STEP = 1.0 / 180.0  # one pixel in the 180 px adjust preview
 
@@ -533,6 +534,20 @@ class _PoseAdjustView(QWidget):
         self._sil_outline_chip.set_enabled_visual(False)
         right.addWidget(self._sil_outline_chip)
 
+        shadow_label = QLabel("Shadow (toon)")
+        shadow_label.setStyleSheet("color: #9a9aa8; font-size: 10px;")
+        right.addWidget(shadow_label)
+        self._sil_shadow_color_row = _SwatchRow(None)
+        self._sil_shadow_color_row.color_picked.connect(self._on_sil_shadow_color)
+        right.addWidget(self._sil_shadow_color_row)
+        self._sil_shadow_chip = _ChipRow(
+            [("subtle", "Subtle"), ("medium", "Medium"), ("strong", "Strong")],
+            current="medium",
+        )
+        self._sil_shadow_chip.value_changed.connect(self._on_sil_shadow_softness)
+        self._sil_shadow_chip.set_enabled_visual(False)
+        right.addWidget(self._sil_shadow_chip)
+
         right.addStretch(1)
         body.addLayout(right, 1)
 
@@ -638,6 +653,28 @@ class _PoseAdjustView(QWidget):
     def silhouette_outline(self) -> tuple[Optional[str], str]:
         return self._sil_outline_color_row.current(), self._sil_outline_chip.current()
 
+    def _on_sil_shadow_color(self, hex_) -> None:
+        self._sil_shadow_chip.set_enabled_visual(hex_ is not None)
+        self.silhouette_shadow_changed.emit(hex_, self._sil_shadow_chip.current())
+
+    def _on_sil_shadow_softness(self, softness_key: str) -> None:
+        self.silhouette_shadow_changed.emit(
+            self._sil_shadow_color_row.current(), softness_key,
+        )
+
+    def set_silhouette_shadow_from_draft(
+        self, hex_, softness_key,
+    ) -> None:
+        """Initial-state setter used by _PoseSection. Does NOT emit -
+        the dialog's draft already has this value."""
+        self._sil_shadow_color_row.set_current(hex_)
+        if softness_key:
+            self._sil_shadow_chip.set_current(softness_key)
+        self._sil_shadow_chip.set_enabled_visual(hex_ is not None)
+
+    def silhouette_shadow(self) -> tuple:
+        return self._sil_shadow_color_row.current(), self._sil_shadow_chip.current()
+
 
 class _PoseSection(QWidget):
     """Toon pose picker, 2-state. Page 0 = grid of 13 pose tiles. Page 1
@@ -647,6 +684,7 @@ class _PoseSection(QWidget):
     pose_changed = Signal(str)
     transform_changed = Signal()  # emitted when adjust view writes to transform
     silhouette_outline_changed = Signal(object, object)  # (hex or None, width key)
+    silhouette_shadow_changed = Signal(object, object)
 
     def __init__(self, dna: Optional[str], current_pose: str, parent=None):
         super().__init__(parent)
@@ -784,6 +822,9 @@ class _PoseSection(QWidget):
         self._adjust_view.silhouette_outline_changed.connect(
             self.silhouette_outline_changed.emit
         )
+        self._adjust_view.silhouette_shadow_changed.connect(
+            self.silhouette_shadow_changed.emit
+        )
         self._stack.addWidget(self._adjust_view)
         self._header_stack.addWidget(self._build_adjust_header())
 
@@ -824,6 +865,13 @@ class _PoseSection(QWidget):
         self._ensure_adjust_view()
         self._adjust_view.set_silhouette_outline_from_draft(hex_, width_key)
         self.silhouette_outline_changed.emit(hex_, width_key)
+
+    def set_silhouette_shadow(
+        self, hex_, softness_key,
+    ) -> None:
+        self._ensure_adjust_view()
+        self._adjust_view.set_silhouette_shadow_from_draft(hex_, softness_key)
+        self.silhouette_shadow_changed.emit(hex_, softness_key)
 
     # -- Signal handlers -----------------------------------------------------
 
@@ -1191,6 +1239,15 @@ class ToonCustomizationDialog(QDialog):
         else:
             self._on_silhouette_outline(hex_, width_key or "medium")
 
+    def set_silhouette_shadow(
+        self, hex_, softness_key,
+    ) -> None:
+        if "Toon" in self._sections:
+            sec = self._sections["Toon"]
+            sec.set_silhouette_shadow(hex_, softness_key)
+        else:
+            self._on_silhouette_shadow(hex_, softness_key or "medium")
+
     def reset_all(self) -> None:
         self._draft = {}
         for name, w in self._sections.items():
@@ -1265,12 +1322,17 @@ class ToonCustomizationDialog(QDialog):
             pose_section.pose_changed.connect(self._on_pose_changed)
             pose_section.transform_changed.connect(self._on_transform_changed)
             pose_section.silhouette_outline_changed.connect(self._on_silhouette_outline)
+            pose_section.silhouette_shadow_changed.connect(self._on_silhouette_shadow)
             initial_transform = resolve_portrait_transform(self._draft)
             pose_section.set_transform_from_draft(initial_transform)
             sil = (self._draft.get("portrait") or {}).get("silhouette") or {}
             outline = sil.get("outline") or {}
             pose_section.set_silhouette_outline(
                 outline.get("color"), outline.get("width"),
+            )
+            shadow = sil.get("shadow") or {}
+            pose_section.set_silhouette_shadow(
+                shadow.get("color"), shadow.get("softness"),
             )
             self._add_section("Toon", pose_section)
 
@@ -1388,6 +1450,21 @@ class ToonCustomizationDialog(QDialog):
             sil.pop("outline", None)
         else:
             sil["outline"] = {"color": hex_, "width": width_key}
+        if not sil:
+            portrait.pop("silhouette", None)
+        if not portrait:
+            self._draft.pop("portrait", None)
+        self._preview.set_draft(self._draft)
+
+    def _on_silhouette_shadow(
+        self, hex_, softness_key,
+    ) -> None:
+        portrait = self._draft.setdefault("portrait", {})
+        sil = portrait.setdefault("silhouette", {})
+        if hex_ is None:
+            sil.pop("shadow", None)
+        else:
+            sil["shadow"] = {"color": hex_, "softness": softness_key}
         if not sil:
             portrait.pop("silhouette", None)
         if not portrait:
