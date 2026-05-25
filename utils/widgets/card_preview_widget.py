@@ -74,6 +74,12 @@ class CardPreviewWidget(QWidget):
     def dna(self) -> Optional[str]:
         return self._dna
 
+    def current_portrait_transform(self) -> tuple[float, float, float, float]:
+        """Test hook: returns the (zoom, off_x, off_y, rotate) tuple
+        the next paintEvent will apply to the pose pixmap."""
+        from utils.toon_customization_resolve import resolve_portrait_transform
+        return resolve_portrait_transform(self._draft)
+
     def _current_pose(self) -> str:
         from utils.toon_customization_resolve import resolve_pose
         return resolve_pose(self._draft, "portrait")
@@ -150,20 +156,26 @@ class CardPreviewWidget(QWidget):
                         p.drawPixmap(x, y, pm)
                 p.restore()
 
-        # Pose pixmap layer (clipped to portrait circle).
+        # Pose pixmap layer (clipped to portrait circle, with transform).
         if self._pose_pixmap is not None and not self._pose_pixmap.isNull():
+            from utils.toon_customization_resolve import resolve_portrait_transform
+            zoom, off_x, off_y, rot = resolve_portrait_transform(self._draft)
+            ox = int(off_x * circle_rect.width())
+            oy = int(off_y * circle_rect.height())
             path = QPainterPath()
             path.addEllipse(circle_rect)
             p.save()
             p.setClipPath(path)
+            p.translate(circle_rect.center())
+            p.rotate(rot)
+            p.scale(zoom, zoom)
+            p.translate(ox, oy)
             scaled = self._pose_pixmap.scaled(
                 circle_rect.size(),
                 Qt.KeepAspectRatio,
                 Qt.SmoothTransformation,
             )
-            dx = circle_rect.x() + (circle_rect.width() - scaled.width()) // 2
-            dy = circle_rect.y() + (circle_rect.height() - scaled.height()) // 2
-            p.drawPixmap(dx, dy, scaled)
+            p.drawPixmap(-scaled.width() // 2, -scaled.height() // 2, scaled)
             p.restore()
 
         # Toon name

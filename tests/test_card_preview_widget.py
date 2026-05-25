@@ -103,3 +103,25 @@ def test_preview_without_dna_does_not_request(qapp, monkeypatch):
         game="ttr", toon_name="Flossbud", draft={"pose": "portrait-grin"}, dna=None,
     )
     assert requested == []
+
+
+def test_preview_current_portrait_transform(qapp):
+    """Test hook: preview exposes the current transform that paintEvent
+    will apply to the pose pixmap."""
+    from utils.widgets.card_preview_widget import CardPreviewWidget
+    w = CardPreviewWidget(
+        game="ttr", toon_name="Flossbud", draft={}, dna="dna-test-123",
+    )
+    assert w.current_portrait_transform() == (1.0, 0.0, 0.0, 0.0)
+
+    w.set_draft({
+        "portrait": {
+            "transform": {
+                "zoom": 1.25,
+                "offset_x": 0.1,
+                "offset_y": 0.2,
+                "rotate": -15.0,
+            }
+        }
+    })
+    assert w.current_portrait_transform() == (1.25, 0.1, 0.2, -15.0)
