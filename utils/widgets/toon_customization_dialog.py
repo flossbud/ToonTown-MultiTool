@@ -135,6 +135,77 @@ class _SimpleColorSection(QWidget):
         self._row.set_current(hex_)
 
 
+class _ChipRow(QWidget):
+    """A row of mutually-exclusive chip buttons. Used for picking from
+    a small fixed set of named values (thin/medium/thick,
+    subtle/medium/strong, etc). Emits value_changed(str) with the key.
+    Mirrors _SwatchRow's API surface."""
+
+    value_changed = Signal(object)  # str (key) - never None
+
+    def __init__(
+        self,
+        options: list[tuple[str, str]],
+        current: Optional[str] = None,
+        parent=None,
+    ):
+        super().__init__(parent)
+        self._options = list(options)
+        self._current = current if current in {k for k, _ in options} else (
+            options[0][0] if options else None
+        )
+        self._enabled_visual = True
+        outer = QHBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(4)
+        self._chip_btns: dict[str, QPushButton] = {}
+        for key, label in self._options:
+            btn = QPushButton(label)
+            btn.setCheckable(True)
+            btn.clicked.connect(lambda _=False, k=key: self._select(k))
+            outer.addWidget(btn)
+            self._chip_btns[key] = btn
+        outer.addStretch(1)
+        self._refresh_checked()
+        self._refresh_enabled_style()
+
+    def current(self) -> Optional[str]:
+        return self._current
+
+    def set_current(self, key: Optional[str]) -> None:
+        if key is None or key not in self._chip_btns:
+            return
+        self._current = key
+        self._refresh_checked()
+
+    def set_enabled_visual(self, enabled: bool) -> None:
+        self._enabled_visual = enabled
+        self._refresh_enabled_style()
+
+    def click_chip(self, key: str) -> None:
+        """Programmatic chip click (for tests)."""
+        if not self._enabled_visual:
+            return
+        if key not in self._chip_btns:
+            return
+        self._select(key)
+
+    def _select(self, key: str) -> None:
+        if not self._enabled_visual:
+            return
+        self._current = key
+        self._refresh_checked()
+        self.value_changed.emit(key)
+
+    def _refresh_checked(self) -> None:
+        for k, btn in self._chip_btns.items():
+            btn.setChecked(k == self._current)
+
+    def _refresh_enabled_style(self) -> None:
+        for btn in self._chip_btns.values():
+            btn.setEnabled(self._enabled_visual)
+
+
 class _PoseTile(QFrame):
     """One pose option. Shows a circular crop of the fetched pixmap on
     a slot-default-grey backdrop, with the pose name underneath. Click

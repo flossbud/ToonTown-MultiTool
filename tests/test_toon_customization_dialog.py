@@ -486,3 +486,33 @@ def test_pose_section_adjust_button_disabled_without_dna(qapp):
     # The contract: click_adjust() is a no-op in that mode.
     sec.click_adjust()
     assert sec.is_adjusting() is False
+
+
+def test_chip_row_emits_value_changed_on_click(qapp):
+    from utils.widgets.toon_customization_dialog import _ChipRow
+    from PySide6.QtTest import QSignalSpy
+    row = _ChipRow([("thin", "Thin"), ("medium", "Medium"), ("thick", "Thick")], current="medium")
+    spy = QSignalSpy(row.value_changed)
+    row.click_chip("thick")
+    assert spy.count() == 1
+    assert spy.at(0)[0] == "thick"
+    assert row.current() == "thick"
+
+
+def test_chip_row_visually_disabled_when_set_enabled_visual_false(qapp):
+    """When the paired color is Default, the chips render greyed out
+    and ignore clicks but retain the last selection."""
+    from utils.widgets.toon_customization_dialog import _ChipRow
+    from PySide6.QtTest import QSignalSpy
+    row = _ChipRow([("thin", "Thin"), ("medium", "Medium")], current="thin")
+    row.set_enabled_visual(False)
+    spy = QSignalSpy(row.value_changed)
+    row.click_chip("medium")
+    # No signal, no state change while disabled.
+    assert spy.count() == 0
+    assert row.current() == "thin"
+    # Re-enable and click works again.
+    row.set_enabled_visual(True)
+    row.click_chip("medium")
+    assert spy.count() == 1
+    assert row.current() == "medium"
