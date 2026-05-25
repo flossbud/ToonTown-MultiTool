@@ -269,6 +269,7 @@ class _BodyClip(QWidget):
         self._anim = QPropertyAnimation(self, b"content_height")
         self._anim.setDuration(self.DURATION_MS)
         self._anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._connected_finished: str | None = None
 
     def set_content_widget(self, widget: QWidget) -> None:
         """Parent the body content widget and lay it out at full natural size."""
@@ -338,16 +339,17 @@ class _BodyClip(QWidget):
     content_height = Property(int, _get_content_height, _set_content_height)
 
     def _detach_finished_handlers(self) -> None:
-        """Disconnect both expand and collapse finished handlers from the
-        animation's finished signal. Uses slot-specific disconnect so a
-        fresh _BodyClip (no handler connected yet) doesn't emit the spurious
-        'Failed to disconnect (None)' RuntimeWarning that the no-arg
-        .disconnect() emits."""
-        for handler in (self._on_expand_finished, self._on_collapse_finished):
-            try:
-                self._anim.finished.disconnect(handler)
-            except (RuntimeError, TypeError):
-                pass
+        """Disconnect whichever finished handler is currently bound to the
+        animation's finished signal, tracked via ``_connected_finished``.
+        Disconnecting an unconnected slot in PySide6 6.x emits a
+        RuntimeWarning via the warnings module (not an exception), which a
+        try/except cannot suppress; tracking the live binding avoids the
+        spurious warning entirely."""
+        if self._connected_finished == "expand":
+            self._anim.finished.disconnect(self._on_expand_finished)
+        elif self._connected_finished == "collapse":
+            self._anim.finished.disconnect(self._on_collapse_finished)
+        self._connected_finished = None
 
     def show_instant(self) -> None:
         """Snap the clip to full natural height without animating.
@@ -393,6 +395,7 @@ class _BodyClip(QWidget):
         self._anim.setEndValue(target)
         self._detach_finished_handlers()
         self._anim.finished.connect(self._on_expand_finished)
+        self._connected_finished = "expand"
         self._anim.start()
 
     def collapse(self) -> None:
@@ -415,6 +418,7 @@ class _BodyClip(QWidget):
         self._anim.setEndValue(0)
         self._detach_finished_handlers()
         self._anim.finished.connect(self._on_collapse_finished)
+        self._connected_finished = "collapse"
         self._anim.start()
 
     def _on_expand_finished(self) -> None:

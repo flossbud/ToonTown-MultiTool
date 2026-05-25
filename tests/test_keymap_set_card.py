@@ -238,6 +238,51 @@ def test_setcard_body_is_bodyclip(qapp):
     assert isinstance(card._body, _BodyClip)
 
 
+def _disconnect_warnings(captured):
+    return [
+        w for w in captured
+        if issubclass(w.category, RuntimeWarning)
+        and "Failed to disconnect" in str(w.message)
+    ]
+
+
+def test_bodyclip_detach_handlers_no_warning_when_none_connected(qapp):
+    """A fresh _BodyClip has no finished-handler connected. Calling
+    _detach_finished_handlers must not emit a 'Failed to disconnect'
+    RuntimeWarning."""
+    import warnings
+    from tabs.keymap_tab import _BodyClip
+    clip = _BodyClip()
+    with warnings.catch_warnings(record=True) as captured:
+        warnings.simplefilter("always")
+        clip._detach_finished_handlers()
+    assert _disconnect_warnings(captured) == []
+
+
+def test_bodyclip_detach_handlers_no_warning_after_expand_then_collapse(qapp):
+    """When expand() has bound _on_expand_finished, collapse() must be able
+    to swap to _on_collapse_finished without emitting a 'Failed to disconnect'
+    warning for the never-connected handler."""
+    import warnings
+    from tabs.keymap_tab import _BodyClip
+    from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel
+    clip = _BodyClip()
+    content = QWidget()
+    lay = QVBoxLayout(content)
+    lay.addWidget(QLabel("row"))
+    clip.set_content_widget(content)
+    with warnings.catch_warnings(record=True) as captured:
+        warnings.simplefilter("always")
+        clip.expand()
+        clip.collapse()
+        clip.expand()
+        clip.collapse()
+    assert _disconnect_warnings(captured) == [], (
+        f"Expected no disconnect warnings, got: "
+        f"{[str(w.message) for w in _disconnect_warnings(captured)]}"
+    )
+
+
 def test_setcard_header_has_fixed_height(qapp):
     from tabs.keymap_tab import SetCard
     card = SetCard(index=0, set_data={"name": "Default"})
