@@ -76,3 +76,30 @@ def resolve_pose(entry: dict, fallback: str = "portrait") -> str:
     if isinstance(val, str) and val in POSE_NAMES:
         return val
     return fallback
+
+
+def resolve_portrait_transform(
+    entry: dict,
+) -> tuple[float, float, float, float]:
+    """Returns (zoom, offset_x, offset_y, rotate). Defaults to
+    (1.0, 0.0, 0.0, 0.0). Clamps zoom to [0.5, 3.0], clamps offsets
+    to [-1.0, 1.0] (fractions of the rendered circle diameter), and
+    normalizes rotate into [-180, 180]. Non-dict transform → defaults."""
+    portrait = entry.get("portrait") if isinstance(entry, dict) else None
+    if not isinstance(portrait, dict):
+        return (1.0, 0.0, 0.0, 0.0)
+    t = portrait.get("transform")
+    if not isinstance(t, dict):
+        return (1.0, 0.0, 0.0, 0.0)
+    zoom = float(t.get("zoom", 1.0))
+    zoom = max(0.5, min(3.0, zoom))
+    off_x = float(t.get("offset_x", 0.0))
+    off_x = max(-1.0, min(1.0, off_x))
+    off_y = float(t.get("offset_y", 0.0))
+    off_y = max(-1.0, min(1.0, off_y))
+    rot = float(t.get("rotate", 0.0))
+    while rot > 180.0:
+        rot -= 360.0
+    while rot < -180.0:
+        rot += 360.0
+    return (zoom, off_x, off_y, rot)

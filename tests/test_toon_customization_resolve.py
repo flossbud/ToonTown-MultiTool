@@ -123,3 +123,56 @@ def test_resolve_pose_missing_falls_back(qapp):
 def test_resolve_pose_custom_fallback(qapp):
     from utils.toon_customization_resolve import resolve_pose
     assert resolve_pose({"pose": None}, fallback="head") == "head"
+
+
+# -- resolve_portrait_transform --------------------------------------------
+
+def test_resolve_portrait_transform_default(qapp):
+    from utils.toon_customization_resolve import resolve_portrait_transform
+    assert resolve_portrait_transform({}) == (1.0, 0.0, 0.0, 0.0)
+
+
+def test_resolve_portrait_transform_round_trip(qapp):
+    from utils.toon_customization_resolve import resolve_portrait_transform
+    entry = {
+        "portrait": {
+            "transform": {
+                "zoom": 1.4,
+                "offset_x": 0.25,
+                "offset_y": -0.1,
+                "rotate": 30.0,
+            }
+        }
+    }
+    assert resolve_portrait_transform(entry) == (1.4, 0.25, -0.1, 30.0)
+
+
+def test_resolve_portrait_transform_clamps_zoom(qapp):
+    from utils.toon_customization_resolve import resolve_portrait_transform
+    high = {"portrait": {"transform": {"zoom": 10.0}}}
+    low = {"portrait": {"transform": {"zoom": 0.1}}}
+    assert resolve_portrait_transform(high)[0] == 3.0
+    assert resolve_portrait_transform(low)[0] == 0.5
+
+
+def test_resolve_portrait_transform_clamps_offsets(qapp):
+    from utils.toon_customization_resolve import resolve_portrait_transform
+    big = {"portrait": {"transform": {"offset_x": 5.0, "offset_y": -3.0}}}
+    z, ox, oy, r = resolve_portrait_transform(big)
+    assert ox == 1.0
+    assert oy == -1.0
+
+
+def test_resolve_portrait_transform_normalizes_rotate(qapp):
+    from utils.toon_customization_resolve import resolve_portrait_transform
+    e = {"portrait": {"transform": {"rotate": 270.0}}}
+    z, ox, oy, r = resolve_portrait_transform(e)
+    # 270 normalized into [-180, 180] is -90.
+    assert r == -90.0
+
+
+def test_resolve_portrait_transform_non_dict_falls_back(qapp):
+    from utils.toon_customization_resolve import resolve_portrait_transform
+    assert resolve_portrait_transform(None) == (1.0, 0.0, 0.0, 0.0)
+    assert resolve_portrait_transform({"portrait": "garbage"}) == (1.0, 0.0, 0.0, 0.0)
+    assert resolve_portrait_transform({"portrait": {"transform": "garbage"}}) == (1.0, 0.0, 0.0, 0.0)
