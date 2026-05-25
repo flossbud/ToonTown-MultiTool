@@ -10,9 +10,13 @@ to identify the game from the executable name.
 
 from __future__ import annotations
 
+import errno
+import logging
 import os
 import sys
 import threading
+
+logger = logging.getLogger(__name__)
 
 _KNOWN_PROCESSES = {
     "ttrengine64.exe": "ttr",
