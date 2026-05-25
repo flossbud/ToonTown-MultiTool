@@ -1729,15 +1729,7 @@ class MultitoonTab(QWidget):
             self.laff_labels[i].setStyleSheet(stat_style)
             self.bean_labels[i].setStyleSheet(stat_style)
 
-        # Keep-alive inset groups + progress bar track color
-        for ka_group in self.ka_groups:
-            ka_group.setStyleSheet(f"""
-                QFrame#ka_group {{
-                    background: {c['bg_input']};
-                    border: 1px solid {c['border_muted']};
-                    border-radius: 8px;
-                }}
-            """)
+        # Progress bar track color
         for ka_bar in self.ka_progress_bars:
             ka_bar.set_bg_color(c['border_muted'])
 
@@ -1745,6 +1737,21 @@ class MultitoonTab(QWidget):
             help_btn.refresh_theme(c)
 
         self.apply_all_visual_states()
+
+        # Re-assert per-slot card brand so body-derived border colors
+        # survive the theme-wide pass above. Pattern mirrors the existing
+        # rebrand loop at the apply_all_visual_states call site.
+        if self._mode == "compact":
+            for i in range(len(self.toon_cards)):
+                if i >= len(self.slot_badges):
+                    continue
+                game = self.slot_badges[i].game
+                enabled = bool(
+                    i < len(self.enabled_toons)
+                    and self.enabled_toons[i]
+                    and self.service_running
+                )
+                self._set_card_brand_for_slot(i, game, enabled=enabled)
 
         # Apply theme to the *active* layout only. Compact's per-card colors
         # ran above (the toon_cards loop). Full has its own apply_theme entry
