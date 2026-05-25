@@ -142,7 +142,7 @@ class _PoseTile(QFrame):
 
     clicked_pose = Signal(str)
 
-    _TILE_W = 80
+    _TILE_W = 110  # wide enough for "portrait-delighted" / "portrait-thinking"
     _TILE_H = 100  # box + label
     _BOX = 80
     _CIRCLE_INSET = 8  # circle margin inside the box
@@ -192,7 +192,9 @@ class _PoseTile(QFrame):
         if self._selected:
             p.fillRect(self.rect(), QColor(74, 124, 255, 60))
 
-        box = QRect(0, 0, self._BOX, self._BOX)
+        # Center the box horizontally in the (possibly wider) tile.
+        box_x = (self._TILE_W - self._BOX) // 2
+        box = QRect(box_x, 0, self._BOX, self._BOX)
         circle = box.adjusted(
             self._CIRCLE_INSET, self._CIRCLE_INSET,
             -self._CIRCLE_INSET, -self._CIRCLE_INSET,
