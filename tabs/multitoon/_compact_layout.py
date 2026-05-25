@@ -105,7 +105,7 @@ class _CompactLayout(QWidget):
         # flush against the right edge.
         meta_col = QVBoxLayout()
         meta_col.setContentsMargins(0, 0, 0, 0)
-        meta_col.setSpacing(3)
+        meta_col.setSpacing(0)
 
         # Sub-line that hosts laff/bean (TTR) and cc_subtitle (CC) - the
         # existing per-widget show/hide logic in _tab.py drives which one

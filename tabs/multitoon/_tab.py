@@ -1530,7 +1530,8 @@ class MultitoonTab(QWidget):
             # into different QFont states; using px here keeps pixelSize()
             # queryable in tests).
             name_label.setStyleSheet(
-                f"font-size: 21px; font-weight: bold; color: {c['text_primary']}; background: none; border: none;"
+                f"font-size: 21px; font-weight: bold; color: {c['text_primary']}; "
+                f"background: none; border: none; padding-left: 6px; padding-top: 10px;"
             )
             stat_style = (
                 f"border: none; background: transparent; font-weight: 500; "
@@ -2581,7 +2582,8 @@ class MultitoonTab(QWidget):
             display = self.toon_names[i] if self.toon_names[i] else f"Toon {i + 1}"
             name_label.setText(display)
             name_label.setStyleSheet(
-                f"font-size: 21px; font-weight: bold; color: {c['text_primary']}; background: none; border: none;"
+                f"font-size: 21px; font-weight: bold; color: {c['text_primary']}; "
+                f"background: none; border: none; padding-left: 6px; padding-top: 10px;"
             )
         if self._mode == "full" and hasattr(self, "_full") and self._full is not None:
             for card in self._full._cards:
