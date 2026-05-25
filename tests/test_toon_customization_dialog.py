@@ -87,6 +87,20 @@ def test_reset_all_empties_draft(qapp):
     assert dlg.draft() == {}
 
 
+def test_reset_all_clears_portrait_circle_outline_visual_state(qapp):
+    """Reset all must clear the new outline picker visual state on
+    _PortraitSection, otherwise subsequent edits re-introduce stale
+    color into the draft."""
+    dlg, _ = _build(qapp, existing={
+        "portrait": {"outline": {"color": "#ff0000", "width": "thick"}},
+    })
+    dlg.reset_all()
+    sec = dlg.section("Portrait")
+    color, _width = sec.current_circle_outline()
+    assert color is None
+    assert dlg.draft() == {}
+
+
 def test_draft_loaded_from_existing(qapp):
     dlg, _ = _build(qapp, existing={"accent": "#56c856"})
     assert dlg.draft() == {"accent": "#56c856"}

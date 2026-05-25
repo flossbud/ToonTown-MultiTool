@@ -1134,6 +1134,7 @@ class ToonCustomizationDialog(QDialog):
                 w.set_color(None)
                 w.set_gradient(None)
                 w.set_pattern(None, None)
+                w.set_circle_outline(None, None)
             elif isinstance(w, _PoseSection):
                 for t in w.tiles():
                     t.set_selected(t.pose == "portrait")
