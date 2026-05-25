@@ -178,3 +178,47 @@ def test_cc_icon_set_to_none_removes_field(qapp):
     dlg.set_icon_stem(None)
     dlg.accept_save()
     assert mgr.get("cc", "Flossbud") == {}
+
+
+def test_pose_tile_initial_state(qapp):
+    from utils.widgets.toon_customization_dialog import _PoseTile
+    tile = _PoseTile("portrait-grin")
+    assert tile.pose == "portrait-grin"
+    assert tile.is_selected() is False
+    assert tile.has_pixmap() is False
+
+
+def test_pose_tile_set_pixmap(qapp):
+    from PySide6.QtGui import QPixmap
+    from utils.widgets.toon_customization_dialog import _PoseTile
+    pm = QPixmap(32, 32)
+    pm.fill()
+    tile = _PoseTile("waving")
+    tile.set_pixmap(pm)
+    assert tile.has_pixmap() is True
+
+
+def test_pose_tile_set_selected_toggles(qapp):
+    from utils.widgets.toon_customization_dialog import _PoseTile
+    tile = _PoseTile("head")
+    tile.set_selected(True)
+    assert tile.is_selected() is True
+    tile.set_selected(False)
+    assert tile.is_selected() is False
+
+
+def test_pose_tile_click_emits_pose(qapp):
+    from PySide6.QtCore import QPoint, QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+    from PySide6.QtTest import QSignalSpy
+    from utils.widgets.toon_customization_dialog import _PoseTile
+    tile = _PoseTile("portrait-sleep")
+    spy = QSignalSpy(tile.clicked_pose)
+    press = QMouseEvent(
+        QMouseEvent.MouseButtonPress,
+        QPointF(10, 10),
+        Qt.LeftButton, Qt.LeftButton, Qt.NoModifier,
+    )
+    tile.mousePressEvent(press)
+    assert spy.count() == 1
+    assert spy.at(0)[0] == "portrait-sleep"

@@ -8,11 +8,12 @@ from __future__ import annotations
 
 from typing import Optional
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtCore import QRect, QSize, Qt, Signal
+from PySide6.QtGui import QColor, QPainter, QPainterPath, QPixmap
 from PySide6.QtWidgets import (
     QColorDialog,
     QDialog,
+    QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
@@ -131,6 +132,97 @@ class _SimpleColorSection(QWidget):
 
     def set_current(self, hex_: Optional[str]) -> None:
         self._row.set_current(hex_)
+
+
+class _PoseTile(QFrame):
+    """One pose option. Shows a circular crop of the fetched pixmap on
+    a slot-default-grey backdrop, with the pose name underneath. Click
+    to select. The tile itself does NOT apply user customizations -
+    the user is choosing the pose so we show it raw."""
+
+    clicked_pose = Signal(str)
+
+    _TILE_W = 80
+    _TILE_H = 100  # box + label
+    _BOX = 80
+    _CIRCLE_INSET = 8  # circle margin inside the box
+    _BACKDROP = QColor("#4a4a4a")
+
+    def __init__(self, pose: str, parent=None):
+        super().__init__(parent)
+        self._pose = pose
+        self._pixmap: Optional[QPixmap] = None
+        self._selected = False
+        self.setFixedSize(QSize(self._TILE_W, self._TILE_H))
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFrameShape(QFrame.NoFrame)
+
+    # -- Public API ----------------------------------------------------------
+
+    @property
+    def pose(self) -> str:
+        return self._pose
+
+    def is_selected(self) -> bool:
+        return self._selected
+
+    def has_pixmap(self) -> bool:
+        return self._pixmap is not None and not self._pixmap.isNull()
+
+    def set_pixmap(self, pixmap: Optional[QPixmap]) -> None:
+        self._pixmap = pixmap
+        self.update()
+
+    def set_selected(self, on: bool) -> None:
+        if self._selected != on:
+            self._selected = on
+            self.update()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.clicked_pose.emit(self._pose)
+        super().mousePressEvent(event)
+
+    # -- Paint --------------------------------------------------------------
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+
+        if self._selected:
+            p.fillRect(self.rect(), QColor(74, 124, 255, 60))
+
+        box = QRect(0, 0, self._BOX, self._BOX)
+        circle = box.adjusted(
+            self._CIRCLE_INSET, self._CIRCLE_INSET,
+            -self._CIRCLE_INSET, -self._CIRCLE_INSET,
+        )
+        p.setPen(Qt.NoPen)
+        p.setBrush(self._BACKDROP)
+        p.drawEllipse(circle)
+
+        if self.has_pixmap():
+            path = QPainterPath()
+            path.addEllipse(circle)
+            p.save()
+            p.setClipPath(path)
+            scaled = self._pixmap.scaled(
+                circle.size(),
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation,
+            )
+            dx = circle.x() + (circle.width() - scaled.width()) // 2
+            dy = circle.y() + (circle.height() - scaled.height()) // 2
+            p.drawPixmap(dx, dy, scaled)
+            p.restore()
+        else:
+            p.setPen(QColor("#9a9aa8"))
+            p.drawText(circle, Qt.AlignCenter, "…")
+
+        p.setPen(QColor("#c8c8d8"))
+        label_rect = QRect(0, self._BOX + 2, self.width(), self.height() - self._BOX - 2)
+        p.drawText(label_rect, Qt.AlignHCenter | Qt.AlignTop, self._pose)
+        p.end()
 
 
 class _PortraitSection(QWidget):
