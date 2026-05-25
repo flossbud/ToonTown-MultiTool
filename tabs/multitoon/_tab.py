@@ -103,6 +103,7 @@ class ToonPortraitWidget(QWidget):
         self.setMinimumSize(38, 38)
         self.setMaximumSize(64, 64)
         self.setCursor(Qt.PointingHandCursor)
+        self.setAttribute(Qt.WA_TranslucentBackground)
         from utils.rendition_poses import RenditionPoseFetcher
         self._fetcher = RenditionPoseFetcher.instance()
         self._fetcher.pose_ready.connect(self._on_pose_ready)
@@ -454,6 +455,20 @@ class ToonPortraitWidget(QWidget):
                     p.setFont(font)
                     p.setPen(self._text)
                     p.drawText(self.rect(), Qt.AlignCenter, str(self._slot))
+
+            # Circle outline (drawn on top of pose, outside the clip).
+            from utils.toon_customization_resolve import resolve_circle_outline
+            outline = resolve_circle_outline(entry)
+            if outline is not None:
+                color, width = outline
+                inset = max(0, width / 2.0)
+                p.setPen(QPen(color, width))
+                p.setBrush(Qt.NoBrush)
+                p.drawEllipse(
+                    QPointF(cx, cy),
+                    r - inset,
+                    r - inset,
+                )
 
         # Unified pencil overlay: paints in any mode where _can_show_pencil
         # is True (TTR + CC + future games).
