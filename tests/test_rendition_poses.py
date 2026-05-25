@@ -210,3 +210,60 @@ def test_invalidate_dna_removes_matching_files(qapp, isolated_cache):
     files = set(os.listdir(fetcher.cache_dir()))
     assert "otherDNA__portrait.png" in files
     assert not any(f.startswith("dnaABC__") for f in files)
+
+
+def test_max_workers_is_three_or_fewer(qapp, isolated_cache):
+    """Regression: workers must stay capped so the dialog-open burst
+    doesn't reintroduce the Python 3.14 paint-time GC race."""
+    from utils.rendition_poses import RenditionPoseFetcher
+    fetcher = RenditionPoseFetcher.instance()
+    # ThreadPoolExecutor exposes _max_workers (private but stable across
+    # 3.10-3.14). Using it here is intentional - this test exists to
+    # catch refactors that bump the constant.
+    assert fetcher._executor._max_workers <= 3
+
+
+def test_worker_emits_bytes_not_qimage(qapp, isolated_cache, monkeypatch):
+    """Regression: the private _bytes_ready signal must carry `bytes`
+    (or None), NOT a QImage/QPixmap. Worker threads must do zero Qt
+    object construction - see docs/postmortem-py314-gc-paint-segv.md."""
+    from PySide6.QtTest import QSignalSpy
+    from utils.rendition_poses import RenditionPoseFetcher
+
+    # Provide a tiny PNG payload.
+    from PySide6.QtCore import QBuffer, QIODevice, QByteArray
+    from PySide6.QtGui import QImage, QColor
+    img = QImage(1, 1, QImage.Format_ARGB32)
+    img.fill(QColor("#ffffff"))
+    ba = QByteArray()
+    buf = QBuffer(ba)
+    buf.open(QIODevice.WriteOnly)
+    img.save(buf, "PNG")
+    png_bytes = bytes(ba)
+
+    class _FakeResponse:
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+        def read(self):
+            return png_bytes
+
+    monkeypatch.setattr(
+        "urllib.request.urlopen", lambda req, timeout=10: _FakeResponse()
+    )
+
+    fetcher = RenditionPoseFetcher.instance()
+    spy = QSignalSpy(fetcher._bytes_ready)
+    fetcher.request("dnaTEST", "portrait")
+
+    import time
+    deadline = time.time() + 2.0
+    while time.time() < deadline and spy.count() == 0:
+        qapp.processEvents()
+        time.sleep(0.02)
+
+    assert spy.count() == 1
+    payload = spy.at(0)[2]
+    # Must be raw bytes or None, never a Qt object.
+    assert payload is None or isinstance(payload, (bytes, bytearray))
