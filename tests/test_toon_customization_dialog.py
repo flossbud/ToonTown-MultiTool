@@ -101,6 +101,30 @@ def test_reset_all_clears_portrait_circle_outline_visual_state(qapp):
     assert dlg.draft() == {}
 
 
+def test_reset_all_clears_silhouette_visual_state_on_pose_section(qapp, monkeypatch, tmp_path):
+    """Reset all must also clear the Adjust view's silhouette swatch
+    state if the adjust view was opened. Without this, the swatch row
+    retains the old color and the next chip click re-writes silhouette
+    back into the cleared draft."""
+    monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
+    _reset_singletons()
+    dlg, _ = _build(qapp, dna="dna-test-123", existing={
+        "portrait": {"silhouette": {
+            "outline": {"color": "#ff0000", "width": "thick"},
+            "shadow":  {"color": "#000000", "softness": "strong"},
+        }},
+    })
+    sec = dlg.section("Toon")
+    sec._ensure_adjust_view()  # force the lazy view to exist
+    dlg.reset_all()
+    # Draft is empty.
+    assert dlg.draft() == {}
+    # Adjust view's pickers are at default.
+    adjust = sec._adjust_view
+    assert adjust._sil_outline_color_row.current() is None
+    assert adjust._sil_shadow_color_row.current() is None
+
+
 def test_draft_loaded_from_existing(qapp):
     dlg, _ = _build(qapp, existing={"accent": "#56c856"})
     assert dlg.draft() == {"accent": "#56c856"}

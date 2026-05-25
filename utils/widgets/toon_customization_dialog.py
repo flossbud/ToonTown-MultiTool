@@ -1273,6 +1273,13 @@ class ToonCustomizationDialog(QDialog):
                 for t in w.tiles():
                     t.set_selected(t.pose == "portrait")
                 w._current_pose = "portrait"
+                # Clear the Adjust view's silhouette picker state if it
+                # was lazy-constructed - otherwise the swatch color
+                # persists and any subsequent interaction re-writes the
+                # silhouette back into the draft.
+                if w._adjust_view is not None:
+                    w._adjust_view.set_silhouette_outline_from_draft(None, None)
+                    w._adjust_view.set_silhouette_shadow_from_draft(None, None)
             # RaceIconGridWidget keeps its visual selection; that's fine,
             # the draft no longer references it so save will skip it.
         self._preview.set_draft(self._draft)
