@@ -260,3 +260,57 @@ def test_customizations_keyed_by_game_isolate_cc_vs_ttr(qapp, tmp_path, monkeypa
     assert stripe_0.target_color() == QColor("#56c856"), (
         "Same slot, same name, but TTR game tag picks up TTR override"
     )
+
+
+def test_open_customization_dialog_passes_dna(qapp, tmp_path, monkeypatch):
+    """The dialog ctor must receive the badge's current DNA so the
+    Toon section can show pose thumbnails."""
+    tab = _build_tab(qapp, tmp_path, monkeypatch)
+    tab.slot_badges[0].set_toon_name("Flossbud")
+    tab.slot_badges[0].set_game("ttr")
+    tab.slot_badges[0]._dna = "dna-flossbud-test"
+
+    captured = {}
+    from utils.widgets import toon_customization_dialog as dlg_mod
+    original_ctor = dlg_mod.ToonCustomizationDialog.__init__
+
+    def _capturing_ctor(self, *args, **kwargs):
+        captured.update(kwargs)
+        # Skip actual dialog construction to avoid showing it.
+        from PySide6.QtWidgets import QDialog
+        QDialog.__init__(self, kwargs.get("parent"))
+        self._game = kwargs["game"]
+        self._toon_name = kwargs["toon_name"]
+        self._manager = kwargs["manager"]
+        # Leave the class-level customization_changed Signal descriptor
+        # in place so dlg.customization_changed.connect(...) still works
+        # via PySide6's descriptor protocol.
+
+    monkeypatch.setattr(dlg_mod.ToonCustomizationDialog, "__init__", _capturing_ctor)
+    monkeypatch.setattr(
+        dlg_mod.ToonCustomizationDialog, "exec", lambda self: None,
+    )
+
+    tab._open_customization_dialog(0)
+    assert captured.get("dna") == "dna-flossbud-test"
+
+
+def test_on_customization_saved_propagates_pose(qapp, tmp_path, monkeypatch):
+    """After Save, the badge's pose must update so the real card
+    refetches the chosen pose."""
+    tab = _build_tab(qapp, tmp_path, monkeypatch)
+    tab.toon_names[0] = "Flossbud"
+    tab.slot_badges[0].set_toon_name("Flossbud")
+    tab.slot_badges[0].set_game("ttr")
+    tab.slot_badges[0]._dna = "dna-foo"
+    tab.customizations.set("ttr", "Flossbud", {"pose": "portrait-grin"})
+
+    set_pose_calls = []
+    monkeypatch.setattr(
+        type(tab.slot_badges[0]),
+        "set_pose",
+        lambda self, p: set_pose_calls.append(p),
+    )
+
+    tab._on_customization_saved(0, "ttr")
+    assert "portrait-grin" in set_pose_calls

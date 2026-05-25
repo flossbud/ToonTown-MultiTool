@@ -2139,6 +2139,7 @@ class MultitoonTab(QWidget):
             manager=self.customizations,
             skin_color=skin,
             auto_stem=auto_stem,
+            dna=badge._dna,
             parent=self,
         )
         dlg.customization_changed.connect(
@@ -2153,6 +2154,15 @@ class MultitoonTab(QWidget):
             slot, game,
             enabled=bool(self.enabled_toons[slot]),
         )
+        # Propagate pose change to the badge so it refetches if needed.
+        if game == "ttr" and slot < len(self.slot_badges):
+            from utils.toon_customization_resolve import resolve_pose
+            toon_name = self.toon_names[slot] if slot < len(self.toon_names) else None
+            entry = (
+                self.customizations.get(game, toon_name) if toon_name else {}
+            )
+            new_pose = resolve_pose(entry, "portrait")
+            self.slot_badges[slot].set_pose(new_pose)
         if slot < len(self.slot_badges):
             self.slot_badges[slot].update()
         self.apply_visual_state(slot)
