@@ -99,8 +99,9 @@ class ToonPortraitWidget(QWidget):
         self._cc_accent: QColor | None = None
         self._cc_gloves: QColor | None = None
         self._cc_emoji: str = ""
-        self._overrides_manager = None         # CCRaceOverridesManager
+        self._customizations = None            # ToonCustomizationsManager
         self._toon_name: str | None = None
+        self._game: str | None = None
         self._cc_auto_species: str | None = None
         self._hovered = False
         self._press_consumed_by_pencil = False
@@ -196,9 +197,28 @@ class ToonPortraitWidget(QWidget):
         self._cc_emoji = emoji
         self.update()
 
-    def set_overrides_manager(self, manager) -> None:
-        """Inject the CCRaceOverridesManager. Call once after construction."""
-        self._overrides_manager = manager
+    def set_customizations_manager(self, manager) -> None:
+        """Inject the ToonCustomizationsManager. Call once after construction."""
+        self._customizations = manager
+
+    def set_game(self, game: str | None) -> None:
+        """Set the game tag ('cc', 'ttr', or None). Triggers a repaint."""
+        if self._game != game:
+            self._game = game
+            self.update()
+
+    @property
+    def game(self) -> str | None:
+        return self._game
+
+    def current_portrait_brush(self):
+        """Test hook: returns the QBrush the next paintEvent will use for
+        the portrait circle."""
+        from utils.toon_customization_resolve import resolve_portrait_brush
+        entry = {}
+        if self._customizations is not None and self._toon_name and self._game:
+            entry = self._customizations.get(self._game, self._toon_name)
+        return resolve_portrait_brush(entry, self._bg)
 
     def set_toon_name(self, name: str | None) -> None:
         """Set the toon name used as the override key. Triggers a repaint."""
@@ -227,9 +247,10 @@ class ToonPortraitWidget(QWidget):
     def _resolve_asset_stem(self) -> str | None:
         """Resolve which asset stem to render: manual override > auto > None."""
         from utils import cc_race_assets
-        if self._overrides_manager is not None and self._toon_name:
-            override = self._overrides_manager.get(self._toon_name)
-            if override:
+        if self._customizations is not None and self._toon_name:
+            entry = self._customizations.get("cc", self._toon_name)
+            override = entry.get("icon_stem")
+            if isinstance(override, str):
                 return override
         return cc_race_assets.asset_stem_for_species(self._cc_auto_species)
 
@@ -270,7 +291,7 @@ class ToonPortraitWidget(QWidget):
         super().leaveEvent(event)
 
     def _can_show_pencil(self) -> bool:
-        return bool(self._cc_mode and self._toon_name)
+        return bool(self._toon_name) and self._game in ("cc", "ttr")
 
     def _fetch(self, dna: str, token: int):
         """Background thread — fetch and decode the portrait off the GUI thread."""
@@ -326,9 +347,23 @@ class ToonPortraitWidget(QWidget):
 
         if self._cc_mode and self._cc_skin is not None:
             from utils.cc_badge_paint import paint_cc_badge, pencil_rect_for
+            from utils.toon_customization_resolve import (
+                resolve_portrait_brush, resolve_portrait_pattern,
+            )
             stem = self._resolve_asset_stem()
+            entry = {}
+            if self._customizations is not None and self._toon_name:
+                entry = self._customizations.get("cc", self._toon_name)
+            # CC fallback brush is the historic complement of skin color,
+            # so we pass None and let paint_cc_badge derive it.
+            brush = None
+            portrait = entry.get("portrait") if isinstance(entry, dict) else None
+            if isinstance(portrait, dict) and (portrait.get("color") or portrait.get("gradient")):
+                brush = resolve_portrait_brush(entry, self._cc_skin)
             paint_cc_badge(
-                p, rect, self._cc_skin, stem, self._slot
+                p, rect, self._cc_skin, stem, self._slot,
+                portrait_brush=brush,
+                pattern=resolve_portrait_pattern(entry),
             )
             if self._hovered and self._can_show_pencil():
                 self._paint_pencil_overlay(p, pencil_rect_for(rect))
@@ -346,8 +381,32 @@ class ToonPortraitWidget(QWidget):
             p.setPen(QPen(self._border_color, 2.0))
         else:
             p.setPen(Qt.NoPen)
-        p.setBrush(self._bg)
+        entry = {}
+        if self._customizations is not None and self._toon_name and self._game:
+            entry = self._customizations.get(self._game, self._toon_name)
+        from utils.toon_customization_resolve import (
+            resolve_portrait_brush, resolve_portrait_pattern,
+        )
+        p.setBrush(resolve_portrait_brush(entry, self._bg))
         p.drawEllipse(QPointF(cx, cy), r, r)
+
+        pattern = resolve_portrait_pattern(entry)
+        if pattern is not None:
+            from utils.toon_pattern_assets import tinted_pattern_pixmap
+            name, color = pattern
+            pm = tinted_pattern_pixmap(name, color, tile_size=24)
+            if not pm.isNull():
+                path = QPainterPath()
+                path.addEllipse(QPointF(cx, cy), r, r)
+                p.save()
+                p.setClipPath(path)
+                d = int(r * 2)
+                top = int(cy - r)
+                left = int(cx - r)
+                for y in range(top, top + d + 1, 24):
+                    for x in range(left, left + d + 1, 24):
+                        p.drawPixmap(x, y, pm)
+                p.restore()
 
         if self._pixmap and not self._pixmap.isNull():
             path = QPainterPath()
