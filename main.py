@@ -3,6 +3,33 @@ from __future__ import annotations
 import os
 import sys
 
+# Crash diagnostics: faulthandler dumps a Python traceback for all threads
+# on SIGSEGV/SIGBUS/SIGABRT. Python 3.14 + PySide6 6.10 has a known class
+# of GC-during-paint races where the C stack alone (from coredumpctl) does
+# not name the Python paintEvent or worker call site that triggered the
+# crash. Writes to a persistent log so the trace survives terminal close;
+# `tail -f ~/.cache/toontown-multitool/faulthandler.log` to follow live.
+import faulthandler as _ttmt_faulthandler
+import datetime as _ttmt_dt
+_ttmt_fault_dir = os.path.join(
+    os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"),
+    "toontown-multitool",
+)
+try:
+    os.makedirs(_ttmt_fault_dir, exist_ok=True)
+    _ttmt_fault_log = open(
+        os.path.join(_ttmt_fault_dir, "faulthandler.log"),
+        "a",
+        buffering=1,
+    )
+    _ttmt_fault_log.write(
+        f"\n=== ttmt {_ttmt_dt.datetime.now().isoformat()} pid={os.getpid()} ===\n"
+    )
+    _ttmt_faulthandler.enable(file=_ttmt_fault_log, all_threads=True)
+except OSError:
+    _ttmt_faulthandler.enable(file=sys.stderr, all_threads=True)
+del _ttmt_dt, _ttmt_fault_dir
+
 # Redirect to ./venv/bin/python when invoked via system Python. The
 # venv ships pip-installed PySide6 with bundled Qt; system PySide6 may
 # link against a broken system Qt6 (e.g. the QFontEngineFT NULL-pointer
