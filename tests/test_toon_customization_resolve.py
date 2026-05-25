@@ -209,3 +209,36 @@ def test_resolve_circle_outline_falls_back_to_medium_for_unknown_width(qapp):
     color, width = resolve_circle_outline(entry)
     assert color.name() == "#ffffff"
     assert width == 2
+
+
+# -- resolve_silhouette_outline --------------------------------------------
+
+@pytest.mark.parametrize("preset,px", [("thin", 1), ("medium", 2), ("thick", 3)])
+def test_resolve_silhouette_outline_returns_color_and_width_per_preset(qapp, preset, px):
+    from utils.toon_customization_resolve import resolve_silhouette_outline
+    entry = {"portrait": {"silhouette": {"outline": {"color": "#ffd84a", "width": preset}}}}
+    result = resolve_silhouette_outline(entry)
+    assert result is not None
+    color, width = result
+    assert color.name() == "#ffd84a"
+    assert width == px
+
+
+def test_resolve_silhouette_outline_returns_none_when_missing(qapp):
+    from utils.toon_customization_resolve import resolve_silhouette_outline
+    assert resolve_silhouette_outline({}) is None
+    assert resolve_silhouette_outline({"portrait": {}}) is None
+    assert resolve_silhouette_outline({"portrait": {"silhouette": {}}}) is None
+
+
+def test_resolve_silhouette_outline_returns_none_when_color_invalid(qapp):
+    from utils.toon_customization_resolve import resolve_silhouette_outline
+    entry = {"portrait": {"silhouette": {"outline": {"color": "xxx", "width": "medium"}}}}
+    assert resolve_silhouette_outline(entry) is None
+
+
+def test_resolve_silhouette_outline_falls_back_to_medium_for_unknown_width(qapp):
+    from utils.toon_customization_resolve import resolve_silhouette_outline
+    entry = {"portrait": {"silhouette": {"outline": {"color": "#ffffff", "width": "extra"}}}}
+    color, width = resolve_silhouette_outline(entry)
+    assert width == 2
