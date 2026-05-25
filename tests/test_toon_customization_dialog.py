@@ -101,3 +101,57 @@ def test_set_accent_to_none_removes_field(qapp):
     dlg.set_accent(None)
     dlg.accept_save()
     assert mgr.get("ttr", "Flossbud") == {"body": "#101020"}
+
+
+def test_set_portrait_color(qapp):
+    dlg, mgr = _build(qapp)
+    dlg.set_portrait_color("#d9a04e")
+    dlg.accept_save()
+    assert mgr.get("ttr", "Flossbud") == {"portrait": {"color": "#d9a04e"}}
+
+
+def test_set_portrait_color_to_none_removes_color(qapp):
+    dlg, mgr = _build(qapp, existing={"portrait": {"color": "#d9a04e"}})
+    dlg.set_portrait_color(None)
+    dlg.accept_save()
+    assert mgr.get("ttr", "Flossbud") == {}
+
+
+def test_set_gradient(qapp):
+    dlg, mgr = _build(qapp)
+    dlg.set_portrait_gradient({"start": "#ff0000", "end": "#00ff00"})
+    dlg.accept_save()
+    assert mgr.get("ttr", "Flossbud") == {
+        "portrait": {"gradient": {"start": "#ff0000", "end": "#00ff00"}}
+    }
+
+
+def test_set_pattern(qapp):
+    dlg, mgr = _build(qapp)
+    dlg.set_portrait_pattern("dots", "#ffffff")
+    dlg.accept_save()
+    assert mgr.get("ttr", "Flossbud") == {
+        "portrait": {"pattern": {"name": "dots", "color": "#ffffff"}}
+    }
+
+
+def test_clear_pattern(qapp):
+    dlg, mgr = _build(qapp, existing={
+        "portrait": {"pattern": {"name": "dots", "color": "#fff000"}}
+    })
+    dlg.set_portrait_pattern(None, None)
+    dlg.accept_save()
+    assert mgr.get("ttr", "Flossbud") == {}
+
+
+def test_portrait_combines_color_pattern(qapp):
+    dlg, mgr = _build(qapp)
+    dlg.set_portrait_color("#d9a04e")
+    dlg.set_portrait_pattern("stripes_diag", "#101020")
+    dlg.accept_save()
+    assert mgr.get("ttr", "Flossbud") == {
+        "portrait": {
+            "color": "#d9a04e",
+            "pattern": {"name": "stripes_diag", "color": "#101020"},
+        }
+    }

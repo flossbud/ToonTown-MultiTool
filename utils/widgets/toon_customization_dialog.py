@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from utils.toon_pattern_assets import PATTERN_NAMES
 from utils.widgets.card_preview_widget import CardPreviewWidget
 
 
@@ -131,6 +132,161 @@ class _SimpleColorSection(QWidget):
         self._row.set_current(hex_)
 
 
+class _PortraitSection(QWidget):
+    """Portrait color + gradient + pattern controls.
+
+    Holds three sub-controls:
+      - color row (default + 12 presets + custom)
+      - gradient toggle + 2 color rows (only visible when toggle is on)
+      - pattern picker (none + 8 patterns) + pattern color row
+        (only visible when a pattern is selected)
+    """
+
+    color_changed = Signal(object)         # str or None
+    gradient_changed = Signal(object)      # {"start", "end"} or None
+    pattern_changed = Signal(object, object)  # (name or None, color or None)
+
+    def __init__(self, current: dict, parent=None):
+        super().__init__(parent)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(8, 8, 8, 8)
+        outer.setSpacing(8)
+
+        outer.addWidget(self._label("Color"))
+        self._color_row = _SwatchRow(current.get("color"))
+        self._color_row.color_picked.connect(self.color_changed.emit)
+        outer.addWidget(self._color_row)
+
+        outer.addWidget(self._label("Gradient"))
+        grad_row = QHBoxLayout()
+        self._grad_toggle = QPushButton("Off")
+        self._grad_toggle.setCheckable(True)
+        self._grad_toggle.setFixedHeight(22)
+        self._grad_toggle.clicked.connect(self._on_gradient_toggle)
+        grad_row.addWidget(self._grad_toggle)
+        grad_row.addStretch(1)
+        outer.addLayout(grad_row)
+
+        self._grad_start = _SwatchRow(
+            (current.get("gradient") or {}).get("start")
+        )
+        self._grad_end = _SwatchRow(
+            (current.get("gradient") or {}).get("end")
+        )
+        self._grad_start.color_picked.connect(lambda _: self._emit_gradient())
+        self._grad_end.color_picked.connect(lambda _: self._emit_gradient())
+        outer.addWidget(self._grad_start)
+        outer.addWidget(self._grad_end)
+
+        outer.addWidget(self._label("Pattern"))
+        pat_row = QHBoxLayout()
+        self._pat_buttons: dict[Optional[str], QPushButton] = {}
+        none_btn = QPushButton("None")
+        none_btn.setCheckable(True)
+        none_btn.setFixedHeight(22)
+        none_btn.clicked.connect(lambda: self._select_pattern(None))
+        pat_row.addWidget(none_btn)
+        self._pat_buttons[None] = none_btn
+        for name in PATTERN_NAMES:
+            b = QPushButton(name.replace("_", " "))
+            b.setCheckable(True)
+            b.setFixedHeight(22)
+            b.clicked.connect(lambda _=False, n=name: self._select_pattern(n))
+            pat_row.addWidget(b)
+            self._pat_buttons[name] = b
+        pat_row.addStretch(1)
+        outer.addLayout(pat_row)
+
+        outer.addWidget(self._label("Pattern color"))
+        self._pat_color_row = _SwatchRow(
+            (current.get("pattern") or {}).get("color")
+        )
+        self._pat_color_row.color_picked.connect(lambda _: self._emit_pattern())
+        outer.addWidget(self._pat_color_row)
+
+        outer.addStretch(1)
+
+        # Initialize visibility / checked state from `current`.
+        grad = current.get("gradient")
+        if isinstance(grad, dict):
+            self._grad_toggle.setChecked(True)
+            self._grad_toggle.setText("On")
+        else:
+            self._grad_start.setVisible(False)
+            self._grad_end.setVisible(False)
+
+        pat = current.get("pattern") or {}
+        pat_name = pat.get("name") if isinstance(pat, dict) else None
+        self._current_pat = pat_name
+        self._refresh_pat_checked()
+        self._pat_color_row.setVisible(pat_name is not None)
+
+    def _label(self, text: str) -> QLabel:
+        lbl = QLabel(text)
+        lbl.setStyleSheet(
+            "color: #9a9aa8; font-size: 10px; "
+            "text-transform: uppercase; letter-spacing: 0.5px;"
+        )
+        return lbl
+
+    def _on_gradient_toggle(self) -> None:
+        on = self._grad_toggle.isChecked()
+        self._grad_toggle.setText("On" if on else "Off")
+        self._grad_start.setVisible(on)
+        self._grad_end.setVisible(on)
+        self._emit_gradient()
+
+    def _emit_gradient(self) -> None:
+        if not self._grad_toggle.isChecked():
+            self.gradient_changed.emit(None)
+            return
+        start = self._grad_start.current()
+        end = self._grad_end.current()
+        if start and end:
+            self.gradient_changed.emit({"start": start, "end": end})
+        else:
+            self.gradient_changed.emit(None)
+
+    def _select_pattern(self, name: Optional[str]) -> None:
+        self._current_pat = name
+        self._refresh_pat_checked()
+        self._pat_color_row.setVisible(name is not None)
+        self._emit_pattern()
+
+    def _refresh_pat_checked(self) -> None:
+        for n, btn in self._pat_buttons.items():
+            btn.setChecked(n == self._current_pat)
+
+    def _emit_pattern(self) -> None:
+        if self._current_pat is None:
+            self.pattern_changed.emit(None, None)
+            return
+        color = self._pat_color_row.current() or "#ffffff"
+        self.pattern_changed.emit(self._current_pat, color)
+
+    # -- programmatic setters (for tests) --------------------------------------
+
+    def set_color(self, hex_: Optional[str]) -> None:
+        self._color_row.set_current(hex_)
+
+    def set_gradient(self, grad: Optional[dict]) -> None:
+        on = isinstance(grad, dict)
+        self._grad_toggle.setChecked(on)
+        self._grad_toggle.setText("On" if on else "Off")
+        self._grad_start.setVisible(on)
+        self._grad_end.setVisible(on)
+        if on:
+            self._grad_start.set_current(grad.get("start"))
+            self._grad_end.set_current(grad.get("end"))
+
+    def set_pattern(self, name: Optional[str], color: Optional[str]) -> None:
+        self._current_pat = name
+        self._refresh_pat_checked()
+        self._pat_color_row.setVisible(name is not None)
+        if color is not None:
+            self._pat_color_row.set_current(color)
+
+
 class ToonCustomizationDialog(QDialog):
     customization_changed = Signal()
 
@@ -165,11 +321,32 @@ class ToonCustomizationDialog(QDialog):
         body_section.set_current(hex_)
         self._on_body_changed(hex_)
 
+    # -- Portrait setters for tests --------------------------------------------
+
+    def set_portrait_color(self, hex_: Optional[str]) -> None:
+        sec: _PortraitSection = self._sections["Portrait"]
+        sec.set_color(hex_)
+        self._on_portrait_color(hex_)
+
+    def set_portrait_gradient(self, grad: Optional[dict]) -> None:
+        sec: _PortraitSection = self._sections["Portrait"]
+        sec.set_gradient(grad)
+        self._on_portrait_gradient(grad)
+
+    def set_portrait_pattern(self, name: Optional[str], color: Optional[str]) -> None:
+        sec: _PortraitSection = self._sections["Portrait"]
+        sec.set_pattern(name, color)
+        self._on_portrait_pattern(name, color)
+
     def reset_all(self) -> None:
         self._draft = {}
         for name, w in self._sections.items():
             if isinstance(w, _SimpleColorSection):
                 w.set_current(None)
+            elif isinstance(w, _PortraitSection):
+                w.set_color(None)
+                w.set_gradient(None)
+                w.set_pattern(None, None)
         self._preview.set_draft(self._draft)
 
     def accept_save(self) -> None:
@@ -207,11 +384,12 @@ class ToonCustomizationDialog(QDialog):
 
         # CC-only Icon section is added by Task 10. Stub for now: missing.
 
-        # Portrait section is added by Task 9. Stub for now: a placeholder
-        # widget so the section list isn't empty.
-        portrait_placeholder = QLabel("Portrait controls land in a later task.")
-        portrait_placeholder.setStyleSheet("color: #6a6f85; padding: 12px;")
-        self._add_section("Portrait", portrait_placeholder)
+        # Portrait
+        portrait_section = _PortraitSection(self._draft.get("portrait") or {})
+        portrait_section.color_changed.connect(self._on_portrait_color)
+        portrait_section.gradient_changed.connect(self._on_portrait_gradient)
+        portrait_section.pattern_changed.connect(self._on_portrait_pattern)
+        self._add_section("Portrait", portrait_section)
 
         # Accent
         accent_section = _SimpleColorSection(
@@ -268,4 +446,40 @@ class ToonCustomizationDialog(QDialog):
             self._draft.pop("body", None)
         else:
             self._draft["body"] = hex_
+        self._preview.set_draft(self._draft)
+
+    # -- Portrait field handlers -----------------------------------------------
+
+    def _portrait_subdict(self) -> dict:
+        return self._draft.setdefault("portrait", {})
+
+    def _prune_portrait(self) -> None:
+        if not self._draft.get("portrait"):
+            self._draft.pop("portrait", None)
+
+    def _on_portrait_color(self, hex_: Optional[str]) -> None:
+        sub = self._portrait_subdict()
+        if hex_ is None:
+            sub.pop("color", None)
+        else:
+            sub["color"] = hex_
+        self._prune_portrait()
+        self._preview.set_draft(self._draft)
+
+    def _on_portrait_gradient(self, grad: Optional[dict]) -> None:
+        sub = self._portrait_subdict()
+        if grad is None:
+            sub.pop("gradient", None)
+        else:
+            sub["gradient"] = dict(grad)
+        self._prune_portrait()
+        self._preview.set_draft(self._draft)
+
+    def _on_portrait_pattern(self, name: Optional[str], color: Optional[str]) -> None:
+        sub = self._portrait_subdict()
+        if name is None:
+            sub.pop("pattern", None)
+        else:
+            sub["pattern"] = {"name": name, "color": color or "#ffffff"}
+        self._prune_portrait()
         self._preview.set_draft(self._draft)
