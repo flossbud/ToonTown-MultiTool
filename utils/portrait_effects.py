@@ -15,7 +15,7 @@ from PySide6.QtGui import (
     QPixmap,
 )
 from PySide6.QtWidgets import (
-    QGraphicsDropShadowEffect,
+    QGraphicsBlurEffect,
     QGraphicsPixmapItem,
     QGraphicsScene,
 )
@@ -67,11 +67,14 @@ def build_silhouette_shadow_pixmap(
 ) -> QPixmap:
     """Returns a softly-blurred colored shadow of `pose_pm`'s alpha.
 
-    Implementation: wrap pose in a QGraphicsPixmapItem, attach a
-    QGraphicsDropShadowEffect with the requested color and blur, render
-    the resulting bounding rect (including blur padding) onto a fresh
-    transparent QPixmap. Output size is `pose_pm.size()` plus 2 * blur_px
-    on each axis so the soft edge isn't clipped."""
+    Implementation: color the source with the shadow color preserving
+    alpha, then apply a Gaussian-style blur via QGraphicsBlurEffect.
+    The blur softens the entire silhouette including its alpha edges,
+    producing a soft fuzzy shadow shape (not a hard silhouette).
+
+    Output size is `pose_pm.size()` plus 2 * blur_px on each axis so
+    the blurred halo isn't clipped. With blur_px == 0 the output is
+    the source size with the colored silhouette unblurred."""
     pad = max(0, blur_px)
     out_w = pose_pm.width() + 2 * pad
     out_h = pose_pm.height() + 2 * pad
@@ -82,8 +85,7 @@ def build_silhouette_shadow_pixmap(
         return out
 
     # Build a solid-color version of the source (preserve alpha, replace RGB
-    # with shadow color). The scene item uses this so both the body and the
-    # blurred halo share the requested color.
+    # with shadow color).
     colored = QPixmap(pose_pm.size())
     colored.fill(Qt.transparent)
     cp = QPainter(colored)
@@ -92,21 +94,28 @@ def build_silhouette_shadow_pixmap(
     cp.fillRect(colored.rect(), color)
     cp.end()
 
+    # When blur_px == 0 we don't need the scene/effect machinery - just
+    # blit the colored silhouette into the center of the (un-padded) out.
+    if blur_px == 0:
+        p = QPainter(out)
+        p.drawPixmap(pad, pad, colored)
+        p.end()
+        return out
+
     scene = QGraphicsScene()
     item = QGraphicsPixmapItem(colored)
-    effect = QGraphicsDropShadowEffect()
-    effect.setColor(color)
+    effect = QGraphicsBlurEffect()
     effect.setBlurRadius(blur_px)
-    effect.setOffset(0, 0)
+    effect.setBlurHints(QGraphicsBlurEffect.QualityHint)
     item.setGraphicsEffect(effect)
     scene.addItem(item)
 
     p = QPainter(out)
     p.setRenderHint(QPainter.Antialiasing)
-    # Capture the full output area in scene coords: item lives at (0,0)..(W,H)
-    # in scene space, and the blur halo extends to negative coords by `pad` px.
-    # Mapping (-pad,-pad,out_w,out_h) in scene → (0,0,out_w,out_h) in painter
-    # naturally centers the item with `pad` of padding on each side.
+    # Item lives at (0,0)..(W,H) in scene coords; blur halo extends
+    # `pad` px in each direction. Mapping (-pad,-pad,out_w,out_h) in
+    # scene → (0,0,out_w,out_h) in painter centers the item with `pad`
+    # of padding on each side.
     source_rect = QRectF(-pad, -pad, out_w, out_h)
     target_rect = QRectF(0, 0, out_w, out_h)
     scene.render(p, target_rect, source_rect)
