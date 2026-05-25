@@ -10,13 +10,9 @@ to identify the game from the executable name.
 
 from __future__ import annotations
 
-import errno
-import logging
 import os
 import sys
 import threading
-
-logger = logging.getLogger(__name__)
 
 _KNOWN_PROCESSES = {
     "ttrengine64.exe": "ttr",
@@ -275,16 +271,13 @@ class GameRegistry:
                 try:
                     exe = win32process.GetModuleFileNameEx(handle, 0)
                 except (OSError, AttributeError) as e:
-                    logger.warning("Win32 process query failed for PID %d: %s", pid, e)
+                    print(f"[GameRegistry] Win32 process query failed for PID {pid}: {e}")
                     return None
                 finally:
                     win32api.CloseHandle(handle)
             else:
                 exe = os.readlink(f"/proc/{pid}/exe")
         except (OSError, FileNotFoundError) as e:
-            if getattr(e, "errno", None) in (errno.EACCES, errno.EPERM):
-                logger.debug("Process name lookup failed for PID %d: %s", pid, e)
-            else:
-                logger.warning("Process name lookup failed for PID %d: %s", pid, e)
+            print(f"[GameRegistry] Process name lookup failed for PID {pid}: {e}")
             return None
         return os.path.basename(exe).lower()
