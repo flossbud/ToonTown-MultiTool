@@ -516,3 +516,15 @@ def test_chip_row_visually_disabled_when_set_enabled_visual_false(qapp):
     row.click_chip("medium")
     assert spy.count() == 1
     assert row.current() == "medium"
+
+
+def test_chip_row_set_current_does_not_emit(qapp):
+    """Programmatic set_current is a silent state mutation - never emits
+    value_changed. Mirrors _SwatchRow.set_current semantics."""
+    from utils.widgets.toon_customization_dialog import _ChipRow
+    from PySide6.QtTest import QSignalSpy
+    row = _ChipRow([("thin", "Thin"), ("thick", "Thick")], current="thin")
+    spy = QSignalSpy(row.value_changed)
+    row.set_current("thick")
+    assert spy.count() == 0
+    assert row.current() == "thick"

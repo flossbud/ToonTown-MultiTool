@@ -150,7 +150,6 @@ class _ChipRow(QWidget):
         parent=None,
     ):
         super().__init__(parent)
-        self._options = list(options)
         self._current = current if current in {k for k, _ in options} else (
             options[0][0] if options else None
         )
@@ -159,7 +158,7 @@ class _ChipRow(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(4)
         self._chip_btns: dict[str, QPushButton] = {}
-        for key, label in self._options:
+        for key, label in options:
             btn = QPushButton(label)
             btn.setCheckable(True)
             btn.clicked.connect(lambda _=False, k=key: self._select(k))
