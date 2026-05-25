@@ -242,3 +242,41 @@ def test_resolve_silhouette_outline_falls_back_to_medium_for_unknown_width(qapp)
     entry = {"portrait": {"silhouette": {"outline": {"color": "#ffffff", "width": "extra"}}}}
     color, width = resolve_silhouette_outline(entry)
     assert width == 2
+
+
+# -- resolve_silhouette_shadow ---------------------------------------------
+
+@pytest.mark.parametrize("preset,blur,ox,oy", [
+    ("subtle", 2, 1, 2),
+    ("medium", 4, 2, 3),
+    ("strong", 8, 3, 5),
+])
+def test_resolve_silhouette_shadow_bundles_blur_and_offset_per_softness(
+    qapp, preset, blur, ox, oy,
+):
+    from utils.toon_customization_resolve import resolve_silhouette_shadow
+    entry = {"portrait": {"silhouette": {"shadow": {"color": "#000000", "softness": preset}}}}
+    result = resolve_silhouette_shadow(entry)
+    assert result is not None
+    color, b, x, y = result
+    assert color.name() == "#000000"
+    assert (b, x, y) == (blur, ox, oy)
+
+
+def test_resolve_silhouette_shadow_returns_none_when_missing(qapp):
+    from utils.toon_customization_resolve import resolve_silhouette_shadow
+    assert resolve_silhouette_shadow({}) is None
+    assert resolve_silhouette_shadow({"portrait": {"silhouette": {}}}) is None
+
+
+def test_resolve_silhouette_shadow_returns_none_when_color_invalid(qapp):
+    from utils.toon_customization_resolve import resolve_silhouette_shadow
+    entry = {"portrait": {"silhouette": {"shadow": {"color": "bogus", "softness": "medium"}}}}
+    assert resolve_silhouette_shadow(entry) is None
+
+
+def test_resolve_silhouette_shadow_falls_back_to_medium_for_unknown_softness(qapp):
+    from utils.toon_customization_resolve import resolve_silhouette_shadow
+    entry = {"portrait": {"silhouette": {"shadow": {"color": "#000", "softness": "huge"}}}}
+    color, b, x, y = resolve_silhouette_shadow(entry)
+    assert (b, x, y) == (4, 2, 3)

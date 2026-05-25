@@ -150,3 +150,35 @@ def resolve_silhouette_outline(entry: dict) -> Optional[tuple[QColor, int]]:
         width_key, _SILHOUETTE_OUTLINE_WIDTHS["medium"]
     )
     return QColor(color), px
+
+
+_SILHOUETTE_SHADOW_PRESETS = {
+    "subtle": (2, 1, 2),
+    "medium": (4, 2, 3),
+    "strong": (8, 3, 5),
+}
+
+
+def resolve_silhouette_shadow(
+    entry: dict,
+) -> Optional[tuple[QColor, int, int, int]]:
+    """Returns (color, blur_px, offset_x_px, offset_y_px) for the
+    silhouette drop shadow, or None when not set. Unknown softness
+    presets fall back to 'medium'. Invalid colors -> None."""
+    portrait = entry.get("portrait") if isinstance(entry, dict) else None
+    if not isinstance(portrait, dict):
+        return None
+    silhouette = portrait.get("silhouette")
+    if not isinstance(silhouette, dict):
+        return None
+    shadow = silhouette.get("shadow")
+    if not isinstance(shadow, dict):
+        return None
+    color = shadow.get("color")
+    if not _is_hex(color):
+        return None
+    softness_key = shadow.get("softness", "medium")
+    blur, ox, oy = _SILHOUETTE_SHADOW_PRESETS.get(
+        softness_key, _SILHOUETTE_SHADOW_PRESETS["medium"]
+    )
+    return QColor(color), blur, ox, oy
