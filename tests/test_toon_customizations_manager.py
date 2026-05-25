@@ -146,3 +146,12 @@ def test_migration_handles_corrupt_legacy_file(isolated_config):
     # Corrupt legacy is left alone -- no .bak rename when there was nothing
     # to migrate.
     assert legacy.exists()
+
+
+def test_pose_field_round_trips(isolated_config):
+    from utils.toon_customizations_manager import ToonCustomizationsManager
+    m = ToonCustomizationsManager()
+    m.set("ttr", "Flossbud", {"pose": "portrait-grin", "accent": "#56c856"})
+    entry = m.get("ttr", "Flossbud")
+    assert entry["pose"] == "portrait-grin"
+    assert entry["accent"] == "#56c856"
