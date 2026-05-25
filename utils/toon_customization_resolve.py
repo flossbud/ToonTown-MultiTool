@@ -103,3 +103,24 @@ def resolve_portrait_transform(
     while rot < -180.0:
         rot += 360.0
     return (zoom, off_x, off_y, rot)
+
+
+_CIRCLE_OUTLINE_WIDTHS = {"thin": 1, "medium": 2, "thick": 4}
+
+
+def resolve_circle_outline(entry: dict) -> Optional[tuple[QColor, int]]:
+    """Returns (color, px_width) for the portrait circle outline, or
+    None when not set. Unknown width presets fall back to 'medium'.
+    Invalid colors → None (the effect is off)."""
+    portrait = entry.get("portrait") if isinstance(entry, dict) else None
+    if not isinstance(portrait, dict):
+        return None
+    outline = portrait.get("outline")
+    if not isinstance(outline, dict):
+        return None
+    color = outline.get("color")
+    if not _is_hex(color):
+        return None
+    width_key = outline.get("width", "medium")
+    px = _CIRCLE_OUTLINE_WIDTHS.get(width_key, _CIRCLE_OUTLINE_WIDTHS["medium"])
+    return QColor(color), px
