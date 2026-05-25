@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 
 from utils.toon_pattern_assets import PATTERN_NAMES
 from utils.widgets.card_preview_widget import CardPreviewWidget
+from utils.widgets.race_icon_grid import RaceIconGridWidget
 
 
 # Curated 12-color palette. Order matters - first row primaries, second
@@ -290,11 +291,21 @@ class _PortraitSection(QWidget):
 class ToonCustomizationDialog(QDialog):
     customization_changed = Signal()
 
-    def __init__(self, game: str, toon_name: str, manager, parent=None):
+    def __init__(
+        self,
+        game: str,
+        toon_name: str,
+        manager,
+        skin_color: Optional[QColor] = None,
+        auto_stem: Optional[str] = None,
+        parent=None,
+    ):
         super().__init__(parent)
         self._game = game
         self._toon_name = toon_name
         self._manager = manager
+        self._skin = skin_color
+        self._auto_stem = auto_stem
         self._draft: dict = dict(manager.get(game, toon_name))
         self._sections: dict[str, QWidget] = {}
 
@@ -308,8 +319,27 @@ class ToonCustomizationDialog(QDialog):
     def section_names(self) -> list[str]:
         return list(self._sections.keys())
 
+    def section(self, name: str) -> QWidget:
+        return self._sections[name]
+
     def draft(self) -> dict:
         return dict(self._draft)
+
+    def set_icon_stem(self, stem: Optional[str]) -> None:
+        if self._game != "cc":
+            return
+        if "Icon" not in self._sections:
+            return
+        grid: RaceIconGridWidget = self._sections["Icon"]
+        if stem is None:
+            # Best-effort: nothing to call to "unselect" the grid, so we just
+            # update the draft. The dialog tracks the unset state and the
+            # grid will visually fall back to the auto-marked tile.
+            self._draft.pop("icon_stem", None)
+            self._preview.set_draft(self._draft)
+            return
+        grid.select_stem(stem)
+        self._on_icon_stem(stem)
 
     def set_accent(self, hex_: Optional[str]) -> None:
         accent_section: _SimpleColorSection = self._sections["Accent"]
@@ -347,6 +377,8 @@ class ToonCustomizationDialog(QDialog):
                 w.set_color(None)
                 w.set_gradient(None)
                 w.set_pattern(None, None)
+            # RaceIconGridWidget keeps its visual selection; that's fine,
+            # the draft no longer references it so save will skip it.
         self._preview.set_draft(self._draft)
 
     def accept_save(self) -> None:
@@ -382,7 +414,16 @@ class ToonCustomizationDialog(QDialog):
         )
         self._stack = QStackedWidget()
 
-        # CC-only Icon section is added by Task 10. Stub for now: missing.
+        # Icon (CC only)
+        if self._game == "cc":
+            skin = self._skin or QColor("#d9a04e")
+            grid = RaceIconGridWidget(
+                skin_color=skin,
+                selected_stem=self._draft.get("icon_stem"),
+                auto_stem=self._auto_stem,
+            )
+            grid.selection_changed.connect(self._on_icon_stem)
+            self._add_section("Icon", grid)
 
         # Portrait
         portrait_section = _PortraitSection(self._draft.get("portrait") or {})
@@ -433,6 +474,13 @@ class ToonCustomizationDialog(QDialog):
         self._stack.addWidget(widget)
 
     # -- Field handlers --------------------------------------------------------
+
+    def _on_icon_stem(self, stem: str) -> None:
+        if stem:
+            self._draft["icon_stem"] = stem
+        else:
+            self._draft.pop("icon_stem", None)
+        self._preview.set_draft(self._draft)
 
     def _on_accent_changed(self, hex_: Optional[str]) -> None:
         if hex_ is None:

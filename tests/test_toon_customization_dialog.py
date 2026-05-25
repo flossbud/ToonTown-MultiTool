@@ -58,7 +58,6 @@ def test_ttr_has_no_icon_section(qapp):
     assert "Icon" not in dlg.section_names()
 
 
-@pytest.mark.xfail(reason="Icon section added in Task 10")
 def test_cc_has_icon_section(qapp):
     dlg, _ = _build(qapp, game="cc")
     assert "Icon" in dlg.section_names()
@@ -155,3 +154,27 @@ def test_portrait_combines_color_pattern(qapp):
             "pattern": {"name": "stripes_diag", "color": "#101020"},
         }
     }
+
+
+def test_cc_icon_section_initial_selection(qapp):
+    """When CC entry has icon_stem, the Icon section reflects it."""
+    dlg, _ = _build(
+        qapp, game="cc",
+        existing={"icon_stem": "dog"},
+    )
+    sec = dlg.section("Icon")
+    assert sec.selected_stem() == "dog"
+
+
+def test_cc_icon_section_save(qapp):
+    dlg, mgr = _build(qapp, game="cc")
+    dlg.set_icon_stem("dog")
+    dlg.accept_save()
+    assert mgr.get("cc", "Flossbud") == {"icon_stem": "dog"}
+
+
+def test_cc_icon_set_to_none_removes_field(qapp):
+    dlg, mgr = _build(qapp, game="cc", existing={"icon_stem": "dog"})
+    dlg.set_icon_stem(None)
+    dlg.accept_save()
+    assert mgr.get("cc", "Flossbud") == {}
