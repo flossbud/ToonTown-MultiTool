@@ -104,3 +104,69 @@ def test_ttr_pencil_shows_after_apply_toon_names(qapp, tmp_path, monkeypatch):
     tab._set_card_brand_for_slot(0, "ttr", enabled=True)
     qapp.processEvents()
     assert tab.slot_badges[0]._can_show_pencil() is True
+
+
+def test_customizations_follow_toon_name_across_slots(qapp, tmp_path, monkeypatch):
+    """Lock-in: customizations are keyed by toon name, not slot index.
+    When a toon moves between slots, its customization moves with it."""
+    tab = _build_tab(qapp, tmp_path, monkeypatch)
+    # Bypass the 1s cold-start delay so stripe.set_color() applies
+    # immediately during the test (otherwise set_card_brand is gated off).
+    tab._compact._cold_start_in_progress = False
+    # Save a customization for "Flossbud" before placing the toon anywhere.
+    tab.customizations.set("ttr", "Flossbud", {"accent": "#56c856"})
+
+    # Place "Flossbud" in slot 0.
+    tab._apply_toon_names(["Flossbud", None, None, None])
+    tab._set_card_brand_for_slot(0, "ttr", enabled=True)
+    qapp.processEvents()
+
+    stripe_0 = tab._compact._card_slots[0]["card_stripe"]
+    from PySide6.QtGui import QColor
+    assert stripe_0.target_color() == QColor("#56c856"), (
+        "Slot 0 should pick up Flossbud's accent override"
+    )
+
+    # Move "Flossbud" to slot 2. Slot 0 is now empty.
+    tab._apply_toon_names([None, None, "Flossbud", None])
+    tab._set_card_brand_for_slot(0, "ttr", enabled=False)
+    tab._set_card_brand_for_slot(2, "ttr", enabled=True)
+    qapp.processEvents()
+
+    stripe_2 = tab._compact._card_slots[2]["card_stripe"]
+    assert stripe_2.target_color() == QColor("#56c856"), (
+        "Slot 2 should now have Flossbud's accent (customization moved with name)"
+    )
+    # Slot 0 should fall back to default (empty / no override).
+    assert stripe_0.target_color() != QColor("#56c856"), (
+        "Slot 0 should no longer show Flossbud's accent after she moved away"
+    )
+
+
+def test_customizations_keyed_by_game_isolate_cc_vs_ttr(qapp, tmp_path, monkeypatch):
+    """Lock-in: a CC toon and a TTR toon with the same name keep
+    independent customizations (namespaced keys)."""
+    tab = _build_tab(qapp, tmp_path, monkeypatch)
+    # Bypass the 1s cold-start delay so stripe.set_color() applies
+    # immediately during the test.
+    tab._compact._cold_start_in_progress = False
+    tab.customizations.set("cc", "Flossbud", {"accent": "#e74a4a"})
+    tab.customizations.set("ttr", "Flossbud", {"accent": "#56c856"})
+
+    # Slot 0 = CC Flossbud
+    tab._apply_toon_names(["Flossbud", None, None, None])
+    tab._set_card_brand_for_slot(0, "cc", enabled=True)
+    qapp.processEvents()
+
+    from PySide6.QtGui import QColor
+    stripe_0 = tab._compact._card_slots[0]["card_stripe"]
+    assert stripe_0.target_color() == QColor("#e74a4a"), (
+        "CC slot must show CC-namespaced override, not TTR's"
+    )
+
+    # Now treat slot 0 as TTR Flossbud
+    tab._set_card_brand_for_slot(0, "ttr", enabled=True)
+    qapp.processEvents()
+    assert stripe_0.target_color() == QColor("#56c856"), (
+        "Same slot, same name, but TTR game tag picks up TTR override"
+    )
