@@ -662,3 +662,21 @@ def test_dialog_silhouette_shadow_and_outline_coexist(qapp, monkeypatch, tmp_pat
     sil = dlg.draft()["portrait"]["silhouette"]
     assert sil["outline"] == {"color": "#ffd84a", "width": "thin"}
     assert sil["shadow"] == {"color": "#000000", "softness": "subtle"}
+
+
+def test_dialog_removing_shadow_preserves_existing_outline(qapp, monkeypatch, tmp_path):
+    """Asymmetric removal: when silhouette has both outline and shadow,
+    clearing shadow must leave outline in place. Guards the prune-empty
+    cleanup in _on_silhouette_shadow."""
+    monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
+    _reset_singletons()
+    dlg, _ = _build(qapp, dna="dna-test-123", existing={
+        "portrait": {"silhouette": {
+            "outline": {"color": "#ffd84a", "width": "medium"},
+            "shadow":  {"color": "#000000", "softness": "medium"},
+        }},
+    })
+    dlg.set_silhouette_shadow(None, None)
+    sil = dlg.draft()["portrait"]["silhouette"]
+    assert "shadow" not in sil
+    assert sil["outline"] == {"color": "#ffd84a", "width": "medium"}

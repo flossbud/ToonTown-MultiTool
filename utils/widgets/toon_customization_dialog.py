@@ -653,7 +653,7 @@ class _PoseAdjustView(QWidget):
     def silhouette_outline(self) -> tuple[Optional[str], str]:
         return self._sil_outline_color_row.current(), self._sil_outline_chip.current()
 
-    def _on_sil_shadow_color(self, hex_) -> None:
+    def _on_sil_shadow_color(self, hex_: Optional[str]) -> None:
         self._sil_shadow_chip.set_enabled_visual(hex_ is not None)
         self.silhouette_shadow_changed.emit(hex_, self._sil_shadow_chip.current())
 
@@ -663,7 +663,7 @@ class _PoseAdjustView(QWidget):
         )
 
     def set_silhouette_shadow_from_draft(
-        self, hex_, softness_key,
+        self, hex_: Optional[str], softness_key: Optional[str],
     ) -> None:
         """Initial-state setter used by _PoseSection. Does NOT emit -
         the dialog's draft already has this value."""
@@ -672,7 +672,7 @@ class _PoseAdjustView(QWidget):
             self._sil_shadow_chip.set_current(softness_key)
         self._sil_shadow_chip.set_enabled_visual(hex_ is not None)
 
-    def silhouette_shadow(self) -> tuple:
+    def silhouette_shadow(self) -> tuple[Optional[str], str]:
         return self._sil_shadow_color_row.current(), self._sil_shadow_chip.current()
 
 
@@ -684,7 +684,7 @@ class _PoseSection(QWidget):
     pose_changed = Signal(str)
     transform_changed = Signal()  # emitted when adjust view writes to transform
     silhouette_outline_changed = Signal(object, object)  # (hex or None, width key)
-    silhouette_shadow_changed = Signal(object, object)
+    silhouette_shadow_changed = Signal(object, object)  # (hex or None, softness key)
 
     def __init__(self, dna: Optional[str], current_pose: str, parent=None):
         super().__init__(parent)
@@ -867,8 +867,11 @@ class _PoseSection(QWidget):
         self.silhouette_outline_changed.emit(hex_, width_key)
 
     def set_silhouette_shadow(
-        self, hex_, softness_key,
+        self, hex_: Optional[str], softness_key: Optional[str],
     ) -> None:
+        """Forwarded from the dialog setter. Pushes through to the adjust
+        view (creating it if needed) and re-emits so the dialog handler
+        writes to the draft."""
         self._ensure_adjust_view()
         self._adjust_view.set_silhouette_shadow_from_draft(hex_, softness_key)
         self.silhouette_shadow_changed.emit(hex_, softness_key)
@@ -1240,7 +1243,7 @@ class ToonCustomizationDialog(QDialog):
             self._on_silhouette_outline(hex_, width_key or "medium")
 
     def set_silhouette_shadow(
-        self, hex_, softness_key,
+        self, hex_: Optional[str], softness_key: Optional[str],
     ) -> None:
         if "Toon" in self._sections:
             sec = self._sections["Toon"]
