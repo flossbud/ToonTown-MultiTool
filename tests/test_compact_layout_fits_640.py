@@ -18,7 +18,7 @@ from PySide6.QtWidgets import QApplication
 # docs/superpowers/specs/2026-05-24-multitoon-tab-compact-redesign-design.md
 CONTENT_BUDGET_PX = 650  # 770 default window - 56 header - 64 chip rail
 CONTENT_WIDTH_PX = 549   # default 575 min-width window minus 12+12 outer margins minus 2 border
-_PIN_HEIGHT_PX = 588     # measured natural height; +4 px grace
+_PIN_HEIGHT_PX = 624     # measured natural height after the header-restack (21 px name); +4 px grace
 
 
 @pytest.fixture(scope="module")
