@@ -234,10 +234,17 @@ class ToonPortraitWidget(QWidget):
         self._customizations = manager
 
     def set_game(self, game: str | None) -> None:
-        """Set the game tag ('cc', 'ttr', or None). Triggers a repaint."""
-        if self._game != game:
-            self._game = game
-            self.update()
+        """Set the game tag ('cc', 'ttr', or None). Triggers a repaint
+        and re-resolves the pose against the manager if a DNA + name
+        are already known (same race fix as `set_toon_name`)."""
+        if self._game == game:
+            return
+        self._game = game
+        self.update()
+        if self._dna and self._toon_name and game in ("cc", "ttr"):
+            new_pose = self._resolve_pose_from_manager()
+            if new_pose != self._pose:
+                self.set_pose(new_pose)
 
     @property
     def game(self) -> str | None:
@@ -262,10 +269,22 @@ class ToonPortraitWidget(QWidget):
         return resolve_portrait_transform(entry)
 
     def set_toon_name(self, name: str | None) -> None:
-        """Set the toon name used as the override key. Triggers a repaint."""
-        if self._toon_name != name:
-            self._toon_name = name
-            self.update()
+        """Set the toon name used as the override key. Triggers a repaint.
+
+        If a DNA is already known, re-resolve the pose against the
+        customizations manager - on initial load `set_dna` runs before
+        `set_toon_name` (see `_apply_merged_toon_data`), so the first
+        fetch always asks for the default "portrait". Once the name
+        lands here we re-check the manager and refetch the saved pose
+        if it differs."""
+        if self._toon_name == name:
+            return
+        self._toon_name = name
+        self.update()
+        if self._dna and name:
+            new_pose = self._resolve_pose_from_manager()
+            if new_pose != self._pose:
+                self.set_pose(new_pose)
 
     def set_cc_auto_species(self, species_name: str | None) -> None:
         """Set the auto-detected CC species name (e.g. 'DOG'). Triggers a repaint."""

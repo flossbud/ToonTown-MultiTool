@@ -107,3 +107,68 @@ def test_set_dna_none_clears_pixmap(qt_app, monkeypatch, tmp_path):
     w._pixmap = pm
     w.set_dna(None)
     assert w._pixmap is None
+
+
+def test_set_toon_name_after_set_dna_picks_up_saved_pose(qt_app, monkeypatch, tmp_path):
+    """Regression: on app restart, the data ingestion path calls
+    `set_dna()` before `set_toon_name()`. The first call resolves the
+    pose against an empty toon name and asks for "portrait". When the
+    name finally arrives, the widget must re-check the manager and
+    refetch the saved pose if it differs."""
+    monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
+    requested = []
+    from utils.rendition_poses import RenditionPoseFetcher
+    RenditionPoseFetcher._instance = None
+    monkeypatch.setattr(
+        RenditionPoseFetcher,
+        "request",
+        lambda self, dna, pose: requested.append((dna, pose)),
+    )
+    from utils.toon_customizations_manager import ToonCustomizationsManager
+    from tabs.multitoon._tab import ToonPortraitWidget
+    mgr = ToonCustomizationsManager()
+    mgr.set("ttr", "Flossbud", {"pose": "portrait-grin"})
+
+    w = ToonPortraitWidget(1)
+    w.set_customizations_manager(mgr)
+    w.set_game("ttr")
+    # Simulate the real-world order: set_dna FIRST (with no name yet),
+    # then set_toon_name catches up.
+    w.set_dna("dna-foo")
+    # First fetch is for the default "portrait" (no name to look up).
+    assert ("dna-foo", "portrait") in requested
+    requested.clear()
+
+    w.set_toon_name("Flossbud")
+    # Now that the name is set, the widget must refetch the saved pose.
+    assert ("dna-foo", "portrait-grin") in requested
+    assert w._pose == "portrait-grin"
+
+
+def test_set_game_after_set_dna_picks_up_saved_pose(qt_app, monkeypatch, tmp_path):
+    """Sister test: if set_game runs after set_dna + set_toon_name,
+    the widget re-resolves the pose under the new game namespace."""
+    monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
+    requested = []
+    from utils.rendition_poses import RenditionPoseFetcher
+    RenditionPoseFetcher._instance = None
+    monkeypatch.setattr(
+        RenditionPoseFetcher,
+        "request",
+        lambda self, dna, pose: requested.append((dna, pose)),
+    )
+    from utils.toon_customizations_manager import ToonCustomizationsManager
+    from tabs.multitoon._tab import ToonPortraitWidget
+    mgr = ToonCustomizationsManager()
+    mgr.set("ttr", "Flossbud", {"pose": "waving"})
+
+    w = ToonPortraitWidget(1)
+    w.set_customizations_manager(mgr)
+    w.set_toon_name("Flossbud")
+    w.set_dna("dna-foo")  # game not yet set → default portrait
+    assert ("dna-foo", "portrait") in requested
+    requested.clear()
+
+    w.set_game("ttr")
+    assert ("dna-foo", "waving") in requested
+    assert w._pose == "waving"
