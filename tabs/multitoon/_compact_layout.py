@@ -223,13 +223,21 @@ class _CompactLayout(QWidget):
         card = self._card_slots[i]["card"]
         stripe = self._card_slots[i]["card_stripe"]
 
+        from utils.toon_customization_resolve import resolve_accent
+        toon_name = self._tab.toon_names[i] if i < len(self._tab.toon_names) else None
+        entry: dict = {}
+        if game in ("cc", "ttr") and toon_name and self._tab.customizations is not None:
+            entry = self._tab.customizations.get(game, toon_name)
+
         if game == "ttr":
             brand = QColor(c["game_pill_ttr"])
+            brand = resolve_accent(entry, brand)
             target = brand if enabled else _muted_brand(brand)
             side_style = "solid"
             side_color = c["border_card"]
         elif game == "cc":
             brand = QColor(c["game_pill_cc"])
+            brand = resolve_accent(entry, brand)
             target = brand if enabled else _muted_brand(brand)
             side_style = "solid"
             side_color = c["border_card"]
@@ -883,6 +891,10 @@ class _CardStripe(QFrame):
         self._anim.setEndValue(1.0)
         self._anim.finished.connect(self._on_anim_finished)
         self._anim.start()
+
+    def target_color(self) -> QColor:
+        """Return the color most recently passed to set_color()."""
+        return QColor(self._color)
 
     def _on_anim_finished(self) -> None:
         self._prev_color = None

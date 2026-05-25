@@ -24,6 +24,7 @@ from utils.ttr_api import get_toon_names_by_slot, invalidate_port_to_wid_cache, 
 from utils import cc_api
 from utils.game_registry import GameRegistry
 from utils import logical_actions
+from utils.toon_customizations_manager import ToonCustomizationsManager
 from tabs.multitoon._keep_alive_help_button import KeepAliveHelpButton
 
 
@@ -997,6 +998,7 @@ class MultitoonTab(QWidget):
         self._toon_fetch_inflight_keys = set()
         self._active_profile  = -1  # no profile active initially
         self._last_window_ids = []
+        self.customizations = ToonCustomizationsManager()
 
         self._keep_alive_running = False
         self._keep_alive_thread = None
@@ -1669,32 +1671,13 @@ class MultitoonTab(QWidget):
 
         if window_available:
             game_tag = GameRegistry.instance().get_game_for_window(str(wids[index]))
-            if game_tag == "cc":
-                self.game_badges[index].setText("CC")
-                self.game_badges[index].setStyleSheet(
-                    "background: transparent; color: #F26D21; "
-                    "border: 2px solid #F26D21; border-radius: 12px; "
-                    "padding: 3px 8px; font-weight: bold; font-size: 12px;"
-                )
-                self.game_badges[index].show()
+            self._apply_chip_for_slot(index, game_tag)
+            if game_tag in ("cc", "ttr"):
                 self._set_card_brand_for_slot(
-                    index, "cc",
-                    enabled=self.enabled_toons[index] and self.service_running,
-                )
-            elif game_tag == "ttr":
-                self.game_badges[index].setText("TTR")
-                self.game_badges[index].setStyleSheet(
-                    "background: transparent; color: #4A8FE7; "
-                    "border: 2px solid #4A8FE7; border-radius: 12px; "
-                    "padding: 3px 8px; font-weight: bold; font-size: 12px;"
-                )
-                self.game_badges[index].show()
-                self._set_card_brand_for_slot(
-                    index, "ttr",
+                    index, game_tag,
                     enabled=self.enabled_toons[index] and self.service_running,
                 )
             else:
-                self.game_badges[index].hide()
                 self._set_card_brand_for_slot(index, None, enabled=False)
             if self._mode == "full" and hasattr(self, "_full") and index < len(self._full._cards):
                 self._full._cards[index]._apply_game_pill_style()
@@ -2143,6 +2126,38 @@ class MultitoonTab(QWidget):
         set_brand = getattr(compact, "set_card_brand", None)
         if callable(set_brand):
             set_brand(index, game, enabled=enabled)
+
+    def _apply_chip_for_slot(self, index: int, game_tag: str | None) -> None:
+        """Apply the CC/TTR chip stylesheet, consulting accent override."""
+        from utils.toon_customization_resolve import resolve_accent
+        from PySide6.QtGui import QColor
+        if index >= len(self.game_badges):
+            return
+        chip = self.game_badges[index]
+        toon_name = self.toon_names[index] if index < len(self.toon_names) else None
+        entry: dict = {}
+        if game_tag in ("cc", "ttr") and toon_name and self.customizations is not None:
+            entry = self.customizations.get(game_tag, toon_name)
+        if game_tag == "cc":
+            color = resolve_accent(entry, QColor("#F26D21")).name()
+            chip.setText("CC")
+            chip.setStyleSheet(
+                f"background: transparent; color: {color}; "
+                f"border: 2px solid {color}; border-radius: 12px; "
+                f"padding: 3px 8px; font-weight: bold; font-size: 12px;"
+            )
+            chip.show()
+        elif game_tag == "ttr":
+            color = resolve_accent(entry, QColor("#4A8FE7")).name()
+            chip.setText("TTR")
+            chip.setStyleSheet(
+                f"background: transparent; color: {color}; "
+                f"border: 2px solid {color}; border-radius: 12px; "
+                f"padding: 3px 8px; font-weight: bold; font-size: 12px;"
+            )
+            chip.show()
+        else:
+            chip.hide()
 
     def manual_refresh(self):
         self.log("[Service] Manual refresh triggered.")
