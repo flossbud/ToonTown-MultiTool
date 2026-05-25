@@ -1798,7 +1798,7 @@ class MultitoonTab(QWidget):
                 else None
             )
             game = None
-            if badge is not None and badge.isVisible():
+            if badge is not None and not badge.isHidden():
                 game = "cc" if badge.text() == "CC" else "ttr"
             self._set_card_brand_for_slot(
                 index, game,

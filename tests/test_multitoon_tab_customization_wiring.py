@@ -143,6 +143,44 @@ def test_customizations_follow_toon_name_across_slots(qapp, tmp_path, monkeypatc
     )
 
 
+def test_theme_switch_preserves_badge_game_state(qapp, tmp_path, monkeypatch):
+    """Regression: when apply_visual_state runs while the tab page is
+    hidden (e.g. theme switch fires from the Settings tab), it must NOT
+    reset badge._game to None. Previously chip.isVisible() returned False
+    while the tab was hidden, which caused the trailing re-brand block
+    to clobber state."""
+    tab = _build_tab(qapp, tmp_path, monkeypatch)
+    # Give the tab a real window in slot 0 so apply_visual_state takes
+    # the window_available branch (which is where the chip is shown +
+    # the trailing re-brand block runs).
+    tab.window_manager.ttr_window_ids = ["1001"]
+    from utils.game_registry import GameRegistry
+    monkeypatch.setattr(
+        GameRegistry.instance(),
+        "get_game_for_window",
+        lambda wid: "ttr",
+    )
+    tab._apply_toon_names(["Flossbud", None, None, None])
+    tab._set_card_brand_for_slot(0, "ttr", enabled=True)
+    tab._apply_chip_for_slot(0, "ttr")
+    qapp.processEvents()
+    assert tab.slot_badges[0].game == "ttr"
+
+    # Simulate the tab page being hidden (as happens when user is on the
+    # Settings tab during a theme switch). The chip widget reports
+    # isVisible()==False even though it was explicitly shown.
+    tab.hide()
+    qapp.processEvents()
+
+    # Re-run apply_visual_state, which is what _apply_full_theme does.
+    tab.apply_visual_state(0)
+
+    assert tab.slot_badges[0].game == "ttr", (
+        "Badge game must survive a theme refresh that runs while the "
+        "multitoon tab is hidden"
+    )
+
+
 def test_customizations_keyed_by_game_isolate_cc_vs_ttr(qapp, tmp_path, monkeypatch):
     """Lock-in: a CC toon and a TTR toon with the same name keep
     independent customizations (namespaced keys)."""
