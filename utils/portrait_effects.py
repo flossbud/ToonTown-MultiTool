@@ -8,7 +8,7 @@ sources; callers should cache results keyed on (source, params)."""
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QRectF
 from PySide6.QtGui import (
     QColor,
     QPainter,
@@ -103,9 +103,13 @@ def build_silhouette_shadow_pixmap(
 
     p = QPainter(out)
     p.setRenderHint(QPainter.Antialiasing)
-    # Source is positioned at (pad, pad) in output coords.
-    source_rect = item.boundingRect()
-    target_rect = source_rect.translated(pad, pad)
+    # Capture the full output area in scene coords: item lives at (0,0)..(W,H)
+    # in scene space, and the blur halo extends to negative coords by `pad` px.
+    # Mapping (-pad,-pad,out_w,out_h) in scene → (0,0,out_w,out_h) in painter
+    # naturally centers the item with `pad` of padding on each side.
+    source_rect = QRectF(-pad, -pad, out_w, out_h)
+    target_rect = QRectF(0, 0, out_w, out_h)
     scene.render(p, target_rect, source_rect)
     p.end()
+    scene.clear()  # destroy item + effect deterministically on GUI thread
     return out

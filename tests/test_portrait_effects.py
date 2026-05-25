@@ -150,3 +150,27 @@ def test_build_silhouette_shadow_pixmap_returns_transparent_when_source_empty(qt
     for y in range(out.height()):
         for x in range(out.width()):
             assert img.pixelColor(x, y).alpha() == 0
+
+
+def test_build_silhouette_shadow_pixmap_halo_not_clipped_at_source_edge(qt_app):
+    """A source with alpha flush against the pixmap edge should still produce
+    a visible halo in the pad zone — the blur must not be clipped by the
+    scene boundary. Regression test for the `source_rect = item.boundingRect()`
+    bug that silently clipped halo into negative scene coords."""
+    from PySide6.QtGui import QColor, QPixmap
+    from utils.portrait_effects import build_silhouette_shadow_pixmap
+
+    # Fully opaque pixmap — alpha touches all four edges.
+    pm = QPixmap(32, 32)
+    pm.fill(QColor(255, 0, 0, 255))
+    blur_px = 8
+    out = build_silhouette_shadow_pixmap(pm, QColor("#0000ff"), blur_px)
+    img = out.toImage()
+    # Inside the pad zone (x=2 is well left of the source area which starts
+    # at x=blur_px=8), the halo must produce some alpha. Buggy code returns
+    # 0 here because the halo into negative scene coords is clipped.
+    a = img.pixelColor(2, out.height() // 2).alpha()
+    assert a > 0, (
+        f"blur halo must extend into the pad zone for edge-flush content "
+        f"(alpha at x=2 was {a})"
+    )
