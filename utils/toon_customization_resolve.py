@@ -66,3 +66,13 @@ def resolve_body(entry: dict) -> Optional[QColor]:
     if _is_hex(val):
         return QColor(val)
     return None
+
+
+def resolve_pose(entry: dict, fallback: str = "portrait") -> str:
+    """Returns the pose name to render. Validates against POSE_NAMES;
+    unknown values fall back to `fallback`."""
+    from utils.rendition_poses import POSE_NAMES
+    val = entry.get("pose") if isinstance(entry, dict) else None
+    if isinstance(val, str) and val in POSE_NAMES:
+        return val
+    return fallback

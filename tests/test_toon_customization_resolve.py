@@ -100,3 +100,26 @@ def test_body_missing_returns_none(qapp):
     from utils.toon_customization_resolve import resolve_body
     assert resolve_body({}) is None
     assert resolve_body({"body": None}) is None
+
+
+# -- resolve_pose ----------------------------------------------------------
+
+def test_resolve_pose_known(qapp):
+    from utils.toon_customization_resolve import resolve_pose
+    assert resolve_pose({"pose": "portrait-grin"}) == "portrait-grin"
+
+
+def test_resolve_pose_unknown_falls_back(qapp):
+    from utils.toon_customization_resolve import resolve_pose
+    assert resolve_pose({"pose": "not-a-real-pose"}) == "portrait"
+
+
+def test_resolve_pose_missing_falls_back(qapp):
+    from utils.toon_customization_resolve import resolve_pose
+    assert resolve_pose({}) == "portrait"
+    assert resolve_pose({"pose": None}) == "portrait"
+
+
+def test_resolve_pose_custom_fallback(qapp):
+    from utils.toon_customization_resolve import resolve_pose
+    assert resolve_pose({"pose": None}, fallback="head") == "head"
