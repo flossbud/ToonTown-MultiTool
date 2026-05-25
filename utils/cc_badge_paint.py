@@ -150,10 +150,14 @@ def paint_cc_badge(
     portrait_brush: Optional[QBrush] = None,
     pattern: Optional[tuple[str, QColor]] = None,
     circle_outline: Optional[tuple[QColor, int]] = None,
+    silhouette_outline_pixmap: Optional[QPixmap] = None,
+    silhouette_shadow_pixmap: Optional[QPixmap] = None,
+    silhouette_shadow_offset: tuple[int, int] = (0, 0),
 ) -> None:
     """Paint a CC badge: bg circle (skin-complement or override), optional
     pattern overlay, then either the race silhouette in skin color or a
-    slot-number fallback, and finally an optional circle outline on top.
+    slot-number fallback, optional silhouette outline/shadow overlays, and
+    finally an optional circle outline on top.
 
     `portrait_brush` overrides the bg fill. When None, fall back to the
     historical complement-of-skin color.
@@ -163,6 +167,11 @@ def paint_cc_badge(
     `circle_outline` is an optional (QColor, width_px) tuple; when present,
     a ring of that color and width is drawn last, on top of the silhouette
     and pattern.
+    `silhouette_outline_pixmap` is an optional pre-built outline pixmap drawn
+    centered inside `inner`, after the silhouette/slot-number block.
+    `silhouette_shadow_pixmap` is an optional pre-built shadow pixmap drawn
+    centered inside `inner` with `silhouette_shadow_offset` applied.
+    `silhouette_shadow_offset` is a (dx, dy) pixel offset for the shadow.
     """
     painter.setRenderHint(QPainter.Antialiasing)
 
@@ -193,6 +202,28 @@ def paint_cc_badge(
         pass  # silhouette painted
     else:
         _paint_slot_number(painter, inner, slot_number)
+
+    if silhouette_shadow_pixmap is not None and not silhouette_shadow_pixmap.isNull():
+        sx, sy = silhouette_shadow_offset
+        cx_inner = inner.center().x()
+        cy_inner = inner.center().y()
+        shadow_w = silhouette_shadow_pixmap.width()
+        shadow_h = silhouette_shadow_pixmap.height()
+        painter.drawPixmap(
+            cx_inner - shadow_w // 2 + sx,
+            cy_inner - shadow_h // 2 + sy,
+            silhouette_shadow_pixmap,
+        )
+    if silhouette_outline_pixmap is not None and not silhouette_outline_pixmap.isNull():
+        cx_inner = inner.center().x()
+        cy_inner = inner.center().y()
+        out_w = silhouette_outline_pixmap.width()
+        out_h = silhouette_outline_pixmap.height()
+        painter.drawPixmap(
+            cx_inner - out_w // 2,
+            cy_inner - out_h // 2,
+            silhouette_outline_pixmap,
+        )
 
     # Circle outline (drawn last, on top of silhouette and pattern).
     if circle_outline is not None:

@@ -331,3 +331,39 @@ def test_cc_portrait_draws_circle_outline_when_set(qt_app, monkeypatch, tmp_path
         f"never saw a yellow outline pixel walking inward at y={cy}. "
         f"sampled: {[img.pixelColor(x, cy).name() for x in range(0, 10)]}"
     )
+
+
+def test_cc_portrait_invokes_silhouette_builders_when_set(qt_app, monkeypatch, tmp_path):
+    monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QColor, QPixmap
+    import utils.portrait_effects as eff
+    calls = []
+    monkeypatch.setattr(
+        eff, "build_silhouette_outline_pixmap",
+        lambda pm, c, w: (calls.append(("out", c.name(), w)), QPixmap(pm.size()))[1],
+    )
+    monkeypatch.setattr(
+        eff, "build_silhouette_shadow_pixmap",
+        lambda pm, c, b: (calls.append(("shd", c.name(), b)),
+                          QPixmap(pm.width() + 2 * b, pm.height() + 2 * b))[1],
+    )
+    from tabs.multitoon._tab import ToonPortraitWidget
+    from utils.toon_customizations_manager import ToonCustomizationsManager
+    mgr = ToonCustomizationsManager()
+    mgr.set("cc", "CCToon", {"portrait": {"silhouette": {
+        "outline": {"color": "#ffd84a", "width": "thin"},
+        "shadow":  {"color": "#000000", "softness": "subtle"},
+    }}})
+    w = ToonPortraitWidget(1)
+    w.set_customizations_manager(mgr)
+    w.set_game("cc")
+    w.set_toon_name("CCToon")
+    w._cc_mode = True
+    w._cc_skin = QColor("#d9a04e")
+    fake = QPixmap(64, 64); fake.fill(Qt.red)
+    w._pixmap = fake
+    w.show()
+    w.repaint(); qt_app.processEvents()
+    assert ("out", "#ffd84a", 1) in calls
+    assert ("shd", "#000000", 2) in calls

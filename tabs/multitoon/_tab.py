@@ -417,11 +417,27 @@ class ToonPortraitWidget(QWidget):
                 brush = resolve_portrait_brush(entry, self._cc_skin)
             from utils.toon_customization_resolve import resolve_circle_outline
             circle_outline = resolve_circle_outline(entry)
+            silhouette_outline_pm = None
+            silhouette_shadow_pm = None
+            silhouette_shadow_off = (0, 0)
+            if self._pixmap and not self._pixmap.isNull():
+                from PySide6.QtCore import QSize
+                bg_rect = rect.adjusted(2, 2, -2, -2)
+                target = min(bg_rect.width(), bg_rect.height())
+                outline_pm, shadow_pm, sx, sy = self._get_silhouette_bundle(
+                    self._pixmap, QSize(target, target), entry,
+                )
+                silhouette_outline_pm = outline_pm
+                silhouette_shadow_pm = shadow_pm
+                silhouette_shadow_off = (sx, sy)
             paint_cc_badge(
                 p, rect, self._cc_skin, stem, self._slot,
                 portrait_brush=brush,
                 pattern=resolve_portrait_pattern(entry),
                 circle_outline=circle_outline,
+                silhouette_outline_pixmap=silhouette_outline_pm,
+                silhouette_shadow_pixmap=silhouette_shadow_pm,
+                silhouette_shadow_offset=silhouette_shadow_off,
             )
             # Pencil overlay is drawn once at the end of paintEvent so it
             # appears for both CC and TTR badges.
