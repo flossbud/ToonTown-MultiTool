@@ -12,8 +12,8 @@ from __future__ import annotations
 
 from typing import Optional
 
-from PySide6.QtCore import QRect, Qt
-from PySide6.QtGui import QColor, QFont, QPainter, QPixmap
+from PySide6.QtCore import QPointF, QRect, Qt
+from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPainterPath, QPixmap
 
 from utils import cc_race_assets
 
@@ -146,30 +146,46 @@ def paint_cc_badge(
     skin: QColor,
     asset_stem: Optional[str],
     slot_number: int,
+    *,
+    portrait_brush: Optional[QBrush] = None,
+    pattern: Optional[tuple[str, QColor]] = None,
 ) -> None:
-    """Paint a CC badge: complement bg circle, then either the race
-    silhouette in skin color or a slot-number fallback.
+    """Paint a CC badge: bg circle (skin-complement or override), optional
+    pattern overlay, then either the race silhouette in skin color or a
+    slot-number fallback.
 
-    Caller controls hover/pencil rendering separately (see pencil_rect_for).
+    `portrait_brush` overrides the bg fill. When None, fall back to the
+    historical complement-of-skin color.
+    `pattern` is an optional (name, color) tuple; when present, the
+    tinted pattern tile is tiled inside the inner circle, beneath the
+    silhouette.
     """
     painter.setRenderHint(QPainter.Antialiasing)
-    bg = complementary_bg_color(skin)
 
-    # Inset 2 px from each edge to match the non-CC paint path in
-    # ToonPortraitWidget.paintEvent (`r = min(cx, cy) - 2.0`). Without
-    # this, the CC bg circle is drawn on the full rect (diameter = rect
-    # width) while the non-CC circle is drawn at diameter = rect width - 4,
-    # making the badge appear to grow when CC data populates.
     inner = rect.adjusted(2, 2, -2, -2)
 
-    # Background circle
+    bg_brush = portrait_brush if portrait_brush is not None else QBrush(
+        complementary_bg_color(skin)
+    )
     painter.setPen(Qt.NoPen)
-    painter.setBrush(bg)
+    painter.setBrush(bg_brush)
     painter.drawEllipse(inner)
+
+    if pattern is not None:
+        from utils.toon_pattern_assets import tinted_pattern_pixmap
+        name, color = pattern
+        pm = tinted_pattern_pixmap(name, color, tile_size=24)
+        if not pm.isNull():
+            path = QPainterPath()
+            path.addEllipse(inner)
+            painter.save()
+            painter.setClipPath(path)
+            for y in range(inner.top(), inner.bottom() + 1, 24):
+                for x in range(inner.left(), inner.right() + 1, 24):
+                    painter.drawPixmap(x, y, pm)
+            painter.restore()
 
     if asset_stem is not None and _paint_silhouette(painter, inner, skin, asset_stem):
         return
 
-    # Fallback: slot number in white. Bg stays the complement so the badge
-    # still feels CC-mode-styled even without a silhouette.
     _paint_slot_number(painter, inner, slot_number)
