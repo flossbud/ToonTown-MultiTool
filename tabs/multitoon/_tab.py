@@ -370,10 +370,13 @@ class ToonPortraitWidget(QWidget):
             portrait = entry.get("portrait") if isinstance(entry, dict) else None
             if isinstance(portrait, dict) and (portrait.get("color") or portrait.get("gradient")):
                 brush = resolve_portrait_brush(entry, self._cc_skin)
+            from utils.toon_customization_resolve import resolve_circle_outline
+            circle_outline = resolve_circle_outline(entry)
             paint_cc_badge(
                 p, rect, self._cc_skin, stem, self._slot,
                 portrait_brush=brush,
                 pattern=resolve_portrait_pattern(entry),
+                circle_outline=circle_outline,
             )
             # Pencil overlay is drawn once at the end of paintEvent so it
             # appears for both CC and TTR badges.

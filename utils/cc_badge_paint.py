@@ -149,16 +149,20 @@ def paint_cc_badge(
     *,
     portrait_brush: Optional[QBrush] = None,
     pattern: Optional[tuple[str, QColor]] = None,
+    circle_outline: Optional[tuple[QColor, int]] = None,
 ) -> None:
     """Paint a CC badge: bg circle (skin-complement or override), optional
     pattern overlay, then either the race silhouette in skin color or a
-    slot-number fallback.
+    slot-number fallback, and finally an optional circle outline on top.
 
     `portrait_brush` overrides the bg fill. When None, fall back to the
     historical complement-of-skin color.
     `pattern` is an optional (name, color) tuple; when present, the
     tinted pattern tile is tiled inside the inner circle, beneath the
     silhouette.
+    `circle_outline` is an optional (QColor, width_px) tuple; when present,
+    a ring of that color and width is drawn last, on top of the silhouette
+    and pattern.
     """
     painter.setRenderHint(QPainter.Antialiasing)
 
@@ -186,6 +190,15 @@ def paint_cc_badge(
             painter.restore()
 
     if asset_stem is not None and _paint_silhouette(painter, inner, skin, asset_stem):
-        return
+        pass  # silhouette painted
+    else:
+        _paint_slot_number(painter, inner, slot_number)
 
-    _paint_slot_number(painter, inner, slot_number)
+    # Circle outline (drawn last, on top of silhouette and pattern).
+    if circle_outline is not None:
+        from PySide6.QtGui import QPen
+        color, width = circle_outline
+        inset = max(0, width // 2)
+        painter.setPen(QPen(color, width))
+        painter.setBrush(Qt.NoBrush)
+        painter.drawEllipse(inner.adjusted(inset, inset, -inset, -inset))

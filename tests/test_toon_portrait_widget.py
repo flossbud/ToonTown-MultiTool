@@ -218,3 +218,39 @@ def test_toon_portrait_widget_draws_circle_outline_when_set(qt_app, monkeypatch,
         f"never saw a yellow outline pixel walking inward from x=0..9 at y={cy}. "
         f"sampled colors: {[img.pixelColor(x, cy).name() for x in range(0, 10)]}"
     )
+
+
+def test_cc_portrait_draws_circle_outline_when_set(qt_app, monkeypatch, tmp_path):
+    """CC mode renders via paint_cc_badge. The badge function must accept
+    the new circle_outline kwarg and draw the ring on top."""
+    monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
+    from PySide6.QtGui import QColor
+    from tabs.multitoon._tab import ToonPortraitWidget
+    from utils.toon_customizations_manager import ToonCustomizationsManager
+
+    mgr = ToonCustomizationsManager()
+    mgr.set("cc", "CCToon", {
+        "portrait": {"outline": {"color": "#ffd84a", "width": "thick"}}
+    })
+    w = ToonPortraitWidget(1)
+    w.set_customizations_manager(mgr)
+    w.set_game("cc")
+    w.set_toon_name("CCToon")
+    # CC mode requires _cc_mode + _cc_skin to engage the CC paint path.
+    w._cc_mode = True
+    w._cc_skin = QColor("#d9a04e")
+    pm = w.grab()
+    img = pm.toImage()
+    # Widget is 64x64 (hard-capped). Walk inward at vertical center
+    # looking for the FIRST YELLOW pixel.
+    cy = 32
+    found_yellow = False
+    for x in range(0, 10):
+        px = img.pixelColor(x, cy)
+        if px.red() > 200 and px.green() > 180 and px.blue() < 120:
+            found_yellow = True
+            break
+    assert found_yellow, (
+        f"never saw a yellow outline pixel walking inward at y={cy}. "
+        f"sampled: {[img.pixelColor(x, cy).name() for x in range(0, 10)]}"
+    )
