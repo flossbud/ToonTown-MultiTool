@@ -269,6 +269,7 @@ class _BodyClip(QWidget):
         self._anim = QPropertyAnimation(self, b"content_height")
         self._anim.setDuration(self.DURATION_MS)
         self._anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._connected_finished = None
 
     def set_content_widget(self, widget: QWidget) -> None:
         """Parent the body content widget and lay it out at full natural size."""
@@ -338,16 +339,15 @@ class _BodyClip(QWidget):
     content_height = Property(int, _get_content_height, _set_content_height)
 
     def _detach_finished_handlers(self) -> None:
-        """Disconnect both expand and collapse finished handlers from the
-        animation's finished signal. Uses slot-specific disconnect so a
-        fresh _BodyClip (no handler connected yet) doesn't emit the spurious
-        'Failed to disconnect (None)' RuntimeWarning that the no-arg
-        .disconnect() emits."""
-        for handler in (self._on_expand_finished, self._on_collapse_finished):
-            try:
-                self._anim.finished.disconnect(handler)
-            except (RuntimeError, TypeError):
-                pass
+        """Disconnect whichever finished handler is currently connected.
+
+        Tracks the connected slot explicitly because PySide6 6.x no longer
+        raises on disconnect of an unconnected slot; it emits a
+        RuntimeWarning that no try/except can swallow. A None tracker means
+        nothing is connected, so there's nothing to disconnect."""
+        if self._connected_finished is not None:
+            self._anim.finished.disconnect(self._connected_finished)
+            self._connected_finished = None
 
     def show_instant(self) -> None:
         """Snap the clip to full natural height without animating.
@@ -393,6 +393,7 @@ class _BodyClip(QWidget):
         self._anim.setEndValue(target)
         self._detach_finished_handlers()
         self._anim.finished.connect(self._on_expand_finished)
+        self._connected_finished = self._on_expand_finished
         self._anim.start()
 
     def collapse(self) -> None:
@@ -415,6 +416,7 @@ class _BodyClip(QWidget):
         self._anim.setEndValue(0)
         self._detach_finished_handlers()
         self._anim.finished.connect(self._on_collapse_finished)
+        self._connected_finished = self._on_collapse_finished
         self._anim.start()
 
     def _on_expand_finished(self) -> None:
@@ -1143,7 +1145,7 @@ class KeymapTab(QWidget):
         add_btn.setMinimumHeight(28)
         add_btn.setMaximumWidth(260)
         add_btn.setCursor(Qt.PointingHandCursor)
-        add_btn.clicked.connect(lambda g=game: self._on_add_set_for_game(g))
+        add_btn.clicked.connect(lambda _checked, g=game: self._on_add_set_for_game(g))
         add_btn.setVisible(len(sets) < self.keymap_manager.MAX_SETS_PER_GAME)
         page_layout.addWidget(add_btn, alignment=Qt.AlignHCenter)
         page_layout.addStretch()
