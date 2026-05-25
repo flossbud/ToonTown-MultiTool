@@ -278,6 +278,29 @@ class _CompactLayout(QWidget):
                 f"background: {c['border_muted']}; border: none;"
             )
 
+        # Body tint (lazy; only created when an override is present).
+        from utils.toon_customization_resolve import resolve_body
+        from utils.widgets.card_body_tint import CardBodyTint
+        body_color = None
+        if game in ("cc", "ttr") and toon_name and self._tab.customizations is not None:
+            body_color = resolve_body(entry)
+        slot = self._card_slots[i]
+        tint = slot.get("body_tint")
+        if body_color is None:
+            if tint is not None:
+                tint.hide()
+            return
+        if tint is None:
+            tint = CardBodyTint(body_color, parent=card)
+            slot["body_tint"] = tint
+            # Cover the card body (minus the 3 px stripe at top).
+            card_w = card.width()
+            card_h = card.height()
+            tint.setGeometry(1, 4, card_w - 2, card_h - 5)
+            tint.lower()
+        tint.set_color(body_color)
+        tint.show()
+
     # ── Populate ───────────────────────────────────────────────────────────
     def populate(self):
         """Clear slot layouts and re-add shared widgets in the correct order.
