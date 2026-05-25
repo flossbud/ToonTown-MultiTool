@@ -100,20 +100,22 @@ class _CompactLayout(QWidget):
         top_row = QHBoxLayout()
         top_row.setSpacing(10)
 
-        stats_row = QHBoxLayout()
-        stats_row.setSpacing(4)
-        stats_row.setContentsMargins(0, 0, 0, 0)
+        # Vertical meta column: name on top, stats/CC-subtitle sub-line
+        # underneath. Stretches inside top_row so the mode chip lands
+        # flush against the right edge.
+        meta_col = QVBoxLayout()
+        meta_col.setContentsMargins(0, 0, 0, 0)
+        meta_col.setSpacing(3)
+
+        # Sub-line that hosts laff/bean (TTR) and cc_subtitle (CC) - the
+        # existing per-widget show/hide logic in _tab.py drives which one
+        # is visible per mode. We host all three here so neither mode
+        # needs structural changes when toggling.
+        sub_row = QHBoxLayout()
+        sub_row.setContentsMargins(0, 0, 0, 0)
+        sub_row.setSpacing(8)
 
         layout.addLayout(top_row)
-
-        # CC subtitle slot — populated in populate() with the shared
-        # subtitle widget. Sits between top_row (name/badge/stats) and
-        # ctrl_row (enable/chat/ka/selector). Hidden by default so
-        # non-CC slots have zero visual change.
-        cc_subtitle_row = QHBoxLayout()
-        cc_subtitle_row.setContentsMargins(0, 0, 0, 0)
-        cc_subtitle_row.setSpacing(0)
-        layout.addLayout(cc_subtitle_row)
 
         # Hairline between the header (portrait + name + stats + CC chips)
         # and the body (Enable + chat + KA + bar + selector). Colour is
@@ -127,13 +129,28 @@ class _CompactLayout(QWidget):
         # of this absorbs the reduced bottom contentsMargin (5 -> 2);
         # the extra 2 px absorbs the reduced top contentsMargin
         # (13 -> 11) so the divider and body row stay in place while
-        # the header content shifts up.
-        layout.addSpacing(5)
+        # the header content shifts up. +2 px (5 -> 7) drops the divider
+        # 2 px lower; paired with the addSpacing(4 -> 2) below the
+        # divider, the body row keeps its position and card height is
+        # unchanged.
+        layout.addSpacing(7)
         layout.addWidget(header_divider)
 
         # 3 px animated top stripe. Position is set in _position_stripes().
         card_stripe = _CardStripe(card)
         card_stripe.hide()  # shown after the first position pass
+
+        # Portrait placeholder: reserves the original 50x50 layout slot in
+        # top_row so the row's geometry stays put while the real
+        # ToonPortraitWidget renders larger (56x56) as a free-floating
+        # overlay positioned manually in _position_portraits().
+        # The transparent QSS overrides main.py's container-level
+        # `QWidget { background: bg_app }` rule - without it the
+        # placeholder paints in bg_app and shows through the badge's
+        # transparent corners as darker squares.
+        portrait_placeholder = QWidget()
+        portrait_placeholder.setFixedSize(50, 50)
+        portrait_placeholder.setStyleSheet("background: transparent;")
 
         ctrl_row = QHBoxLayout()
         ctrl_row.setSpacing(8)
@@ -155,22 +172,25 @@ class _CompactLayout(QWidget):
 
         # Small breathing room between the hairline divider and the
         # body row. Paired with a 4 px reduction in the card's bottom
-        # contentsMargin so total card height stays the same.
-        layout.addSpacing(4)
+        # contentsMargin so total card height stays the same. Trimmed
+        # from 4 -> 2 to compensate for the +2 px above the divider
+        # (keeps body row position + card height unchanged).
+        layout.addSpacing(2)
         layout.addLayout(ctrl_row)
 
         # Cache slot refs for populate()
         self._card_slots.append({
             "card": card,
             "top_row": top_row,
-            "stats_row": stats_row,
+            "meta_col": meta_col,
+            "sub_row": sub_row,
             "ctrl_row": ctrl_row,
-            "cc_subtitle_row": cc_subtitle_row,
             "middle": middle,
             "ka_group": ka_group,
             "ka_group_layout": ka_group_layout,
             "header_divider": header_divider,
             "card_stripe": card_stripe,
+            "portrait_placeholder": portrait_placeholder,
         })
         self._tab.toon_cards.append(card)
         self._tab.ka_groups.append(ka_group)
@@ -291,6 +311,7 @@ class _CompactLayout(QWidget):
             if stripe is not None:
                 stripe.set_color(empty_color)
 
+        self._position_portraits()
         self._position_status_rings()
         self._position_stripes()
 
@@ -338,10 +359,15 @@ class _CompactLayout(QWidget):
         if hasattr(self._tab.set_selectors[i], "set_paint_scale"):
             self._tab.set_selectors[i].set_paint_scale(1.0)
 
-        # Direction D portrait sizing: tall-header design wants a fixed 50 px.
+        # Direction D portrait sizing: the visible portrait renders at 64x64
+        # as a free-floating overlay (reparented to the card, positioned in
+        # _position_portraits). The layout reserves a 50x50 placeholder so
+        # card height/row spacing stay unchanged; the extra size extends into
+        # the card's top and left padding via the offset in _position_portraits.
         badge = self._tab.slot_badges[i]
-        badge.setMinimumSize(50, 50)
-        badge.setMaximumSize(50, 50)
+        badge.setMinimumSize(64, 64)
+        badge.setMaximumSize(64, 64)
+        badge.setParent(slot["card"])
 
         # ka_bar: Full scales dynamically; SmoothProgressBar's constructor
         # defaults are setFixedHeight(7) + setMinimumWidth(40), elastic max width.
@@ -360,11 +386,12 @@ class _CompactLayout(QWidget):
         game_badge.setMinimumSize(0, 0)
         game_badge.setMaximumSize(16777215, 16777215)
 
-        # Direction D header: name uses an 11 pt (about 15 px on most DPI)
-        # bold font for hierarchy against the smaller stats text.
+        # Direction D header: name at 21 px bold for hierarchy against
+        # the smaller stats text. setPixelSize so rendered size matches
+        # the design mockup regardless of DPI scaling.
         name_label, _ = self._tab.toon_labels[i]
         name_font = QFont()
-        name_font.setPointSize(11)
+        name_font.setPixelSize(21)
         name_font.setBold(True)
         name_label.setFont(name_font)
 
@@ -389,41 +416,56 @@ class _CompactLayout(QWidget):
         self._tab.laff_labels[i].setIconSize(QSize(16, 16))
         self._tab.bean_labels[i].setIconSize(QSize(16, 16))
 
-        # Direction D stats font: 10 pt (about 12.5 px) Medium weight to
-        # balance the larger name above.
+        # Direction D stats font: 14 px Medium weight to balance the
+        # larger name above. setPixelSize so the rendered size matches
+        # the design mockup regardless of DPI scaling.
         stats_font = QFont()
-        stats_font.setPointSize(10)
+        stats_font.setPixelSize(14)
         stats_font.setWeight(QFont.Medium)
         self._tab.laff_labels[i].setFont(stats_font)
         self._tab.bean_labels[i].setFont(stats_font)
 
-        # ── existing populate logic continues below ──
-        # top_row: badge | name | game_badge | <stretch> | stats_row(laff bean)
+        # top_row: portrait_placeholder | meta_col(name + sub_row) | game_badge
+        # The real 64x64 badge is overlaid on top of the placeholder via
+        # _position_portraits (free-floating child of the card).
         clear_layout(slot["top_row"])
-        clear_layout(slot["stats_row"])
-        slot["top_row"].addWidget(self._tab.slot_badges[i])
+        clear_layout(slot["meta_col"])
+        clear_layout(slot["sub_row"])
+
+        # sub_row hosts both mode-specific info sets. _tab.py drives the
+        # per-widget visibility: laff/bean stay hidden when no laff data
+        # is available (CC mode), and cc_subtitle is shown only when
+        # set_compact_cc_subtitle has been called with a non-None
+        # playground. Adding all three here means neither mode needs
+        # structural changes during runtime toggles.
+        slot["sub_row"].addWidget(self._tab.laff_labels[i])
+        slot["sub_row"].addWidget(self._tab.bean_labels[i])
+        slot["sub_row"].addWidget(
+            self._tab._compact_cc_subtitles[i],
+            alignment=Qt.AlignLeft,
+        )
+        slot["sub_row"].addStretch()
+
+        # meta_col: name on top, sub_row underneath.
         name_label, status_dot = self._tab.toon_labels[i]
-        slot["top_row"].addWidget(name_label)
+        slot["meta_col"].addWidget(name_label)
+        slot["meta_col"].addLayout(slot["sub_row"])
+
+        # top_row: portrait_placeholder | meta_col (stretch=1) | game_badge.
+        # stretch on meta_col pushes the chip flush against the right
+        # edge of the header.
+        slot["top_row"].addWidget(slot["portrait_placeholder"])
+        slot["top_row"].addLayout(slot["meta_col"], 1)
+        slot["top_row"].addWidget(
+            self._tab.game_badges[i], alignment=Qt.AlignTop
+        )
+
         # PulsingDot is no longer added next to the name. Instead it
         # becomes the portrait status ring overlay (reparented to the
         # card; positioned in _position_status_rings()). Stash it in
         # the slot dict so the position helper can find it.
         status_dot.setParent(slot["card"])
         slot["status_ring"] = status_dot
-        slot["top_row"].addWidget(self._tab.game_badges[i])
-        slot["top_row"].addStretch()
-        slot["stats_row"].addWidget(self._tab.laff_labels[i])
-        slot["stats_row"].addWidget(self._tab.bean_labels[i])
-        slot["top_row"].addLayout(slot["stats_row"])
-
-        # CC subtitle (Compact-only enrichment). The shared widget sits
-        # in a row of its own; hidden unless set_compact_cc_subtitle has
-        # populated it.
-        clear_layout(slot["cc_subtitle_row"])
-        slot["cc_subtitle_row"].addWidget(
-            self._tab._compact_cc_subtitles[i],
-            alignment=Qt.AlignLeft,
-        )
 
         # ctrl_row: toon_button | middle (ka_group + addStretch) | set_selector
         clear_layout(slot["ctrl_row"])
@@ -438,6 +480,23 @@ class _CompactLayout(QWidget):
         slot["middle"].addStretch(1)
         slot["ctrl_row"].addLayout(slot["middle"], 1)
         slot["ctrl_row"].addWidget(self._tab.set_selectors[i])
+
+    def _position_portraits(self) -> None:
+        """Position each card's 64x64 portrait widget on top of its 50x50
+        placeholder, shifted 9 px left and 8 px up so the extra size
+        extends into the card's top/left padding instead of pushing the
+        layout. Must be called AFTER Qt has resolved the layout (so the
+        placeholder has a real geometry) and BEFORE _position_status_rings
+        (which uses badge.mapTo for the corner dot)."""
+        for i, slot in enumerate(self._card_slots):
+            placeholder = slot.get("portrait_placeholder")
+            if placeholder is None:
+                continue
+            badge = self._tab.slot_badges[i]
+            top_left = placeholder.mapTo(slot["card"], placeholder.rect().topLeft())
+            badge.move(top_left.x() - 9, top_left.y() - 8)
+            badge.show()
+            badge.raise_()
 
     def _position_status_rings(self) -> None:
         """Re-position the portrait status-dot overlays after Qt has
@@ -474,11 +533,13 @@ class _CompactLayout(QWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
+        self._position_portraits()
         self._position_status_rings()
         self._position_stripes()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        self._position_portraits()
         self._position_status_rings()
         self._position_stripes()
 

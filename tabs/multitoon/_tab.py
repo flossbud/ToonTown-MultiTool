@@ -1523,14 +1523,18 @@ class MultitoonTab(QWidget):
                 }}
             """)
             name_label, status_dot = self.toon_labels[i]
-            # Direction D compact header: 11 pt bold name, 10 pt medium stats.
-            # Using pt units so QFont.pointSize() is queryable in tests.
+            # Direction D compact header: 21 px bold name, 14 px medium stats.
+            # px units match the setPixelSize() calls in _compact_layout.py so
+            # refresh_theme does not override those QFont objects with a
+            # pt-based font (Qt resolves pt and px font-size stylesheet rules
+            # into different QFont states; using px here keeps pixelSize()
+            # queryable in tests).
             name_label.setStyleSheet(
-                f"font-size: 11pt; font-weight: bold; color: {c['text_primary']}; background: none; border: none;"
+                f"font-size: 21px; font-weight: bold; color: {c['text_primary']}; background: none; border: none;"
             )
             stat_style = (
                 f"border: none; background: transparent; font-weight: 500; "
-                f"font-size: 10pt; color: {c['text_primary']};"
+                f"font-size: 14px; color: {c['text_primary']};"
             )
             self.laff_labels[i].setStyleSheet(stat_style)
             self.bean_labels[i].setStyleSheet(stat_style)
