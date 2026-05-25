@@ -22,6 +22,13 @@ def _muted_brand(color: QColor) -> QColor:
     return QColor.fromHsl(h, int(255 * 0.55), l, a)
 
 
+# Width the compact content column (service controls, config row, toon
+# cards) is locked to. Equals the natural card width at the app's 575 px
+# minimum window: 575 - outer_layout's 12 px horizontal margins (× 2) = 551.
+# Past min width the content stays at 551 and centers horizontally.
+_LOCKED_CONTENT_WIDTH = 551
+
+
 class _CompactLayout(QWidget):
     """Reproduces the default Multitoon layout. Two-phase construction:
 
@@ -53,7 +60,13 @@ class _CompactLayout(QWidget):
         # Direction D drops the grouped outer card. Pieces sit directly
         # on the tab background; vertical centring is done by leading +
         # trailing stretches added in the outer_layout below.
-        card_layout = QVBoxLayout()
+        #
+        # Content (service controls, config row, toon cards) lives inside
+        # a fixed-width wrapper so the column doesn't grow with the window
+        # past its natural default width. See _LOCKED_CONTENT_WIDTH.
+        content = QWidget()
+        content.setFixedWidth(_LOCKED_CONTENT_WIDTH)
+        card_layout = QVBoxLayout(content)
         card_layout.setContentsMargins(0, 0, 0, 0)
         card_layout.setSpacing(8)
 
@@ -80,8 +93,16 @@ class _CompactLayout(QWidget):
         # gives ~equal breathing room at the default window height. With
         # ~24 px of slack in the 650 px tab content area, the content
         # block ends up ~12 px from top and ~12 px from bottom.
+        # Horizontal centring: stretches on either side of the locked
+        # content keep it centered as the window grows past min width.
+        center_row = QHBoxLayout()
+        center_row.setContentsMargins(0, 0, 0, 0)
+        center_row.addStretch(1)
+        center_row.addWidget(content)
+        center_row.addStretch(1)
+
         outer_layout.addStretch(1)
-        outer_layout.addLayout(card_layout)
+        outer_layout.addLayout(center_row)
         outer_layout.addStretch(1)
 
     def _build_card_structure(self, i: int) -> QFrame:
@@ -271,19 +292,38 @@ class _CompactLayout(QWidget):
         if dot is not None and hasattr(dot, "set_cutout_border"):
             dot.set_cutout_border(c["bg_card"], width=2.5)
 
-        # Header divider colour also picks up the theme.
-        divider = self._card_slots[i].get("header_divider")
-        if divider is not None:
-            divider.setStyleSheet(
-                f"background: {c['border_muted']}; border: none;"
-            )
-
-        # Body tint (lazy; only created when an override is present).
+        # Resolve any user-picked body color once; the border (divider +
+        # ka_group) and the tint widget both consume it.
         from utils.toon_customization_resolve import resolve_body
         from utils.widgets.card_body_tint import CardBodyTint
+        from utils.color_math import darken_hsl
         body_color = None
         if game in ("cc", "ttr") and toon_name and self._tab.customizations is not None:
             body_color = resolve_body(entry)
+
+        # Header divider + ka_group border. When a body color is set, both
+        # follow darken_hsl(body, 0.7); otherwise both use the theme's
+        # neutral border_muted (today's behavior).
+        if body_color is not None:
+            border_color = darken_hsl(body_color, 0.7).name()
+        else:
+            border_color = c["border_muted"]
+        divider = self._card_slots[i].get("header_divider")
+        if divider is not None:
+            divider.setStyleSheet(
+                f"background: {border_color}; border: none;"
+            )
+        if i < len(self._tab.ka_groups):
+            ka_group = self._tab.ka_groups[i]
+            ka_group.setStyleSheet(
+                f"QFrame#ka_group {{"
+                f"  background: {c['bg_input']};"
+                f"  border: 1px solid {border_color};"
+                f"  border-radius: 8px;"
+                f"}}"
+            )
+
+        # Body tint widget (lazy; only created when an override is present).
         slot = self._card_slots[i]
         tint = slot.get("body_tint")
         if body_color is None:
