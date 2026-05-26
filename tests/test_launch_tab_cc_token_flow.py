@@ -76,6 +76,14 @@ def test_cc_account_with_token_skips_register(qapp, monkeypatch, tmp_path):
     import tabs.launch_tab as _lt
     monkeypatch.setattr(_lt.LaunchTab, "_get_engine_dir",
                         lambda self, game: "/fake/cc/install")
+    # Stub install discovery so the CC launch gate doesn't trigger the
+    # multi-install picker dialog. Without this, `discover_cc_installs()`
+    # runs against the real dev machine and (if it finds >1 install)
+    # `_cc_launch_gate` opens a modal CCInstallPickerDialog whose
+    # `dlg.exec()` blocks forever in offscreen test mode with no user
+    # to click. Returning [] makes the gate fall through the
+    # multi-install branch and return True immediately.
+    monkeypatch.setattr(_lt, "discover_cc_installs", lambda: [])
     import os as _os
     _real_isfile = _os.path.isfile
     monkeypatch.setattr(
