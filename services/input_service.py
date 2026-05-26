@@ -714,6 +714,12 @@ class InputService(QObject):
                     if now - self._chat_last_activity > self.CHAT_IDLE_TIMEOUT:
                         self._timeout_reset_chat(enabled, assignments)
 
+                # Phantom gate — clear stale phantom state if the gate has closed
+                # since activation (e.g. user toggled chat off on the last
+                # chat-enabled bg toon while phantom was already suppressing).
+                if self._phantom_active and not self._phantom_gate_open():
+                    self._phantom_reset()
+
                 window_ids = self.window_manager.get_window_ids()
                 if not window_ids:
                     self.window_manager.assign_windows()

@@ -235,3 +235,31 @@ def test_mid_burst_gate_close_resets_counter():
         assert svc._phantom_active is False
     finally:
         svc.stop(wait=True)
+
+
+def test_active_phantom_deactivates_when_gate_closes():
+    """If phantom is already active and the user toggles chat off on the
+    last chat-enabled bg toon, the next run-loop iteration must clear
+    phantom state so movement to bg resumes on the next keystroke."""
+    chat = [False, True]  # gate open
+    svc, q = _make_drive_service(chat)
+    try:
+        # Activate phantom
+        _drive_no_stop(svc, q, [
+            ("keydown", "h"), ("keyup", "h"),
+            ("keydown", "i"), ("keyup", "i"),
+            ("keydown", "x"), ("keyup", "x"),
+        ])
+        assert svc._phantom_active is True
+
+        # User toggles chat off on the only chat-enabled bg toon
+        chat[:] = [False, False]
+
+        # Wait for at least one run-loop iteration (loop sleeps 5ms per tick).
+        # 100ms is comfortably more than enough.
+        time.sleep(0.1)
+
+        assert svc._phantom_active is False
+        assert svc._phantom_char_count == 0
+    finally:
+        svc.stop(wait=True)
