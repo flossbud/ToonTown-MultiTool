@@ -40,19 +40,3 @@ def test_section_module_exports_widgets(qapp):
     assert _PortraitSection is not None
 
 
-def test_dialog_still_imports_section_classes(qapp):
-    """The old dialog re-exports these names for backward compat
-    until it is deleted in a later task. This test guards that
-    bridge."""
-    from utils.widgets.toon_customization_dialog import (
-        _SwatchRow,
-        _SimpleColorSection,
-        _ChipRow,
-        _PortraitSection,
-        _PoseSection,
-    )
-    assert _SwatchRow is not None
-    assert _SimpleColorSection is not None
-    assert _ChipRow is not None
-    assert _PortraitSection is not None
-    assert _PoseSection is not None

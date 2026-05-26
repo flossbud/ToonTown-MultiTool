@@ -1,4 +1,4 @@
-"""Tests for the live preview widget inside ToonCustomizationDialog."""
+"""Tests for the live preview widget used by the customization overlay."""
 
 from __future__ import annotations
 
