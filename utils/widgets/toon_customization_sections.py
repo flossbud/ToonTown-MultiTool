@@ -728,13 +728,20 @@ class _PoseSection(QWidget):
         self._adjust_btn.clicked.connect(self.click_adjust)
         if not self._dna:
             self._adjust_btn.setEnabled(False)
-        # Pin Adjust + Refresh to the same explicit height so they render
-        # identically across DPI scales and platform styles.
-        # setMinimumHeight via sizeHint() is unreliable on Wayland because
-        # Breeze style returns different metrics than offscreen QStyle.
+        # Pin Adjust to a known height so refresh (icon-only) matches.
         self._adjust_btn.setFixedHeight(28)
         header.addWidget(self._adjust_btn)
-        self._refresh_btn = QPushButton("↻")
+        # Refresh button uses Qt's standard reload icon instead of "↻"
+        # text. KDE Breeze elides QPushButton text in tight buttons,
+        # which would otherwise render the ↻ glyph as ":" or "...".
+        # Icons are never elided.
+        from PySide6.QtWidgets import QStyle
+        self._refresh_btn = QPushButton()
+        self._refresh_btn.setIcon(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_BrowserReload)
+        )
+        from PySide6.QtCore import QSize
+        self._refresh_btn.setIconSize(QSize(14, 14))
         self._refresh_btn.setToolTip("Refresh pose thumbnails")
         self._refresh_btn.setFixedSize(32, 28)
         self._refresh_btn.clicked.connect(self._on_refresh_clicked)

@@ -75,8 +75,10 @@ def test_panel_has_close_x_button(qapp):
     from utils.widgets.customization_overlay import _Panel
     panel = _Panel()
     assert panel.close_btn is not None
-    # HEAVY MULTIPLICATION X (U+2715) renders as the close glyph
-    assert panel.close_btn.text() == "✕"
+    # Close glyph is rendered via QIcon (not text) to bypass KDE
+    # Breeze's QPushButton text-eliding on small buttons.
+    assert panel.close_btn.text() == ""
+    assert not panel.close_btn.icon().isNull()
     assert panel.close_btn.minimumWidth() == 28
 
 
