@@ -10,7 +10,7 @@ _compact_layout.py."""
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QSize, QEvent
+from PySide6.QtCore import Qt, QSize, QEvent, QTimer
 from PySide6.QtGui import QFont, QColor, QPainter, QTransform
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QFrame,
@@ -26,8 +26,17 @@ from tabs.multitoon._compact_layout import (
 )
 
 
+# Full-mode card height. Replaces the prior `int(natural * 1.5)`
+# rule once the placeholder grew to 120 (which would make natural * 1.5
+# balloon past 270). Derived from: 13 (margins) + 120 (placeholder/
+# top_row) + 6 (spacing) + 2 (divider) + 2 (spacing) + 40 (ctrl_row) +
+# 2 (bottom margin) = 185, plus 5 px of breathing room absorbed by the
+# leading stretch in _build_card_structure.
+_FULL_CARD_HEIGHT = 190
+
+
 class _FullContent(QWidget):
-    """Inner content widget for full mode. Reproduces the compact card layout with cards in a 2x2 grid; lives inside a _FullLayout QGraphicsView wrapper that scales the rendered output 1.5x.
+    """Inner content widget for full mode. Reproduces the compact card layout with cards in a 2x2 grid; lives inside a _FullLayout QGraphicsView wrapper that scales the rendered output 1.125x.
 
     Public API mirrors _CompactLayout so prewarm_full_layout and the
     mode-switch hook in _tab.py don't need to know which class they
@@ -130,6 +139,12 @@ class _FullContent(QWidget):
         layout.setContentsMargins(14, 11, 14, 2)
         layout.setSpacing(0)
 
+        # Full-mode card is 50 % taller than its natural content height
+        # (set per-card in populate() via setFixedHeight). This leading
+        # stretch absorbs the extra space so the content stays anchored
+        # to the bottom edge of the card.
+        layout.addStretch(1)
+
         top_row = QHBoxLayout()
         top_row.setSpacing(10)
 
@@ -201,7 +216,10 @@ class _FullContent(QWidget):
         # placeholder paints in bg_app and shows through the badge's
         # transparent corners as darker squares.
         portrait_placeholder = QWidget()
-        portrait_placeholder.setFixedSize(50, 50)
+        # Full-mode divergence vs compact: placeholder reserves 120x120
+        # in the layout to match the enlarged badge overlay (set in
+        # _populate_card). Compact's placeholder is still 50x50.
+        portrait_placeholder.setFixedSize(120, 120)
         portrait_placeholder.setStyleSheet("background: transparent;")
 
         ctrl_row = QHBoxLayout()
@@ -432,6 +450,14 @@ class _FullContent(QWidget):
         for i, slot in enumerate(self._card_slots):
             self._populate_card(i, slot)
 
+        # Full-mode card height: 50 % taller than the natural content
+        # sizeHint. The actual measurement + setFixedHeight is deferred
+        # via QTimer.singleShot(0, ...) so Qt has processed the layout
+        # from _populate_card before sizeHint is read. Running it
+        # synchronously here returns a too-small sizeHint (Qt hasn't
+        # activated the layout yet) and clips the card content.
+        QTimer.singleShot(0, self._apply_full_card_heights)
+
         # Seed each card stripe to the theme's empty colour BEFORE the
         # initial brand pass. Two purposes: (1) the stripes paint
         # immediately so the cards are not visually empty during the
@@ -486,8 +512,12 @@ class _FullContent(QWidget):
         # card height/row spacing stay unchanged; the extra size extends into
         # the card's top and left padding via the offset in _position_portraits.
         badge = self._tab.slot_badges[i]
-        badge.setMinimumSize(64, 64)
-        badge.setMaximumSize(64, 64)
+        # Full-mode badge is 120x120 (compact uses 64x64). Pinned via
+        # both min and max because slot_badges is a shared widget; the
+        # compact populate_card resets it back to 64x64 on the next
+        # mode swap.
+        badge.setMinimumSize(120, 120)
+        badge.setMaximumSize(120, 120)
         badge.setParent(slot["card"])
 
         # ka_bar: SmoothProgressBar's constructor defaults are
@@ -512,14 +542,23 @@ class _FullContent(QWidget):
         game_badge.setMinimumSize(0, 0)
         game_badge.setMaximumSize(16777215, 16777215)
 
-        # Direction D header: name at 21 px bold for hierarchy against
+        # Direction D header: name at 23 px bold for hierarchy against
         # the smaller stats text. setPixelSize so rendered size matches
         # the design mockup regardless of DPI scaling.
+        # Also update the stylesheet font-size so Qt's CSS cascade does
+        # not override the QFont set above. refresh_theme() writes
+        # font-size: 21px on name_label (compact size); clearing that
+        # stylesheet rule here lets the full-mode QFont take effect.
+        c = self._tab._c()
         name_label, _ = self._tab.toon_labels[i]
         name_font = QFont()
-        name_font.setPixelSize(21)
+        name_font.setPixelSize(23)
         name_font.setBold(True)
         name_label.setFont(name_font)
+        name_label.setStyleSheet(
+            f"font-size: 23px; font-weight: bold; color: {c['text_primary']}; "
+            f"background: none; border: none; padding-left: 6px;"
+        )
 
         # Buttons: constructor defaults are 88x32 enable, 32x32
         # chat/KA/help, 14px icons.
@@ -536,17 +575,26 @@ class _FullContent(QWidget):
         self._tab.chat_buttons[i].setIconSize(QSize(14, 14))
         self._tab.keep_alive_buttons[i].setIconSize(QSize(14, 14))
         self._tab.help_buttons[i].setIconSize(QSize(14, 14))
-        self._tab.laff_labels[i].setIconSize(QSize(16, 16))
-        self._tab.bean_labels[i].setIconSize(QSize(16, 16))
+        self._tab.laff_labels[i].setIconSize(QSize(17, 17))
+        self._tab.bean_labels[i].setIconSize(QSize(17, 17))
 
-        # Direction D stats font: 14 px Medium weight to balance the
+        # Direction D stats font: 15 px Medium weight to balance the
         # larger name above. setPixelSize so the rendered size matches
         # the design mockup regardless of DPI scaling.
+        # Stylesheet updated to match so Qt's CSS cascade does not
+        # override the QFont (refresh_theme writes font-size: 14px).
         stats_font = QFont()
-        stats_font.setPixelSize(14)
+        stats_font.setPixelSize(15)
         stats_font.setWeight(QFont.Medium)
         self._tab.laff_labels[i].setFont(stats_font)
         self._tab.bean_labels[i].setFont(stats_font)
+        stat_style = (
+            f"border: none; background: transparent; font-weight: 500; "
+            f"font-size: 15px; color: {c['text_primary']}; "
+            f"padding: 0; min-height: 0;"
+        )
+        self._tab.laff_labels[i].setStyleSheet(stat_style)
+        self._tab.bean_labels[i].setStyleSheet(stat_style)
 
         # top_row: portrait_placeholder | meta_col(name + sub_row) | game_badge
         # The real 64x64 badge is overlaid on top of the placeholder via
@@ -669,6 +717,30 @@ class _FullContent(QWidget):
         automatically); the only positioning work is the portrait /
         status ring / stripe overlays, which we re-run here so prewarm
         warms those paths too."""
+        self._position_portraits()
+        self._position_status_rings()
+        self._position_stripes()
+
+    def _apply_full_card_heights(self) -> None:
+        """Set each card's fixed height to _FULL_CARD_HEIGHT (190).
+        Hardcoded rather than computed from sizeHint because the
+        enlarged top-section placeholder (120 vs compact's 50) would
+        push `sizeHint * 1.5` (the prior dynamic-measurement rule that
+        existed before this constant was introduced) to ~280, far past
+        the user-approved
+        190.
+
+        Called deferred via QTimer.singleShot(0, ...) from populate()
+        for consistency with the rest of the populate flow; no
+        functional reason to defer a hardcoded constant, but the
+        deferral is harmless and matches the existing shape."""
+        for slot in self._card_slots:
+            card = slot.get("card")
+            if card is None:
+                continue
+            card.setFixedHeight(_FULL_CARD_HEIGHT)
+        # Cards just resized; the badge / status ring / stripe overlays
+        # are anchored to slot["card"] positions that just moved.
         self._position_portraits()
         self._position_status_rings()
         self._position_stripes()
@@ -926,18 +998,18 @@ class _FullContent(QWidget):
 
 
 class _FullLayout(QWidget):
-    """QGraphicsView wrapper that scales _FullContent uniformly 1.5x.
+    """QGraphicsView wrapper that scales _FullContent uniformly via _SCALE.
 
     The actual widget tree (controls + 2x2 card grid) lives in
     _FullContent. _FullLayout hosts it via a QGraphicsScene +
-    QGraphicsProxyWidget and applies a 1.5x transform on the view.
+    QGraphicsProxyWidget and applies the _SCALE transform on the view.
     Every public method (populate, apply_theme, deactivate, etc.) and
     selected attributes (_card_slots, _card_grid, _ka_anims) are
     forwarded to self._content so _tab.py callers don't know about
     the wrapping.
     """
 
-    _SCALE = 1.5
+    _SCALE = 1.125
 
     def __init__(self, tab, parent=None):
         super().__init__(parent)
@@ -991,7 +1063,7 @@ class _FullLayout(QWidget):
         self._view.setTransform(QTransform().scale(self._SCALE, self._SCALE))
 
         # Keep the scene rect synced to the content's natural size so
-        # the view's transform shows the entire content at 1.5x without
+        # the view's transform shows the entire content at _SCALE without
         # blank scene area or cropping.
         self._sync_scene_rect()
         self._content.installEventFilter(self)

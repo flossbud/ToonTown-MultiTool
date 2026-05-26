@@ -1421,6 +1421,32 @@ class MultitoonTab(QWidget):
             # shared widgets render at Compact sizes again.
             self.refresh_theme()
 
+        # Re-apply per-toon visual state on every slot now that the
+        # parent chain has changed (compact stack vs full's
+        # QGraphicsProxyWidget tree). apply_visual_state is the public
+        # orchestrator — it dispatches to _apply_chat_btn_style and
+        # _apply_keep_alive_btn_style only when a window is available;
+        # it also calls _set_widget_opacity for chat / enable / selector
+        # which lets the proxy-detect path in _set_widget_opacity clear
+        # any stale QGraphicsOpacityEffect carried over from the prior
+        # mode. Do NOT call _apply_chat_btn_style / _apply_keep_alive_
+        # btn_style directly here: they unconditionally setEnabled(True)
+        # and apply the active-state QSS, which would override the
+        # correctly-disabled state apply_visual_state produces in the
+        # no-window branch.
+        # Resize the shared PulsingDot status indicators to the
+        # mode's target size. Compact uses 13 (the historical
+        # construction value); full uses 24 to match the enlarged
+        # portrait. PulsingDot.set_size handles the QWidget sizing
+        # and triggers a repaint.
+        dot_size = 24 if mode == "full" else 13
+        for i in range(4):
+            if i < len(self.toon_labels):
+                _, status_dot = self.toon_labels[i]
+                status_dot.set_size(dot_size)
+        for i in range(4):
+            self.apply_visual_state(i)
+
         # After the swap, reconcile visibility (no animation — the swap
         # itself is an instant snap per the existing layout-swap convention).
         self._reconcile_keep_alive_visibility_instant()
@@ -1979,6 +2005,13 @@ class MultitoonTab(QWidget):
         effect crashes intermittently in PySide6 6.11, so we skip it
         there - matches the guard at _full_layout.py:825.
 
+        Also skipped when the widget is hosted inside a
+        QGraphicsProxyWidget (full mode's scale layer): the combination
+        of QGraphicsOpacityEffect + QGraphicsProxyWidget breaks the
+        button paint chain in PySide6 6.11 - widgets become entirely
+        invisible. Any stale effect carried over from a prior compact
+        populate is cleared so the widget paints at full opacity.
+
         Used for the "available but quiet" / "disabled but present"
         affordance on the per-toon control row (KA button in idle,
         Enable/Chat/Selector when disabled).
@@ -1986,6 +2019,18 @@ class MultitoonTab(QWidget):
         from PySide6.QtGui import QGuiApplication
         if QGuiApplication.platformName() == "offscreen":
             return
+
+        # Walk up the parent chain looking for a widget that is the main
+        # widget of a QGraphicsProxyWidget. If found, we're inside full
+        # mode's scale layer - skip the effect path.
+        walker = w
+        while walker is not None:
+            if walker.graphicsProxyWidget() is not None:
+                if w.graphicsEffect() is not None:
+                    w.setGraphicsEffect(None)
+                return
+            walker = walker.parentWidget()
+
         from PySide6.QtWidgets import QGraphicsOpacityEffect
         if opacity >= 1.0:
             if w.graphicsEffect() is not None:

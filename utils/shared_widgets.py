@@ -253,6 +253,18 @@ class PulsingDot(QWidget):
         self._anim.setEasingCurve(QEasingCurve.Linear)
         self._anim.valueChanged.connect(self._on_pulse)
 
+    def set_size(self, size: int) -> None:
+        """Resize the core dot. The widget's fixed size is (size + 8) on
+        each axis to keep an 8 px halo budget for the pulse glow. Used
+        by the Multitoon mode switch to swap between compact (13) and
+        full (24). Cancels nothing — any in-flight pulse animation
+        keeps driving the new size."""
+        if int(size) == self._dot_size:
+            return
+        self._dot_size = int(size)
+        self.setFixedSize(self._dot_size + 8, self._dot_size + 8)
+        self.update()
+
     def set_cutout_border(self, color: str | None, width: float = 2.5) -> None:
         """Paint a ring in `color` just outside the core dot. Use the
         backdrop colour (e.g. card background) to create a 'notched
