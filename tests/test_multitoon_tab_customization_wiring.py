@@ -262,37 +262,35 @@ def test_customizations_keyed_by_game_isolate_cc_vs_ttr(qapp, tmp_path, monkeypa
     )
 
 
-def test_open_customization_dialog_passes_dna(qapp, tmp_path, monkeypatch):
-    """The dialog ctor must receive the badge's current DNA so the
-    Toon section can show pose thumbnails."""
+def test_open_customization_dialog_delegates_to_main_window(qapp, tmp_path, monkeypatch):
+    """The tab method delegates to main_window.open_customization(slot)
+    after the inline-panel refactor."""
+    from PySide6.QtWidgets import QMainWindow
+
     tab = _build_tab(qapp, tmp_path, monkeypatch)
+    # Populate slot 0 so the call passes the early-return guards.
+    tab.toon_names[0] = "Flossbud"
     tab.slot_badges[0].set_toon_name("Flossbud")
     tab.slot_badges[0].set_game("ttr")
-    tab.slot_badges[0]._dna = "dna-flossbud-test"
 
-    captured = {}
-    from utils.widgets import toon_customization_dialog as dlg_mod
-    original_ctor = dlg_mod.ToonCustomizationDialog.__init__
-
-    def _capturing_ctor(self, *args, **kwargs):
-        captured.update(kwargs)
-        # Skip actual dialog construction to avoid showing it.
-        from PySide6.QtWidgets import QDialog
-        QDialog.__init__(self, kwargs.get("parent"))
-        self._game = kwargs["game"]
-        self._toon_name = kwargs["toon_name"]
-        self._manager = kwargs["manager"]
-        # Leave the class-level customization_changed Signal descriptor
-        # in place so dlg.customization_changed.connect(...) still works
-        # via PySide6's descriptor protocol.
-
-    monkeypatch.setattr(dlg_mod.ToonCustomizationDialog, "__init__", _capturing_ctor)
-    monkeypatch.setattr(
-        dlg_mod.ToonCustomizationDialog, "exec", lambda self: None,
-    )
+    win = QMainWindow()
+    win.setCentralWidget(tab)
+    calls = []
+    win.open_customization = lambda slot: calls.append(slot)
 
     tab._open_customization_dialog(0)
-    assert captured.get("dna") == "dna-flossbud-test"
+    assert calls == [0]
+
+
+def test_open_customization_dialog_returns_early_without_main_window(qapp, tmp_path, monkeypatch):
+    """If the tab is not yet parented under a window with
+    open_customization, the method is a no-op (no AttributeError)."""
+    tab = _build_tab(qapp, tmp_path, monkeypatch)
+    tab.toon_names[0] = "Flossbud"
+    tab.slot_badges[0].set_toon_name("Flossbud")
+    tab.slot_badges[0].set_game("ttr")
+    # No main window attached; should not raise.
+    tab._open_customization_dialog(0)
 
 
 def test_on_customization_saved_propagates_pose(qapp, tmp_path, monkeypatch):

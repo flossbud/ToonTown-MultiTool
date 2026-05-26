@@ -2340,35 +2340,20 @@ class MultitoonTab(QWidget):
                 set_brand(index, game, enabled=enabled)
 
     def _open_customization_dialog(self, slot: int) -> None:
-        """Open ToonCustomizationDialog for the given slot's badge."""
-        from utils.widgets.toon_customization_dialog import ToonCustomizationDialog
-        from utils import cc_race_assets
+        """Open the customization overlay for the given slot.
 
-        if slot >= len(self.slot_badges):
+        The overlay lives on the main window; we delegate here so
+        the tab itself doesn't need to know about overlay
+        construction or lifecycle."""
+        if slot < 0 or slot >= len(self.slot_badges):
             return
         badge = self.slot_badges[slot]
-        toon_name = badge.toon_name
-        game = badge.game
-        if not toon_name or game not in ("cc", "ttr"):
+        if not badge.toon_name or badge.game not in ("cc", "ttr"):
             return
-        auto_stem = (
-            cc_race_assets.asset_stem_for_species(badge.cc_auto_species)
-            if game == "cc" else None
-        )
-        skin = badge.cc_skin if game == "cc" else None
-        dlg = ToonCustomizationDialog(
-            game=game,
-            toon_name=toon_name,
-            manager=self.customizations,
-            skin_color=skin,
-            auto_stem=auto_stem,
-            dna=badge._dna,
-            parent=self,
-        )
-        dlg.customization_changed.connect(
-            lambda s=slot, g=game: self._on_customization_saved(s, g)
-        )
-        dlg.exec()
+        win = self.window()
+        if win is None or not hasattr(win, "open_customization"):
+            return
+        win.open_customization(slot)
 
     def _on_customization_saved(self, slot: int, game: str) -> None:
         """Re-apply chrome and repaint after a successful Save."""
