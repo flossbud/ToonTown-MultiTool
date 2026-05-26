@@ -240,3 +240,16 @@ def test_pop_menu_reduced_motion_shows_instantly(qapp, monkeypatch, reset_motion
     result = motion.pop_menu(pop, anchor, show=True)
     assert result is None
     assert pop.isVisible()
+
+
+# -- reduced_motion_enabled() (stub used by the customization overlay) -------
+
+
+def test_reduced_motion_enabled_returns_bool():
+    assert isinstance(motion.reduced_motion_enabled(), bool)
+
+
+def test_reduced_motion_enabled_default_is_false():
+    """Stub returns False so animations stay on by default until the
+    real OS read is plumbed."""
+    assert motion.reduced_motion_enabled() is False
