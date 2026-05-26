@@ -1488,40 +1488,12 @@ class MultitoonTab(QWidget):
             self._reconcile_keep_alive_visibility_instant()
 
     def _sync_full_cards_to_state(self) -> None:
-        """Cheap sync of Full UI cards' active view + status state, without
-        the per-toon stylesheet cascade that apply_visual_state runs for
-        Compact widgets. Used right after switching into Full mode, since
-        while Compact was visible the Full cards' set_active/set_status_state
-        calls were gated out and are now stale."""
-        if not self._full:
-            return
-        wids = self.window_manager.ttr_window_ids if hasattr(self, 'input_service') else []
-        for index in range(min(4, len(self._full._cards))):
-            window_available = index < len(wids)
-            active = window_available and self.enabled_toons[index] and self.service_running
-            if active:
-                state_str = "active"
-            elif window_available:
-                state_str = "keep_alive" if self.keep_alive_enabled[index] else "disabled"
-            else:
-                state_str = "off"
-            card = self._full._cards[index]
-            card.set_active(window_available)
-            if window_available:
-                card.set_status_state(state_str)
-                card._apply_game_pill_style()
-
-        # Sync CC-specific chip row state for slots whose game is CC.
-        # populate_active() unconditionally hides the chip row container, so
-        # we must re-call set_cc_mode after every layout swap to restore it.
-        for index in range(min(4, len(self._full._cards))):
-            info = self._cc_toon_infos[index] if index < len(self._cc_toon_infos) else None
-            if info is not None and info.playground is not None:
-                self._full._cards[index].set_cc_mode(
-                    info.playground, info.zone_name,
-                )
-            else:
-                self._full._cards[index].set_cc_mode(None, None)
+        """No-op shell. Full-mode cards are structural clones of
+        compact's; per-toon state lives on the shared widgets (chat
+        buttons, KA buttons, slot badges, etc.) and propagates the
+        same way as compact. Kept as a method so prewarm_full_layout
+        can call it without conditionals."""
+        return
 
     # ── Set selector rebuild ───────────────────────────────────────────────
 
@@ -1776,12 +1748,6 @@ class MultitoonTab(QWidget):
         wids = self.window_manager.ttr_window_ids if hasattr(self, 'input_service') else []
         window_available = index < len(wids)
 
-        # Mirror window availability into the Full UI card's active/inactive view.
-        # Only do this while Full owns the shared widgets; otherwise the hidden
-        # Full card can resize Compact's controls during service/window updates.
-        if self._mode == "full" and hasattr(self, "_full") and index < len(self._full._cards):
-            self._full._cards[index].set_active(window_available)
-
         slot_colors = self._slot_colors(c)
         active = window_available and self.enabled_toons[index] and self.service_running
         state_str = "off"
@@ -1800,8 +1766,6 @@ class MultitoonTab(QWidget):
 
         status_dot.set_state(state_str, tooltip_str)
         self.dot_state_changed.emit(index, state_str)
-        if self._mode == "full" and hasattr(self, "_full") and index < len(self._full._cards):
-            self._full._cards[index].set_status_state(state_str)
 
         if window_available:
             game_tag = GameRegistry.instance().get_game_for_window(str(wids[index]))
@@ -1813,8 +1777,6 @@ class MultitoonTab(QWidget):
                 )
             else:
                 self._set_card_brand_for_slot(index, None, enabled=False)
-            if self._mode == "full" and hasattr(self, "_full") and index < len(self._full._cards):
-                self._full._cards[index]._apply_game_pill_style()
             # Keep this toon's set selector scoped to its game's set list.
             if hasattr(self, "set_selectors") and index < len(self.set_selectors):
                 self.set_selectors[index].set_toon_game(game_tag)
@@ -2314,17 +2276,23 @@ class MultitoonTab(QWidget):
     def _set_card_brand_for_slot(
         self, index: int, game: str | None, enabled: bool = False
     ) -> None:
-        """Forward to the compact layout's set_card_brand. Also teaches
-        the badge what game it represents so it can look up its
-        customization entry on next paint."""
+        """Forward to BOTH layouts' set_card_brand so per-card chrome
+        (stripe, header divider color, ka_group border, body tint) stays
+        in sync across compact and full. Both layouts hold their own
+        QFrame trees but share the brand-resolution logic via parallel
+        set_card_brand methods; both must be told whenever a slot's
+        game/enabled state changes so a layout-mode swap doesn't reveal
+        stale chrome. Also teaches the badge what game it represents so
+        it can look up its customization entry on next paint."""
         if index < len(self.slot_badges):
             self.slot_badges[index].set_game(game)
-        compact = getattr(self, "_compact", None)
-        if compact is None:
-            return
-        set_brand = getattr(compact, "set_card_brand", None)
-        if callable(set_brand):
-            set_brand(index, game, enabled=enabled)
+        for layout_attr in ("_compact", "_full"):
+            layout = getattr(self, layout_attr, None)
+            if layout is None:
+                continue
+            set_brand = getattr(layout, "set_card_brand", None)
+            if callable(set_brand):
+                set_brand(index, game, enabled=enabled)
 
     def _open_customization_dialog(self, slot: int) -> None:
         """Open ToonCustomizationDialog for the given slot's badge."""
@@ -2784,8 +2752,6 @@ class MultitoonTab(QWidget):
                     self.slot_badges[global_idx].set_cc_auto_species(None)
                     self.slot_badges[global_idx].set_cc_mode(None, None, None, None)
                 self.set_compact_cc_subtitle(global_idx, None, None)
-                if self._mode == "full" and global_idx < len(self._full._cards):
-                    self._full._cards[global_idx].set_cc_mode(None, None)
                 continue
 
             # Apply name
@@ -2819,16 +2785,12 @@ class MultitoonTab(QWidget):
                     badge.set_cc_auto_species(None)
                     badge.set_cc_mode(None, None, None, None)
 
-            # Compact subtitle
+            # Compact subtitle (shared widget; full mode reuses
+            # _compact_cc_subtitles[i] now that full is a structural
+            # clone of compact).
             self.set_compact_cc_subtitle(
                 global_idx, info.playground, info.zone_name,
             )
-
-            # Full chip row
-            if self._mode == "full" and global_idx < len(self._full._cards):
-                self._full._cards[global_idx].set_cc_mode(
-                    info.playground, info.zone_name,
-                )
 
         self._refresh_toon_name_labels()
 
@@ -2957,9 +2919,6 @@ class MultitoonTab(QWidget):
                 f"font-size: 21px; font-weight: bold; color: {c['text_primary']}; "
                 f"background: none; border: none; padding-left: 6px;"
             )
-        if self._mode == "full" and hasattr(self, "_full") and self._full is not None:
-            for card in self._full._cards:
-                card._apply_scaled_styles()
 
     def set_compact_cc_subtitle(self, slot: int, playground, zone_name):
         """Update the Compact UI subtitle for a CC slot. Hides if both
@@ -3166,6 +3125,8 @@ class MultitoonTab(QWidget):
         # Compact: flip ka_group's stretch factor in its middle layout.
         if hasattr(self, "_compact"):
             self._compact._set_keep_alive_collapsed(not target_visible)
+        if hasattr(self, "_full") and self._full is not None:
+            self._full._set_keep_alive_collapsed(not target_visible)
 
     def showEvent(self, event):
         """When the multitoon tab becomes visible, reconcile per-toon KA widget
@@ -3243,6 +3204,8 @@ class MultitoonTab(QWidget):
                 self.help_buttons[i].setVisible(not target_visible)
         if hasattr(self, "_compact"):
             self._compact._set_keep_alive_collapsed(not target_visible)
+        if hasattr(self, "_full") and self._full is not None:
+            self._full._set_keep_alive_collapsed(not target_visible)
 
     def _run_keep_alive_loop(self):
         try:
