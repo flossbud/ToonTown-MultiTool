@@ -1284,7 +1284,7 @@ class MultitoonTab(QWidget):
             self._compact_cc_subtitles.append(cc_subtitle)
 
             name_label = ElidingLabel(f"Toon {i + 1}")
-            status_dot = PulsingDot(10)
+            status_dot = PulsingDot(13)
             status_dot.setToolTip("Not Found")
             self.toon_labels.append((name_label, status_dot))
 
@@ -1934,6 +1934,34 @@ class MultitoonTab(QWidget):
                 enabled=self.enabled_toons[index] and self.service_running,
             )
 
+        # Disabled / off state opacity. Qt's disabled palette alone
+        # doesn't read as "off" against the body-tinted wrapper, so we
+        # fade controls when they are inert. Chat tracks the KA button
+        # at 70% in BOTH its disabled state AND its enabled-but-off
+        # state (the two sit next to each other and should match
+        # visually) - it only renders at full opacity when chat is
+        # actively broadcasting. Enable + Selector stay at 50% when
+        # setEnabled(False) so they read as more clearly inert.
+        # The KA button has its own opacity logic in
+        # _apply_keep_alive_btn_style (driven by keep_alive_enabled,
+        # not isEnabled) and is intentionally not handled here.
+        chat_active = chat_btn.isEnabled() and self.chat_enabled[index]
+        self._set_widget_opacity(chat_btn, 1.0 if chat_active else 0.7)
+        # Enable button: full opacity only when actively enabled (green
+        # "Enabled" state). Both off states fade to 50%:
+        #   - branch 1: no window/service, Qt-disabled, "Enable" grey
+        #   - branch 3: window+service present but toon not toggled on,
+        #     Qt-enabled but visually grey "Enable"
+        btn_active = (
+            btn.isEnabled()
+            and self.enabled_toons[index]
+            and self.service_running
+        )
+        self._set_widget_opacity(btn, 1.0 if btn_active else 0.85)
+        # Selector keeps the Qt-disabled-only rule (no enabled-but-off
+        # equivalent — when enabled, it is always interactive).
+        self._set_widget_opacity(selector, 0.5 if not selector.isEnabled() else 1.0)
+
     def _apply_chat_btn_style(self, index, c):
         chat_btn = self.chat_buttons[index]
         chat_btn.setEnabled(True)
@@ -1981,6 +2009,34 @@ class MultitoonTab(QWidget):
     def _on_input_log(self, msg):
         self.log(msg)
 
+    def _set_widget_opacity(self, w, opacity: float):
+        """Apply a constant opacity to a widget via QGraphicsOpacityEffect.
+        opacity >= 1.0 removes any existing effect so the widget paints
+        at native opacity (and avoids the small repaint cost of a no-op
+        effect). Under the offscreen Qt platform plugin (test suite) the
+        effect crashes intermittently in PySide6 6.11, so we skip it
+        there - matches the guard at _full_layout.py:825.
+
+        Used for the "available but quiet" / "disabled but present"
+        affordance on the per-toon control row (KA button in idle,
+        Enable/Chat/Selector when disabled).
+        """
+        from PySide6.QtGui import QGuiApplication
+        if QGuiApplication.platformName() == "offscreen":
+            return
+        from PySide6.QtWidgets import QGraphicsOpacityEffect
+        if opacity >= 1.0:
+            if w.graphicsEffect() is not None:
+                w.setGraphicsEffect(None)
+            return
+        effect = w.graphicsEffect()
+        if isinstance(effect, QGraphicsOpacityEffect):
+            effect.setOpacity(opacity)
+        else:
+            effect = QGraphicsOpacityEffect(w)
+            effect.setOpacity(opacity)
+            w.setGraphicsEffect(effect)
+
     def _apply_keep_alive_btn_style(self, index, c):
         ka_btn = self.keep_alive_buttons[index]
         if not self._keep_alive_globally_enabled():
@@ -1998,6 +2054,7 @@ class MultitoonTab(QWidget):
             bar = self.ka_progress_bars[index] if index < len(self.ka_progress_bars) else None
             if bar:
                 bar.set_fill_color(c.get('text_muted', '#888888'))
+            self._set_widget_opacity(ka_btn, 1.0)
             return
         ka_btn.setEnabled(True)
         ka_btn.setToolTip("Toggle keep-alive for this toon")
@@ -2034,6 +2091,7 @@ class MultitoonTab(QWidget):
                 """)
                 if bar:
                     bar.set_fill_color("#e0943a")  # orange to match keep-alive button
+            self._set_widget_opacity(ka_btn, 1.0)
         else:
             ka_btn.setStyleSheet(f"""
                 QPushButton {{
@@ -2047,6 +2105,10 @@ class MultitoonTab(QWidget):
                     border: 1px solid {c['toon_btn_inactive_hover_border']};
                 }}
             """)
+            # Idle state: KA is globally enabled but this toon's KA is
+            # toggled off. 70% opacity so the button reads as "available
+            # but quiet" against the body-tinted wrapper around it.
+            self._set_widget_opacity(ka_btn, 0.7)
 
     # ── Glow animations ────────────────────────────────────────────────────
 

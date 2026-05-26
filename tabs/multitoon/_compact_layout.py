@@ -142,12 +142,26 @@ class _CompactLayout(QWidget):
         # and the body (Enable + chat + KA + bar + selector). Colour is
         # set in set_card_brand so theme swaps re-tint it.
         header_divider = QFrame()
-        header_divider.setFrameShape(QFrame.HLine)
+        # NoFrame (not HLine) so the widget paints purely as its QSS
+        # background. QFrame.HLine ignores the QSS background and draws
+        # its line via palette colors instead - which kept the divider
+        # reading as default gray even when set_card_brand set the
+        # background to the body-derived darkened color.
+        header_divider.setFrameShape(QFrame.NoFrame)
         header_divider.setObjectName(f"toon_card_divider_{i}")
         # 2 px so the body-derived color in set_card_brand actually reads
         # against the card body. addSpacing above (line ~158) trimmed
         # from 7 to 6 to keep total card height pixel-identical.
         header_divider.setFixedHeight(2)
+        # 45% opacity so the divider reads as a soft separator rather
+        # than a hard line, regardless of whether body is set (darkened
+        # body color) or not (theme border_muted).
+        from PySide6.QtGui import QGuiApplication
+        if QGuiApplication.platformName() != "offscreen":
+            from PySide6.QtWidgets import QGraphicsOpacityEffect
+            _opacity = QGraphicsOpacityEffect(header_divider)
+            _opacity.setOpacity(0.45)
+            header_divider.setGraphicsEffect(_opacity)
 
         # Push the header_divider (and everything below it) down. 3 px
         # of this absorbs the reduced bottom contentsMargin (5 -> 2);
@@ -599,18 +613,20 @@ class _CompactLayout(QWidget):
 
     def _position_portraits(self) -> None:
         """Position each card's 64x64 portrait widget on top of its 50x50
-        placeholder, shifted 9 px left and 8 px up so the extra size
+        placeholder, shifted 9 px left and 10 px up so the extra size
         extends into the card's top/left padding instead of pushing the
-        layout. Must be called AFTER Qt has resolved the layout (so the
-        placeholder has a real geometry) and BEFORE _position_status_rings
-        (which uses badge.mapTo for the corner dot)."""
+        layout. (The -10 was bumped from -8 so the portrait sits further
+        away from the header/controls divider.) Must be called AFTER Qt
+        has resolved the layout (so the placeholder has a real geometry)
+        and BEFORE _position_status_rings (which uses badge.mapTo for
+        the corner dot, so the dot tracks the badge automatically)."""
         for i, slot in enumerate(self._card_slots):
             placeholder = slot.get("portrait_placeholder")
             if placeholder is None:
                 continue
             badge = self._tab.slot_badges[i]
             top_left = placeholder.mapTo(slot["card"], placeholder.rect().topLeft())
-            badge.move(top_left.x() - 9, top_left.y() - 8)
+            badge.move(top_left.x() - 9, top_left.y() - 10)
             badge.show()
             badge.raise_()
 
@@ -625,13 +641,12 @@ class _CompactLayout(QWidget):
             badge = self._tab.slot_badges[i]
             if not badge.isVisible():
                 continue
-            # Convert badge bottom-right corner into card-local coords,
-            # then offset so the visible dot cluster (10 px core + 2.5 px
-            # cut-out ring on each side = 15 px) extends 2 px past the
-            # corner, matching the design mockup's
-            # `right: -2px; bottom: -2px`.
+            # PulsingDot(13) widget is 21x21 (13 px core + 4 px padding
+            # for glow on each side). Anchor to badge.bottomRight() and
+            # offset (-18, -19) to nudge the dot 1 px left and 2 px up
+            # from sitting flush at the badge's bottom-right corner.
             br = badge.mapTo(slot["card"], badge.rect().bottomRight())
-            ring.move(br.x() - 14, br.y() - 14)
+            ring.move(br.x() - 18, br.y() - 19)
             ring.show()
             ring.raise_()
 
