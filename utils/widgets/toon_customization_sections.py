@@ -731,7 +731,10 @@ class _PoseSection(QWidget):
         header.addWidget(self._adjust_btn)
         self._refresh_btn = QPushButton("↻")
         self._refresh_btn.setToolTip("Refresh pose thumbnails")
+        # Match the natural Adjust button height so the two don't render
+        # at different vertical sizes; fix width to keep it square-ish.
         self._refresh_btn.setFixedWidth(32)
+        self._refresh_btn.setMinimumHeight(self._adjust_btn.sizeHint().height())
         self._refresh_btn.clicked.connect(self._on_refresh_clicked)
         if not self._dna:
             self._refresh_btn.setEnabled(False)

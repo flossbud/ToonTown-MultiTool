@@ -166,22 +166,18 @@ class _Panel(QFrame):
         )
         row.addWidget(self.title_label, 1)
 
-        self.close_btn = QPushButton()
+        self.close_btn = QPushButton("×")  # Unicode MULTIPLICATION SIGN
         self.close_btn.setFixedSize(28, 28)
         self.close_btn.setToolTip("Close (Esc)")
         self.close_btn.setStyleSheet(
             "QPushButton {"
             "  background: #353a52; color: #e8e8f0;"
             "  border: none; border-radius: 6px;"
-            "  font-size: 16px; font-weight: bold;"
+            "  font-size: 18px; font-weight: bold;"
+            "  padding-bottom: 2px;"  # nudge the glyph toward optical center
             "}"
             "QPushButton:hover { background: #4a5070; }"
         )
-        # No glyph yet: the button is identified by its dark square
-        # styling + tooltip. A real "×" or SVG icon lands in a later
-        # task once the glyph source is settled; until then, .text()
-        # stays empty (tests assert this) and the tooltip plus the
-        # styled background carry the affordance.
         self.close_btn.clicked.connect(self.close_requested)
         row.addWidget(self.close_btn)
         return bar
