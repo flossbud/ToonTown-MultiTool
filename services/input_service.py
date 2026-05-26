@@ -836,16 +836,22 @@ class InputService(QObject):
                                     self._chat_last_activity = now
                                     self._send_typing_to_bg(key, enabled, assignments, movement_keys)
                             elif len(key) == 1 and key.isprintable():
-                                # Possible whisper reply (3 printable chars with no chat open)
+                                # Possible whisper reply (3 printable chars with no chat open).
+                                # Gated by _phantom_gate_open(): when no chat-enabled bg toon
+                                # exists, phantom serves no purpose and is skipped entirely.
                                 if key not in self.bg_typing_held:
                                     self.bg_typing_held.add(key)
-                                    self._phantom_char_count += 1
-                                    if self._phantom_char_count >= 3:
-                                        self._phantom_active = True
-                                        self._chat_last_activity = now
-                                        if self.logging_enabled:
-                                            self.input_log.emit("[Input] Whisper reply detected — input suppressed")
+                                    if self._phantom_gate_open():
+                                        self._phantom_char_count += 1
+                                        if self._phantom_char_count >= 3:
+                                            self._phantom_active = True
+                                            self._chat_last_activity = now
+                                            if self.logging_enabled:
+                                                self.input_log.emit("[Input] Whisper reply detected — input suppressed")
+                                        else:
+                                            self._send_typing_to_bg(key, enabled, assignments, movement_keys)
                                     else:
+                                        self._phantom_char_count = 0
                                         self._send_typing_to_bg(key, enabled, assignments, movement_keys)
                             else:
                                 # In-game non-printable key (Delete, F-keys, numpad, etc.)

@@ -113,3 +113,125 @@ def test_gate_closed_when_chat_list_is_shorter_than_enabled():
     )
     # bg toons are index 1 and 2; chat list only has index 0; gate closed.
     assert svc._phantom_gate_open() is False
+
+
+# ── Integration tests: drive the run loop and assert on state ────────────
+
+import queue
+import time
+
+
+class _DriveWindowManager:
+    """Window manager fixture for tests that drive the run loop. Mutable
+    _active so tests can simulate focus changes."""
+    def __init__(self, window_ids, active):
+        self._ids = list(window_ids)
+        self._active = active
+
+    def get_active_window(self):
+        return self._active
+
+    def get_window_ids(self):
+        return list(self._ids)
+
+    def assign_windows(self):
+        pass
+
+
+def _make_drive_service(chat):
+    """Build an InputService with two windows where '1001' is the focused
+    (multitool) window and '1002' is the background toon. The `chat` list
+    is captured by closure so tests can mutate it mid-run via `chat[:] = ...`
+    to simulate the user toggling chat buttons live."""
+    wm = _DriveWindowManager(window_ids=["1001", "1002"], active="1001")
+    settings = MagicMock()
+    settings.get.side_effect = lambda key, default=None: (
+        "1001" if key == "multitool_window_id" else default
+    )
+    q = queue.Queue()
+    svc = InputService(
+        window_manager=wm,
+        get_enabled_toons=lambda: [True, True],
+        get_movement_modes=lambda: ["WASD", "WASD"],
+        get_event_queue_func=lambda: q,
+        settings_manager=settings,
+        get_chat_enabled=lambda: list(chat),
+    )
+    svc._xlib = MagicMock()
+    svc._xlib.send_keydown.return_value = True
+    svc._xlib.send_keyup.return_value = True
+    svc._xlib.send_key.return_value = True
+    return svc, q
+
+
+def _drive_no_stop(svc, q, events, drain_timeout=0.5, settle=0.05):
+    """Push events; start the service if not running; wait for queue to drain
+    and one settle period. Does NOT stop the service so tests can inspect
+    state between batches."""
+    for ev in events:
+        q.put(ev)
+    if not svc.running:
+        svc.start()
+    deadline = time.monotonic() + drain_timeout
+    while time.monotonic() < deadline and not q.empty():
+        time.sleep(0.005)
+    time.sleep(settle)
+
+
+def test_phantom_does_not_activate_when_gate_closed():
+    """Bg toon has chat off → gate closed. Typing 5 printable chars must
+    leave _phantom_active False and _phantom_char_count at 0."""
+    chat = [False, False]
+    svc, q = _make_drive_service(chat)
+    try:
+        _drive_no_stop(svc, q, [
+            ("keydown", "h"), ("keyup", "h"),
+            ("keydown", "i"), ("keyup", "i"),
+            ("keydown", "x"), ("keyup", "x"),
+            ("keydown", "y"), ("keyup", "y"),
+            ("keydown", "z"), ("keyup", "z"),
+        ])
+        assert svc._phantom_active is False
+        assert svc._phantom_char_count == 0
+    finally:
+        svc.stop(wait=True)
+
+
+def test_phantom_activates_after_three_chars_when_gate_open():
+    """Bg toon has chat on → gate open. Three unique printable chars must
+    activate phantom (preserves current behavior)."""
+    chat = [False, True]
+    svc, q = _make_drive_service(chat)
+    try:
+        _drive_no_stop(svc, q, [
+            ("keydown", "h"), ("keyup", "h"),
+            ("keydown", "i"), ("keyup", "i"),
+            ("keydown", "x"), ("keyup", "x"),
+        ])
+        assert svc._phantom_active is True
+    finally:
+        svc.stop(wait=True)
+
+
+def test_mid_burst_gate_close_resets_counter():
+    """Counter increments while gate open; flipping gate closed mid-burst
+    resets the counter to 0 on the next printable keydown."""
+    chat = [False, True]  # gate open
+    svc, q = _make_drive_service(chat)
+    try:
+        # Two chars with gate open
+        _drive_no_stop(svc, q, [
+            ("keydown", "h"), ("keyup", "h"),
+            ("keydown", "i"), ("keyup", "i"),
+        ])
+        assert svc._phantom_char_count == 2
+
+        # User toggles chat off on the only chat-enabled bg toon
+        chat[:] = [False, False]
+
+        # Next printable char must reset the counter (and not activate phantom)
+        _drive_no_stop(svc, q, [("keydown", "x"), ("keyup", "x")])
+        assert svc._phantom_char_count == 0
+        assert svc._phantom_active is False
+    finally:
+        svc.stop(wait=True)
