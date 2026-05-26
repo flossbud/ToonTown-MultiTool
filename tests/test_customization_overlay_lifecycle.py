@@ -58,3 +58,77 @@ def test_backdrop_blur_dim_color_present(qapp):
     assert bd.DIM_COLOR.red() == 0
     assert bd.DIM_COLOR.green() == 0
     assert bd.DIM_COLOR.blue() == 0
+
+
+def test_panel_has_pinned_dimensions(qapp):
+    from utils.widgets.customization_overlay import _Panel
+    parent = QWidget()
+    parent.resize(575, 770)
+    panel = _Panel(parent)
+    assert panel.PANEL_W == 543
+    assert panel.PANEL_H == 738
+    assert panel.HEADER_H == 44
+    assert panel.FOOTER_H == 52
+
+
+def test_panel_has_close_x_button(qapp):
+    from utils.widgets.customization_overlay import _Panel
+    panel = _Panel()
+    assert panel.close_btn is not None
+    assert panel.close_btn.text() == ""  # icon-only
+    assert panel.close_btn.minimumWidth() == 28
+
+
+def test_panel_has_footer_buttons(qapp):
+    from utils.widgets.customization_overlay import _Panel
+    panel = _Panel()
+    assert panel.reset_btn is not None
+    assert panel.reset_btn.text() == "Reset all"
+    assert panel.cancel_btn is not None
+    assert panel.cancel_btn.text() == "Cancel"
+    assert panel.save_btn is not None
+    assert panel.save_btn.text() == "Save"
+
+
+def test_panel_pill_row_exists(qapp):
+    from utils.widgets.customization_overlay import _Panel
+    panel = _Panel()
+    assert panel.pill_row is not None
+    assert panel.section_stack is not None
+
+
+def test_panel_emits_close_signal(qapp):
+    """Clicking the close X emits close_requested."""
+    from utils.widgets.customization_overlay import _Panel
+    panel = _Panel()
+    received = []
+    panel.close_requested.connect(lambda: received.append(True))
+    panel.close_btn.click()
+    assert received == [True]
+
+
+def test_panel_emits_cancel_signal(qapp):
+    from utils.widgets.customization_overlay import _Panel
+    panel = _Panel()
+    received = []
+    panel.cancel_requested.connect(lambda: received.append(True))
+    panel.cancel_btn.click()
+    assert received == [True]
+
+
+def test_panel_emits_save_signal(qapp):
+    from utils.widgets.customization_overlay import _Panel
+    panel = _Panel()
+    received = []
+    panel.save_requested.connect(lambda: received.append(True))
+    panel.save_btn.click()
+    assert received == [True]
+
+
+def test_panel_emits_reset_signal(qapp):
+    from utils.widgets.customization_overlay import _Panel
+    panel = _Panel()
+    received = []
+    panel.reset_requested.connect(lambda: received.append(True))
+    panel.reset_btn.click()
+    assert received == [True]
