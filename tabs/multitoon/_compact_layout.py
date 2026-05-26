@@ -29,6 +29,23 @@ def _muted_brand(color: QColor) -> QColor:
 _LOCKED_CONTENT_WIDTH = 551
 
 
+def _is_descendant_of(widget, ancestor) -> bool:
+    """Return True iff `ancestor` is in `widget`'s parent chain.
+
+    Used to guard `widget.mapTo(ancestor, ...)` calls in the position-
+    helper paths: badges + status rings are shared between the compact
+    and full layouts, so during a mode-swap or full-layout prewarm
+    they may be temporarily parented to the OTHER layout's card. Calling
+    mapTo against a non-ancestor target prints a Qt warning AND returns
+    meaningless coords."""
+    walker = widget.parentWidget()
+    while walker is not None:
+        if walker is ancestor:
+            return True
+        walker = walker.parentWidget()
+    return False
+
+
 class _CompactLayout(QWidget):
     """Reproduces the default Multitoon layout. Two-phase construction:
 
@@ -641,11 +658,19 @@ class _CompactLayout(QWidget):
             badge = self._tab.slot_badges[i]
             if not badge.isVisible():
                 continue
+            card = slot["card"]
+            # Skip if the badge has been reparented out of this compact
+            # card (e.g., during full-mode prewarm at init). mapTo on a
+            # non-ancestor target prints a Qt warning and returns
+            # meaningless coords; the badge ring will be repositioned
+            # correctly when compact reclaims ownership.
+            if not _is_descendant_of(badge, card):
+                continue
             # PulsingDot(13) widget is 21x21 (13 px core + 4 px padding
             # for glow on each side). Anchor to badge.bottomRight() and
             # offset (-18, -19) to nudge the dot 1 px left and 2 px up
             # from sitting flush at the badge's bottom-right corner.
-            br = badge.mapTo(slot["card"], badge.rect().bottomRight())
+            br = badge.mapTo(card, badge.rect().bottomRight())
             ring.move(br.x() - 18, br.y() - 19)
             ring.show()
             ring.raise_()

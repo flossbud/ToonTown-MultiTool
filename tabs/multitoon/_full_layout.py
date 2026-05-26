@@ -724,12 +724,22 @@ class _FullContent(QWidget):
         """Re-position the portrait status-dot overlays after Qt has
         resolved layout. Called from showEvent / resizeEvent /
         populate()."""
+        from tabs.multitoon._compact_layout import _is_descendant_of
         for i, slot in enumerate(self._card_slots):
             ring = slot.get("status_ring")
             if ring is None:
                 continue
             badge = self._tab.slot_badges[i]
             if not badge.isVisible():
+                continue
+            card = slot["card"]
+            # Skip if the badge has been reparented out of this full
+            # card (e.g., during compact-mode operations while full is
+            # still warming or transitioning). mapTo on a non-ancestor
+            # target prints a Qt warning and returns junk coords; the
+            # ring will be repositioned correctly when full reclaims
+            # ownership.
+            if not _is_descendant_of(badge, card):
                 continue
             # Anchor the status dot at badge.bottomRight() with a small
             # overhang past the badge bounding-box corner: 3 px right,
@@ -741,7 +751,7 @@ class _FullContent(QWidget):
             # (-29, -30), which keeps the dot center sitting at the
             # visible-circle bottom-right of the 120 badge instead of
             # drifting past the corner.
-            br = badge.mapTo(slot["card"], badge.rect().bottomRight())
+            br = badge.mapTo(card, badge.rect().bottomRight())
             ring.move(br.x() - (ring.width() - 3), br.y() - (ring.height() - 2))
             ring.show()
             ring.raise_()
