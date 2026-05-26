@@ -107,19 +107,25 @@ def test_swap_to_full_reparents_shared_widgets(tab):
     tab.set_layout_mode("full")
     assert tab._mode == "full"
 
-    # Per-slot widgets should now live under _full
+    # Per-slot widgets should now live under _full._content (the inner
+    # widget tree of the QGraphicsView wrapper). Qt's parent chain ends
+    # at _content because it lives inside a QGraphicsProxyWidget — the
+    # proxy boundary is opaque to widget.parent(). The wrapper still
+    # logically owns the cards; we just walk to the right ownership root.
+    full_content = tab._full._content
     for i in range(4):
-        assert _is_descendant_of(tab.toon_buttons[i], tab._full), (
-            f"slot {i} toon_button should be under _full after swap"
+        assert _is_descendant_of(tab.toon_buttons[i], full_content), (
+            f"slot {i} toon_button should be under _full._content after swap"
         )
-        assert _is_descendant_of(tab.slot_badges[i], tab._full)
+        assert _is_descendant_of(tab.slot_badges[i], full_content)
 
 
 def test_config_label_reparented_to_full(tab):
-    """Config label must be a descendant of _full in full mode."""
+    """Config label must be a descendant of _full._content in full mode."""
     tab.set_layout_mode("full")
-    assert _is_descendant_of(tab.config_label, tab._full), (
-        "config_label should be under _full in full mode"
+    full_content = tab._full._content
+    assert _is_descendant_of(tab.config_label, full_content), (
+        "config_label should be under _full._content in full mode"
     )
     assert not _is_descendant_of(tab.config_label, tab._compact), (
         "config_label should NOT be under _compact in full mode"
@@ -136,15 +142,17 @@ def test_swap_back_to_compact_reparents_again(tab):
     assert _is_descendant_of(tab.service_status_bar, tab._compact)
 
     tab.set_layout_mode("full")
-    # In full mode, service_status_bar moves to full
-    assert _is_descendant_of(tab.service_status_bar, tab._full)
+    # In full mode, service_status_bar moves into _full._content (the
+    # inner widget tree behind the QGraphicsView wrapper).
+    full_content = tab._full._content
+    assert _is_descendant_of(tab.service_status_bar, full_content)
 
     tab.set_layout_mode("compact")
     assert tab._mode == "compact"
 
     # Back in compact: service_status_bar is under compact again
     assert _is_descendant_of(tab.service_status_bar, tab._compact)
-    assert not _is_descendant_of(tab.service_status_bar, tab._full)
+    assert not _is_descendant_of(tab.service_status_bar, full_content)
 
     for i in range(4):
         assert _is_descendant_of(tab.toon_buttons[i], tab._compact)

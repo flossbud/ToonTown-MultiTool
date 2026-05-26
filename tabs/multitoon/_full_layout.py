@@ -10,10 +10,11 @@ _compact_layout.py."""
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QSize
-from PySide6.QtGui import QFont, QColor
+from PySide6.QtCore import Qt, QSize, QEvent
+from PySide6.QtGui import QFont, QColor, QPainter, QTransform
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QFrame
+    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QFrame,
+    QGraphicsView, QGraphicsScene, QGraphicsProxyWidget
 )
 
 from utils.theme_manager import make_heart_icon, make_jellybean_icon
@@ -25,8 +26,8 @@ from tabs.multitoon._compact_layout import (
 )
 
 
-class _FullLayout(QWidget):
-    """Reproduces the compact card layout with cards in a 2x2 grid.
+class _FullContent(QWidget):
+    """Inner content widget for full mode. Reproduces the compact card layout with cards in a 2x2 grid; lives inside a _FullLayout QGraphicsView wrapper that scales the rendered output 1.5x.
 
     Public API mirrors _CompactLayout so prewarm_full_layout and the
     mode-switch hook in _tab.py don't need to know which class they
@@ -922,3 +923,135 @@ class _FullLayout(QWidget):
             except RuntimeError:
                 pass
         self._ka_anims = []
+
+
+class _FullLayout(QWidget):
+    """QGraphicsView wrapper that scales _FullContent uniformly 1.5x.
+
+    The actual widget tree (controls + 2x2 card grid) lives in
+    _FullContent. _FullLayout hosts it via a QGraphicsScene +
+    QGraphicsProxyWidget and applies a 1.5x transform on the view.
+    Every public method (populate, apply_theme, deactivate, etc.) and
+    selected attributes (_card_slots, _card_grid, _ka_anims) are
+    forwarded to self._content so _tab.py callers don't know about
+    the wrapping.
+    """
+
+    _SCALE = 1.5
+
+    def __init__(self, tab, parent=None):
+        super().__init__(parent)
+        self._tab = tab
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        self._content = _FullContent(tab)
+
+        self._scene = QGraphicsScene(self)
+        self._proxy = self._scene.addWidget(self._content)
+        self._proxy.setPos(0, 0)
+
+        self._view = QGraphicsView(self._scene, self)
+        self._view.setRenderHints(
+            QPainter.Antialiasing
+            | QPainter.SmoothPixmapTransform
+            | QPainter.TextAntialiasing
+        )
+        self._view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._view.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._view.setFrameStyle(QFrame.NoFrame)
+        self._view.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
+        # Transparent viewport so the tab background bleeds through.
+        # Four overlapping mechanisms because each catches a different
+        # Qt-version/theme failure mode:
+        #   - setBackgroundBrush(Qt.transparent): QGraphicsView's scene
+        #     background fill, the primary signal to Qt's painter.
+        #   - QSS background: transparent: handles QSS-aware themes that
+        #     would otherwise paint a default palette background.
+        #   - WA_TranslucentBackground: required on some Linux WMs where
+        #     the previous two are otherwise composited under an opaque
+        #     window-system background.
+        #   - viewport().setAutoFillBackground(False): the actual viewport
+        #     QWidget under the scene, which would otherwise honor its
+        #     palette role and paint a fill before the scene renders.
+        # Dropping any one of these has produced visible regressions in
+        # one Qt environment or another.
+        self._view.setBackgroundBrush(Qt.transparent)
+        self._view.setStyleSheet(
+            "QGraphicsView { background: transparent; border: none; }"
+        )
+        self._view.setAttribute(Qt.WA_TranslucentBackground, True)
+        self._view.viewport().setAutoFillBackground(False)
+
+        # Idempotent: setTransform replaces the current transform
+        # instead of multiplying, so if __init__ ever ran twice the
+        # scale wouldn't compound.
+        self._view.setTransform(QTransform().scale(self._SCALE, self._SCALE))
+
+        # Keep the scene rect synced to the content's natural size so
+        # the view's transform shows the entire content at 1.5x without
+        # blank scene area or cropping.
+        self._sync_scene_rect()
+        self._content.installEventFilter(self)
+
+        outer.addWidget(self._view)
+
+    def eventFilter(self, obj, ev):
+        if obj is self._content and ev.type() == QEvent.Resize:
+            self._sync_scene_rect()
+        return super().eventFilter(obj, ev)
+
+    def _sync_scene_rect(self):
+        hint = self._content.sizeHint()
+        size = self._content.size()
+        w = max(hint.width(), size.width(), 1)
+        h = max(hint.height(), size.height(), 1)
+        self._scene.setSceneRect(0, 0, w, h)
+
+    # ── Forwarded public API ──────────────────────────────────────────
+
+    def populate(self):
+        self._content.populate()
+
+    def apply_theme(self, c):
+        self._content.apply_theme(c)
+
+    def deactivate(self):
+        self._content.deactivate()
+
+    def set_card_brand(self, i, game, enabled=False):
+        self._content.set_card_brand(i, game, enabled=enabled)
+
+    def _animate_keep_alive_visibility(self, target_visible):
+        self._content._animate_keep_alive_visibility(target_visible)
+
+    def _set_keep_alive_collapsed(self, collapsed):
+        self._content._set_keep_alive_collapsed(collapsed)
+
+    def _position_portraits(self):
+        self._content._position_portraits()
+
+    def _position_status_rings(self):
+        self._content._position_status_rings()
+
+    def _position_stripes(self):
+        self._content._position_stripes()
+
+    def _position_cards(self):
+        self._content._position_cards()
+
+    # ── Forwarded attributes (read-only properties) ──────────────────
+
+    @property
+    def _card_slots(self):
+        return self._content._card_slots
+
+    @property
+    def _card_grid(self):
+        return self._content._card_grid
+
+    @property
+    def _ka_anims(self):
+        return self._content._ka_anims
