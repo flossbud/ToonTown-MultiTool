@@ -88,3 +88,44 @@ def test_pose_tile_no_label_pixels_below_box(qapp):
             )
 
 
+def test_pose_section_3_columns(qapp):
+    """Every tile lives in column 0, 1, or 2 — no column 3."""
+    from utils.widgets.toon_customization_sections import _PoseSection
+
+    section = _PoseSection(dna="dna-abc-123", current_pose="portrait")
+    qapp.processEvents()
+    grid_page = section._grid_page
+    layout = grid_page.layout()
+    grid_idx = None
+    for i in range(layout.count()):
+        item = layout.itemAt(i)
+        if item.layout() is not None and hasattr(item.layout(), "getItemPosition"):
+            grid_idx = i
+            break
+    assert grid_idx is not None, "could not find QGridLayout inside grid page"
+    grid = layout.itemAt(grid_idx).layout()
+    columns_seen = set()
+    for tile in section._tiles:
+        idx_in_grid = grid.indexOf(tile)
+        assert idx_in_grid != -1, f"tile {tile.pose} not found in grid"
+        row, col, _rs, _cs = grid.getItemPosition(idx_in_grid)
+        columns_seen.add(col)
+    assert columns_seen == {0, 1, 2}, (
+        f"expected only columns 0,1,2; got {sorted(columns_seen)}"
+    )
+
+
+def test_pose_section_grid_width_fits_compact_viewport(qapp):
+    """Grid page's minimum width must be <= 527 (the compact-mode
+    panel section viewport width after the vertical scrollbar)."""
+    from utils.widgets.toon_customization_sections import _PoseSection
+
+    section = _PoseSection(dna="dna-abc-123", current_pose="portrait")
+    qapp.processEvents()
+    section._grid_page.layout().activate()
+    hint = section._grid_page.minimumSizeHint().width()
+    assert hint <= 527, (
+        f"grid page min width {hint} exceeds compact viewport (527 px); "
+        f"horizontal scroll will appear"
+    )
+

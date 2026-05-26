@@ -773,7 +773,7 @@ class _PoseSection(QWidget):
             tile = _PoseTile(pose)
             tile.set_selected(pose == self._current_pose)
             tile.clicked_pose.connect(self._on_tile_clicked)
-            grid.addWidget(tile, idx // 4, idx % 4)
+            grid.addWidget(tile, idx // 3, idx % 3)
             self._tiles.append(tile)
         outer.addLayout(grid)
         outer.addStretch(1)
