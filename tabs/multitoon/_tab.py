@@ -1436,10 +1436,10 @@ class MultitoonTab(QWidget):
         # no-window branch.
         # Resize the shared PulsingDot status indicators to the
         # mode's target size. Compact uses 13 (the historical
-        # construction value); full uses 24 to match the enlarged
-        # portrait. PulsingDot.set_size handles the QWidget sizing
-        # and triggers a repaint.
-        dot_size = 24 if mode == "full" else 13
+        # construction value); full uses 26 to match the enlarged
+        # portrait (130/64 * 13 ≈ 26). PulsingDot.set_size handles
+        # the QWidget sizing and triggers a repaint.
+        dot_size = 26 if mode == "full" else 13
         for i in range(4):
             if i < len(self.toon_labels):
                 _, status_dot = self.toon_labels[i]

@@ -153,9 +153,17 @@ def test_full_layout_body_color_drives_border(qapp, tmp_path, monkeypatch):
     compact mode: setting a body color on slot 0 produces the same
     darkened border in full's divider AND ka_group as it would in
     compact's (matches the body-derived chrome rule from
-    test_card_body_tint_integration.py)."""
+    test_card_body_tint_integration.py).
+
+    Full's divider is pre-blended at 45 % over the body color rather
+    than carrying the raw darkened border (full uses the blended
+    solid color directly to avoid QGraphicsOpacityEffect, which
+    renders invisible inside the QGraphicsView proxy in PySide6
+    6.11). The ka_group still carries the un-blended darkened
+    border. Both still encode the body-color signal."""
     from utils.color_math import darken_hsl
     from PySide6.QtGui import QColor
+    from tabs.multitoon._full_layout import _blend_hex
 
     tab = _build_tab(qapp, tmp_path, monkeypatch)
     tab.toon_names[0] = "Flossbud"
@@ -164,10 +172,16 @@ def test_full_layout_body_color_drives_border(qapp, tmp_path, monkeypatch):
     tab._set_card_brand_for_slot(0, "ttr", enabled=True)
 
     expected = darken_hsl(QColor("#e74a4a"), 0.4).name()
-    divider = tab._full._card_slots[0].get("header_divider")
-    assert divider is not None
-    assert expected in divider.styleSheet()
 
+    # ka_group still carries the raw darkened border color.
     ka_group = tab._full._card_slots[0].get("ka_group")
     assert ka_group is not None
     assert expected in ka_group.styleSheet()
+
+    # Divider carries the 45 %-pre-blended version of that color over
+    # the card body (which is the body color #e74a4a at full opacity
+    # via CardBodyTint).
+    expected_divider = _blend_hex(expected, "#e74a4a", 0.45)
+    divider = tab._full._card_slots[0].get("header_divider")
+    assert divider is not None
+    assert expected_divider in divider.styleSheet()

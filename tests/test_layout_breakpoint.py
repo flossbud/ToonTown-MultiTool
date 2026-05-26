@@ -17,7 +17,7 @@ def test_decide_swaps_to_full_above_breakpoint_plus_deadband():
 
 
 def test_decide_stays_compact_just_above_breakpoint_within_deadband():
-    """Hysteresis: 1700-wide window stays compact because the 'enter Full' threshold is 1780."""
+    """Hysteresis: 1280-wide window stays compact because the 'enter Full' threshold is 1360."""
     assert _decide_layout_mode("compact", W_FULL, H_FULL) == "compact"
     assert _decide_layout_mode("compact", W_FULL + DEADBAND_W - 1, H_FULL + DEADBAND_H) == "compact"
 

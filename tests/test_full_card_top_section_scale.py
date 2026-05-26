@@ -82,8 +82,8 @@ def test_full_mode_badge_is_120(qapp, tmp_path, monkeypatch):
     tab = _build_tab(qapp, tmp_path, monkeypatch)
     for i in range(4):
         badge = tab.slot_badges[i]
-        assert badge.minimumSize() == QSize(120, 120)
-        assert badge.maximumSize() == QSize(120, 120)
+        assert badge.minimumSize() == QSize(130, 130)
+        assert badge.maximumSize() == QSize(130, 130)
 
 
 def test_full_mode_status_dot_is_24(qapp, tmp_path, monkeypatch):
@@ -91,8 +91,8 @@ def test_full_mode_status_dot_is_24(qapp, tmp_path, monkeypatch):
     tab = _build_tab(qapp, tmp_path, monkeypatch)
     for i in range(4):
         _, status_dot = tab.toon_labels[i]
-        assert status_dot._dot_size == 24, (
-            f"slot {i}: expected 24, got {status_dot._dot_size}"
+        assert status_dot._dot_size == 26, (
+            f"slot {i}: expected 26, got {status_dot._dot_size}"
         )
 
 
@@ -169,3 +169,49 @@ def test_compact_mode_unchanged_after_full_round_trip(qapp, tmp_path, monkeypatc
         assert tab.bean_labels[i].iconSize() == QSize(16, 16)
         # Status dot back to 13.
         assert status_dot._dot_size == 13
+
+
+def test_compact_badge_not_displaced_by_full_deferred_timer(qapp, tmp_path, monkeypatch):
+    """Init order: _CompactLayout.populate() runs, then _FullLayout
+    constructs (which schedules _apply_full_card_heights via
+    QTimer.singleShot(0)), then _compact.populate() runs again to
+    reclaim the shared widgets. The deferred timer fires LATER and
+    used to call full's _position_portraits / _position_status_rings
+    on the (compact-parented) badges with full's coords, sliding the
+    badges down past the divider in compact mode.
+
+    Regression: after init + event loop tick, the compact badge must
+    be positioned where compact's placeholder dictates, not displaced
+    by full's deferred positioner."""
+    # Build a tab in compact mode WITHOUT switching to full.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
+    from tabs.multitoon._tab import MultitoonTab
+    from utils.settings_manager import SettingsManager
+    tab = MultitoonTab(
+        settings_manager=SettingsManager(),
+        window_manager=_FakeWindowManager(),
+    )
+    # Let the deferred QTimer.singleShot(0, ...) fire.
+    for _ in range(10):
+        qapp.processEvents()
+
+    for i in range(4):
+        badge = tab.slot_badges[i]
+        compact_card = tab._compact._card_slots[i]["card"]
+        placeholder = tab._compact._card_slots[i]["portrait_placeholder"]
+        assert badge.parentWidget() is compact_card, (
+            f"slot {i}: badge should be parented to compact card after init"
+        )
+        # compact's _position_portraits formula: badge.move(top_left.x - 9, top_left.y - 10)
+        top_left = placeholder.mapTo(compact_card, placeholder.rect().topLeft())
+        expected_x = top_left.x() - 9
+        expected_y = top_left.y() - 10
+        assert badge.x() == expected_x, (
+            f"slot {i}: badge.x()={badge.x()}, expected {expected_x} "
+            f"(full's deferred positioner is overwriting compact's coords)"
+        )
+        assert badge.y() == expected_y, (
+            f"slot {i}: badge.y()={badge.y()}, expected {expected_y} "
+            f"(full's deferred positioner is overwriting compact's coords)"
+        )

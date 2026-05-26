@@ -1,11 +1,11 @@
-"""Pin the QGraphicsView wrapper contract for full-mode 1.5x scaling.
+"""Pin the QGraphicsView wrapper contract for full-mode scaling.
 
 These tests assert that:
 - _FullLayout wraps an inner _FullContent in a QGraphicsView + QGraphicsScene + QGraphicsProxyWidget.
-- The view's transform is exactly 1.5x in both axes.
+- The view's transform applies a uniform scale matching _FullLayout._SCALE on both axes.
 - The proxy holds the _FullContent instance.
 - The inner cards stay at compact width (the scale is purely visual via the view's transform).
-- Scrollbars are disabled (we rely on the raised W_FULL trigger to guarantee fit).
+- Scrollbars are disabled (we rely on the W_FULL trigger to guarantee fit).
 """
 
 import os
@@ -62,13 +62,16 @@ def test_full_layout_view_is_graphics_view(qapp, tmp_path, monkeypatch):
     assert isinstance(tab._full._view, QGraphicsView)
 
 
-def test_full_layout_scale_is_1_5x(qapp, tmp_path, monkeypatch):
-    """The view's transform applies a uniform 1.5x scale on both axes."""
+def test_full_layout_scale_matches_constant(qapp, tmp_path, monkeypatch):
+    """The view's transform applies a uniform scale matching _FullLayout._SCALE
+    on both axes. The constant is the single source of truth so tweaking it
+    doesn't require updating tests."""
     tab = _build_tab(qapp, tmp_path, monkeypatch)
     transform = tab._full._view.transform()
+    expected = tab._full._SCALE
     # m11 / m22 are the X / Y scale factors of QTransform.
-    assert transform.m11() == pytest.approx(1.5)
-    assert transform.m22() == pytest.approx(1.5)
+    assert transform.m11() == pytest.approx(expected)
+    assert transform.m22() == pytest.approx(expected)
 
 
 def test_full_layout_proxy_holds_content(qapp, tmp_path, monkeypatch):

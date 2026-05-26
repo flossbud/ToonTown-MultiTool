@@ -160,12 +160,13 @@ TITLE_ANIM_MAX_WIDTH = 300
 # accept the 4px (0.5%) card scale-down at the trigger to keep the
 # threshold accessible.
 #
-# After the 1.5x QGraphicsView wrapping for Full UI cards (May 2026),
-# W_FULL raised from 1280 to 1700 so the scaled 2x2 grid (2 × 551 × 1.5
-# + spacing + margins ≈ 1694 px) fits without scrollbars. H_FULL kept
-# at 800; the scaled grid in a 2x2 arrangement uses less vertical room
-# than compact's 1x4 stack so 800 still provides comfortable headroom.
-W_FULL = 1700
+# After the QGraphicsView wrapping for Full UI cards (May 2026) the
+# scale is 1.125x, so the 2x2 grid (2 × 551 × 1.125 + spacing + margins
+# ≈ 1272 px) fits within the original 1280 trigger; W_FULL stays at
+# 1280. (An earlier iteration ran 1.5x and bumped W_FULL to 1700 before
+# the user dialed the scale back.) H_FULL stays at 800; the 2x2
+# arrangement uses less vertical room than compact's 1x4 stack.
+W_FULL = 1280
 H_FULL = 800
 DEADBAND_W = 80
 DEADBAND_H = 60

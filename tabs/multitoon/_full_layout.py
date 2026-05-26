@@ -27,12 +27,34 @@ from tabs.multitoon._compact_layout import (
 
 
 # Full-mode card height. Replaces the prior `int(natural * 1.5)`
-# rule once the placeholder grew to 120 (which would make natural * 1.5
+# rule once the placeholder grew (which would make natural * 1.5
 # balloon past 270). Derived from: 13 (margins) + 120 (placeholder/
 # top_row) + 6 (spacing) + 2 (divider) + 2 (spacing) + 40 (ctrl_row) +
-# 2 (bottom margin) = 185, plus 5 px of breathing room absorbed by the
-# leading stretch in _build_card_structure.
+# 2 (bottom margin) = 185, plus 5 px of breathing room absorbed by
+# the leading stretch. The visible 130-px portrait overlay is bigger
+# than the 120 placeholder; _position_portraits places it manually
+# centered between the stripe bottom and the divider top, so the
+# overflow rides into the existing stretch + spacing budget without
+# growing the card.
 _FULL_CARD_HEIGHT = 190
+
+
+def _blend_hex(fg_hex: str, bg_hex: str, alpha: float) -> str:
+    """Pre-blend `fg_hex` over `bg_hex` at the given alpha and return
+    the resulting solid color as #rrggbb. Used for the header divider
+    in full mode, where QGraphicsOpacityEffect (compact's mechanism)
+    renders the widget invisible inside the QGraphicsView proxy in
+    PySide6 6.11. Painting the divider in the pre-blended solid color
+    looks identical to a 45 % effect over the same card body but
+    avoids alpha compositing entirely."""
+    fh = fg_hex.lstrip("#")
+    bh = bg_hex.lstrip("#")
+    fr, fg, fb = int(fh[0:2], 16), int(fh[2:4], 16), int(fh[4:6], 16)
+    br, bg_, bb = int(bh[0:2], 16), int(bh[2:4], 16), int(bh[4:6], 16)
+    r = int(round(fr * alpha + br * (1 - alpha)))
+    g = int(round(fg * alpha + bg_ * (1 - alpha)))
+    b = int(round(fb * alpha + bb * (1 - alpha)))
+    return f"#{r:02x}{g:02x}{b:02x}"
 
 
 class _FullContent(QWidget):
@@ -180,15 +202,16 @@ class _FullContent(QWidget):
         # against the card body. addSpacing above (line ~158) trimmed
         # from 7 to 6 to keep total card height pixel-identical.
         header_divider.setFixedHeight(2)
-        # 45% opacity so the divider reads as a soft separator rather
-        # than a hard line, regardless of whether body is set (darkened
-        # body color) or not (theme border_muted).
-        from PySide6.QtGui import QGuiApplication
-        if QGuiApplication.platformName() != "offscreen":
-            from PySide6.QtWidgets import QGraphicsOpacityEffect
-            _opacity = QGraphicsOpacityEffect(header_divider)
-            _opacity.setOpacity(0.45)
-            header_divider.setGraphicsEffect(_opacity)
+        # 45% opacity look is achieved in set_card_brand by pre-blending
+        # the border color over the card body and painting the divider
+        # in that solid blend (set_card_brand picks the right card-body
+        # color for the blend). We do NOT use QGraphicsOpacityEffect
+        # here: inside the QGraphicsView proxy wrapper that hosts this
+        # widget, QGraphicsOpacityEffect renders the widget entirely
+        # invisible in PySide6 6.11 (same bug as _set_widget_opacity
+        # guards against in _tab.py). The pre-blended-color approach
+        # avoids alpha compositing entirely, so it renders correctly
+        # both inside and outside the proxy.
 
         # Push the header_divider (and everything below it) down. 3 px
         # of this absorbs the reduced bottom contentsMargin (5 -> 2);
@@ -217,8 +240,10 @@ class _FullContent(QWidget):
         # transparent corners as darker squares.
         portrait_placeholder = QWidget()
         # Full-mode divergence vs compact: placeholder reserves 120x120
-        # in the layout to match the enlarged badge overlay (set in
-        # _populate_card). Compact's placeholder is still 50x50.
+        # in the layout. The visible badge overlay is 130 (set in
+        # _populate_card); it overflows past the placeholder bounds
+        # by 5 px on each side, riding into the existing layout
+        # spacing budget. Compact's placeholder is still 50x50.
         portrait_placeholder.setFixedSize(120, 120)
         portrait_placeholder.setStyleSheet("background: transparent;")
 
@@ -378,8 +403,16 @@ class _FullContent(QWidget):
 
         divider = self._card_slots[i].get("header_divider")
         if divider is not None:
+            # Pre-blend the border color at 45 % over the card body to
+            # simulate QGraphicsOpacityEffect(0.45) without the effect —
+            # the effect renders invisible inside the QGraphicsView
+            # proxy in PySide6 6.11. Card body behind the divider is
+            # the body color when set (full opacity via CardBodyTint),
+            # else the theme bg_card.
+            card_bg_hex = body_color.name() if body_color is not None else c["bg_card"]
+            divider_color = _blend_hex(border_color, card_bg_hex, 0.45)
             divider.setStyleSheet(
-                f"background: {border_color}; border: none;"
+                f"background: {divider_color}; border: none;"
             )
         # Use this slot's ka_group directly. Full owns its own QFrame
         # tree separately from compact: self._tab.ka_groups holds only
@@ -512,12 +545,12 @@ class _FullContent(QWidget):
         # card height/row spacing stay unchanged; the extra size extends into
         # the card's top and left padding via the offset in _position_portraits.
         badge = self._tab.slot_badges[i]
-        # Full-mode badge is 120x120 (compact uses 64x64). Pinned via
+        # Full-mode badge is 130x130 (compact uses 64x64). Pinned via
         # both min and max because slot_badges is a shared widget; the
         # compact populate_card resets it back to 64x64 on the next
         # mode swap.
-        badge.setMinimumSize(120, 120)
-        badge.setMaximumSize(120, 120)
+        badge.setMinimumSize(130, 130)
+        badge.setMaximumSize(130, 130)
         badge.setParent(slot["card"])
 
         # ka_bar: SmoothProgressBar's constructor defaults are
@@ -660,20 +693,30 @@ class _FullContent(QWidget):
         slot["ctrl_row"].addWidget(self._tab.set_selectors[i])
 
     def _position_portraits(self) -> None:
-        """Position each card's 64x64 portrait widget on top of its 50x50
-        placeholder, shifted 9 px left and 10 px up so the extra size
-        extends into the card's top/left padding instead of pushing the
-        layout. Must be called AFTER Qt has resolved the layout (so the
-        placeholder has a real geometry) and BEFORE _position_status_rings
-        (which uses badge.mapTo for the corner dot, so the dot tracks
-        the badge automatically)."""
+        """Position each card's 130x130 portrait widget. Horizontal:
+        9 px left of the placeholder's top-left so the extra size
+        extends into the card's left padding. Vertical: centered
+        between the stripe bottom (y=5, just below the 5 px accent
+        border-top) and the divider top, so the portrait reads as
+        anchored in the visible top section with body color showing
+        above and below it. Must be called AFTER Qt has resolved the
+        layout and BEFORE _position_status_rings (which uses
+        badge.bottomRight for the corner dot)."""
         for i, slot in enumerate(self._card_slots):
             placeholder = slot.get("portrait_placeholder")
-            if placeholder is None:
+            divider = slot.get("header_divider")
+            if placeholder is None or divider is None:
                 continue
             badge = self._tab.slot_badges[i]
-            top_left = placeholder.mapTo(slot["card"], placeholder.rect().topLeft())
-            badge.move(top_left.x() - 9, top_left.y() - 10)
+            card = slot["card"]
+            ph_top_left = placeholder.mapTo(card, placeholder.rect().topLeft())
+            div_top_y = divider.mapTo(card, divider.rect().topLeft()).y()
+            # Stripe occupies the card's 5 px transparent border-top.
+            stripe_bottom_y = 5
+            center_y = (stripe_bottom_y + div_top_y) // 2
+            badge_x = ph_top_left.x() - 9
+            badge_y = center_y - badge.height() // 2
+            badge.move(badge_x, badge_y)
             badge.show()
             badge.raise_()
 
@@ -688,12 +731,18 @@ class _FullContent(QWidget):
             badge = self._tab.slot_badges[i]
             if not badge.isVisible():
                 continue
-            # PulsingDot(13) widget is 21x21 (13 px core + 4 px padding
-            # for glow on each side). Anchor to badge.bottomRight() and
-            # offset (-18, -19) to nudge the dot 1 px left and 2 px up
-            # from sitting flush at the badge's bottom-right corner.
+            # Anchor the status dot at badge.bottomRight() with a small
+            # overhang past the badge bounding-box corner: 3 px right,
+            # 2 px down. Compact's literal (-18, -19) was the same idea
+            # for a 21x21 dot widget (21 - 3, 21 - 2). Here we compute
+            # the offset from the live widget size so the dot scales
+            # cleanly when set_size flips it between compact 13 (widget
+            # 21) and full 24 (widget 32). At 32x32 this resolves to
+            # (-29, -30), which keeps the dot center sitting at the
+            # visible-circle bottom-right of the 120 badge instead of
+            # drifting past the corner.
             br = badge.mapTo(slot["card"], badge.rect().bottomRight())
-            ring.move(br.x() - 18, br.y() - 19)
+            ring.move(br.x() - (ring.width() - 3), br.y() - (ring.height() - 2))
             ring.show()
             ring.raise_()
 
@@ -739,11 +788,41 @@ class _FullContent(QWidget):
             if card is None:
                 continue
             card.setFixedHeight(_FULL_CARD_HEIGHT)
-        # Cards just resized; the badge / status ring / stripe overlays
-        # are anchored to slot["card"] positions that just moved.
-        self._position_portraits()
-        self._position_status_rings()
-        self._position_stripes()
+        # Reposition the badge / status ring / stripe overlays — but
+        # ONLY if the shared widgets are currently parented to full's
+        # cards. At init the sequence is: _CompactLayout.populate runs
+        # (parents widgets into compact); _FullLayout constructor runs
+        # (parents widgets into full + schedules this method via
+        # QTimer.singleShot(0)); _compact.populate runs again (parents
+        # widgets back to compact). By the time this deferred method
+        # fires, the widgets live in compact's cards. Calling the
+        # position helpers anyway would use full's slot["card"] coords
+        # via mapTo, then apply them to widgets whose parent is
+        # compact's card — sliding the badges down past compact's
+        # divider line. Skip the position pass when we don't own the
+        # widgets; full's own populate path will run the helpers
+        # synchronously when full mode actually becomes active.
+        if self._owns_shared_widgets():
+            self._position_portraits()
+            self._position_status_rings()
+            self._position_stripes()
+
+    def _owns_shared_widgets(self) -> bool:
+        """True if slot_badges[0] is a descendant of this layout's
+        card 0. Used to gate the deferred position pass against the
+        init-time ownership race (compact ends up with the badges by
+        the time the QTimer.singleShot(0) tick lands)."""
+        if not self._card_slots or not self._tab.slot_badges:
+            return False
+        target_card = self._card_slots[0].get("card")
+        if target_card is None:
+            return False
+        parent = self._tab.slot_badges[0].parentWidget()
+        while parent is not None:
+            if parent is target_card:
+                return True
+            parent = parent.parentWidget()
+        return False
 
     def showEvent(self, event):
         super().showEvent(event)
