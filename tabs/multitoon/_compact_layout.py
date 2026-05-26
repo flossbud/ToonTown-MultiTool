@@ -176,7 +176,7 @@ class _CompactLayout(QWidget):
         layout.addSpacing(6)
         layout.addWidget(header_divider)
 
-        # 3 px animated top stripe. Position is set in _position_stripes().
+        # 5 px animated top stripe. Position is set in _position_stripes().
         card_stripe = _CardStripe(card)
         card_stripe.hide()  # shown after the first position pass
 
@@ -253,8 +253,8 @@ class _CompactLayout(QWidget):
             enabled (game set, enabled True)-> full brand    (rank 2)
 
         Card chrome QSS no longer writes a `border-top` - the painted
-        _CardStripe widget owns that 3 px region. We reserve the space
-        with `border-top: 3px solid transparent` so the card's interior
+        _CardStripe widget owns that 5 px region. We reserve the space
+        with `border-top: 5px solid transparent` so the card's interior
         layout stays at its current dimensions.
         """
         from utils.theme_manager import get_theme_colors, resolve_theme
@@ -289,7 +289,7 @@ class _CompactLayout(QWidget):
         card.setStyleSheet(
             f"#toon_card_{i} {{"
             f"  background: {c['bg_card']};"
-            f"  border-top: 3px solid transparent;"
+            f"  border-top: 5px solid transparent;"
             f"  border-left: 1px {side_style} {side_color};"
             f"  border-right: 1px {side_style} {side_color};"
             f"  border-bottom: 1px {side_style} {side_color};"
@@ -376,10 +376,12 @@ class _CompactLayout(QWidget):
         if tint is None:
             tint = CardBodyTint(body_color, parent=card)
             slot["body_tint"] = tint
-            # Cover the card body (minus the 3 px stripe at top).
+            # Cover the card body, starting flush against the bottom
+            # edge of the 5 px stripe so no bg_card row shows between
+            # the accent stripe and the body color.
             card_w = card.width()
             card_h = card.height()
-            tint.setGeometry(1, 4, card_w - 2, card_h - 5)
+            tint.setGeometry(1, 5, card_w - 2, card_h - 6)
             tint.lower()
         tint.set_color(body_color)
         tint.show()
@@ -658,7 +660,7 @@ class _CompactLayout(QWidget):
             if stripe is None:
                 continue
             card = slot["card"]
-            stripe.setGeometry(0, 0, card.width(), 3)
+            stripe.setGeometry(0, 0, card.width(), 5)
             stripe.show()
             stripe.raise_()
 
@@ -890,7 +892,7 @@ class _CompactLayout(QWidget):
 
 
 class _CardStripe(QFrame):
-    """3 px tall stripe painted at the top of a toon card. Animates
+    """5 px tall stripe painted at the top of a toon card. Animates
     forward (left-to-right fill) when transitioning to a more-saturated
     state (grey -> muted brand, muted brand -> full brand) and cross-
     fades in place when transitioning backward.
@@ -906,7 +908,7 @@ class _CardStripe(QFrame):
 
     def __init__(self, parent: QWidget):
         super().__init__(parent)
-        self.setFixedHeight(3)
+        self.setFixedHeight(5)
         self.setAttribute(Qt.WA_TransparentForMouseEvents)
         # Keep a Python-level reference to the parent so that callers
         # holding only the stripe (e.g. test fixtures) don't accidentally

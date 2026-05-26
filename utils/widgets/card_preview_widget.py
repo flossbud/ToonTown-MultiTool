@@ -179,9 +179,9 @@ class CardPreviewWidget(QWidget):
         else:
             p.fillRect(rect, QColor(_CARD_BG))
 
-        # Accent stripe (top 3 px)
+        # Accent stripe (top 5 px)
         accent = resolve_accent(self._draft, _brand_fallback(self._game))
-        p.fillRect(QRect(rect.left(), rect.top(), rect.width(), 3), accent)
+        p.fillRect(QRect(rect.left(), rect.top(), rect.width(), 5), accent)
 
         # Portrait circle (40 px, vertically centered, 10 px from left)
         circle_d = 40
