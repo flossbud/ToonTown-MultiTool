@@ -174,3 +174,41 @@ def test_border_survives_theme_refresh(qapp, tmp_path, monkeypatch):
     # Second assertion: body-derived border still survives the re-brand.
     assert expected in ka_group.styleSheet()
     assert expected in divider.styleSheet()
+
+
+def test_status_ring_uses_body_color_when_override_set(qapp, tmp_path, monkeypatch):
+    """Cutout ring around the status dot must equal the user-picked body
+    color so the dot continues to read as notched into the card surface
+    when a body override is set."""
+    tab = _build_tab(qapp, tmp_path, monkeypatch)
+    tab.toon_names[0] = "Flossbud"
+    tab.slot_badges[0].set_toon_name("Flossbud")
+    tab.customizations.set("ttr", "Flossbud", {"body": "#e74a4a"})
+    tab._set_card_brand_for_slot(0, "ttr", enabled=True)
+
+    dot = tab._compact._card_slots[0].get("status_ring")
+    assert dot is not None
+    assert dot._cutout_color is not None
+    assert dot._cutout_color.name() == "#e74a4a"
+
+
+def test_status_ring_reverts_to_bg_card_when_body_cleared(qapp, tmp_path, monkeypatch):
+    """After a body override is set and then cleared, the cutout ring
+    must revert to the theme's bg_card so the cutout illusion still
+    works on the default surface."""
+    from utils.theme_manager import get_theme_colors, resolve_theme
+
+    tab = _build_tab(qapp, tmp_path, monkeypatch)
+    tab.toon_names[0] = "Flossbud"
+    tab.slot_badges[0].set_toon_name("Flossbud")
+    tab.customizations.set("ttr", "Flossbud", {"body": "#e74a4a"})
+    tab._set_card_brand_for_slot(0, "ttr", enabled=True)
+    tab.customizations.clear("ttr", "Flossbud")
+    tab._set_card_brand_for_slot(0, "ttr", enabled=True)
+
+    is_dark = resolve_theme(tab.settings_manager) == "dark"
+    expected = get_theme_colors(is_dark)["bg_card"]
+    dot = tab._compact._card_slots[0].get("status_ring")
+    assert dot is not None
+    assert dot._cutout_color is not None
+    assert dot._cutout_color.name().lower() == expected.lower()

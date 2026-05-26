@@ -291,12 +291,6 @@ class _CompactLayout(QWidget):
         if not self._cold_start_in_progress:
             stripe.set_color(target)
 
-        # Refresh the portrait-overlay dot's cut-out ring so it matches
-        # the current card backdrop.
-        dot = self._card_slots[i].get("status_ring")
-        if dot is not None and hasattr(dot, "set_cutout_border"):
-            dot.set_cutout_border(c["bg_card"], width=2.5)
-
         # Resolve any user-picked body color once; the border (divider +
         # ka_group) and the tint widget both consume it.
         from utils.toon_customization_resolve import resolve_body
@@ -322,6 +316,18 @@ class _CompactLayout(QWidget):
         else:
             border_color = c["border_muted"]
             wrapper_bg = c["bg_input"]
+
+        # Refresh the portrait-overlay dot's cut-out ring so it tracks
+        # the card body. When the user picks a body color, the dot must
+        # match it to preserve the cutout illusion; otherwise it follows
+        # the theme card backdrop. Lives after body_color is resolved
+        # so re-brand triggers (theme refresh, body change, body clear)
+        # all flow through one resolution path.
+        dot = self._card_slots[i].get("status_ring")
+        if dot is not None and hasattr(dot, "set_cutout_border"):
+            ring_color = body_color.name() if body_color is not None else c["bg_card"]
+            dot.set_cutout_border(ring_color, width=2.5)
+
         divider = self._card_slots[i].get("header_divider")
         if divider is not None:
             divider.setStyleSheet(
