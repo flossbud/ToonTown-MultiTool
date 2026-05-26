@@ -412,6 +412,64 @@ class _Panel(QFrame):
                     w._adjust_view.set_silhouette_shadow_from_draft(None, None)
         self._preview.set_draft(self._draft)
 
+    def set_pose(self, pose: str) -> None:
+        from utils.rendition_poses import POSE_NAMES
+        if pose not in POSE_NAMES:
+            return
+        if "Toon" in self._sections:
+            sec = self._sections["Toon"]
+            if pose == sec._current_pose:
+                self._on_pose_changed(pose)
+                return
+            sec._on_tile_clicked(pose)
+        else:
+            self._on_pose_changed(pose)
+
+    def set_icon_stem(self, stem: Optional[str]) -> None:
+        if self._game != "cc" or "Icon" not in self._sections:
+            return
+        grid = self._sections["Icon"]
+        if stem is None:
+            self._draft.pop("icon_stem", None)
+            self._preview.set_draft(self._draft)
+            return
+        grid.select_stem(stem)
+        self._on_icon_stem(stem)
+
+    def set_portrait_color(self, hex_: Optional[str]) -> None:
+        sec = self._sections["Portrait"]
+        sec.set_color(hex_)
+        self._on_portrait_color(hex_)
+
+    def set_portrait_gradient(self, grad: Optional[dict]) -> None:
+        sec = self._sections["Portrait"]
+        sec.set_gradient(grad)
+        self._on_portrait_gradient(grad)
+
+    def set_portrait_pattern(self, name, color) -> None:
+        sec = self._sections["Portrait"]
+        sec.set_pattern(name, color)
+        self._on_portrait_pattern(name, color)
+
+    def set_circle_outline(self, hex_, width_key) -> None:
+        sec = self._sections["Portrait"]
+        sec.set_circle_outline(hex_, width_key)
+        self._on_circle_outline(hex_, width_key or "medium")
+
+    def set_silhouette_outline(self, hex_, width_key) -> None:
+        if "Toon" in self._sections:
+            sec = self._sections["Toon"]
+            sec.set_silhouette_outline(hex_, width_key)
+        else:
+            self._on_silhouette_outline(hex_, width_key or "medium")
+
+    def set_silhouette_shadow(self, hex_, softness_key) -> None:
+        if "Toon" in self._sections:
+            sec = self._sections["Toon"]
+            sec.set_silhouette_shadow(hex_, softness_key)
+        else:
+            self._on_silhouette_shadow(hex_, softness_key or "medium")
+
     # -- Draft mutation handlers (mirror old dialog) --------------------
 
     def _on_icon_stem(self, stem: str) -> None:
