@@ -883,6 +883,40 @@ class MultiToonTool(QMainWindow):
         # multitoon_tab tree, which makes mid-drag resizes laggy and the very
         # first apply takes multiple seconds because the effect path has no
         # warm cache. Instant snap matches the rest of the resize feel.
+        #
+        # Mode-switch guard: if the customization overlay is open, defer or
+        # abandon the swap based on whether the draft is dirty.
+        overlay = self.customization_overlay
+        if overlay is not None and overlay.isVisible():
+            if overlay._is_dirty():
+                # Defer: remember the requested target, surface the confirm
+                # prompt. discard_clicked resumes the swap; keep_clicked
+                # abandons it.
+                self._pending_mode_swap = target
+                try:
+                    overlay._confirm_prompt.discard_clicked.disconnect(
+                        self._resume_pending_mode_swap
+                    )
+                except (RuntimeError, TypeError):
+                    pass  # not connected yet, fine
+                overlay._confirm_prompt.discard_clicked.connect(
+                    self._resume_pending_mode_swap
+                )
+                overlay._show_confirm_prompt()
+                return
+            # Clean draft: close immediately, then fall through to swap.
+            overlay.close_and_discard()
+
+        self._layout_mode = target
+        self.multitoon_tab.set_layout_mode(target)
+        if hasattr(self, "launch_tab") and self.launch_tab is not None:
+            self.launch_tab.set_layout_mode(target)
+
+    def _resume_pending_mode_swap(self) -> None:
+        target = getattr(self, "_pending_mode_swap", None)
+        if target is None:
+            return
+        self._pending_mode_swap = None
         self._layout_mode = target
         self.multitoon_tab.set_layout_mode(target)
         if hasattr(self, "launch_tab") and self.launch_tab is not None:
