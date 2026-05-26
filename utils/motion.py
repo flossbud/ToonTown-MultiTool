@@ -58,6 +58,17 @@ def set_settings_manager(settings_manager) -> None:
     _settings = settings_manager
 
 
+def reduced_motion_enabled() -> bool:
+    """Returns True when the OS prefers reduced motion.
+
+    Currently a stub that returns False; the real read (Qt 6.5+
+    QStyleHints, Linux gtk-enable-animations, etc.) is deferred
+    per the customization-inline-panel spec. Task 9 will use this
+    helper to skip animations when the OS prefers reduced motion.
+    """
+    return False
+
+
 def is_reduced() -> bool:
     """True when animations should snap instead of interpolate.
 
