@@ -19,6 +19,7 @@ from copy import deepcopy
 from typing import Optional
 
 from PySide6.QtCore import (
+    Property,
     QEasingCurve,
     QParallelAnimationGroup,
     QPoint,
@@ -54,7 +55,17 @@ from utils.widgets.toon_customization_sections import (
 
 
 class _BackdropBlur(QWidget):
-    """Static blurred backdrop for the customization overlay."""
+    """Static blurred backdrop for the customization overlay.
+
+    Exposes `opacity` as a Qt property (0.0 - 1.0) so the entry/exit
+    animations can drive the backdrop's fade via QPropertyAnimation
+    on the widget itself. We deliberately do NOT use
+    QGraphicsOpacityEffect here: the effect's source-pixmap render
+    path creates a second QPainter on the widget's paint device
+    while the widget's own paintEvent has QPainter(self) active,
+    producing "A paint device can only be painted by one painter at
+    a time" spam. Painting with `p.setOpacity(self._opacity)` keeps
+    everything inside the widget's single painter."""
 
     DIM_COLOR = QColor(0, 0, 0, int(0.40 * 255))
     BLUR_RADIUS = 16
@@ -62,6 +73,7 @@ class _BackdropBlur(QWidget):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self._blurred: Optional[QPixmap] = None
+        self._opacity: float = 1.0
         self.setAttribute(Qt.WA_TransparentForMouseEvents, False)
 
     def set_source_pixmap(self, pix: QPixmap) -> None:
@@ -72,8 +84,20 @@ class _BackdropBlur(QWidget):
             self._blurred = gaussian_blur_pixmap(pix, self.BLUR_RADIUS)
         self.update()
 
+    # `opacity` is a Qt property so QPropertyAnimation(self, b"opacity")
+    # can drive it. Setter triggers a repaint.
+    def _get_opacity(self) -> float:
+        return self._opacity
+
+    def _set_opacity(self, value: float) -> None:
+        self._opacity = float(value)
+        self.update()
+
+    opacity = Property(float, _get_opacity, _set_opacity)
+
     def paintEvent(self, event) -> None:
         p = QPainter(self)
+        p.setOpacity(self._opacity)
         if self._blurred is not None and not self._blurred.isNull():
             # Stretch the captured pixmap to fill the widget bounds.
             p.drawPixmap(self.rect(), self._blurred, self._blurred.rect())
@@ -101,6 +125,13 @@ class _Panel(QFrame):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.setObjectName("CustomizationPanel")
+        # WA_StyledBackground + WA_TranslucentBackground let the QSS
+        # rgba alpha composite against the parent's painted pixels
+        # (the blurred backdrop) rather than against an opaque widget
+        # surface. Without WA_TranslucentBackground the panel renders
+        # as a solid #1f2230 even with alpha < 255 in the QSS.
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setStyleSheet(
             "QFrame#CustomizationPanel {"
             "  background: rgba(31, 34, 48, 240);"  # ~94 % alpha of #1f2230
@@ -673,7 +704,11 @@ class ToonCustomizationOverlay(QWidget):
         self.setStyleSheet("background: transparent;")
 
         self._backdrop = _BackdropBlur(self)
-        self._panel = _Panel(self)
+        # Panel is a CHILD of the backdrop (not the overlay) so the
+        # panel's translucent fill composites against the backdrop's
+        # blurred pixels. Sibling widgets in Qt don't alpha-blend with
+        # each other; nesting forces correct compositing.
+        self._panel = _Panel(self._backdrop)
         self._panel.close_requested.connect(self.request_close)
         self._panel.cancel_requested.connect(self.request_close)
         self._panel.save_requested.connect(self.close_and_save)
@@ -810,9 +845,11 @@ class ToonCustomizationOverlay(QWidget):
     PANEL_SCALE_END = 1.00
 
     def _ensure_opacity_effects(self) -> None:
-        if not hasattr(self, "_backdrop_opacity"):
-            self._backdrop_opacity = QGraphicsOpacityEffect(self._backdrop)
-            self._backdrop.setGraphicsEffect(self._backdrop_opacity)
+        # Backdrop has its own `opacity` Qt property (animated directly).
+        # Only the panel needs a QGraphicsOpacityEffect: QFrame's default
+        # QSS-driven paint plays nice with the effect, but a widget with
+        # a custom QPainter(self) paintEvent (like _BackdropBlur) fights
+        # the effect's source-pixmap renderer.
         if not hasattr(self, "_panel_opacity"):
             self._panel_opacity = QGraphicsOpacityEffect(self._panel)
             self._panel.setGraphicsEffect(self._panel_opacity)
@@ -848,19 +885,19 @@ class ToonCustomizationOverlay(QWidget):
     def _play_entry_animation(self) -> None:
         if self._skip_animations_for_test or reduced_motion_enabled():
             self._ensure_opacity_effects()
-            self._backdrop_opacity.setOpacity(1.0)
+            self._backdrop.opacity = 1.0
             self._panel_opacity.setOpacity(1.0)
             self._restore_panel_scale()
             return
         self._stop_active_animation()
         self._ensure_opacity_effects()
-        self._backdrop_opacity.setOpacity(0.0)
+        self._backdrop.opacity = 0.0
         self._panel_opacity.setOpacity(0.0)
         self._set_panel_scale(self.PANEL_SCALE_START)
 
         group = QParallelAnimationGroup(self)
 
-        a_back = QPropertyAnimation(self._backdrop_opacity, b"opacity", self)
+        a_back = QPropertyAnimation(self._backdrop, b"opacity", self)
         a_back.setStartValue(0.0)
         a_back.setEndValue(1.0)
         a_back.setDuration(self.BACKDROP_ENTRY_MS)
@@ -902,7 +939,7 @@ class ToonCustomizationOverlay(QWidget):
         self._ensure_opacity_effects()
         group = QParallelAnimationGroup(self)
 
-        a_back = QPropertyAnimation(self._backdrop_opacity, b"opacity", self)
+        a_back = QPropertyAnimation(self._backdrop, b"opacity", self)
         a_back.setStartValue(1.0)
         a_back.setEndValue(0.0)
         a_back.setDuration(self.BACKDROP_EXIT_MS)
