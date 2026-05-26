@@ -949,6 +949,33 @@ class InputService(QObject):
             if self.logging_enabled:
                 self.input_log.emit(f"[Input] Chat broadcast {'activated' if active else 'deactivated'}")
 
+    def _phantom_gate_open(self) -> bool:
+        """Return True iff phantom suppression has a purpose given the
+        current per-toon chat-enable state.
+
+        Phantom protects bg toons from accidentally receiving whisper-reply
+        text. If no enabled bg toon has chat enabled, the protection is moot:
+        chat block-list entries (Return, Escape, and letters when TTR has
+        chat-by-typing on) are already filtered out by _send_typing_to_bg.
+
+        Foreground toon is excluded because its chat state does not affect
+        what gets broadcast to other toons.
+        """
+        enabled = self.get_enabled_toons()
+        if not enabled:
+            return False
+        chat = self.get_chat_enabled() if self.get_chat_enabled else [True] * len(enabled)
+        window_ids = self.window_manager.get_window_ids()
+        active_window = self.window_manager.get_active_window()
+        for i, is_enabled in enumerate(enabled):
+            if not is_enabled or i >= len(window_ids):
+                continue
+            if window_ids[i] == active_window:
+                continue
+            if i < len(chat) and chat[i]:
+                return True
+        return False
+
     def _phantom_reset(self):
         """Reset phantom (stealth whisper) detection state."""
         self._phantom_char_count = 0
