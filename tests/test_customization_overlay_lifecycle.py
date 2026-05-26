@@ -225,3 +225,50 @@ def test_panel_reset_all_clears_draft(qapp):
     assert panel.draft() == {"body": "#56c856", "accent": "#abcdef"}
     panel.reset_all()
     assert panel.draft() == {}
+
+
+def test_overlay_open_for_shows_overlay(qapp):
+    from utils.widgets.customization_overlay import ToonCustomizationOverlay
+    parent = QWidget()
+    parent.resize(575, 770)
+    parent.show()
+    overlay = ToonCustomizationOverlay(parent)
+    overlay._skip_animations_for_test = True
+    mgr = _FakeManager()
+    overlay.open_for(
+        slot=0, game="ttr", toon_name="Flossbud",
+        manager=mgr, dna=None, skin_color=None, auto_stem=None,
+    )
+    assert overlay.isVisible()
+    assert overlay._panel.section_names() != []
+
+
+def test_overlay_close_and_discard_hides(qapp):
+    from utils.widgets.customization_overlay import ToonCustomizationOverlay
+    parent = QWidget()
+    parent.resize(575, 770)
+    parent.show()
+    overlay = ToonCustomizationOverlay(parent)
+    overlay._skip_animations_for_test = True
+    overlay.open_for(0, "ttr", "Flossbud", _FakeManager(), None, None, None)
+    overlay.close_and_discard()
+    assert not overlay.isVisible()
+
+
+def test_overlay_close_and_save_emits_signal(qapp):
+    from utils.widgets.customization_overlay import ToonCustomizationOverlay
+    parent = QWidget()
+    parent.resize(575, 770)
+    parent.show()
+    overlay = ToonCustomizationOverlay(parent)
+    overlay._skip_animations_for_test = True
+    mgr = _FakeManager()
+    received = []
+    overlay.customization_changed.connect(
+        lambda s, g: received.append((s, g))
+    )
+    overlay.open_for(2, "ttr", "Flossbud", mgr, None, None, None)
+    overlay._panel.set_body("#56c856")
+    overlay.close_and_save()
+    assert received == [(2, "ttr")]
+    assert mgr.get("ttr", "Flossbud") == {"body": "#56c856"}

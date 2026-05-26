@@ -15,6 +15,7 @@ for the design contract.
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Optional
 
 from PySide6.QtCore import Qt, Signal
@@ -518,3 +519,212 @@ class _Panel(QFrame):
             sub["outline"] = {"color": hex_, "width": width_key}
         self._prune_portrait()
         self._preview.set_draft(self._draft)
+
+
+class _ConfirmPrompt(QWidget):
+    """Inline confirm prompt shown over the panel when the user
+    requests close with unsaved changes. Slides over the preview
+    area; styling intentionally matches the panel chrome."""
+
+    keep_clicked = Signal()
+    discard_clicked = Signal()
+
+    def __init__(self, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.setObjectName("ConfirmPrompt")
+        self.setStyleSheet(
+            "QWidget#ConfirmPrompt {"
+            "  background: rgba(31, 34, 48, 245);"
+            "  border: 1px solid #4a5070;"
+            "  border-radius: 10px;"
+            "}"
+        )
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(20, 16, 20, 16)
+        outer.setSpacing(12)
+
+        title = QLabel("Discard unsaved changes?")
+        title.setStyleSheet(
+            "color: #e8e8f0; font-size: 15px; font-weight: 600;"
+        )
+        outer.addWidget(title)
+
+        body = QLabel(
+            "Your edits will be lost. Save first, or keep editing."
+        )
+        body.setWordWrap(True)
+        body.setStyleSheet("color: #c8c8d0; font-size: 12px;")
+        outer.addWidget(body)
+
+        row = QHBoxLayout()
+        row.addStretch(1)
+        self.keep_btn = QPushButton("Keep editing")
+        self.keep_btn.setFixedHeight(30)
+        self.keep_btn.setStyleSheet(
+            "QPushButton {"
+            "  background: #4a7cff; color: #ffffff;"
+            "  border: none; border-radius: 6px;"
+            "  padding: 0 14px; font-size: 12px; font-weight: 600;"
+            "}"
+        )
+        self.keep_btn.setDefault(True)
+        self.keep_btn.clicked.connect(self.keep_clicked)
+        self.discard_btn = QPushButton("Discard changes")
+        self.discard_btn.setFixedHeight(30)
+        self.discard_btn.setStyleSheet(
+            "QPushButton {"
+            "  background: transparent; color: #e74a4a;"
+            "  border: 1px solid #e74a4a; border-radius: 6px;"
+            "  padding: 0 14px; font-size: 12px;"
+            "}"
+            "QPushButton:hover { background: rgba(231, 74, 74, 30); }"
+        )
+        self.discard_btn.clicked.connect(self.discard_clicked)
+        row.addWidget(self.discard_btn)
+        row.addWidget(self.keep_btn)
+        outer.addLayout(row)
+
+
+class ToonCustomizationOverlay(QWidget):
+    """Whole-window overlay that hosts the customization editor."""
+
+    customization_changed = Signal(int, str)
+
+    def __init__(self, parent: QWidget):
+        super().__init__(parent)
+        self._skip_animations_for_test = False
+        self._slot: Optional[int] = None
+        self._game: Optional[str] = None
+        self._original: dict = {}
+
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        # The overlay itself is invisible chrome; visuals come from
+        # _BackdropBlur and _Panel.
+        self.setStyleSheet("background: transparent;")
+
+        self._backdrop = _BackdropBlur(self)
+        self._panel = _Panel(self)
+        self._panel.close_requested.connect(self.request_close)
+        self._panel.cancel_requested.connect(self.request_close)
+        self._panel.save_requested.connect(self.close_and_save)
+        self._panel.reset_requested.connect(self._on_reset_requested)
+
+        self._confirm_prompt = _ConfirmPrompt(self)
+        self._confirm_prompt.hide()
+        self._confirm_prompt.keep_clicked.connect(self._on_confirm_keep)
+        self._confirm_prompt.discard_clicked.connect(self._on_confirm_discard)
+
+        self.hide()
+
+    # -- Public API -----------------------------------------------------
+
+    def open_for(
+        self,
+        slot: int,
+        game: str,
+        toon_name: str,
+        manager,
+        dna: Optional[str] = None,
+        skin_color: Optional[QColor] = None,
+        auto_stem: Optional[str] = None,
+    ) -> None:
+        self._slot = slot
+        self._game = game
+        self._manager = manager
+
+        self._panel.populate(
+            game=game, toon_name=toon_name, manager=manager,
+            dna=dna, skin_color=skin_color, auto_stem=auto_stem,
+        )
+        self._original = deepcopy(self._panel.draft())
+
+        self._refresh_geometry()
+        self._refresh_backdrop_pixmap()
+        self._confirm_prompt.hide()
+        self.show()
+        self.raise_()
+        self._panel.save_btn.setFocus()
+
+    def request_close(self) -> None:
+        if self._is_dirty():
+            self._show_confirm_prompt()
+        else:
+            self.close_and_discard()
+
+    def close_and_discard(self) -> None:
+        self._confirm_prompt.hide()
+        self.hide()
+
+    def close_and_save(self) -> None:
+        if self._slot is None or self._game is None:
+            return
+        toon_name = self._panel._toon_name
+        self._manager.set(self._game, toon_name, self._panel.draft())
+        self.customization_changed.emit(self._slot, self._game)
+        self.close_and_discard()
+
+    # -- Internals ------------------------------------------------------
+
+    def _is_dirty(self) -> bool:
+        return self._panel.draft() != self._original
+
+    def _show_confirm_prompt(self) -> None:
+        # Center the prompt horizontally over the panel; place it just
+        # below the panel header so it covers the preview area.
+        panel_geom = self._panel.geometry()
+        prompt_w = 380
+        prompt_h = 140
+        x = panel_geom.x() + (panel_geom.width() - prompt_w) // 2
+        y = panel_geom.y() + self._panel.HEADER_H + 30
+        self._confirm_prompt.setGeometry(x, y, prompt_w, prompt_h)
+        self._confirm_prompt.show()
+        self._confirm_prompt.raise_()
+        self._confirm_prompt.keep_btn.setFocus()
+
+    def _on_confirm_keep(self) -> None:
+        self._confirm_prompt.hide()
+        self._panel.setFocus()
+
+    def _on_confirm_discard(self) -> None:
+        self._confirm_prompt.hide()
+        self.close_and_discard()
+
+    def _on_reset_requested(self) -> None:
+        self._panel.reset_all()
+
+    def _refresh_geometry(self) -> None:
+        parent = self.parentWidget()
+        if parent is None:
+            return
+        self.setGeometry(parent.rect())
+        self._backdrop.setGeometry(self.rect())
+        px = (self.width() - self._panel.PANEL_W) // 2
+        py = (self.height() - self._panel.PANEL_H) // 2
+        self._panel.move(max(0, px), max(0, py))
+
+    def _refresh_backdrop_pixmap(self) -> None:
+        parent = self.parentWidget()
+        if parent is None:
+            self._backdrop.set_source_pixmap(QPixmap())
+            return
+        # Grab the parent's current rendering. The overlay is hidden
+        # at this point (we call show() AFTER this), so the grab is
+        # of the underlying tab without the overlay on top.
+        pix = parent.grab()
+        self._backdrop.set_source_pixmap(pix)
+
+    # -- Events ---------------------------------------------------------
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Escape:
+            self.request_close()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._refresh_geometry()
+        # On resize while open, re-grab the backdrop too.
+        if self.isVisible():
+            self._refresh_backdrop_pixmap()
