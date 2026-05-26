@@ -263,3 +263,55 @@ def test_active_phantom_deactivates_when_gate_closes():
         assert svc._phantom_char_count == 0
     finally:
         svc.stop(wait=True)
+
+
+# ── Phantom gate integration with chat handling mode ─────────────────────
+
+
+def test_phantom_gate_closed_when_chat_handling_mode_is_simple():
+    """Even with every bg toon's chat enabled, phantom must be hard-disabled
+    when the global mode is 'simple'. Spec: 'if disabled in settings,
+    phantom chat detection should be off no matter what.'"""
+    wm = _FakeWindowManager(window_ids=["w1", "w2"], active_window="w1")
+    svc = InputService(
+        window_manager=wm,
+        get_enabled_toons=lambda: [True, True],
+        get_movement_modes=lambda: ["WASD", "WASD"],
+        get_event_queue_func=lambda: None,
+        settings_manager=MagicMock(),
+        get_chat_enabled=lambda: [True, True],
+        get_chat_handling_mode=lambda: "simple",
+    )
+    assert svc._phantom_gate_open() is False
+
+
+def test_phantom_gate_open_when_chat_handling_mode_is_advanced():
+    """In 'advanced' mode the gate consults per-toon chat as before."""
+    wm = _FakeWindowManager(window_ids=["w1", "w2"], active_window="w1")
+    svc = InputService(
+        window_manager=wm,
+        get_enabled_toons=lambda: [True, True],
+        get_movement_modes=lambda: ["WASD", "WASD"],
+        get_event_queue_func=lambda: None,
+        settings_manager=MagicMock(),
+        get_chat_enabled=lambda: [False, True],
+        get_chat_handling_mode=lambda: "advanced",
+    )
+    assert svc._phantom_gate_open() is True
+
+
+def test_phantom_gate_open_when_get_chat_handling_mode_is_none():
+    """Legacy fixtures (and existing tests) that do not wire the mode
+    accessor must keep behaving as Advanced. The default-None path
+    preserves the existing phantom-gate test suite without modification."""
+    wm = _FakeWindowManager(window_ids=["w1", "w2"], active_window="w1")
+    svc = InputService(
+        window_manager=wm,
+        get_enabled_toons=lambda: [True, True],
+        get_movement_modes=lambda: ["WASD", "WASD"],
+        get_event_queue_func=lambda: None,
+        settings_manager=MagicMock(),
+        get_chat_enabled=lambda: [False, True],
+        # get_chat_handling_mode not passed -> defaults to None
+    )
+    assert svc._phantom_gate_open() is True

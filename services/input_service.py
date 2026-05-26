@@ -94,7 +94,7 @@ class InputService(QObject):
     def __init__(self, window_manager, get_enabled_toons, get_movement_modes, get_event_queue_func,
                  get_chat_enabled=None, settings_manager=None,
                  get_keymap_assignments=None, keymap_manager=None,
-                 get_chat_block_list=None):
+                 get_chat_block_list=None, get_chat_handling_mode=None):
         super().__init__()
         self.window_manager = window_manager
         self.get_enabled_toons = get_enabled_toons
@@ -108,6 +108,7 @@ class InputService(QObject):
         # are honored without restarting the input thread. Default preserves the
         # legacy hard-coded behavior for callers that don't wire the helper.
         self.get_chat_block_list = get_chat_block_list or (lambda: {"Return", "Escape"})
+        self.get_chat_handling_mode = get_chat_handling_mode
         self.running = False
         self.thread = None
         self._stop_event = threading.Event()
@@ -973,6 +974,13 @@ class InputService(QObject):
         Foreground toon is excluded because its chat state does not affect
         what gets broadcast to other toons.
         """
+        # Hard gate: when global Chat Handling mode is anything other than
+        # 'advanced' (Simple mode being the default), phantom is off
+        # regardless of per-toon chat state. Legacy callers that pass
+        # get_chat_handling_mode=None get advanced-equivalent behavior.
+        if self.get_chat_handling_mode is not None:
+            if self.get_chat_handling_mode() != "advanced":
+                return False
         enabled = self.get_enabled_toons()
         if not enabled:
             return False
