@@ -1,8 +1,7 @@
 """Regression guard: when the app launches with theme=light, the full-UI
-toon cards must render with the light-theme card_toon_bg color, not the
-dark variant. The chip-rail audit flagged a suspicion that the full
-layout's apply_theme wasn't re-running after theme propagation; this
-test pins the contract."""
+toon cards must render with the light-theme bg_card color, not the dark
+variant. After the compact-clone refactor, full cards expose their chrome
+through _card_slots[i]["card"] rather than the old _cards list."""
 
 import os
 
@@ -22,6 +21,7 @@ def qapp():
 
 def test_full_card_uses_light_theme_card_bg(qapp, tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
     settings = SettingsManager()
     settings.set("theme", "light")
 
@@ -30,17 +30,15 @@ def test_full_card_uses_light_theme_card_bg(qapp, tmp_path, monkeypatch):
 
     from main import MultiToonTool
     window = MultiToonTool()
-    # Switch the multitoon tab into full mode to exercise _full.apply_theme
     window.multitoon_tab.set_layout_mode("full")
     for _ in range(5):
         qapp.processEvents()
 
-    expected_card_bg = get_theme_colors(is_dark=False)["card_toon_bg"]
-    # Inspect the first full-UI card's stylesheet (or its _inactive_root)
+    expected_card_bg = get_theme_colors(is_dark=False)["bg_card"]
     full = window.multitoon_tab._full
-    card0 = full._cards[0]
+    card0 = full._card_slots[0]["card"]
     assert expected_card_bg.lower() in card0.styleSheet().lower(), (
-        f"Expected card_toon_bg {expected_card_bg!r} in card stylesheet; "
+        f"Expected bg_card {expected_card_bg!r} in card stylesheet; "
         f"got: {card0.styleSheet()!r}"
     )
     window.close()

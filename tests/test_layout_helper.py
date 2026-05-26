@@ -42,31 +42,6 @@ def test_clamp_centered_returns_widget_for_chaining(qapp):
     assert result is child
 
 
-def test_status_indicator_constructs_and_renders(qapp):
-    from tabs.multitoon._full_layout import _StatusIndicator
-    from PySide6.QtGui import QPixmap
-
-    w = _StatusIndicator()
-    w.apply_theme("#2a2a30", "#3aaa5e", "#45454c")
-    w.set_active(True)
-    # Render to a pixmap to force a paintEvent
-    pixmap = QPixmap(w.size())
-    pixmap.fill(Qt.transparent)
-    w.render(pixmap)
-    assert not pixmap.isNull()
-    assert pixmap.size().width() == 32
-    assert pixmap.size().height() == 32
-
-
-def test_full_layout_helper_imports_resolve(qapp):
-    """Sanity: the new symbols added in Task 9 are importable."""
-    from tabs.multitoon._full_layout import (
-        _StatusIndicator, _FullToonCard
-    )
-    assert _StatusIndicator is not None
-    assert _FullToonCard is not None
-
-
 def test_clear_layout_removes_all_items(qapp):
     from PySide6.QtWidgets import QHBoxLayout, QPushButton, QWidget
     from tabs.multitoon._layout_utils import clear_layout
