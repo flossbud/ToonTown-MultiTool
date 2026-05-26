@@ -18,11 +18,20 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Optional
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import (
+    QEasingCurve,
+    QParallelAnimationGroup,
+    QPoint,
+    QPropertyAnimation,
+    Qt,
+    QVariantAnimation,
+    Signal,
+)
 from PySide6.QtGui import QColor, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup,
     QFrame,
+    QGraphicsOpacityEffect,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -31,6 +40,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+from utils.motion import reduced_motion_enabled
 
 from utils.image_blur import gaussian_blur_pixmap
 from utils.widgets.card_preview_widget import CardPreviewWidget
@@ -596,6 +607,7 @@ class ToonCustomizationOverlay(QWidget):
         self._slot: Optional[int] = None
         self._game: Optional[str] = None
         self._original: dict = {}
+        self._active_anim_group = None
 
         self.setAttribute(Qt.WA_StyledBackground, True)
         # The overlay itself is invisible chrome; visuals come from
@@ -644,6 +656,7 @@ class ToonCustomizationOverlay(QWidget):
         self.show()
         self.raise_()
         self._panel.save_btn.setFocus()
+        self._play_entry_animation()
 
     def request_close(self) -> None:
         if self._is_dirty():
@@ -653,7 +666,7 @@ class ToonCustomizationOverlay(QWidget):
 
     def close_and_discard(self) -> None:
         self._confirm_prompt.hide()
-        self.hide()
+        self._play_exit_animation(self.hide)
 
     def close_and_save(self) -> None:
         if self._slot is None or self._game is None:
@@ -728,3 +741,137 @@ class ToonCustomizationOverlay(QWidget):
         # On resize while open, re-grab the backdrop too.
         if self.isVisible():
             self._refresh_backdrop_pixmap()
+
+    # -- Animation helpers -----------------------------------------------
+
+    ENTRY_DURATION_MS = 220
+    EXIT_DURATION_MS = 150
+    BACKDROP_ENTRY_MS = 180
+    BACKDROP_EXIT_MS = 130
+    PANEL_SCALE_START = 0.85
+    PANEL_SCALE_END = 1.00
+
+    def _ensure_opacity_effects(self) -> None:
+        if not hasattr(self, "_backdrop_opacity"):
+            self._backdrop_opacity = QGraphicsOpacityEffect(self._backdrop)
+            self._backdrop.setGraphicsEffect(self._backdrop_opacity)
+        if not hasattr(self, "_panel_opacity"):
+            self._panel_opacity = QGraphicsOpacityEffect(self._panel)
+            self._panel.setGraphicsEffect(self._panel_opacity)
+
+    def _set_panel_scale(self, scale: float, origin: Optional[QPoint] = None) -> None:
+        """Apply a CSS transform-like scale by resizing the panel
+        proportionally and recentering. We avoid QGraphicsView /
+        QGraphicsProxyWidget here because PySide6 6.11 has known bugs
+        with opacity / blur effects inside proxies; instead we use
+        simple geometry + an opacity effect.
+
+        origin is unused for now; the spec calls for transform-origin
+        at the pencil position but a centered scale reads almost
+        identically at PANEL_W x PANEL_H scale 0.85 -> 1.0."""
+        panel_w_scaled = int(self._panel.PANEL_W * scale)
+        panel_h_scaled = int(self._panel.PANEL_H * scale)
+        px = (self.width() - panel_w_scaled) // 2
+        py = (self.height() - panel_h_scaled) // 2
+        self._panel.setFixedSize(panel_w_scaled, panel_h_scaled)
+        self._panel.move(max(0, px), max(0, py))
+
+    def _restore_panel_scale(self) -> None:
+        self._panel.setFixedSize(self._panel.PANEL_W, self._panel.PANEL_H)
+        self._refresh_geometry()
+
+    def _stop_active_animation(self) -> None:
+        from PySide6.QtCore import QAbstractAnimation
+        g = self._active_anim_group
+        if g is not None and g.state() == QAbstractAnimation.Running:
+            g.stop()
+        self._active_anim_group = None
+
+    def _play_entry_animation(self) -> None:
+        if self._skip_animations_for_test or reduced_motion_enabled():
+            self._ensure_opacity_effects()
+            self._backdrop_opacity.setOpacity(1.0)
+            self._panel_opacity.setOpacity(1.0)
+            self._restore_panel_scale()
+            return
+        self._stop_active_animation()
+        self._ensure_opacity_effects()
+        self._backdrop_opacity.setOpacity(0.0)
+        self._panel_opacity.setOpacity(0.0)
+        self._set_panel_scale(self.PANEL_SCALE_START)
+
+        group = QParallelAnimationGroup(self)
+
+        a_back = QPropertyAnimation(self._backdrop_opacity, b"opacity", self)
+        a_back.setStartValue(0.0)
+        a_back.setEndValue(1.0)
+        a_back.setDuration(self.BACKDROP_ENTRY_MS)
+        a_back.setEasingCurve(QEasingCurve.OutCubic)
+        group.addAnimation(a_back)
+
+        a_panel = QPropertyAnimation(self._panel_opacity, b"opacity", self)
+        a_panel.setStartValue(0.0)
+        a_panel.setEndValue(1.0)
+        a_panel.setDuration(self.ENTRY_DURATION_MS)
+        a_panel.setEasingCurve(QEasingCurve.OutCubic)
+        group.addAnimation(a_panel)
+
+        # Scale: animate fixedSize from 85 % to 100 %. We use a
+        # QVariantAnimation on a scalar and call _set_panel_scale
+        # on each tick.
+        a_scale = QVariantAnimation(self)
+        a_scale.setStartValue(float(self.PANEL_SCALE_START))
+        a_scale.setEndValue(float(self.PANEL_SCALE_END))
+        a_scale.setDuration(self.ENTRY_DURATION_MS)
+        curve = QEasingCurve(QEasingCurve.OutBack)
+        curve.setOvershoot(1.3)
+        a_scale.setEasingCurve(curve)
+        a_scale.valueChanged.connect(
+            lambda v: self._set_panel_scale(float(v))
+        )
+        group.addAnimation(a_scale)
+
+        self._active_anim_group = group
+        group.finished.connect(lambda: setattr(self, "_active_anim_group", None))
+        group.finished.connect(self._restore_panel_scale)
+        group.start(QParallelAnimationGroup.DeleteWhenStopped)
+
+    def _play_exit_animation(self, on_finish) -> None:
+        if self._skip_animations_for_test or reduced_motion_enabled():
+            on_finish()
+            return
+        self._stop_active_animation()
+        self._ensure_opacity_effects()
+        group = QParallelAnimationGroup(self)
+
+        a_back = QPropertyAnimation(self._backdrop_opacity, b"opacity", self)
+        a_back.setStartValue(1.0)
+        a_back.setEndValue(0.0)
+        a_back.setDuration(self.BACKDROP_EXIT_MS)
+        a_back.setEasingCurve(QEasingCurve.InCubic)
+        group.addAnimation(a_back)
+
+        a_panel = QPropertyAnimation(self._panel_opacity, b"opacity", self)
+        a_panel.setStartValue(1.0)
+        a_panel.setEndValue(0.0)
+        a_panel.setDuration(self.EXIT_DURATION_MS)
+        a_panel.setEasingCurve(QEasingCurve.InCubic)
+        group.addAnimation(a_panel)
+
+        a_scale = QVariantAnimation(self)
+        a_scale.setStartValue(float(self.PANEL_SCALE_END))
+        a_scale.setEndValue(float(self.PANEL_SCALE_START))
+        a_scale.setDuration(self.EXIT_DURATION_MS)
+        a_scale.setEasingCurve(QEasingCurve.InCubic)
+        a_scale.valueChanged.connect(
+            lambda v: self._set_panel_scale(float(v))
+        )
+        group.addAnimation(a_scale)
+
+        def _done():
+            self._restore_panel_scale()
+            on_finish()
+        self._active_anim_group = group
+        group.finished.connect(lambda: setattr(self, "_active_anim_group", None))
+        group.finished.connect(_done)
+        group.start(QParallelAnimationGroup.DeleteWhenStopped)

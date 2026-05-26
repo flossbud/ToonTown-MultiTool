@@ -272,3 +272,29 @@ def test_overlay_close_and_save_emits_signal(qapp):
     overlay.close_and_save()
     assert received == [(2, "ttr")]
     assert mgr.get("ttr", "Flossbud") == {"body": "#56c856"}
+
+
+def test_overlay_close_during_entry_animation_does_not_crash(qapp):
+    """Click Close X mid-entry-animation: exit animation must replace
+    entry cleanly (entry group stopped, exit group runs to completion)
+    with no exception and the overlay ends hidden."""
+    from utils.widgets.customization_overlay import ToonCustomizationOverlay
+    parent = QWidget()
+    parent.resize(575, 770)
+    parent.show()
+    overlay = ToonCustomizationOverlay(parent)
+    # Skip animations OFF for this test so we exercise the real paths.
+    overlay._skip_animations_for_test = False
+    mgr = _FakeManager()
+    overlay.open_for(0, "ttr", "Flossbud", mgr, None, None, None)
+    # Entry animation is now running. Click close immediately.
+    overlay._panel.close_btn.click()
+    # Pump events long enough for exit animation to complete (~150 ms).
+    import time
+    deadline = time.monotonic() + 0.6
+    while time.monotonic() < deadline:
+        qapp.processEvents()
+        if not overlay.isVisible():
+            break
+    assert not overlay.isVisible(), "overlay must end hidden"
+    assert overlay._active_anim_group is None, "no animation should be lingering"
