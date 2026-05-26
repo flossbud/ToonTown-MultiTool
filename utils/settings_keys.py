@@ -30,3 +30,6 @@ LAUNCH_SECTION_CC_COLLAPSED  = "launch_section_cc_collapsed"
 
 # Settings tab navigation (added 2026-05-23)
 SETTINGS_ACTIVE_CATEGORY = "settings_active_category"
+
+# Chat handling mode (added 2026-05-26)
+CHAT_HANDLING_MODE = "chat_handling_mode"
