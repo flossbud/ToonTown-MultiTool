@@ -331,6 +331,7 @@ class MultiToonTool(QMainWindow):
             profile_manager=self.profile_manager,
             window_manager=self.window_manager,
         )
+        self.customization_overlay: ToonCustomizationOverlay | None = None
         self.launch_tab = LaunchTab(settings_manager=self.settings_manager, logger=self.logger)
         self.keymap_tab = KeymapTab(
             self.keymap_manager,
@@ -886,6 +887,49 @@ class MultiToonTool(QMainWindow):
         self.multitoon_tab.set_layout_mode(target)
         if hasattr(self, "launch_tab") and self.launch_tab is not None:
             self.launch_tab.set_layout_mode(target)
+
+    def open_customization(self, slot: int) -> None:
+        """Open the customization overlay for the given slot. Lazy-
+        constructs the overlay on first call; subsequent calls reuse
+        the same instance. Returns immediately (no-op) if the overlay
+        is already visible."""
+        from utils.widgets.customization_overlay import ToonCustomizationOverlay
+
+        if (
+            self.customization_overlay is not None
+            and self.customization_overlay.isVisible()
+        ):
+            return
+
+        tab = self.multitoon_tab
+        if slot < 0 or slot >= len(tab.slot_badges):
+            return
+        badge = tab.slot_badges[slot]
+        toon_name = badge.toon_name
+        game = badge.game
+        if not toon_name or game not in ("cc", "ttr"):
+            return
+
+        from utils import cc_race_assets
+        auto_stem = (
+            cc_race_assets.asset_stem_for_species(badge.cc_auto_species)
+            if game == "cc" else None
+        )
+        skin = badge.cc_skin if game == "cc" else None
+
+        if self.customization_overlay is None:
+            self.customization_overlay = ToonCustomizationOverlay(
+                self.centralWidget()
+            )
+            self.customization_overlay.customization_changed.connect(
+                tab._on_customization_saved
+            )
+
+        self.customization_overlay.open_for(
+            slot=slot, game=game, toon_name=toon_name,
+            manager=tab.customizations,
+            dna=badge._dna, skin_color=skin, auto_stem=auto_stem,
+        )
 
     def _apply_chip_styles(self):
         """Apply theme-aware QSS + icon rendering to the chip rail's nav chips.
