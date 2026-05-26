@@ -1,8 +1,10 @@
-"""Semi-transparent body-tint overlay for the per-toon card.
+"""Body-tint overlay for the per-toon card.
 
 Lives beneath the toon controls (Z-order via lower()) and reads its
-color from `ToonCustomizationsManager`. Painted at ~25% opacity so
-theme contrast survives.
+color from `ToonCustomizationsManager`. Painted at full opacity so the
+on-card color matches the value picked in the customization dialog. The
+overlay only renders when the user has explicitly chosen a non-default
+body color; the Default option hides the widget entirely.
 """
 
 from __future__ import annotations
@@ -10,9 +12,6 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import QWidget
-
-
-_TINT_OPACITY = 64  # /255 ~= 25%
 
 
 class CardBodyTint(QWidget):
@@ -31,7 +30,5 @@ class CardBodyTint(QWidget):
 
     def paintEvent(self, event):
         p = QPainter(self)
-        c = QColor(self._color)
-        c.setAlpha(_TINT_OPACITY)
-        p.fillRect(self.rect(), c)
+        p.fillRect(self.rect(), self._color)
         p.end()

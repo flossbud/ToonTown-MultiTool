@@ -170,16 +170,14 @@ class CardPreviewWidget(QWidget):
         p.setRenderHint(QPainter.SmoothPixmapTransform)
         rect = self.rect()
 
-        # Card background
+        # Card background. When the user has picked a non-default body
+        # color the card paints it at full opacity so the on-card result
+        # matches the swatch. Default body (None) keeps the theme card bg.
         body = resolve_body(self._draft)
-        card_bg = QColor(_CARD_BG)
         if body is not None:
-            mix = QColor(body)
-            mix.setAlpha(64)
-            p.fillRect(rect, card_bg)
-            p.fillRect(rect, mix)
+            p.fillRect(rect, QColor(body))
         else:
-            p.fillRect(rect, card_bg)
+            p.fillRect(rect, QColor(_CARD_BG))
 
         # Accent stripe (top 3 px)
         accent = resolve_accent(self._draft, _brand_fallback(self._game))
