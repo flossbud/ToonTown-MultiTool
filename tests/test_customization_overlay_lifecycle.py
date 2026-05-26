@@ -75,8 +75,8 @@ def test_panel_has_close_x_button(qapp):
     from utils.widgets.customization_overlay import _Panel
     panel = _Panel()
     assert panel.close_btn is not None
-    # MULTIPLICATION SIGN renders as the close glyph
-    assert panel.close_btn.text() == "×"
+    # HEAVY MULTIPLICATION X (U+2715) renders as the close glyph
+    assert panel.close_btn.text() == "✕"
     assert panel.close_btn.minimumWidth() == 28
 
 

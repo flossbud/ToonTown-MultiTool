@@ -728,13 +728,15 @@ class _PoseSection(QWidget):
         self._adjust_btn.clicked.connect(self.click_adjust)
         if not self._dna:
             self._adjust_btn.setEnabled(False)
+        # Pin Adjust + Refresh to the same explicit height so they render
+        # identically across DPI scales and platform styles.
+        # setMinimumHeight via sizeHint() is unreliable on Wayland because
+        # Breeze style returns different metrics than offscreen QStyle.
+        self._adjust_btn.setFixedHeight(28)
         header.addWidget(self._adjust_btn)
         self._refresh_btn = QPushButton("↻")
         self._refresh_btn.setToolTip("Refresh pose thumbnails")
-        # Match the natural Adjust button height so the two don't render
-        # at different vertical sizes; fix width to keep it square-ish.
-        self._refresh_btn.setFixedWidth(32)
-        self._refresh_btn.setMinimumHeight(self._adjust_btn.sizeHint().height())
+        self._refresh_btn.setFixedSize(32, 28)
         self._refresh_btn.clicked.connect(self._on_refresh_clicked)
         if not self._dna:
             self._refresh_btn.setEnabled(False)

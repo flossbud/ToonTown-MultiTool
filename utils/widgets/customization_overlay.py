@@ -166,15 +166,20 @@ class _Panel(QFrame):
         )
         row.addWidget(self.title_label, 1)
 
-        self.close_btn = QPushButton("×")  # Unicode MULTIPLICATION SIGN
+        # U+2715 HEAVY MULTIPLICATION X. Bolder + larger than U+00D7 so the
+        # glyph is unmistakably visible at compact-window DPI scales (KDE
+        # Wayland with fractional scaling under-renders the thinner ×).
+        # Avoid QSS padding shorthand-quirks: specify either NO padding or
+        # an explicit four-sided value. Here we use Qt-style defaults
+        # (no padding override).
+        self.close_btn = QPushButton("✕")
         self.close_btn.setFixedSize(28, 28)
         self.close_btn.setToolTip("Close (Esc)")
         self.close_btn.setStyleSheet(
             "QPushButton {"
             "  background: #353a52; color: #e8e8f0;"
             "  border: none; border-radius: 6px;"
-            "  font-size: 18px; font-weight: bold;"
-            "  padding-bottom: 2px;"  # nudge the glyph toward optical center
+            "  font-size: 20px; font-weight: bold;"
             "}"
             "QPushButton:hover { background: #4a5070; }"
         )
