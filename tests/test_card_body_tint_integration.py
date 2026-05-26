@@ -82,7 +82,7 @@ def test_body_tint_widget_hidden_when_override_cleared(qapp, tmp_path, monkeypat
 
 def test_border_uses_darkened_body_when_override_set(qapp, tmp_path, monkeypatch):
     """When a body color is set, the header divider and ka_group both
-    use darken_hsl(body, 0.7) instead of the theme's border_muted."""
+    use darken_hsl(body, 0.4) instead of the theme's border_muted."""
     from utils.color_math import darken_hsl
 
     tab = _build_tab(qapp, tmp_path, monkeypatch)
@@ -91,7 +91,7 @@ def test_border_uses_darkened_body_when_override_set(qapp, tmp_path, monkeypatch
     tab.customizations.set("ttr", "Flossbud", {"body": "#e74a4a"})
     tab._set_card_brand_for_slot(0, "ttr", enabled=True)
 
-    expected = darken_hsl(QColor("#e74a4a"), 0.7).name()
+    expected = darken_hsl(QColor("#e74a4a"), 0.4).name()
     divider = tab._compact._card_slots[0].get("header_divider")
     assert divider is not None
     assert expected in divider.styleSheet()
@@ -156,7 +156,7 @@ def test_border_survives_theme_refresh(qapp, tmp_path, monkeypatch):
     tab.customizations.set("ttr", "Flossbud", {"body": "#56c856"})
     tab._set_card_brand_for_slot(0, "ttr", enabled=True)
 
-    expected = darken_hsl(QColor("#56c856"), 0.7).name()
+    expected = darken_hsl(QColor("#56c856"), 0.4).name()
 
     # First assertion: body-derived border is set.
     ka_group = tab.ka_groups[0]

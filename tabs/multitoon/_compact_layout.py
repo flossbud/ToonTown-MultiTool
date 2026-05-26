@@ -144,7 +144,10 @@ class _CompactLayout(QWidget):
         header_divider = QFrame()
         header_divider.setFrameShape(QFrame.HLine)
         header_divider.setObjectName(f"toon_card_divider_{i}")
-        header_divider.setFixedHeight(1)
+        # 2 px so the body-derived color in set_card_brand actually reads
+        # against the card body. addSpacing above (line ~158) trimmed
+        # from 7 to 6 to keep total card height pixel-identical.
+        header_divider.setFixedHeight(2)
 
         # Push the header_divider (and everything below it) down. 3 px
         # of this absorbs the reduced bottom contentsMargin (5 -> 2);
@@ -154,7 +157,9 @@ class _CompactLayout(QWidget):
         # 2 px lower; paired with the addSpacing(4 -> 2) below the
         # divider, the body row keeps its position and card height is
         # unchanged.
-        layout.addSpacing(7)
+        # 6 px (was 7) to absorb the divider growing from 1 to 2 px so
+        # total card height is unchanged.
+        layout.addSpacing(6)
         layout.addWidget(header_divider)
 
         # 3 px animated top stripe. Position is set in _position_stripes().
@@ -301,13 +306,22 @@ class _CompactLayout(QWidget):
         if game in ("cc", "ttr") and toon_name and self._tab.customizations is not None:
             body_color = resolve_body(entry)
 
-        # Header divider + ka_group border. When a body color is set, both
-        # follow darken_hsl(body, 0.7); otherwise both use the theme's
-        # neutral border_muted (today's behavior).
+        # Body-derived chrome for the controls region. When the user picks
+        # a body color, three things follow it so the wrapper reads as
+        # unambiguously body-tinted (not "still grey same as idle"):
+        #   - Wrapper interior (ka_group bg): darken_hsl(body, 0.65) — a
+        #     visibly-tinted recessed shade, lighter than the border.
+        #   - Wrapper border (divider + ka_group outline): darken_hsl(
+        #     body, 0.4) — deep enough to define the wrapper's edge
+        #     against the interior and against the surrounding body.
+        #   - Progress bar track: matches border for cohesion.
+        # When body is None, all three fall back to today's theme colors.
         if body_color is not None:
-            border_color = darken_hsl(body_color, 0.7).name()
+            border_color = darken_hsl(body_color, 0.4).name()
+            wrapper_bg = darken_hsl(body_color, 0.65).name()
         else:
             border_color = c["border_muted"]
+            wrapper_bg = c["bg_input"]
         divider = self._card_slots[i].get("header_divider")
         if divider is not None:
             divider.setStyleSheet(
@@ -317,11 +331,20 @@ class _CompactLayout(QWidget):
             ka_group = self._tab.ka_groups[i]
             ka_group.setStyleSheet(
                 f"QFrame#ka_group {{"
-                f"  background: {c['bg_input']};"
-                f"  border: 1px solid {border_color};"
+                f"  background: {wrapper_bg};"
+                f"  border: 2px solid {border_color};"
                 f"  border-radius: 8px;"
                 f"}}"
             )
+        # Progress bar track inside the wrapper. Currently theme grey
+        # regardless of body, which is what dominates the user's
+        # perception of "the wrapper" (it is the largest grey surface
+        # inside the rounded rect). Follow the body-derived border_color
+        # so the whole wrapper reads as one coherent body-tinted unit.
+        if i < len(self._tab.ka_progress_bars):
+            ka_bar = self._tab.ka_progress_bars[i]
+            if hasattr(ka_bar, "set_bg_color"):
+                ka_bar.set_bg_color(border_color)
 
         # Body tint widget (lazy; only created when an override is present).
         slot = self._card_slots[i]
