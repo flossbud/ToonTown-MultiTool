@@ -40,3 +40,51 @@ def test_section_module_exports_widgets(qapp):
     assert _PortraitSection is not None
 
 
+def test_pose_tile_pinned_dimensions(qapp):
+    from utils.widgets.toon_customization_sections import _PoseTile
+    assert _PoseTile._TILE_W == 160
+    assert _PoseTile._TILE_H == 110
+    assert _PoseTile._BOX == 100
+
+
+def test_pose_tile_tooltip_matches_pose(qapp):
+    from utils.widgets.toon_customization_sections import _PoseTile
+    tile = _PoseTile("portrait-delighted")
+    assert tile.toolTip() == "portrait-delighted"
+
+
+def test_pose_tile_no_label_pixels_below_box(qapp):
+    """The label area (rows below _BOX) must be free of any rendered
+    text pixels. Render the tile to an image and assert the bottom
+    band is uniformly the tile background (no non-background pixels).
+
+    Tile draws on its parent surface, so we render via QPainter onto
+    a transparent QImage we own."""
+    from PySide6.QtCore import QPoint, QSize, Qt
+    from PySide6.QtGui import QImage, QPainter
+    from PySide6.QtWidgets import QWidget
+    from utils.widgets.toon_customization_sections import _PoseTile
+
+    tile = _PoseTile("portrait")
+    tile.resize(_PoseTile._TILE_W, _PoseTile._TILE_H)
+    image = QImage(
+        QSize(_PoseTile._TILE_W, _PoseTile._TILE_H),
+        QImage.Format_ARGB32_Premultiplied,
+    )
+    image.fill(Qt.transparent)
+    painter = QPainter(image)
+    tile.render(painter, QPoint(0, 0), renderFlags=QWidget.RenderFlag.DrawChildren)
+    painter.end()
+
+    # Sample the label band (below _BOX). For each pixel: must be
+    # transparent (no paint touched it).
+    label_y_start = _PoseTile._BOX + 2
+    for y in range(label_y_start, _PoseTile._TILE_H):
+        for x in range(_PoseTile._TILE_W):
+            px = image.pixelColor(x, y)
+            assert px.alpha() == 0, (
+                f"label band has non-transparent pixel at ({x},{y}): "
+                f"rgba={px.red()},{px.green()},{px.blue()},{px.alpha()}"
+            )
+
+

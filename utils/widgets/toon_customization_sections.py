@@ -209,10 +209,10 @@ class _PoseTile(QFrame):
 
     clicked_pose = Signal(str)
 
-    _TILE_W = 110  # wide enough for "portrait-delighted" / "portrait-thinking"
-    _TILE_H = 100  # box + label
-    _BOX = 80
-    _CIRCLE_INSET = 8  # circle margin inside the box
+    _TILE_W = 160  # wide enough for the bigger label-free thumbnail
+    _TILE_H = 110  # box + small padding only; labels live in tooltips
+    _BOX = 100
+    _CIRCLE_INSET = 10  # circle margin inside the box (scaled with _BOX)
     _BACKDROP = QColor("#4a4a4a")
 
     def __init__(self, pose: str, parent=None):
@@ -223,6 +223,7 @@ class _PoseTile(QFrame):
         self.setFixedSize(QSize(self._TILE_W, self._TILE_H))
         self.setCursor(Qt.PointingHandCursor)
         self.setFrameShape(QFrame.NoFrame)
+        self.setToolTip(pose)
 
     # -- Public API ----------------------------------------------------------
 
@@ -288,9 +289,6 @@ class _PoseTile(QFrame):
             p.setPen(QColor("#9a9aa8"))
             p.drawText(circle, Qt.AlignCenter, "…")
 
-        p.setPen(QColor("#c8c8d8"))
-        label_rect = QRect(0, self._BOX + 2, self.width(), self.height() - self._BOX - 2)
-        p.drawText(label_rect, Qt.AlignHCenter | Qt.AlignTop, self._pose)
         p.end()
 
 
