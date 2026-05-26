@@ -371,19 +371,19 @@ def test_pose_adjust_preview_drag_updates_offset_and_emits(qapp):
     from PySide6.QtTest import QSignalSpy
     from utils.widgets.toon_customization_sections import _PoseAdjustPreview
     w = _PoseAdjustPreview()
-    w.resize(180, 180)
+    w.resize(140, 140)
     spy = QSignalSpy(w.transform_changed)
 
     press = QMouseEvent(
-        QMouseEvent.MouseButtonPress, QPointF(90, 90),
+        QMouseEvent.MouseButtonPress, QPointF(70, 70),
         Qt.LeftButton, Qt.LeftButton, Qt.NoModifier,
     )
     move = QMouseEvent(
-        QMouseEvent.MouseMove, QPointF(108, 90),
+        QMouseEvent.MouseMove, QPointF(84, 70),
         Qt.NoButton, Qt.LeftButton, Qt.NoModifier,
     )
     release = QMouseEvent(
-        QMouseEvent.MouseButtonRelease, QPointF(108, 90),
+        QMouseEvent.MouseButtonRelease, QPointF(84, 70),
         Qt.LeftButton, Qt.NoButton, Qt.NoModifier,
     )
     w.mousePressEvent(press)
@@ -391,7 +391,7 @@ def test_pose_adjust_preview_drag_updates_offset_and_emits(qapp):
     w.mouseReleaseEvent(release)
 
     z, ox, oy, r = w.transform()
-    # 18 px drag in a 180 px preview = 0.1 fraction.
+    # 14 px drag in a 140 px preview = 0.1 fraction.
     assert abs(ox - 0.1) < 1e-6
     assert abs(oy - 0.0) < 1e-6
     assert spy.count() >= 1

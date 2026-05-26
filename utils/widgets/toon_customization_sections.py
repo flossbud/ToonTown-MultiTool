@@ -299,7 +299,7 @@ class _PoseAdjustPreview(QFrame):
 
     transform_changed = Signal()
 
-    _SIZE = 180
+    _SIZE = 140
     _BACKDROP = QColor("#1a1d29")
 
     def __init__(self, parent=None):
@@ -435,9 +435,9 @@ class _PoseAdjustView(QWidget):
     ) -> None:
         outer = QVBoxLayout(self)
         outer.setContentsMargins(8, 8, 8, 8)
-        outer.setSpacing(6)
+        outer.setSpacing(8)
 
-        # Header row: Back + Reset
+        # Header row: Back + Reset (right-aligned)
         header = QHBoxLayout()
         self._back_btn = QPushButton("← Back")
         self._back_btn.clicked.connect(self.back_requested.emit)
@@ -448,17 +448,11 @@ class _PoseAdjustView(QWidget):
         header.addWidget(self._reset_btn)
         outer.addLayout(header)
 
-        # Body: preview on the left, controls on the right
-        body = QHBoxLayout()
-        body.setSpacing(16)
-
-        # Left column: preview + nudge buttons
-        left = QVBoxLayout()
-        left.setSpacing(4)
+        # Preview (centered) + nudge row underneath
         self._preview = _PoseAdjustPreview()
         self._preview.set_transform(zoom, off_x, off_y, rot)
         self._preview.transform_changed.connect(self._on_preview_changed)
-        left.addWidget(self._preview, alignment=Qt.AlignHCenter)
+        outer.addWidget(self._preview, alignment=Qt.AlignHCenter)
 
         nudge = QHBoxLayout()
         nudge.setSpacing(2)
@@ -478,16 +472,12 @@ class _PoseAdjustView(QWidget):
         for btn in (self._left_btn, self._up_btn, self._down_btn, self._right_btn):
             nudge.addWidget(btn)
         nudge.addStretch(1)
-        left.addLayout(nudge)
-        body.addLayout(left)
+        outer.addLayout(nudge)
 
-        # Right column: sliders + value labels
-        right = QVBoxLayout()
-        right.setSpacing(10)
-
+        # Zoom slider
         zoom_label = QLabel("Zoom")
         zoom_label.setStyleSheet("color: #9a9aa8; font-size: 10px;")
-        right.addWidget(zoom_label)
+        outer.addWidget(zoom_label)
         zoom_row = QHBoxLayout()
         self._zoom_slider = QSlider(Qt.Horizontal)
         self._zoom_slider.setRange(50, 300)  # 0.5x to 3.0x in 0.01 steps
@@ -497,11 +487,12 @@ class _PoseAdjustView(QWidget):
         self._zoom_value = QLabel(f"{zoom:.2f}x")
         self._zoom_value.setFixedWidth(48)
         zoom_row.addWidget(self._zoom_value)
-        right.addLayout(zoom_row)
+        outer.addLayout(zoom_row)
 
+        # Rotate slider
         rot_label = QLabel("Rotate")
         rot_label.setStyleSheet("color: #9a9aa8; font-size: 10px;")
-        right.addWidget(rot_label)
+        outer.addWidget(rot_label)
         rot_row = QHBoxLayout()
         self._rot_slider = QSlider(Qt.Horizontal)
         self._rot_slider.setRange(-180, 180)
@@ -511,41 +502,38 @@ class _PoseAdjustView(QWidget):
         self._rot_value = QLabel(f"{int(rot)}°")
         self._rot_value.setFixedWidth(48)
         rot_row.addWidget(self._rot_value)
-        right.addLayout(rot_row)
+        outer.addLayout(rot_row)
 
-        # Silhouette outline sub-section
+        # Silhouette outline section
         outline_label = QLabel("Outline (toon)")
         outline_label.setStyleSheet("color: #9a9aa8; font-size: 10px;")
-        right.addWidget(outline_label)
+        outer.addWidget(outline_label)
         self._sil_outline_color_row = _SwatchRow(None)
         self._sil_outline_color_row.color_picked.connect(self._on_sil_outline_color)
-        right.addWidget(self._sil_outline_color_row)
+        outer.addWidget(self._sil_outline_color_row)
         self._sil_outline_chip = _ChipRow(
             [("thin", "Thin"), ("medium", "Medium"), ("thick", "Thick")],
             current="medium",
         )
         self._sil_outline_chip.value_changed.connect(self._on_sil_outline_width)
         self._sil_outline_chip.set_enabled_visual(False)
-        right.addWidget(self._sil_outline_chip)
+        outer.addWidget(self._sil_outline_chip)
 
+        # Silhouette shadow section
         shadow_label = QLabel("Shadow (toon)")
         shadow_label.setStyleSheet("color: #9a9aa8; font-size: 10px;")
-        right.addWidget(shadow_label)
+        outer.addWidget(shadow_label)
         self._sil_shadow_color_row = _SwatchRow(None)
         self._sil_shadow_color_row.color_picked.connect(self._on_sil_shadow_color)
-        right.addWidget(self._sil_shadow_color_row)
+        outer.addWidget(self._sil_shadow_color_row)
         self._sil_shadow_chip = _ChipRow(
             [("subtle", "Subtle"), ("medium", "Medium"), ("strong", "Strong")],
             current="medium",
         )
         self._sil_shadow_chip.value_changed.connect(self._on_sil_shadow_softness)
         self._sil_shadow_chip.set_enabled_visual(False)
-        right.addWidget(self._sil_shadow_chip)
+        outer.addWidget(self._sil_shadow_chip)
 
-        right.addStretch(1)
-        body.addLayout(right, 1)
-
-        outer.addLayout(body)
         outer.addStretch(1)
 
     # -- Public API ----------------------------------------------------------

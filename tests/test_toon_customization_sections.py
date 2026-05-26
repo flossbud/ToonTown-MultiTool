@@ -129,3 +129,64 @@ def test_pose_section_grid_width_fits_compact_viewport(qapp):
         f"horizontal scroll will appear"
     )
 
+
+def test_pose_adjust_preview_size_140(qapp):
+    from utils.widgets.toon_customization_sections import _PoseAdjustPreview
+    assert _PoseAdjustPreview._SIZE == 140
+
+
+def test_pose_adjust_view_min_width_fits_compact(qapp):
+    """Adjust view's minimum width must be <= 527 so the
+    QStackedWidget (grid + adjust) doesn't inflate past the
+    compact panel viewport."""
+    from utils.widgets.toon_customization_sections import _PoseAdjustView
+    view = _PoseAdjustView(initial=(1.0, 0.0, 0.0, 0.0))
+    view.layout().activate()
+    hint = view.minimumSizeHint().width()
+    assert hint <= 527, (
+        f"adjust view min width {hint} exceeds compact viewport "
+        f"(527 px); will force horizontal scroll on the parent stack"
+    )
+
+
+def test_pose_section_stack_min_width_fits_compact(qapp):
+    """Regression guard for the original bug: the QStackedWidget
+    that hosts the grid + adjust subview must not exceed 527 px
+    after the adjust view is constructed."""
+    from utils.widgets.toon_customization_sections import _PoseSection
+    section = _PoseSection(dna="dna-abc-123", current_pose="portrait")
+    qapp.processEvents()
+    # Force the adjust view to exist (same trigger as the production
+    # path: _Panel.populate calls set_silhouette_outline which
+    # lazy-builds the adjust view).
+    section._ensure_adjust_view()
+    qapp.processEvents()
+    section._stack.layout().activate() if section._stack.layout() else None
+    hint = section._stack.minimumSizeHint().width()
+    assert hint <= 527, (
+        f"pose-section stack min width {hint} exceeds compact "
+        f"viewport (527 px); horizontal scroll will appear"
+    )
+
+
+def test_pose_adjust_view_attributes_preserved(qapp):
+    """The vertical-stack rewrite must keep every widget attribute
+    name + signal that consumers depend on."""
+    from utils.widgets.toon_customization_sections import _PoseAdjustView
+    view = _PoseAdjustView(initial=(1.0, 0.0, 0.0, 0.0))
+    assert view._preview is not None
+    assert view._left_btn is not None
+    assert view._up_btn is not None
+    assert view._down_btn is not None
+    assert view._right_btn is not None
+    assert view._zoom_slider is not None
+    assert view._zoom_value is not None
+    assert view._rot_slider is not None
+    assert view._rot_value is not None
+    assert view._sil_outline_color_row is not None
+    assert view._sil_outline_chip is not None
+    assert view._sil_shadow_color_row is not None
+    assert view._sil_shadow_chip is not None
+    assert view._back_btn is not None
+    assert view._reset_btn is not None
+
