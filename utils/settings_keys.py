@@ -33,3 +33,4 @@ SETTINGS_ACTIVE_CATEGORY = "settings_active_category"
 
 # Chat handling mode (added 2026-05-26)
 CHAT_HANDLING_MODE = "chat_handling_mode"
+CHAT_HANDLING_MODE_DEFAULT = "simple"

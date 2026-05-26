@@ -17,11 +17,9 @@ def test_chat_handling_mode_constant_exists_and_is_string():
     assert CHAT_HANDLING_MODE == "chat_handling_mode"
 
 
-def test_default_mode_is_simple_via_settings_manager_get():
-    """A fresh SettingsManager with no persisted value returns 'simple' as
-    the default when callers pass 'simple' as the get() default. This is the
-    convention every read site will use."""
-    from utils.settings_keys import CHAT_HANDLING_MODE
-    settings = MagicMock()
-    settings.get.side_effect = lambda key, default=None: default
-    assert settings.get(CHAT_HANDLING_MODE, "simple") == "simple"
+def test_chat_handling_mode_default_is_simple():
+    """The CHAT_HANDLING_MODE_DEFAULT constant is 'simple'. Every read site
+    imports this constant rather than duplicating the literal, so changing
+    the default later is a one-line edit and call sites cannot drift."""
+    from utils.settings_keys import CHAT_HANDLING_MODE_DEFAULT
+    assert CHAT_HANDLING_MODE_DEFAULT == "simple"
