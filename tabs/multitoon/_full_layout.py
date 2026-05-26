@@ -104,7 +104,9 @@ class _FullLayout(QWidget):
         grid_row.addWidget(grid_host)
         grid_row.addStretch(1)
 
-        outer_layout.addStretch(1)
+        # Vertical anchoring: trailing stretch only, so controls + grid
+        # hug the top of the tab content area regardless of how tall the
+        # window grows. Matches compact's anchoring.
         outer_layout.addLayout(controls_row)
         outer_layout.addSpacing(12)
         outer_layout.addLayout(grid_row)

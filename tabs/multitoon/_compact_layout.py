@@ -89,19 +89,17 @@ class _CompactLayout(QWidget):
         for i in range(4):
             card_layout.addWidget(self._build_card_structure(i))
 
-        # Vertical centring: a stretch above and below the content layout
-        # gives ~equal breathing room at the default window height. With
-        # ~24 px of slack in the 650 px tab content area, the content
-        # block ends up ~12 px from top and ~12 px from bottom.
         # Horizontal centring: stretches on either side of the locked
         # content keep it centered as the window grows past min width.
+        # Vertical anchoring: trailing stretch only, so the content
+        # block hugs the top of the tab content area regardless of how
+        # tall the window grows.
         center_row = QHBoxLayout()
         center_row.setContentsMargins(0, 0, 0, 0)
         center_row.addStretch(1)
         center_row.addWidget(content)
         center_row.addStretch(1)
 
-        outer_layout.addStretch(1)
         outer_layout.addLayout(center_row)
         outer_layout.addStretch(1)
 
