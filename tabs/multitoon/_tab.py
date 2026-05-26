@@ -1064,6 +1064,37 @@ class SetSelectorWidget(QWidget):
 # ── Main Tab ───────────────────────────────────────────────────────────────
 
 
+def compute_effective_chat_enabled(
+    mode: str,
+    raw_chat: list[bool],
+    enabled_toons: list[bool],
+    assignments: list[int],
+) -> list[bool]:
+    """Compute per-toon effective chat-broadcast state.
+
+    Advanced mode: returns the user-managed raw_chat list verbatim.
+    Simple mode: returns a derived list where each toon's chat is True iff
+    the toon is enabled AND its assigned keyset index is 0 (the default).
+
+    Result length always equals len(enabled_toons); raw_chat and
+    assignments are tolerated at any length (missing indices treated as
+    non-default keyset in Simple mode).
+
+    See: docs/superpowers/specs/2026-05-26-chat-handling-mode-design.md
+    """
+    if mode == "advanced":
+        # Return raw_chat sized to enabled_toons (mode flip during a partial
+        # state should still produce a consistent length).
+        n = len(enabled_toons)
+        return [bool(raw_chat[i]) if i < len(raw_chat) else False for i in range(n)]
+    return [
+        bool(enabled_toons[i])
+        and i < len(assignments)
+        and assignments[i] == 0
+        for i in range(len(enabled_toons))
+    ]
+
+
 class MultitoonTab(QWidget):
     _toon_names_ready  = Signal(list)
     _toon_styles_ready = Signal(list)
@@ -2971,8 +3002,37 @@ class MultitoonTab(QWidget):
     def get_enabled_toons(self):
         return self.enabled_toons
 
+    def get_chat_handling_mode(self) -> str:
+        """Return the global chat handling mode: 'simple' (default) or
+        'advanced'. Reads from settings_manager when wired; defaults to
+        CHAT_HANDLING_MODE_DEFAULT ('simple') otherwise."""
+        from utils.settings_keys import CHAT_HANDLING_MODE, CHAT_HANDLING_MODE_DEFAULT
+        if self.settings_manager is None:
+            return CHAT_HANDLING_MODE_DEFAULT
+        return self.settings_manager.get(CHAT_HANDLING_MODE, CHAT_HANDLING_MODE_DEFAULT)
+
     def get_chat_enabled(self):
-        return self.chat_enabled
+        """Return the effective per-toon chat-broadcast state.
+
+        In Advanced mode this is the user-managed self.chat_enabled list
+        verbatim. In Simple mode the result is derived from
+        self.enabled_toons + the per-toon keyset assignments.
+
+        Called per keystroke by InputService; cost is O(n) over the
+        4-toon list. See compute_effective_chat_enabled for the rule.
+        """
+        mode = self.get_chat_handling_mode()
+        assignments = (
+            self.get_keymap_assignments()
+            if hasattr(self, "get_keymap_assignments")
+            else [0] * len(self.enabled_toons)
+        )
+        return compute_effective_chat_enabled(
+            mode=mode,
+            raw_chat=self.chat_enabled,
+            enabled_toons=self.enabled_toons,
+            assignments=assignments,
+        )
 
     def get_keymap_assignments(self):
         """Return per-toon set indices from the set selector dropdowns."""

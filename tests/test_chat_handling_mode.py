@@ -23,3 +23,81 @@ def test_chat_handling_mode_default_is_simple():
     the default later is a one-line edit and call sites cannot drift."""
     from utils.settings_keys import CHAT_HANDLING_MODE_DEFAULT
     assert CHAT_HANDLING_MODE_DEFAULT == "simple"
+
+
+# ── compute_effective_chat_enabled pure helper tests ─────────────────────
+
+
+def test_effective_chat_simple_mode_all_default_keyset():
+    """Every enabled toon is on set 0 -> all four broadcast in Simple mode."""
+    from tabs.multitoon._tab import compute_effective_chat_enabled
+    result = compute_effective_chat_enabled(
+        mode="simple",
+        raw_chat=[True, True, True, True],
+        enabled_toons=[True, True, True, True],
+        assignments=[0, 0, 0, 0],
+    )
+    assert result == [True, True, True, True]
+
+
+def test_effective_chat_simple_mode_one_non_default_keyset():
+    """A toon assigned to set 1 has chat OFF in Simple mode; others stay ON."""
+    from tabs.multitoon._tab import compute_effective_chat_enabled
+    result = compute_effective_chat_enabled(
+        mode="simple",
+        raw_chat=[True, True, True, True],
+        enabled_toons=[True, True, True, True],
+        assignments=[0, 1, 0, 0],
+    )
+    assert result == [True, False, True, True]
+
+
+def test_effective_chat_simple_mode_disabled_toon():
+    """A disabled toon has chat OFF regardless of keyset in Simple mode."""
+    from tabs.multitoon._tab import compute_effective_chat_enabled
+    result = compute_effective_chat_enabled(
+        mode="simple",
+        raw_chat=[True, True, True, True],
+        enabled_toons=[True, False, True, True],
+        assignments=[0, 0, 0, 0],
+    )
+    assert result == [True, False, True, True]
+
+
+def test_effective_chat_advanced_mode_returns_raw():
+    """In Advanced mode the helper returns the raw per-toon list unchanged,
+    regardless of enabled_toons or assignments."""
+    from tabs.multitoon._tab import compute_effective_chat_enabled
+    result = compute_effective_chat_enabled(
+        mode="advanced",
+        raw_chat=[True, False, True, False],
+        enabled_toons=[True, True, True, True],
+        assignments=[1, 1, 1, 1],
+    )
+    assert result == [True, False, True, False]
+
+
+def test_effective_chat_simple_mode_short_assignments_list():
+    """Defensive: assignments shorter than enabled_toons treats missing
+    indices as not-set-0 (chat off)."""
+    from tabs.multitoon._tab import compute_effective_chat_enabled
+    result = compute_effective_chat_enabled(
+        mode="simple",
+        raw_chat=[True, True, True, True],
+        enabled_toons=[True, True, True, True],
+        assignments=[0, 0],  # only first two have assignments
+    )
+    assert result == [True, True, False, False]
+
+
+def test_effective_chat_simple_mode_short_enabled_returns_short_list():
+    """The result length follows enabled_toons length (sizing the per-toon
+    decisions). raw_chat shape does not affect length in either mode."""
+    from tabs.multitoon._tab import compute_effective_chat_enabled
+    result = compute_effective_chat_enabled(
+        mode="simple",
+        raw_chat=[True, True, True, True],
+        enabled_toons=[True, True],
+        assignments=[0, 1],
+    )
+    assert result == [True, False]
