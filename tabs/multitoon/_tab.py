@@ -1083,8 +1083,9 @@ def compute_effective_chat_enabled(
     See: docs/superpowers/specs/2026-05-26-chat-handling-mode-design.md
     """
     if mode == "advanced":
-        # Return raw_chat sized to enabled_toons (mode flip during a partial
-        # state should still produce a consistent length).
+        # Normalize length to enabled_toons so downstream zip-by-index callers
+        # in InputService never read past the end of raw_chat if a partial
+        # mutation slipped in.
         n = len(enabled_toons)
         return [bool(raw_chat[i]) if i < len(raw_chat) else False for i in range(n)]
     return [
@@ -3021,17 +3022,11 @@ class MultitoonTab(QWidget):
         Called per keystroke by InputService; cost is O(n) over the
         4-toon list. See compute_effective_chat_enabled for the rule.
         """
-        mode = self.get_chat_handling_mode()
-        assignments = (
-            self.get_keymap_assignments()
-            if hasattr(self, "get_keymap_assignments")
-            else [0] * len(self.enabled_toons)
-        )
         return compute_effective_chat_enabled(
-            mode=mode,
+            mode=self.get_chat_handling_mode(),
             raw_chat=self.chat_enabled,
             enabled_toons=self.enabled_toons,
-            assignments=assignments,
+            assignments=self.get_keymap_assignments(),
         )
 
     def get_keymap_assignments(self):
