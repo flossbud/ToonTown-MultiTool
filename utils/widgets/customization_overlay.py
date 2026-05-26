@@ -25,12 +25,20 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QScrollArea,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
 from utils.image_blur import gaussian_blur_pixmap
+from utils.widgets.card_preview_widget import CardPreviewWidget
+from utils.widgets.race_icon_grid import RaceIconGridWidget
+from utils.widgets.toon_customization_sections import (
+    _PortraitSection,
+    _PoseSection,
+    _SimpleColorSection,
+)
 
 
 class _BackdropBlur(QWidget):
@@ -216,3 +224,297 @@ class _Panel(QFrame):
         btn = self._pill_group.button(index)
         if btn is not None:
             self.section_changed.emit(btn.text())
+
+    # -- populate / public API ------------------------------------------
+
+    def populate(
+        self,
+        *,
+        game: str,
+        toon_name: str,
+        manager,
+        dna: Optional[str] = None,
+        skin_color: Optional[QColor] = None,
+        auto_stem: Optional[str] = None,
+    ) -> None:
+        self._game = game
+        self._toon_name = toon_name
+        self._manager = manager
+        self._dna = dna
+        self._skin = skin_color
+        self._auto_stem = auto_stem
+        self._draft: dict = dict(manager.get(game, toon_name))
+        self._sections: dict[str, QWidget] = {}
+
+        self.title_label.setText(f"Customize {toon_name}")
+
+        # Tear down any previous content.
+        while self.pill_row.count():
+            item = self.pill_row.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+        for btn in self._pill_group.buttons():
+            self._pill_group.removeButton(btn)
+        while self.section_stack.count():
+            w = self.section_stack.widget(0)
+            self.section_stack.removeWidget(w)
+            w.deleteLater()
+
+        # Preview widget lives in preview_host.
+        prev_layout = self.preview_host.layout()
+        if prev_layout is not None:
+            while prev_layout.count():
+                item = prev_layout.takeAt(0)
+                w = item.widget()
+                if w is not None:
+                    w.deleteLater()
+        else:
+            prev_layout = QVBoxLayout(self.preview_host)
+            prev_layout.setContentsMargins(0, 0, 0, 0)
+        self._preview = CardPreviewWidget(
+            self._game, self._toon_name, self._draft, dna=self._dna,
+        )
+        prev_layout.addWidget(self._preview, alignment=Qt.AlignHCenter)
+
+        # Build sections per game.
+        if self._game == "cc":
+            skin = self._skin or QColor("#d9a04e")
+            grid = RaceIconGridWidget(
+                skin_color=skin,
+                selected_stem=self._draft.get("icon_stem"),
+                auto_stem=self._auto_stem,
+            )
+            grid.selection_changed.connect(self._on_icon_stem)
+            self._add_section("Icon", grid)
+
+        if self._game == "ttr":
+            from utils.toon_customization_resolve import (
+                resolve_pose, resolve_portrait_transform,
+            )
+            current_pose = resolve_pose(self._draft, "portrait")
+            pose_section = _PoseSection(self._dna, current_pose)
+            pose_section.pose_changed.connect(self._on_pose_changed)
+            pose_section.transform_changed.connect(self._on_transform_changed)
+            pose_section.silhouette_outline_changed.connect(self._on_silhouette_outline)
+            pose_section.silhouette_shadow_changed.connect(self._on_silhouette_shadow)
+            pose_section.set_transform_from_draft(resolve_portrait_transform(self._draft))
+            sil = (self._draft.get("portrait") or {}).get("silhouette") or {}
+            outline = sil.get("outline") or {}
+            pose_section.set_silhouette_outline(
+                outline.get("color"), outline.get("width"),
+            )
+            shadow = sil.get("shadow") or {}
+            pose_section.set_silhouette_shadow(
+                shadow.get("color"), shadow.get("softness"),
+            )
+            self._add_section("Toon", pose_section)
+
+        portrait_section = _PortraitSection(self._draft.get("portrait") or {})
+        portrait_section.color_changed.connect(self._on_portrait_color)
+        portrait_section.gradient_changed.connect(self._on_portrait_gradient)
+        portrait_section.pattern_changed.connect(self._on_portrait_pattern)
+        portrait_section.circle_outline_changed.connect(self._on_circle_outline)
+        self._add_section("Portrait", portrait_section)
+
+        accent_section = _SimpleColorSection(
+            "Accent (stripe + chip)", self._draft.get("accent"),
+        )
+        accent_section.color_changed.connect(self._on_accent_changed)
+        self._add_section("Accent", accent_section)
+
+        body_section = _SimpleColorSection(
+            "Body tint", self._draft.get("body"),
+        )
+        body_section.color_changed.connect(self._on_body_changed)
+        self._add_section("Body", body_section)
+
+        if self._pill_group.buttons():
+            self._pill_group.button(0).setChecked(True)
+            self.section_stack.setCurrentIndex(0)
+
+    def _add_section(self, name: str, widget: QWidget) -> None:
+        self._sections[name] = widget
+        btn = QPushButton(name)
+        btn.setCheckable(True)
+        btn.setFixedHeight(30)
+        btn.setStyleSheet(
+            "QPushButton {"
+            "  background: #353a52; color: #c8c8d0;"
+            "  border: none; border-radius: 8px; padding: 0 12px;"
+            "  font-size: 12px;"
+            "}"
+            "QPushButton:checked {"
+            "  background: #4a7cff; color: #ffffff;"
+            "}"
+        )
+        idx = self.section_stack.count()
+        self._pill_group.addButton(btn, idx)
+        self.pill_row.addWidget(btn)
+
+        # Wrap each section in a scroll area so long content doesn't clip.
+        scroll = QScrollArea()
+        scroll.setWidget(widget)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+        scroll.setStyleSheet("QScrollArea { background: transparent; }")
+        self.section_stack.addWidget(scroll)
+
+    def section_names(self) -> list[str]:
+        return list(self._sections.keys())
+
+    def section(self, name: str) -> QWidget:
+        return self._sections[name]
+
+    def draft(self) -> dict:
+        return dict(self._draft)
+
+    # -- Public setters used by tests + outside callers -----------------
+
+    def set_body(self, hex_: Optional[str]) -> None:
+        body_section: _SimpleColorSection = self._sections["Body"]
+        body_section.set_current(hex_)
+        self._on_body_changed(hex_)
+
+    def set_accent(self, hex_: Optional[str]) -> None:
+        accent_section: _SimpleColorSection = self._sections["Accent"]
+        accent_section.set_current(hex_)
+        self._on_accent_changed(hex_)
+
+    def reset_all(self) -> None:
+        self._draft = {}
+        for name, w in self._sections.items():
+            if isinstance(w, _SimpleColorSection):
+                w.set_current(None)
+            elif isinstance(w, _PortraitSection):
+                w.set_color(None)
+                w.set_gradient(None)
+                w.set_pattern(None, None)
+                w.set_circle_outline(None, None)
+            elif isinstance(w, _PoseSection):
+                for t in w.tiles():
+                    t.set_selected(t.pose == "portrait")
+                w._current_pose = "portrait"
+                if w._adjust_view is not None:
+                    w._adjust_view.set_silhouette_outline_from_draft(None, None)
+                    w._adjust_view.set_silhouette_shadow_from_draft(None, None)
+        self._preview.set_draft(self._draft)
+
+    # -- Draft mutation handlers (mirror old dialog) --------------------
+
+    def _on_icon_stem(self, stem: str) -> None:
+        if stem:
+            self._draft["icon_stem"] = stem
+        else:
+            self._draft.pop("icon_stem", None)
+        self._preview.set_draft(self._draft)
+
+    def _on_accent_changed(self, hex_: Optional[str]) -> None:
+        if hex_ is None:
+            self._draft.pop("accent", None)
+        else:
+            self._draft["accent"] = hex_
+        self._preview.set_draft(self._draft)
+
+    def _on_body_changed(self, hex_: Optional[str]) -> None:
+        if hex_ is None:
+            self._draft.pop("body", None)
+        else:
+            self._draft["body"] = hex_
+        self._preview.set_draft(self._draft)
+
+    def _on_pose_changed(self, pose: str) -> None:
+        if pose == "portrait":
+            self._draft.pop("pose", None)
+        else:
+            self._draft["pose"] = pose
+        self._preview.set_draft(self._draft)
+
+    def _on_transform_changed(self) -> None:
+        sec = self._sections["Toon"]
+        zoom, off_x, off_y, rot = sec.transform()
+        portrait = self._draft.setdefault("portrait", {})
+        if (
+            abs(zoom - 1.0) < 1e-6
+            and abs(off_x) < 1e-6
+            and abs(off_y) < 1e-6
+            and abs(rot) < 1e-6
+        ):
+            portrait.pop("transform", None)
+        else:
+            portrait["transform"] = {
+                "zoom": zoom, "offset_x": off_x,
+                "offset_y": off_y, "rotate": rot,
+            }
+        if not self._draft.get("portrait"):
+            self._draft.pop("portrait", None)
+        self._preview.set_draft(self._draft)
+
+    def _on_silhouette_outline(self, hex_: Optional[str], width_key: Optional[str]) -> None:
+        portrait = self._draft.setdefault("portrait", {})
+        sil = portrait.setdefault("silhouette", {})
+        if hex_ is None:
+            sil.pop("outline", None)
+        else:
+            sil["outline"] = {"color": hex_, "width": width_key}
+        if not sil:
+            portrait.pop("silhouette", None)
+        if not portrait:
+            self._draft.pop("portrait", None)
+        self._preview.set_draft(self._draft)
+
+    def _on_silhouette_shadow(self, hex_, softness_key) -> None:
+        portrait = self._draft.setdefault("portrait", {})
+        sil = portrait.setdefault("silhouette", {})
+        if hex_ is None:
+            sil.pop("shadow", None)
+        else:
+            sil["shadow"] = {"color": hex_, "softness": softness_key}
+        if not sil:
+            portrait.pop("silhouette", None)
+        if not portrait:
+            self._draft.pop("portrait", None)
+        self._preview.set_draft(self._draft)
+
+    def _portrait_subdict(self) -> dict:
+        return self._draft.setdefault("portrait", {})
+
+    def _prune_portrait(self) -> None:
+        if not self._draft.get("portrait"):
+            self._draft.pop("portrait", None)
+
+    def _on_portrait_color(self, hex_: Optional[str]) -> None:
+        sub = self._portrait_subdict()
+        if hex_ is None:
+            sub.pop("color", None)
+        else:
+            sub["color"] = hex_
+        self._prune_portrait()
+        self._preview.set_draft(self._draft)
+
+    def _on_portrait_gradient(self, grad: Optional[dict]) -> None:
+        sub = self._portrait_subdict()
+        if grad is None:
+            sub.pop("gradient", None)
+        else:
+            sub["gradient"] = dict(grad)
+        self._prune_portrait()
+        self._preview.set_draft(self._draft)
+
+    def _on_portrait_pattern(self, name: Optional[str], color: Optional[str]) -> None:
+        sub = self._portrait_subdict()
+        if name is None:
+            sub.pop("pattern", None)
+        else:
+            sub["pattern"] = {"name": name, "color": color or "#ffffff"}
+        self._prune_portrait()
+        self._preview.set_draft(self._draft)
+
+    def _on_circle_outline(self, hex_: Optional[str], width_key: str) -> None:
+        sub = self._portrait_subdict()
+        if hex_ is None:
+            sub.pop("outline", None)
+        else:
+            sub["outline"] = {"color": hex_, "width": width_key}
+        self._prune_portrait()
+        self._preview.set_draft(self._draft)
