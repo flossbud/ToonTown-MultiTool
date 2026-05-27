@@ -32,31 +32,63 @@ def test_parse_build_from_body_returns_none_when_missing():
     assert parse_build_from_body("Just some release notes.") is None
 
 
-def test_select_release_picks_highest_in_channel_beta():
+def test_select_release_picks_alpha_with_prerelease_false():
+    """Post-rebrand: alpha-tagged release with prerelease=false (the new
+    'latest' shape per the release-flow-restructure spec) must be
+    selectable by select_release. Prior behavior skipped it via the
+    tag_is_beta != bool(prerelease) cross-check."""
+    releases = [
+        _release("v0.6.0-alpha.3", body="Build: 1234", prerelease=False),
+        _release("v0.6.0-alpha.2", body="Build: 1200", prerelease=True),
+    ]
+    chosen = select_release(releases)
+    assert chosen is not None
+    assert chosen["tag_name"] == "v0.6.0-alpha.3"
+
+
+def test_select_release_picks_newest_by_tuple_compare():
+    """Without channel filtering: highest (major, minor, patch) wins, then
+    suffix ordering (stable beats pre-release), then build number."""
+    releases = [
+        _release("v0.5.0-alpha.2", body="Build: 100", prerelease=True),
+        _release("v0.6.0-alpha.3", body="Build: 200", prerelease=False),
+        _release("v0.6.0-alpha.4", body="Build: 300", prerelease=True),
+    ]
+    chosen = select_release(releases)
+    assert chosen["tag_name"] == "v0.6.0-alpha.4"
+
+
+def test_select_release_picks_highest_by_tuple_regardless_of_prerelease():
+    """Replacement for the prior 'in_channel_beta' test: post-rebrand,
+    channel filtering is dropped. A stable v2.3.0 wins over v2.3.0-b
+    by suffix ordering, regardless of any beta-vs-stable concept."""
     releases = [
         _release("v2.3.0-a", body="Build: 458", prerelease=True),
         _release("v2.3.0-b", body="Build: 470", prerelease=True),
         _release("v2.3.0", body="Build: 500", prerelease=False),
     ]
-    chosen = select_release(releases, is_beta=True)
-    assert chosen["tag_name"] == "v2.3.0-b"
+    chosen = select_release(releases)
+    assert chosen["tag_name"] == "v2.3.0"
 
 
-def test_select_release_picks_highest_in_channel_stable():
+def test_select_release_alpha_tag_visible_to_any_install():
+    """Replacement for the prior 'in_channel_stable' test: every install
+    sees the same feed. A v2.4.0-a release is higher by tuple compare
+    than v2.3.0, so it wins."""
     releases = [
         _release("v2.2.0", body="Build: 400", prerelease=False),
         _release("v2.3.0", body="Build: 500", prerelease=False),
         _release("v2.4.0-a", body="Build: 600", prerelease=True),
     ]
-    chosen = select_release(releases, is_beta=False)
-    assert chosen["tag_name"] == "v2.3.0"
+    chosen = select_release(releases)
+    assert chosen["tag_name"] == "v2.4.0-a"
 
 
 def test_select_release_drops_drafts():
     releases = [
         _release("v2.3.0", body="Build: 500", prerelease=False, draft=True),
     ]
-    assert select_release(releases, is_beta=False) is None
+    assert select_release(releases) is None
 
 
 def test_select_release_skips_malformed_tags():
@@ -64,12 +96,12 @@ def test_select_release_skips_malformed_tags():
         _release("not-a-tag", body="Build: 999", prerelease=False),
         _release("v2.3.0", body="Build: 500", prerelease=False),
     ]
-    chosen = select_release(releases, is_beta=False)
+    chosen = select_release(releases)
     assert chosen["tag_name"] == "v2.3.0"
 
 
 def test_select_release_returns_none_for_empty():
-    assert select_release([], is_beta=False) is None
+    assert select_release([]) is None
 
 
 # Integration via UpdateChecker

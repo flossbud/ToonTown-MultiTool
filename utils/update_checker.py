@@ -15,14 +15,13 @@ from typing import List, Optional
 import requests
 from PySide6.QtCore import QObject, QThread, Signal
 
-from utils import build_flavor, build_info, version
+from utils import build_info, version
 from utils.settings_keys import (
     UPDATE_LAST_CHECK_AT,
     UPDATE_LAST_CHECK_RESULT,
     UPDATE_SKIPPED_VERSION,
 )
 from utils.version_compare import (
-    is_beta_tag,
     is_newer,
     parse,
 )
@@ -43,23 +42,24 @@ def parse_build_from_body(body: str) -> Optional[int]:
     return int(m.group(1)) if m else None
 
 
-def select_release(releases: List[dict], *, is_beta: bool) -> Optional[dict]:
-    """Pick the highest in-channel non-draft release from a list."""
+def select_release(releases: List[dict]) -> Optional[dict]:
+    """Pick the highest non-draft release by tuple compare + suffix
+    ordering + build number tiebreaker.
+
+    Post-rebrand: no channel filtering. Every install (stable AUR,
+    ttmt-beta AUR, AppImage, Flatpak, EXE, .deb) reads the same release
+    feed. The prerelease flag is informational only; it surfaces in the
+    GitHub UI but does not gate updater visibility. See
+    docs/superpowers/specs/2026-05-27-release-flow-restructure-design.md.
+    """
     best = None
     best_parsed = None
     best_build = -1
     for r in releases:
         if r.get("draft"):
             continue
-        tag = r.get("tag_name", "")
-        parsed = parse(tag)
+        parsed = parse(r.get("tag_name", ""))
         if parsed is None:
-            continue
-        tag_is_beta = is_beta_tag(tag)
-        # Defensive: cross-check with the API's prerelease boolean.
-        if tag_is_beta != bool(r.get("prerelease")):
-            continue
-        if tag_is_beta != is_beta:
             continue
         build = parse_build_from_body(r.get("body", "")) or 0
         if best_parsed is None or is_newer(best_parsed, best_build, parsed, build):
@@ -207,7 +207,7 @@ def _perform_check(sm, *, manual: bool) -> dict:
     except (ValueError, json.JSONDecodeError) as e:
         return {"kind": "failed", "reason": f"bad JSON: {e}"}
 
-    chosen = select_release(releases, is_beta=build_flavor.is_beta())
+    chosen = select_release(releases)
     if chosen is None:
         _write_cache(sm, None, local_app_version, local_build)
         return {"kind": "none"}
