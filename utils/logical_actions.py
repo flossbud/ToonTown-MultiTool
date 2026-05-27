@@ -28,6 +28,7 @@ ACTIONS: dict[str, Action] = {
     "tasks":   Action(frozenset({"ttr", "cc"}), MappingProxyType({"ttr": "t",       "cc": "e"})),
     "map":     Action(frozenset({"ttr", "cc"}), MappingProxyType({"ttr": "Shift_L", "cc": "Alt_L"})),
     "sprint":  Action(frozenset({"cc"}),        MappingProxyType({"cc": "Shift_L"})),
+    "action":  Action(frozenset({"ttr"}),       MappingProxyType({"ttr": "Delete"})),
 }
 
 

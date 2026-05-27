@@ -37,11 +37,12 @@ class TestDefaultKey:
 
 
 class TestActionsFor:
-    def test_ttr_has_nine_actions(self):
+    def test_ttr_has_ten_actions(self):
         actions = set(logical_actions.actions_for("ttr"))
         assert actions == {
             "forward", "reverse", "left", "right",
             "jump", "book", "gags", "tasks", "map",
+            "action",
         }
 
     def test_cc_has_ten_actions(self):
@@ -56,6 +57,7 @@ class TestActionsFor:
         assert logical_actions.actions_for("ttr") == [
             "forward", "reverse", "left", "right",
             "jump", "book", "gags", "tasks", "map",
+            "action",
         ]
 
     def test_cc_action_order_is_stable(self):
@@ -94,3 +96,27 @@ class TestTtrMovementDefaults:
         assert logical_actions.default_key("cc", "reverse") == "s"
         assert logical_actions.default_key("cc", "left") == "a"
         assert logical_actions.default_key("cc", "right") == "d"
+
+
+class TestPerformAction:
+    """`action` is the TTMT name for TTR's `performAction` control
+    (default key `Delete`). TTR-only — Corporate Clash has no analog.
+    See docs/superpowers/specs/2026-05-26-perform-action-logical-action-design.md."""
+
+    def test_action_supports_ttr(self):
+        assert logical_actions.supports("ttr", "action") is True
+
+    def test_action_does_not_support_cc(self):
+        assert logical_actions.supports("cc", "action") is False
+
+    def test_action_ttr_default_is_delete(self):
+        assert logical_actions.default_key("ttr", "action") == "Delete"
+
+    def test_action_cc_default_is_none(self):
+        assert logical_actions.default_key("cc", "action") is None
+
+    def test_action_in_ttr_actions_list(self):
+        assert "action" in logical_actions.actions_for("ttr")
+
+    def test_action_not_in_cc_actions_list(self):
+        assert "action" not in logical_actions.actions_for("cc")
