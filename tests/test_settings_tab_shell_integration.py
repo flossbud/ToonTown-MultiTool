@@ -42,20 +42,23 @@ def test_settings_tab_has_sidebar_and_four_pages(qapp, settings_manager):
     tab = SettingsTab(settings_manager)
     assert tab.sidebar is not None
     assert [item.key for item in tab.sidebar.items] == [
-        "general", "games", "keep_alive", "advanced",
+        "general", "games", "features", "advanced",
     ]
     # Each category has a page widget mounted in the content-pane stack.
-    for key in ("general", "games", "keep_alive", "advanced"):
+    for key in ("general", "games", "features", "advanced"):
         assert key in tab.pages
         assert isinstance(tab.pages[key], QWidget)
 
 
 def test_settings_tab_initial_page_persisted(qapp, settings_manager):
+    # Back-compat: the persisted "keep_alive" value should be silently
+    # rewritten to the renamed "features" page by the shim in
+    # SettingsTab._show_category.
     settings_manager.set("settings_active_category", "keep_alive")
     from tabs.settings_tab import SettingsTab
     tab = SettingsTab(settings_manager)
-    assert tab.sidebar.active_key == "keep_alive"
-    assert tab._current_page_key == "keep_alive"
+    assert tab.sidebar.active_key == "features"
+    assert tab._current_page_key == "features"
 
 
 def test_settings_tab_clicking_sidebar_swaps_page_and_persists(qapp, settings_manager):

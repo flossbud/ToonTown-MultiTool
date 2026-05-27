@@ -591,11 +591,12 @@ class SettingsTab(QWidget):
     input_backend_changed = Signal()
     clear_credentials_requested = Signal()
     max_accounts_changed = Signal(int)
+    chat_handling_mode_changed = Signal(str)
 
     CATEGORIES = [
         ("general", "General"),
         ("games", "Games"),
-        ("keep_alive", "Keep-Alive"),
+        ("features", "Features"),
         ("advanced", "Advanced"),
     ]
 
@@ -659,7 +660,7 @@ class SettingsTab(QWidget):
         # the real content.)
         self._build_general_page(self.pages["general"])
         self._build_games_page(self.pages["games"])
-        self._build_keep_alive_page(self.pages["keep_alive"])
+        self._build_features_page(self.pages["features"])
         self._build_advanced_page(self.pages["advanced"])
 
         # Restore persisted category.
@@ -1245,13 +1246,15 @@ class SettingsTab(QWidget):
             self, "External CC log discovery", "\n".join(results),
         )
 
-    def _build_keep_alive_page(self, page):
-        page._title_label.setText("Keep-Alive")
+    def _build_features_page(self, page):
+        page._title_label.setText("Features")
         page._sub_label.setText(
-            "Periodically send a keystroke to keep toons logged in. "
-            "See the warning before enabling."
+            "Optional broadcast and automation behaviors."
         )
+        self._build_keep_alive_card(page)
+        self._build_chat_handling_card(page)
 
+    def _build_keep_alive_card(self, page):
         lay = page._panel_layout
         insert_at = lay.count() - 1
 
@@ -1317,6 +1320,37 @@ class SettingsTab(QWidget):
 
         lay.insertWidget(insert_at, panel)
 
+    def _build_chat_handling_card(self, page):
+        from utils.settings_keys import CHAT_HANDLING_MODE, CHAT_HANDLING_MODE_DEFAULT
+
+        lay = page._panel_layout
+        insert_at = lay.count() - 1
+
+        panel = SettingsPanel(title="Chat Handling", stripe="blue")
+        self._panels.append(panel)
+        self._chat_handling_panel = panel
+
+        mode_initial = self.settings_manager.get(CHAT_HANDLING_MODE, CHAT_HANDLING_MODE_DEFAULT)
+        field = SettingsField(
+            "Per-Toon Chat Handling",
+            helper=(
+                "Off: the chat button is hidden on every toon. Each toon's "
+                "chat broadcast is auto-determined by its keyset (default "
+                "keyset broadcasts; customized keyset does not). The "
+                "whisper-reply detector is off. "
+                "On: the chat button is visible on every toon and you "
+                "control chat broadcast per toon. The whisper-reply "
+                "detector runs."
+            ),
+        )
+        switch = Switch(mode_initial == "advanced")
+        switch.toggled.connect(self._on_chat_handling_mode_toggle)
+        field.set_control(switch)
+        self._chat_handling_switch = switch
+        panel.add_field(field)
+
+        lay.insertWidget(insert_at, panel)
+
     # ── Keep-Alive handlers ───────────────────────────────────────────────
 
     def _refresh_keep_alive_enabled_state(self, enabled: bool):
@@ -1374,6 +1408,14 @@ class SettingsTab(QWidget):
     def _on_keep_alive_delay_changed(self, i: int):
         delay = self._ka_delay_combo.itemText(i)
         self.settings_manager.set("keep_alive_delay", delay)
+
+    # ── Chat Handling handler ────────────────────────────────────────────
+
+    def _on_chat_handling_mode_toggle(self, checked: bool):
+        from utils.settings_keys import CHAT_HANDLING_MODE
+        mode = "advanced" if checked else "simple"
+        self.settings_manager.set(CHAT_HANDLING_MODE, mode)
+        self.chat_handling_mode_changed.emit(mode)
 
     def _build_advanced_page(self, page):
         page._title_label.setText("Advanced")
@@ -1509,6 +1551,11 @@ class SettingsTab(QWidget):
         self.settings_manager.set(SETTINGS_ACTIVE_CATEGORY, key)
 
     def _show_category(self, key: str):
+        # Back-compat: the "Keep-Alive" sidebar category was renamed to
+        # "Features" on 2026-05-26. Users with the old key persisted in
+        # SETTINGS_ACTIVE_CATEGORY get silently rewritten on read.
+        if key == "keep_alive":
+            key = "features"
         keys = [k for k, _ in self.CATEGORIES]
         if key not in keys:
             key = "general"
@@ -1594,8 +1641,8 @@ class SettingsTab(QWidget):
         from PySide6.QtCore import QEasingCurve, QPropertyAnimation
         from PySide6.QtWidgets import QGraphicsColorizeEffect
         from PySide6.QtGui import QColor
-        self._show_category("keep_alive")
-        self.settings_manager.set(SETTINGS_ACTIVE_CATEGORY, "keep_alive")
+        self._show_category("features")
+        self.settings_manager.set(SETTINGS_ACTIVE_CATEGORY, "features")
         panel = getattr(self, "_keep_alive_panel", None)
         if panel is None:
             return

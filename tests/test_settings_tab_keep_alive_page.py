@@ -37,7 +37,7 @@ def settings_manager():
 
 def _field(tab, label):
     from tabs.settings_tab import SettingsField
-    for f in tab.pages["keep_alive"].findChildren(SettingsField):
+    for f in tab.pages["features"].findChildren(SettingsField):
         if f.label_widget.text() == label:
             return f
     return None
@@ -46,7 +46,7 @@ def _field(tab, label):
 def test_keep_alive_page_has_three_fields(qapp, settings_manager):
     from tabs.settings_tab import SettingsTab, SettingsField
     tab = SettingsTab(settings_manager)
-    fields = tab.pages["keep_alive"].findChildren(SettingsField)
+    fields = tab.pages["features"].findChildren(SettingsField)
     labels = {f.label_widget.text() for f in fields}
     assert {"Enable Keep-Alive", "Action", "Interval"} <= labels
 
@@ -104,4 +104,4 @@ def test_highlight_keep_alive_group_switches_to_keep_alive(qapp, settings_manage
     tab = SettingsTab(settings_manager)
     tab._show_category("general")
     tab.highlight_keep_alive_group()
-    assert tab._current_page_key == "keep_alive"
+    assert tab._current_page_key == "features"

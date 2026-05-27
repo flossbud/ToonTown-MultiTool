@@ -101,3 +101,15 @@ def test_effective_chat_simple_mode_short_enabled_returns_short_list():
         assignments=[0, 1],
     )
     assert result == [True, False]
+
+
+# ── SettingsTab back-compat shim ─────────────────────────────────────────
+
+
+def test_settings_categories_use_features_key():
+    """The renamed sidebar category uses the 'features' key. Old 'keep_alive'
+    persisted value should resolve to the features page via shim."""
+    from tabs.settings_tab import SettingsTab
+    keys = [k for k, _ in SettingsTab.CATEGORIES]
+    assert "features" in keys
+    assert "keep_alive" not in keys
