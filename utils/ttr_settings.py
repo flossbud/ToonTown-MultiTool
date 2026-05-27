@@ -107,6 +107,7 @@ _TTR_CONTROL_TO_ACTION = {
     "forward": "forward", "reverse": "reverse", "left": "left", "right": "right",
     "jump": "jump", "stickerBook": "book", "showGags": "gags",
     "showTasks": "tasks", "showMap": "map",
+    "performAction": "action",
 }
 
 # TTR's settings.json control values, translated to TTMT's X-keysym strings.
@@ -132,6 +133,7 @@ _TTR_VALUE_TO_KEYSYM = {
     # Whitespace / control
     "space": "space", "escape": "Escape", "enter": "Return",
     "tab": "Tab", "backspace": "BackSpace", "delete": "Delete",
+    "\\": "backslash",
     # Navigation cluster
     "home": "Home", "end": "End",
     "page_up": "Prior", "page_down": "Next",

@@ -253,3 +253,37 @@ def test_has_letter_hotkeys_false_for_real_ttr_default_arrows(tmp_path):
     assert s.has_letter_hotkeys is False
     assert s.chat_by_typing_enabled_resolved is True
     assert "a" in resolve_chat_block_list(s)
+
+
+def test_apply_ttr_controls_to_set_translates_perform_action_delete():
+    """TTR's `performAction` field (default key `delete` on a clean
+    install) maps to the TTMT `action` logical action. The string `delete`
+    translates to the X11 keysym name `Delete`."""
+    from utils.ttr_settings import apply_ttr_controls_to_set
+    km = _FakeKeymapManager()
+    n = apply_ttr_controls_to_set(km, 0, {"performAction": "delete"})
+    assert n == 1
+    assert km.calls == [("ttr", 0, "action", "Delete")]
+
+
+def test_apply_ttr_controls_to_set_translates_perform_action_backslash():
+    """A TTR user may remap `performAction` to backslash. The literal `\\`
+    string from TTR's JSON must translate to the X11 keysym name
+    `backslash`, which is what the input service's _resolve_keysym
+    expects for that physical key."""
+    from utils.ttr_settings import apply_ttr_controls_to_set
+    km = _FakeKeymapManager()
+    n = apply_ttr_controls_to_set(km, 0, {"performAction": "\\"})
+    assert n == 1
+    assert km.calls == [("ttr", 0, "action", "backslash")]
+
+
+def test_apply_ttr_controls_to_set_perform_action_letter_passes_through():
+    """A TTR user who has remapped `performAction` to a single letter
+    (e.g. `u`); the letter passes through verbatim, same as other
+    letter-hotkey controls."""
+    from utils.ttr_settings import apply_ttr_controls_to_set
+    km = _FakeKeymapManager()
+    n = apply_ttr_controls_to_set(km, 0, {"performAction": "u"})
+    assert n == 1
+    assert km.calls == [("ttr", 0, "action", "u")]
