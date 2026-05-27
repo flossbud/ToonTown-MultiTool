@@ -2,8 +2,6 @@
 
 A multitoon controller for **Toontown Rewritten** and **Corporate Clash** on Linux and Windows.
 
-Built with Python and PySide6.
-
 <!-- Hero screenshot goes here. Suggested: top-of-app multitoon tab with
      4 toons enabled, 1200x700 PNG. Drop the file into assets/ and add
      an img tag once available. -->
@@ -12,77 +10,54 @@ Built with Python and PySide6.
 
 ## Status: alpha (pre-1.0)
 
-ToonTown MultiTool is in active alpha development. The architecture is
-still changing as features land: wine input bridge for Corporate Clash,
-Proton / Bottles / Lutris integration, keymap schema redesigns, launcher
-and runtime redesigns. Expect occasional breaking changes between alpha
-releases.
-
-Releases prior to `v0.6.0-alpha.3` were retagged from `v1.x` / `v2.x` on
-2026-05-27 to reflect the pre-1.0 status. See `CHANGELOG.md` for the full
-mapping.
+ToonTown MultiTool is in active alpha development. Features are still being added and some may change between alpha releases. Updates usually go smoothly: your saved accounts, profiles, and key layouts carry over.
 
 ---
 
 ## ✨ Features
 
 **Multitoon control**
-- Broadcast keyboard input to up to 4 background toons simultaneously
-- Per-toon movement key mapping (each toon can use a different key set: WASD or fully custom)
-- Up to 8 custom key sets
-- Per-toon keep-alive timer with configurable key and interval
+- Play up to 4 toons at the same time. What you do on the active toon (move, jump, talk, attack) happens on the others too.
+- Each toon can use a different set of movement keys (WASD, arrow keys, or your own custom layout).
+- Save up to 8 key layouts and assign a different one to each toon.
+- Keep background toons from going idle: pick a key and an interval, and the app presses it for them automatically.
 
-**Game support**
-- Toontown Rewritten: form-based login, queue polling, Flatpak launcher
-- Corporate Clash: JSON API login, CLI credential injection
+**Toontown Rewritten support**
+- Sign in to TTR from inside the app. If TTR has a login queue, you see your queue position and ETA.
+- Launches both the standard TTR install and the official Flatpak version.
+- See each toon's name, laff, jellybean count, and portrait update live while you play, across all your open TTR windows.
 
-**Account management**
-- Up to 16 TTR and CC accounts with OS keyring storage (Secret Service on Linux, Credential Locker on Windows)
-- Passwords never written to disk, keyring only
-- One-click launch with automatic credential injection
+**Corporate Clash support**
+- Sign in to CC from inside the app.
+- Plays nicely with however you have CC installed: native Windows, or any major Linux setup (Wine, Bottles, Lutris, Steam Proton, and similar).
+- Multi-toon for CC, which CC's official launcher doesn't support out of the box.
+- If CC reports the wrong species for one of your toons and the portrait shows the wrong character, set the right one per-toon and it sticks.
 
-**Companion app integration (TTR)**
-- Live toon names, laff points, and jellybean counts from the TTR Local API
-- Toon portrait images via the Rendition API
-- Works with multiple Flatpak TTR instances via XRes PID resolution
+**Accounts**
+- Save up to 16 accounts across both games, with one-click launch.
+- Passwords are stored securely; the app never writes them into plain files. See [PRIVACY.md](PRIVACY.md) for details.
 
 **Session profiles**
-- 5 named profiles storing which toons are enabled
-- Load profiles via hotkeys (Ctrl+1 through Ctrl+5)
-
-**UI**
-- Chip-rail navigation under the header (icon + label) with animated transitions
-- Click the app logo in the header to open the Credits page
-- Light and dark themes (auto-detected from system)
+- Save up to 5 named setups (which toons are active, plus their movement keys and anti-idle settings).
+- Switch setups instantly with Ctrl+1 through Ctrl+5.
 
 ---
 
 ## 📥 Installation
 
-Install on Windows (installer, portable ZIP, or source) or on Linux (Arch,
-Flatpak, AppImage, .deb, or source). All paths run the same app from the
-same release artifacts. The latest release is always at
-`https://github.com/flossbud/ToonTown-MultiTool/releases/latest`.
+Install on Windows (installer, portable ZIP, or source) or on Linux (Arch, Flatpak, AppImage, .deb, or source). The latest release is always at `https://github.com/flossbud/ToonTown-MultiTool/releases/latest`.
 
 ### Windows
 
 #### Installer (recommended)
 
-Download `ToonTownMultiTool-Setup-vX.Y.Z-Windows-x86_64.exe` from the
-[Releases page](https://github.com/flossbud/ToonTown-MultiTool/releases)
-and run it. The wizard asks whether to install for just you (no admin
-required) or for all users.
+Download `ToonTownMultiTool-Setup-vX.Y.Z-Windows-x86_64.exe` from the [Releases page](https://github.com/flossbud/ToonTown-MultiTool/releases) and run it. The wizard asks whether to install for just you (no admin needed) or for all users.
 
-On first download, Windows SmartScreen will show "Windows protected your
-PC". This is expected for unsigned installers, click "More info" then
-"Run anyway".
+On first download, Windows SmartScreen will show "Windows protected your PC". This is expected for unsigned installers, click "More info" then "Run anyway".
 
 #### Portable (no install)
 
-If you'd rather not install, download
-`ToonTownMultiTool-vX.Y.Z-Windows-x86_64.zip`. Extract it anywhere and run
-`ToonTownMultiTool.exe` from the extracted folder. Same EXE, no Start Menu
-entry or uninstaller.
+Download `ToonTownMultiTool-vX.Y.Z-Windows-x86_64.zip`, extract anywhere, and run `ToonTownMultiTool.exe` from the extracted folder. No Start Menu entry, no uninstaller.
 
 #### Run from source
 
@@ -94,13 +69,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1
 python main.py
 ```
 
-Pass `-Yes` to skip prompts. PySide6 wheels are self-contained on Windows,
-so no separate Qt6 install is required.
-
-#### Windows notes
-
-- Input via Win32 `PostMessage`, no focus stealing
-- Corporate Clash supported alongside TTR
+Pass `-Yes` to skip prompts.
 
 ### Linux
 
@@ -114,52 +83,29 @@ Published as [`toontown-multitool`](https://aur.archlinux.org/packages/toontown-
 yay -S toontown-multitool       # or: paru -S toontown-multitool
 ```
 
-Manual build with `makepkg`:
-
-```bash
-git clone https://aur.archlinux.org/toontown-multitool.git
-cd toontown-multitool
-makepkg -si
-```
-
-After install, launch from the application menu or run `toontown-multitool`
-(or the short alias `ttmt`) from a terminal.
+After install, launch from your application menu or run `toontown-multitool` (short alias `ttmt`) from a terminal.
 
 #### Flatpak
 
-Download the `.flatpak` bundle from the
-[Releases page](https://github.com/flossbud/ToonTown-MultiTool/releases) and
-install it:
+Download the `.flatpak` from the [Releases page](https://github.com/flossbud/ToonTown-MultiTool/releases):
 
 ```bash
 flatpak install --user ./TTMultiTool-vX.Y.Z-Linux-x86_64.flatpak
 flatpak run io.github.flossbud.ToonTownMultiTool
 ```
 
-The Flatpak runs in a sandbox and uses `flatpak-spawn` to launch the host
-TTR and Corporate Clash engines, so the games must already be installed on
-the host.
+You need TTR or CC already installed on your system; the Flatpak doesn't bundle the games.
 
 #### AppImage
-
-Download `TTMultiTool-vX.Y.Z-Linux-x86_64.AppImage` from the Releases page,
-mark it executable, run it:
 
 ```bash
 chmod +x TTMultiTool-vX.Y.Z-Linux-x86_64.AppImage
 ./TTMultiTool-vX.Y.Z-Linux-x86_64.AppImage
 ```
 
-The AppImage is built against glibc 2.31, so it runs on any of the
-supported distros below or newer. Double-click launch additionally needs
-`libfuse2`; on newer distros that don't ship it (Ubuntu 24.04, Mint 22)
-either install it (`sudo apt install libfuse2`) or run with
-`--appimage-extract-and-run`.
+If double-clicking does nothing on Ubuntu 24.04 or Mint 22, either install `libfuse2` (`sudo apt install libfuse2`) or run with `--appimage-extract-and-run`.
 
 #### Debian / Ubuntu / Mint (.deb)
-
-Download `ttmultitool_X.Y.Z_amd64.deb` from the Releases page and install
-it:
 
 ```bash
 sudo apt install ./ttmultitool_X.Y.Z_amd64.deb
@@ -175,16 +121,9 @@ source venv/bin/activate           # use activate.fish if your shell is fish
 python main.py
 ```
 
-`install.sh` detects your OS and distro, installs Python 3.9 to 3.14 if
-missing, installs the Qt6 runtime libraries, creates a venv at `./venv`,
-and installs the Python dependencies. It asks before each `sudo` command;
-pass `--yes` to skip the prompts. Re-running is fast: it detects an
-existing valid venv via a SHA-256 sentinel and exits without re-prompting
-unless `requirements.txt` has changed or `--force` is passed.
+`install.sh` detects your distro, installs Python 3.9 to 3.14 and the Qt6 runtime libraries if missing, and sets up a local Python environment. It asks before each `sudo` command; pass `--yes` to skip the prompts.
 
-For unsupported distros (openSUSE, Gentoo, NixOS) or if you've already
-installed Python 3.9 to 3.14 and the Qt6 runtime libraries yourself, skip
-the OS package detection:
+For unsupported distros (openSUSE, Gentoo, NixOS), or if you already have Python 3.9 to 3.14 and Qt6 installed:
 
 ```bash
 ./install.sh --skip-system-deps
@@ -208,61 +147,40 @@ the OS package detection:
 
 #### Wayland
 
-Wayland is auto-detected since v0.3.0-alpha.3. On older releases under
-Wayland, force xcb:
+If you're on Wayland and hit input issues, force xcb:
 
 ```bash
 QT_QPA_PLATFORM=xcb python main.py
 ```
 
-#### Linux notes
-
-- Tested on Fedora (KDE Plasma, GNOME) with Wayland and X11
-- KWallet and GNOME Keyring both supported
-- Flatpak TTR instances fully supported via XRes PID resolution
-
 ---
 
 ## Configuration
 
-Config files live at `~/.config/toontown_multitool/`:
+Your settings, profiles, and account list live in `~/.config/toontown_multitool/`. Back it up, copy it between machines, or delete it to start fresh.
 
-| File             | Contents                          |
-|------------------|-----------------------------------|
-| `settings.json`  | App preferences                   |
-| `accounts.json`  | Account metadata (no passwords)   |
-| `keymaps.json`   | Custom movement key sets          |
-| `profiles.json`  | Named session profiles            |
-
-Passwords live only in the OS keyring (Secret Service on Linux, Credential
-Locker on Windows), never in these files.
+See [PRIVACY.md](PRIVACY.md) for the full breakdown of what's stored on your device and what gets sent to the game servers.
 
 ---
 
 ## Updates
 
-The app can check for new releases at startup. Toggle it under **Settings >
-Updates**, or click **Check now** any time. When a new release is found, a
-banner appears at the top of the window; click it for release notes and the
-choices Update now, Remind me later, or Skip this version.
+The app can check for new releases at startup. Toggle it under **Settings > Updates**, or click **Check now** any time. When a new release is found, a banner appears at the top of the window. Click it to read the release notes and choose Update now, Remind me later, or Skip this version.
 
-What "Update now" does depends on how you installed:
+The update action depends on how you installed:
 
-| Install method      | Update action                                                |
-|---------------------|--------------------------------------------------------------|
-| Windows installer   | Downloads the new installer and prompts before running it    |
-| AppImage            | Opens the release page in your browser                       |
-| Flatpak, AUR, .deb  | Opens your default terminal with the right package-manager command (`flatpak update`, your AUR helper, or `dpkg -i` via `pkexec` for the new .deb) |
-| Run from source     | Shows the `git pull` command in a copyable dialog            |
+| Install method      | What "Update now" does                                          |
+|---------------------|-----------------------------------------------------------------|
+| Windows installer   | Downloads the new installer and prompts before running it       |
+| AppImage            | Opens the release page in your browser                          |
+| Flatpak, AUR, .deb  | Opens a terminal with the right update command for your install |
+| Run from source     | Shows a copyable `git pull` command                             |
 
 ---
 
 ## Privacy
 
-See [PRIVACY.md](PRIVACY.md) for what data ToonTown MultiTool stores on
-your device, where, and what is sent to the official game servers when
-you launch a toon. The app contains no telemetry, analytics, or crash
-reporting.
+See [PRIVACY.md](PRIVACY.md) for what data ToonTown MultiTool stores on your device, where, and what is sent to the official game servers when you launch a toon. The app contains no telemetry, analytics, or crash reporting.
 
 ---
 
@@ -271,5 +189,7 @@ reporting.
 MIT. Free to use, share, and modify.
 
 ---
+
+Releases prior to `v0.6.0-alpha.3` were retagged from `v1.x` / `v2.x` on 2026-05-27 to reflect the pre-1.0 status. See `CHANGELOG.md` for the mapping.
 
 by **flossbud**
