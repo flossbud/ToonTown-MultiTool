@@ -8,6 +8,7 @@ from functools import lru_cache
 from PySide6.QtCore import QObject, Signal
 
 from utils.cc_isolation import MOVEMENT_ACTIONS as _MOVEMENT_ACTIONS
+from utils.held_key_registry import HoldKind, HeldKeyRegistry
 
 WASD_KEYS     = frozenset({'w', 'a', 's', 'd'})
 MOVEMENT_KEYS = WASD_KEYS | frozenset({'Up', 'Down', 'Left', 'Right', 'space'})
@@ -114,10 +115,8 @@ class InputService(QObject):
         self._stop_event = threading.Event()
         self.logging_enabled = False
 
-        self.keys_held = set()
+        self.holds = HeldKeyRegistry()
         self.bg_typing_held = set()
-        self.modifiers_held = set()
-        self.action_held = set()
         self.chat_active = set()
         self.global_chat_active = False
 
@@ -133,6 +132,18 @@ class InputService(QObject):
         # Track the most recent foreground game so keys pressed while TTMT
         # itself has focus still resolve through a meaningful default set.
         self._last_known_foreground_game: str | None = None
+
+    @property
+    def keys_held(self) -> set[str]:
+        return set(self.holds.keys_by_kind(HoldKind.MOVEMENT))
+
+    @property
+    def modifiers_held(self) -> set[str]:
+        return set(self.holds.keys_by_kind(HoldKind.MODIFIER))
+
+    @property
+    def action_held(self) -> set[str]:
+        return set(self.holds.keys_by_kind(HoldKind.ACTION))
 
     def start(self):
         if self.running and self.thread is not None and self.thread.is_alive():
@@ -544,24 +555,24 @@ class InputService(QObject):
         Returns True if the released key was BackSpace (so the caller can
         reset BackSpace repeat timing); False otherwise.
 
-        Check actual set membership rather than re-classifying, since chat
-        state may have changed between the original keydown and this keyup.
+        Routes by HoldKind discriminator captured at acquire time, so chat
+        state changes between keydown and keyup do not affect dispatch.
         """
-        if key in self.modifiers_held:
-            self.modifiers_held.discard(key)
+        entry = self.holds.release(key)
+        if entry is None:
+            self.bg_typing_held.discard(key)
+            return False
+        if entry.kind == HoldKind.MODIFIER:
             self._send_modifier_to_bg("keyup", key, enabled, assignments)
             return False
-        if key in self.keys_held:
-            self.keys_held.discard(key)
+        if entry.kind == HoldKind.MOVEMENT:
             self._log_key(key, "released")
             self._send_logical_action_km("keyup", key, enabled, assignments)
             return key == "BackSpace"
-        if key in self.action_held:
-            self.action_held.discard(key)
+        if entry.kind == HoldKind.ACTION:
             self._log_key(key, "released")
             self._send_action_keyup_to_bg(key, enabled, assignments)
             return False
-        self.bg_typing_held.discard(key)
         return False
 
     def _send_modifier_to_bg(self, action, key, enabled, assignments):
@@ -605,14 +616,32 @@ class InputService(QObject):
             if win != active_window:
                 self._send_via_backend("keyup", win, keysym)
 
-    def _drain_action_held(self, enabled, assignments):
-        """Send keyup for every held action key and clear the set.
+    def _drain_kind(self, kind, enabled, assignments):
+        """Drain held keys of one kind, dispatching keyup via that kind's
+        send path. Used when the caller wants to clear only one bucket
+        (e.g. chat-opens path wants to clear ACTION but keep modifiers
+        and movement)."""
+        for key in list(self.holds.keys_by_kind(kind)):
+            entry = self.holds.release(key)
+            if entry is None:
+                continue
+            if entry.kind == HoldKind.MODIFIER:
+                self._send_modifier_to_bg("keyup", entry.key, enabled, assignments)
+            elif entry.kind == HoldKind.MOVEMENT:
+                self._send_logical_action_km("keyup", entry.key, enabled, assignments)
+            elif entry.kind == HoldKind.ACTION:
+                self._send_action_keyup_to_bg(entry.key, enabled, assignments)
 
-        Called whenever the in-game regime ends (chat opens, focus lost, shutdown).
-        """
-        for key in list(self.action_held):
-            self._send_action_keyup_to_bg(key, enabled, assignments)
-        self.action_held.clear()
+    def _drain_all_held(self, enabled, assignments):
+        """Drain every held key across all kinds, dispatching keyup via
+        each kind's send path. Used on focus loss and shutdown."""
+        for entry in self.holds.drain():
+            if entry.kind == HoldKind.MODIFIER:
+                self._send_modifier_to_bg("keyup", entry.key, enabled, assignments)
+            elif entry.kind == HoldKind.MOVEMENT:
+                self._send_logical_action_km("keyup", entry.key, enabled, assignments)
+            elif entry.kind == HoldKind.ACTION:
+                self._send_action_keyup_to_bg(entry.key, enabled, assignments)
 
     def _send_typing_to_bg(self, key, enabled, assignments, movement_keys=None):
         from utils.game_registry import GameRegistry
@@ -682,18 +711,10 @@ class InputService(QObject):
                             event_queue.get_nowait()
                         except queue.Empty:
                             break
-                    if self.keys_held or self.modifiers_held or self.action_held:
+                    if len(self.holds) > 0:
                         enabled     = self.get_enabled_toons()
                         assignments = self._get_assignments(enabled)
-                        for key in list(self.keys_held):
-                            self._send_logical_action_km("keyup", key, enabled, assignments)
-                        for key in list(self.modifiers_held):
-                            self._send_modifier_to_bg("keyup", key, enabled, assignments)
-                        for key in list(self.action_held):
-                            self._send_action_keyup_to_bg(key, enabled, assignments)
-                        self.keys_held.clear()
-                        self.modifiers_held.clear()
-                        self.action_held.clear()
+                        self._drain_all_held(enabled, assignments)
                     self.bg_typing_held.clear()
                     pending_keyups.clear()
                     self._phantom_reset()
@@ -762,13 +783,11 @@ class InputService(QObject):
                             is_movement = False
 
                         if is_modifier:
-                            if key not in self.modifiers_held:
-                                self.modifiers_held.add(key)
+                            if self.holds.acquire(key, HoldKind.MODIFIER, now):
                                 self._send_modifier_to_bg("keydown", key, enabled, assignments)
 
                         elif is_movement:
-                            if key not in self.keys_held:
-                                self.keys_held.add(key)
+                            if self.holds.acquire(key, HoldKind.MOVEMENT, now):
                                 if self.logging_enabled:
                                     logical = self._resolve_logical_action(key)
                                     extra = f" (action: {logical})" if logical else ""
@@ -785,8 +804,7 @@ class InputService(QObject):
                                         self._send_typing_to_bg(key, enabled, assignments, movement_keys)
 
                         elif key == "BackSpace":
-                            if key not in self.keys_held:
-                                self.keys_held.add(key)
+                            if self.holds.acquire(key, HoldKind.MOVEMENT, now):
                                 self._log_key(key, "pressed")
                                 bs_press_time  = now
                                 bs_last_repeat = 0.0
@@ -808,7 +826,7 @@ class InputService(QObject):
                                     if self.global_chat_active:
                                         # Chat just opened. Release any in-game keys the user
                                         # is still holding so they do not stick on bg toons.
-                                        self._drain_action_held(enabled, assignments)
+                                        self._drain_kind(HoldKind.ACTION, enabled, assignments)
                                     for i in range(min(len(assignments), len(enabled))):
                                         if i < len(window_ids) and enabled[i]:
                                             if not self._is_chat_allowed(i):
@@ -864,8 +882,7 @@ class InputService(QObject):
                                 # In-game non-printable key (Delete, F-keys, numpad, etc.)
                                 # Hold for as long as the user holds it so TTR's action-key
                                 # duration replicates on background toons.
-                                if key not in self.action_held:
-                                    self.action_held.add(key)
+                                if self.holds.acquire(key, HoldKind.ACTION, now):
                                     self._log_key(key, "pressed")
                                     self._send_action_keydown_to_bg(key, enabled, assignments)
 
@@ -879,7 +896,7 @@ class InputService(QObject):
                             bs_press_time  = None
                             bs_last_repeat = 0.0
 
-                if bs_press_time is not None and "BackSpace" in self.keys_held and not self._phantom_active:
+                if bs_press_time is not None and self.holds.contains("BackSpace") and not self._phantom_active:
                     held_for = now - bs_press_time
                     if held_for >= self.BACKSPACE_REPEAT_DELAY:
                         if now - bs_last_repeat >= self.BACKSPACE_REPEAT_INTERVAL:
@@ -925,7 +942,7 @@ class InputService(QObject):
     def _active_modifiers(self):
         seen = set()
         mods = []
-        for key in self.modifiers_held:
+        for key in self.holds.keys_by_kind(HoldKind.MODIFIER):
             prefix = MODIFIER_PREFIX.get(key)
             if prefix and prefix not in seen:
                 seen.add(prefix)
@@ -1008,7 +1025,7 @@ class InputService(QObject):
             self.input_log.emit("[Input] Chat idle timeout — resetting chat state")
         # Defensive: in case any action key was somehow held during chat,
         # release it now. Normal flow drains on chat-open so this is empty.
-        self._drain_action_held(enabled, assignments)
+        self._drain_kind(HoldKind.ACTION, enabled, assignments)
         if self.global_chat_active:
             active_window = self.window_manager.get_active_window()
             window_ids = self.window_manager.get_window_ids()
@@ -1110,57 +1127,12 @@ class InputService(QObject):
             return False
 
     def release_all_keys(self):
-        from utils.game_registry import GameRegistry
-        from utils import logical_actions
-
         assignments = self._get_assignments(self.get_enabled_toons())
         enabled = self.get_enabled_toons()
-        active_window = self.window_manager.get_active_window()
-        window_ids = self.window_manager.get_window_ids()
-        registry = GameRegistry.instance()
 
-        for key in list(self.keys_held):
-            for i, is_enabled in enumerate(enabled):
-                if not (is_enabled and i < len(window_ids)):
-                    continue
-                win = window_ids[i]
-                if win == active_window:
-                    continue
-                toon_game = registry.get_game_for_window(str(win))
-                if toon_game is None:
-                    toon_game = "ttr"  # Windows fallback: TTMT pre-dates CC support
-                set_idx = assignments[i] if i < len(assignments) else 0
-                if self.keymap_manager is None:
-                    continue
-                toon_action = self.keymap_manager.get_action_in_set(toon_game, set_idx, key)
-                if toon_action is None and set_idx != 0:
-                    default_action = self.keymap_manager.get_action_in_set(toon_game, 0, key)
-                    if default_action is not None and default_action not in _MOVEMENT_ACTIONS:
-                        toon_action = default_action
-                if toon_action is None:
-                    continue
-                if not logical_actions.supports(toon_game, toon_action):
-                    continue
-                outbound = self.keymap_manager.get_key_for_action(toon_game, 0, toon_action)
-                keysym = self._resolve_keysym(outbound) if outbound else None
-                if keysym:
-                    self._send_via_backend("keyup", win, keysym)
+        self._drain_all_held(enabled, assignments)
 
-        for key in list(self.modifiers_held):
-            keysym = self._resolve_keysym(key)
-            if keysym:
-                for i, is_enabled in enumerate(enabled):
-                    if is_enabled and i < len(window_ids):
-                        if window_ids[i] != active_window:
-                            self._send_via_backend("keyup", window_ids[i], keysym)
-
-        for key in list(self.action_held):
-            self._send_action_keyup_to_bg(key, enabled, assignments)
-
-        self.keys_held.clear()
-        self.modifiers_held.clear()
         self.bg_typing_held.clear()
-        self.action_held.clear()
         self.chat_active.clear()
         self._set_chat_active(False)
         self._phantom_reset()
