@@ -549,6 +549,18 @@ class InputService(QObject):
                             f"(action: {toon_action}, {toon_game} set {set_idx + 1})"
                         )
 
+    def _dispatch_keyup_for_entry(self, entry, enabled, assignments) -> None:
+        """Single-site keyup routing by HoldKind. Used by _dispatch_keyup
+        on individual releases and by the drain helpers on bulk drains.
+        Extracted so any future change to a kind's dispatch path lands
+        in one place."""
+        if entry.kind == HoldKind.MODIFIER:
+            self._send_modifier_to_bg("keyup", entry.key, enabled, assignments)
+        elif entry.kind == HoldKind.MOVEMENT:
+            self._send_logical_action_km("keyup", entry.key, enabled, assignments)
+        elif entry.kind == HoldKind.ACTION:
+            self._send_action_keyup_to_bg(entry.key, enabled, assignments)
+
     def _dispatch_keyup(self, key, enabled, assignments) -> bool:
         """Process a single keyup event.
 
@@ -562,18 +574,12 @@ class InputService(QObject):
         if entry is None:
             self.bg_typing_held.discard(key)
             return False
-        if entry.kind == HoldKind.MODIFIER:
-            self._send_modifier_to_bg("keyup", key, enabled, assignments)
-            return False
-        if entry.kind == HoldKind.MOVEMENT:
+        # MOVEMENT and ACTION log the release; MODIFIER does not (matches
+        # pre-refactor behavior).
+        if entry.kind in (HoldKind.MOVEMENT, HoldKind.ACTION):
             self._log_key(key, "released")
-            self._send_logical_action_km("keyup", key, enabled, assignments)
-            return key == "BackSpace"
-        if entry.kind == HoldKind.ACTION:
-            self._log_key(key, "released")
-            self._send_action_keyup_to_bg(key, enabled, assignments)
-            return False
-        return False
+        self._dispatch_keyup_for_entry(entry, enabled, assignments)
+        return key == "BackSpace" and entry.kind == HoldKind.MOVEMENT
 
     def _send_modifier_to_bg(self, action, key, enabled, assignments):
         active_window = self.window_manager.get_active_window()
@@ -620,28 +626,21 @@ class InputService(QObject):
         """Drain held keys of one kind, dispatching keyup via that kind's
         send path. Used when the caller wants to clear only one bucket
         (e.g. chat-opens path wants to clear ACTION but keep modifiers
-        and movement)."""
+        and movement). Drain paths intentionally skip per-key logging;
+        callers log the regime change instead."""
         for key in list(self.holds.keys_by_kind(kind)):
             entry = self.holds.release(key)
             if entry is None:
                 continue
-            if entry.kind == HoldKind.MODIFIER:
-                self._send_modifier_to_bg("keyup", entry.key, enabled, assignments)
-            elif entry.kind == HoldKind.MOVEMENT:
-                self._send_logical_action_km("keyup", entry.key, enabled, assignments)
-            elif entry.kind == HoldKind.ACTION:
-                self._send_action_keyup_to_bg(entry.key, enabled, assignments)
+            self._dispatch_keyup_for_entry(entry, enabled, assignments)
 
     def _drain_all_held(self, enabled, assignments):
         """Drain every held key across all kinds, dispatching keyup via
-        each kind's send path. Used on focus loss and shutdown."""
+        each kind's send path. Used on focus loss and shutdown. Drain
+        paths intentionally skip per-key logging; callers log the regime
+        change instead."""
         for entry in self.holds.drain():
-            if entry.kind == HoldKind.MODIFIER:
-                self._send_modifier_to_bg("keyup", entry.key, enabled, assignments)
-            elif entry.kind == HoldKind.MOVEMENT:
-                self._send_logical_action_km("keyup", entry.key, enabled, assignments)
-            elif entry.kind == HoldKind.ACTION:
-                self._send_action_keyup_to_bg(entry.key, enabled, assignments)
+            self._dispatch_keyup_for_entry(entry, enabled, assignments)
 
     def _send_typing_to_bg(self, key, enabled, assignments, movement_keys=None):
         from utils.game_registry import GameRegistry
@@ -1130,6 +1129,11 @@ class InputService(QObject):
         assignments = self._get_assignments(self.get_enabled_toons())
         enabled = self.get_enabled_toons()
 
+        # Drain via _drain_all_held; for MOVEMENT keys this routes through
+        # _send_logical_action_km which early-returns when global_chat_active
+        # is True. Intentional: if chat is active, in-game keydowns were
+        # never dispatched to bg toons, so the matching keyups must not be
+        # either (see docs/superpowers/specs/2026-05-26-held-key-registry-design.md).
         self._drain_all_held(enabled, assignments)
 
         self.bg_typing_held.clear()
