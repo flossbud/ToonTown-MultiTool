@@ -100,7 +100,7 @@ class TestTtrMovementDefaults:
 
 class TestPerformAction:
     """`action` is the TTMT name for TTR's `performAction` control
-    (default key `Delete`). TTR-only — Corporate Clash has no analog.
+    (default key `Delete`). TTR-only; Corporate Clash has no analog.
     See docs/superpowers/specs/2026-05-26-perform-action-logical-action-design.md."""
 
     def test_action_supports_ttr(self):
