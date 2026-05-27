@@ -23,7 +23,7 @@ Past releases v1.0 through v2.3.0-a1 have been retagged to v0.1.0-alpha.1 throug
 - Play up to 4 toons at the same time. What you do on the active toon (move, jump, talk, attack) happens on the others too.
 - Each toon can use a different set of movement keys (WASD, arrow keys, or your own custom layout).
 - Save up to 8 key layouts and assign a different one to each toon.
-- Keep background toons from going idle: pick a key and an interval, and the app presses it for them automatically.
+- Keep background toons from going idle: pick a key and an interval, and the app presses it for them automatically. **(The use of Keep-Alive is against TTR and CC ToS, and thus is disabled by default. Enable in settings at your own risk.)**
 
 **Toontown Rewritten support**
 - Sign in to TTR from inside the app. If TTR has a login queue, you see your queue position and ETA.
