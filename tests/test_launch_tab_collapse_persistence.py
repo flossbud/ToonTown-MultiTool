@@ -1,4 +1,6 @@
 """LaunchTab: restore collapsed state from settings at init, persist on toggle."""
+from __future__ import annotations
+
 import pytest
 from PySide6.QtWidgets import QApplication
 

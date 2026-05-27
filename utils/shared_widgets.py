@@ -7,6 +7,7 @@ PulsingDot          — Animated status dot with optional breathing glow
 SmoothProgressBar   — Sub-pixel precision progress bar with rounded pill shape
 ElidingLabel        — QLabel that truncates long text with an ellipsis
 """
+from __future__ import annotations
 
 import math
 
