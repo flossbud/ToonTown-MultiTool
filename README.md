@@ -160,7 +160,7 @@ QT_QPA_PLATFORM=xcb python main.py
 
 ## Configuration
 
-Your settings, profiles, and account list live in `~/.config/toontown_multitool/`. Back it up, copy it between machines, or delete it to start fresh.
+Your settings, profiles, and account list live in `C:\Users\<username>\.config\toontown_multitool\` (Windows) or `~/.config/toontown_multitool/` (Linux). Back it up, copy it between machines, or delete it to start fresh.
 
 See [PRIVACY.md](PRIVACY.md) for the full breakdown of what's stored on your device and what gets sent to the game servers.
 
