@@ -263,6 +263,10 @@ def _is_packaged_install() -> bool:
     return not (script_dir + os.sep).startswith(home + os.sep)
 
 
+def _is_appimage_install() -> bool:
+    return bool(os.environ.get("APPIMAGE"))
+
+
 def _select_desktop_file_name() -> str | None:
     override = os.environ.get("TTMT_DESKTOP_FILE_NAME")
     if override:
@@ -278,6 +282,23 @@ def _select_desktop_file_name() -> str | None:
     # Otherwise the entry may be from a coexisting Flatpak/AUR/etc. install
     # of ourselves, and using it as the Wayland app_id makes the WM render
     # that foreign install's icon in the taskbar.
+    #
+    # AppImage returns None deliberately: a host .desktop entry with the
+    # canonical id almost always belongs to a different install method's
+    # version (current AUR / .deb / Flatpak, or a stale one of those that
+    # left files behind), and binding the AppImage to that id makes the WM
+    # render the foreign install's icon. The trade-off: the AppImage window
+    # no longer groups with any installed .desktop entry, so users who
+    # registered the AppImage's bundled .desktop via AppImageLauncher / a
+    # manual symlink lose menu integration, jump-list actions, and
+    # Categories= grouping for the running window. With None returned, Qt
+    # falls back to QCoreApplication::applicationName() ("ToonTown
+    # MultiTool" with a space) as the app_id, which is non-conformant per
+    # xdg-shell conventions but tolerated by Plasma/GNOME/sway. Acceptable
+    # trade-off because the alternative (wrong taskbar icon) is more
+    # visible than the lost integration.
+    if _is_appimage_install():
+        return None
     if _is_packaged_install():
         if _desktop_file_exists(canonical_id):
             return canonical_id
@@ -326,6 +347,7 @@ class MultiToonTool(QMainWindow):
         self._apply_startup_ttr_keymap()
 
         self.setObjectName("MultiToonToolMainWindow")
+        self._shutdown_complete = False
         QTimer.singleShot(0, self._capture_multitool_window_id)
 
         self.window_manager = WindowManager(self.settings_manager)
@@ -1231,28 +1253,67 @@ class MultiToonTool(QMainWindow):
 
     # ── Lifecycle ──────────────────────────────────────────────────────────
 
-    def closeEvent(self, event):
+    def shutdown(self):
+        # DIAG: this print stays in until we have confirmation from a real
+        # AppImage run that the close-path is actually reached and each
+        # sub-shutdown returns. Per docs/handoff-appimage-icon-and-close-leak-bug.md
+        # the open question is which (if any) of these calls hangs on close.
+        # Output goes to AppImage stderr (visible from terminal launch) and
+        # to ~/.cache/toontown-multitool/faulthandler.log via main.py:11.
+        print(f"[shutdown] entered pid={os.getpid()} complete={getattr(self, '_shutdown_complete', False)}")
+        if getattr(self, "_shutdown_complete", False):
+            return
+        self._shutdown_complete = True
         # Each shutdown call is wrapped independently so a failure in one
         # (e.g. pynput's listener.stop() racing its own initialization)
         # does not prevent the others from running. Skipping
         # window_manager.stop() leaves its poll thread alive and locks
         # the terminal.
-        for label, fn in (
-            ("hotkey_manager", self.hotkey_manager.stop),
-            ("launch_tab",      self.launch_tab.shutdown),
-            ("multitoon_tab",   self.multitoon_tab.shutdown),
-            ("window_manager",  self.window_manager.stop),
+        #
+        # The `getattr(self, obj_name, None)` guard is defensive against the
+        # dual call-site introduced by `_wire_app_lifecycle`: shutdown can
+        # fire from either `closeEvent` (normal user close) or `aboutToQuit`
+        # (e.g. signal-handled exit), and in the rare case that __init__ is
+        # still partway through when aboutToQuit fires, half-constructed
+        # attributes may be missing. Don't strip this guard under the
+        # "no defensive bloat" rule.
+        for label, obj_name, method_name in (
+            ("hotkey_manager", "hotkey_manager", "stop"),
+            ("launch_tab", "launch_tab", "shutdown"),
+            ("multitoon_tab", "multitoon_tab", "shutdown"),
+            ("window_manager", "window_manager", "stop"),
         ):
+            print(f"[shutdown] -> {label}.{method_name}()")
             try:
+                obj = getattr(self, obj_name, None)
+                if obj is None:
+                    print(f"[shutdown]    skipped: {obj_name} not set yet")
+                    continue
+                fn = getattr(obj, method_name)
                 fn()
+                print(f"[shutdown]    {label}.{method_name}() returned")
             except Exception as e:
                 print(f"[CloseEvent] {label} shutdown error: {e}")
         try:
             if hasattr(self, "update_checker"):
+                print("[shutdown] -> update_checker.shutdown()")
                 self.update_checker.shutdown()
+                print("[shutdown]    update_checker.shutdown() returned")
         except Exception as e:
             print(f"[Main] update_checker shutdown error: {e}")
+        print(f"[shutdown] complete pid={os.getpid()}")
+
+    def closeEvent(self, event):
+        # DIAG: see comment in shutdown(). Confirms whether closeEvent itself
+        # is reached on AppImage close (the highest-value open question per
+        # the handoff doc).
+        print(f"[closeEvent] entered pid={os.getpid()}")
+        self.shutdown()
         super().closeEvent(event)
+        print(f"[closeEvent] super returned, accepted={event.isAccepted()}")
+        if event.isAccepted():
+            _quit_app_after_main_window_close()
+        print(f"[closeEvent] exiting pid={os.getpid()}")
 
     def log(self, message: str):
         if not self.debug_tab.logging_enabled:
@@ -1262,26 +1323,47 @@ class MultiToonTool(QMainWindow):
 
 
 def _resolve_icon_path() -> str:
-    # Linux: AppImage/Flatpak register the icon in the XDG theme. This is the
-    # disk fallback used when theme lookup misses (e.g. Windows, dev runs).
+    # Disk fallback used when theme lookup misses or is intentionally skipped
+    # (e.g. Windows, dev runs, AppImage).
     base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
     filename = "ToonTownMultiTool-beta.png" if is_beta() else "ToonTownMultiTool.ico"
     return os.path.join(base, "assets", filename)
 
 
 def _resolve_app_icon() -> QIcon:
-    # Linux: AppImage/Flatpak register the icon in the XDG theme.
-    # Windows has no theme system, so fromTheme returns a null icon there;
-    # fall back to the bundled file so setWindowIcon has something to use.
-    # Dev-from-source intentionally skips the theme lookup: a coexisting
-    # packaged install of ourselves may have registered an older icon under
-    # the same id, which would otherwise shadow the bundled new one.
-    if _is_packaged_install():
+    # Theme lookup is used by AUR, .deb, and Flatpak installs, all of which
+    # register their own (current) icon files in the XDG icon theme at
+    # install time, so QIcon.fromTheme() returns the right icon for that
+    # install. Skipped for:
+    #   - Windows: no XDG theme system; fromTheme returns null.
+    #   - Dev-from-source: a coexisting packaged install of ourselves may
+    #     have registered an older icon under the same id, which would
+    #     shadow the bundled new one.
+    #   - AppImage: portable bundle; even if the system theme has an entry
+    #     from a prior AUR/Flatpak/.deb install on the same machine, that
+    #     entry may be stale (different version, removed package, etc).
+    #     The bundled icon inside the AppImage is the authoritative one.
+    if _is_packaged_install() and not _is_appimage_install():
         theme_id = BETA_DESKTOP_ID if is_beta() else APP_DESKTOP_ID
         themed = QIcon.fromTheme(theme_id)
         if not themed.isNull():
             return themed
     return QIcon(_resolve_icon_path())
+
+
+def _quit_app_after_main_window_close() -> None:
+    # DIAG: see shutdown() comment. This print confirms whether the close
+    # path actually reaches app.quit(), which is the prerequisite for
+    # aboutToQuit firing.
+    app = QApplication.instance()
+    print(f"[quit_after_close] app_instance={app is not None}")
+    if app is not None:
+        app.quit()
+        print("[quit_after_close] app.quit() called")
+
+
+def _wire_app_lifecycle(app: QApplication, window: MultiToonTool) -> None:
+    app.aboutToQuit.connect(window.shutdown)
 
 
 def _platform_only_modules(platform: str) -> set[str]:
@@ -1554,6 +1636,7 @@ if __name__ == "__main__":
     settings = SettingsManager()
     apply_theme(app, resolve_theme(settings))
     window = MultiToonTool()
+    _wire_app_lifecycle(app, window)
     window.show()
     _lock_cc_prefs_silently()
     # Fire the multi-install picker on a 0-delay timer so Qt has finished

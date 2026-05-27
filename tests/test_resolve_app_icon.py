@@ -73,14 +73,33 @@ def test_resolve_app_icon_skips_theme_when_not_packaged(qapp, monkeypatch):
 
 
 def test_resolve_app_icon_consults_theme_when_packaged(qapp, monkeypatch):
-    """Packaged installs (AppImage/Flatpak/PyInstaller/AUR) keep the existing
+    """Packaged installs other than AppImage keep the existing
     behaviour: prefer the system XDG theme, since it carries the multi-size
     icon set the WM expects."""
     import main
     from PySide6.QtGui import QIcon
     monkeypatch.setattr(main, "is_beta", lambda: False)
     monkeypatch.setattr(main, "_is_packaged_install", lambda: True, raising=False)
+    monkeypatch.setattr(main, "_is_appimage_install", lambda: False, raising=False)
     calls = []
     monkeypatch.setattr(QIcon, "fromTheme", lambda name: calls.append(name) or QIcon())
     main._resolve_app_icon()
     assert calls == [main.APP_DESKTOP_ID]
+
+
+def test_resolve_app_icon_skips_theme_for_appimage(qapp, monkeypatch):
+    """AppImages carry their own icon asset, so do not consult host themes.
+
+    A host theme lookup can resolve an icon exported by a removed or older
+    package of the same app id, which is the stale-icon class seen on KDE.
+    """
+    import main
+    from PySide6.QtGui import QIcon
+    monkeypatch.setattr(main, "is_beta", lambda: False)
+    monkeypatch.setattr(main, "_is_packaged_install", lambda: True, raising=False)
+    monkeypatch.setattr(main, "_is_appimage_install", lambda: True, raising=False)
+    calls = []
+    monkeypatch.setattr(QIcon, "fromTheme", lambda name: calls.append(name) or QIcon())
+    icon = main._resolve_app_icon()
+    assert calls == []
+    assert not icon.isNull()

@@ -93,6 +93,21 @@ def test_select_desktop_file_name_trusts_system_desktop_when_packaged(monkeypatc
     assert main._select_desktop_file_name() == main.APP_DESKTOP_ID
 
 
+def test_select_desktop_file_name_skips_appimage_host_desktop_ids(monkeypatch):
+    """AppImages should use the per-window icon unless explicitly overridden.
+
+    Host XDG desktop files may belong to a stale Flatpak/AUR install of the
+    same app id, which makes KDE Wayland bind the AppImage window to the wrong
+    taskbar icon.
+    """
+    import main
+    _clear_packaging_env(monkeypatch)
+    monkeypatch.setattr(main, "is_beta", lambda: False)
+    monkeypatch.setenv("APPIMAGE", "/tmp/TTMultiTool.AppImage")
+    monkeypatch.setattr(main, "_desktop_file_exists", lambda _id: True)
+    assert main._select_desktop_file_name() is None
+
+
 def test_select_desktop_file_name_honours_explicit_override(monkeypatch):
     """`TTMT_DESKTOP_FILE_NAME` env override wins over any gating, both for
     explicit values and the disable sentinels."""

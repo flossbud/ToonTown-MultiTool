@@ -22,6 +22,7 @@ def test_selects_reverse_dns_desktop_file_when_installed():
     with (
         patch("sys.platform", "linux"),
         patch("os.path.isfile", side_effect=fake_isfile),
+        patch("main._is_packaged_install", return_value=True),
         patch.dict("os.environ", {"XDG_DATA_DIRS": "/usr/share"}, clear=True),
     ):
         assert _select_desktop_file_name() == APP_DESKTOP_ID
@@ -36,6 +37,7 @@ def test_selects_legacy_desktop_file_when_only_legacy_is_installed():
     with (
         patch("sys.platform", "linux"),
         patch("os.path.isfile", side_effect=fake_isfile),
+        patch("main._is_packaged_install", return_value=True),
         patch.dict("os.environ", {"XDG_DATA_DIRS": "/usr/share"}, clear=True),
     ):
         assert _select_desktop_file_name() == LEGACY_DESKTOP_ID
