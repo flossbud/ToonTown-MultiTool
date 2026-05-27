@@ -1129,6 +1129,12 @@ class MultitoonTab(QWidget):
         self.game_badges = []       # list of QLabel game badges
         self.toon_buttons = []
         self.chat_buttons = []
+        # Per-slot cached "game type supports chat button" intent. Updated by
+        # CC/TTR paint paths via _set_chat_button_visible. Read by
+        # apply_chat_handling_mode when the global mode flips so visibility
+        # respects both the per-slot game intent and the master Simple/Advanced
+        # mode (Simple hides regardless; Advanced shows only TTR/empty slots).
+        self._chat_button_game_wants_visible = [True] * 4
         self.keep_alive_buttons = []
         self.ka_progress_bars = []
         self.help_buttons = []
@@ -2774,9 +2780,9 @@ class MultitoonTab(QWidget):
                                 names[source_idx] if source_idx < len(names) else None
                             )
                         # CC -> TTR transition: a previous CC paint may have hidden the chat
-                        # button. Restore visibility now that this slot is a TTR toon.
-                        if global_idx < len(self.chat_buttons):
-                            self.chat_buttons[global_idx].show()
+                        # button. TTR slot supports chat; visibility is then masked by the
+                        # global Chat Handling mode (Simple hides regardless).
+                        self._set_chat_button_visible(global_idx, True)
         self._refresh_toon_name_labels()
         self._refresh_toon_stats_labels()
         # Defer chrome refresh to the next event-loop tick so any in-progress
@@ -2808,8 +2814,7 @@ class MultitoonTab(QWidget):
                     self.laff_labels[global_idx].hide()
                 if global_idx < len(self.bean_labels):
                     self.bean_labels[global_idx].hide()
-                if global_idx < len(self.chat_buttons):
-                    self.chat_buttons[global_idx].hide()
+                self._set_chat_button_visible(global_idx, False)
                 if global_idx < len(self.slot_badges):
                     self.slot_badges[global_idx].set_toon_name(None)
                     self.slot_badges[global_idx].set_cc_auto_species(None)
@@ -2826,8 +2831,7 @@ class MultitoonTab(QWidget):
                 self.laff_labels[global_idx].hide()
             if global_idx < len(self.bean_labels):
                 self.bean_labels[global_idx].hide()
-            if global_idx < len(self.chat_buttons):
-                self.chat_buttons[global_idx].hide()
+            self._set_chat_button_visible(global_idx, False)
 
             # Apply portrait (CC paint mode in both layouts since the
             # widget is shared between them). If colors missing, fall
@@ -3030,19 +3034,42 @@ class MultitoonTab(QWidget):
             assignments=self.get_keymap_assignments(),
         )
 
-    def _apply_chat_handling_mode(self, mode: str) -> None:
-        """Show or hide the chat button on every toon card.
+    def _set_chat_button_visible(self, idx: int, want_visible: bool) -> None:
+        """Set per-slot chat-button visibility intent and apply the AND of
+        that intent with the global Chat Handling mode.
 
-        Simple mode: setVisible(False) on all chat_buttons[i]. The button's
-        underlying state (chat_enabled[i]) is preserved; flipping back to
-        Advanced re-exposes the buttons in whatever state they were last
-        in (or all-True by default).
+        Call sites: TTR paint passes True (TTR slot supports chat); CC paint
+        passes False (chat button not integrated for CC). The cached intent
+        is what apply_chat_handling_mode reads when the global mode flips,
+        so a Simple to Advanced transition does not re-show a CC slot's
+        button.
+        """
+        if idx >= len(self.chat_buttons):
+            return
+        self._chat_button_game_wants_visible[idx] = want_visible
+        is_advanced = self.get_chat_handling_mode() == "advanced"
+        self.chat_buttons[idx].setVisible(want_visible and is_advanced)
 
-        Idempotent. Called on startup with the persisted mode and on
-        every chat_handling_mode_changed signal."""
-        visible = mode == "advanced"
-        for btn in self.chat_buttons:
-            btn.setVisible(visible)
+    def apply_chat_handling_mode(self, mode: str) -> None:
+        """Refresh chat-button visibility on every slot to honor the global
+        Simple/Advanced mode.
+
+        Visibility per slot is (mode == "advanced") AND the cached per-slot
+        game-type intent in self._chat_button_game_wants_visible (set by CC
+        and TTR paint paths via _set_chat_button_visible). The button's
+        underlying chat_enabled state is preserved across mode flips.
+
+        Idempotent. Called once at startup with the persisted mode and on
+        every chat_handling_mode_changed signal from SettingsTab.
+        """
+        is_advanced = mode == "advanced"
+        for i, btn in enumerate(self.chat_buttons):
+            want = (
+                self._chat_button_game_wants_visible[i]
+                if i < len(self._chat_button_game_wants_visible)
+                else True
+            )
+            btn.setVisible(want and is_advanced)
 
     def get_keymap_assignments(self):
         """Return per-toon set indices from the set selector dropdowns."""

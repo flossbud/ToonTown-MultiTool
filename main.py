@@ -386,7 +386,7 @@ class MultiToonTool(QMainWindow):
         # Chat handling mode: SettingsTab toggle -> MultitoonTab visibility.
         # The signal carries the new mode string ("simple"|"advanced").
         self.settings_tab.chat_handling_mode_changed.connect(
-            self.multitoon_tab._apply_chat_handling_mode
+            self.multitoon_tab.apply_chat_handling_mode
         )
 
         # Apply the persisted Chat Handling mode once at startup so the
@@ -394,7 +394,7 @@ class MultiToonTool(QMainWindow):
         # a user toggle. Default "simple" -> buttons hidden.
         from utils.settings_keys import CHAT_HANDLING_MODE, CHAT_HANDLING_MODE_DEFAULT
         initial_mode = self.settings_manager.get(CHAT_HANDLING_MODE, CHAT_HANDLING_MODE_DEFAULT)
-        self.multitoon_tab._apply_chat_handling_mode(initial_mode)
+        self.multitoon_tab.apply_chat_handling_mode(initial_mode)
 
         # ── Build layout: banner + header + chip_rail + stacked content ────
         root = QVBoxLayout()
