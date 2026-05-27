@@ -53,6 +53,7 @@ ACTION_LABELS = {
     "tasks":   "Tasks",
     "map":     "Map",
     "sprint":  "Sprint",
+    "action":  "Perform Action",
 }
 
 DISPLAY_NAMES = {
@@ -616,7 +617,7 @@ class SetCard(QFrame):
             if action in ("forward", "reverse", "left", "right", "jump"):
                 move_col.addLayout(_make_key_row(action))
         for action in actions:
-            if action in ("book", "gags", "tasks", "map", "sprint"):
+            if action in ("book", "gags", "tasks", "map", "sprint", "action"):
                 aux_col.addLayout(_make_key_row(action))
         aux_col.addStretch()
         two_col.addLayout(move_col)

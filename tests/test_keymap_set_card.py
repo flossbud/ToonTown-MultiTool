@@ -350,3 +350,40 @@ def test_movementkeyfield_has_stylesheet_after_refresh(qapp):
         # Specific tokens we expect in the rendered QSS
         assert "QLineEdit" in f.styleSheet()
         assert ":hover" in f.styleSheet()
+
+
+def test_ttr_setcard_has_perform_action_field(qapp):
+    """The TTR keymap card renders a MovementKeyField for the new
+    'action' logical action. See docs/superpowers/specs/
+    2026-05-26-perform-action-logical-action-design.md."""
+    from tabs.keymap_tab import SetCard, MovementKeyField
+    card = SetCard(index=0, set_data={
+        "name": "Default", "forward": "Up", "reverse": "Down",
+        "left": "Left", "right": "Right", "jump": "space",
+        "book": "Alt_L", "gags": "g", "tasks": "t", "map": "Shift_L",
+        "action": "Delete",
+    }, active_game="ttr")
+    field = card.findChild(MovementKeyField, "key_field_action")
+    assert field is not None
+    assert field.get_key() == "Delete"
+
+
+def test_ttr_setcard_perform_action_label_text(qapp):
+    """The Perform Action row's label uses the human-readable
+    'Perform Action' string from ACTION_LABELS."""
+    from tabs.keymap_tab import SetCard, ACTION_LABELS
+    assert ACTION_LABELS.get("action") == "Perform Action"
+
+
+def test_cc_setcard_has_no_perform_action_field(qapp):
+    """`action` is registered TTR-only in logical_actions, so it must
+    not render on a CC SetCard."""
+    from tabs.keymap_tab import SetCard, MovementKeyField
+    card = SetCard(index=0, set_data={
+        "name": "Default", "forward": "w", "reverse": "s",
+        "left": "a", "right": "d", "jump": "space",
+        "book": "Escape", "gags": "q", "tasks": "e",
+        "map": "Alt_L", "sprint": "Shift_L",
+    }, active_game="cc")
+    field = card.findChild(MovementKeyField, "key_field_action")
+    assert field is None
