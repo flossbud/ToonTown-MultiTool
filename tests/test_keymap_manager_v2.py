@@ -268,3 +268,66 @@ class TestHasConflicts:
         mgr.update_set_key("cc", 0, "sprint", "w")  # collides with cc forward=w
         has, pairs = mgr.has_conflicts("cc", 0)
         assert has is True
+
+
+class TestPerformActionBackfill:
+    """`action` is a TTR-only logical action (see Task 1). The existing
+    backfill loop must add it to TTR sets and never to CC sets."""
+
+    def test_fresh_ttr_default_has_action_delete(self, tmp_path):
+        mgr, _ = _make_manager_with_file(tmp_path)
+        ttr = mgr.get_default("ttr")
+        assert ttr["action"] == "Delete"
+
+    def test_fresh_cc_default_has_no_action(self, tmp_path):
+        mgr, _ = _make_manager_with_file(tmp_path)
+        cc = mgr.get_default("cc")
+        assert "action" not in cc
+
+    def test_legacy_ttr_set_without_action_gets_delete(self, tmp_path):
+        """A keymaps.json file written by an older TTMT (no `action` in
+        any set) must have `action` backfilled to `Delete` on load."""
+        v2 = {
+            "version": 2,
+            "ttr": [
+                {"name": "Default", "forward": "w", "reverse": "s",
+                 "left": "a", "right": "d", "jump": "space",
+                 "book": "Alt_L", "gags": "g", "tasks": "t", "map": "Shift_L"},
+            ],
+            "cc": [{"name": "Default"}],
+        }
+        mgr, _ = _make_manager_with_file(tmp_path, v2)
+        ttr = mgr.get_default("ttr")
+        assert ttr["action"] == "Delete"
+
+    def test_legacy_alternate_ttr_set_action_mirrors_default(self, tmp_path):
+        """An alternate set that lacks `action` mirrors set 0's value
+        per the existing _backfill_missing_actions rule (set 0 backfills
+        from the registry default, then alternates mirror set 0)."""
+        v2 = {
+            "version": 2,
+            "ttr": [
+                {"name": "Default", "forward": "w", "reverse": "s",
+                 "left": "a", "right": "d", "jump": "space",
+                 "book": "Alt_L", "gags": "g", "tasks": "t", "map": "Shift_L"},
+                {"name": "Arrows", "forward": "Up", "reverse": "Down",
+                 "left": "Left", "right": "Right", "jump": "space",
+                 "book": "Alt_L", "gags": "g", "tasks": "t", "map": "Shift_L"},
+            ],
+            "cc": [{"name": "Default"}],
+        }
+        mgr, _ = _make_manager_with_file(tmp_path, v2)
+        ttr_default = mgr.get_set("ttr", 0)
+        ttr_alt = mgr.get_set("ttr", 1)
+        assert ttr_default["action"] == "Delete"
+        assert ttr_alt["action"] == "Delete"
+
+    def test_cc_set_never_gets_action_backfilled(self, tmp_path):
+        v2 = {
+            "version": 2,
+            "ttr": [{"name": "Default"}],
+            "cc": [{"name": "Default"}, {"name": "Alt"}],
+        }
+        mgr, _ = _make_manager_with_file(tmp_path, v2)
+        for i in range(mgr.num_sets("cc")):
+            assert "action" not in mgr.get_set("cc", i)
