@@ -8,7 +8,7 @@ A multitoon controller for **Toontown Rewritten** and **Corporate Clash** on Lin
 
 ---
 
-## Status: alpha (pre-1.0)
+## Status
 
 **ToonTown MultiTool is in active alpha development.** Features are still being added and some may change between alpha releases. Updates usually go smoothly: your saved accounts, profiles, and key layouts carry over.
 
