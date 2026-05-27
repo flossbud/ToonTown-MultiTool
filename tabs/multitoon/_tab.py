@@ -1173,6 +1173,7 @@ class MultitoonTab(QWidget):
             settings_manager=settings_manager,
             get_keymap_assignments=self.get_keymap_assignments,
             keymap_manager=self.keymap_manager,
+            get_chat_handling_mode=self.get_chat_handling_mode,
         )
         # Default to TTR for foreground-game cache if no game window has been focused yet.
         self.input_service._last_known_foreground_game = "ttr"
@@ -3028,6 +3029,20 @@ class MultitoonTab(QWidget):
             enabled_toons=self.enabled_toons,
             assignments=self.get_keymap_assignments(),
         )
+
+    def _apply_chat_handling_mode(self, mode: str) -> None:
+        """Show or hide the chat button on every toon card.
+
+        Simple mode: setVisible(False) on all chat_buttons[i]. The button's
+        underlying state (chat_enabled[i]) is preserved; flipping back to
+        Advanced re-exposes the buttons in whatever state they were last
+        in (or all-True by default).
+
+        Idempotent. Called on startup with the persisted mode and on
+        every chat_handling_mode_changed signal."""
+        visible = mode == "advanced"
+        for btn in self.chat_buttons:
+            btn.setVisible(visible)
 
     def get_keymap_assignments(self):
         """Return per-toon set indices from the set selector dropdowns."""

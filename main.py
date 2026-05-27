@@ -41,6 +41,16 @@ from utils.venv_reexec import reexec_into_venv
 reexec_into_venv(__file__)
 del reexec_into_venv
 
+# Diagnostic: trace every Xlib.display.Display open/close so we can
+# attribute the X11 client-slot leak (see
+# docs/handoff-pynput-x11-client-leak-bug.md) to a specific creation
+# site. No-op unless TTMT_TRACE_XLIB=1 is set; installed before any
+# Xlib import so the wrap catches every call.
+if os.environ.get("TTMT_TRACE_XLIB") == "1":
+    from utils._xlib_display_tracer import install as _install_xlib_tracer
+    _install_xlib_tracer()
+    del _install_xlib_tracer
+
 # Upper bound was previously (3, 14) to mirror the PySide6 6.8.x wheel
 # ceiling for pip-installed source runs. Bumped to (3, 15) once
 # archlinux:latest started shipping Python 3.14 by default: the AUR
@@ -372,6 +382,19 @@ class MultiToonTool(QMainWindow):
         ttr_api.set_log_callback(self._api_log.emit)
         self.settings_tab.input_backend_changed.connect(self.on_input_backend_changed)
         self.settings_tab.clear_credentials_requested.connect(self.on_clear_credentials_requested)
+
+        # Chat handling mode: SettingsTab toggle -> MultitoonTab visibility.
+        # The signal carries the new mode string ("simple"|"advanced").
+        self.settings_tab.chat_handling_mode_changed.connect(
+            self.multitoon_tab._apply_chat_handling_mode
+        )
+
+        # Apply the persisted Chat Handling mode once at startup so the
+        # chat buttons reflect the setting on launch without waiting for
+        # a user toggle. Default "simple" -> buttons hidden.
+        from utils.settings_keys import CHAT_HANDLING_MODE, CHAT_HANDLING_MODE_DEFAULT
+        initial_mode = self.settings_manager.get(CHAT_HANDLING_MODE, CHAT_HANDLING_MODE_DEFAULT)
+        self.multitoon_tab._apply_chat_handling_mode(initial_mode)
 
         # ── Build layout: banner + header + chip_rail + stacked content ────
         root = QVBoxLayout()
