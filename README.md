@@ -6,34 +6,13 @@ Built with Python + PySide6.
 
 ---
 
-## ✨ What's New in v2.0
+## ✨ Current Status: alpha (pre-1.0)
 
-**🪟 Windows Support**
-- v2.0 adds full Windows support
+ToonTown MultiTool is in active alpha development. The architecture is still changing as features land (wine input bridge for Corporate Clash, Proton / Bottles / Lutris integration, keymap schema redesigns, launcher and runtime redesigns). Expect occasional breaking changes between alpha releases.
 
-**⌨️ Custom Movement Key Sets**
-- v2.0 lets each slot use a different key set, and reads the default configuration for input translation
-- Up to 8 named key sets, fully customisable in the new Keymap tab
-  
-**🐾 TTR Companion App Integration**
-- Live toon name, laff, and jellybean count per slot in the Multitoon tab
-- Toon portrait images fetched and cached from the Rendition API
+**Downloading the latest release:** during alpha, `https://github.com/flossbud/ToonTown-MultiTool/releases/latest` will not resolve, because every alpha release has `prerelease=true` set and GitHub's "latest" endpoint excludes prereleases. To download the latest build, visit https://github.com/flossbud/ToonTown-MultiTool/releases and grab the top entry, or use the AUR `ttmt-beta` package on Arch.
 
-**💾 Session Profiles**
-- 5 named profiles storing which toon slots are active
-- Load via Ctrl+1–5 hotkeys or change via icons on the main tab, replacing the old Preset system
-
-**⚡ Input Backend**
-- Keystrokes now sent via Xlib `send_event` directly; no more `xdotool` subprocess per keypress, fixing GNOME Wayland portal auth prompts
-
-**🔐 Account Manager**
-- Store up to 16 TTR and CC accounts with one-click launch
-- Passwords stored exclusively in the OS keyring, never written to disk
-- Handles TTR login queues and 2FA automatically
-
-**🎮 Corporate Clash Support**
-- Launch, log in to, and multibox CC alongside TTR
-- The app automatically identifies which game each window belongs to
+**Past versions:** releases v1.0 through v2.3.0-a1 were retagged on 2026-05-27 to v0.1.0-alpha.1 through v0.6.0-alpha.2 as part of the pre-1.0 alpha rebrand. Each renamed GitHub Release carries a "Previously released as" callout at the top of its body, so anyone landing on the old tag URL sees the new name. See `CHANGELOG.md` and the rename mapping in `docs/superpowers/specs/2026-05-27-versioning-restructure-design.md`.
 
 ---
 
@@ -141,7 +120,7 @@ The Flatpak runs the app in a sandbox and uses `flatpak-spawn` to launch the hos
 ### Windows
 
 **Recommended:** Download the installer from the
-[latest release](https://github.com/flossbud/ToonTownMultiTool-v2/releases/latest):
+[Releases page](https://github.com/flossbud/ToonTown-MultiTool/releases) (grab the top entry, since `/releases/latest` does not resolve during the alpha period):
 
 - `ToonTownMultiTool-Setup-vX.Y.Z-Windows-x86_64.exe`
 
@@ -196,7 +175,7 @@ For unsupported distros (openSUSE, Gentoo, NixOS, etc.) or if you've already ins
 
 ### Linux: Wayland sessions
 
-Wayland is auto-detected in v2.0.2 and later. If you are running an older release on Wayland and hit input issues, force xcb:
+Wayland is auto-detected in v0.3.0-alpha.3 (previously v2.0.2) and later. If you are running an older release on Wayland and hit input issues, force xcb:
 
 ```bash
 QT_QPA_PLATFORM=xcb python main.py

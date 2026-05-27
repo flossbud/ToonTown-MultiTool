@@ -22,14 +22,20 @@
   </categories>
   <content_rating type="oars-1.1"/>
   <releases>
-    <release version="2.1.1" date="2026-05-04">
+    <release version="0.6.0-alpha.3" date="2026-05-27">
       <description>
-        <p>New: per-toon Keep-Alive discovery affordance — a help icon now appears next to the chat button on every toon card when Keep-Alive is disabled, with a popover that explains the feature and offers a one-click jump to the Settings group.</p>
-        <p>Refreshed Credits tab with new artwork and an updated product description.</p>
-        <p>Linux fixes: dark-mode detection on GNOME via the appearance portal with live re-theming; .desktop filename and StartupWMClass aligned with the Wayland app id so pinned launchers group correctly; SecretService keyring probe no longer blocks first launch.</p>
+        <p>Project versioning has been restructured to a pre-1.0 alpha line to better reflect maturity. Past releases v1.0 through v2.3.0-a1 have been retagged to v0.1.0-alpha.1 through v0.6.0-alpha.2.</p>
+        <p>This release includes the Perform Action logical-action feature for TTR, a unified Held-Key Registry with hold-duration verification, and Python 3.9 CI compatibility fixes inherited from the dev branch since v0.6.0-alpha.2.</p>
       </description>
     </release>
-    <release version="2.1.0" date="2026-05-03"/>
-    <release version="2.0.2" date="2026-04-26"/>
+    <release version="0.4.0-alpha.2" date="2026-05-04">
+      <description>
+        <p>New: per-toon Keep-Alive discovery affordance, a help icon now appears next to the chat button on every toon card when Keep-Alive is disabled, with a popover that explains the feature and offers a one-click jump to the Settings group.</p>
+        <p>Refreshed Credits tab with new artwork and an updated product description.</p>
+        <p>Linux fixes: dark-mode detection on GNOME via the appearance portal with live re-theming, .desktop filename and StartupWMClass aligned with the Wayland app id so pinned launchers group correctly, SecretService keyring probe no longer blocks first launch.</p>
+      </description>
+    </release>
+    <release version="0.4.0-alpha.1" date="2026-05-03"/>
+    <release version="0.3.0-alpha.3" date="2026-04-26"/>
   </releases>
 </component>

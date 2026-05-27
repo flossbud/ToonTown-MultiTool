@@ -1,12 +1,18 @@
-# ToonTown MultiTool — Changelog
+# ToonTown MultiTool: Changelog
 
-## v2.3 — Wine-launcher support for Corporate Clash (in progress)
+> **Versioning restructure (2026-05-27):** the project has been rebranded to a pre-1.0 alpha line to better reflect maturity. Past releases v1.0 through v2.3.0-a1 have been retagged to v0.1.0-alpha.1 through v0.6.0-alpha.2. New releases are versioned `v0.X.Y-alpha.Z`. See `v0.6.0-alpha.3` below for the first release in the new numbering, and the per-release notes for the previous tag of each historical release.
+
+## v0.6.0-alpha.3 (2026-05-27)
+
+Rebrand release. Source bumps the app version string, login User-Agent headers, README, Flatpak metainfo, and AUR ttmt-beta PKGBUILD (with `epoch=1` to keep paru -Syu working for existing beta users). Contains the inherited feature work from dev since v0.6.0-alpha.2: Perform Action logical-action for TTR, unified Held-Key Registry with hold-duration verification, F-key Held-State fix, and Python 3.9 CI compatibility fixes.
+
+## v0.6 (rebranded from v2.3): Wine-launcher support for Corporate Clash (in progress)
 
 ### Corporate Clash launching on Linux
 
 Detection and launch now cover Bottles (Flatpak and native), Lutris-managed Wine
-prefixes, Steam Proton compatdata, and plain `~/.wine` / `~/.local/share/wineprefixes`
-— regardless of bottle / prefix / shortcut name. Each launcher is invoked through
+prefixes, Steam Proton compatdata, and plain `~/.wine` / `~/.local/share/wineprefixes`,
+regardless of bottle / prefix / shortcut name. Each launcher is invoked through
 the right runtime: Bottles via `bottles-cli`, Steam Proton via the Proton runtime
 referenced in `compatdata/<appid>/config_info`, plain wine with `WINEPREFIX` set.
 Windows behavior is unchanged.
@@ -35,7 +41,7 @@ that third-party launchers should not store passwords.
 Token revocation: when a CC account is removed in TTMT (single-delete or
 "Clear all credentials"), a best-effort `/revoke_self` fires on a daemon
 thread so CC's authorized-launchers list stays clean. Local deletion is
-instant — the network call happens in the background.
+instant, the network call happens in the background.
 
 Token namespace is channel-aware: stable builds use the
 `toontown_multitool_cc_token` keyring service and beta builds use
@@ -48,7 +54,7 @@ password changed, etc.), the affected account turns red with the message
 re-enter your password." Editing the password triggers fresh registration
 on the next launch.
 
-## v2.2 — Scope Refinement
+## v0.5 (rebranded from v2.2): Scope Refinement
 
 ### Removed: Invasion Tracker
 
@@ -75,9 +81,9 @@ The left sidebar has been replaced with a horizontal "chip rail" beneath the hea
 
 ---
 
-## v2.0 — Complete Rewrite
+## v0.3 (rebranded from v2.0): Complete Rewrite
 
-v2.0 is a ground-up rewrite. The core concept is the same — multiboxing input control for Toontown — but almost every part of the app has been rebuilt or replaced.
+v2.0 was a ground-up rewrite. The core concept is the same (multiboxing input control for Toontown), but almost every part of the app was rebuilt or replaced.
 
 ---
 
@@ -89,7 +95,7 @@ CC can now be launched, logged in to, and multiboxed alongside TTR. The app auto
 
 ### New: Account Manager & Secure Login
 
-Accounts (up to 16, across TTR and CC) are stored with labels and usernames in a config file. Passwords live exclusively in the OS keyring — GNOME Keyring or KWallet on Linux, Windows Credential Locker on Windows. Nothing is written to disk in plaintext.
+Accounts (up to 16, across TTR and CC) are stored with labels and usernames in a config file. Passwords live exclusively in the OS keyring (GNOME Keyring or KWallet on Linux, Windows Credential Locker on Windows). Nothing is written to disk in plaintext.
 
 One-click launch from the Launch tab handles login automatically, including TTR queue waiting and 2FA prompts.
 
@@ -101,13 +107,13 @@ Previously, there was no credential storage. You had to log in to each instance 
 
 When TTR's local API is running, the Multitoon tab shows each toon's name, laff points, and jellybean count in real time. Toon portrait images are fetched from the Rendition API and cached.
 
-This works correctly with multiple Flatpak instances — each window is matched to its API port using the XRes X11 extension rather than broken namespace PID lookups.
+This works correctly with multiple Flatpak instances. Each window is matched to its API port using the XRes X11 extension rather than broken namespace PID lookups.
 
 ---
 
 ### New: Custom Movement Key Sets
 
-v1.5.1 assumed every toon used WASD. v2.0 introduces a Keymap tab where you can define up to 8 named key sets and assign one per toon slot. The default sets are WASD and Arrow Keys; additional sets can be fully customised.
+v1.5.1 assumed every toon used WASD. v2.0 introduced a Keymap tab where you can define up to 8 named key sets and assign one per toon slot. The default sets are WASD and Arrow Keys; additional sets can be fully customised.
 
 ---
 
@@ -121,13 +127,13 @@ Previously, invasion alerts existed as a background system but had no dedicated 
 
 ### New: Session Profiles
 
-Profiles replace the old Preset system. You can save 5 named profiles, each storing which toon slots are enabled. Profiles load instantly via Ctrl+1–5 hotkeys or the profile selector in the Multitoon tab.
+Profiles replace the old Preset system. You can save 5 named profiles, each storing which toon slots are enabled. Profiles load instantly via Ctrl+1 through Ctrl+5 hotkeys or the profile selector in the Multitoon tab.
 
 ---
 
 ### New: Windows Support
 
-v1.5.1 was Linux-only. v2.0 adds a Win32 input backend that sends keystrokes to background game windows using `PostMessage` — no focus stealing. Window detection and credential storage also work natively on Windows.
+v1.5.1 was Linux-only. v2.0 added a Win32 input backend that sends keystrokes to background game windows using `PostMessage`, with no focus stealing. Window detection and credential storage also work natively on Windows.
 
 ---
 
@@ -156,3 +162,7 @@ Keep-alive is now configured per toon slot in the Multitoon tab rather than as a
 - The Extras tab keep-alive controls (moved into Multitoon tab)
 - The old Presets system (replaced by Profiles)
 - Hardcoded WASD assumption
+
+---
+
+**Historical version references:** Mentions of v1.x and v2.x in section bodies above refer to releases that have been retagged. Each renamed GitHub Release also carries a "Previously released as" callout at the top of its body. The full old-to-new tag mapping lives in `docs/superpowers/specs/2026-05-27-versioning-restructure-design.md`.
