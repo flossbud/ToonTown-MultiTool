@@ -8,17 +8,45 @@ from __future__ import annotations
 import os
 import subprocess
 import threading
+import tempfile
 from PySide6.QtCore import QObject, Signal
 from services.launcher_env import build_launcher_env
 from services.ttr_login_service import ENGINE_SEARCH_PATHS, get_engine_executable_name
 from utils.game_registry import GameRegistry
-from utils.host_spawn import host_popen
+from utils.host_spawn import host_popen, in_flatpak
 
 _CUSTOM_APPROVAL_KEY = "ttr_engine_dir_approved_custom_dir"
 _TRUSTED_ENGINE_DIRS = {
     os.path.realpath(path)
     for path in ENGINE_SEARCH_PATHS
 }
+_FLATPAK_ENGINE_DIR_TO_APP_ID = {
+    os.path.realpath(os.path.expanduser("~/.var/app/com.toontownrewritten.Launcher/data")):
+        "com.toontownrewritten.Launcher",
+}
+_TTR_FLATPAK_ENGINE_SCRIPT = (
+    'export PATCHER_BASE="$XDG_DATA_HOME"; '
+    'export RESOURCES_BASE="/app"; '
+    'cd "$XDG_DATA_HOME" && exec ./TTREngine'
+)
+
+
+def _flatpak_app_for_engine_dir(engine_dir: str) -> str | None:
+    if not in_flatpak():
+        return None
+    return _FLATPAK_ENGINE_DIR_TO_APP_ID.get(os.path.realpath(engine_dir))
+
+
+def _build_log_tail(stderr_content: str, stdout_content: str) -> str:
+    parts = []
+    if stderr_content:
+        parts.append("stderr:\n" + stderr_content)
+    if stdout_content:
+        parts.append("stdout:\n" + stdout_content)
+    combined = "\n\n".join(parts).strip()
+    if len(combined) > 4000:
+        combined = combined[-4000:]
+    return combined
 
 
 def _approved_custom_engine_dir(settings_manager) -> str | None:
@@ -65,7 +93,10 @@ class TTRLauncher(QObject):
             )
             return
 
-        # Ensure executable
+        # Native/custom launches exec this path directly. Official Flatpak
+        # launches re-enter the TTR sandbox and exec its own data-dir
+        # TTREngine; chmod may be ineffective there if TTMT only has a
+        # read-only view of another app's files, so failures are ignored.
         if not os.access(engine_path, os.X_OK):
             try:
                 os.chmod(engine_path, 0o755)
@@ -76,10 +107,28 @@ class TTRLauncher(QObject):
             "TTR_GAMESERVER": gameserver,
             "TTR_PLAYCOOKIE": cookie,
         })
+        flatpak_app_id = _flatpak_app_for_engine_dir(engine_dir)
 
         def _run():
+            stdout_fd = None
+            stderr_fd = None
+            stdout_path = None
+            stderr_path = None
+            stdout_fh = None
+            stderr_fh = None
+            retcode = None
             try:
                 import sys
+                stdout_fd, stdout_path = tempfile.mkstemp(
+                    prefix="ttmt-ttr-stdout-", suffix=".log"
+                )
+                stderr_fd, stderr_path = tempfile.mkstemp(
+                    prefix="ttmt-ttr-stderr-", suffix=".log"
+                )
+                stdout_fh = os.fdopen(stdout_fd, "w+b")
+                stdout_fd = None
+                stderr_fh = os.fdopen(stderr_fd, "w+b")
+                stderr_fd = None
                 kwargs = {}
                 if sys.platform == "win32":
                     # Break out of the parent's Windows Job Object so closing
@@ -92,12 +141,23 @@ class TTRLauncher(QObject):
                     )
 
                 def _spawn():
+                    if flatpak_app_id:
+                        return host_popen(
+                            [
+                                "flatpak", "run", "--command=sh",
+                                flatpak_app_id, "-lc", _TTR_FLATPAK_ENGINE_SCRIPT,
+                            ],
+                            env=env,
+                            stdout=stdout_fh,
+                            stderr=stderr_fh,
+                            **kwargs
+                        )
                     return host_popen(
                         [engine_path],
                         cwd=engine_dir,
                         env=env,
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
+                        stdout=stdout_fh,
+                        stderr=stderr_fh,
                         **kwargs
                     )
 
@@ -116,14 +176,44 @@ class TTRLauncher(QObject):
                 retcode = self._game_process.wait()
                 GameRegistry.instance().unregister(pid)
                 self._game_process = None
-                # TTR redirects stdout/stderr to DEVNULL so there is no
-                # captured log tail to surface. Emit an empty string for
-                # raw_log_tail to keep the signal shape uniform with
-                # CCLauncher.game_exited.
-                self.game_exited.emit(retcode, "")
+
+                def _read_capture(fh):
+                    try:
+                        fh.flush()
+                        fh.seek(0)
+                        return fh.read().decode("utf-8", "replace").strip()
+                    except Exception as e:
+                        return f"<failed to read capture: {e}>"
+
+                stdout_content = _read_capture(stdout_fh)
+                stderr_content = _read_capture(stderr_fh)
+                raw_log = ""
+                if retcode != 0:
+                    raw_log = _build_log_tail(stderr_content, stdout_content)
+                self.game_exited.emit(retcode, raw_log)
 
             except Exception as e:
                 self.launch_failed.emit(f"Launch error: {e}")
+            finally:
+                for fd in (stdout_fd, stderr_fd):
+                    try:
+                        if fd is not None:
+                            os.close(fd)
+                    except Exception:
+                        pass
+                for fh in (stdout_fh, stderr_fh):
+                    try:
+                        if fh:
+                            fh.close()
+                    except Exception:
+                        pass
+                if retcode == 0:
+                    for path in (stdout_path, stderr_path):
+                        try:
+                            if path:
+                                os.unlink(path)
+                        except OSError:
+                            pass
 
         threading.Thread(target=_run, daemon=True).start()
 

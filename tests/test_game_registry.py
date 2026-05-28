@@ -1,6 +1,8 @@
 """Unit tests for GameRegistry singleton and PID classification."""
 
 import sys
+import errno
+import logging
 from unittest.mock import mock_open, patch
 
 import pytest
@@ -91,6 +93,23 @@ class TestX11ClassFallback:
             # PID_A is not registered so get_game(PID_A) returns None too.
             assert reg.get_game_for_window("0xabcd") == "cc"
             m.assert_called_once_with("0xabcd")
+
+    def test_proc_exe_enoent_is_debug_noise(self, monkeypatch, caplog):
+        """Flatpak XRes can return a host PID that does not exist in the
+        sandbox /proc namespace. Treat ENOENT like EACCES/EPERM: expected
+        lookup failure, not a warning-worthy runtime problem."""
+        def _raise(_path):
+            raise FileNotFoundError(errno.ENOENT, "No such file or directory")
+
+        monkeypatch.setattr("utils.game_registry.os.readlink", _raise)
+        with caplog.at_level(logging.DEBUG, logger="utils.game_registry"):
+            assert GameRegistry._get_process_name(PID_A) is None
+
+        assert not [
+            rec for rec in caplog.records
+            if rec.levelno >= logging.WARNING
+            and "Process name lookup failed" in rec.getMessage()
+        ]
 
     def test_proc_name_wins_over_x11_class_when_available(self):
         """X11 fallback only runs when /proc lookup fails — don't trample a
