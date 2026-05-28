@@ -8,6 +8,8 @@ session bus and runs it outside the sandbox.
 Outside Flatpak, the helpers fall through to the original argv unchanged.
 """
 
+from __future__ import annotations
+
 import os
 import shutil
 import subprocess
