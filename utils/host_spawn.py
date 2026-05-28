@@ -147,6 +147,34 @@ def host_visible_xauthority() -> str | None:
         return None
 
 
+def _build_forwarded_env(env, forward_xauthority: bool) -> dict:
+    """Return the {KEY: VALUE} subset of `env` that should reach the host child.
+
+    Strips vars whose values are meaningful only inside the sandbox
+    (_SANDBOX_ONLY_ENV) and any value that points at a sandbox-internal path,
+    so the host process inherits the correct host defaults from flatpak-portal.
+    When forward_xauthority is set, the sandbox Xauthority is replaced with a
+    host-visible copy so X11 auth survives the flatpak-spawn boundary.
+    """
+    forwarded = {}
+    if env is None:
+        return forwarded
+    if forward_xauthority:
+        xauthority = host_visible_xauthority()
+        if xauthority:
+            env = dict(env)
+            env["XAUTHORITY"] = xauthority
+    for k, v in env.items():
+        if v is None:
+            continue
+        if k in _SANDBOX_ONLY_ENV and not (forward_xauthority and k == "XAUTHORITY"):
+            continue
+        if _is_sandbox_path(str(v)):
+            continue
+        forwarded[k] = str(v)
+    return forwarded
+
+
 def host_popen(argv, **kwargs):
     """Popen variant. When sandboxed, pass env via --env=KEY=VAL flags so the
     host process sees the variables (Popen's env= alone only changes the
@@ -160,23 +188,9 @@ def host_popen(argv, **kwargs):
         return subprocess.Popen(argv, **kwargs)
     spawn = shutil.which("flatpak-spawn") or "/usr/bin/flatpak-spawn"
     env_flags = []
-    env = kwargs.pop("env", None)
-    if env is not None:
-        if forward_xauthority:
-            xauthority = host_visible_xauthority()
-            if xauthority:
-                env = dict(env)
-                env["XAUTHORITY"] = xauthority
-        for k, v in env.items():
-            if v is None:
-                continue
-            if k in _SANDBOX_ONLY_ENV and not (
-                forward_xauthority and k == "XAUTHORITY"
-            ):
-                continue
-            if _is_sandbox_path(str(v)):
-                continue
-            env_flags.append(f"--env={k}={v}")
+    forwarded_env = _build_forwarded_env(kwargs.pop("env", None), forward_xauthority)
+    for k, v in forwarded_env.items():
+        env_flags.append(f"--env={k}={v}")
     cwd = kwargs.pop("cwd", None)
     if cwd:
         env_flags.append(f"--directory={cwd}")

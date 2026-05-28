@@ -136,3 +136,35 @@ def test_host_visible_xauthority_returns_none_when_unset(monkeypatch):
     monkeypatch.delenv("XAUTHORITY", raising=False)
 
     assert host_spawn.host_visible_xauthority() is None
+
+
+def test_build_forwarded_env_filters_sandbox_vars_and_paths():
+    result = host_spawn._build_forwarded_env(
+        {
+            "DISPLAY": ":0",
+            "TTR_PLAYCOOKIE": "secret",
+            "PATH": "/app/bin",                       # sandbox-only KEY -> dropped
+            "XAUTHORITY": "/run/flatpak/Xauthority",  # sandbox-only + sandbox path -> dropped
+            "RESBASE": "/app/lib/x",                  # sandbox path VALUE -> dropped
+            "EMPTY": None,                            # None -> dropped
+        },
+        forward_xauthority=False,
+    )
+    assert result == {"DISPLAY": ":0", "TTR_PLAYCOOKIE": "secret"}
+
+
+def test_build_forwarded_env_none_returns_empty():
+    assert host_spawn._build_forwarded_env(None, forward_xauthority=False) == {}
+
+
+def test_build_forwarded_env_forward_xauthority_uses_host_copy(monkeypatch):
+    monkeypatch.setattr(
+        host_spawn, "host_visible_xauthority",
+        lambda: "/home/test/cache/Xauthority",
+    )
+    result = host_spawn._build_forwarded_env(
+        {"XAUTHORITY": "/run/flatpak/Xauthority", "DISPLAY": ":0"},
+        forward_xauthority=True,
+    )
+    assert result["XAUTHORITY"] == "/home/test/cache/Xauthority"
+    assert result["DISPLAY"] == ":0"
