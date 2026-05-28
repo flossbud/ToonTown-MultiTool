@@ -1,26 +1,114 @@
 import os
 import subprocess
 
+import pytest
+
 from utils import host_spawn
 
 
-def test_host_popen_forwards_copied_xauthority_when_requested(monkeypatch):
-    captured = {}
+def test_env_block_memfd_serializes_nul_separated():
+    fd = host_spawn._env_block_memfd({"A": "1", "B": "two"})
+    try:
+        os.lseek(fd, 0, os.SEEK_SET)
+        raw = os.read(fd, 4096)
+    finally:
+        os.close(fd)
+    # env -0 format: NUL-terminated KEY=VALUE records, insertion order.
+    assert raw == b"A=1\x00B=two\x00"
 
-    monkeypatch.setattr(host_spawn, "in_flatpak", lambda: True)
-    monkeypatch.setattr(host_spawn.shutil, "which", lambda name: "/usr/bin/flatpak-spawn")
-    monkeypatch.setattr(
-        host_spawn,
-        "host_visible_xauthority",
-        lambda: "/home/test/.cache/ttmt-host/Xauthority",
-    )
+
+def _spawn_capture(monkeypatch):
+    """Install a fake subprocess.Popen that records argv/kwargs and, when an
+    --env-fd flag is present, reads the in-memory env block back (the fd is
+    still open during the Popen call). Returns the dict it populates."""
+    captured = {}
 
     def fake_popen(argv, **kwargs):
         captured["argv"] = argv
         captured["kwargs"] = kwargs
+        block = {}
+        for arg in argv:
+            if isinstance(arg, str) and arg.startswith("--env-fd="):
+                fd = int(arg.split("=", 1)[1])
+                os.lseek(fd, 0, os.SEEK_SET)
+                raw = b""
+                while True:
+                    chunk = os.read(fd, 4096)
+                    if not chunk:
+                        break
+                    raw += chunk
+                for record in raw.split(b"\0"):
+                    if record:
+                        k, _, v = record.partition(b"=")
+                        block[k.decode()] = v.decode()
+        captured["env_fd_block"] = block
         return object()
 
     monkeypatch.setattr(subprocess, "Popen", fake_popen)
+    return captured
+
+
+def test_host_popen_routes_env_through_env_fd_not_argv(monkeypatch):
+    monkeypatch.setattr(host_spawn, "in_flatpak", lambda: True)
+    monkeypatch.setattr(host_spawn.shutil, "which", lambda name: "/usr/bin/flatpak-spawn")
+    captured = _spawn_capture(monkeypatch)
+
+    host_spawn.host_popen(
+        ["TTREngine"],
+        env={"DISPLAY": ":0", "TTR_PLAYCOOKIE": "secret-cookie"},
+    )
+
+    argv = captured["argv"]
+    assert not any(isinstance(a, str) and a.startswith("--env=") for a in argv)
+    assert all("secret-cookie" not in str(a) for a in argv)
+    env_fd_flags = [a for a in argv if isinstance(a, str) and a.startswith("--env-fd=")]
+    assert len(env_fd_flags) == 1
+    fd = int(env_fd_flags[0].split("=", 1)[1])
+    assert fd in captured["kwargs"]["pass_fds"]
+    assert captured["env_fd_block"]["TTR_PLAYCOOKIE"] == "secret-cookie"
+    assert captured["env_fd_block"]["DISPLAY"] == ":0"
+
+
+def test_host_popen_no_env_means_no_env_fd(monkeypatch):
+    monkeypatch.setattr(host_spawn, "in_flatpak", lambda: True)
+    monkeypatch.setattr(host_spawn.shutil, "which", lambda name: "/usr/bin/flatpak-spawn")
+    captured = _spawn_capture(monkeypatch)
+
+    host_spawn.host_popen(["xdg-open", "https://example.test"])
+
+    argv = captured["argv"]
+    assert not any(isinstance(a, str) and a.startswith("--env-fd=") for a in argv)
+    assert not captured["kwargs"].get("pass_fds")
+
+
+def test_host_popen_closes_env_fd_after_spawn(monkeypatch):
+    monkeypatch.setattr(host_spawn, "in_flatpak", lambda: True)
+    monkeypatch.setattr(host_spawn.shutil, "which", lambda name: "/usr/bin/flatpak-spawn")
+    seen = {}
+
+    def fake_popen(argv, **kwargs):
+        for a in argv:
+            if isinstance(a, str) and a.startswith("--env-fd="):
+                seen["fd"] = int(a.split("=", 1)[1])
+        return object()
+
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
+
+    host_spawn.host_popen(["TTREngine"], env={"TTR_PLAYCOOKIE": "secret"})
+
+    assert "fd" in seen
+    with pytest.raises(OSError):
+        os.fstat(seen["fd"])  # parent must close its copy after the spawn
+
+
+def test_host_popen_forwards_copied_xauthority_when_requested(monkeypatch):
+    monkeypatch.setattr(host_spawn, "in_flatpak", lambda: True)
+    monkeypatch.setattr(host_spawn.shutil, "which", lambda name: "/usr/bin/flatpak-spawn")
+    monkeypatch.setattr(
+        host_spawn, "host_visible_xauthority",
+        lambda: "/home/test/.cache/ttmt-host/Xauthority",
+    )
+    captured = _spawn_capture(monkeypatch)
 
     host_spawn.host_popen(
         ["TTREngine"],
@@ -28,30 +116,27 @@ def test_host_popen_forwards_copied_xauthority_when_requested(monkeypatch):
         forward_xauthority=True,
     )
 
-    assert "--env=XAUTHORITY=/home/test/.cache/ttmt-host/Xauthority" in captured["argv"]
-    assert "--env=XAUTHORITY=/run/flatpak/Xauthority" not in captured["argv"]
-    assert "--env=DISPLAY=:0" in captured["argv"]
+    argv = captured["argv"]
+    assert not any(isinstance(a, str) and a.startswith("--env=") for a in argv)
+    assert all("/run/flatpak/Xauthority" not in str(a) for a in argv)
+    assert captured["env_fd_block"]["XAUTHORITY"] == "/home/test/.cache/ttmt-host/Xauthority"
+    assert captured["env_fd_block"]["DISPLAY"] == ":0"
 
 
 def test_host_popen_strips_sandbox_xauthority_by_default(monkeypatch):
-    captured = {}
-
     monkeypatch.setattr(host_spawn, "in_flatpak", lambda: True)
     monkeypatch.setattr(host_spawn.shutil, "which", lambda name: "/usr/bin/flatpak-spawn")
-
-    def fake_popen(argv, **kwargs):
-        captured["argv"] = argv
-        return object()
-
-    monkeypatch.setattr(subprocess, "Popen", fake_popen)
+    captured = _spawn_capture(monkeypatch)
 
     host_spawn.host_popen(
         ["env"],
         env={"DISPLAY": ":0", "XAUTHORITY": "/run/flatpak/Xauthority"},
     )
 
-    assert "--env=XAUTHORITY=/run/flatpak/Xauthority" not in captured["argv"]
-    assert "--env=DISPLAY=:0" in captured["argv"]
+    # Without forward_xauthority the sandbox cookie is dropped entirely; only
+    # the host-safe var survives, and it travels via the fd, not argv.
+    assert captured["env_fd_block"] == {"DISPLAY": ":0"}
+    assert not any(isinstance(a, str) and a.startswith("--env=") for a in captured["argv"])
 
 
 def test_host_visible_cache_dir_uses_xdg_when_valid(tmp_path, monkeypatch):
@@ -155,6 +240,16 @@ def test_build_forwarded_env_filters_sandbox_vars_and_paths():
 
 def test_build_forwarded_env_none_returns_empty():
     assert host_spawn._build_forwarded_env(None, forward_xauthority=False) == {}
+
+
+def test_build_forwarded_env_forward_xauthority_drops_xauth_when_host_copy_unavailable(monkeypatch):
+    monkeypatch.setattr(host_spawn, "host_visible_xauthority", lambda: None)
+    result = host_spawn._build_forwarded_env(
+        {"XAUTHORITY": "/run/flatpak/Xauthority", "DISPLAY": ":0"},
+        forward_xauthority=True,
+    )
+    assert "XAUTHORITY" not in result
+    assert result == {"DISPLAY": ":0"}
 
 
 def test_build_forwarded_env_forward_xauthority_uses_host_copy(monkeypatch):

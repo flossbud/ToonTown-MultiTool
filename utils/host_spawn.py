@@ -153,8 +153,8 @@ def _build_forwarded_env(env, forward_xauthority: bool) -> dict:
     Strips vars whose values are meaningful only inside the sandbox
     (_SANDBOX_ONLY_ENV) and any value that points at a sandbox-internal path,
     so the host process inherits the correct host defaults from flatpak-portal.
-    When forward_xauthority is set, the sandbox Xauthority is replaced with a
-    host-visible copy so X11 auth survives the flatpak-spawn boundary.
+    When `forward_xauthority` is `True`, the sandbox Xauthority is replaced
+    with a host-visible copy so X11 auth survives the flatpak-spawn boundary.
     """
     forwarded = {}
     if env is None:
@@ -175,10 +175,31 @@ def _build_forwarded_env(env, forward_xauthority: bool) -> dict:
     return forwarded
 
 
+def _env_block_memfd(forwarded_env: dict) -> int:
+    """Serialize forwarded_env to an anonymous in-memory fd in `env -0` format
+    (NUL-terminated KEY=VALUE records) and return the fd, seeked to 0.
+
+    Used with `flatpak-spawn --env-fd` so credential values (play cookies,
+    tokens) never appear on the host command line in /proc/<pid>/cmdline.
+    The caller owns the returned fd and must close it after the spawn.
+    """
+    block = b"".join(
+        f"{k}={v}".encode("utf-8") + b"\0" for k, v in forwarded_env.items()
+    )
+    fd = os.memfd_create("ttmt-host-env", 0)
+    try:
+        os.write(fd, block)
+        os.lseek(fd, 0, os.SEEK_SET)
+    except OSError:
+        os.close(fd)
+        raise
+    return fd
+
+
 def host_popen(argv, **kwargs):
-    """Popen variant. When sandboxed, pass env via --env=KEY=VAL flags so the
-    host process sees the variables (Popen's env= alone only changes the
-    sandbox-side environment, which flatpak-spawn does not forward by default).
+    """Popen variant. When sandboxed, forward env to the host process through
+    flatpak-spawn's --env-fd (an in-memory fd of NUL-separated KEY=VALUE
+    records) so credential values never land on the host command line.
 
     Strips env vars whose values are sandbox-internal so the host process
     inherits the correct host defaults from flatpak-portal.
@@ -189,9 +210,22 @@ def host_popen(argv, **kwargs):
     spawn = shutil.which("flatpak-spawn") or "/usr/bin/flatpak-spawn"
     env_flags = []
     forwarded_env = _build_forwarded_env(kwargs.pop("env", None), forward_xauthority)
-    for k, v in forwarded_env.items():
-        env_flags.append(f"--env={k}={v}")
     cwd = kwargs.pop("cwd", None)
     if cwd:
         env_flags.append(f"--directory={cwd}")
-    return subprocess.Popen([spawn, "--host", *env_flags, *argv], **kwargs)
+    env_fd = None
+    if forwarded_env:
+        # Pass the env through an in-memory fd rather than --env=KEY=VAL argv
+        # flags so credential values never appear in the host process's
+        # /proc/<pid>/cmdline. pass_fds keeps the fd at the same number in the
+        # flatpak-spawn child (it is not renumbered), which is what --env-fd
+        # references. The child gets its own dup across fork, so the parent
+        # closes its copy as soon as Popen returns.
+        env_fd = _env_block_memfd(forwarded_env)
+        env_flags.append(f"--env-fd={env_fd}")
+        kwargs["pass_fds"] = tuple(kwargs.get("pass_fds", ())) + (env_fd,)
+    try:
+        return subprocess.Popen([spawn, "--host", *env_flags, *argv], **kwargs)
+    finally:
+        if env_fd is not None:
+            os.close(env_fd)
