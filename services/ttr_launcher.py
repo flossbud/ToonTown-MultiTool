@@ -13,30 +13,13 @@ from PySide6.QtCore import QObject, Signal
 from services.launcher_env import build_launcher_env
 from services.ttr_login_service import ENGINE_SEARCH_PATHS, get_engine_executable_name
 from utils.game_registry import GameRegistry
-from utils.host_spawn import host_popen, in_flatpak
+from utils.host_spawn import host_popen
 
 _CUSTOM_APPROVAL_KEY = "ttr_engine_dir_approved_custom_dir"
 _TRUSTED_ENGINE_DIRS = {
     os.path.realpath(path)
     for path in ENGINE_SEARCH_PATHS
 }
-_FLATPAK_ENGINE_DIR_TO_APP_ID = {
-    os.path.realpath(os.path.expanduser("~/.var/app/com.toontownrewritten.Launcher/data")):
-        "com.toontownrewritten.Launcher",
-}
-_TTR_FLATPAK_ENGINE_SCRIPT = (
-    'export PATCHER_BASE="$XDG_DATA_HOME"; '
-    'export RESOURCES_BASE="/app"; '
-    'cd "$XDG_DATA_HOME" && exec ./TTREngine'
-)
-
-
-def _flatpak_app_for_engine_dir(engine_dir: str) -> str | None:
-    if not in_flatpak():
-        return None
-    return _FLATPAK_ENGINE_DIR_TO_APP_ID.get(os.path.realpath(engine_dir))
-
-
 def _build_log_tail(stderr_content: str, stdout_content: str) -> str:
     parts = []
     if stderr_content:
@@ -93,10 +76,9 @@ class TTRLauncher(QObject):
             )
             return
 
-        # Native/custom launches exec this path directly. Official Flatpak
-        # launches re-enter the TTR sandbox and exec its own data-dir
-        # TTREngine; chmod may be ineffective there if TTMT only has a
-        # read-only view of another app's files, so failures are ignored.
+        # The official TTR Flatpak data dir may be mounted read-only inside
+        # TTMT, so chmod failures are ignored. The host launch below still
+        # executes the selected engine path directly.
         if not os.access(engine_path, os.X_OK):
             try:
                 os.chmod(engine_path, 0o755)
@@ -107,7 +89,10 @@ class TTRLauncher(QObject):
             "TTR_GAMESERVER": gameserver,
             "TTR_PLAYCOOKIE": cookie,
         })
-        flatpak_app_id = _flatpak_app_for_engine_dir(engine_dir)
+        # XAUTHORITY forwarding is host_popen's job: forward_xauthority=True (below)
+        # copies the sandbox cookie to a host-visible path and keeps it from being
+        # stripped as a sandbox-only var. Don't also set it here - that would be a
+        # redundant double copy with two sources of truth.
 
         def _run():
             stdout_fd = None
@@ -141,21 +126,11 @@ class TTRLauncher(QObject):
                     )
 
                 def _spawn():
-                    if flatpak_app_id:
-                        return host_popen(
-                            [
-                                "flatpak", "run", "--command=sh",
-                                flatpak_app_id, "-lc", _TTR_FLATPAK_ENGINE_SCRIPT,
-                            ],
-                            env=env,
-                            stdout=stdout_fh,
-                            stderr=stderr_fh,
-                            **kwargs
-                        )
                     return host_popen(
                         [engine_path],
                         cwd=engine_dir,
                         env=env,
+                        forward_xauthority=True,
                         stdout=stdout_fh,
                         stderr=stderr_fh,
                         **kwargs

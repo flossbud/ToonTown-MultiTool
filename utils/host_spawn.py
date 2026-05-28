@@ -98,6 +98,55 @@ def _is_sandbox_path(value: str) -> bool:
     return value.startswith(("/app/", "/run/flatpak/", "/usr/share/runtime/"))
 
 
+def host_visible_cache_dir(name: str) -> str:
+    """Return a per-user cache directory visible to host-spawned processes."""
+    base = os.environ.get("XDG_CACHE_HOME")
+    if not base or _is_sandbox_path(base):
+        home = os.path.expanduser("~")
+        flatpak_id = os.environ.get("FLATPAK_ID")
+        if in_flatpak() and flatpak_id:
+            base = os.path.join(home, ".var", "app", flatpak_id, "cache")
+        else:
+            base = os.path.join(home, ".cache")
+    path = os.path.join(base, name)
+    os.makedirs(path, mode=0o700, exist_ok=True)
+    try:
+        os.chmod(path, 0o700)
+    except OSError:
+        pass
+    return path
+
+
+def host_visible_xauthority() -> str | None:
+    """Copy Flatpak's Xauthority file to a host-visible path.
+
+    The sandbox exposes Xauthority as /run/flatpak/Xauthority, which is not a
+    valid path for host processes launched through flatpak-spawn. Copying the
+    cookie into the app cache gives host X11 clients a real file to read.
+    """
+    src = os.environ.get("XAUTHORITY")
+    if not src or not os.path.isfile(src):
+        return None
+    if not in_flatpak() and not _is_sandbox_path(src):
+        return src
+    try:
+        with open(src, "rb") as src_fh:
+            data = src_fh.read()
+        if not data:
+            return None
+        dest = os.path.join(host_visible_cache_dir("host-spawn"), "Xauthority")
+        fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "wb") as dest_fh:
+            dest_fh.write(data)
+        try:
+            os.chmod(dest, 0o600)
+        except OSError:
+            pass
+        return dest
+    except OSError:
+        return None
+
+
 def host_popen(argv, **kwargs):
     """Popen variant. When sandboxed, pass env via --env=KEY=VAL flags so the
     host process sees the variables (Popen's env= alone only changes the
@@ -106,16 +155,24 @@ def host_popen(argv, **kwargs):
     Strips env vars whose values are sandbox-internal so the host process
     inherits the correct host defaults from flatpak-portal.
     """
+    forward_xauthority = kwargs.pop("forward_xauthority", False)
     if not in_flatpak():
         return subprocess.Popen(argv, **kwargs)
     spawn = shutil.which("flatpak-spawn") or "/usr/bin/flatpak-spawn"
     env_flags = []
     env = kwargs.pop("env", None)
     if env is not None:
+        if forward_xauthority:
+            xauthority = host_visible_xauthority()
+            if xauthority:
+                env = dict(env)
+                env["XAUTHORITY"] = xauthority
         for k, v in env.items():
             if v is None:
                 continue
-            if k in _SANDBOX_ONLY_ENV:
+            if k in _SANDBOX_ONLY_ENV and not (
+                forward_xauthority and k == "XAUTHORITY"
+            ):
                 continue
             if _is_sandbox_path(str(v)):
                 continue

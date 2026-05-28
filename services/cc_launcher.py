@@ -15,6 +15,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import tempfile
 import threading
 from dataclasses import replace
 from pathlib import Path
@@ -29,7 +30,7 @@ from services.steam_compat_mapping import steam_compat_choice
 from services.steam_proton_tools import enumerate_proton_tools
 from services.wine_runtimes import WineInstall
 from utils.game_registry import GameRegistry
-from utils.host_spawn import host_popen
+from utils.host_spawn import host_popen, host_visible_cache_dir, in_flatpak
 
 # ── PID → stdout-path registry ────────────────────────────────────────
 # Populated by `_run` when a CC process is spawned, popped in its
@@ -64,6 +65,16 @@ def get_stdout_path_for_pid(pid: int) -> Path | None:
 
 _LOG_TAIL_LINES = 50
 _LOG_TAIL_TOTAL_BYTES = 4000
+
+
+def _capture_temp_dir() -> str | None:
+    if not in_flatpak():
+        return None
+    return host_visible_cache_dir("launch-logs")
+
+
+def _mk_capture_file(prefix: str) -> tuple[int, str]:
+    return tempfile.mkstemp(prefix=prefix, suffix=".log", dir=_capture_temp_dir())
 
 
 def _build_log_tail(stderr_text: str, stdout_text: str) -> str:
@@ -367,20 +378,30 @@ class CCLauncher(QObject):
 
         def _run():
             import sys
-            import tempfile
-            # Capture BOTH stdout and stderr to temp files. DXVK 'info:'
-            # lines and CC's own progress messages go to stdout; bottles
-            # / wine / fsync messages go to stderr. We need both to
-            # diagnose silent exits. Use mkstemp (atomic create+name) so
-            # there's no TOCTOU between picking a name and opening it.
-            stdout_fd, stdout_path = tempfile.mkstemp(prefix="ttmt-cc-stdout-", suffix=".log")
-            stderr_fd, stderr_path = tempfile.mkstemp(prefix="ttmt-cc-stderr-", suffix=".log")
-            stdout_fh = os.fdopen(stdout_fd, "w+b")
-            stderr_fh = os.fdopen(stderr_fd, "w+b")
+            stdout_fd = None
+            stderr_fd = None
+            stdout_path = None
+            stderr_path = None
+            stdout_fh = None
+            stderr_fh = None
             retcode = None
             pid = None  # Set after successful spawn; used in finally to unregister
             proton_compatdata = None  # Set after successful spawn for steam-proton
             try:
+                # Capture BOTH stdout and stderr to temp files. DXVK 'info:'
+                # lines and CC's own progress messages go to stdout; bottles
+                # / wine / fsync messages go to stderr. We need both to
+                # diagnose silent exits. Use mkstemp (atomic create+name) so
+                # there's no TOCTOU between picking a name and opening it.
+                # Create them inside the try so a host-visible cache-dir
+                # failure surfaces as launch_failed instead of silently
+                # killing this daemon thread.
+                stdout_fd, stdout_path = _mk_capture_file("ttmt-cc-stdout-")
+                stdout_fh = os.fdopen(stdout_fd, "w+b")
+                stdout_fd = None
+                stderr_fd, stderr_path = _mk_capture_file("ttmt-cc-stderr-")
+                stderr_fh = os.fdopen(stderr_fd, "w+b")
+                stderr_fd = None
                 kwargs = {}
                 if sys.platform == "win32" and install.launcher == "native":
                     kwargs["creationflags"] = (
@@ -491,21 +512,32 @@ class CCLauncher(QObject):
                         wine_input_bridge.shutdown_for_prefix(install.prefix_path)
                     except Exception as e:
                         print(f"[CCLauncher] _run: bridge post-exit cleanup error: {e}")
+                # Close any raw mkstemp fd that fdopen never took ownership
+                # of (e.g. failure between the two captures), then close the
+                # file handles. Without this a partial-init failure leaks an fd.
+                for fd in (stdout_fd, stderr_fd):
+                    try:
+                        if fd is not None:
+                            os.close(fd)
+                    except Exception:
+                        pass
                 # Always close both fds. Without this each successful
                 # launch leaks two file descriptors on the parent.
                 for fh in (stdout_fh, stderr_fh):
                     try:
-                        fh.close()
+                        if fh:
+                            fh.close()
                     except Exception:
                         pass
                 # Unlink capture files on clean exit. Preserve them on
                 # rc != 0 or on exception so the user can grep them
                 # post-hoc. Without this every launch accumulates two
-                # files in /tmp indefinitely.
+                # files in the cache dir indefinitely.
                 if retcode == 0:
                     for path in (stdout_path, stderr_path):
                         try:
-                            os.unlink(path)
+                            if path:
+                                os.unlink(path)
                         except OSError:
                             pass
 

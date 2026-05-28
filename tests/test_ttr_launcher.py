@@ -44,10 +44,12 @@ class _Proc:
         return self._returncode
 
 
-def test_flatpak_ttr_engine_uses_official_flatpak_runtime(tmp_path, monkeypatch):
-    """When TTMT is sandboxed and the selected TTREngine belongs to the
-    official TTR Flatpak data dir, launch it inside that Flatpak runtime
-    instead of running the downloaded binary directly on the host."""
+def test_flatpak_ttr_engine_uses_direct_host_launch_with_xauthority(tmp_path, monkeypatch):
+    """Launch the selected TTREngine directly on the host and ask host_popen to
+    forward a host-visible Xauthority file so X11 auth survives the flatpak-spawn
+    boundary. The Xauthority copy/injection itself is host_popen's responsibility
+    (covered in test_host_spawn.py); here we only assert the launcher requests it
+    via forward_xauthority and does not embed the cookie in argv."""
     _qapp()
     engine_dir = tmp_path / "ttr-data"
     engine_dir.mkdir()
@@ -58,13 +60,6 @@ def test_flatpak_ttr_engine_uses_official_flatpak_runtime(tmp_path, monkeypatch)
     captured = {}
     spawned = threading.Event()
 
-    monkeypatch.setattr(ttr_launcher, "in_flatpak", lambda: True, raising=False)
-    monkeypatch.setattr(
-        ttr_launcher,
-        "_FLATPAK_ENGINE_DIR_TO_APP_ID",
-        {os.path.realpath(engine_dir): "com.toontownrewritten.Launcher"},
-        raising=False,
-    )
     monkeypatch.setattr(ttr_launcher, "_is_trusted_engine_path", lambda *_: True)
 
     def fake_host_popen(cmd, **kwargs):
@@ -79,19 +74,12 @@ def test_flatpak_ttr_engine_uses_official_flatpak_runtime(tmp_path, monkeypatch)
     launcher.launch("gameserver", "secret-cookie", str(engine_dir))
 
     assert spawned.wait(timeout=2.0), "TTR launcher did not spawn"
-    assert captured["cmd"][:4] == [
-        "flatpak", "run", "--command=sh", "com.toontownrewritten.Launcher",
-    ]
-    assert captured["cmd"][-2:] == [
-        "-lc",
-        'export PATCHER_BASE="$XDG_DATA_HOME"; '
-        'export RESOURCES_BASE="/app"; '
-        'cd "$XDG_DATA_HOME" && exec ./TTREngine',
-    ]
+    assert captured["cmd"] == [str(engine)]
     assert "secret-cookie" not in " ".join(captured["cmd"])
     assert captured["kwargs"]["env"]["TTR_PLAYCOOKIE"] == "secret-cookie"
     assert captured["kwargs"]["env"]["TTR_GAMESERVER"] == "gameserver"
-    assert "cwd" not in captured["kwargs"]
+    assert captured["kwargs"]["forward_xauthority"] is True
+    assert captured["kwargs"]["cwd"] == str(engine_dir)
 
 
 def test_ttr_nonzero_exit_emits_captured_log_tail(tmp_path, monkeypatch):

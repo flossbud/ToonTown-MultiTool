@@ -5,6 +5,7 @@ arguments it was called with.
 """
 
 import sys
+import os
 import pytest
 from PySide6.QtCore import QCoreApplication
 
@@ -66,6 +67,27 @@ def test_launch_calls_host_popen_with_built_command(qapp, tmp_path, monkeypatch)
     assert env["SENTRY_ENVIRONMENT"] == "corporateclash"
     # CC_OSST_TOKEN is the old contract and must not leak through.
     assert "CC_OSST_TOKEN" not in env
+
+
+def test_cc_capture_files_use_host_visible_cache_dir_in_flatpak(tmp_path, monkeypatch):
+    cache_home = tmp_path / "cache"
+
+    monkeypatch.setattr(ccl, "in_flatpak", lambda: True)
+    monkeypatch.setenv("XDG_CACHE_HOME", str(cache_home))
+
+    stdout_fd, stdout_path = ccl._mk_capture_file("ttmt-cc-stdout-")
+    stderr_fd, stderr_path = ccl._mk_capture_file("ttmt-cc-stderr-")
+    try:
+        assert os.path.dirname(stdout_path) == str(cache_home / "launch-logs")
+        assert os.path.dirname(stderr_path) == str(cache_home / "launch-logs")
+    finally:
+        for fd in (stdout_fd, stderr_fd):
+            os.close(fd)
+        for path in (stdout_path, stderr_path):
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
 
 
 def test_launch_fails_when_launcher_unavailable(qapp, tmp_path, monkeypatch):
