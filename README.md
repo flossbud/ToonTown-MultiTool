@@ -1,4 +1,6 @@
-# 🎮 ToonTown MultiTool
+<p align="center">
+  <img src="assets/ttmtlogocombo.png" alt="ToonTown MultiTool" width="480">
+</p>
 
 A multitoon controller for **Toontown Rewritten** and **Corporate Clash** on Linux and Windows.
 
