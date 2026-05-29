@@ -43,20 +43,28 @@ def test_fetch_all_manifests_merges_and_tags_platform(monkeypatch):
     assert len(files) == 2
 
 
-def test_download_name_hashes_raw_filepath_plus_token():
-    expected = hashlib.sha1(("config\\g.prc" + "resources").encode("utf-8"),
+def test_make_object_key_cloudflare_path_scheme():
+    # Cloudflare/R2: "<platform>/<filePath-as-posix>.gz"; backslashes -> slashes.
+    # (Confirmed live 2026-05-29 by decompiling CC's launcher.util.downloads.)
+    assert p.make_object_key("config\\g.prc", "windows", "Cloudflare") == "windows/config/g.prc.gz"
+    assert p.make_object_key("resources/default/x.mf", "resources", "Cloudflare") \
+        == "resources/resources/default/x.mf.gz"
+
+
+def test_make_object_key_legacy_sha1_scheme():
+    # Any non-Cloudflare server falls back to the legacy sha1(filePath+platform).
+    expected = hashlib.sha1(("config\\g.prc" + "windows").encode("utf-8"),
                             usedforsecurity=False).hexdigest()
-    assert p.download_name("config\\g.prc", "resources") == expected
+    assert p.make_object_key("config\\g.prc", "windows", "Legacy Mirror") == expected
 
 
-def test_fetch_verified_roundtrip_and_mismatches(monkeypatch):
+def test_fetch_verified_decompresses_and_checks_sha1(monkeypatch):
     raw = b"corporate-clash-file"
     comp = gzip.compress(raw)
     entry = {
         "filePath": "config\\g.prc",
         "sha1": hashlib.sha1(raw, usedforsecurity=False).hexdigest(),
-        "compressed_sha1": hashlib.sha1(comp, usedforsecurity=False).hexdigest(),
-        "_platform": "resources",
+        "_platform": "windows",
     }
     seen = {}
 
@@ -70,38 +78,42 @@ def test_fetch_verified_roundtrip_and_mismatches(monkeypatch):
         return R()
 
     monkeypatch.setattr(p.requests, "get", fake_get)
-    assert p.fetch_verified(entry, "https://dl/base") == raw
-    assert seen["url"] == "https://dl/base/" + p.download_name("config\\g.prc", "resources")
+    assert p.fetch_verified(entry, "https://dl/base", "Cloudflare") == raw
+    # URL uses the path-based key, not a hash.
+    assert seen["url"] == "https://dl/base/windows/config/g.prc.gz"
 
+    # Wrong decompressed hash -> ValueError. (compressed_sha1 is intentionally
+    # NOT checked: CC's gzip framing makes it unstable.)
     with pytest.raises(ValueError):
-        p.fetch_verified(dict(entry, compressed_sha1="00"), "https://dl/base")
+        p.fetch_verified(dict(entry, sha1="00"), "https://dl/base", "Cloudflare")
     with pytest.raises(ValueError):
-        p.fetch_verified(dict(entry, sha1="00"), "https://dl/base")
+        p.fetch_verified({"filePath": "x", "_platform": "windows"}, "https://dl/base", "Cloudflare")
 
 
-def test_resolve_download_base_reads_realm_nested_servers(monkeypatch):
+def test_resolve_download_server_reads_realm_nested(monkeypatch):
     # Live CC metadata nests downloadservers INSIDE the matching realm, not at
     # the top level (confirmed 2026-05-29 against production: r2prod R2 host).
     class R:
         def raise_for_status(self): pass
         def json(self):
             return {"realms": [
-                {"slug": "other", "downloadservers": [{"base_url": "https://dl/other"}]},
+                {"slug": "other", "downloadservers": [{"base_url": "https://dl/other", "name": "X"}]},
                 {"slug": "production", "downloadservers": [
                     {"id": 23, "name": "Cloudflare",
                      "base_url": "https://r2prod.corporateclash.net/", "realm": "production"}]},
             ]}
     monkeypatch.setattr(p.requests, "get", lambda url, **k: R())
-    assert p.resolve_download_base("tok", "production") == "https://r2prod.corporateclash.net/"
+    assert p.resolve_download_server("tok", "production") == \
+        ("https://r2prod.corporateclash.net/", "Cloudflare")
 
 
-def test_resolve_download_base_raises_without_server(monkeypatch):
+def test_resolve_download_server_raises_without_server(monkeypatch):
     class R:
         def raise_for_status(self): pass
         def json(self): return {"realms": [{"slug": "production", "downloadservers": []}]}
     monkeypatch.setattr(p.requests, "get", lambda url, **k: R())
     with pytest.raises(ValueError):
-        p.resolve_download_base("tok", "production")
+        p.resolve_download_server("tok", "production")
 
 
 def test_local_path_converts_backslashes(tmp_path):
@@ -191,13 +203,13 @@ def test_verify_up_to_date_when_nothing_stale(monkeypatch):
 
 def test_verify_downloads_and_places_stale(monkeypatch):
     placed, parents = [], []
-    entry = {"filePath": "config\\g.prc", "sha1": "x", "compressed_sha1": "y", "_platform": "resources"}
+    entry = {"filePath": "config\\g.prc", "sha1": "x", "_platform": "windows"}
     result, _ = _run_patch(
         monkeypatch,
         fetch_all_manifests=lambda realm, plat: [entry],
         select_stale=lambda files, game_dir: [entry],
-        resolve_download_base=lambda tok, realm: "https://dl/base",
-        fetch_verified=lambda e, base: b"new",
+        resolve_download_server=lambda tok, realm: ("https://dl/base", "Cloudflare"),
+        fetch_verified=lambda e, base, server_name: b"new",
         ensure_parent_dir=lambda dest: parents.append(dest),
         place_file=lambda data, dest: placed.append((dest, data)),
     )
@@ -215,14 +227,14 @@ def test_verify_offline_proceeds_as_up_to_date(monkeypatch):
 
 
 def test_verify_failure_on_download_error(monkeypatch):
-    entry = {"filePath": "a.dll", "sha1": "x", "compressed_sha1": "y", "_platform": "windows"}
-    def bad_fetch(e, base):
+    entry = {"filePath": "a.dll", "sha1": "x", "_platform": "windows"}
+    def bad_fetch(e, base, server_name):
         raise ValueError("hash mismatch")
     result, _ = _run_patch(
         monkeypatch,
         fetch_all_manifests=lambda realm, plat: [entry],
         select_stale=lambda files, game_dir: [entry],
-        resolve_download_base=lambda tok, realm: "https://dl/base",
+        resolve_download_server=lambda tok, realm: ("https://dl/base", "Cloudflare"),
         fetch_verified=bad_fetch,
         ensure_parent_dir=lambda dest: None,
     )

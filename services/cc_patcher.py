@@ -27,14 +27,6 @@ _MANIFEST_URL = "https://corporateclash.net/api/v1/launcher/manifest/v3/{realm}/
 _HTTP_TIMEOUT = 30
 _USER_AGENT = "ToontownMultiTool"
 
-# Remap of manifest platform -> the token appended to filePath when computing
-# the download name. Plain pass-through today (binaries use their platform
-# name, shared assets use "resources"), kept as the single place to encode a
-# different token if the live protocol check (the cc-patch protocol probe)
-# ever shows CC expects a non-obvious string.
-_DOWNLOAD_TOKENS = {"windows": "windows", "macos": "macos", "resources": "resources"}
-
-
 def _platform_for_os(plat: str | None = None) -> str:
     """The manifest platform to fetch alongside 'resources'. Every Linux wine
     runtime runs the Windows build, so Linux -> 'windows'."""
@@ -59,40 +51,49 @@ def fetch_all_manifests(realm: str, platform: str) -> list:
     return fetch_manifest(realm, platform) + fetch_manifest(realm, "resources")
 
 
-def download_name(raw_file_path: str, platform_token: str) -> str:
-    """CC's download filename: sha1 of the RAW manifest filePath (backslashes
-    intact) concatenated with the platform token."""
-    token = _DOWNLOAD_TOKENS.get(platform_token, platform_token)
-    return hashlib.sha1((raw_file_path + token).encode("utf-8"),
+def make_object_key(file_path: str, platform_str: str, server_name: str) -> str:
+    """Download-server object key for a manifest file, replicating CC's own
+    launcher (launcher.util.downloads.make_object_key). For a Cloudflare/R2
+    server the key is a path: '<platform>/<filePath-as-posix>.gz' (CC's current
+    scheme). For any other (legacy) server it is sha1(filePath + platform).
+    filePath is normalized to forward slashes (CC computes Path(...).as_posix()
+    under Windows, where the manifest's backslashes are separators)."""
+    posix = file_path.replace("\\", "/")
+    if "cloudflare" in server_name.lower().strip():
+        return f"{platform_str}/{posix}.gz"
+    return hashlib.sha1((file_path + platform_str).encode("utf-8"),
                         usedforsecurity=False).hexdigest()
 
 
-def fetch_verified(entry: dict, base_url: str) -> bytes:
-    """Download the entry's gzip blob, verify compressed_sha1, decompress,
-    verify sha1. Return verified bytes. Raise ValueError on any mismatch."""
-    if not entry.get("sha1") or not entry.get("compressed_sha1"):
-        raise ValueError("manifest entry missing sha1/compressed_sha1")
-    name = download_name(entry["filePath"], entry["_platform"])
-    url = base_url.rstrip("/") + "/" + name
+def fetch_verified(entry: dict, base_url: str, server_name: str) -> bytes:
+    """Download the entry's gzip blob from the download server, decompress, and
+    verify the decompressed bytes against the manifest 'sha1'. Return the
+    verified bytes. Raise ValueError on a malformed entry or hash mismatch.
+
+    Note: the manifest's 'compressed_sha1' is NOT checked — the gzip blobs CC
+    serves carry an mtime/filename header, so the compressed bytes' hash is not
+    stable across re-gzips. The decompressed content hash ('sha1') is the
+    authoritative integrity gate."""
+    if not entry.get("sha1"):
+        raise ValueError("manifest entry missing sha1")
+    key = make_object_key(entry["filePath"], entry["_platform"], server_name)
+    url = base_url.rstrip("/") + "/" + key
     r = requests.get(url, headers={"User-Agent": _USER_AGENT}, timeout=_HTTP_TIMEOUT)
     r.raise_for_status()
-    comp = r.content
-    got_comp = hashlib.sha1(comp, usedforsecurity=False).hexdigest()
-    if got_comp != entry["compressed_sha1"]:
-        raise ValueError(f"compressed-hash mismatch for {entry['filePath']}: {got_comp}")
-    data = gzip.decompress(comp)
+    data = gzip.decompress(r.content)
     got = hashlib.sha1(data, usedforsecurity=False).hexdigest()
     if got != entry["sha1"]:
         raise ValueError(f"file-hash mismatch for {entry['filePath']}: {got}")
     return data
 
 
-def resolve_download_base(launcher_token: str, realm: str) -> str:
-    """GET /metadata with the launcher token; return the download server's
-    base_url. CC nests downloadservers INSIDE the matching realm (not at the
-    top level), so prefer the realm whose slug matches, then any realm, then a
-    top-level list as a defensive fallback. Raise ValueError if none. Network
-    errors propagate as requests.RequestException."""
+def resolve_download_server(launcher_token: str, realm: str) -> tuple:
+    """GET /metadata with the launcher token; return (base_url, server_name)
+    for the realm's download server. CC nests downloadservers INSIDE the
+    matching realm (not at the top level), so prefer the realm whose slug
+    matches, then any realm, then a top-level list as a defensive fallback. The
+    server name selects the object-key scheme (see make_object_key). Raise
+    ValueError if none. Network errors propagate as requests.RequestException."""
     headers = dict(CC_HEADERS)
     headers["Authorization"] = f"Bearer {launcher_token}"
     r = requests.get(CC_METADATA_URL, headers=headers, timeout=_HTTP_TIMEOUT)
@@ -110,14 +111,16 @@ def resolve_download_base(launcher_token: str, realm: str) -> str:
     servers += data.get("downloadservers") or []
     for s in servers:
         if s.get("base_url"):
-            return s["base_url"]
+            return s["base_url"], (s.get("name") or "")
     raise ValueError("no download server with base_url in /metadata")
 
 
 def _local_path(game_dir: str, raw_file_path: str) -> str:
-    """Host path of a manifest file: join game_dir with the filePath, its
-    backslashes converted to the OS separator."""
-    return os.path.join(game_dir, *raw_file_path.split("\\"))
+    """Host path of a manifest file: join game_dir with the filePath. Manifest
+    paths use backslashes (windows binaries) or forward slashes (resources), so
+    normalize both to the OS separator."""
+    parts = [p for p in raw_file_path.replace("\\", "/").split("/") if p]
+    return os.path.join(game_dir, *parts)
 
 
 def _host_sha1_batch(paths: list) -> dict:
@@ -209,13 +212,13 @@ class CCPatcher(QObject):
                         _verified_manifests[game_dir] = msha
                         self.up_to_date.emit()
                         return
-                    base = resolve_download_base(launcher_token, realm)
+                    base, server_name = resolve_download_server(launcher_token, realm)
                     updated = []
                     total = len(stale)
                     for i, entry in enumerate(stale):
                         self.progress.emit(f"Updating {entry['filePath']}…",
                                            int(i / total * 100))
-                        data = fetch_verified(entry, base)
+                        data = fetch_verified(entry, base, server_name)
                         dest = _local_path(game_dir, entry["filePath"])
                         ensure_parent_dir(dest)
                         place_file(data, dest)
