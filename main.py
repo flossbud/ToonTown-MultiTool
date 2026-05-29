@@ -364,7 +364,7 @@ class MultiToonTool(QMainWindow):
             window_manager=self.window_manager,
         )
         self.customization_overlay: ToonCustomizationOverlay | None = None
-        self.launch_tab = LaunchTab(settings_manager=self.settings_manager, logger=self.logger)
+        self.launch_tab = LaunchTab(settings_manager=self.settings_manager, logger=self.logger, window_manager=self.window_manager)
         self.keymap_tab = KeymapTab(
             self.keymap_manager,
             self.settings_manager,

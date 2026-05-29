@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QFrame, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QScrollArea,
     QSizePolicy, QVBoxLayout, QWidget,
 )
-from PySide6.QtCore import Qt, QObject, Signal, QThread, Slot
+from PySide6.QtCore import Qt, QObject, Signal, QThread, Slot, QTimer
 
 from utils.theme_manager import resolve_theme, get_theme_colors
 from utils.credentials_manager import CredentialsManager, set_debug_log_callback
@@ -275,8 +275,11 @@ class LaunchTab(QWidget):
     # thread DebugTab.append_log slot. See the __init__ comment below.
     _log_to_debug_tab = Signal(str)
 
+    LOADING_WINDOW_TIMEOUT_MS = 30000
+
     def __init__(self, settings_manager=None, logger=None, parent=None,
-                 credentials_manager=None, cred_manager=None):
+                 credentials_manager=None, cred_manager=None,
+                 window_manager=None):
         super().__init__(parent)
         self.settings_manager = settings_manager
         self.logger = logger
@@ -307,6 +310,16 @@ class LaunchTab(QWidget):
         self._probe_thread = None
         self._probe_worker = None
         self._pending_2fa: set = set()
+
+        # Loading-state orchestration. _loading[game] is a launch-ordered list
+        # of (section_index, QTimer); _window_credit[game] is the count of
+        # windows already accounted for at the start of the current loading
+        # episode (so pre-existing/other windows don't false-promote a loader).
+        self.window_manager = window_manager
+        self._loading: dict[str, list] = {"ttr": [], "cc": []}
+        self._window_credit: dict[str, int] = {"ttr": 0, "cc": 0}
+        if self.window_manager is not None:
+            self.window_manager.window_ids_updated.connect(self._on_windows_changed)
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -1232,10 +1245,77 @@ class LaunchTab(QWidget):
 
     def _on_game_launched(self, game, section_index, pid):
         game_label = "TTR" if game == "ttr" else "CC"
-        self.log(f"[Launch] {game_label} account {section_index + 1} game running (PID {pid})")
+        if self.window_manager is None:
+            self.log(f"[Launch] {game_label} account {section_index + 1} game running (PID {pid})")
+            self._update_status(game, section_index, LoginState.RUNNING, "Game running")
+            return
+        self.log(f"[Launch] {game_label} account {section_index + 1} process started "
+                 f"(PID {pid}); waiting for window")
+        # Ensure the shared detector is active even if the Multitoon tab was
+        # never opened (its only other caller). Idempotent; nothing disables it.
+        self.window_manager.enable_detection()
+        # Relaunch into a slot already loading: drop the stale timer first.
+        stale = self._pop_loader(game, section_index)
+        if stale is not None:
+            stale[1].stop()
+            stale[1].deleteLater()
+        # Start of a loading episode -> baseline the windows already present.
+        if not self._loading[game]:
+            self._window_credit[game] = self.window_manager.count_for_game(game)
+        timer = QTimer(self)
+        timer.setSingleShot(True)
+        timer.timeout.connect(
+            lambda g=game, si=section_index: self._promote_loader(g, si, "timeout")
+        )
+        self._loading[game].append((section_index, timer))
+        self._update_status(game, section_index, LoginState.LOADING, "")
+        timer.start(self.LOADING_WINDOW_TIMEOUT_MS)
+
+    def _pop_loader(self, game, section_index):
+        """Remove and return the (section_index, timer) entry for section_index,
+        or None if it is not currently loading."""
+        loaders = self._loading[game]
+        for i, (idx, timer) in enumerate(loaders):
+            if idx == section_index:
+                del loaders[i]
+                return (idx, timer)
+        return None
+
+    def _promote_loader(self, game, section_index, reason):
+        """Flip a loading slot to RUNNING. Consumes one window credit so a later
+        phantom window cannot double-promote and a timeout-promoted slot's
+        eventual real window is a no-op."""
+        entry = self._pop_loader(game, section_index)
+        if entry is None:
+            return  # already promoted or exited
+        entry[1].stop()
+        entry[1].deleteLater()
+        self._window_credit[game] += 1
+        game_label = "TTR" if game == "ttr" else "CC"
+        detail = "window detected" if reason == "window" else "window wait timed out"
+        self.log(f"[Launch] {game_label} account {section_index + 1} {detail}; marking running")
         self._update_status(game, section_index, LoginState.RUNNING, "Game running")
 
+    def _on_windows_changed(self, _ids):
+        """A WindowManager detection pass changed the window set. Promote the
+        oldest loading slot of each game for every window beyond the baseline."""
+        if self.window_manager is None:
+            return
+        for game in ("ttr", "cc"):
+            while self._loading[game] and (
+                self.window_manager.count_for_game(game) - self._window_credit[game] > 0
+            ):
+                oldest_index = self._loading[game][0][0]
+                self._promote_loader(game, oldest_index, "window")
+
     def _on_game_exited(self, game, section_index, retcode, raw_log=""):
+        # If the process exits while still loading, drop its pending timer so it
+        # cannot later flip a re-used slot to running. Do NOT touch the window
+        # credit -- no window was consumed.
+        stale = self._pop_loader(game, section_index)
+        if stale is not None:
+            stale[1].stop()
+            stale[1].deleteLater()
         game_label = "TTR" if game == "ttr" else "CC"
         self.log(f"[Launch] {game_label} account {section_index + 1} game exited (code {retcode})")
         # game crash / kill: status band carries the exit code; no login-failure dialog (post-launch is out of scope)

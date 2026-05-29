@@ -68,6 +68,7 @@ class LoginState:
     NEED_2FA = "need_2fa"
     QUEUED = "queued"
     LAUNCHING = "launching"
+    LOADING = "loading"
     RUNNING = "running"
     FAILED = "failed"
 
