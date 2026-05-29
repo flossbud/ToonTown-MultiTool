@@ -160,8 +160,60 @@ def test_portal_acquire_holds_and_closes(monkeypatch, rec):
 
 def test_portal_failure_returns_false(monkeypatch, rec):
     monkeypatch.setattr(si, "_is_windows", lambda: False)
-    monkeypatch.setattr(si, "_session_bus",
-                        lambda: FakeBus(rec, fail_names={"org.freedesktop.portal.Desktop"}))
-    # screensaver/login1 still stubs returning False -> overall None.
+    # Portal, ScreenSaver, and login1 all unreachable -> overall None.
+    monkeypatch.setattr(
+        si, "_session_bus",
+        lambda: FakeBus(rec, fail_names={
+            "org.freedesktop.portal.Desktop",
+            "org.freedesktop.ScreenSaver",
+        }),
+    )
+    monkeypatch.setattr(
+        si, "_system_bus",
+        lambda: FakeBus(rec, fail_names={"org.freedesktop.login1"}),
+    )
     inh = si.SleepInhibitor()
     assert inh.acquire() is None
+
+
+def test_fallback_acquires_screensaver_and_login1(monkeypatch, rec):
+    monkeypatch.setattr(si, "_is_windows", lambda: False)
+    # Portal unreachable -> fallback. ScreenSaver on session bus, login1 on system bus.
+    monkeypatch.setattr(
+        si, "_session_bus",
+        lambda: FakeBus(rec, fail_names={"org.freedesktop.portal.Desktop"}),
+    )
+    monkeypatch.setattr(si, "_system_bus", lambda: FakeBus(rec))
+    closed = []
+    monkeypatch.setattr(si, "_close_fd", lambda fd: closed.append(fd))
+
+    inh = si.SleepInhibitor()
+    tier = inh.acquire()
+    assert tier == "screensaver+login1"
+
+    ss = [c for c in rec["inhibit"] if c[0] == "org.freedesktop.ScreenSaver"][0]
+    assert ss[1] == (si.APP_NAME, si.REASON)
+    assert ss[2]["dbus_interface"] == "org.freedesktop.ScreenSaver"
+    l1 = [c for c in rec["inhibit"] if c[0] == "org.freedesktop.login1"][0]
+    assert l1[1] == ("sleep:idle", si.APP_NAME, si.REASON, "block")
+
+    inh.release()
+    # ScreenSaver released via UnInhibit(cookie); login1 fd closed.
+    assert rec["uninhibit"][0][1] == (42,)
+    assert closed == [7]
+    assert inh.is_active() is False
+
+
+def test_fallback_screensaver_only_when_login1_unreachable(monkeypatch, rec):
+    monkeypatch.setattr(si, "_is_windows", lambda: False)
+    monkeypatch.setattr(
+        si, "_session_bus",
+        lambda: FakeBus(rec, fail_names={"org.freedesktop.portal.Desktop"}),
+    )
+    # System bus unreachable (the Flatpak sandbox case).
+    monkeypatch.setattr(
+        si, "_system_bus",
+        lambda: FakeBus(rec, fail_names={"org.freedesktop.login1"}),
+    )
+    inh = si.SleepInhibitor()
+    assert inh.acquire() == "screensaver"

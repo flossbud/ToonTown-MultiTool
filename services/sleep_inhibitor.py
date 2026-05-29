@@ -138,7 +138,41 @@ class SleepInhibitor:
             return False
 
     def _acquire_screensaver(self):
-        return False
+        try:
+            bus = _session_bus()
+            obj = bus.get_object(
+                "org.freedesktop.ScreenSaver", "/org/freedesktop/ScreenSaver"
+            )
+            cookie = obj.Inhibit(
+                APP_NAME, REASON,
+                dbus_interface="org.freedesktop.ScreenSaver",
+            )
+
+            def _uninhibit(bus=bus, cookie=cookie):
+                o = bus.get_object(
+                    "org.freedesktop.ScreenSaver", "/org/freedesktop/ScreenSaver"
+                )
+                o.UnInhibit(cookie, dbus_interface="org.freedesktop.ScreenSaver")
+
+            self._releases.append(("screensaver", _uninhibit))
+            return True
+        except Exception:
+            return False
 
     def _acquire_login1(self):
-        return False
+        try:
+            bus = _system_bus()
+            obj = bus.get_object(
+                "org.freedesktop.login1", "/org/freedesktop/login1"
+            )
+            fd = obj.Inhibit(
+                "sleep:idle", APP_NAME, REASON, "block",
+                dbus_interface="org.freedesktop.login1.Manager",
+            )
+            real_fd = fd.take()
+            self._releases.append(
+                ("login1", lambda real_fd=real_fd: _close_fd(real_fd))
+            )
+            return True
+        except Exception:
+            return False
