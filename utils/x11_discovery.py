@@ -57,6 +57,35 @@ def _open_display():
     return d
 
 
+# Marker -> game. WM_CLASS substring match takes precedence; WM_NAME prefix is
+# the fallback for Wine/Proton windows whose WM_CLASS is forced to steam_proton.
+_GAME_BY_MARKER = {
+    "Toontown Rewritten": "ttr",
+    "Corporate Clash": "cc",
+}
+
+
+def _game_for_window_props(wm_class, wm_name) -> str | None:
+    """Classify a window as 'ttr'/'cc'/None from its WM_CLASS and WM_NAME.
+
+    wm_class is the tuple returned by Xlib's get_wm_class() — (instance, class);
+    we match against its class component (index 1). wm_name is the WM_NAME str.
+    WM_CLASS substring wins; WM_NAME must *start with* a marker (so a Wine
+    console window titled with the full .exe path does not match).
+    """
+    if wm_class and len(wm_class) >= 2:
+        cls = wm_class[1] or ""
+        for marker, game in _GAME_BY_MARKER.items():
+            if marker in cls:
+                return game
+    if wm_name:
+        name_str = str(wm_name)
+        for marker, game in _GAME_BY_MARKER.items():
+            if name_str.startswith(marker):
+                return game
+    return None
+
+
 def find_window_ids_by_class(
     class_names: list[str],
     title_prefixes: list[str] | None = None,
@@ -124,6 +153,44 @@ def _walk_collect(
         children = []
     for child in children:
         _walk_collect(child, targets, prefixes, results)
+
+
+def find_game_windows() -> list[tuple[str, str]]:
+    """Return (window_id, game) for all visible TTR/CC windows.
+
+    game is "ttr" or "cc". Mirrors find_window_ids_by_class' matching but keeps
+    the game identity instead of discarding it.
+    """
+    d = _open_display()
+    if d is None:
+        return []
+    results: list[tuple[str, str]] = []
+    try:
+        root = d.screen().root
+    except Exception:
+        return []
+    _walk_collect_games(root, results)
+    return results
+
+
+def _walk_collect_games(window, results: list[tuple[str, str]]) -> None:
+    try:
+        wm_class = window.get_wm_class()
+    except Exception:
+        wm_class = None
+    try:
+        wm_name = window.get_wm_name()
+    except Exception:
+        wm_name = None
+    game = _game_for_window_props(wm_class, wm_name)
+    if game is not None:
+        results.append((str(window.id), game))
+    try:
+        children = window.query_tree().children
+    except Exception:
+        children = []
+    for child in children:
+        _walk_collect_games(child, results)
 
 
 def get_window_root_x(wid: str) -> int | None:
