@@ -15,6 +15,7 @@ class WindowManager(QObject):
         self.settings_manager = settings_manager
 
         self.ttr_window_ids = []
+        self.window_games: dict[str, str] = {}  # window_id -> "ttr" | "cc"
         self._active_id = None
         self._detection_enabled = False
 
@@ -47,6 +48,7 @@ class WindowManager(QObject):
             self._active_id = None
             had_ids = bool(self.ttr_window_ids)
             self.ttr_window_ids = []
+            self.window_games = {}
             snapshot = list(self.ttr_window_ids)
         if had_ids:
             self.window_ids_updated.emit(snapshot)
@@ -60,9 +62,15 @@ class WindowManager(QObject):
         with self._lock:
             return list(self.ttr_window_ids)
 
+    def count_for_game(self, game: str) -> int:
+        """Number of currently-detected windows belonging to `game`."""
+        with self._lock:
+            return sum(1 for g in self.window_games.values() if g == game)
+
     def clear_window_ids(self):
         with self._lock:
             self.ttr_window_ids = []
+            self.window_games = {}
             snapshot = list(self.ttr_window_ids)
         self.window_ids_updated.emit(snapshot)
 
@@ -117,6 +125,7 @@ class WindowManager(QObject):
             return
 
         registry = GameRegistry.instance()
+        game_by_wid: dict[str, str] = {}
 
         def _accept_candidate_window(wid: str) -> bool:
             game, confirmed = registry.classify_window_for_filtering(wid)
@@ -165,6 +174,9 @@ class WindowManager(QObject):
                             pt = win32gui.ClientToScreen(hwnd, (0, 0))
                             x = pt[0]
                             visible.append((wid, x))
+                            game_by_wid[wid] = (
+                                "ttr" if "Toontown Rewritten" in title else "cc"
+                            )
                 win32gui.EnumWindows(enum_windows_proc, 0)
                 visible.sort(key=lambda item: (item[1], item[0]))
                 new_ids = list(dict.fromkeys(w for w, _ in visible))[:16]
@@ -172,19 +184,17 @@ class WindowManager(QObject):
                 new_ids = []
         else:
             try:
-                raw_ids = x11_discovery.find_window_ids_by_class(
-                    ["Toontown Rewritten", "Corporate Clash"],
-                    title_prefixes=["Toontown Rewritten", "Corporate Clash"],
-                )
+                raw_pairs = x11_discovery.find_game_windows()
 
                 visible = []
-                for wid in raw_ids:
+                for wid, game in raw_pairs:
                     if not _accept_candidate_window(wid):
                         continue
                     x = x11_discovery.get_window_root_x(wid)
                     if x is None:
                         continue
                     visible.append((wid, x))
+                    game_by_wid[wid] = game
 
                 visible.sort(key=lambda item: (item[1], item[0]))
                 new_ids = list(dict.fromkeys(w for w, _ in visible))[:16]
@@ -195,6 +205,9 @@ class WindowManager(QObject):
             changed = new_ids != self.ttr_window_ids
             if changed:
                 self.ttr_window_ids = list(new_ids)
+            self.window_games = {
+                wid: game_by_wid[wid] for wid in new_ids if wid in game_by_wid
+            }
             snapshot = list(self.ttr_window_ids)
         if changed:
             self.window_ids_updated.emit(snapshot)
