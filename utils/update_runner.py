@@ -251,7 +251,8 @@ class UpdateRunner(QObject):
         self.started_terminal.emit()
 
     def _show_copy_dialog(self, *, title: str, command: str, note: str) -> None:
-        from PySide6.QtWidgets import QApplication, QMessageBox
+        from PySide6.QtWidgets import QMessageBox
+        from utils.clipboard import copy_text
         if self._parent is None:
             return
         box = QMessageBox(self._parent)
@@ -262,7 +263,7 @@ class UpdateRunner(QObject):
         box.addButton(QMessageBox.Ok)
         box.exec()
         if box.clickedButton() is copy_btn:
-            QApplication.clipboard().setText(command)
+            copy_text(command)
 
     def _open_release_with_toast(self, info: dict, msg: str) -> None:
         url = info.get("html_url")

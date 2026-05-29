@@ -4,10 +4,14 @@ from __future__ import annotations
 
 from datetime import datetime
 
+import shiboken6
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
-    QApplication, QDialog, QFrame, QHBoxLayout, QLabel, QPlainTextEdit,
-    QPushButton, QVBoxLayout,
+    QDialog, QFrame, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton,
+    QVBoxLayout,
 )
+
+from utils.clipboard import copy_text
 
 
 _GAME_NAMES = {"ttr": "Toontown Rewritten", "cc": "Corporate Clash"}
@@ -63,10 +67,13 @@ class ErrorModal(QDialog):
         acts = QHBoxLayout()
         acts.addStretch()
         self.copy_btn = QPushButton("Copy")
+        self.copy_btn.setMinimumWidth(78)
         self.copy_btn.setStyleSheet(
-            "QPushButton { background: rgba(255,255,255,0.06); border:"
-            " 1px solid rgba(255,255,255,0.12); color: #cfd6e6;"
+            "QPushButton { background: #7fc7ff; border:"
+            " 1px solid rgba(127,199,255,0.8); color: #111827;"
             " border-radius: 5px; padding: 6px 14px; font-size: 12px; }"
+            "QPushButton:hover { background: #9ad3ff; }"
+            "QPushButton:pressed { background: #66b8f2; }"
         )
         self.copy_btn.clicked.connect(self._on_copy)
         acts.addWidget(self.copy_btn)
@@ -83,4 +90,10 @@ class ErrorModal(QDialog):
         self.setStyleSheet("QDialog { background: #1a2236; }")
 
     def _on_copy(self) -> None:
-        QApplication.clipboard().setText(self._raw)
+        self.copy_btn.setText("Copied" if copy_text(self._raw) else "Copy failed")
+        QTimer.singleShot(1500, self._reset_copy_label)
+
+    def _reset_copy_label(self) -> None:
+        # The modal may be closed (C++ object deleted) before the timer fires.
+        if shiboken6.isValid(self.copy_btn):
+            self.copy_btn.setText("Copy")
