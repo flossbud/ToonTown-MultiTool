@@ -24,6 +24,7 @@ from services.ttr_login_service import (
     TTRLoginWorker, LoginState, find_engine_path, get_engine_executable_name,
 )
 from services.ttr_launcher import TTRLauncher
+from services.ttr_patcher import TTRPatcher
 from services.cc_login_service import (
     CCLoginWorker,
     find_cc_engine_path,
@@ -1125,7 +1126,32 @@ class LaunchTab(QWidget):
                                 username=username, realm_slug=CC_DEFAULT_REALM)
             else:
                 engine_dir = self._get_engine_dir(game)
-                launcher.launch(gameserver, token, engine_dir)
+                self._launch_ttr_with_patch(section_index, gameserver, token, engine_dir, launcher)
+
+    def _launch_ttr_with_patch(self, section_index, gameserver, token, engine_dir, launcher):
+        """Verify/repair TTR game files against the official manifest, then
+        launch on success. A stale phase file would otherwise fail the engine's
+        integrity check. See docs/superpowers/specs/2026-05-28-ttr-game-file-patching-design.md.
+        """
+        patcher = TTRPatcher(self)
+        # Keep the patcher alive for the duration of its background thread by
+        # parenting it to the (retained) launcher.
+        launcher._ttr_patcher = patcher
+
+        def _go():
+            launcher.launch(gameserver, token, engine_dir)
+
+        patcher.progress.connect(
+            lambda msg, pct, si=section_index: self._update_status("ttr", si, LoginState.LAUNCHING, msg)
+        )
+        patcher.up_to_date.connect(_go)
+        patcher.patched.connect(
+            lambda files: (self.log(f"[Launch] Updated TTR game files: {', '.join(files)}"), _go())
+        )
+        patcher.failed.connect(
+            lambda msg, si=section_index: self._on_launcher_failed("ttr", si, msg)
+        )
+        patcher.verify_and_patch(engine_dir)
 
     def _on_login_failed(self, game, section_index, msg):
         game_label = "TTR" if game == "ttr" else "CC"
