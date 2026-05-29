@@ -101,3 +101,46 @@ def resolve_download_base(launcher_token: str, realm: str) -> str:
         if s.get("base_url"):
             return s["base_url"]
     raise ValueError("no download server with base_url in /metadata")
+
+
+def _local_path(game_dir: str, raw_file_path: str) -> str:
+    """Host path of a manifest file: join game_dir with the filePath, its
+    backslashes converted to the OS separator."""
+    return os.path.join(game_dir, *raw_file_path.split("\\"))
+
+
+def _host_sha1_batch(paths: list) -> dict:
+    """SHA1 every path host-side in one batched `sha1sum` call (flatpak path).
+    A path sha1sum cannot read (missing) is simply absent from the result.
+    Output line format is '<hash>  <path>' (hash, two spaces, path)."""
+    if not paths:
+        return {}
+    res = host_run(["sha1sum", "--", *paths], capture_output=True, text=True)
+    out = {}
+    for line in (res.stdout or "").splitlines():
+        h, sep, path = line.partition("  ")
+        if sep and path:
+            out[path] = h
+    return out
+
+
+def select_stale(files: list, game_dir: str) -> list:
+    """Return the manifest entries whose on-disk SHA1 != manifest sha1
+    (mismatched or missing). Under flatpak, hash host-side in one batch so
+    prefixes under another flatpak's ~/.var/app are reachable."""
+    paths = [_local_path(game_dir, f["filePath"]) for f in files]
+    if in_flatpak():
+        hashed = _host_sha1_batch(paths)
+        return [f for f, path in zip(files, paths) if hashed.get(path) != f["sha1"]]
+    return [f for f, path in zip(files, paths) if local_sha1(path) != f["sha1"]]
+
+
+def ensure_parent_dir(dest_path: str) -> None:
+    """Create the parent dir of dest_path (host-side under flatpak)."""
+    parent = os.path.dirname(dest_path)
+    if not parent:
+        return
+    if in_flatpak():
+        host_run(["mkdir", "-p", "--", parent], check=True)
+    else:
+        os.makedirs(parent, exist_ok=True)
