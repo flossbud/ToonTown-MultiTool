@@ -46,7 +46,7 @@ modules:
       # rejects. Drop this pin when bumping to a newer KDE runtime.
       - pip3 install --prefix=/app --no-build-isolation
         "PySide6>=6.8,<6.9" pynput "evdev<1.9" requests "keyring>=24" certifi
-        cryptography secretstorage jeepney python-xlib "psutil>=5.9"
+        cryptography secretstorage jeepney python-xlib "psutil>=5.9" "PyYAML>=6.0"
 
   - name: toontown-multitool
     buildsystem: simple
