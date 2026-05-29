@@ -118,6 +118,68 @@ def fetch_verified(entry: dict, mirror: str) -> bytes:
     return data
 
 
+# engine_dir (realpath) -> SHA256 of the manifest last verified clean this
+# session. Lets multiple account launches share one verification pass while
+# still re-verifying if TTR pushes an update mid-session (manifest changes).
+_verified_manifests = {}
+
+
+def reset_verify_cache() -> None:
+    _verified_manifests.clear()
+
+
+def _manifest_sha(manifest: dict) -> str:
+    return hashlib.sha256(json.dumps(manifest, sort_keys=True).encode()).hexdigest()
+
+
+class TTRPatcher(QObject):
+    progress = Signal(str, int)   # (human message, percent 0-100)
+    up_to_date = Signal()         # nothing to do (or offline -> proceed)
+    patched = Signal(list)        # [filenames] successfully updated
+    failed = Signal(str)          # fatal error; do not launch
+
+    def verify_and_patch(self, engine_dir: str) -> None:
+        """Verify the install against the manifest and repair stale files on a
+        background thread. Emits exactly one terminal signal
+        (up_to_date | patched | failed)."""
+        engine_dir = os.path.realpath(engine_dir)
+
+        def _run():
+            try:
+                self.progress.emit("Checking TTR game files…", 0)
+                try:
+                    manifest = fetch_manifest()
+                except requests.RequestException as e:
+                    # Offline / manifest unreachable: don't block the launch.
+                    print(f"[TTRPatcher] manifest unreachable, proceeding: {e}")
+                    self.up_to_date.emit()
+                    return
+                msha = _manifest_sha(manifest)
+                if _verified_manifests.get(engine_dir) == msha:
+                    self.up_to_date.emit()
+                    return
+                stale = select_stale(manifest, engine_dir)
+                if not stale:
+                    _verified_manifests[engine_dir] = msha
+                    self.up_to_date.emit()
+                    return
+                mirror = resolve_mirror()
+                updated = []
+                total = len(stale)
+                for i, (filename, entry) in enumerate(stale):
+                    self.progress.emit(f"Updating {filename}…", int(i / total * 100))
+                    data = fetch_verified(entry, mirror)
+                    place_file(data, os.path.join(engine_dir, filename))
+                    updated.append(filename)
+                _verified_manifests[engine_dir] = msha
+                self.progress.emit("TTR game files updated.", 100)
+                self.patched.emit(updated)
+            except Exception as e:
+                self.failed.emit(f"TTR game file update failed: {e}")
+
+        threading.Thread(target=_run, daemon=True).start()
+
+
 def place_file(data: bytes, dest_path: str) -> None:
     """Atomically install verified bytes at dest_path.
 

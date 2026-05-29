@@ -200,3 +200,91 @@ def test_place_file_non_flatpak_cleans_temp_on_replace_failure(tmp_path, monkeyp
 
     assert dest.read_bytes() == b"old"   # dest untouched
     assert [f for f in os.listdir(tmp_path) if f.endswith(".ttmt.tmp")] == []  # temp cleaned
+
+
+def _run_patch(monkeypatch, **stubs):
+    """Drive TTRPatcher.verify_and_patch and return the terminal result dict."""
+    _qapp()
+    p.reset_verify_cache()
+    for name, val in stubs.items():
+        monkeypatch.setattr(p, name, val)
+    patcher = p.TTRPatcher()
+    done = threading.Event()
+    result = {}
+    patcher.up_to_date.connect(lambda: (result.update(kind="up_to_date"), done.set()), Qt.DirectConnection)
+    patcher.patched.connect(lambda files: (result.update(kind="patched", files=files), done.set()), Qt.DirectConnection)
+    patcher.failed.connect(lambda msg: (result.update(kind="failed", msg=msg), done.set()), Qt.DirectConnection)
+    patcher.verify_and_patch("/engine")
+    assert done.wait(2.0), "no terminal signal"
+    return result, patcher
+
+
+def test_verify_up_to_date_when_nothing_stale(monkeypatch):
+    result, _ = _run_patch(
+        monkeypatch,
+        fetch_manifest=lambda: {"phase_3.mf": {"hash": "h", "only": ["linux"]}},
+        select_stale=lambda manifest, engine_dir: [],
+    )
+    assert result["kind"] == "up_to_date"
+
+
+def test_verify_downloads_and_places_stale(monkeypatch):
+    placed = []
+    entry = {"dl": "phase_14.mf.f9.bz2", "hash": "x", "compHash": "y"}
+    result, _ = _run_patch(
+        monkeypatch,
+        fetch_manifest=lambda: {"phase_14.mf": entry},
+        select_stale=lambda manifest, engine_dir: [("phase_14.mf", entry)],
+        resolve_mirror=lambda: "https://m/patches/",
+        fetch_verified=lambda e, mirror: b"new",
+        place_file=lambda data, dest: placed.append((dest, data)),
+    )
+    assert result["kind"] == "patched"
+    assert result["files"] == ["phase_14.mf"]
+    assert placed == [(os.path.join("/engine", "phase_14.mf"), b"new")]
+
+
+def test_verify_offline_proceeds_as_up_to_date(monkeypatch):
+    def boom():
+        raise p.requests.RequestException("offline")
+    result, _ = _run_patch(monkeypatch, fetch_manifest=boom)
+    assert result["kind"] == "up_to_date"
+
+
+def test_verify_failure_on_download_error(monkeypatch):
+    entry = {"dl": "phase_14.mf.bz2", "hash": "x", "compHash": "y"}
+    def bad_fetch(e, mirror):
+        raise ValueError("hash mismatch")
+    result, _ = _run_patch(
+        monkeypatch,
+        fetch_manifest=lambda: {"phase_14.mf": entry},
+        select_stale=lambda manifest, engine_dir: [("phase_14.mf", entry)],
+        resolve_mirror=lambda: "https://m/patches/",
+        fetch_verified=bad_fetch,
+    )
+    assert result["kind"] == "failed"
+    assert "hash mismatch" in result["msg"]
+
+
+def test_session_cache_skips_second_verify(monkeypatch):
+    manifest = {"phase_3.mf": {"hash": "h", "only": ["linux"]}}
+    result1, _ = _run_patch(
+        monkeypatch,
+        fetch_manifest=lambda: manifest,
+        select_stale=lambda m, d: [],
+    )
+    assert result1["kind"] == "up_to_date"
+
+    # Second run: same manifest; select_stale must NOT be called (cache hit).
+    def explode(m, d):
+        raise AssertionError("select_stale should be cached")
+    monkeypatch.setattr(p, "fetch_manifest", lambda: manifest)
+    monkeypatch.setattr(p, "select_stale", explode)
+    patcher = p.TTRPatcher()
+    done = threading.Event()
+    seen = {}
+    patcher.up_to_date.connect(lambda: (seen.update(ok=True), done.set()), Qt.DirectConnection)
+    patcher.failed.connect(lambda m: (seen.update(fail=m), done.set()), Qt.DirectConnection)
+    patcher.verify_and_patch("/engine")
+    assert done.wait(2.0)
+    assert seen.get("ok") and "fail" not in seen
