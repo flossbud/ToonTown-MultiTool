@@ -7,9 +7,6 @@ on:
         description: Build and launch-test the Flatpak (slow; uncheck for a faster manual run)
         type: boolean
         default: true
-  pull_request:
-  push:
-    branches: [dev, main]
 
 # A new push to a branch cancels its still-running CI -- saves runner minutes
 # on rapid pushes.
