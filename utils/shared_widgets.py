@@ -4,6 +4,7 @@ Shared custom widgets used across multiple tabs.
 Switch              — Accent-blue pill toggle (Settings)
 IOSSegmentedControl — iOS-style segmented control for small option sets
 PulsingDot          — Animated status dot with optional breathing glow
+Spinner             — Indeterminate rotating spinner, animates only while visible
 SmoothProgressBar   — Sub-pixel precision progress bar with rounded pill shape
 ElidingLabel        — QLabel that truncates long text with an ellipsis
 """
@@ -14,7 +15,7 @@ import math
 from PySide6.QtWidgets import QWidget, QLabel, QSizePolicy, QStyledItemDelegate, QComboBox
 from PySide6.QtCore import (
     Qt, Signal, QPropertyAnimation, QEasingCurve, QVariantAnimation,
-    Property, QRectF, QSize,
+    Property, QRectF, QSize, QTimer,
 )
 from PySide6.QtGui import QColor, QPainter, QPen, QFont, QRadialGradient, QFontMetrics
 
@@ -346,6 +347,60 @@ class PulsingDot(QWidget):
 
         p.setBrush(core)
         p.drawEllipse(QRectF(cx - r, cy - r, r * 2, r * 2))
+        p.end()
+
+
+class Spinner(QWidget):
+    """Indeterminate rotating spinner. Animates only while visible.
+
+    Plain QPainter(self) in paintEvent driven by an integer rotation that a
+    QTimer advances. No QGraphicsEffect anywhere on this widget -- combining a
+    QGraphicsEffect with a custom QPainter(self) paintEvent triggers
+    'A paint device can only be painted by one painter at a time'.
+    """
+
+    def __init__(self, size: int = 14, parent=None):
+        super().__init__(parent)
+        self._size = int(size)
+        self.setFixedSize(self._size, self._size)
+        self._angle = 0
+        self._color = QColor("#8a9bb8")
+        self._timer = QTimer(self)
+        self._timer.setInterval(70)
+        self._timer.timeout.connect(self._advance)
+
+    def set_color(self, hex_color: str) -> None:
+        self._color = QColor(hex_color)
+        self.update()
+
+    def _advance(self) -> None:
+        self._angle = (self._angle + 30) % 360
+        self.update()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not self._timer.isActive():
+            self._timer.start()
+
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        self._timer.stop()
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.translate(self.width() / 2.0, self.height() / 2.0)
+        p.rotate(self._angle)
+        spokes = 12
+        r_out = self._size / 2.0 - 1.0
+        r_in = r_out * 0.5
+        pen_w = max(1.0, self._size / 12.0)
+        for i in range(spokes):
+            col = QColor(self._color)
+            col.setAlphaF((i + 1) / spokes)
+            p.setPen(QPen(col, pen_w, Qt.SolidLine, Qt.RoundCap))
+            p.drawLine(0, int(r_in), 0, int(r_out))
+            p.rotate(360.0 / spokes)
         p.end()
 
 
