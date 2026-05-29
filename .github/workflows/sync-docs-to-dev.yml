@@ -1,0 +1,136 @@
+name: Sync docs to dev
+
+# Propagate documentation-only changes made on main to dev. Normal flow is
+# dev -> main; this is the deliberate main -> dev exception for docs, so a
+# quick README/CHANGELOG fix on main does not leave dev behind. Scoped to
+# tracked markdown (docs/ is gitignored, so '*.md' is exactly the doc set)
+# plus the README banner assets. Never propagates non-doc main commits.
+on:
+  push:
+    branches: [main]
+    paths:
+      - '*.md'
+      - 'assets/ttmtlogo*.png'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Log the computed patch and predicted outcome without pushing or opening a PR
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+# Serialize runs so two quick main pushes can't race on the dev push.
+concurrency:
+  group: sync-docs-to-dev
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Configure git identity
+        run: |
+          git config user.name 'flossbud'
+          git config user.email 'flossbud27@gmail.com'
+
+      - name: Sync docs to dev
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DRY_RUN: ${{ github.event.inputs.dry_run }}
+          BEFORE: ${{ github.event.before }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          git fetch origin dev main --prune
+
+          # Determine the base of the change range. Normally the push's
+          # "before" SHA; fall back to the dev/main merge-base when before is
+          # the all-zeros sentinel (branch (re)creation) or missing locally
+          # (force-push, or manual dispatch where before is empty).
+          zero="0000000000000000000000000000000000000000"
+          base="${BEFORE:-}"
+          if [ -z "$base" ] || [ "$base" = "$zero" ] || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+            base="$(git merge-base origin/dev "$SHA")"
+          fi
+          echo "Diff range: ${base}..${SHA}"
+
+          # Path-scoped, binary-safe patch (markdown text + logo image data).
+          git diff --binary "$base" "$SHA" -- '*.md' 'assets/ttmtlogo*.png' > sync.patch || true
+          if [ ! -s sync.patch ]; then
+            echo "No documentation changes in range; nothing to sync."
+            exit 0
+          fi
+
+          echo "=== Documentation changes in this push ==="
+          git --no-pager diff --stat "$base" "$SHA" -- '*.md' 'assets/ttmtlogo*.png'
+          changed_files="$(git diff --name-only "$base" "$SHA" -- '*.md' 'assets/ttmtlogo*.png')"
+
+          # Land on a local dev matching origin.
+          git checkout -B dev origin/dev
+          short_sha="$(git rev-parse --short "$SHA")"
+
+          # 3-way apply just the doc changes. Clean (incl. auto-merged
+          # non-overlapping edits) -> exit 0; real conflict -> non-zero.
+          if git apply --3way --index sync.patch 2>apply.err; then
+            if git diff --cached --quiet; then
+              echo "dev already contains these doc changes; nothing to do."
+              exit 0
+            fi
+            outcome="clean"
+          else
+            echo "--- apply output ---"; cat apply.err || true
+            git reset --hard origin/dev
+            outcome="conflict"
+          fi
+          echo "Outcome: ${outcome}"
+
+          if [ "${DRY_RUN:-false}" = "true" ]; then
+            if [ "$outcome" = "clean" ]; then
+              echo "[dry-run] Would commit and push these docs to dev:"
+            else
+              echo "[dry-run] Would open a PR into dev (conflict) for these docs:"
+            fi
+            echo "$changed_files"
+            exit 0
+          fi
+
+          if [ "$outcome" = "clean" ]; then
+            git commit -m "docs: sync from main (${short_sha}) [skip ci]"
+            git push origin dev
+            echo "Pushed doc sync to dev."
+            exit 0
+          fi
+
+          # Conflict: open a PR with main's version of the changed docs (clean,
+          # no conflict markers) for manual resolution. Never touch dev directly.
+          branch="auto/docs-sync-${short_sha}"
+          git checkout -B "$branch" origin/dev
+          while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            git checkout "$SHA" -- "$f"
+          done <<EOF
+          $changed_files
+          EOF
+          git commit -m "docs: sync from main (${short_sha}) [skip ci]"
+          git push --force-with-lease origin "$branch"
+
+          body="Automatic doc sync from \`main\` (${short_sha}) could not be applied cleanly to \`dev\` (a divergent edit conflicts). This PR contains main's version of the changed docs for you to resolve and merge.
+
+          Changed files:
+          ${changed_files}"
+          gh pr create --base dev --head "$branch" \
+            --title "Sync docs from main (${short_sha})" \
+            --body "$body" \
+          || gh pr edit "$branch" --body "$body" \
+          || true
+          echo "Opened/updated doc-sync PR: ${branch}"
