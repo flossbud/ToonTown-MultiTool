@@ -3,7 +3,6 @@
 import gzip
 import hashlib
 import os
-import subprocess
 import threading
 
 import pytest
@@ -141,6 +140,21 @@ def test_ensure_parent_dir_non_flatpak(tmp_path, monkeypatch):
     dest = tmp_path / "sub" / "deep" / "file.prc"
     p.ensure_parent_dir(str(dest))
     assert (tmp_path / "sub" / "deep").is_dir()
+
+
+def test_ensure_parent_dir_flatpak_uses_host_mkdir(monkeypatch):
+    monkeypatch.setattr(p, "in_flatpak", lambda: True)
+    calls = []
+
+    def fake_host_run(argv, **kw):
+        calls.append(list(argv))
+        class _R:
+            returncode = 0
+        return _R()
+
+    monkeypatch.setattr(p, "host_run", fake_host_run)
+    p.ensure_parent_dir("/game/config/deep/file.prc")
+    assert calls == [["mkdir", "-p", "--", "/game/config/deep"]]
 
 
 def _run_patch(monkeypatch, token="tok", **stubs):

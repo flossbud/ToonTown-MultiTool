@@ -13,7 +13,6 @@ import gzip
 import hashlib
 import json
 import os
-import subprocess
 import sys
 import threading
 
@@ -28,8 +27,11 @@ _MANIFEST_URL = "https://corporateclash.net/api/v1/launcher/manifest/v3/{realm}/
 _HTTP_TIMEOUT = 30
 _USER_AGENT = "ToontownMultiTool"
 
-# Download-name hash tokens. Platform binaries use the platform name; shared
-# assets use "resources".
+# Remap of manifest platform -> the token appended to filePath when computing
+# the download name. Plain pass-through today (binaries use their platform
+# name, shared assets use "resources"), kept as the single place to encode a
+# different token if the live protocol check (the cc-patch protocol probe)
+# ever shows CC expects a non-obvious string.
 _DOWNLOAD_TOKENS = {"windows": "windows", "macos": "macos", "resources": "resources"}
 
 
@@ -91,7 +93,7 @@ def resolve_download_base(launcher_token: str, realm: str) -> str:
     none. Network errors propagate as requests.RequestException."""
     headers = dict(CC_HEADERS)
     headers["Authorization"] = f"Bearer {launcher_token}"
-    r = requests.get(CC_METADATA_URL, headers=headers, timeout=_HTTP_TIMEOUT, verify=True)
+    r = requests.get(CC_METADATA_URL, headers=headers, timeout=_HTTP_TIMEOUT)
     r.raise_for_status()
     servers = r.json().get("downloadservers") or []
     for s in servers:
@@ -162,7 +164,7 @@ def reset_verify_cache() -> None:
 
 def _manifest_sha(files: list) -> str:
     key = sorted((f["filePath"], f.get("sha1", "")) for f in files)
-    return hashlib.sha256(json.dumps(key, sort_keys=True).encode()).hexdigest()
+    return hashlib.sha256(json.dumps(key).encode()).hexdigest()
 
 
 class CCPatcher(QObject):
