@@ -41,6 +41,19 @@ jobs:
 
       - uses: actions/download-artifact@v4
 
+      - name: Determine release channel
+        id: channel
+        run: |
+          set -euo pipefail
+          git fetch --quiet origin main
+          if git merge-base --is-ancestor "$GITHUB_SHA" FETCH_HEAD 2>/dev/null; then
+            echo "public=true" >> "$GITHUB_OUTPUT"
+            echo "Channel: public (tag reachable from origin/main) -> Latest"
+          else
+            echo "public=false" >> "$GITHUB_OUTPUT"
+            echo "Channel: beta (tag not on origin/main) -> prerelease"
+          fi
+
       - name: Render SMOKETEST.md (beta tags only)
         if: contains(github.ref_name, '-')
         run: |
@@ -79,7 +92,7 @@ jobs:
         with:
           name: ToonTown MultiTool ${{ github.ref_name }}
           body_path: RELEASE_NOTES.md
-          prerelease: ${{ contains(github.ref_name, '-') }}
+          prerelease: ${{ steps.channel.outputs.public != 'true' }}
           files: |
             windows-zip/ToonTownMultiTool-*.zip
             windows-installer/ToonTownMultiTool-Setup-*.exe
@@ -87,3 +100,18 @@ jobs:
             linux-flatpak/TTMultiTool-*.flatpak
             linux-deb/TTMultiTool-*.deb
             SMOKETEST.md
+
+      - name: Demote prior Latest
+        if: steps.channel.outputs.public == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          PRIOR=$(gh api "repos/${GITHUB_REPOSITORY}/releases" --paginate \
+            --jq "[.[] | select(.prerelease==false) | select(.tag_name != \"${GITHUB_REF_NAME}\")] | sort_by(.created_at) | last | .tag_name // empty")
+          if [ -n "$PRIOR" ]; then
+            gh release edit "$PRIOR" --prerelease --repo "$GITHUB_REPOSITORY"
+            echo "Demoted prior Latest: $PRIOR"
+          else
+            echo "No prior Latest to demote."
+          fi
