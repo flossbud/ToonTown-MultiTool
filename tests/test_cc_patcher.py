@@ -42,3 +42,58 @@ def test_fetch_all_manifests_merges_and_tags_platform(monkeypatch):
     assert by_path["a.dll"]["_platform"] == "windows"
     assert by_path["config\\g.prc"]["_platform"] == "resources"
     assert len(files) == 2
+
+
+def test_download_name_hashes_raw_filepath_plus_token():
+    expected = hashlib.sha1(("config\\g.prc" + "resources").encode("utf-8"),
+                            usedforsecurity=False).hexdigest()
+    assert p.download_name("config\\g.prc", "resources") == expected
+
+
+def test_fetch_verified_roundtrip_and_mismatches(monkeypatch):
+    raw = b"corporate-clash-file"
+    comp = gzip.compress(raw)
+    entry = {
+        "filePath": "config\\g.prc",
+        "sha1": hashlib.sha1(raw, usedforsecurity=False).hexdigest(),
+        "compressed_sha1": hashlib.sha1(comp, usedforsecurity=False).hexdigest(),
+        "_platform": "resources",
+    }
+    seen = {}
+
+    class R:
+        status_code = 200
+        content = comp
+        def raise_for_status(self): pass
+
+    def fake_get(url, **k):
+        seen["url"] = url
+        return R()
+
+    monkeypatch.setattr(p.requests, "get", fake_get)
+    assert p.fetch_verified(entry, "https://dl/base") == raw
+    assert seen["url"] == "https://dl/base/" + p.download_name("config\\g.prc", "resources")
+
+    with pytest.raises(ValueError):
+        p.fetch_verified(dict(entry, compressed_sha1="00"), "https://dl/base")
+    with pytest.raises(ValueError):
+        p.fetch_verified(dict(entry, sha1="00"), "https://dl/base")
+
+
+def test_resolve_download_base_reads_metadata(monkeypatch):
+    class R:
+        def raise_for_status(self): pass
+        def json(self):
+            return {"downloadservers": [{"id": 1, "base_url": "https://dl/one",
+                                         "realm": "production"}]}
+    monkeypatch.setattr(p.requests, "get", lambda url, **k: R())
+    assert p.resolve_download_base("tok", "production") == "https://dl/one"
+
+
+def test_resolve_download_base_raises_without_server(monkeypatch):
+    class R:
+        def raise_for_status(self): pass
+        def json(self): return {"downloadservers": []}
+    monkeypatch.setattr(p.requests, "get", lambda url, **k: R())
+    with pytest.raises(ValueError):
+        p.resolve_download_base("tok", "production")
