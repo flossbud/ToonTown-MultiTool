@@ -137,3 +137,31 @@ def test_linux_orchestration_returns_none_when_nothing_works(monkeypatch):
     inh = si.SleepInhibitor()
     assert inh.acquire() is None
     assert inh.is_active() is False
+
+
+def test_portal_acquire_holds_and_closes(monkeypatch, rec):
+    monkeypatch.setattr(si, "_is_windows", lambda: False)
+    monkeypatch.setattr(si, "_session_bus", lambda: FakeBus(rec))
+    inh = si.SleepInhibitor()
+    tier = inh.acquire()
+    assert tier == "portal"
+    # Inhibit was called on the portal interface with the suspend|idle flags.
+    name, args, kwargs = rec["inhibit"][0]
+    assert name == "org.freedesktop.portal.Desktop"
+    assert kwargs["dbus_interface"] == "org.freedesktop.portal.Inhibit"
+    assert int(args[1]) == si.PORTAL_SUSPEND_IDLE
+    assert args[2] == {"reason": si.REASON}
+    # Release closes the returned request handle.
+    inh.release()
+    assert rec["close"][0][0] == "org.freedesktop.portal.Desktop"
+    assert rec["close"][0][1] == "/portal/request/1"
+    assert inh.is_active() is False
+
+
+def test_portal_failure_returns_false(monkeypatch, rec):
+    monkeypatch.setattr(si, "_is_windows", lambda: False)
+    monkeypatch.setattr(si, "_session_bus",
+                        lambda: FakeBus(rec, fail_names={"org.freedesktop.portal.Desktop"}))
+    # screensaver/login1 still stubs returning False -> overall None.
+    inh = si.SleepInhibitor()
+    assert inh.acquire() is None

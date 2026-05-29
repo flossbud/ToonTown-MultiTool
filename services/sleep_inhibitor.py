@@ -113,7 +113,29 @@ class SleepInhibitor:
         return "+".join(tiers) if tiers else None
 
     def _acquire_portal(self):
-        return False
+        try:
+            import dbus
+            bus = _session_bus()
+            obj = bus.get_object(
+                "org.freedesktop.portal.Desktop",
+                "/org/freedesktop/portal/desktop",
+            )
+            handle = obj.Inhibit(
+                "",
+                dbus.UInt32(PORTAL_SUSPEND_IDLE),
+                {"reason": REASON},
+                dbus_interface="org.freedesktop.portal.Inhibit",
+            )
+            path = str(handle)
+
+            def _close(bus=bus, path=path):
+                req = bus.get_object("org.freedesktop.portal.Desktop", path)
+                req.Close(dbus_interface="org.freedesktop.portal.Request")
+
+            self._releases.append(("portal", _close))
+            return True
+        except Exception:
+            return False
 
     def _acquire_screensaver(self):
         return False
