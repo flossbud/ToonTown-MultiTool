@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
 )
 
 import utils.motion as motion
-from utils.shared_widgets import PulsingDot
+from utils.shared_widgets import PulsingDot, Spinner
 from utils.theme_manager import get_theme_colors, make_edit_icon, make_trash_icon
 from utils.widgets.chip_button import ChipButton, QuietChipButton
 
@@ -45,6 +45,7 @@ def _hamburger_icon(color: str, size: int = 12) -> QIcon:
 _STATUS_VISUALS = {
     "logging_in": ("status_warning_bg", "status_warning_text", "Logging in…"),
     "launching":  ("status_warning_bg", "status_warning_text", "Launching…"),
+    "loading":    ("status_info_bg",    "status_info_text",    "Loading…"),
     "queued":     ("status_warning_bg", "status_warning_text", "In queue"),
     "need_2fa":   ("status_info_bg",    "status_info_text",    "2FA Required"),
     "running":    ("status_success_bg", "status_success_text", "Running"),
@@ -56,6 +57,7 @@ _BUTTON_MAP = {
     "idle":       ("Launch",       "#0077ff", True,  "launch_clicked"),
     "logging_in": ("Logging in…",  "rgba(255,255,255,0.06)", False, None),
     "launching":  ("Launching…",   "rgba(255,255,255,0.06)", False, None),
+    "loading":    ("Quit",         "#b34848", True,  "quit_clicked"),
     "queued":     ("Cancel",       "#b34848", True,  "cancel_clicked"),
     "need_2fa":   ("Enter 2FA →",  "#C87EE8", True,  "enter_2fa_clicked"),
     "running":    ("Quit",         "#b34848", True,  "quit_clicked"),
@@ -139,6 +141,9 @@ class AccountTile(QFrame):
         self.status_dot = PulsingDot(8)
         self.status_dot.setVisible(False)
         band_lay.addWidget(self.status_dot)
+        self.status_spinner = Spinner(12)
+        self.status_spinner.setVisible(False)
+        band_lay.addWidget(self.status_spinner)
         self.status_label = QLabel("")
         self.status_label.setStyleSheet("font-size: 11px; font-weight: 600;")
         band_lay.addWidget(self.status_label, 1)
@@ -290,6 +295,9 @@ class AccountTile(QFrame):
         self.status_dot.setVisible(state == "running")
         if state == "running":
             self.status_dot.set_color("#56c856", pulse=True)
+        self.status_spinner.setVisible(state == "loading")
+        if state == "loading":
+            self.status_spinner.set_color(fg)
         self.expand_btn.setVisible(state == "failed")
         if state == "failed":
             self.expand_btn.setIcon(_hamburger_icon(fg, 12))
