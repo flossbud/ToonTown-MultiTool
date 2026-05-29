@@ -25,6 +25,7 @@ from services.ttr_login_service import (
 )
 from services.ttr_launcher import TTRLauncher
 from services.ttr_patcher import TTRPatcher
+from services.cc_patcher import CCPatcher
 from services.cc_login_service import (
     CCLoginWorker,
     find_cc_engine_path,
@@ -1120,10 +1121,10 @@ class LaunchTab(QWidget):
                 if section_index < len(cc_accounts):
                     _flat_idx, acct = cc_accounts[section_index]
                     username = acct.username or ""
-                print(f"[Launch] _on_login_success: invoking CCLauncher.launch username_len={len(username)}")
+                print(f"[Launch] _on_login_success: invoking CC patch+launch username_len={len(username)}")
                 from services.cc_login_service import CC_DEFAULT_REALM
-                launcher.launch(gameserver, token, install,
-                                username=username, realm_slug=CC_DEFAULT_REALM)
+                self._launch_cc_with_patch(section_index, gameserver, token,
+                                           install, username, CC_DEFAULT_REALM, launcher)
             else:
                 engine_dir = self._get_engine_dir(game)
                 self._launch_ttr_with_patch(section_index, gameserver, token, engine_dir, launcher)
@@ -1153,6 +1154,52 @@ class LaunchTab(QWidget):
             lambda msg, si=section_index: self._on_launcher_failed("ttr", si, msg)
         )
         patcher.verify_and_patch(engine_dir)
+
+    def _launch_cc_with_patch(self, section_index, gameserver, token, install,
+                              username, realm_slug, launcher):
+        """Verify/repair CC game files against CC's official manifest, then
+        launch on success. On hard failure, block the launch and offer the
+        official CC launcher (which patches via CC's own flow).
+        See docs/superpowers/specs/2026-05-29-cc-verify-repair-design.md.
+        """
+        patcher = CCPatcher(self)
+        launcher._cc_patcher = patcher   # strong ref through the bg thread
+
+        def _go():
+            launcher.launch(gameserver, token, install,
+                            username=username, realm_slug=realm_slug)
+
+        patcher.progress.connect(
+            lambda msg, pct, si=section_index: self._update_status("cc", si, LoginState.LAUNCHING, msg)
+        )
+        patcher.up_to_date.connect(_go)
+        patcher.patched.connect(
+            lambda files: (self.log(f"[Launch] Updated CC game files: {', '.join(files)}"), _go())
+        )
+        patcher.failed.connect(
+            lambda msg, si=section_index: self._offer_cc_launcher_fallback(si, msg)
+        )
+        game_dir = os.path.dirname(install.exe_path)
+        patcher.verify_and_patch(game_dir, token, realm_slug)
+
+    def _offer_cc_launcher_fallback(self, section_index, msg):
+        """Hard patch failure: mark the slot failed and offer to open CC's
+        official launcher, which performs CC's own update flow."""
+        from PySide6.QtWidgets import QMessageBox
+        self._update_status("cc", section_index, LoginState.FAILED, msg)
+        box = QMessageBox(self.window())
+        box.setIcon(QMessageBox.Warning)
+        box.setWindowTitle("Corporate Clash update failed")
+        box.setText("Could not update Corporate Clash automatically.")
+        box.setInformativeText(
+            f"{msg}\n\nOpen the official Corporate Clash launcher to update?"
+        )
+        open_btn = box.addButton("Open official launcher", QMessageBox.AcceptRole)
+        box.addButton("Cancel", QMessageBox.RejectRole)
+        box.exec()
+        if box.clickedButton() is open_btn:
+            if not run_official_cc_launcher(self.settings_manager):
+                self.log("[Launch] Could not start the official CC launcher.")
 
     def _on_login_failed(self, game, section_index, msg):
         game_label = "TTR" if game == "ttr" else "CC"
