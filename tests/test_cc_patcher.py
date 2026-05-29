@@ -79,20 +79,26 @@ def test_fetch_verified_roundtrip_and_mismatches(monkeypatch):
         p.fetch_verified(dict(entry, sha1="00"), "https://dl/base")
 
 
-def test_resolve_download_base_reads_metadata(monkeypatch):
+def test_resolve_download_base_reads_realm_nested_servers(monkeypatch):
+    # Live CC metadata nests downloadservers INSIDE the matching realm, not at
+    # the top level (confirmed 2026-05-29 against production: r2prod R2 host).
     class R:
         def raise_for_status(self): pass
         def json(self):
-            return {"downloadservers": [{"id": 1, "base_url": "https://dl/one",
-                                         "realm": "production"}]}
+            return {"realms": [
+                {"slug": "other", "downloadservers": [{"base_url": "https://dl/other"}]},
+                {"slug": "production", "downloadservers": [
+                    {"id": 23, "name": "Cloudflare",
+                     "base_url": "https://r2prod.corporateclash.net/", "realm": "production"}]},
+            ]}
     monkeypatch.setattr(p.requests, "get", lambda url, **k: R())
-    assert p.resolve_download_base("tok", "production") == "https://dl/one"
+    assert p.resolve_download_base("tok", "production") == "https://r2prod.corporateclash.net/"
 
 
 def test_resolve_download_base_raises_without_server(monkeypatch):
     class R:
         def raise_for_status(self): pass
-        def json(self): return {"downloadservers": []}
+        def json(self): return {"realms": [{"slug": "production", "downloadservers": []}]}
     monkeypatch.setattr(p.requests, "get", lambda url, **k: R())
     with pytest.raises(ValueError):
         p.resolve_download_base("tok", "production")

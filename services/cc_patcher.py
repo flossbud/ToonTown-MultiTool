@@ -88,17 +88,26 @@ def fetch_verified(entry: dict, base_url: str) -> bytes:
 
 
 def resolve_download_base(launcher_token: str, realm: str) -> str:
-    """GET /metadata with the launcher token; return the first download
-    server's base_url (preferring one matching realm). Raise ValueError if
-    none. Network errors propagate as requests.RequestException."""
+    """GET /metadata with the launcher token; return the download server's
+    base_url. CC nests downloadservers INSIDE the matching realm (not at the
+    top level), so prefer the realm whose slug matches, then any realm, then a
+    top-level list as a defensive fallback. Raise ValueError if none. Network
+    errors propagate as requests.RequestException."""
     headers = dict(CC_HEADERS)
     headers["Authorization"] = f"Bearer {launcher_token}"
     r = requests.get(CC_METADATA_URL, headers=headers, timeout=_HTTP_TIMEOUT)
     r.raise_for_status()
-    servers = r.json().get("downloadservers") or []
-    for s in servers:
-        if s.get("base_url") and s.get("realm") == realm:
-            return s["base_url"]
+    data = r.json()
+    realms = data.get("realms") or []
+    servers = []
+    for rlm in realms:
+        if rlm.get("slug") == realm:
+            servers = rlm.get("downloadservers") or []
+            break
+    if not servers:
+        for rlm in realms:
+            servers += rlm.get("downloadservers") or []
+    servers += data.get("downloadservers") or []
     for s in servers:
         if s.get("base_url"):
             return s["base_url"]
