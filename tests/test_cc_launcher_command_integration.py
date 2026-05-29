@@ -67,6 +67,38 @@ def test_launch_calls_host_popen_with_built_command(qapp, tmp_path, monkeypatch)
     assert env["SENTRY_ENVIRONMENT"] == "corporateclash"
     # CC_OSST_TOKEN is the old contract and must not leak through.
     assert "CC_OSST_TOKEN" not in env
+    # The host-spawned wine process must receive a host-visible X auth cookie,
+    # or it cannot open a window across the flatpak-spawn boundary (the cookie
+    # copy/injection itself is host_popen's job, covered in test_host_spawn.py).
+    assert captured["kw"]["forward_xauthority"] is True
+
+
+def test_launch_requests_xauthority_forwarding_for_bottles(qapp, tmp_path, monkeypatch):
+    """Every wine-based CC launcher (here: bottles) must ask host_popen to
+    forward a host-visible Xauthority. Without it, host wine fails X11 auth
+    ("Authorization required, but no authorization protocol specified") and
+    cannot open a window, exactly as TTR's launcher already guards against."""
+    install = _install("bottles", tmp_path)
+    captured = {}
+
+    class _Proc:
+        def __init__(self): self.pid = 9999
+        def poll(self): return None
+        def wait(self): return 0
+    monkeypatch.setattr(ccl, "host_popen",
+                        lambda cmd, **kw: (captured.update(cmd=cmd, kw=kw) or _Proc()))
+    monkeypatch.setattr("services.wine_runtimes.is_launcher_available",
+                        lambda lk: True)
+    monkeypatch.setattr("services.wine_runtimes.ensure_bottle_env_allowlist",
+                        lambda *a, **kw: False)
+    launcher = ccl.CCLauncher(settings_manager=None)
+    launcher.launch("srv", "tok", install, username="bob")
+    import time
+    for _ in range(50):
+        if "cmd" in captured:
+            break
+        time.sleep(0.05)
+    assert captured.get("kw", {}).get("forward_xauthority") is True
 
 
 def test_cc_capture_files_use_host_visible_cache_dir_in_flatpak(tmp_path, monkeypatch):

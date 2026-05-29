@@ -415,6 +415,13 @@ class CCLauncher(QObject):
                         cmd,
                         cwd=cwd,
                         env=spawn_env,
+                        # Copy the sandbox X cookie to a host-visible path and
+                        # inject it across the flatpak-spawn boundary. Without
+                        # this the host-spawned wine process has no valid X11
+                        # auth and dies with "Authorization required, but no
+                        # authorization protocol specified" → "Could not open
+                        # window." Mirrors TTRLauncher. No-op outside Flatpak.
+                        forward_xauthority=True,
                         stdout=stdout_fh,
                         stderr=stderr_fh,
                         **kwargs,
