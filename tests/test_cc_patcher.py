@@ -141,3 +141,93 @@ def test_ensure_parent_dir_non_flatpak(tmp_path, monkeypatch):
     dest = tmp_path / "sub" / "deep" / "file.prc"
     p.ensure_parent_dir(str(dest))
     assert (tmp_path / "sub" / "deep").is_dir()
+
+
+def _run_patch(monkeypatch, token="tok", **stubs):
+    """Drive CCPatcher.verify_and_patch and return (result, patcher)."""
+    _qapp()
+    p.reset_verify_cache()
+    for name, val in stubs.items():
+        monkeypatch.setattr(p, name, val)
+    patcher = p.CCPatcher()
+    done = threading.Event()
+    result = {}
+    patcher.up_to_date.connect(lambda: (result.update(kind="up_to_date"), done.set()), Qt.DirectConnection)
+    patcher.patched.connect(lambda files: (result.update(kind="patched", files=files), done.set()), Qt.DirectConnection)
+    patcher.failed.connect(lambda msg: (result.update(kind="failed", msg=msg), done.set()), Qt.DirectConnection)
+    patcher.verify_and_patch("/game", token, "production")
+    assert done.wait(2.0), "no terminal signal"
+    return result, patcher
+
+
+def test_verify_up_to_date_when_nothing_stale(monkeypatch):
+    result, _ = _run_patch(
+        monkeypatch,
+        fetch_all_manifests=lambda realm, plat: [{"filePath": "a.dll", "sha1": "h", "_platform": "windows"}],
+        select_stale=lambda files, game_dir: [],
+    )
+    assert result["kind"] == "up_to_date"
+
+
+def test_verify_downloads_and_places_stale(monkeypatch):
+    placed, parents = [], []
+    entry = {"filePath": "config\\g.prc", "sha1": "x", "compressed_sha1": "y", "_platform": "resources"}
+    result, _ = _run_patch(
+        monkeypatch,
+        fetch_all_manifests=lambda realm, plat: [entry],
+        select_stale=lambda files, game_dir: [entry],
+        resolve_download_base=lambda tok, realm: "https://dl/base",
+        fetch_verified=lambda e, base: b"new",
+        ensure_parent_dir=lambda dest: parents.append(dest),
+        place_file=lambda data, dest: placed.append((dest, data)),
+    )
+    assert result["kind"] == "patched"
+    assert result["files"] == ["config\\g.prc"]
+    assert placed == [(os.path.join("/game", "config", "g.prc"), b"new")]
+    assert parents == [os.path.join("/game", "config", "g.prc")]
+
+
+def test_verify_offline_proceeds_as_up_to_date(monkeypatch):
+    def boom(realm, plat):
+        raise p.requests.RequestException("offline")
+    result, _ = _run_patch(monkeypatch, fetch_all_manifests=boom)
+    assert result["kind"] == "up_to_date"
+
+
+def test_verify_failure_on_download_error(monkeypatch):
+    entry = {"filePath": "a.dll", "sha1": "x", "compressed_sha1": "y", "_platform": "windows"}
+    def bad_fetch(e, base):
+        raise ValueError("hash mismatch")
+    result, _ = _run_patch(
+        monkeypatch,
+        fetch_all_manifests=lambda realm, plat: [entry],
+        select_stale=lambda files, game_dir: [entry],
+        resolve_download_base=lambda tok, realm: "https://dl/base",
+        fetch_verified=bad_fetch,
+        ensure_parent_dir=lambda dest: None,
+    )
+    assert result["kind"] == "failed"
+    assert "hash mismatch" in result["msg"]
+
+
+def test_session_cache_skips_second_verify(monkeypatch):
+    manifest = [{"filePath": "a.dll", "sha1": "h", "_platform": "windows"}]
+    result1, _ = _run_patch(
+        monkeypatch,
+        fetch_all_manifests=lambda realm, plat: manifest,
+        select_stale=lambda files, game_dir: [],
+    )
+    assert result1["kind"] == "up_to_date"
+
+    def explode(files, game_dir):
+        raise AssertionError("select_stale should be cached")
+    monkeypatch.setattr(p, "fetch_all_manifests", lambda realm, plat: manifest)
+    monkeypatch.setattr(p, "select_stale", explode)
+    patcher = p.CCPatcher()
+    done = threading.Event()
+    seen = {}
+    patcher.up_to_date.connect(lambda: (seen.update(ok=True), done.set()), Qt.DirectConnection)
+    patcher.failed.connect(lambda m: (seen.update(fail=m), done.set()), Qt.DirectConnection)
+    patcher.verify_and_patch("/game", "tok", "production")
+    assert done.wait(2.0)
+    assert seen.get("ok") and "fail" not in seen

@@ -144,3 +144,75 @@ def ensure_parent_dir(dest_path: str) -> None:
         host_run(["mkdir", "-p", "--", parent], check=True)
     else:
         os.makedirs(parent, exist_ok=True)
+
+
+# game_dir (realpath) -> SHA256 of the manifest last verified clean this
+# session. Lets multiple account launches share one verification pass while
+# still re-verifying if CC pushes an update mid-session.
+_verified_manifests = {}
+
+# Serializes verify+patch across concurrent account launches so they don't
+# redundantly re-download and collide on shared staging/temp paths.
+_patch_lock = threading.Lock()
+
+
+def reset_verify_cache() -> None:
+    _verified_manifests.clear()
+
+
+def _manifest_sha(files: list) -> str:
+    key = sorted((f["filePath"], f.get("sha1", "")) for f in files)
+    return hashlib.sha256(json.dumps(key, sort_keys=True).encode()).hexdigest()
+
+
+class CCPatcher(QObject):
+    progress = Signal(str, int)   # (human message, percent 0-100)
+    up_to_date = Signal()         # nothing to do (or offline -> proceed)
+    patched = Signal(list)        # [filePaths] successfully updated
+    failed = Signal(str)          # fatal error; do not launch
+
+    def verify_and_patch(self, game_dir: str, launcher_token: str,
+                         realm: str = "production") -> None:
+        """Verify the selected CC install against CC's manifest and repair
+        stale files on a background thread. Emits exactly one terminal signal
+        (up_to_date | patched | failed)."""
+        game_dir = os.path.realpath(game_dir)
+        platform = _platform_for_os()
+
+        def _run():
+            self.progress.emit("Checking Corporate Clash files…", 0)
+            with _patch_lock:
+                try:
+                    try:
+                        files = fetch_all_manifests(realm, platform)
+                    except requests.RequestException as e:
+                        print(f"[CCPatcher] manifest unreachable, proceeding: {e}")
+                        self.up_to_date.emit()
+                        return
+                    msha = _manifest_sha(files)
+                    if _verified_manifests.get(game_dir) == msha:
+                        self.up_to_date.emit()
+                        return
+                    stale = select_stale(files, game_dir)
+                    if not stale:
+                        _verified_manifests[game_dir] = msha
+                        self.up_to_date.emit()
+                        return
+                    base = resolve_download_base(launcher_token, realm)
+                    updated = []
+                    total = len(stale)
+                    for i, entry in enumerate(stale):
+                        self.progress.emit(f"Updating {entry['filePath']}…",
+                                           int(i / total * 100))
+                        data = fetch_verified(entry, base)
+                        dest = _local_path(game_dir, entry["filePath"])
+                        ensure_parent_dir(dest)
+                        place_file(data, dest)
+                        updated.append(entry["filePath"])
+                    _verified_manifests[game_dir] = msha
+                    self.progress.emit("Corporate Clash files updated.", 100)
+                    self.patched.emit(updated)
+                except Exception as e:
+                    self.failed.emit(f"Corporate Clash file update failed: {e}")
+
+        threading.Thread(target=_run, daemon=True).start()
