@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, Slot, QTimer, QVariantAnimation, QEasingCurve, QRectF, QPointF, QSize
 from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPen, QPainterPath, QPixmap
 from services.input_service import InputService
+from services.sleep_inhibitor import SleepInhibitor
 from utils.theme_manager import (
     resolve_theme, get_theme_colors, apply_card_shadow,
     make_chat_icon, make_refresh_icon, make_lightning_icon,
@@ -1164,7 +1165,7 @@ class MultitoonTab(QWidget):
         self._keep_alive_thread = None
         self._ka_cycle_start = 0.0
         self._ka_cycle_event = threading.Event()
-        self._inhibitor_fd = None
+        self._sleep_inhibitor = SleepInhibitor()
 
         self.key_event_queue = queue.Queue(maxsize=200)
 
@@ -3118,66 +3119,22 @@ class MultitoonTab(QWidget):
     # ── Sleep inhibitor ───────────────────────────────────────────────────
 
     def _acquire_sleep_inhibitor(self):
-        """Hold a systemd sleep/idle inhibitor lock for the duration of keep-alive.
-        Works on KDE, GNOME, or any systemd-based distro with no DE at all.
-        The fd is owned by this process — released automatically on crash too."""
-        if self._inhibitor_fd is not None:
-            return
-        import sys
-        if sys.platform == "win32":
-            try:
-                import ctypes
-                # ES_CONTINUOUS | ES_SYSTEM_REQUIRED
-                ctypes.windll.kernel32.SetThreadExecutionState(0x80000000 | 0x00000001)
-                self._inhibitor_fd = "win32"
-                self.log("[KeepAlive] Sleep/idle inhibitor acquired (Windows).")
-            except Exception as e:
-                self.log(f"[KeepAlive] Could not acquire sleep inhibitor on Windows: {e}")
-                self._inhibitor_fd = None
-            return
-
-        try:
-            import dbus
-            bus = dbus.SystemBus()
-            manager = bus.get_object("org.freedesktop.login1", "/org/freedesktop/login1")
-            iface = dbus.Interface(manager, "org.freedesktop.login1.Manager")
-            fd = iface.Inhibit(
-                "sleep:idle",
-                "ToonTown MultiTool",
-                "Keep-Alive is active",
-                "block"
-            )
-            self._inhibitor_fd = fd.take()
-            self.log("[KeepAlive] Sleep/idle inhibitor acquired.")
-        except Exception as e:
-            self.log(f"[KeepAlive] Could not acquire sleep inhibitor (install python3-dbus if needed): {e}")
-            self._inhibitor_fd = None
+        """Hold an OS sleep + screen-lock inhibitor for the duration of
+        keep-alive. Cross-desktop on Linux (portal first, then ScreenSaver +
+        login1), SetThreadExecutionState on Windows. Best-effort: a failure to
+        acquire is logged, never raised."""
+        tier = self._sleep_inhibitor.acquire()
+        if tier:
+            self.log(f"[KeepAlive] Sleep/idle inhibitor acquired ({tier}).")
+        else:
+            self.log("[KeepAlive] Could not acquire sleep inhibitor; "
+                     "the screen may lock.")
 
     def _release_sleep_inhibitor(self):
-        """Release the inhibitor lock, allowing sleep/idle again."""
-        if self._inhibitor_fd is None:
-            return
-        import sys
-        if sys.platform == "win32":
-            try:
-                import ctypes
-                # ES_CONTINUOUS to clear the state
-                ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)
-                self.log("[KeepAlive] Sleep/idle inhibitor released (Windows).")
-            except Exception:
-                pass
-            finally:
-                self._inhibitor_fd = None
-            return
-
-        try:
-            import os
-            os.close(self._inhibitor_fd)
+        """Release the inhibitor, allowing sleep/idle again."""
+        if self._sleep_inhibitor.is_active():
+            self._sleep_inhibitor.release()
             self.log("[KeepAlive] Sleep/idle inhibitor released.")
-        except Exception:
-            pass
-        finally:
-            self._inhibitor_fd = None
 
     def _start_keep_alive(self):
         if not self._keep_alive_running:

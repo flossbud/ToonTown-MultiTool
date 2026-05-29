@@ -217,3 +217,41 @@ def test_fallback_screensaver_only_when_login1_unreachable(monkeypatch, rec):
     )
     inh = si.SleepInhibitor()
     assert inh.acquire() == "screensaver"
+
+
+def test_tab_delegates_acquire_and_release(monkeypatch):
+    """The tab's inhibitor methods delegate to SleepInhibitor and log the
+    tier. Built via __new__ to avoid the heavy MultitoonTab.__init__ (Qt,
+    InputService, etc.)."""
+    from tabs.multitoon._tab import MultitoonTab
+
+    tab = MultitoonTab.__new__(MultitoonTab)
+    logs = []
+    tab.log = lambda m: logs.append(m)
+    state = {"active": False}
+    tab._sleep_inhibitor = SimpleNamespace(
+        acquire=lambda: state.update(active=True) or "portal",
+        is_active=lambda: state["active"],
+        release=lambda: state.update(active=False),
+    )
+
+    MultitoonTab._acquire_sleep_inhibitor(tab)
+    assert any("portal" in m for m in logs)
+
+    MultitoonTab._release_sleep_inhibitor(tab)
+    assert any("released" in m.lower() for m in logs)
+
+
+def test_tab_logs_warning_when_acquire_fails(monkeypatch):
+    from tabs.multitoon._tab import MultitoonTab
+
+    tab = MultitoonTab.__new__(MultitoonTab)
+    logs = []
+    tab.log = lambda m: logs.append(m)
+    tab._sleep_inhibitor = SimpleNamespace(
+        acquire=lambda: None,
+        is_active=lambda: False,
+        release=lambda: None,
+    )
+    MultitoonTab._acquire_sleep_inhibitor(tab)
+    assert any("could not" in m.lower() for m in logs)
