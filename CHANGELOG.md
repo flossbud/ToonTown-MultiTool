@@ -165,4 +165,4 @@ Keep-alive is now configured per toon slot in the Multitoon tab rather than as a
 
 ---
 
-**Historical version references:** Mentions of v1.x and v2.x in section bodies above refer to releases that have been retagged. Each renamed GitHub Release also carries a "Previously released as" callout at the top of its body. The full old-to-new tag mapping lives in `docs/superpowers/specs/2026-05-27-versioning-restructure-design.md`.
+**Historical version references:** Mentions of v1.x and v2.x in section bodies above refer to releases that have been retagged. Each renamed GitHub Release also carries a "Previously released as" callout at the top of its body.
