@@ -35,15 +35,37 @@ TERMINAL_ORDER = [
 ]
 
 
+def _which(name: str) -> Optional[str]:
+    """Resolve `name` to a full path, querying the host when sandboxed.
+
+    Inside a Flatpak sandbox the host's terminals are not on the sandbox PATH,
+    so shutil.which would always miss. Route through flatpak-spawn --host so we
+    probe the host PATH instead (mirrors wine_runtimes._host_command_exists).
+    """
+    from utils.host_spawn import in_flatpak, host_check_output
+    if in_flatpak():
+        try:
+            out = host_check_output(["which", name], timeout=3)
+            if isinstance(out, bytes):
+                out = out.decode("utf-8", "replace")
+            # `which` appends a trailing newline; strip it so build_argv's
+            # os.path.basename match (e.g. the "konsole" branch) still fires.
+            line = out.strip().splitlines()[0].strip() if out.strip() else ""
+            return line or None
+        except Exception:
+            return None
+    return shutil.which(name)
+
+
 def detect_terminal() -> Optional[str]:
     """Return a path to a usable terminal, or None."""
     env = os.environ.get("TERMINAL")
     if env:
-        found = shutil.which(env)
+        found = _which(env)
         if found:
             return found
     for name in TERMINAL_ORDER:
-        found = shutil.which(name)
+        found = _which(name)
         if found:
             return found
     return None
@@ -80,7 +102,15 @@ def run_in_terminal(cmd: List[str], on_exit: Callable[[int], None]) -> bool:
         return False
     argv = build_argv(terminal, cmd)
     try:
-        proc = subprocess.Popen(argv)
+        from utils.host_spawn import in_flatpak, host_popen
+        if in_flatpak():
+            # The terminal is a host GUI process: launch it on the host with
+            # X11 auth forwarded (the same path the game launchers use). The
+            # command payload stays raw -- flatpak-spawn must not be nested,
+            # and forward_xauthority is a no-op unless an env is passed.
+            proc = host_popen(argv, env=os.environ.copy(), forward_xauthority=True)
+        else:
+            proc = subprocess.Popen(argv)
     except (OSError, subprocess.SubprocessError):
         return False
 

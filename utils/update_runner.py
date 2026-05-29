@@ -121,8 +121,12 @@ class UpdateRunner(QObject):
         )
 
     def _handle_flatpak(self, info: dict) -> None:
-        from utils.host_spawn import host_argv
-        cmd = host_argv(["flatpak", "update", "-y", _FLATPAK_APP_ID])
+        # Keep the payload raw. run_in_terminal host-launches the terminal
+        # itself when sandboxed, wrapping the whole terminal argv in
+        # flatpak-spawn --host once. Pre-wrapping the payload here would make
+        # the host terminal try to run `flatpak-spawn --host ...`, which fails
+        # because flatpak-spawn only works from inside a sandbox.
+        cmd = ["flatpak", "update", "-y", _FLATPAK_APP_ID]
         self._spawn_terminal_or_fallback(cmd, info)
 
     def _handle_aur(self, info: dict) -> None:

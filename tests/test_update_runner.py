@@ -88,3 +88,23 @@ def test_runner_dispatches_flatpak_to_terminal(monkeypatch):
     )
     runner.run_update({"tag_name": "v2.4.0-a", "html_url": "https://example/r", "assets": []})
     assert spawned == [["flatpak", "update", "-y", "io.github.flossbud.ToonTownMultiTool"]]
+
+
+def test_flatpak_payload_not_prewrapped_in_sandbox(monkeypatch):
+    # Regression guard for the double-wrap hazard: even when running inside the
+    # sandbox (in_flatpak True), the command handed to the terminal launcher
+    # must stay raw. The flatpak-spawn --host wrap is applied once, by the
+    # terminal launcher around the whole terminal argv -- never pre-applied to
+    # the payload here (a host terminal cannot itself invoke flatpak-spawn).
+    parent = MagicMock()
+    runner = UpdateRunner(parent)
+    monkeypatch.setattr("utils.install_method.detect", lambda: InstallMethod.FLATPAK)
+    monkeypatch.setattr("utils.host_spawn.in_flatpak", lambda: True)
+    spawned = []
+    monkeypatch.setattr(
+        "utils.update_runner.run_in_terminal",
+        lambda cmd, on_exit: spawned.append(cmd) or True,
+    )
+    runner.run_update({"tag_name": "v2.4.0-a", "html_url": "https://example/r", "assets": []})
+    assert spawned == [["flatpak", "update", "-y", "io.github.flossbud.ToonTownMultiTool"]]
+    assert "flatpak-spawn" not in spawned[0]
