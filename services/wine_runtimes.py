@@ -268,6 +268,15 @@ def _read_bottle_name(bottle_dir: str) -> str | None:
     try:
         import yaml  # PyYAML — Linux-only, lazy-imported so this module
         # imports cleanly on Windows where the dep is not installed.
+    except ImportError:
+        # A genuinely missing dependency, not a per-file parse error. Without
+        # this the bottle name silently falls back to the hyphenated dir
+        # basename and bottles-cli can't match the bottle (see the Flatpak
+        # PyYAML-bundling regression). Surface it loudly.
+        print("[wine_runtimes] _read_bottle_name: PyYAML unavailable; "
+              "falling back to directory name")
+        return None
+    try:
         with open(bottle_yml, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
         name = data.get("Name")
@@ -323,6 +332,13 @@ def _parse_lutris_yaml(yml_path: str) -> tuple[str | None, str | None, str | Non
     (None, None, None) if unparseable."""
     try:
         import yaml  # PyYAML — Linux-only, lazy-imported.
+    except ImportError:
+        # Missing dependency, not a per-file parse error: every Lutris game
+        # silently disappears from discovery. Surface it loudly.
+        print("[wine_runtimes] _parse_lutris_yaml: PyYAML unavailable; "
+              "skipping Lutris discovery")
+        return None, None, None
+    try:
         with open(yml_path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
         # Prefix lives under "game" or "wine" depending on Lutris version.
