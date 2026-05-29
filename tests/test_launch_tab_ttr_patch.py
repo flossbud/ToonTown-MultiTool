@@ -60,6 +60,32 @@ def test_ttr_login_success_launches_after_up_to_date(monkeypatch, request):
     assert launcher.launched_with[0] == ("gameserver-1", "cookie-1", "/engine/dir")
 
 
+def test_ttr_login_success_launches_after_patched(monkeypatch, request):
+    """The real-world case: files were stale, the patcher updated them, then
+    the engine launches. Also logs which files were updated."""
+    class _PatchedPatcher(QObject):
+        progress = Signal(str, int)
+        up_to_date = Signal()
+        patched = Signal(list)
+        failed = Signal(str)
+        def verify_and_patch(self, engine_dir):
+            self.patched.emit(["phase_14.mf"])
+    monkeypatch.setattr(launch_tab, "TTRPatcher", _PatchedPatcher, raising=False)
+
+    tab = _make_tab(monkeypatch, request)
+    monkeypatch.setattr(tab, "_get_engine_dir", lambda game: "/engine/dir")
+    logs = []
+    monkeypatch.setattr(tab, "log", lambda msg: logs.append(msg))
+    launcher = _FakeLauncher()
+    tab._launchers["ttr"][0] = launcher
+
+    tab._on_login_success("ttr", 0, "gameserver-1", "cookie-1")
+
+    assert launcher.launched_with is not None
+    assert launcher.launched_with[0] == ("gameserver-1", "cookie-1", "/engine/dir")
+    assert any("phase_14.mf" in m for m in logs)
+
+
 def test_ttr_login_success_aborts_launch_on_patch_failure(monkeypatch, request):
     class _FailingPatcher(QObject):
         progress = Signal(str, int)

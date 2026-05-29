@@ -43,6 +43,8 @@ def _platform_tokens() -> set:
 
 def _applicable(entry: dict) -> bool:
     only = entry.get("only")
+    # Absent "only" -> applies to all platforms. An explicit (rare) empty list
+    # means no platforms, so check `is None`, not falsiness.
     if only is None:
         return True
     return bool(set(only) & _platform_tokens())
@@ -123,6 +125,11 @@ def fetch_verified(entry: dict, mirror: str) -> bytes:
 # still re-verifying if TTR pushes an update mid-session (manifest changes).
 _verified_manifests = {}
 
+# Serializes verify+patch across concurrent account launches so they don't
+# redundantly re-download and collide on the shared staging/temp paths in
+# place_file: the first thread patches and caches, later threads hit the cache.
+_patch_lock = threading.Lock()
+
 
 def reset_verify_cache() -> None:
     _verified_manifests.clear()
@@ -145,37 +152,38 @@ class TTRPatcher(QObject):
         engine_dir = os.path.realpath(engine_dir)
 
         def _run():
-            try:
-                self.progress.emit("Checking TTR game files…", 0)
+            self.progress.emit("Checking TTR game files…", 0)
+            with _patch_lock:
                 try:
-                    manifest = fetch_manifest()
-                except requests.RequestException as e:
-                    # Offline / manifest unreachable: don't block the launch.
-                    print(f"[TTRPatcher] manifest unreachable, proceeding: {e}")
-                    self.up_to_date.emit()
-                    return
-                msha = _manifest_sha(manifest)
-                if _verified_manifests.get(engine_dir) == msha:
-                    self.up_to_date.emit()
-                    return
-                stale = select_stale(manifest, engine_dir)
-                if not stale:
+                    try:
+                        manifest = fetch_manifest()
+                    except requests.RequestException as e:
+                        # Offline / manifest unreachable: don't block the launch.
+                        print(f"[TTRPatcher] manifest unreachable, proceeding: {e}")
+                        self.up_to_date.emit()
+                        return
+                    msha = _manifest_sha(manifest)
+                    if _verified_manifests.get(engine_dir) == msha:
+                        self.up_to_date.emit()
+                        return
+                    stale = select_stale(manifest, engine_dir)
+                    if not stale:
+                        _verified_manifests[engine_dir] = msha
+                        self.up_to_date.emit()
+                        return
+                    mirror = resolve_mirror()
+                    updated = []
+                    total = len(stale)
+                    for i, (filename, entry) in enumerate(stale):
+                        self.progress.emit(f"Updating {filename}…", int(i / total * 100))
+                        data = fetch_verified(entry, mirror)
+                        place_file(data, os.path.join(engine_dir, filename))
+                        updated.append(filename)
                     _verified_manifests[engine_dir] = msha
-                    self.up_to_date.emit()
-                    return
-                mirror = resolve_mirror()
-                updated = []
-                total = len(stale)
-                for i, (filename, entry) in enumerate(stale):
-                    self.progress.emit(f"Updating {filename}…", int(i / total * 100))
-                    data = fetch_verified(entry, mirror)
-                    place_file(data, os.path.join(engine_dir, filename))
-                    updated.append(filename)
-                _verified_manifests[engine_dir] = msha
-                self.progress.emit("TTR game files updated.", 100)
-                self.patched.emit(updated)
-            except Exception as e:
-                self.failed.emit(f"TTR game file update failed: {e}")
+                    self.progress.emit("TTR game files updated.", 100)
+                    self.patched.emit(updated)
+                except Exception as e:
+                    self.failed.emit(f"TTR game file update failed: {e}")
 
         threading.Thread(target=_run, daemon=True).start()
 

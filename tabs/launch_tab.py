@@ -1134,8 +1134,9 @@ class LaunchTab(QWidget):
         integrity check. See docs/superpowers/specs/2026-05-28-ttr-game-file-patching-design.md.
         """
         patcher = TTRPatcher(self)
-        # Keep the patcher alive for the duration of its background thread by
-        # parenting it to the (retained) launcher.
+        # Keep the patcher alive through its background thread two ways: Qt
+        # parents it to this tab (TTRPatcher(self)), and a Python strong ref is
+        # held on the retained launcher so it can't be GC'd before it finishes.
         launcher._ttr_patcher = patcher
 
         def _go():

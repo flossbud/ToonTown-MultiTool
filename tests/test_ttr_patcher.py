@@ -288,3 +288,40 @@ def test_session_cache_skips_second_verify(monkeypatch):
     patcher.verify_and_patch("/engine")
     assert done.wait(2.0)
     assert seen.get("ok") and "fail" not in seen
+
+
+def test_session_cache_skips_after_patched_run(monkeypatch):
+    """After a run that actually patched files, the manifest is cached so a
+    second account launch skips re-verification (not just the no-op path)."""
+    _qapp()
+    p.reset_verify_cache()
+    entry = {"dl": "p.bz2", "hash": "x", "compHash": "y"}
+    manifest = {"phase_14.mf": entry}
+    monkeypatch.setattr(p, "fetch_manifest", lambda: manifest)
+    monkeypatch.setattr(p, "select_stale", lambda m, d: [("phase_14.mf", entry)])
+    monkeypatch.setattr(p, "resolve_mirror", lambda: "https://m/patches/")
+    monkeypatch.setattr(p, "fetch_verified", lambda e, mirror: b"data")
+    monkeypatch.setattr(p, "place_file", lambda data, dest: None)
+
+    # First run: stale -> patched -> caches the manifest sha.
+    patcher1 = p.TTRPatcher()
+    done1 = threading.Event()
+    res1 = {}
+    patcher1.patched.connect(lambda files: (res1.update(files=files), done1.set()), Qt.DirectConnection)
+    patcher1.failed.connect(lambda m: (res1.update(fail=m), done1.set()), Qt.DirectConnection)
+    patcher1.verify_and_patch("/engine")
+    assert done1.wait(2.0)
+    assert res1.get("files") == ["phase_14.mf"]
+
+    # Second run: same manifest -> cache hit; select_stale must NOT run again.
+    def explode(m, d):
+        raise AssertionError("select_stale should be cached after a patched run")
+    monkeypatch.setattr(p, "select_stale", explode)
+    patcher2 = p.TTRPatcher()
+    done2 = threading.Event()
+    res2 = {}
+    patcher2.up_to_date.connect(lambda: (res2.update(ok=True), done2.set()), Qt.DirectConnection)
+    patcher2.failed.connect(lambda m: (res2.update(fail=m), done2.set()), Qt.DirectConnection)
+    patcher2.verify_and_patch("/engine")
+    assert done2.wait(2.0)
+    assert res2.get("ok") and "fail" not in res2
