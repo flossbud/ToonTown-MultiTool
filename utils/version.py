@@ -1,4 +1,4 @@
 # Single source of truth for the app's user-facing version string.
 # Bumped during release prep (see docs/superpowers and the /release skill).
 # Imported by main.py (window title, About menu) and tabs/credits_tab.py.
-APP_VERSION = "0.6.0-alpha.5"
+APP_VERSION = "0.6.0-alpha.6"
