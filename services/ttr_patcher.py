@@ -116,3 +116,52 @@ def fetch_verified(entry: dict, mirror: str) -> bytes:
     if got != entry["hash"]:
         raise ValueError(f"file-hash mismatch for {dl}: {got}")
     return data
+
+
+def place_file(data: bytes, dest_path: str) -> None:
+    """Atomically install verified bytes at dest_path.
+
+    In Flatpak the destination dir is mounted read-only in-sandbox, so the
+    write crosses to the host via flatpak-spawn: stage the bytes in TTMT's
+    host-visible cache, then host-side `cp` to a same-dir temp and `mv` it
+    onto the destination (atomic rename). Outside Flatpak, write a same-dir
+    temp and os.replace() it. The engine is not running during patching, so
+    there is no read/write race.
+    """
+    name = os.path.basename(dest_path)
+    if in_flatpak():
+        staged = os.path.join(host_visible_cache_dir("ttr-patch"), name)
+        with open(staged, "wb") as f:
+            f.write(data)
+        tmp = dest_path + ".ttmt.tmp"
+        try:
+            host_run(["cp", "--", staged, tmp], check=True)
+            host_run(["mv", "-f", "--", tmp, dest_path], check=True)
+        except BaseException:
+            # mv may have failed after cp created the temp in the game dir;
+            # remove the orphan (best-effort, host-side) so it can't accumulate
+            # or be mistaken for a real file. check=False so cleanup never masks
+            # the original error.
+            try:
+                host_run(["rm", "-f", "--", tmp], check=False)
+            except Exception:
+                pass
+            raise
+        finally:
+            try:
+                os.unlink(staged)
+            except OSError:
+                pass
+    else:
+        dest_dir = os.path.dirname(dest_path)
+        fd, tmp = tempfile.mkstemp(dir=dest_dir, prefix="." + name + ".", suffix=".ttmt.tmp")
+        try:
+            with os.fdopen(fd, "wb") as f:
+                f.write(data)
+            os.replace(tmp, dest_path)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise

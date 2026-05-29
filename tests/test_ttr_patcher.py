@@ -3,6 +3,7 @@
 import bz2
 import hashlib
 import os
+import subprocess
 import threading
 
 import pytest
@@ -112,3 +113,90 @@ def test_fetch_verified_normalizes_mirror_without_trailing_slash(monkeypatch):
 def test_fetch_verified_rejects_entry_missing_fields():
     with pytest.raises(ValueError):
         p.fetch_verified({"dl": "p.bz2", "hash": "h"}, "https://m/")  # no compHash
+
+
+def test_place_file_non_flatpak_atomic_replace(tmp_path, monkeypatch):
+    monkeypatch.setattr(p, "in_flatpak", lambda: False)
+    dest = tmp_path / "phase_14.mf"
+    dest.write_bytes(b"old")
+    p.place_file(b"new-bytes", str(dest))
+    assert dest.read_bytes() == b"new-bytes"
+    # no leftover temp files
+    assert [f for f in os.listdir(tmp_path) if f.endswith(".ttmt.tmp")] == []
+
+
+def test_place_file_flatpak_stages_and_host_moves(tmp_path, monkeypatch):
+    monkeypatch.setattr(p, "in_flatpak", lambda: True)
+    staging = tmp_path / "stage"
+    staging.mkdir()
+    monkeypatch.setattr(p, "host_visible_cache_dir", lambda name: str(staging))
+
+    calls = []
+    captured = {}
+
+    def fake_host_run(argv, **kw):
+        argv = list(argv)
+        calls.append(argv)
+        if argv[0] == "cp":
+            captured["staged_bytes"] = open(argv[-2], "rb").read()  # cp -- <staged> <tmp>
+        class _R:
+            returncode = 0
+        return _R()
+
+    monkeypatch.setattr(p, "host_run", fake_host_run)
+
+    dest = "/host/ttr/data/phase_14.mf"
+    p.place_file(b"verified", dest)
+
+    assert captured["staged_bytes"] == b"verified"
+    assert calls[0][0] == "cp" and calls[0][-1] == dest + ".ttmt.tmp"
+    assert calls[1][:2] == ["mv", "-f"] and calls[1][-1] == dest
+    # never wrote directly to the read-only dest dir in-sandbox
+    assert not os.path.exists(dest)
+    # staged file is cleaned up
+    assert not os.path.exists(os.path.join(str(staging), "phase_14.mf"))
+
+
+def test_place_file_flatpak_cleans_temp_when_mv_fails(tmp_path, monkeypatch):
+    monkeypatch.setattr(p, "in_flatpak", lambda: True)
+    staging = tmp_path / "stage"
+    staging.mkdir()
+    monkeypatch.setattr(p, "host_visible_cache_dir", lambda name: str(staging))
+
+    calls = []
+
+    def fake_host_run(argv, **kw):
+        argv = list(argv)
+        calls.append(argv)
+        if argv[0] == "mv":
+            raise subprocess.CalledProcessError(1, argv)
+        class _R:
+            returncode = 0
+        return _R()
+
+    monkeypatch.setattr(p, "host_run", fake_host_run)
+
+    dest = "/host/ttr/data/phase_14.mf"
+    with pytest.raises(subprocess.CalledProcessError):
+        p.place_file(b"verified", dest)
+
+    # staged file cleaned up despite the failure
+    assert not os.path.exists(os.path.join(str(staging), "phase_14.mf"))
+    # best-effort rm of the orphaned game-dir temp was attempted
+    assert any(c[0] == "rm" and c[-1] == dest + ".ttmt.tmp" for c in calls)
+
+
+def test_place_file_non_flatpak_cleans_temp_on_replace_failure(tmp_path, monkeypatch):
+    monkeypatch.setattr(p, "in_flatpak", lambda: False)
+    dest = tmp_path / "phase_14.mf"
+    dest.write_bytes(b"old")
+
+    def boom(src, dst):
+        raise OSError("replace failed")
+
+    monkeypatch.setattr(p.os, "replace", boom)
+    with pytest.raises(OSError):
+        p.place_file(b"new", str(dest))
+
+    assert dest.read_bytes() == b"old"   # dest untouched
+    assert [f for f in os.listdir(tmp_path) if f.endswith(".ttmt.tmp")] == []  # temp cleaned
