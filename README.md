@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/ttmtlogocombo.png" alt="ToonTown MultiTool" width="480">
+  <img src="assets/logos/ttmt_logo_icon+text.png" alt="ToonTown MultiTool" width="480">
 </p>
 
 A multitoon controller for **Toontown Rewritten** and **Corporate Clash** on Linux and Windows.
