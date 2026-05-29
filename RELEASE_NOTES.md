@@ -1,20 +1,21 @@
 ## ToonTown MultiTool v0.6.0-alpha.5
 
-Adds automatic game-file verification for both games and fixes Flatpak clipboard and config issues.
+Linux launch and Keep-Alive fixes, automatic game-file verification, and a new launch loading indicator.
 
 ---
 
 ### Bug Fixes
 
 - Corporate Clash now launches from the Flatpak build; it could previously fail to open its game window.
+- Keep-Alive now reliably keeps your screen from locking and your computer from sleeping while it is active, on Linux desktops and Windows.
 - Copying error details from the launch-failure dialog now works on the Flatpak build under Wayland.
 - Bottles and Lutris configurations are now read correctly on the Flatpak build.
 
 ### Improvements
 
+- Each toon's launch status now shows "Loading" with a spinner until its game window actually appears, then switches to "Running", so it no longer reads "Running" before the window opens.
 - Corporate Clash now verifies and repairs its game files automatically before launch, so a stale install no longer fails to start. If an update cannot finish, you are prompted to open the official launcher.
 - Toontown Rewritten now verifies and repairs its game files automatically before launch.
-- Clarified the Keep-Alive feature warning.
 
 ---
 
