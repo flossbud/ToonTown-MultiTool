@@ -44,3 +44,71 @@ def test_select_stale_detects_mismatch_and_missing(tmp_path, monkeypatch):
     }
     stale = dict(p.select_stale(manifest, str(tmp_path)))
     assert set(stale) == {"phase_bad.mf", "phase_gone.mf"}
+
+
+def test_resolve_mirror_uses_first_endpoint(monkeypatch):
+    class R:
+        def __init__(self, data): self._d = data
+        def raise_for_status(self): pass
+        def json(self): return self._d
+    monkeypatch.setattr(p.requests, "get",
+                        lambda url, **k: R(["https://m1/patches/"]))
+    assert p.resolve_mirror() == "https://m1/patches/"
+
+
+def test_resolve_mirror_falls_back_when_all_fail(monkeypatch):
+    def boom(url, **k):
+        raise p.requests.RequestException("down")
+    monkeypatch.setattr(p.requests, "get", boom)
+    assert p.resolve_mirror() == p._FALLBACK_MIRROR
+
+
+def test_fetch_verified_roundtrip_and_mismatches(monkeypatch):
+    raw = b"phase-file-contents"
+    comp = bz2.compress(raw)
+    entry = {
+        "dl": "phase_x.mf.abc.bz2",
+        "hash": hashlib.sha1(raw, usedforsecurity=False).hexdigest(),
+        "compHash": hashlib.sha1(comp, usedforsecurity=False).hexdigest(),
+    }
+
+    class R:
+        content = comp
+        def raise_for_status(self): pass
+
+    monkeypatch.setattr(p.requests, "get", lambda url, **k: R())
+    assert p.fetch_verified(entry, "https://m/patches/") == raw
+
+    with pytest.raises(ValueError):
+        p.fetch_verified(dict(entry, compHash="00"), "https://m/patches/")
+    with pytest.raises(ValueError):
+        p.fetch_verified(dict(entry, hash="00"), "https://m/patches/")
+
+
+def test_fetch_verified_normalizes_mirror_without_trailing_slash(monkeypatch):
+    raw = b"x"
+    comp = bz2.compress(raw)
+    entry = {
+        "dl": "p.bz2",
+        "hash": hashlib.sha1(raw, usedforsecurity=False).hexdigest(),
+        "compHash": hashlib.sha1(comp, usedforsecurity=False).hexdigest(),
+    }
+    seen = {}
+
+    class R:
+        content = comp
+        def raise_for_status(self): pass
+
+    def fake_get(url, **k):
+        seen["url"] = url
+        return R()
+
+    monkeypatch.setattr(p.requests, "get", fake_get)
+    # mirror WITHOUT trailing slash must still produce …/patches/p.bz2
+    assert p.fetch_verified(entry, "https://m/patches") == raw
+    assert seen["url"] == "https://m/patches/p.bz2"
+
+
+def test_fetch_verified_rejects_entry_missing_fields():
+    with pytest.raises(ValueError):
+        p.fetch_verified({"dl": "p.bz2", "hash": "h"}, "https://m/")  # no compHash

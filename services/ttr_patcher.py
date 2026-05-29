@@ -79,3 +79,40 @@ def select_stale(manifest: dict, engine_dir: str) -> list[tuple[str, dict]]:
         if local_sha1(os.path.join(engine_dir, filename)) != expected:
             stale.append((filename, entry))
     return stale
+
+
+def resolve_mirror() -> str:
+    """Return the download base URL. Tries TTR's mirror endpoints in order,
+    falling back to the canonical patches host."""
+    for url in _MIRROR_ENDPOINTS:
+        try:
+            r = requests.get(url, headers={"User-Agent": _USER_AGENT}, timeout=_HTTP_TIMEOUT)
+            r.raise_for_status()
+            mirrors = r.json()
+            if mirrors:
+                return mirrors[0]
+        except (requests.RequestException, ValueError):
+            continue
+    return _FALLBACK_MIRROR
+
+
+def fetch_verified(entry: dict, mirror: str) -> bytes:
+    """Download the entry's bz2 from the mirror, verify compHash, decompress,
+    verify hash. Return the verified uncompressed bytes. Raise ValueError on a
+    malformed entry or any hash mismatch (never returns unverified data)."""
+    dl = entry.get("dl")
+    if not dl or not entry.get("hash") or not entry.get("compHash"):
+        raise ValueError("manifest entry missing dl/hash/compHash")
+    base = mirror.rstrip("/") + "/"
+    url = urllib.parse.urljoin(base, dl)
+    r = requests.get(url, headers={"User-Agent": _USER_AGENT}, timeout=_HTTP_TIMEOUT)
+    r.raise_for_status()
+    comp = r.content
+    got_comp = hashlib.sha1(comp, usedforsecurity=False).hexdigest()
+    if got_comp != entry["compHash"]:
+        raise ValueError(f"compressed-hash mismatch for {dl}: {got_comp}")
+    data = bz2.decompress(comp)
+    got = hashlib.sha1(data, usedforsecurity=False).hexdigest()
+    if got != entry["hash"]:
+        raise ValueError(f"file-hash mismatch for {dl}: {got}")
+    return data
