@@ -295,13 +295,17 @@ class MultiToonTool(QMainWindow):
         super().__init__()
 
         self.setWindowTitle(window_title())
-        # Default 748 height. Threshold for the multitoon tab to render cards
-        # without 1-2px compression of the controls pill is 742 (header 56 +
-        # tab natural 686). v2.0.3 used a 650 default but Qt auto-grew the
-        # window to fit the central widget; that auto-grow no longer works
-        # through the QStackedWidget that hosts Compact + Full layouts, so we
-        # set the default high enough to fit content directly.
-        self.setGeometry(QRect(100, 100, 560, 770))
+        # Default height grew from 770 to ~862 to fit the taller 112px logo
+        # header (header 112 + chip rail 64 + tab natural ~686 = 862) without
+        # clipping the Multitoon content. Clamp to the usable screen height so
+        # small/scaled displays are not over-sized. Width stays 575 (compact);
+        # the full-mode gate also needs width >= 1360, so a taller window
+        # never trips it.
+        from utils.window_layout import clamp_window_height
+        screen = self.screen() or QGuiApplication.primaryScreen()
+        avail_h = screen.availableGeometry().height() if screen else 0
+        default_h = clamp_window_height(avail_h)
+        self.setGeometry(QRect(100, 100, 575, default_h))
         self.setMinimumWidth(575)
         self._layout_mode = "compact"
 
