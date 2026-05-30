@@ -16,3 +16,7 @@ def test_clamp_custom_target_and_margin():
 
 def test_clamp_falls_back_to_target_when_available_unknown():
     assert clamp_window_height(available_height=0) == 862
+
+
+def test_clamp_tiny_screen_never_negative():
+    assert clamp_window_height(available_height=32) == 32
