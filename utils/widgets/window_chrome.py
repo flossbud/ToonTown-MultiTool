@@ -9,7 +9,7 @@ move()/resize() — that breaks on Wayland."""
 
 from PySide6.QtCore import Qt, QObject, QEvent
 from PySide6.QtGui import QColor, QPainter
-from PySide6.QtWidgets import QAbstractButton
+from PySide6.QtWidgets import QAbstractButton, QApplication, QWidget
 
 
 def resize_edge_for_pos(x: int, y: int, w: int, h: int, margin: int = 6):
@@ -105,8 +105,12 @@ class WindowChromeController(QObject):
         self.btn_max.clicked.connect(self._toggle_max_restore)
         self.btn_close.clicked.connect(self._win.close)
 
-        self._header.installEventFilter(self)
-        self._win.installEventFilter(self)
+        # App-level filter so we see presses delivered to child widgets too
+        # (a QMainWindow is fully covered by its central widget, so a
+        # window-level filter would never receive edge-resize presses).
+        app = QApplication.instance()
+        if app is not None:
+            app.installEventFilter(self)
 
     def _toggle_max_restore(self):
         if self._is_maximized:
@@ -126,53 +130,63 @@ class WindowChromeController(QObject):
         self.btn_max.move(x - (self.btn_max.width() + gap), 12)
         self.btn_min.move(x - 2 * (self.btn_max.width() + gap), 12)
 
-    def _on_header_press(self, event) -> bool:
-        if event.button() != Qt.LeftButton:
-            return False
-        child = self._header.childAt(event.position().toPoint())
-        if isinstance(child, _TrafficDot):
-            return False
-        wh = self._win.windowHandle()
-        if wh is not None and not wh.startSystemMove():
-            if not self._logged_move_fail:
-                print("[chrome] startSystemMove unsupported on this platform")
-                self._logged_move_fail = True
-        return True
-
-    def _maybe_start_resize(self, event) -> bool:
-        if self._is_maximized or event.button() != Qt.LeftButton:
-            return False
-        pos = event.position().toPoint()
-        edge = resize_edge_for_pos(
-            pos.x(), pos.y(), self._win.width(), self._win.height(), self._RESIZE_MARGIN
-        )
-        if edge is None:
-            return False
-        wh = self._win.windowHandle()
-        if wh is not None and not wh.startSystemResize(edge):
-            if not self._logged_resize_fail:
-                print("[chrome] startSystemResize unsupported on this platform")
-                self._logged_resize_fail = True
-        return True
+    def _press_action(self, obj, win_pos):
+        """Decide what a left press maps to: ('resize', edge), ('move', None),
+        or None. Pure given obj + a window-local QPoint. Control buttons are
+        never hijacked (they handle their own clicks)."""
+        if isinstance(obj, _TrafficDot):
+            return None
+        if not self._is_maximized:
+            edge = resize_edge_for_pos(
+                win_pos.x(), win_pos.y(),
+                self._win.width(), self._win.height(), self._RESIZE_MARGIN,
+            )
+            if edge is not None:
+                return ("resize", edge)
+        if obj is self._header or self._header.isAncestorOf(obj):
+            return ("move", None)
+        return None
 
     def eventFilter(self, obj, event):
         # Guard against Shiboken teardown ordering: Qt may fire eventFilter
-        # after Python has partially destroyed this object's attributes.
-        if not hasattr(self, "_header"):
+        # after Python has partially cleared this object's attributes.
+        if not hasattr(self, "_header") or self._win is None:
             return False
         et = event.type()
-        if obj is self._header:
-            if et == QEvent.Resize:
-                self.reposition()
-            elif et == QEvent.MouseButtonPress:
-                return self._on_header_press(event)
-            elif et == QEvent.MouseButtonDblClick:
-                self._toggle_max_restore()
-                return True
-        elif obj is self._win:
-            if et == QEvent.WindowStateChange:
-                self._sync_window_state(bool(self._win.isMaximized()))
-            elif et == QEvent.MouseButtonPress:
-                if self._maybe_start_resize(event):
+        if et == QEvent.Resize and obj is self._header:
+            self.reposition()
+            return False
+        if et == QEvent.WindowStateChange and obj is self._win:
+            self._sync_window_state(bool(self._win.isMaximized()))
+            return False
+        if et in (QEvent.MouseButtonPress, QEvent.MouseButtonDblClick):
+            if not isinstance(obj, QWidget) or event.button() != Qt.LeftButton:
+                return False
+            if obj.window() is not self._win:
+                return False
+            win_pos = obj.mapTo(self._win, event.position().toPoint())
+            if et == QEvent.MouseButtonDblClick:
+                if not isinstance(obj, _TrafficDot) and (
+                    obj is self._header or self._header.isAncestorOf(obj)
+                ):
+                    self._toggle_max_restore()
                     return True
+                return False
+            action = self._press_action(obj, win_pos)
+            if action is None:
+                return False
+            kind, edge = action
+            wh = self._win.windowHandle()
+            if kind == "resize":
+                if wh is not None and not wh.startSystemResize(edge):
+                    if not self._logged_resize_fail:
+                        print("[chrome] startSystemResize unsupported on this platform")
+                        self._logged_resize_fail = True
+                return True
+            # kind == "move"
+            if wh is not None and not wh.startSystemMove():
+                if not self._logged_move_fail:
+                    print("[chrome] startSystemMove unsupported on this platform")
+                    self._logged_move_fail = True
+            return True
         return False

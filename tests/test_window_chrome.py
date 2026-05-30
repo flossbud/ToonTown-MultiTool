@@ -2,7 +2,7 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import Qt, QSize, QPoint
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QApplication
 from utils.widgets.window_chrome import resize_edge_for_pos, maximize_glyph
@@ -46,7 +46,7 @@ def test_traffic_dot_properties(qapp):
     assert dot._glyph == "×"
 
 
-from PySide6.QtWidgets import QMainWindow, QFrame
+from PySide6.QtWidgets import QMainWindow, QFrame, QWidget
 
 
 class _FakeWindow(QMainWindow):
@@ -90,3 +90,29 @@ def test_maximize_toggles_and_swaps_glyph(qapp):
     assert ctl.btn_max._glyph == maximize_glyph(True)
     ctl._sync_window_state(is_maximized=False)
     assert ctl.btn_max._glyph == maximize_glyph(False)
+
+
+def test_press_near_edge_from_central_child_routes_to_resize(qapp):
+    from utils.widgets.window_chrome import WindowChromeController
+    win = _FakeWindow(); win.resize(575, 770)
+    header = QFrame(win)
+    ctl = WindowChromeController(win, header)
+    content = QWidget(win)  # a central child that covers the window
+    action = ctl._press_action(content, QPoint(573, 768))  # bottom-right corner
+    assert action is not None and action[0] == "resize"
+
+
+def test_press_on_header_interior_routes_to_move(qapp):
+    from utils.widgets.window_chrome import WindowChromeController
+    win = _FakeWindow(); win.resize(575, 770)
+    header = QFrame(win)
+    ctl = WindowChromeController(win, header)
+    assert ctl._press_action(header, QPoint(300, 40)) == ("move", None)
+
+
+def test_press_on_control_button_is_ignored(qapp):
+    from utils.widgets.window_chrome import WindowChromeController
+    win = _FakeWindow(); win.resize(575, 770)
+    header = QFrame(win)
+    ctl = WindowChromeController(win, header)
+    assert ctl._press_action(ctl.btn_close, QPoint(560, 12)) is None
