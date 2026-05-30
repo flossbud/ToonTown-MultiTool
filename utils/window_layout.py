@@ -28,13 +28,19 @@ def compute_logo_size(
 
     controls_cluster_width default 58 = 3*14px dots + 2*8px gaps.
     side_reserve = controls_cluster_width + side_margin (per side).
+    Returns (0, 0) when the header is too narrow to safely show the logo.
+    Raises ValueError on non-positive asset dimensions (bad/missing pixmap).
     """
+    if asset_w <= 0 or asset_h <= 0:
+        raise ValueError(f"asset dimensions must be positive, got {asset_w}x{asset_h}")
     aspect = asset_w / asset_h
-    width = round(target_height * aspect)
-    height = target_height
     side_reserve = controls_cluster_width + side_margin
     max_logo_width = header_width - 2 * side_reserve
-    if width > max_logo_width > 0:
+    if max_logo_width <= 0:
+        return 0, 0
+    width = round(target_height * aspect)
+    height = target_height
+    if width > max_logo_width:
         width = max_logo_width
         height = round(width / aspect)
     return width, height

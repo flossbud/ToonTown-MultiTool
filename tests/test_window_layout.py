@@ -39,3 +39,13 @@ def test_logo_size_scales_down_when_too_wide():
     # max_logo_width = 200 - 2*74 = 52 -> height = round(52/2.908) = 18
     assert w == 52
     assert h == 18
+
+
+def test_logo_size_hides_when_no_safe_space():
+    assert compute_logo_size(header_width=100, asset_w=2100, asset_h=722) == (0, 0)
+
+
+def test_logo_size_raises_on_bad_asset_dims():
+    import pytest
+    with pytest.raises(ValueError):
+        compute_logo_size(header_width=575, asset_w=0, asset_h=722)
