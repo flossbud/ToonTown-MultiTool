@@ -44,3 +44,49 @@ def test_traffic_dot_properties(qapp):
     assert dot.toolTip() == "Close"
     assert dot._dot_color == QColor("#ff5f56")
     assert dot._glyph == "×"
+
+
+from PySide6.QtWidgets import QMainWindow, QFrame
+
+
+class _FakeWindow(QMainWindow):
+    """Stand-in main window that records the chrome calls."""
+    def __init__(self):
+        super().__init__()
+        self.calls = []
+    def showMinimized(self): self.calls.append("min")
+    def showMaximized(self): self.calls.append("max")
+    def showNormal(self): self.calls.append("normal")
+    def close(self): self.calls.append("close"); return True
+
+
+def test_controller_builds_three_named_controls(qapp):
+    from utils.widgets.window_chrome import WindowChromeController
+    win = _FakeWindow()
+    header = QFrame(win)
+    ctl = WindowChromeController(win, header)
+    assert ctl.btn_min.objectName() == "win_ctl_min"
+    assert ctl.btn_max.objectName() == "win_ctl_max"
+    assert ctl.btn_close.objectName() == "win_ctl_close"
+    assert ctl.btn_min._dot_color == QColor("#4aa3ff")
+    assert ctl.btn_max._dot_color == QColor("#0077ff")
+    assert ctl.btn_close._dot_color == QColor("#ff5f56")
+
+
+def test_controls_invoke_window_methods(qapp):
+    from utils.widgets.window_chrome import WindowChromeController
+    win = _FakeWindow()
+    ctl = WindowChromeController(win, QFrame(win))
+    ctl.btn_min.click()
+    ctl.btn_close.click()
+    assert win.calls == ["min", "close"]
+
+
+def test_maximize_toggles_and_swaps_glyph(qapp):
+    from utils.widgets.window_chrome import WindowChromeController, maximize_glyph
+    win = _FakeWindow()
+    ctl = WindowChromeController(win, QFrame(win))
+    ctl._sync_window_state(is_maximized=True)
+    assert ctl.btn_max._glyph == maximize_glyph(True)
+    ctl._sync_window_state(is_maximized=False)
+    assert ctl.btn_max._glyph == maximize_glyph(False)

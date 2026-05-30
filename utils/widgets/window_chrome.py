@@ -77,3 +77,102 @@ class _TrafficDot(QAbstractButton):
             p.setFont(f)
             p.drawText(self.rect(), Qt.AlignCenter, self._glyph)
         p.end()
+
+
+class WindowChromeController(QObject):
+    """Owns the custom window controls + drag/resize/state for a frameless
+    main window. Construct only when custom chrome is active (the
+    use_system_title_bar setting is off)."""
+
+    _RESIZE_MARGIN = 6
+
+    def __init__(self, window, header, parent=None):
+        super().__init__(parent or window)
+        self._win = window
+        self._header = header
+        self._is_maximized = False
+        self._logged_move_fail = False
+        self._logged_resize_fail = False
+
+        self.btn_min = _TrafficDot("#4aa3ff", "−", "#d7ebff", "Minimize", header)
+        self.btn_max = _TrafficDot("#0077ff", maximize_glyph(False), "#aed5ff", "Maximize", header)
+        self.btn_close = _TrafficDot("#ff5f56", "×", "#ffcecb", "Close", header)
+        self.btn_min.setObjectName("win_ctl_min")
+        self.btn_max.setObjectName("win_ctl_max")
+        self.btn_close.setObjectName("win_ctl_close")
+
+        self.btn_min.clicked.connect(self._win.showMinimized)
+        self.btn_max.clicked.connect(self._toggle_max_restore)
+        self.btn_close.clicked.connect(self._win.close)
+
+        self._header.installEventFilter(self)
+        self._win.installEventFilter(self)
+
+    def _toggle_max_restore(self):
+        if self._is_maximized:
+            self._win.showNormal()
+        else:
+            self._win.showMaximized()
+
+    def _sync_window_state(self, is_maximized: bool):
+        self._is_maximized = is_maximized
+        self.btn_max.set_glyph(maximize_glyph(is_maximized))
+
+    def reposition(self):
+        """Pin the control cluster to the header's top-right corner."""
+        x = self._header.width() - 12 - self.btn_close.width()
+        gap = 8
+        self.btn_close.move(x, 12)
+        self.btn_max.move(x - (self.btn_max.width() + gap), 12)
+        self.btn_min.move(x - 2 * (self.btn_max.width() + gap), 12)
+
+    def _on_header_press(self, event) -> bool:
+        if event.button() != Qt.LeftButton:
+            return False
+        child = self._header.childAt(event.position().toPoint())
+        if isinstance(child, _TrafficDot):
+            return False
+        wh = self._win.windowHandle()
+        if wh is not None and not wh.startSystemMove():
+            if not self._logged_move_fail:
+                print("[chrome] startSystemMove unsupported on this platform")
+                self._logged_move_fail = True
+        return True
+
+    def _maybe_start_resize(self, event) -> bool:
+        if self._is_maximized or event.button() != Qt.LeftButton:
+            return False
+        pos = event.position().toPoint()
+        edge = resize_edge_for_pos(
+            pos.x(), pos.y(), self._win.width(), self._win.height(), self._RESIZE_MARGIN
+        )
+        if edge is None:
+            return False
+        wh = self._win.windowHandle()
+        if wh is not None and not wh.startSystemResize(edge):
+            if not self._logged_resize_fail:
+                print("[chrome] startSystemResize unsupported on this platform")
+                self._logged_resize_fail = True
+        return True
+
+    def eventFilter(self, obj, event):
+        # Guard against Shiboken teardown ordering: Qt may fire eventFilter
+        # after Python has partially destroyed this object's attributes.
+        if not hasattr(self, "_header"):
+            return False
+        et = event.type()
+        if obj is self._header:
+            if et == QEvent.Resize:
+                self.reposition()
+            elif et == QEvent.MouseButtonPress:
+                return self._on_header_press(event)
+            elif et == QEvent.MouseButtonDblClick:
+                self._toggle_max_restore()
+                return True
+        elif obj is self._win:
+            if et == QEvent.WindowStateChange:
+                self._sync_window_state(bool(self._win.isMaximized()))
+            elif et == QEvent.MouseButtonPress:
+                if self._maybe_start_resize(event):
+                    return True
+        return False
