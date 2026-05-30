@@ -744,6 +744,21 @@ class SettingsTab(QWidget):
         rm_field.set_control(rm_combo)
         appearance.add_field(rm_field)
 
+        # Window chrome: native OS title bar vs the in-app custom controls.
+        # Applied on restart (window flags are construction-time).
+        tb_enabled = bool(self.settings_manager.get("use_system_title_bar", False))
+        tb_field = SettingsField(
+            "Use system title bar",
+            helper="Show your OS window frame instead of the in-app controls. "
+                   "Restart required to take effect.",
+        )
+        tb_switch = Switch(tb_enabled)
+        tb_switch.toggled.connect(
+            lambda v: self.settings_manager.set("use_system_title_bar", v)
+        )
+        tb_field.set_control(tb_switch)
+        appearance.add_field(tb_field)
+
         lay.insertWidget(insert_at, appearance)
         insert_at += 1
 
