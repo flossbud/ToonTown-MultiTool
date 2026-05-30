@@ -441,6 +441,7 @@ class MultiToonTool(QMainWindow):
         self.setCentralWidget(self.container)
 
         self._apply_full_theme()
+        self._apply_window_chrome()
         self._refresh_header_session_status()
         # Demo mode (TTMT_DEMO_LAUNCH_TAB) jumps directly to the Launch tab so
         # the visual verification script can capture it without synthesizing
@@ -640,6 +641,19 @@ class MultiToonTool(QMainWindow):
             return
         scaled = src.scaled(tw, th, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         self.header_logo.setPixmap(scaled)
+
+    def _apply_window_chrome(self):
+        """Apply the frameless flag + custom controls unless the escape-hatch
+        setting requests the native title bar. Window flags are construction-
+        time, so the setting takes effect on restart. Sets self._chrome to the
+        controller (custom chrome) or None (native)."""
+        self._chrome = None
+        if bool(self.settings_manager.get("use_system_title_bar", False)):
+            return  # native decorations; no custom controls
+        self.setWindowFlag(Qt.FramelessWindowHint, True)
+        from utils.widgets.window_chrome import WindowChromeController
+        self._chrome = WindowChromeController(self, self.header)
+        self._chrome.reposition()
 
     # ── Chip Rail ──────────────────────────────────────────────────────────
 
