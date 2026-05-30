@@ -127,7 +127,7 @@ from PySide6.QtWidgets import (
     QLabel, QPushButton, QToolButton, QProxyStyle, QStyle, QFrame,
     QSpacerItem, QSizePolicy,
 )
-from PySide6.QtCore import QObject, QRect, QRectF, Qt, QSize, QEvent, Signal, Slot, QPropertyAnimation, QEasingCurve, QTimer
+from PySide6.QtCore import QObject, QRect, QRectF, Qt, QSize, QEvent, Signal, Slot, QTimer
 from PySide6.QtGui import QColor, QGuiApplication, QIcon
 
 # === Internal Imports ===
@@ -153,16 +153,13 @@ from utils.theme_manager import (
 from utils.build_flavor import window_title, app_name, is_beta
 
 
-TITLE_ANIM_DURATION_MS = 800
-TITLE_ANIM_MAX_WIDTH = 300
-
 # Layout-mode breakpoint and hysteresis. Window must be >= W_FULL x H_FULL
 # (plus deadband on the way up) to enter Full UI; Compact resumes once either
 # dimension drops below (breakpoint - deadband) on the way down.
 #
 # H_FULL=800 matches the pre-chip-rail trigger threshold so users who used
 # to enter Full at ~860 height (1280+80, 800+60) still can. At the trigger,
-# content area = 860 - HEADER_H(56) - CHIP_RAIL_H(64) = 740, which renders
+# content area = 860 - HEADER_H(112) - CHIP_RAIL_H(64) = 684, which renders
 # the 2x2 card grid at ~99.5% of its 632x360 reference (744-design). As
 # the window grows, cards scale up to 100% and then cap at _MAX_CARD.
 # The earlier bump to 852/864 preserved cards-at-100% at the trigger
@@ -497,7 +494,6 @@ class MultiToonTool(QMainWindow):
             QSize(W_FULL, H_FULL - HEADER_H - CHIP_RAIL_H),
             include_active=True,
         )
-        self._animate_launch()
 
     def _capture_multitool_window_id(self):
         # xdotool is X11-only; the gate is on the Qt platform, not the
@@ -521,21 +517,6 @@ class MultiToonTool(QMainWindow):
         except Exception:
             print("[Main] Warning: Failed to get MultiTool window ID.")
 
-    def _animate_launch(self):
-        # Prevent word filtering from causing layout jumps while width is small
-        self.title_label.setWordWrap(False)
-        self.title_label.setMaximumWidth(0)
-
-        self._launch_anim = QPropertyAnimation(self.title_label, b"maximumWidth")
-        self._launch_anim.setDuration(TITLE_ANIM_DURATION_MS)
-        self._launch_anim.setStartValue(0)
-        self._launch_anim.setEndValue(TITLE_ANIM_MAX_WIDTH)
-        self._launch_anim.setEasingCurve(QEasingCurve.OutCubic)
-
-        # After animation, remove the maximum width constraint
-        self._launch_anim.finished.connect(lambda: self.title_label.setMaximumWidth(16777215))
-        self._launch_anim.start()
-
     # ── Hint Toggle ──────────────────────────────────────────────────────
 
     def _toggle_hints(self):
@@ -544,6 +525,8 @@ class MultiToonTool(QMainWindow):
         self._update_hint_icon()
 
     def _update_hint_icon(self):
+        if not hasattr(self, "hint_btn") or self.hint_btn is None:
+            return
         c = self._theme_colors()
         color = QColor(c['sidebar_text'])
 
@@ -1038,16 +1021,6 @@ class MultiToonTool(QMainWindow):
     def _theme_colors(self):
         return get_theme_colors(resolve_theme(self.settings_manager) == "dark")
 
-    def _set_header_title(self, tc: str, vc: str) -> None:
-        """Render the header title label with the app name and an inline
-        accent-colored version string. Extracted so tests can exercise the
-        title-build path without wiring up the full theme machinery."""
-        self.title_label.setText(
-            f'<span style="color:{tc}">{app_name()}</span>'
-            f' <span style="color:{vc}; font-size:{font_role("label")}px; '
-            f'font-weight:bold;">v{APP_VERSION}</span>'
-        )
-
     def _refresh_header_session_status(self):
         """Update the header's right-aligned status label from the live
         multitoon state. Called from __init__ once and re-fired on
@@ -1063,9 +1036,7 @@ class MultiToonTool(QMainWindow):
         )
 
     def _apply_full_theme(self):
-        theme = resolve_theme(self.settings_manager)
         c = self._theme_colors()
-        is_dark = theme == "dark"
 
         # Container background
         self.container.setStyleSheet(f"QWidget {{ background: {c['bg_app']}; }}")
@@ -1077,25 +1048,7 @@ class MultiToonTool(QMainWindow):
                 border-bottom: 1px solid {c['sidebar_border']};
             }}
         """)
-        apply_card_shadow(self.header, is_dark, blur=10, offset_y=2)
-        tc = c['header_text']
-        vc = c['header_accent']
-        self.title_label.setStyleSheet(
-            f"font-size: {font_role('title')}px; font-weight: bold; background: transparent;"
-        )
-        self._set_header_title(tc, vc)
-        if hasattr(self, "header_session_status"):
-            self.header_session_status.setStyleSheet(
-                f"font-size: {font_role('label')}px; color: {c['text_muted']}; "
-                f"background: transparent; padding-right: 12px;"
-            )
-        # Accent stripe
-        accent = self.header.findChild(QFrame, "header_accent")
-        if accent:
-            accent.setStyleSheet(f"""
-                background: {c['header_accent']};
-                border-radius: 2px;
-            """)
+        self._refresh_header_logo()
 
         # Chip rail
         self.chip_rail.setStyleSheet(f"""
