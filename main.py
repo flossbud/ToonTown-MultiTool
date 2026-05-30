@@ -145,7 +145,7 @@ from utils.profile_manager import ProfileManager
 from services.window_manager import WindowManager
 from utils.game_registry import GameRegistry
 from utils.theme_manager import (
-    apply_theme, resolve_theme, get_theme_colors, apply_card_shadow,
+    apply_theme, resolve_theme, get_theme_colors,
     make_nav_gamepad, make_nav_power, make_nav_keyboard, make_nav_gear,
     make_hint_icon, font_role,
     SystemThemeWatcher,
@@ -211,23 +211,6 @@ class NoFocusProxyStyle(QProxyStyle):
         if element == QStyle.PE_FrameFocusRect:
             return
         super().drawPrimitive(element, option, painter, widget)
-
-
-class _BrandLink(QFrame):
-    """Header logo+accent+title wrapper. Click → Credits page (index 5)
-    via a vertical push-slide animation."""
-
-    def __init__(self, credits_callback, parent=None):
-        super().__init__(parent)
-        self._credits_callback = credits_callback
-        self.setObjectName("header_brand_link")
-        self.setCursor(Qt.PointingHandCursor)
-        self.setToolTip("About / Credits")
-
-    def mouseReleaseEvent(self, event):
-        if event.button() == Qt.LeftButton and self.rect().contains(event.position().toPoint()):
-            self._credits_callback()
-        super().mouseReleaseEvent(event)
 
 
 def _desktop_file_exists(desktop_id: str) -> bool:
@@ -325,6 +308,10 @@ class MultiToonTool(QMainWindow):
         self.pressed_keys = set()
         GameRegistry.instance()  # warm up before any launchers
         self.settings_manager = SettingsManager()
+        # Hover-hints flag is read by the global tooltip eventFilter, which is
+        # installed before the chip rail builds — initialize it here so it
+        # always exists regardless of where the hint toggle is constructed.
+        self._hints_enabled = bool(self.settings_manager.get("hints_enabled", True))
         from utils.update_defaults import apply_first_launch_defaults
         apply_first_launch_defaults(self.settings_manager)
 
