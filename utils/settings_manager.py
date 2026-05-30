@@ -16,6 +16,7 @@ class SettingsManager:
             "keep_alive_action":     "jump",
             "keep_alive_delay":      "30 sec",
             "theme":                 "system",
+            "use_system_title_bar":  False,
             "enable_companion_app":  True,
             "input_backend":         "xlib",
             "active_profile":        -1,
