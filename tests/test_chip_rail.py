@@ -228,8 +228,8 @@ def test_view_logs_action_calls_nav_select_with_index_4(qapp):
     assert instance._nav_select_calls == [4]
 
 
-# Click test for hint_btn moved to tests/test_app_header.py since
-# the hint toggle now lives in the header, not the chip rail.
+# Hint toggle now lives in the chip rail; see test_chip_rail_has_hint_button
+# and test_hint_button_parented_in_rail above.
 
 
 def test_apply_chip_styles_uniform_icon_size_and_font(qapp):
@@ -514,3 +514,22 @@ def test_chip_rail_nav_items_order(qapp):
     rail = instance._build_chip_rail()
     labels = [c.text() for c in instance.chip_buttons]
     assert labels == ["Multitoon", "Launcher", "Keysets", "Settings"]
+
+
+def test_chip_rail_phantoms_balance_clusters_debug_off(qapp):
+    """Debug off: left cluster = app icon (40), right cluster = hint (34).
+    The right phantom pads +6 so both fixed ends are 40px and the chips
+    sit at true center."""
+    instance, rail = _build_rail_with_debug(qapp, show_debug_tab=False)
+    lp = instance.chip_rail_left_phantom.sizeHint().width()
+    rp = instance.chip_rail_right_phantom.sizeHint().width()
+    assert lp == 0 and rp == 6, f"expected left=0 right=6, got left={lp} right={rp}"
+
+
+def test_chip_rail_phantoms_balance_clusters_debug_on(qapp):
+    """Debug on: right cluster = overflow(34)+spacing(4)+hint(34)=72,
+    left = icon(40). Left phantom pads +32 so both ends are 72px."""
+    instance, rail = _build_rail_with_debug(qapp, show_debug_tab=True)
+    lp = instance.chip_rail_left_phantom.sizeHint().width()
+    rp = instance.chip_rail_right_phantom.sizeHint().width()
+    assert lp == 32 and rp == 0, f"expected left=32 right=0, got left={lp} right={rp}"

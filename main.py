@@ -763,6 +763,16 @@ class MultiToonTool(QMainWindow):
 
         layout.addStretch()
 
+        # Right phantom: counterpart to the left phantom. The chips sit between
+        # two stretches, so they only center when the fixed clusters on each
+        # end are equal width. The app icon (left, 40) and the hint+overflow
+        # (right) differ, so _update_chip_rail_phantom_width pads whichever
+        # side is lighter via these two spacers.
+        self.chip_rail_right_phantom = QSpacerItem(
+            0, 0, QSizePolicy.Fixed, QSizePolicy.Minimum
+        )
+        layout.addSpacerItem(self.chip_rail_right_phantom)
+
         # Overflow menu — visible only when debug logging is enabled.
         # Uses a custom OverflowPopup (replaces Qt's QMenu so we can
         # animate the open/close).
@@ -808,15 +818,22 @@ class MultiToonTool(QMainWindow):
         (34) plus optional debug overflow (34). Pad the lighter side via the
         left phantom spacer so the centered chip cluster is not pushed
         off-center."""
-        if not hasattr(self, "chip_rail_left_phantom"):
+        if not (
+            hasattr(self, "chip_rail_left_phantom")
+            and hasattr(self, "chip_rail_right_phantom")
+        ):
             return
         right = 34  # hint toggle
         if self.settings_manager.get("show_debug_tab", False):
             right += 4 + 34  # overflow button + its leading spacing
         left = 40  # app icon
-        pad = max(0, right - left)
+        # Pad whichever fixed cluster is lighter so the two ends match and the
+        # chips land at true center.
         self.chip_rail_left_phantom.changeSize(
-            pad, 0, QSizePolicy.Fixed, QSizePolicy.Minimum
+            max(0, right - left), 0, QSizePolicy.Fixed, QSizePolicy.Minimum
+        )
+        self.chip_rail_right_phantom.changeSize(
+            max(0, left - right), 0, QSizePolicy.Fixed, QSizePolicy.Minimum
         )
         if hasattr(self, "chip_rail"):
             self.chip_rail.layout().invalidate()
@@ -824,10 +841,10 @@ class MultiToonTool(QMainWindow):
     def nav_select_credits(self):
         """Navigate to the Credits tab with a vertical push-slide.
 
-        The brand lives in the header (not the chip rail), so its
-        transition deliberately uses vertical motion to feel distinct
-        from chip nav. Credits enters from above (modal-motion principle:
-        animate from the trigger source).
+        Reached via the app-icon button on the chip rail; its transition
+        deliberately uses vertical motion to feel distinct from chip nav.
+        Credits enters from above (modal-motion principle: animate from the
+        trigger source).
         """
         prev_index = self.stack.currentIndex()
         if prev_index == 5:
