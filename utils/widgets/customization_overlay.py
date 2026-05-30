@@ -29,7 +29,7 @@ from PySide6.QtCore import (
     QVariantAnimation,
     Signal,
 )
-from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
+from PySide6.QtGui import QColor, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup,
     QFrame,
@@ -43,31 +43,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from utils.icon_factory import make_x_icon
 from utils.motion import reduced_motion_enabled
-
-
-def _make_x_icon(color: QColor, size: int = 14) -> QIcon:
-    """Paint an X glyph into a QPixmap, return as a QIcon.
-
-    Bypasses QPushButton text-rendering entirely, which is necessary on
-    KDE Breeze (Wayland) where small buttons elide text that would
-    otherwise overflow the content rect. The offscreen Fusion style
-    does NOT elide, which is why probes pass while the real app shows
-    an empty button. Painting the glyph into a QPixmap and using
-    setIcon() sidesteps the whole style/elide/font/DPI pipeline.
-    """
-    pix = QPixmap(size, size)
-    pix.fill(Qt.transparent)
-    p = QPainter(pix)
-    p.setRenderHint(QPainter.Antialiasing)
-    pen = QPen(color, 2.0)
-    pen.setCapStyle(Qt.RoundCap)
-    p.setPen(pen)
-    inset = max(2, size // 4)
-    p.drawLine(inset, inset, size - inset, size - inset)
-    p.drawLine(size - inset, inset, inset, size - inset)
-    p.end()
-    return QIcon(pix)
 
 from utils.image_blur import gaussian_blur_pixmap
 from utils.widgets.card_preview_widget import CardPreviewWidget
@@ -196,7 +173,7 @@ class _Panel(QFrame):
         # rect, which makes a small text-glyph close button render as
         # an empty square. Icons are never elided.
         self.close_btn = QPushButton()
-        self.close_btn.setIcon(_make_x_icon(QColor("#e8e8f0"), 14))
+        self.close_btn.setIcon(make_x_icon(14, QColor("#e8e8f0")))
         self.close_btn.setIconSize(QSize(14, 14))
         self.close_btn.setFixedSize(28, 28)
         self.close_btn.setToolTip("Close (Esc)")

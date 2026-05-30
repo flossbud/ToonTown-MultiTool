@@ -370,6 +370,30 @@ def make_nav_gear(size: int = 22, color: QColor = None) -> QIcon:
     return _draw_nav_icon(size, color, draw)
 
 
+def make_x_icon(size: int = 14, color: QColor = None) -> QIcon:
+    """Paint an X glyph into a QPixmap and return it as a QIcon.
+
+    Bypasses QPushButton text rendering, which is necessary on KDE Breeze
+    (Wayland): a small button with text '×' elides the glyph and renders
+    empty. Painting into a pixmap and using setIcon() sidesteps the whole
+    style / elide / font / DPI pipeline, so the X is always visible.
+    """
+    if color is None:
+        color = QColor("#e8e8f0")
+    pix = QPixmap(size, size)
+    pix.fill(Qt.transparent)
+    p = QPainter(pix)
+    p.setRenderHint(QPainter.Antialiasing)
+    pen = QPen(color, 2.0)
+    pen.setCapStyle(Qt.RoundCap)
+    p.setPen(pen)
+    inset = max(2, size // 4)
+    p.drawLine(inset, inset, size - inset, size - inset)
+    p.drawLine(size - inset, inset, inset, size - inset)
+    p.end()
+    return QIcon(pix)
+
+
 def make_trash_icon(size: int = 18, color: QColor = None) -> QIcon:
     """Draw a trash can icon using Qt primitives."""
     if color is None:

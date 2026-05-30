@@ -28,3 +28,17 @@ def test_make_help_icon_default_size(qapp):
     icon = make_help_icon()
     assert isinstance(icon, QIcon)
     assert not icon.isNull()
+
+
+def test_make_x_icon_returns_qicon(qapp):
+    from utils.icon_factory import make_x_icon
+    icon = make_x_icon(14, QColor("#ffffff"))
+    assert isinstance(icon, QIcon)
+    assert not icon.isNull()
+
+
+def test_make_x_icon_default_args(qapp):
+    from utils.icon_factory import make_x_icon
+    icon = make_x_icon()
+    assert isinstance(icon, QIcon)
+    assert not icon.isNull()
