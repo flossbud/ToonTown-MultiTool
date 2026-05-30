@@ -418,7 +418,7 @@ class MultiToonTool(QMainWindow):
         initial_mode = self.settings_manager.get(CHAT_HANDLING_MODE, CHAT_HANDLING_MODE_DEFAULT)
         self.multitoon_tab.apply_chat_handling_mode(initial_mode)
 
-        # ── Build layout: banner + header + chip_rail + stacked content ────
+        # ── Build layout: header + banner + chip_rail + stacked content ────
         root = QVBoxLayout()
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
@@ -428,10 +428,13 @@ class MultiToonTool(QMainWindow):
         self.update_banner.clicked.connect(self._on_update_banner_clicked)
         self.update_banner.dismissed.connect(self._on_update_banner_dismissed)
         self._pending_update_info = None
-        root.addWidget(self.update_banner)
 
         self.header = self._build_header()
         root.addWidget(self.header)
+
+        # Banner sits between the header and the tab switcher; in normal flow
+        # so show/hide reflows the content below down.
+        root.addWidget(self.update_banner)
 
         self.chip_rail = self._build_chip_rail()
         root.addWidget(self.chip_rail)
@@ -1130,6 +1133,7 @@ class MultiToonTool(QMainWindow):
                 border-bottom: 1px solid {c['sidebar_border']};
             }}
         """)
+        self.update_banner.apply_theme(c)
         self._apply_chip_styles()
         if hasattr(self, "overflow_popup"):
             self.overflow_popup.set_theme_colors(
