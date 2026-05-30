@@ -188,7 +188,7 @@ DEADBAND_H = 60
 # pressure; if the chip sizeHint ever grows past 52px, bump this in
 # lockstep or `tests/test_chip_rail.py::test_chip_rail_height_accommodates_chip_sizeHint`
 # will fail.
-HEADER_H = 56
+HEADER_H = 112
 CHIP_RAIL_H = 64
 APP_DESKTOP_ID = "io.github.flossbud.ToonTownMultiTool"
 BETA_DESKTOP_ID = "io.github.flossbud.ToonTownMultiTool-beta"
@@ -623,78 +623,49 @@ class MultiToonTool(QMainWindow):
         header.setMinimumHeight(HEADER_H)
         header.setObjectName("app_header")
 
-        outer_layout = QHBoxLayout(header)
-        # Bottom margin of 1px reserves a row for the QSS border-bottom.
-        # Qt does NOT automatically reduce contentsRect for partial borders
-        # (border-bottom alone, vs full `border:` shorthand), so without this
-        # the brand widget stretches into y=55 and the border line gets
-        # painted over by the brand's rendering. The chip rail doesn't hit
-        # this bug because its layout has 6px top/bottom margins already.
-        outer_layout.setContentsMargins(8, 0, 16, 1)
-        outer_layout.setSpacing(0)
+        outer = QHBoxLayout(header)
+        # 1px bottom margin reserves the QSS border-bottom row (Qt does not
+        # shrink contentsRect for a partial border).
+        outer.setContentsMargins(0, 0, 0, 1)
+        outer.setSpacing(0)
+        outer.addStretch()
 
-        brand = _BrandLink(self.nav_select_credits)
-        brand_layout = QHBoxLayout(brand)
-        brand_layout.setContentsMargins(4, 4, 10, 4)
-        brand_layout.setSpacing(10)
+        # Centered wordmark. The pixmap (and its theme variant) is assigned in
+        # _apply_full_theme via _refresh_header_logo so theme + sizing live in
+        # one place.
+        self.header_logo = QLabel()
+        self.header_logo.setObjectName("header_logo")
+        self.header_logo.setAlignment(Qt.AlignCenter)
+        self.header_logo.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        outer.addWidget(self.header_logo, 0, Qt.AlignCenter)
 
-        # App icon — 46px logo loaded via _resolve_app_icon so the beta
-        # build picks up the badged variant automatically.
-        self.header_icon = QLabel()
-        self.header_icon.setObjectName("header_icon")
-        self.header_icon.setFixedSize(46, 46)
-        self.header_icon.setPixmap(_resolve_app_icon().pixmap(46, 46))
-        self.header_icon.setScaledContents(True)
-        brand_layout.addWidget(self.header_icon)
+        outer.addStretch()
 
-        # Accent stripe (thin vertical bar)
-        accent = QFrame()
-        accent.setFixedWidth(4)
-        accent.setMinimumHeight(24)
-        accent.setObjectName("header_accent")
-        brand_layout.addWidget(accent)
-
-        # Title with inline version
-        self.title_label = QLabel()
-        self.title_label.setObjectName("header_title")
-        self.version_label = None  # inline in title_label
-        brand_layout.addWidget(self.title_label)
-
-        outer_layout.addWidget(brand)
-        outer_layout.addStretch()
-
-        # Compact session status — visible at all window widths but most
-        # valuable when the rail is wide. Wired to multitoon state in
-        # __init__ via _refresh_header_session_status.
-        self.header_session_status = QLabel()
-        self.header_session_status.setObjectName("header_session_status")
-        self.header_session_status.setText("Idle  •  0/4 toons active")
-        outer_layout.addWidget(self.header_session_status)
-
-        # Hint toggle lives in the header (not the chip rail) so it sits
-        # alongside the session-status line at the top of the window.
-        # Construction here; styling + icon land in _update_hint_icon
-        # during _apply_full_theme. _toggle_hints flips the persisted
-        # hints_enabled flag.
-        self._hints_enabled = self.settings_manager.get("hints_enabled", True)
-        self.hint_btn = QToolButton(header)
-        self.hint_btn.setObjectName("hint_toggle")
-        self.hint_btn.setFixedSize(34, 34)
-        self.hint_btn.setIconSize(QSize(20, 20))
-        self.hint_btn.setCursor(Qt.PointingHandCursor)
-        # Qt.NoFocus prevents Qt from auto-assigning initial focus to this
-        # button on window-show. QToolButton's default policy is TabFocus,
-        # and since this widget is the first focusable in the header (which
-        # precedes the chip rail in tab order), the live app was drawing
-        # the :focus ring on it at every launch. The button remains
-        # click-functional; it's just no longer Tab-reachable. Accept the
-        # small a11y regression for this single secondary toggle — the
-        # chip rail still carries visible focus rings for keyboard nav.
-        self.hint_btn.setFocusPolicy(Qt.NoFocus)
-        self.hint_btn.clicked.connect(self._toggle_hints)
-        outer_layout.addWidget(self.hint_btn)
-
+        # Render an initial pixmap so the label is non-empty before theming
+        # (tests build the header without _apply_full_theme).
+        self._refresh_header_logo(header_width=575)
         return header
+
+    def _refresh_header_logo(self, header_width=None):
+        from PySide6.QtGui import QPixmap
+        from utils.window_layout import compute_logo_size
+        is_dark = True
+        if hasattr(self, "settings_manager"):
+            from utils.theme_manager import resolve_theme
+            is_dark = resolve_theme(self.settings_manager) == "dark"
+        fname = "ttmt_logo_textonly.png" if is_dark else "ttmt_logo_textonly_shadow.png"
+        path = os.path.join(_assets_dir(), "logos", fname)
+        src = QPixmap(path)
+        if src.isNull():
+            return
+        w = header_width if header_width is not None else (
+            self.header.width() if hasattr(self, "header") and self.header.width() else 575
+        )
+        tw, th = compute_logo_size(w, src.width(), src.height(), target_height=80)
+        if tw <= 0 or th <= 0:
+            return
+        scaled = src.scaled(tw, th, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self.header_logo.setPixmap(scaled)
 
     # ── Chip Rail ──────────────────────────────────────────────────────────
 
@@ -1324,6 +1295,11 @@ class MultiToonTool(QMainWindow):
             return
         print(message)
         self.debug_tab.append_log(message)
+
+
+def _assets_dir() -> str:
+    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, "assets")
 
 
 def _resolve_icon_path() -> str:
