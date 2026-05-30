@@ -64,3 +64,27 @@ def test_header_no_longer_has_old_brand_widgets(header):
 def test_header_hint_button_not_in_header(header):
     from PySide6.QtWidgets import QToolButton
     assert header.findChild(QToolButton, "hint_toggle") is None
+
+
+def test_logo_asset_swaps_with_theme(qapp, monkeypatch):
+    """Dark theme uses the plain wordmark; light uses the shadow variant.
+    The two assets have different aspect ratios (2.909 vs 2.675), so the
+    scaled logo width differs by theme — proving _refresh_header_logo swaps
+    the asset rather than reusing one."""
+    import utils.theme_manager as tm
+    from main import MultiToonTool
+    inst = MultiToonTool.__new__(MultiToonTool)
+    inst.settings_manager = _StubSettings()
+    inst.header = inst._build_header()
+
+    monkeypatch.setattr(tm, "resolve_theme", lambda _sm: "dark")
+    inst._refresh_header_logo(header_width=575)
+    dark_w = inst.header_logo.pixmap().width()
+
+    monkeypatch.setattr(tm, "resolve_theme", lambda _sm: "light")
+    inst._refresh_header_logo(header_width=575)
+    light_w = inst.header_logo.pixmap().width()
+
+    assert dark_w != light_w, (
+        f"logo should swap per theme; got dark={dark_w} light={light_w}"
+    )
