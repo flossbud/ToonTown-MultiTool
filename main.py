@@ -697,6 +697,19 @@ class MultiToonTool(QMainWindow):
         layout.setContentsMargins(12, 6, 12, 6)
         layout.setSpacing(4)
 
+        # App icon pinned far-left — navigates to Credits/About (replaces the
+        # old header brand-link affordance).
+        self.rail_app_icon = QToolButton(rail)
+        self.rail_app_icon.setObjectName("rail_app_icon")
+        self.rail_app_icon.setIcon(_resolve_app_icon())
+        self.rail_app_icon.setIconSize(QSize(34, 34))
+        self.rail_app_icon.setFixedSize(40, 40)
+        self.rail_app_icon.setCursor(Qt.PointingHandCursor)
+        self.rail_app_icon.setFocusPolicy(Qt.NoFocus)
+        self.rail_app_icon.setToolTip("About / Credits")
+        self.rail_app_icon.clicked.connect(self.nav_select_credits)
+        layout.addWidget(self.rail_app_icon)
+
         # Left phantom: invisible spacer whose width mirrors the right
         # utility cluster (divider + hint + optional overflow). Without
         # this counterbalance, the two addStretch() items around the chips
@@ -773,29 +786,37 @@ class MultiToonTool(QMainWindow):
         self.overflow_btn.clicked.connect(_toggle_popup)
         layout.addWidget(self.overflow_btn)
 
+        # Hint toggle far-right (moved here from the header). _hints_enabled is
+        # initialized in __init__; do not re-read it here.
+        self.hint_btn = QToolButton(rail)
+        self.hint_btn.setObjectName("hint_toggle")
+        self.hint_btn.setFixedSize(34, 34)
+        self.hint_btn.setIconSize(QSize(20, 20))
+        self.hint_btn.setCursor(Qt.PointingHandCursor)
+        self.hint_btn.setFocusPolicy(Qt.NoFocus)
+        self.hint_btn.clicked.connect(self._toggle_hints)
+        layout.addWidget(self.hint_btn)
+
         # Phantom width matches the now-built utility cluster.
         self._update_chip_rail_phantom_width()
 
         return rail
 
     def _update_chip_rail_phantom_width(self):
-        """Size the left phantom spacer to match the visible right utility
-        cluster (only the debug-gated overflow menu now — the hint button
-        moved to the header), so the four chips sit at the geometric center
-        of the chip rail. Called at build time and whenever overflow
-        visibility changes (debug toggle). Reads show_debug_tab directly
-        rather than isVisible() because the widget may not yet be shown
-        when this runs at construction time."""
+        """Keep the four chips at the geometric center of the rail. Fixed
+        clusters sit on both ends: left = app icon (40), right = hint toggle
+        (34) plus optional debug overflow (34). Pad the lighter side via the
+        left phantom spacer so the centered chip cluster is not pushed
+        off-center."""
         if not hasattr(self, "chip_rail_left_phantom"):
             return
-        # Right utility cluster is empty unless debug is on; in that case
-        # only the overflow button (34 px) plus its 4 px leading spacing.
+        right = 34  # hint toggle
         if self.settings_manager.get("show_debug_tab", False):
-            width = 4 + 34
-        else:
-            width = 0
+            right += 4 + 34  # overflow button + its leading spacing
+        left = 40  # app icon
+        pad = max(0, right - left)
         self.chip_rail_left_phantom.changeSize(
-            width, 0, QSizePolicy.Fixed, QSizePolicy.Minimum
+            pad, 0, QSizePolicy.Fixed, QSizePolicy.Minimum
         )
         if hasattr(self, "chip_rail"):
             self.chip_rail.layout().invalidate()

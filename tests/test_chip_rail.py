@@ -157,17 +157,37 @@ def _build_rail_with_debug(qapp, *, show_debug_tab: bool):
     return instance, instance._build_chip_rail()
 
 
-def test_chip_rail_has_no_hint_button(qapp):
-    """The hint toggle moved to the header — the chip rail should no
-    longer construct or parent it. Tests for the hint button's existence
-    live in test_app_header.py now."""
+def test_chip_rail_has_app_icon_far_left(qapp):
     instance, rail = _build_rail_with_debug(qapp, show_debug_tab=False)
-    # If hint_btn ever does get created on the instance (via __init__
-    # construction order), it must NOT be parented inside the rail.
-    if hasattr(instance, "hint_btn") and instance.hint_btn is not None:
-        assert instance.hint_btn.parent() is not rail, (
-            "hint_btn should live in the header now, not the chip rail"
-        )
+    from PySide6.QtWidgets import QToolButton
+    icon = rail.findChild(QToolButton, "rail_app_icon")
+    assert icon is not None, "chip rail must have a 'rail_app_icon' button"
+    assert not icon.icon().isNull()
+
+
+def test_clicking_rail_app_icon_navigates_to_credits(qapp):
+    instance, rail = _build_rail_with_debug(qapp, show_debug_tab=False)
+    instance._nav_select_credits_calls = []
+    instance.nav_select_credits = lambda: instance._nav_select_credits_calls.append(True)
+    from PySide6.QtWidgets import QToolButton
+    icon = rail.findChild(QToolButton, "rail_app_icon")
+    icon.clicked.disconnect()
+    icon.clicked.connect(instance.nav_select_credits)
+    icon.click()
+    assert instance._nav_select_credits_calls == [True]
+
+
+def test_chip_rail_has_hint_button(qapp):
+    instance, rail = _build_rail_with_debug(qapp, show_debug_tab=False)
+    from PySide6.QtWidgets import QToolButton
+    hint = rail.findChild(QToolButton, "hint_toggle")
+    assert hint is not None, "hint toggle now lives in the chip rail"
+    assert hint.size().width() == 34 and hint.size().height() == 34
+
+
+def test_hint_button_parented_in_rail(qapp):
+    instance, rail = _build_rail_with_debug(qapp, show_debug_tab=False)
+    assert instance.hint_btn.parent() is rail
 
 
 def test_chip_rail_no_divider_between_chips_and_utilities(qapp):
