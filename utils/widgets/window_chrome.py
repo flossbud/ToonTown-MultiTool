@@ -149,25 +149,28 @@ class WindowChromeController(QObject):
 
     def eventFilter(self, obj, event):
         # Guard against Shiboken teardown ordering: Qt may fire eventFilter
-        # after Python has partially cleared this object's attributes.
-        if not hasattr(self, "_header") or self._win is None:
+        # after Python has partially cleared this object's attributes. Read
+        # both attrs via getattr so a partially-torn-down object can't raise.
+        header = getattr(self, "_header", None)
+        win = getattr(self, "_win", None)
+        if header is None or win is None:
             return False
         et = event.type()
-        if et == QEvent.Resize and obj is self._header:
+        if et == QEvent.Resize and obj is header:
             self.reposition()
             return False
-        if et == QEvent.WindowStateChange and obj is self._win:
-            self._sync_window_state(bool(self._win.isMaximized()))
+        if et == QEvent.WindowStateChange and obj is win:
+            self._sync_window_state(bool(win.isMaximized()))
             return False
         if et in (QEvent.MouseButtonPress, QEvent.MouseButtonDblClick):
             if not isinstance(obj, QWidget) or event.button() != Qt.LeftButton:
                 return False
-            if obj.window() is not self._win:
+            if obj.window() is not win:
                 return False
-            win_pos = obj.mapTo(self._win, event.position().toPoint())
+            win_pos = obj.mapTo(win, event.position().toPoint())
             if et == QEvent.MouseButtonDblClick:
                 if not isinstance(obj, _TrafficDot) and (
-                    obj is self._header or self._header.isAncestorOf(obj)
+                    obj is header or header.isAncestorOf(obj)
                 ):
                     self._toggle_max_restore()
                     return True
@@ -176,7 +179,7 @@ class WindowChromeController(QObject):
             if action is None:
                 return False
             kind, edge = action
-            wh = self._win.windowHandle()
+            wh = win.windowHandle()
             if kind == "resize":
                 if wh is not None and not wh.startSystemResize(edge):
                     if not self._logged_resize_fail:
