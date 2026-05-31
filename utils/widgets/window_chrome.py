@@ -60,7 +60,7 @@ class _TrafficDot(QAbstractButton):
         self._dot_hovered = False
         self._pressed = False
         self._cluster_hovered = False   # driven by WindowChromeController.set_cluster_hovered
-        self._window_focused = True     # driven by the controller (later task)
+        self._window_focused = True     # driven by WindowChromeController.set_window_focused
         self._inactive_dot = QColor("#5a5d63")
         self._inactive_glyph = QColor("#33353a")
         # animated paint values

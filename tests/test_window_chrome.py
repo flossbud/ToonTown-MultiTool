@@ -314,12 +314,27 @@ def test_set_theme_pushes_inactive_colors(qapp):
 
 
 def test_deactivate_event_dims_dots(qapp):
-    # the controller's eventFilter must react to a WindowDeactivate on the window
+    # the controller's eventFilter must DIM on WindowDeactivate (not merely match
+    # whatever isActiveWindow() already returns)
     from PySide6.QtCore import QEvent
     from utils.widgets.window_chrome import WindowChromeController
     win = QMainWindow(); header = QFrame()
+    win.isActiveWindow = lambda: False
     c = WindowChromeController(win, header)
     c.set_window_focused(True)
     c.eventFilter(win, QEvent(QEvent.WindowDeactivate))
     for b in (c.btn_min, c.btn_max, c.btn_close):
-        assert b._window_focused == bool(win.isActiveWindow())
+        assert b._window_focused is False
+
+
+def test_activate_event_restores_dots(qapp):
+    # symmetric: WindowActivate must restore focus when the window reports active
+    from PySide6.QtCore import QEvent
+    from utils.widgets.window_chrome import WindowChromeController
+    win = QMainWindow(); header = QFrame()
+    win.isActiveWindow = lambda: True
+    c = WindowChromeController(win, header)
+    c.set_window_focused(False)
+    c.eventFilter(win, QEvent(QEvent.WindowActivate))
+    for b in (c.btn_min, c.btn_max, c.btn_close):
+        assert b._window_focused is True
