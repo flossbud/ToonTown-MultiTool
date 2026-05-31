@@ -120,10 +120,14 @@ def test_press_on_control_button_is_ignored(qapp):
 
 def test_traffic_dot_diameter_is_16_and_glyph_scales():
     from utils.widgets.window_chrome import _TrafficDot
-    from utils.widgets import window_chrome_style as s
     dot = _TrafficDot("#febc2e", "-", "#7a4e00", "Minimize")
     assert dot._VISUAL_DIAMETER == 16
-    assert s.glyph_pixel_size(dot._VISUAL_DIAMETER) == 11
+    # The dot derives its glyph size from its diameter (not a hardcoded value),
+    # so paintEvent can't silently regress to the old fixed 9px.
+    assert dot._glyph_pixel_size() == 11
+    big = _TrafficDot("#febc2e", "-", "#7a4e00", "Minimize")
+    big._VISUAL_DIAMETER = 30
+    assert big._glyph_pixel_size() > dot._glyph_pixel_size()
 
 
 def test_controller_buttons_use_traffic_light_colors(qapp):
@@ -132,6 +136,11 @@ def test_controller_buttons_use_traffic_light_colors(qapp):
     win = QMainWindow()
     header = QFrame()
     c = WindowChromeController(win, header)
+    # dot fills
     assert c.btn_min._dot_color.name() == "#febc2e"
     assert c.btn_max._dot_color.name() == "#28c840"
     assert c.btn_close._dot_color.name() == "#ff5f56"
+    # glyph tints (darker shades, not white)
+    assert c.btn_min._glyph_color.name() == "#7a4e00"
+    assert c.btn_max._glyph_color.name() == "#0c5a1e"
+    assert c.btn_close._glyph_color.name() == "#7a1410"

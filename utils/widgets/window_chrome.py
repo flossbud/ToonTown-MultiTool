@@ -64,6 +64,11 @@ class _TrafficDot(QAbstractButton):
         self._glyph = glyph
         self.update()
 
+    def _glyph_pixel_size(self) -> int:
+        """Glyph size derived from this dot's diameter (testable seam so the
+        scaling can't silently regress to a hardcoded value)."""
+        return glyph_pixel_size(self._VISUAL_DIAMETER)
+
     def paintEvent(self, _event):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing, True)
@@ -75,7 +80,7 @@ class _TrafficDot(QAbstractButton):
         if self._glyph:
             p.setPen(self._glyph_color)
             f = p.font()
-            f.setPixelSize(glyph_pixel_size(self._VISUAL_DIAMETER))
+            f.setPixelSize(self._glyph_pixel_size())
             f.setBold(True)
             p.setFont(f)
             p.drawText(self.rect(), Qt.AlignCenter, self._glyph)
