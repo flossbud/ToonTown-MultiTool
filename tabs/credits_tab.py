@@ -8,6 +8,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QFont, QPalette, QPixmap
 from utils.open_url import open_url
 from utils.theme_manager import resolve_theme, get_theme_colors
+from utils.widgets.backdrop_blur import BackdropBlur
 
 class CreditsTab(QWidget):
     def __init__(self, settings_manager=None, system_theme_watcher=None, parent=None):
@@ -39,6 +40,17 @@ class CreditsTab(QWidget):
             self.refresh_theme()
 
     def build_ui(self):
+        self._has_backdrop = False
+        # Bottom layer: a blurred snapshot of the tab you came from, shown when
+        # Credits is entered via the header icon. Mouse-transparent so the card
+        # and footer links stay clickable. Not in the content layout — positioned
+        # to fill the tab in resizeEvent and kept lowered. Hidden until a real
+        # snapshot is set (a visible empty backdrop would dim bg_app via its 40%
+        # scrim).
+        self._backdrop = BackdropBlur(self, mouse_transparent=True)
+        self._backdrop.lower()
+        self._backdrop.hide()
+
         layout = QVBoxLayout(self)
         # Trimmed top/bottom 16 -> 4 and card top/bottom 40 -> 12 to drop
         # Credits' sizeHint below the multitoon compact sizeHint so the
@@ -159,31 +171,59 @@ class CreditsTab(QWidget):
 
         from utils.layout import clamp_centered
         clamp_centered(layout, self.card, 720)
-        
+
+    def set_backdrop_source(self, pix):
+        """Set (or clear, if null/None) the blurred backdrop. A non-null pixmap
+        puts the tab into transparent mode; otherwise the normal opaque bg_app
+        stays, so Credits never shows a bare dim scrim over nothing."""
+        self._has_backdrop = bool(pix is not None and not pix.isNull())
+        self._backdrop.set_source_pixmap(pix if pix is not None else QPixmap())
+        # setVisible toggles the backdrop's own show/hide flag. We deliberately
+        # do NOT call self.show(): CreditsTab is a QStackedWidget page whose
+        # visibility the stack owns; showing it here (during nav, before it is
+        # the current page) would overlap the current page. When the stack makes
+        # Credits current it fires resizeEvent, which syncs the geometry.
+        self._backdrop.setVisible(self._has_backdrop)
+        if self._has_backdrop:
+            self._backdrop.setGeometry(self.rect())
+            self._backdrop.lower()
+        self.refresh_theme()
+
+    def clear_backdrop(self):
+        """Drop the blurred backdrop and return to the opaque bg_app look."""
+        self._has_backdrop = False
+        self._backdrop.set_source_pixmap(QPixmap())
+        self._backdrop.hide()
+        self.refresh_theme()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, "_backdrop"):
+            self._backdrop.setGeometry(self.rect())
+
     def refresh_theme(self):
         is_dark = resolve_theme(self.settings_manager) == "dark"
         c = get_theme_colors(is_dark)
 
-        # Tab uses bg_app like every other tab. Labels inherit bg_app via
-        # Qt's stylesheet cascade, so we explicitly transparent them below
-        # to avoid them painting bg_app chips on top of any backdrop.
-        self.setStyleSheet(
-            f"background: {c['bg_app']}; color: {c['text_primary']};"
-        )
-
-        # Card frame is invisible: same color as the surrounding app
-        # background, no border, no shadow. The QFrame is kept only as a
-        # layout container for clamp_centered. The QLabel rule clears any
-        # inherited background so labels float on whatever's behind them.
-        self.card.setStyleSheet(f"""
-            QFrame#credits_card {{
-                background: {c['bg_app']};
-                border: none;
-            }}
-            QLabel {{
-                background: transparent;
-            }}
-        """)
+        if getattr(self, "_has_backdrop", False):
+            self.setStyleSheet(f"background: transparent; color: {c['text_primary']};")
+            self.card.setStyleSheet("""
+                QFrame#credits_card { background: transparent; border: none; }
+                QLabel { background: transparent; }
+            """)
+        else:
+            self.setStyleSheet(
+                f"background: {c['bg_app']}; color: {c['text_primary']};"
+            )
+            self.card.setStyleSheet(f"""
+                QFrame#credits_card {{
+                    background: {c['bg_app']};
+                    border: none;
+                }}
+                QLabel {{
+                    background: transparent;
+                }}
+            """)
 
         # Footer link color follows the theme's muted text color so the
         # row reads as fine-print rather than a primary accent. Setting
