@@ -162,12 +162,14 @@ def on_settings_change(key: str, value) -> None:
 
 # ── Page transition helper ───────────────────────────────────────────────────
 
-def push_slide_pages(stack, from_idx: int, to_idx: int, axis: str = "h"):
+def push_slide_pages(stack, from_idx: int, to_idx: int, axis: str = "h", reverse: bool = False):
     """Animate the QStackedWidget from from_idx to to_idx.
 
     axis='h': horizontal push-slide. Direction = sign(to_idx - from_idx).
     axis='v': vertical. Incoming enters from y=-H; outgoing settles +0.08*H
               and fades to opacity 0.
+              reverse=True: outgoing exits upward (y=-H) and incoming reveals
+              from +0.08*H (Credits return).
 
     Uses two QLabel proxies to avoid layout reflow on live page widgets.
     Returns the running QParallelAnimationGroup, or None when reduced motion
@@ -216,9 +218,16 @@ def push_slide_pages(stack, from_idx: int, to_idx: int, axis: str = "h"):
         out_end = QPoint(-direction * w, 0)
         in_end = QPoint(0, 0)
     elif axis == "v":
-        in_start = QPoint(0, -h)
-        out_end = QPoint(0, int(h * 0.08))
-        in_end = QPoint(0, 0)
+        if reverse:
+            # Return: outgoing (Credits) slides up off the top; incoming target
+            # reveals from a slight downward offset.
+            in_start = QPoint(0, int(h * 0.08))
+            out_end = QPoint(0, -h)
+            in_end = QPoint(0, 0)
+        else:
+            in_start = QPoint(0, -h)
+            out_end = QPoint(0, int(h * 0.08))
+            in_end = QPoint(0, 0)
 
     out_label.move(0, 0)
     in_label.move(in_start)
