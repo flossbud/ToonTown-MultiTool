@@ -43,47 +43,44 @@ def is_dark_bg(hex_color: str) -> bool:
     return lum < 0.5
 
 
-def bevel_border_colors(bg_hex: str) -> dict:
-    """Top-lighter / bottom-darker 1px bevel stroke colors, chosen by the
-    background's luminance so the edge reads on both dark and light themes."""
+def window_edge_colors(bg_hex: str) -> dict:
+    """Edge tokens for the frameless window, chosen by background luminance:
+    `outline` = a consistent 1px boundary on all four card edges; `rim` = a 1px
+    inner top highlight ("light from above") carried by the header's border-top.
+    Designed for both themes (the light rim is faint by design - the slate
+    outline does the real window-definition work)."""
     if is_dark_bg(bg_hex):
-        return {
-            "top":    "rgba(255,255,255,0.16)",
-            "side":   "rgba(255,255,255,0.10)",
-            "bottom": "rgba(255,255,255,0.05)",
-        }
-    return {
-        "top":    "rgba(0,0,0,0.06)",
-        "side":   "rgba(0,0,0,0.12)",
-        "bottom": "rgba(0,0,0,0.18)",
-    }
+        return {"outline": "rgba(255,255,255,0.14)", "rim": "rgba(255,255,255,0.10)"}
+    return {"outline": "rgba(15,23,42,0.16)", "rim": "rgba(255,255,255,0.55)"}
 
 
-def card_qss(object_name: str, bg: str, radius: int, colors) -> str:
-    """QSS for the root 'card'. When radius>0 and colors are given, draws the
-    rounded background + 1px per-side bevel stroke. Otherwise a plain bg
-    (native-title-bar / maximized path)."""
-    if radius > 0 and colors:
+def card_qss(object_name: str, bg: str, radius: int, outline) -> str:
+    """QSS for the root 'card'. With radius>0 AND an outline color, draws the
+    rounded background + a uniform 1px outline on all edges. Otherwise a plain
+    background (square / native-title-bar path)."""
+    if radius > 0 and outline:
         return (
             f"QWidget#{object_name} {{\n"
             f"    background: {bg};\n"
             f"    border-radius: {radius}px;\n"
-            f"    border-top: 1px solid {colors['top']};\n"
-            f"    border-left: 1px solid {colors['side']};\n"
-            f"    border-right: 1px solid {colors['side']};\n"
-            f"    border-bottom: 1px solid {colors['bottom']};\n"
+            f"    border: 1px solid {outline};\n"
             f"}}"
         )
     return f"QWidget#{object_name} {{ background: {bg}; }}"
 
 
-def header_top_radius_qss(header_bg: str, border_color: str, radius: int) -> str:
-    """Header rounds its own top corners, nested inside the card's 1px stroke
-    (radius - STROKE_INSET) so there is no fringe. Keeps its bottom divider."""
+def header_top_radius_qss(header_bg: str, border_color: str, radius: int,
+                          top_rim: str = None) -> str:
+    """Header rounds its own top corners (nested 1px inside the card outline at
+    radius - STROKE_INSET) and keeps its bottom divider. When `top_rim` is given,
+    its `border-top` becomes the window's inner 'lit rim' - it sits 1px inside the
+    card's top outline because the header is inset by STROKE_INSET."""
     r = max(0, radius - STROKE_INSET) if radius > 0 else 0
+    rim = f"    border-top: 1px solid {top_rim};\n" if top_rim else ""
     return (
         f"QFrame#app_header {{\n"
         f"    background: {header_bg};\n"
+        f"{rim}"
         f"    border-bottom: 1px solid {border_color};\n"
         f"    border-top-left-radius: {r}px;\n"
         f"    border-top-right-radius: {r}px;\n"

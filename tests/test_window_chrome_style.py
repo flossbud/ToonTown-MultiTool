@@ -38,26 +38,22 @@ def test_is_dark_bg_rejects_malformed_hex():
             s.is_dark_bg(bad)
 
 
-def test_bevel_border_colors_theme_aware():
-    dark = s.bevel_border_colors("#1a1a1a")
-    light = s.bevel_border_colors("#f8fafc")
-    assert "255,255,255" in dark["top"] and "0.16" in dark["top"]
-    assert "255,255,255" in dark["side"] and "0.10" in dark["side"]
-    assert "255,255,255" in dark["bottom"] and "0.05" in dark["bottom"]
-    assert "0,0,0" in light["top"] and "0.06" in light["top"]
-    assert "0,0,0" in light["side"] and "0.12" in light["side"]
-    assert "0,0,0" in light["bottom"] and "0.18" in light["bottom"]
+def test_window_edge_colors_theme_aware():
+    dark = s.window_edge_colors("#1a1a1a")
+    light = s.window_edge_colors("#f8fafc")
+    assert dark["outline"] == "rgba(255,255,255,0.14)"
+    assert dark["rim"] == "rgba(255,255,255,0.10)"
+    assert light["outline"] == "rgba(15,23,42,0.16)"
+    assert light["rim"] == "rgba(255,255,255,0.55)"
 
 
-def test_card_qss_contains_radius_and_four_border_colors():
-    colors = s.bevel_border_colors("#1a1a1a")
-    qss = s.card_qss("app_card", "#1a1a1a", 16, colors)
+def test_card_qss_uniform_outline_when_radius_and_outline():
+    qss = s.card_qss("app_card", "#1a1a1a", 16, "rgba(255,255,255,0.14)")
     assert "QWidget#app_card" in qss
     assert "border-radius: 16px" in qss
-    assert f"border-top: 1px solid {colors['top']}" in qss
-    assert f"border-bottom: 1px solid {colors['bottom']}" in qss
-    assert f"border-left: 1px solid {colors['side']}" in qss
-    assert f"border-right: 1px solid {colors['side']}" in qss
+    assert "border: 1px solid rgba(255,255,255,0.14)" in qss
+    assert "border-top:" not in qss
+    assert "border-bottom:" not in qss
 
 
 def test_card_qss_plain_when_radius_zero_and_no_colors():
@@ -68,14 +64,11 @@ def test_card_qss_plain_when_radius_zero_and_no_colors():
     assert "border-top:" not in qss
 
 
-def test_card_qss_plain_unless_both_radius_and_colors():
-    colors = s.bevel_border_colors("#1a1a1a")
-    # radius>0 but no colors -> plain (no border)
+def test_card_qss_plain_unless_both_radius_and_outline():
     q1 = s.card_qss("app_card", "#1a1a1a", 16, None)
-    assert "border-radius" not in q1 and "border-top:" not in q1
-    # radius==0 but colors given -> plain (no border)
-    q2 = s.card_qss("app_card", "#1a1a1a", 0, colors)
-    assert "border-radius" not in q2 and "border-top:" not in q2
+    assert "border" not in q1 and "border-radius" not in q1
+    q2 = s.card_qss("app_card", "#1a1a1a", 0, "rgba(255,255,255,0.14)")
+    assert "border" not in q2 and "border-radius" not in q2
 
 
 def test_header_top_radius_nests_inside_stroke():
@@ -90,3 +83,15 @@ def test_header_top_radius_zero_when_maximized():
     qss = s.header_top_radius_qss("#1a1a1a", "#333", 0)
     assert "border-top-left-radius: 0px" in qss
     assert "border-top-right-radius: 0px" in qss
+
+
+def test_header_top_radius_includes_rim_when_given():
+    qss = s.header_top_radius_qss("#1a1a1a", "#333", 16, top_rim="rgba(255,255,255,0.10)")
+    assert "border-top: 1px solid rgba(255,255,255,0.10)" in qss
+    assert "border-bottom: 1px solid #333" in qss
+    assert "border-top-left-radius: 15px" in qss
+
+
+def test_header_top_radius_no_rim_by_default():
+    qss = s.header_top_radius_qss("#1a1a1a", "#333", 16)
+    assert "border-top:" not in qss
