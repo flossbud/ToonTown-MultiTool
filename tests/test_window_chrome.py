@@ -251,3 +251,39 @@ def test_local_hover_scope(qapp, monkeypatch):
     c.btn_max._set_dot_hovered(True)
     assert c.btn_max.dot_scale == 1.10
     assert c.btn_min.dot_scale == 1.0 and c.btn_close.dot_scale == 1.0  # siblings unaffected
+
+
+def test_cluster_enter_leave_drives_reveal(qapp, monkeypatch):
+    # Exercise the REAL _TrafficCluster.enterEvent/leaveEvent (not the controller
+    # method directly), so broken hover delivery would fail this.
+    import utils.motion as motion
+    monkeypatch.setattr(motion, "is_reduced", lambda: True)
+    from PySide6.QtGui import QEnterEvent
+    from PySide6.QtCore import QPointF, QEvent
+    from utils.widgets.window_chrome import WindowChromeController
+    win = QMainWindow(); header = QFrame(win)
+    c = WindowChromeController(win, header)
+    pt = QPointF(1, 1)
+    c._cluster.enterEvent(QEnterEvent(pt, pt, pt))
+    assert c.btn_min.glyph_opacity == 1.0 and c.btn_close.glyph_opacity == 1.0
+    c._cluster.leaveEvent(QEvent(QEvent.Leave))
+    assert c.btn_min.glyph_opacity == 0.0 and c.btn_close.glyph_opacity == 0.0
+
+
+def test_cluster_lays_dots_left_to_right(qapp):
+    from utils.widgets.window_chrome import WindowChromeController
+    win = QMainWindow(); header = QFrame(win)
+    c = WindowChromeController(win, header)
+    c._cluster.layout().activate()
+    assert c.btn_min.x() == 0
+    assert c.btn_max.x() == 30      # 22px dot + 8px gap
+    assert c.btn_close.x() == 60
+
+
+def test_reposition_places_cluster_top_right(qapp):
+    from utils.widgets.window_chrome import WindowChromeController
+    win = QMainWindow(); header = QFrame(win); header.resize(575, 112)
+    c = WindowChromeController(win, header)
+    c.reposition()
+    assert c._cluster.x() == 575 - 12 - 82
+    assert c._cluster.y() == 12
