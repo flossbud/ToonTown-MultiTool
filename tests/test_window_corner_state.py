@@ -91,3 +91,21 @@ def test_changeevent_restyles_on_window_state_change(qapp, monkeypatch):
     monkeypatch.setattr(inst, "_apply_window_corner_state", lambda is_maximized: calls.append(is_maximized))
     inst.changeEvent(QEvent(QEvent.WindowStateChange))
     assert calls, "WindowStateChange should re-apply the corner state"
+
+
+def test_notify_chrome_theme_calls_set_theme(qapp):
+    # _notify_chrome_theme pushes the current theme (is_dark) to the chrome
+    # controller so unfocused control dots use the right inactive grey.
+    inst, _root = _make(qapp, native=False)
+    calls = []
+    class _Chrome:
+        def set_theme(self, is_dark): calls.append(is_dark)
+    inst._chrome = _Chrome()
+    inst._notify_chrome_theme()
+    assert calls == [True]   # _make uses theme="dark" -> bg_app #1a1a1a -> is_dark True
+
+
+def test_notify_chrome_theme_noop_without_chrome(qapp):
+    inst, _root = _make(qapp, native=False)
+    inst._chrome = None
+    inst._notify_chrome_theme()   # must not raise when there is no controller (native mode)

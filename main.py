@@ -703,6 +703,14 @@ class MultiToonTool(QMainWindow):
             if root is not None:
                 root.setContentsMargins(0, 0, 0, 0)
 
+    def _notify_chrome_theme(self):
+        """Tell the window-chrome controller the current theme so the control
+        dots use the right inactive-grey when the window is unfocused."""
+        chrome = getattr(self, "_chrome", None)
+        if chrome is not None and hasattr(chrome, "set_theme"):
+            from utils.widgets.window_chrome_style import is_dark_bg
+            chrome.set_theme(is_dark_bg(self._theme_colors()["bg_app"]))
+
     def changeEvent(self, event):
         super().changeEvent(event)
         if event.type() == QEvent.WindowStateChange and getattr(self, "_chrome", None) is not None:
@@ -1136,6 +1144,7 @@ class MultiToonTool(QMainWindow):
 
         # Container card + header corners/stroke (rounded vs native/maximized)
         self._apply_window_corner_state(self.isMaximized())
+        self._notify_chrome_theme()
         self._refresh_header_logo()
 
         # Chip rail
