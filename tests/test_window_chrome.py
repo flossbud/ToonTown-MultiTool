@@ -388,3 +388,49 @@ def test_box_glyph_renders_at_partial_opacity(qapp, monkeypatch):
     b._window_focused = True; b._glyph_opacity = 0.5
     img = b.grab().toImage()         # must not raise
     assert img.width() == 22
+
+
+def test_header_app_icon_rest_opacity(qapp):
+    from PySide6.QtGui import QIcon
+    from utils.widgets.window_chrome import _HeaderAppIcon
+    icon = _HeaderAppIcon(QIcon())
+    assert icon.icon_opacity == 0.75
+    assert icon._active is False
+    assert icon.size().width() == 36 and icon.size().height() == 36
+
+
+def test_header_app_icon_hover_brightens(qapp, monkeypatch):
+    import utils.motion as motion
+    monkeypatch.setattr(motion, "is_reduced", lambda: True)  # instant: value == target
+    from PySide6.QtGui import QIcon
+    from utils.widgets.window_chrome import _HeaderAppIcon
+    icon = _HeaderAppIcon(QIcon())
+    icon._set_hovered(True)
+    assert icon.icon_opacity == 1.0
+    icon._set_hovered(False)
+    assert icon.icon_opacity == 0.75
+
+
+def test_header_app_icon_active_holds_lit_through_hover_out(qapp, monkeypatch):
+    import utils.motion as motion
+    monkeypatch.setattr(motion, "is_reduced", lambda: True)
+    from PySide6.QtGui import QIcon
+    from utils.widgets.window_chrome import _HeaderAppIcon
+    icon = _HeaderAppIcon(QIcon())
+    icon.set_active(True)
+    assert icon.icon_opacity == 1.0
+    icon._set_hovered(True); icon._set_hovered(False)   # hover-out while active
+    assert icon.icon_opacity == 1.0                     # stays lit
+    icon.set_active(False)
+    assert icon.icon_opacity == 0.75
+
+
+def test_header_app_icon_reduced_motion_no_animation(qapp, monkeypatch):
+    import utils.motion as motion
+    monkeypatch.setattr(motion, "is_reduced", lambda: True)
+    from PySide6.QtGui import QIcon
+    from utils.widgets.window_chrome import _HeaderAppIcon
+    icon = _HeaderAppIcon(QIcon())
+    icon._set_hovered(True)
+    assert icon._op_anim.state() != icon._op_anim.State.Running
+    assert icon.icon_opacity == 1.0

@@ -8,7 +8,7 @@ startSystemResize(), which is the only reliable cross-platform path
 move()/resize() — that breaks on Wayland."""
 
 from PySide6.QtCore import Qt, QObject, QEvent, QPointF, QRectF, Property, QPropertyAnimation, QEasingCurve
-from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtGui import QColor, QIcon, QPainter, QPen
 from PySide6.QtWidgets import QAbstractButton, QApplication, QWidget, QHBoxLayout
 from utils.widgets.window_chrome_style import (
     DOT_DIAMETER, TRAFFIC, glyph_pixel_size,
@@ -252,6 +252,88 @@ class _TrafficCluster(QWidget):
     def leaveEvent(self, event):
         self._controller.set_cluster_hovered(False)
         super().leaveEvent(event)
+
+
+class _HeaderAppIcon(QAbstractButton):
+    """Header brand icon pinned at the top-left corner, mirroring the
+    traffic-light controls at top-right. A subdued brand mark at rest
+    (opacity 0.75) that brightens to full on hover, and is held lit while its
+    destination (the Credits page) is the active view. Opacity is animated via
+    a Qt float Property read by paintEvent — NOT a QGraphicsEffect, which
+    triggers the documented Py3.14/PySide6 paint-time GC SEGV (the dots paint
+    opacity the same way for the same reason)."""
+
+    _SIZE = 36
+    _REST = 0.75
+    _LIT = 1.0
+
+    def __init__(self, icon: QIcon, parent=None):
+        super().__init__(parent)
+        self._icon = icon
+        self._hovered = False
+        self._active = False
+        self._icon_opacity = self._REST
+        self._op_anim = QPropertyAnimation(self, b"icon_opacity", self)
+        self._op_anim.setDuration(150)
+        self._op_anim.setEasingCurve(QEasingCurve.OutCubic)
+        self.setFixedSize(self._SIZE, self._SIZE)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFocusPolicy(Qt.NoFocus)
+        self.setToolTip("About / Credits")
+        self.setAccessibleName("About / Credits")
+
+    # --- animated paint property (read by paintEvent) ---
+    def _get_icon_opacity(self): return self._icon_opacity
+    def _set_icon_opacity(self, v): self._icon_opacity = v; self.update()
+    icon_opacity = Property(float, _get_icon_opacity, _set_icon_opacity)
+
+    def _target_opacity(self) -> float:
+        return self._LIT if (self._active or self._hovered) else self._REST
+
+    def _apply_target(self):
+        """Animate opacity toward the current target, or jump instantly under
+        reduced motion. Stops any running animation first; no-op if already
+        settled on the target."""
+        value = self._target_opacity()
+        if (abs(self._icon_opacity - value) < 1e-6
+                and self._op_anim.state() != self._op_anim.State.Running):
+            return
+        self._op_anim.stop()
+        if motion.is_reduced():
+            self._set_icon_opacity(value)
+            return
+        self._op_anim.setStartValue(self._icon_opacity)
+        self._op_anim.setEndValue(value)
+        self._op_anim.start()
+
+    def set_active(self, v: bool):
+        """Hold the icon lit while True (Credits is the active page)."""
+        v = bool(v)
+        if self._active == v:
+            return
+        self._active = v
+        self._apply_target()
+
+    def _set_hovered(self, v: bool):
+        self._hovered = bool(v)
+        self._apply_target()
+
+    def enterEvent(self, event):
+        self._set_hovered(True)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._set_hovered(False)
+        super().leaveEvent(event)
+
+    def paintEvent(self, _event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        p.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        p.setOpacity(self._icon_opacity)
+        # QIcon.paint is DPR-aware (crisp on HiDPI); do NOT cache a fixed pixmap.
+        self._icon.paint(p, self.rect(), Qt.AlignCenter)
+        p.end()   # release the paint device explicitly (matches _TrafficDot)
 
 
 class WindowChromeController(QObject):
