@@ -102,8 +102,10 @@ def test_header_has_app_icon_at_corner(header):
 
 
 def test_header_app_icon_click_opens_credits(qapp):
-    # clicked.connect(self.nav_select_credits) binds at build time, so patch the
-    # instance method BEFORE building the header.
+    # The icon's clicked signal binds to _on_app_icon_clicked at build time, and
+    # from a non-Credits page that calls self.nav_select_credits(). Patch
+    # nav_select_credits on the instance BEFORE building the header to exercise
+    # the credits-open path.
     from PySide6.QtCore import Qt
     from PySide6.QtTest import QTest
     from main import MultiToonTool

@@ -635,7 +635,7 @@ class MultiToonTool(QMainWindow):
         self.header_app_icon = _HeaderAppIcon(_resolve_app_icon(), header)
         self.header_app_icon.move(13, 13)
         self.header_app_icon.raise_()   # keep above any later header children
-        self.header_app_icon.clicked.connect(self.nav_select_credits)
+        self.header_app_icon.clicked.connect(self._on_app_icon_clicked)
 
         return header
 
@@ -927,11 +927,19 @@ class MultiToonTool(QMainWindow):
             self.chip_rail.layout().invalidate()
 
     def _on_active_page_changed(self, index: int):
-        """Light the header app icon while Credits (stack index 5) is the
-        active page; subdue it otherwise."""
+        """Fired by stack.currentChanged on every page switch. Lights the header
+        app icon while Credits (index 5) is active, and — whenever the user
+        leaves Credits by ANY path (icon toggle-back, chip nav, or animated
+        slide finalization) — clears the credits open-flag and releases the
+        blurred backdrop pixmap."""
         icon = getattr(self, "header_app_icon", None)
         if icon is not None:
             icon.set_active(index == 5)
+        if index != 5:
+            self._credits_open = False
+            credits_tab = getattr(self, "credits_tab", None)
+            if credits_tab is not None:
+                credits_tab.clear_backdrop()
 
     def _wire_header_icon_active_state(self):
         """Drive the icon's 'lit while Credits active' state from ONE choke
@@ -973,6 +981,37 @@ class MultiToonTool(QMainWindow):
         for chip in self.chip_buttons:
             chip.setChecked(False)
         self._apply_chip_styles()
+
+    def _on_app_icon_clicked(self):
+        """Header app icon: open Credits, or (if already on Credits) return to
+        the tab you came from. Ignored while a Credits slide is in flight."""
+        if getattr(self, "_credits_transitioning", False):
+            return
+        if getattr(self, "_credits_open", False):
+            self._nav_return_from_credits()
+        else:
+            self.nav_select_credits()
+
+    def _nav_return_from_credits(self):
+        """Reverse-vertical slide from Credits back to the pre-Credits tab."""
+        target = getattr(self, "_pre_credits_index", 0)
+        if not (0 <= target < 5):
+            target = 0
+        self._credits_open = False
+        self._credits_transitioning = True
+        from utils.motion import push_slide_pages
+        self._begin_credits_transition(
+            push_slide_pages(self.stack, 5, target, axis="v", reverse=True)
+        )
+        for i, chip in enumerate(self.chip_buttons):
+            chip.setChecked(i == target)
+        self._apply_chip_styles()
+        # Move the pill to the target chip, mirroring nav_select. Targets 0-3
+        # are chips; target 4 (debug) is overflow-only, so no pill move (the
+        # range guard handles it).
+        if 0 <= target < len(self.chip_buttons) and hasattr(self, "chip_pill"):
+            from PySide6.QtCore import QRectF
+            self.chip_pill.slide_to(QRectF(self.chip_buttons[target].geometry()))
 
     def _begin_credits_transition(self, group):
         """Lower the in-flight guard when the given slide finishes (immediately
