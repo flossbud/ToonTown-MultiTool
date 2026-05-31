@@ -800,19 +800,6 @@ class MultiToonTool(QMainWindow):
         layout.setContentsMargins(12, 6, 12, 6)
         layout.setSpacing(4)
 
-        # App icon pinned far-left — navigates to Credits/About (replaces the
-        # old header brand-link affordance).
-        self.rail_app_icon = QToolButton(rail)
-        self.rail_app_icon.setObjectName("rail_app_icon")
-        self.rail_app_icon.setIcon(_resolve_app_icon())
-        self.rail_app_icon.setIconSize(QSize(34, 34))
-        self.rail_app_icon.setFixedSize(40, 40)
-        self.rail_app_icon.setCursor(Qt.PointingHandCursor)
-        self.rail_app_icon.setFocusPolicy(Qt.NoFocus)
-        self.rail_app_icon.setToolTip("About / Credits")
-        self.rail_app_icon.clicked.connect(self.nav_select_credits)
-        layout.addWidget(self.rail_app_icon)
-
         # Left phantom: invisible spacer whose width mirrors the right
         # utility cluster (divider + hint + optional overflow). Without
         # this counterbalance, the two addStretch() items around the chips
@@ -866,15 +853,11 @@ class MultiToonTool(QMainWindow):
 
         layout.addStretch()
 
-        # Right phantom: counterpart to the left phantom. The chips sit between
-        # two stretches, so they only center when the fixed clusters on each
-        # end are equal width. The app icon (left, 40) and the hint+overflow
-        # (right) differ, so _update_chip_rail_phantom_width pads whichever
-        # side is lighter via these two spacers.
-        self.chip_rail_right_phantom = QSpacerItem(
-            0, 0, QSizePolicy.Fixed, QSizePolicy.Minimum
-        )
-        layout.addSpacerItem(self.chip_rail_right_phantom)
+        # No right phantom: with the app icon gone the rail has a single fixed
+        # cluster (hint + optional overflow) on the right. Centering is handled
+        # by sizing the left phantom in _update_chip_rail_phantom_width; a
+        # zero-width right spacer would be inert (Qt adds no spacing around a
+        # zero-size spacer item), so it is simply omitted.
 
         # Overflow menu — visible only when debug logging is enabled.
         # Uses a custom OverflowPopup (replaces Qt's QMenu so we can
@@ -916,27 +899,29 @@ class MultiToonTool(QMainWindow):
         return rail
 
     def _update_chip_rail_phantom_width(self):
-        """Keep the four chips at the geometric center of the rail. Fixed
-        clusters sit on both ends: left = app icon (40), right = hint toggle
-        (34) plus optional debug overflow (34). Pad the lighter side via the
-        left phantom spacer so the centered chip cluster is not pushed
-        off-center."""
-        if not (
-            hasattr(self, "chip_rail_left_phantom")
-            and hasattr(self, "chip_rail_right_phantom")
-        ):
+        """Keep the four chips at the geometric center of the rail. The only
+        fixed cluster sits on the right, in layout order: the debug overflow
+        button (34, present-but-hidden when debug is off) then the hint toggle
+        (34). The left end is empty (the app icon moved to the header corner).
+        Size the left phantom to the right cluster's width PLUS one layout-
+        spacing gap: the right cluster carries an extra leading spacing slot
+        (from the always-present overflow item) that the corner-flush left
+        phantom has no mirror for. Without the extra gap the chips drift ~2px
+        left; with it they center exactly (verified by
+        test_chip_rail_chips_are_visually_centered, matching the prior
+        icon-based layout)."""
+        if not hasattr(self, "chip_rail_left_phantom"):
             return
         right = 34  # hint toggle
         if self.settings_manager.get("show_debug_tab", False):
-            right += 4 + 34  # overflow button + its leading spacing
-        left = 40  # app icon
-        # Pad whichever fixed cluster is lighter so the two ends match and the
-        # chips land at true center.
+            right += 34 + 4  # overflow button (34) + its leading spacing gap (4)
+        # self.chip_rail is not yet assigned on the first call (from inside
+        # _build_chip_rail), so fall back to 4 — which matches the setSpacing(4)
+        # set on that layout.
+        spacing = (self.chip_rail.layout().spacing()
+                   if hasattr(self, "chip_rail") else 4)
         self.chip_rail_left_phantom.changeSize(
-            max(0, right - left), 0, QSizePolicy.Fixed, QSizePolicy.Minimum
-        )
-        self.chip_rail_right_phantom.changeSize(
-            max(0, left - right), 0, QSizePolicy.Fixed, QSizePolicy.Minimum
+            right + spacing, 0, QSizePolicy.Fixed, QSizePolicy.Minimum
         )
         if hasattr(self, "chip_rail"):
             self.chip_rail.layout().invalidate()

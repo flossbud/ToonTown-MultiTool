@@ -157,24 +157,9 @@ def _build_rail_with_debug(qapp, *, show_debug_tab: bool):
     return instance, instance._build_chip_rail()
 
 
-def test_chip_rail_has_app_icon_far_left(qapp):
-    instance, rail = _build_rail_with_debug(qapp, show_debug_tab=False)
-    from PySide6.QtWidgets import QToolButton
-    icon = rail.findChild(QToolButton, "rail_app_icon")
-    assert icon is not None, "chip rail must have a 'rail_app_icon' button"
-    assert not icon.icon().isNull()
-
-
-def test_clicking_rail_app_icon_navigates_to_credits(qapp):
-    instance, rail = _build_rail_with_debug(qapp, show_debug_tab=False)
-    instance._nav_select_credits_calls = []
-    instance.nav_select_credits = lambda: instance._nav_select_credits_calls.append(True)
-    from PySide6.QtWidgets import QToolButton
-    icon = rail.findChild(QToolButton, "rail_app_icon")
-    icon.clicked.disconnect()
-    icon.clicked.connect(instance.nav_select_credits)
-    icon.click()
-    assert instance._nav_select_credits_calls == [True]
+# The app icon moved from the chip rail to the header's top-left corner; its
+# presence + click-to-Credits behavior is now covered in tests/test_app_header.py
+# (test_header_has_app_icon_at_corner / test_header_app_icon_click_opens_credits).
 
 
 def test_chip_rail_has_hint_button(qapp):
@@ -517,19 +502,42 @@ def test_chip_rail_nav_items_order(qapp):
 
 
 def test_chip_rail_phantoms_balance_clusters_debug_off(qapp):
-    """Debug off: left cluster = app icon (40), right cluster = hint (34).
-    The right phantom pads +6 so both fixed ends are 40px and the chips
-    sit at true center."""
+    """Debug off: the left end is empty (app icon moved to the header corner).
+    The left phantom = right cluster (hint 34) + one layout-spacing gap (4) = 38;
+    there is no right phantom."""
     instance, rail = _build_rail_with_debug(qapp, show_debug_tab=False)
     lp = instance.chip_rail_left_phantom.sizeHint().width()
-    rp = instance.chip_rail_right_phantom.sizeHint().width()
-    assert lp == 0 and rp == 6, f"expected left=0 right=6, got left={lp} right={rp}"
+    assert lp == 38, f"expected left=38, got left={lp}"
+    assert not hasattr(instance, "chip_rail_right_phantom")
 
 
 def test_chip_rail_phantoms_balance_clusters_debug_on(qapp):
-    """Debug on: right cluster = overflow(34)+spacing(4)+hint(34)=72,
-    left = icon(40). Left phantom pads +32 so both ends are 72px."""
+    """Debug on: right cluster = overflow(34)+spacing(4)+hint(34)=72; left phantom
+    = 72 + one layout-spacing gap (4) = 76."""
     instance, rail = _build_rail_with_debug(qapp, show_debug_tab=True)
     lp = instance.chip_rail_left_phantom.sizeHint().width()
-    rp = instance.chip_rail_right_phantom.sizeHint().width()
-    assert lp == 32 and rp == 0, f"expected left=32 right=0, got left={lp} right={rp}"
+    assert lp == 76, f"expected left=76, got left={lp}"
+    assert not hasattr(instance, "chip_rail_right_phantom")
+
+
+@pytest.mark.parametrize("width", [575, 700])
+@pytest.mark.parametrize("debug", [False, True])
+def test_chip_rail_chips_are_visually_centered(qapp, debug, width):
+    """The chips must sit at the rail's true geometric center (the whole point
+    of the phantom spacer). Regression guard: removing the old left-corner app
+    icon must not shift the chip cluster off-center. Asserts the ACTUAL laid-out
+    geometry, not just spacer sizeHints, at the minimum (575) and a wider (700)
+    rail width, for both debug states."""
+    instance, rail = _build_rail_with_debug(qapp, show_debug_tab=debug)
+    rail.resize(width, 44)
+    rail.show()
+    qapp.processEvents()
+    rail.layout().activate()
+    qapp.processEvents()
+    geos = [c.geometry() for c in instance.chip_buttons]
+    cluster_center = (min(g.left() for g in geos)
+                      + max(g.right() for g in geos) + 1) / 2.0
+    offset = cluster_center - rail.width() / 2.0
+    rail.hide()
+    assert abs(offset) <= 1.0, (
+        f"chips off-center by {offset:+.1f}px (debug={debug}, width={width})")

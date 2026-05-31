@@ -158,3 +158,38 @@ def test_theme_refresh_reraises_app_icon(qapp):
     inst.header_app_icon.raise_ = lambda: calls.append(True)
     inst._refresh_header_logo(header_width=575)
     assert calls == [True]
+
+
+def test_chip_rail_no_longer_has_app_icon(qapp):
+    from PySide6.QtWidgets import QToolButton
+    from main import MultiToonTool
+    inst = MultiToonTool.__new__(MultiToonTool)
+    inst.settings_manager = _StubSettings(show_debug_tab=False)
+    inst.chip_rail = inst._build_chip_rail()
+    assert inst.chip_rail.findChild(QToolButton, "rail_app_icon") is None
+    assert not hasattr(inst, "rail_app_icon")
+
+
+def test_chip_phantom_balances_with_no_left_cluster(qapp):
+    # Left end is empty (icon moved to header). The left phantom = right cluster
+    # (hint 34) + one layout-spacing gap (4) = 38. There is no right phantom.
+    # (Actual centering is asserted in tests/test_chip_rail.py.)
+    from main import MultiToonTool
+    inst = MultiToonTool.__new__(MultiToonTool)
+    inst.settings_manager = _StubSettings(show_debug_tab=False)
+    inst.chip_rail = inst._build_chip_rail()
+    inst._update_chip_rail_phantom_width()
+    assert inst.chip_rail_left_phantom.sizeHint().width() == 38
+    assert not hasattr(inst, "chip_rail_right_phantom")
+
+
+def test_chip_phantom_with_debug_tab(qapp):
+    # Debug visible -> right cluster = overflow(34) + spacing(4) + hint(34) = 72;
+    # left phantom = 72 + one layout-spacing gap (4) = 76.
+    from main import MultiToonTool
+    inst = MultiToonTool.__new__(MultiToonTool)
+    inst.settings_manager = _StubSettings(show_debug_tab=True)
+    inst.chip_rail = inst._build_chip_rail()
+    inst._update_chip_rail_phantom_width()
+    assert inst.chip_rail_left_phantom.sizeHint().width() == 76
+    assert not hasattr(inst, "chip_rail_right_phantom")
