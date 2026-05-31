@@ -200,3 +200,54 @@ def test_dot_release_clears_pressed_and_emits_clicked(qapp):
     QTest.mouseClick(d, Qt.LeftButton)
     assert fired == [True]
     assert d._pressed is False
+
+
+def test_cluster_hover_reveals_all_glyphs(qapp, monkeypatch):
+    import utils.motion as motion
+    monkeypatch.setattr(motion, "is_reduced", lambda: True)
+    from PySide6.QtWidgets import QMainWindow, QFrame
+    from utils.widgets.window_chrome import WindowChromeController
+    win = QMainWindow(); header = QFrame()
+    c = WindowChromeController(win, header)
+    for b in (c.btn_min, c.btn_max, c.btn_close):
+        assert b.glyph_opacity == 0.0          # hidden at rest
+    c.set_cluster_hovered(True)
+    for b in (c.btn_min, c.btn_max, c.btn_close):
+        assert b.glyph_opacity == 1.0
+    c.set_cluster_hovered(False)
+    for b in (c.btn_min, c.btn_max, c.btn_close):
+        assert b.glyph_opacity == 0.0
+
+
+def test_cluster_wraps_dots(qapp):
+    from PySide6.QtWidgets import QMainWindow, QFrame
+    from utils.widgets.window_chrome import WindowChromeController, _TrafficCluster
+    win = QMainWindow(); header = QFrame()
+    c = WindowChromeController(win, header)
+    assert isinstance(c._cluster, _TrafficCluster)
+    assert c._cluster.width() == 3 * 22 + 2 * 8
+    for b in (c.btn_min, c.btn_max, c.btn_close):
+        assert b.parent() is c._cluster
+
+
+def test_dot_press_routes_to_none_gap_press_moves(qapp):
+    # reparenting into the cluster must NOT break drag/click routing
+    from PySide6.QtWidgets import QMainWindow, QFrame
+    from PySide6.QtCore import QPoint
+    from utils.widgets.window_chrome import WindowChromeController
+    win = QMainWindow(); win.resize(575, 770); header = QFrame(win)
+    c = WindowChromeController(win, header)
+    assert c._press_action(c.btn_close, QPoint(560, 12)) is None      # dot press = click
+    assert c._press_action(c._cluster, QPoint(540, 12)) == ("move", None)  # gap/cluster press = move
+
+
+def test_local_hover_scope(qapp, monkeypatch):
+    import utils.motion as motion
+    monkeypatch.setattr(motion, "is_reduced", lambda: True)
+    from PySide6.QtWidgets import QMainWindow, QFrame
+    from utils.widgets.window_chrome import WindowChromeController
+    win = QMainWindow(); header = QFrame()
+    c = WindowChromeController(win, header)
+    c.btn_max._set_dot_hovered(True)
+    assert c.btn_max.dot_scale == 1.10
+    assert c.btn_min.dot_scale == 1.0 and c.btn_close.dot_scale == 1.0  # siblings unaffected

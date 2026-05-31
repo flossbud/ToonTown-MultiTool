@@ -64,7 +64,7 @@ class _TrafficDot(QAbstractButton):
         self._inactive_dot = QColor("#5a5d63")
         self._inactive_glyph = QColor("#33353a")
         # animated paint values
-        self._glyph_opacity = 1.0       # later task switches rest default to hidden
+        self._glyph_opacity = 0.0       # hidden at rest; revealed on cluster hover
         self._dot_scale = 1.0
         self._brightness = 1.0
         self._glyph_anim = QPropertyAnimation(self, b"glyph_opacity", self)
@@ -117,7 +117,11 @@ class _TrafficDot(QAbstractButton):
         anim.start()
 
     def _glyph_opacity_rest(self) -> float:
-        return 1.0  # glyphs visible at rest in this task; cluster-reveal lands later
+        return 0.0  # glyphs hidden at rest; revealed on cluster hover
+
+    def set_cluster_hovered(self, v: bool):
+        self._cluster_hovered = bool(v)
+        self._recompute_targets()
 
     def _recompute_targets(self):
         scale, bright = hover_targets(self._pressed, self._dot_hovered)
@@ -193,6 +197,26 @@ class _TrafficDot(QAbstractButton):
         p.end()
 
 
+class _TrafficCluster(QWidget):
+    """Transparent fixed-size holder for the three control dots. Owns hover so
+    moving the cursor between dots never flickers the cluster-hover state."""
+
+    _GAP = 8
+
+    def __init__(self, controller, parent=None):
+        super().__init__(parent)
+        self._controller = controller
+        self.setFixedSize(3 * _TrafficDot._HIT + 2 * self._GAP, _TrafficDot._HIT)
+
+    def enterEvent(self, event):
+        self._controller.set_cluster_hovered(True)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._controller.set_cluster_hovered(False)
+        super().leaveEvent(event)
+
+
 class WindowChromeController(QObject):
     """Owns the custom window controls + drag/resize/state for a frameless
     main window. Construct only when custom chrome is active (the
@@ -208,12 +232,17 @@ class WindowChromeController(QObject):
         self._logged_move_fail = False
         self._logged_resize_fail = False
 
-        self.btn_min = _TrafficDot(TRAFFIC["min"][0], "−", TRAFFIC["min"][1], "Minimize", header)
-        self.btn_max = _TrafficDot(TRAFFIC["max"][0], maximize_glyph(self._is_maximized), TRAFFIC["max"][1], "Maximize", header)
-        self.btn_close = _TrafficDot(TRAFFIC["close"][0], "×", TRAFFIC["close"][1], "Close", header)
+        from PySide6.QtWidgets import QHBoxLayout
+        self._cluster = _TrafficCluster(self, header)
+        self.btn_min = _TrafficDot(TRAFFIC["min"][0], "−", TRAFFIC["min"][1], "Minimize", self._cluster)
+        self.btn_max = _TrafficDot(TRAFFIC["max"][0], maximize_glyph(self._is_maximized), TRAFFIC["max"][1], "Maximize", self._cluster)
+        self.btn_close = _TrafficDot(TRAFFIC["close"][0], "×", TRAFFIC["close"][1], "Close", self._cluster)
         self.btn_min.setObjectName("win_ctl_min")
         self.btn_max.setObjectName("win_ctl_max")
         self.btn_close.setObjectName("win_ctl_close")
+        _lay = QHBoxLayout(self._cluster)
+        _lay.setContentsMargins(0, 0, 0, 0); _lay.setSpacing(_TrafficCluster._GAP)
+        _lay.addWidget(self.btn_min); _lay.addWidget(self.btn_max); _lay.addWidget(self.btn_close)
 
         self.btn_min.clicked.connect(self._win.showMinimized)
         self.btn_max.clicked.connect(self._toggle_max_restore)
@@ -232,17 +261,18 @@ class WindowChromeController(QObject):
         else:
             self._win.showMaximized()
 
+    def set_cluster_hovered(self, v: bool):
+        for b in (self.btn_min, self.btn_max, self.btn_close):
+            b.set_cluster_hovered(v)
+
     def _sync_window_state(self, is_maximized: bool):
         self._is_maximized = is_maximized
         self.btn_max.set_glyph(maximize_glyph(is_maximized))
 
     def reposition(self):
         """Pin the control cluster to the header's top-right corner."""
-        x = self._header.width() - 12 - self.btn_close.width()
-        gap = 8
-        self.btn_close.move(x, 12)
-        self.btn_max.move(x - (self.btn_max.width() + gap), 12)
-        self.btn_min.move(x - 2 * (self.btn_max.width() + gap), 12)
+        x = self._header.width() - 12 - self._cluster.width()
+        self._cluster.move(x, 12)
 
     def _press_action(self, obj, win_pos):
         """Decide what a left press maps to: ('resize', edge), ('move', None),
