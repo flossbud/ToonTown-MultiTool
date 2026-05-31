@@ -88,3 +88,73 @@ def test_logo_asset_swaps_with_theme(qapp, monkeypatch):
     assert dark_w != light_w, (
         f"logo should swap per theme; got dark={dark_w} light={light_w}"
     )
+
+
+def test_header_has_app_icon_at_corner(header):
+    from utils.widgets.window_chrome import _HeaderAppIcon
+    icon = header.findChild(_HeaderAppIcon)
+    assert icon is not None, "header must contain a _HeaderAppIcon"
+    assert icon.pos().x() == 15 and icon.pos().y() == 5     # Option A geometry
+    assert icon.size().width() == 36 and icon.size().height() == 36
+    assert icon.toolTip() == "About / Credits"
+    assert icon.icon_opacity == 0.75                        # subdued at rest
+
+
+def test_header_app_icon_click_opens_credits(qapp):
+    # clicked.connect(self.nav_select_credits) binds at build time, so patch the
+    # instance method BEFORE building the header.
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    from main import MultiToonTool
+    from utils.widgets.window_chrome import _HeaderAppIcon
+    inst = MultiToonTool.__new__(MultiToonTool)
+    inst.settings_manager = _StubSettings(hints_enabled=True)
+    called = []
+    inst.nav_select_credits = lambda: called.append(True)
+    inst.header = inst._build_header()
+    icon = inst.header.findChild(_HeaderAppIcon)
+    QTest.mouseClick(icon, Qt.LeftButton)
+    assert called == [True]
+
+
+def test_on_active_page_changed_drives_icon(qapp, monkeypatch):
+    import utils.motion as motion
+    monkeypatch.setattr(motion, "is_reduced", lambda: True)
+    from main import MultiToonTool
+    from utils.widgets.window_chrome import _HeaderAppIcon
+    inst = MultiToonTool.__new__(MultiToonTool)
+    inst.settings_manager = _StubSettings(hints_enabled=True)
+    inst.header = inst._build_header()
+    inst._on_active_page_changed(5)                 # Credits is active
+    assert inst.header_app_icon.icon_opacity == 1.0
+    inst._on_active_page_changed(0)                 # back to a chip page
+    assert inst.header_app_icon.icon_opacity == 0.75
+
+
+def test_currentchanged_hook_and_initial_sync(qapp, monkeypatch):
+    import utils.motion as motion
+    monkeypatch.setattr(motion, "is_reduced", lambda: True)
+    from PySide6.QtWidgets import QStackedWidget, QWidget
+    from main import MultiToonTool
+    inst = MultiToonTool.__new__(MultiToonTool)
+    inst.settings_manager = _StubSettings(hints_enabled=True)
+    inst.header = inst._build_header()
+    inst.stack = QStackedWidget()
+    for _ in range(6):                              # indices 0..5 (5 = credits)
+        inst.stack.addWidget(QWidget())
+    inst.stack.setCurrentIndex(5)                   # start ON credits
+    inst._wire_header_icon_active_state()
+    assert inst.header_app_icon.icon_opacity == 1.0   # initial sync caught it
+    inst.stack.setCurrentIndex(0)                     # via the signal
+    assert inst.header_app_icon.icon_opacity == 0.75
+
+
+def test_theme_refresh_reraises_app_icon(qapp):
+    from main import MultiToonTool
+    inst = MultiToonTool.__new__(MultiToonTool)
+    inst.settings_manager = _StubSettings(hints_enabled=True)
+    inst.header = inst._build_header()        # build-time refresh: no crash
+    calls = []
+    inst.header_app_icon.raise_ = lambda: calls.append(True)
+    inst._refresh_header_logo(header_width=575)
+    assert calls == [True]

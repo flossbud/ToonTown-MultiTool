@@ -438,6 +438,7 @@ class MultiToonTool(QMainWindow):
         self.stack.addWidget(self.settings_tab)     # 3
         self.stack.addWidget(self.debug_tab)        # 4
         self.stack.addWidget(self.credits_tab)      # 5
+        self._wire_header_icon_active_state()
         root.addWidget(self.stack, 1)
 
         self.container = QWidget()
@@ -623,6 +624,19 @@ class MultiToonTool(QMainWindow):
         # Render an initial pixmap so the label is non-empty before theming
         # (tests build the header without _apply_full_theme).
         self._refresh_header_logo(header_width=575)
+
+        # App icon pinned at the top-left corner, proportionally opposite the
+        # traffic-light controls (top-right). 36px, left edge 15px from the
+        # window edge (mirrors the close dot's 15px visible right margin),
+        # vertically centered on the dots' centerline (y=23 -> top y=5).
+        # Header-owned (not the frameless-only WindowChromeController) so the
+        # Credits entry point survives the "system title bar" setting.
+        from utils.widgets.window_chrome import _HeaderAppIcon
+        self.header_app_icon = _HeaderAppIcon(_resolve_app_icon(), header)
+        self.header_app_icon.move(15, 5)
+        self.header_app_icon.raise_()   # keep above any later header children
+        self.header_app_icon.clicked.connect(self.nav_select_credits)
+
         return header
 
     def _refresh_header_logo(self, header_width=None):
@@ -645,6 +659,11 @@ class MultiToonTool(QMainWindow):
             return
         scaled = src.scaled(tw, th, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         self.header_logo.setPixmap(scaled)
+        # Keep the corner app icon above the logo after any theme/size refresh.
+        # Guarded: the build-time call runs before the icon is created.
+        icon = getattr(self, "header_app_icon", None)
+        if icon is not None:
+            icon.raise_()
 
     def _apply_window_chrome(self):
         """Apply the frameless flag + custom controls + rounded translucent
@@ -922,10 +941,26 @@ class MultiToonTool(QMainWindow):
         if hasattr(self, "chip_rail"):
             self.chip_rail.layout().invalidate()
 
+    def _on_active_page_changed(self, index: int):
+        """Light the header app icon while Credits (stack index 5) is the
+        active page; subdue it otherwise."""
+        icon = getattr(self, "header_app_icon", None)
+        if icon is not None:
+            icon.set_active(index == 5)
+
+    def _wire_header_icon_active_state(self):
+        """Drive the icon's 'lit while Credits active' state from ONE choke
+        point — the stack's currentChanged — so every nav path (chip nav,
+        credits nav, slide-animation finalization, direct setCurrentIndex) is
+        covered without duplicating logic. Sync once for the page shown at
+        startup (currentChanged does not fire retroactively)."""
+        self.stack.currentChanged.connect(self._on_active_page_changed)
+        self._on_active_page_changed(self.stack.currentIndex())
+
     def nav_select_credits(self):
         """Navigate to the Credits tab with a vertical push-slide.
 
-        Reached via the app-icon button on the chip rail; its transition
+        Reached via the app icon in the header's top-left corner; its transition
         deliberately uses vertical motion to feel distinct from chip nav.
         Credits enters from above (modal-motion principle: animate from the
         trigger source).
