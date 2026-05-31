@@ -23,7 +23,7 @@ API_URL = "https://www.toontownrewritten.com/api/login?format=json"
 assert API_URL.startswith("https://"), "API_URL must use HTTPS"
 HEADERS = {
     "Content-type": "application/x-www-form-urlencoded",
-    "User-Agent": "ToontownMultiTool/0.6.0-alpha.5"
+    "User-Agent": "ToontownMultiTool/0.7.0-alpha.1"
 }
 
 # Common locations to search for TTREngine
