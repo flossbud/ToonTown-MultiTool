@@ -943,28 +943,47 @@ class MultiToonTool(QMainWindow):
         self._on_active_page_changed(self.stack.currentIndex())
 
     def nav_select_credits(self):
-        """Navigate to the Credits tab with a vertical push-slide.
-
-        Reached via the app icon in the header's top-left corner; its transition
-        deliberately uses vertical motion to feel distinct from chip nav.
-        Credits enters from above (modal-motion principle: animate from the
-        trigger source).
+        """Open Credits with a vertical push-slide over a blurred snapshot of
+        the tab you were on. Reached via the header app icon (which toggles back
+        to that tab on the next press).
         """
         prev_index = self.stack.currentIndex()
         if prev_index == 5:
             return
+
+        # Capture the outgoing page as the blurred backdrop BEFORE switching, so
+        # the descending Credits page already carries the blurred view. Ordering
+        # is load-bearing: push_slide_pages grabs credits.grab() for its proxy.
+        self._pre_credits_index = prev_index if 0 <= prev_index < 5 else 0
+        self.credits_tab.set_backdrop_source(self.stack.widget(prev_index).grab())
+        self._credits_open = True
+        self._credits_transitioning = True
+
         was_initialized = getattr(self, "_initialized_nav", False)
         self._initialized_nav = True
-
         if not was_initialized:
             self.stack.setCurrentIndex(5)
+            self._credits_transitioning = False
         else:
             from utils.motion import push_slide_pages
-            push_slide_pages(self.stack, prev_index, 5, axis="v")
+            self._begin_credits_transition(
+                push_slide_pages(self.stack, prev_index, 5, axis="v")
+            )
 
         for chip in self.chip_buttons:
             chip.setChecked(False)
         self._apply_chip_styles()
+
+    def _begin_credits_transition(self, group):
+        """Lower the in-flight guard when the given slide finishes (immediately
+        under reduced motion, where push_slide_pages returns None)."""
+        if group is None:
+            self._credits_transitioning = False
+        else:
+            group.finished.connect(
+                lambda: setattr(self, "_credits_transitioning", False)
+            )
+        return group
 
     def nav_select(self, index: int):
         if self.stack.currentIndex() == index and getattr(self, "_initialized_nav", False):
