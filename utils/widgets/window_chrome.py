@@ -410,7 +410,12 @@ class WindowChromeController(QObject):
         """Decide what a left press maps to: ('resize', edge), ('move', None),
         or None. Pure given obj + a window-local QPoint. Control buttons are
         never hijacked (they handle their own clicks)."""
-        if isinstance(obj, _TrafficDot):
+        # A control button handles its own click — never hijack a button press
+        # into a window move OR an edge-resize (this check runs first by
+        # design). In practice no header button sits within the resize margin,
+        # so existing widgets are unaffected; this makes the header app icon's
+        # clicks robust.
+        if isinstance(obj, QAbstractButton):
             return None
         if not self._is_maximized:
             edge = resize_edge_for_pos(
@@ -448,7 +453,7 @@ class WindowChromeController(QObject):
                 return False
             win_pos = obj.mapTo(win, event.position().toPoint())
             if et == QEvent.MouseButtonDblClick:
-                if not isinstance(obj, _TrafficDot) and (
+                if not isinstance(obj, QAbstractButton) and (
                     obj is header or header.isAncestorOf(obj)
                 ):
                     self._toggle_max_restore()

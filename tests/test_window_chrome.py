@@ -434,3 +434,44 @@ def test_header_app_icon_reduced_motion_no_animation(qapp, monkeypatch):
     icon._set_hovered(True)
     assert icon._op_anim.state() != icon._op_anim.State.Running
     assert icon.icon_opacity == 1.0
+
+
+def test_press_on_header_button_not_routed_to_move(qapp):
+    # Any QAbstractButton inside the header must NOT be turned into a window
+    # move/resize (it handles its own click). The header background still does.
+    from PySide6.QtCore import QPoint
+    from PySide6.QtWidgets import QMainWindow, QFrame, QPushButton
+    from utils.widgets.window_chrome import WindowChromeController
+    win = QMainWindow(); header = QFrame(); win.setCentralWidget(header)
+    win.resize(575, 300)
+    c = WindowChromeController(win, header)
+    btn = QPushButton(header)             # a non-_TrafficDot header button
+    # interior point (away from resize edges)
+    assert c._press_action(btn, QPoint(100, 100)) is None
+    # the header background itself is still draggable
+    assert c._press_action(header, QPoint(100, 100)) == ("move", None)
+
+
+def test_doubleclick_on_header_button_does_not_maximize(qapp, monkeypatch):
+    # The dblclick guard must also exclude buttons: double-clicking a header
+    # QAbstractButton must NOT toggle maximize, while the header bg still does.
+    from PySide6.QtCore import QPoint, QPointF, QEvent
+    from PySide6.QtGui import QMouseEvent
+    from PySide6.QtWidgets import QMainWindow, QFrame, QPushButton
+    from utils.widgets.window_chrome import WindowChromeController
+    win = QMainWindow(); header = QFrame(); win.setCentralWidget(header)
+    win.resize(575, 300)
+    c = WindowChromeController(win, header)
+    calls = []
+    monkeypatch.setattr(c, "_toggle_max_restore", lambda: calls.append(True))
+    btn = QPushButton(header)
+
+    def dblclick(obj, local):
+        ev = QMouseEvent(QEvent.MouseButtonDblClick, QPointF(local), QPointF(local),
+                         Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
+        c.eventFilter(obj, ev)
+
+    dblclick(btn, QPoint(5, 5))            # button: must NOT maximize
+    assert calls == []
+    dblclick(header, QPoint(100, 100))     # header bg: must maximize
+    assert calls == [True]
