@@ -41,7 +41,7 @@ def maximize_glyph(is_maximized: bool) -> str:
 
 
 class _TrafficDot(QAbstractButton):
-    """A 22x22 button (comfortable hit area) that paints a centered 14px
+    """A 22x22 button (comfortable hit area) that paints a centered 16px
     colored circle with a subtle tinted glyph. No QGraphicsEffect (avoids the
     paint-device conflict that effects cause with custom paintEvent)."""
 
