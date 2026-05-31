@@ -10,6 +10,9 @@ move()/resize() — that breaks on Wayland."""
 from PySide6.QtCore import Qt, QObject, QEvent
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import QAbstractButton, QApplication, QWidget
+from utils.widgets.window_chrome_style import (
+    DOT_DIAMETER, TRAFFIC, glyph_pixel_size,
+)
 
 
 def resize_edge_for_pos(x: int, y: int, w: int, h: int, margin: int = 6):
@@ -42,7 +45,7 @@ class _TrafficDot(QAbstractButton):
     colored circle with a subtle tinted glyph. No QGraphicsEffect (avoids the
     paint-device conflict that effects cause with custom paintEvent)."""
 
-    _VISUAL_DIAMETER = 14
+    _VISUAL_DIAMETER = DOT_DIAMETER
     _HIT = 22
 
     def __init__(self, dot_color: str, glyph: str, glyph_color: str,
@@ -72,7 +75,7 @@ class _TrafficDot(QAbstractButton):
         if self._glyph:
             p.setPen(self._glyph_color)
             f = p.font()
-            f.setPixelSize(9)
+            f.setPixelSize(glyph_pixel_size(self._VISUAL_DIAMETER))
             f.setBold(True)
             p.setFont(f)
             p.drawText(self.rect(), Qt.AlignCenter, self._glyph)
@@ -94,9 +97,9 @@ class WindowChromeController(QObject):
         self._logged_move_fail = False
         self._logged_resize_fail = False
 
-        self.btn_min = _TrafficDot("#4aa3ff", "−", "#d7ebff", "Minimize", header)
-        self.btn_max = _TrafficDot("#0077ff", maximize_glyph(False), "#aed5ff", "Maximize", header)
-        self.btn_close = _TrafficDot("#ff5f56", "×", "#ffcecb", "Close", header)
+        self.btn_min = _TrafficDot(TRAFFIC["min"][0], "−", TRAFFIC["min"][1], "Minimize", header)
+        self.btn_max = _TrafficDot(TRAFFIC["max"][0], maximize_glyph(False), TRAFFIC["max"][1], "Maximize", header)
+        self.btn_close = _TrafficDot(TRAFFIC["close"][0], "×", TRAFFIC["close"][1], "Close", header)
         self.btn_min.setObjectName("win_ctl_min")
         self.btn_max.setObjectName("win_ctl_max")
         self.btn_close.setObjectName("win_ctl_close")

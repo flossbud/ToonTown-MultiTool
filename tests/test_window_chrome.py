@@ -68,8 +68,8 @@ def test_controller_builds_three_named_controls(qapp):
     assert ctl.btn_min.objectName() == "win_ctl_min"
     assert ctl.btn_max.objectName() == "win_ctl_max"
     assert ctl.btn_close.objectName() == "win_ctl_close"
-    assert ctl.btn_min._dot_color == QColor("#4aa3ff")
-    assert ctl.btn_max._dot_color == QColor("#0077ff")
+    assert ctl.btn_min._dot_color == QColor("#febc2e")
+    assert ctl.btn_max._dot_color == QColor("#28c840")
     assert ctl.btn_close._dot_color == QColor("#ff5f56")
 
 
@@ -116,3 +116,22 @@ def test_press_on_control_button_is_ignored(qapp):
     header = QFrame(win)
     ctl = WindowChromeController(win, header)
     assert ctl._press_action(ctl.btn_close, QPoint(560, 12)) is None
+
+
+def test_traffic_dot_diameter_is_16_and_glyph_scales():
+    from utils.widgets.window_chrome import _TrafficDot
+    from utils.widgets import window_chrome_style as s
+    dot = _TrafficDot("#febc2e", "-", "#7a4e00", "Minimize")
+    assert dot._VISUAL_DIAMETER == 16
+    assert s.glyph_pixel_size(dot._VISUAL_DIAMETER) == 11
+
+
+def test_controller_buttons_use_traffic_light_colors(qapp):
+    from PySide6.QtWidgets import QMainWindow, QFrame
+    from utils.widgets.window_chrome import WindowChromeController
+    win = QMainWindow()
+    header = QFrame()
+    c = WindowChromeController(win, header)
+    assert c.btn_min._dot_color.name() == "#febc2e"
+    assert c.btn_max._dot_color.name() == "#28c840"
+    assert c.btn_close._dot_color.name() == "#ff5f56"
