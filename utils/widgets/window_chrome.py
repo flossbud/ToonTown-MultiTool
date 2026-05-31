@@ -8,7 +8,7 @@ startSystemResize(), which is the only reliable cross-platform path
 move()/resize() — that breaks on Wayland."""
 
 from PySide6.QtCore import Qt, QObject, QEvent, QPointF, QRectF, Property, QPropertyAnimation, QEasingCurve
-from PySide6.QtGui import QColor, QPainter, QFontMetricsF, QPen
+from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import QAbstractButton, QApplication, QWidget, QHBoxLayout
 from utils.widgets.window_chrome_style import (
     DOT_DIAMETER, TRAFFIC, glyph_pixel_size,
