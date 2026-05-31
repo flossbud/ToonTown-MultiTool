@@ -151,6 +151,10 @@ from utils.theme_manager import (
     SystemThemeWatcher,
 )
 from utils.build_flavor import window_title, app_name, is_beta
+from utils.widgets.window_chrome_style import (
+    RADIUS_NORMAL, BOTTOM_INSET, STROKE_INSET,
+    bevel_border_colors, card_qss, header_top_radius_qss,
+)
 
 
 # Layout-mode breakpoint and hysteresis. Window must be >= W_FULL x H_FULL
@@ -643,17 +647,51 @@ class MultiToonTool(QMainWindow):
         self.header_logo.setPixmap(scaled)
 
     def _apply_window_chrome(self):
-        """Apply the frameless flag + custom controls unless the escape-hatch
-        setting requests the native title bar. Window flags are construction-
-        time, so the setting takes effect on restart. Sets self._chrome to the
+        """Apply the frameless flag + custom controls + rounded translucent
+        shell, unless the escape-hatch setting requests the native title bar.
+        Window flags + translucency are construction-time (set once, before
+        show), so the setting takes effect on restart. Sets self._chrome to the
         controller (custom chrome) or None (native)."""
         self._chrome = None
+        self.container.setObjectName("app_card")
+        self.container.setAttribute(Qt.WA_StyledBackground, True)
         if bool(self.settings_manager.get("use_system_title_bar", False)):
+            self.setAttribute(Qt.WA_TranslucentBackground, False)
+            self._apply_window_corner_state(self.isMaximized())
             return  # native decorations; no custom controls
         self.setWindowFlag(Qt.FramelessWindowHint, True)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
         from utils.widgets.window_chrome import WindowChromeController
         self._chrome = WindowChromeController(self, self.header)
         self._chrome.reposition()
+        self._apply_window_corner_state(self.isMaximized())
+
+    def _apply_window_corner_state(self, is_maximized: bool):
+        """Apply rounded-card + bevel-stroke + layout insets for the current
+        state. Frameless + not maximized -> 16px rounded card with a 1px
+        theme-aware bevel stroke, header top corners nested inside, content
+        inset 1px on sides/top and 16px at the bottom so no tab can re-square
+        the corners. Maximized or native title bar -> square, plain bg, no
+        insets."""
+        c = self._theme_colors()
+        bg = c["bg_app"]
+        native = bool(self.settings_manager.get("use_system_title_bar", False))
+        rounded = (not native) and (not is_maximized)
+        root = self.container.layout()
+
+        if rounded:
+            colors = bevel_border_colors(bg)
+            self.container.setStyleSheet(card_qss("app_card", bg, RADIUS_NORMAL, colors))
+            self.header.setStyleSheet(
+                header_top_radius_qss(c["header_bg"], c["sidebar_border"], RADIUS_NORMAL))
+            if root is not None:
+                root.setContentsMargins(STROKE_INSET, STROKE_INSET, STROKE_INSET, BOTTOM_INSET)
+        else:
+            self.container.setStyleSheet(card_qss("app_card", bg, 0, None))
+            self.header.setStyleSheet(
+                header_top_radius_qss(c["header_bg"], c["sidebar_border"], 0))
+            if root is not None:
+                root.setContentsMargins(0, 0, 0, 0)
 
     # ── Chip Rail ──────────────────────────────────────────────────────────
 
@@ -1081,16 +1119,8 @@ class MultiToonTool(QMainWindow):
     def _apply_full_theme(self):
         c = self._theme_colors()
 
-        # Container background
-        self.container.setStyleSheet(f"QWidget {{ background: {c['bg_app']}; }}")
-
-        # Header
-        self.header.setStyleSheet(f"""
-            QFrame#app_header {{
-                background: {c['header_bg']};
-                border-bottom: 1px solid {c['sidebar_border']};
-            }}
-        """)
+        # Container card + header corners/stroke (rounded vs native/maximized)
+        self._apply_window_corner_state(self.isMaximized())
         self._refresh_header_logo()
 
         # Chip rail
