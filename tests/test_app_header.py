@@ -15,8 +15,9 @@ from PySide6.QtWidgets import QApplication
 
 
 class _StubSettings:
-    """Minimal settings_manager stub — _build_header now reads hints_enabled
-    while constructing the header-resident hint toggle."""
+    """Minimal settings_manager stub for header / chip-rail construction tests.
+    `get` returns whatever kwargs were passed in (e.g. hints_enabled,
+    show_debug_tab, use_system_title_bar), else the provided default."""
     def __init__(self, **kv):
         self._kv = kv
 
@@ -193,3 +194,32 @@ def test_chip_phantom_with_debug_tab(qapp):
     inst._update_chip_rail_phantom_width()
     assert inst.chip_rail_left_phantom.sizeHint().width() == 76
     assert not hasattr(inst, "chip_rail_right_phantom")
+
+
+def test_app_icon_present_in_system_title_bar_mode(qapp):
+    """The app icon is header-owned (built in _build_header), NOT owned by the
+    frameless-only WindowChromeController. With the 'use system title bar'
+    escape hatch on, _apply_window_chrome creates no controller (self._chrome is
+    None) — but the header icon must still exist, be positioned, and open
+    Credits, so that mode never loses the About/Credits entry point."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QMainWindow, QWidget
+    from main import MultiToonTool
+    from utils.widgets.window_chrome import _HeaderAppIcon
+    inst = MultiToonTool.__new__(MultiToonTool)
+    QMainWindow.__init__(inst)
+    inst.settings_manager = _StubSettings(
+        hints_enabled=True, theme="dark", use_system_title_bar=True
+    )
+    called = []
+    inst.nav_select_credits = lambda: called.append(True)
+    inst.header = inst._build_header()
+    inst.container = QWidget()
+    inst._apply_window_chrome()
+    assert inst._chrome is None        # native title bar: no traffic-light controller
+    icon = inst.header.findChild(_HeaderAppIcon)
+    assert icon is not None, "icon must exist even with the system title bar"
+    assert icon.pos().x() == 15 and icon.pos().y() == 5
+    QTest.mouseClick(icon, Qt.LeftButton)
+    assert called == [True]

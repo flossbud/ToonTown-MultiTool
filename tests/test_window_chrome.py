@@ -475,3 +475,21 @@ def test_doubleclick_on_header_button_does_not_maximize(qapp, monkeypatch):
     assert calls == []
     dblclick(header, QPoint(100, 100))     # header bg: must maximize
     assert calls == [True]
+
+
+def test_window_deactivate_does_not_dim_app_icon(qapp, monkeypatch):
+    # The header app icon ignores window focus (unlike the traffic dots, which
+    # grey out on deactivate). It has no set_window_focused, and a
+    # WindowDeactivate delivered to it must not change its opacity.
+    import utils.motion as motion
+    monkeypatch.setattr(motion, "is_reduced", lambda: True)
+    from PySide6.QtCore import QEvent
+    from PySide6.QtGui import QIcon
+    from utils.widgets.window_chrome import _HeaderAppIcon
+    icon = _HeaderAppIcon(QIcon())
+    assert icon.icon_opacity == 0.75
+    assert not hasattr(icon, "set_window_focused")       # no focus handling
+    QApplication.sendEvent(icon, QEvent(QEvent.WindowDeactivate))
+    assert icon.icon_opacity == 0.75                     # focus change does not dim it
+    icon._set_hovered(True)                              # sanity: opacity IS responsive
+    assert icon.icon_opacity == 1.0
