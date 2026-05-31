@@ -35,8 +35,8 @@ def is_dark_bg(hex_color: str) -> bool:
     Expects a 6-digit hex (`#rrggbb` or `rrggbb`); raises ValueError otherwise
     so a malformed theme color fails fast with a clear message rather than a
     cryptic int-parse error deep in the styling path."""
-    h = hex_color.lstrip("#")
-    if len(h) != 6:
+    h = hex_color[1:] if hex_color.startswith("#") else hex_color
+    if len(h) != 6 or any(ch not in "0123456789abcdefABCDEF" for ch in h):
         raise ValueError(f"is_dark_bg expects a 6-digit hex color, got: {hex_color!r}")
     r, g, b = (int(h[i:i + 2], 16) for i in (0, 2, 4))
     lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255.0

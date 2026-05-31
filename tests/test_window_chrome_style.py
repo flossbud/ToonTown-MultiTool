@@ -15,11 +15,9 @@ def test_radius_and_inset_constants():
 
 
 def test_traffic_colors_are_amber_green_red():
-    assert s.TRAFFIC["min"][0] == "#febc2e"
-    assert s.TRAFFIC["max"][0] == "#28c840"
-    assert s.TRAFFIC["close"][0] == "#ff5f56"
-    for _key, (_dot, glyph) in s.TRAFFIC.items():
-        assert glyph != "#ffffff"
+    assert s.TRAFFIC["min"] == ("#febc2e", "#7a4e00")
+    assert s.TRAFFIC["max"] == ("#28c840", "#0c5a1e")
+    assert s.TRAFFIC["close"] == ("#ff5f56", "#7a1410")
 
 
 def test_glyph_pixel_size_scales_and_floors():
@@ -35,7 +33,7 @@ def test_is_dark_bg_by_luminance():
 
 def test_is_dark_bg_rejects_malformed_hex():
     import pytest
-    for bad in ("#abc", "black", "#12345"):
+    for bad in ("#abc", "black", "#12345", "##123456", "#zzzzzz"):
         with pytest.raises(ValueError):
             s.is_dark_bg(bad)
 
@@ -68,6 +66,16 @@ def test_card_qss_plain_when_radius_zero_and_no_colors():
     assert "background: #1a1a1a" in qss
     assert "border-radius" not in qss
     assert "border-top:" not in qss
+
+
+def test_card_qss_plain_unless_both_radius_and_colors():
+    colors = s.bevel_border_colors("#1a1a1a")
+    # radius>0 but no colors -> plain (no border)
+    q1 = s.card_qss("app_card", "#1a1a1a", 16, None)
+    assert "border-radius" not in q1 and "border-top:" not in q1
+    # radius==0 but colors given -> plain (no border)
+    q2 = s.card_qss("app_card", "#1a1a1a", 0, colors)
+    assert "border-radius" not in q2 and "border-top:" not in q2
 
 
 def test_header_top_radius_nests_inside_stroke():
