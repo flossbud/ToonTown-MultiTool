@@ -9,7 +9,7 @@ move()/resize() — that breaks on Wayland."""
 
 from PySide6.QtCore import Qt, QObject, QEvent, QPointF, QRectF, Property, QPropertyAnimation, QEasingCurve
 from PySide6.QtGui import QColor, QPainter, QFontMetricsF
-from PySide6.QtWidgets import QAbstractButton, QApplication, QWidget
+from PySide6.QtWidgets import QAbstractButton, QApplication, QWidget, QHBoxLayout
 from utils.widgets.window_chrome_style import (
     DOT_DIAMETER, TRAFFIC, glyph_pixel_size,
     hover_targets, brighten, inactive_grey,
@@ -59,7 +59,7 @@ class _TrafficDot(QAbstractButton):
         # interaction state
         self._dot_hovered = False
         self._pressed = False
-        self._cluster_hovered = False   # driven by the controller (later task)
+        self._cluster_hovered = False   # driven by WindowChromeController.set_cluster_hovered
         self._window_focused = True     # driven by the controller (later task)
         self._inactive_dot = QColor("#5a5d63")
         self._inactive_glyph = QColor("#33353a")
@@ -232,7 +232,6 @@ class WindowChromeController(QObject):
         self._logged_move_fail = False
         self._logged_resize_fail = False
 
-        from PySide6.QtWidgets import QHBoxLayout
         self._cluster = _TrafficCluster(self, header)
         self.btn_min = _TrafficDot(TRAFFIC["min"][0], "−", TRAFFIC["min"][1], "Minimize", self._cluster)
         self.btn_max = _TrafficDot(TRAFFIC["max"][0], maximize_glyph(self._is_maximized), TRAFFIC["max"][1], "Maximize", self._cluster)
