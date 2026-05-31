@@ -82,3 +82,20 @@ def test_native_does_not_set_translucent_background(qapp):
     inst.setCentralWidget(inst.container)
     inst._apply_window_chrome()
     assert inst.testAttribute(Qt.WA_TranslucentBackground) is False
+
+
+def test_frameless_chrome_gets_initial_theme_push(qapp):
+    # _apply_window_chrome must push the current theme to the freshly-built
+    # controller so unfocused dots use theme-correct inactive grey from startup
+    # (light theme here -> light inactive grey, not the dark default).
+    from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout
+    from PySide6.QtGui import QColor
+    from main import MultiToonTool
+    inst = MultiToonTool.__new__(MultiToonTool)
+    QMainWindow.__init__(inst)
+    inst.settings_manager = _StubSettings(use_system_title_bar=False, hints_enabled=True, theme="light")
+    inst.header = inst._build_header()
+    inst.container = QWidget(); inst.container.setLayout(QVBoxLayout())
+    inst.setCentralWidget(inst.container)
+    inst._apply_window_chrome()
+    assert inst._chrome.btn_min._inactive_dot == QColor("#b8bcc2")  # light inactive grey

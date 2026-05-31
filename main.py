@@ -665,6 +665,11 @@ class MultiToonTool(QMainWindow):
         self._chrome = WindowChromeController(self, self.header)
         self._chrome.reposition()
         self._apply_window_corner_state(self.isMaximized())
+        # Push the current theme now: the earlier _apply_full_theme() in __init__
+        # ran before _chrome existed, so without this the unfocused dots would
+        # keep the dark-default inactive grey under the light theme until the
+        # next theme change.
+        self._notify_chrome_theme()
 
     def _apply_window_corner_state(self, is_maximized: bool):
         """Apply rounded-card + outline + lit-rim + layout insets for the
