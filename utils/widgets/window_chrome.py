@@ -8,7 +8,7 @@ startSystemResize(), which is the only reliable cross-platform path
 move()/resize() — that breaks on Wayland."""
 
 from PySide6.QtCore import Qt, QObject, QEvent, QPointF, QRectF, Property, QPropertyAnimation, QEasingCurve
-from PySide6.QtGui import QColor, QPainter, QFontMetricsF
+from PySide6.QtGui import QColor, QPainter, QFontMetricsF, QPen
 from PySide6.QtWidgets import QAbstractButton, QApplication, QWidget, QHBoxLayout
 from utils.widgets.window_chrome_style import (
     DOT_DIAMETER, TRAFFIC, glyph_pixel_size,
@@ -188,25 +188,50 @@ class _TrafficDot(QAbstractButton):
         if self._glyph and self._glyph_opacity > 0.001:
             p.setOpacity(self._glyph_opacity)
             gcol = self._glyph_color if self._window_focused else self._inactive_glyph
-            p.setPen(gcol)
-            f = p.font()
-            f.setPixelSize(self._glyph_pixel_size())
-            f.setBold(True)
-            p.setFont(f)
-            # The maximize/restore box glyphs (□/❐) are not vertically centered
-            # within their font line box — they sit low — so Qt.AlignCenter
-            # renders them below the dot's center. Center those on their tight
-            # INK bounds instead. The minus and × already center correctly via
-            # AlignCenter, so leave them on the simpler path.
+            # The maximize/restore box glyphs (□/❐) are VECTOR-drawn, not font
+            # glyphs: the font glyph's metrics don't match its rasterized ink, so
+            # tightBoundingRect/AlignCenter both left it off-center (vertically,
+            # then horizontally). A QPainter rect centered on (cx,cy) is
+            # pixel-symmetric and deterministic. The minus (−) and close (×) center
+            # correctly via AlignCenter, so they stay font glyphs.
             if self._glyph in (maximize_glyph(False), maximize_glyph(True)):
-                br = QFontMetricsF(f).tightBoundingRect(self._glyph)
-                gx = (self.width() - br.width()) / 2.0 - br.left()
-                gy = (self.height() - br.height()) / 2.0 - br.top()
-                p.drawText(QPointF(gx, gy), self._glyph)
+                self._paint_box_glyph(p, gcol, restore=(self._glyph == maximize_glyph(True)))
             else:
+                p.setPen(gcol)
+                f = p.font()
+                f.setPixelSize(self._glyph_pixel_size())
+                f.setBold(True)
+                p.setFont(f)
                 p.drawText(self.rect(), Qt.AlignCenter, self._glyph)
         p.restore()
         p.end()
+
+    def _paint_box_glyph(self, p, color, restore: bool):
+        """Vector maximize (□) / restore (❐) glyph centered on the dot center.
+        Deterministic (font metrics for these glyphs didn't match their ink) and
+        STROKE-ONLY — no occlusion fill — so it composites correctly at any
+        glyph_opacity. Drawn inside paintEvent's scale transform, so it scales
+        with the dot."""
+        pen = QPen(color, 1.4)
+        pen.setJoinStyle(Qt.MiterJoin)
+        p.setPen(pen)
+        p.setBrush(Qt.NoBrush)
+        cx = self.width() / 2.0
+        cy = self.height() / 2.0
+        if not restore:
+            side = 8.0
+            p.drawRect(QRectF(cx - side / 2.0, cy - side / 2.0, side, side))
+            return
+        # Restore: a full front square + the back square's two protruding edges
+        # (top + right). Union of the two centered on (cx, cy). Stroke-only.
+        side = 7.0
+        off = 2.5
+        fx = cx - (side + off) / 2.0
+        fy = cy - (side - off) / 2.0
+        p.drawRect(QRectF(fx, fy, side, side))           # front square
+        bx, by = fx + off, fy - off                       # back square (up-right)
+        p.drawLine(QPointF(bx, by), QPointF(bx + side, by))               # back top edge
+        p.drawLine(QPointF(bx + side, by), QPointF(bx + side, by + side))  # back right edge
 
 
 class _TrafficCluster(QWidget):

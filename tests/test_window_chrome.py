@@ -340,3 +340,51 @@ def test_activate_event_restores_dots(qapp):
     c.eventFilter(win, QEvent(QEvent.WindowActivate))
     for b in (c.btn_min, c.btn_max, c.btn_close):
         assert b._window_focused is True
+
+
+def _box_vs_dot_centers(glyph, scale):
+    """Isolate the box-glyph ink (diff vs dot-only) and the dot; return
+    (box_cx, box_cy, dot_cx, dot_cy) bbox centers under the SAME pixel
+    convention so they're directly comparable."""
+    from utils.widgets.window_chrome import _TrafficDot
+    def grab(g):
+        b = _TrafficDot("#28c840", g, "#0c5a1e", "Maximize"); b.resize(22, 22)
+        b._window_focused = True; b._glyph_opacity = 1.0; b._dot_scale = scale
+        return b.grab().toImage()
+    withg = grab(glyph); without = grab("")
+    gxs, gys, dxs, dys = [], [], [], []
+    for y in range(22):
+        for x in range(22):
+            a = withg.pixelColor(x, y); o = without.pixelColor(x, y)
+            if abs(a.red()-o.red()) + abs(a.green()-o.green()) + abs(a.blue()-o.blue()) > 20:
+                gxs.append(x); gys.append(y)
+            if o.alpha() > 30:
+                dxs.append(x); dys.append(y)
+    assert gxs and dxs, "no glyph ink or no dot pixels detected"
+    return ((min(gxs)+max(gxs))/2.0, (min(gys)+max(gys))/2.0,
+            (min(dxs)+max(dxs))/2.0, (min(dys)+max(dys))/2.0)
+
+
+def test_box_glyphs_centered_on_dot(qapp, monkeypatch):
+    # The maximize □ AND restore ❐ must be centered on the dot, horizontally
+    # (<=0.25) and vertically (<=0.5), at rest and hover scale. This is the
+    # regression guard for the repeated off-center bugs (now vector-drawn).
+    import utils.motion as motion
+    monkeypatch.setattr(motion, "is_reduced", lambda: True)
+    for glyph in (maximize_glyph(False), maximize_glyph(True)):
+        for scale in (1.0, 1.10):
+            bx, by, dx, dy = _box_vs_dot_centers(glyph, scale)
+            assert abs(bx - dx) <= 0.25, f"{glyph!r} scale {scale}: x off {bx-dx:+.2f} (box {bx} dot {dx})"
+            assert abs(by - dy) <= 0.5, f"{glyph!r} scale {scale}: y off {by-dy:+.2f} (box {by} dot {dy})"
+
+
+def test_box_glyph_renders_at_partial_opacity(qapp, monkeypatch):
+    # stroke-only box glyphs must composite fine mid-fade (no occlusion-fill
+    # bleed); just assert rendering the restore glyph at 0.5 opacity is stable.
+    import utils.motion as motion
+    monkeypatch.setattr(motion, "is_reduced", lambda: True)
+    from utils.widgets.window_chrome import _TrafficDot
+    b = _TrafficDot("#28c840", maximize_glyph(True), "#0c5a1e", "Maximize"); b.resize(22, 22)
+    b._window_focused = True; b._glyph_opacity = 0.5
+    img = b.grab().toImage()         # must not raise
+    assert img.width() == 22
