@@ -306,11 +306,13 @@ def test_set_theme_pushes_inactive_colors(qapp):
     win = QMainWindow(); header = QFrame()
     c = WindowChromeController(win, header)
     c.set_theme(is_dark=False)
-    assert c.btn_min._inactive_dot == QColor("#b8bcc2")
-    assert c.btn_min._inactive_glyph == QColor("#8b9098")
+    for b in (c.btn_min, c.btn_max, c.btn_close):   # fan-out to ALL three
+        assert b._inactive_dot == QColor("#b8bcc2")
+        assert b._inactive_glyph == QColor("#8b9098")
     c.set_theme(is_dark=True)
-    assert c.btn_min._inactive_dot == QColor("#5a5d63")
-    assert c.btn_min._inactive_glyph == QColor("#33353a")
+    for b in (c.btn_min, c.btn_max, c.btn_close):
+        assert b._inactive_dot == QColor("#5a5d63")
+        assert b._inactive_glyph == QColor("#33353a")
 
 
 def test_deactivate_event_dims_dots(qapp):
