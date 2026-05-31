@@ -7,8 +7,8 @@ startSystemResize(), which is the only reliable cross-platform path
 (X11, Wayland, Windows) and preserves native snap/tiling. We never hand-roll
 move()/resize() — that breaks on Wayland."""
 
-from PySide6.QtCore import Qt, QObject, QEvent
-from PySide6.QtGui import QColor, QPainter
+from PySide6.QtCore import Qt, QObject, QEvent, QPointF
+from PySide6.QtGui import QColor, QPainter, QFontMetricsF
 from PySide6.QtWidgets import QAbstractButton, QApplication, QWidget
 from utils.widgets.window_chrome_style import (
     DOT_DIAMETER, TRAFFIC, glyph_pixel_size,
@@ -83,7 +83,18 @@ class _TrafficDot(QAbstractButton):
             f.setPixelSize(self._glyph_pixel_size())
             f.setBold(True)
             p.setFont(f)
-            p.drawText(self.rect(), Qt.AlignCenter, self._glyph)
+            # The maximize/restore box glyphs (□/❐) are not vertically centered
+            # within their font line box — they sit low — so Qt.AlignCenter
+            # renders them below the dot's center. Center those on their tight
+            # INK bounds instead. The minus and × already center correctly via
+            # AlignCenter, so leave them on the simpler path.
+            if self._glyph in (maximize_glyph(False), maximize_glyph(True)):
+                br = QFontMetricsF(f).tightBoundingRect(self._glyph)
+                x = (self.width() - br.width()) / 2.0 - br.left()
+                y = (self.height() - br.height()) / 2.0 - br.top()
+                p.drawText(QPointF(x, y), self._glyph)
+            else:
+                p.drawText(self.rect(), Qt.AlignCenter, self._glyph)
         p.end()
 
 
