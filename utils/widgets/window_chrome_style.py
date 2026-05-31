@@ -86,3 +86,40 @@ def header_top_radius_qss(header_bg: str, border_color: str, radius: int,
         f"    border-top-right-radius: {r}px;\n"
         f"}}"
     )
+
+
+# --- hover/press animation targets + inactive-state colors (pure) ---
+HOVER_SCALE = 1.10
+PRESS_SCALE = 0.94
+HOVER_BRIGHTNESS = 1.18
+PRESS_BRIGHTNESS = 0.85
+
+
+def hover_targets(pressed: bool, hovered: bool):
+    """(dot_scale, brightness) for the current interaction state. Press wins."""
+    if pressed:
+        return (PRESS_SCALE, PRESS_BRIGHTNESS)
+    if hovered:
+        return (HOVER_SCALE, HOVER_BRIGHTNESS)
+    return (1.0, 1.0)
+
+
+def brighten(hex_color: str, factor: float) -> str:
+    """Adjust a #rrggbb color: factor>1 blends toward white by (factor-1),
+    factor<1 multiplies channels down (darken). Returns #rrggbb, clamped."""
+    h = hex_color.lstrip("#")
+    r, g, b = (int(h[i:i + 2], 16) for i in (0, 2, 4))
+    if factor < 1.0:
+        r, g, b = (r * factor, g * factor, b * factor)
+    elif factor > 1.0:
+        t = min(1.0, factor - 1.0)
+        r, g, b = (r + (255 - r) * t, g + (255 - g) * t, b + (255 - b) * t)
+    cl = lambda v: max(0, min(255, int(round(v))))
+    return "#%02x%02x%02x" % (cl(r), cl(g), cl(b))
+
+
+def inactive_grey(bg_is_dark: bool):
+    """(dot_color, glyph_color) for the unfocused-window dimmed state."""
+    if bg_is_dark:
+        return ("#5a5d63", "#33353a")
+    return ("#b8bcc2", "#8b9098")

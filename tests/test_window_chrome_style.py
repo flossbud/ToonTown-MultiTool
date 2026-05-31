@@ -95,3 +95,27 @@ def test_header_top_radius_includes_rim_when_given():
 def test_header_top_radius_no_rim_by_default():
     qss = s.header_top_radius_qss("#1a1a1a", "#333", 16)
     assert "border-top:" not in qss
+
+
+def test_hover_targets_precedence():
+    assert s.hover_targets(pressed=True, hovered=True) == (s.PRESS_SCALE, s.PRESS_BRIGHTNESS)
+    assert s.hover_targets(pressed=True, hovered=False) == (s.PRESS_SCALE, s.PRESS_BRIGHTNESS)
+    assert s.hover_targets(pressed=False, hovered=True) == (s.HOVER_SCALE, s.HOVER_BRIGHTNESS)
+    assert s.hover_targets(pressed=False, hovered=False) == (1.0, 1.0)
+
+
+def test_brighten_toward_white_and_dark():
+    assert s.brighten("#808080", 1.0) == "#808080"
+    assert s.brighten("#808080", 0.5) == "#404040"
+    out = s.brighten("#808080", 1.5)
+    assert out != "#808080"
+    assert int(out[1:3], 16) > 0x80
+    assert s.brighten("#ffffff", 2.0) == "#ffffff"
+
+
+def test_inactive_grey_per_theme():
+    d_dot, d_gly = s.inactive_grey(True)
+    l_dot, l_gly = s.inactive_grey(False)
+    assert d_dot == "#5a5d63" and d_gly == "#33353a"
+    assert l_dot == "#b8bcc2" and l_gly == "#8b9098"
+    assert d_dot != l_dot
