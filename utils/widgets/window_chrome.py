@@ -98,12 +98,12 @@ class WindowChromeController(QObject):
         super().__init__(parent or window)
         self._win = window
         self._header = header
-        self._is_maximized = False
+        self._is_maximized = bool(window.isMaximized())
         self._logged_move_fail = False
         self._logged_resize_fail = False
 
         self.btn_min = _TrafficDot(TRAFFIC["min"][0], "−", TRAFFIC["min"][1], "Minimize", header)
-        self.btn_max = _TrafficDot(TRAFFIC["max"][0], maximize_glyph(False), TRAFFIC["max"][1], "Maximize", header)
+        self.btn_max = _TrafficDot(TRAFFIC["max"][0], maximize_glyph(self._is_maximized), TRAFFIC["max"][1], "Maximize", header)
         self.btn_close = _TrafficDot(TRAFFIC["close"][0], "×", TRAFFIC["close"][1], "Close", header)
         self.btn_min.setObjectName("win_ctl_min")
         self.btn_max.setObjectName("win_ctl_max")

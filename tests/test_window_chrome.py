@@ -144,3 +144,18 @@ def test_controller_buttons_use_traffic_light_colors(qapp):
     assert c.btn_min._glyph_color.name() == "#7a4e00"
     assert c.btn_max._glyph_color.name() == "#0c5a1e"
     assert c.btn_close._glyph_color.name() == "#7a1410"
+
+
+def test_controller_inits_maximized_state_from_window(qapp):
+    from PySide6.QtWidgets import QMainWindow, QFrame
+    from utils.widgets.window_chrome import WindowChromeController, maximize_glyph
+
+    # Deterministic: force the window to report maximized so the test fails
+    # against the old hardcoded `_is_maximized = False` (offscreen does not
+    # reliably honor showMaximized()).
+    win = QMainWindow()
+    win.isMaximized = lambda: True  # monkeypatch the instance
+    header = QFrame()
+    c = WindowChromeController(win, header)
+    assert c._is_maximized is True
+    assert c.btn_max._glyph == maximize_glyph(True)
