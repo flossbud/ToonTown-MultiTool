@@ -5,11 +5,72 @@ reached through module-level seams that these tests monkeypatch, so no real
 bus or Win32 call is ever made.
 """
 
+import os
 from types import SimpleNamespace
 
 import pytest
 
 import services.sleep_inhibitor as si
+
+
+class FakeHolder:
+    """Stand-in for the systemd-inhibit Popen handle."""
+    def __init__(self):
+        self.terminated = False
+        self.waited = False
+        self.returncode = 0
+    def poll(self):
+        return None if not self.terminated else 0
+    def wait(self, timeout=None):
+        self.waited = True
+        return 0
+
+
+def test_systemd_layer_acquires_and_verifies(monkeypatch):
+    monkeypatch.setattr(si, "_is_windows", lambda: False)
+    monkeypatch.setattr(si, "_uuid_token", lambda: "TOKENXYZ")
+    spawned = {}
+    def fake_popen_holder(token):
+        spawned["token"] = token
+        spawned["write_fd_open"] = True
+        return FakeHolder(), 99  # (proc, write_fd)
+    monkeypatch.setattr(si, "_popen_holder", fake_popen_holder)
+    # --list returns a row containing our token
+    monkeypatch.setattr(si, "_run_list",
+                        lambda: "ToonTown MultiTool 1000 jaret 1 systemd-inhibit "
+                                "sleep:idle Keep-Alive is active [TOKENXYZ] block\n")
+    monkeypatch.setattr(si, "_close_write_fd", lambda fd: spawned.update(write_fd_open=False))
+    # Layer 2 + fallback off for this test
+    monkeypatch.setattr(si.SleepInhibitor, "_acquire_login1_qtdbus", lambda self: None)
+    monkeypatch.setattr(si.SleepInhibitor, "_acquire_screensaver_qtdbus", lambda self: None)
+
+    inh = si.SleepInhibitor()
+    tier = inh.acquire()
+    assert tier == "systemd"
+    assert inh.is_active() is True
+    assert inh.status.sleep_blocked is True
+    assert inh.status.method == "systemd"
+    assert spawned["token"] == "TOKENXYZ"
+
+
+def test_systemd_layer_unverified_cleans_up_then_returns_none(monkeypatch):
+    monkeypatch.setattr(si, "_is_windows", lambda: False)
+    monkeypatch.setattr(si, "_uuid_token", lambda: "TOKENXYZ")
+    holder = FakeHolder()
+    closed = {"write": False, "reaped": False}
+    monkeypatch.setattr(si, "_popen_holder", lambda token: (holder, 99))
+    monkeypatch.setattr(si, "_run_list", lambda: "no token here\n")  # never verifies
+    monkeypatch.setattr(si, "_close_write_fd", lambda fd: closed.update(write=True))
+    monkeypatch.setattr(si, "_reap", lambda proc: closed.update(reaped=True))
+    monkeypatch.setattr(si.SleepInhibitor, "_acquire_login1_qtdbus", lambda self: None)
+    monkeypatch.setattr(si.SleepInhibitor, "_acquire_screensaver_qtdbus", lambda self: None)
+
+    inh = si.SleepInhibitor()
+    tier = inh.acquire()
+    assert tier is None
+    assert inh.is_active() is False
+    assert inh.status.sleep_blocked is False
+    assert closed["write"] is True and closed["reaped"] is True
 
 
 # ── Fakes ────────────────────────────────────────────────────────────────
@@ -72,7 +133,7 @@ def test_windows_acquire_sets_system_and_display_flags(monkeypatch, rec):
     assert inh.is_active() is False
 
 
-def test_acquire_is_idempotent(monkeypatch):
+def test_reacquire_releases_before_acquiring(monkeypatch):
     monkeypatch.setattr(si, "_is_windows", lambda: True)
     calls = []
     monkeypatch.setattr(
@@ -83,8 +144,10 @@ def test_acquire_is_idempotent(monkeypatch):
     )
     inh = si.SleepInhibitor()
     assert inh.acquire() == "windows"
-    assert inh.acquire() == "windows"  # second call holds the same lock
-    assert len(calls) == 1  # only acquired once
+    assert inh.acquire() == "windows"  # re-acquire releases first, never stacks
+    # acquire (set flags), release (ES_CONTINUOUS), acquire again (set flags).
+    set_flags = 0x80000000 | 0x00000001 | 0x00000002
+    assert calls == [set_flags, 0x80000000, set_flags]
 
 
 def test_release_runs_all_thunks_even_if_one_raises(monkeypatch):

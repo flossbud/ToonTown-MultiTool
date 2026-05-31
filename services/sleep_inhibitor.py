@@ -1,17 +1,24 @@
 """System sleep + screen-lock inhibition for the Keep-Alive feature.
 
 Holds OS-level locks so the machine neither sleeps nor locks the screen while
-Keep-Alive runs. Cross-desktop on Linux (KDE, GNOME, others) via the XDG
-Inhibit portal, with a session/system-bus fallback; SetThreadExecutionState on
-Windows.
+Keep-Alive runs. On Linux the primary, verified layer is a `systemd-inhibit
+--what=sleep:idle --mode=block` holder subprocess released via pipe-EOF and
+verified by finding a per-acquire UUID token in `systemd-inhibit --list`, with
+a QtDBus login1 fallback and a best-effort QtDBus ScreenSaver cookie;
+SetThreadExecutionState on Windows.
 
-OS access goes through the module-level seams `_is_windows`, `_session_bus`,
-`_system_bus`, `_kernel32`, and `_close_fd` so tests can inject fakes without
-touching a real bus or the Win32 API. `import dbus` is kept lazy because dbus
-is not importable on Windows.
+OS access goes through module-level seams (`_is_windows`, `_kernel32`,
+`_uuid_token`, `_popen_holder`, `_close_write_fd`, `_reap`, `_run_list`, and
+the QtDBus seams) so tests can inject fakes without spawning a real holder or
+touching a real bus.
 """
 
+import os
+import subprocess
 import sys
+import time
+import uuid
+from dataclasses import dataclass
 
 APP_NAME = "ToonTown MultiTool"
 REASON = "Keep-Alive is active"
@@ -24,10 +31,86 @@ ES_DISPLAY_REQUIRED = 0x00000002
 # XDG Inhibit portal flags: Suspend (4) | Idle (8).
 PORTAL_SUSPEND_IDLE = 0x4 | 0x8
 
+# Verification budget: per-call timeout and overall wall-clock deadline.
+_LIST_CALL_TIMEOUT = 1.5      # seconds, each `systemd-inhibit --list`
+_VERIFY_DEADLINE = 0.75       # seconds, total poll budget
+_VERIFY_INTERVAL = 0.15       # seconds between polls
+_REAP_TIMEOUT = 1.0           # seconds to wait for holder/wrapper to die
+
+
+@dataclass
+class InhibitStatus:
+    sleep_blocked: bool = False
+    screen_lock_cookie_held: bool = False
+    method: str = ""    # "systemd" | "login1" | ""
+    detail: str = ""    # optional human-readable reason for logs/warning text
+
 
 # ── Seams (monkeypatched in tests) ─────────────────────────────────────────
 def _is_windows():
     return sys.platform == "win32"
+
+
+def _kernel32():
+    import ctypes
+    return ctypes.windll.kernel32
+
+
+def _uuid_token():
+    return uuid.uuid4().hex
+
+
+def _popen_holder(token):
+    """Spawn `systemd-inhibit ... -- cat` with a parent-owned pipe as the
+    holder's stdin. Returns (proc, write_fd). Closing write_fd (or process
+    death) sends EOF to cat, which exits and releases the logind lock.
+
+    `host_popen` applies `flatpak-spawn --host` wrapping internally when
+    sandboxed, so argv is passed unwrapped."""
+    r_fd, w_fd = os.pipe()
+    argv = [
+        "systemd-inhibit", "--what=sleep:idle", "--mode=block",
+        f"--who={APP_NAME}", f"--why={REASON} [{token}]",
+        "--", "cat",
+    ]
+    from utils.host_spawn import host_popen
+    proc = host_popen(argv, stdin=r_fd, pass_fds=(r_fd,))
+    os.close(r_fd)  # parent keeps only the write end
+    return proc, w_fd
+
+
+def _close_write_fd(fd):
+    try:
+        os.close(fd)
+    except OSError:
+        pass
+
+
+def _reap(proc):
+    try:
+        proc.wait(timeout=_REAP_TIMEOUT)
+    except Exception:
+        try:
+            proc.kill()
+            proc.wait(timeout=_REAP_TIMEOUT)
+        except Exception:
+            pass
+
+
+def _run_list():
+    """Return `systemd-inhibit --list` text (LC_ALL=C, host-routed under
+    Flatpak). Empty string on any failure."""
+    from utils.host_spawn import host_run
+    env = dict(os.environ)
+    env["LC_ALL"] = "C"
+    try:
+        cp = host_run(
+            ["systemd-inhibit", "--list", "--no-pager", "--no-legend"],
+            capture_output=True, text=True, timeout=_LIST_CALL_TIMEOUT, env=env,
+        )
+        return cp.stdout or ""
+    except Exception:
+        return ""
 
 
 def _session_bus():
@@ -38,11 +121,6 @@ def _session_bus():
 def _system_bus():
     import dbus
     return dbus.SystemBus()
-
-
-def _kernel32():
-    import ctypes
-    return ctypes.windll.kernel32
 
 
 def _close_fd(fd):
@@ -59,15 +137,16 @@ class SleepInhibitor:
         self._releases = []
         self.active_tier = None
         self._acquired = False
+        self.status = InhibitStatus()
 
     def is_active(self):
-        return bool(self._releases)
+        return bool(self.status.sleep_blocked) or self.active_tier == "windows"
 
     def acquire(self):
         """Acquire inhibition. Returns a tier name string, or None if nothing
-        could be acquired. Calling again while already held is a no-op."""
+        could be acquired. Re-acquiring releases first so locks never stack."""
         if self._acquired:
-            return self.active_tier
+            self.release()  # release-before-acquire: never stack locks
         self._acquired = True
         if _is_windows():
             self.active_tier = self._acquire_windows()
@@ -103,14 +182,54 @@ class SleepInhibitor:
 
     # ── Linux ───────────────────────────────────────────────────────────────
     def _acquire_linux(self):
-        if self._acquire_portal():
-            return "portal"
-        tiers = []
-        if self._acquire_screensaver():
+        self.status = InhibitStatus()
+        self._acquire_sleep_layer()                # sets release thunks + status
+        screensaver = self._acquire_screensaver_qtdbus()
+        if screensaver is not None:
+            self._releases.append(("screensaver", screensaver))
+            self.status.screen_lock_cookie_held = True
+        if not self.status.sleep_blocked:
+            # Screensaver-only must NOT look like success to `if tier:` callers.
+            return None
+        tiers = [self.status.method]
+        if self.status.screen_lock_cookie_held:
             tiers.append("screensaver")
-        if self._acquire_login1():
-            tiers.append("login1")
-        return "+".join(tiers) if tiers else None
+        return "+".join(tiers)
+
+    def _acquire_sleep_layer(self):
+        token = _uuid_token()
+        proc, w_fd = _popen_holder(token)
+        if self._verify_systemd(token):
+            self._releases.append(("systemd", lambda: _close_write_fd(w_fd)))
+            self.status.sleep_blocked = True
+            self.status.method = "systemd"
+            return "systemd"
+        # Partial-acquire cleanup: EOF the holder, reap both processes, then fall back.
+        _close_write_fd(w_fd)
+        _reap(proc)
+        fd = self._acquire_login1_qtdbus()
+        if fd is not None:
+            self._releases.append(("login1", lambda: _close_write_fd(fd)))
+            self.status.sleep_blocked = True
+            self.status.method = "login1"
+            return "login1"
+        return ""
+
+    def _verify_systemd(self, token):
+        deadline = time.monotonic() + _VERIFY_DEADLINE
+        while True:
+            if token in _run_list():
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(_VERIFY_INTERVAL)
+
+    # QtDBus seams (implemented in Tasks 2-3).
+    def _acquire_login1_qtdbus(self):
+        return None
+
+    def _acquire_screensaver_qtdbus(self):
+        return None
 
     def _acquire_portal(self):
         try:
