@@ -102,15 +102,26 @@ def test_hover_targets_precedence():
     assert s.hover_targets(pressed=True, hovered=False) == (s.PRESS_SCALE, s.PRESS_BRIGHTNESS)
     assert s.hover_targets(pressed=False, hovered=True) == (s.HOVER_SCALE, s.HOVER_BRIGHTNESS)
     assert s.hover_targets(pressed=False, hovered=False) == (1.0, 1.0)
+    # pin the literal constant values (so a wrong constant can't pass)
+    assert (s.PRESS_SCALE, s.PRESS_BRIGHTNESS) == (0.94, 0.85)
+    assert (s.HOVER_SCALE, s.HOVER_BRIGHTNESS) == (1.10, 1.18)
+    assert s.hover_targets(pressed=False, hovered=True) == (1.10, 1.18)
+    assert s.hover_targets(pressed=True, hovered=False) == (0.94, 0.85)
 
 
 def test_brighten_toward_white_and_dark():
     assert s.brighten("#808080", 1.0) == "#808080"
     assert s.brighten("#808080", 0.5) == "#404040"
-    out = s.brighten("#808080", 1.5)
-    assert out != "#808080"
-    assert int(out[1:3], 16) > 0x80
+    # exact blend toward white: 128 + (255-128)*0.5 = 191.5 -> 192 = 0xc0
+    assert s.brighten("#808080", 1.5) == "#c0c0c0"
+    # clamps to white at/above factor 2.0
     assert s.brighten("#ffffff", 2.0) == "#ffffff"
+    assert s.brighten("#123456", 5.0) == "#ffffff"
+    # darken edge cases: factor 0 and negative clamp to black
+    assert s.brighten("#abcdef", 0.0) == "#000000"
+    assert s.brighten("#abcdef", -1.0) == "#000000"
+    # uppercase input is accepted (hex parse is case-insensitive), output lowercase
+    assert s.brighten("#ABCDEF", 1.0) == "#abcdef"
 
 
 def test_inactive_grey_per_theme():
