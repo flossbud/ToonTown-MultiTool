@@ -59,3 +59,12 @@ def test_corner_state_native_is_plain(qapp):
     assert "border-radius" not in inst.container.styleSheet()
     m = root.contentsMargins()
     assert (m.left(), m.top(), m.right(), m.bottom()) == (0, 0, 0, 0)
+
+
+def test_changeevent_restyles_on_window_state_change(qapp, monkeypatch):
+    from PySide6.QtCore import QEvent
+    inst, root = _make(qapp, native=False)
+    calls = []
+    monkeypatch.setattr(inst, "_apply_window_corner_state", lambda is_maximized: calls.append(is_maximized))
+    inst.changeEvent(QEvent(QEvent.WindowStateChange))
+    assert calls, "WindowStateChange should re-apply the corner state"

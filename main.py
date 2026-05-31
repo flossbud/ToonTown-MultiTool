@@ -693,6 +693,11 @@ class MultiToonTool(QMainWindow):
             if root is not None:
                 root.setContentsMargins(0, 0, 0, 0)
 
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() == QEvent.WindowStateChange and getattr(self, "_chrome", None) is not None:
+            self._apply_window_corner_state(self.isMaximized())
+
     # ── Chip Rail ──────────────────────────────────────────────────────────
 
     def _build_chip_rail(self) -> QFrame:
