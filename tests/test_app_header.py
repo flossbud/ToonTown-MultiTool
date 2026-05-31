@@ -95,7 +95,7 @@ def test_header_has_app_icon_at_corner(header):
     from utils.widgets.window_chrome import _HeaderAppIcon
     icon = header.findChild(_HeaderAppIcon)
     assert icon is not None, "header must contain a _HeaderAppIcon"
-    assert icon.pos().x() == 15 and icon.pos().y() == 5     # Option A geometry
+    assert icon.pos().x() == 13 and icon.pos().y() == 13   # equal 13px corner margins
     assert icon.size().width() == 36 and icon.size().height() == 36
     assert icon.toolTip() == "About / Credits"
     assert icon.icon_opacity == 0.75                        # subdued at rest
@@ -220,6 +220,6 @@ def test_app_icon_present_in_system_title_bar_mode(qapp):
     assert inst._chrome is None        # native title bar: no traffic-light controller
     icon = inst.header.findChild(_HeaderAppIcon)
     assert icon is not None, "icon must exist even with the system title bar"
-    assert icon.pos().x() == 15 and icon.pos().y() == 5
+    assert icon.pos().x() == 13 and icon.pos().y() == 13
     QTest.mouseClick(icon, Qt.LeftButton)
     assert called == [True]

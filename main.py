@@ -625,15 +625,15 @@ class MultiToonTool(QMainWindow):
         # (tests build the header without _apply_full_theme).
         self._refresh_header_logo(header_width=575)
 
-        # App icon pinned at the top-left corner, proportionally opposite the
-        # traffic-light controls (top-right). 36px, left edge 15px from the
-        # window edge (mirrors the close dot's 15px visible right margin),
-        # vertically centered on the dots' centerline (y=23 -> top y=5).
-        # Header-owned (not the frameless-only WindowChromeController) so the
-        # Credits entry point survives the "system title bar" setting.
+        # App icon pinned in the top-left corner, proportionally opposite the
+        # traffic-light controls (top-right). 36px, inset an equal 13px from
+        # both the top and left edges so it sits symmetrically in the corner
+        # (well inside the 16px rounded corner). Header-owned (not the
+        # frameless-only WindowChromeController) so the Credits entry point
+        # survives the "system title bar" setting.
         from utils.widgets.window_chrome import _HeaderAppIcon
         self.header_app_icon = _HeaderAppIcon(_resolve_app_icon(), header)
-        self.header_app_icon.move(15, 5)
+        self.header_app_icon.move(13, 13)
         self.header_app_icon.raise_()   # keep above any later header children
         self.header_app_icon.clicked.connect(self.nav_select_credits)
 
