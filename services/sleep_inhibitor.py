@@ -32,9 +32,11 @@ ES_DISPLAY_REQUIRED = 0x00000002
 PORTAL_SUSPEND_IDLE = 0x4 | 0x8
 
 # Verification budget: per-call timeout and overall wall-clock deadline.
-_LIST_CALL_TIMEOUT = 1.5      # seconds, each `systemd-inhibit --list`
-_VERIFY_DEADLINE = 0.75       # seconds, total poll budget
-_VERIFY_INTERVAL = 0.15       # seconds between polls
+# Each `systemd-inhibit --list` call is bounded below the overall poll deadline
+# so a single slow/hung call cannot blow the whole budget.
+_LIST_CALL_TIMEOUT = 0.5      # seconds, each `systemd-inhibit --list`
+_VERIFY_DEADLINE = 1.5        # seconds, total poll budget (worker thread)
+_VERIFY_INTERVAL = 0.1        # seconds between polls
 _REAP_TIMEOUT = 1.0           # seconds to wait for holder/wrapper to die
 
 
@@ -169,6 +171,7 @@ class SleepInhibitor:
         self._releases.clear()
         self._acquired = False
         self.active_tier = None
+        self.status = InhibitStatus()  # nothing held -> is_active() reads False
         for _label, thunk in releases:
             try:
                 thunk()
@@ -215,7 +218,9 @@ class SleepInhibitor:
             proc = None
         if proc is not None:
             if self._verify_systemd(token):
-                self._releases.append(("systemd", lambda: _close_write_fd(w_fd)))
+                self._releases.append(
+                    ("systemd",
+                     lambda p=proc, fd=w_fd: (_close_write_fd(fd), _reap(p))))
                 self.status.sleep_blocked = True
                 self.status.method = "systemd"
                 return "systemd"
