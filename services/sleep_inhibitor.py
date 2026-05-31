@@ -74,7 +74,15 @@ def _popen_holder(token):
         "--", "cat",
     ]
     from utils.host_spawn import host_popen
-    proc = host_popen(argv, stdin=r_fd, pass_fds=(r_fd,))
+    try:
+        proc = host_popen(argv, stdin=r_fd, pass_fds=(r_fd,))
+    except BaseException:
+        # Spawn failed after the pipe was created (missing binary, sandbox
+        # denial, ENOMEM): close both ends so neither fd leaks, then re-raise
+        # so the caller can degrade to the fallback.
+        os.close(r_fd)
+        _close_write_fd(w_fd)
+        raise
     os.close(r_fd)  # parent keeps only the write end
     return proc, w_fd
 
@@ -89,7 +97,7 @@ def _close_write_fd(fd):
 def _reap(proc):
     try:
         proc.wait(timeout=_REAP_TIMEOUT)
-    except Exception:
+    except subprocess.TimeoutExpired:
         try:
             proc.kill()
             proc.wait(timeout=_REAP_TIMEOUT)
@@ -137,6 +145,7 @@ class SleepInhibitor:
         self._releases = []
         self.active_tier = None
         self._acquired = False
+        self._token = None
         self.status = InhibitStatus()
 
     def is_active(self):
@@ -197,16 +206,22 @@ class SleepInhibitor:
         return "+".join(tiers)
 
     def _acquire_sleep_layer(self):
-        token = _uuid_token()
-        proc, w_fd = _popen_holder(token)
-        if self._verify_systemd(token):
-            self._releases.append(("systemd", lambda: _close_write_fd(w_fd)))
-            self.status.sleep_blocked = True
-            self.status.method = "systemd"
-            return "systemd"
-        # Partial-acquire cleanup: EOF the holder, reap both processes, then fall back.
-        _close_write_fd(w_fd)
-        _reap(proc)
+        token = self._token = _uuid_token()
+        try:
+            proc, w_fd = _popen_holder(token)
+        except Exception:
+            # Spawn failed (no systemd-inhibit/cat, sandbox denial, ENOMEM):
+            # degrade to the QtDBus login1 fallback rather than propagating.
+            proc = None
+        if proc is not None:
+            if self._verify_systemd(token):
+                self._releases.append(("systemd", lambda: _close_write_fd(w_fd)))
+                self.status.sleep_blocked = True
+                self.status.method = "systemd"
+                return "systemd"
+            # Partial-acquire cleanup: EOF the holder, reap both processes.
+            _close_write_fd(w_fd)
+            _reap(proc)
         fd = self._acquire_login1_qtdbus()
         if fd is not None:
             self._releases.append(("login1", lambda: _close_write_fd(fd)))
