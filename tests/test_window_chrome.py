@@ -181,5 +181,22 @@ def test_dot_reduced_motion_no_animation(qapp, monkeypatch):
     from utils.widgets.window_chrome import _TrafficDot
     d = _TrafficDot("#28c840", "□", "#0c5a1e", "Maximize")
     d._set_dot_hovered(True)
+    # reduced motion must start NONE of the three animations
     assert d._scale_anim.state() != d._scale_anim.State.Running
+    assert d._bright_anim.state() != d._bright_anim.State.Running
+    assert d._glyph_anim.state() != d._glyph_anim.State.Running
     assert d.dot_scale == 1.10
+
+
+def test_dot_release_clears_pressed_and_emits_clicked(qapp):
+    # A full press+release must still emit `clicked` AND clear _pressed; the
+    # release clears _pressed BEFORE super() so a close-on-click slot can delete
+    # the widget without a use-after-free.
+    from PySide6.QtTest import QTest
+    from utils.widgets.window_chrome import _TrafficDot
+    d = _TrafficDot("#ff5f56", "×", "#7a1410", "Close"); d.resize(22, 22)
+    fired = []
+    d.clicked.connect(lambda: fired.append(True))
+    QTest.mouseClick(d, Qt.LeftButton)
+    assert fired == [True]
+    assert d._pressed is False

@@ -148,8 +148,12 @@ class _TrafficDot(QAbstractButton):
             self._set_pressed(True)
 
     def mouseReleaseEvent(self, event):
-        super().mouseReleaseEvent(event)
+        # Clear pressed state BEFORE super(): super() emits `clicked`, whose slot
+        # (e.g. close) can synchronously delete this widget — touching self after
+        # that would hit a dead Qt wrapper. Qt's internal pressed state is
+        # separate, so `clicked` still fires.
         self._set_pressed(False)
+        super().mouseReleaseEvent(event)
 
     def paintEvent(self, _event):
         p = QPainter(self)
