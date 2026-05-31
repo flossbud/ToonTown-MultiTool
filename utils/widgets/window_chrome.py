@@ -119,6 +119,18 @@ class _TrafficDot(QAbstractButton):
     def _glyph_opacity_rest(self) -> float:
         return 0.0  # glyphs hidden at rest; revealed on cluster hover
 
+    def set_window_focused(self, v: bool):
+        if self._window_focused == bool(v):
+            return
+        self._window_focused = bool(v)
+        self.update()
+
+    def set_inactive_colors(self, dot_hex: str, glyph_hex: str):
+        self._inactive_dot = QColor(dot_hex)
+        self._inactive_glyph = QColor(glyph_hex)
+        if not self._window_focused:
+            self.update()
+
     def set_cluster_hovered(self, v: bool):
         self._cluster_hovered = bool(v)
         self._recompute_targets()
@@ -243,6 +255,10 @@ class WindowChromeController(QObject):
         _lay.setContentsMargins(0, 0, 0, 0); _lay.setSpacing(_TrafficCluster._GAP)
         _lay.addWidget(self.btn_min); _lay.addWidget(self.btn_max); _lay.addWidget(self.btn_close)
 
+        self._window_focused = bool(window.isActiveWindow())
+        for _b in (self.btn_min, self.btn_max, self.btn_close):
+            _b.set_window_focused(self._window_focused)
+
         self.btn_min.clicked.connect(self._win.showMinimized)
         self.btn_max.clicked.connect(self._toggle_max_restore)
         self.btn_close.clicked.connect(self._win.close)
@@ -263,6 +279,16 @@ class WindowChromeController(QObject):
     def set_cluster_hovered(self, v: bool):
         for b in (self.btn_min, self.btn_max, self.btn_close):
             b.set_cluster_hovered(v)
+
+    def set_window_focused(self, v: bool):
+        self._window_focused = bool(v)
+        for b in (self.btn_min, self.btn_max, self.btn_close):
+            b.set_window_focused(v)
+
+    def set_theme(self, is_dark: bool):
+        dot_hex, glyph_hex = inactive_grey(bool(is_dark))
+        for b in (self.btn_min, self.btn_max, self.btn_close):
+            b.set_inactive_colors(dot_hex, glyph_hex)
 
     def _sync_window_state(self, is_maximized: bool):
         self._is_maximized = is_maximized
@@ -304,6 +330,9 @@ class WindowChromeController(QObject):
             return False
         if et == QEvent.WindowStateChange and obj is win:
             self._sync_window_state(bool(win.isMaximized()))
+            return False
+        if et in (QEvent.WindowActivate, QEvent.WindowDeactivate, QEvent.ActivationChange) and obj is win:
+            self.set_window_focused(bool(win.isActiveWindow()))
             return False
         if et in (QEvent.MouseButtonPress, QEvent.MouseButtonDblClick):
             if not isinstance(obj, QWidget) or event.button() != Qt.LeftButton:

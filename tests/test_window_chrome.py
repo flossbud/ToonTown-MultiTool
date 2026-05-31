@@ -287,3 +287,39 @@ def test_reposition_places_cluster_top_right(qapp):
     c.reposition()
     assert c._cluster.x() == 575 - 12 - 82
     assert c._cluster.y() == 12
+
+
+def test_window_focus_propagates_to_dots(qapp):
+    from utils.widgets.window_chrome import WindowChromeController
+    win = QMainWindow(); header = QFrame()
+    c = WindowChromeController(win, header)
+    c.set_window_focused(False)
+    for b in (c.btn_min, c.btn_max, c.btn_close):
+        assert b._window_focused is False
+    c.set_window_focused(True)
+    for b in (c.btn_min, c.btn_max, c.btn_close):
+        assert b._window_focused is True
+
+
+def test_set_theme_pushes_inactive_colors(qapp):
+    from utils.widgets.window_chrome import WindowChromeController
+    win = QMainWindow(); header = QFrame()
+    c = WindowChromeController(win, header)
+    c.set_theme(is_dark=False)
+    assert c.btn_min._inactive_dot == QColor("#b8bcc2")
+    assert c.btn_min._inactive_glyph == QColor("#8b9098")
+    c.set_theme(is_dark=True)
+    assert c.btn_min._inactive_dot == QColor("#5a5d63")
+    assert c.btn_min._inactive_glyph == QColor("#33353a")
+
+
+def test_deactivate_event_dims_dots(qapp):
+    # the controller's eventFilter must react to a WindowDeactivate on the window
+    from PySide6.QtCore import QEvent
+    from utils.widgets.window_chrome import WindowChromeController
+    win = QMainWindow(); header = QFrame()
+    c = WindowChromeController(win, header)
+    c.set_window_focused(True)
+    c.eventFilter(win, QEvent(QEvent.WindowDeactivate))
+    for b in (c.btn_min, c.btn_max, c.btn_close):
+        assert b._window_focused == bool(win.isActiveWindow())
