@@ -107,3 +107,18 @@ def test_active_page_change_clears_backdrop(qapp, monkeypatch):
     inst._on_active_page_changed(0)             # left credits
     assert inst._credits_open is False
     assert inst.credits_tab.__class__.cleared == [True]
+
+
+def test_active_page_change_self_heals_stuck_transitioning(qapp, monkeypatch):
+    # Regression (final-review Important): a chip nav cancels a Credits slide via
+    # push_slide_pages' stop(), which does NOT emit `finished`, so
+    # _begin_credits_transition's lambda never fires. _on_active_page_changed —
+    # which DOES fire via the cancelling nav's currentChanged — must clear the
+    # guard, else the header icon toggle is permanently disabled.
+    inst = _app(qapp, monkeypatch)
+    inst.header_app_icon = type("I", (), {"set_active": lambda self, v: None})()
+    inst._credits_transitioning = True          # simulate the stuck guard
+    inst._credits_open = True
+    inst._on_active_page_changed(1)             # settled on a chip page
+    assert inst._credits_transitioning is False
+    assert inst._credits_open is False

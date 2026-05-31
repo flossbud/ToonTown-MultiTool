@@ -932,6 +932,13 @@ class MultiToonTool(QMainWindow):
         leaves Credits by ANY path (icon toggle-back, chip nav, or animated
         slide finalization) — clears the credits open-flag and releases the
         blurred backdrop pixmap."""
+        # currentChanged fires only when a transition has SETTLED on a page, so
+        # no Credits slide is in flight any more. Clearing the guard here is the
+        # self-heal for the case where a chip nav cancels a Credits slide via
+        # push_slide_pages' stop() — Qt does NOT emit `finished` on stop(), so
+        # _begin_credits_transition's finished-lambda would otherwise leave
+        # _credits_transitioning stuck True and permanently disable the toggle.
+        self._credits_transitioning = False
         icon = getattr(self, "header_app_icon", None)
         if icon is not None:
             icon.set_active(index == 5)
