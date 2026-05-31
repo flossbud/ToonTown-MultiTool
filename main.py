@@ -152,7 +152,7 @@ from utils.theme_manager import (
 )
 from utils.build_flavor import window_title, app_name, is_beta
 from utils.widgets.window_chrome_style import (
-    RADIUS_NORMAL, BOTTOM_INSET, STROKE_INSET,
+    RADIUS_NORMAL, RADIUS_MAXIMIZED, BOTTOM_INSET, STROKE_INSET,
     bevel_border_colors, card_qss, header_top_radius_qss,
 )
 
@@ -679,17 +679,26 @@ class MultiToonTool(QMainWindow):
         rounded = (not native) and (not is_maximized)
         root = self.container.layout()
 
+        # A bare, unprefixed `QWidget { background }` rule on the container
+        # CASCADES bg_app to every descendant QWidget (the long-standing
+        # behavior several tabs rely on, e.g. the multitoon portrait
+        # placeholders that explicitly set `transparent` to override it). The
+        # object-scoped `QWidget#app_card { ... }` rule (rounded bg + bevel
+        # stroke) is more specific, so the card itself keeps its rounded fill
+        # while descendants still inherit bg_app. Emit both.
+        cascade = f"\nQWidget {{ background: {bg}; }}"
+
         if rounded:
             colors = bevel_border_colors(bg)
-            self.container.setStyleSheet(card_qss("app_card", bg, RADIUS_NORMAL, colors))
+            self.container.setStyleSheet(card_qss("app_card", bg, RADIUS_NORMAL, colors) + cascade)
             self.header.setStyleSheet(
                 header_top_radius_qss(c["header_bg"], c["sidebar_border"], RADIUS_NORMAL))
             if root is not None:
                 root.setContentsMargins(STROKE_INSET, STROKE_INSET, STROKE_INSET, BOTTOM_INSET)
         else:
-            self.container.setStyleSheet(card_qss("app_card", bg, 0, None))
+            self.container.setStyleSheet(card_qss("app_card", bg, RADIUS_MAXIMIZED, None) + cascade)
             self.header.setStyleSheet(
-                header_top_radius_qss(c["header_bg"], c["sidebar_border"], 0))
+                header_top_radius_qss(c["header_bg"], c["sidebar_border"], RADIUS_MAXIMIZED))
             if root is not None:
                 root.setContentsMargins(0, 0, 0, 0)
 

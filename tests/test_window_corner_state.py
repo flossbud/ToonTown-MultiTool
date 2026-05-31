@@ -44,6 +44,22 @@ def test_corner_state_normal_rounds_and_insets(qapp):
     assert "border-top-left-radius: 15px" in inst.header.styleSheet()
 
 
+def test_corner_state_preserves_bg_cascade_to_descendants(qapp):
+    # Regression: the container must still emit a bare, unprefixed
+    # `QWidget { background: bg_app }` rule so descendant widgets inherit the
+    # app background (several tabs rely on this cascade). The object-scoped
+    # #app_card rule alone would not cascade.
+    for maxed in (False, True):
+        inst, _root = _make(qapp, native=False)
+        inst._apply_window_corner_state(is_maximized=maxed)
+        ss = inst.container.styleSheet()
+        assert "QWidget {" in ss, f"missing bg cascade rule (maximized={maxed}): {ss!r}"
+        # native path too
+    inst, _root = _make(qapp, native=True)
+    inst._apply_window_corner_state(is_maximized=False)
+    assert "QWidget {" in inst.container.styleSheet()
+
+
 def test_corner_state_maximized_is_square(qapp):
     inst, root = _make(qapp, native=False)
     inst._apply_window_corner_state(is_maximized=True)
