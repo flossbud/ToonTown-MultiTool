@@ -7,12 +7,14 @@ startSystemResize(), which is the only reliable cross-platform path
 (X11, Wayland, Windows) and preserves native snap/tiling. We never hand-roll
 move()/resize() — that breaks on Wayland."""
 
-from PySide6.QtCore import Qt, QObject, QEvent, QPointF
+from PySide6.QtCore import Qt, QObject, QEvent, QPointF, QRectF, Property, QPropertyAnimation, QEasingCurve
 from PySide6.QtGui import QColor, QPainter, QFontMetricsF
 from PySide6.QtWidgets import QAbstractButton, QApplication, QWidget
 from utils.widgets.window_chrome_style import (
     DOT_DIAMETER, TRAFFIC, glyph_pixel_size,
+    hover_targets, brighten, inactive_grey,
 )
+import utils.motion as motion
 
 
 def resize_edge_for_pos(x: int, y: int, w: int, h: int, margin: int = 6):
@@ -54,6 +56,23 @@ class _TrafficDot(QAbstractButton):
         self._dot_color = QColor(dot_color)
         self._glyph = glyph
         self._glyph_color = QColor(glyph_color)
+        # interaction state
+        self._dot_hovered = False
+        self._pressed = False
+        self._cluster_hovered = False   # driven by the controller (later task)
+        self._window_focused = True     # driven by the controller (later task)
+        self._inactive_dot = QColor("#5a5d63")
+        self._inactive_glyph = QColor("#33353a")
+        # animated paint values
+        self._glyph_opacity = 1.0       # later task switches rest default to hidden
+        self._dot_scale = 1.0
+        self._brightness = 1.0
+        self._glyph_anim = QPropertyAnimation(self, b"glyph_opacity", self)
+        self._glyph_anim.setDuration(150); self._glyph_anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._scale_anim = QPropertyAnimation(self, b"dot_scale", self)
+        self._scale_anim.setDuration(130); self._scale_anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._bright_anim = QPropertyAnimation(self, b"brightness", self)
+        self._bright_anim.setDuration(130); self._bright_anim.setEasingCurve(QEasingCurve.OutCubic)
         self.setFixedSize(self._HIT, self._HIT)
         self.setCursor(Qt.PointingHandCursor)
         self.setFocusPolicy(Qt.NoFocus)
@@ -69,16 +88,87 @@ class _TrafficDot(QAbstractButton):
         scaling can't silently regress to a hardcoded value)."""
         return glyph_pixel_size(self._VISUAL_DIAMETER)
 
+    # --- animated paint properties (read by paintEvent) ---
+    def _get_glyph_opacity(self): return self._glyph_opacity
+    def _set_glyph_opacity(self, v): self._glyph_opacity = v; self.update()
+    glyph_opacity = Property(float, _get_glyph_opacity, _set_glyph_opacity)
+
+    def _get_dot_scale(self): return self._dot_scale
+    def _set_dot_scale(self, v): self._dot_scale = v; self.update()
+    dot_scale = Property(float, _get_dot_scale, _set_dot_scale)
+
+    def _get_brightness(self): return self._brightness
+    def _set_brightness(self, v): self._brightness = v; self.update()
+    brightness = Property(float, _get_brightness, _set_brightness)
+
+    def _set_target(self, anim, prop: bytes, value: float):
+        """Animate `prop` to `value`, or jump instantly under reduced motion.
+        Always stops any running animation first; no-op if already targeting."""
+        name = bytes(prop).decode()
+        if abs(getattr(self, name) - value) < 1e-6 and anim.state() != anim.State.Running:
+            return
+        anim.stop()
+        if motion.is_reduced():
+            setattr(self, name, value)
+            self.update()
+            return
+        anim.setStartValue(getattr(self, name))
+        anim.setEndValue(value)
+        anim.start()
+
+    def _glyph_opacity_rest(self) -> float:
+        return 1.0  # glyphs visible at rest in this task; cluster-reveal lands later
+
+    def _recompute_targets(self):
+        scale, bright = hover_targets(self._pressed, self._dot_hovered)
+        self._set_target(self._scale_anim, b"dot_scale", scale)
+        self._set_target(self._bright_anim, b"brightness", bright)
+        self._set_target(self._glyph_anim, b"glyph_opacity",
+                         1.0 if self._cluster_hovered else self._glyph_opacity_rest())
+
+    def _set_dot_hovered(self, v: bool):
+        self._dot_hovered = bool(v)
+        self._recompute_targets()
+
+    def _set_pressed(self, v: bool):
+        self._pressed = bool(v)
+        self._recompute_targets()
+
+    def enterEvent(self, event):
+        self._set_dot_hovered(True)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._set_dot_hovered(False)
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, event):
+        super().mousePressEvent(event)
+        if event.button() == Qt.LeftButton:
+            self._set_pressed(True)
+
+    def mouseReleaseEvent(self, event):
+        super().mouseReleaseEvent(event)
+        self._set_pressed(False)
+
     def paintEvent(self, _event):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing, True)
+        dot = self._dot_color if self._window_focused else self._inactive_dot
+        fill = QColor(brighten(dot.name(), self._brightness))
+        cx = self.width() / 2.0
+        cy = self.height() / 2.0
+        p.save()
+        p.translate(cx, cy); p.scale(self._dot_scale, self._dot_scale); p.translate(-cx, -cy)
         d = self._VISUAL_DIAMETER
-        off = (self._HIT - d) / 2
+        off = (self._HIT - d) / 2.0
         p.setPen(Qt.NoPen)
-        p.setBrush(self._dot_color)
-        p.drawEllipse(int(off), int(off), d, d)
-        if self._glyph:
-            p.setPen(self._glyph_color)
+        p.setBrush(fill)
+        p.drawEllipse(QRectF(off, off, d, d))
+        if self._glyph and self._glyph_opacity > 0.001:
+            p.setOpacity(self._glyph_opacity)
+            gcol = self._glyph_color if self._window_focused else self._inactive_glyph
+            p.setPen(gcol)
             f = p.font()
             f.setPixelSize(self._glyph_pixel_size())
             f.setBold(True)
@@ -90,11 +180,12 @@ class _TrafficDot(QAbstractButton):
             # AlignCenter, so leave them on the simpler path.
             if self._glyph in (maximize_glyph(False), maximize_glyph(True)):
                 br = QFontMetricsF(f).tightBoundingRect(self._glyph)
-                x = (self.width() - br.width()) / 2.0 - br.left()
-                y = (self.height() - br.height()) / 2.0 - br.top()
-                p.drawText(QPointF(x, y), self._glyph)
+                gx = (self.width() - br.width()) / 2.0 - br.left()
+                gy = (self.height() - br.height()) / 2.0 - br.top()
+                p.drawText(QPointF(gx, gy), self._glyph)
             else:
                 p.drawText(self.rect(), Qt.AlignCenter, self._glyph)
+        p.restore()
         p.end()
 
 

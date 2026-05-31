@@ -159,3 +159,27 @@ def test_controller_inits_maximized_state_from_window(qapp):
     c = WindowChromeController(win, header)
     assert c._is_maximized is True
     assert c.btn_max._glyph == maximize_glyph(True)
+
+
+def test_dot_hover_press_targets(qapp, monkeypatch):
+    import utils.motion as motion
+    monkeypatch.setattr(motion, "is_reduced", lambda: True)  # instant: value == target
+    from utils.widgets.window_chrome import _TrafficDot
+    d = _TrafficDot("#febc2e", "−", "#7a4e00", "Minimize")
+    assert d.dot_scale == 1.0 and d.brightness == 1.0
+    d._set_dot_hovered(True)
+    assert d.dot_scale == 1.10 and round(d.brightness, 2) == 1.18
+    d._set_pressed(True)            # press overrides hover
+    assert d.dot_scale == 0.94 and round(d.brightness, 2) == 0.85
+    d._set_pressed(False); d._set_dot_hovered(False)
+    assert d.dot_scale == 1.0 and d.brightness == 1.0
+
+
+def test_dot_reduced_motion_no_animation(qapp, monkeypatch):
+    import utils.motion as motion
+    monkeypatch.setattr(motion, "is_reduced", lambda: True)
+    from utils.widgets.window_chrome import _TrafficDot
+    d = _TrafficDot("#28c840", "□", "#0c5a1e", "Maximize")
+    d._set_dot_hovered(True)
+    assert d._scale_anim.state() != d._scale_anim.State.Running
+    assert d.dot_scale == 1.10
