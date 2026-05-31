@@ -35,13 +35,16 @@ def _make(qapp, native=False):
     return inst, root
 
 
-def test_corner_state_normal_rounds_and_insets(qapp):
+def test_corner_state_normal_outline_and_rim(qapp):
     inst, root = _make(qapp, native=False)
     inst._apply_window_corner_state(is_maximized=False)
-    assert "border-radius: 16px" in inst.container.styleSheet()
+    ss = inst.container.styleSheet()
+    assert "border-radius: 16px" in ss
+    assert "border: 1px solid rgba(255,255,255,0.14)" in ss  # dark theme outline
+    hss = inst.header.styleSheet()
+    assert "border-top: 1px solid rgba(255,255,255,0.10)" in hss  # lit rim
     m = root.contentsMargins()
     assert (m.left(), m.top(), m.right(), m.bottom()) == (1, 1, 1, 16)
-    assert "border-top-left-radius: 15px" in inst.header.styleSheet()
 
 
 def test_corner_state_preserves_bg_cascade_to_descendants(qapp):
@@ -63,10 +66,12 @@ def test_corner_state_preserves_bg_cascade_to_descendants(qapp):
 def test_corner_state_maximized_is_square(qapp):
     inst, root = _make(qapp, native=False)
     inst._apply_window_corner_state(is_maximized=True)
-    assert "border-radius" not in inst.container.styleSheet()
+    ss = inst.container.styleSheet()
+    assert "border-radius" not in ss
+    assert "border:" not in ss            # no outline when maximized
+    assert "border-top:" not in inst.header.styleSheet()  # no rim when maximized
     m = root.contentsMargins()
     assert (m.left(), m.top(), m.right(), m.bottom()) == (0, 0, 0, 0)
-    assert "border-top-left-radius: 0px" in inst.header.styleSheet()
 
 
 def test_corner_state_native_is_plain(qapp):
@@ -75,6 +80,8 @@ def test_corner_state_native_is_plain(qapp):
     assert "border-radius" not in inst.container.styleSheet()
     m = root.contentsMargins()
     assert (m.left(), m.top(), m.right(), m.bottom()) == (0, 0, 0, 0)
+    assert "border:" not in inst.container.styleSheet()
+    assert "border-top:" not in inst.header.styleSheet()
 
 
 def test_changeevent_restyles_on_window_state_change(qapp, monkeypatch):

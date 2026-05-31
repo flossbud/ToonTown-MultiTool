@@ -153,7 +153,7 @@ from utils.theme_manager import (
 from utils.build_flavor import window_title, app_name, is_beta
 from utils.widgets.window_chrome_style import (
     RADIUS_NORMAL, RADIUS_MAXIMIZED, BOTTOM_INSET, STROKE_INSET,
-    bevel_border_colors, card_qss, header_top_radius_qss,
+    window_edge_colors, card_qss, header_top_radius_qss,
 )
 
 
@@ -667,12 +667,10 @@ class MultiToonTool(QMainWindow):
         self._apply_window_corner_state(self.isMaximized())
 
     def _apply_window_corner_state(self, is_maximized: bool):
-        """Apply rounded-card + bevel-stroke + layout insets for the current
-        state. Frameless + not maximized -> 16px rounded card with a 1px
-        theme-aware bevel stroke, header top corners nested inside, content
-        inset 1px on sides/top and 16px at the bottom so no tab can re-square
-        the corners. Maximized or native title bar -> square, plain bg, no
-        insets."""
+        """Apply rounded-card + outline + lit-rim + layout insets for the
+        current state. Frameless + not maximized -> 16px rounded card with a
+        1px theme-aware uniform outline and a lit top-rim on the header.
+        Maximized or native title bar -> square, plain bg, no insets."""
         c = self._theme_colors()
         bg = c["bg_app"]
         native = bool(self.settings_manager.get("use_system_title_bar", False))
@@ -683,20 +681,23 @@ class MultiToonTool(QMainWindow):
         # CASCADES bg_app to every descendant QWidget (the long-standing
         # behavior several tabs rely on, e.g. the multitoon portrait
         # placeholders that explicitly set `transparent` to override it). The
-        # object-scoped `QWidget#app_card { ... }` rule (rounded bg + bevel
-        # stroke) is more specific, so the card itself keeps its rounded fill
+        # object-scoped `QWidget#app_card { ... }` rule (rounded bg + uniform
+        # outline) is more specific, so the card itself keeps its rounded fill
         # while descendants still inherit bg_app. Emit both.
         cascade = f"\nQWidget {{ background: {bg}; }}"
 
         if rounded:
-            colors = bevel_border_colors(bg)
-            self.container.setStyleSheet(card_qss("app_card", bg, RADIUS_NORMAL, colors) + cascade)
+            edge = window_edge_colors(bg)
+            self.container.setStyleSheet(
+                card_qss("app_card", bg, RADIUS_NORMAL, edge["outline"]) + cascade)
             self.header.setStyleSheet(
-                header_top_radius_qss(c["header_bg"], c["sidebar_border"], RADIUS_NORMAL))
+                header_top_radius_qss(c["header_bg"], c["sidebar_border"],
+                                      RADIUS_NORMAL, top_rim=edge["rim"]))
             if root is not None:
                 root.setContentsMargins(STROKE_INSET, STROKE_INSET, STROKE_INSET, BOTTOM_INSET)
         else:
-            self.container.setStyleSheet(card_qss("app_card", bg, RADIUS_MAXIMIZED, None) + cascade)
+            self.container.setStyleSheet(
+                card_qss("app_card", bg, RADIUS_MAXIMIZED, None) + cascade)
             self.header.setStyleSheet(
                 header_top_radius_qss(c["header_bg"], c["sidebar_border"], RADIUS_MAXIMIZED))
             if root is not None:
