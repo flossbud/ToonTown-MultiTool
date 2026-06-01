@@ -25,6 +25,7 @@ from utils.widgets import install_modern_scrollbar
 from utils.motion import push_slide_pages
 
 from utils import logical_actions
+from utils.key_registry import NAMED_KEY_REGISTRY, DISPLAY_NAMES_FROM_REGISTRY
 
 _GAME_INDEX = {"ttr": 0, "cc": 1}
 """Stack page index per game. TTR sits on the left page, CC on the right,
@@ -56,27 +57,18 @@ ACTION_LABELS = {
     "action":  "Perform Action",
 }
 
-DISPLAY_NAMES = {
-    "space": "Space", "Control_L": "L Ctrl", "Control_R": "R Ctrl",
-    "Shift_L": "L Shift", "Shift_R": "R Shift",
-    "Alt_L": "L Alt", "Alt_R": "R Alt",
-    "Up": "Up Arrow", "Down": "Down Arrow", "Left": "Left Arrow", "Right": "Right Arrow",
-    "Return": "Enter", "BackSpace": "Backspace", "Tab": "Tab",
-    "Escape": "Esc", "Delete": "Delete",
-    # Numpad keys
-    "KP_0": "NP 0", "KP_1": "NP 1", "KP_2": "NP 2", "KP_3": "NP 3",
-    "KP_4": "NP 4", "KP_5": "NP 5", "KP_6": "NP 6", "KP_7": "NP 7",
-    "KP_8": "NP 8", "KP_9": "NP 9",
-    "KP_Decimal": "NP .", "KP_Enter": "NP Enter",
-    "KP_Add": "NP +", "KP_Subtract": "NP -",
-    "KP_Multiply": "NP *", "KP_Divide": "NP /",
-}
+# Registry-derived. Adds F1-F12, Home/End/PgUp/PgDn/Insert display names.
+DISPLAY_NAMES: dict[str, str] = dict(DISPLAY_NAMES_FROM_REGISTRY)
 
-SPECIAL_KEYS = {
-    Qt.Key_Space: "space", Qt.Key_Return: "Return", Qt.Key_Enter: "Return",
-    Qt.Key_Tab: "Tab", Qt.Key_Backspace: "BackSpace", Qt.Key_Escape: "Escape",
-    Qt.Key_Delete: "Delete",
-    Qt.Key_Up: "Up", Qt.Key_Down: "Down", Qt.Key_Left: "Left", Qt.Key_Right: "Right",
+# Registry-derived. Adds F1-F12, Home/End/PgUp/PgDn/Insert to UI capture.
+# getattr(Qt, name) without a default: a typo in qt_key_names becomes an
+# import-time AttributeError (the correct fail-fast), not a silently
+# un-capturable key. Comprehension scope keeps the loop vars out of the module.
+SPECIAL_KEYS: dict[int, str] = {
+    int(getattr(Qt, _qt_name)): _kd.canonical
+    for _kd in NAMED_KEY_REGISTRY
+    if not _kd.numpad_key
+    for _qt_name in _kd.qt_key_names
 }
 
 
@@ -124,15 +116,13 @@ class MovementKeyField(QLineEdit):
         self._update_display()
 
     # Map Qt key codes to KP_* keysym names when numpad modifier is active
-    _NUMPAD_KEYS = {
-        Qt.Key_0: "KP_0", Qt.Key_1: "KP_1", Qt.Key_2: "KP_2",
-        Qt.Key_3: "KP_3", Qt.Key_4: "KP_4", Qt.Key_5: "KP_5",
-        Qt.Key_6: "KP_6", Qt.Key_7: "KP_7", Qt.Key_8: "KP_8",
-        Qt.Key_9: "KP_9",
-        Qt.Key_Period: "KP_Decimal",
-        Qt.Key_Enter: "KP_Enter",
-        Qt.Key_Plus: "KP_Add", Qt.Key_Minus: "KP_Subtract",
-        Qt.Key_Asterisk: "KP_Multiply", Qt.Key_Slash: "KP_Divide",
+    # Registry-derived. Adds NumLock-off Qt key variants (e.g. Key_Clear for KP_5,
+    # Key_Insert for KP_0, Key_End for KP_1, etc.) alongside NumLock-on variants.
+    _NUMPAD_KEYS: dict[int, str] = {
+        int(getattr(Qt, _qt_name)): _kd.canonical
+        for _kd in NAMED_KEY_REGISTRY
+        if _kd.numpad_key
+        for _qt_name in _kd.qt_key_names
     }
 
     @staticmethod
