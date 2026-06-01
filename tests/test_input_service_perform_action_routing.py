@@ -283,11 +283,13 @@ def test_backslash_action_key_sends_keydown_and_keyup(monkeypatch):
         ("keyup",   "\\"),
     ])
 
-    assert ("keydown", "w2", "backslash") in sent, (
-        f"expected ('keydown', 'w2', 'backslash'), got: {sent}"
+    keydowns = [(a, w, k) for (a, w, k) in sent if k == "backslash" and a == "keydown"]
+    keyups   = [(a, w, k) for (a, w, k) in sent if k == "backslash" and a == "keyup"]
+    assert keydowns == [("keydown", "w2", "backslash")], (
+        f"expected exactly one backslash keydown on bg toon, got {keydowns} (full sent: {sent})"
     )
-    assert ("keyup", "w2", "backslash") in sent, (
-        f"expected ('keyup', 'w2', 'backslash'), got: {sent}"
+    assert keyups == [("keyup", "w2", "backslash")], (
+        f"expected exactly one backslash keyup on bg toon, got {keyups} (full sent: {sent})"
     )
 
 
