@@ -426,6 +426,67 @@ def test_screensaver_seam_none_returns_none(monkeypatch):
     assert inh._acquire_screensaver_qtdbus() is None
 
 
+def _patch_fake_qtdbus(monkeypatch, reply_factory):
+    """Replace PySide6.QtDBus QDBusConnection/QDBusInterface with fakes that
+    record calls, so the real `_qt_screensaver_inhibit` seam can be unit-tested
+    without a session bus. `reply_factory(method, args)` returns a fake reply."""
+    import PySide6.QtDBus as qtdbus
+    calls = []
+
+    class FakeIface:
+        def __init__(self, *a, **k):
+            pass
+        def isValid(self):
+            return True
+        def setTimeout(self, t):
+            calls.append(("setTimeout", t))
+        def call(self, method, *args):
+            calls.append((method, args))
+            return reply_factory(method, args)
+
+    class FakeReply:
+        def __init__(self, err="", args=None):
+            self._err, self._args = err, (args or [])
+        def errorName(self):
+            return self._err
+        def arguments(self):
+            return self._args
+
+    monkeypatch.setattr(qtdbus, "QDBusConnection",
+                        SimpleNamespace(sessionBus=lambda: object(),
+                                        systemBus=lambda: object()))
+    monkeypatch.setattr(qtdbus, "QDBusInterface", FakeIface)
+    return calls, FakeReply
+
+
+def test_qt_screensaver_inhibit_seam_returns_cookie_and_uninhibits(monkeypatch):
+    """Exercise the REAL _qt_screensaver_inhibit seam: bounds the call, extracts
+    the cookie, and its uninhibit thunk calls UnInhibit(cookie)."""
+    calls = {}
+
+    def factory(method, args):
+        return calls["reply"](args=[777]) if method == "Inhibit" else calls["reply"]()
+
+    recorded, FakeReply = _patch_fake_qtdbus(monkeypatch, factory)
+    calls["reply"] = FakeReply
+
+    result = si._qt_screensaver_inhibit("who", "why")
+    assert result is not None
+    cookie, uninhibit = result
+    assert cookie == 777
+    assert ("setTimeout", 3000) in recorded
+    assert ("Inhibit", ("who", "why")) in recorded
+    uninhibit()
+    assert ("UnInhibit", (777,)) in recorded
+
+
+def test_qt_screensaver_inhibit_seam_error_reply_returns_none(monkeypatch):
+    """An error reply from ScreenSaver.Inhibit yields None (no cookie held)."""
+    recorded, FakeReply = _patch_fake_qtdbus(
+        monkeypatch, lambda method, args: FakeReply(err="org.freedesktop.DBus.Error.Failed"))
+    assert si._qt_screensaver_inhibit("who", "why") is None
+
+
 def test_tab_delegates_acquire_and_release(monkeypatch):
     """The tab's inhibitor methods delegate to SleepInhibitor and log the
     tier. Built via __new__ to avoid the heavy MultitoonTab.__init__ (Qt,
