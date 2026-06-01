@@ -39,7 +39,7 @@ def test_systemd_layer_acquires_and_verifies(monkeypatch):
     monkeypatch.setattr(si, "_popen_holder", fake_popen_holder)
     # --list returns a row containing our token
     monkeypatch.setattr(si, "_run_list",
-                        lambda: "ToonTown MultiTool 1000 jaret 1 systemd-inhibit "
+                        lambda timeout=None: "ToonTown MultiTool 1000 jaret 1 systemd-inhibit "
                                 "sleep:idle Keep-Alive is active [TOKENXYZ] block\n")
     monkeypatch.setattr(si, "_close_write_fd", lambda fd: spawned.update(write_fd_open=False))
     # Layer 2 + fallback off for this test
@@ -66,12 +66,14 @@ def test_systemd_layer_unverified_cleans_up_then_returns_none(monkeypatch):
     monkeypatch.setattr(si, "_is_windows", lambda: False)
     monkeypatch.setattr(si, "_uuid_token", lambda: "TOKENXYZ")
     holder = FakeHolder()
-    closed = {"write": False, "reaped": False}
+    closed = {"write": False, "reaped": False, "login1_tried": False}
     monkeypatch.setattr(si, "_popen_holder", lambda token: (holder, 99))
-    monkeypatch.setattr(si, "_run_list", lambda: "no token here\n")  # never verifies
+    monkeypatch.setattr(si, "_run_list", lambda timeout=None: "no token here\n")  # never verifies
     monkeypatch.setattr(si, "_close_write_fd", lambda fd: closed.update(write=True))
     monkeypatch.setattr(si, "_reap", lambda proc: closed.update(reaped=True))
-    monkeypatch.setattr(si.SleepInhibitor, "_acquire_login1_qtdbus", lambda self: None)
+    # dict.update() returns None, so the stub records the call AND reports no fd.
+    monkeypatch.setattr(si.SleepInhibitor, "_acquire_login1_qtdbus",
+                        lambda self: closed.update(login1_tried=True))
     monkeypatch.setattr(si.SleepInhibitor, "_acquire_screensaver_qtdbus", lambda self: None)
 
     inh = si.SleepInhibitor()
@@ -80,6 +82,8 @@ def test_systemd_layer_unverified_cleans_up_then_returns_none(monkeypatch):
     assert inh.is_active() is False
     assert inh.status.sleep_blocked is False
     assert closed["write"] is True and closed["reaped"] is True
+    # cleanup-THEN-fallback: the login1 fallback must actually be attempted.
+    assert closed["login1_tried"] is True
 
 
 def test_popen_holder_builds_argv_and_wires_pipe_stdin(monkeypatch):
@@ -204,13 +208,16 @@ def test_holder_spawn_failure_degrades_to_fallback_without_raising(monkeypatch):
         raise FileNotFoundError("systemd-inhibit")
 
     monkeypatch.setattr(si, "_popen_holder", boom)
-    monkeypatch.setattr(si.SleepInhibitor, "_acquire_login1_qtdbus", lambda self: None)
+    tried = {"login1": False}
+    monkeypatch.setattr(si.SleepInhibitor, "_acquire_login1_qtdbus",
+                        lambda self: tried.update(login1=True))
     monkeypatch.setattr(si.SleepInhibitor, "_acquire_screensaver_qtdbus", lambda self: None)
 
     inh = si.SleepInhibitor()
     assert inh.acquire() is None          # no exception, no false success
     assert inh.is_active() is False
     assert inh.status.sleep_blocked is False
+    assert tried["login1"] is True        # spawn failure still tried the fallback
 
 
 def test_reap_kills_holder_when_first_wait_times_out(monkeypatch):

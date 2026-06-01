@@ -81,8 +81,9 @@ def _popen_holder(token):
     except BaseException:
         # Spawn failed after the pipe was created (missing binary, sandbox
         # denial, ENOMEM): close both ends so neither fd leaks, then re-raise
-        # so the caller can degrade to the fallback.
-        os.close(r_fd)
+        # so the caller can degrade to the fallback. Close both defensively so
+        # a failing read-fd close cannot skip the write-fd close.
+        _close_write_fd(r_fd)
         _close_write_fd(w_fd)
         raise
     os.close(r_fd)  # parent keeps only the write end
@@ -107,16 +108,17 @@ def _reap(proc):
             pass
 
 
-def _run_list():
+def _run_list(timeout=_LIST_CALL_TIMEOUT):
     """Return `systemd-inhibit --list` text (LC_ALL=C, host-routed under
-    Flatpak). Empty string on any failure."""
+    Flatpak). Empty string on any failure. `timeout` is bounded by the caller
+    to the remaining verify budget so a single call cannot overrun it."""
     from utils.host_spawn import host_run
     env = dict(os.environ)
     env["LC_ALL"] = "C"
     try:
         cp = host_run(
             ["systemd-inhibit", "--list", "--no-pager", "--no-legend"],
-            capture_output=True, text=True, timeout=_LIST_CALL_TIMEOUT, env=env,
+            capture_output=True, text=True, timeout=timeout, env=env,
         )
         return cp.stdout or ""
     except Exception:
@@ -238,11 +240,13 @@ class SleepInhibitor:
     def _verify_systemd(self, token):
         deadline = time.monotonic() + _VERIFY_DEADLINE
         while True:
-            if token in _run_list():
-                return True
-            if time.monotonic() >= deadline:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
                 return False
-            time.sleep(_VERIFY_INTERVAL)
+            # Never start a list call that could run past the overall deadline.
+            if token in _run_list(timeout=min(_LIST_CALL_TIMEOUT, remaining)):
+                return True
+            time.sleep(min(_VERIFY_INTERVAL, max(0.0, deadline - time.monotonic())))
 
     # QtDBus seams (implemented in Tasks 2-3).
     def _acquire_login1_qtdbus(self):
