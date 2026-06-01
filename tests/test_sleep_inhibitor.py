@@ -349,6 +349,83 @@ def test_reap_kills_holder_when_first_wait_times_out(monkeypatch):
     assert events == ["killed", "reaped"]
 
 
+def test_screensaver_only_returns_none_but_records_status(monkeypatch):
+    monkeypatch.setattr(si, "_is_windows", lambda: False)
+    monkeypatch.setattr(si, "_uuid_token", lambda: "T")
+    monkeypatch.setattr(si, "_popen_holder", lambda token: (FakeHolder(), 99))
+    monkeypatch.setattr(si, "_run_list", lambda timeout=None: "")   # systemd fails
+    monkeypatch.setattr(si, "_close_write_fd", lambda fd: None)
+    monkeypatch.setattr(si, "_reap", lambda proc: None)
+    monkeypatch.setattr(si.SleepInhibitor, "_acquire_login1_qtdbus", lambda self: None)
+    monkeypatch.setattr(si.SleepInhibitor, "_acquire_screensaver_qtdbus", lambda self: (lambda: None))
+
+    inh = si.SleepInhibitor()
+    tier = inh.acquire()
+    assert tier is None                              # truthiness trap closed
+    assert inh.is_active() is False
+    assert inh.status.sleep_blocked is False
+    assert inh.status.screen_lock_cookie_held is True
+
+
+def test_full_acquire_composes_tier_and_releases_all(monkeypatch):
+    monkeypatch.setattr(si, "_is_windows", lambda: False)
+    monkeypatch.setattr(si, "_uuid_token", lambda: "T")
+    monkeypatch.setattr(si, "_popen_holder", lambda token: (FakeHolder(), 99))
+    monkeypatch.setattr(si, "_run_list", lambda timeout=None: "row [T] block\n")
+    closed = {"write": 0, "cookie": 0}
+    monkeypatch.setattr(si, "_close_write_fd", lambda fd: closed.update(write=closed["write"] + 1))
+    monkeypatch.setattr(si.SleepInhibitor, "_acquire_login1_qtdbus", lambda self: None)
+    monkeypatch.setattr(si.SleepInhibitor, "_acquire_screensaver_qtdbus",
+                        lambda self: (lambda: closed.update(cookie=closed["cookie"] + 1)))
+
+    inh = si.SleepInhibitor()
+    tier = inh.acquire()
+    assert tier == "systemd+screensaver"
+    assert inh.status.sleep_blocked and inh.status.screen_lock_cookie_held
+    inh.release()
+    assert closed["write"] == 1 and closed["cookie"] == 1
+    assert inh.is_active() is False
+
+
+def test_screensaver_seam_thunk_is_returned_and_releases_cookie(monkeypatch):
+    """_acquire_screensaver_qtdbus calls the seam and returns its uninhibit
+    thunk; calling it releases the cookie. Exercises the real method (not a
+    method-level monkeypatch) via the _qt_screensaver_inhibit seam."""
+    released = {"cookie": None}
+
+    def fake_seam(who, why):
+        def _uninhibit():
+            released["cookie"] = "COOKIE42"
+        return "COOKIE42", _uninhibit
+
+    monkeypatch.setattr(si, "_qt_screensaver_inhibit", fake_seam)
+    inh = si.SleepInhibitor()
+    thunk = inh._acquire_screensaver_qtdbus()
+    assert callable(thunk)
+    assert released["cookie"] is None      # not released until thunk runs
+    thunk()
+    assert released["cookie"] == "COOKIE42"
+
+
+def test_screensaver_seam_error_returns_none_no_propagation(monkeypatch):
+    """A QtDBus error in the seam must NOT propagate; the method returns None
+    so the rest of the tier still composes."""
+    def boom(who, why):
+        raise RuntimeError("session bus exploded")
+
+    monkeypatch.setattr(si, "_qt_screensaver_inhibit", boom)
+    inh = si.SleepInhibitor()
+    assert inh._acquire_screensaver_qtdbus() is None
+
+
+def test_screensaver_seam_none_returns_none(monkeypatch):
+    """When the seam reports no cookie (invalid iface / error reply), the
+    method returns None without recording a held cookie."""
+    monkeypatch.setattr(si, "_qt_screensaver_inhibit", lambda who, why: None)
+    inh = si.SleepInhibitor()
+    assert inh._acquire_screensaver_qtdbus() is None
+
+
 def test_tab_delegates_acquire_and_release(monkeypatch):
     """The tab's inhibitor methods delegate to SleepInhibitor and log the
     tier. Built via __new__ to avoid the heavy MultitoonTab.__init__ (Qt,

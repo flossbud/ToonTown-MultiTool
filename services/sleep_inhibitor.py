@@ -186,6 +186,38 @@ def _qt_login1_list_inhibitors():
     return rows
 
 
+def _qt_screensaver_inhibit(who, why):
+    """Hold org.freedesktop.ScreenSaver.Inhibit over QtDBus on a persistent
+    session bus connection and return (cookie, uninhibit_callable) or None.
+
+    The session bus connection is application-lifetime so the cookie stays
+    valid until UnInhibit; the call is bounded by setTimeout so a slow/hung
+    session bus cannot block the worker, consistent with the login1 seam."""
+    from PySide6.QtDBus import QDBusConnection, QDBusInterface
+    bus = QDBusConnection.sessionBus()
+    iface = QDBusInterface("org.freedesktop.ScreenSaver",
+                           "/org/freedesktop/ScreenSaver",
+                           "org.freedesktop.ScreenSaver", bus)
+    if not iface.isValid():
+        return None
+    iface.setTimeout(3000)  # ms; never block the worker on a slow session bus
+    reply = iface.call("Inhibit", who, why)
+    if reply.errorName():
+        return None
+    args = reply.arguments()
+    if not args:
+        return None
+    cookie = args[0]
+
+    def _uninhibit(iface=iface, cookie=cookie):
+        try:
+            iface.call("UnInhibit", cookie)
+        except Exception:
+            pass
+
+    return cookie, _uninhibit
+
+
 def _session_bus():
     import dbus
     return dbus.SessionBus()
@@ -329,7 +361,26 @@ class SleepInhibitor:
         return None
 
     def _acquire_screensaver_qtdbus(self):
-        return None
+        """Best-effort screen-lock inhibitor over QtDBus. Returns a release
+        thunk (UnInhibit) or None. Exception-safe: a QtDBus error must not
+        propagate, and a half-held cookie must not leak. The seam returns the
+        cookie alongside its uninhibit callable, so any error after the cookie
+        is held still releases it before returning None."""
+        try:
+            result = _qt_screensaver_inhibit(APP_NAME, REASON)
+        except Exception:
+            return None  # QtDBus error before we own a cookie -> nothing to leak
+        if result is None:
+            return None
+        # From here the seam owns a cookie whose only release path is the
+        # returned uninhibit callable. A structurally bad return means we cannot
+        # obtain that callable; treat it as not-held (no thunk to leak through)
+        # rather than propagating, mirroring the login1 fallback's rigor.
+        try:
+            _cookie, uninhibit = result
+        except Exception:
+            return None
+        return uninhibit
 
     def _acquire_portal(self):
         try:
