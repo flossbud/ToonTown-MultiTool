@@ -153,18 +153,19 @@ class InputService(QObject):
         """Install the platform-appropriate movement key grabber in
         focus-aware mode.
 
-        Linux gate: only when an X11 display is available AND a CC install
-        is detected. The Linux grabber needs the display to install passive
-        XGrabKeys; without CC there's no use for those grabs.
+        Linux gate: only when an X11 display is available. The grabber now
+        arms for CC OR TTR windows, controlled per-focus by
+        _on_active_window_changed_for_grabber; the actual passive XGrabKeys are
+        installed/uninstalled there. Without a display, strict separation
+        degrades to a no-op.
 
         Windows gate: only the platform check. The Win32 grabber is purely
         a state machine queried by HotkeyManager's pynput hook; there is
-        nothing to install at the OS level, so the CC-install gate would
-        only delay arming until CC is detected with no benefit.
+        nothing to install at the OS level.
 
         Common lifecycle: prepare() at startup, install_grabs only while a
-        CC window has focus, uninstall on focus-change away from CC. The
-        canonical set is the focused CC toon's assigned set.
+        CC or TTR window has focus, uninstall on focus-change away. The
+        canonical set is the focused toon's assigned set.
         """
         if self._key_grabber is not None:
             return  # already initialized; stop()/start() cycle preserves the grabber
@@ -181,19 +182,11 @@ class InputService(QObject):
         else:
             try:
                 from utils.x11_movement_grabber import MovementKeyGrabber, xlib_available
-                from services.wine_runtimes import discover_cc_installs
             except ImportError as e:
                 print(f"[InputService] key grabber unavailable: {e}")
                 return
             if not xlib_available():
-                return
-            try:
-                installs = discover_cc_installs()
-            except Exception as e:  # noqa: BLE001
-                print(f"[InputService] CC install detection failed: {e}")
-                installs = []
-            if not installs:
-                return  # no CC detected (or detection failed); no grabber
+                return  # no X11 display: strict separation degrades to no-op
             grabber = MovementKeyGrabber()
             ok = grabber.prepare(
                 on_key=self._on_grabbed_key,
@@ -263,12 +256,16 @@ class InputService(QObject):
         return None
 
     def _on_active_window_changed_for_grabber(self, window_id: str) -> None:
-        """Slot for WindowManager.active_window_changed. Decides whether
-        the grabber should be Idle (no grabs) or Active(set) for the
-        focused CC toon's keyset.
+        """Slot for WindowManager.active_window_changed. Installs grabs for the
+        focused CC or TTR toon's keyset, or uninstalls them. Maintains
+        self._ttr_grabs_active so the router only synthesizes to a focused TTR
+        window whose physical keys are actually being suppressed.
         """
         if self._key_grabber is None:
-            return  # no grabber instantiated (CC not installed or prepare() failed)
+            return
+        # Default to "not suppressing" for every path below; only a successful
+        # TTR install flips it back on.
+        self._ttr_grabs_active = False
         if not window_id:
             self._key_grabber.uninstall_grabs()
             return
@@ -277,7 +274,10 @@ class InputService(QObject):
             game = GameRegistry.instance().get_game_for_window(str(window_id))
         except Exception:
             game = None
-        if game != "cc":
+        if game == "ttr" and not self._strict_ttr_enabled():
+            self._key_grabber.uninstall_grabs()
+            return
+        if game not in ("cc", "ttr"):
             self._key_grabber.uninstall_grabs()
             return
         try:
@@ -300,6 +300,7 @@ class InputService(QObject):
             canonical_set=canonical,
             passthrough_keysyms=passthrough,
         )
+        self._ttr_grabs_active = (game == "ttr")
 
     def _on_grabbed_key(self, action: str, keysym: str) -> None:
         """Forward a consumed grab event into the same queue pynput uses."""
@@ -311,12 +312,10 @@ class InputService(QObject):
             print(f"[InputService] enqueue from grabber failed: {e}")
 
     def _on_passthrough_key(self, action: str, keysym: str) -> None:
-        """Hand a non-grabbed key that arrived during our active grab
-        back to the focused CC window via the wine bridge.
-
-        Without this the focused window loses control of WASD/modifiers/
-        action keys while an arrow is held, because X redirects every
-        keyboard event to the grabbing client during the active grab.
+        """Hand a non-grabbed key that arrived during an active grab back to the
+        focused game window (X redirects all keyboard events to the grabbing
+        client during an active grab). CC routes via the wine bridge and TTR via
+        native X11 -- both handled by _send_via_backend.
         """
         try:
             active = self.window_manager.get_active_window()
@@ -326,27 +325,22 @@ class InputService(QObject):
             return
         try:
             from utils.game_registry import GameRegistry
-            if GameRegistry.instance().get_game_for_window(str(active)) != "cc":
-                return
+            game = GameRegistry.instance().get_game_for_window(str(active))
         except Exception:
             return
+        if game not in ("cc", "ttr"):
+            return
+        if game == "ttr" and not self._strict_ttr_enabled():
+            return
         try:
-            from utils import wine_input_bridge
-            wine_input_bridge.send_to_window(
-                str(active),
-                self._cc_window_ids(),
-                action,
-                keysym,
-            )
+            self._send_via_backend(action, str(active), keysym)
         except Exception as e:  # noqa: BLE001
-            print(f"[InputService] passthrough bridge send failed: {e}")
+            print(f"[InputService] passthrough send failed: {e}")
 
     def _should_consume_grabbed_key(self, keysym: str) -> bool:
         """Decide per-event whether to suppress the grabbed key from the
-        focused window. Only consume when:
-          - the active window is a CC window (TTR / non-game windows pass through),
-          - and CC chat broadcast isn't active (so arrows still drive the
-            chat cursor when the user is typing).
+        focused window. Consume only when chat broadcast isn't active AND the
+        active window is a CC window, or a TTR window with strict separation on.
         """
         if self.global_chat_active:
             return False
@@ -358,9 +352,14 @@ class InputService(QObject):
             return False
         try:
             from utils.game_registry import GameRegistry
-            return GameRegistry.instance().get_game_for_window(str(active)) == "cc"
+            game = GameRegistry.instance().get_game_for_window(str(active))
         except Exception:
             return False
+        if game == "cc":
+            return True
+        if game == "ttr":
+            return self._strict_ttr_enabled()
+        return False
 
     def _suppress_predicate(self, keysym: str) -> bool:
         """Bridge from HotkeyManager's pynput callback to the platform

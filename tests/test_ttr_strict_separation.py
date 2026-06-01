@@ -225,3 +225,124 @@ def test_ttr_strict_focused_native_keyup_passes_native(monkeypatch, tmp_path):
     sends = _capture_sends(svc)
     svc._send_logical_action_km("keyup", "Up", [True, True], [0, 1])
     assert not any(w == "ttr-1" for (_, w, _) in sends)
+
+
+class _FakeGrabber:
+    def __init__(self):
+        self.calls = []
+    def install_grabs(self, canonical_set, passthrough_keysyms=None):
+        self.calls.append(("install", canonical_set))
+    def uninstall_grabs(self):
+        self.calls.append(("uninstall",))
+
+
+def test_focus_ttr_installs_grabs_and_sets_flag(monkeypatch, tmp_path):
+    svc, km = _make_service(
+        monkeypatch, tmp_path, active_wid="ttr-1",
+        windows=["ttr-1"], games={"ttr-1": "ttr"},
+        assignments=[0], settings={STRICT_TTR_SEPARATION: True},
+    )
+    fg = _FakeGrabber(); svc._key_grabber = fg
+    svc._on_active_window_changed_for_grabber("ttr-1")
+    assert ("install", "arrows") in fg.calls
+    assert svc._ttr_grabs_active is True
+
+
+def test_focus_ttr_uninstalls_when_toggle_off(monkeypatch, tmp_path):
+    svc, km = _make_service(
+        monkeypatch, tmp_path, active_wid="ttr-1",
+        windows=["ttr-1"], games={"ttr-1": "ttr"},
+        assignments=[0], settings={STRICT_TTR_SEPARATION: False},
+    )
+    fg = _FakeGrabber(); svc._key_grabber = fg
+    svc._on_active_window_changed_for_grabber("ttr-1")
+    assert fg.calls == [("uninstall",)]
+    assert svc._ttr_grabs_active is False
+
+
+def test_focus_ttr_custom_set_uninstalls_and_clears_flag(monkeypatch, tmp_path):
+    svc, km = _make_service(
+        monkeypatch, tmp_path, active_wid="ttr-1",
+        windows=["ttr-1"], games={"ttr-1": "ttr"},
+        assignments=[0], settings={STRICT_TTR_SEPARATION: True},
+    )
+    km.update_set_key("ttr", 0, "forward", "i")  # custom forward -> canonical None
+    fg = _FakeGrabber(); svc._key_grabber = fg
+    svc._ttr_grabs_active = True
+    svc._on_active_window_changed_for_grabber("ttr-1")
+    assert ("uninstall",) in fg.calls
+    assert svc._ttr_grabs_active is False
+
+
+def test_focus_non_game_uninstalls(monkeypatch, tmp_path):
+    svc, _ = _make_service(
+        monkeypatch, tmp_path, active_wid="other",
+        windows=["ttr-1"], games={"ttr-1": "ttr"},
+        assignments=[0], settings={STRICT_TTR_SEPARATION: True},
+    )
+    fg = _FakeGrabber(); svc._key_grabber = fg
+    svc._ttr_grabs_active = True
+    svc._on_active_window_changed_for_grabber("other")  # unknown -> game None
+    assert ("uninstall",) in fg.calls
+    assert svc._ttr_grabs_active is False
+
+
+def test_focus_cc_still_installs_without_ttr_flag(monkeypatch, tmp_path):
+    svc, km = _make_service(
+        monkeypatch, tmp_path, active_wid="cc-1",
+        windows=["cc-1"], games={"cc-1": "cc"},
+        assignments=[0], settings={STRICT_TTR_SEPARATION: False},
+    )
+    fg = _FakeGrabber(); svc._key_grabber = fg
+    svc._on_active_window_changed_for_grabber("cc-1")
+    assert ("install", "wasd") in fg.calls
+    assert svc._ttr_grabs_active is False
+
+
+def test_consume_true_for_ttr_when_enabled(monkeypatch, tmp_path):
+    svc, _ = _make_service(
+        monkeypatch, tmp_path, active_wid="ttr-1",
+        windows=["ttr-1"], games={"ttr-1": "ttr"}, settings={STRICT_TTR_SEPARATION: True},
+    )
+    svc.global_chat_active = False
+    assert svc._should_consume_grabbed_key("w") is True
+
+
+def test_consume_false_for_ttr_when_toggle_off(monkeypatch, tmp_path):
+    svc, _ = _make_service(
+        monkeypatch, tmp_path, active_wid="ttr-1",
+        windows=["ttr-1"], games={"ttr-1": "ttr"}, settings={STRICT_TTR_SEPARATION: False},
+    )
+    svc.global_chat_active = False
+    assert svc._should_consume_grabbed_key("w") is False
+
+
+def test_consume_false_during_chat(monkeypatch, tmp_path):
+    svc, _ = _make_service(
+        monkeypatch, tmp_path, active_wid="ttr-1",
+        windows=["ttr-1"], games={"ttr-1": "ttr"}, settings={STRICT_TTR_SEPARATION: True},
+    )
+    svc.global_chat_active = True
+    assert svc._should_consume_grabbed_key("w") is False
+
+
+def test_consume_true_for_cc(monkeypatch, tmp_path):
+    svc, _ = _make_service(
+        monkeypatch, tmp_path, active_wid="cc-1",
+        windows=["cc-1"], games={"cc-1": "cc"}, settings={STRICT_TTR_SEPARATION: False},
+    )
+    svc.global_chat_active = False
+    assert svc._should_consume_grabbed_key("Up") is True
+
+
+def test_passthrough_ttr_uses_backend(monkeypatch, tmp_path):
+    svc, _ = _make_service(
+        monkeypatch, tmp_path, active_wid="ttr-1",
+        windows=["ttr-1"], games={"ttr-1": "ttr"}, settings={STRICT_TTR_SEPARATION: True},
+    )
+    sends = []
+    svc._send_via_backend = lambda action, win, keysym, modifiers=None: sends.append(
+        (action, str(win), keysym)
+    )
+    svc._on_passthrough_key("keydown", "w")
+    assert ("keydown", "ttr-1", "w") in sends

@@ -47,8 +47,36 @@ def test_should_consume_true_when_active_window_is_cc(svc, monkeypatch):
     assert svc._should_consume_grabbed_key("Up") is True
 
 
-def test_should_consume_false_when_active_window_is_ttr(svc, monkeypatch):
+def test_should_consume_true_when_active_window_is_ttr_strict_on(svc, monkeypatch):
+    """Strict separation ON (default for the truthy MagicMock settings_manager)
+    means a focused TTR window consumes the grabbed key, just like CC."""
     svc.window_manager.get_active_window.return_value = "w1"
+    svc.global_chat_active = False
+    from utils import game_registry as gr
+    fake_reg = MagicMock()
+    fake_reg.get_game_for_window.return_value = "ttr"
+    monkeypatch.setattr(gr.GameRegistry, "instance", lambda: fake_reg)
+    assert svc._should_consume_grabbed_key("Up") is True
+
+
+def test_should_consume_false_when_active_window_is_ttr_strict_off(svc, monkeypatch):
+    """Strict separation OFF is the escape hatch back to focus-passthrough:
+    a focused TTR window does NOT consume the grabbed key."""
+    svc.window_manager.get_active_window.return_value = "w1"
+    svc.global_chat_active = False
+    svc.settings_manager.get.return_value = False  # strict OFF
+    from utils import game_registry as gr
+    fake_reg = MagicMock()
+    fake_reg.get_game_for_window.return_value = "ttr"
+    monkeypatch.setattr(gr.GameRegistry, "instance", lambda: fake_reg)
+    assert svc._should_consume_grabbed_key("Up") is False
+
+
+def test_should_consume_false_when_active_window_is_ttr_chat_active(svc, monkeypatch):
+    """Even with strict ON, an active chat broadcast lets arrows drive the
+    chat cursor: no consumption."""
+    svc.window_manager.get_active_window.return_value = "w1"
+    svc.global_chat_active = True
     from utils import game_registry as gr
     fake_reg = MagicMock()
     fake_reg.get_game_for_window.return_value = "ttr"
@@ -169,7 +197,18 @@ def test_on_passthrough_key_cc_window_routes_to_wine_bridge(svc, monkeypatch):
 
     svc._on_passthrough_key("keydown", "w")
 
-    bridge.assert_called_once_with("w1", ["w1", "w2"], "keydown", "w")
+    # CC passthrough now flows through _send_via_backend, which for a CC
+    # window still routes to the wine bridge -- behavior-preserving. The
+    # call shape gained a trailing `modifiers` arg and the window-id list is
+    # now _cc_window_ids() (both CC windows here, so still ["w1", "w2"]).
+    bridge.assert_called_once()
+    args, kwargs = bridge.call_args
+    assert args[0] == "w1"  # focused window
+    assert args[1] == ["w1", "w2"]  # _cc_window_ids() (both registered as cc)
+    assert args[2] == "keydown"  # action
+    assert args[3] == "w"  # keysym
+    # trailing modifiers arg present (None for a bare passthrough key)
+    assert args[4] is None
 
 
 def test_on_passthrough_key_swallows_bridge_exceptions(svc, monkeypatch):
@@ -188,19 +227,26 @@ def test_on_passthrough_key_swallows_bridge_exceptions(svc, monkeypatch):
     svc._on_passthrough_key("keydown", "w")
 
 
-def test_start_key_grabber_skips_when_no_cc_installs(monkeypatch, svc):
-    """When discover_cc_installs() returns empty, the grabber is never
-    instantiated. TTMT opens zero Xlib connections for grab purposes."""
+def test_start_key_grabber_instantiates_when_xlib_available(monkeypatch, svc):
+    """The CC-install gate is removed: the grabber now instantiates whenever an
+    X11 display is available, even with zero CC installs. It arms for CC OR TTR
+    windows, controlled per-focus by _on_active_window_changed_for_grabber."""
     monkeypatch.setattr(
         "services.wine_runtimes.discover_cc_installs", lambda: []
     )
-    fake_grabber_cls = MagicMock()
+    fake_instance = MagicMock()
+    fake_instance.prepare.return_value = True
+    fake_grabber_cls = MagicMock(return_value=fake_instance)
     monkeypatch.setattr(
         "utils.x11_movement_grabber.MovementKeyGrabber", fake_grabber_cls
     )
+    monkeypatch.setattr(
+        "utils.x11_movement_grabber.xlib_available", lambda: True
+    )
     svc._start_key_grabber()
-    assert svc._key_grabber is None
-    assert fake_grabber_cls.call_count == 0
+    assert svc._key_grabber is fake_instance
+    assert fake_grabber_cls.call_count == 1
+    fake_instance.prepare.assert_called_once()
 
 
 def test_start_key_grabber_instantiates_when_cc_installs_present(monkeypatch, svc):
@@ -297,8 +343,10 @@ def _make_focused_svc(monkeypatch, focus_window_id, registry_mapping, assignment
     return svc, fake_instance
 
 
-def test_no_install_when_no_cc_window_focused(monkeypatch):
-    """At startup, if a TTR window is focused, install_grabs is not called."""
+def test_install_when_ttr_window_focused_strict_on(monkeypatch):
+    """At startup, if a TTR preset window is focused with strict separation ON
+    (default), install_grabs IS called and _ttr_grabs_active is set True. This is
+    the core Task 4 contract change: TTR windows now arm the grabber."""
     svc, grabber = _make_focused_svc(
         monkeypatch,
         focus_window_id="100",
@@ -306,7 +354,27 @@ def test_no_install_when_no_cc_window_focused(monkeypatch):
         assignments=[0, 0],
     )
     svc._start_key_grabber()
+    grabber.install_grabs.assert_called_once()
+    args, kwargs = grabber.install_grabs.call_args
+    canonical = kwargs.get("canonical_set", args[0] if args else None)
+    assert canonical == "wasd"  # set_idx 0 -> forward "w" -> wasd
+    assert svc._ttr_grabs_active is True
+
+
+def test_no_install_when_ttr_window_focused_strict_off(monkeypatch):
+    """With strict separation OFF, focusing a TTR window uninstalls grabs and
+    leaves _ttr_grabs_active False -- the escape hatch back to passthrough."""
+    svc, grabber = _make_focused_svc(
+        monkeypatch,
+        focus_window_id="100",
+        registry_mapping={"100": "ttr", "200": "cc"},
+        assignments=[0, 0],
+    )
+    svc.settings_manager.get.return_value = False  # strict OFF
+    svc._start_key_grabber()
     grabber.install_grabs.assert_not_called()
+    grabber.uninstall_grabs.assert_called()
+    assert svc._ttr_grabs_active is False
 
 
 def test_install_wasd_canonical_when_wasd_cc_focused(monkeypatch):
@@ -337,8 +405,11 @@ def test_install_arrows_canonical_when_arrows_cc_focused(monkeypatch):
     assert canonical == "arrows"
 
 
-def test_focus_change_to_non_cc_uninstalls(monkeypatch):
-    """Focus moves from CC to TTR -> uninstall_grabs called."""
+def test_focus_change_cc_to_ttr_installs_ttr_grabs(monkeypatch):
+    """Focus moves from CC to a TTR preset window -> with strict ON, grabs are
+    re-installed for the TTR window (the grabber's install is idempotent and
+    swaps the canonical set) and _ttr_grabs_active becomes True. This is the
+    Task 4 contract change from the old 'non-CC focus = no grabs' behavior."""
     svc, grabber = _make_focused_svc(
         monkeypatch,
         focus_window_id="200",
@@ -350,8 +421,32 @@ def test_focus_change_to_non_cc_uninstalls(monkeypatch):
     grabber.uninstall_grabs.reset_mock()
     svc.window_manager.get_active_window.return_value = "100"
     svc._on_active_window_changed_for_grabber("100")
+    grabber.install_grabs.assert_called_once()
+    args, kwargs = grabber.install_grabs.call_args
+    canonical = kwargs.get("canonical_set", args[0] if args else None)
+    assert canonical == "wasd"
+    assert svc._ttr_grabs_active is True
+
+
+def test_focus_change_to_non_game_uninstalls(monkeypatch):
+    """Focus moves from CC to a truly non-game window -> uninstall_grabs called,
+    no install, and _ttr_grabs_active stays False. The 'leaving a game = drop
+    grabs' guarantee survives, but only for non-game focus now."""
+    svc, grabber = _make_focused_svc(
+        monkeypatch,
+        focus_window_id="200",
+        registry_mapping={"200": "cc"},
+        assignments=[0],
+    )
+    svc._start_key_grabber()
+    grabber.install_grabs.reset_mock()
+    grabber.uninstall_grabs.reset_mock()
+    # "999" is not in the registry mapping -> get_game_for_window returns None.
+    svc.window_manager.get_active_window.return_value = "999"
+    svc._on_active_window_changed_for_grabber("999")
     grabber.uninstall_grabs.assert_called_once()
     grabber.install_grabs.assert_not_called()
+    assert svc._ttr_grabs_active is False
 
 
 def test_focus_change_between_different_set_cc_swaps_canonical(monkeypatch):
