@@ -9,6 +9,7 @@ from PySide6.QtCore import QObject, Signal
 
 from utils.cc_isolation import MOVEMENT_ACTIONS as _MOVEMENT_ACTIONS
 from utils.held_key_registry import HoldKind, HeldKeyRegistry
+from utils.key_registry import NAMED_KEYSYMS_FROM_REGISTRY, PASSTHROUGH_KEYSYMS
 
 WASD_KEYS     = frozenset({'w', 'a', 's', 'd'})
 MOVEMENT_KEYS = WASD_KEYS | frozenset({'Up', 'Down', 'Left', 'Right', 'space'})
@@ -22,38 +23,9 @@ MODIFIER_PREFIX = {
     'Alt_L': 'alt', 'Alt_R': 'alt',
 }
 
-NAMED_KEYSYMS = {
-    'space':     'space',
-    'Return':    'Return',
-    'BackSpace': 'BackSpace',
-    'Tab':       'Tab',
-    'Escape':    'Escape',
-    'Delete':    'Delete',
-    'Up':        'Up',
-    'Down':      'Down',
-    'Left':      'Left',
-    'Right':     'Right',
-    'Shift_L':   'Shift_L',
-    'Shift_R':   'Shift_R',
-    'Control_L': 'Control_L',
-    'Control_R': 'Control_R',
-    'Alt_L':     'Alt_L',
-    'Alt_R':     'Alt_R',
-    # Numpad keys
-    'KP_0': 'KP_0', 'KP_1': 'KP_1', 'KP_2': 'KP_2', 'KP_3': 'KP_3',
-    'KP_4': 'KP_4', 'KP_5': 'KP_5', 'KP_6': 'KP_6', 'KP_7': 'KP_7',
-    'KP_8': 'KP_8', 'KP_9': 'KP_9',
-    'KP_Decimal':  'KP_Decimal',
-    'KP_Enter':    'KP_Enter',
-    'KP_Add':      'KP_Add',
-    'KP_Subtract': 'KP_Subtract',
-    'KP_Multiply': 'KP_Multiply',
-    'KP_Divide':   'KP_Divide',
-    # Function keys F1-F12
-    'F1':  'F1',  'F2':  'F2',  'F3':  'F3',  'F4':  'F4',
-    'F5':  'F5',  'F6':  'F6',  'F7':  'F7',  'F8':  'F8',
-    'F9':  'F9',  'F10': 'F10', 'F11': 'F11', 'F12': 'F12',
-}
+# Alias so the existing _KEYSYM_LOOKUP.update(NAMED_KEYSYMS) line below works unchanged.
+# The registry adds Home, End, Prior, Next, Insert to what was previously here.
+NAMED_KEYSYMS: dict[str, str] = NAMED_KEYSYMS_FROM_REGISTRY
 
 CHAR_TO_PHYSICAL_KEYSYM = {
     **{c: c for c in 'abcdefghijklmnopqrstuvwxyz'},
@@ -81,6 +53,19 @@ _KEYSYM_LOOKUP.update(CHAR_TO_PHYSICAL_KEYSYM)
 # Add lowercase alpha mappings (handles the .lower() case)
 for c in 'abcdefghijklmnopqrstuvwxyz':
     _KEYSYM_LOOKUP[c] = CHAR_TO_PHYSICAL_KEYSYM[c]
+
+
+def _resolve_keysym(key):
+    """Module-level send-time keysym resolver. O(1) lookup from the
+    pre-built _KEYSYM_LOOKUP. Returns the X11 keysym string for a stored
+    key, or None if unmapped. The InputService method below delegates here
+    so both the instance call sites and registry tests share one resolver."""
+    result = _KEYSYM_LOOKUP.get(key)
+    if result:
+        return result
+    if len(key) == 1 and key.isalpha():
+        return _KEYSYM_LOOKUP.get(key.lower())
+    return None
 
 
 
@@ -1043,13 +1028,9 @@ class InputService(QObject):
         self._phantom_reset()
 
     def _resolve_keysym(self, key):
-        """Fix #8: O(1) lookup from pre-built dict instead of repeated branching."""
-        result = _KEYSYM_LOOKUP.get(key)
-        if result:
-            return result
-        if len(key) == 1 and key.isalpha():
-            return _KEYSYM_LOOKUP.get(key.lower())
-        return None
+        """Fix #8: O(1) lookup. Delegates to the module-level _resolve_keysym
+        so instance call sites and registry tests share one implementation."""
+        return _resolve_keysym(key)
 
     def _cc_window_ids(self) -> list:
         """Return the subset of managed windows that are CC windows.
@@ -1172,11 +1153,9 @@ def _passthrough_keysyms_for_canonical(canonical: str) -> tuple[str, ...]:
     canonical_keys = tuple(
         _canonical_keys_for(canonical)
     )
-    modifiers = ("Shift_L", "Shift_R", "Control_L", "Control_R", "Alt_L", "Alt_R")
-    common = ("space", "Tab", "Return", "Escape", "BackSpace", "Delete")
     letters = tuple("abcdefghijklmnopqrstuvwxyz")
     digits = tuple("0123456789")
-    return canonical_keys + modifiers + common + letters + digits
+    return canonical_keys + PASSTHROUGH_KEYSYMS + letters + digits
 
 
 def _canonical_keys_for(canonical: str) -> tuple[str, ...]:
