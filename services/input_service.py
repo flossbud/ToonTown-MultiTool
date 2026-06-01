@@ -571,8 +571,9 @@ class InputService(QObject):
                     # key (OS delivers it) but mismatched keys are intercepted by
                     # the grabber and synthesized here. Fall back to today's
                     # unconditional skip when strict separation isn't actually
-                    # enforceable (toggle OFF or no grabber armed) or when the
-                    # pressed key already equals the native outbound key.
+                    # enforceable (toggle OFF or grabs not installed for this
+                    # focus) or when the pressed key already equals the native
+                    # outbound key.
                     if not self._strict_ttr_active() or key == outbound:
                         continue
                 keysym = self._resolve_keysym(outbound)
