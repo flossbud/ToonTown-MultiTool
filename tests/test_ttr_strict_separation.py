@@ -4,6 +4,8 @@ Run: TTMT_NO_VENV_REEXEC=1 QT_QPA_PLATFORM=offscreen pytest tests/test_ttr_stric
 """
 from types import SimpleNamespace
 
+from services.input_service import STRICT_TTR_SEPARATION
+
 
 def _make_service(monkeypatch, tmp_path, active_wid="100", windows=None,
                   games=None, assignments=None, settings=None):
@@ -43,8 +45,8 @@ def _make_service(monkeypatch, tmp_path, active_wid="100", windows=None,
         get_event_queue_func=lambda: None,
         keymap_manager=km,
         get_keymap_assignments=lambda: assignments,
+        settings_manager=sm,
     )
-    svc.settings_manager = sm
     return svc, km
 
 
@@ -55,7 +57,7 @@ def test_strict_ttr_enabled_defaults_true(monkeypatch, tmp_path):
 
 def test_strict_ttr_enabled_reads_setting_false(monkeypatch, tmp_path):
     svc, _ = _make_service(monkeypatch, tmp_path,
-                           settings={"strict_ttr_separation": False})
+                           settings={STRICT_TTR_SEPARATION: False})
     assert svc._strict_ttr_enabled() is False
 
 
@@ -67,6 +69,7 @@ def test_strict_ttr_active_false_without_grabber(monkeypatch, tmp_path):
 
 
 def test_strict_ttr_active_true_with_grabber(monkeypatch, tmp_path):
+    """Both conditions met (toggle ON + a grabber exists): returns True."""
     svc, _ = _make_service(monkeypatch, tmp_path)
     svc._key_grabber = object()  # sentinel: a grabber exists
     assert svc._strict_ttr_active() is True
@@ -74,6 +77,6 @@ def test_strict_ttr_active_true_with_grabber(monkeypatch, tmp_path):
 
 def test_strict_ttr_active_false_when_toggle_off(monkeypatch, tmp_path):
     svc, _ = _make_service(monkeypatch, tmp_path,
-                           settings={"strict_ttr_separation": False})
+                           settings={STRICT_TTR_SEPARATION: False})
     svc._key_grabber = object()
     assert svc._strict_ttr_active() is False
