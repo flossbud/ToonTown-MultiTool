@@ -261,11 +261,12 @@ class InputService(QObject):
         self._ttr_grabs_active so the router only synthesizes to a focused TTR
         window whose physical keys are actually being suppressed.
         """
+        # Default to "not suppressing"; only a successful TTR install flips it
+        # back on. Set before the grabber-None guard so this handler ALWAYS
+        # leaves the flag accurate, even if the grabber was torn down.
+        self._ttr_grabs_active = False
         if self._key_grabber is None:
             return
-        # Default to "not suppressing" for every path below; only a successful
-        # TTR install flips it back on.
-        self._ttr_grabs_active = False
         if not window_id:
             self._key_grabber.uninstall_grabs()
             return
@@ -417,6 +418,7 @@ class InputService(QObject):
             except Exception as e:
                 print(f"[InputService] key grabber shutdown error: {e}")
             self._key_grabber = None
+        self._ttr_grabs_active = False  # grabs are gone; keep the flag accurate
         try:
             from utils import wine_input_bridge
             wine_input_bridge.shutdown_all()

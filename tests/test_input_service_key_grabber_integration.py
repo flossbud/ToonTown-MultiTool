@@ -169,19 +169,28 @@ def test_on_passthrough_key_no_active_window_is_a_noop(svc):
     svc._on_passthrough_key("keydown", "w")
 
 
-def test_on_passthrough_key_non_cc_window_is_a_noop(svc, monkeypatch):
+def test_on_passthrough_key_non_game_window_is_a_noop(svc, monkeypatch):
+    # A focused window that is neither CC nor TTR: passthrough must do nothing
+    # (no bridge call and no backend send). game=None makes this a REAL no-op
+    # assertion -- under the Task 4 contract a TTR window would instead route
+    # through _send_via_backend, so this test deliberately uses a non-game
+    # window. (TTR passthrough-via-backend is covered in
+    # tests/test_ttr_strict_separation.py::test_passthrough_ttr_uses_backend.)
     svc.window_manager.get_active_window.return_value = "w1"
     from utils import game_registry as gr
     fake_reg = MagicMock()
-    fake_reg.get_game_for_window.return_value = "ttr"
+    fake_reg.get_game_for_window.return_value = None  # not a game window
     monkeypatch.setattr(gr.GameRegistry, "instance", lambda: fake_reg)
 
+    sent = []
+    monkeypatch.setattr(svc, "_send_via_backend", lambda *a, **k: sent.append(a))
     bridge = MagicMock()
     monkeypatch.setattr("utils.wine_input_bridge.send_to_window", bridge)
 
     svc._on_passthrough_key("keydown", "w")
 
     bridge.assert_not_called()
+    assert sent == []  # non-game window -> no passthrough send at all
 
 
 def test_on_passthrough_key_cc_window_routes_to_wine_bridge(svc, monkeypatch):
