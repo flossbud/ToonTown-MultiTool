@@ -128,3 +128,65 @@ Targeted repros for the issues fixed in `2026-05-07-input-forwarding-fixes.md`.
 - [ ] Settings "Detect" button with no CC running: opens an info dialog saying "No running CC processes detected."
 - [ ] Settings "External CC log directory" set to a wrong path: badge does NOT populate for externally-launched CC (filter is honored).
 - [ ] Settings "External CC log directory" cleared after a bad set: badge populates again on the next poll.
+
+## Keep-Alive sleep inhibitor (2026-05-31)
+
+The Keep-Alive sleep inhibitor was rewritten to be dbus-python-free: a verified
+`systemd-inhibit --what=sleep:idle --mode=block` holder is the primary sleep
+guarantee, with a QtDBus login1 fd fallback and a best-effort QtDBus ScreenSaver
+cookie. These checks confirm it actually engages per runtime.
+
+### Live no-suspend proof (KDE / GNOME, the causal test)
+
+- [ ] Temporarily set the desktop's power setting to suspend or hibernate after
+  about 2 minutes of inactivity (KDE: System Settings > Power Management; GNOME:
+  Settings > Power).
+- [ ] Launch TTMT, enable Keep-Alive (accept the TOS consent), and in a terminal
+  run `systemd-inhibit --list --no-pager | grep "Keep-Alive is active"`. Expect
+  one `sleep:idle ... block` row owned by `ToonTown MultiTool` whose reason ends
+  with a `[<uuid>]` token.
+- [ ] Leave the machine idle past the 2-minute timeout. It must NOT suspend or
+  hibernate.
+- [ ] Disable Keep-Alive. The `systemd-inhibit --list` row disappears and the
+  machine is free to suspend again.
+- [ ] Restore the original power timeout.
+
+### Per-runtime acquisition
+
+- [ ] venv run (`python main.py`): enable Keep-Alive, confirm the inline
+  indicator reads "Sleep blocked" (green) and the `systemd-inhibit --list` row
+  is present.
+- [ ] AppImage: same check from the built `.AppImage` (proves the
+  dbus-python-free path works in the frozen runtime; the AppImage does not ship
+  `dbus-python`).
+- [ ] If the inhibitor cannot engage (e.g. a non-systemd distro), the one-time
+  warning dialog appears once per launch and the indicator reads "Sleep NOT
+  blocked" (red). The dialog text names no implementation internals.
+
+### Flatpak holder release mechanism (Task 7 spike)
+
+The holder releases via pipe EOF: closing the parent-held write end makes the
+host `cat` exit, which drops the logind lock. Confirm `flatpak-spawn --host`
+forwards the inherited pipe read end as the host process's stdin so EOF actually
+reaches it. Run inside a Flatpak build of this branch:
+
+- [ ] `flatpak run --command=sh <app-id> -c 'python3 - <<PY
+import os, subprocess, time
+r,w=os.pipe()
+p=subprocess.Popen(["flatpak-spawn","--host","systemd-inhibit","--what=sleep:idle",
+  "--mode=block","--who=TTMT","--why=KA [PROBE777]","--","cat"], stdin=r, pass_fds=(r,))
+os.close(r); time.sleep(1)
+out=subprocess.run(["flatpak-spawn","--host","systemd-inhibit","--list","--no-pager","--no-legend"],
+  capture_output=True,text=True).stdout
+print("held:", "PROBE777" in out)
+os.close(w); p.wait(timeout=3)
+out2=subprocess.run(["flatpak-spawn","--host","systemd-inhibit","--list","--no-pager","--no-legend"],
+  capture_output=True,text=True).stdout
+print("released:", "PROBE777" not in out2)
+PY'`
+  Expect `held: True` then `released: True`.
+- [ ] If `held` is False (stdin not forwarded) or `released` is False (no EOF),
+  the Flatpak holder needs a sentinel-file release instead of pipe EOF (create a
+  sentinel on acquire, a host `sh -c 'while [ -e "$0" ]; do sleep 1; done'`
+  holder, delete the sentinel on release). The non-Flatpak pipe-EOF path is
+  already validated and unaffected.
