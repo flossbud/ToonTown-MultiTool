@@ -244,7 +244,7 @@ class InputService(QObject):
             assignments = self._get_assignments(self.get_enabled_toons())
         except Exception:
             return None
-        if toon_index < 0 or toon_index >= len(assignments):
+        if toon_index >= len(assignments):
             return None
         set_idx = assignments[toon_index]
         try:
