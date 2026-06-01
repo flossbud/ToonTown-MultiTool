@@ -28,9 +28,6 @@ ES_CONTINUOUS = 0x80000000
 ES_SYSTEM_REQUIRED = 0x00000001
 ES_DISPLAY_REQUIRED = 0x00000002
 
-# XDG Inhibit portal flags: Suspend (4) | Idle (8).
-PORTAL_SUSPEND_IDLE = 0x4 | 0x8
-
 # Verification budget: per-call timeout and overall wall-clock deadline.
 # Each `systemd-inhibit --list` call is bounded below the overall poll deadline
 # so a single slow/hung call cannot blow the whole budget.
@@ -218,16 +215,6 @@ def _qt_screensaver_inhibit(who, why):
     return cookie, _uninhibit
 
 
-def _session_bus():
-    import dbus
-    return dbus.SessionBus()
-
-
-def _system_bus():
-    import dbus
-    return dbus.SystemBus()
-
-
 class SleepInhibitor:
     """Acquire/release OS inhibition locks. Idempotent; release never raises."""
 
@@ -381,68 +368,3 @@ class SleepInhibitor:
         except Exception:
             return None
         return uninhibit
-
-    def _acquire_portal(self):
-        try:
-            import dbus
-            bus = _session_bus()
-            obj = bus.get_object(
-                "org.freedesktop.portal.Desktop",
-                "/org/freedesktop/portal/desktop",
-            )
-            handle = obj.Inhibit(
-                "",
-                dbus.UInt32(PORTAL_SUSPEND_IDLE),
-                {"reason": REASON},
-                dbus_interface="org.freedesktop.portal.Inhibit",
-            )
-            path = str(handle)
-
-            def _close(bus=bus, path=path):
-                req = bus.get_object("org.freedesktop.portal.Desktop", path)
-                req.Close(dbus_interface="org.freedesktop.portal.Request")
-
-            self._releases.append(("portal", _close))
-            return True
-        except Exception:
-            return False
-
-    def _acquire_screensaver(self):
-        try:
-            bus = _session_bus()
-            obj = bus.get_object(
-                "org.freedesktop.ScreenSaver", "/org/freedesktop/ScreenSaver"
-            )
-            cookie = obj.Inhibit(
-                APP_NAME, REASON,
-                dbus_interface="org.freedesktop.ScreenSaver",
-            )
-
-            def _uninhibit(bus=bus, cookie=cookie):
-                o = bus.get_object(
-                    "org.freedesktop.ScreenSaver", "/org/freedesktop/ScreenSaver"
-                )
-                o.UnInhibit(cookie, dbus_interface="org.freedesktop.ScreenSaver")
-
-            self._releases.append(("screensaver", _uninhibit))
-            return True
-        except Exception:
-            return False
-
-    def _acquire_login1(self):
-        try:
-            bus = _system_bus()
-            obj = bus.get_object(
-                "org.freedesktop.login1", "/org/freedesktop/login1"
-            )
-            fd = obj.Inhibit(
-                "sleep:idle", APP_NAME, REASON, "block",
-                dbus_interface="org.freedesktop.login1.Manager",
-            )
-            real_fd = fd.take()
-            self._releases.append(
-                ("login1", lambda real_fd=real_fd: _close_fd(real_fd))
-            )
-            return True
-        except Exception:
-            return False
