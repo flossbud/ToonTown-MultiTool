@@ -125,6 +125,58 @@ def _run_list(timeout=_LIST_CALL_TIMEOUT):
         return ""
 
 
+def _close_fd(fd):
+    try:
+        os.close(fd)
+    except OSError:
+        pass
+
+
+def _fd_open(fd):
+    try:
+        os.fstat(fd)
+        return True
+    except OSError:
+        return False
+
+
+def _qt_login1_inhibit(who, why):
+    """Call login1.Manager.Inhibit('sleep:idle', who, why, 'block') over
+    QtDBus on the application-lifetime system bus, dup the returned unix fd
+    out of the wrapper, and return the duped int (or None)."""
+    from PySide6.QtDBus import (
+        QDBusConnection, QDBusInterface, QDBusUnixFileDescriptor,
+    )
+    bus = QDBusConnection.systemBus()
+    iface = QDBusInterface("org.freedesktop.login1", "/org/freedesktop/login1",
+                           "org.freedesktop.login1.Manager", bus)
+    if not iface.isValid():
+        return None
+    iface.setTimeout(3000)  # ms; never block the worker on a slow system bus
+    reply = iface.call("Inhibit", "sleep:idle", who, why, "block")
+    args = reply.arguments()
+    if not args or not isinstance(args[0], QDBusUnixFileDescriptor):
+        return None
+    qfd = args[0]
+    if not qfd.isValid():
+        return None
+    return os.dup(qfd.fileDescriptor())  # survives qfd GC
+
+
+def _qt_login1_list_inhibitors():
+    """Return login1 ListInhibitors() rows as (what, who, why, mode) tuples."""
+    from PySide6.QtDBus import QDBusConnection, QDBusInterface
+    bus = QDBusConnection.systemBus()
+    iface = QDBusInterface("org.freedesktop.login1", "/org/freedesktop/login1",
+                           "org.freedesktop.login1.Manager", bus)
+    reply = iface.call("ListInhibitors")
+    rows = []
+    for entry in (reply.arguments()[0] if reply.arguments() else []):
+        # (what, who, why, mode, uid, pid)
+        rows.append((entry[0], entry[1], entry[2], entry[3]))
+    return rows
+
+
 def _session_bus():
     import dbus
     return dbus.SessionBus()
@@ -133,11 +185,6 @@ def _session_bus():
 def _system_bus():
     import dbus
     return dbus.SystemBus()
-
-
-def _close_fd(fd):
-    import os
-    os.close(fd)
 
 
 class SleepInhibitor:
@@ -231,7 +278,7 @@ class SleepInhibitor:
             _reap(proc)
         fd = self._acquire_login1_qtdbus()
         if fd is not None:
-            self._releases.append(("login1", lambda: _close_write_fd(fd)))
+            self._releases.append(("login1", lambda: _close_fd(fd)))
             self.status.sleep_blocked = True
             self.status.method = "login1"
             return "login1"
@@ -248,8 +295,22 @@ class SleepInhibitor:
                 return True
             time.sleep(min(_VERIFY_INTERVAL, max(0.0, deadline - time.monotonic())))
 
-    # QtDBus seams (implemented in Tasks 2-3).
+    # QtDBus seams (screensaver implemented in Task 3).
     def _acquire_login1_qtdbus(self):
+        """Hold a logind sleep:idle inhibitor over QtDBus, verifying that our
+        own per-acquire token shows up in ListInhibitors(). Returns the duped
+        fd to hold, or None (closing the fd on any unverified path)."""
+        token = self._token  # set by _acquire_sleep_layer before fallback
+        fd = _qt_login1_inhibit(APP_NAME, f"{REASON} [{token}]")
+        if fd is None:
+            return None
+        if not _fd_open(fd):
+            _close_fd(fd)
+            return None
+        for (_what, _who, why, _mode) in _qt_login1_list_inhibitors():
+            if token in (why or ""):
+                return fd
+        _close_fd(fd)  # could not confirm our own inhibitor -> not held
         return None
 
     def _acquire_screensaver_qtdbus(self):

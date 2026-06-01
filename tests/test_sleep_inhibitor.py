@@ -144,6 +144,52 @@ def test_popen_holder_closes_both_fds_on_spawn_failure(monkeypatch):
             os.fstat(fd)   # closed -> EBADF
 
 
+def test_login1_fallback_used_when_systemd_unverified(monkeypatch):
+    monkeypatch.setattr(si, "_is_windows", lambda: False)
+    monkeypatch.setattr(si, "_uuid_token", lambda: "TOK1")
+    monkeypatch.setattr(si, "_popen_holder", lambda token: (FakeHolder(), 99))
+    monkeypatch.setattr(si, "_run_list", lambda timeout=None: "")        # systemd never verifies
+    monkeypatch.setattr(si, "_close_write_fd", lambda fd: None)
+    monkeypatch.setattr(si, "_reap", lambda proc: None)
+    # login1 seam returns a fake duped fd and verifies against our token
+    monkeypatch.setattr(si, "_qt_login1_inhibit",
+                        lambda who, why: 4242)              # duped fd int
+    monkeypatch.setattr(si, "_qt_login1_list_inhibitors",
+                        lambda: [("sleep:idle", "ToonTown MultiTool",
+                                  "Keep-Alive is active [TOK1]", "block")])
+    monkeypatch.setattr(si, "_fd_open", lambda fd: True)
+    monkeypatch.setattr(si.SleepInhibitor, "_acquire_screensaver_qtdbus", lambda self: None)
+
+    inh = si.SleepInhibitor()
+    tier = inh.acquire()
+    assert tier == "login1"
+    assert inh.status.sleep_blocked is True
+    assert inh.status.method == "login1"
+
+
+def test_login1_fallback_rejected_when_token_absent(monkeypatch):
+    monkeypatch.setattr(si, "_is_windows", lambda: False)
+    monkeypatch.setattr(si, "_uuid_token", lambda: "TOK1")
+    monkeypatch.setattr(si, "_popen_holder", lambda token: (FakeHolder(), 99))
+    monkeypatch.setattr(si, "_run_list", lambda timeout=None: "")
+    monkeypatch.setattr(si, "_close_write_fd", lambda fd: None)
+    monkeypatch.setattr(si, "_reap", lambda proc: None)
+    monkeypatch.setattr(si, "_qt_login1_inhibit", lambda who, why: 4242)
+    # Another process holds a sleep inhibitor, but NOT our token:
+    monkeypatch.setattr(si, "_qt_login1_list_inhibitors",
+                        lambda: [("sleep", "OtherApp", "something else", "block")])
+    monkeypatch.setattr(si, "_fd_open", lambda fd: True)
+    closed = {"fd": None}
+    monkeypatch.setattr(si, "_close_fd", lambda fd: closed.update(fd=fd))
+    monkeypatch.setattr(si.SleepInhibitor, "_acquire_screensaver_qtdbus", lambda self: None)
+
+    inh = si.SleepInhibitor()
+    tier = inh.acquire()
+    assert tier is None                 # not our inhibitor -> not held
+    assert inh.status.sleep_blocked is False
+    assert closed["fd"] == 4242         # the unverified fd is closed, no leak
+
+
 # ── Fakes ────────────────────────────────────────────────────────────────
 def test_windows_acquire_sets_system_and_display_flags(monkeypatch):
     calls = []
