@@ -16,6 +16,7 @@ touching a real bus.
 import os
 import subprocess
 import sys
+import threading
 import time
 import uuid
 from dataclasses import dataclass
@@ -226,6 +227,12 @@ class SleepInhibitor:
         self._acquired = False
         self._token = None
         self.status = InhibitStatus()
+        # acquire() runs on a worker thread while release() may be called from
+        # the GUI thread; serialize them so a release can never clear/rebuild
+        # _releases or status while an acquire is mid-flight (which would drop a
+        # just-acquired holder thunk and leak the OS inhibitor). Reentrant
+        # because acquire() calls release() internally (release-before-acquire).
+        self._lock = threading.RLock()
 
     def is_active(self):
         return bool(self.status.sleep_blocked) or self.active_tier == "windows"
@@ -233,27 +240,29 @@ class SleepInhibitor:
     def acquire(self):
         """Acquire inhibition. Returns a tier name string, or None if nothing
         could be acquired. Re-acquiring releases first so locks never stack."""
-        if self._acquired:
-            self.release()  # release-before-acquire: never stack locks
-        self._acquired = True
-        if _is_windows():
-            self.active_tier = self._acquire_windows()
-        else:
-            self.active_tier = self._acquire_linux()
-        return self.active_tier
+        with self._lock:
+            if self._acquired:
+                self.release()  # release-before-acquire: never stack locks
+            self._acquired = True
+            if _is_windows():
+                self.active_tier = self._acquire_windows()
+            else:
+                self.active_tier = self._acquire_linux()
+            return self.active_tier
 
     def release(self):
         """Release every held lock. Safe to call when nothing is held."""
-        releases = list(self._releases)
-        self._releases.clear()
-        self._acquired = False
-        self.active_tier = None
-        self.status = InhibitStatus()  # nothing held -> is_active() reads False
-        for _label, thunk in releases:
-            try:
-                thunk()
-            except Exception:
-                pass
+        with self._lock:
+            releases = list(self._releases)
+            self._releases.clear()
+            self._acquired = False
+            self.active_tier = None
+            self.status = InhibitStatus()  # nothing held -> is_active() False
+            for _label, thunk in releases:
+                try:
+                    thunk()
+                except Exception:
+                    pass
 
     # ── Windows ────────────────────────────────────────────────────────────
     def _acquire_windows(self):

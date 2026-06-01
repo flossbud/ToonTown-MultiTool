@@ -11,7 +11,9 @@ from services.sleep_inhibitor import InhibitStatus
 
 
 class InhibitAcquireWorker(QThread):
-    finished = Signal(object)  # emits InhibitStatus
+    # NOTE: deliberately NOT named `finished` -- that would shadow QThread's
+    # built-in finished() completion signal (which fires when run() returns).
+    status_ready = Signal(object)  # emits InhibitStatus
 
     def __init__(self, inhibitor, parent=None):
         super().__init__(parent)
@@ -23,4 +25,4 @@ class InhibitAcquireWorker(QThread):
             status = self._inhibitor.status
         except Exception:
             status = InhibitStatus()
-        self.finished.emit(status)
+        self.status_ready.emit(status)

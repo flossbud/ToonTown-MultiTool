@@ -3135,7 +3135,7 @@ class MultitoonTab(QWidget):
         # No Qt parent: we hold a Python ref via self._inhibit_worker and join
         # it in _release_sleep_inhibitor, so it cannot be GC'd or leak.
         worker = InhibitAcquireWorker(self._sleep_inhibitor)
-        worker.finished.connect(lambda status, g=gen: self._on_inhibit_status(g, status))
+        worker.status_ready.connect(lambda status, g=gen: self._on_inhibit_status(g, status))
         self._inhibit_worker = worker  # keep a ref so it is not GC'd
         worker.start()
 
@@ -3160,7 +3160,11 @@ class MultitoonTab(QWidget):
         self._inhibit_gen += 1  # invalidate any in-flight worker result
         w = getattr(self, "_inhibit_worker", None)
         if w is not None and w.isRunning():
+            # Bound the GUI-thread wait. If acquire() is on a slow fallback path
+            # and outruns the wait, SleepInhibitor's own lock still serializes
+            # this release against the in-flight acquire (no thunk is dropped).
             w.wait(2000)
+        self._inhibit_worker = None
         if self._sleep_inhibitor.is_active():
             self._sleep_inhibitor.release()
             self.log("[KeepAlive] Sleep inhibitor released.")

@@ -35,13 +35,29 @@ class RaisingInhibitor:
         raise RuntimeError("boom")
 
 
+def test_qthread_finished_signal_is_not_shadowed():
+    """The custom signal is `status_ready`, so QThread's built-in finished()
+    completion signal must still exist and fire when run() returns."""
+    _app()
+    worker = InhibitAcquireWorker(FakeInhibitor())
+    fired = {"finished": False}
+    worker.finished.connect(lambda: fired.update(finished=True))  # QThread builtin
+    loop = QEventLoop()
+    worker.finished.connect(loop.quit)
+    worker.start()
+    QTimer.singleShot(2000, loop.quit)
+    loop.exec()
+    worker.wait(2000)
+    assert fired["finished"] is True
+
+
 def _drive(worker, timeout_ms=2000):
     """Run the worker to completion on a local event loop, returning the
     emitted status (or None if it timed out)."""
     captured = {}
-    worker.finished.connect(lambda st: captured.update(status=st))
+    worker.status_ready.connect(lambda st: captured.update(status=st))
     loop = QEventLoop()
-    worker.finished.connect(loop.quit)
+    worker.status_ready.connect(loop.quit)
     worker.start()
     QTimer.singleShot(timeout_ms, loop.quit)
     loop.exec()
