@@ -1109,6 +1109,7 @@ class MultitoonTab(QWidget):
     keep_alive_updated = Signal()
     dot_state_changed = Signal(int, str)
     keep_alive_help_requested = Signal()
+    keep_alive_inhibit_status = Signal(object)  # InhibitStatus, for warning + indicator
     launch_tab_requested = Signal()
 
     def __init__(self, logger=None, settings_manager=None, keymap_manager=None, profile_manager=None, window_manager=None):
@@ -1166,6 +1167,8 @@ class MultitoonTab(QWidget):
         self._ka_cycle_start = 0.0
         self._ka_cycle_event = threading.Event()
         self._sleep_inhibitor = SleepInhibitor()
+        self._inhibit_worker = None
+        self._inhibit_gen = 0
 
         self.key_event_queue = queue.Queue(maxsize=200)
 
@@ -3119,22 +3122,48 @@ class MultitoonTab(QWidget):
     # ── Sleep inhibitor ───────────────────────────────────────────────────
 
     def _acquire_sleep_inhibitor(self):
-        """Hold an OS sleep + screen-lock inhibitor for the duration of
-        keep-alive. Cross-desktop on Linux (portal first, then ScreenSaver +
-        login1), SetThreadExecutionState on Windows. Best-effort: a failure to
-        acquire is logged, never raised."""
-        tier = self._sleep_inhibitor.acquire()
-        if tier:
-            self.log(f"[KeepAlive] Sleep/idle inhibitor acquired ({tier}).")
+        """Acquire the OS sleep/idle inhibitor off the GUI thread; surface the
+        verified status to the UI when it completes.
+
+        acquire() can block up to ~1.5s (it shells out to systemd-inhibit and
+        polls), so it runs on a worker thread. A generation guard ensures a
+        late result from a worker that was superseded by release/re-acquire can
+        never flip the UI back."""
+        from services._inhibit_worker import InhibitAcquireWorker
+        self._inhibit_gen += 1
+        gen = self._inhibit_gen
+        # No Qt parent: we hold a Python ref via self._inhibit_worker and join
+        # it in _release_sleep_inhibitor, so it cannot be GC'd or leak.
+        worker = InhibitAcquireWorker(self._sleep_inhibitor)
+        worker.finished.connect(lambda status, g=gen: self._on_inhibit_status(g, status))
+        self._inhibit_worker = worker  # keep a ref so it is not GC'd
+        worker.start()
+
+    def _on_inhibit_status(self, gen, status):
+        if gen != self._inhibit_gen:
+            return  # stale result from a worker superseded by release/re-acquire
+        if status.sleep_blocked:
+            self.log(f"[KeepAlive] Sleep inhibitor verified ({status.method}).")
         else:
-            self.log("[KeepAlive] Could not acquire sleep inhibitor; "
-                     "the screen may lock.")
+            self.log("[KeepAlive] Could not verify sleep inhibitor; "
+                     "the machine may sleep.")
+        self.keep_alive_inhibit_status.emit(status)
+        self._update_inhibit_indicator(status)
+
+    def _update_inhibit_indicator(self, status):
+        # Placeholder; the live indicator is implemented in a later task.
+        pass
 
     def _release_sleep_inhibitor(self):
-        """Release the inhibitor, allowing sleep/idle again."""
+        """Release the inhibitor, allowing sleep/idle again. Invalidates any
+        in-flight worker and joins it so no late result can flip the UI."""
+        self._inhibit_gen += 1  # invalidate any in-flight worker result
+        w = getattr(self, "_inhibit_worker", None)
+        if w is not None and w.isRunning():
+            w.wait(2000)
         if self._sleep_inhibitor.is_active():
             self._sleep_inhibitor.release()
-            self.log("[KeepAlive] Sleep/idle inhibitor released.")
+            self.log("[KeepAlive] Sleep inhibitor released.")
 
     def _start_keep_alive(self):
         if not self._keep_alive_running:

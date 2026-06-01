@@ -487,39 +487,75 @@ def test_qt_screensaver_inhibit_seam_error_reply_returns_none(monkeypatch):
     assert si._qt_screensaver_inhibit("who", "why") is None
 
 
+def _drive_inhibit_worker(tab, timeout_ms=2000):
+    """Spin a local Qt event loop until the tab's in-flight inhibit worker
+    finishes (it emits across a queued connection on a worker thread)."""
+    from PySide6.QtCore import QEventLoop, QTimer
+    from PySide6.QtWidgets import QApplication
+
+    QApplication.instance() or QApplication([])
+    w = tab._inhibit_worker
+    loop = QEventLoop()
+    w.finished.connect(loop.quit)
+    QTimer.singleShot(timeout_ms, loop.quit)
+    loop.exec()
+    w.wait(2000)
+
+
 def test_tab_delegates_acquire_and_release(monkeypatch):
-    """The tab's inhibitor methods delegate to SleepInhibitor and log the
-    tier. Built via __new__ to avoid the heavy MultitoonTab.__init__ (Qt,
-    InputService, etc.)."""
+    """The tab acquires off a worker thread and surfaces a verified status via
+    the keep_alive_inhibit_status signal; release joins the worker and frees
+    the inhibitor. Built via __new__ to avoid the heavy MultitoonTab.__init__
+    (Qt, InputService, etc.)."""
     from tabs.multitoon._tab import MultitoonTab
 
     tab = MultitoonTab.__new__(MultitoonTab)
+    tab._inhibit_gen = 0
+    tab._inhibit_worker = None
     logs = []
     tab.log = lambda m: logs.append(m)
     state = {"active": False}
+    blocked = si.InhibitStatus(sleep_blocked=True, method="systemd")
     tab._sleep_inhibitor = SimpleNamespace(
+        status=blocked,
         acquire=lambda: state.update(active=True) or "systemd",
         is_active=lambda: state["active"],
         release=lambda: state.update(active=False),
     )
+    emitted = {}
+    tab.keep_alive_inhibit_status = SimpleNamespace(
+        emit=lambda st: emitted.update(status=st)
+    )
 
     MultitoonTab._acquire_sleep_inhibitor(tab)
-    assert any("systemd" in m for m in logs)
+    _drive_inhibit_worker(tab)
+
+    assert emitted["status"].method == "systemd"
+    assert emitted["status"].sleep_blocked is True
+    assert any("verified" in m.lower() for m in logs)
+    assert state["active"] is True
 
     MultitoonTab._release_sleep_inhibitor(tab)
     assert any("released" in m.lower() for m in logs)
+    assert state["active"] is False
 
 
 def test_tab_logs_warning_when_acquire_fails(monkeypatch):
     from tabs.multitoon._tab import MultitoonTab
 
     tab = MultitoonTab.__new__(MultitoonTab)
+    tab._inhibit_gen = 0
+    tab._inhibit_worker = None
     logs = []
     tab.log = lambda m: logs.append(m)
     tab._sleep_inhibitor = SimpleNamespace(
+        status=si.InhibitStatus(),
         acquire=lambda: None,
         is_active=lambda: False,
         release=lambda: None,
     )
+    tab.keep_alive_inhibit_status = SimpleNamespace(emit=lambda st: None)
+
     MultitoonTab._acquire_sleep_inhibitor(tab)
+    _drive_inhibit_worker(tab)
     assert any("could not" in m.lower() for m in logs)
