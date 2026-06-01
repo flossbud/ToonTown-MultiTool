@@ -73,9 +73,13 @@ def _popen_holder(token):
         f"--who={APP_NAME}", f"--why={REASON} [{token}]",
         "--", "cat",
     ]
-    from utils.host_spawn import host_popen
+    from utils.host_spawn import host_popen, _clean_host_env
     try:
-        proc = host_popen(argv, stdin=r_fd, pass_fds=(r_fd,))
+        # _clean_host_env strips the PyInstaller/AppImage bundle's
+        # LD_LIBRARY_PATH so the host systemd-inhibit binary does not load
+        # bundled libs (which would break it on the AppImage runtime).
+        proc = host_popen(argv, stdin=r_fd, pass_fds=(r_fd,),
+                          env=_clean_host_env())
     except BaseException:
         # Spawn failed after the pipe was created (missing binary, sandbox
         # denial, ENOMEM): close both ends so neither fd leaks, then re-raise
@@ -110,8 +114,11 @@ def _run_list(timeout=_LIST_CALL_TIMEOUT):
     """Return `systemd-inhibit --list` text (LC_ALL=C, host-routed under
     Flatpak). Empty string on any failure. `timeout` is bounded by the caller
     to the remaining verify budget so a single call cannot overrun it."""
-    from utils.host_spawn import host_run
-    env = dict(os.environ)
+    from utils.host_spawn import host_run, _clean_host_env
+    # Start from the cleaned host env (strips the AppImage bundle's
+    # LD_LIBRARY_PATH so host systemd-inhibit isn't broken by bundled libs),
+    # then force LC_ALL=C for stable `--list` parsing.
+    env = _clean_host_env()
     env["LC_ALL"] = "C"
     try:
         cp = host_run(
@@ -310,7 +317,9 @@ class SleepInhibitor:
                 self.status.sleep_blocked = True
                 self.status.method = "systemd"
                 return "systemd"
-            # Partial-acquire cleanup: EOF the holder, reap both processes.
+            # Partial-acquire cleanup: EOF the holder and reap the wrapper
+            # process we spawned (under Flatpak that is flatpak-spawn; the
+            # host-side systemd-inhibit/cat are reaped by host init).
             _close_write_fd(w_fd)
             _reap(proc)
         fd = self._acquire_login1_qtdbus()

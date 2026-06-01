@@ -487,6 +487,52 @@ def test_qt_screensaver_inhibit_seam_error_reply_returns_none(monkeypatch):
     assert si._qt_screensaver_inhibit("who", "why") is None
 
 
+def test_qt_login1_list_inhibitors_seam_parses_rows_and_bounds_timeout(monkeypatch):
+    """Exercise the REAL _qt_login1_list_inhibitors seam: bounded call, and
+    (what, who, why, mode) extraction from a ListInhibitors() reply row."""
+    rows = [("sleep:idle", "ToonTown MultiTool",
+             "Keep-Alive is active [TOK]", "block", 1000, 4242)]
+    recorded, _FakeReply = _patch_fake_qtdbus(
+        monkeypatch, lambda method, args: _FakeReply(args=[rows]))
+    out = si._qt_login1_list_inhibitors()
+    assert out == [("sleep:idle", "ToonTown MultiTool",
+                    "Keep-Alive is active [TOK]", "block")]
+    assert ("setTimeout", 3000) in recorded
+
+
+def test_qt_login1_list_inhibitors_seam_error_reply_returns_empty(monkeypatch):
+    recorded, _FakeReply = _patch_fake_qtdbus(
+        monkeypatch, lambda method, args: _FakeReply(err="org.freedesktop.DBus.Error.AccessDenied"))
+    assert si._qt_login1_list_inhibitors() == []
+
+
+def test_qt_login1_inhibit_seam_dups_fd_out_of_wrapper(monkeypatch):
+    """Exercise the REAL _qt_login1_inhibit seam: it dups the unix fd OUT of the
+    QDBusUnixFileDescriptor (a NEW fd that survives the wrapper's GC)."""
+    import PySide6.QtDBus as qtdbus
+
+    real_fd = os.open(os.devnull, os.O_RDONLY)  # a real fd so os.dup works
+
+    class FakeQFD:
+        def isValid(self):
+            return True
+        def fileDescriptor(self):
+            return real_fd
+
+    recorded, _FakeReply = _patch_fake_qtdbus(
+        monkeypatch, lambda method, args: _FakeReply(args=[FakeQFD()]))
+    monkeypatch.setattr(qtdbus, "QDBusUnixFileDescriptor", FakeQFD)
+
+    duped = si._qt_login1_inhibit("who", "why [TOK]")
+    try:
+        assert isinstance(duped, int) and duped != real_fd  # a fresh dup
+        assert ("setTimeout", 3000) in recorded
+        assert ("Inhibit", ("sleep:idle", "who", "why [TOK]", "block")) in recorded
+    finally:
+        os.close(duped)
+        os.close(real_fd)
+
+
 def _drive_inhibit_worker(tab, timeout_ms=2000):
     """Spin a local Qt event loop until the tab's in-flight inhibit worker
     finishes (it emits across a queued connection on a worker thread)."""

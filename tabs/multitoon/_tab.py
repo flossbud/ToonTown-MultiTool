@@ -1169,6 +1169,7 @@ class MultitoonTab(QWidget):
         self._sleep_inhibitor = SleepInhibitor()
         self._inhibit_worker = None
         self._inhibit_gen = 0
+        self._retired_workers = []  # still-running workers kept alive to finish
 
         self.key_event_queue = queue.Queue(maxsize=200)
 
@@ -3141,6 +3142,15 @@ class MultitoonTab(QWidget):
         prev = getattr(self, "_inhibit_worker", None)
         if prev is not None and prev.isRunning():
             prev.wait(5000)
+            if prev.isRunning():
+                # Pathologically slow acquire still running after the wait:
+                # keep a reference so the QThread is never destroyed mid-run.
+                # It self-finishes within acquire()'s internal timeouts; prune
+                # finished retirees so the list cannot grow unbounded.
+                retired = [w for w in getattr(self, "_retired_workers", [])
+                           if w.isRunning()]
+                retired.append(prev)
+                self._retired_workers = retired
         self._inhibit_gen += 1
         gen = self._inhibit_gen
         # No Qt parent: we hold a Python ref via self._inhibit_worker and join
