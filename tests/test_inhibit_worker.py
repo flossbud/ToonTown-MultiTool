@@ -164,7 +164,6 @@ def test_indicator_shows_blocked_state():
         tab, InhibitStatus(sleep_blocked=True, method="systemd")
     )
     lbl = tab._inhibit_indicator
-    assert lbl.isVisibleTo(lbl.parent()) or lbl.isVisible() or not lbl.isHidden()
     # Visible (not hidden) and in the non-warning/good state.
     assert lbl.isHidden() is False
     assert "not" not in lbl.text().lower()
