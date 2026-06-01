@@ -211,6 +211,11 @@ class InputService(QObject):
         except Exception:
             seed = None
         self._on_active_window_changed_for_grabber(seed or "")
+        if self.settings_manager is not None:
+            try:
+                self.settings_manager.on_change(self._on_strict_ttr_setting_changed)
+            except Exception as e:  # noqa: BLE001
+                print(f"[InputService] settings on_change connect failed: {e}")
 
     def _canonical_set_for_toon_index(self, toon_index: int) -> str | None:
         """Return 'wasd' or 'arrows' for the keyset assigned to the toon at
@@ -302,6 +307,23 @@ class InputService(QObject):
             passthrough_keysyms=passthrough,
         )
         self._ttr_grabs_active = (game == "ttr")
+
+    def _on_strict_ttr_setting_changed(self, key: str = "", value=None) -> None:
+        """React to the strict_ttr_separation toggle changing at runtime.
+        Release any held keys (so a toon isn't left walking when grabs are torn
+        down), then re-seed the grabber for the current focus. settings_manager
+        broadcasts (key, value) for every change, so ignore unrelated keys."""
+        if key and key != STRICT_TTR_SEPARATION:
+            return
+        try:
+            self.release_all_keys()
+        except Exception as e:  # noqa: BLE001
+            print(f"[InputService] release_all_keys on toggle failed: {e}")
+        try:
+            seed = self.window_manager.get_active_window()
+        except Exception:
+            seed = None
+        self._on_active_window_changed_for_grabber(seed or "")
 
     def _on_grabbed_key(self, action: str, keysym: str) -> None:
         """Forward a consumed grab event into the same queue pynput uses."""

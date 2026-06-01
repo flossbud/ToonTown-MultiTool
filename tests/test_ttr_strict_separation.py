@@ -361,3 +361,30 @@ def test_passthrough_ttr_uses_backend(monkeypatch, tmp_path):
     )
     svc._on_passthrough_key("keydown", "w")
     assert ("keydown", "ttr-1", "w") in sends
+
+
+def test_toggle_change_releases_before_reseed(monkeypatch, tmp_path):
+    """The handler must release held keys BEFORE re-seeding the grabber, so no
+    toon is left walking when grabs are torn down."""
+    svc, _ = _make_service(
+        monkeypatch, tmp_path, active_wid="ttr-1", windows=["ttr-1"],
+        games={"ttr-1": "ttr"},
+    )
+    order = []
+    svc.release_all_keys = lambda: order.append("release")
+    svc._on_active_window_changed_for_grabber = lambda wid: order.append("reseed")
+    svc._on_strict_ttr_setting_changed("strict_ttr_separation", False)
+    assert order == ["release", "reseed"]
+
+
+def test_toggle_change_ignores_unrelated_key(monkeypatch, tmp_path):
+    """A change to an unrelated setting must not release keys."""
+    svc, _ = _make_service(
+        monkeypatch, tmp_path, active_wid="ttr-1", windows=["ttr-1"],
+        games={"ttr-1": "ttr"},
+    )
+    order = []
+    svc.release_all_keys = lambda: order.append("release")
+    svc._on_active_window_changed_for_grabber = lambda wid: order.append("reseed")
+    svc._on_strict_ttr_setting_changed("some_other_setting", True)
+    assert order == []
