@@ -23,6 +23,7 @@ from services.cc_login_service import (
     discover_cc_installs,
 )
 from services.wine_runtimes import install_signature
+from services.input_service import STRICT_TTR_SEPARATION
 from utils.settings_keys import CC_ENGINE_INSTALL_SIGNATURE, SETTINGS_ACTIVE_CATEGORY
 
 
@@ -837,6 +838,22 @@ class SettingsTab(QWidget):
         )
         comp_field.set_control(comp_switch)
         ttr_panel.add_field(comp_field)
+
+        # Strict per-window keyset separation (TTR)
+        strict_field = SettingsField(
+            "Strict keyset separation (TTR)",
+            helper=(
+                "Keep each toon controlled by its own assigned keys no matter "
+                "which window is in front. Turn off to control the front window "
+                "with the default keys."
+            ),
+        )
+        strict_switch = Switch(self.settings_manager.get(STRICT_TTR_SEPARATION, True))
+        strict_switch.toggled.connect(
+            lambda v: self.settings_manager.set(STRICT_TTR_SEPARATION, v)
+        )
+        strict_field.set_control(strict_switch)
+        ttr_panel.add_field(strict_field)
 
         lay.insertWidget(insert_at, ttr_panel)
         insert_at += 1
