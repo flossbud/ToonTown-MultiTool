@@ -323,7 +323,12 @@ class InputService(QObject):
             seed = self.window_manager.get_active_window()
         except Exception:
             seed = None
-        self._on_active_window_changed_for_grabber(seed or "")
+        try:
+            self._on_active_window_changed_for_grabber(seed or "")
+        except Exception as e:  # noqa: BLE001
+            # This runs inside settings_manager's change-callback loop; never let
+            # a reseed failure propagate and break other listeners.
+            print(f"[InputService] grabber reseed on toggle failed: {e}")
 
     def _on_grabbed_key(self, action: str, keysym: str) -> None:
         """Forward a consumed grab event into the same queue pynput uses."""
