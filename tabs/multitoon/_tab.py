@@ -3130,6 +3130,13 @@ class MultitoonTab(QWidget):
         late result from a worker that was superseded by release/re-acquire can
         never flip the UI back."""
         from services._inhibit_worker import InhibitAcquireWorker
+        # Never overwrite the ref to a still-running worker: dropping the last
+        # Python ref to a live QThread crashes with "Destroyed while thread is
+        # still running". In the normal flow the prior worker was already joined
+        # by _release_sleep_inhibitor; this guards a direct re-acquire.
+        prev = getattr(self, "_inhibit_worker", None)
+        if prev is not None and prev.isRunning():
+            prev.wait(5000)
         self._inhibit_gen += 1
         gen = self._inhibit_gen
         # No Qt parent: we hold a Python ref via self._inhibit_worker and join
@@ -3168,6 +3175,11 @@ class MultitoonTab(QWidget):
         # completes, so the holder is released, never leaked. release() is a
         # safe no-op when nothing is held, and also frees a screensaver-only
         # cookie (which is_active() would not see).
+        # Tradeoff: if acquire() is mid-flight on a slow fallback path (only on
+        # non-systemd / slow-D-Bus systems), this release blocks on the lock
+        # until it finishes. We accept that rare stop-time stall in exchange for
+        # a guaranteed-no-leak release rather than a more error-prone deferred
+        # scheme.
         self._sleep_inhibitor.release()
         self.log("[KeepAlive] Sleep inhibitor released.")
         if w is not None and not w.isRunning():

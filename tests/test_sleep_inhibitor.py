@@ -579,3 +579,37 @@ def test_release_calls_inhibitor_release_even_when_not_active():
 
     MultitoonTab._release_sleep_inhibitor(tab)
     assert released["called"] is True                 # released despite is_active() False
+
+
+def test_release_serializes_with_inflight_acquire_no_holder_leak(monkeypatch):
+    """Deterministic concurrency proof on the REAL SleepInhibitor: a slow
+    acquire holds the internal lock and appends a holder release-thunk; a
+    release() invoked while that acquire is still running must block on the lock
+    and then run the thunk (the OS holder is freed, never leaked)."""
+    import threading
+    import time
+
+    monkeypatch.setattr(si, "_is_windows", lambda: False)
+    monkeypatch.setattr(si, "_uuid_token", lambda: "TOK")
+    monkeypatch.setattr(si, "_popen_holder", lambda token: (FakeHolder(), 99))
+    started = threading.Event()
+
+    def slow_verify(self, token):
+        started.set()
+        time.sleep(0.3)  # stay inside acquire() (holding the lock) a while
+        return True
+
+    monkeypatch.setattr(si.SleepInhibitor, "_verify_systemd", slow_verify)
+    freed = {"holder": False}
+    # the systemd release thunk calls _close_write_fd(w_fd); record that it ran.
+    monkeypatch.setattr(si, "_close_write_fd", lambda fd: freed.update(holder=True))
+    monkeypatch.setattr(si, "_reap", lambda p: None)
+    monkeypatch.setattr(si.SleepInhibitor, "_acquire_screensaver_qtdbus", lambda self: None)
+
+    inh = si.SleepInhibitor()
+    t = threading.Thread(target=inh.acquire)
+    t.start()
+    assert started.wait(2.0)          # acquire is now inside the lock
+    inh.release()                     # blocks on the lock, then frees the holder
+    t.join(2.0)
+    assert freed["holder"] is True    # holder thunk ran -> no leak
