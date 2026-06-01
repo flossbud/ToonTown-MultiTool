@@ -14,6 +14,7 @@ from utils.key_registry import NAMED_KEYSYMS_FROM_REGISTRY, PASSTHROUGH_KEYSYMS
 WASD_KEYS     = frozenset({'w', 'a', 's', 'd'})
 MOVEMENT_KEYS = WASD_KEYS | frozenset({'Up', 'Down', 'Left', 'Right', 'space'})
 ARROW_KEYS    = frozenset({'Up', 'Down', 'Left', 'Right'})
+STRICT_TTR_SEPARATION = "strict_ttr_separation"
 ARROW_TO_WASD = {'Up': 'w', 'Down': 's', 'Left': 'a', 'Right': 'd'}
 
 MODIFIER_KEYS = frozenset({'Shift_L', 'Shift_R', 'Control_L', 'Control_R', 'Alt_L', 'Alt_R'})
@@ -424,6 +425,24 @@ class InputService(QObject):
         if self.get_keymap_assignments:
             return self.get_keymap_assignments()
         return [0] * len(enabled)
+
+    def _strict_ttr_enabled(self) -> bool:
+        """Whether the strict-separation toggle is ON for TTR. Default ON;
+        the toggle is the escape hatch back to focus-passthrough behavior.
+        This reflects ONLY the user setting, not whether the grabber is armed."""
+        if self.settings_manager is None:
+            return True
+        return bool(self.settings_manager.get(STRICT_TTR_SEPARATION, True))
+
+    def _strict_ttr_active(self) -> bool:
+        """Whether strict separation can actually be enforced for TTR right now:
+        the toggle is ON AND a movement grabber exists. Without the grabber the
+        focused window's wrong-keyset keys can't be suppressed, so the router
+        must NOT take the conditional-skip path (it would move the focused toon
+        natively on a wrong key while also synthesizing to the right toon).
+        When no grabber is available, strict separation degrades to today's
+        unconditional focused-window skip."""
+        return self._strict_ttr_enabled() and self._key_grabber is not None
 
     # ── Keymap-aware send methods ──────────────────────────────────────────
 
