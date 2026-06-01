@@ -555,11 +555,18 @@ class InputService(QObject):
                     continue
                 if not logical_actions.supports(toon_game, toon_action):
                     continue
-                if win == active_window:
-                    continue
                 outbound = self.keymap_manager.get_key_for_action(toon_game, 0, toon_action)
                 if outbound is None:
                     continue
+                if win == active_window:
+                    # Strict separation: the focused window keeps its OWN native
+                    # key (OS delivers it) but mismatched keys are intercepted by
+                    # the grabber and synthesized here. Fall back to today's
+                    # unconditional skip when strict separation isn't actually
+                    # enforceable (toggle OFF or no grabber armed) or when the
+                    # pressed key already equals the native outbound key.
+                    if not self._strict_ttr_active() or key == outbound:
+                        continue
                 keysym = self._resolve_keysym(outbound)
                 if keysym:
                     self._send_via_backend(action, win, keysym)

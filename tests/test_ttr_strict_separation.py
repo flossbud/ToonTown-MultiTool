@@ -120,3 +120,85 @@ def test_canonical_set_for_ttr_custom_set_returns_none(monkeypatch, tmp_path):
     km.add_set("ttr")  # creates set index 1
     km.update_set_key("ttr", 1, "forward", "i")  # custom: neither 'w' nor 'Up'
     assert svc._canonical_set_for_toon_index(1) is None
+
+
+def _capture_sends(svc):
+    """Replace _send_via_backend with a recorder; return the list of calls.
+    Also install a grabber sentinel so _strict_ttr_active() is True (the run
+    loop isn't started in unit tests, so _key_grabber would otherwise be None
+    and the router would take the fallback path)."""
+    sends = []
+    svc._send_via_backend = lambda action, win, keysym, modifiers=None: sends.append(
+        (action, str(win), keysym)
+    )
+    svc._key_grabber = object()  # sentinel: a grabber exists -> strict can be active
+    return sends
+
+
+def _two_ttr_toons(monkeypatch, tmp_path, active_wid, settings=None):
+    """Toon1 (ttr-1) on set 0 (the ARROWS default = TTR's shared native), and
+    Toon2 (ttr-2) on set 1 (a WASD set we build). Returns (svc, km).
+    Because the shared native is arrows, the outbound for 'forward' is 'Up'."""
+    svc, km = _make_service(
+        monkeypatch, tmp_path, active_wid=active_wid,
+        windows=["ttr-1", "ttr-2"], games={"ttr-1": "ttr", "ttr-2": "ttr"},
+        assignments=[0, 1], settings=settings or {STRICT_TTR_SEPARATION: True},
+    )
+    km.add_set("ttr")  # creates set index 1 (defaults to arrows)
+    km.update_set_key("ttr", 1, "forward", "w")
+    km.update_set_key("ttr", 1, "reverse", "s")
+    km.update_set_key("ttr", 1, "left", "a")
+    km.update_set_key("ttr", 1, "right", "d")
+    return svc, km
+
+
+def test_ttr_strict_focused_mismatched_key_synthesizes_to_focused(monkeypatch, tmp_path):
+    """Toon2 focused, assigned WASD (set 1). User presses 'w'. The shared native
+    (set 0) is arrows, so outbound for forward is 'Up'; 'w' != 'Up' -> synthesize
+    'Up' to the focused window (strict ON). Toon1 (arrows set 0) ignores 'w'."""
+    svc, km = _two_ttr_toons(monkeypatch, tmp_path, "ttr-2")
+    sends = _capture_sends(svc)
+    svc._send_logical_action_km("keydown", "w", [True, True], [0, 1])
+    assert ("keydown", "ttr-2", "Up") in sends
+    assert not any(w == "ttr-1" for (_, w, _) in sends)
+
+
+def test_ttr_strict_focused_canonical_key_passes_native(monkeypatch, tmp_path):
+    """Toon1 focused, assigned arrows (set 0 = native). User presses 'Up'.
+    key == outbound 'Up', so the focused window is skipped (OS delivers it
+    natively); no synth to ttr-1. Toon2 (wasd) doesn't bind 'Up' -> no synth."""
+    svc, km = _two_ttr_toons(monkeypatch, tmp_path, "ttr-1")
+    sends = _capture_sends(svc)
+    svc._send_logical_action_km("keydown", "Up", [True, True], [0, 1])
+    assert not any(w == "ttr-1" for (_, w, _) in sends)
+
+
+def test_ttr_strict_off_skips_focused_unconditionally(monkeypatch, tmp_path):
+    """With the toggle OFF, the focused window is skipped even on a mismatched
+    key (today's behavior). Toon2 focused (wasd), press 'w' -> no synth to it."""
+    svc, km = _two_ttr_toons(monkeypatch, tmp_path, "ttr-2",
+                             settings={STRICT_TTR_SEPARATION: False})
+    sends = _capture_sends(svc)
+    svc._send_logical_action_km("keydown", "w", [True, True], [0, 1])
+    assert not any(w == "ttr-2" for (_, w, _) in sends)
+
+
+def test_ttr_background_window_still_forwards(monkeypatch, tmp_path):
+    """Regression: background TTR forwarding is unchanged. Toon1 focused
+    (arrows), Toon2 background (wasd); pressing 'w' routes outbound 'Up' to
+    background Toon2."""
+    svc, km = _two_ttr_toons(monkeypatch, tmp_path, "ttr-1")
+    sends = _capture_sends(svc)
+    svc._send_logical_action_km("keydown", "w", [True, True], [0, 1])
+    assert ("keydown", "ttr-2", "Up") in sends
+
+
+def test_ttr_no_grabber_falls_back_to_skip(monkeypatch, tmp_path):
+    """Toggle ON but no grabber armed -> router keeps today's unconditional
+    focused-window skip (no synth to the focused window), because without
+    suppression the conditional-skip path would be worse than today."""
+    svc, km = _two_ttr_toons(monkeypatch, tmp_path, "ttr-2")
+    sends = _capture_sends(svc)
+    svc._key_grabber = None  # override the sentinel: no grabber
+    svc._send_logical_action_km("keydown", "w", [True, True], [0, 1])
+    assert not any(w == "ttr-2" for (_, w, _) in sends)
