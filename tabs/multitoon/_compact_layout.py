@@ -409,6 +409,8 @@ class _CompactLayout(QWidget):
         # toggle_service_button + StatusBar pair.
         clear_layout(self._service_layout)
         self._service_layout.addWidget(self._tab.service_status_bar)
+        # Persistent Keep-Alive sleep indicator (hidden until KA runs).
+        self._service_layout.addWidget(self._tab._inhibit_indicator)
 
         # Config row. Refresh button moved into the status bar; the
         # profile-save button slot is filled in Task 5.

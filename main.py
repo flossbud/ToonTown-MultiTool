@@ -298,6 +298,9 @@ class MultiToonTool(QMainWindow):
     def __init__(self):
         super().__init__()
 
+        # One-time-per-launch gate for the Keep-Alive sleep warning dialog.
+        self._sleep_warning_shown = False
+
         self.setWindowTitle(window_title())
         # Default height grew from 770 to ~862 to fit the taller 112px logo
         # header (header 112 + chip rail 64 + tab natural ~686 = 862) without
@@ -481,6 +484,9 @@ class MultiToonTool(QMainWindow):
         )
         self.multitoon_tab.keep_alive_help_requested.connect(
             self._on_keep_alive_help_requested
+        )
+        self.multitoon_tab.keep_alive_inhibit_status.connect(
+            self._on_keep_alive_inhibit_status
         )
         self.multitoon_tab.launch_tab_requested.connect(
             lambda: self.nav_select(1)
@@ -1304,6 +1310,29 @@ class MultiToonTool(QMainWindow):
         Navigate to the Settings tab and highlight the Keep-Alive group."""
         self.nav_select(3)  # Settings tab index — see stack widget order in __init__
         self.settings_tab.highlight_keep_alive_group()
+
+    def _on_keep_alive_inhibit_status(self, status):
+        """Show a one-time-per-launch warning when Keep-Alive is running but the
+        verified sleep guarantee is missing. A held sleep lock (sleep_blocked
+        True) never warns; a screen-lock-only shortfall (sleep_blocked True,
+        cookie not held) never warns either - only sleep_blocked False does."""
+        if status.sleep_blocked or self._sleep_warning_shown:
+            return
+        self._sleep_warning_shown = True
+        from PySide6.QtWidgets import QMessageBox
+
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Warning)
+        box.setWindowTitle("Keep-Alive cannot block sleep")
+        box.setText(
+            "Keep-Alive is running, but this computer's sleep or hibernate "
+            "setting could not be held off. Your toons may be disconnected if "
+            "the machine sleeps.\n\nThis is unexpected on a standard Linux "
+            "desktop. You can keep the machine awake in your system's power "
+            "settings as a workaround."
+        )
+        box.setStandardButtons(QMessageBox.Ok)
+        box.exec()
 
     # ── TTR settings ──────────────────────────────────────────────────────────
 
