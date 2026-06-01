@@ -274,6 +274,21 @@ def test_focus_ttr_custom_set_uninstalls_and_clears_flag(monkeypatch, tmp_path):
     assert svc._ttr_grabs_active is False
 
 
+def test_focus_handler_clears_flag_when_no_grabber(monkeypatch, tmp_path):
+    """If the grabber was torn down, the focus handler must still leave
+    _ttr_grabs_active False (the reset runs before the grabber-None guard), so a
+    stale True can't survive into the router."""
+    svc, _ = _make_service(
+        monkeypatch, tmp_path, active_wid="ttr-1",
+        windows=["ttr-1"], games={"ttr-1": "ttr"},
+        assignments=[0], settings={STRICT_TTR_SEPARATION: True},
+    )
+    svc._key_grabber = None
+    svc._ttr_grabs_active = True  # stale from a prior focus
+    svc._on_active_window_changed_for_grabber("ttr-1")
+    assert svc._ttr_grabs_active is False
+
+
 def test_focus_non_game_uninstalls(monkeypatch, tmp_path):
     svc, _ = _make_service(
         monkeypatch, tmp_path, active_wid="other",

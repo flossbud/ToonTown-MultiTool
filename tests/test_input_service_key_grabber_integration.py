@@ -138,10 +138,13 @@ def test_start_key_grabber_skipped_when_grabber_prepare_returns_false(svc, monke
 def test_shutdown_calls_grabber_stop(svc, monkeypatch):
     fake = MagicMock()
     svc._key_grabber = fake
+    svc._ttr_grabs_active = True  # pretend grabs were installed for a TTR focus
     monkeypatch.setattr(input_service, "wine_input_bridge", MagicMock(), raising=False)
     svc.shutdown()
     fake.stop.assert_called_once()
     assert svc._key_grabber is None
+    # grabs are gone after shutdown -> the flag must not stay stale True
+    assert svc._ttr_grabs_active is False
 
 
 def test_passthrough_keysyms_for_wasd_canonical_includes_movement_modifiers_letters():
