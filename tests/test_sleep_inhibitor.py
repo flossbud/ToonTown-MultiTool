@@ -559,3 +559,23 @@ def test_tab_logs_warning_when_acquire_fails(monkeypatch):
     MultitoonTab._acquire_sleep_inhibitor(tab)
     _drive_inhibit_worker(tab)
     assert any("could not" in m.lower() for m in logs)
+
+
+def test_release_calls_inhibitor_release_even_when_not_active():
+    """A worker on a slow acquire may outrun wait() and acquire a holder AFTER
+    is_active() was read as False. release() must therefore be called
+    UNCONDITIONALLY, or that holder would leak (no OS inhibitor released)."""
+    from tabs.multitoon._tab import MultitoonTab
+
+    tab = MultitoonTab.__new__(MultitoonTab)
+    tab._inhibit_gen = 0
+    tab._inhibit_worker = None
+    tab.log = lambda m: None
+    released = {"called": False}
+    tab._sleep_inhibitor = SimpleNamespace(
+        is_active=lambda: False,                      # not active yet
+        release=lambda: released.update(called=True),
+    )
+
+    MultitoonTab._release_sleep_inhibitor(tab)
+    assert released["called"] is True                 # released despite is_active() False

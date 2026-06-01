@@ -3160,14 +3160,18 @@ class MultitoonTab(QWidget):
         self._inhibit_gen += 1  # invalidate any in-flight worker result
         w = getattr(self, "_inhibit_worker", None)
         if w is not None and w.isRunning():
-            # Bound the GUI-thread wait. If acquire() is on a slow fallback path
-            # and outruns the wait, SleepInhibitor's own lock still serializes
-            # this release against the in-flight acquire (no thunk is dropped).
-            w.wait(2000)
-        self._inhibit_worker = None
-        if self._sleep_inhibitor.is_active():
-            self._sleep_inhibitor.release()
-            self.log("[KeepAlive] Sleep inhibitor released.")
+            w.wait(2000)  # give a fast acquire a chance to finish first
+        # Release UNCONDITIONALLY (not gated on is_active()): if acquire() is on
+        # a slow fallback path and outran the wait, it may not have set
+        # sleep_blocked yet but will still acquire a holder. SleepInhibitor's
+        # reentrant lock makes this release block until that in-flight acquire
+        # completes, so the holder is released, never leaked. release() is a
+        # safe no-op when nothing is held, and also frees a screensaver-only
+        # cookie (which is_active() would not see).
+        self._sleep_inhibitor.release()
+        self.log("[KeepAlive] Sleep inhibitor released.")
+        if w is not None and not w.isRunning():
+            self._inhibit_worker = None  # only drop the ref once run() has returned
 
     def _start_keep_alive(self):
         if not self._keep_alive_running:
