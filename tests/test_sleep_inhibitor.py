@@ -222,6 +222,21 @@ def test_login1_fallback_closes_fd_when_list_raises(monkeypatch):
     assert closed["fd"] == 4242          # fd closed despite the raise
 
 
+def test_login1_fallback_degrades_when_inhibit_raises(monkeypatch):
+    """A QtDBus error in the Inhibit call (before we own an fd) degrades to
+    'not held' without propagating out of acquire()."""
+    _login1_fallback_harness(monkeypatch)
+
+    def boom(who, why):
+        raise RuntimeError("dbus error on Inhibit")
+
+    monkeypatch.setattr(si, "_qt_login1_inhibit", boom)
+
+    inh = si.SleepInhibitor()
+    assert inh.acquire() is None
+    assert inh.status.sleep_blocked is False
+
+
 def test_login1_fallback_closes_fd_when_not_open(monkeypatch):
     """If the duped fd is reported not-open, it is closed and not held."""
     closed = _login1_fallback_harness(monkeypatch)

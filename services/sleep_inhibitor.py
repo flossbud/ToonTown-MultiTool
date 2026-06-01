@@ -171,6 +171,7 @@ def _qt_login1_list_inhibitors():
     bus = QDBusConnection.systemBus()
     iface = QDBusInterface("org.freedesktop.login1", "/org/freedesktop/login1",
                            "org.freedesktop.login1.Manager", bus)
+    iface.setTimeout(3000)  # ms; bound verification too, not just Inhibit()
     reply = iface.call("ListInhibitors")
     if reply.errorName():
         return []
