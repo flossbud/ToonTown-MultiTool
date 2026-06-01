@@ -80,3 +80,43 @@ def test_strict_ttr_active_false_when_toggle_off(monkeypatch, tmp_path):
                            settings={STRICT_TTR_SEPARATION: False})
     svc._key_grabber = object()
     assert svc._strict_ttr_active() is False
+
+
+def test_canonical_set_for_ttr_arrows_default_toon(monkeypatch, tmp_path):
+    svc, km = _make_service(
+        monkeypatch, tmp_path, active_wid="ttr-1",
+        windows=["ttr-1"], games={"ttr-1": "ttr"}, assignments=[0],
+    )
+    # TTR default set 0 forward == 'Up' -> arrows
+    assert km.get_key_for_action("ttr", 0, "forward") == "Up"
+    assert svc._canonical_set_for_toon_index(0) == "arrows"
+
+
+def test_canonical_set_for_ttr_wasd_toon(monkeypatch, tmp_path):
+    svc, km = _make_service(
+        monkeypatch, tmp_path, active_wid="ttr-2",
+        windows=["ttr-1", "ttr-2"], games={"ttr-1": "ttr", "ttr-2": "ttr"},
+        assignments=[0, 1],
+    )
+    # Build a WASD set at index 1 for ttr (set 0 stays the arrows default).
+    km.add_set("ttr")  # creates set index 1
+    km.update_set_key("ttr", 1, "forward", "w")
+    km.update_set_key("ttr", 1, "reverse", "s")
+    km.update_set_key("ttr", 1, "left", "a")
+    km.update_set_key("ttr", 1, "right", "d")
+    # toon index 1 -> assignment set 1 -> forward 'w' -> wasd
+    assert svc._canonical_set_for_toon_index(1) == "wasd"
+
+
+def test_canonical_set_for_ttr_custom_set_returns_none(monkeypatch, tmp_path):
+    """A non-preset (custom) movement set yields None, which makes the grabber
+    uninstall and the window fall back to today's behavior (no strict
+    separation) - matching CC's preset-only capability."""
+    svc, km = _make_service(
+        monkeypatch, tmp_path, active_wid="ttr-2",
+        windows=["ttr-1", "ttr-2"], games={"ttr-1": "ttr", "ttr-2": "ttr"},
+        assignments=[0, 1],
+    )
+    km.add_set("ttr")  # creates set index 1
+    km.update_set_key("ttr", 1, "forward", "i")  # custom: neither 'w' nor 'Up'
+    assert svc._canonical_set_for_toon_index(1) is None

@@ -215,18 +215,30 @@ class InputService(QObject):
         self._on_active_window_changed_for_grabber(seed or "")
 
     def _canonical_set_for_toon_index(self, toon_index: int) -> str | None:
-        """Return 'wasd' or 'arrows' for the keyset assigned to a CC toon.
+        """Return 'wasd' or 'arrows' for the keyset assigned to the toon at
+        toon_index, for whichever game that toon's window belongs to. Returns
+        None for any non-preset set (which causes the grabber to uninstall and
+        the window to fall back to today's behavior).
 
-        Resolves the assigned set's forward binding: 'w' -> WASD;
-        'Up' -> arrows. Returns None if the index is out of range or the
-        keymap manager isn't wired.
-
-        Staleness note: changes to the focused toon's assignment are
-        picked up on the NEXT focus-change event, not live. A user who
-        re-assigns the currently-focused CC toon's keyset must alt-tab
-        away and back for the grabber to pick up the new canonical.
+        Staleness note: changes to the focused toon's assignment are picked up
+        on the NEXT focus-change event, not live.
         """
         if self.keymap_manager is None:
+            return None
+        try:
+            window_ids = self.window_manager.get_window_ids()
+        except Exception:
+            return None
+        if toon_index < 0 or toon_index >= len(window_ids):
+            return None
+        try:
+            from utils.game_registry import GameRegistry
+            game = GameRegistry.instance().get_game_for_window(
+                str(window_ids[toon_index])
+            )
+        except Exception:
+            game = None
+        if game is None:
             return None
         try:
             assignments = self._get_assignments(self.get_enabled_toons())
@@ -236,7 +248,7 @@ class InputService(QObject):
             return None
         set_idx = assignments[toon_index]
         try:
-            forward = self.keymap_manager.get_key_for_action("cc", set_idx, "forward")
+            forward = self.keymap_manager.get_key_for_action(game, set_idx, "forward")
         except Exception:
             return None
         if forward == "w":
