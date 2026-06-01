@@ -10,11 +10,13 @@ from PySide6.QtCore import QObject, Signal
 from utils.cc_isolation import MOVEMENT_ACTIONS as _MOVEMENT_ACTIONS
 from utils.held_key_registry import HoldKind, HeldKeyRegistry
 from utils.key_registry import NAMED_KEYSYMS_FROM_REGISTRY, PASSTHROUGH_KEYSYMS
+# Re-exported so existing `from services.input_service import STRICT_TTR_SEPARATION`
+# call sites keep working; the canonical home is utils/settings_keys.py.
+from utils.settings_keys import STRICT_TTR_SEPARATION
 
 WASD_KEYS     = frozenset({'w', 'a', 's', 'd'})
 MOVEMENT_KEYS = WASD_KEYS | frozenset({'Up', 'Down', 'Left', 'Right', 'space'})
 ARROW_KEYS    = frozenset({'Up', 'Down', 'Left', 'Right'})
-STRICT_TTR_SEPARATION = "strict_ttr_separation"
 ARROW_TO_WASD = {'Up': 'w', 'Down': 's', 'Left': 'a', 'Right': 'd'}
 
 MODIFIER_KEYS = frozenset({'Shift_L', 'Shift_R', 'Control_L', 'Control_R', 'Alt_L', 'Alt_R'})

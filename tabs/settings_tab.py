@@ -23,8 +23,9 @@ from services.cc_login_service import (
     discover_cc_installs,
 )
 from services.wine_runtimes import install_signature
-from services.input_service import STRICT_TTR_SEPARATION
-from utils.settings_keys import CC_ENGINE_INSTALL_SIGNATURE, SETTINGS_ACTIVE_CATEGORY
+from utils.settings_keys import (
+    CC_ENGINE_INSTALL_SIGNATURE, SETTINGS_ACTIVE_CATEGORY, STRICT_TTR_SEPARATION,
+)
 
 
 # ── New primitives (Settings tab redesign 2026-05-23) ─────────────────────────
