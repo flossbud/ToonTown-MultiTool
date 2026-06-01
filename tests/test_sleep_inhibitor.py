@@ -498,13 +498,13 @@ def test_tab_delegates_acquire_and_release(monkeypatch):
     tab.log = lambda m: logs.append(m)
     state = {"active": False}
     tab._sleep_inhibitor = SimpleNamespace(
-        acquire=lambda: state.update(active=True) or "portal",
+        acquire=lambda: state.update(active=True) or "systemd",
         is_active=lambda: state["active"],
         release=lambda: state.update(active=False),
     )
 
     MultitoonTab._acquire_sleep_inhibitor(tab)
-    assert any("portal" in m for m in logs)
+    assert any("systemd" in m for m in logs)
 
     MultitoonTab._release_sleep_inhibitor(tab)
     assert any("released" in m.lower() for m in logs)
