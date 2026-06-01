@@ -110,16 +110,16 @@ _TTR_CONTROL_TO_ACTION = {
     "performAction": "action",
 }
 
-# TTR's settings.json control values, translated to TTMT's X-keysym strings.
-# Keys are the actual literal strings TTR writes; values are what the rest
-# of TTMT (KeymapManager, InputService, Win32Backend, XlibBackend) expects.
+# TTR's settings.json control values normalized for TTMT's keymap storage.
+# Named/special strings (arrows, modifiers, control cluster, nav keys, F-keys)
+# are translated to their X11 keysym names here. Printable single-char values
+# (a-z and others like '\\') intentionally fall through verbatim — the keymap
+# must store the raw char so pynput event matching works at runtime.
+# _resolve_keysym() in input_service.py handles the raw-char → keysym
+# translation at send time.
 #
 # Confirmed by inspecting a real Windows TTR install's settings.json:
 # C:\Program Files (x86)\Toontown Rewritten\settings.json
-#
-# Anything not in this table falls through verbatim. That's intentional for
-# letter hotkeys (a-z) — TTR writes them as "w" / "a" etc., which our
-# keymap stores literally.
 _TTR_VALUE_TO_KEYSYM = {
     # Modifiers
     "shift": "Shift_L", "control": "Control_L", "alt": "Alt_L",
