@@ -164,16 +164,24 @@ def _qt_login1_inhibit(who, why):
 
 
 def _qt_login1_list_inhibitors():
-    """Return login1 ListInhibitors() rows as (what, who, why, mode) tuples."""
+    """Return login1 ListInhibitors() rows as (what, who, why, mode) tuples.
+    Returns [] on a D-Bus error reply or a structurally unexpected row, so a
+    malformed reply is treated as 'not verified' rather than raising."""
     from PySide6.QtDBus import QDBusConnection, QDBusInterface
     bus = QDBusConnection.systemBus()
     iface = QDBusInterface("org.freedesktop.login1", "/org/freedesktop/login1",
                            "org.freedesktop.login1.Manager", bus)
     reply = iface.call("ListInhibitors")
+    if reply.errorName():
+        return []
+    args = reply.arguments()
     rows = []
-    for entry in (reply.arguments()[0] if reply.arguments() else []):
+    for entry in (args[0] if args else []):
         # (what, who, why, mode, uid, pid)
-        rows.append((entry[0], entry[1], entry[2], entry[3]))
+        try:
+            rows.append((entry[0], entry[1], entry[2], entry[3]))
+        except (IndexError, TypeError):
+            continue
     return rows
 
 
@@ -301,16 +309,22 @@ class SleepInhibitor:
         own per-acquire token shows up in ListInhibitors(). Returns the duped
         fd to hold, or None (closing the fd on any unverified path)."""
         token = self._token  # set by _acquire_sleep_layer before fallback
-        fd = _qt_login1_inhibit(APP_NAME, f"{REASON} [{token}]")
+        try:
+            fd = _qt_login1_inhibit(APP_NAME, f"{REASON} [{token}]")
+        except Exception:
+            return None  # QtDBus error before we own an fd -> nothing to leak
         if fd is None:
             return None
-        if not _fd_open(fd):
-            _close_fd(fd)
-            return None
-        for (_what, _who, why, _mode) in _qt_login1_list_inhibitors():
-            if token in (why or ""):
-                return fd
-        _close_fd(fd)  # could not confirm our own inhibitor -> not held
+        # From here we own a duped fd; every non-success path must close it and
+        # no QtDBus error may propagate out of acquire().
+        try:
+            if _fd_open(fd):
+                for (_what, _who, why, _mode) in _qt_login1_list_inhibitors():
+                    if token in (why or ""):
+                        return fd
+        except Exception:
+            pass
+        _close_fd(fd)  # unverified, fd closed, or a QtDBus error -> not held
         return None
 
     def _acquire_screensaver_qtdbus(self):

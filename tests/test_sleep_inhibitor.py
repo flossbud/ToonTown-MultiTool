@@ -190,6 +190,51 @@ def test_login1_fallback_rejected_when_token_absent(monkeypatch):
     assert closed["fd"] == 4242         # the unverified fd is closed, no leak
 
 
+def _login1_fallback_harness(monkeypatch):
+    """Common wiring: systemd never verifies so the login1 fallback runs."""
+    monkeypatch.setattr(si, "_is_windows", lambda: False)
+    monkeypatch.setattr(si, "_uuid_token", lambda: "TOK1")
+    monkeypatch.setattr(si, "_popen_holder", lambda token: (FakeHolder(), 99))
+    monkeypatch.setattr(si, "_run_list", lambda timeout=None: "")
+    monkeypatch.setattr(si, "_close_write_fd", lambda fd: None)
+    monkeypatch.setattr(si, "_reap", lambda proc: None)
+    monkeypatch.setattr(si, "_qt_login1_inhibit", lambda who, why: 4242)
+    monkeypatch.setattr(si.SleepInhibitor, "_acquire_screensaver_qtdbus", lambda self: None)
+    closed = {"fd": None}
+    monkeypatch.setattr(si, "_close_fd", lambda fd: closed.update(fd=fd))
+    return closed
+
+
+def test_login1_fallback_closes_fd_when_list_raises(monkeypatch):
+    """A QtDBus error while verifying must NOT leak the duped fd and must NOT
+    propagate out of acquire() -- it degrades to 'not held'."""
+    closed = _login1_fallback_harness(monkeypatch)
+    monkeypatch.setattr(si, "_fd_open", lambda fd: True)
+
+    def boom():
+        raise RuntimeError("dbus marshalling error")
+
+    monkeypatch.setattr(si, "_qt_login1_list_inhibitors", boom)
+
+    inh = si.SleepInhibitor()
+    assert inh.acquire() is None         # graceful degrade, no exception
+    assert inh.status.sleep_blocked is False
+    assert closed["fd"] == 4242          # fd closed despite the raise
+
+
+def test_login1_fallback_closes_fd_when_not_open(monkeypatch):
+    """If the duped fd is reported not-open, it is closed and not held."""
+    closed = _login1_fallback_harness(monkeypatch)
+    monkeypatch.setattr(si, "_fd_open", lambda fd: False)
+    monkeypatch.setattr(si, "_qt_login1_list_inhibitors",
+                        lambda: [("sleep:idle", "ToonTown MultiTool",
+                                  "Keep-Alive is active [TOK1]", "block")])
+
+    inh = si.SleepInhibitor()
+    assert inh.acquire() is None
+    assert closed["fd"] == 4242
+
+
 # ── Fakes ────────────────────────────────────────────────────────────────
 def test_windows_acquire_sets_system_and_display_flags(monkeypatch):
     calls = []
