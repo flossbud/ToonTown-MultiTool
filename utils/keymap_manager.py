@@ -76,6 +76,7 @@ class KeymapManager:
         if isinstance(data, list):
             print("[KeymapManager] Migrating v1 keymaps.json to v2")
             self._sets = self._migrate_v1_list(data)
+            self._canonicalize_stored_keys()
             self._save()
             return
 
@@ -84,7 +85,9 @@ class KeymapManager:
             ttr = data.get("ttr") or [_seed_default_set("ttr")]
             cc = data.get("cc") or [_seed_default_set("cc")]
             self._sets = {"ttr": ttr, "cc": cc}
-            if self._backfill_missing_actions():
+            changed = self._backfill_missing_actions()
+            changed |= self._canonicalize_stored_keys()
+            if changed:
                 self._save()
             return
 
@@ -134,6 +137,24 @@ class KeymapManager:
                         fallback = sets[0].get(action, "")
                     s[action] = fallback
                     changed = True
+        return changed
+
+    def _canonicalize_stored_keys(self) -> bool:
+        """Migrate persisted X11 keysym name strings back to raw-char form.
+
+        Historical bug: apply_ttr_controls_to_set() stored 'backslash' for
+        TTR's raw '\\' performAction binding. pynput delivers '\\', so the
+        stored form never matched. Fix existing keymaps.json files on load.
+        """
+        _KEYSYM_TO_CHAR = {"backslash": "\\"}
+        changed = False
+        for game in GAMES:
+            for s in self._sets.get(game, []):
+                for action in logical_actions.actions_for(game):
+                    v = s.get(action)
+                    if v in _KEYSYM_TO_CHAR:
+                        s[action] = _KEYSYM_TO_CHAR[v]
+                        changed = True
         return changed
 
     def _save(self):

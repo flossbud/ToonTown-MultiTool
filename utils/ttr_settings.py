@@ -133,7 +133,9 @@ _TTR_VALUE_TO_KEYSYM = {
     # Whitespace / control
     "space": "space", "escape": "Escape", "enter": "Return",
     "tab": "Tab", "backspace": "BackSpace", "delete": "Delete",
-    "\\": "backslash",
+    # Intentionally no entry for "\\": pynput delivers the raw char '\\' and
+    # the keymap must store it the same way. _resolve_keysym('\\') converts to
+    # the X11 keysym 'backslash' at send time.
     # Navigation cluster
     "home": "Home", "end": "End",
     "page_up": "Prior", "page_down": "Next",

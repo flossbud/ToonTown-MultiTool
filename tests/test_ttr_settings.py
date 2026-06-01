@@ -267,15 +267,15 @@ def test_apply_ttr_controls_to_set_translates_perform_action_delete():
 
 
 def test_apply_ttr_controls_to_set_translates_perform_action_backslash():
-    """A TTR user may remap `performAction` to backslash. The literal `\\`
-    string from TTR's JSON must translate to the X11 keysym name
-    `backslash`, which is what the input service's _resolve_keysym
-    expects for that physical key."""
+    """TTR's JSON writes performAction as the raw char '\\'. That raw char
+    must be stored verbatim in the keymap so it matches what pynput delivers
+    at runtime. _resolve_keysym('\\') converts to the X11 keysym at send
+    time; the keymap must never store the X11 name 'backslash' directly."""
     from utils.ttr_settings import apply_ttr_controls_to_set
     km = _FakeKeymapManager()
     n = apply_ttr_controls_to_set(km, 0, {"performAction": "\\"})
     assert n == 1
-    assert km.calls == [("ttr", 0, "action", "backslash")]
+    assert km.calls == [("ttr", 0, "action", "\\")]
 
 
 def test_apply_ttr_controls_to_set_perform_action_letter_passes_through():

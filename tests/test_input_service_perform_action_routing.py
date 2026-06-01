@@ -256,6 +256,41 @@ def test_holding_perform_action_sends_one_keydown_then_keyup(monkeypatch):
     )
 
 
+def test_backslash_action_key_sends_keydown_and_keyup(monkeypatch):
+    """Regression: when keymap stores '\\' (raw char) for the 'action' binding,
+    pressing backslash must route as a held logical action to bg toons — one
+    keydown then one keyup. Prior to the fix, apply_ttr_controls_to_set() stored
+    'backslash' (X11 name) which pynput never delivered, causing the key to fall
+    into the printable/phantom branch with no hold tracking."""
+    sets = {
+        "cc": [{"forward": "w", "reverse": "s", "left": "a", "right": "d"}],
+        "ttr": [
+            {"forward": "w", "reverse": "s", "left": "a", "right": "d",
+             "jump": "space", "gags": "g", "tasks": "t", "book": "Alt_L",
+             "map": "Shift_L", "action": "\\"},
+        ],
+    }
+    q = queue.Queue()
+    svc, sent = _make_svc(
+        monkeypatch, sets,
+        window_ids=["w1", "w2"], active_window="w1",
+        assignments=[0, 0], registry_mapping={"w1": "ttr", "w2": "ttr"},
+        queue_obj=q,
+    )
+
+    _drive(svc, q, [
+        ("keydown", "\\"),
+        ("keyup",   "\\"),
+    ])
+
+    assert ("keydown", "w2", "backslash") in sent, (
+        f"expected ('keydown', 'w2', 'backslash'), got: {sent}"
+    )
+    assert ("keyup", "w2", "backslash") in sent, (
+        f"expected ('keyup', 'w2', 'backslash'), got: {sent}"
+    )
+
+
 def test_perform_action_falls_into_movement_branch_not_action_held(monkeypatch):
     """Regression guard: once Delete is bound as the 'action' logical
     action in the keymap, _movement_keys() includes it and the run loop

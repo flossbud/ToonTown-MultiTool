@@ -331,3 +331,52 @@ class TestPerformActionBackfill:
         mgr, _ = _make_manager_with_file(tmp_path, v2)
         for i in range(mgr.num_sets("cc")):
             assert "action" not in mgr.get_set("cc", i)
+
+
+class TestCanonicalizeStoredKeys:
+    """Migration: persisted 'backslash' (X11 keysym name) must be rewritten
+    to '\\' (raw char) on load so pynput events match the stored value."""
+
+    def test_backslash_keysym_name_migrated_to_raw_char_on_load(self, tmp_path):
+        v2 = {
+            "version": 2,
+            "ttr": [
+                {"name": "Default", "forward": "w", "reverse": "s",
+                 "left": "a", "right": "d", "jump": "space",
+                 "book": "Alt_L", "gags": "g", "tasks": "t", "map": "Shift_L",
+                 "action": "backslash"},
+            ],
+            "cc": [{"name": "Default"}],
+        }
+        mgr, path = _make_manager_with_file(tmp_path, v2)
+        assert mgr.get_default("ttr")["action"] == "\\"
+        saved = json.loads(path.read_text())
+        assert saved["ttr"][0]["action"] == "\\"
+
+    def test_raw_char_backslash_not_double_migrated(self, tmp_path):
+        v2 = {
+            "version": 2,
+            "ttr": [
+                {"name": "Default", "forward": "w", "reverse": "s",
+                 "left": "a", "right": "d", "jump": "space",
+                 "book": "Alt_L", "gags": "g", "tasks": "t", "map": "Shift_L",
+                 "action": "\\"},
+            ],
+            "cc": [{"name": "Default"}],
+        }
+        mgr, _ = _make_manager_with_file(tmp_path, v2)
+        assert mgr.get_default("ttr")["action"] == "\\"
+
+    def test_unrelated_actions_not_affected_by_migration(self, tmp_path):
+        v2 = {
+            "version": 2,
+            "ttr": [
+                {"name": "Default", "forward": "w", "reverse": "s",
+                 "left": "a", "right": "d", "jump": "space",
+                 "book": "Alt_L", "gags": "g", "tasks": "t", "map": "Shift_L",
+                 "action": "Delete"},
+            ],
+            "cc": [{"name": "Default"}],
+        }
+        mgr, _ = _make_manager_with_file(tmp_path, v2)
+        assert mgr.get_default("ttr")["action"] == "Delete"
