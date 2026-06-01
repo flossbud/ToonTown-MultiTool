@@ -380,3 +380,17 @@ class TestCanonicalizeStoredKeys:
         }
         mgr, _ = _make_manager_with_file(tmp_path, v2)
         assert mgr.get_default("ttr")["action"] == "Delete"
+
+    def test_v1_migration_path_canonicalizes_backslash_if_present(self, tmp_path):
+        """A manually-written v1 list that carries action='backslash' must
+        have it canonicalized to '\\' during the v1->v2 migration path
+        (_canonicalize_stored_keys is called before _save in the v1 branch)."""
+        v1 = [
+            {"name": "Default", "up": "Up", "down": "Down",
+             "left": "Left", "right": "Right", "jump": "control",
+             "action": "backslash"},
+        ]
+        mgr, path = _make_manager_with_file(tmp_path, v1)
+        assert mgr.get_default("ttr")["action"] == "\\"
+        saved = json.loads(path.read_text())
+        assert saved["ttr"][0]["action"] == "\\"
