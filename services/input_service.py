@@ -118,6 +118,11 @@ class InputService(QObject):
 
         self._xlib = None
         self._key_grabber = None
+        # True only while movement grabs are actually INSTALLED for a focused
+        # TTR preset window. Set by _on_active_window_changed_for_grabber. Gates
+        # the focused-window synth in _send_logical_action_km so we never
+        # synthesize to a focused window whose physical key isn't suppressed.
+        self._ttr_grabs_active = False
 
         # Track the most recent foreground game so keys pressed while TTMT
         # itself has focus still resolve through a meaningful default set.
@@ -447,14 +452,17 @@ class InputService(QObject):
         return bool(self.settings_manager.get(STRICT_TTR_SEPARATION, True))
 
     def _strict_ttr_active(self) -> bool:
-        """Whether strict separation can actually be enforced for TTR right now:
-        the toggle is ON AND a movement grabber exists. Without the grabber the
-        focused window's wrong-keyset keys can't be suppressed, so the router
-        must NOT take the conditional-skip path (it would move the focused toon
-        natively on a wrong key while also synthesizing to the right toon).
-        When no grabber is available, strict separation degrades to today's
-        unconditional focused-window skip."""
-        return self._strict_ttr_enabled() and self._key_grabber is not None
+        """Whether strict separation can actually be enforced for the focused
+        TTR window right now: the toggle is ON AND grabs are currently INSTALLED
+        for it (`_ttr_grabs_active`). Mere existence of a grabber object is not
+        enough -- the focus handler uninstalls grabs for non-game focus and for
+        non-preset/custom sets, and in that state the focused window's physical
+        key is NOT suppressed. If the router synthesized then, it would move the
+        focused toon both natively (unsuppressed key) and via the synth -> a
+        double-move. So the gate must reflect ACTUAL suppression, not object
+        existence. When grabs are not installed, strict separation degrades to
+        today's unconditional focused-window skip."""
+        return self._strict_ttr_enabled() and self._ttr_grabs_active
 
     # ── Keymap-aware send methods ──────────────────────────────────────────
 

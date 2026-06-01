@@ -61,24 +61,26 @@ def test_strict_ttr_enabled_reads_setting_false(monkeypatch, tmp_path):
     assert svc._strict_ttr_enabled() is False
 
 
-def test_strict_ttr_active_false_without_grabber(monkeypatch, tmp_path):
-    """Toggle ON but no grabber armed -> not active (router must fall back)."""
+def test_strict_ttr_active_false_without_installed_grabs(monkeypatch, tmp_path):
+    """Toggle ON but grabs not installed for the focused window -> not active
+    (router must fall back; _ttr_grabs_active defaults False)."""
     svc, _ = _make_service(monkeypatch, tmp_path)
-    svc._key_grabber = None
+    assert svc._ttr_grabs_active is False  # default
     assert svc._strict_ttr_active() is False
 
 
-def test_strict_ttr_active_true_with_grabber(monkeypatch, tmp_path):
-    """Both conditions met (toggle ON + a grabber exists): returns True."""
+def test_strict_ttr_active_true_with_installed_grabs(monkeypatch, tmp_path):
+    """Both conditions met (toggle ON + grabs installed for the focused TTR
+    window): returns True."""
     svc, _ = _make_service(monkeypatch, tmp_path)
-    svc._key_grabber = object()  # sentinel: a grabber exists
+    svc._ttr_grabs_active = True
     assert svc._strict_ttr_active() is True
 
 
 def test_strict_ttr_active_false_when_toggle_off(monkeypatch, tmp_path):
     svc, _ = _make_service(monkeypatch, tmp_path,
                            settings={STRICT_TTR_SEPARATION: False})
-    svc._key_grabber = object()
+    svc._ttr_grabs_active = True
     assert svc._strict_ttr_active() is False
 
 
@@ -124,14 +126,14 @@ def test_canonical_set_for_ttr_custom_set_returns_none(monkeypatch, tmp_path):
 
 def _capture_sends(svc):
     """Replace _send_via_backend with a recorder; return the list of calls.
-    Also install a grabber sentinel so _strict_ttr_active() is True (the run
-    loop isn't started in unit tests, so _key_grabber would otherwise be None
+    Also mark grabs as installed so _strict_ttr_active() is True (the run loop
+    isn't started in unit tests, so _ttr_grabs_active would otherwise be False
     and the router would take the fallback path)."""
     sends = []
     svc._send_via_backend = lambda action, win, keysym, modifiers=None: sends.append(
         (action, str(win), keysym)
     )
-    svc._key_grabber = object()  # sentinel: a grabber exists -> strict can be active
+    svc._ttr_grabs_active = True  # simulate grabs installed for the focused TTR window
     return sends
 
 
@@ -193,13 +195,14 @@ def test_ttr_background_window_still_forwards(monkeypatch, tmp_path):
     assert ("keydown", "ttr-2", "Up") in sends
 
 
-def test_ttr_no_grabber_falls_back_to_skip(monkeypatch, tmp_path):
-    """Toggle ON but no grabber armed -> router keeps today's unconditional
-    focused-window skip (no synth to the focused window), because without
-    suppression the conditional-skip path would be worse than today."""
+def test_ttr_grabs_inactive_falls_back_to_skip(monkeypatch, tmp_path):
+    """Toggle ON but grabs NOT installed for the focused window -> router keeps
+    today's unconditional focused-window skip (no synth to the focused window),
+    because without suppression the conditional-skip path would double-move the
+    focused toon. This is the custom-set / non-game-focus state."""
     svc, km = _two_ttr_toons(monkeypatch, tmp_path, "ttr-2")
     sends = _capture_sends(svc)
-    svc._key_grabber = None  # override the sentinel: no grabber
+    svc._ttr_grabs_active = False  # grabs not installed for this focus
     svc._send_logical_action_km("keydown", "w", [True, True], [0, 1])
     assert not any(w == "ttr-2" for (_, w, _) in sends)
 
