@@ -202,3 +202,23 @@ def test_ttr_no_grabber_falls_back_to_skip(monkeypatch, tmp_path):
     svc._key_grabber = None  # override the sentinel: no grabber
     svc._send_logical_action_km("keydown", "w", [True, True], [0, 1])
     assert not any(w == "ttr-2" for (_, w, _) in sends)
+
+
+def test_ttr_strict_focused_mismatched_keyup_synthesizes_to_focused(monkeypatch, tmp_path):
+    """keyup symmetry (load-bearing for VP hold-release): releasing 'w' on the
+    focused WASD toon synthesizes keyup 'Up' to the focused window, mirroring the
+    keydown. The skip conditional is action-agnostic, so down and up stay paired."""
+    svc, km = _two_ttr_toons(monkeypatch, tmp_path, "ttr-2")
+    sends = _capture_sends(svc)
+    svc._send_logical_action_km("keyup", "w", [True, True], [0, 1])
+    assert ("keyup", "ttr-2", "Up") in sends
+    assert not any(w == "ttr-1" for (_, w, _) in sends)
+
+
+def test_ttr_strict_focused_native_keyup_passes_native(monkeypatch, tmp_path):
+    """keyup of a native key on the focused arrows toon is skipped (the OS
+    delivers the real keyup); no synth to ttr-1."""
+    svc, km = _two_ttr_toons(monkeypatch, tmp_path, "ttr-1")
+    sends = _capture_sends(svc)
+    svc._send_logical_action_km("keyup", "Up", [True, True], [0, 1])
+    assert not any(w == "ttr-1" for (_, w, _) in sends)
