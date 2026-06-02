@@ -932,3 +932,74 @@ def test_route_all_reinstall_same_mode_is_noop_even_if_canonical_differs(fake_di
         assert root.ungrab_key.call_count == 0    # no drain/uninstall
     finally:
         g.stop()
+
+
+# ── Task 2: route_all event handling ──────────────────────────────────────────
+
+def _route_all_ready(fake_display, on_key, physically_down):
+    """A prepared route_all grabber with keycodes registered, _handle_event_
+    route_all callable directly. physically_down(kc)->bool stubs query_keymap."""
+    d, root = fake_display
+    g = grabber_mod.MovementKeyGrabber()
+    g._on_key = on_key
+    g._route_all = True
+    g._keycode_to_name = {100: ("grabbed", "w"), 101: ("grabbed", "a")}
+    g._key_physically_down = physically_down
+    return g
+
+
+def _ev(etype, detail, t=0):
+    from unittest.mock import MagicMock
+    e = MagicMock(); e.type = etype; e.detail = detail; e.time = t
+    return e
+
+
+def test_route_all_real_press_and_release(fake_display):
+    calls = []
+    g = _route_all_ready(fake_display, lambda a, k: calls.append((a, k)),
+                         physically_down=lambda kc: False)
+    g._handle_event_route_all(_ev(X.KeyPress, 100))
+    g._handle_event_route_all(_ev(X.KeyRelease, 100))  # physically up -> real
+    assert calls == [("keydown", "w"), ("keyup", "w")]
+
+
+def test_route_all_autorepeat_release_kept_held(fake_display):
+    calls = []
+    g = _route_all_ready(fake_display, lambda a, k: calls.append((a, k)),
+                         physically_down=lambda kc: True)  # still down = autorepeat
+    g._handle_event_route_all(_ev(X.KeyPress, 100))
+    g._handle_event_route_all(_ev(X.KeyRelease, 100))  # autorepeat -> dropped
+    assert calls == [("keydown", "w")]
+    assert 100 in g._held
+
+
+def test_route_all_autorepeat_press_not_redundant_keydown(fake_display):
+    calls = []
+    g = _route_all_ready(fake_display, lambda a, k: calls.append((a, k)),
+                         physically_down=lambda kc: True)
+    g._handle_event_route_all(_ev(X.KeyPress, 100))
+    g._handle_event_route_all(_ev(X.KeyPress, 100))  # autorepeat press
+    assert calls == [("keydown", "w")]
+
+
+def test_route_all_unheld_release_ignored(fake_display):
+    calls = []
+    g = _route_all_ready(fake_display, lambda a, k: calls.append((a, k)),
+                         physically_down=lambda kc: False)
+    g._handle_event_route_all(_ev(X.KeyRelease, 100))  # never pressed
+    assert calls == []
+
+
+def test_route_all_uninstall_drains_held(fake_display):
+    d, root = fake_display
+    calls = []
+    g = grabber_mod.MovementKeyGrabber()
+    g._on_key = lambda a, k: calls.append((a, k))
+    g._route_all = True
+    g._display = d; g._root = root
+    g._keycode_to_name = {100: ("grabbed", "w")}
+    g._grabbed = [(100, 0)]
+    g._held = {100}
+    g._uninstall_grabs_inline()
+    assert ("keyup", "w") in calls
+    assert g._held == set()

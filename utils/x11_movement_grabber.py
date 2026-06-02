@@ -272,6 +272,15 @@ class MovementKeyGrabber:
         self._current_canonical = canonical_set
 
     def _uninstall_grabs_inline(self) -> None:
+        if self._route_all and self._held and self._on_key is not None:
+            for keycode in list(self._held):
+                entry = self._keycode_to_name.get(keycode)
+                if entry is not None:
+                    try:
+                        self._on_key("keyup", entry[1])
+                    except Exception as e:  # noqa: BLE001
+                        print(f"[x11_movement_grabber] on_key (drain) raised: {e}")
+        self._held = set()
         for keycode, mod in self._grabbed:
             try:
                 self._root.ungrab_key(keycode, mod)
@@ -286,7 +295,6 @@ class MovementKeyGrabber:
         self._current_canonical = None
         self._route_all = False
         self._grab_ok = False
-        self._held = set()
 
     def _key_physically_down(self, keycode: int) -> bool:
         """True if `keycode` is currently held per the server's physical key
@@ -370,6 +378,11 @@ class MovementKeyGrabber:
                                 f"kc={event.detail} kind={_ent[0] if _ent else None} "
                                 f"ks={_ent[1] if _ent else None} canon={self._current_canonical} "
                                 f"xtime={event.time}")
+
+            if self._route_all:
+                self._handle_event_route_all(event)
+                continue
+            # ---- legacy KeyRelease guard + _handle_event below (unchanged) ----
 
             # Auto-repeat detection. X11 represents auto-repeat as a
             # KeyRelease immediately followed by a KeyPress for the same
@@ -485,3 +498,34 @@ class MovementKeyGrabber:
                 self._on_passthrough(action, keysym_name)
             except Exception as e:  # noqa: BLE001
                 print(f"[x11_movement_grabber] on_passthrough raised: {e}")
+
+    def _handle_event_route_all(self, event) -> None:
+        """route_all: native delivery already suppressed (owner_events=False)
+        and the keyboard is not frozen (GrabModeAsync), so no AllowEvents is
+        needed. Physical held-state + query_keymap (reliable without a freeze)
+        dedup autorepeat and gate real releases; every real transition routes
+        via on_key."""
+        entry = self._keycode_to_name.get(event.detail)
+        if entry is None or entry[0] != "grabbed":
+            return
+        keysym_name = entry[1]
+        if event.type == X.KeyPress:
+            if event.detail in self._held:
+                return  # autorepeat press
+            self._held.add(event.detail)
+            action = "keydown"
+        else:  # KeyRelease
+            if event.detail not in self._held:
+                return  # release without a tracked press: ignore
+            if self._key_physically_down(event.detail):
+                return  # autorepeat release: key still down, stay held
+            self._held.discard(event.detail)
+            action = "keyup"
+        if _ITRACE:
+            _itrace("grab", f"ROUTE_ALL kc={event.detail} ks={keysym_name} "
+                            f"action={action} held={sorted(self._held)}")
+        if self._on_key is not None:
+            try:
+                self._on_key(action, keysym_name)
+            except Exception as e:  # noqa: BLE001
+                print(f"[x11_movement_grabber] on_key raised: {e}")
