@@ -326,6 +326,12 @@ class InputService(QObject):
         self._intended_ttr_strict = (game == "ttr")
         if game == "ttr":
             # X11-only (gated above); route both keysets, suppress native.
+            if self.global_chat_active or self._phantom_active:
+                # Input capture (chat/whisper) is active: keep grabs OFF so
+                # keystrokes land natively in the focused TTR window. Intent
+                # stays True so the capture-close resync reinstalls route_all.
+                self._key_grabber.uninstall_grabs()
+                return
             passthrough = list(_passthrough_keysyms_for_canonical(canonical))
             self._key_grabber.install_grabs(
                 canonical_set=canonical, passthrough_keysyms=passthrough, route_all=True)

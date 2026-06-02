@@ -543,6 +543,76 @@ def test_strict_toggle_off_while_held_sends_focused_keyup(monkeypatch, tmp_path)
         "_strict_drain_active must be reset to False after drain"
 
 
+def test_focus_change_during_chat_does_not_reinstall_ttr_grabs(monkeypatch, tmp_path):
+    """Regression: focusing a TTR window while chat is open must NOT reinstall
+    route_all grabs. Intent must stay True so that when chat closes the
+    resync can reinstall them."""
+    svc, km = _make_service(
+        monkeypatch, tmp_path, active_wid="ttr-1",
+        windows=["ttr-1"], games={"ttr-1": "ttr"},
+        assignments=[0], settings={STRICT_TTR_SEPARATION: True},
+    )
+    fg = _FakeGrabber(on_grabs_changed=svc._on_grabs_changed)
+    svc._key_grabber = fg
+    svc.global_chat_active = True   # chat already open
+    fg.calls.clear()
+
+    svc._on_active_window_changed_for_grabber("ttr-1")
+
+    assert not any(op == "install" for op, *_ in fg.calls), (
+        "must NOT install grabs while chat is active; got: %s" % fg.calls
+    )
+    assert svc._intended_ttr_strict is True, (
+        "_intended_ttr_strict must stay True so capture-close resync reinstalls route_all"
+    )
+
+
+def test_focus_change_during_phantom_does_not_reinstall_ttr_grabs(monkeypatch, tmp_path):
+    """Regression: same guard applies when phantom/whisper capture is active
+    instead of (or in addition to) chat."""
+    svc, km = _make_service(
+        monkeypatch, tmp_path, active_wid="ttr-1",
+        windows=["ttr-1"], games={"ttr-1": "ttr"},
+        assignments=[0], settings={STRICT_TTR_SEPARATION: True},
+    )
+    fg = _FakeGrabber(on_grabs_changed=svc._on_grabs_changed)
+    svc._key_grabber = fg
+    svc.global_chat_active = False
+    svc._phantom_active = True      # phantom/whisper capture active
+    fg.calls.clear()
+
+    svc._on_active_window_changed_for_grabber("ttr-1")
+
+    assert not any(op == "install" for op, *_ in fg.calls), (
+        "must NOT install grabs while phantom is active; got: %s" % fg.calls
+    )
+    assert svc._intended_ttr_strict is True, (
+        "_intended_ttr_strict must stay True so phantom-close resync reinstalls route_all"
+    )
+
+
+def test_focus_change_no_capture_installs_ttr_grabs(monkeypatch, tmp_path):
+    """Sanity: when neither chat nor phantom is active, focusing a TTR window
+    MUST install route_all grabs (baseline/non-regression check)."""
+    svc, km = _make_service(
+        monkeypatch, tmp_path, active_wid="ttr-1",
+        windows=["ttr-1"], games={"ttr-1": "ttr"},
+        assignments=[0], settings={STRICT_TTR_SEPARATION: True},
+    )
+    fg = _FakeGrabber(on_grabs_changed=svc._on_grabs_changed)
+    svc._key_grabber = fg
+    svc.global_chat_active = False
+    svc._phantom_active = False
+    fg.calls.clear()
+
+    svc._on_active_window_changed_for_grabber("ttr-1")
+
+    assert any(op == "install" for op, *_ in fg.calls), (
+        "must install grabs when no capture is active; got: %s" % fg.calls
+    )
+    assert svc._intended_ttr_strict is True
+
+
 def test_chat_close_does_not_reinstall_while_phantom_active(monkeypatch, tmp_path):
     """Chat close must NOT reinstall grabs when phantom capture is still live.
 
