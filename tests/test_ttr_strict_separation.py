@@ -169,14 +169,16 @@ def test_ttr_strict_focused_mismatched_key_synthesizes_to_focused(monkeypatch, t
     assert not any(w == "ttr-1" for (_, w, _) in sends)
 
 
-def test_ttr_strict_focused_canonical_key_passes_native(monkeypatch, tmp_path):
+def test_ttr_strict_focused_canonical_key_synthesizes_when_strict_active(monkeypatch, tmp_path):
     """Toon1 focused, assigned arrows (set 0 = native). User presses 'Up'.
-    key == outbound 'Up', so the focused window is skipped (OS delivers it
-    natively); no synth to ttr-1. Toon2 (wasd) doesn't bind 'Up' -> no synth."""
+    With route_all active, the grabber suppresses native delivery even for
+    keys that match the outbound (Up == Up). The router must therefore
+    synthesize 'Up' to the focused window so it can move; the old
+    key==outbound skip no longer applies when strict is active."""
     svc, km = _two_ttr_toons(monkeypatch, tmp_path, "ttr-1")
     sends = _capture_sends(svc)
     svc._send_logical_action_km("keydown", "Up", [True, True], [0, 1])
-    assert not any(w == "ttr-1" for (_, w, _) in sends)
+    assert ("keydown", "ttr-1", "Up") in sends
 
 
 def test_ttr_strict_off_skips_focused_unconditionally(monkeypatch, tmp_path):
@@ -222,24 +224,29 @@ def test_ttr_strict_focused_mismatched_keyup_synthesizes_to_focused(monkeypatch,
     assert not any(w == "ttr-1" for (_, w, _) in sends)
 
 
-def test_ttr_strict_focused_native_keyup_passes_native(monkeypatch, tmp_path):
-    """keyup of a native key on the focused arrows toon is skipped (the OS
-    delivers the real keyup); no synth to ttr-1."""
+def test_ttr_strict_focused_native_keyup_synthesizes_when_strict_active(monkeypatch, tmp_path):
+    """keyup symmetry: releasing 'Up' on the focused arrows toon with
+    route_all active also synthesizes the keyup to the focused window.
+    route_all suppresses native delivery for all movement keys (matched
+    and mismatched), so the router must synthesize both down and up."""
     svc, km = _two_ttr_toons(monkeypatch, tmp_path, "ttr-1")
     sends = _capture_sends(svc)
     svc._send_logical_action_km("keyup", "Up", [True, True], [0, 1])
-    assert not any(w == "ttr-1" for (_, w, _) in sends)
+    assert ("keyup", "ttr-1", "Up") in sends
 
 
 class _FakeGrabber:
     """Stub grabber that, like the real x11 grabber, fires on_grabs_changed with
     the now-current canonical (None on uninstall) AFTER each grab op. This is how
-    _ttr_grabs_active gets set (the focus handler only records intent)."""
+    _ttr_grabs_active gets set (the focus handler only records intent).
+
+    Accepts route_all and passthrough_keysyms kwargs so it can handle both the
+    TTR (route_all=True) and CC (passthrough_keysyms=[...]) install paths."""
     def __init__(self, on_grabs_changed=None):
         self.calls = []
         self._on_grabs_changed = on_grabs_changed
         self._current = None
-    def install_grabs(self, canonical_set, passthrough_keysyms=None):
+    def install_grabs(self, canonical_set, passthrough_keysyms=None, route_all=False):
         self.calls.append(("install", canonical_set))
         self._current = canonical_set
         if self._on_grabs_changed:

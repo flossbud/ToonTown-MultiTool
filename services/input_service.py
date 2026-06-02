@@ -318,11 +318,15 @@ class InputService(QObject):
         # strict focus. CC focus installs the same way but intent stays False
         # (CC has its own always-on routing and must not flip the TTR gate).
         self._intended_ttr_strict = (game == "ttr")
-        passthrough = list(_passthrough_keysyms_for_canonical(canonical))
-        self._key_grabber.install_grabs(
-            canonical_set=canonical,
-            passthrough_keysyms=passthrough,
-        )
+        if game == "ttr":
+            # X11-only (gated above); route both keysets, suppress native.
+            self._key_grabber.install_grabs(canonical_set=canonical, route_all=True)
+        else:
+            # CC: legacy path. Omit route_all so the Win32 grabber (no such
+            # kwarg) is never broken; the X11 grabber defaults route_all=False.
+            passthrough = list(_passthrough_keysyms_for_canonical(canonical))
+            self._key_grabber.install_grabs(
+                canonical_set=canonical, passthrough_keysyms=passthrough)
 
     def _on_grabs_changed(self, canonical) -> None:
         """Called by the grabber AFTER grabs actually change (worker thread on
@@ -647,16 +651,13 @@ class InputService(QObject):
                 outbound = self.keymap_manager.get_key_for_action(toon_game, 0, toon_action)
                 if outbound is None:
                     continue
-                if win == active_window:
-                    # Strict separation: the focused window keeps its OWN native
-                    # key (OS delivers it) but mismatched keys are intercepted by
-                    # the grabber and synthesized here. Fall back to today's
-                    # unconditional skip when strict separation isn't actually
-                    # enforceable (toggle OFF or grabs not installed for this
-                    # focus) or when the pressed key already equals the native
-                    # outbound key.
-                    if not self._strict_ttr_active() or key == outbound:
-                        continue
+                if win == active_window and not self._strict_ttr_active():
+                    # Strict not enforceable (toggle OFF or grabs not installed):
+                    # the focused window still receives its native key -> skip.
+                    # When strict IS active, route_all suppressed the native key
+                    # for matched AND mismatched keys, so synthesize to the
+                    # focused toon too (no key == outbound skip).
+                    continue
                 keysym = self._resolve_keysym(outbound)
                 if keysym:
                     self._send_via_backend(action, win, keysym)

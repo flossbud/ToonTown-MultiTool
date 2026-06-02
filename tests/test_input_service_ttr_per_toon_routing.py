@@ -201,6 +201,54 @@ class TestTtrPerToonRouting:
         assert ("keydown", "200", "Up") not in sent
 
 
+def _make_ttr_service(monkeypatch):
+    """Minimal two-TTR-window service for the route_all wiring tests.
+
+    Window 100 (toon 0): set 0, forward='w' -> canonical 'wasd'.
+    Window 200 (toon 1): set 1, forward='Up' -> canonical 'arrows'.
+    """
+    svc, _ = _build_svc(
+        monkeypatch,
+        registry_mapping={"100": "ttr", "200": "ttr"},
+        focus_window_id="100",
+        assignments=[0, 1],
+    )
+    return svc
+
+
+def test_focused_ttr_toon_synthesizes_even_when_key_equals_outbound(monkeypatch):
+    """With route_all, the focused toon's native key is suppressed by the
+    grabber for ALL movement keys (not just mismatched ones). So when
+    strict is active, the router must synthesize the outbound key to the
+    focused window even when key == outbound; otherwise the focused toon
+    cannot move."""
+    svc = _make_ttr_service(monkeypatch)
+    svc._strict_ttr_active = lambda: True
+    sent = []
+    svc._send_via_backend = lambda action, win, keysym, *a, **k: sent.append((action, win, keysym))
+    svc.window_manager.get_active_window = lambda: svc.window_manager.get_window_ids()[0]
+    enabled = svc.get_enabled_toons()
+    assignments = svc._get_assignments(enabled)
+    svc._send_logical_action_km("keydown", "w", enabled, assignments)
+    focused = str(svc.window_manager.get_window_ids()[0])
+    assert any(win == focused and keysym == "w" for _, win, keysym in sent)
+
+
+def test_ttr_focus_installs_route_all_true(monkeypatch):
+    """When a TTR preset window is focused with strict ON, the focus handler
+    must call install_grabs with route_all=True so both keysets are grabbed
+    and native delivery is suppressed for all movement keys."""
+    import unittest.mock as _m
+    svc = _make_ttr_service(monkeypatch)
+    grab = svc._key_grabber = _m.MagicMock()
+    monkeypatch.setattr(svc, "_strict_ttr_enabled", lambda: True)
+    monkeypatch.setattr(svc, "_ttr_strict_supported", lambda: True)
+    win = str(svc.window_manager.get_window_ids()[0])
+    svc._on_active_window_changed_for_grabber(win)
+    kwargs = grab.install_grabs.call_args.kwargs
+    assert kwargs.get("route_all") is True
+
+
 class TestNonMovementFallback:
     """Sets in TTMT are movement-only overrides; non-movement bindings
     (jump, sprint, map, etc.) live only in the default set. Strict
