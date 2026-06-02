@@ -120,6 +120,17 @@ class InputService(QObject):
         self.CHAT_IDLE_TIMEOUT = 15.0
 
         self._xlib = None
+        # _xlib_backend_failed: True only when the xlib backend was REQUESTED
+        # (input_backend == "xlib") but its connect() raised. Distinct from the
+        # user explicitly selecting the xdotool backend. _send_via_backend reads
+        # this to REFUSE a silent xdotool/XTEST fallback, which would re-trigger
+        # the Wayland input-control portal the app deliberately avoids (and can
+        # stick an auto-repeating key).
+        self._xlib_backend_failed = False
+        # One-shot guard so the "input delivery disabled" surfacing fires once
+        # per failure episode, not on every dropped keystroke. Reset whenever a
+        # working backend is (re)established. (Consumed in Task 2.)
+        self._xlib_unavailable_logged = False
         self._key_grabber = None
         # True only while movement grabs are actually INSTALLED for a focused
         # TTR preset window. Set by _on_active_window_changed_for_grabber. Gates
@@ -469,23 +480,49 @@ class InputService(QObject):
                     from utils.win32_backend import Win32Backend
                     self._xlib = Win32Backend()
                     self._xlib.connect()
+                    self._xlib_backend_failed = False
+                    self._xlib_unavailable_logged = False
                 except Exception as e:
                     print(f"[InputService] Win32 backend unavailable: {e}")
                     self._xlib = None
+                    self._xlib_backend_failed = True
             return
 
         use_xlib = (self.settings_manager.get("input_backend", "xlib") == "xlib") if self.settings_manager else True
-        if use_xlib and self._xlib is None:
-            try:
-                from utils.xlib_backend import XlibBackend
-                self._xlib = XlibBackend()
-                self._xlib.connect()
-            except Exception as e:
-                print(f"[InputService] Xlib backend unavailable, falling back to xdotool: {e}")
+        if use_xlib:
+            if self._xlib is None:
+                try:
+                    from utils.xlib_backend import XlibBackend
+                    self._xlib = XlibBackend()
+                    self._xlib.connect()
+                    self._xlib_backend_failed = False
+                    self._xlib_unavailable_logged = False
+                    if _ITRACE:
+                        _itrace("backend", "xlib backend connected")
+                except Exception as e:
+                    # Do NOT fall back to xdotool/XTEST: that re-triggers the
+                    # Wayland input-control portal the app deliberately avoids
+                    # and can leave a stuck auto-repeating key. Disable
+                    # synthetic input and surface the failure instead.
+                    print(f"[InputService] Xlib backend unavailable; synthetic "
+                          f"input disabled (refusing xdotool/XTEST fallback): {e}")
+                    self._xlib = None
+                    self._xlib_backend_failed = True
+                    if _ITRACE:
+                        _itrace("backend", f"xlib connect FAILED: {e}")
+                    if self.logging_enabled:
+                        self.input_log.emit(
+                            "[Input] Xlib backend unavailable — input delivery "
+                            "disabled (refusing xdotool/XTEST fallback)"
+                        )
+        else:
+            # User explicitly selected the xdotool backend (intended; the
+            # settings UI warns about the Wayland portal on GNOME).
+            if self._xlib is not None:
+                self._xlib.disconnect()
                 self._xlib = None
-        elif not use_xlib and self._xlib is not None:
-            self._xlib.disconnect()
-            self._xlib = None
+            self._xlib_backend_failed = False
+            self._xlib_unavailable_logged = False
 
     def stop(self, wait: bool = False):
         self.running = False
