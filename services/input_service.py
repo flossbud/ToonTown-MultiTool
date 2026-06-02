@@ -1041,11 +1041,21 @@ class InputService(QObject):
                                     self._send_action_keydown_to_bg(key, enabled, assignments)
 
                 # Flush keyups that have been buffered past the auto-repeat
-                # window. These are real releases — no matching keydown arrived
-                # in time, so the key was genuinely released.
+                # window. These look like real releases — no matching keydown
+                # arrived in time — BUT X11 has one more ambiguity the timer
+                # can't catch: when two keys are held, only the most-recent one
+                # auto-repeats, and releasing the OTHER key ends that repeat with
+                # a final, UNPAIRED release. That unpaired release waits out the
+                # window and would stop a still-held toon. So before treating a
+                # buffered keyup as real, confirm the key is actually physically
+                # up. If it is still held (positive XQueryKeymap), it's an
+                # auto-repeat artifact — drop it; the genuine release will buffer
+                # and flush later. Unknown/non-X paths fall back to time-based.
                 for stale_key, buffered_at in list(pending_keyups.items()):
                     if now - buffered_at >= self.AUTO_REPEAT_DEDUP_WINDOW:
                         del pending_keyups[stale_key]
+                        if self._key_still_physically_down(stale_key):
+                            continue
                         if self._dispatch_keyup(stale_key, enabled, assignments):
                             bs_press_time  = None
                             bs_last_repeat = 0.0
@@ -1238,6 +1248,23 @@ class InputService(QObject):
         """Fix #8: O(1) lookup. Delegates to the module-level _resolve_keysym
         so instance call sites and registry tests share one implementation."""
         return _resolve_keysym(key)
+
+    def _key_still_physically_down(self, key) -> bool:
+        """True ONLY when we can positively confirm (via XQueryKeymap on the
+        Xlib backend) that `key` is still physically held. Returns False for
+        every other case — no Xlib backend (Windows / xdotool), an unmappable
+        key, or any query failure — so the caller falls back to the existing
+        time-based release handling and behavior is unchanged off Linux/Xlib.
+        Used to drop unpaired auto-repeat releases of a still-held co-key."""
+        backend = self._xlib
+        probe = getattr(backend, "key_physically_down", None)
+        if probe is None:
+            return False
+        keysym = self._resolve_keysym(key) or key
+        try:
+            return probe(keysym) is True
+        except Exception:
+            return False
 
     def _cc_window_ids(self) -> list:
         """Return the subset of managed windows that are CC windows.

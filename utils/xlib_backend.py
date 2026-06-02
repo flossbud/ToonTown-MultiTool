@@ -89,6 +89,48 @@ class XlibBackend:
         kc = self._display.keysym_to_keycode(ks)
         return kc if kc else None
 
+    def key_physically_down(self, keysym_str: str):
+        """Tri-state physical-key check via XQueryKeymap.
+
+        Returns True if the key is currently held, False if it is up, or None
+        when the answer is unknown (no display, unmappable keysym, or query
+        failure) so callers can fall back to their default behavior rather than
+        guess. Querying the server's keymap is a direct physical-state read and
+        is unaffected by the GrabModeAsync movement grab (no freeze). Must be
+        called on the thread that owns this Display (the InputService worker,
+        same as send_event)."""
+        if not self._display:
+            return None
+        try:
+            ks = XK.string_to_keysym(keysym_str)
+            if not ks and len(keysym_str) == 1:
+                ks = ord(keysym_str)
+            if not ks:
+                return None
+            # All keycodes that map to this keysym (handles duplicate/layout keys).
+            keycodes = []
+            try:
+                for item in self._display.keysym_to_keycodes(ks):
+                    kc = item[0] if isinstance(item, (tuple, list)) else item
+                    keycodes.append(kc)
+            except Exception:
+                keycodes = []
+            if not keycodes:
+                kc = self._display.keysym_to_keycode(ks)
+                if kc:
+                    keycodes = [kc]
+            if not keycodes:
+                return None
+            km = self._display.query_keymap()
+            if not isinstance(km, (list, tuple)) or len(km) != 32:
+                return None
+            for kc in keycodes:
+                if 0 <= kc <= 255 and (km[kc >> 3] & (1 << (kc & 7))):
+                    return True
+            return False
+        except Exception:
+            return None
+
     def _modifier_mask(self, modifiers: list) -> int:
         mask = 0
         for m in modifiers:
