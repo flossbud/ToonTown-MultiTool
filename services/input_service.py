@@ -320,7 +320,9 @@ class InputService(QObject):
         self._intended_ttr_strict = (game == "ttr")
         if game == "ttr":
             # X11-only (gated above); route both keysets, suppress native.
-            self._key_grabber.install_grabs(canonical_set=canonical, route_all=True)
+            passthrough = list(_passthrough_keysyms_for_canonical(canonical))
+            self._key_grabber.install_grabs(
+                canonical_set=canonical, passthrough_keysyms=passthrough, route_all=True)
         else:
             # CC: legacy path. Omit route_all so the Win32 grabber (no such
             # kwarg) is never broken; the X11 grabber defaults route_all=False.

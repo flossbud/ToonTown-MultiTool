@@ -203,10 +203,13 @@ class MovementKeyGrabber:
                               passthrough_keysyms: list[str],
                               route_all: bool = False) -> None:
         if route_all:
-            # passthrough_keysyms intentionally unused: route_all grabs all 8 movement keysyms as "grabbed".
             # Idempotent on MODE, not canonical: both keysets are grabbed
             # regardless of canonical, so a TTR->TTR focus switch must not
             # re-grab (which would drain a held key). Just refresh the token.
+            # (This early-return path leaves passthrough registration as-is;
+            # the fresh-install path below registers passthrough_keysyms so
+            # non-movement keys redirected during an active grab can be
+            # re-delivered to the focused window -- see _handle_event_route_all.)
             if self._route_all and self._grab_ok:
                 self._current_canonical = canonical_set
                 return
@@ -233,6 +236,19 @@ class MovementKeyGrabber:
                 self._display.sync()
             except Exception:
                 pass
+            # Register passthrough keysyms (recognized, NOT grabbed): when any
+            # movement key is held, X redirects ALL keyboard events here via the
+            # active grab (owner_events=False). Non-movement keys arrive via that
+            # redirect path; we re-deliver them to the focused window via synth.
+            # setdefault so a movement "grabbed" entry is never overwritten.
+            for keysym_name in passthrough_keysyms:
+                ks = XK.string_to_keysym(keysym_name)
+                if ks == 0:
+                    continue
+                keycode = self._display.keysym_to_keycode(ks)
+                if keycode == 0:
+                    continue
+                self._keycode_to_name.setdefault(keycode, ("passthrough", keysym_name))
             # If NOTHING grabbed, native is not suppressed; report inactive so
             # the router does not synthesize to an unsuppressed focused window.
             self._current_canonical = canonical_set if self._grab_ok else None
@@ -506,9 +522,24 @@ class MovementKeyGrabber:
         dedup autorepeat and gate real releases; every real transition routes
         via on_key."""
         entry = self._keycode_to_name.get(event.detail)
-        if entry is None or entry[0] != "grabbed":
+        if entry is None:
             return
-        keysym_name = entry[1]
+        kind, keysym_name = entry
+        if kind == "passthrough":
+            # Non-movement key redirected here by the active grab that a held
+            # movement key established. Re-deliver to the focused window via
+            # synthesize (on_passthrough -> backend). No ReplayKeyboard: the
+            # grab is GrabModeAsync and native delivery is already suppressed,
+            # so this synth is the single delivery (no double-move).
+            action = "keydown" if event.type == X.KeyPress else "keyup"
+            if self._on_passthrough is not None:
+                try:
+                    self._on_passthrough(action, keysym_name)
+                except Exception as e:  # noqa: BLE001
+                    print(f"[x11_movement_grabber] on_passthrough raised: {e}")
+            return
+        if kind != "grabbed":
+            return
         if event.type == X.KeyPress:
             if event.detail in self._held:
                 return  # autorepeat press

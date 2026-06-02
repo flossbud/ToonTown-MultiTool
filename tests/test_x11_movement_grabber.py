@@ -1003,3 +1003,46 @@ def test_route_all_uninstall_drains_held(fake_display):
     g._uninstall_grabs_inline()
     assert ("keyup", "w") in calls
     assert g._held == set()
+
+
+# ── Task 3B: route_all passthrough re-delivery ────────────────────────────────
+
+def test_route_all_install_registers_passthrough_without_grabbing(fake_display):
+    """route_all grabs the 8 movement keys AND registers passthrough keysyms
+    (recognized but NOT grabbed) so they can be re-delivered when redirected."""
+    d, root = fake_display
+    from Xlib import XK
+    names = {"w": 100, "a": 101, "s": 102, "d": 103,
+             "Up": 111, "Down": 116, "Left": 113, "Right": 114, "j": 150}
+    d.keysym_to_keycode.side_effect = (
+        lambda ks: next((kc for n, kc in names.items()
+                         if XK.string_to_keysym(n) == ks), 0))
+    g = grabber_mod.MovementKeyGrabber()
+    try:
+        g.prepare(on_key=lambda *_: None, should_consume=lambda _: True,
+                  on_passthrough=lambda *_: None)
+        g.install_grabs(canonical_set="wasd", passthrough_keysyms=["j"], route_all=True)
+        import time; time.sleep(0.1)
+        assert g._keycode_to_name.get(150) == ("passthrough", "j")
+        grabbed = {c.args[0] for c in root.grab_key.call_args_list}
+        assert 150 not in grabbed                 # passthrough key not grabbed
+        assert 100 in grabbed and 111 in grabbed  # movement keys grabbed
+    finally:
+        g.stop()
+
+
+def test_route_all_passthrough_key_calls_on_passthrough(fake_display):
+    """A non-movement key event (arrives only via the active-grab redirect)
+    is re-delivered through on_passthrough, NOT dropped, NOT via on_key."""
+    d, root = fake_display
+    pt, ok = [], []
+    g = grabber_mod.MovementKeyGrabber()
+    g._on_passthrough = lambda a, k: pt.append((a, k))
+    g._on_key = lambda a, k: ok.append((a, k))
+    g._route_all = True
+    g._keycode_to_name = {150: ("passthrough", "j")}
+    g._handle_event_route_all(_ev(X.KeyPress, 150))
+    g._handle_event_route_all(_ev(X.KeyRelease, 150))
+    assert pt == [("keydown", "j"), ("keyup", "j")]
+    assert ok == []
+    assert 150 not in g._held
