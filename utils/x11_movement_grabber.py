@@ -71,6 +71,8 @@ def _modifier_combos():
 
 _LOCK_MODIFIERS = _modifier_combos()
 
+_ALL_MOVEMENT_KEYSYMS = ("w", "a", "s", "d", "Up", "Down", "Left", "Right")
+
 
 def xlib_available() -> bool:
     """Probe whether the module can do anything at all."""
@@ -99,6 +101,9 @@ class MovementKeyGrabber:
         self._on_passthrough: Optional[Callable[[str, str], None]] = None
         self._should_consume: Optional[Callable[[str], bool]] = None
         self._on_grabs_changed: Optional[Callable[[Optional[str]], None]] = None
+        self._route_all: bool = False
+        self._held: set[int] = set()  # physically-held keycodes; populated by route_all handling (Task 2)
+        self._grab_ok: bool = False
 
     def prepare(
         self,
@@ -140,11 +145,14 @@ class MovementKeyGrabber:
         self,
         canonical_set: str,
         passthrough_keysyms: Optional[list[str]] = None,
+        route_all: bool = False,
     ) -> None:
-        """Register passive grabs on the OPPOSITE of canonical_set.
-        Idempotent if the requested set is already active. Safe to call
-        from any thread."""
-        self._actions.put(("install", canonical_set, list(passthrough_keysyms or [])))
+        """route_all=True (TTR strict, X11 only): grab BOTH keysets,
+        GrabModeAsync + owner_events=False, route every movement key via
+        on_key. route_all=False (CC, default): legacy conflicting-keyset /
+        GrabModeSync / passthrough. Safe from any thread."""
+        self._actions.put(("install", canonical_set,
+                           list(passthrough_keysyms or []), route_all))
 
     def uninstall_grabs(self) -> None:
         """Remove all currently-installed passive grabs. Safe to call
@@ -175,6 +183,9 @@ class MovementKeyGrabber:
             self._grabbed = []
             self._keycode_to_name = {}
             self._current_canonical = None
+            self._route_all = False
+            self._grab_ok = False
+            self._held = set()
         # Discard any pending actions so a subsequent prepare() starts with a
         # clean queue. Without this, an install_grabs() enqueued between
         # stop() and the thread's exit would survive into the next lifecycle
@@ -188,9 +199,48 @@ class MovementKeyGrabber:
             return ("w", "a", "s", "d")
         return ()
 
-    def _install_grabs_inline(self, canonical_set: str, passthrough_keysyms: list[str]) -> None:
-        if self._current_canonical == canonical_set:
-            return  # idempotent
+    def _install_grabs_inline(self, canonical_set: str,
+                              passthrough_keysyms: list[str],
+                              route_all: bool = False) -> None:
+        if route_all:
+            # passthrough_keysyms intentionally unused: route_all grabs all 8 movement keysyms as "grabbed".
+            # Idempotent on MODE, not canonical: both keysets are grabbed
+            # regardless of canonical, so a TTR->TTR focus switch must not
+            # re-grab (which would drain a held key). Just refresh the token.
+            if self._route_all and self._grab_ok:
+                self._current_canonical = canonical_set
+                return
+            if self._grabbed:
+                self._uninstall_grabs_inline()
+            self._route_all = True
+            self._grab_ok = False
+            for keysym_name in _ALL_MOVEMENT_KEYSYMS:
+                ks = XK.string_to_keysym(keysym_name)
+                if ks == 0:
+                    continue
+                keycode = self._display.keysym_to_keycode(ks)
+                if keycode == 0:
+                    continue
+                self._keycode_to_name[keycode] = ("grabbed", keysym_name)
+                for mod in _LOCK_MODIFIERS:
+                    try:
+                        self._root.grab_key(keycode, mod, False,
+                                            X.GrabModeAsync, X.GrabModeAsync)
+                        self._grabbed.append((keycode, mod))
+                        self._grab_ok = True
+                    except BadAccess:
+                        pass
+            try:
+                self._display.sync()
+            except Exception:
+                pass
+            # If NOTHING grabbed, native is not suppressed; report inactive so
+            # the router does not synthesize to an unsuppressed focused window.
+            self._current_canonical = canonical_set if self._grab_ok else None
+            return
+        # ---- legacy CC path (unchanged) ----
+        if self._current_canonical == canonical_set and not self._route_all:
+            return
         if self._grabbed:
             self._uninstall_grabs_inline()
         keysyms = self._conflicting_keysyms(canonical_set)
@@ -204,10 +254,8 @@ class MovementKeyGrabber:
             self._keycode_to_name[keycode] = ("grabbed", keysym_name)
             for mod in _LOCK_MODIFIERS:
                 try:
-                    self._root.grab_key(
-                        keycode, mod, True,
-                        X.GrabModeAsync, X.GrabModeSync,
-                    )
+                    self._root.grab_key(keycode, mod, True,
+                                        X.GrabModeAsync, X.GrabModeSync)
                     self._grabbed.append((keycode, mod))
                 except BadAccess:
                     pass
@@ -238,6 +286,9 @@ class MovementKeyGrabber:
         self._grabbed = []
         self._keycode_to_name = {}
         self._current_canonical = None
+        self._route_all = False
+        self._grab_ok = False
+        self._held = set()
 
     def _key_physically_down(self, keycode: int) -> bool:
         """True if `keycode` is currently held per the server's physical key
@@ -280,8 +331,8 @@ class MovementKeyGrabber:
                 action = self._actions.get_nowait()
                 try:
                     if action[0] == "install":
-                        _, canonical_set, passthrough = action
-                        self._install_grabs_inline(canonical_set, passthrough)
+                        _, canonical_set, passthrough, route_all = action
+                        self._install_grabs_inline(canonical_set, passthrough, route_all)
                         self._notify_grabs_changed()
                     elif action[0] == "uninstall":
                         self._uninstall_grabs_inline()

@@ -820,3 +820,44 @@ def test_query_keymap_failure_falls_back_to_real_release(fake_display):
     g.stop()
 
     assert on_passthrough_calls == [("keyup", "w")]
+
+
+def test_route_all_grabs_both_keysets_async_owner_false(fake_display):
+    d, root = fake_display
+    from Xlib import XK
+    names = ["w", "a", "s", "d", "Up", "Down", "Left", "Right"]
+    keycodes = {n: 100 + i for i, n in enumerate(names)}
+    d.keysym_to_keycode.side_effect = (
+        lambda ks: next((kc for n, kc in keycodes.items()
+                         if XK.string_to_keysym(n) == ks), 0))
+    g = grabber_mod.MovementKeyGrabber()
+    try:
+        g.prepare(on_key=lambda *_: None, should_consume=lambda _: True)
+        g.install_grabs(canonical_set="wasd", route_all=True)
+        import time; time.sleep(0.1)
+        grabbed = {c.args[0] for c in root.grab_key.call_args_list}
+        assert grabbed == set(keycodes.values())            # all 8, both sets
+        sample = root.grab_key.call_args_list[0]
+        assert sample.args[2] is False                       # owner_events
+        assert sample.args[4] == grabber_mod.X.GrabModeAsync # keyboard mode
+    finally:
+        g.stop()
+
+
+def test_route_all_reinstall_same_mode_is_noop_even_if_canonical_differs(fake_display):
+    """Switching focus between two TTR toons (wasd <-> arrows) must NOT
+    re-grab: route_all grabs both keysets regardless of canonical, and a
+    re-grab would drain a still-held key and stop the toon."""
+    d, root = fake_display
+    g = grabber_mod.MovementKeyGrabber()
+    try:
+        g.prepare(on_key=lambda *_: None, should_consume=lambda _: True)
+        g.install_grabs(canonical_set="wasd", route_all=True)
+        import time; time.sleep(0.1)
+        first = root.grab_key.call_count
+        g.install_grabs(canonical_set="arrows", route_all=True)  # other TTR toon
+        time.sleep(0.1)
+        assert root.grab_key.call_count == first  # no re-grab
+        assert root.ungrab_key.call_count == 0    # no drain/uninstall
+    finally:
+        g.stop()
