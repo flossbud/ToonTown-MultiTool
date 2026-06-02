@@ -29,6 +29,8 @@ import queue as _queue
 import threading
 from typing import Callable, Optional
 
+from utils.input_trace import trace as _itrace, ENABLED as _ITRACE
+
 try:
     from Xlib import display as _xlib_display, X, XK
     from Xlib.error import BadAccess, ConnectionClosedError
@@ -313,6 +315,13 @@ class MovementKeyGrabber:
             if event.type not in (X.KeyPress, X.KeyRelease):
                 continue
 
+            if _ITRACE:
+                _ent = self._keycode_to_name.get(event.detail)
+                _itrace("grab", f"EVENT {'PRESS' if event.type == X.KeyPress else 'RELEASE'} "
+                                f"kc={event.detail} kind={_ent[0] if _ent else None} "
+                                f"ks={_ent[1] if _ent else None} canon={self._current_canonical} "
+                                f"xtime={event.time}")
+
             # Auto-repeat detection. X11 represents auto-repeat as a
             # KeyRelease immediately followed by a KeyPress for the same
             # key at the same timestamp. Without this dedup, every
@@ -333,7 +342,11 @@ class MovementKeyGrabber:
                 # the focused window as a real keyup, stopping that toon while the
                 # user controlled another toon. If the key is STILL physically
                 # held, this release is an auto-repeat artifact -> drop it.
-                if self._key_physically_down(event.detail):
+                _down = self._key_physically_down(event.detail)
+                if _ITRACE:
+                    _itrace("grab", f"RELEASE kc={event.detail} query_keymap_down={_down} "
+                                    f"(guard {'DROPS' if _down else 'passes'})")
+                if _down:
                     try:
                         self._display.allow_events(X.AsyncKeyboard, event.time)
                         self._display.sync()
@@ -397,6 +410,14 @@ class MovementKeyGrabber:
             return
 
         action = "keydown" if event.type == X.KeyPress else "keyup"
+        if _ITRACE:
+            _cb = ("on_key" if (consume and self._on_key is not None)
+                   else ("on_passthrough" if (kind == "passthrough" and keysym_name
+                                              and self._on_passthrough is not None)
+                         else "none"))
+            _itrace("grab", f"HANDLE kc={event.detail} kind={kind} ks={keysym_name} "
+                            f"action={action} consume={consume} "
+                            f"allow={'Async' if consume else 'Replay'} cb={_cb}")
         if consume and self._on_key is not None:
             try:
                 self._on_key(action, keysym_name)

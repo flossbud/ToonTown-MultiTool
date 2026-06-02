@@ -10,6 +10,7 @@ from PySide6.QtCore import QObject, Signal
 from utils.cc_isolation import MOVEMENT_ACTIONS as _MOVEMENT_ACTIONS
 from utils.held_key_registry import HoldKind, HeldKeyRegistry
 from utils.key_registry import NAMED_KEYSYMS_FROM_REGISTRY, PASSTHROUGH_KEYSYMS
+from utils.input_trace import trace as _itrace, ENABLED as _ITRACE
 # Re-exported so existing `from services.input_service import STRICT_TTR_SEPARATION`
 # call sites keep working; the canonical home is utils/settings_keys.py.
 from utils.settings_keys import STRICT_TTR_SEPARATION
@@ -359,6 +360,8 @@ class InputService(QObject):
 
     def _on_grabbed_key(self, action: str, keysym: str) -> None:
         """Forward a consumed grab event into the same queue pynput uses."""
+        if _ITRACE:
+            _itrace("grabbed_enqueue", f"action={action} keysym={keysym}")
         try:
             event_queue = self.get_event_queue()
             if event_queue is not None:
@@ -386,7 +389,13 @@ class InputService(QObject):
         if game not in ("cc", "ttr"):
             return
         if game == "ttr" and not (self._strict_ttr_enabled() and self._ttr_strict_supported()):
+            if _ITRACE:
+                _itrace("passthru", f"action={action} keysym={keysym} active={active} "
+                                    f"game={game} -> SKIP (ttr strict off/unsupported)")
             return
+        if _ITRACE:
+            _itrace("passthru", f"action={action} keysym={keysym} active={active} "
+                                f"game={game} -> send")
         try:
             self._send_via_backend(action, str(active), keysym)
         except Exception as e:  # noqa: BLE001
@@ -1181,6 +1190,13 @@ class InputService(QObject):
 
     def _send_via_backend(self, action: str, win_id: str, keysym: str, modifiers: list = None):
         """Route input through Xlib or xdotool depending on USE_XLIB_BACKEND."""
+        if _ITRACE:
+            try:
+                _active = self.window_manager.get_active_window()
+            except Exception:
+                _active = "?"
+            _itrace("send", f"action={action} target={win_id} active={_active} "
+                            f"keysym={keysym} mods={modifiers}")
         import sys
         if sys.platform != "win32":
             try:
