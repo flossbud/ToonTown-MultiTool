@@ -210,8 +210,7 @@ class MovementKeyGrabber:
             if self._route_all and self._grab_ok:
                 self._current_canonical = canonical_set
                 return
-            if self._grabbed:
-                self._uninstall_grabs_inline()
+            self._uninstall_grabs_inline()
             self._route_all = True
             self._grab_ok = False
             for keysym_name in _ALL_MOVEMENT_KEYSYMS:
@@ -241,8 +240,7 @@ class MovementKeyGrabber:
         # ---- legacy CC path (unchanged) ----
         if self._current_canonical == canonical_set and not self._route_all:
             return
-        if self._grabbed:
-            self._uninstall_grabs_inline()
+        self._uninstall_grabs_inline()
         keysyms = self._conflicting_keysyms(canonical_set)
         for keysym_name in keysyms:
             ks = XK.string_to_keysym(keysym_name)

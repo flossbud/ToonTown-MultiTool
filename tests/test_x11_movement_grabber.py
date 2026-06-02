@@ -844,6 +844,77 @@ def test_route_all_grabs_both_keysets_async_owner_false(fake_display):
         g.stop()
 
 
+def test_failed_route_all_then_cc_install_clears_stale_state(fake_display):
+    """Regression: an all-BadAccess route_all install leaves _grabbed empty but
+    _keycode_to_name populated and _route_all=True.  A subsequent CC install must
+    NOT skip the pre-install cleanup just because _grabbed is empty.
+
+    Proves:
+      (a) _route_all is False after the CC install (mode was reset)
+      (b) No wasd keycodes remain classified as 'grabbed' - only the CC
+          conflicting set (arrows, when canonical=wasd) should be grabbed.
+    """
+    import time
+    d, root = fake_display
+    g = grabber_mod.MovementKeyGrabber()
+    try:
+        g.prepare(on_key=lambda *_: None, should_consume=lambda _: True)
+
+        # Make every grab_key call raise BadAccess to simulate all-failed
+        # route_all install (e.g. another process holds an exclusive grab).
+        root.grab_key.side_effect = grabber_mod.BadAccess.__new__(grabber_mod.BadAccess)
+        g.install_grabs(canonical_set="wasd", route_all=True)
+        time.sleep(0.1)
+
+        # Confirm we're in the poisoned state: _route_all True, _grab_ok False.
+        assert g._route_all is True
+        assert g._grab_ok is False
+        # _keycode_to_name must be populated (all 8 movement keycodes were
+        # registered before the grab attempt, even though grabs all failed).
+        assert len(g._keycode_to_name) == 8, (
+            f"Expected 8 keycode_to_name entries after all-failed route_all, "
+            f"got {len(g._keycode_to_name)}: {g._keycode_to_name}"
+        )
+
+        # Now a CC install - grabs succeed again.
+        root.grab_key.side_effect = None
+        g.install_grabs(canonical_set="wasd")   # route_all defaults False
+        time.sleep(0.1)
+
+        # (a) mode must be reset.
+        assert g._route_all is False, "_route_all must be False after CC install"
+
+        # (b) Only the CC conflicting keyset (Up/Down/Left/Right for wasd
+        # canonical) should be "grabbed".  The wasd keycodes that were
+        # spuriously populated by the failed route_all install must be gone.
+        from Xlib import XK
+        wasd_keycodes = {
+            d.keysym_to_keycode(XK.string_to_keysym(n))
+            for n in ("w", "a", "s", "d")
+        }
+        arrow_keycodes = {
+            d.keysym_to_keycode(XK.string_to_keysym(n))
+            for n in ("Up", "Down", "Left", "Right")
+        }
+        grabbed_kcs = {
+            kc for kc, (kind, _) in g._keycode_to_name.items()
+            if kind == "grabbed"
+        }
+        # Arrow keys must be grabbed (CC conflicting set).
+        assert grabbed_kcs == arrow_keycodes, (
+            f"CC install should grab only arrow keycodes {arrow_keycodes}, "
+            f"got {grabbed_kcs}"
+        )
+        # WASD keycodes must not be present at all (stale from failed route_all).
+        stale = wasd_keycodes & set(g._keycode_to_name.keys())
+        assert not stale, (
+            f"Stale wasd keycodes from failed route_all still in "
+            f"_keycode_to_name after CC install: {stale}"
+        )
+    finally:
+        g.stop()
+
+
 def test_route_all_reinstall_same_mode_is_noop_even_if_canonical_differs(fake_display):
     """Switching focus between two TTR toons (wasd <-> arrows) must NOT
     re-grab: route_all grabs both keysets regardless of canonical, and a
