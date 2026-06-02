@@ -9,8 +9,6 @@ xdotool/XTEST fallback that re-triggers the Wayland input-control portal.
 import queue
 from unittest.mock import MagicMock
 
-import pytest
-
 from services.input_service import InputService
 
 
@@ -96,11 +94,13 @@ def test_explicit_xdotool_clears_flag_and_disconnects():
     mock_backend = MagicMock()
     svc._xlib = mock_backend
     svc._xlib_backend_failed = True
+    svc._xlib_unavailable_logged = True
 
     svc._apply_backend_setting()
 
     assert svc._xlib is None
     assert svc._xlib_backend_failed is False
+    assert svc._xlib_unavailable_logged is False
     mock_backend.disconnect.assert_called_once()
 
 
