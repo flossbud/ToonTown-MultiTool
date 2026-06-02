@@ -488,7 +488,7 @@ class InputService(QObject):
                     self._xlib = None
                     self._xlib_backend_failed = True
                     # Leave _xlib_unavailable_logged as-is: it is reset only on
-                    # recovery, so the drop message (Task 2) surfaces once per
+                    # recovery, so the drop message surfaces once per
                     # failure episode rather than every keystroke.
             return
 
@@ -513,7 +513,7 @@ class InputService(QObject):
                     self._xlib = None
                     self._xlib_backend_failed = True
                     # Leave _xlib_unavailable_logged as-is: it is reset only on
-                    # recovery, so the drop message (Task 2) surfaces once per
+                    # recovery, so the drop message surfaces once per
                     # failure episode rather than every keystroke.
                     if _ITRACE:
                         _itrace("backend", f"xlib connect FAILED: {e}")
@@ -1349,7 +1349,9 @@ class InputService(QObject):
         ]
 
     def _send_via_backend(self, action: str, win_id: str, keysym: str, modifiers: list = None):
-        """Route input through Xlib or xdotool depending on USE_XLIB_BACKEND."""
+        """Route a synthetic key event through the active backend: the xlib
+        backend, dropped-with-notice when the xlib backend failed to
+        initialize, or the user's explicit xdotool backend."""
         if _ITRACE:
             try:
                 _active = self.window_manager.get_active_window()

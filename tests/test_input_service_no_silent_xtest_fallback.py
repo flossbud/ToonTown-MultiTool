@@ -138,3 +138,68 @@ def test_xlib_path_unaffected(monkeypatch):
 
     svc._xlib.send_keydown.assert_called_once_with("100", "w")
     svc._safe_run.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# 5. Drop message re-surfaces after recovery
+# ---------------------------------------------------------------------------
+
+def test_drop_resurfaces_after_recovery(monkeypatch):
+    """The once-guard (_xlib_unavailable_logged) resets on recovery so a NEW
+    failure episode surfaces the drop message again."""
+    svc = _make_svc(monkeypatch)
+
+    # Wire settings so _apply_backend_setting selects the xlib path.
+    svc.settings_manager.get = lambda key, default=None: (
+        "xlib" if key == "input_backend" else default
+    )
+    svc.logging_enabled = True
+    svc.input_log = MagicMock()
+    svc._safe_run = MagicMock()
+
+    # --- Step 1: First failure episode ---
+    class _FailingBackend:
+        def connect(self):
+            raise RuntimeError("no display")
+
+    monkeypatch.setattr("utils.xlib_backend.XlibBackend", _FailingBackend)
+    svc._apply_backend_setting()
+    assert svc._xlib_backend_failed is True
+
+    # Reset the mock so we count only drop-message emits from _send_via_backend.
+    svc.input_log.reset_mock()
+
+    # --- Step 2: Drop surfaces once during this episode ---
+    svc._send_via_backend("keydown", "100", "w")
+    svc._send_via_backend("keyup", "100", "w")
+    assert svc.input_log.emit.call_count == 1
+
+    # --- Step 3: Recovery - backend comes back up ---
+    class _SucceedingBackend:
+        def connect(self):
+            pass  # success
+
+    monkeypatch.setattr("utils.xlib_backend.XlibBackend", _SucceedingBackend)
+    svc._apply_backend_setting()
+    assert svc._xlib is not None
+    assert svc._xlib_unavailable_logged is False
+
+    # Reset again to isolate the new failure episode's drop-message count.
+    svc.input_log.reset_mock()
+
+    # --- Step 4: New failure episode ---
+    # Setting _xlib = None simulates backend teardown so _apply_backend_setting
+    # re-attempts the connect (the if self._xlib is None guard triggers).
+    svc._xlib = None
+    monkeypatch.setattr("utils.xlib_backend.XlibBackend", _FailingBackend)
+    svc._apply_backend_setting()
+    assert svc._xlib_backend_failed is True
+    assert svc._xlib_unavailable_logged is False
+
+    # Reset once more to count only the drop-message emit in step 5.
+    svc.input_log.reset_mock()
+
+    # --- Step 5: Drop re-surfaces in the new episode ---
+    svc._send_via_backend("keydown", "100", "w")
+    assert svc.input_log.emit.call_count == 1
+    svc._safe_run.assert_not_called()
