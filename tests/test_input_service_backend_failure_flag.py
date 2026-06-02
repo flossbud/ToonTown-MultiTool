@@ -104,6 +104,36 @@ def test_explicit_xdotool_clears_flag_and_disconnects():
     mock_backend.disconnect.assert_called_once()
 
 
+def test_ongoing_failure_preserves_unavailable_logged(monkeypatch):
+    """A re-failing reconnect must NOT reset _xlib_unavailable_logged.
+
+    Simulates Task 2 having already fired the one-shot "input delivery
+    disabled" log during a prior drop; verifies the guard survives a
+    subsequent _apply_backend_setting() call that also fails.
+    """
+
+    class _FailingBackend:
+        def connect(self):
+            raise RuntimeError("no display")
+
+    monkeypatch.setattr("utils.xlib_backend.XlibBackend", _FailingBackend)
+
+    svc = _make_svc(
+        lambda key, default=None: "xlib" if key == "input_backend" else default
+    )
+
+    # Preconditions: no live backend, one-shot guard already fired.
+    assert svc._xlib is None
+    svc._xlib_unavailable_logged = True
+
+    svc._apply_backend_setting()
+
+    # The failure branch must set the failed flag …
+    assert svc._xlib_backend_failed is True
+    # … and must NOT reset the one-shot guard (only recovery resets it).
+    assert svc._xlib_unavailable_logged is True
+
+
 def test_connect_success_clears_both_flags(monkeypatch):
     """Recovery after a real failure clears both _xlib_backend_failed and
     _xlib_unavailable_logged, and leaves _xlib set.

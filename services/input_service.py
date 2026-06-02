@@ -120,12 +120,13 @@ class InputService(QObject):
         self.CHAT_IDLE_TIMEOUT = 15.0
 
         self._xlib = None
-        # _xlib_backend_failed: True only when the xlib backend was REQUESTED
-        # (input_backend == "xlib") but its connect() raised. Distinct from the
-        # user explicitly selecting the xdotool backend. _send_via_backend reads
-        # this to REFUSE a silent xdotool/XTEST fallback, which would re-trigger
-        # the Wayland input-control portal the app deliberately avoids (and can
-        # stick an auto-repeating key).
+        # _xlib_backend_failed: True when a REQUESTED delivery backend's
+        # connect() raised — the xlib backend on Linux (input_backend == "xlib")
+        # or the Win32 backend on Windows. Distinct from the user explicitly
+        # selecting the xdotool backend on Linux. _send_via_backend reads this to
+        # REFUSE a silent xdotool/XTEST fallback, which would re-trigger the
+        # Wayland input-control portal the app deliberately avoids (and can stick
+        # an auto-repeating key).
         self._xlib_backend_failed = False
         # One-shot guard so the "input delivery disabled" surfacing fires once
         # per failure episode, not on every dropped keystroke. Reset whenever a
