@@ -63,7 +63,8 @@ def _make_svc(monkeypatch):
 ])
 def test_no_xtest_when_xlib_failed(monkeypatch, action, keysym, modifiers):
     """When xlib failed to init, _safe_run (xdotool/XTEST) must NOT be
-    called regardless of action type."""
+    called regardless of action type. assign_windows must also not be called
+    (a fall-through with success=False would call it)."""
     svc = _make_svc(monkeypatch)
 
     svc._xlib = None
@@ -71,9 +72,11 @@ def test_no_xtest_when_xlib_failed(monkeypatch, action, keysym, modifiers):
     svc._xlib_unavailable_logged = False
 
     svc._safe_run = MagicMock()
+    svc.window_manager.assign_windows = MagicMock()
     svc._send_via_backend(action, "100", keysym, modifiers)
 
     svc._safe_run.assert_not_called()
+    svc.window_manager.assign_windows.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -82,7 +85,8 @@ def test_no_xtest_when_xlib_failed(monkeypatch, action, keysym, modifiers):
 
 def test_drop_surfaces_once(monkeypatch):
     """input_log.emit must fire exactly once across multiple dropped events,
-    and _safe_run must never be called."""
+    _safe_run must never be called, and assign_windows must not be called
+    (a fall-through with success=False would call it)."""
     svc = _make_svc(monkeypatch)
 
     svc._xlib = None
@@ -92,12 +96,14 @@ def test_drop_surfaces_once(monkeypatch):
 
     svc.input_log = MagicMock()
     svc._safe_run = MagicMock()
+    svc.window_manager.assign_windows = MagicMock()
 
     svc._send_via_backend("keydown", "100", "w")
     svc._send_via_backend("keyup", "100", "w")
 
     svc.input_log.emit.assert_called_once()
     svc._safe_run.assert_not_called()
+    svc.window_manager.assign_windows.assert_not_called()
     assert svc._xlib_unavailable_logged is True
 
 

@@ -66,7 +66,7 @@ def test_connect_failure_sets_flag(monkeypatch):
 
 def test_failure_message_is_not_misleading(monkeypatch, capsys):
     """Failure stdout must NOT mention 'falling back to xdotool' and MUST
-    mention 'refusing xdotool/XTEST fallback'."""
+    use backend-neutral, WHAT-not-HOW wording."""
 
     class _FailingBackend:
         def connect(self):
@@ -81,7 +81,8 @@ def test_failure_message_is_not_misleading(monkeypatch, capsys):
 
     captured = capsys.readouterr()
     assert "falling back to xdotool" not in captured.out
-    assert "refusing xdotool/XTEST fallback" in captured.out
+    assert "input backend unavailable" in captured.out
+    assert "not emulating" in captured.out
 
 
 def test_explicit_xdotool_clears_flag_and_disconnects():

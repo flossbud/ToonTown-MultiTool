@@ -508,8 +508,8 @@ class InputService(QObject):
                     # Wayland input-control portal the app deliberately avoids
                     # and can leave a stuck auto-repeating key. Disable
                     # synthetic input and surface the failure instead.
-                    print(f"[InputService] Xlib backend unavailable; synthetic "
-                          f"input disabled (refusing xdotool/XTEST fallback): {e}")
+                    print(f"[InputService] input backend unavailable; synthetic "
+                          f"input disabled (not emulating): {e}")
                     self._xlib = None
                     self._xlib_backend_failed = True
                     # Leave _xlib_unavailable_logged as-is: it is reset only on
@@ -519,8 +519,7 @@ class InputService(QObject):
                         _itrace("backend", f"xlib connect FAILED: {e}")
                     if self.logging_enabled:
                         self.input_log.emit(
-                            "[Input] Xlib backend unavailable; input delivery "
-                            "disabled (refusing xdotool/XTEST fallback)"
+                            "[Input] Input delivery unavailable; the input backend failed to start."
                         )
         else:
             # User explicitly selected the xdotool backend (intended; the
@@ -1395,12 +1394,10 @@ class InputService(QObject):
                                 f"target={win_id} keysym={keysym}")
             if not self._xlib_unavailable_logged:
                 self._xlib_unavailable_logged = True
-                print("[InputService] dropping synthetic input: xlib backend "
-                      "unavailable (refusing xdotool/XTEST fallback)")
+                print("[InputService] input backend unavailable; dropping synthetic input")
                 if self.logging_enabled:
                     self.input_log.emit(
-                        "[Input] Input delivery disabled; xlib backend "
-                        "unavailable (refusing xdotool/XTEST fallback)"
+                        "[Input] Input delivery unavailable; key input is being skipped."
                     )
             return
         else:
