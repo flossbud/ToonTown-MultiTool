@@ -102,7 +102,6 @@ class MovementKeyGrabber:
         self._should_consume: Optional[Callable[[str], bool]] = None
         self._on_grabs_changed: Optional[Callable[[Optional[str]], None]] = None
         self._route_all: bool = False
-        self._held: set[int] = set()  # physically-held keycodes; populated by route_all handling (Task 2)
         self._grab_ok: bool = False
 
     def prepare(
@@ -185,7 +184,6 @@ class MovementKeyGrabber:
             self._current_canonical = None
             self._route_all = False
             self._grab_ok = False
-            self._held = set()
         # Discard any pending actions so a subsequent prepare() starts with a
         # clean queue. Without this, an install_grabs() enqueued between
         # stop() and the thread's exit would survive into the next lifecycle
@@ -288,15 +286,6 @@ class MovementKeyGrabber:
         self._current_canonical = canonical_set
 
     def _uninstall_grabs_inline(self) -> None:
-        if self._route_all and self._held and self._on_key is not None:
-            for keycode in list(self._held):
-                entry = self._keycode_to_name.get(keycode)
-                if entry is not None:
-                    try:
-                        self._on_key("keyup", entry[1])
-                    except Exception as e:  # noqa: BLE001
-                        print(f"[x11_movement_grabber] on_key (drain) raised: {e}")
-        self._held = set()
         for keycode, mod in self._grabbed:
             try:
                 self._root.ungrab_key(keycode, mod)
@@ -516,21 +505,16 @@ class MovementKeyGrabber:
                 print(f"[x11_movement_grabber] on_passthrough raised: {e}")
 
     def _handle_event_route_all(self, event) -> None:
-        """route_all: native delivery already suppressed (owner_events=False)
-        and the keyboard is not frozen (GrabModeAsync), so no AllowEvents is
-        needed. Physical held-state + query_keymap (reliable without a freeze)
-        dedup autorepeat and gate real releases; every real transition routes
-        via on_key."""
+        """route_all: native delivery is already suppressed (owner_events=False).
+        Movement keys are routed by the pynput (XRecord) feed, which is the single
+        source of truth -- the grabber's own event stream is lossy under XWayland,
+        so we do NOT route movement or track held-state from it. Only non-movement
+        keys redirected by the active grab are re-delivered to the focused window."""
         entry = self._keycode_to_name.get(event.detail)
         if entry is None:
             return
         kind, keysym_name = entry
         if kind == "passthrough":
-            # Non-movement key redirected here by the active grab that a held
-            # movement key established. Re-deliver to the focused window via
-            # synthesize (on_passthrough -> backend). No ReplayKeyboard: the
-            # grab is GrabModeAsync and native delivery is already suppressed,
-            # so this synth is the single delivery (no double-move).
             action = "keydown" if event.type == X.KeyPress else "keyup"
             if self._on_passthrough is not None:
                 try:
@@ -538,25 +522,5 @@ class MovementKeyGrabber:
                 except Exception as e:  # noqa: BLE001
                     print(f"[x11_movement_grabber] on_passthrough raised: {e}")
             return
-        if kind != "grabbed":
-            return
-        if event.type == X.KeyPress:
-            if event.detail in self._held:
-                return  # autorepeat press
-            self._held.add(event.detail)
-            action = "keydown"
-        else:  # KeyRelease
-            if event.detail not in self._held:
-                return  # release without a tracked press: ignore
-            if self._key_physically_down(event.detail):
-                return  # autorepeat release: key still down, stay held
-            self._held.discard(event.detail)
-            action = "keyup"
-        if _ITRACE:
-            _itrace("grab", f"ROUTE_ALL kc={event.detail} ks={keysym_name} "
-                            f"action={action} held={sorted(self._held)}")
-        if self._on_key is not None:
-            try:
-                self._on_key(action, keysym_name)
-            except Exception as e:  # noqa: BLE001
-                print(f"[x11_movement_grabber] on_key raised: {e}")
+        # kind == "grabbed": movement key. Suppress only (pynput routes it). No-op.
+        return

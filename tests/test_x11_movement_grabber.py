@@ -934,19 +934,7 @@ def test_route_all_reinstall_same_mode_is_noop_even_if_canonical_differs(fake_di
         g.stop()
 
 
-# ── Task 2: route_all event handling ──────────────────────────────────────────
-
-def _route_all_ready(fake_display, on_key, physically_down):
-    """A prepared route_all grabber with keycodes registered, _handle_event_
-    route_all callable directly. physically_down(kc)->bool stubs query_keymap."""
-    d, root = fake_display
-    g = grabber_mod.MovementKeyGrabber()
-    g._on_key = on_key
-    g._route_all = True
-    g._keycode_to_name = {100: ("grabbed", "w"), 101: ("grabbed", "a")}
-    g._key_physically_down = physically_down
-    return g
-
+# ── route_all event handling ───────────────────────────────────────────────────
 
 def _ev(etype, detail, t=0):
     from unittest.mock import MagicMock
@@ -954,80 +942,20 @@ def _ev(etype, detail, t=0):
     return e
 
 
-def test_route_all_real_press_and_release(fake_display):
-    calls = []
-    g = _route_all_ready(fake_display, lambda a, k: calls.append((a, k)),
-                         physically_down=lambda kc: False)
-    g._handle_event_route_all(_ev(X.KeyPress, 100))
-    g._handle_event_route_all(_ev(X.KeyRelease, 100))  # physically up -> real
-    assert calls == [("keydown", "w"), ("keyup", "w")]
-
-
-def test_route_all_autorepeat_release_kept_held(fake_display):
-    calls = []
-    g = _route_all_ready(fake_display, lambda a, k: calls.append((a, k)),
-                         physically_down=lambda kc: True)  # still down = autorepeat
-    g._handle_event_route_all(_ev(X.KeyPress, 100))
-    g._handle_event_route_all(_ev(X.KeyRelease, 100))  # autorepeat -> dropped
-    assert calls == [("keydown", "w")]
-    assert 100 in g._held
-
-
-def test_route_all_autorepeat_press_not_redundant_keydown(fake_display):
-    calls = []
-    g = _route_all_ready(fake_display, lambda a, k: calls.append((a, k)),
-                         physically_down=lambda kc: True)
-    g._handle_event_route_all(_ev(X.KeyPress, 100))
-    g._handle_event_route_all(_ev(X.KeyPress, 100))  # autorepeat press
-    assert calls == [("keydown", "w")]
-
-
-def test_route_all_unheld_release_ignored(fake_display):
-    calls = []
-    g = _route_all_ready(fake_display, lambda a, k: calls.append((a, k)),
-                         physically_down=lambda kc: False)
-    g._handle_event_route_all(_ev(X.KeyRelease, 100))  # never pressed
-    assert calls == []
-
-
-def test_route_all_uninstall_drains_held(fake_display):
-    """ORDERING: the drain keyup (on_key "keyup") must fire BEFORE
-    root.ungrab_key is called. Grabs must still be active when on_key fires
-    so InputService can synthesize to the still-suppressed focused window."""
+def test_route_all_grabbed_movement_does_not_route(fake_display):
+    """route_all is suppress-only for movement: a grabbed movement key event
+    must NOT call on_key (pynput is the source of truth for movement routing)."""
     d, root = fake_display
-    order = []
+    ok, pt = [], []
     g = grabber_mod.MovementKeyGrabber()
-    g._on_key = lambda a, k: order.append(("on_key", a, k))
+    g._on_key = lambda a, k: ok.append((a, k))
+    g._on_passthrough = lambda a, k: pt.append((a, k))
     g._route_all = True
-    g._display = d; g._root = root
     g._keycode_to_name = {100: ("grabbed", "w")}
-    g._grabbed = [(100, 0)]
-    g._held = {100}
-
-    # Record the call order via side_effect on ungrab_key.
-    _orig_ungrab = root.ungrab_key
-    def _recording_ungrab(kc, mod):
-        order.append(("ungrab_key", kc, mod))
-        return _orig_ungrab(kc, mod)
-    root.ungrab_key.side_effect = _recording_ungrab
-
-    calls = [(e[1], e[2]) for e in order if e[0] == "on_key"]
-    g._uninstall_grabs_inline()
-
-    # Gather on_key and ungrab_key positions in the order list.
-    on_key_positions = [i for i, e in enumerate(order) if e[0] == "on_key"]
-    ungrab_positions  = [i for i, e in enumerate(order) if e[0] == "ungrab_key"]
-
-    assert ("keyup", "w") in [(e[1], e[2]) for e in order if e[0] == "on_key"], (
-        "drain keyup for 'w' must be emitted"
-    )
-    assert on_key_positions, "on_key was never called"
-    assert ungrab_positions, "ungrab_key was never called"
-    assert max(on_key_positions) < min(ungrab_positions), (
-        "on_key (drain keyup) must fire before any ungrab_key call; "
-        f"on_key positions={on_key_positions}, ungrab positions={ungrab_positions}"
-    )
-    assert g._held == set()
+    g._handle_event_route_all(_ev(X.KeyPress, 100))
+    g._handle_event_route_all(_ev(X.KeyRelease, 100))
+    assert ok == []          # movement is NOT routed by the grabber
+    assert pt == []          # and it's not passthrough either
 
 
 # ── Task 3B: route_all passthrough re-delivery ────────────────────────────────
@@ -1070,41 +998,6 @@ def test_route_all_passthrough_key_calls_on_passthrough(fake_display):
     g._handle_event_route_all(_ev(X.KeyRelease, 150))
     assert pt == [("keydown", "j"), ("keyup", "j")]
     assert ok == []
-    assert 150 not in g._held
-
-
-def test_route_all_rapid_tap_adjacent_press_keeps_held(fake_display):
-    """Rapid-tap / adjacent-press behavior under query_keymap-Async contract.
-
-    When a KeyRelease arrives but query_keymap reports the key STILL
-    physically down, _handle_event_route_all treats it as an autorepeat-or-
-    rapid-tap artifact and keeps the keycode in _held without emitting a
-    keyup. Only when query_keymap subsequently reports the key UP is the
-    real keyup emitted and the key removed from _held.
-
-    This is the accepted behavior under GrabModeAsync where the XServer
-    does not freeze keyboard delivery between events. A 'rapid tap'
-    (human tap shorter than a typical query_keymap poll window) may look
-    identical to an autorepeat release and is handled identically here:
-    the held state lingers until the next release with the key physically
-    up. The practical effect is at most one extra autorepeat cycle of
-    delay between the real physical release and the simulated keyup --
-    acceptable given that the alternative (treating every release as real)
-    causes spurious mid-hold keyup spikes that stop the toon."""
-    calls = []
-    # First pass: physically down => autorepeat/rapid-tap: stay held, no keyup.
-    g = _route_all_ready(fake_display, lambda a, k: calls.append((a, k)),
-                         physically_down=lambda kc: True)
-    g._handle_event_route_all(_ev(X.KeyPress, 100))       # keydown
-    g._handle_event_route_all(_ev(X.KeyRelease, 100))     # physically still down -> kept held
-    assert calls == [("keydown", "w")]
-    assert 100 in g._held
-
-    # Second pass: physically up => real release: keyup emitted, removed from held.
-    g._key_physically_down = lambda kc: False
-    g._handle_event_route_all(_ev(X.KeyRelease, 100))     # now really up
-    assert calls == [("keydown", "w"), ("keyup", "w")]
-    assert 100 not in g._held
 
 
 def test_route_all_passthrough_none_callback_no_raise(fake_display):
