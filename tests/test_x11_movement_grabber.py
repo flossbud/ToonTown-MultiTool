@@ -691,3 +691,132 @@ def test_per_action_exception_does_not_kill_thread(fake_display):
     assert g._thread.is_alive(), "Thread died after processing uninstall action"
 
     g.stop()
+
+
+# ── Regression: held passthrough key auto-repeat release must not stop the toon ──
+
+def _bitvector_with(keycode, down):
+    """A 32-byte query_keymap() bit vector with `keycode` set/clear."""
+    km = [0] * 32
+    if down:
+        km[keycode >> 3] |= (1 << (keycode & 7))
+    return km
+
+
+def test_passthrough_autorepeat_release_dropped_when_key_still_down(fake_display):
+    """REGRESSION (TTR strict simultaneous control): while a passthrough key
+    (the focused toon's WASD) is physically HELD, its X auto-repeat KeyRelease
+    can reach the grabber during another key's active grab without the same-time
+    matching KeyPress queued. The grabber must NOT forward that as a real keyup
+    (which stopped the focused toon). query_keymap shows the key still down ->
+    drop it."""
+    d, root = fake_display
+    g = grabber_mod.MovementKeyGrabber()
+
+    on_passthrough_calls = []
+
+    from Xlib import XK
+    up_ks = XK.string_to_keysym("Up")
+    w_ks = XK.string_to_keysym("w")
+    d.keysym_to_keycode.side_effect = lambda ks: {up_ks: 111, w_ks: 25}.get(ks, 0)
+
+    release = MagicMock()
+    release.type = X.KeyRelease
+    release.detail = 25          # 'w' (passthrough)
+    release.time = 5000
+
+    # No same-time matching KeyPress queued (broken pairing).
+    pending_seq = iter([0, 1, 0, 0, 0, 0, 0, 0, 0, 0])
+    d.pending_events.side_effect = lambda: next(pending_seq, 0)
+    d.next_event.return_value = release
+    # 'w' (keycode 25) is still physically down -> this release is auto-repeat.
+    d.query_keymap.return_value = _bitvector_with(25, down=True)
+
+    g.prepare(
+        on_key=lambda *_: None,
+        on_passthrough=lambda a, k: on_passthrough_calls.append((a, k)),
+        should_consume=lambda _: True,
+    )
+    g.install_grabs(canonical_set="wasd", passthrough_keysyms=["w"])
+    import time
+    time.sleep(0.1)
+    g.stop()
+
+    assert ("keyup", "w") not in on_passthrough_calls
+
+
+def test_passthrough_real_release_forwarded_when_key_up(fake_display):
+    """Inverse guard: a genuine release (key physically UP per query_keymap) IS
+    forwarded once as a keyup, so the focused toon stops when the user really
+    lets go."""
+    d, root = fake_display
+    g = grabber_mod.MovementKeyGrabber()
+
+    on_passthrough_calls = []
+
+    from Xlib import XK
+    up_ks = XK.string_to_keysym("Up")
+    w_ks = XK.string_to_keysym("w")
+    d.keysym_to_keycode.side_effect = lambda ks: {up_ks: 111, w_ks: 25}.get(ks, 0)
+
+    release = MagicMock()
+    release.type = X.KeyRelease
+    release.detail = 25
+    release.time = 5000
+
+    pending_seq = iter([0, 1, 0, 0, 0, 0, 0, 0, 0, 0])
+    d.pending_events.side_effect = lambda: next(pending_seq, 0)
+    d.next_event.return_value = release
+    # 'w' is physically UP -> a real release.
+    d.query_keymap.return_value = _bitvector_with(25, down=False)
+
+    g.prepare(
+        on_key=lambda *_: None,
+        on_passthrough=lambda a, k: on_passthrough_calls.append((a, k)),
+        should_consume=lambda _: True,
+    )
+    g.install_grabs(canonical_set="wasd", passthrough_keysyms=["w"])
+    import time
+    time.sleep(0.1)
+    g.stop()
+
+    # Forwarded exactly once (a duplicate keyup would also be a defect).
+    assert on_passthrough_calls == [("keyup", "w")]
+
+
+def test_query_keymap_failure_falls_back_to_real_release(fake_display):
+    """Defensive: if query_keymap() raises (or is unavailable), the auto-repeat
+    guard must not crash the event-loop thread and must fall back to the prior
+    behavior (treat the release as real and forward it)."""
+    d, root = fake_display
+    g = grabber_mod.MovementKeyGrabber()
+
+    on_passthrough_calls = []
+
+    from Xlib import XK
+    w_ks = XK.string_to_keysym("w")
+    d.keysym_to_keycode.side_effect = lambda ks: {w_ks: 25}.get(ks, 0)
+
+    release = MagicMock()
+    release.type = X.KeyRelease
+    release.detail = 25
+    release.time = 5000
+
+    pending_seq = iter([0, 1, 0, 0, 0, 0, 0, 0, 0, 0])
+    d.pending_events.side_effect = lambda: next(pending_seq, 0)
+    d.next_event.return_value = release
+    d.query_keymap.side_effect = RuntimeError("xlib boom")
+
+    g.prepare(
+        on_key=lambda *_: None,
+        on_passthrough=lambda a, k: on_passthrough_calls.append((a, k)),
+        should_consume=lambda _: True,
+    )
+    g.install_grabs(canonical_set="wasd", passthrough_keysyms=["w"])
+    import time
+    time.sleep(0.1)
+    # Thread survived the raising query_keymap and forwarded the release.
+    assert g._thread.is_alive()
+    g.stop()
+
+    assert on_passthrough_calls == [("keyup", "w")]

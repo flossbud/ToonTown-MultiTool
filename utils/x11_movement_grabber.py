@@ -237,6 +237,26 @@ class MovementKeyGrabber:
         self._keycode_to_name = {}
         self._current_canonical = None
 
+    def _key_physically_down(self, keycode: int) -> bool:
+        """True if `keycode` is currently held per the server's physical key
+        state (query_keymap). Used to recognize X auto-repeat KeyRelease events
+        (the key is still down) so they aren't mistaken for real releases.
+
+        Defensive on purpose: any failure, unexpected shape, or out-of-range
+        keycode returns False, so the caller falls back to the same-time-pair
+        heuristic and existing behavior is preserved on servers/paths where
+        query_keymap is unavailable (and so a raising query_keymap can never
+        kill the event-loop thread)."""
+        try:
+            if keycode < 0 or keycode > 255:
+                return False
+            km = self._display.query_keymap()
+            if not isinstance(km, (list, tuple)) or len(km) != 32:
+                return False
+            return bool(km[keycode >> 3] & (1 << (keycode & 7)))
+        except Exception:
+            return False
+
     def _notify_grabs_changed(self) -> None:
         """Tell the caller (InputService) that grabs ACTUALLY changed, with the
         now-current canonical set (None if uninstalled). Lets the caller gate
@@ -303,6 +323,23 @@ class MovementKeyGrabber:
             # no real keyup) and let the InputService's existing
             # keys_held set keep the held state.
             if event.type == X.KeyRelease:
+                # Robust auto-repeat guard. The same-time-pair heuristic below
+                # only catches an auto-repeat KeyRelease when its matching
+                # KeyPress is the very next queued event. During another key's
+                # ACTIVE grab, a held passthrough key's (e.g. the focused toon's
+                # WASD) auto-repeat events are redirected here, and the pairing
+                # can break (a different key's event interleaves, or the matching
+                # press isn't queued yet). A mispaired release used to be sent to
+                # the focused window as a real keyup, stopping that toon while the
+                # user controlled another toon. If the key is STILL physically
+                # held, this release is an auto-repeat artifact -> drop it.
+                if self._key_physically_down(event.detail):
+                    try:
+                        self._display.allow_events(X.AsyncKeyboard, event.time)
+                        self._display.sync()
+                    except Exception:
+                        break
+                    continue
                 try:
                     next_pending = self._display.pending_events()
                 except Exception:
