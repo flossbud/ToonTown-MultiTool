@@ -7,7 +7,7 @@ xdotool/XTEST fallback that re-triggers the Wayland input-control portal.
 """
 
 import queue
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -86,7 +86,7 @@ def test_failure_message_is_not_misleading(monkeypatch, capsys):
     assert "refusing xdotool/XTEST fallback" in captured.out
 
 
-def test_explicit_xdotool_clears_flag_and_disconnects(monkeypatch):
+def test_explicit_xdotool_clears_flag_and_disconnects():
     """When the user explicitly selects xdotool, _xlib_backend_failed is
     cleared to False and any existing backend is disconnected."""
     svc = _make_svc(
@@ -105,24 +105,39 @@ def test_explicit_xdotool_clears_flag_and_disconnects(monkeypatch):
 
 
 def test_connect_success_clears_both_flags(monkeypatch):
-    """A successful connect() clears both _xlib_backend_failed and
-    _xlib_unavailable_logged, and leaves _xlib set."""
+    """Recovery after a real failure clears both _xlib_backend_failed and
+    _xlib_unavailable_logged, and leaves _xlib set.
 
+    Goes through a genuine failure first, then swaps in a working backend
+    and calls _apply_backend_setting() again to exercise the recovery path.
+    """
+    class _FailingBackend:
+        def connect(self):
+            raise RuntimeError("no display")
+
+    monkeypatch.setattr("utils.xlib_backend.XlibBackend", _FailingBackend)
+
+    svc = _make_svc(
+        lambda key, default=None: "xlib" if key == "input_backend" else default
+    )
+
+    # Step 1: trigger a real failure.
+    svc._apply_backend_setting()
+    assert svc._xlib is None
+    assert svc._xlib_backend_failed is True
+    # Simulate Task 2 having logged a drop message during the failed episode.
+    svc._xlib_unavailable_logged = True
+
+    # Step 2: swap in a working backend; _xlib is still None so the
+    # if self._xlib is None: guard re-attempts the connect.
     class _SucceedingBackend:
         def connect(self):
             pass  # success
 
     monkeypatch.setattr("utils.xlib_backend.XlibBackend", _SucceedingBackend)
-
-    svc = _make_svc(
-        lambda key, default=None: "xlib" if key == "input_backend" else default
-    )
-    # Simulate a prior failure state that a retry should clear.
-    svc._xlib_backend_failed = True
-    svc._xlib_unavailable_logged = True
-
     svc._apply_backend_setting()
 
+    # Step 3: recovery must clear both failure flags and leave _xlib set.
     assert svc._xlib is not None
     assert svc._xlib_backend_failed is False
     assert svc._xlib_unavailable_logged is False

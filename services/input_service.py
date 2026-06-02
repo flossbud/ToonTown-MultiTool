@@ -486,6 +486,9 @@ class InputService(QObject):
                     print(f"[InputService] Win32 backend unavailable: {e}")
                     self._xlib = None
                     self._xlib_backend_failed = True
+                    # Leave _xlib_unavailable_logged as-is: it is reset only on
+                    # recovery, so the drop message (Task 2) surfaces once per
+                    # failure episode rather than every keystroke.
             return
 
         use_xlib = (self.settings_manager.get("input_backend", "xlib") == "xlib") if self.settings_manager else True
@@ -508,11 +511,14 @@ class InputService(QObject):
                           f"input disabled (refusing xdotool/XTEST fallback): {e}")
                     self._xlib = None
                     self._xlib_backend_failed = True
+                    # Leave _xlib_unavailable_logged as-is: it is reset only on
+                    # recovery, so the drop message (Task 2) surfaces once per
+                    # failure episode rather than every keystroke.
                     if _ITRACE:
                         _itrace("backend", f"xlib connect FAILED: {e}")
                     if self.logging_enabled:
                         self.input_log.emit(
-                            "[Input] Xlib backend unavailable — input delivery "
+                            "[Input] Xlib backend unavailable; input delivery "
                             "disabled (refusing xdotool/XTEST fallback)"
                         )
         else:
@@ -1053,7 +1059,7 @@ class InputService(QObject):
                                             self._phantom_active = True
                                             self._chat_last_activity = now
                                             if self.logging_enabled:
-                                                self.input_log.emit("[Input] Whisper reply detected — input suppressed")
+                                                self.input_log.emit("[Input] Whisper reply detected; input suppressed")
                                             # Drain held movement before ungrabs so no toon
                                             # is left walking while whisper mode is active.
                                             try:
@@ -1268,7 +1274,7 @@ class InputService(QObject):
     def _timeout_reset_chat(self, enabled, assignments):
         """Idle timeout fired — send Escape to bg toons to close any open chat, then reset."""
         if self.logging_enabled:
-            self.input_log.emit("[Input] Chat idle timeout — resetting chat state")
+            self.input_log.emit("[Input] Chat idle timeout; resetting chat state")
         # Defensive: in case any action key was somehow held during chat,
         # release it now. Normal flow drains on chat-open so this is empty.
         self._drain_kind(HoldKind.ACTION, enabled, assignments)
