@@ -484,7 +484,8 @@ class InputService(QObject):
                     self._xlib_backend_failed = False
                     self._xlib_unavailable_logged = False
                 except Exception as e:
-                    print(f"[InputService] Win32 backend unavailable: {e}")
+                    print(f"[InputService] input backend unavailable; synthetic "
+                          f"input disabled (not emulating): {e}")
                     self._xlib = None
                     self._xlib_backend_failed = True
                     # Leave _xlib_unavailable_logged as-is: it is reset only on
