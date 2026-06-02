@@ -70,9 +70,10 @@ def test_strict_ttr_active_false_without_installed_grabs(monkeypatch, tmp_path):
 
 
 def test_strict_ttr_active_true_with_installed_grabs(monkeypatch, tmp_path):
-    """Both conditions met (toggle ON + grabs installed for the focused TTR
-    window): returns True."""
+    """All conditions met (toggle ON + a live grabber + grabs installed for the
+    focused TTR window): returns True."""
     svc, _ = _make_service(monkeypatch, tmp_path)
+    svc._key_grabber = object()  # a live grabber must exist
     svc._ttr_grabs_active = True
     assert svc._strict_ttr_active() is True
 
@@ -133,7 +134,10 @@ def _capture_sends(svc):
     svc._send_via_backend = lambda action, win, keysym, modifiers=None: sends.append(
         (action, str(win), keysym)
     )
-    svc._ttr_grabs_active = True  # simulate grabs installed for the focused TTR window
+    # Simulate a live grabber with grabs installed for the focused TTR window so
+    # _strict_ttr_active() (grabber-not-None AND _ttr_grabs_active) is True.
+    svc._key_grabber = object()
+    svc._ttr_grabs_active = True
     return sends
 
 
@@ -228,12 +232,23 @@ def test_ttr_strict_focused_native_keyup_passes_native(monkeypatch, tmp_path):
 
 
 class _FakeGrabber:
-    def __init__(self):
+    """Stub grabber that, like the real x11 grabber, fires on_grabs_changed with
+    the now-current canonical (None on uninstall) AFTER each grab op. This is how
+    _ttr_grabs_active gets set (the focus handler only records intent)."""
+    def __init__(self, on_grabs_changed=None):
         self.calls = []
+        self._on_grabs_changed = on_grabs_changed
+        self._current = None
     def install_grabs(self, canonical_set, passthrough_keysyms=None):
         self.calls.append(("install", canonical_set))
+        self._current = canonical_set
+        if self._on_grabs_changed:
+            self._on_grabs_changed(self._current)
     def uninstall_grabs(self):
         self.calls.append(("uninstall",))
+        self._current = None
+        if self._on_grabs_changed:
+            self._on_grabs_changed(None)
 
 
 def test_focus_ttr_installs_grabs_and_sets_flag(monkeypatch, tmp_path):
@@ -242,10 +257,13 @@ def test_focus_ttr_installs_grabs_and_sets_flag(monkeypatch, tmp_path):
         windows=["ttr-1"], games={"ttr-1": "ttr"},
         assignments=[0], settings={STRICT_TTR_SEPARATION: True},
     )
-    fg = _FakeGrabber(); svc._key_grabber = fg
+    fg = _FakeGrabber(on_grabs_changed=svc._on_grabs_changed); svc._key_grabber = fg
     svc._on_active_window_changed_for_grabber("ttr-1")
     assert ("install", "arrows") in fg.calls
+    assert svc._intended_ttr_strict is True
+    # The grabber's completion callback flips the gate on once grabs are live.
     assert svc._ttr_grabs_active is True
+    assert svc._strict_ttr_active() is True
 
 
 def test_focus_ttr_uninstalls_when_toggle_off(monkeypatch, tmp_path):
@@ -254,9 +272,10 @@ def test_focus_ttr_uninstalls_when_toggle_off(monkeypatch, tmp_path):
         windows=["ttr-1"], games={"ttr-1": "ttr"},
         assignments=[0], settings={STRICT_TTR_SEPARATION: False},
     )
-    fg = _FakeGrabber(); svc._key_grabber = fg
+    fg = _FakeGrabber(on_grabs_changed=svc._on_grabs_changed); svc._key_grabber = fg
     svc._on_active_window_changed_for_grabber("ttr-1")
     assert fg.calls == [("uninstall",)]
+    assert svc._intended_ttr_strict is False
     assert svc._ttr_grabs_active is False
 
 
@@ -267,17 +286,18 @@ def test_focus_ttr_custom_set_uninstalls_and_clears_flag(monkeypatch, tmp_path):
         assignments=[0], settings={STRICT_TTR_SEPARATION: True},
     )
     km.update_set_key("ttr", 0, "forward", "i")  # custom forward -> canonical None
-    fg = _FakeGrabber(); svc._key_grabber = fg
+    fg = _FakeGrabber(on_grabs_changed=svc._on_grabs_changed); svc._key_grabber = fg
     svc._ttr_grabs_active = True
     svc._on_active_window_changed_for_grabber("ttr-1")
     assert ("uninstall",) in fg.calls
+    assert svc._intended_ttr_strict is False
     assert svc._ttr_grabs_active is False
 
 
-def test_focus_handler_clears_flag_when_no_grabber(monkeypatch, tmp_path):
-    """If the grabber was torn down, the focus handler must still leave
-    _ttr_grabs_active False (the reset runs before the grabber-None guard), so a
-    stale True can't survive into the router."""
+def test_focus_handler_clears_intent_when_no_grabber(monkeypatch, tmp_path):
+    """If the grabber was torn down, the focus handler still clears intent and
+    _strict_ttr_active() stays False (it requires a live grabber), so a stale
+    _ttr_grabs_active can't leak into the router."""
     svc, _ = _make_service(
         monkeypatch, tmp_path, active_wid="ttr-1",
         windows=["ttr-1"], games={"ttr-1": "ttr"},
@@ -285,8 +305,10 @@ def test_focus_handler_clears_flag_when_no_grabber(monkeypatch, tmp_path):
     )
     svc._key_grabber = None
     svc._ttr_grabs_active = True  # stale from a prior focus
+    svc._intended_ttr_strict = True
     svc._on_active_window_changed_for_grabber("ttr-1")
-    assert svc._ttr_grabs_active is False
+    assert svc._intended_ttr_strict is False
+    assert svc._strict_ttr_active() is False  # no grabber -> not active regardless
 
 
 def test_focus_non_game_uninstalls(monkeypatch, tmp_path):
@@ -295,10 +317,11 @@ def test_focus_non_game_uninstalls(monkeypatch, tmp_path):
         windows=["ttr-1"], games={"ttr-1": "ttr"},
         assignments=[0], settings={STRICT_TTR_SEPARATION: True},
     )
-    fg = _FakeGrabber(); svc._key_grabber = fg
+    fg = _FakeGrabber(on_grabs_changed=svc._on_grabs_changed); svc._key_grabber = fg
     svc._ttr_grabs_active = True
     svc._on_active_window_changed_for_grabber("other")  # unknown -> game None
     assert ("uninstall",) in fg.calls
+    assert svc._intended_ttr_strict is False
     assert svc._ttr_grabs_active is False
 
 
@@ -308,9 +331,11 @@ def test_focus_cc_still_installs_without_ttr_flag(monkeypatch, tmp_path):
         windows=["cc-1"], games={"cc-1": "cc"},
         assignments=[0], settings={STRICT_TTR_SEPARATION: False},
     )
-    fg = _FakeGrabber(); svc._key_grabber = fg
+    fg = _FakeGrabber(on_grabs_changed=svc._on_grabs_changed); svc._key_grabber = fg
     svc._on_active_window_changed_for_grabber("cc-1")
     assert ("install", "wasd") in fg.calls
+    # CC focus installs grabs but must NOT flip the TTR gate.
+    assert svc._intended_ttr_strict is False
     assert svc._ttr_grabs_active is False
 
 
@@ -388,3 +413,47 @@ def test_toggle_change_ignores_unrelated_key(monkeypatch, tmp_path):
     svc._on_active_window_changed_for_grabber = lambda wid: order.append("reseed")
     svc._on_strict_ttr_setting_changed("some_other_setting", True)
     assert order == []
+
+
+# ── D3: Windows is out of scope for v1 (Linux/X11 only) ──────────────────────
+
+def test_ttr_strict_supported_false_on_windows(monkeypatch, tmp_path):
+    import sys
+    svc, _ = _make_service(monkeypatch, tmp_path)
+    monkeypatch.setattr(sys, "platform", "win32")
+    assert svc._ttr_strict_supported() is False
+    # Even with a live grabber and the flag set, the gate is OFF on Windows.
+    svc._key_grabber = object()
+    svc._ttr_grabs_active = True
+    assert svc._strict_ttr_active() is False
+
+
+def test_consume_false_for_ttr_on_windows(monkeypatch, tmp_path):
+    import sys
+    svc, _ = _make_service(
+        monkeypatch, tmp_path, active_wid="ttr-1",
+        windows=["ttr-1"], games={"ttr-1": "ttr"},
+        settings={STRICT_TTR_SEPARATION: True},
+    )
+    svc.global_chat_active = False
+    monkeypatch.setattr(sys, "platform", "win32")
+    # On Windows the TTR strict path stays off, so the grabber must not consume
+    # TTR keys (Windows keeps pre-feature behavior).
+    assert svc._should_consume_grabbed_key("w") is False
+
+
+# ── D4: the gate reflects REAL grab state via on_grabs_changed ────────────────
+
+def test_on_grabs_changed_tracks_real_grab_state(monkeypatch, tmp_path):
+    svc, _ = _make_service(monkeypatch, tmp_path)
+    # Intent True + a grab actually installed (canonical not None) -> active.
+    svc._intended_ttr_strict = True
+    svc._on_grabs_changed("arrows")
+    assert svc._ttr_grabs_active is True
+    # Grabs uninstalled (canonical None) -> inactive, even though intent is True.
+    svc._on_grabs_changed(None)
+    assert svc._ttr_grabs_active is False
+    # Intent False (e.g. CC focus) + a grab installed -> TTR gate stays off.
+    svc._intended_ttr_strict = False
+    svc._on_grabs_changed("wasd")
+    assert svc._ttr_grabs_active is False

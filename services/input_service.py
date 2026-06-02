@@ -125,6 +125,11 @@ class InputService(QObject):
         # the focused-window synth in _send_logical_action_km so we never
         # synthesize to a focused window whose physical key isn't suppressed.
         self._ttr_grabs_active = False
+        # Whether the CURRENT focus should be under TTR strict suppression.
+        # Set by the focus handler; read by the grabber's on_grabs_changed
+        # callback (which owns _ttr_grabs_active) so the gate reflects real grab
+        # state rather than enqueue-time intent.
+        self._intended_ttr_strict = False
 
         # Track the most recent foreground game so keys pressed while TTMT
         # itself has focus still resolve through a meaningful default set.
@@ -194,6 +199,7 @@ class InputService(QObject):
                 on_key=self._on_grabbed_key,
                 should_consume=self._should_consume_grabbed_key,
                 on_passthrough=self._on_passthrough_key,
+                on_grabs_changed=self._on_grabs_changed,
             )
             if not ok:
                 return
@@ -264,14 +270,16 @@ class InputService(QObject):
 
     def _on_active_window_changed_for_grabber(self, window_id: str) -> None:
         """Slot for WindowManager.active_window_changed. Installs grabs for the
-        focused CC or TTR toon's keyset, or uninstalls them. Maintains
-        self._ttr_grabs_active so the router only synthesizes to a focused TTR
-        window whose physical keys are actually being suppressed.
+        focused CC or TTR toon's keyset, or uninstalls them. Records
+        self._intended_ttr_strict (whether the focused window SHOULD be under TTR
+        strict suppression); the grabber's on_grabs_changed callback then sets
+        self._ttr_grabs_active once grabs ACTUALLY change, so the router never
+        synthesizes to a focused TTR window whose keys aren't yet suppressed.
         """
-        # Default to "not suppressing"; only a successful TTR install flips it
-        # back on. Set before the grabber-None guard so this handler ALWAYS
-        # leaves the flag accurate, even if the grabber was torn down.
-        self._ttr_grabs_active = False
+        # Record intent before any grabber call so the (possibly synchronous in
+        # tests, async in production) completion callback observes the right
+        # value. Default: not a TTR strict focus.
+        self._intended_ttr_strict = False
         if self._key_grabber is None:
             return
         if not window_id:
@@ -282,7 +290,9 @@ class InputService(QObject):
             game = GameRegistry.instance().get_game_for_window(str(window_id))
         except Exception:
             game = None
-        if game == "ttr" and not self._strict_ttr_enabled():
+        # TTR strict separation is Linux/X11 only in v1 (Windows is a documented
+        # follow-on); on Windows TTR keeps pre-feature behavior.
+        if game == "ttr" and not (self._strict_ttr_enabled() and self._ttr_strict_supported()):
             self._key_grabber.uninstall_grabs()
             return
         if game not in ("cc", "ttr"):
@@ -303,12 +313,27 @@ class InputService(QObject):
         if canonical is None:
             self._key_grabber.uninstall_grabs()
             return
+        # Set intent BEFORE install so on_grabs_changed credits this as a TTR
+        # strict focus. CC focus installs the same way but intent stays False
+        # (CC has its own always-on routing and must not flip the TTR gate).
+        self._intended_ttr_strict = (game == "ttr")
         passthrough = list(_passthrough_keysyms_for_canonical(canonical))
         self._key_grabber.install_grabs(
             canonical_set=canonical,
             passthrough_keysyms=passthrough,
         )
-        self._ttr_grabs_active = (game == "ttr")
+
+    def _on_grabs_changed(self, canonical) -> None:
+        """Called by the grabber AFTER grabs actually change (worker thread on
+        Linux). Sets _ttr_grabs_active to reflect REAL suppression state, not the
+        enqueue-time intent: True only when the latest focus intends TTR strict
+        AND a grab is now installed (canonical is not None) AND the platform
+        supports it. This closes the enqueue-vs-install timing gap."""
+        self._ttr_grabs_active = bool(
+            self._intended_ttr_strict
+            and canonical is not None
+            and self._ttr_strict_supported()
+        )
 
     def _on_strict_ttr_setting_changed(self, key: str = "", value=None) -> None:
         """React to the strict_ttr_separation toggle changing at runtime.
@@ -360,7 +385,7 @@ class InputService(QObject):
             return
         if game not in ("cc", "ttr"):
             return
-        if game == "ttr" and not self._strict_ttr_enabled():
+        if game == "ttr" and not (self._strict_ttr_enabled() and self._ttr_strict_supported()):
             return
         try:
             self._send_via_backend(action, str(active), keysym)
@@ -388,7 +413,7 @@ class InputService(QObject):
         if game == "cc":
             return True
         if game == "ttr":
-            return self._strict_ttr_enabled()
+            return self._strict_ttr_enabled() and self._ttr_strict_supported()
         return False
 
     def _suppress_predicate(self, keysym: str) -> bool:
@@ -448,6 +473,7 @@ class InputService(QObject):
                 print(f"[InputService] key grabber shutdown error: {e}")
             self._key_grabber = None
         self._ttr_grabs_active = False  # grabs are gone; keep the flag accurate
+        self._intended_ttr_strict = False
         try:
             from utils import wine_input_bridge
             wine_input_bridge.shutdown_all()
@@ -491,8 +517,24 @@ class InputService(QObject):
         focused toon both natively (unsuppressed key) and via the synth -> a
         double-move. So the gate must reflect ACTUAL suppression, not object
         existence. When grabs are not installed, strict separation degrades to
-        today's unconditional focused-window skip."""
-        return self._strict_ttr_enabled() and self._ttr_grabs_active
+        today's unconditional focused-window skip.
+
+        v1 is Linux/X11 only (`_ttr_strict_supported`); on Windows this is always
+        False so TTR keeps pre-feature behavior. The `_key_grabber is not None`
+        check is a safety net against a stale flag after teardown."""
+        return (
+            self._strict_ttr_enabled()
+            and self._ttr_strict_supported()
+            and self._key_grabber is not None
+            and self._ttr_grabs_active
+        )
+
+    def _ttr_strict_supported(self) -> bool:
+        """TTR strict separation is implemented for Linux/X11 in v1. Windows is a
+        documented follow-on (the win32 grabber path is unvalidated for TTR), so
+        the strict path stays off there and Windows keeps pre-feature behavior."""
+        import sys
+        return sys.platform != "win32"
 
     # ── Keymap-aware send methods ──────────────────────────────────────────
 

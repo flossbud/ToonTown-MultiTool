@@ -96,12 +96,14 @@ class MovementKeyGrabber:
         self._on_key: Optional[Callable[[str, str], None]] = None
         self._on_passthrough: Optional[Callable[[str, str], None]] = None
         self._should_consume: Optional[Callable[[str], bool]] = None
+        self._on_grabs_changed: Optional[Callable[[Optional[str]], None]] = None
 
     def prepare(
         self,
         on_key: Callable[[str, str], None],
         should_consume: Callable[[str], bool],
         on_passthrough: Optional[Callable[[str, str], None]] = None,
+        on_grabs_changed: Optional[Callable[[Optional[str]], None]] = None,
     ) -> bool:
         """Open the Xlib display and start the event-loop thread.
         Installs zero grabs. Returns True on success, False if Xlib is
@@ -119,6 +121,7 @@ class MovementKeyGrabber:
         self._on_key = on_key
         self._on_passthrough = on_passthrough
         self._should_consume = should_consume
+        self._on_grabs_changed = on_grabs_changed
         self._stop.clear()
         # Flush any actions that were enqueued after the previous stop() but
         # before this prepare(). Without this, a stale install_grabs() would
@@ -234,6 +237,19 @@ class MovementKeyGrabber:
         self._keycode_to_name = {}
         self._current_canonical = None
 
+    def _notify_grabs_changed(self) -> None:
+        """Tell the caller (InputService) that grabs ACTUALLY changed, with the
+        now-current canonical set (None if uninstalled). Lets the caller gate
+        focused-window synthesis on real grab state instead of enqueue time.
+        Runs on the worker thread; the callback must be cheap and thread-safe."""
+        cb = self._on_grabs_changed
+        if cb is None:
+            return
+        try:
+            cb(self._current_canonical)
+        except Exception as e:  # noqa: BLE001
+            print(f"[x11_movement_grabber] on_grabs_changed raised: {e}")
+
     def _drain_actions(self) -> bool:
         """Process queued install/uninstall actions. Returns True if a
         shutdown action was seen."""
@@ -244,8 +260,10 @@ class MovementKeyGrabber:
                     if action[0] == "install":
                         _, canonical_set, passthrough = action
                         self._install_grabs_inline(canonical_set, passthrough)
+                        self._notify_grabs_changed()
                     elif action[0] == "uninstall":
                         self._uninstall_grabs_inline()
+                        self._notify_grabs_changed()
                     elif action[0] == "shutdown":
                         return True
                 except Exception as e:  # noqa: BLE001

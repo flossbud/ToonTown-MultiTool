@@ -357,8 +357,11 @@ def _make_focused_svc(monkeypatch, focus_window_id, registry_mapping, assignment
 
 def test_install_when_ttr_window_focused_strict_on(monkeypatch):
     """At startup, if a TTR preset window is focused with strict separation ON
-    (default), install_grabs IS called and _ttr_grabs_active is set True. This is
-    the core Task 4 contract change: TTR windows now arm the grabber."""
+    (default), install_grabs IS called and the handler records TTR strict intent.
+    This is the core Task 4 contract change: TTR windows now arm the grabber.
+    (_ttr_grabs_active is flipped by the grabber's on_grabs_changed callback once
+    grabs are live; the MagicMock grabber doesn't fire it, so we assert the
+    handler's synchronous output, _intended_ttr_strict.)"""
     svc, grabber = _make_focused_svc(
         monkeypatch,
         focus_window_id="100",
@@ -370,7 +373,7 @@ def test_install_when_ttr_window_focused_strict_on(monkeypatch):
     args, kwargs = grabber.install_grabs.call_args
     canonical = kwargs.get("canonical_set", args[0] if args else None)
     assert canonical == "wasd"  # set_idx 0 -> forward "w" -> wasd
-    assert svc._ttr_grabs_active is True
+    assert svc._intended_ttr_strict is True
 
 
 def test_no_install_when_ttr_window_focused_strict_off(monkeypatch):
@@ -420,8 +423,11 @@ def test_install_arrows_canonical_when_arrows_cc_focused(monkeypatch):
 def test_focus_change_cc_to_ttr_installs_ttr_grabs(monkeypatch):
     """Focus moves from CC to a TTR preset window -> with strict ON, grabs are
     re-installed for the TTR window (the grabber's install is idempotent and
-    swaps the canonical set) and _ttr_grabs_active becomes True. This is the
-    Task 4 contract change from the old 'non-CC focus = no grabs' behavior."""
+    swaps the canonical set) and the handler records TTR strict intent. This is
+    the Task 4 contract change from the old 'non-CC focus = no grabs' behavior.
+    (_ttr_grabs_active itself is flipped by the grabber's on_grabs_changed
+    callback once grabs are live; the MagicMock grabber here doesn't fire it, so
+    we assert the handler's synchronous output, _intended_ttr_strict.)"""
     svc, grabber = _make_focused_svc(
         monkeypatch,
         focus_window_id="200",
@@ -437,7 +443,7 @@ def test_focus_change_cc_to_ttr_installs_ttr_grabs(monkeypatch):
     args, kwargs = grabber.install_grabs.call_args
     canonical = kwargs.get("canonical_set", args[0] if args else None)
     assert canonical == "wasd"
-    assert svc._ttr_grabs_active is True
+    assert svc._intended_ttr_strict is True
 
 
 def test_focus_change_to_non_game_uninstalls(monkeypatch):
