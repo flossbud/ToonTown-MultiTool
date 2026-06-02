@@ -385,6 +385,21 @@ class MovementKeyGrabber:
         return False
 
     def _run(self) -> None:
+        try:
+            self._run_loop()
+        finally:
+            # Safety net: never leave the keyboard captured if the worker loop
+            # exits unexpectedly (display error, ConnectionClosed, etc.) while a
+            # route_all keyboard grab is held. Normal teardown also ungrabs via
+            # uninstall / _cleanup_display; this guards the break-out paths.
+            if self._keyboard_grabbed and self._display is not None:
+                try:
+                    self._display.ungrab_keyboard(X.CurrentTime)
+                except Exception:
+                    pass
+                self._keyboard_grabbed = False
+
+    def _run_loop(self) -> None:
         while True:
             if self._drain_actions():
                 break
