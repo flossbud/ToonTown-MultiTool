@@ -541,3 +541,36 @@ def test_strict_toggle_off_while_held_sends_focused_keyup(monkeypatch, tmp_path)
         f"focused toon must receive a keyup when strict toggles off mid-hold; got {sent}"
     assert svc._strict_drain_active is False, \
         "_strict_drain_active must be reset to False after drain"
+
+
+def test_chat_close_does_not_reinstall_while_phantom_active(monkeypatch, tmp_path):
+    """Chat close must NOT reinstall grabs when phantom capture is still live.
+
+    release_all_keys() calls _set_chat_active(False) then _phantom_reset(), so
+    if both chat and phantom were active simultaneously, the naive unconditional
+    call to _resync_grabs_for_input_capture(False) inside _set_chat_active would
+    attempt to reinstall grabs before phantom is cleared — breaking native typing
+    during the phantom window.  After Fix 1 the reinstall is gated on
+    _phantom_active being False, so install_grabs must NOT be called here.
+    """
+    svc, km = _two_ttr_toons(monkeypatch, tmp_path, "ttr-2")
+    grab = MagicMock()
+    svc._key_grabber = grab
+    svc._intended_ttr_strict = True
+    svc._ttr_grabs_active = True
+    # Simulate the state that release_all_keys() hits: chat AND phantom are both active.
+    svc.global_chat_active = True
+    svc._phantom_active = True
+    # Wire _on_active_window_changed_for_grabber to call install_grabs so we
+    # can detect any accidental reinstall attempt.
+    monkeypatch.setattr(
+        svc, "_on_active_window_changed_for_grabber",
+        lambda *_: grab.install_grabs(canonical_set="wasd", route_all=True),
+    )
+
+    grab.reset_mock()
+    svc._set_chat_active(False)  # chat closes, phantom still active
+
+    assert not grab.install_grabs.called, (
+        "install_grabs must NOT be called on chat-close while phantom is still active"
+    )

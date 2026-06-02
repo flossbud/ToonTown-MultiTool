@@ -1001,6 +1001,12 @@ class InputService(QObject):
                                     if self._phantom_gate_open():
                                         self._phantom_char_count += 1
                                         if self._phantom_char_count >= 3:
+                                            # NOTE: _phantom_active is set before draining here
+                                            # (unlike chat-open, where global_chat_active must
+                                            # be False during the drain). Safe because
+                                            # _send_logical_action_km has no _phantom_active
+                                            # early-return guard; if one is ever added, the
+                                            # drain must move above this assignment.
                                             self._phantom_active = True
                                             self._chat_last_activity = now
                                             if self.logging_enabled:
@@ -1120,7 +1126,9 @@ class InputService(QObject):
         Callers MUST drain held movement (with _strict_drain_active set) before
         invoking with capturing=True, so no toon is left walking.
         No-op without a grabber or where TTR strict is unsupported."""
-        if self._key_grabber is None or not self._ttr_strict_supported():
+        if (self._key_grabber is None
+                or not self._ttr_strict_supported()
+                or not self._intended_ttr_strict):
             return
         try:
             if capturing:
@@ -1147,7 +1155,14 @@ class InputService(QObject):
             self.chat_state_changed.emit(active)
             if self.logging_enabled:
                 self.input_log.emit(f"[Input] Chat broadcast {'activated' if active else 'deactivated'}")
-            self._resync_grabs_for_input_capture(active)
+            if active:
+                self._resync_grabs_for_input_capture(True)
+            elif not self._phantom_active:
+                # Don't reinstall grabs while phantom capture is still live.
+                # release_all_keys() calls _set_chat_active(False) THEN
+                # _phantom_reset(), so phantom hasn't been cleared yet here;
+                # _phantom_reset() will reinstall once it clears.
+                self._resync_grabs_for_input_capture(False)
 
     def _phantom_gate_open(self) -> bool:
         """Return True iff phantom suppression has a purpose given the
