@@ -120,17 +120,17 @@ class InputService(QObject):
         self.CHAT_IDLE_TIMEOUT = 15.0
 
         self._xlib = None
-        # _xlib_backend_failed: True when a REQUESTED delivery backend's
-        # connect() raised — the xlib backend on Linux (input_backend == "xlib")
-        # or the Win32 backend on Windows. Distinct from the user explicitly
-        # selecting the xdotool backend on Linux. _send_via_backend will read this
-        # (in the follow-up delivery-gating change) to REFUSE a silent
-        # xdotool/XTEST fallback, which would re-trigger the Wayland input-control
-        # portal the app deliberately avoids (and can stick an auto-repeating key).
+        # _xlib_backend_failed: True when a REQUESTED delivery backend could not
+        # be initialized (import, construct, or connect) -- the xlib backend on
+        # Linux (input_backend == "xlib") or the Win32 backend on Windows.
+        # Distinct from the user explicitly selecting the xdotool backend on
+        # Linux. _send_via_backend reads this to REFUSE a silent xdotool/XTEST
+        # fallback, which would re-trigger the Wayland input-control portal the
+        # app deliberately avoids (and can stick an auto-repeating key).
         self._xlib_backend_failed = False
         # One-shot guard so the "input delivery disabled" surfacing fires once
         # per failure episode, not on every dropped keystroke. Reset whenever a
-        # working backend is (re)established. (Consumed in Task 2.)
+        # working backend is (re)established.
         self._xlib_unavailable_logged = False
         self._key_grabber = None
         # True only while movement grabs are actually INSTALLED for a focused
@@ -1383,7 +1383,27 @@ class InputService(QObject):
                 success = self._xlib.send_keyup(win_id, keysym)
             elif action == "key":
                 success = self._xlib.send_key(win_id, keysym, modifiers)
+        elif self._xlib_backend_failed:
+            # The requested xlib backend failed to initialize. NEVER silently
+            # emulate via xdotool/XTEST here: XTEST re-triggers the Wayland
+            # input-control portal the app deliberately avoids and can leave a
+            # stuck auto-repeating key. Drop the event and surface once.
+            if _ITRACE:
+                _itrace("send", f"DROP (xlib unavailable) action={action} "
+                                f"target={win_id} keysym={keysym}")
+            if not self._xlib_unavailable_logged:
+                self._xlib_unavailable_logged = True
+                print("[InputService] dropping synthetic input: xlib backend "
+                      "unavailable (refusing xdotool/XTEST fallback)")
+                if self.logging_enabled:
+                    self.input_log.emit(
+                        "[Input] Input delivery disabled; xlib backend "
+                        "unavailable (refusing xdotool/XTEST fallback)"
+                    )
+            return
         else:
+            # User explicitly selected the xdotool backend (intended; the
+            # settings UI warns about the Wayland portal on GNOME).
             if action == "keydown":
                 success = self._safe_run(["xdotool", "keydown", "--window", win_id, keysym])
             elif action == "keyup":
@@ -1394,7 +1414,7 @@ class InputService(QObject):
                     success = self._safe_run(["xdotool", "key", "--window", win_id, combo])
                 else:
                     success = self._safe_run(["xdotool", "key", "--window", win_id, keysym])
-                    
+
         if not success:
             self.window_manager.assign_windows()
 
