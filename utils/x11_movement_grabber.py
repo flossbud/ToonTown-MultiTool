@@ -147,9 +147,13 @@ class MovementKeyGrabber:
         route_all: bool = False,
     ) -> None:
         """route_all=True (TTR strict, X11 only): grab BOTH keysets,
-        GrabModeAsync + owner_events=False, route every movement key via
-        on_key. route_all=False (CC, default): legacy conflicting-keyset /
-        GrabModeSync / passthrough. Safe from any thread."""
+        GrabModeAsync + owner_events=False, to SUPPRESS native movement
+        delivery. Movement is NOT routed from the grabber's own event stream
+        (it is lossy under XWayland); the pynput/XRecord feed is the single
+        source of truth for movement. Only non-movement keys redirected by the
+        active grab are re-delivered via on_passthrough. route_all=False (CC,
+        default): legacy conflicting-keyset / GrabModeSync / passthrough +
+        on_key routing. Safe from any thread."""
         self._actions.put(("install", canonical_set,
                            list(passthrough_keysyms or []), route_all))
 
