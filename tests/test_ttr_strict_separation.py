@@ -3,6 +3,7 @@
 Run: TTMT_NO_VENV_REEXEC=1 QT_QPA_PLATFORM=offscreen pytest tests/test_ttr_strict_separation.py -v
 """
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 from services.input_service import STRICT_TTR_SEPARATION
 
@@ -464,3 +465,79 @@ def test_on_grabs_changed_tracks_real_grab_state(monkeypatch, tmp_path):
     svc._intended_ttr_strict = False
     svc._on_grabs_changed("wasd")
     assert svc._ttr_grabs_active is False
+
+
+# ── Task 4: chat/phantom/toggle-off drain + ungrab ────────────────────────────
+
+def test_chat_open_drains_then_ungrabs_close_reinstalls(monkeypatch, tmp_path):
+    """On chat open: drain held keys (while strict still active) THEN ungrab.
+    On chat close: reinstall grabs for current focus."""
+    svc, km = _two_ttr_toons(monkeypatch, tmp_path, "ttr-2")
+    grab = MagicMock()
+    svc._key_grabber = grab
+    svc._intended_ttr_strict = True
+    svc._ttr_grabs_active = True
+
+    order = []
+    monkeypatch.setattr(svc, "_drain_all_held", lambda *a, **k: order.append("drain"))
+    grab.uninstall_grabs.side_effect = lambda *a, **k: order.append("ungrab")
+    grab.install_grabs.side_effect = lambda *a, **k: order.append("install")
+    monkeypatch.setattr(
+        svc, "_on_active_window_changed_for_grabber",
+        lambda *_: grab.install_grabs(canonical_set="wasd", route_all=True),
+    )
+
+    svc._set_chat_active(True)
+    assert order[:2] == ["drain", "ungrab"], \
+        f"expected drain before ungrab on open; got {order}"
+
+    order.clear()
+    svc._set_chat_active(False)
+    assert "install" in order, \
+        f"expected install on chat close; got {order}"
+
+
+def test_phantom_active_ungrabs_for_ttr(monkeypatch, tmp_path):
+    """_resync_grabs_for_input_capture(True) with an active TTR grab calls
+    uninstall_grabs so native keystrokes land during phantom/whisper mode."""
+    svc, km = _two_ttr_toons(monkeypatch, tmp_path, "ttr-2")
+    grab = MagicMock()
+    svc._key_grabber = grab
+    svc._intended_ttr_strict = True
+    svc._ttr_grabs_active = True
+
+    svc._resync_grabs_for_input_capture(True)
+    assert grab.uninstall_grabs.called, \
+        "uninstall_grabs must be called when capture opens"
+
+
+def test_strict_toggle_off_while_held_sends_focused_keyup(monkeypatch, tmp_path):
+    """When strict is toggled off while a movement key is held, the drain that
+    fires inside _on_strict_ttr_setting_changed must deliver a keyup to the
+    focused window so it does not remain walking.
+    _strict_drain_active must be False afterwards (flag is transient)."""
+    from utils.held_key_registry import HoldKind
+
+    svc, km = _two_ttr_toons(monkeypatch, tmp_path, "ttr-2")
+    # Strict is effectively disabled (the setting was just flipped off).
+    monkeypatch.setattr(svc, "_strict_ttr_enabled", lambda: False)
+    # Grabber must exist so _strict_ttr_active() can be computed; grabs were
+    # previously live (we're mid-toggle).
+    svc._key_grabber = MagicMock()
+    svc._ttr_grabs_active = True
+
+    sent = []
+    svc._send_via_backend = lambda action, win, keysym, *a, **kw: sent.append(
+        (action, str(win), keysym)
+    )
+
+    # Simulate a held "w" on toon index 1 (ttr-2, WASD set).
+    svc.holds.acquire("w", HoldKind.MOVEMENT, 0.0)
+
+    svc._on_strict_ttr_setting_changed(STRICT_TTR_SEPARATION, False)
+
+    focused_keyups = [(a, w, k) for a, w, k in sent if a == "keyup" and w == "ttr-2"]
+    assert focused_keyups, \
+        f"focused toon must receive a keyup when strict toggles off mid-hold; got {sent}"
+    assert svc._strict_drain_active is False, \
+        "_strict_drain_active must be reset to False after drain"

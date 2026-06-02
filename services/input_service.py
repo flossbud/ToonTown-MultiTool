@@ -131,6 +131,12 @@ class InputService(QObject):
         # callback (which owns _ttr_grabs_active) so the gate reflects real grab
         # state rather than enqueue-time intent.
         self._intended_ttr_strict = False
+        # Transient flag: True only during an explicit synchronous drain that
+        # fires while strict is being torn down (toggle-off or capture-open).
+        # Allows the focused-window keyup to pass through _send_logical_action_km
+        # even though _strict_ttr_active() is already False at that point, so
+        # the focused toon's synthesized keydown is properly balanced.
+        self._strict_drain_active: bool = False
 
         # Track the most recent foreground game so keys pressed while TTMT
         # itself has focus still resolve through a meaningful default set.
@@ -350,9 +356,12 @@ class InputService(QObject):
         if key and key != STRICT_TTR_SEPARATION:
             return
         try:
+            self._strict_drain_active = True
             self.release_all_keys()
         except Exception as e:  # noqa: BLE001
             print(f"[InputService] release_all_keys on toggle failed: {e}")
+        finally:
+            self._strict_drain_active = False
         try:
             seed = self.window_manager.get_active_window()
         except Exception:
@@ -653,12 +662,16 @@ class InputService(QObject):
                 outbound = self.keymap_manager.get_key_for_action(toon_game, 0, toon_action)
                 if outbound is None:
                     continue
-                if win == active_window and not self._strict_ttr_active():
+                if win == active_window and not self._strict_ttr_active() \
+                        and not self._strict_drain_active:
                     # Strict not enforceable (toggle OFF or grabs not installed):
                     # the focused window still receives its native key -> skip.
                     # When strict IS active, route_all suppressed the native key
                     # for matched AND mismatched keys, so synthesize to the
                     # focused toon too (no key == outbound skip).
+                    # _strict_drain_active bypasses this skip during an explicit
+                    # synchronous drain on toggle-off / capture-open, so the
+                    # focused toon's synthesized keydown is paired with a keyup.
                     continue
                 keysym = self._resolve_keysym(outbound)
                 if keysym:
@@ -992,6 +1005,16 @@ class InputService(QObject):
                                             self._chat_last_activity = now
                                             if self.logging_enabled:
                                                 self.input_log.emit("[Input] Whisper reply detected — input suppressed")
+                                            # Drain held movement before ungrabs so no toon
+                                            # is left walking while whisper mode is active.
+                                            try:
+                                                self._strict_drain_active = True
+                                                self._drain_all_held(enabled, assignments)
+                                            except Exception as _e:  # noqa: BLE001
+                                                print(f"[InputService] phantom-open drain failed: {_e}")
+                                            finally:
+                                                self._strict_drain_active = False
+                                            self._resync_grabs_for_input_capture(True)
                                         else:
                                             self._send_typing_to_bg(key, enabled, assignments, movement_keys)
                                     else:
@@ -1090,13 +1113,41 @@ class InputService(QObject):
         tag = self._focused_toon_tag()
         self.input_log.emit(f"[Input]{tag} '{key}' {state}{extra}")
 
+    def _resync_grabs_for_input_capture(self, capturing: bool) -> None:
+        """A focused TTR window under route_all has its movement keys suppressed
+        from native delivery. When the game needs native typing (chat box,
+        whisper/stealth), ungrab so keystrokes land; reinstall when it ends.
+        Callers MUST drain held movement (with _strict_drain_active set) before
+        invoking with capturing=True, so no toon is left walking.
+        No-op without a grabber or where TTR strict is unsupported."""
+        if self._key_grabber is None or not self._ttr_strict_supported():
+            return
+        try:
+            if capturing:
+                self._key_grabber.uninstall_grabs()
+            else:
+                seed = self.window_manager.get_active_window()
+                self._on_active_window_changed_for_grabber(seed or "")
+        except Exception as e:  # noqa: BLE001
+            print(f"[InputService] capture grab resync failed: {e}")
+
     def _set_chat_active(self, active: bool):
         """Set global_chat_active and emit signal on change."""
         if self.global_chat_active != active:
+            if active:
+                try:
+                    self._strict_drain_active = True
+                    enabled = self.get_enabled_toons()
+                    self._drain_all_held(enabled, self._get_assignments(enabled))
+                except Exception as e:  # noqa: BLE001
+                    print(f"[InputService] chat-open drain failed: {e}")
+                finally:
+                    self._strict_drain_active = False
             self.global_chat_active = active
             self.chat_state_changed.emit(active)
             if self.logging_enabled:
                 self.input_log.emit(f"[Input] Chat broadcast {'activated' if active else 'deactivated'}")
+            self._resync_grabs_for_input_capture(active)
 
     def _phantom_gate_open(self) -> bool:
         """Return True iff phantom suppression has a purpose given the
@@ -1137,6 +1188,10 @@ class InputService(QObject):
         self._phantom_char_count = 0
         self._phantom_active = False
         self._chat_last_activity = 0.0
+        # Reinstall grabs if neither phantom nor chat is active; if chat is
+        # still active _set_chat_active(False) will handle the reinstall.
+        if not self.global_chat_active:
+            self._resync_grabs_for_input_capture(False)
 
     def _timeout_reset_chat(self, enabled, assignments):
         """Idle timeout fired — send Escape to bg toons to close any open chat, then reset."""
