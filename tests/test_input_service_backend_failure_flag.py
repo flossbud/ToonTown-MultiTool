@@ -7,6 +7,7 @@ xdotool/XTEST fallback that re-triggers the Wayland input-control portal.
 """
 
 import queue
+import sys
 from unittest.mock import MagicMock
 
 from services.input_service import InputService
@@ -172,3 +173,42 @@ def test_connect_success_clears_both_flags(monkeypatch):
     assert svc._xlib is not None
     assert svc._xlib_backend_failed is False
     assert svc._xlib_unavailable_logged is False
+
+
+def test_win32_backend_failure_sets_flag_and_emits(monkeypatch):
+    """Win32 backend connect() failure sets _xlib_backend_failed=True and
+    emits the same neutral user-facing message as the xlib failure branch.
+
+    Patching strategy: _apply_backend_setting does a local
+    `from utils.win32_backend import Win32Backend` inside the win32 branch.
+    utils/win32_backend.py references win32con at module scope, so it cannot
+    be imported on Linux. We therefore inject a fake module into sys.modules
+    so the import resolves to our stub without ever loading the real file.
+    """
+    import types
+
+    monkeypatch.setattr(sys, "platform", "win32")
+
+    class _FailingWin32Backend:
+        def connect(self):
+            raise RuntimeError("win32 backend unavailable")
+
+    fake_module = types.ModuleType("utils.win32_backend")
+    fake_module.Win32Backend = _FailingWin32Backend
+    monkeypatch.setitem(sys.modules, "utils.win32_backend", fake_module)
+
+    svc = _make_svc(
+        lambda key, default=None: default
+    )
+    assert svc._xlib is None
+
+    svc.logging_enabled = True
+    svc.input_log = MagicMock()
+
+    svc._apply_backend_setting()
+
+    assert svc._xlib is None
+    assert svc._xlib_backend_failed is True
+    svc.input_log.emit.assert_called_once_with(
+        "[Input] Input delivery unavailable; the input backend failed to start."
+    )

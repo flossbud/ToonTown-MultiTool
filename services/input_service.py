@@ -491,6 +491,10 @@ class InputService(QObject):
                     # Leave _xlib_unavailable_logged as-is: it is reset only on
                     # recovery, so the drop message surfaces once per
                     # failure episode rather than every keystroke.
+                    if self.logging_enabled:
+                        self.input_log.emit(
+                            "[Input] Input delivery unavailable; the input backend failed to start."
+                        )
             return
 
         use_xlib = (self.settings_manager.get("input_backend", "xlib") == "xlib") if self.settings_manager else True
