@@ -1054,7 +1054,11 @@ class InputService(QObject):
                 for stale_key, buffered_at in list(pending_keyups.items()):
                     if now - buffered_at >= self.AUTO_REPEAT_DEDUP_WINDOW:
                         del pending_keyups[stale_key]
-                        if self._key_still_physically_down(stale_key):
+                        _phys = self._key_phys_state(stale_key)
+                        if _ITRACE:
+                            _itrace("flush", f"keyup key={stale_key} phys={_phys} "
+                                             f"-> {'DROP(held)' if _phys is True else 'dispatch'}")
+                        if _phys is True:
                             continue
                         if self._dispatch_keyup(stale_key, enabled, assignments):
                             bs_press_time  = None
@@ -1249,6 +1253,20 @@ class InputService(QObject):
         so instance call sites and registry tests share one implementation."""
         return _resolve_keysym(key)
 
+    def _key_phys_state(self, key):
+        """Raw tri-state physical check (True held / False up / None unknown)
+        via the Xlib backend's XQueryKeymap. None when no backend / unmappable
+        / failure."""
+        backend = self._xlib
+        probe = getattr(backend, "key_physically_down", None)
+        if probe is None:
+            return None
+        keysym = self._resolve_keysym(key) or key
+        try:
+            return probe(keysym)
+        except Exception:
+            return None
+
     def _key_still_physically_down(self, key) -> bool:
         """True ONLY when we can positively confirm (via XQueryKeymap on the
         Xlib backend) that `key` is still physically held. Returns False for
@@ -1256,15 +1274,7 @@ class InputService(QObject):
         key, or any query failure — so the caller falls back to the existing
         time-based release handling and behavior is unchanged off Linux/Xlib.
         Used to drop unpaired auto-repeat releases of a still-held co-key."""
-        backend = self._xlib
-        probe = getattr(backend, "key_physically_down", None)
-        if probe is None:
-            return False
-        keysym = self._resolve_keysym(key) or key
-        try:
-            return probe(keysym) is True
-        except Exception:
-            return False
+        return self._key_phys_state(key) is True
 
     def _cc_window_ids(self) -> list:
         """Return the subset of managed windows that are CC windows.

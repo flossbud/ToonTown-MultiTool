@@ -26,6 +26,10 @@ def fake_display(monkeypatch):
     d.screen.return_value.root = root
     d.keysym_to_keycode.side_effect = lambda ks: 100 + (ks % 50)
     d.pending_events.return_value = 0
+    # route_all uses one persistent XGrabKeyboard; report GrabSuccess (0) so the
+    # grab is treated as granted in tests (MagicMock would otherwise return a
+    # truthy Mock != 0 and the grabber would consider the grab denied).
+    root.grab_keyboard.return_value = X.GrabSuccess
     monkeypatch.setattr(grabber_mod._xlib_display, "Display", lambda: d)
     return d, root
 
@@ -822,24 +826,24 @@ def test_query_keymap_failure_falls_back_to_real_release(fake_display):
     assert on_passthrough_calls == [("keyup", "w")]
 
 
-def test_route_all_grabs_both_keysets_async_owner_false(fake_display):
+def test_route_all_uses_one_persistent_keyboard_grab(fake_display):
+    """route_all installs ONE persistent XGrabKeyboard (owner_events=False,
+    GrabModeAsync x2) and NO per-key XGrabKey grabs -- per-key grabs caused the
+    active-grab-teardown focus churn that stopped the focused toon mid-combo."""
     d, root = fake_display
-    from Xlib import XK
-    names = ["w", "a", "s", "d", "Up", "Down", "Left", "Right"]
-    keycodes = {n: 100 + i for i, n in enumerate(names)}
-    d.keysym_to_keycode.side_effect = (
-        lambda ks: next((kc for n, kc in keycodes.items()
-                         if XK.string_to_keysym(n) == ks), 0))
     g = grabber_mod.MovementKeyGrabber()
     try:
-        g.prepare(on_key=lambda *_: None, should_consume=lambda _: True)
+        g.prepare(on_key=lambda *_: None, should_consume=lambda _: True,
+                  on_passthrough=lambda *_: None)
         g.install_grabs(canonical_set="wasd", route_all=True)
         import time; time.sleep(0.1)
-        grabbed = {c.args[0] for c in root.grab_key.call_args_list}
-        assert grabbed == set(keycodes.values())            # all 8, both sets
-        sample = root.grab_key.call_args_list[0]
-        assert sample.args[2] is False                       # owner_events
-        assert sample.args[4] == grabber_mod.X.GrabModeAsync # keyboard mode
+        assert root.grab_keyboard.called                 # one keyboard grab
+        args = root.grab_keyboard.call_args.args
+        assert args[0] is False                          # owner_events
+        assert args[1] == grabber_mod.X.GrabModeAsync    # pointer mode
+        assert args[2] == grabber_mod.X.GrabModeAsync    # keyboard mode
+        assert root.grab_key.call_count == 0             # NOT per-key
+        assert g._keyboard_grabbed is True and g._grab_ok is True
     finally:
         g.stop()
 
@@ -860,9 +864,9 @@ def test_failed_route_all_then_cc_install_clears_stale_state(fake_display):
     try:
         g.prepare(on_key=lambda *_: None, should_consume=lambda _: True)
 
-        # Make every grab_key call raise BadAccess to simulate all-failed
-        # route_all install (e.g. another process holds an exclusive grab).
-        root.grab_key.side_effect = grabber_mod.BadAccess.__new__(grabber_mod.BadAccess)
+        # Make the keyboard grab fail (e.g. another client holds it) to simulate
+        # a route_all install that was not granted.
+        root.grab_keyboard.return_value = grabber_mod.X.AlreadyGrabbed
         g.install_grabs(canonical_set="wasd", route_all=True)
         time.sleep(0.1)
 
@@ -870,14 +874,14 @@ def test_failed_route_all_then_cc_install_clears_stale_state(fake_display):
         assert g._route_all is True
         assert g._grab_ok is False
         # _keycode_to_name must be populated (all 8 movement keycodes were
-        # registered before the grab attempt, even though grabs all failed).
+        # registered before the grab attempt, even though the grab was denied).
         assert len(g._keycode_to_name) == 8, (
-            f"Expected 8 keycode_to_name entries after all-failed route_all, "
+            f"Expected 8 keycode_to_name entries after a denied route_all grab, "
             f"got {len(g._keycode_to_name)}: {g._keycode_to_name}"
         )
 
-        # Now a CC install - grabs succeed again.
-        root.grab_key.side_effect = None
+        # Now a CC install - the per-key grabs succeed.
+        root.grab_keyboard.return_value = grabber_mod.X.GrabSuccess
         g.install_grabs(canonical_set="wasd")   # route_all defaults False
         time.sleep(0.1)
 
@@ -922,14 +926,15 @@ def test_route_all_reinstall_same_mode_is_noop_even_if_canonical_differs(fake_di
     d, root = fake_display
     g = grabber_mod.MovementKeyGrabber()
     try:
-        g.prepare(on_key=lambda *_: None, should_consume=lambda _: True)
+        g.prepare(on_key=lambda *_: None, should_consume=lambda _: True,
+                  on_passthrough=lambda *_: None)
         g.install_grabs(canonical_set="wasd", route_all=True)
         import time; time.sleep(0.1)
-        first = root.grab_key.call_count
+        first = root.grab_keyboard.call_count
         g.install_grabs(canonical_set="arrows", route_all=True)  # other TTR toon
         time.sleep(0.1)
-        assert root.grab_key.call_count == first  # no re-grab
-        assert root.ungrab_key.call_count == 0    # no drain/uninstall
+        assert root.grab_keyboard.call_count == first  # no re-grab (idempotent)
+        assert root.ungrab_keyboard.call_count == 0    # no ungrab/re-grab churn
     finally:
         g.stop()
 
@@ -961,8 +966,9 @@ def test_route_all_grabbed_movement_does_not_route(fake_display):
 # ── Task 3B: route_all passthrough re-delivery ────────────────────────────────
 
 def test_route_all_install_registers_passthrough_without_grabbing(fake_display):
-    """route_all grabs the 8 movement keys AND registers passthrough keysyms
-    (recognized but NOT grabbed) so they can be re-delivered when redirected."""
+    """route_all classifies the 8 movement keys as 'grabbed' (suppress-only) and
+    pre-maps passthrough keysyms by NAME so non-movement keys can be re-delivered.
+    No per-key XGrabKey is used (one persistent XGrabKeyboard instead)."""
     d, root = fake_display
     from Xlib import XK
     names = {"w": 100, "a": 101, "s": 102, "d": 103,
@@ -976,10 +982,10 @@ def test_route_all_install_registers_passthrough_without_grabbing(fake_display):
                   on_passthrough=lambda *_: None)
         g.install_grabs(canonical_set="wasd", passthrough_keysyms=["j"], route_all=True)
         import time; time.sleep(0.1)
-        assert g._keycode_to_name.get(150) == ("passthrough", "j")
-        grabbed = {c.args[0] for c in root.grab_key.call_args_list}
-        assert 150 not in grabbed                 # passthrough key not grabbed
-        assert 100 in grabbed and 111 in grabbed  # movement keys grabbed
+        assert g._keycode_to_name.get(150) == ("passthrough", "j")  # named, re-deliverable
+        assert g._keycode_to_name.get(100) == ("grabbed", "w")       # movement classified
+        assert root.grab_key.call_count == 0                         # no per-key grabs
+        assert root.grab_keyboard.called                             # one keyboard grab
     finally:
         g.stop()
 
@@ -1012,3 +1018,41 @@ def test_route_all_passthrough_none_callback_no_raise(fake_display):
     # Must not raise.
     g._handle_event_route_all(_ev(X.KeyPress, 150))
     g._handle_event_route_all(_ev(X.KeyRelease, 150))
+
+
+def test_route_all_unregistered_nonmovement_key_passthrough(fake_display):
+    """Under the persistent whole-keyboard grab, a non-movement key that was NOT
+    pre-registered (e.g. an arbitrary printable) is still re-delivered to the
+    focused window, with its keysym name resolved from the keycode."""
+    from Xlib import XK
+    d, root = fake_display
+    pt = []
+    g = grabber_mod.MovementKeyGrabber()
+    g._display = d
+    g._on_passthrough = lambda a, k: pt.append((a, k))
+    g._route_all = True
+    g._keycode_to_name = {100: ("grabbed", "w")}      # only movement registered
+    d.keycode_to_keysym.side_effect = (
+        lambda kc, idx: XK.string_to_keysym("q") if kc == 200 else 0)
+    g._handle_event_route_all(_ev(X.KeyPress, 200))
+    g._handle_event_route_all(_ev(X.KeyRelease, 200))
+    assert pt == [("keydown", "q"), ("keyup", "q")]
+
+
+def test_route_all_uninstall_ungrabs_keyboard(fake_display):
+    """Uninstalling a route_all session releases the persistent keyboard grab so
+    the keyboard is never left captured (focus-away / toggle-off / shutdown)."""
+    d, root = fake_display
+    g = grabber_mod.MovementKeyGrabber()
+    try:
+        g.prepare(on_key=lambda *_: None, should_consume=lambda _: True,
+                  on_passthrough=lambda *_: None)
+        g.install_grabs(canonical_set="wasd", route_all=True)
+        import time; time.sleep(0.1)
+        assert g._keyboard_grabbed is True
+        g.uninstall_grabs()
+        time.sleep(0.1)
+        assert d.ungrab_keyboard.called
+        assert g._keyboard_grabbed is False
+    finally:
+        g.stop()

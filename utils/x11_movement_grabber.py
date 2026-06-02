@@ -103,6 +103,7 @@ class MovementKeyGrabber:
         self._on_grabs_changed: Optional[Callable[[Optional[str]], None]] = None
         self._route_all: bool = False
         self._grab_ok: bool = False
+        self._keyboard_grabbed: bool = False  # holding a persistent XGrabKeyboard
 
     def prepare(
         self,
@@ -173,6 +174,12 @@ class MovementKeyGrabber:
 
     def _cleanup_display(self) -> None:
         if self._display is not None:
+            if self._keyboard_grabbed:
+                try:
+                    self._display.ungrab_keyboard(X.CurrentTime)
+                except Exception:
+                    pass
+                self._keyboard_grabbed = False
             try:
                 self._display.sync()
             except Exception:
@@ -188,6 +195,7 @@ class MovementKeyGrabber:
             self._current_canonical = None
             self._route_all = False
             self._grab_ok = False
+            self._keyboard_grabbed = False
         # Discard any pending actions so a subsequent prepare() starts with a
         # clean queue. Without this, an install_grabs() enqueued between
         # stop() and the thread's exit would survive into the next lifecycle
@@ -205,19 +213,25 @@ class MovementKeyGrabber:
                               passthrough_keysyms: list[str],
                               route_all: bool = False) -> None:
         if route_all:
-            # Idempotent on MODE, not canonical: both keysets are grabbed
-            # regardless of canonical, so a TTR->TTR focus switch must not
-            # re-grab (which would drain a held key). Just refresh the token.
-            # (This early-return path leaves passthrough registration as-is;
-            # the fresh-install path below registers passthrough_keysyms so
-            # non-movement keys redirected during an active grab can be
-            # re-delivered to the focused window -- see _handle_event_route_all.)
+            # Persistent whole-keyboard grab for the focused session -- NOT
+            # per-key passive grabs. Per-key XGrabKey makes each movement key
+            # activate a transient active grab whose teardown (on releasing the
+            # activating/first key) churns NotifyGrab/Ungrab focus events that
+            # make the focused XWayland TTR (Panda3D) client clear its held-key
+            # state, stopping still-held combos. ONE XGrabKeyboard fires a single
+            # grab/ungrab (no per-key churn) and keeps the game window focused.
+            # All keys redirect here (owner_events=False): movement is routed by
+            # the pynput/RECORD feed; non-movement is re-delivered to the focused
+            # window via on_passthrough (see _handle_event_route_all). Idempotent
+            # on mode so a TTR->TTR focus switch does not re-grab.
             if self._route_all and self._grab_ok:
                 self._current_canonical = canonical_set
                 return
             self._uninstall_grabs_inline()
             self._route_all = True
             self._grab_ok = False
+            # Register the movement keysyms so the handler classifies them as
+            # "grabbed" (suppress-only; pynput routes them).
             for keysym_name in _ALL_MOVEMENT_KEYSYMS:
                 ks = XK.string_to_keysym(keysym_name)
                 if ks == 0:
@@ -226,23 +240,10 @@ class MovementKeyGrabber:
                 if keycode == 0:
                     continue
                 self._keycode_to_name[keycode] = ("grabbed", keysym_name)
-                for mod in _LOCK_MODIFIERS:
-                    try:
-                        self._root.grab_key(keycode, mod, False,
-                                            X.GrabModeAsync, X.GrabModeAsync)
-                        self._grabbed.append((keycode, mod))
-                        self._grab_ok = True
-                    except BadAccess:
-                        pass
-            try:
-                self._display.sync()
-            except Exception:
-                pass
-            # Register passthrough keysyms (recognized, NOT grabbed): when any
-            # movement key is held, X redirects ALL keyboard events here via the
-            # active grab (owner_events=False). Non-movement keys arrive via that
-            # redirect path; we re-deliver them to the focused window via synth.
-            # setdefault so a movement "grabbed" entry is never overwritten.
+            # Pre-map common non-movement keys to their keysym NAMES so the
+            # handler can re-deliver them by name. keysym_to_string only resolves
+            # printables, so specials (Return/Escape/modifiers/Tab/BackSpace) must
+            # be named here. setdefault so a movement entry is never overwritten.
             for keysym_name in passthrough_keysyms:
                 ks = XK.string_to_keysym(keysym_name)
                 if ks == 0:
@@ -251,8 +252,23 @@ class MovementKeyGrabber:
                 if keycode == 0:
                     continue
                 self._keycode_to_name.setdefault(keycode, ("passthrough", keysym_name))
-            # If NOTHING grabbed, native is not suppressed; report inactive so
-            # the router does not synthesize to an unsuppressed focused window.
+            # One persistent active keyboard grab. status 0 == GrabSuccess.
+            try:
+                status = self._root.grab_keyboard(
+                    False, X.GrabModeAsync, X.GrabModeAsync, X.CurrentTime)
+                self._keyboard_grabbed = (status == X.GrabSuccess)
+                if not self._keyboard_grabbed:
+                    print(f"[x11_movement_grabber] grab_keyboard not granted (status={status})")
+            except Exception as e:  # noqa: BLE001
+                print(f"[x11_movement_grabber] grab_keyboard failed: {e}")
+                self._keyboard_grabbed = False
+            try:
+                self._display.sync()
+            except Exception:
+                pass
+            self._grab_ok = self._keyboard_grabbed
+            # If the grab was not granted, native is NOT suppressed; report
+            # inactive so the router does not synthesize to an unsuppressed window.
             self._current_canonical = canonical_set if self._grab_ok else None
             return
         # ---- legacy CC path (unchanged) ----
@@ -290,6 +306,14 @@ class MovementKeyGrabber:
         self._current_canonical = canonical_set
 
     def _uninstall_grabs_inline(self) -> None:
+        # Release the persistent route_all keyboard grab first so the keyboard is
+        # never left captured (focus-away / toggle-off / shutdown all route here).
+        if self._keyboard_grabbed:
+            try:
+                self._display.ungrab_keyboard(X.CurrentTime)
+            except Exception:
+                pass
+            self._keyboard_grabbed = False
         for keycode, mod in self._grabbed:
             try:
                 self._root.ungrab_key(keycode, mod)
@@ -508,23 +532,37 @@ class MovementKeyGrabber:
             except Exception as e:  # noqa: BLE001
                 print(f"[x11_movement_grabber] on_passthrough raised: {e}")
 
+    def _resolve_keysym_name(self, keycode: int) -> Optional[str]:
+        """Resolve a keycode to an X keysym NAME string for passthrough re-send.
+        Only handles printables (keysym_to_string is ASCII-only); special keys
+        (Return/Escape/modifiers/...) are pre-registered by name in
+        _keycode_to_name. Returns None if it can't be resolved."""
+        try:
+            ks = self._display.keycode_to_keysym(keycode, 0)
+            if not ks:
+                return None
+            return XK.keysym_to_string(ks) or None
+        except Exception:
+            return None
+
     def _handle_event_route_all(self, event) -> None:
-        """route_all: native delivery is already suppressed (owner_events=False).
-        Movement keys are routed by the pynput (XRecord) feed, which is the single
-        source of truth -- the grabber's own event stream is lossy under XWayland,
-        so we do NOT route movement or track held-state from it. Only non-movement
-        keys redirected by the active grab are re-delivered to the focused window."""
+        """route_all (one persistent XGrabKeyboard): EVERY key is redirected here
+        (owner_events=False), so native delivery to the focused window is fully
+        suppressed. Movement keys are routed to the correct toon by the pynput
+        (XRecord) feed -- suppress them here (no-op). EVERY other key is one the
+        focused window still needs (chat, Enter, Escape, modifiers, hotkeys); we
+        re-deliver it to the focused window via on_passthrough, by its registered
+        name or (for unregistered printables) a keysym resolved from the keycode."""
         entry = self._keycode_to_name.get(event.detail)
-        if entry is None:
+        if entry is not None and entry[0] == "grabbed":
+            return  # movement: suppress here; pynput routes it to its toon
+        if self._on_passthrough is None:
             return
-        kind, keysym_name = entry
-        if kind == "passthrough":
-            action = "keydown" if event.type == X.KeyPress else "keyup"
-            if self._on_passthrough is not None:
-                try:
-                    self._on_passthrough(action, keysym_name)
-                except Exception as e:  # noqa: BLE001
-                    print(f"[x11_movement_grabber] on_passthrough raised: {e}")
+        keysym_name = entry[1] if entry is not None else self._resolve_keysym_name(event.detail)
+        if not keysym_name:
             return
-        # kind == "grabbed": movement key. Suppress only (pynput routes it). No-op.
-        return
+        action = "keydown" if event.type == X.KeyPress else "keyup"
+        try:
+            self._on_passthrough(action, keysym_name)
+        except Exception as e:  # noqa: BLE001
+            print(f"[x11_movement_grabber] on_passthrough raised: {e}")
