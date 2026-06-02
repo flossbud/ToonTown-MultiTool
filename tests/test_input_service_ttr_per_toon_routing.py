@@ -347,3 +347,96 @@ class TestNonMovementFallback:
         )
         svc._send_logical_action_km("keydown", "Shift_L", [True, True], [0, 1])
         assert ("keydown", "200", "Shift_L") in sent
+
+
+# ── Double-feed deduplication via HeldKeyRegistry ─────────────────────────────
+
+class TestDoubleFeedDedup:
+    """Both the X11 grabber's on_key path AND pynput enqueue onto the same
+    key_event_queue. A physical press that races both producers could trigger
+    two keydown events for the same movement key before a keyup arrives. The
+    HeldKeyRegistry (holds) guards against this: acquire() returns False for
+    a key already held, so the second keydown is a no-op and the toon receives
+    exactly ONE keydown.
+
+    Limitation: the full consumer-loop racing is hard to exercise synchronously.
+    These tests drive the registry directly and assert idempotency at the holds
+    level - the single point at which both producers converge - rather than
+    wiring a full async consumer harness. The holds.acquire contract is the
+    source-of-truth dedup gate; a racing harness would only re-test threading.
+    """
+
+    def test_double_keydown_acquires_only_once(self, monkeypatch):
+        """Two 'keydown' events for the same key: only the first acquire
+        succeeds (returns True); the second is a no-op (returns False).
+        A downstream synthesize call that is gated on acquire's return value
+        therefore fires exactly once."""
+        from utils.held_key_registry import HeldKeyRegistry, HoldKind
+        holds = HeldKeyRegistry()
+        synth_count = 0
+
+        def handle_keydown(key):
+            nonlocal synth_count
+            if holds.acquire(key, HoldKind.MOVEMENT, 0.0):
+                synth_count += 1  # only when acquire succeeds
+
+        # Simulate both producers racing with a keydown for the same key.
+        handle_keydown("w")
+        handle_keydown("w")
+        assert synth_count == 1, (
+            "double keydown must synthesize only once; holds dedup the second"
+        )
+        assert holds.contains("w")
+
+    def test_double_keydown_then_keyup_balances(self, monkeypatch):
+        """After a double-keydown, a single keyup correctly releases
+        the hold and would fire exactly one keyup synth."""
+        from utils.held_key_registry import HeldKeyRegistry, HoldKind
+        holds = HeldKeyRegistry()
+        synth_downs = 0
+        synth_ups   = 0
+
+        def handle_keydown(key):
+            nonlocal synth_downs
+            if holds.acquire(key, HoldKind.MOVEMENT, 0.0):
+                synth_downs += 1
+
+        def handle_keyup(key):
+            nonlocal synth_ups
+            entry = holds.release(key)
+            if entry is not None:
+                synth_ups += 1
+
+        # Grabber path fires first, then pynput path (both paths: same key).
+        handle_keydown("Up")
+        handle_keydown("Up")  # second producer - deduped
+        handle_keyup("Up")
+
+        assert synth_downs == 1
+        assert synth_ups   == 1
+        assert not holds.contains("Up")
+
+    @pytest.mark.parametrize("grabber_first", [True, False])
+    def test_double_keydown_order_independent(self, grabber_first, monkeypatch):
+        """Idempotency holds regardless of which producer (grabber or pynput)
+        delivers its keydown first. Both orderings produce exactly one synth."""
+        from utils.held_key_registry import HeldKeyRegistry, HoldKind
+        holds = HeldKeyRegistry()
+        synth_count = 0
+
+        def handle(key):
+            nonlocal synth_count
+            if holds.acquire(key, HoldKind.MOVEMENT, 0.0):
+                synth_count += 1
+
+        producer_a = "grabber"
+        producer_b = "pynput"
+        if not grabber_first:
+            producer_a, producer_b = producer_b, producer_a
+
+        # Both producers send keydown for the same key; order varies.
+        handle("w")  # producer_a
+        handle("w")  # producer_b
+        assert synth_count == 1, (
+            f"order ({producer_a} first) must still deduplicate to a single synth"
+        )

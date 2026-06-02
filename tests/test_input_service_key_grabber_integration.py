@@ -361,7 +361,10 @@ def test_install_when_ttr_window_focused_strict_on(monkeypatch):
     This is the core Task 4 contract change: TTR windows now arm the grabber.
     (_ttr_grabs_active is flipped by the grabber's on_grabs_changed callback once
     grabs are live; the MagicMock grabber doesn't fire it, so we assert the
-    handler's synchronous output, _intended_ttr_strict.)"""
+    handler's synchronous output, _intended_ttr_strict.)
+
+    Also asserts route_all=True and a non-empty passthrough_keysyms for the TTR
+    path, so a Win32 grabber lacking route_all is never accidentally invoked here."""
     svc, grabber = _make_focused_svc(
         monkeypatch,
         focus_window_id="100",
@@ -374,6 +377,16 @@ def test_install_when_ttr_window_focused_strict_on(monkeypatch):
     canonical = kwargs.get("canonical_set", args[0] if args else None)
     assert canonical == "wasd"  # set_idx 0 -> forward "w" -> wasd
     assert svc._intended_ttr_strict is True
+    # route_all must be True for TTR strict (X11 uniform-grab path).
+    assert kwargs.get("route_all") is True, (
+        f"TTR strict install must pass route_all=True; kwargs={kwargs}"
+    )
+    # passthrough_keysyms must be present and non-empty (non-movement keys need
+    # re-delivery to the focused toon while a movement key is held).
+    pt = kwargs.get("passthrough_keysyms")
+    assert pt, (
+        f"TTR strict install must pass a non-empty passthrough_keysyms; kwargs={kwargs}"
+    )
 
 
 def test_no_install_when_ttr_window_focused_strict_off(monkeypatch):
