@@ -1044,6 +1044,8 @@ class InputService(QObject):
                     # reach InputService via pynput.
                     if action == "keydown" and key in pending_keyups:
                         del pending_keyups[key]
+                        if _ITRACE and key in ("Return", "Escape"):
+                            _itrace("chat", f"keydown {key} DEDUPED (treated as autorepeat)")
                         continue
                     if action == "keyup":
                         pending_keyups[key] = now
@@ -1110,6 +1112,9 @@ class InputService(QObject):
                             if key not in self.bg_typing_held:
                                 self.bg_typing_held.add(key)
                                 self._log_key(key, "pressed")
+                                if _ITRACE:
+                                    _itrace("chat", f"Return dispatch phantom={self._phantom_active} "
+                                                    f"chat={self.global_chat_active}")
                                 if self._phantom_active:
                                     # Whisper send detected — don't toggle chat on bg toons
                                     self._phantom_reset()
@@ -1134,6 +1139,9 @@ class InputService(QObject):
                             if key not in self.bg_typing_held:
                                 self.bg_typing_held.add(key)
                                 self._log_key(key, "pressed")
+                                if _ITRACE:
+                                    _itrace("chat", f"Escape dispatch phantom={self._phantom_active} "
+                                                    f"chat={self.global_chat_active}")
                                 was_chatting = self.global_chat_active
                                 self._set_chat_active(False)
                                 self.chat_active.clear()
@@ -1306,18 +1314,30 @@ class InputService(QObject):
         if (self._key_grabber is None
                 or not self._ttr_strict_supported()
                 or not self._intended_ttr_strict):
+            if _ITRACE:
+                _itrace("chat", f"resync capturing={capturing} GATED "
+                                f"(grabber={self._key_grabber is not None} "
+                                f"supported={self._ttr_strict_supported()} "
+                                f"intended_strict={self._intended_ttr_strict})")
             return
         try:
             if capturing:
+                if _ITRACE:
+                    _itrace("chat", "resync -> uninstall_grabs (capture on)")
                 self._key_grabber.uninstall_grabs()
             else:
                 seed = self.window_manager.get_active_window()
+                if _ITRACE:
+                    _itrace("chat", f"resync -> reinstall via focus seed={seed}")
                 self._on_active_window_changed_for_grabber(seed or "")
         except Exception as e:  # noqa: BLE001
             print(f"[InputService] capture grab resync failed: {e}")
 
     def _set_chat_active(self, active: bool):
         """Set global_chat_active and emit signal on change."""
+        if _ITRACE:
+            _itrace("chat", f"set_chat_active({active}) cur={self.global_chat_active} "
+                            f"phantom={self._phantom_active} intended_strict={self._intended_ttr_strict}")
         if self.global_chat_active != active:
             if active:
                 try:
@@ -1340,6 +1360,8 @@ class InputService(QObject):
                 # _phantom_reset(), so phantom hasn't been cleared yet here;
                 # _phantom_reset() will reinstall once it clears.
                 self._resync_grabs_for_input_capture(False)
+            elif _ITRACE:
+                _itrace("chat", "set_chat_active(False) skipped resync (phantom active)")
 
     def _phantom_gate_open(self) -> bool:
         """Return True iff phantom suppression has a purpose given the
@@ -1377,6 +1399,8 @@ class InputService(QObject):
 
     def _phantom_reset(self):
         """Reset phantom (stealth whisper) detection state."""
+        if _ITRACE and self._phantom_active:
+            _itrace("chat", "phantom_reset (was active)")
         self._phantom_char_count = 0
         self._phantom_active = False
         self._chat_last_activity = 0.0
