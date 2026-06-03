@@ -655,6 +655,11 @@ class LaunchTab(QWidget):
                 self._visible_tiles[game][acct.id] = section.tiles[local]
 
     def _on_page_changed(self, game: str, page: int) -> None:
+        # Demo mode renders fixtures (not cred_manager); _render_section would
+        # replace them with real/empty account data, so pagination is a no-op
+        # there. Demo fixtures are single-page anyway.
+        if get_demo_fixtures() is not None:
+            return
         self._page[game] = page
         self._render_section(game)
         self.refresh_theme()

@@ -55,6 +55,10 @@ def test_per_section_paging_is_independent(qapp):
     tab._on_page_changed("ttr", 1)
     assert tab._page["ttr"] == 1
     assert tab._page["cc"] == 0  # CC page unaffected
+    # CC's rendered content must still be page 0 (badges 1-4), not just the int.
+    assert len(tab.cc_section.tiles) == 4
+    assert tab.cc_section.tiles[0].badge.text() == "1"
+    assert tab.cc_section.tiles[3].badge.text() == "4"
 
 
 def test_clamps_page_after_shrink(qapp):
