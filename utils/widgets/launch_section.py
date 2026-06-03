@@ -379,12 +379,14 @@ class LaunchSection(QWidget):
         self.apply_theme(self._current_theme)
 
     def _apply_content_scale_to_tiles(self) -> None:
-        """Apply the current _content_scale to every tile and add_tile.
-        Called from _recompute_content_scale and from set_accounts (after
+        """Apply the current _content_scale to every tile.
+        Called from _recompute_content_scale and from set_page (after
         new tiles are constructed at their default 130 minHeight)."""
         scaled_h = int(130 * self._content_scale)
         for tile in self.tiles:
             tile.setMinimumHeight(scaled_h)
+        # add_tile is always None since T4 (the pager owns Add); the legacy
+        # _AddTile class + this branch are removed in T13's sweep.
         if self.add_tile is not None:
             self.add_tile.setMinimumHeight(scaled_h)
 
@@ -614,5 +616,5 @@ class LaunchSection(QWidget):
 
     def set_activity(self, activity: list[bool]) -> None:
         """Update only the pager dots' activity rings (no full re-render)."""
-        self.pager.set_state(page=self.pager._page, page_count=self.pager._page_count,
+        self.pager.set_state(page=self.pager.page, page_count=self.pager.page_count,
                              activity=activity, show_add=self.pager.add_btn.isVisible())

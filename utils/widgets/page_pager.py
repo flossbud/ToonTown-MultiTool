@@ -72,6 +72,14 @@ class PagePager(QFrame):
 
         self.apply_theme(self._theme)
 
+    @property
+    def page(self) -> int:
+        return self._page
+
+    @property
+    def page_count(self) -> int:
+        return self._page_count
+
     def _go_prev(self):
         if self._page > 0:
             self.page_selected.emit(self._page - 1)
