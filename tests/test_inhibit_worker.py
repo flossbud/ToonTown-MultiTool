@@ -99,17 +99,16 @@ def _make_tab():
 
 def test_on_inhibit_status_ignores_stale_generation():
     """A late result from a worker that was superseded by release/re-acquire
-    must NOT fire the signal or flip the indicator."""
+    must NOT fire the signal."""
     from tabs.multitoon._tab import MultitoonTab
 
     _app()
     tab = _make_tab()
 
-    fired = {"signal": 0, "indicator": None}
+    fired = {"signal": 0}
     tab.keep_alive_inhibit_status = SimpleNamespace(
         emit=lambda st: fired.update(signal=fired["signal"] + 1)
     )
-    tab._update_inhibit_indicator = lambda st: fired.update(indicator=st)
 
     # Generation advanced (a release or re-acquire bumped the counter) while a
     # worker tagged with the previous generation is still in flight.
@@ -118,7 +117,6 @@ def test_on_inhibit_status_ignores_stale_generation():
     MultitoonTab._on_inhibit_status(tab, 4, blocked)
 
     assert fired["signal"] == 0
-    assert fired["indicator"] is None
 
 
 def test_on_inhibit_status_fires_for_current_generation():
@@ -127,81 +125,17 @@ def test_on_inhibit_status_fires_for_current_generation():
     _app()
     tab = _make_tab()
 
-    fired = {"signal": 0, "indicator": None}
+    fired = {"signal": 0}
     tab.keep_alive_inhibit_status = SimpleNamespace(
         emit=lambda st: fired.update(signal=fired["signal"] + 1, last=st)
     )
-    tab._update_inhibit_indicator = lambda st: fired.update(indicator=st)
 
     tab._inhibit_gen = 7
     blocked = InhibitStatus(sleep_blocked=True, method="systemd")
     MultitoonTab._on_inhibit_status(tab, 7, blocked)
 
     assert fired["signal"] == 1
-    assert fired["indicator"] is blocked
     assert any("verified" in m.lower() for m in tab._logs)
-
-
-# ── Task 6: persistent inline indicator ──────────────────────────────────────
-
-
-def _make_indicator_tab(running=True):
-    """Bare tab with a real indicator label, no heavy __init__."""
-    from tabs.multitoon._tab import MultitoonTab
-
-    _app()
-    tab = MultitoonTab.__new__(MultitoonTab)
-    tab._keep_alive_running = running
-    MultitoonTab._build_inhibit_indicator(tab)
-    return tab
-
-
-def test_indicator_shows_blocked_state():
-    from tabs.multitoon._tab import MultitoonTab
-
-    tab = _make_indicator_tab(running=True)
-    MultitoonTab._update_inhibit_indicator(
-        tab, InhibitStatus(sleep_blocked=True, method="systemd")
-    )
-    lbl = tab._inhibit_indicator
-    # Visible (not hidden) and in the non-warning/good state.
-    assert lbl.isHidden() is False
-    assert "not" not in lbl.text().lower()
-
-
-def test_indicator_shows_not_blocked_state():
-    from tabs.multitoon._tab import MultitoonTab
-
-    tab = _make_indicator_tab(running=True)
-    MultitoonTab._update_inhibit_indicator(
-        tab, InhibitStatus(sleep_blocked=False, screen_lock_cookie_held=True)
-    )
-    lbl = tab._inhibit_indicator
-    assert lbl.isHidden() is False
-    # Warning state text differs from the good state and reads as a warning.
-    assert "not" in lbl.text().lower()
-
-
-def test_indicator_hidden_when_keep_alive_not_running():
-    from tabs.multitoon._tab import MultitoonTab
-
-    tab = _make_indicator_tab(running=False)
-    MultitoonTab._update_inhibit_indicator(
-        tab, InhibitStatus(sleep_blocked=True, method="systemd")
-    )
-    assert tab._inhibit_indicator.isHidden() is True
-
-
-def test_indicator_update_is_safe_before_build():
-    """Called on an object that never built the label (defensive no-op)."""
-    from tabs.multitoon._tab import MultitoonTab
-
-    tab = MultitoonTab.__new__(MultitoonTab)
-    tab._keep_alive_running = True
-    # No _inhibit_indicator attribute set; must not raise.
-    MultitoonTab._update_inhibit_indicator(
-        tab, InhibitStatus(sleep_blocked=False)
-    )
 
 
 # ── Task 6: one-time-per-launch warning dialog (main.py gating) ───────────────
