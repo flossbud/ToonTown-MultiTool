@@ -52,7 +52,7 @@ from utils.settings_keys import (
 )
 from utils.widgets import install_modern_scrollbar
 from utils.widgets.cc_install_picker import CCInstallPickerDialog  # noqa: F401
-from utils.widgets.launch_section import LaunchSection
+from utils.widgets.launch_section import LaunchSection, PAGE_SIZE, page_count
 from utils.widgets.account_editor import AccountEditor
 from utils.widgets.confirm_dialog import ConfirmDialog
 from utils.widgets.error_modal import ErrorModal
@@ -550,6 +550,7 @@ class LaunchTab(QWidget):
         section.tile_edit.connect(lambda i, g=game: self._on_tile_edit(g, i))
         section.tile_delete.connect(lambda i, g=game: self._on_delete(g, i))
         section.tile_expand_error.connect(lambda i, g=game: self._on_tile_expand_error(g, i))
+        section.page_changed.connect(lambda p, g=game: self._on_page_changed(g, p))
         # When a section's natural size changes (e.g. resize bumped its
         # content_scale and grew tile min-heights), re-equalize sibling
         # heights in compact mode so the populated card doesn't outgrow
@@ -599,6 +600,82 @@ class LaunchTab(QWidget):
         if not ok:
             self.log(f"[Launch] Official {game.upper()} launcher could not be started.")
 
+    def _effective_state(self, game: str, slot) -> tuple[str, str, str]:
+        """Rehydration precedence: live launcher -> active loading timer ->
+        stored slot state (stored-RUNNING-but-dead falls back to IDLE)."""
+        if slot.launcher is not None and slot.launcher.is_running():
+            return LoginState.RUNNING, "Game running", ""
+        if slot.loading_timer is not None:
+            return LoginState.LOADING, "", ""
+        if slot.state == LoginState.RUNNING and (
+                slot.launcher is None or not slot.launcher.is_running()):
+            return LoginState.IDLE, "", ""
+        return slot.state, slot.message, slot.raw_error
+
+    def _page_activity(self, game: str, ordered, pc: int) -> list[bool]:
+        flags = [False] * pc
+        for idx, acct in enumerate(ordered):
+            slot = self._slots[game].get(acct.id)
+            if slot is None:
+                continue
+            st, _, _ = self._effective_state(game, slot)
+            if st in (LoginState.RUNNING, LoginState.LOADING):
+                p = idx // PAGE_SIZE
+                if p < pc:
+                    flags[p] = True
+        return flags
+
+    def _render_section(self, game: str) -> None:
+        section = self._sections[game]
+        ordered = self._ordered_accounts(game)
+        n = len(ordered)
+        pc = page_count(n)
+        self._page[game] = max(0, min(self._page[game], pc - 1))
+        page = self._page[game]
+        base = page * PAGE_SIZE
+        slice_ = ordered[base:base + PAGE_SIZE]
+        dicts = []
+        self._visible_tiles[game] = {}
+        for acct in slice_:
+            slot = self._slots[game].get(acct.id)
+            if slot is None:
+                slot = AccountSlot(account_id=acct.id)
+                self._slots[game][acct.id] = slot
+            st, msg, raw = self._effective_state(game, slot)
+            dicts.append({"label": acct.label or "", "username": acct.username or "",
+                          "id": acct.id, "state": st, "message": msg, "raw_error": raw})
+        activity = self._page_activity(game, ordered, pc)
+        section.set_page(dicts, page=page, page_count=pc, base_index=base,
+                         activity=activity, show_empty_state=(n == 0),
+                         at_ceiling=(n >= MAX_PER_GAME))
+        for local, acct in enumerate(slice_):
+            if local < len(section.tiles):
+                self._visible_tiles[game][acct.id] = section.tiles[local]
+
+    def _on_page_changed(self, game: str, page: int) -> None:
+        self._page[game] = page
+        self._render_section(game)
+        self.refresh_theme()
+
+    def _build_demo(self, demo):
+        for game in ("ttr", "cc"):
+            self._slots[game] = {}
+            accounts = demo.get(game, [])
+            dicts = []
+            for i, acct in enumerate(accounts):
+                aid = acct.get("id", f"demo_{game}_{i}")
+                slot = AccountSlot(account_id=aid, state=acct.get("state", "idle"),
+                                   message=acct.get("message", ""),
+                                   raw_error=acct.get("raw", ""))
+                self._slots[game][aid] = slot
+                dicts.append({"label": acct.get("label", ""), "username": acct.get("username", ""),
+                              "id": aid, "state": slot.state, "message": slot.message,
+                              "raw_error": slot.raw_error})
+            pc = page_count(len(accounts))
+            self._sections[game].set_page(dicts[:PAGE_SIZE], page=0, page_count=pc,
+                base_index=0, activity=[False] * pc,
+                show_empty_state=(len(accounts) == 0), at_ceiling=(len(accounts) >= 16))
+
     def _build_ui(self):
         # Drop any old children from the scroll layout so we can re-add the
         # banner + sections in the right order.
@@ -627,66 +704,18 @@ class LaunchTab(QWidget):
             self._keyring_banner = KeyringWarningBanner(self.cred_manager, parent=self)
             self._layout.addWidget(self._keyring_banner, alignment=Qt.AlignHCenter)
 
-        # Demo mode: bypass the cred_manager path entirely and force tiles
-        # into the fixture states for screenshot capture.
         demo = get_demo_fixtures()
         if demo is not None:
-            for game in ("ttr", "cc"):
-                accounts = demo.get(game, [])
-                section = self._sections[game]
-                section.set_accounts(accounts)
-                # Build _cards mirror so update_dot_state / etc don't blow
-                # up, even though demo mode never runs the launch flow.
-                self._cards[game] = []
-                for i, acct in enumerate(accounts):
-                    tile = section.tile_at(i)
-                    if tile is None:
-                        continue
-                    state = acct.get("state", "idle")
-                    msg = acct.get("message", "")
-                    raw = acct.get("raw", "")
-                    tile.set_state(state, msg, raw)
-                    self._cards[game].append({
-                        "section_index": i,
-                        "global_index": i,
-                        "tile": tile,
-                        "launch_btn": tile.primary_button,
-                        "state": state,
-                    })
+            self._build_demo(demo)
             self._rebuild_sections_container()
             self._layout.addStretch()
             return
 
-        # Real mode: pull accounts from cred_manager and populate sections.
-        for game in ("ttr", "cc"):
-            section = self._sections[game]
-            accounts = self._game_accounts_with_indices(game)
-            account_dicts = []
-            for _global_idx, acct in accounts:
-                account_dicts.append({
-                    "label": getattr(acct, "label", "") or "",
-                    "username": getattr(acct, "username", "") or "",
-                })
-            section.set_accounts(account_dicts)
-
-            for section_idx, (global_idx, acct) in enumerate(accounts):
-                tile = section.tile_at(section_idx)
-                if tile is None:
-                    continue
-                self._cards[game].append({
-                    "section_index": section_idx,
-                    "global_index": global_idx,
-                    "tile": tile,
-                    "launch_btn": tile.primary_button,
-                    "state": LoginState.IDLE,
-                })
-
+        self._reconcile_slots()
         self._rebuild_sections_container()
+        self._render_section("ttr")
+        self._render_section("cc")
         self._layout.addStretch()
-
-        # Re-apply the RUNNING state to any slot whose launcher is still
-        # alive. Same v2.1.3-issue-5 mitigation as the previous version.
-        self._restore_running_state_from_launchers()
 
     def _restore_running_state_from_launchers(self):
         for game in ("ttr", "cc"):
