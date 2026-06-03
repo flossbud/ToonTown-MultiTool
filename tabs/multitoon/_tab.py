@@ -1264,10 +1264,6 @@ class MultitoonTab(QWidget):
         # Qt reparents the bar as a unit so this is safe.
         self.status_bar = self.service_status_bar
 
-        # Persistent Keep-Alive sleep indicator. Placed in the status area by
-        # the active layout's populate(); hidden until Keep-Alive runs.
-        self._build_inhibit_indicator()
-
         # Full-UI-only service toggle and refresh. Compact uses the
         # ServiceStatusBar's internal stop/play + refresh instead. These
         # are kept as independent widgets so Full can addWidget them
@@ -3169,44 +3165,6 @@ class MultitoonTab(QWidget):
             self.log("[KeepAlive] Could not verify sleep inhibitor; "
                      "the machine may sleep.")
         self.keep_alive_inhibit_status.emit(status)
-        self._update_inhibit_indicator(status)
-
-    def _build_inhibit_indicator(self):
-        """Create the small always-current Keep-Alive sleep indicator label.
-        Lives in the tab's status area (added next to the service status bar by
-        the active layout's populate()). Hidden until Keep-Alive is running."""
-        from PySide6.QtWidgets import QLabel
-
-        lbl = QLabel("")
-        lbl.setObjectName("ka_inhibit_indicator")
-        lbl.setVisible(False)
-        self._inhibit_indicator = lbl
-        return lbl
-
-    def _update_inhibit_indicator(self, status):
-        """Drive the inline indicator from the live sleep_blocked state.
-
-        Hidden when Keep-Alive is not running; a calm/good state when sleep is
-        held; a visible warning state when it is not. Copy avoids implementation
-        detail and describes what the user is seeing."""
-        lbl = getattr(self, "_inhibit_indicator", None)
-        if lbl is None:
-            return
-        if not getattr(self, "_keep_alive_running", False):
-            lbl.setVisible(False)
-            return
-        lbl.setVisible(True)
-        if status.sleep_blocked:
-            lbl.setText("Sleep blocked")
-            lbl.setToolTip("Keep-Alive is holding this computer awake.")
-            lbl.setStyleSheet("color: #56c856;")
-        else:
-            lbl.setText("Sleep NOT blocked")
-            lbl.setToolTip(
-                "Keep-Alive is running, but this computer's sleep setting could "
-                "not be held off. Keep your computer awake in its power settings."
-            )
-            lbl.setStyleSheet("color: #E05252; font-weight: bold;")
 
     def _release_sleep_inhibitor(self):
         """Release the inhibitor, allowing sleep/idle again. Invalidates any
@@ -3250,8 +3208,6 @@ class MultitoonTab(QWidget):
         if self._keep_alive_thread is not None and self._keep_alive_thread.is_alive():
             self._keep_alive_thread.join(timeout=2.0)
         self._release_sleep_inhibitor()
-        # Keep-Alive is no longer running; hide the inline sleep indicator.
-        self._update_inhibit_indicator(self._sleep_inhibitor.status)
         for i in range(4):
             self.keep_alive_buttons[i].set_progress(0.0)
             if i < len(self.ka_progress_bars):
