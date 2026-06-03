@@ -911,6 +911,33 @@ class CredentialsManager:
         self._emit_change()
         return (account_id or "", token)
 
+    def reorder_game(self, game: str, ordered_ids: list[str]) -> bool:
+        """Reorder one game's accounts to match `ordered_ids`.
+
+        `ordered_ids` must be exactly the set of account ids currently stored
+        for `game` (same membership, no extras/missing/duplicates), in the
+        desired new order. The other game's entries keep their positions. Pure
+        list reordering - no keyring/password/token access. Returns False (no
+        change) on any id-set mismatch.
+        """
+        game_ids = [a["id"] for a in self._accounts if a.get("game", "ttr") == game]
+        if len(ordered_ids) != len(set(ordered_ids)):
+            return False  # duplicate id
+        if set(ordered_ids) != set(game_ids):
+            return False  # missing / extra / foreign id
+        by_id = {a["id"]: a for a in self._accounts}
+        new_game_entries = iter(by_id[i] for i in ordered_ids)
+        rebuilt = []
+        for a in self._accounts:
+            if a.get("game", "ttr") == game:
+                rebuilt.append(next(new_game_entries))
+            else:
+                rebuilt.append(a)
+        self._accounts = rebuilt
+        self._save()
+        self._emit_change()
+        return True
+
     def reorder(self, old_index: int, new_index: int):
         if 0 <= old_index < len(self._accounts) and 0 <= new_index < len(self._accounts):
             item = self._accounts.pop(old_index)
