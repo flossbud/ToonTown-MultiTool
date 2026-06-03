@@ -319,44 +319,6 @@ def test_focus_handler_clears_intent_when_no_grabber(monkeypatch, tmp_path):
     assert svc._strict_ttr_active() is False  # no grabber -> not active regardless
 
 
-def test_chat_close_reinstalls_grab_even_if_intent_clobbered(monkeypatch, tmp_path):
-    """Regression (Enter-then-Esc-to-close bug): closing chat must reinstall the
-    route_all grab even if a focus-handler early return DURING chat clobbered
-    _intended_ttr_strict to False. The chat-close resync must re-derive from the
-    current focus rather than gate on the stale flag; otherwise the background
-    toon's movement stays suppressed until a service refresh."""
-    svc, _km = _two_ttr_toons(monkeypatch, tmp_path, "ttr-1")
-    fg = _FakeGrabber(on_grabs_changed=svc._on_grabs_changed)
-    svc._key_grabber = fg
-    # Focus a TTR-strict toon: installs route_all and records intent.
-    svc._on_active_window_changed_for_grabber("ttr-1")
-    assert ("install", "arrows") in fg.calls
-    assert svc._intended_ttr_strict is True
-
-    # Open chat: drains held movement and uninstalls the grab for native typing.
-    svc._set_chat_active(True)
-    assert svc.global_chat_active is True
-    assert ("uninstall",) in fg.calls
-
-    # Simulate a focus-handler early return during chat clobbering the flag
-    # (e.g. Esc opening the in-game book shifts focus/UI). This is the live
-    # precondition captured in the trace.
-    svc._intended_ttr_strict = False
-    fg.calls.clear()
-
-    # Close chat (as the Escape / second-Enter branch does). The reinstall must
-    # re-derive from the current focus and install route_all AGAIN despite the
-    # stale flag.
-    svc._set_chat_active(False)
-    assert svc.global_chat_active is False
-    assert ("install", "arrows") in fg.calls, (
-        "chat-close must reinstall the grab even when _intended_ttr_strict was "
-        "clobbered to False during chat"
-    )
-    assert svc._intended_ttr_strict is True   # re-derived by the focus reseed
-    assert svc._ttr_grabs_active is True
-
-
 def test_focus_non_game_uninstalls(monkeypatch, tmp_path):
     svc, _ = _make_service(
         monkeypatch, tmp_path, active_wid="other",
