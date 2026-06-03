@@ -15,8 +15,10 @@ RING_COLOR = "#56c856"  # matches the tile running-dot color
 
 
 class _PageDot(QToolButton):
-    """A clickable page dot. `current` (bool) -> blue fill; `active` (bool)
-    -> green ring. Styling is driven by dynamic properties + QSS."""
+    """A clickable page dot. The `current` (bool) and `active` (bool) dynamic
+    properties are the single source of truth; apply_theme() reads them back and
+    paints the dot via a per-widget setStyleSheet (blue fill when current, green
+    ring when active)."""
     def __init__(self, index: int, parent=None):
         super().__init__(parent)
         self.index = index
@@ -104,8 +106,6 @@ class PagePager(QFrame):
         for i, dot in enumerate(self._dots):
             dot.setProperty("current", i == page)
             dot.setProperty("active", bool(activity[i]) if i < len(activity) else False)
-            dot.style().unpolish(dot)
-            dot.style().polish(dot)
         self.prev_btn.setEnabled(page > 0)
         self.next_btn.setEnabled(page < page_count - 1)
         self.add_btn.setVisible(show_add)

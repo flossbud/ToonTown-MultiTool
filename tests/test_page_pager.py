@@ -37,7 +37,22 @@ def test_activity_sets_ring_property(qapp):
 def test_add_hidden_when_show_add_false(qapp):
     p = PagePager(game="ttr")
     p.set_state(page=0, page_count=1, activity=[False], show_add=False)
-    assert not p.add_btn.isVisible() or p.add_btn.isHidden()
+    assert not p.add_btn.isVisible()
+
+
+def test_single_page_disables_both_arrows(qapp):
+    p = PagePager(game="ttr")
+    p.set_state(page=0, page_count=1, activity=[False], show_add=True)
+    assert not p.prev_btn.isEnabled()
+    assert not p.next_btn.isEnabled()
+
+
+def test_apply_theme_paints_current_dot_with_accent(qapp):
+    p = PagePager(game="ttr")
+    p.set_state(page=0, page_count=2, activity=[False, False], show_add=True)
+    c = get_theme_colors(True)
+    p.apply_theme(c)
+    assert c["accent_blue_btn"] in p._dots[0].styleSheet()
 
 
 def test_dot_click_emits_page_selected(qapp):
