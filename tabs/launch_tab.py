@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import sys
 import threading
+from dataclasses import dataclass
 from PySide6.QtWidgets import (
     QFrame, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QScrollArea,
     QSizePolicy, QVBoxLayout, QWidget,
@@ -60,6 +61,19 @@ from utils.launch_tab_demo_mode import get_demo_fixtures
 
 MAX_PER_GAME = 16  # hard ceiling per game (TTR / CC)
 LINUX_KEYRING_HELP_URL = "https://wiki.archlinux.org/title/Secret_Service"
+
+
+@dataclass
+class AccountSlot:
+    """Per-account runtime state, keyed by stable account id."""
+    account_id: str
+    state: str = LoginState.IDLE
+    message: str = ""
+    raw_error: str = ""
+    worker: object = None
+    launcher: object = None
+    loading_timer: object = None   # QTimer or None; non-None == active pending
+    dot_state: str = ""
 
 
 def _asset_path(name: str) -> str:
@@ -306,6 +320,10 @@ class LaunchTab(QWidget):
         self._workers = {"ttr": [None] * MAX_PER_GAME, "cc": [None] * MAX_PER_GAME}
         self._launchers = {"ttr": [None] * MAX_PER_GAME, "cc": [None] * MAX_PER_GAME}
         self._cards: dict[str, list[dict]] = {"ttr": [], "cc": []}
+        # New id-keyed structures (alongside legacy _workers/_launchers/_cards).
+        self._slots: dict[str, dict[str, AccountSlot]] = {"ttr": {}, "cc": {}}
+        self._visible_tiles: dict[str, dict[str, object]] = {"ttr": {}, "cc": {}}
+        self._page: dict[str, int] = {"ttr": 0, "cc": 0}
         self._keyring_banner = None
         self._probe_thread = None
         self._probe_worker = None
@@ -435,6 +453,24 @@ class LaunchTab(QWidget):
             if acct.game == game:
                 result.append((flat_idx, acct))
         return result
+
+    def _ordered_accounts(self, game: str):
+        """Accounts for one game in flat cred order (metadata objects)."""
+        return [a for a in self.cred_manager.get_accounts_metadata() if a.game == game]
+
+    def _reconcile_slots(self) -> None:
+        """Ensure a slot exists for each current account (by id) and drop
+        slots whose account is gone. Existing slots (with live workers/
+        launchers/timers) are preserved by id."""
+        for game in ("ttr", "cc"):
+            current = {a.id for a in self._ordered_accounts(game)}
+            slots = self._slots[game]
+            for aid in current:
+                if aid not in slots:
+                    slots[aid] = AccountSlot(account_id=aid)
+            for aid in list(slots):
+                if aid not in current:
+                    del slots[aid]
 
     def _disconnect_worker_signals(self, worker):
         if not worker:
