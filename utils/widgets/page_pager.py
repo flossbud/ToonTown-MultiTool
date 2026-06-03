@@ -31,6 +31,7 @@ class _PageDot(QToolButton):
 class PagePager(QFrame):
     page_selected = Signal(int)
     add_clicked = Signal()
+    reorder_clicked = Signal()
 
     def __init__(self, game: str, parent=None):
         super().__init__(parent)
@@ -64,6 +65,14 @@ class PagePager(QFrame):
 
         lay.addStretch(1)
 
+        self.reorder_btn = QuietChipButton()
+        self.reorder_btn.setText("⇅ Reorder")
+        self.reorder_btn.setCursor(Qt.PointingHandCursor)
+        self.reorder_btn.setToolTip("Reorder accounts")
+        self.reorder_btn.clicked.connect(self.reorder_clicked.emit)
+        self.reorder_btn.setVisible(False)
+        lay.addWidget(self.reorder_btn)
+
         self.add_btn = QuietChipButton()
         self.add_btn.setText(f"+ Add {_SHORT[game]} Account")
         self.add_btn.setCursor(Qt.PointingHandCursor)
@@ -95,6 +104,7 @@ class PagePager(QFrame):
         page_count: int,
         activity: list[bool],
         show_add: bool,
+        show_reorder: bool = False,
     ) -> None:
         self._page = page
         self._page_count = page_count
@@ -117,6 +127,7 @@ class PagePager(QFrame):
         self.prev_btn.setEnabled(page > 0)
         self.next_btn.setEnabled(page < page_count - 1)
         self.add_btn.setVisible(show_add)
+        self.reorder_btn.setVisible(show_reorder)
         self.apply_theme(self._theme)
 
     def apply_theme(self, c: dict) -> None:
@@ -143,4 +154,12 @@ class PagePager(QFrame):
             " font-size: 12px; font-weight: 600; }"
             "QToolButton:hover {"
             f" background: {c['accent_blue_btn_hover']}; }}"
+        )
+        self.reorder_btn.setStyleSheet(
+            "QToolButton {"
+            " background: transparent;"
+            f" border: 1px solid {c['border_muted']}; color: {c['text_secondary']};"
+            " border-radius: 8px; padding: 7px 12px; font-size: 12px; font-weight: 600; }"
+            "QToolButton:hover {"
+            f" background: {c['bg_card_inner_hover']}; color: {c['text_primary']}; }}"
         )

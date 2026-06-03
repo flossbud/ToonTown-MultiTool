@@ -152,3 +152,19 @@ def test_single_tile_occupies_one_quadrant_not_full_row(qapp):
     assert grid_w > 0
     # The tile sits in column 0 of a 2-column grid -> well under full width.
     assert tile.width() < grid_w * 0.6, (tile.width(), grid_w)
+
+
+def test_section_reexposes_reorder_and_threads_show_reorder(qapp):
+    from utils.widgets.launch_section import LaunchSection
+    sec = LaunchSection(game="ttr", icon_path="assets/ttr.png")
+    seen = []
+    sec.reorder_clicked.connect(lambda: seen.append("x"))
+    sec.set_page([_acct(1, "a"), _acct(2, "b")], page=0, page_count=1, base_index=0,
+                 activity=[False], show_empty_state=False, at_ceiling=False, show_reorder=True)
+    sec.show()
+    assert sec.pager.reorder_btn.isVisible()
+    sec.pager.reorder_btn.click()
+    assert seen == ["x"]
+    sec.set_page([_acct(1, "a")], page=0, page_count=1, base_index=0,
+                 activity=[False], show_empty_state=False, at_ceiling=False)
+    assert not sec.pager.reorder_btn.isVisible()

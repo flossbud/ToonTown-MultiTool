@@ -83,6 +83,7 @@ class LaunchSection(QWidget):
     # loop in LaunchTab one-directional.
     collapsed_changed      = Signal(bool)
     page_changed           = Signal(int)
+    reorder_clicked        = Signal()
 
     def __init__(self, game: str, icon_path: str, parent=None):
         super().__init__(parent)
@@ -236,6 +237,7 @@ class LaunchSection(QWidget):
         self.pager = PagePager(self._game)
         self.pager.page_selected.connect(self.page_changed.emit)
         self.pager.add_clicked.connect(self.add_account_clicked.emit)
+        self.pager.reorder_clicked.connect(self.reorder_clicked.emit)
         body_lay.addWidget(self.pager)
 
         card_lay.addWidget(self._body_wrap)
@@ -548,16 +550,17 @@ class LaunchSection(QWidget):
 
     def set_page(self, accounts: list[dict], *, page: int, page_count: int,
                  base_index: int, activity: list[bool], show_empty_state: bool,
-                 at_ceiling: bool) -> None:
+                 at_ceiling: bool, show_reorder: bool = False) -> None:
         """Render one page. `accounts` is this page's slice; each dict has
         label/username/id/state/message/raw_error. base_index is the absolute
         index of the first tile (for badges). Tile signals carry account_id."""
         # Paged-view contract: render at most one page. Defensive slice so a
         # caller passing more than a page slice can't overflow the 2-row grid.
         accounts = accounts[:PAGE_SIZE]
-        # Remember the add-button intent so set_activity() can refresh the dots
-        # without consulting add_btn.isVisible() (which is False before show).
+        # Remember the add-button and reorder-button intent so set_activity() can
+        # refresh the dots without consulting isVisible() (which is False before show).
         self._show_add = not at_ceiling
+        self._show_reorder = show_reorder
         while self.grid.count():
             item = self.grid.takeAt(0)
             w = item.widget()
@@ -595,11 +598,12 @@ class LaunchSection(QWidget):
                 self._wire_tile(tile, acct["id"])
 
         self.pager.set_state(page=page, page_count=page_count, activity=activity,
-                             show_add=not at_ceiling)
+                             show_add=not at_ceiling, show_reorder=show_reorder)
         self._apply_content_scale_to_tiles()
         self.apply_theme(self._current_theme)
 
     def set_activity(self, activity: list[bool]) -> None:
         """Update only the pager dots' activity rings (no full re-render)."""
         self.pager.set_state(page=self.pager.page, page_count=self.pager.page_count,
-                             activity=activity, show_add=getattr(self, "_show_add", True))
+                             activity=activity, show_add=getattr(self, "_show_add", True),
+                             show_reorder=getattr(self, "_show_reorder", False))
