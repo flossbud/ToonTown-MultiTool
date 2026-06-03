@@ -61,3 +61,11 @@ def test_arrow_button_moves_row(qapp):
     d = AccountReorderDialog(game="ttr", accounts=_accts(3))
     d._rows[0].down_btn.click()
     assert d.ordered_ids() == ["id1", "id0", "id2"]
+
+
+def test_cc_game_title_and_accent(qapp):
+    d = AccountReorderDialog(game="cc", accounts=_accts(2))
+    assert "Corporate Clash" in d.windowTitle()
+    assert "Corporate Clash" in d.title_label.text()
+    # CC accent badge color present in a row's stylesheet.
+    assert "#F26D21" in d._rows[0].badge.styleSheet()

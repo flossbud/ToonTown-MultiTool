@@ -18,6 +18,9 @@ _MIME = "application/x-ttmt-reorder-index"
 
 
 class _ReorderRow(QFrame):
+    """One reorder list row: drag handle (drag source), position badge,
+    label-or-username text, and up/down buttons. Acts as both a drag source and
+    a drop target; all reordering is delegated to the owning dialog's _move()."""
     def __init__(self, dialog: "AccountReorderDialog", index: int, account: dict,
                  is_first: bool, is_last: bool):
         super().__init__()
@@ -33,6 +36,8 @@ class _ReorderRow(QFrame):
         self.handle = QLabel("⠇⠇")  # grip glyph
         self.handle.setObjectName("reorder_handle")
         self.handle.setCursor(Qt.OpenHandCursor)
+        self.handle.setToolTip("Drag to reorder")
+        self.handle.setAccessibleName("Drag to reorder")
         lay.addWidget(self.handle)
 
         self.badge = QLabel(str(index + 1))
@@ -57,6 +62,8 @@ class _ReorderRow(QFrame):
         self.up_btn = QToolButton()
         self.up_btn.setText("▲")
         self.up_btn.setCursor(Qt.PointingHandCursor)
+        self.up_btn.setToolTip("Move up")
+        self.up_btn.setAccessibleName("Move up")
         self.up_btn.setEnabled(not is_first)
         self.up_btn.clicked.connect(lambda: self._dialog._move_up(self._index))
         lay.addWidget(self.up_btn)
@@ -64,6 +71,8 @@ class _ReorderRow(QFrame):
         self.down_btn = QToolButton()
         self.down_btn.setText("▼")
         self.down_btn.setCursor(Qt.PointingHandCursor)
+        self.down_btn.setToolTip("Move down")
+        self.down_btn.setAccessibleName("Move down")
         self.down_btn.setEnabled(not is_last)
         self.down_btn.clicked.connect(lambda: self._dialog._move_down(self._index))
         lay.addWidget(self.down_btn)
@@ -97,10 +106,9 @@ class _ReorderRow(QFrame):
         if not e.mimeData().hasFormat(_MIME):
             return
         src = int(bytes(e.mimeData().data(_MIME)).decode())
-        dst = self._index
-        if e.position().y() > self.height() / 2 and src < self._index:
-            dst = self._index
-        self._dialog._move(src, dst)
+        # Insert the dragged row at this row's position (the arrows are the
+        # precise path; drag uses a simple drop-on-target-row target).
+        self._dialog._move(src, self._index)
         e.acceptProposedAction()
 
 
@@ -225,7 +233,7 @@ class AccountReorderDialog(QDialog):
                 btn.setStyleSheet(
                     "QPushButton {"
                     f" background: {c['accent_blue_btn']}; color: {c['text_on_accent']};"
-                    " border: none; border-radius: 8px; padding: 8px 18px; font-weight: 600; }}"
+                    " border: none; border-radius: 8px; padding: 8px 18px; font-weight: 600; }"
                     f"QPushButton:hover {{ background: {c['accent_blue_btn_hover']}; }}")
             else:
                 btn.setStyleSheet(
