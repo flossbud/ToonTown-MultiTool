@@ -1127,7 +1127,8 @@ class LaunchTab(QWidget):
             elif acct.password:
                 print("[Launch] CC dispatch: -> register_and_login (legacy migration path)")
                 slot.worker.launcher_token_obtained.connect(
-                    lambda tok, aid=acct.id: self._persist_launcher_token(aid, tok)
+                    lambda tok, aid=acct.id, w=slot.worker:
+                        self._on_token_obtained("cc", aid, w, tok)
                 )
                 slot.worker.register_and_login(acct.username, acct.password,
                                                label=acct.label or "")
@@ -1188,6 +1189,15 @@ class LaunchTab(QWidget):
         if slot is None or slot.worker is not worker:
             return
         self._prompt_2fa(game, account_id, banner)
+
+    def _on_token_obtained(self, game, account_id, worker, token):
+        """Guarded launcher_token_obtained handler: ignore a token from a
+        superseded/cancelled register worker so it can't persist a token and
+        clear the password after the attempt was replaced."""
+        slot = self._slots[game].get(account_id)
+        if slot is None or slot.worker is not worker:
+            return
+        self._persist_launcher_token(account_id, token)
 
     def _persist_launcher_token(self, account_id: str, token: str) -> None:
         """Save a CC launcher token to keyring AND clear the now-redundant
@@ -1253,6 +1263,11 @@ class LaunchTab(QWidget):
         launcher._ttr_patcher = patcher
 
         def _go():
+            # Stale-guard: a superseded patcher (the slot was relaunched) must
+            # not launch the old launcher after slot.launcher was reassigned.
+            slot = self._slots["ttr"].get(account_id)
+            if slot is None or slot.launcher is not launcher:
+                return
             launcher.launch(gameserver, token, engine_dir)
 
         patcher.progress.connect(
@@ -1286,6 +1301,10 @@ class LaunchTab(QWidget):
         launcher._cc_patcher = patcher   # strong ref through the bg thread
 
         def _go():
+            # Stale-guard: a superseded patcher must not launch the old launcher.
+            slot = self._slots["cc"].get(account_id)
+            if slot is None or slot.launcher is not launcher:
+                return
             launcher.launch(gameserver, token, install,
                             username=username, realm_slug=realm_slug)
 

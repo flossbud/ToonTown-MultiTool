@@ -97,6 +97,30 @@ def test_ttr_login_success_launches_after_patched(monkeypatch, request):
     assert any("phase_14.mf" in m for m in logs)
 
 
+def test_ttr_stale_patcher_up_to_date_does_not_launch_old_launcher(monkeypatch, request):
+    """A superseded patcher finishing after a relaunch must not launch the old
+    launcher (the _go stale-guard)."""
+    holder = {}
+    class _DeferredPatcher(QObject):
+        progress = Signal(str, int); up_to_date = Signal(); patched = Signal(list); failed = Signal(str)
+        def verify_and_patch(self, engine_dir):
+            holder["patcher"] = self  # capture; do not emit yet
+    monkeypatch.setattr(launch_tab, "TTRPatcher", _DeferredPatcher, raising=False)
+
+    tab = _make_tab(monkeypatch, request)
+    monkeypatch.setattr(tab, "_get_engine_dir", lambda game: "/engine/dir")
+    old_launcher = _FakeLauncher()
+    worker = _seed_slot(tab, old_launcher)
+    tab._on_login_success("ttr", "ttr-acct", worker, "gs", "ck")  # _go bound to old_launcher
+
+    # Relaunch reassigns the slot's launcher.
+    new_launcher = _FakeLauncher()
+    tab._slots["ttr"]["ttr-acct"].launcher = new_launcher
+
+    holder["patcher"].up_to_date.emit()  # stale patcher finishes
+    assert old_launcher.launched_with is None  # _go is a no-op
+
+
 def test_ttr_login_success_aborts_launch_on_patch_failure(monkeypatch, request):
     class _FailingPatcher(QObject):
         progress = Signal(str, int)

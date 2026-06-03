@@ -91,3 +91,19 @@ def test_stale_launcher_failed_is_ignored(qapp):
     slot.state = LoginState.RUNNING
     tab._on_launcher_failed("ttr", "a", stale, "stale failure")
     assert slot.state == LoginState.RUNNING  # unchanged by stale launcher
+
+
+def test_stale_register_worker_token_is_ignored(qapp):
+    # A token from a superseded register worker must not persist/clear password.
+    tab = _tab(qapp, [_meta("a", "cc")])
+    tab._build_ui()
+    slot = tab._slots["cc"]["a"]
+    new_worker = SimpleNamespace()
+    slot.worker = new_worker
+    called = []
+    tab._persist_launcher_token = lambda aid, tok: called.append((aid, tok))
+    old_worker = SimpleNamespace()
+    tab._on_token_obtained("cc", "a", old_worker, "tok")   # stale -> ignored
+    assert called == []
+    tab._on_token_obtained("cc", "a", new_worker, "tok2")  # current -> persists
+    assert called == [("a", "tok2")]
