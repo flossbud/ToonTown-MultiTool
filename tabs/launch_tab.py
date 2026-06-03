@@ -359,13 +359,12 @@ class LaunchTab(QWidget):
 
         # Construct the two LaunchSection widgets up front so external code
         # (and tests) can address them as ttr_section / cc_section.
-        max_per = self._max_per_game()
         self.ttr_section = LaunchSection(
-            game="ttr", icon_path=_asset_path("ttr.png"), max_accounts=max_per,
+            game="ttr", icon_path=_asset_path("ttr.png"),
             parent=self._scroll_widget,
         )
         self.cc_section = LaunchSection(
-            game="cc", icon_path=_asset_path("cc.png"), max_accounts=max_per,
+            game="cc", icon_path=_asset_path("cc.png"),
             parent=self._scroll_widget,
         )
         self._sections = {"ttr": self.ttr_section, "cc": self.cc_section}

@@ -1,6 +1,6 @@
 """Section in the Launch tab: header strip (game icon + title + launcher
 button) + 2-column tile grid + empty-state fallback. Owns the per-tile
-widgets and re-emits their signals with the section_index attached."""
+widgets and re-emits their signals with the account_id attached."""
 from __future__ import annotations
 
 from PySide6.QtCore import QPropertyAnimation, QTimer, Qt, Signal
@@ -59,33 +59,6 @@ class _ClickableFrame(QFrame):
         super().mousePressEvent(event)
 
 
-class _AddTile(QuietChipButton):
-    """Dashed-outline "+ Add Account" tile, matches grid cell size.
-    Uses QuietChipButton (no hover upscale, 0.96 press scale)."""
-    def __init__(self, game: str, parent=None):
-        super().__init__(parent)
-        self._game = game
-        self.setText(f"+ Add {_GAME_SHORT[game]} Account")
-        self.setMinimumHeight(130)
-        self.setCursor(Qt.PointingHandCursor)
-        self.apply_theme(get_theme_colors(True))
-
-    def apply_theme(self, c: dict) -> None:
-        """Rebuild QSS from the theme dict `c`."""
-        self.setStyleSheet(
-            "QToolButton { background: transparent;"
-            f" border: 2px dashed {c['border_card']};"
-            " border-radius: 10px;"
-            f" color: {c['text_muted']};"
-            " font-size: 13px; }"
-            "QToolButton:hover {"
-            f" border-color: {c['border_light']};"
-            f" color: {c['text_secondary']};"
-            f" background: {c['bg_card_inner_hover']};"
-            " }"
-        )
-
-
 class LaunchSection(QWidget):
     REVEAL_STAGGER_MS = 30
     REVEAL_DURATION_MS = 150
@@ -111,7 +84,7 @@ class LaunchSection(QWidget):
     collapsed_changed      = Signal(bool)
     page_changed           = Signal(int)
 
-    def __init__(self, game: str, icon_path: str, max_accounts: int = 8, parent=None):
+    def __init__(self, game: str, icon_path: str, parent=None):
         super().__init__(parent)
         # Compact-mode horizontal cap. Mirrors tabs/multitoon/_compact_layout.py:38-44.
         # In full mode (set via set_layout_mode), the cap is lifted so the
@@ -127,9 +100,8 @@ class LaunchSection(QWidget):
         self._content_scale = 1.0
         assert game in ("ttr", "cc")
         self._game = game
-        self._max = max_accounts
         self.tiles: list[AccountTile] = []
-        self.add_tile: _AddTile | None = None
+        self.add_tile = None
         self.is_collapsed: bool = False
         self._collapse_anim: QPropertyAnimation | None = None
 
@@ -328,8 +300,6 @@ class LaunchSection(QWidget):
         for tile in self.tiles:
             if hasattr(tile, "apply_theme"):
                 tile.apply_theme(c)
-        if self.add_tile is not None and hasattr(self.add_tile, "apply_theme"):
-            self.add_tile.apply_theme(c)
         if hasattr(self.empty_state, "apply_theme"):
             self.empty_state.apply_theme(c)
         if hasattr(self, "empty_page_hint"):
@@ -389,10 +359,6 @@ class LaunchSection(QWidget):
         scaled_h = int(130 * self._content_scale)
         for tile in self.tiles:
             tile.setMinimumHeight(scaled_h)
-        # add_tile is always None since T4 (the pager owns Add); the legacy
-        # _AddTile class + this branch are removed in T13's sweep.
-        if self.add_tile is not None:
-            self.add_tile.setMinimumHeight(scaled_h)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
