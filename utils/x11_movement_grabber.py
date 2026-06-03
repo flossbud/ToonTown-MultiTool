@@ -149,10 +149,9 @@ class MovementKeyGrabber:
     ) -> None:
         """route_all=True (TTR strict, X11 only): grab BOTH keysets,
         GrabModeAsync + owner_events=False, to SUPPRESS native movement
-        delivery. Movement is NOT routed from the grabber's own event stream
-        (it is lossy under XWayland); the pynput/XRecord feed is the single
-        source of truth for movement. Only non-movement keys redirected by the
-        active grab are re-delivered via on_passthrough. route_all=False (CC,
+        delivery. The grabber is suppress-only: ALL routing and delivery is
+        driven by the pynput/XRecord feed in InputService (movement to the
+        correct toon; non-movement to the focused toon). route_all=False (CC,
         default): legacy conflicting-keyset / GrabModeSync / passthrough +
         on_key routing. Safe from any thread."""
         self._actions.put(("install", canonical_set,
@@ -220,10 +219,11 @@ class MovementKeyGrabber:
             # make the focused XWayland TTR (Panda3D) client clear its held-key
             # state, stopping still-held combos. ONE XGrabKeyboard fires a single
             # grab/ungrab (no per-key churn) and keeps the game window focused.
-            # All keys redirect here (owner_events=False): movement is routed by
-            # the pynput/RECORD feed; non-movement is re-delivered to the focused
-            # window via on_passthrough (see _handle_event_route_all). Idempotent
-            # on mode so a TTR->TTR focus switch does not re-grab.
+            # All keys redirect here (owner_events=False). The grabber is
+            # suppress-only: movement is routed by the pynput/RECORD feed, and
+            # non-movement (passthrough) is delivered to the focused window by
+            # the same pynput feed. _handle_event_route_all is a no-op.
+            # Idempotent on mode so a TTR->TTR focus switch does not re-grab.
             if self._route_all and self._grab_ok:
                 self._current_canonical = canonical_set
                 return

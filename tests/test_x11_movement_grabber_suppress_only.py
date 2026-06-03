@@ -37,8 +37,7 @@ def test_route_all_does_not_call_on_passthrough_for_grabbed_key():
     g._on_passthrough.assert_not_called()
 
 
-def test_route_all_does_not_call_on_passthrough_for_unregistered_printable(monkeypatch):
+def test_route_all_does_not_call_on_passthrough_for_unregistered_printable():
     g = _grabber()
-    monkeypatch.setattr(g, "_resolve_keysym_name", lambda kc: "h")
     g._handle_event_route_all(_Ev(99))         # unregistered printable
     g._on_passthrough.assert_not_called()
