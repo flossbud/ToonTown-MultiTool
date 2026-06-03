@@ -79,7 +79,6 @@ def test_settings_tab_public_signals_exist(qapp, settings_manager):
         "theme_changed",
         "input_backend_changed",
         "clear_credentials_requested",
-        "max_accounts_changed",
     ):
         assert hasattr(tab, signal_name), f"missing signal: {signal_name}"
 

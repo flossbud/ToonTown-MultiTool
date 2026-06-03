@@ -61,17 +61,6 @@ def test_general_page_appearance_dropdown_changes_theme(qapp, settings_manager):
     assert settings_manager.get("theme") == "light"
 
 
-def test_general_page_max_accounts_dropdown_emits(qapp, settings_manager):
-    from tabs.settings_tab import SettingsTab
-    tab = SettingsTab(settings_manager)
-    field = _find_field(tab, "general", "Max accounts per game")
-    received = []
-    tab.max_accounts_changed.connect(received.append)
-    field.control_widget.setCurrentIndex(2)  # "6"
-    assert received == [6]
-    assert settings_manager.get("max_accounts_per_game") == 6
-
-
 def test_general_page_reduce_motion_tri_state(qapp, settings_manager):
     from tabs.settings_tab import SettingsTab
     tab = SettingsTab(settings_manager)

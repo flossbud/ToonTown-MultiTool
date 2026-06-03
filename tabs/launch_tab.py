@@ -58,7 +58,7 @@ from utils.widgets.error_modal import ErrorModal
 from utils.launch_tab_demo_mode import get_demo_fixtures
 
 
-MAX_PER_GAME = 8  # hard ceiling
+MAX_PER_GAME = 16  # hard ceiling per game (TTR / CC)
 LINUX_KEYRING_HELP_URL = "https://wiki.archlinux.org/title/Secret_Service"
 
 
@@ -384,14 +384,7 @@ class LaunchTab(QWidget):
     # ── Helpers ────────────────────────────────────────────────────────────
 
     def _max_per_game(self) -> int:
-        if self.settings_manager:
-            v = self.settings_manager.get("max_accounts_per_game", 4)
-            try:
-                v = int(v)
-            except (TypeError, ValueError):
-                v = 4
-            return min(v, MAX_PER_GAME)
-        return 4
+        return MAX_PER_GAME
 
     def _get_engine_dir(self, game: str) -> str:
         """Read the engine directory for a game from settings, with auto-detect fallback."""
@@ -1423,14 +1416,6 @@ class LaunchTab(QWidget):
         tile.set_state(LoginState.QUEUED, f"#{position} (~{eta}s)")
 
     # ── Settings callback ──────────────────────────────────────────────────
-
-    def on_max_accounts_changed(self, value: int):
-        """Called when the max accounts per game setting changes."""
-        max_per = self._max_per_game()
-        self.ttr_section._max = max_per
-        self.cc_section._max = max_per
-        self._build_ui()
-        self.refresh_theme()
 
     # ── Theme ──────────────────────────────────────────────────────────────
 

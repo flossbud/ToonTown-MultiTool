@@ -592,7 +592,6 @@ class SettingsTab(QWidget):
     theme_changed = Signal()
     input_backend_changed = Signal()
     clear_credentials_requested = Signal()
-    max_accounts_changed = Signal(int)
     chat_handling_mode_changed = Signal(str)
 
     CATEGORIES = [
@@ -702,21 +701,6 @@ class SettingsTab(QWidget):
         theme_combo.currentIndexChanged.connect(self._on_theme_changed)
         theme_field.set_control(theme_combo)
         appearance.add_field(theme_field)
-
-        # Max accounts per game
-        saved_max = self.settings_manager.get("max_accounts_per_game", 4)
-        max_idx = max(0, min(saved_max - 4, 4))
-        max_field = SettingsField(
-            "Max accounts per game",
-            helper="How many account slots per game (TTR / CC).",
-        )
-        max_combo = SettingsComboBox()
-        max_combo.addItems(["4", "5", "6", "7", "8"])
-        max_combo.setCurrentIndex(max_idx)
-        max_combo.setFixedWidth(150)
-        max_combo.currentIndexChanged.connect(self._on_max_accounts_changed)
-        max_field.set_control(max_combo)
-        appearance.add_field(max_field)
 
         # Reduce motion (tri-state)
         import utils.motion as motion
@@ -1603,11 +1587,6 @@ class SettingsTab(QWidget):
         self.settings_manager.set("theme", theme)
         apply_theme(QApplication.instance(), resolve_theme(self.settings_manager))
         self.theme_changed.emit()
-
-    def _on_max_accounts_changed(self, idx):
-        value = idx + 4
-        self.settings_manager.set("max_accounts_per_game", value)
-        self.max_accounts_changed.emit(value)
 
     def _on_reduce_motion_changed(self, idx):
         if idx == 0:
