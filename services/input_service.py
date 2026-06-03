@@ -132,6 +132,13 @@ class InputService(QObject):
         # per failure episode, not on every dropped keystroke. Reset whenever a
         # working backend is (re)established.
         self._xlib_unavailable_logged = False
+        # Focused-toon passthrough delivery (strict TTR). Maps a key to the
+        # (window, keysym) its keydown was actually sent to, so the release is
+        # paired to the exact target regardless of later focus/strict/chat
+        # changes. Delivered via the reliable pynput/XRecord path because the
+        # grabber's X stream is lossy under XWayland. See
+        # docs/superpowers/specs/2026-06-02-focused-passthrough-delivery-design.md
+        self._focused_passthrough_sent: dict[str, tuple[str, str]] = {}
         self._key_grabber = None
         # True only while movement grabs are actually INSTALLED for a focused
         # TTR preset window. Set by _on_active_window_changed_for_grabber. Gates
@@ -433,6 +440,69 @@ class InputService(QObject):
             self._send_via_backend(action, str(active), keysym)
         except Exception as e:  # noqa: BLE001
             print(f"[InputService] passthrough send failed: {e}")
+
+    def _focused_ttr_window(self) -> str | None:
+        """Return the active window id when strict TTR separation is ACTIVE
+        (native delivery suppressed) AND the active window is a TTR window;
+        else None. Shared gate for the focused-passthrough send helpers."""
+        if not self._strict_ttr_active():
+            return None
+        try:
+            active = self.window_manager.get_active_window()
+        except Exception:
+            return None
+        if not active:
+            return None
+        try:
+            from utils.game_registry import GameRegistry
+            if GameRegistry.instance().get_game_for_window(str(active)) != "ttr":
+                return None
+        except Exception:
+            return None
+        return str(active)
+
+    def _send_passthrough_to_focused(self, key: str) -> None:
+        """Deliver a non-movement key to the focused TTR window via the reliable
+        pynput-driven path (XSendEvent), recording it for a paired release. The
+        grabber's passthrough re-send is lossy under XWayland; this is the
+        reliable replacement. No-op unless strict is active + active is TTR."""
+        active = self._focused_ttr_window()
+        if active is None:
+            return
+        keysym = self._resolve_keysym(key) or key
+        self._focused_passthrough_sent[key] = (active, keysym)
+        if _ITRACE:
+            _itrace("focus_passthru",
+                    f"keydown key={key} keysym={keysym} target={active}")
+        self._send_via_backend("keydown", active, keysym)
+
+    def _release_focused_passthrough(self, key: str) -> None:
+        """Release a previously-delivered focused passthrough key to the SAME
+        (window, keysym) its keydown was sent to, regardless of current
+        strict/active state. No-op if the key was not recorded as sent."""
+        target = self._focused_passthrough_sent.pop(key, None)
+        if target is None:
+            return
+        win, keysym = target
+        if _ITRACE:
+            _itrace("focus_passthru", f"keyup key={key} keysym={keysym} target={win}")
+        self._send_via_backend("keyup", win, keysym)
+
+    def _drain_focused_passthrough(self) -> None:
+        """Release every recorded focused passthrough key (focus-away /
+        toggle-off / shutdown). Independent of HeldKeyRegistry, since
+        Return/Escape/printables never enter `holds`."""
+        for key in list(self._focused_passthrough_sent.keys()):
+            self._release_focused_passthrough(key)
+
+    def _send_backspace_to_focused(self) -> None:
+        """Deliver a BackSpace key-tap to the focused TTR window. BackSpace uses
+        a 'key' tap (like the bg path) rather than the keydown/keyup registry,
+        so the repeat timer can re-send it; no paired release is needed."""
+        active = self._focused_ttr_window()
+        if active is None:
+            return
+        self._send_via_backend("key", active, "BackSpace")
 
     def _should_consume_grabbed_key(self, keysym: str) -> bool:
         """Decide per-event whether to suppress the grabbed key from the
