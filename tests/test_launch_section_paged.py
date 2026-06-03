@@ -33,6 +33,45 @@ def test_tile_signals_carry_account_id(qapp):
     assert seen == ["abc"]
 
 
+@pytest.mark.parametrize("tile_sig,section_sig", [
+    ("launch_clicked", "tile_launch"),
+    ("quit_clicked", "tile_quit"),
+    ("cancel_clicked", "tile_cancel"),
+    ("retry_clicked", "tile_retry"),
+    ("enter_2fa_clicked", "tile_enter_2fa"),
+    ("edit_clicked", "tile_edit"),
+    ("delete_clicked", "tile_delete"),
+    ("expand_error_clicked", "tile_expand_error"),
+])
+def test_all_eight_tile_signals_carry_account_id(qapp, tile_sig, section_sig):
+    sec = LaunchSection(game="ttr", icon_path="assets/ttr.png")
+    sec.set_page([_acct(1, "xyz")], page=0, page_count=1, base_index=0,
+                 activity=[False], show_empty_state=False, at_ceiling=False)
+    seen = []
+    getattr(sec, section_sig).connect(seen.append)
+    getattr(sec.tiles[0], tile_sig).emit()
+    assert seen == ["xyz"]
+
+
+def test_set_activity_preserves_add_button_intent_before_show(qapp):
+    # set_activity must not hide Add just because the section isn't shown yet
+    # (add_btn.isVisible() is False pre-show); it uses the stored show_add intent.
+    sec = LaunchSection(game="ttr", icon_path="assets/ttr.png")
+    sec.set_page([_acct(1, "a")], page=0, page_count=2, base_index=0,
+                 activity=[False, False], show_empty_state=False, at_ceiling=False)
+    sec.set_activity([True, False])
+    sec.show()
+    assert sec.pager.add_btn.isVisible()  # still shown after a dot refresh
+
+
+def test_set_page_caps_at_four_tiles(qapp):
+    sec = LaunchSection(game="ttr", icon_path="assets/ttr.png")
+    over = [_acct(i, f"id{i}") for i in range(6)]
+    sec.set_page(over, page=0, page_count=2, base_index=0,
+                 activity=[False, False], show_empty_state=False, at_ceiling=False)
+    assert len(sec.tiles) == 4
+
+
 def test_zero_accounts_shows_empty_state_and_hides_pager(qapp):
     sec = LaunchSection(game="ttr", icon_path="assets/ttr.png")
     sec.set_page([], page=0, page_count=1, base_index=0, activity=[False],

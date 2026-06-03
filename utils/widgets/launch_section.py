@@ -245,6 +245,10 @@ class LaunchSection(QWidget):
         self.empty_page_hint.setObjectName("empty_page_hint")
         self.empty_page_hint.setAlignment(Qt.AlignCenter)
         self.empty_page_hint.setVisible(False)
+        # Reserve the same 2-row area the tile grid occupies so a reserved
+        # (empty) landing page keeps the section height stable instead of
+        # shrinking when the grid_container is hidden.
+        self.empty_page_hint.setMinimumHeight(2 * 130 + 10)
         body_lay.addWidget(self.empty_page_hint)
 
         # Footer pager.
@@ -573,6 +577,12 @@ class LaunchSection(QWidget):
         """Render one page. `accounts` is this page's slice; each dict has
         label/username/id/state/message/raw_error. base_index is the absolute
         index of the first tile (for badges). Tile signals carry account_id."""
+        # Paged-view contract: render at most one page. Defensive slice so a
+        # caller passing more than a page slice can't overflow the 2-row grid.
+        accounts = accounts[:PAGE_SIZE]
+        # Remember the add-button intent so set_activity() can refresh the dots
+        # without consulting add_btn.isVisible() (which is False before show).
+        self._show_add = not at_ceiling
         while self.grid.count():
             item = self.grid.takeAt(0)
             w = item.widget()
@@ -617,4 +627,4 @@ class LaunchSection(QWidget):
     def set_activity(self, activity: list[bool]) -> None:
         """Update only the pager dots' activity rings (no full re-render)."""
         self.pager.set_state(page=self.pager.page, page_count=self.pager.page_count,
-                             activity=activity, show_add=self.pager.add_btn.isVisible())
+                             activity=activity, show_add=getattr(self, "_show_add", True))
