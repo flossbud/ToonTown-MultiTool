@@ -899,9 +899,15 @@ class LaunchTab(QWidget):
         editor = AccountEditor(game=game, mode="add", parent=self.window())
 
         def _save(label: str, username: str, password: str):
-            self.cred_manager.add_account(
+            ok = self.cred_manager.add_account(
                 label=label, username=username, password=password, game=game,
             )
+            if ok is False:
+                # add_account refused (e.g. its own capacity guard or a storage
+                # failure). Do NOT navigate — _newest_account_id would point at a
+                # pre-existing account as if the add succeeded.
+                self.log(f"[Launch] Could not add {game.upper()} account.")
+                return
             self._reconcile_slots()
             target = self._newest_account_id(game)
             if target is not None:

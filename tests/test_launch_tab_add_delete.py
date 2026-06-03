@@ -141,11 +141,37 @@ def test_edit_is_game_scoped(qapp):
 
     def _capture_factory(*a, **k):
         seen["game"] = k.get("game")
-        return _stub_editor_factory(invoke_save=False)(*a, **k)
+        return _stub_editor_factory(invoke_save=True, save_args=("L2", "u2", "pw2"))(*a, **k)
 
     lt.AccountEditor = _capture_factory
     tab._on_tile_edit("ttr", "a")
     assert seen.get("game") == "ttr"  # editor constructed with the account's game
+    # The save path must NOT change the account's game (immutable): update_account
+    # is called without a `game` argument.
+    assert cred.update_account.called
+    _args, kwargs = cred.update_account.call_args
+    assert "game" not in kwargs
+    assert "ttr" not in _args[1:]  # no game value smuggled positionally
+
+
+def test_add_account_failure_does_not_navigate(qapp):
+    # add_account returning False (capacity/storage failure) must not navigate
+    # to a pre-existing account as if the add succeeded.
+    accounts = [_meta(f"t{i}", "ttr") for i in range(5)]  # 5 accts -> 2 pages
+    cred = MagicMock()
+    cred.keyring_available = True
+    cred.keyring_probe_pending = False
+    cred.get_accounts_metadata.return_value = accounts
+    cred.add_account.return_value = False  # refused
+    sm = MagicMock()
+    sm.get.return_value = None
+    tab = LaunchTab(cred_manager=cred, settings_manager=sm)
+    tab._build_ui()
+    tab._page["ttr"] = 0
+    import tabs.launch_tab as lt
+    lt.AccountEditor = _stub_editor_factory(invoke_save=True, save_args=("L", "u", "pw"))
+    tab._on_add_account("ttr")
+    assert tab._page["ttr"] == 0  # unchanged; no false navigation
 
 
 def test_delete_active_account_tears_down(qapp):
