@@ -158,6 +158,32 @@ def test_exit_while_loading_clears_loader(qapp, monkeypatch, tmp_path):
     assert _state(tab, a) == LoginState.IDLE
 
 
+def test_orphaned_loader_id_does_not_hang_windows_changed(qapp, monkeypatch, tmp_path):
+    # If a loading account's slot is removed leaving a stale id in _loading,
+    # _on_windows_changed must drain it (not spin its promote-loop forever).
+    wm = _FakeWM()
+    tab = _make_tab(qapp, monkeypatch, tmp_path, wm)
+    (a,) = _ids(tab, 1)
+    _launch(tab, a, 1234)
+    assert tab._loading["cc"] == [a]
+    del tab._slots["cc"][a]          # orphan the loader id
+    wm._counts["cc"] = 1
+    tab._on_windows_changed([])      # must return, draining the stale id
+    assert tab._loading["cc"] == []
+
+
+def test_reconcile_discards_loader_for_removed_account(qapp, monkeypatch, tmp_path):
+    wm = _FakeWM()
+    tab = _make_tab(qapp, monkeypatch, tmp_path, wm)
+    (a,) = _ids(tab, 1)
+    _launch(tab, a, 1234)
+    assert tab._loading["cc"] == [a]
+    monkeypatch.setattr(tab, "_ordered_accounts", lambda game: [])
+    tab._reconcile_slots()
+    assert tab._loading["cc"] == []
+    assert a not in tab._slots["cc"]
+
+
 def test_no_window_manager_immediate_running(qapp, monkeypatch, tmp_path):
     from services.ttr_login_service import LoginState
     wm = None

@@ -457,7 +457,21 @@ class LaunchTab(QWidget):
                     slots[aid] = AccountSlot(account_id=aid)
             for aid in list(slots):
                 if aid not in current:
+                    # Drop any pending loader for a removed account so a stale id
+                    # can't linger in _loading[game] (which would spin
+                    # _on_windows_changed's promote loop forever).
+                    self._discard_loader(game, aid)
                     del slots[aid]
+
+    def _discard_loader(self, game: str, account_id: str) -> None:
+        """Stop+clear a slot's loading timer and remove the id from the loading
+        queue. Safe whether or not the slot/timer exists."""
+        slot = self._slots[game].get(account_id)
+        if slot is not None and slot.loading_timer is not None:
+            slot.loading_timer.stop()
+            slot.loading_timer.deleteLater()
+            slot.loading_timer = None
+        self._loading_remove(game, account_id)
 
     def _global_index_of(self, account_id: str) -> int | None:
         for i, a in enumerate(self.cred_manager.get_accounts_metadata()):
@@ -921,6 +935,12 @@ class LaunchTab(QWidget):
                     self._disconnect_launcher_signals(slot.launcher)
                     slot.launcher.kill()
                     slot.launcher = None
+                if slot.loading_timer is not None:
+                    slot.loading_timer.stop()
+                    slot.loading_timer.deleteLater()
+                    slot.loading_timer = None
+            # Drop the loading queue too, so no orphaned id survives the rebuild.
+            self._loading[game] = []
         tokens = self.cred_manager.clear_all()
         for token in tokens:
             threading.Thread(
@@ -1017,6 +1037,12 @@ class LaunchTab(QWidget):
                 worker.cancel()
             except Exception:  # noqa: BLE001
                 pass
+            # Detach the cancelled worker so any already-queued late signal
+            # (e.g. a login_success that beat the cancel) fails the
+            # `slot.worker is worker` guard and can't launch/mutate state.
+            self._disconnect_worker_signals(worker)
+            if slot is not None:
+                slot.worker = None
         self._update_status(game, account_id, LoginState.IDLE, "")
 
     def _on_tile_enter_2fa(self, game: str, account_id: str):
@@ -1418,7 +1444,13 @@ class LaunchTab(QWidget):
         phantom window cannot double-promote and a timeout-promoted slot's
         eventual real window is a no-op."""
         slot = self._slots[game].get(account_id)
-        if slot is None or account_id not in self._loading[game]:
+        if slot is None:
+            # The account was deleted/cleared while loading. Drop the orphaned
+            # id so _on_windows_changed's promote loop can make progress instead
+            # of spinning on a stale entry forever.
+            self._loading_remove(game, account_id)
+            return
+        if account_id not in self._loading[game]:
             return  # already promoted or exited
         if slot.loading_timer is not None:
             slot.loading_timer.stop()

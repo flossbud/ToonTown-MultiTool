@@ -93,6 +93,20 @@ def test_stale_launcher_failed_is_ignored(qapp):
     assert slot.state == LoginState.RUNNING  # unchanged by stale launcher
 
 
+def test_cancel_detaches_worker_so_late_success_is_ignored(qapp):
+    tab = _tab(qapp, [_meta("a", "ttr")])
+    tab._build_ui()
+    slot = tab._slots["ttr"]["a"]
+    w = SimpleNamespace(cancel=lambda: None)
+    slot.worker = w
+    slot.state = LoginState.LOGGING_IN
+    tab._on_tile_cancel("ttr", "a")
+    assert slot.worker is None  # detached on cancel
+    # A late signal from the cancelled worker no longer passes the identity guard.
+    tab._on_worker_state("ttr", "a", w, LoginState.RUNNING, "late")
+    assert slot.state == LoginState.IDLE  # not flipped by the stale worker
+
+
 def test_stale_register_worker_token_is_ignored(qapp):
     # A token from a superseded register worker must not persist/clear password.
     tab = _tab(qapp, [_meta("a", "cc")])
