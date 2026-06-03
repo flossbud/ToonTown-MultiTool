@@ -441,15 +441,6 @@ class LaunchTab(QWidget):
             metadata={},
         )
 
-    def _game_accounts_with_indices(self, game: str) -> list[tuple[int, object]]:
-        """Return [(global_flat_index, AccountCredential), ...] for one game."""
-        result = []
-        all_accounts = self.cred_manager.get_accounts_metadata()
-        for flat_idx, acct in enumerate(all_accounts):
-            if acct.game == game:
-                result.append((flat_idx, acct))
-        return result
-
     def _ordered_accounts(self, game: str):
         """Accounts for one game in flat cred order (metadata objects)."""
         return [a for a in self.cred_manager.get_accounts_metadata() if a.game == game]
@@ -1207,7 +1198,7 @@ class LaunchTab(QWidget):
         try:
             self.cred_manager.set_launcher_token(account_id, token)
             print(f"[Launch] _persist_launcher_token: set_launcher_token ok")
-            idx = self._index_of_account_id(account_id)
+            idx = self._global_index_of(account_id)
             print(f"[Launch] _persist_launcher_token: account index={idx}")
             if idx is not None:
                 self.cred_manager.update_account(idx, password="")
@@ -1216,12 +1207,6 @@ class LaunchTab(QWidget):
             from utils.credentials_manager import _dbg
             print(f"[Launch] _persist_launcher_token: FAILED {type(e).__name__}: {e}")
             _dbg(f"[Credentials] _persist_launcher_token({account_id[:8]}) failed: {type(e).__name__}: {e}")
-
-    def _index_of_account_id(self, account_id: str) -> int | None:
-        for i, a in enumerate(self.cred_manager.get_accounts_metadata()):
-            if a.id == account_id:
-                return i
-        return None
 
     def _on_login_success(self, game, account_id, worker, gameserver, token):
         slot = self._slots[game].get(account_id)
@@ -1271,7 +1256,7 @@ class LaunchTab(QWidget):
             launcher.launch(gameserver, token, engine_dir)
 
         patcher.progress.connect(
-            lambda msg, pct, a=account_id: self._update_status("ttr", a, LoginState.LAUNCHING, msg)
+            lambda msg, pct, a=account_id, l=launcher: self._patch_progress("ttr", a, l, msg)
         )
         patcher.up_to_date.connect(_go)
         patcher.patched.connect(
@@ -1281,6 +1266,14 @@ class LaunchTab(QWidget):
             lambda msg, a=account_id, l=launcher: self._on_launcher_failed("ttr", a, l, msg)
         )
         patcher.verify_and_patch(engine_dir)
+
+    def _patch_progress(self, game, account_id, launcher, msg):
+        """Guarded patcher-progress update: drop progress from a patcher whose
+        launcher was superseded by a relaunch (stale-signal guard)."""
+        slot = self._slots[game].get(account_id)
+        if slot is None or slot.launcher is not launcher:
+            return
+        self._update_status(game, account_id, LoginState.LAUNCHING, msg)
 
     def _launch_cc_with_patch(self, account_id, gameserver, token, install,
                               username, realm_slug, launcher):
@@ -1297,22 +1290,26 @@ class LaunchTab(QWidget):
                             username=username, realm_slug=realm_slug)
 
         patcher.progress.connect(
-            lambda msg, pct, a=account_id: self._update_status("cc", a, LoginState.LAUNCHING, msg)
+            lambda msg, pct, a=account_id, l=launcher: self._patch_progress("cc", a, l, msg)
         )
         patcher.up_to_date.connect(_go)
         patcher.patched.connect(
             lambda files: (self.log(f"[Launch] Updated CC game files: {', '.join(files)}"), _go())
         )
         patcher.failed.connect(
-            lambda msg, a=account_id: self._offer_cc_launcher_fallback(a, msg)
+            lambda msg, a=account_id, l=launcher: self._offer_cc_launcher_fallback(a, msg, l)
         )
         game_dir = os.path.dirname(install.exe_path)
         patcher.verify_and_patch(game_dir, token, realm_slug)
 
-    def _offer_cc_launcher_fallback(self, account_id, msg):
+    def _offer_cc_launcher_fallback(self, account_id, msg, launcher=None):
         """Hard patch failure: mark the slot failed and offer to open CC's
-        official launcher, which performs CC's own update flow."""
+        official launcher, which performs CC's own update flow. Guarded against a
+        superseded launcher (relaunch) so a stale patcher can't clobber state."""
         from PySide6.QtWidgets import QMessageBox
+        slot = self._slots["cc"].get(account_id)
+        if slot is None or (launcher is not None and slot.launcher is not launcher):
+            return
         self._update_status("cc", account_id, LoginState.FAILED, msg)
         box = QMessageBox(self.window())
         box.setIcon(QMessageBox.Warning)
@@ -1428,11 +1425,16 @@ class LaunchTab(QWidget):
                 self._promote_loader(game, self._loading[game][0], "window")
 
     def _on_game_exited(self, game, account_id, launcher, retcode, raw_log=""):
+        # Stale-signal guard: a superseded launcher (the slot was relaunched and
+        # reassigned) can still be alive and fire game_exited later; ignore it so
+        # it can't reset the new launcher's live RUNNING/LOADING state.
+        slot = self._slots[game].get(account_id)
+        if slot is None or slot.launcher is not launcher:
+            return
         # If the process exits while still loading, drop its pending timer so it
         # cannot later flip a re-used slot to running. Do NOT touch the window
         # credit -- no window was consumed.
-        slot = self._slots[game].get(account_id)
-        if slot is not None and slot.launcher is launcher and slot.loading_timer is not None:
+        if slot.loading_timer is not None:
             slot.loading_timer.stop()
             slot.loading_timer.deleteLater()
             slot.loading_timer = None

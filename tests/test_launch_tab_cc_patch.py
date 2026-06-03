@@ -81,7 +81,7 @@ def test_cc_login_success_aborts_and_offers_launcher_on_failure(monkeypatch, req
     tab = _make_tab(monkeypatch, request)
     offered = []
     monkeypatch.setattr(tab, "_offer_cc_launcher_fallback",
-                        lambda account_id, msg: offered.append((account_id, msg)))
+                        lambda account_id, msg, launcher=None: offered.append((account_id, msg)))
     launcher = _FakeLauncher()
     worker = _seed_slot(tab, launcher)
 

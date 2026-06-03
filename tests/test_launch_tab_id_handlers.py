@@ -64,3 +64,30 @@ def test_tile_launch_signal_routes_to_on_launch(qapp, monkeypatch):
     monkeypatch.setattr(tab, "_on_launch", lambda g, a: seen.append((g, a)))
     tab.ttr_section.tile_launch.emit("a")
     assert seen == [("ttr", "a")]
+
+
+def test_stale_launcher_game_exited_is_ignored(qapp):
+    # A superseded launcher firing game_exited must not reset the live slot.
+    tab = _tab(qapp, [_meta("a", "ttr")])
+    tab._build_ui()
+    slot = tab._slots["ttr"]["a"]
+    live = SimpleNamespace(is_running=lambda: True)
+    stale = SimpleNamespace(is_running=lambda: False)
+    slot.launcher = live
+    slot.state = LoginState.RUNNING
+    tab._on_game_exited("ttr", "a", stale, 1, "boom")  # stale launcher
+    assert slot.state == LoginState.RUNNING  # unchanged
+    tab._on_game_exited("ttr", "a", live, 0, "")  # current launcher -> IDLE
+    assert slot.state == LoginState.IDLE
+
+
+def test_stale_launcher_failed_is_ignored(qapp):
+    tab = _tab(qapp, [_meta("a", "ttr")])
+    tab._build_ui()
+    slot = tab._slots["ttr"]["a"]
+    live = SimpleNamespace(is_running=lambda: True)
+    stale = SimpleNamespace(is_running=lambda: False)
+    slot.launcher = live
+    slot.state = LoginState.RUNNING
+    tab._on_launcher_failed("ttr", "a", stale, "stale failure")
+    assert slot.state == LoginState.RUNNING  # unchanged by stale launcher
