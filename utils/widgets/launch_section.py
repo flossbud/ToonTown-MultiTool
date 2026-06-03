@@ -245,10 +245,10 @@ class LaunchSection(QWidget):
         self.empty_page_hint.setObjectName("empty_page_hint")
         self.empty_page_hint.setAlignment(Qt.AlignCenter)
         self.empty_page_hint.setVisible(False)
-        # Reserve the same 2-row area the tile grid occupies so a reserved
-        # (empty) landing page keeps the section height stable instead of
-        # shrinking when the grid_container is hidden.
-        self.empty_page_hint.setMinimumHeight(2 * 130 + 10)
+        # Reserve the SAME area grid_container reserves (2 tile rows + gap +
+        # footer headroom) so a reserved (empty) landing page keeps the section
+        # height stable instead of shrinking when grid_container is hidden.
+        self.empty_page_hint.setMinimumHeight(2 * 130 + 10 + 28)
         body_lay.addWidget(self.empty_page_hint)
 
         # Footer pager.

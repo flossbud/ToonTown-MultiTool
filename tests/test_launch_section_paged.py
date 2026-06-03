@@ -64,6 +64,13 @@ def test_set_activity_preserves_add_button_intent_before_show(qapp):
     assert sec.pager.add_btn.isVisible()  # still shown after a dot refresh
 
 
+def test_empty_page_reservation_matches_grid_reservation(qapp):
+    # A reserved (empty) landing page must reserve the SAME height the populated
+    # grid does, so the section doesn't shrink when you flip to it.
+    sec = LaunchSection(game="ttr", icon_path="assets/ttr.png")
+    assert sec.empty_page_hint.minimumHeight() == sec.grid_container.minimumHeight()
+
+
 def test_set_page_caps_at_four_tiles(qapp):
     sec = LaunchSection(game="ttr", icon_path="assets/ttr.png")
     over = [_acct(i, f"id{i}") for i in range(6)]
