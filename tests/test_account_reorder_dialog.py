@@ -1,4 +1,5 @@
 import pytest
+from PySide6.QtCore import QPoint
 from PySide6.QtWidgets import QApplication
 from utils.widgets.account_reorder_dialog import AccountReorderDialog
 
@@ -87,8 +88,6 @@ def test_modal_height_caps_for_many_accounts(qapp):
     assert big._scroll.minimumHeight() <= 6 * 60 + 16
 
 
-from PySide6.QtCore import QPoint
-
 
 def test_drag_moves_account_to_target(qapp):
     d = AccountReorderDialog(game="ttr", accounts=_accts(4))  # id0..id3
@@ -146,3 +145,20 @@ def test_drag_to_same_target_is_noop(qapp):
     d._drag_to(1)
     d._end_drag()
     assert d.ordered_ids() == ["id0", "id1", "id2"]
+
+
+def test_target_index_for_y_maps_and_clamps(qapp):
+    # Coordinate->slot math: above-all -> 0, just past the first remaining row's
+    # midpoint -> 1, below-all -> len(others). Derived from real geometry so it
+    # catches a midpoint-math regression (e.g. height/2 -> height).
+    d = AccountReorderDialog(game="ttr", accounts=_accts(4))
+    d.resize(460, 460)
+    d.show()
+    QApplication.processEvents()
+    d._begin_drag(0, d.mapToGlobal(QPoint(0, 0)))  # row 0 dragged -> others = rows 1,2,3
+    others = [r for r in d._rows if r is not d._dragged_row]
+    assert d._target_index_for_y(-50) == 0                       # above everything
+    assert d._target_index_for_y(10_000) == len(others)          # below everything
+    just_past_first = int(others[0].y() + others[0].height() / 2 + 1)
+    assert d._target_index_for_y(just_past_first) == 1           # past 1st other's midpoint
+    d._cancel_drag()

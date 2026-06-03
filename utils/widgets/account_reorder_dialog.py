@@ -271,9 +271,17 @@ class AccountReorderDialog(QDialog):
         if self.isVisible():
             self.releaseMouse()
         if self._ghost is not None:
+            self._ghost.hide()              # avoid a one-frame ghost flash before deletion
             self._ghost.deleteLater()
             self._ghost = None
         self._placeholder = None
+        # The dragged row was removed from the layout during the drag, so the
+        # upcoming _rebuild() (which only deletes widgets still in the layout)
+        # won't reclaim it. Delete it here so repeated drags don't orphan a
+        # hidden row per drag in _rows_host.
+        if self._dragged_row is not None:
+            self._dragged_row.setParent(None)
+            self._dragged_row.deleteLater()
         self._dragged_row = None
         self._dragging = False
 
