@@ -67,14 +67,13 @@ def test_runloop_nonmovement_key_delivered_to_focused(monkeypatch):
 
 
 def test_runloop_movement_key_not_via_passthrough(monkeypatch):
-    # keymap_manager=None so _movement_keys() falls back to MOVEMENT_KEYS
-    # which contains 'w'; the movement branch fires, not the passthrough path.
-    svc, q = _make_svc(monkeypatch, keymap_manager=None)
+    svc, q = _make_svc(monkeypatch)
     try:
         svc.start()
-        q.put(("keydown", "w"))
-        # Wait long enough for the run loop to process the event.
-        time.sleep(0.1)
+        q.put(("keydown", "w"))          # movement: must NOT go via passthrough
+        q.put(("keydown", "Escape"))     # non-movement sentinel: WILL go via passthrough
+        # Once the sentinel is delivered, the loop has processed past "w".
+        assert _wait(lambda: ("keydown", "100", "Escape") in _calls(svc))
         assert ("keydown", "100", "w") not in _calls(svc)
         assert "w" not in svc._focused_passthrough_sent
     finally:

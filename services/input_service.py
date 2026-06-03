@@ -138,6 +138,12 @@ class InputService(QObject):
         # changes. Delivered via the reliable pynput/XRecord path because the
         # grabber's X stream is lossy under XWayland. See
         # docs/superpowers/specs/2026-06-02-focused-passthrough-delivery-design.md
+        # Accessed from the run-loop thread (record on keydown, release on the
+        # keyup flush) and, on focus change / shutdown, from the GUI/settings
+        # thread via _drain_focused_passthrough. Intentionally unguarded: dict
+        # set/pop are atomic under the GIL, and a focus-change drain racing a
+        # keydown can at worst send a paired keyup right after the keydown,
+        # which is the desired focus-away behavior (no corruption, no double-send).
         self._focused_passthrough_sent: dict[str, tuple[str, str]] = {}
         self._key_grabber = None
         # True only while movement grabs are actually INSTALLED for a focused
