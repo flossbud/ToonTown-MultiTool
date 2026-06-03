@@ -5,8 +5,6 @@ import queue
 import time
 from unittest.mock import MagicMock
 
-import pytest
-
 from services.input_service import InputService
 
 
@@ -106,3 +104,31 @@ def test_runloop_cleanup_branch_drains_focused(monkeypatch):
         assert _wait(lambda: svc._focused_passthrough_sent == {})
     finally:
         svc.shutdown()
+
+
+def test_drain_on_focus_change_releases_registry(monkeypatch):
+    """A focus CHANGE drains the focused-passthrough registry, releasing held
+    keys to the window they were sent to (the primary stuck-key guard). Driven
+    synchronously via _on_active_window_changed_for_grabber (no svc.start())."""
+    svc, _q = _make_svc(monkeypatch)
+    svc._send_via_backend = MagicMock()
+    svc._send_passthrough_to_focused("Shift_L")
+    assert "Shift_L" in svc._focused_passthrough_sent
+    svc._send_via_backend.reset_mock()
+    # Focus change away: the drain fires before any grabber teardown.
+    svc._on_active_window_changed_for_grabber("")
+    svc._send_via_backend.assert_any_call("keyup", "100", "Shift_L")
+    assert svc._focused_passthrough_sent == {}
+
+
+def test_release_all_keys_drains_focused_passthrough(monkeypatch):
+    """release_all_keys drains the focused-passthrough registry so no key is
+    left logically down on the focused toon. Driven synchronously (no start())."""
+    svc, _q = _make_svc(monkeypatch)
+    svc._send_via_backend = MagicMock()
+    svc._send_passthrough_to_focused("Control_L")
+    assert "Control_L" in svc._focused_passthrough_sent
+    svc._send_via_backend.reset_mock()
+    svc.release_all_keys()
+    svc._send_via_backend.assert_any_call("keyup", "100", "Control_L")
+    assert svc._focused_passthrough_sent == {}

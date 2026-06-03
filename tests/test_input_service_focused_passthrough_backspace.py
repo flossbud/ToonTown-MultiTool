@@ -4,8 +4,6 @@ import queue
 import time
 from unittest.mock import MagicMock
 
-import pytest
-
 from services.input_service import InputService
 
 
