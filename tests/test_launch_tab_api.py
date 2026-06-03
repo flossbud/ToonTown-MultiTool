@@ -93,6 +93,19 @@ def test_shutdown_cleans_transient_but_does_not_kill_games(qapp):
     assert killed == []          # running game NOT killed on UI shutdown
     assert tab._loading["ttr"] == []
     assert slot.loading_timer is None
+    assert slot.worker is None   # detached, so a late signal fails the guard
+
+
+def test_refresh_theme_preserves_multitoon_dot(qapp):
+    # A direct refresh_theme() (e.g. theme change from main.py) must not clobber
+    # a visible running account's Multitoon dot_state back to the running color.
+    tab = _tab(qapp, 2)
+    tab._slots["ttr"]["t0"].launcher = SimpleNamespace(is_running=lambda: True)
+    tab._slots["ttr"]["t0"].state = "running"
+    tab.update_dot_state(0, "warn")          # t0 is on the visible page
+    assert tab._visible_tiles["ttr"]["t0"].status_dot._color.name().lower() == "#e8a838"
+    tab.refresh_theme()                       # must re-apply the warn dot last
+    assert tab._visible_tiles["ttr"]["t0"].status_dot._color.name().lower() == "#e8a838"
 
 
 class _FakeTimer:

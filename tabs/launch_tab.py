@@ -704,8 +704,7 @@ class LaunchTab(QWidget):
             return
         self._page[game] = page
         self._render_section(game)
-        self.refresh_theme()
-        self._reapply_visible_dots(game)
+        self.refresh_theme()  # re-applies Multitoon dot_state last (see refresh_theme)
 
     def _build_demo(self, demo):
         for game in ("ttr", "cc"):
@@ -1671,6 +1670,12 @@ class LaunchTab(QWidget):
             if hasattr(self._keyring_banner, "apply_theme"):
                 self._keyring_banner.apply_theme(c)
 
+        # AccountTile.apply_theme re-runs set_state for non-idle tiles, resetting
+        # the status dot to the plain running color. Re-apply any Multitoon
+        # dot_state LAST so a theme change (from anywhere) doesn't clobber it.
+        for game in ("ttr", "cc"):
+            self._reapply_visible_dots(game)
+
     # ── Logging ────────────────────────────────────────────────────────────
 
     def log(self, msg):
@@ -1690,11 +1695,15 @@ class LaunchTab(QWidget):
                     slot.loading_timer.deleteLater()
                     slot.loading_timer = None
                 if slot.worker is not None:
-                    # Cancel an in-flight login (not a running game).
+                    # Cancel + detach an in-flight login (not a running game) so a
+                    # request that completes after shutdown fails the
+                    # `slot.worker is worker` guard and can't mutate UI / launch.
+                    self._disconnect_worker_signals(slot.worker)
                     try:
                         slot.worker.cancel()
                     except Exception:  # noqa: BLE001
                         pass
+                    slot.worker = None
             self._loading[game] = []
         if self._probe_thread is not None and self._probe_thread.isRunning():
             self._probe_thread.quit()
