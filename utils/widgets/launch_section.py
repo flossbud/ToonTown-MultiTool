@@ -31,6 +31,15 @@ _LAYOUT_MAX_WIDTH = {"compact": 720, "full": 860}
 _REF_WIDTH = {"compact": 540, "full": 720}
 _SCALE_CLAMP_MAX = 1.4
 
+PAGE_SIZE = 4
+MAX_PAGES = 4
+
+
+def page_count(n: int) -> int:
+    """Pages for n accounts, reserving one landing page for the next account
+    until the 16 ceiling. min(4, ceil((n+1)/4))."""
+    return min(MAX_PAGES, max(1, (n + 4) // PAGE_SIZE))
+
 
 class _ClickableFrame(QFrame):
     """A QFrame that emits `clicked` on left mouse press. Used as the
