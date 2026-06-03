@@ -128,3 +128,27 @@ def test_compact_height_stable_one_vs_four_tiles(qapp):
                  activity=[False, False], show_empty_state=False, at_ceiling=False)
     assert sec.grid_container.minimumHeight() == one  # reserved, not content-driven
     assert one >= 2 * 130  # at least two tile rows
+
+
+def test_grid_is_uniform_2x2(qapp):
+    # Both columns and both rows carry equal, positive stretch so every cell is
+    # always 1/4 of the grid area (a lone tile cannot expand to fill the row).
+    sec = LaunchSection(game="ttr", icon_path="assets/ttr.png")
+    assert sec.grid.columnStretch(0) == sec.grid.columnStretch(1) > 0
+    assert sec.grid.rowStretch(0) == sec.grid.rowStretch(1) > 0
+
+
+def test_single_tile_occupies_one_quadrant_not_full_row(qapp):
+    # A page with one account: the tile must stay ~half width (top-left quadrant),
+    # not stretch across the whole row.
+    sec = LaunchSection(game="ttr", icon_path="assets/ttr.png")
+    sec.set_page([_acct(1, "a")], page=0, page_count=1, base_index=0,
+                 activity=[False], show_empty_state=False, at_ceiling=False)
+    sec.resize(520, 460)
+    sec.show()
+    QApplication.processEvents()
+    tile = sec.tiles[0]
+    grid_w = sec.grid_container.width()
+    assert grid_w > 0
+    # The tile sits in column 0 of a 2-column grid -> well under full width.
+    assert tile.width() < grid_w * 0.6, (tile.width(), grid_w)

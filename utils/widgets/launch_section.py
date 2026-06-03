@@ -203,6 +203,15 @@ class LaunchSection(QWidget):
         self.grid = QGridLayout(self.grid_container)
         self.grid.setContentsMargins(14, 14, 14, 14)
         self.grid.setSpacing(10)
+        # Fixed, uniform 2x2: equal stretch on BOTH columns and BOTH rows so every
+        # cell is always 1/4 of the grid area. Without this, a page with fewer than
+        # 4 tiles lets the populated column/row expand to fill the space (a lone
+        # tile would stretch to full width). The empty cells now reserve their
+        # quarter, keeping each account tile at a consistent quarter size and the
+        # page a stable 2x2 grid regardless of how many accounts are on it.
+        for i in (0, 1):
+            self.grid.setColumnStretch(i, 1)
+            self.grid.setRowStretch(i, 1)
         self.grid_container.setMinimumHeight(2 * 130 + 10 + 28)  # 2 tile rows + gap + footer headroom
         body_lay.addWidget(self.grid_container)
 
