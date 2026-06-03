@@ -698,6 +698,7 @@ class LaunchTab(QWidget):
     def _build_demo(self, demo):
         for game in ("ttr", "cc"):
             self._slots[game] = {}
+            self._loading[game] = []
             accounts = demo.get(game, [])
             dicts = []
             for i, acct in enumerate(accounts):
@@ -878,7 +879,23 @@ class LaunchTab(QWidget):
 
     # ── Account actions ────────────────────────────────────────────────────
 
+    def _navigate_to_account(self, game: str, account_id: str) -> None:
+        ordered = self._ordered_accounts(game)
+        for i, a in enumerate(ordered):
+            if a.id == account_id:
+                self._page[game] = i // PAGE_SIZE
+                break
+        self._reconcile_slots()
+        self._render_section(game)
+        self.refresh_theme()
+
+    def _newest_account_id(self, game: str) -> str | None:
+        ordered = self._ordered_accounts(game)
+        return ordered[-1].id if ordered else None
+
     def _on_add_account(self, game: str):
+        if len(self._ordered_accounts(game)) >= MAX_PER_GAME:
+            return  # hard ceiling (the footer Add button is also hidden at 16)
         editor = AccountEditor(game=game, mode="add", parent=self.window())
 
         def _save(label: str, username: str, password: str):
@@ -886,8 +903,12 @@ class LaunchTab(QWidget):
                 label=label, username=username, password=password, game=game,
             )
             self._reconcile_slots()
-            self._render_section(game)
-            self.refresh_theme()
+            target = self._newest_account_id(game)
+            if target is not None:
+                self._navigate_to_account(game, target)
+            else:
+                self._render_section(game)
+                self.refresh_theme()
 
         editor.account_saved.connect(_save)
         editor.exec()
