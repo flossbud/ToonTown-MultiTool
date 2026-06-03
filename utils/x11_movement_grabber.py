@@ -550,19 +550,6 @@ class MovementKeyGrabber:
             except Exception as e:  # noqa: BLE001
                 print(f"[x11_movement_grabber] on_passthrough raised: {e}")
 
-    def _resolve_keysym_name(self, keycode: int) -> Optional[str]:
-        """Resolve a keycode to an X keysym NAME string for passthrough re-send.
-        Only handles printables (keysym_to_string is ASCII-only); special keys
-        (Return/Escape/modifiers/...) are pre-registered by name in
-        _keycode_to_name. Returns None if it can't be resolved."""
-        try:
-            ks = self._display.keycode_to_keysym(keycode, 0)
-            if not ks:
-                return None
-            return XK.keysym_to_string(ks) or None
-        except Exception:
-            return None
-
     def _handle_event_route_all(self, event) -> None:
         """route_all (one persistent XGrabKeyboard): EVERY key is redirected here
         (owner_events=False), so native delivery to the focused window is fully
