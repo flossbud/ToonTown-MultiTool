@@ -932,7 +932,11 @@ class LaunchTab(QWidget):
         editor.exec()
 
     def _on_reorder(self, game: str) -> None:
-        ordered = self._ordered_accounts(game)
+        # Only id-bearing accounts are reorderable. reorder_game validates
+        # against id-bearing entries, so the dialog must offer exactly those —
+        # otherwise an id-less legacy entry would make ordered_ids() mismatch
+        # the validation set and the reorder would be silently rejected.
+        ordered = [a for a in self._ordered_accounts(game) if a.id]
         if len(ordered) < 2:
             return
         accounts = [{"id": a.id, "label": a.label or "", "username": a.username or ""}

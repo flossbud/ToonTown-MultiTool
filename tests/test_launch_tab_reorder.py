@@ -89,3 +89,25 @@ def test_running_account_survives_reorder(qapp, monkeypatch):
     st, _, _ = tab._effective_state("ttr", tab._slots["ttr"]["b"])
     assert st == LoginState.RUNNING
     assert [a.id for a in tab._ordered_accounts("ttr")] == ["b", "a"]
+
+
+def test_on_reorder_excludes_idless_legacy_account(qapp, monkeypatch):
+    # A legacy entry with no id must be excluded from the dialog so ordered_ids()
+    # matches reorder_game's id-bearing validation set (no silent rejection).
+    accounts = [_meta("a"), _meta("b"), SimpleNamespace(
+        id="", game="ttr", label="legacy", username="x", password="", launcher_token="")]
+    tab = _tab(qapp, accounts)
+    import tabs.launch_tab as lt
+    captured = {}
+
+    class _FakeDialog:
+        def __init__(self, *a, **k):
+            captured["accounts"] = k.get("accounts") or (a[1] if len(a) > 1 else None)
+        def exec(self): return QDialog.DialogCode.Accepted
+        def ordered_ids(self): return ["b", "a"]
+    monkeypatch.setattr(lt, "AccountReorderDialog", _FakeDialog)
+
+    tab._on_reorder("ttr")
+    # dialog only offered the two id-bearing accounts (no "" id)
+    assert [d["id"] for d in captured["accounts"]] == ["a", "b"]
+    tab.cred_manager.reorder_game.assert_called_once_with("ttr", ["b", "a"])
