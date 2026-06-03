@@ -10,6 +10,7 @@ import threading
 from PySide6.QtCore import QObject, Signal, Qt, QMetaObject, Q_ARG
 
 from utils.key_registry import PYNPUT_NAME_MAP_BASE
+from utils.input_trace import trace as _itrace, ENABLED as _ITRACE
 
 keyboard = None
 
@@ -83,7 +84,12 @@ class HotkeyManager(QObject):
         self._stop_listener()
 
     def _on_active_window_changed(self, active_win_id: str):
-        if self.window_manager.should_capture_input():
+        capture = self.window_manager.should_capture_input()
+        if _ITRACE:
+            _itrace("hk_listener", f"active={active_win_id!r} should_capture={capture} "
+                                   f"was_listening={self.is_listening} -> "
+                                   f"{'START' if capture else 'STOP'}")
+        if capture:
             self._start_listener()
         else:
             self._stop_listener()
@@ -144,6 +150,9 @@ class HotkeyManager(QObject):
     def on_global_key_press(self, key):
         # Even though we stop the listener, double check capturing rules
         if not self.window_manager.should_capture_input():
+            if _ITRACE:
+                _itrace("hk_press", f"DROP keydown (should_capture=False) raw={key!r} "
+                                    f"active={self.window_manager.active_window_id!r}")
             return None
 
         normalized = None
@@ -162,6 +171,9 @@ class HotkeyManager(QObject):
             if normalized:
                 try:
                     self.key_event_queue.put(("keydown", normalized), timeout=0.05)
+                    if _ITRACE and normalized in ("Return", "Escape"):
+                        _itrace("hk_press", f"ENQUEUE keydown {normalized} "
+                                            f"active={self.window_manager.active_window_id!r}")
                 except queue.Full:
                     print("[HotkeyManager] Warning: key event queue full after timeout, dropping keydown event.")
         except Exception as e:
@@ -188,6 +200,9 @@ class HotkeyManager(QObject):
             if normalized:
                 try:
                     self.key_event_queue.put(("keyup", normalized), timeout=0.05)
+                    if _ITRACE and normalized in ("Return", "Escape"):
+                        _itrace("hk_release", f"ENQUEUE keyup {normalized} (no capture gate) "
+                                              f"active={self.window_manager.active_window_id!r}")
                 except queue.Full:
                     print("[HotkeyManager] Warning: key event queue full after timeout, dropping keyup event.")
         except Exception as e:

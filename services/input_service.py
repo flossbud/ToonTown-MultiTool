@@ -311,14 +311,19 @@ class InputService(QObject):
         # Record intent before any grabber call so the (possibly synchronous in
         # tests, async in production) completion callback observes the right
         # value. Default: not a TTR strict focus.
+        _prev_intent = self._intended_ttr_strict
         self._intended_ttr_strict = False
         # Any focus change releases held focused-passthrough keys to the window
         # they were sent to, so a modifier/char is never left down on the old
         # focused toon when focus moves.
         self._drain_focused_passthrough()
         if self._key_grabber is None:
+            if _ITRACE:
+                _itrace("focus", f"win={window_id!r} no-grabber intent {_prev_intent}->False")
             return
         if not window_id:
+            if _ITRACE:
+                _itrace("focus", f"win=<empty> uninstall intent {_prev_intent}->False")
             self._key_grabber.uninstall_grabs()
             return
         try:
@@ -329,9 +334,15 @@ class InputService(QObject):
         # TTR strict separation is Linux/X11 only in v1 (Windows is a documented
         # follow-on); on Windows TTR keeps pre-feature behavior.
         if game == "ttr" and not (self._strict_ttr_enabled() and self._ttr_strict_supported()):
+            if _ITRACE:
+                _itrace("focus", f"win={window_id} game=ttr strict-unsupported uninstall "
+                                 f"intent {_prev_intent}->False")
             self._key_grabber.uninstall_grabs()
             return
         if game not in ("cc", "ttr"):
+            if _ITRACE:
+                _itrace("focus", f"win={window_id} game={game} non-game uninstall "
+                                 f"intent {_prev_intent}->False")
             self._key_grabber.uninstall_grabs()
             return
         try:
@@ -343,10 +354,16 @@ class InputService(QObject):
         except Exception:
             toon_index = -1
         if toon_index < 0:
+            if _ITRACE:
+                _itrace("focus", f"win={window_id} game={game} toon_index<0 uninstall "
+                                 f"intent {_prev_intent}->False")
             self._key_grabber.uninstall_grabs()
             return
         canonical = self._canonical_set_for_toon_index(toon_index)
         if canonical is None:
+            if _ITRACE:
+                _itrace("focus", f"win={window_id} game={game} idx={toon_index} canonical=None "
+                                 f"uninstall intent {_prev_intent}->False")
             self._key_grabber.uninstall_grabs()
             return
         # Set intent BEFORE install so on_grabs_changed credits this as a TTR
@@ -359,14 +376,24 @@ class InputService(QObject):
                 # Input capture (chat/whisper) is active: keep grabs OFF so
                 # keystrokes land natively in the focused TTR window. Intent
                 # stays True so the capture-close resync reinstalls route_all.
+                if _ITRACE:
+                    _itrace("focus", f"win={window_id} ttr idx={toon_index} chat/phantom-> grabs OFF "
+                                     f"intent {_prev_intent}->True (chat={self.global_chat_active} "
+                                     f"phantom={self._phantom_active})")
                 self._key_grabber.uninstall_grabs()
                 return
+            if _ITRACE:
+                _itrace("focus", f"win={window_id} ttr idx={toon_index} install route_all "
+                                 f"intent {_prev_intent}->True")
             passthrough = list(_passthrough_keysyms_for_canonical(canonical))
             self._key_grabber.install_grabs(
                 canonical_set=canonical, passthrough_keysyms=passthrough, route_all=True)
         else:
             # CC: legacy path. Omit route_all so the Win32 grabber (no such
             # kwarg) is never broken; the X11 grabber defaults route_all=False.
+            if _ITRACE:
+                _itrace("focus", f"win={window_id} cc idx={toon_index} install legacy "
+                                 f"intent {_prev_intent}->False")
             passthrough = list(_passthrough_keysyms_for_canonical(canonical))
             self._key_grabber.install_grabs(
                 canonical_set=canonical, passthrough_keysyms=passthrough)
@@ -382,6 +409,9 @@ class InputService(QObject):
             and canonical is not None
             and self._ttr_strict_supported()
         )
+        if _ITRACE:
+            _itrace("grabs_changed", f"canonical={canonical} intent={self._intended_ttr_strict} "
+                                     f"-> ttr_grabs_active={self._ttr_grabs_active}")
 
     def _on_strict_ttr_setting_changed(self, key: str = "", value=None) -> None:
         """React to the strict_ttr_separation toggle changing at runtime.
@@ -981,15 +1011,35 @@ class InputService(QObject):
         bs_press_time  = None
         bs_last_repeat = 0.0
         pending_keyups: dict[str, float] = {}
+        cleanup_was_active = False  # edge-trigger for cleanup-branch trace
 
         try:
             while self.running:
                 if not self.should_send_input():
+                    # Edge-triggered entry log only (this branch runs ~100Hz; never
+                    # log per-iteration). Captures cached vs real X11 focus + the
+                    # chat/intent/phantom state at the instant focus leaves.
+                    if _ITRACE and not cleanup_was_active:
+                        cached = self.window_manager.get_active_window()
+                        try:
+                            from utils import x11_discovery
+                            real = x11_discovery.get_active_window_id()
+                        except Exception:
+                            real = "?"
+                        _itrace("cleanup", f"ENTER cached_active={cached} real_active={real} "
+                                f"qsize={event_queue.qsize()} chat={self.global_chat_active} "
+                                f"intent={self._intended_ttr_strict} phantom={self._phantom_active}")
+                    cleanup_was_active = True
+                    drained = []
                     while not event_queue.empty():
                         try:
-                            event_queue.get_nowait()
+                            item = event_queue.get_nowait()
+                            if _ITRACE:
+                                drained.append(item)
                         except queue.Empty:
                             break
+                    if _ITRACE and drained:
+                        _itrace("cleanup", f"discarded {len(drained)} queued events: {drained}")
                     if len(self.holds) > 0:
                         enabled     = self.get_enabled_toons()
                         assignments = self._get_assignments(enabled)
@@ -999,12 +1049,18 @@ class InputService(QObject):
                     pending_keyups.clear()
                     self._phantom_reset()
                     if self.global_chat_active:
-                        self._set_chat_active(False)
+                        self._set_chat_active(False, cause="cleanup")
                         self.chat_active.clear()
                     bs_press_time  = None
                     bs_last_repeat = 0.0
                     self._stop_event.wait(0.01)
                     continue
+
+                if _ITRACE and cleanup_was_active:
+                    _itrace("cleanup", f"EXIT (should_send_input True) "
+                            f"active={self.window_manager.get_active_window()} "
+                            f"chat={self.global_chat_active} intent={self._intended_ttr_strict}")
+                cleanup_was_active = False
 
                 now            = time.monotonic()
                 enabled        = self.get_enabled_toons()
@@ -1086,6 +1142,14 @@ class InputService(QObject):
                                     logical = self._resolve_logical_action(key)
                                     extra = f" (action: {logical})" if logical else ""
                                     self._log_key(key, "pressed", extra)
+                                if _ITRACE:
+                                    _route = ("phantom-suppress" if self._phantom_active
+                                              else "typing-broadcast" if self.global_chat_active
+                                              else "movement-route")
+                                    _itrace("movement", f"keydown key={key} route={_route} "
+                                            f"active={self.window_manager.get_active_window()} "
+                                            f"chat={self.global_chat_active} phantom={self._phantom_active} "
+                                            f"strict_active={self._strict_ttr_active()}")
                                 if self._phantom_active:
                                     # Stealth chat — suppress movement to bg toons
                                     self._chat_last_activity = now
@@ -1119,7 +1183,7 @@ class InputService(QObject):
                                     # Whisper send detected — don't toggle chat on bg toons
                                     self._phantom_reset()
                                 else:
-                                    self._set_chat_active(not self.global_chat_active)
+                                    self._set_chat_active(not self.global_chat_active, cause="return")
                                     self._chat_last_activity = now if self.global_chat_active else 0.0
                                     if self.global_chat_active:
                                         # Chat just opened. Release any in-game keys the user
@@ -1143,7 +1207,7 @@ class InputService(QObject):
                                     _itrace("chat", f"Escape dispatch phantom={self._phantom_active} "
                                                     f"chat={self.global_chat_active}")
                                 was_chatting = self.global_chat_active
-                                self._set_chat_active(False)
+                                self._set_chat_active(False, cause="escape")
                                 self.chat_active.clear()
                                 self._phantom_reset()
                                 if was_chatting:
@@ -1333,10 +1397,10 @@ class InputService(QObject):
         except Exception as e:  # noqa: BLE001
             print(f"[InputService] capture grab resync failed: {e}")
 
-    def _set_chat_active(self, active: bool):
+    def _set_chat_active(self, active: bool, cause: str = ""):
         """Set global_chat_active and emit signal on change."""
         if _ITRACE:
-            _itrace("chat", f"set_chat_active({active}) cur={self.global_chat_active} "
+            _itrace("chat", f"set_chat_active({active}) cause={cause or '?'} cur={self.global_chat_active} "
                             f"phantom={self._phantom_active} intended_strict={self._intended_ttr_strict}")
         if self.global_chat_active != active:
             if active:
@@ -1425,7 +1489,7 @@ class InputService(QObject):
                 win = window_ids[i]
                 if win != active_window:
                     self._send_via_backend("key", win, "Escape")
-        self._set_chat_active(False)
+        self._set_chat_active(False, cause="timeout")
         self.chat_active.clear()
         self._phantom_reset()
 
@@ -1575,7 +1639,7 @@ class InputService(QObject):
 
         self.bg_typing_held.clear()
         self.chat_active.clear()
-        self._set_chat_active(False)
+        self._set_chat_active(False, cause="release_all")
         self._phantom_reset()
         self._drain_focused_passthrough()
 
