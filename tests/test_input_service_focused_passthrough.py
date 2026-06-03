@@ -4,8 +4,6 @@ to the exact window/keysym they were sent to."""
 import queue
 from unittest.mock import MagicMock
 
-import pytest
-
 from services.input_service import InputService
 
 
@@ -105,3 +103,16 @@ def test_backspace_to_focused_gated_off(monkeypatch):
     svc._strict_ttr_active = lambda: False
     svc._send_backspace_to_focused()
     svc._send_via_backend.assert_not_called()
+
+
+def test_duplicate_keydown_releases_prior_first(monkeypatch):
+    svc = _make_svc(monkeypatch, active="100", game="ttr")
+    svc._strict_ttr_active = lambda: True
+    svc._send_passthrough_to_focused("Shift_L")          # records ("100","Shift_L")
+    svc.window_manager._active = "200"                     # focus moved, no release seen
+    svc._send_via_backend.reset_mock()
+    svc._send_passthrough_to_focused("Shift_L")           # duplicate keydown
+    calls = [c.args for c in svc._send_via_backend.call_args_list]
+    # Prior entry released to its recorded target BEFORE the new keydown:
+    assert calls == [("keyup", "100", "Shift_L"), ("keydown", "200", "Shift_L")]
+    assert svc._focused_passthrough_sent["Shift_L"] == ("200", "Shift_L")

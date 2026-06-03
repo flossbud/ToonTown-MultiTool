@@ -469,6 +469,11 @@ class InputService(QObject):
         active = self._focused_ttr_window()
         if active is None:
             return
+        # Defensive: a duplicate keydown without an intervening release would
+        # orphan the prior record (and could leave that key down on the old
+        # target). Release any stale entry first so every keydown is paired.
+        if key in self._focused_passthrough_sent:
+            self._release_focused_passthrough(key)
         keysym = self._resolve_keysym(key) or key
         self._focused_passthrough_sent[key] = (active, keysym)
         if _ITRACE:
