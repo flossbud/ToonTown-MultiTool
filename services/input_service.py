@@ -444,22 +444,20 @@ class InputService(QObject):
     def _focused_ttr_window(self) -> str | None:
         """Return the active window id when strict TTR separation is ACTIVE
         (native delivery suppressed) AND the active window is a TTR window;
-        else None. Shared gate for the focused-passthrough send helpers."""
-        if not self._strict_ttr_active():
-            return None
+        else None. Shared gate for the focused-passthrough send helpers.
+        Exception-safe: any failure resolves to None (no-op delivery)."""
         try:
+            if not self._strict_ttr_active():
+                return None
             active = self.window_manager.get_active_window()
-        except Exception:
-            return None
-        if not active:
-            return None
-        try:
+            if not active:
+                return None
             from utils.game_registry import GameRegistry
             if GameRegistry.instance().get_game_for_window(str(active)) != "ttr":
                 return None
+            return str(active)
         except Exception:
             return None
-        return str(active)
 
     def _send_passthrough_to_focused(self, key: str) -> None:
         """Deliver a non-movement key to the focused TTR window via the reliable
@@ -479,7 +477,10 @@ class InputService(QObject):
         if _ITRACE:
             _itrace("focus_passthru",
                     f"keydown key={key} keysym={keysym} target={active}")
-        self._send_via_backend("keydown", active, keysym)
+        try:
+            self._send_via_backend("keydown", active, keysym)
+        except Exception as e:  # noqa: BLE001
+            print(f"[InputService] focused passthrough keydown failed: {e}")
 
     def _release_focused_passthrough(self, key: str) -> None:
         """Release a previously-delivered focused passthrough key to the SAME
@@ -491,7 +492,10 @@ class InputService(QObject):
         win, keysym = target
         if _ITRACE:
             _itrace("focus_passthru", f"keyup key={key} keysym={keysym} target={win}")
-        self._send_via_backend("keyup", win, keysym)
+        try:
+            self._send_via_backend("keyup", win, keysym)
+        except Exception as e:  # noqa: BLE001
+            print(f"[InputService] focused passthrough keyup failed: {e}")
 
     def _drain_focused_passthrough(self) -> None:
         """Release every recorded focused passthrough key (focus-away /
@@ -507,7 +511,10 @@ class InputService(QObject):
         active = self._focused_ttr_window()
         if active is None:
             return
-        self._send_via_backend("key", active, "BackSpace")
+        try:
+            self._send_via_backend("key", active, "BackSpace")
+        except Exception as e:  # noqa: BLE001
+            print(f"[InputService] focused passthrough BackSpace failed: {e}")
 
     def _should_consume_grabbed_key(self, keysym: str) -> bool:
         """Decide per-event whether to suppress the grabbed key from the

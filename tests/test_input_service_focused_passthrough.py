@@ -85,9 +85,10 @@ def test_drain_releases_all_recorded(monkeypatch):
     svc._send_passthrough_to_focused("Control_L")
     svc._send_via_backend.reset_mock()
     svc._drain_focused_passthrough()
-    sent = {c.args for c in svc._send_via_backend.call_args_list}
-    assert ("keyup", "100", "Shift_L") in sent
-    assert ("keyup", "100", "Control_L") in sent
+    calls = [c.args for c in svc._send_via_backend.call_args_list]
+    assert len(calls) == 2
+    assert ("keyup", "100", "Shift_L") in calls
+    assert ("keyup", "100", "Control_L") in calls
     assert svc._focused_passthrough_sent == {}
 
 
@@ -96,6 +97,7 @@ def test_backspace_to_focused_uses_key_tap(monkeypatch):
     svc._strict_ttr_active = lambda: True
     svc._send_backspace_to_focused()
     svc._send_via_backend.assert_called_once_with("key", "100", "BackSpace")
+    assert "BackSpace" not in svc._focused_passthrough_sent
 
 
 def test_backspace_to_focused_gated_off(monkeypatch):
@@ -116,3 +118,11 @@ def test_duplicate_keydown_releases_prior_first(monkeypatch):
     # Prior entry released to its recorded target BEFORE the new keydown:
     assert calls == [("keyup", "100", "Shift_L"), ("keydown", "200", "Shift_L")]
     assert svc._focused_passthrough_sent["Shift_L"] == ("200", "Shift_L")
+
+
+def test_send_passthrough_resolves_keysym(monkeypatch):
+    svc = _make_svc(monkeypatch, active="100", game="ttr")
+    svc._strict_ttr_active = lambda: True
+    svc._send_passthrough_to_focused("/")          # resolves to "slash"
+    svc._send_via_backend.assert_called_once_with("keydown", "100", "slash")
+    assert svc._focused_passthrough_sent["/"] == ("100", "slash")
