@@ -1415,8 +1415,6 @@ class LaunchTab(QWidget):
             return
         tile.set_state(LoginState.QUEUED, f"#{position} (~{eta}s)")
 
-    # ── Settings callback ──────────────────────────────────────────────────
-
     # ── Theme ──────────────────────────────────────────────────────────────
 
     def _c(self):
