@@ -685,6 +685,17 @@ class LaunchTab(QWidget):
             if local < len(section.tiles):
                 self._visible_tiles[game][acct.id] = section.tiles[local]
 
+    def _reapply_visible_dots(self, game: str) -> None:
+        """Re-apply each visible running account's last Multitoon dot_state.
+        Must run AFTER refresh_theme(): AccountTile.apply_theme re-runs set_state
+        for non-idle tiles, which resets the status dot to the plain running
+        color and would clobber an earlier dot override."""
+        for account_id, tile in self._visible_tiles[game].items():
+            slot = self._slots[game].get(account_id)
+            if (slot is not None and slot.dot_state
+                    and slot.launcher is not None and slot.launcher.is_running()):
+                self._apply_dot_color(tile, slot.dot_state)
+
     def _on_page_changed(self, game: str, page: int) -> None:
         # Demo mode renders fixtures (not cred_manager); _render_section would
         # replace them with real/empty account data, so pagination is a no-op
@@ -694,6 +705,7 @@ class LaunchTab(QWidget):
         self._page[game] = page
         self._render_section(game)
         self.refresh_theme()
+        self._reapply_visible_dots(game)
 
     def _build_demo(self, demo):
         for game in ("ttr", "cc"):
@@ -1597,8 +1609,8 @@ class LaunchTab(QWidget):
         and the tile is on the visible page, drives the status dot.
         """
         ordered = self._ordered_accounts("ttr")
-        if index >= len(ordered):
-            return
+        if index < 0 or index >= len(ordered):
+            return  # out of range (e.g. after a delete) -> ignore safely
         account_id = ordered[index].id
         slot = self._slots["ttr"].get(account_id)
         if slot is None:
@@ -1607,14 +1619,23 @@ class LaunchTab(QWidget):
 
         if slot.launcher and slot.launcher.is_running():
             tile = self._visible_tiles["ttr"].get(account_id)
-            if tile is not None and getattr(tile, "status_dot", None) is not None:
-                color = {
-                    "active": "#56c856",
-                    "idle":   "#888888",
-                    "warn":   "#E8A838",
-                    "error":  "#E05252",
-                }.get(state_str, "#56c856")
-                tile.status_dot.set_color(color, pulse=(state_str == "active"))
+            if tile is not None:
+                self._apply_dot_color(tile, state_str)
+
+    def _apply_dot_color(self, tile, state_str: str) -> None:
+        """Paint a tile's status dot for a Multitoon sync state. Shared by
+        update_dot_state and the render path (so a flip back to an off-page
+        running account re-applies its last dot_state)."""
+        dot = getattr(tile, "status_dot", None)
+        if dot is None:
+            return
+        color = {
+            "active": "#56c856",
+            "idle":   "#888888",
+            "warn":   "#E8A838",
+            "error":  "#E05252",
+        }.get(state_str, "#56c856")
+        dot.set_color(color, pulse=(state_str == "active"))
 
     def _update_queue(self, game, account_id, position, eta):
         slot = self._slots[game].get(account_id)
@@ -1659,6 +1680,22 @@ class LaunchTab(QWidget):
             print(msg)
 
     def shutdown(self):
+        # Tear down the tab's own transient resources. Deliberately does NOT
+        # kill running game launchers: closing the TTMT UI leaves already-running
+        # games alive (a multitoon launcher you can close while still playing).
+        for game in ("ttr", "cc"):
+            for slot in self._slots[game].values():
+                if slot.loading_timer is not None:
+                    slot.loading_timer.stop()
+                    slot.loading_timer.deleteLater()
+                    slot.loading_timer = None
+                if slot.worker is not None:
+                    # Cancel an in-flight login (not a running game).
+                    try:
+                        slot.worker.cancel()
+                    except Exception:  # noqa: BLE001
+                        pass
+            self._loading[game] = []
         if self._probe_thread is not None and self._probe_thread.isRunning():
             self._probe_thread.quit()
             self._probe_thread.wait(2000)
