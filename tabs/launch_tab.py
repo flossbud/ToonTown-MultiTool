@@ -13,7 +13,7 @@ import sys
 import threading
 from dataclasses import dataclass
 from PySide6.QtWidgets import (
-    QFrame, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QScrollArea,
+    QDialog, QFrame, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QScrollArea,
     QSizePolicy, QVBoxLayout, QWidget,
 )
 from PySide6.QtCore import Qt, QObject, Signal, QThread, Slot, QTimer
@@ -938,7 +938,6 @@ class LaunchTab(QWidget):
         accounts = [{"id": a.id, "label": a.label or "", "username": a.username or ""}
                     for a in ordered]
         dlg = AccountReorderDialog(game=game, accounts=accounts, parent=self.window())
-        from PySide6.QtWidgets import QDialog
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         new_ids = dlg.ordered_ids()
