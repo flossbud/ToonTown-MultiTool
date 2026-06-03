@@ -54,6 +54,7 @@ from utils.widgets import install_modern_scrollbar
 from utils.widgets.cc_install_picker import CCInstallPickerDialog  # noqa: F401
 from utils.widgets.launch_section import LaunchSection, PAGE_SIZE, page_count
 from utils.widgets.account_editor import AccountEditor
+from utils.widgets.account_reorder_dialog import AccountReorderDialog
 from utils.widgets.confirm_dialog import ConfirmDialog
 from utils.widgets.error_modal import ErrorModal
 from utils.launch_tab_demo_mode import get_demo_fixtures
@@ -581,6 +582,7 @@ class LaunchTab(QWidget):
         section.tile_delete.connect(lambda a, g=game: self._on_delete(g, a))
         section.tile_expand_error.connect(lambda a, g=game: self._on_tile_expand_error(g, a))
         section.page_changed.connect(lambda p, g=game: self._on_page_changed(g, p))
+        section.reorder_clicked.connect(lambda g=game: self._on_reorder(g))
         # When a section's natural size changes (e.g. resize bumped its
         # content_scale and grew tile min-heights), re-equalize sibling
         # heights in compact mode so the populated card doesn't outgrow
@@ -679,7 +681,7 @@ class LaunchTab(QWidget):
         activity = self._page_activity(game, ordered, pc)
         section.set_page(dicts, page=page, page_count=pc, base_index=base,
                          activity=activity, show_empty_state=(n == 0),
-                         at_ceiling=(n >= MAX_PER_GAME))
+                         at_ceiling=(n >= MAX_PER_GAME), show_reorder=(n >= 2))
         for local, acct in enumerate(slice_):
             if local < len(section.tiles):
                 self._visible_tiles[game][acct.id] = section.tiles[local]
@@ -928,6 +930,24 @@ class LaunchTab(QWidget):
 
         editor.account_saved.connect(_save)
         editor.exec()
+
+    def _on_reorder(self, game: str) -> None:
+        ordered = self._ordered_accounts(game)
+        if len(ordered) < 2:
+            return
+        accounts = [{"id": a.id, "label": a.label or "", "username": a.username or ""}
+                    for a in ordered]
+        dlg = AccountReorderDialog(game=game, accounts=accounts, parent=self.window())
+        from PySide6.QtWidgets import QDialog
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        new_ids = dlg.ordered_ids()
+        if not self.cred_manager.reorder_game(game, new_ids):
+            self.log(f"[Launch] Reorder of {game.upper()} accounts was rejected.")
+            return
+        self._reconcile_slots()
+        self._render_section(game)
+        self.refresh_theme()
 
     def _on_tile_edit(self, game: str, account_id: str):
         global_idx = self._global_index_of(account_id)
