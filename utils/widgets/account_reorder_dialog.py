@@ -171,6 +171,14 @@ class AccountReorderDialog(QDialog):
         self._rebuild()
         self.apply_theme(self._theme)
 
+        # Size the scroll area to show several rows up front (it otherwise
+        # collapses to ~1 row). Show up to 6 rows, then scroll; a small floor so
+        # a 2-3 account list still reads as a list. ~52px per row (content +
+        # margins) + the 8px inter-row spacing, plus the host's 8+8 margins.
+        _ROW_H = 52 + 8
+        visible = min(max(len(self._order), 3), 6)
+        self._scroll.setMinimumHeight(visible * _ROW_H + 16)
+
     def ordered_ids(self) -> list[str]:
         return [a["id"] for a in self._order]
 

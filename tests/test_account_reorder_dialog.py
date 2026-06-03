@@ -69,3 +69,19 @@ def test_cc_game_title_and_accent(qapp):
     assert "Corporate Clash" in d.title_label.text()
     # CC accent badge color present in a row's stylesheet.
     assert "#F26D21" in d._rows[0].badge.styleSheet()
+
+
+def test_modal_tall_enough_for_multiple_rows(qapp):
+    # Regression: the modal must open tall enough to list several accounts, not
+    # collapse to a single row. The scroll area reserves height for >=3 rows.
+    d = AccountReorderDialog(game="ttr", accounts=_accts(5))
+    assert d._scroll.minimumHeight() >= 3 * 50  # at least ~3 rows visible
+
+
+def test_modal_height_caps_for_many_accounts(qapp):
+    # With many accounts it caps (then scrolls) rather than growing unbounded.
+    small = AccountReorderDialog(game="ttr", accounts=_accts(3))
+    big = AccountReorderDialog(game="ttr", accounts=_accts(16))
+    # 16-account modal is not taller than a 6-row cap (capped), and is >= the 3-row one
+    assert big._scroll.minimumHeight() >= small._scroll.minimumHeight()
+    assert big._scroll.minimumHeight() <= 6 * 60 + 16
