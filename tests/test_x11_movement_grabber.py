@@ -963,7 +963,7 @@ def test_route_all_grabbed_movement_does_not_route(fake_display):
     assert pt == []          # and it's not passthrough either
 
 
-# ── Task 3B: route_all passthrough re-delivery ────────────────────────────────
+# ── route_all passthrough classification (grabber is suppress-only) ──────────
 
 def test_route_all_install_registers_passthrough_without_grabbing(fake_display):
     """route_all classifies the 8 movement keys as 'grabbed' (suppress-only) and
@@ -990,9 +990,10 @@ def test_route_all_install_registers_passthrough_without_grabbing(fake_display):
         g.stop()
 
 
-def test_route_all_passthrough_key_calls_on_passthrough(fake_display):
-    """A non-movement key event (arrives only via the active-grab redirect)
-    is re-delivered through on_passthrough, NOT dropped, NOT via on_key."""
+def test_route_all_passthrough_key_does_not_call_on_passthrough(fake_display):
+    """In route_all the grabber is suppress-only: a non-movement (passthrough)
+    key event must NOT call on_passthrough (delivery is driven by the pynput
+    XRecord feed in InputService, not re-delivered here)."""
     d, root = fake_display
     pt, ok = [], []
     g = grabber_mod.MovementKeyGrabber()
@@ -1002,28 +1003,27 @@ def test_route_all_passthrough_key_calls_on_passthrough(fake_display):
     g._keycode_to_name = {150: ("passthrough", "j")}
     g._handle_event_route_all(_ev(X.KeyPress, 150))
     g._handle_event_route_all(_ev(X.KeyRelease, 150))
-    assert pt == [("keydown", "j"), ("keyup", "j")]
+    assert pt == []
     assert ok == []
 
 
-def test_route_all_passthrough_none_callback_no_raise(fake_display):
-    """A passthrough event arriving when _on_passthrough is None (e.g.
-    prepare() was called without on_passthrough) must not raise."""
+def test_route_all_any_key_no_raise(fake_display):
+    """_handle_event_route_all is a no-op; any key (including passthrough
+    classified, None callback, or movement) must not raise."""
     d, root = fake_display
     g = grabber_mod.MovementKeyGrabber()
-    g._on_passthrough = None     # explicitly unset
+    g._on_passthrough = None     # explicitly unset (suppress-only: never called)
     g._on_key = lambda *_: None
     g._route_all = True
     g._keycode_to_name = {150: ("passthrough", "j")}
-    # Must not raise.
+    # Must not raise -- and on_passthrough is never called regardless of None.
     g._handle_event_route_all(_ev(X.KeyPress, 150))
     g._handle_event_route_all(_ev(X.KeyRelease, 150))
 
 
-def test_route_all_unregistered_nonmovement_key_passthrough(fake_display):
-    """Under the persistent whole-keyboard grab, a non-movement key that was NOT
-    pre-registered (e.g. an arbitrary printable) is still re-delivered to the
-    focused window, with its keysym name resolved from the keycode."""
+def test_route_all_unregistered_nonmovement_key_does_not_call_on_passthrough(fake_display):
+    """In route_all the grabber is suppress-only: even an unregistered printable
+    key must NOT call on_passthrough (delivery is driven by the pynput feed)."""
     from Xlib import XK
     d, root = fake_display
     pt = []
@@ -1036,7 +1036,7 @@ def test_route_all_unregistered_nonmovement_key_passthrough(fake_display):
         lambda kc, idx: XK.string_to_keysym("q") if kc == 200 else 0)
     g._handle_event_route_all(_ev(X.KeyPress, 200))
     g._handle_event_route_all(_ev(X.KeyRelease, 200))
-    assert pt == [("keydown", "q"), ("keyup", "q")]
+    assert pt == []
 
 
 def test_route_all_uninstall_ungrabs_keyboard(fake_display):

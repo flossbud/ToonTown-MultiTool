@@ -563,21 +563,16 @@ class MovementKeyGrabber:
     def _handle_event_route_all(self, event) -> None:
         """route_all (one persistent XGrabKeyboard): EVERY key is redirected here
         (owner_events=False), so native delivery to the focused window is fully
-        suppressed. Movement keys are routed to the correct toon by the pynput
-        (XRecord) feed -- suppress them here (no-op). EVERY other key is one the
-        focused window still needs (chat, Enter, Escape, modifiers, hotkeys); we
-        re-deliver it to the focused window via on_passthrough, by its registered
-        name or (for unregistered printables) a keysym resolved from the keycode."""
-        entry = self._keycode_to_name.get(event.detail)
-        if entry is not None and entry[0] == "grabbed":
-            return  # movement: suppress here; pynput routes it to its toon
-        if self._on_passthrough is None:
-            return
-        keysym_name = entry[1] if entry is not None else self._resolve_keysym_name(event.detail)
-        if not keysym_name:
-            return
-        action = "keydown" if event.type == X.KeyPress else "keyup"
-        try:
-            self._on_passthrough(action, keysym_name)
-        except Exception as e:  # noqa: BLE001
-            print(f"[x11_movement_grabber] on_passthrough raised: {e}")
+        suppressed. In route_all the grabber is SUPPRESS-ONLY: ALL routing AND
+        delivery is driven by the reliable pynput (XRecord) feed in InputService
+        -- movement keys are routed to the correct toon, and the focused toon's
+        non-movement (passthrough) keys are delivered to the focused window from
+        there too. The grabber does NOT re-deliver anything here, because its X
+        event stream to this grabbing client is lossy under XWayland (it drops
+        KeyPress events), which is the bug that motivated moving delivery to the
+        pynput feed. The per-event observer trace is emitted by the run loop
+        before this call. The grab is GrabModeAsync, so doing nothing here does
+        not freeze the keyboard; never ReplayKeyboard (that would leak native
+        delivery and double-send). The legacy CC path (route_all=False) is
+        unchanged and still re-delivers via on_passthrough."""
+        return
