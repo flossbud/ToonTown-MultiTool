@@ -88,6 +88,7 @@ class _FakeKeymap:
         return next((a for a, k in self._set.items() if k == key), None)
     def get_key_for_action(self, game, set_idx, action): return self._set.get(action)
     def get_all_keys(self): return frozenset({"w", "a", "s", "d"})
+    def get_keys_for_game(self, game): return self.get_all_keys()
 
 
 class _FakeWM:

@@ -51,6 +51,17 @@ class _FakeKeymap:
                         keys.add(v)
         return frozenset(keys)
 
+    def get_keys_for_game(self, game):
+        """Keys bound across one game's sets. Mirrors the real
+        KeymapManager.get_keys_for_game() shape (foreground-scoped)."""
+        keys = set()
+        for s in self._sets.get(game, []):
+            for action in logical_actions.actions_for(game):
+                v = s.get(action)
+                if isinstance(v, str) and v:
+                    keys.add(v)
+        return frozenset(keys)
+
 
 class _FakeWindowManager:
     def __init__(self, window_ids, active_window):

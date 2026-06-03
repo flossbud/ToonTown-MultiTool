@@ -644,3 +644,139 @@ def test_chat_close_does_not_reinstall_while_phantom_active(monkeypatch, tmp_pat
     assert not grab.install_grabs.called, (
         "install_grabs must NOT be called on chat-close while phantom is still active"
     )
+
+
+# ── Movement-key classification is scoped to the FOREGROUND game ────────────
+# Regression for the chat-close bug: CC binds book=Escape, and the keydown
+# dispatch classifies `is_movement = key in _movement_keys()` BEFORE the
+# `elif key == "Escape":` chat-close branch. When _movement_keys() unioned keys
+# across BOTH games, Escape (CC's book) was always "movement", so in a TTR
+# session the Escape keydown was swallowed by the movement branch, the chat-
+# close branch never ran, global_chat_active stayed True, and the background
+# toon got no movement until a service refresh. The classifier must interpret
+# the physical key through the FOREGROUND game's key universe only.
+
+def test_movement_keys_scoped_to_foreground_ttr(monkeypatch, tmp_path):
+    """TTR foreground: CC-only Escape (book) must NOT classify as movement, or
+    it shadows the chat-close branch. TTR's own action keys must classify."""
+    svc, _ = _make_service(
+        monkeypatch, tmp_path,
+        active_wid="t1", windows=["t1", "t2"],
+        games={"t1": "ttr", "t2": "ttr"},
+    )
+    mk = svc._movement_keys()
+    assert "Escape" not in mk, "CC book=Escape must not leak into a TTR session"
+    assert "Up" in mk, "TTR forward must classify"
+    assert "Alt_L" in mk, "TTR book must classify"
+
+
+def test_movement_keys_scoped_to_foreground_cc(monkeypatch, tmp_path):
+    """CC foreground: Escape IS the CC 'book' action and must stay classified
+    so it broadcasts to background toons."""
+    svc, _ = _make_service(
+        monkeypatch, tmp_path,
+        active_wid="c1", windows=["c1", "c2"],
+        games={"c1": "cc", "c2": "cc"},
+    )
+    mk = svc._movement_keys()
+    assert "Escape" in mk, "CC book=Escape must remain classified in a CC session"
+    assert "w" in mk, "CC forward must classify"
+
+
+def test_movement_keys_unknown_foreground_classifies_nothing(monkeypatch, tmp_path):
+    """No known foreground game => no coherent action namespace. Classify no
+    keymap actions (do NOT fall back to the cross-game union, which would
+    reintroduce the cross-game collision)."""
+    svc, _ = _make_service(
+        monkeypatch, tmp_path,
+        active_wid="x", windows=["x"],
+        games={},  # GameRegistry returns None; no last-known game
+    )
+    assert svc._foreground_game() is None
+    assert svc._movement_keys() == frozenset()
+
+
+def test_movement_keys_no_keymap_manager_legacy(monkeypatch, tmp_path):
+    """Legacy path (no keymap manager) keeps the hard-coded MOVEMENT_KEYS."""
+    from services.input_service import MOVEMENT_KEYS
+    svc, _ = _make_service(
+        monkeypatch, tmp_path,
+        active_wid="t1", windows=["t1"], games={"t1": "ttr"},
+    )
+    svc.keymap_manager = None
+    assert svc._movement_keys() == MOVEMENT_KEYS
+
+
+def test_escape_closes_chat_through_run_loop_ttr(monkeypatch, tmp_path):
+    """End-to-end run-loop regression for the chat-close bug. With chat open
+    and a TTR window focused, an Escape keydown must reach the `elif key ==
+    "Escape":` branch and clear global_chat_active. Before the foreground-
+    scoping fix, Escape was in the cross-game movement union (CC book=Escape)
+    so the is_movement branch swallowed it and chat never closed -> the
+    background toon got no movement until a service refresh."""
+    import queue
+    import time
+
+    monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
+    from utils.keymap_manager import KeymapManager
+    from services.input_service import InputService
+
+    # Keep the run loop pure and ISOLATED: no real X grabber, and a fake
+    # GameRegistry (patch the classmethod, never the real singleton) so this
+    # test cannot leak singleton/grabber state into later run-loop tests.
+    monkeypatch.setattr(
+        "services.input_service.InputService._start_key_grabber",
+        lambda self: None,
+    )
+    # No real X/backend work: the dispatch is exercised via stubbed sends, and
+    # opening a real XlibBackend connection here would perturb other run-loop
+    # tests' X grab state.
+    monkeypatch.setattr(
+        "services.input_service.InputService._apply_backend_setting",
+        lambda self: None,
+    )
+    fake_registry = MagicMock()
+    fake_registry.get_game_for_window.side_effect = lambda wid: "ttr"
+    monkeypatch.setattr(
+        "utils.game_registry.GameRegistry.instance", lambda: fake_registry,
+    )
+
+    windows = ["t1", "t2"]
+    wm = SimpleNamespace(
+        get_active_window=lambda: "t1",          # a managed TTR toon is focused
+        get_window_ids=lambda: windows,
+        assign_windows=lambda: None,
+    )
+    store = {}
+    sm = SimpleNamespace(
+        get=lambda k, d=None: store.get(k, d),
+        set=lambda k, v: store.__setitem__(k, v),
+        on_change=lambda cb: None,
+    )
+    eq: queue.Queue = queue.Queue()
+    svc = InputService(
+        window_manager=wm,
+        get_enabled_toons=lambda: [True, True],
+        get_movement_modes=lambda: ["both", "both"],
+        get_event_queue_func=lambda: eq,
+        keymap_manager=KeymapManager(),
+        get_keymap_assignments=lambda: [0, 0],
+        settings_manager=sm,
+    )
+    svc._send_via_backend = lambda *a, **k: None
+    svc._resolve_keysym = lambda k: k
+
+    try:
+        svc.global_chat_active = True   # chat already open (user pressed Enter)
+        svc.start()
+        eq.put(("keydown", "Escape"))
+        # Poll for the state change instead of a fixed sleep.
+        deadline = time.monotonic() + 2.0
+        while svc.global_chat_active and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert svc.global_chat_active is False, (
+            "Escape keydown must reach the chat-close branch and clear chat"
+        )
+    finally:
+        eq.put(("keyup", "Escape"))
+        svc.stop(wait=True)  # join the run-loop thread (no backend/grabber created)

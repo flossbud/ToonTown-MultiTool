@@ -236,6 +236,26 @@ class KeymapManager:
                             keys.add(k)
             return frozenset(keys)
 
+    def get_keys_for_game(self, game: str) -> frozenset:
+        """Union of every action's bound key for ONE game, across all its sets.
+
+        Unlike get_all_keys() this is scoped to a single game, so a key that is
+        an action only in the OTHER game is excluded. The input dispatcher uses
+        this to classify a physical key through the FOREGROUND game's key
+        universe only -- otherwise e.g. CC's book=Escape would make Escape
+        count as movement in a TTR session and shadow the chat-close branch.
+        """
+        if game not in GAMES:
+            return frozenset()
+        with self._lock:
+            keys = set()
+            for s in self._sets.get(game, []):
+                for action in logical_actions.actions_for(game):
+                    k = s.get(action)
+                    if k:
+                        keys.add(k)
+            return frozenset(keys)
+
     def get_default_keys(self, game: str) -> frozenset:
         """The set of keys bound in this game's Default set."""
         with self._lock:

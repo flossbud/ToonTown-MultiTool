@@ -689,10 +689,27 @@ class InputService(QObject):
     # ── Keymap helpers ─────────────────────────────────────────────────────
 
     def _movement_keys(self) -> frozenset:
-        """Return ALL movement keys across ALL sets so any set's keys enter the movement branch."""
-        if self.keymap_manager:
-            return self.keymap_manager.get_all_keys()
-        return MOVEMENT_KEYS
+        """Keys (across all sets) that classify as routable actions for the
+        keydown dispatcher's `is_movement` gate.
+
+        Scoped to the FOREGROUND game's key universe, NOT a cross-game union: a
+        physical key must be interpreted through the game the user is actually
+        playing. Otherwise a key bound only in the other game leaks in -- e.g.
+        CC's book=Escape made Escape count as movement in a TTR session, which
+        shadowed the `elif key == "Escape":` chat-close branch and stranded the
+        background toon (chat stuck open) until a service refresh.
+
+        When the foreground game is not yet known there is no coherent action
+        namespace, so classify nothing (the literal Return/Escape/BackSpace
+        branches still handle those keys); we deliberately do NOT fall back to
+        the cross-game union, which would reintroduce the collision. The legacy
+        no-keymap-manager path keeps the hard-coded MOVEMENT_KEYS."""
+        if self.keymap_manager is None:
+            return MOVEMENT_KEYS
+        game = self._foreground_game()
+        if game is None:
+            return frozenset()
+        return self.keymap_manager.get_keys_for_game(game)
 
     def _get_assignments(self, enabled) -> list:
         """Return per-toon set indices."""

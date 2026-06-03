@@ -36,6 +36,10 @@ class _FakeKeymap:
     def get_all_keys(self):
         return frozenset({"w", "a", "s", "d", "Up", "Down", "Left", "Right", "space"})
 
+    def get_keys_for_game(self, game):
+        # Game-agnostic stub: foreground-scoped classifier asks per-game.
+        return self.get_all_keys()
+
 
 class _FakeWindowManager:
     def __init__(self, window_ids, active_window):

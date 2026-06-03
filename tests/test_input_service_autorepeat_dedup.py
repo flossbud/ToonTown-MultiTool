@@ -42,6 +42,11 @@ class _FakeKeymap:
     def get_all_keys(self):
         return frozenset({"w", "a", "s", "d", "Up", "Down", "Left", "Right", "space"})
 
+    def get_keys_for_game(self, game):
+        # Game-agnostic stub: the foreground-scoped classifier asks per-game,
+        # but this fake models a single movement set for all games.
+        return self.get_all_keys()
+
 
 class _FakeWindowManager:
     def __init__(self, focused, ids):
