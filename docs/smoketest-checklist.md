@@ -153,15 +153,15 @@ cookie. These checks confirm it actually engages per runtime.
 
 ### Per-runtime acquisition
 
-- [ ] venv run (`python main.py`): enable Keep-Alive, confirm the inline
-  indicator reads "Sleep blocked" (green) and the `systemd-inhibit --list` row
-  is present.
+- [ ] venv run (`python main.py`): enable Keep-Alive, confirm the
+  `systemd-inhibit --list` row is present and NO inline sleep-status indicator
+  appears anywhere in the tab.
 - [ ] AppImage: same check from the built `.AppImage` (proves the
   dbus-python-free path works in the frozen runtime; the AppImage does not ship
   `dbus-python`).
 - [ ] If the inhibitor cannot engage (e.g. a non-systemd distro), the one-time
-  warning dialog appears once per launch and the indicator reads "Sleep NOT
-  blocked" (red). The dialog text names no implementation internals.
+  warning dialog appears once per launch (and only on failure). No inline
+  indicator appears. The dialog text names no implementation internals.
 
 ### Flatpak holder release mechanism (Task 7 spike)
 
