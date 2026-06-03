@@ -196,9 +196,13 @@ def test_delete_active_account_tears_down(qapp):
 
     killed = []
     cancelled = []
+    stopped = []
     slot = tab._slots["ttr"]["a"]
     slot.worker = SimpleNamespace(cancel=lambda: cancelled.append(1))
     slot.launcher = SimpleNamespace(is_running=lambda: True, kill=lambda: killed.append(1))
+    # Mid-load: a loading timer + a queue entry must also be torn down on delete.
+    slot.loading_timer = SimpleNamespace(stop=lambda: stopped.append(1), deleteLater=lambda: None)
+    tab._loading["ttr"] = ["a"]
 
     import tabs.launch_tab as lt
 
@@ -215,4 +219,6 @@ def test_delete_active_account_tears_down(qapp):
     tab._on_delete("ttr", "a")
     assert cancelled == [1], "worker.cancel() must be called on delete"
     assert killed == [1], "launcher.kill() must be called on delete"
+    assert stopped == [1], "loading_timer must be stopped on delete"
+    assert tab._loading["ttr"] == [], "loading queue entry must be removed on delete"
     assert "a" not in tab._slots["ttr"], "slot must be removed after delete"

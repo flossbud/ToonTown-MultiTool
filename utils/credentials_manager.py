@@ -31,7 +31,9 @@ else:
 
 from utils.models import AccountCredential
 
-MAX_ACCOUNTS = 16
+# Total storage cap across BOTH games. The launch tab enforces a per-game
+# ceiling of 16 (MAX_PER_GAME); with two games that is up to 32 accounts total.
+MAX_ACCOUNTS = 32
 
 # Always-on diagnostic log. Writes to a file independent of stdout/console
 # state, so issues inside PyInstaller --noconsole builds (e.g. AppImage) can
@@ -78,7 +80,8 @@ def _dbg(msg: str):
 
 
 class CredentialsManager:
-    """Manages up to 8 TTR account credentials using the system keyring."""
+    """Manages TTR and Corporate Clash account credentials (up to 16 per game)
+    using the system keyring."""
 
     def __init__(self):
         import sys

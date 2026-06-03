@@ -108,6 +108,30 @@ def test_refresh_theme_preserves_multitoon_dot(qapp):
     assert tab._visible_tiles["ttr"]["t0"].status_dot._color.name().lower() == "#e8a838"
 
 
+def test_offpage_queue_message_rehydrates_on_flip(qapp):
+    # A queue_update for an off-page account stores the position/ETA on the slot
+    # so flipping to its page shows "#N (~Ms)", not a bare "In queue".
+    tab = _tab(qapp, 6)  # t5 on page 1
+    tab._update_queue("ttr", "t5", 7, 42)
+    assert tab._slots["ttr"]["t5"].message == "#7 (~42s)"
+    tab._on_page_changed("ttr", 1)
+    tile = tab._visible_tiles["ttr"]["t5"]
+    # The rendered tile carries the queue detail (its raw/status message).
+    st, msg, _ = tab._effective_state("ttr", tab._slots["ttr"]["t5"])
+    assert msg == "#7 (~42s)"
+
+
+def test_later_flip_tiles_inherit_layout_mode(qapp):
+    # Tiles created on a later page flip must reflect the section's layout mode.
+    tab = _tab(qapp, 6)
+    tab.set_layout_mode("full")
+    tab._on_page_changed("ttr", 1)   # builds fresh tiles for page 1
+    assert tab.ttr_section._layout_mode == "full"
+    # Fresh tiles exist and carry the content-scale floor (>=130 min-height).
+    assert tab.ttr_section.tiles
+    assert tab.ttr_section.tiles[0].minimumHeight() >= 130
+
+
 class _FakeTimer:
     def __init__(self):
         self.stopped = False

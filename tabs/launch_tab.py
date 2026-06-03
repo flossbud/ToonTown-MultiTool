@@ -1639,10 +1639,14 @@ class LaunchTab(QWidget):
         slot = self._slots[game].get(account_id)
         if slot is None:
             return
+        msg = f"#{position} (~{eta}s)"
         slot.state = LoginState.QUEUED
+        # Store the queue detail on the slot so flipping to an off-page queued
+        # account rehydrates the position/ETA, not a bare "In queue".
+        slot.message = msg
         tile = self._visible_tiles[game].get(account_id)
         if tile is not None:
-            tile.set_state(LoginState.QUEUED, f"#{position} (~{eta}s)")
+            tile.set_state(LoginState.QUEUED, msg)
 
     # ── Theme ──────────────────────────────────────────────────────────────
 
