@@ -49,14 +49,19 @@ def test_cc_account_without_token_runs_register_flow(qapp, monkeypatch, tmp_path
     from services.cc_login_service import CCLoginWorker
     monkeypatch.setattr(CCLoginWorker, "_fetch_gameserver",
                         lambda self, t: "gs:1")
+    import json as _json
     def fake_post(url, **kw):
         resp = MagicMock()
         resp.status_code = 200
-        resp.json.return_value = (
+        body = (
             {"status": True, "token": "launcher-tok"}
             if "register" in url else
             {"status": True, "success": True, "token": "game-tok"}
         )
+        resp.json.return_value = body
+        # resp.text must be a real string: the service logs
+        # _redact_token(resp.text), whose regex rejects a MagicMock.
+        resp.text = _json.dumps(body)
         return resp
     monkeypatch.setattr("requests.post", fake_post)
 
@@ -78,21 +83,44 @@ def test_cc_account_without_token_runs_register_flow(qapp, monkeypatch, tmp_path
     import tabs.launch_tab as _lt
     monkeypatch.setattr(_lt.LaunchTab, "_get_engine_dir",
                         lambda self, game: "/fake/cc/install")
+    # The CC launch gate opens a modal install-picker (dlg.exec()) when it
+    # discovers >1 install; under offscreen that blocks forever. No installs ->
+    # gate passes straight through.
+    monkeypatch.setattr(_lt, "discover_cc_installs", lambda: [])
     import os as _os
     _real_isfile = _os.path.isfile
     monkeypatch.setattr(
         _os.path, "isfile",
         lambda p: True if str(p).startswith("/fake/cc/install") else _real_isfile(p),
     )
+    # Suppress the modal failure dialog (the post-login patch step fails with
+    # no real CC install); box.exec() would block the event-loop wait below.
+    monkeypatch.setattr(_lt.LaunchTab, "_show_failure_dialog",
+                        lambda self, game, account_id, msg: None)
 
+    acct_id = cm.get_accounts_metadata()[0].id
+    tab = None
     try:
         tab = LaunchTab(credentials_manager=cm, settings_manager=_SM())
-        tab._on_launch("cc", 0)
+        tab._on_launch("cc", acct_id)
         # Daemon thread runs the chain; wait for token persistence.
         assert _wait(lambda: cm.get_launcher_token(cm.get_accounts_metadata()[0].id) == "launcher-tok")
         # Password should be cleared (token-only model).
         acct = cm.get_accounts_metadata()[0]
         assert acct.password == ""
     finally:
+        if tab is not None:
+            slot = tab._slots["cc"].get(acct_id)
+            if slot is not None and slot.worker is not None:
+                tab._disconnect_worker_signals(slot.worker)
+                try:
+                    slot.worker.cancel()
+                except Exception:
+                    pass
+                slot.worker = None
+            try:
+                tab.shutdown()
+            except Exception:
+                pass
         if saved is not None:
             keyring_core._keyring_backend = saved

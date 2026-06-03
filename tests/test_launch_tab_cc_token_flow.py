@@ -90,13 +90,33 @@ def test_cc_account_with_token_skips_register(qapp, monkeypatch, tmp_path):
         _os.path, "isfile",
         lambda p: True if str(p).startswith("/fake/cc/install") else _real_isfile(p),
     )
+    # A terminal failure dispatch (e.g. no real CC install for the post-login
+    # patch step) pops a modal _show_failure_dialog; under offscreen its
+    # box.exec() blocks the event-loop wait below. Suppress it; this test only
+    # asserts which HTTP endpoints were hit, not the dialog.
+    monkeypatch.setattr(_lt.LaunchTab, "_show_failure_dialog",
+                        lambda self, game, account_id, msg: None)
 
+    tab = None
     try:
         tab = LaunchTab(credentials_manager=cm, settings_manager=_SM())
-        tab._on_launch("cc", 0)
+        tab._on_launch("cc", acct_id)
         assert _wait(lambda: seen_urls)
         assert all("register" not in u for u in seen_urls)
         assert any("login" in u for u in seen_urls)
     finally:
+        if tab is not None:
+            slot = tab._slots["cc"].get(acct_id)
+            if slot is not None and slot.worker is not None:
+                tab._disconnect_worker_signals(slot.worker)
+                try:
+                    slot.worker.cancel()
+                except Exception:
+                    pass
+                slot.worker = None
+            try:
+                tab.shutdown()
+            except Exception:
+                pass
         if saved is not None:
             keyring_core._keyring_backend = saved

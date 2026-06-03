@@ -27,7 +27,7 @@ def recorded_calls(monkeypatch):
     from tabs.launch_tab import LaunchTab
     monkeypatch.setattr(
         LaunchTab, "_show_failure_dialog",
-        lambda self, game, idx, msg: calls.append((game, idx, msg)),
+        lambda self, game, account_id, msg: calls.append((game, account_id, msg)),
     )
     return calls
 
@@ -69,15 +69,21 @@ def test_on_login_failed_pops_dialog_with_full_message(
     tab, cm = _make_tab(monkeypatch, tmp_path)
     cm.add_account(label="Main", username="u@e.com", password="p",
                    game="cc")
+    tab._build_ui()  # populate the cc slot for this account
+    aid = tab._ordered_accounts("cc")[0].id
+    # The handler ignores stale signals: the emitting worker must be the
+    # slot's current worker. Install a sentinel worker on the slot.
+    worker = object()
+    tab._slots["cc"][aid].worker = worker
     long_msg = (
         "We've noticed that you're logging in from a new device/IP, "
         "please check your email and activate this session before "
         "continuing."
     )
 
-    tab._on_login_failed("cc", 0, long_msg)
+    tab._on_login_failed("cc", aid, worker, long_msg)
 
-    assert recorded_calls == [("cc", 0, long_msg)]
+    assert recorded_calls == [("cc", aid, long_msg)]
 
 
 def test_on_launcher_failed_pops_dialog(
@@ -87,10 +93,17 @@ def test_on_launcher_failed_pops_dialog(
     tab, cm = _make_tab(monkeypatch, tmp_path)
     cm.add_account(label="Main", username="u@e.com", password="p",
                    game="cc")
+    tab._build_ui()
+    aid = tab._ordered_accounts("cc")[0].id
 
-    tab._on_launcher_failed("cc", 0, "Wine exited 1")
+    class _L:
+        def is_running(self): return False
+    launcher = _L()
+    tab._slots["cc"][aid].launcher = launcher
 
-    assert recorded_calls == [("cc", 0, "Wine exited 1")]
+    tab._on_launcher_failed("cc", aid, launcher, "Wine exited 1")
+
+    assert recorded_calls == [("cc", aid, "Wine exited 1")]
 
 
 def test_missing_username_sync_validation_pops_dialog(
@@ -101,10 +114,11 @@ def test_missing_username_sync_validation_pops_dialog(
     tab, cm = _make_tab(monkeypatch, tmp_path)
     cm.add_account(label="Empty", username="", password="",
                    game="ttr")
-    # _build_ui must run after add_account so that self._cards["ttr"] is
-    # populated with the new row; otherwise _on_launch bails on the
-    # section_index range guard before reaching the validation branches.
+    # _build_ui must run after add_account so that the ttr slot is
+    # reconciled; otherwise _on_launch bails on the missing-slot guard
+    # before reaching the validation branches.
     tab._build_ui()
+    aid = tab._ordered_accounts("ttr")[0].id
 
     import tabs.launch_tab as _lt
     monkeypatch.setattr(_lt.LaunchTab, "_get_engine_dir",
@@ -114,11 +128,11 @@ def test_missing_username_sync_validation_pops_dialog(
     monkeypatch.setattr(_os.path, "isfile",
                         lambda p: True if p.startswith("/fake/") else _real_isfile(p))
 
-    tab._on_launch("ttr", 0)
+    tab._on_launch("ttr", aid)
 
     assert len(recorded_calls) == 1
-    game, idx, msg = recorded_calls[0]
-    assert (game, idx) == ("ttr", 0)
+    game, account_id, msg = recorded_calls[0]
+    assert (game, account_id) == ("ttr", aid)
     assert "username" in msg.lower()
 
 
@@ -130,18 +144,19 @@ def test_engine_path_missing_pops_dialog(
     tab, cm = _make_tab(monkeypatch, tmp_path)
     cm.add_account(label="Main", username="u@e.com", password="p",
                    game="ttr")
-    # _build_ui must run after add_account so that self._cards["ttr"] is
-    # populated with the new row; otherwise _on_launch bails on the
-    # section_index range guard before reaching the engine-path check.
+    # _build_ui must run after add_account so that the ttr slot is
+    # reconciled; otherwise _on_launch bails on the missing-slot guard
+    # before reaching the engine-path check.
     tab._build_ui()
+    aid = tab._ordered_accounts("ttr")[0].id
 
     import tabs.launch_tab as _lt
     monkeypatch.setattr(_lt.LaunchTab, "_get_engine_dir",
                         lambda self, game: "")
 
-    tab._on_launch("ttr", 0)
+    tab._on_launch("ttr", aid)
 
     assert len(recorded_calls) == 1
-    game, idx, msg = recorded_calls[0]
-    assert (game, idx) == ("ttr", 0)
+    game, account_id, msg = recorded_calls[0]
+    assert (game, account_id) == ("ttr", aid)
     assert "game path" in msg.lower() or "engine" in msg.lower()

@@ -40,8 +40,17 @@ def _make_tab(monkeypatch, request):
     tab = LaunchTab(settings_manager=_StubSettings())
     request.addfinalizer(tab.shutdown)
     monkeypatch.setattr(tab, "_build_cc_install", lambda: _FakeWineInstall())
-    monkeypatch.setattr(tab, "_game_accounts_with_indices", lambda g: [])
     return tab
+
+
+def _seed_slot(tab, launcher, account_id="cc-acct"):
+    """Install a CC slot with a fresh worker (so the stale-signal guard in
+    _on_login_success passes) and the given launcher, returning the worker."""
+    from tabs.launch_tab import AccountSlot
+    worker = object()
+    tab._slots["cc"][account_id] = AccountSlot(
+        account_id=account_id, worker=worker, launcher=launcher)
+    return worker
 
 
 def test_cc_login_success_launches_after_up_to_date(monkeypatch, request):
@@ -53,9 +62,9 @@ def test_cc_login_success_launches_after_up_to_date(monkeypatch, request):
 
     tab = _make_tab(monkeypatch, request)
     launcher = _FakeLauncher()
-    tab._launchers["cc"][0] = launcher
+    worker = _seed_slot(tab, launcher)
 
-    tab._on_login_success("cc", 0, "gs-1", "token-1")
+    tab._on_login_success("cc", "cc-acct", worker, "gs-1", "token-1")
 
     assert launcher.launched_with is not None
     args, kwargs = launcher.launched_with
@@ -72,11 +81,11 @@ def test_cc_login_success_aborts_and_offers_launcher_on_failure(monkeypatch, req
     tab = _make_tab(monkeypatch, request)
     offered = []
     monkeypatch.setattr(tab, "_offer_cc_launcher_fallback",
-                        lambda section_index, msg: offered.append((section_index, msg)))
+                        lambda account_id, msg: offered.append((account_id, msg)))
     launcher = _FakeLauncher()
-    tab._launchers["cc"][0] = launcher
+    worker = _seed_slot(tab, launcher)
 
-    tab._on_login_success("cc", 0, "gs-1", "token-1")
+    tab._on_login_success("cc", "cc-acct", worker, "gs-1", "token-1")
 
     assert launcher.launched_with is None
-    assert offered and offered[0][0] == 0 and "files broken" in offered[0][1]
+    assert offered and offered[0][0] == "cc-acct" and "files broken" in offered[0][1]

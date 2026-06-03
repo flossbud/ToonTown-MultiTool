@@ -46,9 +46,13 @@ def test_bad_token_surfaces_click_edit_message(qapp, monkeypatch, tmp_path):
     def fake_post(url, **kw):
         resp = MagicMock()
         resp.status_code = 401
-        resp.json.return_value = {
-            "status": False, "success": False,
-            "bad_token": True, "message": "Token revoked"}
+        body = {"status": False, "success": False,
+                "bad_token": True, "message": "Token revoked"}
+        resp.json.return_value = body
+        # resp.text must be a real string: the service logs
+        # _redact_token(resp.text), whose regex rejects a MagicMock.
+        import json as _json
+        resp.text = _json.dumps(body)
         return resp
     monkeypatch.setattr("requests.post", fake_post)
 
@@ -56,6 +60,10 @@ def test_bad_token_surfaces_click_edit_message(qapp, monkeypatch, tmp_path):
     import tabs.launch_tab as _lt
     monkeypatch.setattr(_lt.LaunchTab, "_get_engine_dir",
                         lambda self, game: "/fake/cc/install")
+    # The CC launch gate opens a modal install-picker (dlg.exec()) when it
+    # discovers installs; under offscreen that blocks forever. No installs ->
+    # gate passes straight through.
+    monkeypatch.setattr(_lt, "discover_cc_installs", lambda: [])
     import os as _os
     _real_isfile = _os.path.isfile
     monkeypatch.setattr(_os.path, "isfile",
@@ -75,34 +83,47 @@ def test_bad_token_surfaces_click_edit_message(qapp, monkeypatch, tmp_path):
         def get(self, k, d=""): return d
         def set(self, k, v): pass
 
+    # The terminal failure path pops a modal failure dialog; suppress it so
+    # box.exec() can't block the event-loop wait below.
+    monkeypatch.setattr(_lt.LaunchTab, "_show_failure_dialog",
+                        lambda self, game, account_id, msg: None)
+
+    tab = None
     try:
         tab = LaunchTab(credentials_manager=cm, settings_manager=_SM())
-        tab._on_launch("cc", 0)
-        # Wait for the FAILED state to land. Re-acquire the card on each
-        # tick because the keyring-probe-complete callback rebuilds
-        # _cards via _build_ui(), invalidating any earlier reference.
-        def _card():
-            cards = tab._cards["cc"]
-            return cards[0] if cards else None
+        # The keyring-probe-complete callback rebuilds the slot grid; the slot
+        # is the source of truth for FAILED state + the user-facing message.
+        def _slot():
+            return tab._slots["cc"].get(acct_id)
+
+        tab._on_launch("cc", acct_id)
 
         assert _wait(
-            lambda: _card() is not None
-            and _card().get("state") == LoginState.FAILED
+            lambda: _slot() is not None
+            and _slot().state == LoginState.FAILED
         )
-        card = _card()
-        # The status chip / banner must mention "Edit" so the user knows what to do.
-        # _update_status sets the chip text via card["status_chip"].set_status(state, message).
-        # Read whichever attribute the chip exposes.
-        chip = card["status_chip"]
-        # Try common patterns for chip text retrieval:
-        if hasattr(chip, "text"):
-            text = chip.text()
-        elif hasattr(chip, "_text"):
-            text = chip._text
-        else:
-            text = str(chip)
+        # The status message must mention "Edit" + "password" so the user
+        # knows the recovery action.
+        text = _slot().message
         assert "Edit" in text and "password" in text.lower(), (
-            f"Expected 'Edit' + 'password' in chip text, got: {text!r}")
+            f"Expected 'Edit' + 'password' in status message, got: {text!r}")
     finally:
+        if tab is not None:
+            # Tear down the live CC worker so no late cross-thread login_failed
+            # signal fires _show_failure_dialog during fixture teardown (which
+            # would pop a real modal and abort). Nulling slot.worker also makes
+            # the worker-identity guard reject any in-flight signal.
+            slot = tab._slots["cc"].get(acct_id)
+            if slot is not None and slot.worker is not None:
+                tab._disconnect_worker_signals(slot.worker)
+                try:
+                    slot.worker.cancel()
+                except Exception:
+                    pass
+                slot.worker = None
+            try:
+                tab.shutdown()
+            except Exception:
+                pass
         if saved is not None:
             keyring_core._keyring_backend = saved

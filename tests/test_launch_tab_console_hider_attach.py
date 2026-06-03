@@ -50,9 +50,11 @@ def test_make_launchers_attaches_hider_to_each_new_cc_launcher(qapp, monkeypatch
             attached.append(launcher)
     tab._wine_console_hider = _RecHider()
 
-    # Invoke the per-section launcher factory; signature is project-internal,
-    # so the test calls it with the same shape LaunchTab uses internally.
-    tab._make_launchers(game="cc", section_index=0)
+    # Invoke the per-account launcher factory; it stores the pair on the
+    # account's slot, so the slot must exist first.
+    from tabs.launch_tab import AccountSlot
+    tab._slots["cc"]["cc-acct"] = AccountSlot(account_id="cc-acct")
+    tab._make_launchers(game="cc", account_id="cc-acct")
     assert attached == [fake], (
         f"expected hider.attach(<the new CCLauncher>) exactly once, got {attached}"
     )
@@ -77,7 +79,9 @@ def test_make_launchers_does_not_attach_for_ttr(qapp, monkeypatch):
         def attach(self, launcher): attached.append(launcher)
     tab._wine_console_hider = _RecHider()
 
-    tab._make_launchers(game="ttr", section_index=0)
+    from tabs.launch_tab import AccountSlot
+    tab._slots["ttr"]["ttr-acct"] = AccountSlot(account_id="ttr-acct")
+    tab._make_launchers(game="ttr", account_id="ttr-acct")
     assert attached == []
 
 

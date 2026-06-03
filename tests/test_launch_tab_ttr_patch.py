@@ -39,6 +39,17 @@ def _make_tab(monkeypatch, request):
     return tab
 
 
+def _seed_slot(tab, launcher, account_id="ttr-acct"):
+    """Install a TTR slot with a fresh worker (so the stale-signal guard in
+    _on_login_success passes) and the given launcher, returning the worker the
+    caller must pass to _on_login_success."""
+    from tabs.launch_tab import AccountSlot
+    worker = object()
+    slot = AccountSlot(account_id=account_id, worker=worker, launcher=launcher)
+    tab._slots["ttr"][account_id] = slot
+    return worker
+
+
 def test_ttr_login_success_launches_after_up_to_date(monkeypatch, request):
     class _UpToDatePatcher(QObject):
         progress = Signal(str, int)
@@ -52,9 +63,9 @@ def test_ttr_login_success_launches_after_up_to_date(monkeypatch, request):
     tab = _make_tab(monkeypatch, request)
     monkeypatch.setattr(tab, "_get_engine_dir", lambda game: "/engine/dir")
     launcher = _FakeLauncher()
-    tab._launchers["ttr"][0] = launcher
+    worker = _seed_slot(tab, launcher)
 
-    tab._on_login_success("ttr", 0, "gameserver-1", "cookie-1")
+    tab._on_login_success("ttr", "ttr-acct", worker, "gameserver-1", "cookie-1")
 
     assert launcher.launched_with is not None
     assert launcher.launched_with[0] == ("gameserver-1", "cookie-1", "/engine/dir")
@@ -77,9 +88,9 @@ def test_ttr_login_success_launches_after_patched(monkeypatch, request):
     logs = []
     monkeypatch.setattr(tab, "log", lambda msg: logs.append(msg))
     launcher = _FakeLauncher()
-    tab._launchers["ttr"][0] = launcher
+    worker = _seed_slot(tab, launcher)
 
-    tab._on_login_success("ttr", 0, "gameserver-1", "cookie-1")
+    tab._on_login_success("ttr", "ttr-acct", worker, "gameserver-1", "cookie-1")
 
     assert launcher.launched_with is not None
     assert launcher.launched_with[0] == ("gameserver-1", "cookie-1", "/engine/dir")
@@ -100,11 +111,11 @@ def test_ttr_login_success_aborts_launch_on_patch_failure(monkeypatch, request):
     monkeypatch.setattr(tab, "_get_engine_dir", lambda game: "/engine/dir")
     failures = []
     monkeypatch.setattr(tab, "_on_launcher_failed",
-                        lambda game, si, msg: failures.append((game, si, msg)))
+                        lambda game, account_id, launcher, msg: failures.append((game, account_id, msg)))
     launcher = _FakeLauncher()
-    tab._launchers["ttr"][0] = launcher
+    worker = _seed_slot(tab, launcher)
 
-    tab._on_login_success("ttr", 0, "gameserver-1", "cookie-1")
+    tab._on_login_success("ttr", "ttr-acct", worker, "gameserver-1", "cookie-1")
 
     assert launcher.launched_with is None       # never launched
     assert failures and failures[0][0] == "ttr" and "files broken" in failures[0][2]

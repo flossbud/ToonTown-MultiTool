@@ -314,13 +314,8 @@ class LaunchTab(QWidget):
             self.settings_manager, parent=self
         )
 
-        # Per-game workers and launchers, plus _cards mirror used by
-        # update_dot_state / _restore_running_state_from_launchers /
-        # external callers from main.py.
-        self._workers = {"ttr": [None] * MAX_PER_GAME, "cc": [None] * MAX_PER_GAME}
-        self._launchers = {"ttr": [None] * MAX_PER_GAME, "cc": [None] * MAX_PER_GAME}
-        self._cards: dict[str, list[dict]] = {"ttr": [], "cc": []}
-        # New id-keyed structures (alongside legacy _workers/_launchers/_cards).
+        # Per-account runtime state, keyed by stable account id. Workers,
+        # launchers, and loading timers all live on the AccountSlot.
         self._slots: dict[str, dict[str, AccountSlot]] = {"ttr": {}, "cc": {}}
         self._visible_tiles: dict[str, dict[str, object]] = {"ttr": {}, "cc": {}}
         self._page: dict[str, int] = {"ttr": 0, "cc": 0}
@@ -330,9 +325,10 @@ class LaunchTab(QWidget):
         self._pending_2fa: set = set()
 
         # Loading-state orchestration. _loading[game] is a launch-ordered list
-        # of (section_index, QTimer); _window_credit[game] is the count of
-        # windows already accounted for at the start of the current loading
-        # episode (so pre-existing/other windows don't false-promote a loader).
+        # of account_ids (the timer itself lives on each slot.loading_timer);
+        # _window_credit[game] is the count of windows already accounted for at
+        # the start of the current loading episode (so pre-existing/other
+        # windows don't false-promote a loader).
         self.window_manager = window_manager
         self._loading: dict[str, list] = {"ttr": [], "cc": []}
         self._window_credit: dict[str, int] = {"ttr": 0, "cc": 0}
@@ -472,6 +468,31 @@ class LaunchTab(QWidget):
                 if aid not in current:
                     del slots[aid]
 
+    def _global_index_of(self, account_id: str) -> int | None:
+        for i, a in enumerate(self.cred_manager.get_accounts_metadata()):
+            if a.id == account_id:
+                return i
+        return None
+
+    def _position_of(self, game: str, account_id: str) -> int:
+        """1-based position within the game (for 'Account N' user-facing text)."""
+        for i, a in enumerate(self._ordered_accounts(game)):
+            if a.id == account_id:
+                return i + 1
+        return 0
+
+    def _loading_add(self, game, account_id):
+        if account_id not in self._loading[game]:
+            self._loading[game].append(account_id)
+
+    def _loading_remove(self, game, account_id):
+        self._loading[game] = [a for a in self._loading[game] if a != account_id]
+
+    def _refresh_activity(self, game: str) -> None:
+        ordered = self._ordered_accounts(game)
+        pc = page_count(len(ordered))
+        self._sections[game].set_activity(self._page_activity(game, ordered, pc))
+
     def _disconnect_worker_signals(self, worker):
         if not worker:
             return
@@ -521,11 +542,16 @@ class LaunchTab(QWidget):
         self._probe_worker = None
 
     def _set_launch_buttons_enabled(self, enabled: bool):
+        # Only visible tiles carry buttons; off-page tiles don't exist and
+        # their buttons are created enabled on the next render.
         for game in ("ttr", "cc"):
-            for card in self._cards[game]:
-                if card.get("state") in (LoginState.LOGGING_IN, LoginState.QUEUED, LoginState.LAUNCHING):
+            for account_id, tile in self._visible_tiles[game].items():
+                slot = self._slots[game].get(account_id)
+                if slot is not None and slot.state in (
+                    LoginState.LOGGING_IN, LoginState.QUEUED, LoginState.LAUNCHING
+                ):
                     continue
-                btn = card.get("launch_btn")
+                btn = getattr(tile, "primary_button", None)
                 if btn is None:
                     continue
                 btn.setEnabled(enabled)
@@ -542,14 +568,14 @@ class LaunchTab(QWidget):
         # implementation between construction and the actual click.
         section.launcher_clicked.connect(lambda g=game: self._on_launcher_clicked(g))
         section.add_account_clicked.connect(lambda g=game: self._on_add_account(g))
-        section.tile_launch.connect(lambda i, g=game: self._on_launch(g, i))
-        section.tile_quit.connect(lambda i, g=game: self._on_tile_quit(g, i))
-        section.tile_cancel.connect(lambda i, g=game: self._on_tile_cancel(g, i))
-        section.tile_retry.connect(lambda i, g=game: self._on_launch(g, i))
-        section.tile_enter_2fa.connect(lambda i, g=game: self._on_tile_enter_2fa(g, i))
-        section.tile_edit.connect(lambda i, g=game: self._on_tile_edit(g, i))
-        section.tile_delete.connect(lambda i, g=game: self._on_delete(g, i))
-        section.tile_expand_error.connect(lambda i, g=game: self._on_tile_expand_error(g, i))
+        section.tile_launch.connect(lambda a, g=game: self._on_launch(g, a))
+        section.tile_quit.connect(lambda a, g=game: self._on_tile_quit(g, a))
+        section.tile_cancel.connect(lambda a, g=game: self._on_tile_cancel(g, a))
+        section.tile_retry.connect(lambda a, g=game: self._on_launch(g, a))
+        section.tile_enter_2fa.connect(lambda a, g=game: self._on_tile_enter_2fa(g, a))
+        section.tile_edit.connect(lambda a, g=game: self._on_tile_edit(g, a))
+        section.tile_delete.connect(lambda a, g=game: self._on_delete(g, a))
+        section.tile_expand_error.connect(lambda a, g=game: self._on_tile_expand_error(g, a))
         section.page_changed.connect(lambda p, g=game: self._on_page_changed(g, p))
         # When a section's natural size changes (e.g. resize bumped its
         # content_scale and grew tile min-heights), re-equalize sibling
@@ -701,7 +727,6 @@ class LaunchTab(QWidget):
                 self._sections_container = None
             else:
                 w.deleteLater()
-        self._cards = {"ttr": [], "cc": []}
         self._keyring_banner = None
 
         # Keyring banner (pending or warning) at top.
@@ -724,15 +749,6 @@ class LaunchTab(QWidget):
         self._render_section("ttr")
         self._render_section("cc")
         self._layout.addStretch()
-
-    def _restore_running_state_from_launchers(self):
-        for game in ("ttr", "cc"):
-            for section_idx, launcher in enumerate(self._launchers[game]):
-                if launcher is None or not launcher.is_running():
-                    continue
-                if section_idx >= len(self._cards[game]):
-                    continue
-                self._update_status(game, section_idx, LoginState.RUNNING, "Game running")
 
     # ── Layout mode ────────────────────────────────────────────────────────
 
@@ -864,18 +880,17 @@ class LaunchTab(QWidget):
             self.cred_manager.add_account(
                 label=label, username=username, password=password, game=game,
             )
-            self._build_ui()
+            self._reconcile_slots()
+            self._render_section(game)
             self.refresh_theme()
 
         editor.account_saved.connect(_save)
         editor.exec()
 
-    def _on_tile_edit(self, game: str, section_index: int):
-        cards = self._cards[game]
-        if section_index >= len(cards):
+    def _on_tile_edit(self, game: str, account_id: str):
+        global_idx = self._global_index_of(account_id)
+        if global_idx is None:
             return
-        card = cards[section_index]
-        global_idx = card["global_index"]
         acct = self.cred_manager.get_account(global_idx)
         if acct is None:
             return
@@ -895,24 +910,26 @@ class LaunchTab(QWidget):
             self.cred_manager.update_account(
                 global_idx, label=label, username=username, password=pw,
             )
-            self._build_ui()
+            self._reconcile_slots()
+            self._render_section(game)
             self.refresh_theme()
             game_label = "TTR" if game == "ttr" else "CC"
-            self.log(f"[Launch] {game_label} account {section_index + 1} updated.")
+            self.log(f"[Launch] {game_label} account {self._position_of(game, account_id)} updated.")
 
         editor.account_saved.connect(_save)
         editor.exec()
 
     def clear_all_credentials(self):
         for game in ("ttr", "cc"):
-            for worker in self._workers[game]:
-                if worker:
-                    self._disconnect_worker_signals(worker)
-                    worker.cancel()
-            for launcher in self._launchers[game]:
-                if launcher:
-                    self._disconnect_launcher_signals(launcher)
-                    launcher.kill()
+            for slot in self._slots[game].values():
+                if slot.worker:
+                    self._disconnect_worker_signals(slot.worker)
+                    slot.worker.cancel()
+                    slot.worker = None
+                if slot.launcher:
+                    self._disconnect_launcher_signals(slot.launcher)
+                    slot.launcher.kill()
+                    slot.launcher = None
         tokens = self.cred_manager.clear_all()
         for token in tokens:
             threading.Thread(
@@ -923,14 +940,12 @@ class LaunchTab(QWidget):
         self._build_ui()
         self.refresh_theme()
 
-    def _on_delete(self, game: str, section_index: int):
-        cards = self._cards[game]
-        if section_index >= len(cards):
+    def _on_delete(self, game: str, account_id: str):
+        global_idx = self._global_index_of(account_id)
+        if global_idx is None:
             return
-        card = cards[section_index]
-        global_idx = card["global_index"]
         acct = self.cred_manager.get_account_metadata(global_idx)
-        name = (acct.label or acct.username) if acct else f"account {section_index + 1}"
+        name = (acct.label or acct.username) if acct else f"account {self._position_of(game, account_id)}"
 
         dlg = ConfirmDialog(
             title=f"Delete {name}?",
@@ -945,15 +960,25 @@ class LaunchTab(QWidget):
         if dlg.exec() != dlg.DialogCode.Accepted:
             return
 
-        # Cancel any active worker/launcher
-        if self._workers[game][section_index]:
-            self._disconnect_worker_signals(self._workers[game][section_index])
-            self._workers[game][section_index].cancel()
-            self._workers[game][section_index] = None
-        if self._launchers[game][section_index]:
-            self._disconnect_launcher_signals(self._launchers[game][section_index])
-            self._launchers[game][section_index].kill()
-            self._launchers[game][section_index] = None
+        # Cancel any active worker/launcher and drop a pending loading timer.
+        slot = self._slots[game].get(account_id)
+        if slot is not None:
+            if slot.worker:
+                self._disconnect_worker_signals(slot.worker)
+                slot.worker.cancel()
+                slot.worker = None
+            if slot.launcher:
+                self._disconnect_launcher_signals(slot.launcher)
+                try:
+                    slot.launcher.kill()
+                except Exception as exc:  # noqa: BLE001
+                    self.log(f"[Launch] kill on delete failed: {exc!r}")
+                slot.launcher = None
+            if slot.loading_timer is not None:
+                slot.loading_timer.stop()
+                slot.loading_timer.deleteLater()
+                slot.loading_timer = None
+            self._loading_remove(game, account_id)
 
         result = self.cred_manager.delete_account(global_idx)
         if result is not None:
@@ -964,12 +989,14 @@ class LaunchTab(QWidget):
                     args=(token,),
                     daemon=True,
                 ).start()
-        self._build_ui()
+        self._reconcile_slots()
+        self._render_section(game)
         self.refresh_theme()
 
-    def _on_tile_quit(self, game: str, section_index: int):
+    def _on_tile_quit(self, game: str, account_id: str):
         """Quit the running launcher for this slot, with optional confirm."""
-        launcher = self._launchers[game][section_index] if section_index < len(self._launchers[game]) else None
+        slot = self._slots[game].get(account_id)
+        launcher = slot.launcher if slot is not None else None
         if launcher is None or not launcher.is_running():
             return
         dismissed = False
@@ -988,55 +1015,57 @@ class LaunchTab(QWidget):
             if dlg.dont_ask_again_checked() and self.settings_manager is not None:
                 self.settings_manager.set(LAUNCH_QUIT_CONFIRM_DISMISSED, True)
         game_label = "TTR" if game == "ttr" else "CC"
-        self.log(f"[Launch] Terminating {game_label} game {section_index + 1}…")
+        self.log(f"[Launch] Terminating {game_label} game {self._position_of(game, account_id)}…")
         launcher.kill()
 
-    def _on_tile_cancel(self, game: str, section_index: int):
-        worker = self._workers[game][section_index] if section_index < len(self._workers[game]) else None
-        if worker is None:
-            return
-        try:
-            worker.cancel()
-        except Exception:  # noqa: BLE001
-            pass
-        self._update_status(game, section_index, LoginState.IDLE, "")
+    def _on_tile_cancel(self, game: str, account_id: str):
+        slot = self._slots[game].get(account_id)
+        worker = slot.worker if slot is not None else None
+        if worker is not None:
+            try:
+                worker.cancel()
+            except Exception:  # noqa: BLE001
+                pass
+        self._update_status(game, account_id, LoginState.IDLE, "")
 
-    def _on_tile_enter_2fa(self, game: str, section_index: int):
-        worker = self._workers[game][section_index] if section_index < len(self._workers[game]) else None
+    def _on_tile_enter_2fa(self, game: str, account_id: str):
+        slot = self._slots[game].get(account_id)
+        worker = slot.worker if slot is not None else None
         if worker is None:
-            self.log(f"[2fa] no active worker for {game}/{section_index}; nothing to prompt")
+            self.log(f"[2fa] no active worker for {game}/{account_id}; nothing to prompt")
             return
         banner = "Two-Factor Authentication required"
-        self._prompt_2fa(game, section_index, banner)
+        self._prompt_2fa(game, account_id, banner)
 
-    def _on_tile_expand_error(self, game: str, section_index: int):
-        cards = self._cards[game]
-        if section_index >= len(cards):
-            return
-        card = cards[section_index]
-        tile = card.get("tile")
-        if tile is None:
-            return
-        acct = self.cred_manager.get_account_metadata(card["global_index"])
-        name = (acct.label or acct.username) if acct else f"Account {section_index + 1}"
-        raw = getattr(tile, "raw_error_message", "") or "No additional detail."
+    def _on_tile_expand_error(self, game: str, account_id: str):
+        global_idx = self._global_index_of(account_id)
+        slot = self._slots[game].get(account_id)
+        acct = self.cred_manager.get_account_metadata(global_idx) if global_idx is not None else None
+        name = (acct.label or acct.username) if acct else f"Account {self._position_of(game, account_id)}"
+        raw = (slot.raw_error if slot is not None else "")
+        if not raw:
+            tile = self._visible_tiles[game].get(account_id)
+            raw = getattr(tile, "raw_error_message", "") if tile is not None else ""
+        raw = raw or "No additional detail."
         ErrorModal(
             account_name=name, game=game, raw_message=raw, parent=self.window(),
         ).exec()
 
     # ── Launch flow ────────────────────────────────────────────────────────
 
-    def _on_launch(self, game: str, section_index: int):
+    def _on_launch(self, game: str, account_id: str):
         from utils.credentials_manager import _dbg
-        _dbg(f"[Credentials] _on_launch click: game={game} slot={section_index} "
+        _dbg(f"[Credentials] _on_launch click: game={game} account={account_id} "
              f"probe_pending={getattr(self.cred_manager, 'keyring_probe_pending', False)} "
              f"available={getattr(self.cred_manager, 'keyring_available', True)}")
-        cards = self._cards[game]
-        if section_index >= len(cards):
-            _dbg(f"[Credentials] _on_launch: section_index {section_index} out of range ({len(cards)})")
+        slot = self._slots[game].get(account_id)
+        if slot is None:
+            _dbg(f"[Credentials] _on_launch: no slot for {game}/{account_id}")
             return
-        card = cards[section_index]
-        global_idx = card["global_index"]
+        global_idx = self._global_index_of(account_id)
+        if global_idx is None:
+            _dbg(f"[Credentials] _on_launch: no global index for {account_id}")
+            return
 
         # CC: block launch when multi-install is ambiguous (no stored pick).
         if game == "cc":
@@ -1050,8 +1079,8 @@ class LaunchTab(QWidget):
         if not engine_dir or not os.path.isfile(engine_bin):
             _dbg(f"[Credentials] _on_launch: engine not found (dir='{engine_dir}' bin='{engine_bin}')")
             msg = "Game path not set. Configure in Settings."
-            self._update_status(game, section_index, LoginState.FAILED, msg)
-            self._show_failure_dialog(game, section_index, msg)
+            self._update_status(game, account_id, LoginState.FAILED, msg)
+            self._show_failure_dialog(game, account_id, msg)
             return
 
         acct = self.cred_manager.get_account(global_idx)
@@ -1061,98 +1090,113 @@ class LaunchTab(QWidget):
             f"password={'present' if (acct and acct.password) else 'empty'}"
             if acct is not None else "acct_exists=False"
         )
-        _dbg(f"[Credentials] _on_launch slot={section_index} {acct_desc}")
+        _dbg(f"[Credentials] _on_launch account={account_id} {acct_desc}")
         if not acct or not acct.username:
             msg = "Missing username. Click Edit."
-            self._update_status(game, section_index, LoginState.FAILED, msg)
-            self._show_failure_dialog(game, section_index, msg)
+            self._update_status(game, account_id, LoginState.FAILED, msg)
+            self._show_failure_dialog(game, account_id, msg)
             return
         # TTR still requires a password up front. CC accounts may legitimately
         # have no password (token-only model after register_and_login).
         if game == "ttr" and not acct.password:
             msg = "Missing username or password. Click Edit."
-            self._update_status(game, section_index, LoginState.FAILED, msg)
-            self._show_failure_dialog(game, section_index, msg)
+            self._update_status(game, account_id, LoginState.FAILED, msg)
+            self._show_failure_dialog(game, account_id, msg)
             return
 
         # Check if already running
-        launcher = self._launchers[game][section_index]
-        if launcher and launcher.is_running():
+        if slot.launcher and slot.launcher.is_running():
             game_label = "TTR" if game == "ttr" else "CC"
-            self.log(f"[Launch] Terminating {game_label} game {section_index + 1}…")
-            launcher.kill()
+            self.log(f"[Launch] Terminating {game_label} game {self._position_of(game, account_id)}…")
+            slot.launcher.kill()
             return
 
-        # Cancel any previous worker
-        worker = self._workers[game][section_index]
-        if worker:
-            self._disconnect_worker_signals(worker)
-            worker.cancel()
-            self._workers[game][section_index] = None
-        launcher = self._launchers[game][section_index]
-        if launcher:
-            self._disconnect_launcher_signals(launcher)
-            self._launchers[game][section_index] = None
+        # Cancel any previous worker/launcher
+        if slot.worker:
+            self._disconnect_worker_signals(slot.worker)
+            slot.worker.cancel()
+            slot.worker = None
+        if slot.launcher:
+            self._disconnect_launcher_signals(slot.launcher)
+            slot.launcher = None
 
         # Create game-specific worker and launcher, wire signals.
-        worker, launcher = self._make_launchers(game, section_index)
+        self._make_launchers(game, account_id)
 
         # Start login
         if game == "ttr":
-            worker.login(acct.username, acct.password)
+            slot.worker.login(acct.username, acct.password)
         else:
             # CC: dispatch by stored credential shape.
-            print(f"[Launch] CC dispatch slot={section_index} "
+            print(f"[Launch] CC dispatch account={account_id} "
                   f"has_token={bool(acct.launcher_token)} has_password={bool(acct.password)}")
             if acct.launcher_token:
                 print("[Launch] CC dispatch: -> login_with_token (token-only path)")
-                worker.login_with_token(acct.launcher_token)
+                slot.worker.login_with_token(acct.launcher_token)
             elif acct.password:
                 print("[Launch] CC dispatch: -> register_and_login (legacy migration path)")
-                worker.launcher_token_obtained.connect(
+                slot.worker.launcher_token_obtained.connect(
                     lambda tok, aid=acct.id: self._persist_launcher_token(aid, tok)
                 )
-                worker.register_and_login(acct.username, acct.password,
-                                          label=acct.label or "")
+                slot.worker.register_and_login(acct.username, acct.password,
+                                               label=acct.label or "")
             else:
                 print("[Launch] CC dispatch: -> error branch, no credentials")
                 msg = "No CC credentials stored. Click Edit on this account."
-                self._update_status(game, section_index, LoginState.FAILED, msg)
-                self._show_failure_dialog(game, section_index, msg)
+                self._update_status(game, account_id, LoginState.FAILED, msg)
+                self._show_failure_dialog(game, account_id, msg)
                 return
         game_label = "TTR" if game == "ttr" else "CC"
-        self.log(f"[Launch] Logging in {game_label} account {section_index + 1}…")
+        self.log(f"[Launch] Logging in {game_label} account {self._position_of(game, account_id)}…")
 
-    def _make_launchers(self, game: str, section_index: int):
-        """Create a fresh worker/launcher pair for *game* at *section_index*,
-        store them in the internal registries, connect their signals, and
-        return ``(worker, launcher)``.
+    def _make_launchers(self, game: str, account_id: str):
+        """Create a fresh worker/launcher pair for *game*/*account_id*, store
+        them on the slot, connect their signals, and return ``(worker,
+        launcher)``. Signal handlers carry the worker/launcher object so a
+        superseded attempt's late signals can be ignored (object-identity
+        stale guards).
         """
+        slot = self._slots[game][account_id]
         if game == "ttr":
             worker = TTRLoginWorker(self)
             launcher = TTRLauncher(self, settings_manager=self.settings_manager)
         else:
             worker = CCLoginWorker(self)
             launcher = CCLauncher(self, settings_manager=self.settings_manager)
-
-        if game == "cc":
             self._wine_console_hider.attach(launcher)
 
-        self._workers[game][section_index] = worker
-        self._launchers[game][section_index] = launcher
+        slot.worker, slot.launcher = worker, launcher
 
-        # Connect signals
-        worker.state_changed.connect(lambda s, m, g=game, si=section_index: self._update_status(g, si, s, m))
-        worker.queue_update.connect(lambda p, e, g=game, si=section_index: self._update_queue(g, si, p, e))
-        worker.need_2fa.connect(lambda banner, g=game, si=section_index: self._prompt_2fa(g, si, banner))
-        worker.login_success.connect(lambda gs, ck, g=game, si=section_index: self._on_login_success(g, si, gs, ck))
-        worker.login_failed.connect(lambda msg, g=game, si=section_index: self._on_login_failed(g, si, msg))
+        # Connect signals (worker/launcher passed for stale-signal guards).
+        worker.state_changed.connect(lambda s, m, g=game, a=account_id, w=worker: self._on_worker_state(g, a, w, s, m))
+        worker.queue_update.connect(lambda p, e, g=game, a=account_id, w=worker: self._on_worker_queue(g, a, w, p, e))
+        worker.need_2fa.connect(lambda b, g=game, a=account_id, w=worker: self._on_worker_2fa(g, a, w, b))
+        worker.login_success.connect(lambda gs, ck, g=game, a=account_id, w=worker: self._on_login_success(g, a, w, gs, ck))
+        worker.login_failed.connect(lambda msg, g=game, a=account_id, w=worker: self._on_login_failed(g, a, w, msg))
 
-        launcher.game_launched.connect(lambda pid, g=game, si=section_index: self._on_game_launched(g, si, pid))
-        launcher.game_exited.connect(lambda rc, raw, g=game, si=section_index: self._on_game_exited(g, si, rc, raw))
-        launcher.launch_failed.connect(lambda msg, g=game, si=section_index: self._on_launcher_failed(g, si, msg))
+        launcher.game_launched.connect(lambda pid, g=game, a=account_id, l=launcher: self._on_game_launched(g, a, l, pid))
+        launcher.game_exited.connect(lambda rc, raw, g=game, a=account_id, l=launcher: self._on_game_exited(g, a, l, rc, raw))
+        launcher.launch_failed.connect(lambda msg, g=game, a=account_id, l=launcher: self._on_launcher_failed(g, a, l, msg))
 
         return worker, launcher
+
+    def _on_worker_state(self, game, account_id, worker, state, message):
+        slot = self._slots[game].get(account_id)
+        if slot is None or slot.worker is not worker:
+            return  # stale signal from a superseded/cancelled attempt
+        self._update_status(game, account_id, state, message)
+
+    def _on_worker_queue(self, game, account_id, worker, position, eta):
+        slot = self._slots[game].get(account_id)
+        if slot is None or slot.worker is not worker:
+            return
+        self._update_queue(game, account_id, position, eta)
+
+    def _on_worker_2fa(self, game, account_id, worker, banner):
+        slot = self._slots[game].get(account_id)
+        if slot is None or slot.worker is not worker:
+            return
+        self._prompt_2fa(game, account_id, banner)
 
     def _persist_launcher_token(self, account_id: str, token: str) -> None:
         """Save a CC launcher token to keyring AND clear the now-redundant
@@ -1179,12 +1223,16 @@ class LaunchTab(QWidget):
                 return i
         return None
 
-    def _on_login_success(self, game, section_index, gameserver, token):
+    def _on_login_success(self, game, account_id, worker, gameserver, token):
+        slot = self._slots[game].get(account_id)
+        if slot is None or slot.worker is not worker:
+            return  # stale signal from a superseded/cancelled attempt
         game_label = "TTR" if game == "ttr" else "CC"
-        print(f"[Launch] _on_login_success: game={game} slot={section_index} "
+        print(f"[Launch] _on_login_success: game={game} account={account_id} "
               f"gameserver='{gameserver}' token_len={len(token) if token else 0}")
-        self.log(f"[Launch] {game_label} account {section_index + 1} authenticated. Launching game…")
-        launcher = self._launchers[game][section_index]
+        self.log(f"[Launch] {game_label} account {self._position_of(game, account_id)} "
+                 f"authenticated. Launching game…")
+        launcher = slot.launcher
         print(f"[Launch] _on_login_success: launcher_ref={launcher!r}")
         if launcher:
             if game == "cc":
@@ -1192,23 +1240,23 @@ class LaunchTab(QWidget):
                 print(f"[Launch] _on_login_success: cc install={install!r}")
                 if install is None:
                     msg = "Game path not set. Configure in Settings."
-                    self._update_status(game, section_index, LoginState.FAILED, msg)
-                    self._show_failure_dialog(game, section_index, msg)
+                    self._update_status(game, account_id, LoginState.FAILED, msg)
+                    self._show_failure_dialog(game, account_id, msg)
                     return
-                cc_accounts = self._game_accounts_with_indices("cc")
                 username = ""
-                if section_index < len(cc_accounts):
-                    _flat_idx, acct = cc_accounts[section_index]
-                    username = acct.username or ""
+                for acct in self._ordered_accounts("cc"):
+                    if acct.id == account_id:
+                        username = acct.username or ""
+                        break
                 print(f"[Launch] _on_login_success: invoking CC patch+launch username_len={len(username)}")
                 from services.cc_login_service import CC_DEFAULT_REALM
-                self._launch_cc_with_patch(section_index, gameserver, token,
+                self._launch_cc_with_patch(account_id, gameserver, token,
                                            install, username, CC_DEFAULT_REALM, launcher)
             else:
                 engine_dir = self._get_engine_dir(game)
-                self._launch_ttr_with_patch(section_index, gameserver, token, engine_dir, launcher)
+                self._launch_ttr_with_patch(account_id, gameserver, token, engine_dir, launcher)
 
-    def _launch_ttr_with_patch(self, section_index, gameserver, token, engine_dir, launcher):
+    def _launch_ttr_with_patch(self, account_id, gameserver, token, engine_dir, launcher):
         """Verify/repair TTR game files against the official manifest, then
         launch on success. A stale phase file would otherwise fail the engine's
         integrity check. See docs/superpowers/specs/2026-05-28-ttr-game-file-patching-design.md.
@@ -1223,18 +1271,18 @@ class LaunchTab(QWidget):
             launcher.launch(gameserver, token, engine_dir)
 
         patcher.progress.connect(
-            lambda msg, pct, si=section_index: self._update_status("ttr", si, LoginState.LAUNCHING, msg)
+            lambda msg, pct, a=account_id: self._update_status("ttr", a, LoginState.LAUNCHING, msg)
         )
         patcher.up_to_date.connect(_go)
         patcher.patched.connect(
             lambda files: (self.log(f"[Launch] Updated TTR game files: {', '.join(files)}"), _go())
         )
         patcher.failed.connect(
-            lambda msg, si=section_index: self._on_launcher_failed("ttr", si, msg)
+            lambda msg, a=account_id, l=launcher: self._on_launcher_failed("ttr", a, l, msg)
         )
         patcher.verify_and_patch(engine_dir)
 
-    def _launch_cc_with_patch(self, section_index, gameserver, token, install,
+    def _launch_cc_with_patch(self, account_id, gameserver, token, install,
                               username, realm_slug, launcher):
         """Verify/repair CC game files against CC's official manifest, then
         launch on success. On hard failure, block the launch and offer the
@@ -1249,23 +1297,23 @@ class LaunchTab(QWidget):
                             username=username, realm_slug=realm_slug)
 
         patcher.progress.connect(
-            lambda msg, pct, si=section_index: self._update_status("cc", si, LoginState.LAUNCHING, msg)
+            lambda msg, pct, a=account_id: self._update_status("cc", a, LoginState.LAUNCHING, msg)
         )
         patcher.up_to_date.connect(_go)
         patcher.patched.connect(
             lambda files: (self.log(f"[Launch] Updated CC game files: {', '.join(files)}"), _go())
         )
         patcher.failed.connect(
-            lambda msg, si=section_index: self._offer_cc_launcher_fallback(si, msg)
+            lambda msg, a=account_id: self._offer_cc_launcher_fallback(a, msg)
         )
         game_dir = os.path.dirname(install.exe_path)
         patcher.verify_and_patch(game_dir, token, realm_slug)
 
-    def _offer_cc_launcher_fallback(self, section_index, msg):
+    def _offer_cc_launcher_fallback(self, account_id, msg):
         """Hard patch failure: mark the slot failed and offer to open CC's
         official launcher, which performs CC's own update flow."""
         from PySide6.QtWidgets import QMessageBox
-        self._update_status("cc", section_index, LoginState.FAILED, msg)
+        self._update_status("cc", account_id, LoginState.FAILED, msg)
         box = QMessageBox(self.window())
         box.setIcon(QMessageBox.Warning)
         box.setWindowTitle("Corporate Clash update failed")
@@ -1280,20 +1328,26 @@ class LaunchTab(QWidget):
             if not run_official_cc_launcher(self.settings_manager):
                 self.log("[Launch] Could not start the official CC launcher.")
 
-    def _on_login_failed(self, game, section_index, msg):
+    def _on_login_failed(self, game, account_id, worker, msg):
+        slot = self._slots[game].get(account_id)
+        if slot is None or slot.worker is not worker:
+            return  # stale signal from a superseded/cancelled attempt
         game_label = "TTR" if game == "ttr" else "CC"
-        print(f"[Launch] _on_login_failed: game={game} slot={section_index} msg={msg!r}")
-        self.log(f"[Launch] {game_label} account {section_index + 1} login failed: {msg}")
-        self._update_status(game, section_index, LoginState.FAILED, msg)
-        self._show_failure_dialog(game, section_index, msg)
+        print(f"[Launch] _on_login_failed: game={game} account={account_id} msg={msg!r}")
+        self.log(f"[Launch] {game_label} account {self._position_of(game, account_id)} login failed: {msg}")
+        self._update_status(game, account_id, LoginState.FAILED, msg)
+        self._show_failure_dialog(game, account_id, msg)
 
-    def _on_launcher_failed(self, game, section_index, msg):
+    def _on_launcher_failed(self, game, account_id, launcher, msg):
+        slot = self._slots[game].get(account_id)
+        if slot is None or slot.launcher is not launcher:
+            return  # stale signal from a superseded/cancelled attempt
         game_label = "TTR" if game == "ttr" else "CC"
-        self.log(f"[Launch] {game_label} account {section_index + 1} launch failed: {msg}")
-        self._update_status(game, section_index, LoginState.FAILED, msg)
-        self._show_failure_dialog(game, section_index, msg)
+        self.log(f"[Launch] {game_label} account {self._position_of(game, account_id)} launch failed: {msg}")
+        self._update_status(game, account_id, LoginState.FAILED, msg)
+        self._show_failure_dialog(game, account_id, msg)
 
-    def _show_failure_dialog(self, game, section_index, msg):
+    def _show_failure_dialog(self, game, account_id, msg):
         """Pop a modal warning dialog with the full failure message.
 
         Called from every terminal failure dispatch site. See spec
@@ -1304,63 +1358,63 @@ class LaunchTab(QWidget):
         box = QMessageBox(self.window())
         box.setIcon(QMessageBox.Warning)
         box.setWindowTitle(f"{game_label} login failed")
-        box.setText(f"Account {section_index + 1} couldn't sign in.")
+        box.setText(f"Account {self._position_of(game, account_id)} couldn't sign in.")
         box.setInformativeText(msg)
         box.setStandardButtons(QMessageBox.Ok)
         box.exec()
 
-    def _on_game_launched(self, game, section_index, pid):
+    def _on_game_launched(self, game, account_id, launcher, pid):
+        slot = self._slots[game].get(account_id)
+        if slot is None or slot.launcher is not launcher:
+            return  # stale signal from a superseded/cancelled attempt
         game_label = "TTR" if game == "ttr" else "CC"
+        pos = self._position_of(game, account_id)
         if self.window_manager is None:
-            self.log(f"[Launch] {game_label} account {section_index + 1} game running (PID {pid})")
-            self._update_status(game, section_index, LoginState.RUNNING, "Game running")
+            self.log(f"[Launch] {game_label} account {pos} game running (PID {pid})")
+            self._update_status(game, account_id, LoginState.RUNNING, "Game running")
             return
-        self.log(f"[Launch] {game_label} account {section_index + 1} process started "
+        self.log(f"[Launch] {game_label} account {pos} process started "
                  f"(PID {pid}); waiting for window")
         # Ensure the shared detector is active even if the Multitoon tab was
         # never opened (its only other caller). Idempotent; nothing disables it.
         self.window_manager.enable_detection()
         # Relaunch into a slot already loading: drop the stale timer first.
-        stale = self._pop_loader(game, section_index)
-        if stale is not None:
-            stale[1].stop()
-            stale[1].deleteLater()
+        if slot.loading_timer is not None:
+            slot.loading_timer.stop()
+            slot.loading_timer.deleteLater()
+            slot.loading_timer = None
+            self._loading_remove(game, account_id)
         # Start of a loading episode -> baseline the windows already present.
         if not self._loading[game]:
             self._window_credit[game] = self.window_manager.count_for_game(game)
         timer = QTimer(self)
         timer.setSingleShot(True)
         timer.timeout.connect(
-            lambda g=game, si=section_index: self._promote_loader(g, si, "timeout")
+            lambda g=game, a=account_id: self._promote_loader(g, a, "timeout")
         )
-        self._loading[game].append((section_index, timer))
-        self._update_status(game, section_index, LoginState.LOADING, "")
+        slot.loading_timer = timer
+        self._loading_add(game, account_id)
+        self._update_status(game, account_id, LoginState.LOADING, "")
         timer.start(self.LOADING_WINDOW_TIMEOUT_MS)
 
-    def _pop_loader(self, game, section_index):
-        """Remove and return the (section_index, timer) entry for section_index,
-        or None if it is not currently loading."""
-        loaders = self._loading[game]
-        for i, (idx, timer) in enumerate(loaders):
-            if idx == section_index:
-                del loaders[i]
-                return (idx, timer)
-        return None
-
-    def _promote_loader(self, game, section_index, reason):
+    def _promote_loader(self, game, account_id, reason):
         """Flip a loading slot to RUNNING. Consumes one window credit so a later
         phantom window cannot double-promote and a timeout-promoted slot's
         eventual real window is a no-op."""
-        entry = self._pop_loader(game, section_index)
-        if entry is None:
+        slot = self._slots[game].get(account_id)
+        if slot is None or account_id not in self._loading[game]:
             return  # already promoted or exited
-        entry[1].stop()
-        entry[1].deleteLater()
+        if slot.loading_timer is not None:
+            slot.loading_timer.stop()
+            slot.loading_timer.deleteLater()
+            slot.loading_timer = None
+        self._loading_remove(game, account_id)
         self._window_credit[game] += 1
         game_label = "TTR" if game == "ttr" else "CC"
         detail = "window detected" if reason == "window" else "window wait timed out"
-        self.log(f"[Launch] {game_label} account {section_index + 1} {detail}; marking running")
-        self._update_status(game, section_index, LoginState.RUNNING, "Game running")
+        self.log(f"[Launch] {game_label} account {self._position_of(game, account_id)} "
+                 f"{detail}; marking running")
+        self._update_status(game, account_id, LoginState.RUNNING, "Game running")
 
     def _on_windows_changed(self, _ids):
         """A WindowManager detection pass changed the window set. Promote the
@@ -1371,19 +1425,21 @@ class LaunchTab(QWidget):
             while self._loading[game] and (
                 self.window_manager.count_for_game(game) - self._window_credit[game] > 0
             ):
-                oldest_index = self._loading[game][0][0]
-                self._promote_loader(game, oldest_index, "window")
+                self._promote_loader(game, self._loading[game][0], "window")
 
-    def _on_game_exited(self, game, section_index, retcode, raw_log=""):
+    def _on_game_exited(self, game, account_id, launcher, retcode, raw_log=""):
         # If the process exits while still loading, drop its pending timer so it
         # cannot later flip a re-used slot to running. Do NOT touch the window
         # credit -- no window was consumed.
-        stale = self._pop_loader(game, section_index)
-        if stale is not None:
-            stale[1].stop()
-            stale[1].deleteLater()
+        slot = self._slots[game].get(account_id)
+        if slot is not None and slot.launcher is launcher and slot.loading_timer is not None:
+            slot.loading_timer.stop()
+            slot.loading_timer.deleteLater()
+            slot.loading_timer = None
+            self._loading_remove(game, account_id)
         game_label = "TTR" if game == "ttr" else "CC"
-        self.log(f"[Launch] {game_label} account {section_index + 1} game exited (code {retcode})")
+        self.log(f"[Launch] {game_label} account {self._position_of(game, account_id)} "
+                 f"game exited (code {retcode})")
         # game crash / kill: status band carries the exit code; no login-failure dialog (post-launch is out of scope)
         if retcode not in (0, -9, -15, None):
             # Pass raw_log as BOTH the band message and the modal raw:
@@ -1394,34 +1450,35 @@ class LaunchTab(QWidget):
             # has no captured log (TTRLauncher uses DEVNULL), fall back
             # to the bare "Failed: code N" string.
             payload = raw_log or f"Failed: code {retcode}"
-            self._update_status(game, section_index, LoginState.FAILED,
+            self._update_status(game, account_id, LoginState.FAILED,
                                 payload, raw=payload)
         else:
-            self._update_status(game, section_index, LoginState.IDLE, "")
+            self._update_status(game, account_id, LoginState.IDLE, "")
 
-    def _prompt_2fa(self, game, section_index, banner):
+    def _prompt_2fa(self, game, account_id, banner):
         """Show 2FA input dialog."""
-        key = (game, section_index)
+        key = (game, account_id)
         if key in self._pending_2fa:
             return
         self._pending_2fa.add(key)
 
         game_label = "TTR" if game == "ttr" else "CC"
-        self.log(f"[Launch] {game_label} account {section_index + 1} requires 2FA.")
+        self.log(f"[Launch] {game_label} account {self._position_of(game, account_id)} requires 2FA.")
         token, ok = QInputDialog.getText(
             self, "Two-Factor Authentication",
             f"{banner}\n\nEnter your authenticator code:",
             QLineEdit.Password,
         )
         self._pending_2fa.discard(key)
-        worker = self._workers[game][section_index] if section_index < len(self._workers[game]) else None
+        slot = self._slots[game].get(account_id)
+        worker = slot.worker if slot is not None else None
         if ok and token.strip():
             if worker:
                 worker.submit_2fa(token.strip())
         else:
             if worker:
                 worker.cancel()
-            self._update_status(game, section_index, LoginState.IDLE, "2FA cancelled")
+            self._update_status(game, account_id, LoginState.IDLE, "2FA cancelled")
 
     @Slot(bool)
     def _on_keyring_probe_complete(self, available: bool):
@@ -1436,39 +1493,40 @@ class LaunchTab(QWidget):
 
     # ── Status updates ─────────────────────────────────────────────────────
 
-    def _update_status(self, game, section_index, state, message, raw=None):
-        cards = self._cards[game]
-        if section_index >= len(cards):
+    def _update_status(self, game, account_id, state, message, raw=None):
+        slot = self._slots[game].get(account_id)
+        if slot is None:
             return
-        card = cards[section_index]
-        card["state"] = state
-        tile = card.get("tile")
-        if tile is None:
-            return
+        if raw is None:
+            raw = message if state == LoginState.FAILED else ""
+        slot.state, slot.message, slot.raw_error = state, message or "", raw
         # AccountTile expects the same lowercase string used by LoginState's
         # class attributes (idle/logging_in/queued/launching/running/failed/
         # need_2fa).
-        if raw is None:
-            raw = message if state == LoginState.FAILED else ""
-        tile.set_state(state, message or "", raw)
+        tile = self._visible_tiles[game].get(account_id)
+        if tile is not None:
+            tile.set_state(state, message or "", raw)
+        self._refresh_activity(game)
 
     def update_dot_state(self, index: int, state_str: str):
-        """Called from multitoon tab - index is global slot position.
+        """Called from multitoon tab - index is the global TTR slot position.
 
-        For now, only TTR cards are updated since CC has no companion API.
-        The new AccountTile drives its own running-state pulse; this method
-        only stamps the sync_state into the card record so visual code that
-        consults `card['sync_state']` keeps working.
+        For now, only TTR slots are updated since CC has no companion API.
+        The new AccountTile drives its own running-state pulse; this stamps
+        the sync_state onto the slot and, when the slot's launcher is alive
+        and the tile is on the visible page, drives the status dot.
         """
-        cards = self._cards["ttr"]
-        if index >= len(cards):
+        ordered = self._ordered_accounts("ttr")
+        if index >= len(ordered):
             return
-        card = cards[index]
-        card["sync_state"] = state_str
+        account_id = ordered[index].id
+        slot = self._slots["ttr"].get(account_id)
+        if slot is None:
+            return
+        slot.dot_state = state_str
 
-        launcher = self._launchers["ttr"][index] if index < len(self._launchers["ttr"]) else None
-        if launcher and launcher.is_running():
-            tile = card.get("tile")
+        if slot.launcher and slot.launcher.is_running():
+            tile = self._visible_tiles["ttr"].get(account_id)
             if tile is not None and getattr(tile, "status_dot", None) is not None:
                 color = {
                     "active": "#56c856",
@@ -1478,15 +1536,14 @@ class LaunchTab(QWidget):
                 }.get(state_str, "#56c856")
                 tile.status_dot.set_color(color, pulse=(state_str == "active"))
 
-    def _update_queue(self, game, section_index, position, eta):
-        cards = self._cards[game]
-        if section_index >= len(cards):
+    def _update_queue(self, game, account_id, position, eta):
+        slot = self._slots[game].get(account_id)
+        if slot is None:
             return
-        card = cards[section_index]
-        tile = card.get("tile")
-        if tile is None:
-            return
-        tile.set_state(LoginState.QUEUED, f"#{position} (~{eta}s)")
+        slot.state = LoginState.QUEUED
+        tile = self._visible_tiles[game].get(account_id)
+        if tile is not None:
+            tile.set_state(LoginState.QUEUED, f"#{position} (~{eta}s)")
 
     # ── Theme ──────────────────────────────────────────────────────────────
 
