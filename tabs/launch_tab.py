@@ -621,6 +621,8 @@ class LaunchTab(QWidget):
             st, _, _ = self._effective_state(game, slot)
             if st in (LoginState.RUNNING, LoginState.LOADING):
                 p = idx // PAGE_SIZE
+                # Guard is load-bearing: clamps any out-of-range page (e.g. if
+                # account count ever exceeded the ceiling) to the dot count.
                 if p < pc:
                     flags[p] = True
         return flags
@@ -674,7 +676,8 @@ class LaunchTab(QWidget):
             pc = page_count(len(accounts))
             self._sections[game].set_page(dicts[:PAGE_SIZE], page=0, page_count=pc,
                 base_index=0, activity=[False] * pc,
-                show_empty_state=(len(accounts) == 0), at_ceiling=(len(accounts) >= 16))
+                show_empty_state=(len(accounts) == 0),
+                at_ceiling=(len(accounts) >= MAX_PER_GAME))
 
     def _build_ui(self):
         # Drop any old children from the scroll layout so we can re-add the
