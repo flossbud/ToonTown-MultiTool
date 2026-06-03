@@ -213,16 +213,19 @@ def test_apply_theme_styles_chevron(qapp):
     sec = LaunchSection(game="ttr", icon_path="assets/ttr.png")
     # Hand a fake theme with a sentinel color so we can search for it.
     fake_theme = {
-        "bg_card":             "#000000",
-        "bg_card_inner_hover": "#111111",
-        "border_card":         "#222222",
-        "border_muted":        "#333333",
-        "border_light":        "#444444",
-        "game_pill_ttr":       "#555555",
-        "game_pill_cc":        "#666666",
-        "text_primary":        "#777777",
-        "text_secondary":      "#abcdef",  # sentinel
-        "text_muted":          "#888888",
+        "bg_card":               "#000000",
+        "bg_card_inner_hover":   "#111111",
+        "border_card":           "#222222",
+        "border_muted":          "#333333",
+        "border_light":          "#444444",
+        "game_pill_ttr":         "#555555",
+        "game_pill_cc":          "#666666",
+        "text_primary":          "#777777",
+        "text_secondary":        "#abcdef",  # sentinel
+        "text_muted":            "#888888",
+        "accent_blue_btn":       "#0077ff",
+        "accent_blue_btn_hover": "#0066ee",
+        "text_on_accent":        "#ffffff",
     }
     sec.apply_theme(fake_theme)
     assert "#abcdef" in sec._chev.styleSheet()

@@ -1,0 +1,84 @@
+import pytest
+from PySide6.QtWidgets import QApplication
+from utils.widgets.launch_section import LaunchSection
+
+
+@pytest.fixture(scope="module")
+def qapp():
+    return QApplication.instance() or QApplication([])
+
+
+def _acct(i, aid):
+    return {"label": f"A{i}", "username": f"u{i}", "id": aid, "state": "idle",
+            "message": "", "raw_error": ""}
+
+
+def test_set_page_renders_slice_with_absolute_badges(qapp):
+    sec = LaunchSection(game="ttr", icon_path="assets/ttr.png")
+    page2 = [_acct(5, "id5"), _acct(6, "id6")]
+    sec.set_page(page2, page=1, page_count=2, base_index=4,
+                 activity=[False, False], show_empty_state=False, at_ceiling=False)
+    assert len(sec.tiles) == 2
+    assert sec.tiles[0].badge.text() == "5"
+    assert sec.tiles[1].badge.text() == "6"
+
+
+def test_tile_signals_carry_account_id(qapp):
+    sec = LaunchSection(game="ttr", icon_path="assets/ttr.png")
+    sec.set_page([_acct(1, "abc")], page=0, page_count=1, base_index=0,
+                 activity=[False], show_empty_state=False, at_ceiling=False)
+    seen = []
+    sec.tile_launch.connect(seen.append)
+    sec.tiles[0].launch_clicked.emit()
+    assert seen == ["abc"]
+
+
+def test_zero_accounts_shows_empty_state_and_hides_pager(qapp):
+    sec = LaunchSection(game="ttr", icon_path="assets/ttr.png")
+    sec.set_page([], page=0, page_count=1, base_index=0, activity=[False],
+                 show_empty_state=True, at_ceiling=False)
+    sec.show()
+    assert sec.empty_state.isVisible()
+    assert not sec.pager.isVisible()
+
+
+def test_reserved_empty_page_shows_hint_not_empty_state(qapp):
+    sec = LaunchSection(game="ttr", icon_path="assets/ttr.png")
+    sec.set_page([], page=1, page_count=2, base_index=4, activity=[False, False],
+                 show_empty_state=False, at_ceiling=False)
+    sec.show()
+    assert not sec.empty_state.isVisible()
+    assert sec.pager.isVisible()
+    assert sec.empty_page_hint.isVisible()
+
+
+def test_at_ceiling_hides_add_button(qapp):
+    sec = LaunchSection(game="ttr", icon_path="assets/ttr.png")
+    full = [_acct(13, f"id{13+i}") for i in range(4)]
+    sec.set_page(full, page=3, page_count=4, base_index=12,
+                 activity=[False] * 4, show_empty_state=False, at_ceiling=True)
+    sec.show()
+    assert not sec.pager.add_btn.isVisible()
+
+
+def test_page_changed_emitted_by_pager(qapp):
+    sec = LaunchSection(game="ttr", icon_path="assets/ttr.png")
+    sec.set_page([_acct(1, "a")], page=0, page_count=2, base_index=0,
+                 activity=[False, False], show_empty_state=False, at_ceiling=False)
+    seen = []
+    sec.page_changed.connect(seen.append)
+    sec.pager.next_btn.click()
+    assert seen == [1]
+
+
+def test_compact_height_stable_one_vs_four_tiles(qapp):
+    # Reserved 2-row grid: a 1-tile page must not be shorter than a 4-tile page.
+    sec = LaunchSection(game="ttr", icon_path="assets/ttr.png")
+    sec.set_page([_acct(1, "a")], page=0, page_count=2, base_index=0,
+                 activity=[False, False], show_empty_state=False, at_ceiling=False)
+    one = sec.grid_container.minimumHeight()
+    four = [_acct(i, f"id{i}") for i in range(4)]
+    sec.set_page(four, page=0, page_count=2, base_index=0,
+                 activity=[False, False], show_empty_state=False, at_ceiling=False)
+    assert sec.grid_container.minimumHeight() == one  # reserved, not content-driven
+    assert one >= 2 * 130  # at least two tile rows

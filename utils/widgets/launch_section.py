@@ -9,6 +9,8 @@ from PySide6.QtWidgets import (
     QFrame, QGridLayout, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget,
 )
 
+from utils.widgets.page_pager import PagePager
+
 import utils.motion as motion
 from utils.theme_manager import get_theme_colors
 from utils.widgets.account_tile import AccountTile
@@ -91,14 +93,14 @@ class LaunchSection(QWidget):
 
     launcher_clicked       = Signal()
     add_account_clicked    = Signal()
-    tile_launch            = Signal(int)
-    tile_quit              = Signal(int)
-    tile_cancel            = Signal(int)
-    tile_retry             = Signal(int)
-    tile_enter_2fa         = Signal(int)
-    tile_edit              = Signal(int)
-    tile_delete            = Signal(int)
-    tile_expand_error      = Signal(int)
+    tile_launch            = Signal(str)
+    tile_quit              = Signal(str)
+    tile_cancel            = Signal(str)
+    tile_retry             = Signal(str)
+    tile_enter_2fa         = Signal(str)
+    tile_edit              = Signal(str)
+    tile_delete            = Signal(str)
+    tile_expand_error      = Signal(str)
     # Fires when the section's natural sizeHint changes (content scale
     # bump on resize, account list change). LaunchTab listens so it can
     # re-equalize sibling section heights in compact mode.
@@ -107,6 +109,7 @@ class LaunchSection(QWidget):
     # set_collapsed(...) calls do NOT emit. Keeps the persistence write
     # loop in LaunchTab one-directional.
     collapsed_changed      = Signal(bool)
+    page_changed           = Signal(int)
 
     def __init__(self, game: str, icon_path: str, max_accounts: int = 8, parent=None):
         super().__init__(parent)
@@ -228,12 +231,27 @@ class LaunchSection(QWidget):
         self.grid = QGridLayout(self.grid_container)
         self.grid.setContentsMargins(14, 14, 14, 14)
         self.grid.setSpacing(10)
+        self.grid_container.setMinimumHeight(2 * 130 + 10 + 28)  # 2 tile rows + gap + footer headroom
         body_lay.addWidget(self.grid_container)
 
         self.empty_state = EmptyState(game=game)
         self.empty_state.setAttribute(Qt.WA_TranslucentBackground, True)
         self.empty_state.add_clicked.connect(self.add_account_clicked.emit)
         body_lay.addWidget(self.empty_state)
+
+        # Soft hint shown on a reserved (empty) landing page when the game
+        # has accounts on other pages. Occupies the grid area.
+        self.empty_page_hint = QLabel("No accounts on this page yet")
+        self.empty_page_hint.setObjectName("empty_page_hint")
+        self.empty_page_hint.setAlignment(Qt.AlignCenter)
+        self.empty_page_hint.setVisible(False)
+        body_lay.addWidget(self.empty_page_hint)
+
+        # Footer pager.
+        self.pager = PagePager(self._game)
+        self.pager.page_selected.connect(self.page_changed.emit)
+        self.pager.add_clicked.connect(self.add_account_clicked.emit)
+        body_lay.addWidget(self.pager)
 
         card_lay.addWidget(self._body_wrap)
 
@@ -310,50 +328,30 @@ class LaunchSection(QWidget):
             self.add_tile.apply_theme(c)
         if hasattr(self.empty_state, "apply_theme"):
             self.empty_state.apply_theme(c)
+        if hasattr(self, "empty_page_hint"):
+            self.empty_page_hint.setStyleSheet(
+                f"background: transparent; color: {c['text_muted']};"
+                " font-size: 13px; font-style: italic;"
+            )
+        if hasattr(self, "pager"):
+            self.pager.apply_theme(c)
 
     def set_accounts(self, accounts: list[dict]) -> None:
-        while self.grid.count():
-            item = self.grid.takeAt(0)
-            w = item.widget()
-            if w is not None:
-                w.setParent(None)
-                w.deleteLater()
-        self.tiles = []
-        self.add_tile = None
-
-        if not accounts:
-            self.empty_state.setVisible(True)
-            self.grid_container.setVisible(False)
-            self.subline.setText("No accounts yet")
-            return
-
-        self.empty_state.setVisible(False)
-        self.grid_container.setVisible(True)
-        for i, acct in enumerate(accounts):
-            tile = AccountTile(game=self._game, slot_index=i)
-            tile.set_account(acct.get("label", ""), acct.get("username", ""), i)
-            row, col = divmod(i, 2)
-            self.grid.addWidget(tile, row, col)
-            self.tiles.append(tile)
-            self._wire_tile(tile, i)
-
-        self.add_tile = _AddTile(self._game)
-        self.add_tile.clicked.connect(self.add_account_clicked.emit)
-        n = len(accounts)
-        row, col = divmod(n, 2)
-        self.grid.addWidget(self.add_tile, row, col)
-        if len(accounts) >= self._max:
-            self.add_tile.setVisible(False)
-
-        self.subline.setText(f"{len(accounts)} account" + ("s" if len(accounts) != 1 else ""))
-        # New tiles are born at AccountTile's default minHeight=130; if the
-        # section is currently scaled (e.g. account refresh after a window
-        # resize bumped scale above 1.0), bring the fresh tiles up to the
-        # current scale so they don't render at the wrong height.
-        self._apply_content_scale_to_tiles()
-        # Newly-created tiles default to dark theme via their own __init__.
-        # Re-apply the section's current theme so they match light mode etc.
-        self.apply_theme(self._current_theme)
+        """Back-compat shim: render the given accounts as page 0 (no pagination).
+        New code uses set_page(). Demo mode and a few legacy tests use this."""
+        pc = max(1, page_count(len(accounts)))
+        slice_ = []
+        for i, a in enumerate(accounts[:PAGE_SIZE]):
+            slice_.append({**a, "id": a.get("id", f"_legacy{i}"),
+                           "state": a.get("state", "idle"),
+                           "message": a.get("message", ""),
+                           "raw_error": a.get("raw_error", "")})
+        self.set_page(slice_, page=0, page_count=pc, base_index=0,
+                      activity=[False] * pc, show_empty_state=(len(accounts) == 0),
+                      at_ceiling=(len(accounts) >= 16))
+        self.subline.setText(
+            (f"{len(accounts)} account" + ("s" if len(accounts) != 1 else ""))
+            if accounts else "No accounts yet")
 
     def tile_at(self, section_index: int) -> AccountTile | None:
         if 0 <= section_index < len(self.tiles):
@@ -557,12 +555,64 @@ class LaunchSection(QWidget):
         self.set_collapsed(not self.is_collapsed, animate=True)
         self.collapsed_changed.emit(self.is_collapsed)
 
-    def _wire_tile(self, tile: AccountTile, index: int) -> None:
-        tile.launch_clicked.connect(lambda i=index: self.tile_launch.emit(i))
-        tile.quit_clicked.connect(lambda i=index: self.tile_quit.emit(i))
-        tile.cancel_clicked.connect(lambda i=index: self.tile_cancel.emit(i))
-        tile.retry_clicked.connect(lambda i=index: self.tile_retry.emit(i))
-        tile.enter_2fa_clicked.connect(lambda i=index: self.tile_enter_2fa.emit(i))
-        tile.edit_clicked.connect(lambda i=index: self.tile_edit.emit(i))
-        tile.delete_clicked.connect(lambda i=index: self.tile_delete.emit(i))
-        tile.expand_error_clicked.connect(lambda i=index: self.tile_expand_error.emit(i))
+    def _wire_tile(self, tile: AccountTile, account_id: str) -> None:
+        tile.launch_clicked.connect(lambda a=account_id: self.tile_launch.emit(a))
+        tile.quit_clicked.connect(lambda a=account_id: self.tile_quit.emit(a))
+        tile.cancel_clicked.connect(lambda a=account_id: self.tile_cancel.emit(a))
+        tile.retry_clicked.connect(lambda a=account_id: self.tile_retry.emit(a))
+        tile.enter_2fa_clicked.connect(lambda a=account_id: self.tile_enter_2fa.emit(a))
+        tile.edit_clicked.connect(lambda a=account_id: self.tile_edit.emit(a))
+        tile.delete_clicked.connect(lambda a=account_id: self.tile_delete.emit(a))
+        tile.expand_error_clicked.connect(lambda a=account_id: self.tile_expand_error.emit(a))
+
+    def set_page(self, accounts: list[dict], *, page: int, page_count: int,
+                 base_index: int, activity: list[bool], show_empty_state: bool,
+                 at_ceiling: bool) -> None:
+        """Render one page. `accounts` is this page's slice; each dict has
+        label/username/id/state/message/raw_error. base_index is the absolute
+        index of the first tile (for badges). Tile signals carry account_id."""
+        while self.grid.count():
+            item = self.grid.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.setParent(None)
+                w.deleteLater()
+        self.tiles = []
+        self.add_tile = None  # legacy trailing add-tile no longer used
+
+        if show_empty_state and not accounts:
+            self.empty_state.setVisible(True)
+            self.grid_container.setVisible(False)
+            self.empty_page_hint.setVisible(False)
+            self.pager.setVisible(False)
+            self.subline.setText("No accounts yet")
+            return
+
+        self.empty_state.setVisible(False)
+        self.pager.setVisible(True)
+        if not accounts:
+            self.grid_container.setVisible(False)
+            self.empty_page_hint.setVisible(True)
+        else:
+            self.empty_page_hint.setVisible(False)
+            self.grid_container.setVisible(True)
+            for local, acct in enumerate(accounts):
+                abs_index = base_index + local
+                tile = AccountTile(game=self._game, slot_index=abs_index)
+                tile.set_account(acct.get("label", ""), acct.get("username", ""), abs_index)
+                tile.set_state(acct.get("state", "idle"), acct.get("message", ""),
+                               acct.get("raw_error", ""))
+                row, col = divmod(local, 2)
+                self.grid.addWidget(tile, row, col)
+                self.tiles.append(tile)
+                self._wire_tile(tile, acct["id"])
+
+        self.pager.set_state(page=page, page_count=page_count, activity=activity,
+                             show_add=not at_ceiling)
+        self._apply_content_scale_to_tiles()
+        self.apply_theme(self._current_theme)
+
+    def set_activity(self, activity: list[bool]) -> None:
+        """Update only the pager dots' activity rings (no full re-render)."""
+        self.pager.set_state(page=self.pager._page, page_count=self.pager._page_count,
+                             activity=activity, show_add=self.pager.add_btn.isVisible())

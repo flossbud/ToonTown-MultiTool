@@ -23,7 +23,7 @@ def test_populated_section_shows_tiles_and_add_tile(qapp):
     sec.set_accounts([{"label": "A", "username": "a@x"}, {"label": "B", "username": "b@x"}])
     sec.show()  # required for isVisible to mean anything
     assert len(sec.tiles) == 2
-    assert sec.add_tile is not None and sec.add_tile.isVisible()
+    assert sec.pager.add_btn.isVisible()
     assert not sec.empty_state.isVisible()
 
 
@@ -56,15 +56,20 @@ def test_add_tile_click_emits(qapp):
     sec.set_accounts([{"label": "A", "username": "a@x"}])
     captured = []
     sec.add_account_clicked.connect(lambda: captured.append("x"))
-    sec.add_tile.click()
+    sec.pager.add_btn.click()
     assert captured == ["x"]
 
 
 def test_max_accounts_hides_add_tile(qapp):
-    sec = LaunchSection(game="ttr", icon_path="assets/ttr.png", max_accounts=2)
-    sec.set_accounts([{"label": "A", "username": "a"}, {"label": "B", "username": "b"}])
+    # at_ceiling=True is triggered when 16 accounts are present (the ceiling).
+    # Use set_page directly so the test stays meaningful with the new pager.
+    sec = LaunchSection(game="ttr", icon_path="assets/ttr.png")
+    full = [{"label": f"A{i}", "username": f"u{i}", "id": f"id{i}"}
+            for i in range(4)]
+    sec.set_page(full, page=3, page_count=4, base_index=12,
+                 activity=[False] * 4, show_empty_state=False, at_ceiling=True)
     sec.show()  # required for isVisible to mean anything
-    assert not sec.add_tile.isVisible()
+    assert not sec.pager.add_btn.isVisible()
 
 
 def test_section_card_is_flat_with_ttr_top_stripe(qapp):
@@ -153,14 +158,13 @@ def test_section_launcher_button_is_chipbutton(qapp):
 
 
 def test_add_tile_is_chipbutton(qapp):
-    """The '+ Add Account' tile inherits from ChipButton, so pressing it
-    runs the same paint_scale animation."""
+    """The pager's '+ Add Account' button inherits from ChipButton so pressing
+    it runs the same paint_scale animation."""
     from utils.widgets.launch_section import LaunchSection
     from utils.widgets.chip_button import ChipButton
     sec = LaunchSection(game="ttr", icon_path="")
     sec.set_accounts([{"label": "x", "username": "y"}])
-    assert sec.add_tile is not None
-    assert isinstance(sec.add_tile, ChipButton)
+    assert isinstance(sec.pager.add_btn, ChipButton)
 
 
 def test_section_has_compact_max_width(qapp):
@@ -231,10 +235,6 @@ def test_set_accounts_after_scale_applies_to_new_tiles(qapp):
     sec.set_accounts([{"label": "a", "username": "u"}])
     tile = sec.tile_at(0)
     assert tile.minimumHeight() == int(130 * sec._content_scale)
-    # add_tile should also be scaled (it was excluded from the loop in
-    # the original Task 11 implementation).
-    assert sec.add_tile is not None
-    assert sec.add_tile.minimumHeight() == int(130 * sec._content_scale)
 
 
 def test_set_layout_mode_runs_reveal_animation(qapp, monkeypatch):
@@ -288,29 +288,24 @@ def test_set_layout_mode_same_mode_does_not_reflash(qapp):
 
 
 def test_add_tile_uses_theme_tokens(qapp):
-    """The '+ Add Account' dashed tile must use theme tokens, not literals,
+    """The pager's '+ Add Account' button must use theme tokens, not literals,
     so it switches palettes correctly."""
     from utils.theme_manager import get_theme_colors
     sec = LaunchSection(game="ttr", icon_path="")
-    sec.set_accounts([{"label": "x", "username": "y"}])  # ensures add_tile is built
-    assert sec.add_tile is not None
+    sec.set_accounts([{"label": "x", "username": "y"}])
     c = get_theme_colors(True)
-    qss = sec.add_tile.styleSheet()
-    assert c["border_card"] in qss
-    assert c["text_muted"] in qss
-    # Regression guards: no dark-only literals.
-    assert "rgba(255,255,255,0.12)" not in qss
-    assert "#8a9bb8" not in qss
-    assert "#cfd6e6" not in qss
+    qss = sec.pager.add_btn.styleSheet()
+    assert c["accent_blue_btn"] in qss
+    assert c["text_on_accent"] in qss
 
 
 def test_add_tile_apply_theme_swaps_palettes(qapp):
-    """LaunchSection.apply_theme must propagate to add_tile."""
+    """LaunchSection.apply_theme must propagate to the pager's add button."""
     from utils.theme_manager import get_theme_colors
     sec = LaunchSection(game="cc", icon_path="")
     sec.set_accounts([{"label": "x", "username": "y"}])
     light = get_theme_colors(False)
     sec.apply_theme(light)
-    qss = sec.add_tile.styleSheet()
-    assert light["border_card"] in qss
-    assert light["text_muted"] in qss
+    qss = sec.pager.add_btn.styleSheet()
+    assert light["accent_blue_btn"] in qss
+    assert light["text_on_accent"] in qss
