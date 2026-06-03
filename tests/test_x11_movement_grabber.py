@@ -967,7 +967,8 @@ def test_route_all_grabbed_movement_does_not_route(fake_display):
 
 def test_route_all_install_registers_passthrough_without_grabbing(fake_display):
     """route_all classifies the 8 movement keys as 'grabbed' (suppress-only) and
-    pre-maps passthrough keysyms by NAME so non-movement keys can be re-delivered.
+    pre-maps passthrough keysyms by NAME so the run-loop observer trace can classify
+    them (the grabber is suppress-only; delivery is via the pynput feed).
     No per-key XGrabKey is used (one persistent XGrabKeyboard instead)."""
     d, root = fake_display
     from Xlib import XK
@@ -982,7 +983,7 @@ def test_route_all_install_registers_passthrough_without_grabbing(fake_display):
                   on_passthrough=lambda *_: None)
         g.install_grabs(canonical_set="wasd", passthrough_keysyms=["j"], route_all=True)
         import time; time.sleep(0.1)
-        assert g._keycode_to_name.get(150) == ("passthrough", "j")  # named, re-deliverable
+        assert g._keycode_to_name.get(150) == ("passthrough", "j")  # named, classified as passthrough (for the observer trace)
         assert g._keycode_to_name.get(100) == ("grabbed", "w")       # movement classified
         assert root.grab_key.call_count == 0                         # no per-key grabs
         assert root.grab_keyboard.called                             # one keyboard grab

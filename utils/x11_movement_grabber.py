@@ -241,9 +241,12 @@ class MovementKeyGrabber:
                     continue
                 self._keycode_to_name[keycode] = ("grabbed", keysym_name)
             # Pre-map common non-movement keys to their keysym NAMES so the
-            # handler can re-deliver them by name. keysym_to_string only resolves
-            # printables, so specials (Return/Escape/modifiers/Tab/BackSpace) must
-            # be named here. setdefault so a movement entry is never overwritten.
+            # run-loop observer trace can label them "passthrough" (vs "grabbed"
+            # movement). The grabber is suppress-only in route_all and does NOT
+            # re-deliver; delivery is the pynput/XRecord feed's job. keysym_to_string
+            # only resolves printables, so specials (Return/Escape/modifiers/Tab/
+            # BackSpace) must be named here. setdefault so a movement entry is
+            # never overwritten.
             for keysym_name in passthrough_keysyms:
                 ks = XK.string_to_keysym(keysym_name)
                 if ks == 0:
