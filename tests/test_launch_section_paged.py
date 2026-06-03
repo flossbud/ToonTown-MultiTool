@@ -168,3 +168,15 @@ def test_section_reexposes_reorder_and_threads_show_reorder(qapp):
     sec.set_page([_acct(1, "a")], page=0, page_count=1, base_index=0,
                  activity=[False], show_empty_state=False, at_ceiling=False)
     assert not sec.pager.reorder_btn.isVisible()
+
+
+def test_set_activity_preserves_reorder_chip_intent(qapp):
+    # A dot-only refresh (set_activity) must not hide the reorder chip when it
+    # was shown by the prior set_page (parity with the add-button intent).
+    from utils.widgets.launch_section import LaunchSection
+    sec = LaunchSection(game="ttr", icon_path="assets/ttr.png")
+    sec.set_page([_acct(1, "a"), _acct(2, "b")], page=0, page_count=1, base_index=0,
+                 activity=[False], show_empty_state=False, at_ceiling=False, show_reorder=True)
+    sec.set_activity([True])
+    sec.show()
+    assert sec.pager.reorder_btn.isVisible()

@@ -87,7 +87,7 @@ def test_reorder_button_visibility_and_signal(qapp):
     from utils.widgets.page_pager import PagePager
     p = PagePager(game="ttr")
     p.set_state(page=0, page_count=1, activity=[False], show_add=True, show_reorder=False)
-    assert not p.reorder_btn.isVisible() or p.reorder_btn.isHidden()
+    assert p.reorder_btn.isHidden()
     p.set_state(page=0, page_count=1, activity=[False], show_add=True, show_reorder=True)
     p.show()
     assert p.reorder_btn.isVisible()

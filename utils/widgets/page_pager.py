@@ -1,6 +1,7 @@
 """Footer pager for a LaunchSection: prev/next arrows, dynamic page dots
-(current = blue fill, active = green ring), and a persistent '+ Add Account'
-button. Emits page_selected(int) and add_clicked().
+(current = blue fill, active = green ring), a secondary '⇅ Reorder' chip, and a
+persistent '+ Add Account' button. Emits page_selected(int), reorder_clicked(),
+and add_clicked().
 """
 from __future__ import annotations
 
