@@ -3,8 +3,7 @@ order model; drag a row by its handle, or use the per-row up/down arrows. Both
 funnel through _move(src, dst). The caller reads ordered_ids() on Accepted."""
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QMimeData, Signal
-from PySide6.QtGui import QDrag
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QDialog, QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea,
     QToolButton, QVBoxLayout, QWidget,
@@ -14,19 +13,17 @@ from utils.theme_manager import get_theme_colors
 
 _ACCENT = {"ttr": "#4A8FE7", "cc": "#F26D21"}
 _GAME_NAMES = {"ttr": "Toontown Rewritten", "cc": "Corporate Clash"}
-_MIME = "application/x-ttmt-reorder-index"
 
 
 class _ReorderRow(QFrame):
     """One reorder list row: drag handle (drag source), position badge,
-    label-or-username text, and up/down buttons. Acts as both a drag source and
-    a drop target; all reordering is delegated to the owning dialog's _move()."""
+    label-or-username text, and up/down buttons. Reordering is delegated to
+    the owning dialog's _move() (arrows) or _begin_drag() (handle drag)."""
     def __init__(self, dialog: "AccountReorderDialog", index: int, account: dict,
                  is_first: bool, is_last: bool):
         super().__init__()
         self._dialog = dialog
         self._index = index
-        self.setAcceptDrops(True)
         self.setObjectName("reorder_row")
 
         lay = QHBoxLayout(self)
@@ -78,38 +75,21 @@ class _ReorderRow(QFrame):
         lay.addWidget(self.down_btn)
 
     def mousePressEvent(self, e):
-        if e.button() == Qt.LeftButton:
-            self._press = e.position().toPoint()
+        on_handle = (e.button() == Qt.LeftButton
+                     and self.handle.geometry().contains(e.position().toPoint()))
+        self._press_on_handle = on_handle
+        self._press_pt = e.position().toPoint() if on_handle else None
         super().mousePressEvent(e)
 
     def mouseMoveEvent(self, e):
-        if not (e.buttons() & Qt.LeftButton):
+        # Only a press that started on the drag handle (not the row body or the
+        # arrow buttons, which consume their own events) begins a drag.
+        if not (getattr(self, "_press_on_handle", False) and (e.buttons() & Qt.LeftButton)):
             return
-        press = getattr(self, "_press", e.position().toPoint())
-        if (e.position().toPoint() - press).manhattanLength() < 8:
+        if (e.position().toPoint() - self._press_pt).manhattanLength() < 8:
             return
-        drag = QDrag(self)
-        mime = QMimeData()
-        mime.setData(_MIME, str(self._index).encode())
-        drag.setMimeData(mime)
-        drag.exec(Qt.MoveAction)
-
-    def dragEnterEvent(self, e):
-        if e.mimeData().hasFormat(_MIME):
-            e.acceptProposedAction()
-
-    def dragMoveEvent(self, e):
-        if e.mimeData().hasFormat(_MIME):
-            e.acceptProposedAction()
-
-    def dropEvent(self, e):
-        if not e.mimeData().hasFormat(_MIME):
-            return
-        src = int(bytes(e.mimeData().data(_MIME)).decode())
-        # Insert the dragged row at this row's position (the arrows are the
-        # precise path; drag uses a simple drop-on-target-row target).
-        self._dialog._move(src, self._index)
-        e.acceptProposedAction()
+        self._press_on_handle = False  # consume so we only begin once
+        self._dialog._begin_drag(self._index, e.globalPosition().toPoint())
 
 
 class AccountReorderDialog(QDialog):
@@ -121,6 +101,18 @@ class AccountReorderDialog(QDialog):
         self._game = game
         self._order: list[dict] = list(accounts)
         self._rows: list[_ReorderRow] = []
+        # Manual drag state.
+        self._dragging = False
+        self._drag_src = -1
+        self._placeholder_index = -1
+        self._dragged_row: _ReorderRow | None = None
+        self._ghost: QLabel | None = None
+        self._ghost_offset = None
+        self._placeholder: QWidget | None = None
+        self._autoscroll_dir = 0
+        self._autoscroll = QTimer(self)
+        self._autoscroll.setInterval(15)
+        self._autoscroll.timeout.connect(self._do_autoscroll)
         self.setModal(True)
         self.setWindowTitle(f"Reorder {_GAME_NAMES[game]} accounts")
         self.setMinimumWidth(440)
@@ -196,6 +188,141 @@ class AccountReorderDialog(QDialog):
 
     def _move_down(self, i: int) -> None:
         self._move(i, i + 1)
+
+    # ── manual live-reflow drag ───────────────────────────────────────────
+    def _begin_drag(self, index: int, global_pos) -> None:
+        if self._dragging or not (0 <= index < len(self._rows)):
+            return
+        self._dragging = True
+        self._drag_src = index
+        self._placeholder_index = index
+        self._dragged_row = self._rows[index]
+        row = self._dragged_row
+
+        pm = row.grab()
+        self._ghost = QLabel(self)
+        self._ghost.setPixmap(pm)
+        self._ghost.setFixedSize(pm.size())
+        self._ghost.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self._ghost_offset = row.mapFromGlobal(global_pos)
+        self._ghost.move(self.mapFromGlobal(global_pos) - self._ghost_offset)
+        self._ghost.show()
+        self._ghost.raise_()
+
+        self._placeholder = QWidget()
+        self._placeholder.setFixedHeight(max(row.height(), 1))
+        row.hide()
+        self._relayout_during_drag()
+        if self.isVisible():
+            self.grabMouse()
+
+    def _target_index_for_y(self, y: int) -> int:
+        others = [r for r in self._rows if r is not self._dragged_row]
+        for p, r in enumerate(others):
+            if y < r.y() + r.height() / 2:
+                return p
+        return len(others)
+
+    def _drag_to(self, target: int) -> None:
+        if not self._dragging:
+            return
+        target = max(0, min(target, len(self._order) - 1))
+        if target == self._placeholder_index:
+            return
+        self._placeholder_index = target
+        self._relayout_during_drag()
+
+    def _relayout_during_drag(self) -> None:
+        while self._rows_lay.count():
+            self._rows_lay.takeAt(0)
+        others = [r for r in self._rows if r is not self._dragged_row]
+        pos = min(self._placeholder_index, len(others))
+        for i, r in enumerate(others):
+            if i == pos:
+                self._rows_lay.addWidget(self._placeholder)
+            self._rows_lay.addWidget(r)
+        if pos >= len(others):
+            self._rows_lay.addWidget(self._placeholder)
+        self._rows_lay.addStretch(1)
+
+    def _end_drag(self) -> None:
+        if not self._dragging:
+            return
+        src, dst = self._drag_src, self._placeholder_index
+        self._teardown_drag()
+        n = len(self._order)
+        dst = max(0, min(dst, n - 1))
+        if 0 <= src < n and src != dst:
+            item = self._order.pop(src)
+            self._order.insert(dst, item)
+            self.order_changed.emit()
+        self._rebuild()
+
+    def _cancel_drag(self) -> None:
+        if not self._dragging:
+            return
+        self._teardown_drag()
+        self._rebuild()  # _order untouched -> restores the pre-drag list
+
+    def _teardown_drag(self) -> None:
+        if self._autoscroll.isActive():
+            self._autoscroll.stop()
+        self._autoscroll_dir = 0
+        if self.isVisible():
+            self.releaseMouse()
+        if self._ghost is not None:
+            self._ghost.deleteLater()
+            self._ghost = None
+        self._placeholder = None
+        self._dragged_row = None
+        self._dragging = False
+
+    def _update_autoscroll(self, global_pos) -> None:
+        vp = self._scroll.viewport()
+        y = vp.mapFromGlobal(global_pos).y()
+        h = vp.height()
+        if y < 28:
+            self._autoscroll_dir = -1
+        elif y > h - 28:
+            self._autoscroll_dir = 1
+        else:
+            self._autoscroll_dir = 0
+        if self._autoscroll_dir and not self._autoscroll.isActive():
+            self._autoscroll.start()
+        elif not self._autoscroll_dir and self._autoscroll.isActive():
+            self._autoscroll.stop()
+
+    def _do_autoscroll(self) -> None:
+        bar = self._scroll.verticalScrollBar()
+        bar.setValue(bar.value() + self._autoscroll_dir * 12)
+
+    # ── input routed here while the mouse is grabbed during a drag ────────
+    def mouseMoveEvent(self, e):
+        if not self._dragging:
+            return super().mouseMoveEvent(e)
+        gp = e.globalPosition().toPoint()
+        if self._ghost is not None:
+            self._ghost.move(self.mapFromGlobal(gp) - self._ghost_offset)
+        host_y = self._rows_host.mapFromGlobal(gp).y()
+        self._drag_to(self._target_index_for_y(host_y))
+        self._update_autoscroll(gp)
+
+    def mouseReleaseEvent(self, e):
+        if self._dragging and e.button() == Qt.LeftButton:
+            self._end_drag()
+            return
+        super().mouseReleaseEvent(e)
+
+    def keyPressEvent(self, e):
+        if self._dragging and e.key() == Qt.Key_Escape:
+            self._cancel_drag()
+            return
+        super().keyPressEvent(e)
+
+    def reject(self):
+        if self._dragging:
+            self._cancel_drag()
+        super().reject()
 
     def _rebuild(self) -> None:
         while self._rows_lay.count():

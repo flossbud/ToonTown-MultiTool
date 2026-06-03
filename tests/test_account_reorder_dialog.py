@@ -85,3 +85,64 @@ def test_modal_height_caps_for_many_accounts(qapp):
     # 16-account modal is not taller than a 6-row cap (capped), and is >= the 3-row one
     assert big._scroll.minimumHeight() >= small._scroll.minimumHeight()
     assert big._scroll.minimumHeight() <= 6 * 60 + 16
+
+
+from PySide6.QtCore import QPoint
+
+
+def test_drag_moves_account_to_target(qapp):
+    d = AccountReorderDialog(game="ttr", accounts=_accts(4))  # id0..id3
+    d._begin_drag(0, d.mapToGlobal(QPoint(0, 0)))
+    assert d._dragging is True
+    d._drag_to(2)
+    d._end_drag()
+    assert d.ordered_ids() == ["id1", "id2", "id0", "id3"]
+    assert d._dragging is False
+
+
+def test_drag_to_clamps_to_last(qapp):
+    d = AccountReorderDialog(game="ttr", accounts=_accts(3))
+    d._begin_drag(1, d.mapToGlobal(QPoint(0, 0)))
+    d._drag_to(99)        # clamps to last slot
+    d._end_drag()
+    assert d.ordered_ids() == ["id0", "id2", "id1"]
+
+
+def test_drag_cancel_restores_order(qapp):
+    d = AccountReorderDialog(game="ttr", accounts=_accts(3))
+    before = d.ordered_ids()
+    d._begin_drag(0, d.mapToGlobal(QPoint(0, 0)))
+    d._drag_to(2)
+    d._cancel_drag()
+    assert d.ordered_ids() == before
+    assert d._dragging is False
+
+
+def test_begin_drag_makes_ghost_and_hides_row_then_end_cleans_up(qapp):
+    d = AccountReorderDialog(game="ttr", accounts=_accts(3))
+    row = d._rows[0]
+    d._begin_drag(0, d.mapToGlobal(QPoint(0, 0)))
+    assert d._ghost is not None
+    assert row.isHidden()
+    assert d._placeholder is not None
+    d._end_drag()
+    assert d._ghost is None
+    assert d._placeholder is None
+    assert d._dragging is False
+
+
+def test_no_qdrag_plumbing_remains(qapp):
+    import utils.widgets.account_reorder_dialog as m
+    from utils.widgets.account_reorder_dialog import _ReorderRow
+    assert not hasattr(m, "_MIME")
+    # Verify no custom overrides remain (inherited Qt base methods are expected).
+    assert "dropEvent" not in _ReorderRow.__dict__
+    assert "dragEnterEvent" not in _ReorderRow.__dict__
+
+
+def test_drag_to_same_target_is_noop(qapp):
+    d = AccountReorderDialog(game="ttr", accounts=_accts(3))
+    d._begin_drag(1, d.mapToGlobal(QPoint(0, 0)))
+    d._drag_to(1)
+    d._end_drag()
+    assert d.ordered_ids() == ["id0", "id1", "id2"]
