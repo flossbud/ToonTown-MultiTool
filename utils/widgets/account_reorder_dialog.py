@@ -3,16 +3,18 @@ order model; drag a row by its handle, or use the per-row up/down arrows. Both
 funnel through _move(src, dst). The caller reads ordered_ids() on Accepted."""
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import QPoint, QPropertyAnimation, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QDialog, QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea,
     QToolButton, QVBoxLayout, QWidget,
 )
 
+import utils.motion as motion
 from utils.theme_manager import get_theme_colors
 
 _ACCENT = {"ttr": "#4A8FE7", "cc": "#F26D21"}
 _GAME_NAMES = {"ttr": "Toontown Rewritten", "cc": "Corporate Clash"}
+SWAP_DURATION_MS = 160
 
 
 class _ReorderRow(QFrame):
@@ -113,6 +115,7 @@ class AccountReorderDialog(QDialog):
         self._autoscroll = QTimer(self)
         self._autoscroll.setInterval(15)
         self._autoscroll.timeout.connect(self._do_autoscroll)
+        self._swap_anims: list[QPropertyAnimation] = []
         self.setModal(True)
         self.setWindowTitle(f"Reorder {_GAME_NAMES[game]} accounts")
         self.setMinimumWidth(440)
@@ -174,20 +177,72 @@ class AccountReorderDialog(QDialog):
     def ordered_ids(self) -> list[str]:
         return [a["id"] for a in self._order]
 
-    def _move(self, src: int, dst: int) -> None:
+    def _move(self, src: int, dst: int, animate: bool = False) -> None:
         n = len(self._order)
         if not (0 <= src < n) or not (0 <= dst < n) or src == dst:
             return
+        # Stop any in-flight swap animations BEFORE _rebuild deletes their rows
+        # (prevents dangling-widget animations on rapid clicks).
+        self._finalize_swap_anims()
+        # Capture settled Y of each current row, keyed by account id (rows and
+        # _order are parallel).
+        old_y = {a["id"]: self._rows[i].y() for i, a in enumerate(self._order)}
         item = self._order.pop(src)
         self._order.insert(dst, item)
         self._rebuild()
+        if animate and not motion.is_reduced():
+            self._animate_swap(old_y)
         self.order_changed.emit()
 
     def _move_up(self, i: int) -> None:
-        self._move(i, i - 1)
+        self._move(i, i - 1, animate=True)
 
     def _move_down(self, i: int) -> None:
-        self._move(i, i + 1)
+        self._move(i, i + 1, animate=True)
+
+    def _animate_swap(self, old_y: dict) -> None:
+        # Slide every row whose position changed from its old Y to its new (final)
+        # Y. For a one-step arrow swap that is exactly the two swapped rows, so
+        # both glide past each other.
+        # Deliberate truncation: a 0 scale (reduced-motion / tests) floors to 0
+        # and takes the instant path. Unlike motion.py's max(1, int(...)) helpers,
+        # we WANT duration 0 to mean "no animation" here, so don't clamp it up.
+        duration = int(SWAP_DURATION_MS * motion._TEST_DURATION_SCALE)
+        if duration <= 0:
+            return  # test/instant path
+        # _rebuild() adds the new rows but their parent hasn't shown/polished
+        # them yet, so the layout assigns them no geometry (y() == 0). Show them
+        # and activate the layout to settle final positions synchronously (no
+        # event-loop re-entrancy), so we animate only the rows that moved.
+        for row in self._rows:
+            row.setVisible(True)
+        self._rows_lay.activate()
+        for i, acct in enumerate(self._order):
+            row = self._rows[i]
+            prev = old_y.get(acct["id"])
+            if prev is None or prev == row.y():
+                continue
+            end = row.pos()
+            anim = QPropertyAnimation(row, b"pos")
+            anim.setDuration(duration)
+            anim.setEasingCurve(motion.EASE_STANDARD)
+            anim.setStartValue(QPoint(row.x(), prev))
+            anim.setEndValue(end)
+            anim.finished.connect(lambda r=row, e=end: r.move(e))  # snap to exact end
+            self._swap_anims.append(anim)
+            anim.start()
+
+    def _finalize_swap_anims(self) -> None:
+        # Jump each in-flight animation to its end before stopping so the row
+        # lands at its settled position (stop() alone strands it mid-glide and
+        # poisons the next move's old_y capture / final-position diff).
+        for anim in self._swap_anims:
+            end = anim.endValue()
+            tgt = anim.targetObject()
+            anim.stop()
+            if end is not None and tgt is not None:
+                tgt.move(end)
+        self._swap_anims = []
 
     # ── manual live-reflow drag ───────────────────────────────────────────
     def _begin_drag(self, index: int, global_pos) -> None:
@@ -265,6 +320,7 @@ class AccountReorderDialog(QDialog):
         self._rebuild()  # _order untouched -> restores the pre-drag list
 
     def _teardown_drag(self) -> None:
+        self._finalize_swap_anims()
         if self._autoscroll.isActive():
             self._autoscroll.stop()
         self._autoscroll_dir = 0

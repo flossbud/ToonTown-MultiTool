@@ -1,6 +1,8 @@
 import pytest
 from PySide6.QtCore import QPoint
 from PySide6.QtWidgets import QApplication
+
+import utils.motion as motion
 from utils.widgets.account_reorder_dialog import AccountReorderDialog
 
 
@@ -162,3 +164,57 @@ def test_target_index_for_y_maps_and_clamps(qapp):
     just_past_first = int(others[0].y() + others[0].height() / 2 + 1)
     assert d._target_index_for_y(just_past_first) == 1           # past 1st other's midpoint
     d._cancel_drag()
+
+
+def _force_motion_on(monkeypatch):
+    monkeypatch.setattr(motion, "is_reduced", lambda: False)
+    monkeypatch.setattr(motion, "_TEST_DURATION_SCALE", 1.0)
+
+
+def test_arrow_move_animates_two_changed_rows(qapp, monkeypatch):
+    _force_motion_on(monkeypatch)
+    d = AccountReorderDialog(game="ttr", accounts=_accts(4))
+    d.resize(460, 460); d.show(); QApplication.processEvents()
+    d._move_down(0)                       # swap rows 0 and 1
+    assert d.ordered_ids() == ["id1", "id0", "id2", "id3"]
+    assert len(d._swap_anims) == 2        # exactly the two swapped rows animate
+
+
+def test_reduced_motion_no_animation(qapp, monkeypatch):
+    monkeypatch.setattr(motion, "is_reduced", lambda: True)
+    d = AccountReorderDialog(game="ttr", accounts=_accts(3))
+    d.resize(460, 460); d.show(); QApplication.processEvents()
+    d._move_down(0)
+    assert d.ordered_ids() == ["id1", "id0", "id2"]   # model still correct
+    assert d._swap_anims == []                          # no animation
+
+
+def test_zero_duration_scale_no_animation(qapp, monkeypatch):
+    monkeypatch.setattr(motion, "is_reduced", lambda: False)
+    monkeypatch.setattr(motion, "_TEST_DURATION_SCALE", 0.0)
+    d = AccountReorderDialog(game="ttr", accounts=_accts(3))
+    d.resize(460, 460); d.show(); QApplication.processEvents()
+    d._move_down(0)
+    assert d._swap_anims == []
+
+
+def test_rapid_moves_finalize_prior_anims(qapp, monkeypatch):
+    _force_motion_on(monkeypatch)
+    d = AccountReorderDialog(game="ttr", accounts=_accts(4))
+    d.resize(460, 460); d.show(); QApplication.processEvents()
+    d._move_down(0)
+    first = list(d._swap_anims)
+    d._move_down(1)                       # second move before the first finishes
+    assert all(a not in d._swap_anims for a in first)  # prior anims finalized
+    assert len(d._swap_anims) <= 2
+
+
+def test_drag_commit_does_not_animate(qapp, monkeypatch):
+    _force_motion_on(monkeypatch)
+    d = AccountReorderDialog(game="ttr", accounts=_accts(3))
+    d.resize(460, 460); d.show(); QApplication.processEvents()
+    d._begin_drag(0, d.mapToGlobal(QPoint(0, 0)))
+    d._drag_to(2)
+    d._end_drag()
+    assert d.ordered_ids() == ["id1", "id2", "id0"]
+    assert d._swap_anims == []            # drag commit path is instant
