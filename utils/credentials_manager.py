@@ -920,16 +920,19 @@ class CredentialsManager:
         list reordering - no keyring/password/token access. Returns False (no
         change) on any id-set mismatch.
         """
-        game_ids = [a["id"] for a in self._accounts if a.get("game", "ttr") == game]
+        game_ids = [a["id"] for a in self._accounts
+                    if a.get("game", "ttr") == game and a.get("id")]
         if len(ordered_ids) != len(set(ordered_ids)):
             return False  # duplicate id
         if set(ordered_ids) != set(game_ids):
             return False  # missing / extra / foreign id
-        by_id = {a["id"]: a for a in self._accounts}
+        by_id = {a["id"]: a for a in self._accounts if a.get("id")}
         new_game_entries = iter(by_id[i] for i in ordered_ids)
         rebuilt = []
         for a in self._accounts:
-            if a.get("game", "ttr") == game:
+            # Only real, id-bearing entries of this game are reorderable; an
+            # id-less legacy entry stays put (treated like an other-game entry).
+            if a.get("game", "ttr") == game and a.get("id"):
                 rebuilt.append(next(new_game_entries))
             else:
                 rebuilt.append(a)

@@ -47,3 +47,20 @@ def test_reorder_persists_and_emits(cm, monkeypatch):
     monkeypatch.setattr(cm, "_emit_change", lambda: emitted.append(1))
     assert cm.reorder_game("ttr", [ids[1], ids[0]]) is True
     assert saved == [1] and emitted == [1]
+
+
+def test_reorder_same_order_is_noop_returns_true(cm):
+    cm.add_account(label="T0", username="u0", password="", game="ttr")
+    cm.add_account(label="T1", username="u1", password="", game="ttr")
+    ids = _ids(cm, "ttr")
+    assert cm.reorder_game("ttr", list(ids)) is True  # identical order: accepted no-op
+    assert _ids(cm, "ttr") == ids
+
+
+def test_reorder_skips_legacy_entry_without_id(cm):
+    cm.add_account(label="T0", username="u0", password="", game="ttr")
+    cm.add_account(label="T1", username="u1", password="", game="ttr")
+    ids = _ids(cm, "ttr")
+    cm._accounts.append({"label": "legacy", "username": "x", "game": "ttr"})  # no "id"
+    # reorder of the real two must not KeyError on the id-less legacy entry.
+    assert cm.reorder_game("ttr", [ids[1], ids[0]]) is True
