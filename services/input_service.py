@@ -1104,6 +1104,7 @@ class InputService(QObject):
                                     self._chat_last_activity = now
                                 else:
                                     self._send_backspace_to_background(enabled, assignments)
+                                    self._send_backspace_to_focused()
 
                         elif key == "Return":
                             if key not in self.bg_typing_held:
@@ -1225,6 +1226,7 @@ class InputService(QObject):
                         if now - bs_last_repeat >= self.BACKSPACE_REPEAT_INTERVAL:
                             bs_last_repeat = now
                             self._send_backspace_to_background(enabled, assignments)
+                            self._send_backspace_to_focused()
 
                 time.sleep(0.005)
         finally:
