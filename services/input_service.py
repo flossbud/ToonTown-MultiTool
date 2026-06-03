@@ -306,6 +306,10 @@ class InputService(QObject):
         # tests, async in production) completion callback observes the right
         # value. Default: not a TTR strict focus.
         self._intended_ttr_strict = False
+        # Any focus change releases held focused-passthrough keys to the window
+        # they were sent to, so a modifier/char is never left down on the old
+        # focused toon when focus moves.
+        self._drain_focused_passthrough()
         if self._key_grabber is None:
             return
         if not window_id:
@@ -639,6 +643,7 @@ class InputService(QObject):
             wine_input_bridge.shutdown_all()
         except Exception as e:
             print(f"[InputService] wine_input_bridge shutdown error: {e}")
+        self._drain_focused_passthrough()
         if self._xlib:
             self._xlib.disconnect()
             self._xlib = None
@@ -984,6 +989,7 @@ class InputService(QObject):
                         assignments = self._get_assignments(enabled)
                         self._drain_all_held(enabled, assignments)
                     self.bg_typing_held.clear()
+                    self._drain_focused_passthrough()
                     pending_keyups.clear()
                     self._phantom_reset()
                     if self.global_chat_active:
@@ -1049,6 +1055,18 @@ class InputService(QObject):
                         )
                         if is_modifier:
                             is_movement = False
+
+                        # Focused-toon passthrough: deliver every key to the
+                        # focused TTR window via the reliable pynput path, EXCEPT
+                        # (a) the movement-as-movement case _send_logical_action_km
+                        # already delivers, and (b) BackSpace (handled as key-taps
+                        # with repeat in its own branch). Verbatim; gated inside
+                        # the helper so it no-ops when strict is off.
+                        if key != "BackSpace" and not (
+                            is_movement and not self.global_chat_active
+                            and not self._phantom_active
+                        ):
+                            self._send_passthrough_to_focused(key)
 
                         if is_modifier:
                             if self.holds.acquire(key, HoldKind.MODIFIER, now):
@@ -1190,6 +1208,7 @@ class InputService(QObject):
                                              f"-> {'DROP(held)' if _phys is True else 'dispatch'}")
                         if _phys is True:
                             continue
+                        self._release_focused_passthrough(stale_key)
                         if self._dispatch_keyup(stale_key, enabled, assignments):
                             bs_press_time  = None
                             bs_last_repeat = 0.0
@@ -1526,6 +1545,7 @@ class InputService(QObject):
         self.chat_active.clear()
         self._set_chat_active(False)
         self._phantom_reset()
+        self._drain_focused_passthrough()
 
     def send_keep_alive_to_window(self, win_id, key, modifiers=None):
         """Send a single keep-alive keypress to a specific window."""

@@ -1,0 +1,109 @@
+"""Wiring tests: the run loop delivers non-movement keys to the focused toon
+(skipping movement-as-movement), releases them on keyup, and drains on focus
+loss / shutdown."""
+import queue
+import time
+from unittest.mock import MagicMock
+
+import pytest
+
+from services.input_service import InputService
+
+
+class _WM:
+    def __init__(self, active="100", ids=("100", "200")):
+        self._active = active
+        self._ids = list(ids)
+    def get_active_window(self):
+        return self._active
+    def get_window_ids(self):
+        return list(self._ids)
+    def assign_windows(self):
+        pass
+
+
+def _make_svc(monkeypatch, keymap_manager=None):
+    reg = MagicMock()
+    reg.get_game_for_window.side_effect = lambda wid: "ttr"
+    monkeypatch.setattr("utils.game_registry.GameRegistry.instance", lambda: reg)
+    q = queue.Queue()
+    svc = InputService(
+        window_manager=_WM(),
+        get_enabled_toons=lambda: [True, True],
+        get_movement_modes=lambda: ["both", "both"],
+        get_event_queue_func=lambda: q,
+        settings_manager=MagicMock(get=lambda *a, **k: None),
+        get_keymap_assignments=lambda: [0, 0],
+        keymap_manager=keymap_manager,
+    )
+    svc._strict_ttr_active = lambda: True
+    svc._send_via_backend = MagicMock()
+    return svc, q
+
+
+def _wait(cond, timeout=1.5):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if cond():
+            return True
+        time.sleep(0.005)
+    return cond()
+
+
+def _calls(svc):
+    return [c.args for c in svc._send_via_backend.call_args_list]
+
+
+def test_runloop_nonmovement_key_delivered_to_focused(monkeypatch):
+    svc, q = _make_svc(monkeypatch)
+    try:
+        svc.start()
+        # Put event AFTER start() so the startup seed drain cannot race with it.
+        q.put(("keydown", "Return"))
+        assert _wait(lambda: ("keydown", "100", "Return") in _calls(svc))
+        assert "Return" in svc._focused_passthrough_sent
+    finally:
+        svc.shutdown()
+
+
+def test_runloop_movement_key_not_via_passthrough(monkeypatch):
+    # keymap_manager=None so _movement_keys() falls back to MOVEMENT_KEYS
+    # which contains 'w'; the movement branch fires, not the passthrough path.
+    svc, q = _make_svc(monkeypatch, keymap_manager=None)
+    try:
+        svc.start()
+        q.put(("keydown", "w"))
+        # Wait long enough for the run loop to process the event.
+        time.sleep(0.1)
+        assert ("keydown", "100", "w") not in _calls(svc)
+        assert "w" not in svc._focused_passthrough_sent
+    finally:
+        svc.shutdown()
+
+
+def test_runloop_keyup_releases_focused(monkeypatch):
+    svc, q = _make_svc(monkeypatch)
+    try:
+        svc.start()
+        q.put(("keydown", "Return"))
+        assert _wait(lambda: "Return" in svc._focused_passthrough_sent)
+        q.put(("keyup", "Return"))
+        assert _wait(lambda: ("keyup", "100", "Return") in _calls(svc))
+        assert _wait(lambda: "Return" not in svc._focused_passthrough_sent)
+    finally:
+        svc.shutdown()
+
+
+def test_runloop_cleanup_branch_drains_focused(monkeypatch):
+    svc, q = _make_svc(monkeypatch)
+    try:
+        svc.start()
+        q.put(("keydown", "Shift_L"))
+        assert _wait(lambda: "Shift_L" in svc._focused_passthrough_sent)
+        # Focus loss: point active window at an unrelated hwnd so
+        # should_send_input() is False and the cleanup branch fires.
+        svc.window_manager._active = "999999"
+        assert _wait(lambda: ("keyup", "100", "Shift_L") in _calls(svc))
+        assert _wait(lambda: svc._focused_passthrough_sent == {})
+    finally:
+        svc.shutdown()
