@@ -30,8 +30,11 @@ def _tab(qapp):
 
 def test_live_launcher_takes_precedence_running(qapp):
     tab = _tab(qapp)
+    # Both a live launcher AND an active loading_timer set: the launcher branch
+    # must win (RUNNING), proving its precedence over the timer branch.
     slot = AccountSlot(account_id="a", state=LoginState.IDLE,
-                       launcher=SimpleNamespace(is_running=lambda: True))
+                       launcher=SimpleNamespace(is_running=lambda: True),
+                       loading_timer=object())
     assert tab._effective_state("ttr", slot) == (LoginState.RUNNING, "Game running", "")
 
 
@@ -78,3 +81,13 @@ def test_loading_remove_is_safe_when_absent(qapp):
     tab._loading_remove("ttr", "missing")  # no error
     tab._loading_remove("ttr", "a")
     assert tab._loading["ttr"] == []
+
+
+def test_loading_remove_preserves_remaining_order(qapp):
+    tab = _tab(qapp)
+    for aid in ("a", "b", "c"):
+        tab._loading_add("ttr", aid)
+    tab._loading_remove("ttr", "a")          # remove from the front (FIFO head)
+    assert tab._loading["ttr"] == ["b", "c"]  # order of the rest preserved
+    tab._loading_remove("ttr", "c")          # remove from the tail
+    assert tab._loading["ttr"] == ["b"]
