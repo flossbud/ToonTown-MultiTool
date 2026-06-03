@@ -1311,21 +1311,34 @@ class InputService(QObject):
         Callers MUST drain held movement (with _strict_drain_active set) before
         invoking with capturing=True, so no toon is left walking.
         No-op without a grabber or where TTR strict is unsupported."""
-        if (self._key_grabber is None
-                or not self._ttr_strict_supported()
-                or not self._intended_ttr_strict):
+        if self._key_grabber is None or not self._ttr_strict_supported():
             if _ITRACE:
                 _itrace("chat", f"resync capturing={capturing} GATED "
                                 f"(grabber={self._key_grabber is not None} "
-                                f"supported={self._ttr_strict_supported()} "
-                                f"intended_strict={self._intended_ttr_strict})")
+                                f"supported={self._ttr_strict_supported()})")
             return
         try:
             if capturing:
+                # Tear down only a grab we actually intend. _intended_ttr_strict
+                # is the focus handler's live verdict for the current focus; if
+                # it is False there is no TTR-strict grab to remove.
+                if not self._intended_ttr_strict:
+                    if _ITRACE:
+                        _itrace("chat", "resync capture-on skipped (not intended strict)")
+                    return
                 if _ITRACE:
                     _itrace("chat", "resync -> uninstall_grabs (capture on)")
                 self._key_grabber.uninstall_grabs()
             else:
+                # Reinstall (chat/phantom capture ending): re-derive grabs from
+                # the CURRENT focus. Do NOT gate on _intended_ttr_strict -- it
+                # may be stale (a focus-handler early return during capture
+                # clobbers it to False), which would wrongly block the reinstall
+                # and leave the background toon's movement suppressed until a
+                # service refresh. _on_active_window_changed_for_grabber is
+                # self-gating: it installs route_all for a TTR-strict focus,
+                # uninstalls for CC/non-game/empty focus, and no-ops without a
+                # grabber -- so re-seeding is always safe.
                 seed = self.window_manager.get_active_window()
                 if _ITRACE:
                     _itrace("chat", f"resync -> reinstall via focus seed={seed}")
