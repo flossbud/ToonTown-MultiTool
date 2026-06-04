@@ -88,6 +88,11 @@ class MovementKeyGrabber:
     from any thread (typically Qt main thread from the active_window
     signal slot)."""
 
+    # The X11 active grab redirects ALL keyboard events to the grabbing client,
+    # so the focused window's non-movement keys must be re-delivered. See
+    # InputService._focused_ttr_window. Contrast Win32 (non-exclusive hook).
+    needs_focused_passthrough = True
+
     def __init__(self):
         self._display = None
         self._root = None

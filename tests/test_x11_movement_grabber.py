@@ -1057,3 +1057,12 @@ def test_route_all_uninstall_ungrabs_keyboard(fake_display):
         assert g._keyboard_grabbed is False
     finally:
         g.stop()
+
+
+def test_needs_focused_passthrough_is_true():
+    # X11's active grab redirects ALL keyboard events to the grabbing client, so
+    # the focused window's non-movement keys must be re-sent (focused-passthrough
+    # stays ON for X11). This capability flag is how InputService branches
+    # without checking sys.platform.
+    from utils.x11_movement_grabber import MovementKeyGrabber
+    assert MovementKeyGrabber.needs_focused_passthrough is True
