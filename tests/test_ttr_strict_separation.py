@@ -707,6 +707,47 @@ def test_movement_keys_no_keymap_manager_legacy(monkeypatch, tmp_path):
     assert svc._movement_keys() == MOVEMENT_KEYS
 
 
+class _FakeGrabberCap:
+    def __init__(self, needs_focused_passthrough):
+        self.needs_focused_passthrough = needs_focused_passthrough
+
+
+def _make_focused_ttr_service(monkeypatch, tmp_path, needs_passthrough):
+    svc, _ = _make_service(
+        monkeypatch, tmp_path, active_wid="ttr-1",
+        windows=["ttr-1"], games={"ttr-1": "ttr"},
+        assignments=[0], settings={STRICT_TTR_SEPARATION: True},
+    )
+    svc._key_grabber = _FakeGrabberCap(needs_passthrough)
+    svc._ttr_grabs_active = True        # strict active
+    svc._xlib = object()                # backend present
+    svc._xlib_backend_failed = False
+    return svc
+
+
+def test_focused_ttr_window_none_when_grabber_skips_passthrough(monkeypatch, tmp_path):
+    # Windows grabber: needs_focused_passthrough False -> focused-passthrough OFF.
+    svc = _make_focused_ttr_service(monkeypatch, tmp_path, needs_passthrough=False)
+    assert svc._strict_ttr_active() is True          # strict really is active
+    assert svc._focused_ttr_window() is None          # but passthrough is disabled
+
+
+def test_focused_ttr_window_set_when_grabber_needs_passthrough(monkeypatch, tmp_path):
+    # X11 grabber: needs_focused_passthrough True -> focused-passthrough ON.
+    svc = _make_focused_ttr_service(monkeypatch, tmp_path, needs_passthrough=True)
+    assert svc._focused_ttr_window() == "ttr-1"
+
+
+def test_send_passthrough_to_focused_noop_on_windows_grabber(monkeypatch, tmp_path):
+    svc = _make_focused_ttr_service(monkeypatch, tmp_path, needs_passthrough=False)
+    sends = []
+    svc._send_via_backend = lambda action, win, keysym, modifiers=None: sends.append(
+        (action, str(win), keysym)
+    )
+    svc._send_passthrough_to_focused("Return")
+    assert sends == []   # no double-delivery; Return reaches the window natively
+
+
 def test_escape_closes_chat_through_run_loop_ttr(monkeypatch, tmp_path):
     """End-to-end run-loop regression for the chat-close bug. With chat open
     and a TTR window focused, an Escape keydown must reach the `elif key ==

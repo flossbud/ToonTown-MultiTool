@@ -489,6 +489,15 @@ class InputService(QObject):
         try:
             if not self._strict_ttr_active():
                 return None
+            # Focused-passthrough exists only because the X11 active grab steals
+            # ALL keyboard events. A grabber that does not redirect everything
+            # (the Win32 non-exclusive hook) lets non-movement keys reach the
+            # focused window natively; re-sending them would double them.
+            grabber = self._key_grabber
+            if grabber is not None and not getattr(
+                grabber, "needs_focused_passthrough", True
+            ):
+                return None
             active = self.window_manager.get_active_window()
             if not active:
                 return None
