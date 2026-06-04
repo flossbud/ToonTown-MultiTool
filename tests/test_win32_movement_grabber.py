@@ -161,3 +161,86 @@ class TestModuleHelpers:
         assert wmg.win32_grabber_available() is True
         monkeypatch.setattr(sys, "platform", "linux")
         assert wmg.win32_grabber_available() is False
+
+
+class TestRouteAll:
+    def test_route_all_grabs_both_keysets(self, monkeypatch):
+        monkeypatch.setattr(sys, "platform", "win32")
+        g = wmg.Win32MovementKeyGrabber()
+        g.prepare(_always_consume)
+        g.install_grabs("wasd", route_all=True)
+        for k in ("w", "a", "s", "d", "Up", "Down", "Left", "Right"):
+            assert g.should_suppress(k) is True, k
+
+    def test_route_all_ignores_canonical_for_grab_set(self, monkeypatch):
+        monkeypatch.setattr(sys, "platform", "win32")
+        g = wmg.Win32MovementKeyGrabber()
+        g.prepare(_always_consume)
+        g.install_grabs("arrows", route_all=True)
+        for k in ("w", "a", "s", "d", "Up", "Down", "Left", "Right"):
+            assert g.should_suppress(k) is True, k
+
+    def test_route_all_false_keeps_opposite_only(self, monkeypatch):
+        monkeypatch.setattr(sys, "platform", "win32")
+        g = wmg.Win32MovementKeyGrabber()
+        g.prepare(_always_consume)
+        g.install_grabs("wasd")  # route_all defaults False
+        assert g.should_suppress("Up") is True
+        assert g.should_suppress("w") is False
+
+
+class TestOnGrabsChanged:
+    def test_install_route_all_notifies_canonical(self, monkeypatch):
+        monkeypatch.setattr(sys, "platform", "win32")
+        seen = []
+        g = wmg.Win32MovementKeyGrabber()
+        g.prepare(_always_consume, on_grabs_changed=seen.append)
+        g.install_grabs("wasd", route_all=True)
+        assert seen == ["wasd"]
+
+    def test_install_unknown_canonical_notifies_none(self, monkeypatch):
+        monkeypatch.setattr(sys, "platform", "win32")
+        seen = []
+        g = wmg.Win32MovementKeyGrabber()
+        g.prepare(_always_consume, on_grabs_changed=seen.append)
+        g.install_grabs("xyz")  # opposite_keys -> () -> empty
+        assert seen == [None]
+
+    def test_uninstall_notifies_none(self, monkeypatch):
+        monkeypatch.setattr(sys, "platform", "win32")
+        seen = []
+        g = wmg.Win32MovementKeyGrabber()
+        g.prepare(_always_consume, on_grabs_changed=seen.append)
+        g.install_grabs("wasd", route_all=True)
+        seen.clear()
+        g.uninstall_grabs()
+        assert seen == [None]
+
+    def test_callback_exception_is_shielded(self, monkeypatch):
+        monkeypatch.setattr(sys, "platform", "win32")
+
+        def boom(_canonical):
+            raise RuntimeError("callback blew up")
+
+        g = wmg.Win32MovementKeyGrabber()
+        g.prepare(_always_consume, on_grabs_changed=boom)
+        g.install_grabs("wasd", route_all=True)
+        g.uninstall_grabs()
+        assert g.should_suppress("Up") is False
+
+    def test_prepare_without_callback_still_works(self, monkeypatch):
+        monkeypatch.setattr(sys, "platform", "win32")
+        g = wmg.Win32MovementKeyGrabber()
+        assert g.prepare(_always_consume) is True
+        g.install_grabs("wasd", route_all=True)
+        assert g.should_suppress("Up") is True
+
+
+class TestCapabilityFlag:
+    def test_needs_focused_passthrough_is_false(self):
+        assert wmg.Win32MovementKeyGrabber.needs_focused_passthrough is False
+
+
+class TestBothKeysetsHelper:
+    def test_both_keysets(self):
+        assert wmg._both_keysets() == ("w", "a", "s", "d", "Up", "Down", "Left", "Right")
