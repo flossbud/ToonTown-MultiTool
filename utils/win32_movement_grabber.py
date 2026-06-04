@@ -76,7 +76,9 @@ class Win32MovementKeyGrabber:
         movement key is suppressed and the router re-synthesizes the correct
         native key. route_all=False (CC, default): suppress only the opposite
         keyset. passthrough_keysyms is accepted for parity but ignored (the
-        non-exclusive hook needs no passthrough list)."""
+        non-exclusive hook needs no passthrough list). Fires
+        on_grabs_changed(canonical_set) synchronously after updating the grab
+        set, or on_grabs_changed(None) if the resulting grab set is empty."""
         keys = _both_keysets() if route_all else _opposite_keys(canonical_set)
         self._grabbed_keysyms = frozenset(keys) if keys else None
         # Report the focused canonical only when a real grab set is installed, so
@@ -94,11 +96,12 @@ class Win32MovementKeyGrabber:
             return
         try:
             cb(canonical)
-        except Exception:
+        except Exception as e:  # noqa: BLE001
             # A callback error must never unwind the focus-change / settings-
             # change path that drives install/uninstall (mirrors the X11 grabber,
-            # which shields its on_grabs_changed call too).
-            pass
+            # which shields its on_grabs_changed call too). Log for diagnostics
+            # rather than swallowing silently.
+            print(f"[win32_movement_grabber] on_grabs_changed raised: {e}")
 
     def should_suppress(self, keysym: str) -> bool:
         if self._grabbed_keysyms is None:

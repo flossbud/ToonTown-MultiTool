@@ -206,6 +206,15 @@ class TestOnGrabsChanged:
         g.install_grabs("xyz")  # opposite_keys -> () -> empty
         assert seen == [None]
 
+    def test_install_opposite_only_notifies_canonical(self, monkeypatch):
+        # The CC (route_all=False) path with a known canonical also reports it.
+        monkeypatch.setattr(sys, "platform", "win32")
+        seen = []
+        g = wmg.Win32MovementKeyGrabber()
+        g.prepare(_always_consume, on_grabs_changed=seen.append)
+        g.install_grabs("wasd")  # route_all defaults False
+        assert seen == ["wasd"]
+
     def test_uninstall_notifies_none(self, monkeypatch):
         monkeypatch.setattr(sys, "platform", "win32")
         seen = []
@@ -214,6 +223,16 @@ class TestOnGrabsChanged:
         g.install_grabs("wasd", route_all=True)
         seen.clear()
         g.uninstall_grabs()
+        assert seen == [None]
+
+    def test_stop_fires_callback_with_none(self, monkeypatch):
+        monkeypatch.setattr(sys, "platform", "win32")
+        seen = []
+        g = wmg.Win32MovementKeyGrabber()
+        g.prepare(_always_consume, on_grabs_changed=seen.append)
+        g.install_grabs("wasd", route_all=True)
+        seen.clear()
+        g.stop()
         assert seen == [None]
 
     def test_callback_exception_is_shielded(self, monkeypatch):
