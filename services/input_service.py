@@ -334,8 +334,8 @@ class InputService(QObject):
             game = GameRegistry.instance().get_game_for_window(str(window_id))
         except Exception:
             game = None
-        # TTR strict separation is Linux/X11 only in v1 (Windows is a documented
-        # follow-on); on Windows TTR keeps pre-feature behavior.
+        # TTR strict separation is supported on Linux/X11 and Windows; macOS and
+        # other platforms keep pre-feature behavior (_ttr_strict_supported).
         if game == "ttr" and not (self._strict_ttr_enabled() and self._ttr_strict_supported()):
             if _ITRACE:
                 _itrace("focus", f"win={window_id} game=ttr strict-unsupported uninstall "
@@ -374,7 +374,8 @@ class InputService(QObject):
         # (CC has its own always-on routing and must not flip the TTR gate).
         self._intended_ttr_strict = (game == "ttr")
         if game == "ttr":
-            # X11-only (gated above); route both keysets, suppress native.
+            # Linux (X11 passive grab) and Windows (Win32 LL hook), gated above:
+            # route both keysets, suppress native delivery.
             if self.global_chat_active or self._phantom_active:
                 # Input capture (chat/whisper) is active: keep grabs OFF so
                 # keystrokes land natively in the focused TTR window. Intent
@@ -753,9 +754,12 @@ class InputService(QObject):
         existence. When grabs are not installed, strict separation degrades to
         today's unconditional focused-window skip.
 
-        v1 is Linux/X11 only (`_ttr_strict_supported`); on Windows this is always
-        False so TTR keeps pre-feature behavior. The `_key_grabber is not None`
-        check is a safety net against a stale flag after teardown."""
+        Supported on Linux/X11 and Windows (`_ttr_strict_supported`); other
+        platforms keep pre-feature behavior. Also requires a usable delivery
+        backend (`_delivery_backend_ready`) so suppression never outlives the
+        ability to re-synthesize (which would freeze the focused toon). The
+        `_key_grabber is not None` check is a safety net against a stale flag
+        after teardown."""
         return (
             self._strict_ttr_enabled()
             and self._ttr_strict_supported()
