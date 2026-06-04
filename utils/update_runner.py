@@ -37,6 +37,29 @@ def flatpak_app_id() -> str:
     return _FLATPAK_APP_ID
 
 
+def flatpak_install_scope(info_path: str = "/.flatpak-info") -> str:
+    """Return the `flatpak install` scope flag ('--system' or '--user') matching
+    where THIS Flatpak is deployed, so a reinstall replaces it instead of
+    creating a duplicate in the other scope.
+
+    Detected from the deploy path in /.flatpak-info: user installs live under
+    ~/.local/share/flatpak, system installs under /var/lib/flatpak. Defaults to
+    '--system' (flatpak's own default, and the GitHub-bundle common case) when
+    undeterminable.
+    """
+    try:
+        import configparser
+        cp = configparser.ConfigParser()
+        cp.read(info_path)
+        app_path = (cp.get("Instance", "app-path", fallback="")
+                    or cp.get("Instance", "original-app-path", fallback=""))
+        if "/.local/share/flatpak/" in app_path:
+            return "--user"
+    except Exception:  # noqa: BLE001
+        pass
+    return "--system"
+
+
 def aur_package_name(*, is_beta: bool) -> str:
     """Return the AUR package name for the given channel."""
     return "ttmt-beta" if is_beta else "ttmt"
@@ -121,12 +144,31 @@ class UpdateRunner(QObject):
         )
 
     def _handle_flatpak(self, info: dict) -> None:
-        # Keep the payload raw. run_in_terminal host-launches the terminal
-        # itself when sandboxed, wrapping the whole terminal argv in
-        # flatpak-spawn --host once. Pre-wrapping the payload here would make
-        # the host terminal try to run `flatpak-spawn --host ...`, which fails
-        # because flatpak-spawn only works from inside a sandbox.
-        cmd = ["flatpak", "update", "-y", _FLATPAK_APP_ID]
+        # The Flatpak ships as a standalone .flatpak BUNDLE (no Flathub/repo), so
+        # the install has no live remote and `flatpak update` silently no-ops.
+        # Download the new bundle from the release and reinstall it, the same way
+        # the .deb/.exe handlers download-and-install their assets.
+        asset = pick_asset(info.get("assets", []), suffix=".flatpak")
+        if asset is None:
+            self._open_release_with_toast(info, "Couldn't find the Flatpak bundle")
+            return
+        # Stage where a host-spawned `flatpak install` can read it: the sandbox's
+        # /tmp is private to the sandbox, but host_visible_cache_dir is a real
+        # host path (under ~/.var/app/<id>/cache, shared via --filesystem=home).
+        from utils.host_spawn import in_flatpak, host_visible_cache_dir
+        out_dir = host_visible_cache_dir("update") if in_flatpak() else None
+        path = self._download_asset(asset, out_dir=out_dir)
+        if path is None:
+            self.failed.emit("Failed to download the Flatpak bundle")
+            return
+        # --reinstall forces replacing the existing install with the bundle's new
+        # commit even though the ref name (…/master) is unchanged. The explicit
+        # scope flag targets the SAME installation this app runs from, so a
+        # per-user install isn't shadowed by a duplicate system copy. Runs in a
+        # terminal so the polkit prompt for a system install stays visible. Keep
+        # the payload raw: run_in_terminal applies the flatpak-spawn --host wrap
+        # once around the whole terminal argv (pre-wrapping here would double it).
+        cmd = ["flatpak", "install", flatpak_install_scope(), "--reinstall", "-y", path]
         self._spawn_terminal_or_fallback(cmd, info)
 
     def _handle_aur(self, info: dict) -> None:
@@ -198,7 +240,7 @@ class UpdateRunner(QObject):
 
     # ── Helpers ──────────────────────────────────────────────────────────
 
-    def _download_asset(self, asset: dict) -> Optional[str]:
+    def _download_asset(self, asset: dict, out_dir: Optional[str] = None) -> Optional[str]:
         import requests
         url = asset.get("browser_download_url")
         raw_name = asset.get("name", "download") or "download"
@@ -206,7 +248,10 @@ class UpdateRunner(QObject):
         expected_size = int(asset.get("size", 0))
         if not url:
             return None
-        out_dir = tempfile.gettempdir()
+        # Default to the system temp dir; callers that need a host-visible path
+        # (the Flatpak handler, whose downloaded bundle is installed by a host
+        # process) pass an explicit out_dir.
+        out_dir = out_dir or tempfile.gettempdir()
         out_path = os.path.join(out_dir, name)
         try:
             # `(connect_timeout, read_timeout)`: 15s to establish, 120s
@@ -276,6 +321,20 @@ class UpdateRunner(QObject):
         self.failed.emit(f"{msg} - opening release page.")
 
     def _restart_app(self) -> None:
+        from utils.host_spawn import in_flatpak
+        if in_flatpak():
+            # The bundle reinstall replaced the deployed app on disk, but THIS
+            # sandbox still has the old files mounted, so os.execv would just
+            # re-run the old code. Launch a fresh instance on the host (which
+            # picks up the new commit) and quit this one.
+            from utils.host_spawn import host_popen
+            try:
+                host_popen(["flatpak", "run", _FLATPAK_APP_ID])
+            except Exception as e:  # noqa: BLE001
+                _log.warning("flatpak relaunch failed: %s", e)
+            from PySide6.QtWidgets import QApplication
+            QApplication.quit()
+            return
         # `os.execv` replaces the process image immediately, so the Qt event
         # loop never gets a chance to process a `QApplication.quit()` call —
         # exec is what actually terminates this process.
