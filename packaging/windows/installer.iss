@@ -59,7 +59,11 @@ OutputBaseFilename={#OutputBaseFilename}
 Compression=lzma2
 SolidCompression=yes
 CloseApplications=yes
-RestartApplications=yes
+; Close the running app to release its file locks during an upgrade, but do NOT
+; let the Restart Manager relaunch it. The in-app updater quits the app itself
+; and asks the installer to reopen it via the /RELAUNCH [Run] entry; an RM
+; auto-restart would race that and could double-launch.
+RestartApplications=no
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -89,11 +93,18 @@ Filename: "{app}\ToonTownMultiTool.exe"; \
   Parameters: "--apply-installer-config --check-updates={code:CheckUpdatesFlag} --keep-alive={code:KeepAliveFlag}"; \
   Flags: runhidden waituntilterminated
 
-; Launch the app if the user kept the "Launch" checkbox.
+; Launch the app if the user kept the "Launch" checkbox (interactive install).
 Filename: "{app}\ToonTownMultiTool.exe"; \
   Description: "Launch {#MyAppName}"; \
   Flags: nowait postinstall skipifsilent; \
   Tasks: launchapp
+
+; Reopen the app after a silent in-app update. The updater passes /RELAUNCH=1
+; and closes the running app; skipifsilent on the entry above means it would
+; otherwise stay closed, which reads to the user as "nothing happened".
+Filename: "{app}\ToonTownMultiTool.exe"; \
+  Flags: nowait; \
+  Check: WantSilentRelaunch
 
 [UninstallDelete]
 ; The user-data purge is handled in [Code] via InitializeUninstall + DelTree
@@ -135,6 +146,17 @@ begin
     Result := '0';
 end;
 
+function WantSilentRelaunch(): Boolean;
+begin
+  // The in-app updater runs Setup with /SILENT /RELAUNCH=1 and quits the
+  // running app itself, so the Restart Manager has nothing to relaunch
+  // (RestartApplications=no). Reopen the freshly-installed app exactly once,
+  // and only when the updater asked for it. Never relaunches for an admin's own
+  // silent deployment, and never double-launches alongside the interactive
+  // postinstall checkbox.
+  Result := WizardSilent and (ExpandConstant('{param:RELAUNCH|0}') = '1');
+end;
+
 function IsUpgrade(): Boolean;
 var
   KeyPath: String;
@@ -146,7 +168,14 @@ end;
 function ShouldSkipPage(PageID: Integer): Boolean;
 begin
   if (PageID = KeepAliveConsentPage.ID) then
-    Result := not WizardIsTaskSelected('keepalive')
+    // A silent install (the in-app updater runs Setup with /SILENT) cannot
+    // collect interactive consent, and this page hides Next in CurPageChanged
+    // which would strand Inno's silent page driver. Always skip it silently.
+    // Inno's UsePreviousTasks default can restore 'keepalive' as selected on a
+    // silent upgrade, so the keepalive check alone is not enough to skip it.
+    // The user's existing in-app Keep-Alive choice is left untouched either way
+    // (installer_merge never strips an existing consent marker).
+    Result := WizardSilent or (not WizardIsTaskSelected('keepalive'))
   else
     Result := False;
 end;
@@ -358,10 +387,13 @@ end;
 
 procedure CurPageChanged(CurPageID: Integer);
 begin
-  if (CurPageID = KeepAliveConsentPage.ID) then
+  if (CurPageID = KeepAliveConsentPage.ID) and (not WizardSilent) then
   begin
     // Hide the standard Next and reveal our two consent buttons positioned
-    // to the left of the Cancel button.
+    // to the left of the Cancel button. Guarded by `not WizardSilent` as
+    // defense in depth: ShouldSkipPage already skips this page when silent, but
+    // hiding Next under a silent driver would deadlock it (EAbort), so never do
+    // it silently even if page routing changes later.
     WizardForm.NextButton.Visible := False;
 
     BtnConsentAccept.Top     := WizardForm.NextButton.Top;

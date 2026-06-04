@@ -220,15 +220,18 @@ class UpdateRunner(QObject):
         box.setWindowTitle("Install update")
         box.setText(f"Install {info.get('tag_name', 'update')} now?")
         box.setInformativeText(
-            "The app will close and the installer will run silently. "
-            "The installer relaunches the app on finish (via Inno's Tasks: launchapp)."
+            "The app will close while the installer runs, then reopen "
+            "automatically when the update finishes."
         )
         box.setStandardButtons(QMessageBox.Yes | QMessageBox.Cancel)
         box.setDefaultButton(QMessageBox.Yes)
         if box.exec() != QMessageBox.Yes:
             return
         try:
-            subprocess.Popen([path, "/SILENT", "/SUPPRESSMSGBOXES"])
+            # /RELAUNCH=1 tells the installer to reopen the app after this
+            # silent update (we quit it below; the installer's Restart Manager
+            # is off, so relaunch is owned by this flag).
+            subprocess.Popen([path, "/SILENT", "/SUPPRESSMSGBOXES", "/RELAUNCH=1"])
         except (OSError, subprocess.SubprocessError) as e:
             self.failed.emit(f"Failed to launch installer: {e}. Installer saved at {path}")
             return

@@ -184,6 +184,35 @@ def test_flatpak_install_scope_defaults_system_when_missing(tmp_path):
     assert flatpak_install_scope(str(tmp_path / "nope")) == "--system"
 
 
+def test_windows_installer_launched_silent_with_relaunch_flag(monkeypatch):
+    # The in-app updater drives the installer silently and asks it to reopen
+    # the app on finish (the installer's Restart Manager is off, so relaunch is
+    # owned by the /RELAUNCH param). Without /RELAUNCH the app would stay closed
+    # after a successful silent update -> reads as "nothing happened".
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication, QWidget, QMessageBox
+    app = QApplication.instance() or QApplication([])
+    parent = QWidget()
+    runner = UpdateRunner(parent)
+    monkeypatch.setattr("utils.install_method.detect", lambda: InstallMethod.WINDOWS_INSTALLER)
+    monkeypatch.setattr(runner, "_download_asset",
+                        lambda asset, out_dir=None: r"C:\Temp\ttmt-setup.exe")
+    monkeypatch.setattr(QMessageBox, "exec", lambda self: QMessageBox.Yes)
+    monkeypatch.setattr(QApplication, "quit", staticmethod(lambda *a: None))
+    popened = []
+    monkeypatch.setattr("utils.update_runner.subprocess.Popen",
+                        lambda argv, *a, **k: popened.append(argv) or MagicMock())
+    runner.run_update({"tag_name": "v2.4.0", "html_url": "https://example/r",
+                       "assets": [{"name": "ToonTownMultiTool-Setup-v2.4.0-Windows-x86_64.exe",
+                                   "browser_download_url": "https://x/s.exe", "size": 1}]})
+    assert popened, "installer was not launched"
+    argv = popened[0]
+    assert argv[0].endswith("ttmt-setup.exe")
+    assert "/SILENT" in argv
+    assert "/RELAUNCH=1" in argv
+
+
 def test_restart_app_flatpak_relaunches_via_flatpak_run_not_execv(monkeypatch):
     # os.execv would re-run the OLD sandbox; under Flatpak the restart must
     # launch a fresh `flatpak run` on the host and quit instead.
