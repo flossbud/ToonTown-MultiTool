@@ -44,6 +44,19 @@ if sys.platform == "win32":
     })
 
 
+# Windows VK codes for the movement keys the grabber may suppress (both the
+# WASD and arrow presets). These are the ONLY keys that ever enter the grabbed
+# set, so this small static map is all the win32 event filter needs to translate
+# a raw KBDLLHOOKSTRUCT.vkCode into the keysym the InputService router expects.
+_WIN32_MOVEMENT_VK = {
+    0x57: "w", 0x41: "a", 0x53: "s", 0x44: "d",
+    0x26: "Up", 0x28: "Down", 0x25: "Left", 0x27: "Right",
+}
+# Win32 keyboard messages (incl. the SYS* variants for Alt-combos).
+_WM_KEYDOWN, _WM_KEYUP = 0x0100, 0x0101
+_WM_SYSKEYDOWN, _WM_SYSKEYUP = 0x0104, 0x0105
+
+
 def _join_quietly(listener):
     try:
         listener.join(timeout=2.0)
@@ -97,12 +110,71 @@ class HotkeyManager(QObject):
     def _start_listener(self):
         if not self.is_listening:
             keyboard_module = _keyboard_module()
-            self.listener = keyboard_module.Listener(
-                on_press=self.on_global_key_press,
-                on_release=self.on_global_key_release
-            )
+            if sys.platform == "win32":
+                # Windows suppression goes through the win32 event filter, NOT
+                # by returning False from on_press (that raises StopException and
+                # KILLS the listener). See _win32_event_filter.
+                self.listener = keyboard_module.Listener(
+                    on_press=self.on_global_key_press,
+                    on_release=self.on_global_key_release,
+                    win32_event_filter=self._win32_event_filter,
+                )
+            else:
+                self.listener = keyboard_module.Listener(
+                    on_press=self.on_global_key_press,
+                    on_release=self.on_global_key_release,
+                )
             self.listener.start()
             self.is_listening = True
+
+    def _win32_event_filter(self, msg, data):
+        """pynput win32 event filter — the CORRECT Windows suppression channel.
+
+        Returning False from on_press/on_release does NOT suppress on Windows;
+        pynput interprets it as StopException and stops the listener entirely
+        (the cause of the "first grabbed key sticks, then no input works" bug).
+        The supported mechanism is this filter calling ``suppress_event()``.
+
+        For a grabbed movement key that must be suppressed we enqueue the event
+        here (because suppress_event() prevents on_press/on_release from firing)
+        and then suppress it at the OS level. Every other key returns True and
+        flows through on_press/on_release unchanged, so the listener never stops.
+        """
+        keysym = None
+        do_suppress = False
+        try:
+            keysym = _WIN32_MOVEMENT_VK.get(getattr(data, "vkCode", None))
+            if keysym is None:
+                return True  # not a grabbable movement key — normal processing
+            sp = self.suppress_predicate
+            if sp is None or not sp(keysym):
+                return True  # not suppressed right now — on_press/on_release enqueue it
+            # Suppressed: enqueue ourselves, mirroring the on_press/on_release
+            # capture gating (keydown honours should_capture_input; keyup always
+            # enqueues so a held key is never stranded down on a bg toon).
+            if msg in (_WM_KEYDOWN, _WM_SYSKEYDOWN):
+                if self.window_manager.should_capture_input():
+                    try:
+                        self.key_event_queue.put(("keydown", keysym), timeout=0.05)
+                    except queue.Full:
+                        print("[HotkeyManager] queue full, dropping suppressed keydown")
+                    do_suppress = True
+            elif msg in (_WM_KEYUP, _WM_SYSKEYUP):
+                try:
+                    self.key_event_queue.put(("keyup", keysym), timeout=0.05)
+                except queue.Full:
+                    print("[HotkeyManager] queue full, dropping suppressed keyup")
+                do_suppress = True
+        except Exception as e:  # noqa: BLE001
+            if _ITRACE:
+                _itrace("hk_filter", f"error msg={msg} err={e}")
+            return True
+        if do_suppress and self.listener is not None:
+            if _ITRACE:
+                _itrace("hk_filter", f"suppress msg={msg} keysym={keysym}")
+            # Raises SuppressException (NOT an error we catch) → OS-level suppress.
+            self.listener.suppress_event()
+        return True
 
     def _stop_listener(self):
         if not self.is_listening or not self.listener:
@@ -179,12 +251,10 @@ class HotkeyManager(QObject):
         except Exception as e:
             print(f"[HotkeyManager] Keydown handler error: {e}")
 
-        if normalized and self.suppress_predicate is not None:
-            try:
-                if self.suppress_predicate(normalized):
-                    return False
-            except Exception as e:
-                print(f"[HotkeyManager] suppress_predicate keydown error: {e}")
+        # Suppression is handled by the platform layer, NOT by returning False
+        # here: on Windows that stops the listener (use _win32_event_filter); on
+        # Linux the X11 passive grab suppresses at the X level. Returning False
+        # from a pynput callback ALWAYS stops the listener, so we never do it.
         return None
 
     def on_global_key_release(self, key):
@@ -208,10 +278,6 @@ class HotkeyManager(QObject):
         except Exception as e:
             print(f"[HotkeyManager] Keyup handler error: {e}")
 
-        if normalized and self.suppress_predicate is not None:
-            try:
-                if self.suppress_predicate(normalized):
-                    return False
-            except Exception as e:
-                print(f"[HotkeyManager] suppress_predicate keyup error: {e}")
+        # See on_global_key_press: never return False from a pynput callback
+        # (it stops the listener). Suppression is the platform layer's job.
         return None
