@@ -1,12 +1,13 @@
 ## ToonTown MultiTool v0.7.0-alpha.2
 
-Adds Windows support for strict keyset separation and fixes the Flatpak updater.
+Adds Windows support for strict keyset separation and fixes the Windows and Flatpak updaters.
 
 ---
 
 ### Bug Fixes
 
-- In-app update on Flatpak now installs the new version. It previously looked like nothing happened (the app just restarted on the old version).
+- In-app update on Windows now completes and reopens the app. It previously closed the app without installing the update.
+- In-app update on Flatpak now installs the new version. It previously restarted the app on the old version without updating.
 
 ### Improvements
 
