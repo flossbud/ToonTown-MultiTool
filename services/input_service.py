@@ -214,7 +214,10 @@ class InputService(QObject):
         if _sys.platform == "win32":
             from utils.win32_movement_grabber import Win32MovementKeyGrabber
             grabber = Win32MovementKeyGrabber()
-            ok = grabber.prepare(should_consume=self._should_consume_grabbed_key)
+            ok = grabber.prepare(
+                should_consume=self._should_consume_grabbed_key,
+                on_grabs_changed=self._on_grabs_changed,
+            )
             if not ok:
                 return
             self._key_grabber = grabber

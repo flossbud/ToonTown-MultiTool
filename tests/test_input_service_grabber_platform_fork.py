@@ -92,6 +92,19 @@ class TestPlatformFork:
         svc._start_key_grabber()
         assert svc._key_grabber is sentinel
 
+    def test_windows_wires_on_grabs_changed(self, monkeypatch):
+        monkeypatch.setattr(sys, "platform", "win32")
+        from utils import win32_movement_grabber as wmg
+
+        stub = MagicMock()
+        stub.prepare.return_value = True
+        monkeypatch.setattr(wmg, "Win32MovementKeyGrabber", lambda: stub)
+
+        svc = _make_service()
+        svc._start_key_grabber()
+        _, kwargs = stub.prepare.call_args
+        assert kwargs.get("on_grabs_changed") == svc._on_grabs_changed
+
 
 class TestWin32CcFocusSafety:
     """Win32 CC-focus must NEVER pass route_all to install_grabs.
