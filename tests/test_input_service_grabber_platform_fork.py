@@ -109,10 +109,11 @@ class TestPlatformFork:
 class TestWin32CcFocusSafety:
     """Win32 CC-focus must NEVER pass route_all to install_grabs.
 
-    TTR strict separation is Linux/X11-only in v1; the Win32 grabber does
-    not accept a route_all kwarg.  Passing it would break CC movement on
-    Windows.  Even if a future refactor accidentally gates the wrong branch,
-    this test catches it before it reaches users."""
+    route_all=True is for TTR strict separation only (grab BOTH keysets). CC
+    needs opposite-keyset-only suppression, so its focus-install path must omit
+    route_all (which defaults False). Passing it for a CC focus would over-grab
+    and break CC movement on Windows.  Even if a future refactor accidentally
+    gates the wrong branch, this test catches it before it reaches users."""
 
     def test_cc_focus_win32_does_not_pass_route_all(self, monkeypatch):
         """Focus a CC window on win32 platform.  install_grabs must be called

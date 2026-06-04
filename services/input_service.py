@@ -393,8 +393,8 @@ class InputService(QObject):
             self._key_grabber.install_grabs(
                 canonical_set=canonical, passthrough_keysyms=passthrough, route_all=True)
         else:
-            # CC: legacy path. Omit route_all so the Win32 grabber (no such
-            # kwarg) is never broken; the X11 grabber defaults route_all=False.
+            # CC: legacy path. Omit route_all so CC keeps opposite-keyset-only
+            # suppression on both platforms; both grabbers default route_all=False.
             if _ITRACE:
                 _itrace("focus", f"win={window_id} cc idx={toon_index} install legacy "
                                  f"intent {_prev_intent}->False")

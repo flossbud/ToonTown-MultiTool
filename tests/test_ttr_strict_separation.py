@@ -884,3 +884,35 @@ def test_escape_closes_chat_through_run_loop_ttr(monkeypatch, tmp_path):
     finally:
         eq.put(("keyup", "Escape"))
         svc.stop(wait=True)  # join the run-loop thread (no backend/grabber created)
+
+
+def test_dead_backend_degrades_through_should_suppress_bridge(monkeypatch, tmp_path):
+    """End-to-end: even with route_all grabs INSTALLED for a focused TTR window,
+    a dead delivery backend makes should_suppress() return False through the
+    real grabber -> _should_consume_grabbed_key -> _delivery_backend_ready bridge,
+    so the focused toon moves natively instead of freezing (the no-freeze
+    guarantee proven through the suppression path, not just the consume unit)."""
+    import sys
+    monkeypatch.setattr(sys, "platform", "win32")
+    from utils.win32_movement_grabber import Win32MovementKeyGrabber
+
+    svc, _ = _make_service(
+        monkeypatch, tmp_path, active_wid="ttr-1",
+        windows=["ttr-1"], games={"ttr-1": "ttr"},
+        assignments=[0], settings={STRICT_TTR_SEPARATION: True},
+    )
+    svc.global_chat_active = False
+    grabber = Win32MovementKeyGrabber()
+    grabber.prepare(should_consume=svc._should_consume_grabbed_key)
+    grabber.install_grabs("arrows", route_all=True)  # both keysets grabbed
+    assert grabber._grabbed_keysyms is not None and "w" in grabber._grabbed_keysyms
+
+    # Healthy backend -> the grabbed key IS suppressed.
+    svc._xlib = object()
+    svc._xlib_backend_failed = False
+    assert grabber.should_suppress("w") is True
+
+    # Dead backend -> consume gate False -> NOT suppressed (degrade to native).
+    svc._xlib = None
+    svc._xlib_backend_failed = True
+    assert grabber.should_suppress("w") is False
