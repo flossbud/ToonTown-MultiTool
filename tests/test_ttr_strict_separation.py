@@ -48,6 +48,10 @@ def _make_service(monkeypatch, tmp_path, active_wid="100", windows=None,
         get_keymap_assignments=lambda: assignments,
         settings_manager=sm,
     )
+    # Default to a usable delivery backend so _delivery_backend_ready() is True
+    # regardless of platform under test (tests that need a dead backend override).
+    svc._xlib = object()
+    svc._xlib_backend_failed = False
     return svc, km
 
 
@@ -423,31 +427,90 @@ def test_toggle_change_ignores_unrelated_key(monkeypatch, tmp_path):
     assert order == []
 
 
-# ── D3: Windows is out of scope for v1 (Linux/X11 only) ──────────────────────
+# ── Windows is now SUPPORTED (parity with Linux) ─────────────────────────────
 
-def test_ttr_strict_supported_false_on_windows(monkeypatch, tmp_path):
+def test_ttr_strict_supported_true_on_windows(monkeypatch, tmp_path):
     import sys
     svc, _ = _make_service(monkeypatch, tmp_path)
     monkeypatch.setattr(sys, "platform", "win32")
-    assert svc._ttr_strict_supported() is False
-    # Even with a live grabber and the flag set, the gate is OFF on Windows.
+    assert svc._ttr_strict_supported() is True
+    # With a live grabber, the flag set, and a usable backend, strict is active.
     svc._key_grabber = object()
     svc._ttr_grabs_active = True
+    assert svc._strict_ttr_active() is True
+
+
+def test_ttr_strict_supported_false_on_macos(monkeypatch, tmp_path):
+    import sys
+    svc, _ = _make_service(monkeypatch, tmp_path)
+    monkeypatch.setattr(sys, "platform", "darwin")
+    assert svc._ttr_strict_supported() is False
+
+
+def test_delivery_backend_ready_with_xlib(monkeypatch, tmp_path):
+    svc, _ = _make_service(monkeypatch, tmp_path)
+    svc._xlib = object()
+    svc._xlib_backend_failed = False
+    assert svc._delivery_backend_ready() is True
+
+
+def test_delivery_backend_ready_false_when_failed(monkeypatch, tmp_path):
+    svc, _ = _make_service(monkeypatch, tmp_path)
+    svc._xlib = None
+    svc._xlib_backend_failed = True
+    assert svc._delivery_backend_ready() is False
+
+
+def test_delivery_backend_ready_win32_uninitialized_is_false(monkeypatch, tmp_path):
+    import sys
+    svc, _ = _make_service(monkeypatch, tmp_path)
+    svc._xlib = None
+    svc._xlib_backend_failed = False
+    monkeypatch.setattr(sys, "platform", "win32")
+    assert svc._delivery_backend_ready() is False
+
+
+def test_delivery_backend_ready_linux_xdotool_is_true(monkeypatch, tmp_path):
+    import sys
+    svc, _ = _make_service(monkeypatch, tmp_path)
+    svc._xlib = None
+    svc._xlib_backend_failed = False
+    monkeypatch.setattr(sys, "platform", "linux")
+    assert svc._delivery_backend_ready() is True
+
+
+def test_strict_ttr_active_false_when_backend_dead(monkeypatch, tmp_path):
+    svc, _ = _make_service(monkeypatch, tmp_path)
+    svc._key_grabber = object()
+    svc._ttr_grabs_active = True
+    svc._xlib = None
+    svc._xlib_backend_failed = True
     assert svc._strict_ttr_active() is False
 
 
-def test_consume_false_for_ttr_on_windows(monkeypatch, tmp_path):
-    import sys
+def test_consume_false_for_ttr_when_backend_dead(monkeypatch, tmp_path):
     svc, _ = _make_service(
         monkeypatch, tmp_path, active_wid="ttr-1",
         windows=["ttr-1"], games={"ttr-1": "ttr"},
         settings={STRICT_TTR_SEPARATION: True},
     )
     svc.global_chat_active = False
-    monkeypatch.setattr(sys, "platform", "win32")
-    # On Windows the TTR strict path stays off, so the grabber must not consume
-    # TTR keys (Windows keeps pre-feature behavior).
+    svc._xlib = None
+    svc._xlib_backend_failed = True
     assert svc._should_consume_grabbed_key("w") is False
+
+
+def test_consume_unaffected_for_cc_when_backend_dead(monkeypatch, tmp_path):
+    # CC suppression is NOT gated on backend health (no scope creep): unchanged.
+    svc, _ = _make_service(
+        monkeypatch, tmp_path, active_wid="cc-1",
+        windows=["cc-1"], games={"cc-1": "cc"},
+        settings={STRICT_TTR_SEPARATION: False},
+    )
+    svc.global_chat_active = False
+    svc._xlib = None
+    svc._xlib_backend_failed = True
+    assert svc._should_consume_grabbed_key("Up") is True
 
 
 # ── D4: the gate reflects REAL grab state via on_grabs_changed ────────────────

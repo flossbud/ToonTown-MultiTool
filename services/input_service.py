@@ -589,7 +589,11 @@ class InputService(QObject):
         if game == "cc":
             return True
         if game == "ttr":
-            return self._strict_ttr_enabled() and self._ttr_strict_supported()
+            return (
+                self._strict_ttr_enabled()
+                and self._ttr_strict_supported()
+                and self._delivery_backend_ready()
+            )
         return False
 
     def _suppress_predicate(self, keysym: str) -> bool:
@@ -757,14 +761,28 @@ class InputService(QObject):
             and self._ttr_strict_supported()
             and self._key_grabber is not None
             and self._ttr_grabs_active
+            and self._delivery_backend_ready()
         )
 
     def _ttr_strict_supported(self) -> bool:
-        """TTR strict separation is implemented for Linux/X11 in v1. Windows is a
-        documented follow-on (the win32 grabber path is unvalidated for TTR), so
-        the strict path stays off there and Windows keeps pre-feature behavior."""
+        """TTR strict separation is implemented for Linux/X11 and Windows. macOS
+        and any other platform stay unsupported (out of scope). This is the single
+        platform-capability gate."""
         import sys
-        return sys.platform != "win32"
+        return sys.platform in ("linux", "win32")
+
+    def _delivery_backend_ready(self) -> bool:
+        """Whether _send_via_backend can ACTUALLY deliver synthetic input right
+        now. Mirrors _send_via_backend's delivery capability exactly so strict
+        separation never suppresses native movement while delivery is dead (which
+        would freeze the focused toon). When not ready, strict degrades to native
+        delivery (the toon still moves)."""
+        import sys
+        if self._xlib is not None:
+            return True                       # Win32Backend or XlibBackend connected
+        if self._xlib_backend_failed:
+            return False                      # requested backend failed -> events dropped
+        return sys.platform != "win32"        # _xlib None, not failed: Linux explicit-xdotool delivers; win32 has no xdotool
 
     # ── Keymap-aware send methods ──────────────────────────────────────────
 
