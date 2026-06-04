@@ -71,8 +71,12 @@ jobs:
 
       - uses: actions/download-artifact@v4
 
-      - name: Render SMOKETEST.md (beta tags only)
-        if: contains(github.ref_name, '-')
+      - name: Render SMOKETEST.md (beta channel only)
+        # Gate on the resolved CHANNEL, not a version hyphen: every pre-1.0
+        # alpha tag is hyphenated regardless of channel, so a hyphen check
+        # would wrongly attach SMOKETEST.md to stable /release alphas. Smoke
+        # tests are a /pre-release (beta) artifact only.
+        if: needs.channel.outputs.beta == 'true'
         run: |
           set -euo pipefail
           PREV=$(git describe --tags --abbrev=0 "${{ github.ref_name }}^" 2>/dev/null || echo "")
