@@ -183,6 +183,18 @@ The update action depends on how you installed:
 
 ---
 
+## Troubleshooting
+
+### Windows: background toons will not move together
+
+If you can move one toon but the others do not follow, your game is probably
+running as administrator while ToonTown MultiTool is not. Windows blocks a normal
+program from sending input to a program that has administrator access. MultiTool
+will offer to restart with administrator access so it can control every toon. You
+can also fix this by starting the game without administrator access.
+
+---
+
 ## Privacy
 
 See [PRIVACY.md](PRIVACY.md) for what data ToonTown MultiTool stores on your device, where, and what is sent to the official game servers when you launch a toon. The app contains no telemetry, analytics, or crash reporting.
