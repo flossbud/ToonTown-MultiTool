@@ -1190,6 +1190,7 @@ class MultitoonTab(QWidget):
         self.input_service._last_known_foreground_game = "ttr"
         self.input_service.chat_state_changed.connect(self._on_chat_state_changed)
         self.input_service.input_log.connect(self._on_input_log)
+        self.input_service.uipi_blocked_movement_detected.connect(self._on_uipi_blocked)
         self._chat_glow_active = False
         self.window_manager.window_ids_updated.connect(self.update_toon_controls)
         self._toon_names_ready.connect(self._apply_toon_names)
@@ -2040,6 +2041,52 @@ class MultitoonTab(QWidget):
     @Slot(str)
     def _on_input_log(self, msg):
         self.log(msg)
+
+    def _on_uipi_blocked(self, details: dict) -> None:
+        """Show the elevation modal (once per session unless dismissed) and, on
+        the user's request, relaunch elevated. Triggered when background-toon
+        input is provably being dropped by Windows UIPI."""
+        from utils.settings_keys import UIPI_ELEVATION_PROMPT_DISMISSED
+        sm = self.input_service.settings_manager
+        if sm is not None and sm.get(UIPI_ELEVATION_PROMPT_DISMISSED, False):
+            return
+        from utils.widgets.uipi_elevation_dialog import UipiElevationDialog
+        targets = details.get("targets") or [details]
+        toons = [f"Toon {t.get('toon_index', -1) + 1}"
+                 for t in targets if t.get("toon_index", -1) >= 0]
+        dlg = UipiElevationDialog(affected_toons=toons, parent=self.window())
+        self._uipi_dialog = dlg
+        dlg.restart_as_admin.connect(self._do_elevated_restart)
+        if sm is not None:
+            dlg.dont_ask_again.connect(
+                lambda: sm.set(UIPI_ELEVATION_PROMPT_DISMISSED, True))
+        dlg.exec()
+
+    def _do_elevated_restart(self) -> None:
+        """Relaunch TTMT elevated. On UAC cancel (relaunch returns False) keep the
+        app running and re-arm the prompt so the user can try again."""
+        from utils import win32_elevation
+        sm = self.input_service.settings_manager
+        # Flush settings to disk before spawning the elevated child. SettingsManager
+        # persists via save(); set() already saves synchronously, so this is belt
+        # and suspenders against any buffered state.
+        flush = getattr(sm, "save", None) if sm is not None else None
+        ok = win32_elevation.relaunch_elevated(
+            flush_settings=flush,
+            on_success_shutdown=self._shutdown_for_relaunch,
+        )
+        if not ok:
+            try:
+                self.input_service.reset_uipi_latch()
+            except Exception:
+                pass
+
+    def _shutdown_for_relaunch(self) -> None:
+        try:
+            self.input_service.shutdown()
+        finally:
+            from PySide6.QtWidgets import QApplication
+            QApplication.quit()
 
     def _set_widget_opacity(self, w, opacity: float):
         """Apply a constant opacity to a widget via QGraphicsOpacityEffect.
