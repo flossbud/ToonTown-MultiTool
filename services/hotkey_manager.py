@@ -290,6 +290,10 @@ class HotkeyManager(QObject):
 
             normalized = self.normalize_key(key)
             if normalized == "F5":
+                # Release always clears _f5_down (no should_capture_input() gate,
+                # like the keyup path below): keyups must fire even when capture is
+                # off so a held key is never stranded down. Returning here keeps F5
+                # out of the input queue, mirroring the press handler.
                 self._f5_down = False
                 return None
             if normalized:
