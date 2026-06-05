@@ -35,3 +35,6 @@ SETTINGS_ACTIVE_CATEGORY = "settings_active_category"
 # Chat handling mode (added 2026-05-26)
 CHAT_HANDLING_MODE = "chat_handling_mode"
 CHAT_HANDLING_MODE_DEFAULT = "simple"
+
+# Windows UIPI elevation prompt (added 2026-06-05)
+UIPI_ELEVATION_PROMPT_DISMISSED = "uipi_elevation_prompt_dismissed"
