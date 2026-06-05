@@ -88,7 +88,8 @@ class InputService(QObject):
     def __init__(self, window_manager, get_enabled_toons, get_movement_modes, get_event_queue_func,
                  get_chat_enabled=None, settings_manager=None,
                  get_keymap_assignments=None, keymap_manager=None,
-                 get_chat_block_list=None, get_chat_handling_mode=None):
+                 get_chat_block_list=None, get_chat_handling_mode=None,
+                 capability_provider=None):
         super().__init__()
         self.window_manager = window_manager
         self.get_enabled_toons = get_enabled_toons
@@ -98,6 +99,22 @@ class InputService(QObject):
         self.settings_manager = settings_manager
         self.get_keymap_assignments = get_keymap_assignments
         self.keymap_manager = keymap_manager
+        # Per-window UIPI delivery capability (Windows only). On Windows the hot
+        # path reads a cached snapshot via peek(); focus/assignment handlers
+        # refresh via the cache's get(). Off Windows the feature is a no-op: the
+        # provider resolves to OK directly (no cache), so strict separation and
+        # every other capability check behave exactly as before this feature.
+        # Tests inject a provider directly (no cache).
+        from utils.win32_integrity import _IS_WINDOWS, Capability, WindowCapabilityCache
+        if capability_provider is not None:
+            self._capability_provider = capability_provider
+            self._capability_cache = None
+        elif not _IS_WINDOWS:
+            self._capability_cache = None
+            self._capability_provider = lambda w: Capability.OK
+        else:
+            self._capability_cache = WindowCapabilityCache()
+            self._capability_provider = lambda w: self._capability_cache.peek(int(w))
         # Resolved per call so changes to TTR's settings.json after service start
         # are honored without restarting the input thread. Default preserves the
         # legacy hard-coded behavior for callers that don't wire the helper.
@@ -767,6 +784,36 @@ class InputService(QObject):
             and self._ttr_grabs_active
             and self._delivery_backend_ready()
         )
+
+    def _capability_for(self, win_id):
+        """UIPI delivery capability for a window id, via the injected provider.
+        Never raises; never coerces win_id (the provider owns conversion)."""
+        from utils.win32_integrity import Capability
+        try:
+            return self._capability_provider(win_id)
+        except Exception:
+            return Capability.UNKNOWN
+
+    def _focused_strict_delivery_safe(self) -> bool:
+        """True when arming strict TTR suppression for the FOCUSED window is safe:
+        either the focused window is not a TTR game window, or its UIPI capability
+        is OK. BLOCKED_UIPI/UNKNOWN -> unsafe (fail closed): never suppress native
+        input we cannot redeliver."""
+        from utils.win32_integrity import Capability
+        try:
+            active = self.window_manager.get_active_window()
+        except Exception:
+            return True
+        if not active:
+            return True
+        try:
+            from utils.game_registry import GameRegistry
+            game = GameRegistry.instance().get_game_for_window(str(active))
+        except Exception:
+            return True
+        if game != "ttr":
+            return True
+        return self._capability_for(active) is Capability.OK
 
     def _ttr_strict_supported(self) -> bool:
         """TTR strict separation is implemented for Linux/X11 and Windows. macOS
