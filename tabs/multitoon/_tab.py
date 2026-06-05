@@ -1112,6 +1112,13 @@ class MultitoonTab(QWidget):
     keep_alive_inhibit_status = Signal(object)  # InhibitStatus, for warning + indicator
     launch_tab_requested = Signal()
 
+    # Re-entrancy debounce for manual_refresh(): requests within this many
+    # seconds of the last accepted refresh are coalesced, so a held/mashed F5 or
+    # rapid Refresh clicks cannot stack the heavy InputService restart. A plain
+    # monotonic-time comparison, so it can never wedge regardless of fetch
+    # lifecycle. Chosen to exceed the ~1200ms delayed toon-data fetch timer.
+    _REFRESH_COOLDOWN_S = 1.5
+
     def __init__(self, logger=None, settings_manager=None, keymap_manager=None, profile_manager=None, window_manager=None):
         super().__init__()
         self.logger = logger
@@ -1124,6 +1131,7 @@ class MultitoonTab(QWidget):
         # toggle. Idle state (grey bar) is shown when service is on but
         # no toons are enabled.
         self.service_running = True
+        self._last_refresh_monotonic = float("-inf")
         self.toon_labels = []       # list of (name_label, status_dot)
         self.laff_labels = []       # list of QLabels showing laff
         self.bean_labels = []       # list of QLabels showing beans
@@ -2498,7 +2506,19 @@ class MultitoonTab(QWidget):
         else:
             chip.hide()
 
+    def _refresh_is_coalesced(self, now: float) -> bool:
+        """True if a refresh requested at monotonic time `now` falls within the
+        cooldown of the last accepted refresh (caller should skip it). On a miss,
+        records `now` as the new cooldown origin and returns False (accept)."""
+        if now - self._last_refresh_monotonic < self._REFRESH_COOLDOWN_S:
+            return True
+        self._last_refresh_monotonic = now
+        return False
+
     def manual_refresh(self):
+        if self._refresh_is_coalesced(time.monotonic()):
+            self.log("[Service] Refresh coalesced (within cooldown).")
+            return
         self.log("[Service] Manual refresh triggered.")
         invalidate_port_to_wid_cache()
         clear_stale_names([])
