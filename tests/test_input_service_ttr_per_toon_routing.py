@@ -353,6 +353,134 @@ class TestNonMovementFallback:
         assert ("keydown", "200", "Shift_L") in sent
 
 
+class TestNonMovementRebind:
+    """Regression: a non-default set that REBINDS a non-movement action to a
+    DIFFERENT non-empty key must NOT let the action's default key cross-fire
+    into that toon.
+
+    Distinct from TestNonMovementFallback, whose alternate sets leave the
+    action UNBOUND (missing/empty) and therefore legitimately inherit the
+    default-set binding. Here the action is rebound, so the default key is no
+    longer this toon's trigger. The fallback must fire only on a falsy (unset/
+    empty) own binding, never on a rebind.
+
+    Repro: Toon1 keyset jump=space, Toon2 keyset jump=Control_R. Pressing space
+    must jump only Toon1; pressing Control_R must jump only Toon2.
+    """
+
+    # Full sets (production seeds every action). Set 1 rebinds jump only.
+    _SETS = {
+        "ttr": [
+            {"forward": "w", "reverse": "s", "left": "a", "right": "d",
+             "jump": "space", "book": "Alt_L", "gags": "g", "tasks": "t",
+             "map": "Shift_L"},
+            {"forward": "w", "reverse": "s", "left": "a", "right": "d",
+             "jump": "Control_R", "book": "Alt_L", "gags": "g", "tasks": "t",
+             "map": "Shift_L"},
+        ],
+        "cc": [
+            {"forward": "w", "reverse": "s", "left": "a", "right": "d"},
+        ],
+    }
+
+    def _build(self, monkeypatch, registry_mapping, focus_window_id, assignments,
+               ttr_sets=None):
+        wm = _FakeWindowManager(list(registry_mapping.keys()), focus_window_id)
+        fake_registry = _FakeRegistry(registry_mapping)
+        monkeypatch.setattr(
+            "utils.game_registry.GameRegistry.instance", lambda: fake_registry
+        )
+        sets = dict(self._SETS)
+        if ttr_sets is not None:
+            sets = {**sets, "ttr": ttr_sets}
+        sent = []
+        svc = InputService(
+            window_manager=wm,
+            get_enabled_toons=lambda: [True] * len(registry_mapping),
+            get_movement_modes=lambda: ["both"] * len(registry_mapping),
+            get_event_queue_func=lambda: None,
+            settings_manager=MagicMock(),
+            get_keymap_assignments=lambda: list(assignments),
+            keymap_manager=_FakeKeymap(sets),
+        )
+        svc._send_via_backend = lambda action, win, keysym, mods=None: sent.append(
+            (action, win, keysym)
+        )
+        svc._resolve_keysym = lambda k: k
+        return svc, sent
+
+    def test_default_jump_key_does_not_cross_fire_to_rebound_set(self, monkeypatch):
+        """Focus TTR1 (jump=space), press space. TTR2 (jump=Control_R) must
+        NOT receive anything: space is not TTR2's jump key."""
+        svc, sent = self._build(
+            monkeypatch,
+            registry_mapping={"100": "ttr", "200": "ttr"},
+            focus_window_id="100",
+            assignments=[0, 1],
+        )
+        svc._send_logical_action_km("keydown", "space", [True, True], [0, 1])
+        assert all(s[1] != "200" for s in sent), sent
+
+    def test_rebound_key_routes_to_its_toon_with_set0_outbound(self, monkeypatch):
+        """Press Control_R (TTR2's jump). TTR2 receives space (set 0 outbound,
+        its native binding); TTR1 (no Control_R binding) receives nothing."""
+        svc, sent = self._build(
+            monkeypatch,
+            registry_mapping={"100": "ttr", "200": "ttr"},
+            focus_window_id="100",
+            assignments=[0, 1],
+        )
+        svc._send_logical_action_km("keydown", "Control_R", [True, True], [0, 1])
+        assert ("keydown", "200", "space") in sent
+        assert all(s[1] != "100" for s in sent), sent
+
+    def test_empty_binding_still_inherits_default(self, monkeypatch):
+        """Guard the inherit case: set 1 leaves jump EMPTY ('') -> the default
+        jump key still routes to that toon (existing fallback semantics)."""
+        ttr_sets = [
+            self._SETS["ttr"][0],
+            {**self._SETS["ttr"][1], "jump": ""},
+        ]
+        svc, sent = self._build(
+            monkeypatch,
+            registry_mapping={"100": "ttr", "200": "ttr"},
+            focus_window_id="100",
+            assignments=[0, 1],
+            ttr_sets=ttr_sets,
+        )
+        svc._send_logical_action_km("keydown", "space", [True, True], [0, 1])
+        assert ("keydown", "200", "space") in sent
+
+    def test_rebound_set_focused_strict_does_not_self_jump(self, monkeypatch):
+        """Focus TTR2 (jump=Control_R) under strict separation, press space.
+        TTR2 must NOT self-synthesize a jump (space is not its key); TTR1 (bg,
+        jump=space) does receive space."""
+        svc, sent = self._build(
+            monkeypatch,
+            registry_mapping={"100": "ttr", "200": "ttr"},
+            focus_window_id="200",
+            assignments=[0, 1],
+        )
+        svc._strict_ttr_active = lambda: True
+        svc._send_logical_action_km("keydown", "space", [True, True], [0, 1])
+        assert all(s[1] != "200" for s in sent), sent
+        assert ("keydown", "100", "space") in sent
+
+    def test_rebound_set_focused_strict_jumps_on_own_key(self, monkeypatch):
+        """Focus TTR2 under strict, press Control_R (its jump). TTR2 receives a
+        synthesized space (set 0 outbound) even though it is the focused
+        window, because strict suppressed the native key."""
+        svc, sent = self._build(
+            monkeypatch,
+            registry_mapping={"100": "ttr", "200": "ttr"},
+            focus_window_id="200",
+            assignments=[0, 1],
+        )
+        svc._strict_ttr_active = lambda: True
+        svc._send_logical_action_km("keydown", "Control_R", [True, True], [0, 1])
+        assert ("keydown", "200", "space") in sent
+
+
 # ── Double-feed deduplication via HeldKeyRegistry ─────────────────────────────
 
 class TestDoubleFeedDedup:

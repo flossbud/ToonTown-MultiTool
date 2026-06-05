@@ -842,16 +842,19 @@ class InputService(QObject):
             if toon_game == "cc":
                 toon_action = self.keymap_manager.get_action_in_set("cc", set_idx, key)
                 if toon_action is None and set_idx != 0:
-                    # The toon is on a non-default set that does not bind
-                    # this key. Sets in TTMT are movement-only overrides:
-                    # non-movement bindings (jump, sprint, map, etc.) live
-                    # only in the default set. Fall back to the default
-                    # set's binding -- but ONLY when the resolved action
-                    # is non-movement. Movement actions stay strict per-
-                    # toon so a key the toon's set explicitly does not
-                    # bind for movement is not forwarded as movement.
+                    # The toon is on a non-default set that does not bind this
+                    # key. Fall back to the default set's binding -- but ONLY
+                    # when the resolved action is non-movement AND this toon's
+                    # set leaves that action unbound. Movement actions stay
+                    # strict per-toon (a key the set does not bind for movement
+                    # is not forwarded as movement). A non-movement action that
+                    # the set REBINDS to its own key must not be triggered by
+                    # its default key either, or it cross-fires across toons;
+                    # the get_key_for_action falsy check gates the fallback to
+                    # the missing/empty case.
                     default_action = self.keymap_manager.get_action_in_set("cc", 0, key)
-                    if default_action is not None and default_action not in _MOVEMENT_ACTIONS:
+                    if default_action is not None and default_action not in _MOVEMENT_ACTIONS \
+                            and not self.keymap_manager.get_key_for_action("cc", set_idx, default_action):
                         toon_action = default_action
                 if toon_action is None:
                     continue
@@ -874,14 +877,20 @@ class InputService(QObject):
                         )
             else:
                 # Strict per-toon for movement; default-set fallback for
-                # non-movement actions only. Sets in TTMT are movement-
-                # only overrides; non-movement bindings (jump, etc.) live
-                # only in the default set. Outbound stays sourced from
-                # set 0 (native binding).
+                # non-movement actions ONLY when this toon's set leaves the
+                # action unbound. A set may rebind any non-movement action
+                # (jump, book, etc.) to its own key; when it does, the
+                # action's default key is no longer this toon's trigger, so
+                # forwarding it would cross-fire (e.g. Toon1 jump=space
+                # leaking into a toon whose set rebinds jump to Control_R).
+                # The fallback therefore inherits the default binding only
+                # when get_key_for_action is falsy (action missing/empty in
+                # this set). Outbound stays sourced from set 0 (native binding).
                 toon_action = self.keymap_manager.get_action_in_set(toon_game, set_idx, key)
                 if toon_action is None and set_idx != 0:
                     default_action = self.keymap_manager.get_action_in_set(toon_game, 0, key)
-                    if default_action is not None and default_action not in _MOVEMENT_ACTIONS:
+                    if default_action is not None and default_action not in _MOVEMENT_ACTIONS \
+                            and not self.keymap_manager.get_key_for_action(toon_game, set_idx, default_action):
                         toon_action = default_action
                 if toon_action is None:
                     continue
