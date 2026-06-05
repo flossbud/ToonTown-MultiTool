@@ -351,9 +351,21 @@ class InputService(QObject):
             game = GameRegistry.instance().get_game_for_window(str(window_id))
         except Exception:
             game = None
+        # Refresh this focused window's UIPI capability off the hot path so the
+        # delivery-safe gate (which reads via peek) sees a fresh value. No-op when
+        # no cache (injected provider / off Windows).
+        if self._capability_cache is not None and window_id:
+            try:
+                self._capability_cache.get(int(window_id))
+            except Exception:
+                pass
         # TTR strict separation is supported on Linux/X11 and Windows; macOS and
         # other platforms keep pre-feature behavior (_ttr_strict_supported).
-        if game == "ttr" and not (self._strict_ttr_enabled() and self._ttr_strict_supported()):
+        if game == "ttr" and not (
+            self._strict_ttr_enabled()
+            and self._ttr_strict_supported()
+            and self._focused_strict_delivery_safe()
+        ):
             if _ITRACE:
                 _itrace("focus", f"win={window_id} game=ttr strict-unsupported uninstall "
                                  f"intent {_prev_intent}->False")
@@ -611,6 +623,7 @@ class InputService(QObject):
                 self._strict_ttr_enabled()
                 and self._ttr_strict_supported()
                 and self._delivery_backend_ready()
+                and self._focused_strict_delivery_safe()
             )
         return False
 
@@ -783,6 +796,7 @@ class InputService(QObject):
             and self._key_grabber is not None
             and self._ttr_grabs_active
             and self._delivery_backend_ready()
+            and self._focused_strict_delivery_safe()
         )
 
     def _capability_for(self, win_id):
