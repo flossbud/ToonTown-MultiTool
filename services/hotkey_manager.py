@@ -66,6 +66,7 @@ def _join_quietly(listener):
 
 class HotkeyManager(QObject):
     profile_load_requested = Signal(int)
+    refresh_requested = Signal()
 
     PYNPUT_VK_MAP = _PYNPUT_VK_MAP
     
@@ -82,6 +83,11 @@ class HotkeyManager(QObject):
         self.pressed_keys = set()
         self.listener = None
         self.is_listening = False
+
+        # Tracks F5's physical down-state so OS auto-repeat does not re-fire the
+        # refresh hotkey. Reset in _stop_listener (a focus-out can stop the
+        # listener before the physical release arrives).
+        self._f5_down = False
 
         # We hook into active window changes to start/stop the listener dynamically
         self.window_manager.active_window_changed.connect(self._on_active_window_changed)
@@ -188,6 +194,15 @@ class HotkeyManager(QObject):
         self.listener = None
         self.is_listening = False
         self.pressed_keys.clear()
+        # Deliberate tradeoff: clearing _f5_down here prevents a permanent wedge
+        # when F5's physical release is missed because it happened while the
+        # listener was stopped (a focus-out). The cost is that F5 held ACROSS a
+        # stop+restart can emit one extra refresh on the restarted listener's
+        # auto-repeat; that is bounded to one per excursion and coalesced
+        # downstream by manual_refresh's cooldown. Avoiding both the wedge and
+        # the double-fire would require querying global key state, which pynput
+        # does not provide.
+        self._f5_down = False
         # Race guard: pynput's _stop_platform reaches for self._display_record
         # which the worker thread sets early in _run(). If stop() is called
         # before that line lands (very fast app launch + close cycle), pynput
@@ -240,6 +255,13 @@ class HotkeyManager(QObject):
                     self.profile_load_requested.emit(idx)
 
             normalized = self.normalize_key(key)
+            if normalized == "F5":
+                if not self._f5_down:
+                    self._f5_down = True
+                    if _ITRACE:
+                        _itrace("hk_press", "F5 refresh requested")
+                    self.refresh_requested.emit()
+                return None  # tool hotkey: never route F5 to the input queue
             if normalized:
                 try:
                     self.key_event_queue.put(("keydown", normalized), timeout=0.05)
@@ -267,6 +289,9 @@ class HotkeyManager(QObject):
                 self.pressed_keys.discard(key.char)
 
             normalized = self.normalize_key(key)
+            if normalized == "F5":
+                self._f5_down = False
+                return None
             if normalized:
                 try:
                     self.key_event_queue.put(("keyup", normalized), timeout=0.05)
