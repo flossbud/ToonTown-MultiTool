@@ -80,6 +80,7 @@ class InputService(QObject):
     input_log = Signal(str)
     window_ids_updated = Signal(list)
     chat_state_changed = Signal(bool)  # True = chat active, False = chat inactive
+    uipi_blocked_movement_detected = Signal(object)  # details dict for the elevation modal
 
     BACKSPACE_REPEAT_DELAY    = 0.4
     BACKSPACE_REPEAT_INTERVAL = 0.05
@@ -183,6 +184,16 @@ class InputService(QObject):
         # Track the most recent foreground game so keys pressed while TTMT
         # itself has focus still resolve through a meaningful default set.
         self._last_known_foreground_game: str | None = None
+
+        # UIPI blocked-movement episode counter + deferred modal signal state.
+        import time as _t_uipi
+        self._uipi_clock = _t_uipi.monotonic
+        self._uipi_latched = False
+        self._uipi_episodes: dict[str, list[float]] = {}   # win_id -> [timestamps]
+        self._uipi_holds: dict[str, tuple[str, float]] = {}  # key -> (win_id, down_ts)
+        self._uipi_pending = None    # details dict awaiting release before emit
+        self.UIPI_WINDOW_SECONDS = 5.0
+        self.UIPI_HOLD_SECONDS = 0.75
 
     @property
     def keys_held(self) -> set[str]:
@@ -585,6 +596,96 @@ class InputService(QObject):
         Return/Escape/printables never enter `holds`."""
         for key in list(self._focused_passthrough_sent.keys()):
             self._release_focused_passthrough(key)
+
+    # ------------------------------------------------------------------
+    # UIPI blocked-movement episode counter + deferred modal signal
+    # ------------------------------------------------------------------
+
+    def _note_blocked_movement(self, win_id, action, key):
+        """Record a movement-class action routed to a BACKGROUND target that is
+        BLOCKED_UIPI.  Arms a pending modal when the debounce trips; the modal is
+        emitted later by _release_uipi_hold so it never pops mid-hold.  Proof+intent:
+        only fires when we can PROVE delivery is blocked AND the user is actively
+        moving a background toon."""
+        from utils.cc_isolation import MOVEMENT_ACTIONS
+        from utils.win32_integrity import Capability
+        if self._uipi_latched:
+            return
+        if key in self._uipi_holds:
+            # Still held: a re-report of an already-held key is autorepeat, not a
+            # new press. Do NOT count it as a second episode and do NOT touch the
+            # original press timestamp (so the 750ms hold rule stays a true hold
+            # timer measured from the real keydown). In production the run loop
+            # dedupes autorepeat before dispatch, so this is defense in depth.
+            return
+        if action not in MOVEMENT_ACTIONS:
+            return
+        if self.global_chat_active or self._phantom_active or self._strict_drain_active:
+            return
+        try:
+            active = self.window_manager.get_active_window()
+            ids = [str(w) for w in self.window_manager.get_window_ids()]
+        except Exception:
+            return
+        if not active or str(active) not in ids:
+            return                       # active must be a managed game window (not TTMT)
+        if str(win_id) == str(active):
+            return                       # background targets only
+        if self._capability_for(win_id) is not Capability.BLOCKED_UIPI:
+            return
+        now = self._uipi_clock()
+        self._uipi_holds[key] = (str(win_id), now)
+        stamps = [t for t in self._uipi_episodes.get(str(win_id), [])
+                  if now - t <= self.UIPI_WINDOW_SECONDS]
+        stamps.append(now)
+        self._uipi_episodes[str(win_id)] = stamps
+        if len(stamps) >= 2:
+            self._arm_pending_uipi(str(win_id))
+
+    def _release_uipi_hold(self, key):
+        """On movement keyup: apply the held->750ms rule, then emit any pending
+        modal once no blocked movement key remains held (so it never steals focus
+        mid-hold).  Latch is set BEFORE emit so rapid events cannot queue dupes."""
+        held = self._uipi_holds.pop(key, None)
+        if held is not None and not self._uipi_latched:
+            win_id, down_ts = held
+            if self._uipi_clock() - down_ts >= self.UIPI_HOLD_SECONDS:
+                self._arm_pending_uipi(win_id)
+        if self._uipi_pending is not None and not self._uipi_holds:
+            details = self._uipi_pending
+            self._uipi_pending = None
+            self._uipi_latched = True
+            self.uipi_blocked_movement_detected.emit(details)
+
+    def _arm_pending_uipi(self, win_id):
+        if self._uipi_latched:
+            return
+        self._uipi_pending = self._build_uipi_details(win_id)
+
+    def _build_uipi_details(self, primary_win_id):
+        """Aggregate every enabled BACKGROUND game window currently BLOCKED_UIPI."""
+        from utils.win32_integrity import Capability
+        try:
+            ids = [str(w) for w in self.window_manager.get_window_ids()]
+            active = self.window_manager.get_active_window()
+            enabled = self.get_enabled_toons()
+        except Exception:
+            ids, active, enabled = [], None, []
+        targets = []
+        for i, w in enumerate(ids):
+            if i < len(enabled) and enabled[i] and str(w) != str(active):
+                if self._capability_for(w) is Capability.BLOCKED_UIPI:
+                    targets.append({"window_id": str(w), "toon_index": i})
+        primary_idx = ids.index(str(primary_win_id)) if str(primary_win_id) in ids else -1
+        return {"window_id": str(primary_win_id), "toon_index": primary_idx, "targets": targets}
+
+    def reset_uipi_latch(self):
+        """Re-arm detection (after a successful elevated relaunch attempt or a
+        fresh service start)."""
+        self._uipi_latched = False
+        self._uipi_episodes.clear()
+        self._uipi_holds.clear()
+        self._uipi_pending = None
 
     def _send_backspace_to_focused(self) -> None:
         """Deliver a BackSpace key-tap to the focused TTR window. BackSpace uses
