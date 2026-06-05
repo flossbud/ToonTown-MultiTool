@@ -121,6 +121,14 @@ def test_is_running_elevated_medium(monkeypatch):
     assert win32_integrity.is_running_elevated() is False
 
 
+def test_is_running_elevated_low_integrity_suppresses(monkeypatch):
+    # Below Medium (0x1000 Low / AppContainer): cannot relaunch elevated, so the
+    # admin notice is suppressed rather than offering a non-actionable restart.
+    monkeypatch.setattr(win32_integrity, "_IS_WINDOWS", True)
+    monkeypatch.setattr(win32_integrity, "own_integrity_level", lambda: 0x1000)
+    assert win32_integrity.is_running_elevated() is True
+
+
 def test_is_running_elevated_unknown_suppresses(monkeypatch):
     monkeypatch.setattr(win32_integrity, "_IS_WINDOWS", True)
     monkeypatch.setattr(win32_integrity, "own_integrity_level", lambda: None)

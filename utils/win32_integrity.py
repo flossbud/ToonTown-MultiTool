@@ -166,23 +166,34 @@ def _live_pid(hwnd):
         return None
 
 
+SECURITY_MANDATORY_MEDIUM_RID = 0x2000
 SECURITY_MANDATORY_HIGH_RID = 0x3000
 
 
 def is_running_elevated() -> bool:
-    """True if this process runs at high integrity (administrator/elevated).
+    """True if this process is elevated OR otherwise should not show the admin
+    notice. Returns True (SUPPRESS the notice) when:
 
-    Off Windows, or when own integrity cannot be determined, returns True so the
-    admin notice is SUPPRESSED: never nag when we cannot positively confirm we are
-    NOT elevated. A normal medium-integrity process (including a split-token admin
-    running without elevation) returns False, which is the correct trigger. Uses
-    integrity, not IsUserAnAdmin / group membership, because a split-token admin
-    running normally is still only medium integrity.
+    - off Windows, or own integrity cannot be determined (never nag when we cannot
+      positively confirm we are NOT elevated);
+    - integrity is High or above (>= 0x3000): genuinely elevated;
+    - integrity is BELOW Medium (< 0x2000, e.g. a Low-integrity AppContainer /
+      sandbox): the process cannot meaningfully relaunch elevated, so the
+      'Restart as administrator' offer would not be actionable. Essentially
+      unreachable for a standalone desktop launch (which is Medium), but suppress
+      it rather than show a useless offer.
+
+    Returns False (the correct trigger) only for a normal Medium-integrity,
+    unelevated process, including a split-token admin running without elevation.
+    Uses integrity, not IsUserAnAdmin / group membership, because a split-token
+    admin running normally is still only medium integrity.
     """
     if not _IS_WINDOWS:
         return True
     il = own_integrity_level()
     if il is None:
+        return True
+    if il < SECURITY_MANDATORY_MEDIUM_RID:
         return True
     return il >= SECURITY_MANDATORY_HIGH_RID
 
