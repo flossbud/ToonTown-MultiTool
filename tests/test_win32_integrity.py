@@ -107,3 +107,41 @@ def test_peek_unknown_after_pid_change():
                               pid_of=lambda h: pids(), ttl=3.0, clock=_FakeClock())
     assert c.get(1) is Capability.BLOCKED_UIPI
     assert c.peek(1) is Capability.UNKNOWN   # pid changed -> snapshot stale -> UNKNOWN
+
+
+def test_is_running_elevated_high(monkeypatch):
+    monkeypatch.setattr(win32_integrity, "_IS_WINDOWS", True)
+    monkeypatch.setattr(win32_integrity, "own_integrity_level", lambda: 0x3000)
+    assert win32_integrity.is_running_elevated() is True
+
+
+def test_is_running_elevated_medium(monkeypatch):
+    monkeypatch.setattr(win32_integrity, "_IS_WINDOWS", True)
+    monkeypatch.setattr(win32_integrity, "own_integrity_level", lambda: 0x2000)
+    assert win32_integrity.is_running_elevated() is False
+
+
+def test_is_running_elevated_unknown_suppresses(monkeypatch):
+    monkeypatch.setattr(win32_integrity, "_IS_WINDOWS", True)
+    monkeypatch.setattr(win32_integrity, "own_integrity_level", lambda: None)
+    assert win32_integrity.is_running_elevated() is True
+
+
+def test_is_running_elevated_off_windows_does_not_read(monkeypatch):
+    monkeypatch.setattr(win32_integrity, "_IS_WINDOWS", False)
+    monkeypatch.setattr(win32_integrity, "own_integrity_level",
+                        lambda: (_ for _ in ()).throw(AssertionError("read off Windows")))
+    assert win32_integrity.is_running_elevated() is True
+
+
+def test_should_show_admin_notice_only_when_win_not_elevated_not_dismissed():
+    f = win32_integrity.should_show_admin_notice
+    # Full truth table: only (Windows, not elevated, not dismissed) shows.
+    assert f(True, False, False) is True
+    assert f(True, True, False) is False
+    assert f(True, False, True) is False
+    assert f(True, True, True) is False
+    assert f(False, False, False) is False
+    assert f(False, False, True) is False
+    assert f(False, True, False) is False
+    assert f(False, True, True) is False

@@ -164,3 +164,30 @@ def _live_pid(hwnd):
         return pid
     except Exception:
         return None
+
+
+SECURITY_MANDATORY_HIGH_RID = 0x3000
+
+
+def is_running_elevated() -> bool:
+    """True if this process runs at high integrity (administrator/elevated).
+
+    Off Windows, or when own integrity cannot be determined, returns True so the
+    admin notice is SUPPRESSED: never nag when we cannot positively confirm we are
+    NOT elevated. A normal medium-integrity process (including a split-token admin
+    running without elevation) returns False, which is the correct trigger. Uses
+    integrity, not IsUserAnAdmin / group membership, because a split-token admin
+    running normally is still only medium integrity.
+    """
+    if not _IS_WINDOWS:
+        return True
+    il = own_integrity_level()
+    if il is None:
+        return True
+    return il >= SECURITY_MANDATORY_HIGH_RID
+
+
+def should_show_admin_notice(is_windows: bool, elevated: bool, dismissed: bool) -> bool:
+    """Pure show-gate for the admin-notice banner: show only on Windows, when the
+    process is not elevated, and the user has not dismissed it."""
+    return bool(is_windows and not elevated and not dismissed)
