@@ -424,12 +424,18 @@ class MultiToonTool(QMainWindow):
         self.update_banner.dismissed.connect(self._on_update_banner_dismissed)
         self._pending_update_info = None
 
+        from utils.widgets.admin_notice_banner import AdminNoticeBanner
+        self.admin_notice_banner = AdminNoticeBanner(parent=self)
+        self.admin_notice_banner.restart_as_admin.connect(self._on_admin_notice_restart)
+        self.admin_notice_banner.dismissed.connect(self._on_admin_notice_dismissed)
+
         self.header = self._build_header()
         root.addWidget(self.header)
 
         # Banner sits between the header and the tab switcher; in normal flow
         # so show/hide reflows the content below down.
         root.addWidget(self.update_banner)
+        root.addWidget(self.admin_notice_banner)
 
         self.chip_rail = self._build_chip_rail()
         root.addWidget(self.chip_rail)
@@ -497,6 +503,7 @@ class MultiToonTool(QMainWindow):
             QSize(W_FULL, H_FULL - HEADER_H - CHIP_RAIL_H),
             include_active=True,
         )
+        self._maybe_show_admin_notice()
 
     def _capture_multitool_window_id(self):
         # xdotool is X11-only; the gate is on the Qt platform, not the
@@ -601,6 +608,48 @@ class MultiToonTool(QMainWindow):
     def _on_update_banner_dismissed(self):
         # Session-only dismiss; nothing to persist.
         pass
+
+    def _maybe_show_admin_notice(self) -> None:
+        """Show the Windows 'run as administrator' banner once (until dismissed)
+        when not running elevated. No-op off Windows / when already dismissed."""
+        import sys
+        from utils.win32_integrity import is_running_elevated, should_show_admin_notice
+        from utils.settings_keys import WINDOWS_ADMIN_NOTICE_DISMISSED
+        sm = self.settings_manager
+        dismissed = bool(sm.get(WINDOWS_ADMIN_NOTICE_DISMISSED, False)) if sm is not None else False
+        if should_show_admin_notice(sys.platform == "win32", is_running_elevated(), dismissed):
+            self.admin_notice_banner.show()
+
+    def _on_admin_notice_restart(self) -> None:
+        """Relaunch MultiTool elevated. On UAC cancel (relaunch returns False),
+        keep the app running and re-enable the button so the user can retry."""
+        from utils import win32_elevation
+        sm = self.settings_manager
+        self.admin_notice_banner.set_restart_enabled(False)
+        ok = win32_elevation.relaunch_elevated(
+            flush_settings=getattr(sm, "save", None) if sm is not None else None,
+            on_success_shutdown=self._shutdown_and_quit,
+        )
+        if not ok:
+            self.admin_notice_banner.set_restart_enabled(True)
+
+    def _shutdown_and_quit(self) -> None:
+        """Route the elevated-relaunch success path through the authoritative
+        main-window cleanup, then quit so the elevated instance takes over."""
+        try:
+            self.shutdown()
+        finally:
+            from PySide6.QtWidgets import QApplication
+            QApplication.quit()
+
+    def _on_admin_notice_dismissed(self) -> None:
+        """Persist 'don't show again' for the admin banner and hide it. Independent
+        of the proof modal's UIPI_ELEVATION_PROMPT_DISMISSED key."""
+        from utils.settings_keys import WINDOWS_ADMIN_NOTICE_DISMISSED
+        sm = self.settings_manager
+        if sm is not None:
+            sm.set(WINDOWS_ADMIN_NOTICE_DISMISSED, True)
+        self.admin_notice_banner.hide()
 
     # ── Header Bar ─────────────────────────────────────────────────────────
 
@@ -1251,6 +1300,7 @@ class MultiToonTool(QMainWindow):
             }}
         """)
         self.update_banner.apply_theme(c)
+        self.admin_notice_banner.apply_theme(c)
         self._apply_chip_styles()
         if hasattr(self, "overflow_popup"):
             self.overflow_popup.set_theme_colors(

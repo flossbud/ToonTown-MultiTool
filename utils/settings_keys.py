@@ -38,3 +38,6 @@ CHAT_HANDLING_MODE_DEFAULT = "simple"
 
 # Windows UIPI elevation prompt (added 2026-06-05)
 UIPI_ELEVATION_PROMPT_DISMISSED = "uipi_elevation_prompt_dismissed"
+
+# Windows administrator notice banner (added 2026-06-05)
+WINDOWS_ADMIN_NOTICE_DISMISSED = "windows_admin_notice_dismissed"
