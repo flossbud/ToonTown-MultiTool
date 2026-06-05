@@ -1075,6 +1075,8 @@ class InputService(QObject):
                 keysym = self._resolve_keysym(outbound)
                 if keysym:
                     self._send_via_backend(action, win, keysym)
+                    if action == "keydown" and win != active_window:
+                        self._note_blocked_movement(win, toon_action, key)
                     if self.logging_enabled and action == "keydown" and key != outbound:
                         self.input_log.emit(
                             f"[Input] '{key}' -> '{outbound}' "
@@ -1090,6 +1092,7 @@ class InputService(QObject):
             self._send_modifier_to_bg("keyup", entry.key, enabled, assignments)
         elif entry.kind == HoldKind.MOVEMENT:
             self._send_logical_action_km("keyup", entry.key, enabled, assignments)
+            self._release_uipi_hold(entry.key)
         elif entry.kind == HoldKind.ACTION:
             self._send_action_keyup_to_bg(entry.key, enabled, assignments)
 

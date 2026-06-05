@@ -170,3 +170,52 @@ def test_details_aggregates_all_blocked_bg_targets():
     assert len(fired) == 1
     wins = {t["window_id"] for t in fired[0]["targets"]}
     assert wins == {"w2", "w3"}
+
+
+def test_router_notes_blocked_bg_movement(monkeypatch):
+    # Drives the REAL router _send_logical_action_km for a background BLOCKED
+    # target, twice within 5s; the signal must fire once with that target.
+    c = _Clock()
+    s = _svc({"w2": Capability.BLOCKED_UIPI}, c)
+    km = MagicMock()
+    km.get_action_in_set.side_effect = lambda game, idx, key: "forward" if key == "w" else None
+    km.get_key_for_action.return_value = "w"
+    s.keymap_manager = km
+    s._resolve_keysym = lambda k: k
+    s._send_via_backend = lambda *a, **k: None
+    from utils import game_registry as gr, logical_actions
+    reg = MagicMock(); reg.get_game_for_window.return_value = "ttr"
+    monkeypatch.setattr(gr.GameRegistry, "instance", lambda: reg)
+    monkeypatch.setattr(logical_actions, "supports", lambda g, a: True)
+    fired = []
+    s.uipi_blocked_movement_detected.connect(lambda d: fired.append(d))
+    s._send_logical_action_km("keydown", "w", [True, True], [0, 0]); s._release_uipi_hold("w")
+    c.t = 1.0
+    s._send_logical_action_km("keydown", "w", [True, True], [0, 0]); s._release_uipi_hold("w")
+    assert len(fired) == 1
+    assert fired[0]["window_id"] == "w2"
+
+
+def test_router_foreground_target_not_recorded(monkeypatch):
+    # A movement route to the FOREGROUND target (win == active) must not record.
+    c = _Clock()
+    s = _svc({"w1": Capability.BLOCKED_UIPI}, c, active="w1")
+    km = MagicMock()
+    km.get_action_in_set.side_effect = lambda game, idx, key: "forward" if key == "w" else None
+    km.get_key_for_action.return_value = "w"
+    s.keymap_manager = km
+    s._resolve_keysym = lambda k: k
+    s._send_via_backend = lambda *a, **k: None
+    from utils import game_registry as gr, logical_actions
+    reg = MagicMock(); reg.get_game_for_window.return_value = "ttr"
+    monkeypatch.setattr(gr.GameRegistry, "instance", lambda: reg)
+    monkeypatch.setattr(logical_actions, "supports", lambda g, a: True)
+    # strict not active in this unit harness, so the active/fg target is skipped by the
+    # existing `win == active_window and not strict` continue; even if it sent, the fg
+    # guard in _note_blocked_movement excludes win==active. Assert no fire either way.
+    fired = []
+    s.uipi_blocked_movement_detected.connect(lambda d: fired.append(d))
+    s._send_logical_action_km("keydown", "w", [True, True], [0, 0]); s._release_uipi_hold("w")
+    c.t = 1.0
+    s._send_logical_action_km("keydown", "w", [True, True], [0, 0]); s._release_uipi_hold("w")
+    assert fired == []
