@@ -476,6 +476,7 @@ class MultiToonTool(QMainWindow):
             suppress_predicate=self.multitoon_tab.input_service._suppress_predicate,
         )
         self.hotkey_manager.profile_load_requested.connect(self.load_profile_slot)
+        self.hotkey_manager.refresh_requested.connect(self.multitoon_tab._on_refresh_requested)
         self.hotkey_manager.start()
 
         self.multitoon_tab.dot_state_changed.connect(self.launch_tab.update_dot_state)
