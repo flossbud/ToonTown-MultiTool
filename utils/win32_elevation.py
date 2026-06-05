@@ -38,3 +38,62 @@ def build_relaunch_params(argv) -> list:
     if ELEVATION_RESTART_FLAG not in out:
         out.append(ELEVATION_RESTART_FLAG)
     return out
+
+
+import subprocess
+
+
+def _on_success_shutdown():
+    """Default success path: quit the Qt app. Imported lazily so the module stays
+    import-safe in headless tests."""
+    from PySide6.QtWidgets import QApplication
+    QApplication.quit()
+
+
+def _executable_and_prefix():
+    """(file, prefix_params) for ShellExecuteEx. Frozen build relaunches the exe
+    with no prefix; source/dev relaunches python with main.py as the first
+    parameter. The user argv is filtered separately by build_relaunch_params."""
+    if getattr(sys, "frozen", False):
+        return sys.executable, []
+    return sys.executable, [os.path.abspath(sys.argv[0])]
+
+
+def _shell_execute_runas(file, params, cwd) -> bool:
+    """Spawn `file` elevated via the runas verb. Returns True on launch, False on
+    UAC cancellation (ERROR_CANCELLED) or failure. Windows-only (imported lazily)."""
+    try:
+        import win32com.shell.shell as shell
+        from win32comext.shell import shellcon
+        res = shell.ShellExecuteEx(
+            nShow=1,
+            fMask=shellcon.SEE_MASK_NOCLOSEPROCESS,
+            lpVerb="runas",
+            lpFile=file,
+            lpParameters=subprocess.list2cmdline(params),
+            lpDirectory=cwd,
+        )
+    except Exception:
+        return False
+    return bool(res and res.get("hProcess"))
+
+
+def relaunch_elevated(argv=None, on_success_shutdown=None, flush_settings=None) -> bool:
+    """Flush settings, then ShellExecuteEx(runas). ONLY on success run the
+    shutdown (stop routing + quit). On UAC cancel leave the current app intact.
+    Returns True if the elevated instance was launched. `argv` defaults to the
+    current process's user argv (sys.argv[1:])."""
+    if sys.platform != "win32":
+        return False
+    if flush_settings is not None:
+        try:
+            flush_settings()
+        except Exception:
+            pass
+    user_argv = list(sys.argv[1:]) if argv is None else list(argv)
+    file, prefix = _executable_and_prefix()
+    params = prefix + build_relaunch_params(user_argv)
+    if not _shell_execute_runas(file, params, os.getcwd()):
+        return False
+    (on_success_shutdown or _on_success_shutdown)()
+    return True
