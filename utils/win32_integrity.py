@@ -93,3 +93,74 @@ def window_capability(hwnd) -> Capability:
         print(f"[win32_integrity] capability read failed for hwnd={hwnd!r}: {e}")
         return Capability.UNKNOWN
     return classify_integrity(own_il, target_il)
+
+
+import threading
+import time as _time
+
+CAPABILITY_TTL_SECONDS = 3.0
+
+
+class WindowCapabilityCache:
+    """Caches window_capability per (hwnd, pid). Two accessors:
+
+    - get(hwnd): refresh-or-cached. Calls the reader (OpenProcess) on a miss,
+      TTL expiry, or pid change. Use OFF the input hot path (focus/assignment/
+      timer handlers).
+    - peek(hwnd): snapshot ONLY. NEVER calls the reader. Returns the last cached
+      capability, or UNKNOWN if never refreshed or the live pid has changed since.
+      Use ON the input hot path.
+
+    pid_of (default: live GetWindowThreadProcessId) is a cheap call; only the
+    reader does the expensive OpenProcess.
+    """
+
+    def __init__(self, reader=window_capability, pid_of=None,
+                 ttl=CAPABILITY_TTL_SECONDS, clock=_time.monotonic):
+        self._reader = reader
+        self._pid_of = pid_of if pid_of is not None else _live_pid
+        self._ttl = ttl
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._entries = {}     # hwnd -> (pid, capability, expires_at)
+
+    def get(self, hwnd) -> Capability:
+        now = self._clock()
+        pid = self._pid_of(hwnd)
+        with self._lock:
+            ent = self._entries.get(hwnd)
+            if ent is not None and ent[0] == pid and ent[2] > now:
+                return ent[1]
+        cap = self._reader(hwnd)            # outside the lock
+        with self._lock:
+            self._entries[hwnd] = (pid, cap, now + self._ttl)
+        return cap
+
+    # refresh is an explicit alias for get (forces a fresh read when stale).
+    refresh = get
+
+    def peek(self, hwnd) -> Capability:
+        pid = self._pid_of(hwnd)
+        with self._lock:
+            ent = self._entries.get(hwnd)
+            if ent is not None and ent[0] == pid:
+                return ent[1]
+        return Capability.UNKNOWN
+
+    def invalidate(self, hwnd=None):
+        with self._lock:
+            if hwnd is None:
+                self._entries.clear()
+            else:
+                self._entries.pop(hwnd, None)
+
+
+def _live_pid(hwnd):
+    if not _IS_WINDOWS:
+        return None
+    try:
+        import win32process
+        _, pid = win32process.GetWindowThreadProcessId(hwnd)
+        return pid
+    except Exception:
+        return None
