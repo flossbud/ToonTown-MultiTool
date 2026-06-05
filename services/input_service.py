@@ -192,6 +192,8 @@ class InputService(QObject):
         self._uipi_episodes: dict[str, list[float]] = {}   # win_id -> [timestamps]
         self._uipi_holds: dict[str, tuple[str, float]] = {}  # key -> (win_id, down_ts)
         self._uipi_pending = None    # details dict awaiting release before emit
+        self._uipi_refresh_timer = None  # periodic off-hot-path capability refresh
+        self._uipi_refresh_wired = False  # window_ids_updated connected once
         self.UIPI_WINDOW_SECONDS = 5.0
         self.UIPI_HOLD_SECONDS = 0.75
 
@@ -215,6 +217,7 @@ class InputService(QObject):
         self.thread = threading.Thread(target=self.run, daemon=False)
         self.thread.start()
         self._start_key_grabber()
+        self._start_uipi_refresh()
 
     def _start_key_grabber(self) -> None:
         """Install the platform-appropriate movement key grabber in
@@ -362,14 +365,13 @@ class InputService(QObject):
             game = GameRegistry.instance().get_game_for_window(str(window_id))
         except Exception:
             game = None
-        # Refresh this focused window's UIPI capability off the hot path so the
-        # delivery-safe gate (which reads via peek) sees a fresh value. No-op when
-        # no cache (injected provider / off Windows).
-        if self._capability_cache is not None and window_id:
-            try:
-                self._capability_cache.get(int(window_id))
-            except Exception:
-                pass
+        # Refresh the UIPI capability of EVERY enabled managed game window off the
+        # hot path, so both the focused-window delivery-safe gate AND the
+        # background-window modal trigger (which read via peek) see fresh values.
+        # Refreshing only the focused window would leave never-focused background
+        # targets stuck at UNKNOWN, so the blocked-movement modal would never fire
+        # for an elevated background game (the feature's primary case).
+        self._refresh_uipi_capabilities()
         # TTR strict separation is supported on Linux/X11 and Windows; macOS and
         # other platforms keep pre-feature behavior (_ttr_strict_supported).
         if game == "ttr" and not (
@@ -814,6 +816,7 @@ class InputService(QObject):
     def shutdown(self):
         """Call once on app exit to clean up the Xlib connection."""
         self.stop(wait=True)
+        self._stop_uipi_refresh()
         if self._key_grabber is not None:
             try:
                 self._key_grabber.stop()
@@ -929,6 +932,59 @@ class InputService(QObject):
         if game != "ttr":
             return True
         return self._capability_for(active) is Capability.OK
+
+    def _refresh_uipi_capabilities(self) -> None:
+        """Refresh the UIPI capability of EVERY managed game window via the cache's
+        get() (which does the OpenProcess token read). Runs OFF the input hot path
+        (focus change, window-assignment change, periodic timer) so the hot path
+        only ever peeks. No-op when there is no cache (injected provider in tests,
+        or off Windows where the feature is inert)."""
+        if self._capability_cache is None:
+            return
+        try:
+            ids = list(self.window_manager.get_window_ids())
+        except Exception:
+            return
+        for w in ids:
+            try:
+                self._capability_cache.get(int(w))
+            except Exception:
+                pass
+
+    def _start_uipi_refresh(self) -> None:
+        """Wire the off-hot-path UIPI capability refresh: on window-assignment
+        change (window_ids_updated) and on a periodic timer (the cache TTL). No-op
+        when there is no cache (off Windows / injected provider in tests)."""
+        if self._capability_cache is None:
+            return
+        if not self._uipi_refresh_wired:
+            try:
+                self.window_manager.window_ids_updated.connect(
+                    self._on_window_ids_updated_refresh)
+                self._uipi_refresh_wired = True
+            except Exception as e:  # noqa: BLE001
+                print(f"[InputService] uipi window_ids_updated connect failed: {e}")
+        try:
+            from PySide6.QtCore import QTimer
+            from utils.win32_integrity import CAPABILITY_TTL_SECONDS
+            if self._uipi_refresh_timer is None:
+                self._uipi_refresh_timer = QTimer(self)
+                self._uipi_refresh_timer.setInterval(int(CAPABILITY_TTL_SECONDS * 1000))
+                self._uipi_refresh_timer.timeout.connect(self._refresh_uipi_capabilities)
+            self._uipi_refresh_timer.start()
+        except Exception as e:  # noqa: BLE001
+            print(f"[InputService] uipi refresh timer start failed: {e}")
+
+    def _on_window_ids_updated_refresh(self, *args) -> None:
+        self._refresh_uipi_capabilities()
+
+    def _stop_uipi_refresh(self) -> None:
+        t = self._uipi_refresh_timer
+        if t is not None:
+            try:
+                t.stop()
+            except Exception:
+                pass
 
     def _ttr_strict_supported(self) -> bool:
         """TTR strict separation is implemented for Linux/X11 and Windows. macOS

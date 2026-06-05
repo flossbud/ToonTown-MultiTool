@@ -5,6 +5,7 @@ elevation specifically requires ShellExecuteEx with verb='runas'."""
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 
 ELEVATION_RESTART_FLAG = "--elevation-restart=uipi"
@@ -40,9 +41,6 @@ def build_relaunch_params(argv) -> list:
     return out
 
 
-import subprocess
-
-
 def _on_success_shutdown():
     """Default success path: quit the Qt app. Imported lazily so the module stays
     import-safe in headless tests."""
@@ -63,6 +61,7 @@ def _shell_execute_runas(file, params, cwd) -> bool:
     """Spawn `file` elevated via the runas verb. Returns True on launch, False on
     UAC cancellation (ERROR_CANCELLED) or failure. Windows-only (imported lazily)."""
     try:
+        import win32api
         import win32com.shell.shell as shell
         from win32comext.shell import shellcon
         res = shell.ShellExecuteEx(
@@ -75,7 +74,16 @@ def _shell_execute_runas(file, params, cwd) -> bool:
         )
     except Exception:
         return False
-    return bool(res and res.get("hProcess"))
+    # SEE_MASK_NOCLOSEPROCESS hands us a process handle; we do not wait on the
+    # elevated child, so release our handle (this does not terminate it).
+    hproc = res.get("hProcess") if res else None
+    ok = bool(hproc)
+    if hproc:
+        try:
+            win32api.CloseHandle(hproc)
+        except Exception:
+            pass
+    return ok
 
 
 def relaunch_elevated(argv=None, on_success_shutdown=None, flush_settings=None) -> bool:

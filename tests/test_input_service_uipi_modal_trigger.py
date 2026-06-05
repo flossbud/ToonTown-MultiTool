@@ -219,3 +219,54 @@ def test_router_foreground_target_not_recorded(monkeypatch):
     c.t = 1.0
     s._send_logical_action_km("keydown", "w", [True, True], [0, 0]); s._release_uipi_hold("w")
     assert fired == []
+
+
+def test_production_cache_path_requires_refresh_for_background_modal():
+    # Regression for the final-review D1 bug: with the REAL WindowCapabilityCache,
+    # a never-refreshed BACKGROUND window peeks UNKNOWN, so the modal does NOT fire
+    # (the feature's primary case was broken). After _refresh_uipi_capabilities
+    # populates all managed windows off the hot path, peek returns BLOCKED_UIPI and
+    # the modal fires.
+    from utils.win32_integrity import WindowCapabilityCache
+    c = _Clock()
+    s = _svc({}, c, active="1", ids=("1", "2"))
+    cache = WindowCapabilityCache(
+        reader=lambda h: Capability.BLOCKED_UIPI if h == 2 else Capability.OK,
+        pid_of=lambda h: 1, ttl=3.0, clock=c)
+    s._capability_cache = cache
+    s._capability_provider = lambda w: cache.peek(int(w))   # hot path = peek only
+    fired = _collect(s)
+
+    # Background "2" never refreshed -> peek UNKNOWN -> no episode (the bug).
+    s._note_blocked_movement("2", "forward", "w"); s._release_uipi_hold("w")
+    c.t = 1.0
+    s._note_blocked_movement("2", "forward", "w"); s._release_uipi_hold("w")
+    assert fired == []
+
+    # Off-hot-path refresh of ALL managed windows (focus/assignment/timer).
+    s._refresh_uipi_capabilities()
+    c.t = 2.0
+    s._note_blocked_movement("2", "forward", "w"); s._release_uipi_hold("w")
+    c.t = 3.0
+    s._note_blocked_movement("2", "forward", "w"); s._release_uipi_hold("w")
+    assert len(fired) == 1
+    assert fired[0]["window_id"] == "2"
+
+
+def test_refresh_uipi_capabilities_refreshes_every_managed_window():
+    from utils.win32_integrity import WindowCapabilityCache
+    c = _Clock()
+    s = _svc({}, c, ids=("1", "2", "3"))
+    got = []
+    s._capability_cache = WindowCapabilityCache(
+        reader=lambda h: got.append(h) or Capability.OK,
+        pid_of=lambda h: 1, ttl=3.0, clock=c)
+    s._refresh_uipi_capabilities()
+    assert sorted(got) == [1, 2, 3]
+
+
+def test_refresh_uipi_capabilities_noop_without_cache():
+    c = _Clock()
+    s = _svc({}, c)
+    s._capability_cache = None
+    s._refresh_uipi_capabilities()   # must not raise
