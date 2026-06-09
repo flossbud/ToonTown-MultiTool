@@ -1338,7 +1338,12 @@ class SettingsTab(QWidget):
         lay.insertWidget(insert_at, panel)
 
     def _build_chat_handling_card(self, page):
-        from utils.settings_keys import CHAT_HANDLING_MODE, CHAT_HANDLING_MODE_DEFAULT
+        from utils.settings_keys import (
+            CHAT_HANDLING_MODE, CHAT_HANDLING_MODE_DEFAULT,
+            CHAT_HANDLING_FOCUSED_ONLY, CHAT_HANDLING_ALL_TOONS,
+            CHAT_HANDLING_KEYSET_DYNAMIC, CHAT_HANDLING_PER_TOON,
+            normalize_chat_handling_mode,
+        )
 
         lay = page._panel_layout
         insert_at = lay.count() - 1
@@ -1347,23 +1352,45 @@ class SettingsTab(QWidget):
         self._panels.append(panel)
         self._chat_handling_panel = panel
 
-        mode_initial = self.settings_manager.get(CHAT_HANDLING_MODE, CHAT_HANDLING_MODE_DEFAULT)
+        # Ordered canonical values paired with display labels. The list index
+        # is the combo's current index; never rely on label text elsewhere.
+        self._chat_mode_values = [
+            CHAT_HANDLING_FOCUSED_ONLY,
+            CHAT_HANDLING_ALL_TOONS,
+            CHAT_HANDLING_KEYSET_DYNAMIC,
+            CHAT_HANDLING_PER_TOON,
+        ]
+        chat_mode_labels = [
+            "Focused Toon Only",
+            "All Toons",
+            "Keyset Dynamic",
+            "Per-Toon (manual)",
+        ]
+
+        initial = normalize_chat_handling_mode(
+            self.settings_manager.get(CHAT_HANDLING_MODE, CHAT_HANDLING_MODE_DEFAULT)
+        )
         field = SettingsField(
-            "Per-Toon Chat Handling",
+            "Chat Handling Logic",
             helper=(
-                "Off: the chat button is hidden on every toon. Each toon's "
-                "chat broadcast is auto-determined by its keyset (default "
-                "keyset broadcasts; customized keyset does not). The "
-                "whisper-reply detector is off. "
-                "On: the chat button is visible on every toon and you "
-                "control chat broadcast per toon. The whisper-reply "
-                "detector runs."
+                "Choose where typed chat goes across your toons. "
+                "Focused Toon Only: chat affects only the window you are "
+                "playing; every other toon is left alone. "
+                "All Toons: chat is mirrored to every active toon. "
+                "Keyset Dynamic: chat mirrors to toons sharing the default "
+                "keyset and is held back from toons you moved to another "
+                "keyset. "
+                "Per-Toon (manual): show a chat button on each toon and pick "
+                "who chats yourself."
             ),
         )
-        switch = Switch(mode_initial == "advanced")
-        switch.toggled.connect(self._on_chat_handling_mode_toggle)
-        field.set_control(switch)
-        self._chat_handling_switch = switch
+        combo = SettingsComboBox()
+        combo.addItems(chat_mode_labels)
+        combo.setCurrentIndex(self._chat_mode_values.index(initial))
+        combo.setFixedWidth(180)
+        combo.currentIndexChanged.connect(self._on_chat_handling_mode_changed)
+        field.set_control(combo)
+        self._chat_handling_combo = combo
         panel.add_field(field)
 
         lay.insertWidget(insert_at, panel)
@@ -1428,9 +1455,11 @@ class SettingsTab(QWidget):
 
     # ── Chat Handling handler ────────────────────────────────────────────
 
-    def _on_chat_handling_mode_toggle(self, checked: bool):
+    def _on_chat_handling_mode_changed(self, index: int):
         from utils.settings_keys import CHAT_HANDLING_MODE
-        mode = "advanced" if checked else "simple"
+        if index < 0 or index >= len(self._chat_mode_values):
+            return
+        mode = self._chat_mode_values[index]
         self.settings_manager.set(CHAT_HANDLING_MODE, mode)
         self.chat_handling_mode_changed.emit(mode)
 

@@ -354,3 +354,45 @@ def test_reduce_motion_combo_uses_short_closed_text(app, settings_manager):
     assert long_text == "System default", (
         f"menu text must remain descriptive; got {long_text!r}"
     )
+
+
+def test_chat_handling_dropdown_normalizes_legacy_advanced(app, settings_manager):
+    """A persisted legacy 'advanced' selects the Per-Toon (manual) option,
+    and the control is a SettingsComboBox."""
+    from utils.shared_widgets import SettingsComboBox
+    from tabs.settings_tab import SettingsTab
+    settings_manager.set("chat_handling_mode", "advanced")
+    tab = SettingsTab(settings_manager)
+    try:
+        combo = tab._chat_handling_combo
+        assert isinstance(combo, SettingsComboBox)
+        assert tab._chat_mode_values[combo.currentIndex()] == "per_toon"
+    finally:
+        tab.deleteLater()
+
+
+def test_chat_handling_dropdown_default_focused_only(app, settings_manager):
+    from tabs.settings_tab import SettingsTab
+    tab = SettingsTab(settings_manager)
+    try:
+        combo = tab._chat_handling_combo
+        assert tab._chat_mode_values[combo.currentIndex()] == "focused_only"
+    finally:
+        tab.deleteLater()
+
+
+def test_chat_handling_dropdown_change_persists_and_emits(app, settings_manager):
+    """Selecting a new option writes the canonical value and emits the signal
+    carrying that value."""
+    from tabs.settings_tab import SettingsTab
+    tab = SettingsTab(settings_manager)
+    try:
+        emitted = []
+        tab.chat_handling_mode_changed.connect(emitted.append)
+        combo = tab._chat_handling_combo
+        per_toon_idx = tab._chat_mode_values.index("per_toon")
+        combo.setCurrentIndex(per_toon_idx)
+        assert settings_manager.get("chat_handling_mode") == "per_toon"
+        assert emitted == ["per_toon"]
+    finally:
+        tab.deleteLater()
