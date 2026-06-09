@@ -371,12 +371,37 @@ def test_chat_handling_dropdown_normalizes_legacy_advanced(app, settings_manager
         tab.deleteLater()
 
 
+def test_chat_handling_dropdown_normalizes_legacy_simple(app, settings_manager):
+    """A persisted legacy 'simple' selects the Keyset Dynamic option."""
+    from tabs.settings_tab import SettingsTab
+    settings_manager.set("chat_handling_mode", "simple")
+    tab = SettingsTab(settings_manager)
+    try:
+        combo = tab._chat_handling_combo
+        assert tab._chat_mode_values[combo.currentIndex()] == "keyset_dynamic"
+    finally:
+        tab.deleteLater()
+
+
 def test_chat_handling_dropdown_default_focused_only(app, settings_manager):
     from tabs.settings_tab import SettingsTab
     tab = SettingsTab(settings_manager)
     try:
         combo = tab._chat_handling_combo
         assert tab._chat_mode_values[combo.currentIndex()] == "focused_only"
+    finally:
+        tab.deleteLater()
+
+
+def test_chat_handling_dropdown_build_does_not_persist(app, settings_manager):
+    """The card sets the initial index BEFORE connecting currentIndexChanged,
+    so building it must never write chat_handling_mode. This pins the connect
+    ordering: reversing it would persist a value at construction and fail."""
+    from tabs.settings_tab import SettingsTab
+    assert settings_manager.get("chat_handling_mode", "UNSET") == "UNSET"
+    tab = SettingsTab(settings_manager)
+    try:
+        assert settings_manager.get("chat_handling_mode", "UNSET") == "UNSET"
     finally:
         tab.deleteLater()
 

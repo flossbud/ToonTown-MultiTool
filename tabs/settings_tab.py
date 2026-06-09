@@ -1380,8 +1380,8 @@ class SettingsTab(QWidget):
                 "Keyset Dynamic: chat mirrors to toons sharing the default "
                 "keyset and is held back from toons you moved to another "
                 "keyset. "
-                "Per-Toon (manual): show a chat button on each toon and pick "
-                "who chats yourself."
+                "Per-Toon (manual): choose exactly who chats yourself, using a "
+                "chat button shown on each Toontown Rewritten toon."
             ),
         )
         combo = SettingsComboBox()
