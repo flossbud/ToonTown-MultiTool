@@ -53,8 +53,12 @@ CHAT_HANDLING_MODE_DEFAULT = CHAT_HANDLING_FOCUSED_ONLY
 # Legacy values from the original Simple/Advanced switch, mapped to canonical
 # modes at read time. No write migration: the canonical value persists only
 # when the user next touches the dropdown.
+#
+# Legacy "simple" is intentionally NOT mapped: it was the old implicit
+# default, not an explicit choice in the new dropdown, so it falls through
+# to CHAT_HANDLING_MODE_DEFAULT below. Only "advanced" (an explicit opt-in
+# to the per-card chat buttons) is preserved.
 _LEGACY_CHAT_HANDLING = {
-    "simple": CHAT_HANDLING_KEYSET_DYNAMIC,
     "advanced": CHAT_HANDLING_PER_TOON,
 }
 
@@ -63,9 +67,10 @@ def normalize_chat_handling_mode(raw) -> str:
     """Map any stored/legacy/None chat-handling value to a canonical mode.
 
     - the four canonical values pass through unchanged
-    - legacy 'simple' -> 'keyset_dynamic', 'advanced' -> 'per_toon'
-    - anything else (including None, unknown strings, or a non-string such as
-      a corrupt list/dict from a malformed settings file) -> default
+    - legacy 'advanced' -> 'per_toon'
+    - anything else (including legacy 'simple', None, unknown strings, or a
+      non-string such as a corrupt list/dict from a malformed settings
+      file) -> default
     """
     if isinstance(raw, str):
         if raw in CHAT_HANDLING_MODE_VALUES:

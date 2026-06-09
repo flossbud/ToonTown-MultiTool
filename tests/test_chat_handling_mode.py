@@ -50,9 +50,15 @@ def test_chat_handling_mode_values_tuple():
     )
 
 
-def test_normalize_legacy_simple_to_keyset_dynamic():
-    from utils.settings_keys import normalize_chat_handling_mode
-    assert normalize_chat_handling_mode("simple") == "keyset_dynamic"
+def test_normalize_legacy_simple_to_default():
+    """Legacy 'simple' was the old implicit default, not an explicit choice
+    in the new dropdown, so it resets to the current default (focused_only)
+    rather than preserving the keyset-derived behavior."""
+    from utils.settings_keys import (
+        normalize_chat_handling_mode, CHAT_HANDLING_MODE_DEFAULT,
+    )
+    assert normalize_chat_handling_mode("simple") == CHAT_HANDLING_MODE_DEFAULT
+    assert CHAT_HANDLING_MODE_DEFAULT == "focused_only"
 
 
 def test_normalize_legacy_advanced_to_per_toon():
@@ -147,6 +153,16 @@ def test_get_chat_handling_mode_normalizes_legacy_advanced():
     sm = SimpleNamespace(get=lambda key, default=None: "advanced")
     tab = SimpleNamespace(settings_manager=sm)
     assert MultitoonTab.get_chat_handling_mode(tab) == "per_toon"
+
+
+def test_get_chat_handling_mode_resets_legacy_simple_to_default():
+    """Composition check: a settings manager still returning the raw legacy
+    'simple' yields the focused_only default through the accessor."""
+    from types import SimpleNamespace
+    from tabs.multitoon._tab import MultitoonTab
+    sm = SimpleNamespace(get=lambda key, default=None: "simple")
+    tab = SimpleNamespace(settings_manager=sm)
+    assert MultitoonTab.get_chat_handling_mode(tab) == "focused_only"
 
 
 def test_get_chat_handling_mode_defaults_focused_only_without_settings():

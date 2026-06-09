@@ -371,14 +371,16 @@ def test_chat_handling_dropdown_normalizes_legacy_advanced(app, settings_manager
         tab.deleteLater()
 
 
-def test_chat_handling_dropdown_normalizes_legacy_simple(app, settings_manager):
-    """A persisted legacy 'simple' selects the Keyset Dynamic option."""
+def test_chat_handling_dropdown_resets_legacy_simple_to_default(app, settings_manager):
+    """A persisted legacy 'simple' (the old implicit default) selects the
+    Focused Toon Only option: only a choice made in the new dropdown counts
+    as an explicit mode selection."""
     from tabs.settings_tab import SettingsTab
     settings_manager.set("chat_handling_mode", "simple")
     tab = SettingsTab(settings_manager)
     try:
         combo = tab._chat_handling_combo
-        assert tab._chat_mode_values[combo.currentIndex()] == "keyset_dynamic"
+        assert tab._chat_mode_values[combo.currentIndex()] == "focused_only"
     finally:
         tab.deleteLater()
 
