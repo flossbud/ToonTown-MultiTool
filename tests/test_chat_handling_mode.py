@@ -158,7 +158,6 @@ def test_get_chat_handling_mode_defaults_focused_only_without_settings():
 
 def _visibility_stub(wants):
     from types import SimpleNamespace
-    from unittest.mock import MagicMock
     buttons = [MagicMock() for _ in wants]
     return SimpleNamespace(
         chat_buttons=buttons,
@@ -182,3 +181,24 @@ def test_apply_mode_hides_all_buttons_for_focused_only():
     MultitoonTab.apply_chat_handling_mode(tab, "focused_only")
     for b in buttons:
         b.setVisible.assert_called_with(False)
+
+
+def test_effective_per_toon_short_raw_chat_pads_false():
+    """per_toon length-normalizes: missing raw_chat indices -> False, never
+    an IndexError."""
+    from tabs.multitoon._tab import compute_effective_chat_enabled
+    assert compute_effective_chat_enabled(
+        mode="per_toon", raw_chat=[True], enabled_toons=[True, True, True],
+        assignments=[0, 0, 0],
+    ) == [True, False, False]
+
+
+def test_normalize_non_hashable_returns_default():
+    """A corrupt non-string persisted value must not raise; it returns the
+    default."""
+    from utils.settings_keys import (
+        normalize_chat_handling_mode, CHAT_HANDLING_MODE_DEFAULT,
+    )
+    assert normalize_chat_handling_mode([]) == CHAT_HANDLING_MODE_DEFAULT
+    assert normalize_chat_handling_mode({}) == CHAT_HANDLING_MODE_DEFAULT
+    assert normalize_chat_handling_mode(0) == CHAT_HANDLING_MODE_DEFAULT

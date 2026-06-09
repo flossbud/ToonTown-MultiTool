@@ -1155,8 +1155,8 @@ class MultitoonTab(QWidget):
         # Per-slot cached "game type supports chat button" intent. Updated by
         # CC/TTR paint paths via _set_chat_button_visible. Read by
         # apply_chat_handling_mode when the global mode flips so visibility
-        # respects both the per-slot game intent and the master Simple/Advanced
-        # mode (Simple hides regardless; Advanced shows only TTR/empty slots).
+        # respects both the per-slot game intent and the global Chat Handling
+        # mode (buttons show only in per_toon; other modes hide regardless).
         self._chat_button_game_wants_visible = [True] * 4
         self.keep_alive_buttons = []
         self.ka_progress_bars = []
@@ -2866,7 +2866,7 @@ class MultitoonTab(QWidget):
                             )
                         # CC -> TTR transition: a previous CC paint may have hidden the chat
                         # button. TTR slot supports chat; visibility is then masked by the
-                        # global Chat Handling mode (Simple hides regardless).
+                        # global Chat Handling mode (non per_toon modes hide regardless).
                         self._set_chat_button_visible(global_idx, True)
         self._refresh_toon_name_labels()
         self._refresh_toon_stats_labels()
@@ -3109,11 +3109,10 @@ class MultitoonTab(QWidget):
         )
 
     def get_chat_enabled(self):
-        """Return the effective per-toon chat-broadcast state.
-
-        In Advanced mode this is the user-managed self.chat_enabled list
-        verbatim. In Simple mode the result is derived from
-        self.enabled_toons + the per-toon keyset assignments.
+        """Return the effective per-toon chat-broadcast state for the current
+        canonical mode (per_toon=raw list; all_toons=every enabled toon;
+        focused_only=none; keyset_dynamic=default-keyset toons), computed by
+        compute_effective_chat_enabled.
 
         Called per keystroke by InputService; cost is O(n) over the
         4-toon list. See compute_effective_chat_enabled for the rule.

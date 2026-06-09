@@ -1720,12 +1720,15 @@ class InputService(QObject):
         Foreground toon is excluded because its chat state does not affect
         what gets broadcast to other toons.
         """
-        # Hard gate: when global Chat Handling mode is anything other than
-        # 'advanced' (Simple mode being the default), phantom is off
-        # regardless of per-toon chat state. Legacy callers that pass
-        # get_chat_handling_mode=None get advanced-equivalent behavior.
+        # Hard gate: phantom suppression runs ONLY in the per_toon (manual)
+        # mode. In every other mode (focused_only / all_toons / keyset_dynamic)
+        # the whisper-reply detector is off regardless of per-toon chat state.
+        # get_chat_handling_mode returns canonical values; legacy callers that
+        # pass get_chat_handling_mode=None keep the manual-equivalent path so
+        # existing test fixtures are unaffected.
+        from utils.settings_keys import CHAT_HANDLING_PER_TOON
         if self.get_chat_handling_mode is not None:
-            if self.get_chat_handling_mode() != "advanced":
+            if self.get_chat_handling_mode() != CHAT_HANDLING_PER_TOON:
                 return False
         enabled = self.get_enabled_toons()
         if not enabled:

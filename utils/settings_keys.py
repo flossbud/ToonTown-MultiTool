@@ -64,12 +64,14 @@ def normalize_chat_handling_mode(raw) -> str:
 
     - the four canonical values pass through unchanged
     - legacy 'simple' -> 'keyset_dynamic', 'advanced' -> 'per_toon'
-    - anything else (including None / unknown) -> CHAT_HANDLING_MODE_DEFAULT
+    - anything else (including None, unknown strings, or a non-string such as
+      a corrupt list/dict from a malformed settings file) -> default
     """
-    if raw in CHAT_HANDLING_MODE_VALUES:
-        return raw
-    if raw in _LEGACY_CHAT_HANDLING:
-        return _LEGACY_CHAT_HANDLING[raw]
+    if isinstance(raw, str):
+        if raw in CHAT_HANDLING_MODE_VALUES:
+            return raw
+        if raw in _LEGACY_CHAT_HANDLING:
+            return _LEGACY_CHAT_HANDLING[raw]
     return CHAT_HANDLING_MODE_DEFAULT
 
 # Windows UIPI elevation prompt (added 2026-06-05)

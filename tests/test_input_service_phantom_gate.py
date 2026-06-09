@@ -268,9 +268,9 @@ def test_active_phantom_deactivates_when_gate_closes():
 # ── Phantom gate integration with chat handling mode ─────────────────────
 
 
-def test_phantom_gate_closed_when_chat_handling_mode_is_simple():
+def test_phantom_gate_closed_when_chat_handling_mode_is_keyset_dynamic():
     """Even with every bg toon's chat enabled, phantom must be hard-disabled
-    when the global mode is 'simple'. Spec: 'if disabled in settings,
+    when the global mode is 'keyset_dynamic'. Spec: 'if disabled in settings,
     phantom chat detection should be off no matter what.'"""
     wm = _FakeWindowManager(window_ids=["w1", "w2"], active_window="w1")
     svc = InputService(
@@ -280,13 +280,13 @@ def test_phantom_gate_closed_when_chat_handling_mode_is_simple():
         get_event_queue_func=lambda: None,
         settings_manager=MagicMock(),
         get_chat_enabled=lambda: [True, True],
-        get_chat_handling_mode=lambda: "simple",
+        get_chat_handling_mode=lambda: "keyset_dynamic",
     )
     assert svc._phantom_gate_open() is False
 
 
-def test_phantom_gate_open_when_chat_handling_mode_is_advanced():
-    """In 'advanced' mode the gate consults per-toon chat as before."""
+def test_phantom_gate_open_when_chat_handling_mode_is_per_toon():
+    """In 'per_toon' mode the gate consults per-toon chat as before."""
     wm = _FakeWindowManager(window_ids=["w1", "w2"], active_window="w1")
     svc = InputService(
         window_manager=wm,
@@ -295,7 +295,7 @@ def test_phantom_gate_open_when_chat_handling_mode_is_advanced():
         get_event_queue_func=lambda: None,
         settings_manager=MagicMock(),
         get_chat_enabled=lambda: [False, True],
-        get_chat_handling_mode=lambda: "advanced",
+        get_chat_handling_mode=lambda: "per_toon",
     )
     assert svc._phantom_gate_open() is True
 
@@ -315,3 +315,22 @@ def test_phantom_gate_open_when_get_chat_handling_mode_is_none():
         # get_chat_handling_mode not passed -> defaults to None
     )
     assert svc._phantom_gate_open() is True
+
+
+def test_phantom_gate_closed_when_chat_handling_mode_is_focused_only():
+    """focused_only is a non-manual mode: phantom is hard-disabled even with
+    bg chat enabled."""
+    wm = _FakeWindowManager(window_ids=["w1", "w2"], active_window="w1")
+    svc = InputService(
+        window_manager=wm,
+        get_enabled_toons=lambda: [True, True],
+        get_movement_modes=lambda: ["WASD", "WASD"],
+        get_event_queue_func=lambda: None,
+        settings_manager=MagicMock(),
+        get_chat_enabled=lambda: [True, True],
+        get_chat_handling_mode=lambda: "focused_only",
+    )
+    try:
+        assert svc._phantom_gate_open() is False
+    finally:
+        svc.shutdown()
