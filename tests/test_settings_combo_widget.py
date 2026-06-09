@@ -394,14 +394,19 @@ def test_chat_handling_dropdown_default_focused_only(app, settings_manager):
 
 
 def test_chat_handling_dropdown_build_does_not_persist(app, settings_manager):
-    """The card sets the initial index BEFORE connecting currentIndexChanged,
-    so building it must never write chat_handling_mode. This pins the connect
-    ordering: reversing it would persist a value at construction and fail."""
+    """Building the card must never write chat_handling_mode (no write
+    migration): the initial index is set BEFORE currentIndexChanged is
+    connected. Seed a legacy value whose canonical index is non-zero
+    ('advanced' -> per_toon, index 3) so a reversed connect order would emit
+    setCurrentIndex(3) while connected and overwrite the stored value with the
+    canonical 'per_toon'. Correct ordering leaves the raw value untouched. A
+    default (index 0) seed could not distinguish the two orderings because
+    setCurrentIndex(0) is a no-op that emits nothing."""
     from tabs.settings_tab import SettingsTab
-    assert settings_manager.get("chat_handling_mode", "UNSET") == "UNSET"
+    settings_manager.set("chat_handling_mode", "advanced")
     tab = SettingsTab(settings_manager)
     try:
-        assert settings_manager.get("chat_handling_mode", "UNSET") == "UNSET"
+        assert settings_manager.get("chat_handling_mode") == "advanced"
     finally:
         tab.deleteLater()
 
