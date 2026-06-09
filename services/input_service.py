@@ -1282,6 +1282,14 @@ class InputService(QObject):
             win = window_ids[i]
             if win == active_window:
                 continue
+            if not self._is_chat_allowed(i):
+                # Backspace follows the same per-toon chat permission as the
+                # typed-character path (_send_typing_to_bg). In focused_only the
+                # effective list is all-False, so no background toon gets a
+                # chat-editing key; a chat-blocked toon in any mode is likewise
+                # skipped. Runs whenever Backspace is held, not only during
+                # detected chat.
+                continue
             self._send_via_backend("key", win, "BackSpace")
 
     # ── Run loop ───────────────────────────────────────────────────────────
