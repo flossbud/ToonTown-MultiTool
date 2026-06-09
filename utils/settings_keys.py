@@ -32,9 +32,45 @@ LAUNCH_SECTION_CC_COLLAPSED  = "launch_section_cc_collapsed"
 # Settings tab navigation (added 2026-05-23)
 SETTINGS_ACTIVE_CATEGORY = "settings_active_category"
 
-# Chat handling mode (added 2026-05-26)
+# Chat handling mode (added 2026-05-26; extended 2026-06-09)
 CHAT_HANDLING_MODE = "chat_handling_mode"
-CHAT_HANDLING_MODE_DEFAULT = "simple"
+
+# Canonical mode values (2026-06-09: replaces the simple/advanced switch)
+CHAT_HANDLING_FOCUSED_ONLY = "focused_only"
+CHAT_HANDLING_ALL_TOONS = "all_toons"
+CHAT_HANDLING_KEYSET_DYNAMIC = "keyset_dynamic"
+CHAT_HANDLING_PER_TOON = "per_toon"
+
+CHAT_HANDLING_MODE_VALUES = (
+    CHAT_HANDLING_FOCUSED_ONLY,
+    CHAT_HANDLING_ALL_TOONS,
+    CHAT_HANDLING_KEYSET_DYNAMIC,
+    CHAT_HANDLING_PER_TOON,
+)
+
+CHAT_HANDLING_MODE_DEFAULT = CHAT_HANDLING_FOCUSED_ONLY
+
+# Legacy values from the original Simple/Advanced switch, mapped to canonical
+# modes at read time. No write migration: the canonical value persists only
+# when the user next touches the dropdown.
+_LEGACY_CHAT_HANDLING = {
+    "simple": CHAT_HANDLING_KEYSET_DYNAMIC,
+    "advanced": CHAT_HANDLING_PER_TOON,
+}
+
+
+def normalize_chat_handling_mode(raw) -> str:
+    """Map any stored/legacy/None chat-handling value to a canonical mode.
+
+    - the four canonical values pass through unchanged
+    - legacy 'simple' -> 'keyset_dynamic', 'advanced' -> 'per_toon'
+    - anything else (including None / unknown) -> CHAT_HANDLING_MODE_DEFAULT
+    """
+    if raw in CHAT_HANDLING_MODE_VALUES:
+        return raw
+    if raw in _LEGACY_CHAT_HANDLING:
+        return _LEGACY_CHAT_HANDLING[raw]
+    return CHAT_HANDLING_MODE_DEFAULT
 
 # Windows UIPI elevation prompt (added 2026-06-05)
 UIPI_ELEVATION_PROMPT_DISMISSED = "uipi_elevation_prompt_dismissed"

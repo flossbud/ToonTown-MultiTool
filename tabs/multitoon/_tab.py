@@ -1073,27 +1073,40 @@ def compute_effective_chat_enabled(
 ) -> list[bool]:
     """Compute per-toon effective chat-broadcast state.
 
-    Advanced mode: returns the user-managed raw_chat list verbatim.
-    Simple mode: returns a derived list where each toon's chat is True iff
-    the toon is enabled AND its assigned keyset index is 0 (the default).
+    Expects an already-normalized mode (use normalize_chat_handling_mode
+    before calling). The four canonical modes behave as follows:
 
-    Result length always equals len(enabled_toons); raw_chat and
-    assignments are tolerated at any length (missing indices treated as
-    non-default keyset in Simple mode).
+    - per_toon:       returns raw_chat verbatim, length-normalized to
+                      len(enabled_toons); downstream InputService callers
+                      never read past the end of raw_chat.
+    - all_toons:      every enabled toon broadcasts chat (disabled -> False),
+                      regardless of keyset assignment or raw_chat.
+    - focused_only:   all False; chat is handled by the game's own focused
+                      window, not broadcast by TTMT.
+    - keyset_dynamic: (default / fallback) each toon is True iff the toon is
+                      enabled AND its assigned keyset index is 0. Assignments
+                      shorter than enabled_toons treat missing indices as
+                      non-default keyset (chat off).
 
-    See: docs/superpowers/specs/2026-05-26-chat-handling-mode-design.md
+    Result length always equals len(enabled_toons).
+
+    See: docs/superpowers/specs/2026-06-09-chat-handling-logic-dropdown-design.md
     """
-    if mode == "advanced":
-        # Normalize length to enabled_toons so downstream zip-by-index callers
-        # in InputService never read past the end of raw_chat if a partial
-        # mutation slipped in.
-        n = len(enabled_toons)
+    from utils.settings_keys import (
+        CHAT_HANDLING_PER_TOON,
+        CHAT_HANDLING_ALL_TOONS,
+        CHAT_HANDLING_FOCUSED_ONLY,
+    )
+    n = len(enabled_toons)
+    if mode == CHAT_HANDLING_PER_TOON:
         return [bool(raw_chat[i]) if i < len(raw_chat) else False for i in range(n)]
+    if mode == CHAT_HANDLING_ALL_TOONS:
+        return [bool(enabled_toons[i]) for i in range(n)]
+    if mode == CHAT_HANDLING_FOCUSED_ONLY:
+        return [False] * n
     return [
-        bool(enabled_toons[i])
-        and i < len(assignments)
-        and assignments[i] == 0
-        for i in range(len(enabled_toons))
+        bool(enabled_toons[i]) and i < len(assignments) and assignments[i] == 0
+        for i in range(n)
     ]
 
 
@@ -3081,13 +3094,19 @@ class MultitoonTab(QWidget):
         return self.enabled_toons
 
     def get_chat_handling_mode(self) -> str:
-        """Return the global chat handling mode: 'simple' (default) or
-        'advanced'. Reads from settings_manager when wired; defaults to
-        CHAT_HANDLING_MODE_DEFAULT ('simple') otherwise."""
-        from utils.settings_keys import CHAT_HANDLING_MODE, CHAT_HANDLING_MODE_DEFAULT
+        """Return the global chat handling mode as a canonical value
+        (focused_only / all_toons / keyset_dynamic / per_toon), normalizing
+        legacy simple/advanced and unknown values. Defaults to
+        CHAT_HANDLING_MODE_DEFAULT when no settings_manager is wired."""
+        from utils.settings_keys import (
+            CHAT_HANDLING_MODE, CHAT_HANDLING_MODE_DEFAULT,
+            normalize_chat_handling_mode,
+        )
         if self.settings_manager is None:
             return CHAT_HANDLING_MODE_DEFAULT
-        return self.settings_manager.get(CHAT_HANDLING_MODE, CHAT_HANDLING_MODE_DEFAULT)
+        return normalize_chat_handling_mode(
+            self.settings_manager.get(CHAT_HANDLING_MODE, CHAT_HANDLING_MODE_DEFAULT)
+        )
 
     def get_chat_enabled(self):
         """Return the effective per-toon chat-broadcast state.
@@ -3113,35 +3132,41 @@ class MultitoonTab(QWidget):
         Call sites: TTR paint passes True (TTR slot supports chat); CC paint
         passes False (chat button not integrated for CC). The cached intent
         is what apply_chat_handling_mode reads when the global mode flips,
-        so a Simple to Advanced transition does not re-show a CC slot's
-        button.
+        so a transition away from Per-Toon (manual) mode does not re-show a
+        CC slot's button.
         """
         if idx >= len(self.chat_buttons):
             return
         self._chat_button_game_wants_visible[idx] = want_visible
-        is_advanced = self.get_chat_handling_mode() == "advanced"
-        self.chat_buttons[idx].setVisible(want_visible and is_advanced)
+        from utils.settings_keys import CHAT_HANDLING_PER_TOON
+        is_per_toon = self.get_chat_handling_mode() == CHAT_HANDLING_PER_TOON
+        self.chat_buttons[idx].setVisible(want_visible and is_per_toon)
 
     def apply_chat_handling_mode(self, mode: str) -> None:
         """Refresh chat-button visibility on every slot to honor the global
-        Simple/Advanced mode.
+        chat handling mode.
 
-        Visibility per slot is (mode == "advanced") AND the cached per-slot
-        game-type intent in self._chat_button_game_wants_visible (set by CC
-        and TTR paint paths via _set_chat_button_visible). The button's
-        underlying chat_enabled state is preserved across mode flips.
+        Chat buttons are only shown in Per-Toon (manual) mode (normalizes to
+        'per_toon'). Visibility per slot is (mode == per_toon) AND the
+        cached per-slot game-type intent in
+        self._chat_button_game_wants_visible (set by CC and TTR paint paths
+        via _set_chat_button_visible). The button's underlying chat_enabled
+        state is preserved across mode flips.
 
         Idempotent. Called once at startup with the persisted mode and on
         every chat_handling_mode_changed signal from SettingsTab.
         """
-        is_advanced = mode == "advanced"
+        from utils.settings_keys import (
+            CHAT_HANDLING_PER_TOON, normalize_chat_handling_mode,
+        )
+        is_per_toon = normalize_chat_handling_mode(mode) == CHAT_HANDLING_PER_TOON
         for i, btn in enumerate(self.chat_buttons):
             want = (
                 self._chat_button_game_wants_visible[i]
                 if i < len(self._chat_button_game_wants_visible)
                 else True
             )
-            btn.setVisible(want and is_advanced)
+            btn.setVisible(want and is_per_toon)
 
     def get_keymap_assignments(self):
         """Return per-toon set indices from the set selector dropdowns."""

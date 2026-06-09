@@ -400,15 +400,17 @@ class MultiToonTool(QMainWindow):
         self.settings_tab.input_backend_changed.connect(self.on_input_backend_changed)
         self.settings_tab.clear_credentials_requested.connect(self.on_clear_credentials_requested)
 
-        # Chat handling mode: SettingsTab toggle -> MultitoonTab visibility.
-        # The signal carries the new mode string ("simple"|"advanced").
+        # Chat handling mode: SettingsTab dropdown -> MultitoonTab visibility.
+        # The signal carries the canonical mode string.
         self.settings_tab.chat_handling_mode_changed.connect(
             self.multitoon_tab.apply_chat_handling_mode
         )
 
-        # Apply the persisted Chat Handling mode once at startup so the
-        # chat buttons reflect the setting on launch without waiting for
-        # a user toggle. Default "simple" -> buttons hidden.
+        # Apply the persisted Chat Handling mode once at startup so the chat
+        # buttons reflect the setting on launch. apply_chat_handling_mode
+        # normalizes legacy simple/advanced (and unknown) values, so the raw
+        # persisted value is safe to pass directly. Fresh installs default to
+        # focused_only (buttons hidden).
         from utils.settings_keys import CHAT_HANDLING_MODE, CHAT_HANDLING_MODE_DEFAULT
         initial_mode = self.settings_manager.get(CHAT_HANDLING_MODE, CHAT_HANDLING_MODE_DEFAULT)
         self.multitoon_tab.apply_chat_handling_mode(initial_mode)
