@@ -853,9 +853,11 @@ class _FullContent(QWidget):
     def _collapsed_ka_group_width(self, slot_index: int) -> int:
         """Width that ka_group must hold when KA is collapsed.
 
-        ka_group's row contains chat + help + (hidden ka + hidden bar). When
-        collapsed, only chat and help are visible, so the frame must be wide
-        enough to fit BOTH plus inter-widget spacing plus contentsMargins.
+        ka_group's row contains chat + click-sync + help + (hidden ka +
+        hidden bar). When collapsed, chat and help are visible (plus the
+        click-sync button when its master switch shows it), so the frame
+        must be wide enough to fit them plus inter-widget spacing plus
+        contentsMargins.
 
         Each child's effective layout width is its `sizeHint().width()`
         clamped into `[minimumWidth, maximumWidth]`. Children with
@@ -873,16 +875,24 @@ class _FullContent(QWidget):
             return min(max(sh, min_w), max_w)
 
         chat_btn = self._tab.chat_buttons[slot_index]
+        cs_btn = self._tab.click_sync_buttons[slot_index]
         help_btn = self._tab.help_buttons[slot_index]
         layout = self._card_slots[slot_index]["ka_group"].layout()
         margins = layout.contentsMargins()
-        return (
+        width = (
             _layout_width(chat_btn)
             + _layout_width(help_btn)
             + layout.spacing()
             + margins.left()
             + margins.right()
         )
+        # The click-sync button only takes layout space when shown by the
+        # Settings master switch. isHidden() (not isVisible()) matches how
+        # QLayout allocates space — isVisible() is False for the whole tree
+        # before the window is shown.
+        if not cs_btn.isHidden():
+            width += _layout_width(cs_btn) + layout.spacing()
+        return width
 
     def _set_keep_alive_collapsed(self, collapsed: bool) -> None:
         """Flip ka_group's stretch factor in each card's middle layout.

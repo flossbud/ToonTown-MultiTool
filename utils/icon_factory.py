@@ -56,7 +56,7 @@ def make_click_sync_icon(size: int = 14) -> QIcon:
     path.closeSubpath()
     painter.drawPath(path)
 
-    # Click ripple (two arcs top-right)
+    # Click ripple (one arc top-right)
     pen = QPen(QColor(255, 255, 255, 180), max(1.0, size / 12.0))
     painter.setPen(pen)
     painter.setBrush(Qt.NoBrush)
