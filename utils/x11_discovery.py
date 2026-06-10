@@ -215,7 +215,10 @@ def get_window_geometry(wid: str) -> tuple[int, int, int, int] | None:
     """(root_x, root_y, width, height) of the client window, root-space.
 
     Origin via translate_coords against root (same approach as
-    get_window_root_x); size via get_geometry. None on any failure."""
+    get_window_root_x); size via get_geometry. None on any failure.
+    The two queries are separate round trips, so a window moved/resized
+    between them yields a torn tuple — acceptable: gestures snapshot
+    geometry once at press, bounding the blast radius to one gesture."""
     d = _open_display()
     if d is None:
         return None
