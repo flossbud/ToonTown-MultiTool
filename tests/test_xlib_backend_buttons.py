@@ -6,10 +6,11 @@ from utils.xlib_backend import XlibBackend
 
 class _FakeWin:
     """python-xlib packs events eagerly at construction; Resource fields
-    pack via the object's cast method (__window__ for the window field;
-    real xobjects alias it to __resource__) or accept a plain int. The
-    fake must therefore be pack-compatible — never mock the real xevent
-    classes (production code must construct real events)."""
+    accept plain ints or objects exposing the field's cast function.
+    rq.Window's cast function is __window__ (real xobjects alias it to
+    __resource__ in xobject/drawable.py), so the fake mirrors that. Never
+    mock the real xevent classes — production code must construct real
+    events."""
 
     def __init__(self):
         self.sent = []  # (event, propagate, event_mask)
@@ -66,6 +67,7 @@ def test_button_press_event_fields():
     assert ev.same_screen == 1
     assert propagate is False
     assert b._display.wid_requested == 123  # event targets the right window
+    assert ev.window is w                   # ...and is constructed with it
     assert b._display.flushed == 1          # flush is load-bearing
 
 
