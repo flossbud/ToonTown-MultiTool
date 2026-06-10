@@ -260,7 +260,7 @@ def test_general_page_theme_dropdown_is_settings_combobox(app, settings_manager)
 
 
 def test_all_settings_combos_are_settings_combobox(app, settings_manager):
-    """All 6 known Settings dropdowns must be SettingsComboBox instances."""
+    """All 5 known Settings dropdowns must be SettingsComboBox instances."""
     from PySide6.QtWidgets import QComboBox
     from utils.shared_widgets import SettingsComboBox
     from tabs.settings_tab import SettingsTab
@@ -275,8 +275,8 @@ def test_all_settings_combos_are_settings_combobox(app, settings_manager):
         f"Found {len(non_settings)} QComboBox(es) that are not SettingsComboBox: "
         f"{[type(c).__name__ for c in non_settings]}"
     )
-    assert len(combos) == 6, (
-        f"Expected exactly 6 dropdowns on the Settings tab, found {len(combos)}"
+    assert len(combos) == 5, (
+        f"Expected exactly 5 dropdowns on the Settings tab, found {len(combos)}"
     )
 
 
@@ -356,75 +356,109 @@ def test_reduce_motion_combo_uses_short_closed_text(app, settings_manager):
     )
 
 
-def test_chat_handling_dropdown_normalizes_legacy_advanced(app, settings_manager):
-    """A persisted legacy 'advanced' selects the Per-Toon (manual) option,
-    and the control is a SettingsComboBox."""
-    from utils.shared_widgets import SettingsComboBox
+def test_chat_handling_radio_list_exists_with_forwarding_logic_label(app, settings_manager):
+    from utils.shared_widgets import SettingsRadioList
     from tabs.settings_tab import SettingsTab
-    settings_manager.set("chat_handling_mode", "advanced")
     tab = SettingsTab(settings_manager)
     try:
-        combo = tab._chat_handling_combo
-        assert isinstance(combo, SettingsComboBox)
-        assert tab._chat_mode_values[combo.currentIndex()] == "per_toon"
+        rl = tab._chat_handling_radio_list
+        assert isinstance(rl, SettingsRadioList)
+        assert [r.value for r in rl._rows] == [
+            "focused_only", "all_toons", "keyset_dynamic", "per_toon",
+        ]
+        assert tab._chat_handling_field.label_widget.text() == "Forwarding Logic"
     finally:
         tab.deleteLater()
 
 
-def test_chat_handling_dropdown_resets_legacy_simple_to_default(app, settings_manager):
-    """A persisted legacy 'simple' (the old implicit default) selects the
-    Focused Toon Only option: only a choice made in the new dropdown counts
-    as an explicit mode selection."""
+def test_chat_handling_radio_normalizes_legacy_advanced(app, settings_manager):
+    from tabs.settings_tab import SettingsTab
+    settings_manager.set("chat_handling_mode", "advanced")
+    tab = SettingsTab(settings_manager)
+    try:
+        assert tab._chat_handling_radio_list.value() == "per_toon"
+    finally:
+        tab.deleteLater()
+
+
+def test_chat_handling_radio_resets_legacy_simple_to_default(app, settings_manager):
+    """A persisted legacy 'simple' (the old implicit default) selects
+    Focused Toon Only: only a choice made in the new control counts as an
+    explicit mode selection."""
     from tabs.settings_tab import SettingsTab
     settings_manager.set("chat_handling_mode", "simple")
     tab = SettingsTab(settings_manager)
     try:
-        combo = tab._chat_handling_combo
-        assert tab._chat_mode_values[combo.currentIndex()] == "focused_only"
+        assert tab._chat_handling_radio_list.value() == "focused_only"
     finally:
         tab.deleteLater()
 
 
-def test_chat_handling_dropdown_default_focused_only(app, settings_manager):
+def test_chat_handling_radio_default_focused_only(app, settings_manager):
     from tabs.settings_tab import SettingsTab
     tab = SettingsTab(settings_manager)
     try:
-        combo = tab._chat_handling_combo
-        assert tab._chat_mode_values[combo.currentIndex()] == "focused_only"
+        assert tab._chat_handling_radio_list.value() == "focused_only"
     finally:
         tab.deleteLater()
 
 
-def test_chat_handling_dropdown_build_does_not_persist(app, settings_manager):
-    """Building the card must never write chat_handling_mode (no write
-    migration): the initial index is set BEFORE currentIndexChanged is
-    connected. Seed a legacy value whose canonical index is non-zero
-    ('advanced' -> per_toon, index 3) so a reversed connect order would emit
-    setCurrentIndex(3) while connected and overwrite the stored value with the
-    canonical 'per_toon'. Correct ordering leaves the raw value untouched. A
-    default (index 0) seed could not distinguish the two orderings because
-    setCurrentIndex(0) is a no-op that emits nothing."""
+def test_chat_handling_build_never_writes_setting(app, settings_manager):
+    """Hardened no-write regression: spy on settings_manager.set so even a
+    write-and-restore during construction is caught (a final-value
+    comparison alone would miss it)."""
     from tabs.settings_tab import SettingsTab
     settings_manager.set("chat_handling_mode", "advanced")
+    calls = []
+    orig_set = settings_manager.set
+    settings_manager.set = lambda k, v: (calls.append((k, v)), orig_set(k, v))[1]
     tab = SettingsTab(settings_manager)
     try:
+        chat_writes = [kv for kv in calls if kv[0] == "chat_handling_mode"]
+        assert chat_writes == [], f"construction wrote: {chat_writes}"
         assert settings_manager.get("chat_handling_mode") == "advanced"
+    finally:
+        settings_manager.set = orig_set
+        tab.deleteLater()
+
+
+def test_chat_handling_radio_change_persists_and_emits(app, settings_manager):
+    """User selection writes the canonical value AND emits the signal
+    carrying that value (matches the old dropdown test's coverage)."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    from tabs.settings_tab import SettingsTab
+    tab = SettingsTab(settings_manager)
+    received = []
+    tab.chat_handling_mode_changed.connect(received.append)
+    try:
+        rl = tab._chat_handling_radio_list
+        rl.show()
+        app.processEvents()
+        QTest.mouseClick(rl._rows[3].radio, Qt.LeftButton)  # Per-Toon (manual)
+        app.processEvents()
+        assert settings_manager.get("chat_handling_mode") == "per_toon"
+        assert received == ["per_toon"]
     finally:
         tab.deleteLater()
 
 
-def test_chat_handling_dropdown_change_persists_and_emits(app, settings_manager):
-    """Selecting a new option writes the canonical value and emits the signal
-    carrying that value."""
+def test_chat_handling_theme_pass_reaches_radio_list(app, settings_manager, monkeypatch):
+    """refresh_theme() must propagate tokens to the radio list (spying on
+    the method catches a missing findChildren loop, which direct
+    set_theme_colors calls in widget tests would not)."""
+    from utils.shared_widgets import SettingsRadioList
     from tabs.settings_tab import SettingsTab
+    calls = []
+    orig = SettingsRadioList.set_theme_colors
+    monkeypatch.setattr(
+        SettingsRadioList, "set_theme_colors",
+        lambda self, c, is_dark=True: (calls.append(self), orig(self, c, is_dark)),
+    )
     tab = SettingsTab(settings_manager)
     try:
-        emitted = []
-        tab.chat_handling_mode_changed.connect(emitted.append)
-        combo = tab._chat_handling_combo
-        per_toon_idx = tab._chat_mode_values.index("per_toon")
-        combo.setCurrentIndex(per_toon_idx)
-        assert settings_manager.get("chat_handling_mode") == "per_toon"
-        assert emitted == ["per_toon"]
+        calls.clear()  # ignore constructor-time default application
+        tab.refresh_theme()
+        assert tab._chat_handling_radio_list in calls
     finally:
         tab.deleteLater()

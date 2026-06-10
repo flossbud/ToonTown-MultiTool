@@ -1373,6 +1373,7 @@ class SettingsTab(QWidget):
             CHAT_HANDLING_KEYSET_DYNAMIC, CHAT_HANDLING_PER_TOON,
             normalize_chat_handling_mode,
         )
+        from utils.shared_widgets import SettingsRadioList
 
         lay = page._panel_layout
         insert_at = lay.count() - 1
@@ -1381,45 +1382,30 @@ class SettingsTab(QWidget):
         self._panels.append(panel)
         self._chat_handling_panel = panel
 
-        # Ordered canonical values paired with display labels. The list index
-        # is the combo's current index; never rely on label text elsewhere.
-        self._chat_mode_values = [
-            CHAT_HANDLING_FOCUSED_ONLY,
-            CHAT_HANDLING_ALL_TOONS,
-            CHAT_HANDLING_KEYSET_DYNAMIC,
-            CHAT_HANDLING_PER_TOON,
-        ]
-        chat_mode_labels = [
-            "Focused Toon Only",
-            "All Toons",
-            "Keyset Dynamic",
-            "Per-Toon (manual)",
+        items = [
+            (CHAT_HANDLING_FOCUSED_ONLY, "Focused Toon Only",
+             "Chat affects only the toon you are playing"),
+            (CHAT_HANDLING_ALL_TOONS, "All Toons",
+             "Mirror chat to every active toon"),
+            (CHAT_HANDLING_KEYSET_DYNAMIC, "Keyset Dynamic",
+             "Mirror to toons on the default keyset"),
+            (CHAT_HANDLING_PER_TOON, "Per-Toon (manual)",
+             "Pick per toon with a chat button on each card"),
         ]
 
-        initial = normalize_chat_handling_mode(
-            self.settings_manager.get(CHAT_HANDLING_MODE, CHAT_HANDLING_MODE_DEFAULT)
-        )
-        field = SettingsField(
-            "Chat Handling Logic",
-            helper=(
-                "Choose where typed chat goes across your toons. "
-                "Focused Toon Only: chat affects only the window you are "
-                "playing; every other toon is left alone. "
-                "All Toons: chat is mirrored to every active toon. "
-                "Keyset Dynamic: chat mirrors to toons sharing the default "
-                "keyset and is held back from toons you moved to another "
-                "keyset. "
-                "Per-Toon (manual): choose exactly who chats yourself, using a "
-                "chat button shown on each Toontown Rewritten toon."
-            ),
-        )
-        combo = SettingsComboBox()
-        combo.addItems(chat_mode_labels)
-        combo.setCurrentIndex(self._chat_mode_values.index(initial))
-        combo.setFixedWidth(180)
-        combo.currentIndexChanged.connect(self._on_chat_handling_mode_changed)
-        field.set_control(combo)
-        self._chat_handling_combo = combo
+        field = SettingsField("Forwarding Logic")
+        radio_list = SettingsRadioList(items)
+        # Initial selection BEFORE connecting: building the card must never
+        # write the setting (set_value is silent by contract anyway; the
+        # ordering is belt-and-braces, matching the old dropdown pattern).
+        radio_list.set_value(normalize_chat_handling_mode(
+            self.settings_manager.get(CHAT_HANDLING_MODE,
+                                      CHAT_HANDLING_MODE_DEFAULT)
+        ))
+        radio_list.value_changed.connect(self._on_chat_handling_mode_changed)
+        field.set_full_width_control(radio_list)
+        self._chat_handling_radio_list = radio_list
+        self._chat_handling_field = field
         panel.add_field(field)
 
         lay.insertWidget(insert_at, panel)
@@ -1484,13 +1470,12 @@ class SettingsTab(QWidget):
 
     # ── Chat Handling handler ────────────────────────────────────────────
 
-    def _on_chat_handling_mode_changed(self, index: int):
-        from utils.settings_keys import CHAT_HANDLING_MODE
-        if index < 0 or index >= len(self._chat_mode_values):
+    def _on_chat_handling_mode_changed(self, value: str):
+        from utils.settings_keys import CHAT_HANDLING_MODE, CHAT_HANDLING_MODE_VALUES
+        if value not in CHAT_HANDLING_MODE_VALUES:
             return
-        mode = self._chat_mode_values[index]
-        self.settings_manager.set(CHAT_HANDLING_MODE, mode)
-        self.chat_handling_mode_changed.emit(mode)
+        self.settings_manager.set(CHAT_HANDLING_MODE, value)
+        self.chat_handling_mode_changed.emit(value)
 
     def _build_advanced_page(self, page):
         page._title_label.setText("Advanced")
@@ -1792,4 +1777,8 @@ class SettingsTab(QWidget):
                 accent=c["accent_blue_btn"],
                 is_dark=is_dark,
             )
+        # SettingsRadioList option lists — same token propagation as combos.
+        from utils.shared_widgets import SettingsRadioList
+        for rl in self.findChildren(SettingsRadioList):
+            rl.set_theme_colors(c, is_dark)
 
