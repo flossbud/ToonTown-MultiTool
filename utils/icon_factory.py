@@ -35,6 +35,37 @@ def make_chat_icon(size: int = 18) -> QIcon:
     return QIcon(pixmap)
 
 
+def make_click_sync_icon(size: int = 14) -> QIcon:
+    """Mouse pointer with a click ripple, matching the factory style."""
+    pixmap = QPixmap(size, size)
+    pixmap.fill(QColor(0, 0, 0, 0))
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing)
+
+    # Pointer arrow
+    painter.setBrush(QColor(255, 255, 255, 220))
+    painter.setPen(Qt.NoPen)
+    path = QPainterPath()
+    path.moveTo(size * 0.25, size * 0.15)
+    path.lineTo(size * 0.25, size * 0.78)
+    path.lineTo(size * 0.42, size * 0.62)
+    path.lineTo(size * 0.55, size * 0.88)
+    path.lineTo(size * 0.66, size * 0.82)
+    path.lineTo(size * 0.53, size * 0.57)
+    path.lineTo(size * 0.74, size * 0.55)
+    path.closeSubpath()
+    painter.drawPath(path)
+
+    # Click ripple (two arcs top-right)
+    pen = QPen(QColor(255, 255, 255, 180), max(1.0, size / 12.0))
+    painter.setPen(pen)
+    painter.setBrush(Qt.NoBrush)
+    r1 = QRectF(size * 0.55, size * 0.02, size * 0.4, size * 0.4)
+    painter.drawArc(r1, 0 * 16, 100 * 16)
+    painter.end()
+    return QIcon(pixmap)
+
+
 def make_refresh_icon(size: int = 14, color: QColor = None) -> QIcon:
     """Draw a circular refresh arrow using Qt primitives."""
     pixmap = QPixmap(size, size)

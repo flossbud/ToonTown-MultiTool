@@ -15,7 +15,7 @@ from services.input_service import InputService
 from services.sleep_inhibitor import SleepInhibitor
 from utils.theme_manager import (
     resolve_theme, get_theme_colors, apply_card_shadow,
-    make_chat_icon, make_refresh_icon, make_lightning_icon,
+    make_chat_icon, make_click_sync_icon, make_refresh_icon, make_lightning_icon,
     make_heart_icon, make_jellybean_icon,
     get_set_color, SmoothProgressBar, make_section_label,
 )
@@ -1152,6 +1152,7 @@ class MultitoonTab(QWidget):
         self.game_badges = []       # list of QLabel game badges
         self.toon_buttons = []
         self.chat_buttons = []
+        self.click_sync_buttons = []
         # Per-slot cached "game type supports chat button" intent. Updated by
         # CC/TTR paint paths via _set_chat_button_visible. Read by
         # apply_chat_handling_mode when the global mode flips so visibility
@@ -1404,6 +1405,17 @@ class MultitoonTab(QWidget):
             chat_btn.setToolTip("Toggle chat broadcasting for this toon")
             chat_btn.clicked.connect(lambda checked, idx=i: self.toggle_chat(idx))
             self.chat_buttons.append(chat_btn)
+
+            cs_btn = QPushButton()
+            cs_btn.setCheckable(True)
+            cs_btn.setChecked(False)
+            cs_btn.setFixedHeight(32)
+            cs_btn.setFixedWidth(32)
+            cs_btn.setIcon(make_click_sync_icon(14))
+            cs_btn.setToolTip("Click sync: mirror clicks to this toon")
+            cs_btn.clicked.connect(lambda checked, idx=i: self.toggle_click_sync(idx))
+            cs_btn.setVisible(False)  # gated by the Settings master switch
+            self.click_sync_buttons.append(cs_btn)
 
             ka_bar = SmoothProgressBar()
             self.ka_progress_bars.append(ka_bar)
@@ -2697,6 +2709,10 @@ class MultitoonTab(QWidget):
         name = self.toon_names[index] or f"Toon {index + 1}"
         self.log(f"[Input] {name} (slot {index + 1}): chat {state}")
         self.apply_visual_state(index)
+
+    def toggle_click_sync(self, index: int) -> None:
+        # wired to ClickSyncService in the next change
+        pass
 
     def toggle_rapid_fire(self, index, state):
         if not self._keep_alive_globally_enabled():
