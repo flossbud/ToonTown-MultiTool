@@ -5,15 +5,26 @@ from utils.xlib_backend import XlibBackend
 
 
 class _FakeWin:
+    """python-xlib packs events eagerly at construction; Resource fields
+    pack via the object's cast method (__window__ for the window field;
+    real xobjects alias it to __resource__) or accept a plain int. The
+    fake must therefore be pack-compatible — never mock the real xevent
+    classes (production code must construct real events)."""
+
     def __init__(self):
         self.sent = []  # (event, propagate, event_mask)
+
+    def __resource__(self):
+        return 123
+
+    __window__ = __resource__
 
     def send_event(self, ev, propagate=False, event_mask=0):
         self.sent.append((ev, propagate, event_mask))
 
 
 class _FakeScreen:
-    root = "ROOT"
+    root = 0x1  # ints pack directly in Resource fields
 
 
 class _FakeDisplay:
