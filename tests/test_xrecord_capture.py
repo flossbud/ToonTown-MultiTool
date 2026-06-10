@@ -151,6 +151,80 @@ def test_on_died_fires_only_on_unexpected_death():
     assert died == []
 
 
+def test_zombie_thread_does_not_touch_new_generation_state():
+    # A thread stop() gave up on (forced-close timeout) finishing late must
+    # not clear the NEW capture generation's flags or fire on_died.
+    died = []
+    cap = XRecordCapture(lambda *a: None, on_died=lambda: died.append(1))
+    cap._ctx = object()
+
+    def _raise(ctx, cb):
+        raise RuntimeError("zombie finally exits")
+
+    cap._data = SimpleNamespace(record_enable_context=_raise)
+    cap._stopping = False
+    cap._running = True
+    cap._thread = SimpleNamespace()  # a NEWER generation's thread, not us
+    cap._run()  # we are the zombie
+    assert cap._running is True  # new generation untouched
+    assert died == []
+
+
+def test_start_lifecycle_and_clean_stream_end_fires_on_died(monkeypatch):
+    # Exercises start() with stub displays: connection order (ctl, data),
+    # context creation, running-before-start ordering, and the clean-end
+    # (record_enable_context returns without stop()) death notification.
+    import utils.xrecord_capture as xc
+
+    class _StubCtl:
+        def __init__(self):
+            self.freed = []
+
+        def has_extension(self, name):
+            return name == "RECORD"
+
+        def record_create_context(self, *a):
+            return "CTX"
+
+        def sync(self):
+            pass
+
+        def record_disable_context(self, ctx):
+            pass
+
+        def flush(self):
+            pass
+
+        def record_free_context(self, ctx):
+            self.freed.append(ctx)
+
+        def close(self):
+            pass
+
+    class _StubData:
+        def record_enable_context(self, ctx, cb):
+            return None  # clean stream end, no stop() in flight
+
+        def close(self):
+            pass
+
+    made = []
+
+    def fake_display():
+        d = _StubCtl() if not made else _StubData()
+        made.append(d)
+        return d
+
+    monkeypatch.setattr(xc.xdisplay, "Display", fake_display)
+    died = threading.Event()
+    cap = xc.XRecordCapture(lambda *a: None, on_died=died.set)
+    assert cap.start() is True
+    assert died.wait(2.0)  # clean end without stop() = unexpected death
+    cap.stop()
+    assert cap.is_running() is False
+    assert made[0].freed == ["CTX"]
+
+
 def test_stop_from_on_died_is_safe_and_cleans_up():
     # The natural consumer reaction to on_died is stop(); it runs ON the
     # capture thread, so the self-join must be skipped and cleanup must

@@ -27,6 +27,7 @@ class XRecordCapture:
     def __init__(self, on_event, on_died=None):
         self._on_event = on_event
         self._on_died = on_died  # called once if the capture thread dies unexpectedly
+        self._lifecycle = threading.RLock()  # serializes start()/stop()
         self._ctl = None
         self._data = None
         self._ctx = None
@@ -38,41 +39,42 @@ class XRecordCapture:
         return self._running
 
     def start(self) -> bool:
-        if self._running:
-            return True
-        if self._thread is not None:
-            # A dead-but-unstopped capture (thread died, consumer never
-            # called stop()) still holds X connections; reclaim them first.
-            self.stop()
-        try:
-            self._ctl = xdisplay.Display()
-            self._data = xdisplay.Display()
-            if not self._ctl.has_extension("RECORD"):
+        with self._lifecycle:
+            if self._running:
+                return True
+            if self._thread is not None:
+                # A dead-but-unstopped capture (thread died, consumer never
+                # called stop()) still holds X connections; reclaim first.
+                self.stop()
+            try:
+                self._ctl = xdisplay.Display()
+                self._data = xdisplay.Display()
+                if not self._ctl.has_extension("RECORD"):
+                    self._cleanup()
+                    return False
+                self._ctx = self._ctl.record_create_context(
+                    0, [record.AllClients], [{
+                        "core_requests": (0, 0), "core_replies": (0, 0),
+                        "ext_requests": (0, 0, 0, 0), "ext_replies": (0, 0, 0, 0),
+                        "delivered_events": (0, 0),
+                        # 4..6 = ButtonPress, ButtonRelease, MotionNotify
+                        "device_events": (X.ButtonPress, X.MotionNotify),
+                        "errors": (0, 0),
+                        "client_started": False, "client_died": False,
+                    }])
+                self._ctl.sync()
+            except Exception as e:
+                print(f"[XRecordCapture] start failed: {e}")
                 self._cleanup()
                 return False
-            self._ctx = self._ctl.record_create_context(
-                0, [record.AllClients], [{
-                    "core_requests": (0, 0), "core_replies": (0, 0),
-                    "ext_requests": (0, 0, 0, 0), "ext_replies": (0, 0, 0, 0),
-                    "delivered_events": (0, 0),
-                    # 4..6 = ButtonPress, ButtonRelease, MotionNotify
-                    "device_events": (X.ButtonPress, X.MotionNotify),
-                    "errors": (0, 0),
-                    "client_started": False, "client_died": False,
-                }])
-            self._ctl.sync()
-        except Exception as e:
-            print(f"[XRecordCapture] start failed: {e}")
-            self._cleanup()
-            return False
-        self._stopping = False
-        self._thread = threading.Thread(
-            target=self._run, name="click-sync-xrecord", daemon=True)
-        # Set BEFORE start(): _run's finally clears it on instant failure,
-        # and setting it after would overwrite that back to True.
-        self._running = True
-        self._thread.start()
-        return True
+            self._stopping = False
+            self._thread = threading.Thread(
+                target=self._run, name="click-sync-xrecord", daemon=True)
+            # Set BEFORE start(): _run's finally clears it on instant
+            # failure; setting it after would overwrite that back to True.
+            self._running = True
+            self._thread.start()
+            return True
 
     def stop(self):
         """Idempotent. Disables the context from the control display (the
@@ -86,34 +88,36 @@ class XRecordCapture:
         best-effort unblock; if the recv does not wake, a daemon zombie
         may persist briefly, but both sockets are closed so no X client
         slots leak."""
-        if not self._running and self._thread is None:
-            return
-        self._stopping = True
-        try:
-            if self._ctl is not None and self._ctx is not None:
-                self._ctl.record_disable_context(self._ctx)
-                self._ctl.flush()
-        except Exception:
-            pass
-        if self._thread is not None and self._thread is not threading.current_thread():
-            self._thread.join(timeout=3.0)
-            if self._thread.is_alive():
-                # Forced fallback: closing the data connection should
-                # unblock the recv inside record_enable_context.
-                try:
-                    if self._data is not None:
-                        self._data.close()
-                except Exception:
-                    pass
-                self._thread.join(timeout=2.0)
-        self._thread = None
-        try:
-            if self._ctl is not None and self._ctx is not None:
-                self._ctl.record_free_context(self._ctx)
-        except Exception:
-            pass
-        self._cleanup()
-        self._running = False
+        with self._lifecycle:
+            if not self._running and self._thread is None:
+                return
+            self._stopping = True
+            try:
+                if self._ctl is not None and self._ctx is not None:
+                    self._ctl.record_disable_context(self._ctx)
+                    self._ctl.flush()
+            except Exception:
+                pass
+            if (self._thread is not None
+                    and self._thread is not threading.current_thread()):
+                self._thread.join(timeout=3.0)
+                if self._thread.is_alive():
+                    # Forced fallback: closing the data connection should
+                    # unblock the recv inside record_enable_context.
+                    try:
+                        if self._data is not None:
+                            self._data.close()
+                    except Exception:
+                        pass
+                    self._thread.join(timeout=2.0)
+            self._thread = None
+            try:
+                if self._ctl is not None and self._ctx is not None:
+                    self._ctl.record_free_context(self._ctx)
+            except Exception:
+                pass
+            self._cleanup()
+            self._running = False
 
     def _cleanup(self):
         for attr in ("_ctl", "_data"):
@@ -127,20 +131,28 @@ class XRecordCapture:
         self._ctx = None
 
     def _run(self):
+        me = threading.current_thread()
         died = False
         try:
             self._data.record_enable_context(self._ctx, self._reply_callback)
+            # A clean return without stop() means the server ended the
+            # stream — still an unexpected death for consumers.
+            died = not self._stopping
         except Exception as e:
             if not self._stopping:
                 died = True
                 print(f"[XRecordCapture] capture thread died: {e}")
         finally:
-            self._running = False
-            if died and self._on_died is not None:
-                try:
-                    self._on_died()
-                except Exception:
-                    pass
+            # Generation guard: a zombie from a previous generation (a
+            # stop() timed out and gave up on us, then start() launched a
+            # new thread) must not touch the new generation's state.
+            if self._thread is me or self._thread is None:
+                self._running = False
+                if died and self._on_died is not None:
+                    try:
+                        self._on_died()
+                    except Exception:
+                        pass
 
     def _reply_callback(self, reply):
         if self._stopping:
