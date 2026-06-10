@@ -2732,12 +2732,27 @@ class MultitoonTab(QWidget):
 
         def _cs_source_resolver(root_x, root_y, member_wids):
             # Stacking-aware: the frame under the point must be a member's
-            # toplevel ancestor. Fallback: client-rect containment.
+            # toplevel ancestor.
             frame = _x11d.toplevel_at_point(root_x, root_y)
+            lookup_failed = False
             if frame is not None:
                 for wid in member_wids:
-                    if _x11d.toplevel_ancestor(wid) == frame:
+                    anc = _x11d.toplevel_ancestor(wid)
+                    if anc is None:
+                        # Transient X error on this member's ancestor walk;
+                        # remember so the fallback below can cover for it.
+                        lookup_failed = True
+                    elif anc == frame:
                         return wid
+                if not lookup_failed:
+                    # The point cleanly resolved to a non-member toplevel
+                    # (e.g. a foreign window overlapping a TTR window). Per
+                    # spec, that gesture must be ignored, never rect-matched
+                    # to the member window underneath.
+                    return None
+            # Rect-containment fallback: only for stacking-resolution
+            # FAILURES (toplevel_at_point or an ancestor lookup hit a
+            # transient X error), never for a clean foreign-window hit.
             for wid in member_wids:
                 g = self.window_manager.get_window_geometry(wid)
                 if g and g[0] <= root_x < g[0] + g[2] and g[1] <= root_y < g[1] + g[3]:
@@ -2772,6 +2787,9 @@ class MultitoonTab(QWidget):
         # pass duck-typed fakes that may omit them, so degrade gracefully
         # (no geometry -> slots resolve unusable, capture never starts).
         _geom = getattr(self.window_manager, "get_window_geometry", None)
+        if _geom is None:
+            print("[MultitoonTab] click sync: window manager lacks "
+                  "get_window_geometry; geometry lookups disabled")
         # parent=self: the service's resolver closures capture the tab, so
         # tab <-> service form a reference cycle between two QObjects. Qt
         # parenting destroys the service's C++ object with the widget tree
@@ -2795,6 +2813,9 @@ class MultitoonTab(QWidget):
         if hasattr(self.window_manager, "window_geometry_updated"):
             self.window_manager.window_geometry_updated.connect(
                 self.click_sync_service.recompute)
+        else:
+            print("[MultitoonTab] click sync: window manager lacks "
+                  "window_geometry_updated; live geometry re-check disabled")
         if self.settings_manager is not None:
             self.click_sync_service.set_enabled(
                 bool(self.settings_manager.get(CLICK_SYNC_ENABLED, False)))

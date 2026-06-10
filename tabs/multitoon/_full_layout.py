@@ -1061,15 +1061,19 @@ class _FullContent(QWidget):
                     return _step
                 width_anim.valueChanged.connect(make_width_step(ka_group))
 
-                def make_collapse_done(group, mid, target_w):
+                def make_collapse_done(group, mid, slot):
                     def _done():
-                        group.setFixedWidth(target_w)
+                        # Recompute at finish time: a click-sync visibility
+                        # flip landing mid-animation changes the collapsed
+                        # width, and pinning the start-time value would bake
+                        # in a stale width.
+                        group.setFixedWidth(self._collapsed_ka_group_width(slot))
                         # ka_group stretch 0, addStretch absorbs leftover.
                         mid.setStretch(0, 0)
                         mid.setStretch(1, 1)
                     return _done
                 width_anim.finished.connect(
-                    make_collapse_done(ka_group, middle, chat_only_width)
+                    make_collapse_done(ka_group, middle, i)
                 )
                 QTimer.singleShot(80, width_anim.start)
                 self._ka_anims.append(width_anim)

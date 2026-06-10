@@ -71,14 +71,17 @@ def _fill_ttr_slots(tab):
 def test_buttons_exist_and_hidden_by_default(multitoon_tab):
     tab = multitoon_tab
     assert len(tab.click_sync_buttons) == 4
-    assert all(not b.isVisible() for b in tab.click_sync_buttons)
+    # isHidden, not "not isVisible": isVisible is vacuously False on an
+    # unshown tab, so it would pass even if the buttons were never hidden.
+    assert all(b.isHidden() for b in tab.click_sync_buttons)
 
 
 def test_master_switch_reveals_buttons(multitoon_tab):
     tab = multitoon_tab
     _fill_ttr_slots(tab)
+    # settings_manager.set(...) alone must reveal the buttons: the on_change
+    # registration in _build_click_sync is the wiring under test.
     tab.settings_manager.set("click_sync_enabled", True)
-    tab._on_click_sync_setting_changed("click_sync_enabled", True)
     assert all(b.isVisibleTo(b.parentWidget()) for b in tab.click_sync_buttons)
 
 
