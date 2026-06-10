@@ -92,6 +92,12 @@ class WindowManager(QObject):
             if g is not None:
                 fresh[wid] = g
         with self._lock:
+            # Commit-time guard: detection may have been disabled or the
+            # window list changed during the off-lock X queries. Keep only
+            # wids STILL tracked so a concurrent cache-clear stays cleared
+            # (otherwise this swap would resurrect stale entries).
+            fresh = {w: g for w, g in fresh.items()
+                     if w in self.ttr_window_ids}
             changed = fresh != self.window_geometry
             self.window_geometry = fresh
         if changed:

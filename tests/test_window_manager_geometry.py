@@ -77,6 +77,23 @@ def test_disable_detection_clears_geometry(monkeypatch):
     assert wm.window_geometry == {}
 
 
+def test_refresh_commit_guard_after_concurrent_disable(monkeypatch):
+    # disable_detection() landing DURING the off-lock X queries must not be
+    # overwritten by the refresh's commit (stale-repopulation race).
+    geoms = {"10": (0, 0, 100, 100)}
+    wm = WindowManager()
+    wm.ttr_window_ids = ["10"]
+
+    def query_and_disable(wid):
+        wm.disable_detection()  # simulates the race mid-refresh
+        return geoms.get(wid)
+
+    monkeypatch.setattr(x11_discovery, "get_window_geometry",
+                        query_and_disable, raising=False)
+    wm.refresh_geometry()
+    assert wm.window_geometry == {}
+
+
 def test_geometry_unknown_window_none(monkeypatch):
     monkeypatch.setattr(x11_discovery, "get_window_geometry",
                         lambda wid: None, raising=False)
