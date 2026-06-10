@@ -2733,9 +2733,12 @@ class MultitoonTab(QWidget):
         def _cs_source_resolver(root_x, root_y, member_wids):
             # Stacking-aware: the frame under the point must be a member's
             # toplevel ancestor.
+            # Tri-state hit-test: wid string = a toplevel contains the
+            # point; "" = clean miss (bare root/desktop); None = lookup
+            # FAILURE (no display / X error).
             frame = _x11d.toplevel_at_point(root_x, root_y)
-            lookup_failed = False
-            if frame is not None:
+            lookup_failed = frame is None
+            if frame:
                 for wid in member_wids:
                     anc = _x11d.toplevel_ancestor(wid)
                     if anc is None:
@@ -2750,9 +2753,14 @@ class MultitoonTab(QWidget):
                     # spec, that gesture must be ignored, never rect-matched
                     # to the member window underneath.
                     return None
+            elif frame == "":
+                # Clean miss: the point is over the bare root, no toplevel
+                # there at all. Ignore the gesture; never rect-match.
+                return None
             # Rect-containment fallback: only for stacking-resolution
             # FAILURES (toplevel_at_point or an ancestor lookup hit a
-            # transient X error), never for a clean foreign-window hit.
+            # transient X error), never for a clean miss or a clean
+            # foreign-window hit.
             for wid in member_wids:
                 g = self.window_manager.get_window_geometry(wid)
                 if g and g[0] <= root_x < g[0] + g[2] and g[1] <= root_y < g[1] + g[3]:

@@ -95,10 +95,16 @@ def test_toplevel_at_point_finds_each_frame(monkeypatch):
     assert x11_discovery.toplevel_at_point(1100, 50) == str(0xA0)
 
 
-def test_toplevel_at_point_over_root_returns_none(monkeypatch):
-    # No toplevel contains the point: child is raw int 0 (X.NONE).
+def test_toplevel_at_point_over_root_returns_empty(monkeypatch):
+    # No toplevel contains the point (child raw int 0 = X.NONE): a clean
+    # miss is "" — distinct from None, which means lookup FAILURE.
     _patch(monkeypatch)
-    assert x11_discovery.toplevel_at_point(3000, 2000) is None
+    assert x11_discovery.toplevel_at_point(3000, 2000) == ""
+
+
+def test_toplevel_at_point_failure_returns_none(monkeypatch):
+    monkeypatch.setattr(x11_discovery, "_open_display", lambda: None)
+    assert x11_discovery.toplevel_at_point(10, 10) is None
 
 
 def test_toplevel_ancestor_multi_hop_walk(monkeypatch):

@@ -236,7 +236,13 @@ def toplevel_at_point(root_x: int, root_y: int) -> str | None:
     """The topmost mapped direct child of root containing the point
     (stacking-aware, pointer-independent: works on recorded coordinates).
     Under a reparenting WM this is the frame window; compare it against
-    toplevel_ancestor(client_wid). None when the point is over the root."""
+    toplevel_ancestor(client_wid).
+
+    Tri-state result: a window id string when a toplevel contains the
+    point; "" (empty string) when the lookup SUCCEEDED but no toplevel is
+    there (bare root/desktop); None only on lookup FAILURE (no display /
+    X error). Callers use the distinction to ignore clean misses while
+    falling back on real failures."""
     d = _open_display()
     if d is None:
         return None
@@ -245,7 +251,7 @@ def toplevel_at_point(root_x: int, root_y: int) -> str | None:
         res = root.translate_coords(root, int(root_x), int(root_y))
         child = getattr(res, "child", None)
         if child in (None, 0) or getattr(child, "id", 0) == 0:
-            return None
+            return ""  # clean miss: the point is over the bare root
         return str(child.id)
     except Exception:
         return None
