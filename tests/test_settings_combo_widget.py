@@ -443,6 +443,21 @@ def test_chat_handling_radio_change_persists_and_emits(app, settings_manager):
         tab.deleteLater()
 
 
+def test_chat_handling_radio_list_fits_compact_width(app, settings_manager):
+    """The radio list must never demand more horizontal room than the real
+    usable panel width (~349px), so the card cannot overflow at compact
+    window sizes. Promotes the smoke probe's tab-level assertion into the
+    committed suite."""
+    from tabs.settings_tab import SettingsTab
+    tab = SettingsTab(settings_manager)
+    try:
+        tab.resize(420, 700)
+        app.processEvents()
+        assert tab._chat_handling_radio_list.minimumSizeHint().width() <= 349
+    finally:
+        tab.deleteLater()
+
+
 def test_chat_handling_theme_pass_reaches_radio_list(app, settings_manager, monkeypatch):
     """refresh_theme() must propagate tokens to the radio list (spying on
     the method catches a missing findChildren loop, which direct

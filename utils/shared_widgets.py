@@ -509,7 +509,6 @@ class ElidingLabel(QLabel):
         self.setToolTip(self._full_text if self.text() != self._full_text else "")
 
 
-
 # ── Settings Radio List ──────────────────────────────────────────────────────
 
 class _SettingsRadioRow(QFrame):
@@ -639,6 +638,9 @@ class SettingsRadioList(QWidget):
                 return
 
     def set_theme_colors(self, c: dict, is_dark: bool = True) -> None:
+        # is_dark is unused: every color here derives from the token dict.
+        # It is kept for signature symmetry with the other settings widgets'
+        # set_theme_colors, which SettingsTab's theme loop mirrors.
         sel_bg = c.get("bg_card_inner", "#2e2e2e")
         border = c.get("border_input", "#3a3a3a")
         accent = c.get("accent_blue_btn", "#0077ff")
@@ -658,7 +660,8 @@ class SettingsRadioList(QWidget):
             f"  background: {sel_bg};"
             f"  border: 1px solid {border};"
             "}"
-            'QFrame#settings_radio_row[kbfocus="true"] {'
+            'QFrame#settings_radio_row[kbfocus="true"],'
+            'QFrame#settings_radio_row[kbfocus="true"]:hover {'
             f"  border: 1px solid {accent};"
             "}"
             "QFrame#settings_radio_row QRadioButton {"

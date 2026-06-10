@@ -181,6 +181,11 @@ def test_theme_colors_dark_and_light(app):
         assert "#2e2e2e" in ss          # selected bg = bg_card_inner token
         assert "#0077ff" in ss          # accent reaches indicator/focus
         assert "background: transparent" in ss  # idle rows stay transparent
+        # The focus border must survive hover: without an explicit
+        # [kbfocus="true"]:hover rule, [selected="true"]:hover outranks the
+        # plain [kbfocus="true"] rule and drops the accent border while the
+        # pointer is over a selected, keyboard-focused row.
+        assert 'kbfocus="true"]:hover' in ss
         light = {
             "bg_card_inner": "#f1f5f9", "border_input": "#cbd5e1",
             "text_primary": "#0f172a", "text_muted": "#475569",

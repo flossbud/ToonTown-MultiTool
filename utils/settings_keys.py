@@ -52,10 +52,10 @@ CHAT_HANDLING_MODE_DEFAULT = CHAT_HANDLING_FOCUSED_ONLY
 
 # Legacy values from the original Simple/Advanced switch, mapped to canonical
 # modes at read time. No write migration: the canonical value persists only
-# when the user next touches the dropdown.
+# when the user next touches the Chat Handling selector.
 #
 # Legacy "simple" is intentionally NOT mapped: it was the old implicit
-# default, not an explicit choice in the new dropdown, so it falls through
+# default, not an explicit mode selection, so it falls through
 # to CHAT_HANDLING_MODE_DEFAULT below. Only "advanced" (an explicit opt-in
 # to the per-card chat buttons) is preserved.
 _LEGACY_CHAT_HANDLING = {

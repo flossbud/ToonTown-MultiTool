@@ -495,6 +495,9 @@ def test_set_full_width_control_places_widget_in_bottom_row(qapp):
         # it spans the full row width.
         assert f._bottom_control_slot.count() == 1
         assert f._bottom_control_slot.itemAt(0).widget() is w
+        # Stretch factor 1, so the widget actually expands to fill the row
+        # (a bare addWidget(widget) would still pass the count check).
+        assert f._bottom_control_slot.stretch(0) == 1
     finally:
         f.deleteLater()
 

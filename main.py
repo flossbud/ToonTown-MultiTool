@@ -400,7 +400,7 @@ class MultiToonTool(QMainWindow):
         self.settings_tab.input_backend_changed.connect(self.on_input_backend_changed)
         self.settings_tab.clear_credentials_requested.connect(self.on_clear_credentials_requested)
 
-        # Chat handling mode: SettingsTab dropdown -> MultitoonTab visibility.
+        # Chat handling mode: SettingsTab selector -> MultitoonTab visibility.
         # The signal carries the canonical mode string.
         self.settings_tab.chat_handling_mode_changed.connect(
             self.multitoon_tab.apply_chat_handling_mode
