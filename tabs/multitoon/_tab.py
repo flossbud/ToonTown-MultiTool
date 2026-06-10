@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import queue
+import sys
 import threading
 import time
 
@@ -26,6 +27,7 @@ from utils import cc_api
 from utils.game_registry import GameRegistry
 from utils import logical_actions
 from utils.toon_customizations_manager import ToonCustomizationsManager
+from utils.settings_keys import CLICK_SYNC_ENABLED
 from tabs.multitoon._keep_alive_help_button import KeepAliveHelpButton
 
 
@@ -1213,6 +1215,10 @@ class MultitoonTab(QWidget):
         self.input_service.chat_state_changed.connect(self._on_chat_state_changed)
         self.input_service.input_log.connect(self._on_input_log)
         self.input_service.uipi_blocked_movement_detected.connect(self._on_uipi_blocked)
+        self.click_sync_service = None
+        self._click_sync_backend = None
+        if sys.platform != "win32":
+            self._build_click_sync()
         self._chat_glow_active = False
         self.window_manager.window_ids_updated.connect(self.update_toon_controls)
         self._toon_names_ready.connect(self._apply_toon_names)
@@ -2117,6 +2123,10 @@ class MultitoonTab(QWidget):
     def _shutdown_for_relaunch(self) -> None:
         try:
             self.input_service.shutdown()
+            if self.click_sync_service is not None:
+                self.click_sync_service.shutdown()
+            if self._click_sync_backend is not None:
+                self._click_sync_backend.disconnect()
         finally:
             from PySide6.QtWidgets import QApplication
             QApplication.quit()
@@ -2710,9 +2720,162 @@ class MultitoonTab(QWidget):
         self.log(f"[Input] {name} (slot {index + 1}): chat {state}")
         self.apply_visual_state(index)
 
+    def _build_click_sync(self) -> None:
+        from services.click_sync_service import ClickSyncService
+        from utils import x11_discovery as _x11d
+
+        def _cs_slot_wid(slot, _wm=self.window_manager):
+            ids = _wm.get_window_ids()
+            if slot < len(ids) and _wm.window_games.get(ids[slot]) == "ttr":
+                return ids[slot]
+            return None
+
+        def _cs_source_resolver(root_x, root_y, member_wids):
+            # Stacking-aware: the frame under the point must be a member's
+            # toplevel ancestor. Fallback: client-rect containment.
+            frame = _x11d.toplevel_at_point(root_x, root_y)
+            if frame is not None:
+                for wid in member_wids:
+                    if _x11d.toplevel_ancestor(wid) == frame:
+                        return wid
+            for wid in member_wids:
+                g = self.window_manager.get_window_geometry(wid)
+                if g and g[0] <= root_x < g[0] + g[2] and g[1] <= root_y < g[1] + g[3]:
+                    return wid
+            return None
+
+        def _cs_capture_factory(on_event):
+            from utils.xrecord_capture import XRecordCapture
+            # on_died closes over its own instance so the service can
+            # identity-check stale generations.
+            holder = []
+            cap = XRecordCapture(
+                on_event,
+                on_died=lambda: self.click_sync_service.notify_capture_died(
+                    holder[0]))
+            holder.append(cap)
+            return cap
+
+        # Dedicated injection connection. Do NOT share input_service._xlib:
+        # that Display belongs to the InputService worker thread, and click
+        # sync injects from the XRecord capture thread (Xlib Displays are
+        # not safe to share across threads).
+        from utils.xlib_backend import XlibBackend
+        self._click_sync_backend = XlibBackend()
+        try:
+            self._click_sync_backend.connect()
+        except Exception as e:
+            print(f"[MultitoonTab] click sync backend connect failed: {e}")
+
+        # The real WindowManager (services/window_manager.py) provides
+        # get_window_geometry + window_geometry_updated; offscreen tab tests
+        # pass duck-typed fakes that may omit them, so degrade gracefully
+        # (no geometry -> slots resolve unusable, capture never starts).
+        _geom = getattr(self.window_manager, "get_window_geometry", None)
+        # parent=self: the service's resolver closures capture the tab, so
+        # tab <-> service form a reference cycle between two QObjects. Qt
+        # parenting destroys the service's C++ object with the widget tree
+        # instead of leaving it to Python's GC, whose arbitrary destruction
+        # order segfaults Shiboken at interpreter teardown (Python 3.14 +
+        # PySide6 GC race).
+        self.click_sync_service = ClickSyncService(
+            slot_window_resolver=_cs_slot_wid,
+            geometry_provider=_geom if _geom is not None else (lambda _wid: None),
+            source_resolver=_cs_source_resolver,
+            backend=self._click_sync_backend,
+            capture_factory=_cs_capture_factory,
+            parent=self,
+        )
+        self.click_sync_service.slot_states_changed.connect(
+            self._on_click_sync_states)
+        self.window_manager.window_ids_updated.connect(
+            lambda _ids: self.click_sync_service.recompute())
+        # Resizes don't change the window list; the geometry signal drives
+        # the live aspect re-check (mismatch pause + auto-recovery).
+        if hasattr(self.window_manager, "window_geometry_updated"):
+            self.window_manager.window_geometry_updated.connect(
+                self.click_sync_service.recompute)
+        if self.settings_manager is not None:
+            self.click_sync_service.set_enabled(
+                bool(self.settings_manager.get(CLICK_SYNC_ENABLED, False)))
+            self.settings_manager.on_change(self._on_click_sync_setting_changed)
+        self._apply_click_sync_visibility()
+
     def toggle_click_sync(self, index: int) -> None:
-        # wired to ClickSyncService in the next change
-        pass
+        if self.click_sync_service is None:  # win32
+            return
+        member = self.click_sync_service.toggle_slot(index)
+        self.click_sync_buttons[index].setChecked(member)
+
+    _CLICK_SYNC_STYLES = {
+        "off": "",
+        "armed": "QPushButton { border: 1px solid #c9a227; }",
+        "active": "QPushButton { border: 1px solid #2e9e44; }",
+        "error": "QPushButton { border: 1px solid #cc3b3b; }",
+    }
+    _CLICK_SYNC_TIPS = {
+        "off": "Click sync: mirror clicks to this toon",
+        "armed": "Click sync: waiting for a second toon",
+        "active": "Click sync: active",
+        "error": "Click sync: paused (window missing or proportions differ)",
+    }
+
+    def _on_click_sync_states(self, states: dict) -> None:
+        for i, btn in enumerate(self.click_sync_buttons):
+            state = states.get(i, "off")
+            btn.setChecked(state != "off")
+            btn.setStyleSheet(self._CLICK_SYNC_STYLES[state])
+            btn.setToolTip(self._CLICK_SYNC_TIPS[state])
+
+    def _apply_click_sync_visibility(self) -> None:
+        """Master switch ON + Linux + the slot currently holds a TTR window.
+        Called on setting change and from update_toon_controls (so slots
+        re-gate as windows come and go, mirroring the chat-button pattern)."""
+        master = (
+            sys.platform != "win32"
+            and self.settings_manager is not None
+            and bool(self.settings_manager.get(CLICK_SYNC_ENABLED, False))
+        )
+        ids = self.window_manager.get_window_ids()
+        for i, btn in enumerate(self.click_sync_buttons):
+            is_ttr_slot = (
+                i < len(ids)
+                and self.window_manager.window_games.get(ids[i]) == "ttr"
+            )
+            btn.setVisible(master and is_ttr_slot)
+        self._repin_collapsed_ka_widths()
+
+    def _repin_collapsed_ka_widths(self) -> None:
+        """Re-pin each ka_group's collapsed fixed width after a click-sync
+        visibility flip.
+
+        When keep-alive is master-collapsed, the layouts' collapse animation
+        pins ka_group via setFixedWidth(_collapsed_ka_group_width(i)). A
+        click-sync visibility change alters that target width, so a stale
+        pin clips the row (button just shown) or leaves a gap (just hidden)
+        until the next KA animation. Only width-pinned groups are touched:
+        before any collapse animation has run ka_group carries no fixed
+        width and the stretch-0 layout reflows on its own."""
+        if self._keep_alive_globally_enabled():
+            return
+        QWIDGETSIZE_MAX_VAL = 16777215
+        for layout in (getattr(self, "_compact", None), getattr(self, "_full", None)):
+            if layout is None:
+                continue
+            # _FullLayout wraps the slot-owning content widget; _CompactLayout
+            # owns its slots (and _collapsed_ka_group_width) directly.
+            content = getattr(layout, "_content", layout)
+            for i, slot in enumerate(content._card_slots):
+                ka_group = slot["ka_group"]
+                if ka_group.maximumWidth() == QWIDGETSIZE_MAX_VAL:
+                    continue  # never pinned; follows the layout naturally
+                ka_group.setFixedWidth(content._collapsed_ka_group_width(i))
+
+    def _on_click_sync_setting_changed(self, key, value) -> None:
+        if key != CLICK_SYNC_ENABLED or self.click_sync_service is None:
+            return
+        self.click_sync_service.set_enabled(bool(value))
+        self._apply_click_sync_visibility()
 
     def toggle_rapid_fire(self, index, state):
         if not self._keep_alive_globally_enabled():
@@ -2857,6 +3020,7 @@ class MultitoonTab(QWidget):
         self._refresh_toon_stats_labels()
         if not any(self.keep_alive_enabled):
             self._stop_keep_alive()
+        self._apply_click_sync_visibility()
 
     # ── Name handling ──────────────────────────────────────────────────────
 
@@ -3535,6 +3699,10 @@ class MultitoonTab(QWidget):
         # singleton; per-badge cancel() is no longer needed (stale results
         # are filtered by (dna, pose) match on the GUI thread).
         self.input_service.shutdown()
+        if self.click_sync_service is not None:
+            self.click_sync_service.shutdown()
+        if self._click_sync_backend is not None:
+            self._click_sync_backend.disconnect()
 
 
 def _dispatch_keep_alive_cycle(action, fire_toons, window_manager, keymap_manager,
