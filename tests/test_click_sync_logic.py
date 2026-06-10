@@ -79,6 +79,26 @@ def test_states_missing_window_pauses_group():
     assert "active" not in s.values()
 
 
+def test_aspect_empty_list_trivially_compatible():
+    assert aspect_compatible([])
+
+
+def test_states_unusable_plus_mismatch_usable_show_error():
+    # Slot 2 unusable AND the two usable members mismatched: mismatch wins
+    # for the usable members (error, not armed); the unusable slot is error.
+    s = compute_slot_states({0, 1, 2}, {0: True, 1: True, 2: False}, False)
+    assert s[0] == "error" and s[1] == "error" and s[2] == "error"
+
+
+def test_gesture_is_immutable():
+    import dataclasses
+    import pytest as _pytest
+    g = Gesture(source_slot=0, source_geom=(0, 0, 1, 1), press_root=(0, 0),
+                press_state=0, press_time=0, targets={})
+    with _pytest.raises(dataclasses.FrozenInstanceError):
+        g.source_slot = 1
+
+
 def test_gesture_records_targets_and_press():
     g = Gesture(source_slot=0, source_geom=(0, 0, 100, 100), press_root=(10, 20),
                 press_state=0, press_time=1234,

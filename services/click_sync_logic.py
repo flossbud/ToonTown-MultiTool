@@ -38,7 +38,11 @@ def map_point(src_geom: tuple[int, int, int, int],
               root_x: int, root_y: int) -> tuple[int, int]:
     """Map a root-space point through the source window's relative space into
     the target's client space. Out-of-bounds points pass through unmodified
-    (an outside release must keep its click-cancel semantics; never clamp)."""
+    (an outside release must keep its click-cancel semantics; never clamp).
+
+    Precondition: src_geom has positive width/height — guaranteed because
+    gestures only start while the group is active, which requires geometry
+    that passed aspect_compatible (positive sizes)."""
     sx, sy, sw, sh = src_geom
     _, _, tw, th = tgt_geom
     rx = (root_x - sx) / sw
@@ -53,7 +57,12 @@ def compute_slot_states(members: set[int],
     member is usable, there are >= 2, and all geometries are compatible.
     Any unusable member pauses the whole group (all-or-nothing in v1):
     the unusable slot shows 'error', usable members drop back to 'armed'.
-    A geometry mismatch shows 'error' on every usable member."""
+    A geometry mismatch shows 'error' on every usable member; when both
+    conditions hold (an unusable member AND mismatched usable members),
+    mismatch wins for the usable members — they show 'error', not 'armed'.
+
+    Precondition: callers guarantee member slots are in range(SLOT_COUNT)
+    (the UI has exactly SLOT_COUNT buttons)."""
     states = {s: "off" for s in range(SLOT_COUNT)}
     usable_members = [s for s in members if usable.get(s)]
     group_active = (
@@ -73,11 +82,13 @@ def compute_slot_states(members: set[int],
     return states
 
 
-@dataclass
+@dataclass(frozen=True)
 class Gesture:
     """One in-flight button-1 gesture. Frozen at press: all motion/release
     mapping for the rest of the gesture uses this snapshot (spec: geometry
-    and target XIDs are frozen at press)."""
+    and target XIDs are frozen at press). frozen=True enforces the
+    field-level invariant; the targets dict itself is constructed once and
+    never mutated."""
     source_slot: int
     source_geom: tuple[int, int, int, int]
     press_root: tuple[int, int]
