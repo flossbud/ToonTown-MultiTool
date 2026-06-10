@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from utils import update_checker
 from utils.update_checker import (
     UpdateChecker,
     select_release,
@@ -213,21 +214,16 @@ def test_manual_bypasses_skip_list(monkeypatch):
 
 
 def test_cache_replay_on_auto_within_ttl(monkeypatch):
-    cached_info = {
+    cached_release = {
         "tag_name": "v2.4.0-a",
         "body": "Build: 470\nNotes",
         "html_url": "https://example.com",
         "build_number": 470,
-        "stamped_app_version": "2.3.0-a",
-        "stamped_build": 458,
     }
+    store = {"update_skipped_version": None}
     sm = MagicMock()
-    now = time.time()
-    sm.get.side_effect = lambda key, default=None: {
-        "update_last_check_at": now - 60,  # 1 min ago
-        "update_last_check_result": json.dumps({"release": cached_info}),
-        "update_skipped_version": None,
-    }.get(key, default)
+    sm.get.side_effect = lambda key, default=None: store.get(key, default)
+    sm.set.side_effect = lambda key, value: store.__setitem__(key, value)
 
     network_called = []
     def fake_get(*a, **k):
@@ -237,6 +233,11 @@ def test_cache_replay_on_auto_within_ttl(monkeypatch):
     monkeypatch.setattr("utils.build_flavor.is_beta", lambda: True)
     monkeypatch.setattr("utils.version.APP_VERSION", "2.3.0-a")
     monkeypatch.setattr("utils.build_info.build_number", lambda: 458)
+    # Packaged build: head stamp is None and the source-run resolver never runs.
+    monkeypatch.setattr("utils.build_info.is_source_run", lambda: False)
+
+    # Seed the cache through the real writer (stamps live at the payload top level).
+    update_checker._write_cache(sm, cached_release, None, "2.3.0-a", 458, None)
 
     checker = UpdateChecker(sm)
     fired = []
@@ -249,20 +250,16 @@ def test_cache_replay_on_auto_within_ttl(monkeypatch):
 
 
 def test_cache_invalidated_when_local_version_changed(monkeypatch):
-    cached_info = {
+    cached_release = {
         "tag_name": "v2.4.0-a",
         "body": "Build: 470",
         "html_url": "https://example.com",
         "build_number": 470,
-        "stamped_app_version": "2.2.0-a",  # different from current
-        "stamped_build": 400,
     }
+    store = {"update_skipped_version": None}
     sm = MagicMock()
-    sm.get.side_effect = lambda key, default=None: {
-        "update_last_check_at": time.time() - 60,
-        "update_last_check_result": json.dumps({"release": cached_info}),
-        "update_skipped_version": None,
-    }.get(key, default)
+    sm.get.side_effect = lambda key, default=None: store.get(key, default)
+    sm.set.side_effect = lambda key, value: store.__setitem__(key, value)
     payload = [_release("v2.4.0-a", body="Build: 470", prerelease=True)]
     network_called = []
     def fake_get(*a, **k):
@@ -272,6 +269,12 @@ def test_cache_invalidated_when_local_version_changed(monkeypatch):
     monkeypatch.setattr("utils.build_flavor.is_beta", lambda: True)
     monkeypatch.setattr("utils.version.APP_VERSION", "2.3.0-a")
     monkeypatch.setattr("utils.build_info.build_number", lambda: 458)
+    # Packaged build: the source-run resolver never runs, so the network
+    # counter below sees exactly the one releases refetch.
+    monkeypatch.setattr("utils.build_info.is_source_run", lambda: False)
+
+    # Seed a cache stamped against a DIFFERENT local version/build.
+    update_checker._write_cache(sm, cached_release, None, "2.2.0-a", 400, None)
 
     checker = UpdateChecker(sm)
     fired = []
