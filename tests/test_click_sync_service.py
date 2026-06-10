@@ -232,3 +232,59 @@ def test_capture_died_drains_and_errors(svc):
     assert len(releases) == 1  # drained
     states = s.slot_states()
     assert states[0] == "error" and states[1] == "error" and states[2] == "off"
+
+
+def test_geometry_divergence_mid_gesture_drains(svc):
+    # The live-resize pause path: gesture in flight, geometry diverges,
+    # the next recompute must drain (and the later physical release no-op).
+    s, backend, _ = svc
+    s.toggle_slot(0); s.toggle_slot(1)
+    _press(s, 500, 250)
+    geoms_bad = {"10": (0, 0, 1000, 500), "20": (1100, 0, 1000, 800)}
+    s._geometry_provider = lambda wid: geoms_bad.get(wid)
+    s.recompute()
+    releases = [c for c in backend.calls if c[0] == "release"]
+    assert len(releases) == 1 and releases[0][7] == 1000  # drain @ press time
+    _release(s, 600, 250)
+    assert len([c for c in backend.calls if c[0] == "release"]) == 1
+
+
+def test_capture_stops_when_group_deactivates(svc):
+    s, backend, captures = svc
+    s.toggle_slot(0); s.toggle_slot(1)
+    assert captures[-1].started
+    s.toggle_slot(1)  # group drops below 2
+    assert not captures[-1].started
+    s.toggle_slot(1)  # re-arm: a NEW capture generation starts
+    assert captures[-1].started
+
+
+def test_capture_death_is_sticky_until_user_action(svc):
+    # After a capture death, periodic recomputes must NOT auto-restart or
+    # clear the error (no service_error spam); a user action recovers.
+    s, backend, captures = svc
+    s.toggle_slot(0); s.toggle_slot(1)
+    s.notify_capture_died(captures[-1])
+    assert s.slot_states()[0] == "error"
+    n = len(captures)
+    s.recompute()  # geometry tick
+    s.recompute()
+    assert s.slot_states()[0] == "error"
+    assert len(captures) == n  # no new capture spawned
+    s.toggle_slot(1)  # user action clears the latch (and leaves the group)
+    s.toggle_slot(1)  # rejoin: group re-forms
+    assert s.slot_states()[0] == "active"
+
+
+def test_stale_capture_death_does_not_kill_current(svc):
+    # A previous generation dying late must only reclaim ITS connections:
+    # the current healthy capture and the states stay untouched.
+    s, backend, captures = svc
+    s.toggle_slot(0); s.toggle_slot(1)
+    current = captures[-1]
+    stale = FakeCapture(lambda *a: None)
+    stale.started = True
+    s.notify_capture_died(stale)
+    assert stale.started is False      # reclaimed (stopped)
+    assert current.started is True     # healthy capture untouched
+    assert s.slot_states()[0] == "active"

@@ -20,6 +20,7 @@ from services.click_sync_logic import (
 )
 
 MOTION_COALESCE_S = 0.016  # forward at most ~60 motion events/s per gesture
+BUTTON1_MASK = 0x100  # X.Button1Mask; drains force it set on the release
 
 
 def _trace_enabled() -> bool:
@@ -62,6 +63,11 @@ class ClickSyncService(QObject):
         self._last_motion_emit = 0.0
         self._pending_motion = None  # (root_x, root_y, state, time)
         self._shutdown = False
+        # Sticky service-level failure latch (capture died / start failed).
+        # Prevents the periodic recompute from auto-restarting a broken
+        # capture and re-emitting service_error every tick; cleared only by
+        # an explicit user action (master toggle or membership change).
+        self._service_failed = False
 
     # ── public API (GUI thread) ────────────────────────────────────────
 
@@ -72,6 +78,7 @@ class ClickSyncService(QObject):
             if self._enabled == bool(enabled):
                 return
             self._enabled = bool(enabled)
+            self._service_failed = False  # user action clears the latch
             if not self._enabled:
                 self._drain_locked("master disabled")
         self.recompute()
@@ -79,6 +86,7 @@ class ClickSyncService(QObject):
     def toggle_slot(self, slot: int) -> bool:
         """Flip group membership for a toon slot. Returns new membership."""
         with self._lock:
+            self._service_failed = False  # user action clears the latch
             if slot in self._members:
                 self._members.discard(slot)
                 if self._gesture is not None:
@@ -97,15 +105,28 @@ class ClickSyncService(QObject):
     def recompute(self) -> None:
         """Re-evaluate usability + aspect compatibility and (re)start or stop
         capture. Called on toggles, the master switch, window-list updates,
-        and the periodic geometry tick."""
+        and the periodic geometry tick.
+
+        Capture lifecycle changes are DECIDED under the lock but EXECUTED
+        outside it: start() opens X connections (multiple round trips) and
+        stop() joins a thread whose callback takes this same lock. A new
+        capture is published under the lock only if the service still wants
+        it (a concurrent recompute/disable may have won the race; the loser
+        is stopped)."""
         emit_states = None
-        emit_error = None
-        cap = None
+        to_stop = None
+        start_new = False
         with self._lock:
             if self._shutdown:
                 return
             if not self._enabled:
                 new_states = {s: "off" for s in range(SLOT_COUNT)}
+            elif self._service_failed:
+                # Sticky error: hold the error display, no auto-restart.
+                new_states = {
+                    s: ("error" if s in self._members else "off")
+                    for s in range(SLOT_COUNT)
+                }
             else:
                 usable, geoms = {}, []
                 for s in self._members:
@@ -123,26 +144,49 @@ class ClickSyncService(QObject):
             if new_states != self._states:
                 self._states = new_states
                 emit_states = dict(new_states)
-            if now_active and (self._capture is None or not self._capture.is_running()):
-                self._capture = self._capture_factory(self._on_capture_event)
-                if not self._capture.start():
-                    emit_error = "mouse capture unavailable"
-                    self._states = {
-                        s: ("error" if s in self._members else "off")
-                        for s in range(SLOT_COUNT)
-                    }
-                    emit_states = dict(self._states)
-            elif not now_active and self._capture is not None and self._capture.is_running():
-                cap = self._capture
-                self._capture = None
-        # Outside the lock: Qt signals + capture stop (stop() joins a thread).
-        if cap is not None:
-            cap.stop()
+            if now_active:
+                if self._capture is None or not self._capture.is_running():
+                    # A dead-but-present capture still holds X connections;
+                    # reclaim it and start a fresh generation.
+                    to_stop, self._capture = self._capture, None
+                    start_new = True
+            else:
+                to_stop, self._capture = self._capture, None
+        # Outside the lock from here.
         if emit_states is not None:
             self.slot_states_changed.emit(emit_states)
-        if emit_error is not None:
-            _trace(f"service error: {emit_error}")
-            self.service_error.emit(emit_error)
+        if to_stop is not None:
+            to_stop.stop()
+        if start_new:
+            self._start_capture_outside_lock()
+
+    def _start_capture_outside_lock(self) -> None:
+        """Build and start a capture with no locks held, then publish it
+        under the lock — or stop it if the service no longer wants it."""
+        new_cap = self._capture_factory(self._on_capture_event)
+        ok = new_cap.start()
+        fail_states = None
+        publish = False
+        with self._lock:
+            wanted = (not self._shutdown
+                      and "active" in self._states.values()
+                      and self._capture is None)
+            if ok and wanted:
+                self._capture = new_cap
+                publish = True
+            elif not ok and wanted:
+                self._service_failed = True
+                self._states = {
+                    s: ("error" if s in self._members else "off")
+                    for s in range(SLOT_COUNT)
+                }
+                fail_states = dict(self._states)
+        if not publish:
+            new_cap.stop()  # idempotent; reclaims connections on failure too
+        if fail_states is not None:
+            _trace("service error: mouse capture unavailable")
+            self.slot_states_changed.emit(fail_states)
+            self.service_error.emit("mouse capture unavailable")
 
     def shutdown(self) -> None:
         """Idempotent: drain, stop capture, refuse further work."""
@@ -155,28 +199,40 @@ class ClickSyncService(QObject):
         if cap is not None:
             cap.stop()
 
-    def notify_capture_died(self) -> None:
-        """Hooked to XRecordCapture's on_died: the capture thread died
-        unexpectedly. Stop the capture (NEVER just drop the reference: the
-        dead capture still holds two X connections and dropping it leaks
-        client slots — stop() is safe to call from the capture thread
-        itself), drain, and drop to a service-level error state (member
-        buttons show error; keyboard routing unaffected)."""
+    def notify_capture_died(self, cap=None) -> None:
+        """Hooked to XRecordCapture's on_died: a capture thread died
+        unexpectedly. `cap` identifies the dying generation: if it is a
+        STALE instance (recompute already replaced it), only its X
+        connections are reclaimed — the current healthy capture and the
+        states stay untouched. Otherwise: stop the capture (NEVER just drop
+        the reference — the dead capture still holds two X connections and
+        dropping it leaks client slots; stop() is safe from the capture
+        thread itself), drain, latch the failure, and drop to a
+        service-level error state (member buttons show error; keyboard
+        routing unaffected; no auto-restart until a user action)."""
+        states = None
         with self._lock:
             if self._shutdown:
                 return
-            self._drain_locked("capture died")
-            cap, self._capture = self._capture, None
-            self._states = {
-                s: ("error" if s in self._members else "off")
-                for s in range(SLOT_COUNT)
-            }
-            states = dict(self._states)
-        if cap is not None:
-            cap.stop()
-        _trace("service error: capture died")
-        self.slot_states_changed.emit(states)
-        self.service_error.emit("mouse capture stopped unexpectedly")
+            current = self._capture
+            if cap is not None and current is not None and cap is not current:
+                to_stop = cap  # stale generation: reclaim only
+            else:
+                to_stop = current if current is not None else cap
+                self._capture = None
+                self._service_failed = True
+                self._drain_locked("capture died")
+                self._states = {
+                    s: ("error" if s in self._members else "off")
+                    for s in range(SLOT_COUNT)
+                }
+                states = dict(self._states)
+        if to_stop is not None:
+            to_stop.stop()
+        if states is not None:
+            _trace("service error: capture died")
+            self.slot_states_changed.emit(states)
+            self.service_error.emit("mouse capture stopped unexpectedly")
 
     # ── capture events (XRecord thread) ────────────────────────────────
 
@@ -213,7 +269,10 @@ class ClickSyncService(QObject):
             return
         targets = {}
         for s, wid in wids_by_slot.items():
-            if s == src_slot:
+            # Skip the source slot AND any slot that resolved to the same
+            # window id (a duplicate mapping must never echo a synthetic
+            # press back into the source window).
+            if s == src_slot or wid == src_wid:
                 continue
             g = self._geometry_provider(wid)
             if g is None:
@@ -258,6 +317,9 @@ class ClickSyncService(QObject):
         g = self._gesture
         for wid, geom, _ in g.targets.values():
             tx, ty = map_point(g.source_geom, geom, root_x, root_y)
+            # Return value intentionally ignored (spec deviation, recorded
+            # there): a target dying mid-gesture is reclaimed by window
+            # re-detection and the next geometry tick within ~2s.
             self._backend.send_motion(
                 wid, tx, ty, geom[0] + tx, geom[1] + ty, state=state, time=time)
 
@@ -284,7 +346,7 @@ class ClickSyncService(QObject):
         _trace(f"drain ({reason}) -> {len(g.targets)} targets")
         for wid, geom, (tx, ty) in g.targets.values():
             # Spec: drain at the gesture's mapped press coordinates,
-            # state = press state with Button1Mask (0x100), press timestamp.
+            # state = press state with Button1Mask set, press timestamp.
             self._backend.send_button_release(
                 wid, tx, ty, geom[0] + tx, geom[1] + ty,
-                state=g.press_state | 0x100, time=g.press_time)
+                state=g.press_state | BUTTON1_MASK, time=g.press_time)
