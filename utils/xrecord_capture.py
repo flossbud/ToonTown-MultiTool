@@ -67,9 +67,13 @@ class XRecordCapture:
                 print(f"[XRecordCapture] start failed: {e}")
                 self._cleanup()
                 return False
-            self._stopping = False
+            # Publish the new thread BEFORE clearing _stopping: a zombie
+            # from the previous generation waking in between must see
+            # either _stopping=True (no died) or a foreign _thread
+            # (generation guard) — never both cleared.
             self._thread = threading.Thread(
                 target=self._run, name="click-sync-xrecord", daemon=True)
+            self._stopping = False
             # Set BEFORE start(): _run's finally clears it on instant
             # failure; setting it after would overwrite that back to True.
             self._running = True
