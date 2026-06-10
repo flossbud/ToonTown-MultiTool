@@ -475,3 +475,75 @@ def test_field_has_transparent_background_to_let_panel_chrome_show(qapp):
     qss = field.styleSheet()
     assert "QFrame#settings_field" in qss
     assert "background: transparent" in qss
+
+
+# ── SettingsField.set_full_width_control ────────────────────────────────
+
+
+def test_set_full_width_control_places_widget_in_bottom_row(qapp):
+    from PySide6.QtWidgets import QLabel
+    from tabs.settings_tab import SettingsField
+    f = SettingsField("Label")
+    w = QLabel("control")
+    f.set_full_width_control(w)
+    try:
+        assert f.control_widget is w
+        assert f._controls == [w]
+        assert w.parent() is f._bottom_row
+        assert not f._bottom_row.isHidden()
+        # Trailing stretch removed: the widget is the only layout item, so
+        # it spans the full row width.
+        assert f._bottom_control_slot.count() == 1
+        assert f._bottom_control_slot.itemAt(0).widget() is w
+    finally:
+        f.deleteLater()
+
+
+def test_set_full_width_control_replaces_previous(qapp):
+    from PySide6.QtWidgets import QLabel
+    from tabs.settings_tab import SettingsField
+    f = SettingsField("Label")
+    first, second = QLabel("one"), QLabel("two")
+    f.set_full_width_control(first)
+    f.set_full_width_control(second)
+    try:
+        assert f.control_widget is second
+        assert f._controls == [second]
+        assert f._bottom_control_slot.count() == 1
+        assert f._bottom_control_slot.itemAt(0).widget() is second
+        assert first.parent() is None
+    finally:
+        f.deleteLater()
+
+
+def test_add_control_rejected_after_full_width(qapp):
+    import pytest
+    from PySide6.QtWidgets import QLabel
+    from tabs.settings_tab import SettingsField
+    f = SettingsField("Label")
+    f.set_full_width_control(QLabel("full"))
+    try:
+        with pytest.raises(AssertionError):
+            f.add_control(QLabel("extra"))
+    finally:
+        f.deleteLater()
+
+
+def test_set_control_after_full_width_restores_normal_mode(qapp):
+    from PySide6.QtWidgets import QLabel
+    from tabs.settings_tab import SettingsField
+    f = SettingsField("Label")
+    f.set_full_width_control(QLabel("full"))
+    normal = QLabel("normal")
+    f.set_control(normal)
+    try:
+        assert f.control_widget is normal
+        assert f._bottom_row.isHidden()
+        # Trailing stretch restored for future add_control migrations.
+        assert f._bottom_control_slot.count() == 1
+        assert f._bottom_control_slot.itemAt(0).widget() is None  # stretch
+        # add_control works again in normal mode.
+        f.add_control(QLabel("second"))
+        assert len(f._controls) == 2
+    finally:
+        f.deleteLater()

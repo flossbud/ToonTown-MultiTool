@@ -97,6 +97,7 @@ class SettingsField(QFrame):
         self._bottom_row.hide()
         outer.addWidget(self._bottom_row)
 
+        self._placement = "single"
         self._c = None
         self._is_dark = True
 
@@ -115,7 +116,20 @@ class SettingsField(QFrame):
         Calling this on a field that already has multiple controls collapses
         back to single-control mode.
         """
-        # Clear all existing controls from both slots.
+        self._clear_controls()
+        # Re-add trailing stretch on bottom row.
+        self._bottom_control_slot.addStretch(1)
+
+        widget.setParent(self)
+        self.control_widget = widget
+        self._controls.append(widget)
+        self._top_control_slot.addWidget(widget)
+        self._placement = "single"
+
+    def _clear_controls(self) -> None:
+        """Remove every control from both slots (shared by set_control and
+        set_full_width_control). Leaves the bottom row hidden with no
+        trailing stretch; callers re-add the stretch if they need it."""
         for ctrl in self._controls:
             ctrl.setParent(None)
         self._controls = []
@@ -123,20 +137,17 @@ class SettingsField(QFrame):
             self._top_control_slot.takeAt(0)
         while self._bottom_control_slot.count():
             self._bottom_control_slot.takeAt(0)
-        # Re-add trailing stretch on bottom row.
-        self._bottom_control_slot.addStretch(1)
         self._bottom_row.hide()
-
-        widget.setParent(self)
-        self.control_widget = widget
-        self._controls.append(widget)
-        self._top_control_slot.addWidget(widget)
 
     def add_control(self, widget) -> None:
         """Append an additional control. With 2+ controls, all migrate to
         a row below the label/helper so they cannot be pushed off-screen
         at narrow viewport widths.
         """
+        assert self._placement != "full_width", (
+            "add_control() is unsupported after set_full_width_control(); "
+            "use set_control() to reset the field first"
+        )
         widget.setParent(self)
         self._controls.append(widget)
         if self.control_widget is None:
@@ -166,6 +177,24 @@ class SettingsField(QFrame):
             self._bottom_control_slot.insertWidget(
                 self._bottom_control_slot.count() - 1, widget,
             )
+
+    def set_full_width_control(self, widget) -> None:
+        """Place a single control full-width beneath the label/helper row.
+
+        Used for controls that need the card's whole width (e.g.
+        SettingsRadioList). Replaces any existing controls; the bottom
+        row's right-aligning stretch is removed so the widget spans the
+        row. Repeated calls replace the widget; use set_control() to
+        return to normal single-control mode.
+        """
+        self._clear_controls()
+        widget.setParent(self._bottom_row)
+        self.control_widget = widget
+        self._controls = [widget]
+        # No trailing stretch: the widget owns the full row width.
+        self._bottom_control_slot.addWidget(widget, 1)
+        self._bottom_row.show()
+        self._placement = "full_width"
 
     def apply_theme(self, c, is_dark: bool) -> None:
         self._c = c
