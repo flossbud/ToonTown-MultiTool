@@ -7,6 +7,7 @@ from utils import x11_discovery
 class WindowManager(QObject):
     window_ids_updated = Signal(list)
     active_window_changed = Signal(str)
+    window_geometry_updated = Signal()
 
     POLL_INTERVAL = 0.1
 
@@ -16,6 +17,7 @@ class WindowManager(QObject):
 
         self.ttr_window_ids = []
         self.window_games: dict[str, str] = {}  # window_id -> "ttr" | "cc"
+        self.window_geometry: dict[str, tuple[int, int, int, int]] = {}
         self._active_id = None
         self._detection_enabled = False
 
@@ -74,6 +76,41 @@ class WindowManager(QObject):
             snapshot = list(self.ttr_window_ids)
         self.window_ids_updated.emit(snapshot)
 
+    def refresh_geometry(self):
+        """Refresh the geometry cache for all currently-tracked windows.
+        Linux only (the click sync feature is X11-only in v1)."""
+        import sys
+        if sys.platform == "win32":
+            return
+        with self._lock:
+            wids = list(self.ttr_window_ids)
+        fresh = {}
+        for wid in wids:
+            g = x11_discovery.get_window_geometry(wid)
+            if g is not None:
+                fresh[wid] = g
+        with self._lock:
+            changed = fresh != self.window_geometry
+            self.window_geometry = fresh
+        if changed:
+            # Resizes do not change the window LIST, so click sync needs its
+            # own signal to re-check aspect compatibility (live mismatch
+            # pause/recovery; see spec).
+            self.window_geometry_updated.emit()
+
+    def get_window_geometry(self, wid: str) -> tuple[int, int, int, int] | None:
+        """Cached client-window geometry, with an on-demand live query as
+        fallback so per-gesture snapshots are never stale-or-missing."""
+        with self._lock:
+            cached = self.window_geometry.get(wid)
+        if cached is not None:
+            return cached
+        g = x11_discovery.get_window_geometry(wid)
+        if g is not None:
+            with self._lock:
+                self.window_geometry[wid] = g
+        return g
+
     @property
     def active_window_id(self):
         with self._lock:
@@ -111,6 +148,7 @@ class WindowManager(QObject):
             now = time.monotonic()
             if now - last_assign_time > 2.0:
                 self.assign_windows()
+                self.refresh_geometry()
                 last_assign_time = now
 
             time.sleep(self.POLL_INTERVAL)
