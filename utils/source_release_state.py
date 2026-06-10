@@ -23,6 +23,7 @@ as UNPROVABLE.
 """
 from __future__ import annotations
 
+import re
 import subprocess
 import urllib.parse
 from enum import Enum, auto
@@ -32,6 +33,7 @@ from typing import Callable, Optional, Tuple
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _GIT_TIMEOUT = 5.0
 _MAX_TAG_DEREFS = 3  # deref calls AFTER the initial ref lookup
+_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 
 Runner = Callable[..., Tuple[int, str]]
 
@@ -59,6 +61,10 @@ def classify(release_sha: str, run: Runner = _default_runner) -> ReleaseState:
     AT_OR_PAST. merge-base --is-ancestor: rc 0 = yes, rc 1 = no, anything
     else = error. DIVERGENT requires two explicit "no"s AND a confirmed
     non-shallow repository."""
+    if not isinstance(release_sha, str) or not _SHA_RE.fullmatch(release_sha):
+        # Fail-safe: never let a non-sha (empty, malformed, or an
+        # option-shaped string from a hostile payload) reach git argv.
+        return ReleaseState.UNPROVABLE
     rc, _ = run(["cat-file", "-e", f"{release_sha}^{{commit}}"])
     if rc != 0:
         return ReleaseState.UNPROVABLE
@@ -95,7 +101,7 @@ def resolve_release_commit(tag: str, api_get,
     quoted = urllib.parse.quote(tag, safe="")
     payload = api_get(f"/git/ref/tags/{quoted}")
     seen = set()
-    for _ in range(_MAX_TAG_DEREFS + 1):
+    while True:
         if not isinstance(payload, dict):
             return None
         obj = payload.get("object")
@@ -108,9 +114,12 @@ def resolve_release_commit(tag: str, api_get,
             return sha
         if otype != "tag" or sha in seen:
             return None
+        if len(seen) >= _MAX_TAG_DEREFS:
+            # Budget exhausted: give up WITHOUT issuing another call
+            # (hard bound: 1 ref lookup + 3 derefs = 4 HTTP requests).
+            return None
         seen.add(sha)
         payload = api_get(f"/git/tags/{sha}")
-    return None
 
 
 def head_sha(run: Runner = _default_runner) -> Optional[str]:

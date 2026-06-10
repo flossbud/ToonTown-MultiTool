@@ -24,8 +24,18 @@ def _runner(table):
 
 
 def test_object_absent_is_unprovable():
-    run = _runner({f"cat-file -e {SHA}^{{commit}}": (1, "")})
+    # Real git returns 128 for a missing/unpeelable object (not 1).
+    run = _runner({f"cat-file -e {SHA}^{{commit}}": (128, "")})
     assert classify(SHA, run=run) is ReleaseState.UNPROVABLE
+
+
+def test_classify_rejects_non_sha_input():
+    def boom(args, timeout=5.0):
+        raise AssertionError("non-sha must never reach git argv")
+
+    assert classify("--upload-pack=evil", run=boom) is ReleaseState.UNPROVABLE
+    assert classify("", run=boom) is ReleaseState.UNPROVABLE
+    assert classify("HEAD", run=boom) is ReleaseState.UNPROVABLE
 
 
 def test_release_ancestor_of_head_is_at_or_past():
@@ -91,6 +101,18 @@ def test_shallow_garbage_output_is_unprovable():
     assert classify(SHA, run=run) is ReleaseState.UNPROVABLE
 
 
+def test_shallow_check_rc_failure_is_unprovable():
+    # The rc==0 guard is load-bearing: a failing shallow check with
+    # plausible stdout must never grant DIVERGENT (a suppression state).
+    run = _runner({
+        f"cat-file -e {SHA}^{{commit}}": (0, ""),
+        f"merge-base --is-ancestor {SHA} HEAD": (1, ""),
+        f"merge-base --is-ancestor HEAD {SHA}": (1, ""),
+        "rev-parse --is-shallow-repository": (1, "false\n"),
+    })
+    assert classify(SHA, run=run) is ReleaseState.UNPROVABLE
+
+
 def test_resolver_prefers_local_tag_no_api():
     api_calls = []
 
@@ -138,6 +160,43 @@ def test_resolver_api_cycle_and_depth_exhaustion_return_none():
 
     run = _runner({})
     assert resolve_release_commit("v1.2.3", api_get, run=run) is None
+
+
+def test_resolver_deref_budget_max_four_http_calls():
+    # 1 ref lookup + at most 3 derefs: a 4-deep tag chain stops WITHOUT a
+    # wasteful 4th deref request.
+    chain = ["s1", "s2", "s3", "s4"]
+    calls = []
+
+    def api_get(url):
+        calls.append(url)
+        if url.endswith("/git/ref/tags/v1.2.3"):
+            return {"object": {"type": "tag", "sha": chain[0]}}
+        for i, sha in enumerate(chain):
+            if url.endswith(f"/git/tags/{sha}"):
+                nxt = chain[i + 1] if i + 1 < len(chain) else "s5"
+                return {"object": {"type": "tag", "sha": nxt}}
+        return None
+
+    assert resolve_release_commit("v1.2.3", api_get, run=_runner({})) is None
+    assert len(calls) == 4  # ref + 3 derefs, never a 4th deref
+
+
+def test_resolver_three_deref_chain_resolves():
+    chain = {
+        "/git/ref/tags/v1.2.3": {"object": {"type": "tag", "sha": "s1"}},
+        "/git/tags/s1": {"object": {"type": "tag", "sha": "s2"}},
+        "/git/tags/s2": {"object": {"type": "tag", "sha": "s3"}},
+        "/git/tags/s3": {"object": {"type": "commit", "sha": SHA}},
+    }
+
+    def api_get(url):
+        for suffix, payload in chain.items():
+            if url.endswith(suffix):
+                return payload
+        return None
+
+    assert resolve_release_commit("v1.2.3", api_get, run=_runner({})) == SHA
 
 
 def test_resolver_api_malformed_and_error_return_none():
