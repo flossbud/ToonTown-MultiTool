@@ -95,6 +95,22 @@ def cmd_record(seconds):
             ctl.flush()
 
     print(f"Recording for {seconds}s; click and move the mouse anywhere...")
+
+    # Watchdog: the deadline above only fires inside the callback, so with
+    # ZERO captured events (the exact failure this probe detects) the enable
+    # call would block forever. The main thread blocks on `data`, so using
+    # `ctl` from this thread is safe.
+    import threading
+
+    def _watchdog():
+        time.sleep(seconds + 2)
+        try:
+            ctl.record_disable_context(ctx)
+            ctl.flush()
+        except Exception:
+            pass
+
+    threading.Thread(target=_watchdog, daemon=True).start()
     data.record_enable_context(ctx, cb)  # blocks until disabled
     ctl.record_free_context(ctx)
     ctl.close(); data.close()
@@ -168,7 +184,11 @@ def main():
     args = sys.argv[1:]
     if not args:
         print(__doc__); return 2
-    mask = "zero" if "--mask" in args and args[args.index("--mask") + 1] == "zero" else "masked"
+    mask = "masked"
+    if "--mask" in args:
+        mi = args.index("--mask")
+        if mi + 1 < len(args) and args[mi + 1] == "zero":
+            mask = "zero"
     cmd = args[0]
     if cmd == "list":
         cmd_list()
