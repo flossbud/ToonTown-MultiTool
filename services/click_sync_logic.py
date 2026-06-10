@@ -42,7 +42,11 @@ def map_point(src_geom: tuple[int, int, int, int],
 
     Precondition: src_geom has positive width/height — guaranteed because
     gestures only start while the group is active, which requires geometry
-    that passed aspect_compatible (positive sizes)."""
+    that passed aspect_compatible (positive sizes).
+
+    Quantization note: integer rounding means a point less than half a
+    target pixel outside the source maps onto the target's edge pixel.
+    Real cancel-releases land far outside, so this is accepted."""
     sx, sy, sw, sh = src_geom
     _, _, tw, th = tgt_geom
     rx = (root_x - sx) / sw
@@ -61,8 +65,10 @@ def compute_slot_states(members: set[int],
     conditions hold (an unusable member AND mismatched usable members),
     mismatch wins for the usable members — they show 'error', not 'armed'.
 
-    Precondition: callers guarantee member slots are in range(SLOT_COUNT)
-    (the UI has exactly SLOT_COUNT buttons)."""
+    Preconditions: callers guarantee member slots are in range(SLOT_COUNT)
+    (the UI has exactly SLOT_COUNT buttons), and `compatible` is computed
+    over the USABLE members' geometries — vacuously True with fewer than
+    two usable members."""
     states = {s: "off" for s in range(SLOT_COUNT)}
     usable_members = [s for s in members if usable.get(s)]
     group_active = (

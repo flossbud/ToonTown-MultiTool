@@ -83,6 +83,17 @@ def test_aspect_empty_list_trivially_compatible():
     assert aspect_compatible([])
 
 
+def test_aspect_tolerance_boundary():
+    # error == 0.01 exactly: compatible (<=); just over: incompatible.
+    assert aspect_compatible([(0, 0, 1000, 1000), (0, 0, 1000, 990)])
+    assert not aspect_compatible([(0, 0, 1000, 1000), (0, 0, 1000, 989)])
+
+
+def test_aspect_negative_size_incompatible():
+    assert not aspect_compatible([(0, 0, -100, 100), (0, 0, 100, 100)])
+    assert not aspect_compatible([(0, 0, 100, -100), (0, 0, 100, 100)])
+
+
 def test_states_unusable_plus_mismatch_usable_show_error():
     # Slot 2 unusable AND the two usable members mismatched: mismatch wins
     # for the usable members (error, not armed); the unusable slot is error.
