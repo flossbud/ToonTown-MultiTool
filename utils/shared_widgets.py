@@ -12,10 +12,13 @@ from __future__ import annotations
 
 import math
 
-from PySide6.QtWidgets import QWidget, QLabel, QSizePolicy, QStyledItemDelegate, QComboBox
+from PySide6.QtWidgets import (
+    QWidget, QLabel, QSizePolicy, QStyledItemDelegate, QComboBox,
+    QRadioButton, QButtonGroup, QFrame, QVBoxLayout, QHBoxLayout,
+)
 from PySide6.QtCore import (
     Qt, Signal, QPropertyAnimation, QEasingCurve, QVariantAnimation,
-    Property, QRectF, QSize, QTimer,
+    Property, QRectF, QSize, QTimer, QEvent,
 )
 from PySide6.QtGui import QColor, QPainter, QPen, QFont, QRadialGradient, QFontMetrics
 
@@ -504,6 +507,221 @@ class ElidingLabel(QLabel):
         else:
             super().setText(fm.elidedText(self._full_text, self._elide_mode, available))
         self.setToolTip(self._full_text if self.text() != self._full_text else "")
+
+
+
+# ── Settings Radio List ──────────────────────────────────────────────────────
+
+class _SettingsRadioRow(QFrame):
+    """One row of a SettingsRadioList: a real QRadioButton (option label) on
+    top and an eliding one-line description beneath, indented under the
+    radio's text. The whole row activates the radio on left-click release."""
+
+    def __init__(self, value: str, label: str, description: str, parent=None):
+        super().__init__(parent)
+        self.setObjectName("settings_radio_row")
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.value = value
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(10, 8, 10, 8)
+        lay.setSpacing(1)
+
+        self.radio = QRadioButton(label, self)
+        lay.addWidget(self.radio)
+
+        desc_row = QHBoxLayout()
+        # Indent aligns the description under the radio's text
+        # (14px indicator + 8px spacing).
+        desc_row.setContentsMargins(22, 0, 0, 0)
+        desc_row.setSpacing(0)
+        self.desc = ElidingLabel(description, parent=self)
+        desc_row.addWidget(self.desc)
+        lay.addLayout(desc_row)
+
+    def mousePressEvent(self, event):
+        # Accept the press so the matching release is delivered to this row.
+        # Presses on the QRadioButton itself are consumed by it and never
+        # reach here, so there is no double-handling.
+        if event.button() == Qt.LeftButton:
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        # Release-based activation: dragging off the row before releasing
+        # does not select.
+        if (event.button() == Qt.LeftButton
+                and self.rect().contains(event.position().toPoint())):
+            self.radio.setFocus(Qt.MouseFocusReason)
+            self.radio.click()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+
+class SettingsRadioList(QWidget):
+    """Vertical radio option list for the Settings tab (reusable sibling of
+    SettingsComboBox): one row per option, each a radio button plus a muted
+    one-line description that elides at narrow widths.
+
+    items: non-empty list of (value, label, description); values unique.
+    The first item starts selected (silently), so value() is always defined.
+    set_value() is the ONLY supported programmatic mutation (silent; unknown
+    values are a no-op). value_changed fires exactly once per user-initiated
+    change (mouse or keyboard). Styling comes from theme tokens via
+    set_theme_colors(); the constructor ships dark-theme defaults like
+    SettingsComboBox does.
+    """
+
+    value_changed = Signal(str)
+
+    _DARK_DEFAULTS = {
+        "bg_card_inner": "#2e2e2e",
+        "border_input": "#3a3a3a",
+        "text_primary": "#ffffff",
+        "text_muted": "#888888",
+        "accent_blue_btn": "#0077ff",
+    }
+
+    def __init__(self, items, parent=None):
+        super().__init__(parent)
+        assert items, "SettingsRadioList requires at least one item"
+        values = [v for v, _, _ in items]
+        assert len(set(values)) == len(values), (
+            f"SettingsRadioList values must be unique, got {values}"
+        )
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self._guard = False
+        self._rows: list[_SettingsRadioRow] = []
+        self._current_row = None
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(4)
+
+        self._group = QButtonGroup(self)
+        self._group.setExclusive(True)
+        for value, label, description in items:
+            row = _SettingsRadioRow(value, label, description, self)
+            row.radio.installEventFilter(self)
+            self._group.addButton(row.radio)
+            self._rows.append(row)
+            lay.addWidget(row)
+        self._group.buttonToggled.connect(self._on_button_toggled)
+
+        # First item starts selected, silently.
+        self._guard = True
+        try:
+            self._rows[0].radio.setChecked(True)
+        finally:
+            self._guard = False
+
+        self.set_theme_colors(self._DARK_DEFAULTS, is_dark=True)
+
+    # ── public API ────────────────────────────────────────────────────────
+
+    def value(self) -> str:
+        for row in self._rows:
+            if row.radio.isChecked():
+                return row.value
+        return self._rows[0].value  # unreachable: group is exclusive
+
+    def set_value(self, v) -> None:
+        """Silent programmatic selection. Unknown values are a no-op."""
+        for row in self._rows:
+            if row.value == v:
+                self._guard = True
+                try:
+                    row.radio.setChecked(True)
+                finally:
+                    self._guard = False
+                return
+
+    def set_theme_colors(self, c: dict, is_dark: bool = True) -> None:
+        sel_bg = c.get("bg_card_inner", "#2e2e2e")
+        border = c.get("border_input", "#3a3a3a")
+        accent = c.get("accent_blue_btn", "#0077ff")
+        text = c.get("text_primary", "#ffffff")
+        muted = c.get("text_muted", "#888888")
+        h = QColor(sel_bg)
+        hover_rgba = f"rgba({h.red()}, {h.green()}, {h.blue()}, 128)"
+        self.setStyleSheet(
+            "QFrame#settings_radio_row {"
+            "  background: transparent;"
+            "  border: 1px solid transparent;"  # layout-stable selection
+            "  border-radius: 8px;"
+            "}"
+            f"QFrame#settings_radio_row:hover {{ background: {hover_rgba}; }}"
+            'QFrame#settings_radio_row[selected="true"],'
+            'QFrame#settings_radio_row[selected="true"]:hover {'
+            f"  background: {sel_bg};"
+            f"  border: 1px solid {border};"
+            "}"
+            'QFrame#settings_radio_row[kbfocus="true"] {'
+            f"  border: 1px solid {accent};"
+            "}"
+            "QFrame#settings_radio_row QRadioButton {"
+            f"  font-size: 12.5px; font-weight: 500; color: {text};"
+            "  background: transparent; border: none; spacing: 8px;"
+            "}"
+            "QFrame#settings_radio_row QRadioButton::indicator {"
+            "  width: 14px; height: 14px; border-radius: 8px;"
+            f"  border: 1px solid {border}; background: transparent;"
+            "}"
+            "QFrame#settings_radio_row QRadioButton::indicator:checked {"
+            f"  border: 1px solid {accent};"
+            "  background: qradialgradient(cx:0.5, cy:0.5, radius:0.5,"
+            "      fx:0.5, fy:0.5,"
+            f"      stop:0 {accent}, stop:0.55 {accent},"
+            "      stop:0.65 transparent, stop:1 transparent);"
+            "}"
+            "QFrame#settings_radio_row QLabel {"
+            f"  font-size: 11px; color: {muted};"
+            "  background: transparent; border: none;"
+            "}"
+        )
+        for row in self._rows:
+            self._repolish(row)
+
+    # ── internals ─────────────────────────────────────────────────────────
+
+    def _on_button_toggled(self, button, checked: bool) -> None:
+        if not checked:
+            return
+        prev, self._current_row = self._current_row, self._row_for(button)
+        for row in (prev, self._current_row):
+            if row is not None:
+                row.setProperty(
+                    "selected", "true" if row is self._current_row else "false"
+                )
+                self._repolish(row)
+        if not self._guard and self._current_row is not None:
+            self.value_changed.emit(self._current_row.value)
+
+    def _row_for(self, button):
+        for row in self._rows:
+            if row.radio is button:
+                return row
+        return None
+
+    def eventFilter(self, obj, event):
+        # Track each radio's focus so its row shows the accent focus border.
+        if event.type() in (QEvent.FocusIn, QEvent.FocusOut):
+            row = self._row_for(obj)
+            if row is not None:
+                row.setProperty(
+                    "kbfocus",
+                    "true" if event.type() == QEvent.FocusIn else "false",
+                )
+                self._repolish(row)
+        return super().eventFilter(obj, event)
+
+    @staticmethod
+    def _repolish(w) -> None:
+        w.style().unpolish(w)
+        w.style().polish(w)
+        w.update()
 
 
 # ── Settings ComboBox ─────────────────────────────────────────────────────────
