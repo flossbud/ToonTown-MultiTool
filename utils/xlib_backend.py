@@ -193,7 +193,9 @@ class XlibBackend:
         try:
             win = self._display.create_resource_object("window", int(win_id_str))
             ev = ev_cls(
-                time=(time or X.CurrentTime),
+                # X.CurrentTime == 0; the sentinel passes through verbatim
+                # (SendEvent never substitutes server time).
+                time=time,
                 root=self._display.screen().root,
                 window=win,
                 same_screen=1,

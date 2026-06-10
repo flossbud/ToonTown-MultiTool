@@ -31,9 +31,11 @@ class _FakeDisplay:
     def __init__(self, win):
         self._win = win
         self.flushed = 0
+        self.wid_requested = None
 
     def create_resource_object(self, kind, wid):
         assert kind == "window"
+        self.wid_requested = wid
         return self._win
 
     def screen(self):
@@ -63,24 +65,31 @@ def test_button_press_event_fields():
     assert ev.time == 999
     assert ev.same_screen == 1
     assert propagate is False
+    assert b._display.wid_requested == 123  # event targets the right window
+    assert b._display.flushed == 1          # flush is load-bearing
 
 
 def test_button_release_carries_state():
     b, w = _backend_with_fake()
     b.send_button_release("123", x=1, y=2, root_x=3, root_y=4,
                           state=X.Button1Mask, time=1000)
-    ev, _, _ = w.sent[0]
+    ev, _, mask = w.sent[0]
     assert ev.type == X.ButtonRelease
     assert ev.state & X.Button1Mask
+    assert mask == X.ButtonReleaseMask
 
 
 def test_motion_event():
     b, w = _backend_with_fake()
     b.send_motion("123", x=10, y=20, root_x=30, root_y=40,
                   state=X.Button1Mask, time=5)
-    ev, _, _ = w.sent[0]
+    ev, _, mask = w.sent[0]
     assert ev.type == X.MotionNotify
     assert ev.detail == 0
+    # The triple-OR is load-bearing: dragging clients often select only
+    # ButtonMotionMask/Button1MotionMask (drag delivery would silently break).
+    assert mask == (X.PointerMotionMask | X.ButtonMotionMask
+                    | X.Button1MotionMask)
 
 
 def test_no_display_returns_false():
