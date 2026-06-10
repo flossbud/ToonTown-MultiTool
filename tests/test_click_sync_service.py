@@ -277,17 +277,51 @@ def test_capture_death_is_sticky_until_user_action(svc):
 
 
 def test_stale_capture_death_does_not_kill_current(svc):
-    # A previous generation dying late must only reclaim ITS connections:
-    # the current healthy capture and the states stay untouched.
+    # A previous generation dying late is a no-op for the service: the
+    # detach site that orphaned it owns stopping it, and the current
+    # healthy capture and the states stay untouched.
     s, backend, captures = svc
     s.toggle_slot(0); s.toggle_slot(1)
     current = captures[-1]
     stale = FakeCapture(lambda *a: None)
     stale.started = True
     s.notify_capture_died(stale)
-    assert stale.started is False      # reclaimed (stopped)
+    assert stale.started is True       # not ours to stop (owner does)
     assert current.started is True     # healthy capture untouched
     assert s.slot_states()[0] == "active"
+
+
+def test_instant_dead_capture_treated_as_start_failure(svc):
+    # start() succeeded but the thread died before publication: the starter
+    # must treat it as a failure, stop it (ownership), and latch sticky.
+    s, backend, captures = svc
+
+    class InstantDeath:
+        def __init__(self):
+            self.stopped = False
+
+        def start(self):
+            return True
+
+        def is_running(self):
+            return False  # died between start() and publication
+
+        def stop(self):
+            self.stopped = True
+
+    dead_caps = []
+
+    def factory(cb):
+        c = InstantDeath()
+        dead_caps.append(c)
+        return c
+
+    s._capture_factory = factory
+    s.toggle_slot(0); s.toggle_slot(1)
+    assert s.slot_states()[0] == "error"        # latched as failure
+    assert dead_caps and dead_caps[0].stopped   # starter owned the stop
+    s.recompute()
+    assert len(dead_caps) == 1                  # sticky: no restart spam
 
 
 def test_dead_capture_at_recompute_latches_no_restart(svc):
