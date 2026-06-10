@@ -53,12 +53,12 @@ jobs:
         shell: pwsh
         run: |
           $tag = "${{ inputs.version_label }}"
-          Compress-Archive -Path "dist\ToonTownMultiTool\*" -DestinationPath "ToonTownMultiTool-$tag-Windows-x86_64.zip"
+          Compress-Archive -Path "dist\ToonTownMultiTool\*" -DestinationPath "ToonTownMultiTool-Portable-$tag.zip"
 
       - uses: actions/upload-artifact@v4
         with:
           name: windows-zip
-          path: ToonTownMultiTool-*.zip
+          path: ToonTownMultiTool-Portable-*.zip
 
   build-windows-installer:
     needs: build-windows
@@ -92,7 +92,7 @@ jobs:
       - name: Extract onedir into dist\
         shell: pwsh
         run: |
-          $zip = (Get-ChildItem zip-in\ToonTownMultiTool-*.zip)[0].FullName
+          $zip = (Get-ChildItem zip-in\ToonTownMultiTool-Portable-*.zip)[0].FullName
           New-Item -ItemType Directory -Force -Path dist\ToonTownMultiTool | Out-Null
           Expand-Archive $zip -DestinationPath dist\ToonTownMultiTool -Force
 
@@ -141,7 +141,7 @@ jobs:
             "/DMyAppId=${{ steps.flavor.outputs.appid }}" `
             "/DMyAppFlavor=${{ steps.flavor.outputs.flavor }}" `
             "/DConfigDirName=${{ steps.flavor.outputs.configdir }}" `
-            "/DOutputBaseFilename=ToonTownMultiTool-Setup-$tag-Windows-x86_64" `
+            "/DOutputBaseFilename=ToonTownMultiTool-Setup-$tag" `
             packaging\windows\installer.iss
           if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit $LASTEXITCODE" }
 

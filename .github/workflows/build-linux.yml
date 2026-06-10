@@ -93,12 +93,12 @@ jobs:
       - name: Build AppImage
         run: |
           ARCH=x86_64 ./appimagetool-x86_64.AppImage --appimage-extract-and-run AppDir \
-            TTMultiTool-${{ inputs.version_label }}-Linux-x86_64.AppImage
+            ToonTownMultiTool-${{ inputs.version_label }}.AppImage
 
       - uses: actions/upload-artifact@v4
         with:
           name: linux-appimage
-          path: TTMultiTool-*.AppImage
+          path: ToonTownMultiTool-*.AppImage
 
   build-flatpak:
     if: ${{ inputs.include_flatpak }}
@@ -128,14 +128,14 @@ jobs:
       - name: Build Flatpak bundle
         uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
-          bundle: TTMultiTool-${{ inputs.version_label }}-Linux-x86_64.flatpak
+          bundle: ToonTownMultiTool-${{ inputs.version_label }}.flatpak
           manifest-path: flatpak/io.github.flossbud.ToonTownMultiTool.yml
           cache-key: flatpak-builder-${{ hashFiles('flatpak/*.yml') }}
 
       - uses: actions/upload-artifact@v4
         with:
           name: linux-flatpak
-          path: TTMultiTool-*.flatpak
+          path: ToonTownMultiTool-*.flatpak
 
   build-deb:
     needs: build-appimage
@@ -171,4 +171,4 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: linux-deb
-          path: TTMultiTool-*.deb
+          path: ToonTownMultiTool-*.deb

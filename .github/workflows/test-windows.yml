@@ -32,7 +32,7 @@ jobs:
       - name: Launch-test the packaged EXE
         shell: pwsh
         run: |
-          $zip = (Get-ChildItem dist-zip\ToonTownMultiTool-*.zip)[0].FullName
+          $zip = (Get-ChildItem dist-zip\ToonTownMultiTool-Portable-*.zip)[0].FullName
           Expand-Archive -Path $zip -DestinationPath exe-test
           # The EXE is a GUI-subsystem app (console=False): PowerShell's call
           # operator never populates $LASTEXITCODE for it, and it has no

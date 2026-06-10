@@ -115,11 +115,11 @@ jobs:
           body_path: RELEASE_NOTES.md
           prerelease: ${{ needs.channel.outputs.beta == 'true' }}
           files: |
-            windows-zip/ToonTownMultiTool-*.zip
+            windows-zip/ToonTownMultiTool-Portable-*.zip
             windows-installer/ToonTownMultiTool-Setup-*.exe
-            linux-appimage/TTMultiTool-*.AppImage
-            linux-flatpak/TTMultiTool-*.flatpak
-            linux-deb/TTMultiTool-*.deb
+            linux-appimage/ToonTownMultiTool-*.AppImage
+            linux-flatpak/ToonTownMultiTool-*.flatpak
+            linux-deb/ToonTownMultiTool-*.deb
             SMOKETEST.md
 
       - name: Demote prior Latest

@@ -4,7 +4,7 @@
 # The Python dependencies (PySide6, pynput, keyring, ...) are bundled inside
 # the PyInstaller binary. The system Qt/GL/xcb runtime libraries are NOT
 # bundled, so they are declared in the control file's Depends: field -- apt
-# resolves them on `apt-get install ./TTMultiTool-*.deb`.
+# resolves them on `apt-get install ./ToonTownMultiTool-*.deb`.
 #
 # Usage: scripts/build-deb.sh <binary-path> <version-label> [output-dir]
 # Must be run from the repository root.
@@ -56,7 +56,7 @@ Description: Multitoon controller for Toontown Rewritten and Corporate Clash
  bundled in the binary; this package depends only on the system GL/xcb stack.
 EOF
 
-OUTPUT="$OUTDIR/TTMultiTool-${VERSION}-Linux-x86_64.deb"
+OUTPUT="$OUTDIR/ToonTownMultiTool-${VERSION}.deb"
 # -Zxz: Debian 11's dpkg 1.20 cannot read the zstd members modern
 # dpkg-deb produces by default. xz is understood by every supported dpkg.
 dpkg-deb --build --root-owner-group -Zxz "$STAGE" "$OUTPUT"

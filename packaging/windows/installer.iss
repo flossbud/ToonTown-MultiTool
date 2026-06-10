@@ -6,7 +6,7 @@
 ;   ISCC.exe /DMyAppVersion=vDEV /DMyAppName="ToonTown MultiTool" \
 ;            /DMyAppId={8B2F4F8C-...} /DMyAppFlavor=stable \
 ;            /DConfigDirName=toontown_multitool \
-;            /DOutputBaseFilename=ToonTownMultiTool-Setup-vDEV-Windows-x86_64 \
+;            /DOutputBaseFilename=ToonTownMultiTool-Setup-vDEV \
 ;            packaging\windows\installer.iss
 
 #ifndef MyAppName
@@ -25,7 +25,7 @@
   #define ConfigDirName "toontown_multitool"
 #endif
 #ifndef OutputBaseFilename
-  #define OutputBaseFilename "ToonTownMultiTool-Setup-" + MyAppVersion + "-Windows-x86_64"
+  #define OutputBaseFilename "ToonTownMultiTool-Setup-" + MyAppVersion
 #endif
 #ifndef MyBuildNumber
   #define MyBuildNumber "0"

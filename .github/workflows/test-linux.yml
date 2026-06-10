@@ -131,11 +131,11 @@ jobs:
 
       - name: Run self-check via AppImage (extract-and-run)
         run: |
-          chmod +x TTMultiTool-*.AppImage
+          chmod +x ToonTownMultiTool-*.AppImage
           # -e /dev/stdout surfaces Xvfb's own stderr into the job log;
           # without it xvfb-run discards it to /dev/null and an Xvfb startup
           # failure shows only as an opaque "could not connect to display".
-          xvfb-run -a -e /dev/stdout ./TTMultiTool-*.AppImage --appimage-extract-and-run --self-check
+          xvfb-run -a -e /dev/stdout ./ToonTownMultiTool-*.AppImage --appimage-extract-and-run --self-check
 
   test-flatpak:
     if: ${{ inputs.include_flatpak }}
@@ -154,7 +154,7 @@ jobs:
           flatpak remote-add --user --if-not-exists flathub \
             https://flathub.org/repo/flathub.flatpakrepo
           flatpak install --user -y flathub org.kde.Platform//6.7
-          flatpak install --user -y --bundle TTMultiTool-*.flatpak
+          flatpak install --user -y --bundle ToonTownMultiTool-*.flatpak
 
       - name: Run self-check via Flatpak
         run: |
@@ -187,7 +187,7 @@ jobs:
         run: |
           export DEBIAN_FRONTEND=noninteractive
           apt-get update
-          apt-get install -y xvfb ./TTMultiTool-*.deb
+          apt-get install -y xvfb ./ToonTownMultiTool-*.deb
 
       - name: Run self-check via the installed .deb
         run: xvfb-run -a toontown-multitool --self-check
