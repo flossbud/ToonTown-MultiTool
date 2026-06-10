@@ -41,9 +41,15 @@ class ClickSyncService(QObject):
     service_error = Signal(str)
 
     def __init__(self, slot_window_resolver, geometry_provider,
-                 source_resolver, backend, capture_factory, parent=None):
+                 source_resolver, backend, capture_factory, parent=None,
+                 fresh_geometry_provider=None):
         """slot_window_resolver(slot:int) -> wid|None
-        geometry_provider(wid:str) -> (x, y, w, h)|None  (fresh-enough query)
+        geometry_provider(wid:str) -> (x, y, w, h)|None  (cached is fine:
+            drives the periodic aspect-compatibility re-check)
+        fresh_geometry_provider(wid) -> same, but must be a LIVE query:
+            gesture snapshots are taken from it at press time, where a ~2s
+            stale origin would mismap the injection (a window moved then
+            clicked immediately). Defaults to geometry_provider.
         source_resolver(root_x, root_y, member_wids:list) -> wid|None
             (stacking-aware hit test; see wire-up in Task 9)
         backend: object with send_button_press/send_button_release/send_motion
@@ -52,6 +58,8 @@ class ClickSyncService(QObject):
         super().__init__(parent)
         self._slot_window_resolver = slot_window_resolver
         self._geometry_provider = geometry_provider
+        self._fresh_geometry_provider = (fresh_geometry_provider
+                                         or geometry_provider)
         self._source_resolver = source_resolver
         self._backend = backend
         self._capture_factory = capture_factory
@@ -355,8 +363,12 @@ class ClickSyncService(QObject):
         if src_wid is None:
             return
         src_slot = next(s for s, w in wids_by_slot.items() if w == src_wid)
-        src_geom = self._geometry_provider(src_wid)
-        if src_geom is None:
+        # Gesture snapshots come from the FRESH provider: the cached
+        # geometry can be ~2s old, and a window moved-then-clicked would
+        # mismap every injection for the whole gesture. Presses are rare,
+        # so the extra X round trips are cheap.
+        src_geom = self._fresh_geometry_provider(src_wid)
+        if src_geom is None or src_geom[2] <= 0 or src_geom[3] <= 0:
             return
         targets = {}
         for s, wid in wids_by_slot.items():
@@ -365,7 +377,7 @@ class ClickSyncService(QObject):
             # press back into the source window).
             if s == src_slot or wid == src_wid:
                 continue
-            g = self._geometry_provider(wid)
+            g = self._fresh_geometry_provider(wid)
             if g is None:
                 continue
             tx, ty = map_point(src_geom, g, root_x, root_y)

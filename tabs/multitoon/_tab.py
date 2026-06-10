@@ -2811,9 +2811,15 @@ class MultitoonTab(QWidget):
             backend=self._click_sync_backend,
             capture_factory=_cs_capture_factory,
             parent=self,
+            # Gesture snapshots need LIVE geometry: the WM cache can be ~2s
+            # stale after a window move, which would mismap the injection.
+            # The capture thread gets its own per-thread Display.
+            fresh_geometry_provider=_x11d.get_window_geometry,
         )
         self.click_sync_service.slot_states_changed.connect(
             self._on_click_sync_states)
+        self.click_sync_service.service_error.connect(
+            self._on_click_sync_service_error)
         self.window_manager.window_ids_updated.connect(
             lambda _ids: self.click_sync_service.recompute())
         # Resizes don't change the window list; the geometry signal drives
@@ -2855,6 +2861,18 @@ class MultitoonTab(QWidget):
             btn.setChecked(state != "off")
             btn.setStyleSheet(self._CLICK_SYNC_STYLES[state])
             btn.setToolTip(self._CLICK_SYNC_TIPS[state])
+
+    def _on_click_sync_service_error(self, message: str) -> None:
+        """A capture failure needs different user action than a window
+        mismatch: replace the generic error tooltip on the member buttons.
+        The service emits states (error) before this signal, so the
+        generic tooltip is already applied; recovery (any toggle) goes
+        back through _on_click_sync_states, which resets it."""
+        tip = f"Click sync: stopped ({message}). Toggle a toon button to retry."
+        for btn in self.click_sync_buttons:
+            if btn.isChecked():
+                btn.setToolTip(tip)
+        print(f"[MultitoonTab] click sync error: {message}")
 
     def _apply_click_sync_visibility(self) -> None:
         """Master switch ON + Linux + the slot currently holds a TTR window.

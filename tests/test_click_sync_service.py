@@ -223,6 +223,30 @@ def test_press_inject_failure_drops_target(svc):
     assert [r[1] for r in releases] == ["30"]  # failed target got no release
 
 
+def test_press_uses_fresh_geometry_provider(svc):
+    # The cached provider still has the target's OLD origin; the window
+    # just moved. Gesture snapshots must come from the fresh provider or
+    # every injection in the gesture is mismapped.
+    s, backend, _ = svc
+    s.toggle_slot(0); s.toggle_slot(1)
+    fresh = {"10": (0, 0, 1000, 500), "20": (1200, 0, 1000, 500)}
+    s._fresh_geometry_provider = lambda wid: fresh.get(wid)
+    _press(s, 500, 250)
+    presses = [c for c in backend.calls if c[0] == "press"]
+    assert presses and presses[0][4] == 1200 + 500  # fresh origin, not 1100
+
+
+def test_press_zero_size_fresh_geometry_ignored(svc):
+    # A fresh query returning a zero-size source (mid-teardown) must not
+    # divide by zero or start a gesture.
+    s, backend, _ = svc
+    s.toggle_slot(0); s.toggle_slot(1)
+    fresh = {"10": (0, 0, 0, 0), "20": (1100, 0, 1000, 500)}
+    s._fresh_geometry_provider = lambda wid: fresh.get(wid)
+    _press(s, 500, 250)
+    assert backend.calls == []
+
+
 def test_capture_died_drains_and_errors(svc):
     s, backend, _ = svc
     s.toggle_slot(0); s.toggle_slot(1)

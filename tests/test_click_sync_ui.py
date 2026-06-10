@@ -91,3 +91,19 @@ def test_toggle_calls_service(multitoon_tab):
     tab.click_sync_service.toggle_slot = lambda idx: calls.append(idx) or True
     tab.toggle_click_sync(2)
     assert calls == [2]
+
+
+def test_service_error_sets_failure_tooltip(multitoon_tab):
+    # A capture failure must NOT leave the generic mismatch tooltip on the
+    # member buttons (it would send the user resizing windows instead of
+    # retrying). The service emits error states first, then service_error.
+    tab = multitoon_tab
+    tab.click_sync_buttons[0].setChecked(True)
+    tab.click_sync_buttons[1].setChecked(True)
+    tab.click_sync_service.service_error.emit("mouse capture unavailable")
+    for i in (0, 1):
+        tip = tab.click_sync_buttons[i].toolTip()
+        assert "mouse capture unavailable" in tip
+        assert "proportions" not in tip
+    # Non-member button keeps its default tooltip.
+    assert "stopped" not in tab.click_sync_buttons[2].toolTip()

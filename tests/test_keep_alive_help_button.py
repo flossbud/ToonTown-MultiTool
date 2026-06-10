@@ -183,6 +183,7 @@ def test_collapsed_ka_group_width_includes_help_button(qapp):
     stub_tab = StubTab()
     stub_tab.chat_buttons = []
     stub_tab.help_buttons = []
+    stub_tab.click_sync_buttons = []
     for _ in range(4):
         cb = QPushButton()
         cb.setFixedHeight(32)
@@ -192,6 +193,13 @@ def test_collapsed_ka_group_width_includes_help_button(qapp):
         # setFixedSize forces 32. Test must use the actual class to catch
         # the clamping regression.
         stub_tab.help_buttons.append(KeepAliveHelpButton())
+        # Hidden by default like the real tab's click sync buttons; the
+        # width formula must skip hidden buttons (isHidden() check).
+        cs = QPushButton()
+        cs.setFixedHeight(32)
+        cs.setFixedWidth(32)
+        cs.setVisible(False)
+        stub_tab.click_sync_buttons.append(cs)
 
     ka_group = QFrame()
     inner = QHBoxLayout(ka_group)
