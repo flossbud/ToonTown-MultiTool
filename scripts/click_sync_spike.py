@@ -115,8 +115,12 @@ def cmd_record(seconds):
     ctl.record_free_context(ctx)
     ctl.close(); data.close()
     print(f"counts: {count}")
-    ok = count["press"] > 0 and count["release"] > 0 and count["motion"] > 0
-    print("PASS" if ok else "FAIL: no events captured (XRecord unusable -> feature infeasible)")
+    missing = [k for k, v in count.items() if v == 0]
+    if not missing:
+        print("PASS")
+    else:
+        print(f"FAIL: no {'/'.join(missing)} events captured "
+              "(if press/release are missing, XRecord is unusable -> feature infeasible)")
 
 
 def _geom(d, wid):
@@ -148,7 +152,11 @@ def _send_motion(d, win, wx, wy, rx_root, ry_root, mask_mode):
     if mask_mode == "zero":
         win.send_event(ev, propagate=False, event_mask=0)
     else:
-        win.send_event(ev, propagate=False, event_mask=X.PointerMotionMask)
+        # Dragging clients usually select ButtonMotionMask/Button1MotionMask,
+        # not PointerMotionMask; include all three or they miss the event.
+        motion_mask = (X.PointerMotionMask | X.ButtonMotionMask
+                       | X.Button1MotionMask)
+        win.send_event(ev, propagate=False, event_mask=motion_mask)
     d.flush()
 
 
@@ -187,13 +195,16 @@ def main():
     mask = "masked"
     if "--mask" in args:
         mi = args.index("--mask")
-        if mi + 1 < len(args) and args[mi + 1] == "zero":
+        val = args[mi + 1] if mi + 1 < len(args) else None
+        if val == "zero":
             mask = "zero"
+        elif val != "masked":
+            print(f"warning: unrecognized --mask value {val!r}; using 'masked'")
     cmd = args[0]
     if cmd == "list":
         cmd_list()
     elif cmd == "record":
-        cmd_record(int(args[1]) if len(args) > 1 else 10)
+        cmd_record(max(0, int(args[1])) if len(args) > 1 else 10)
     elif cmd == "click":
         cmd_click(int(args[1]), float(args[2]), float(args[3]), mask)
     elif cmd == "drag":
