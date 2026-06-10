@@ -13,16 +13,19 @@ from utils.update_runner import (
 
 
 def test_pick_asset_finds_windows_exe():
+    """Fixture names mirror the shipped naming convention
+    (ToonTownMultiTool-Setup-<tag>.exe etc.) so this proves suffix matching
+    against the names actually published."""
     assets = [
-        {"name": "ToonTownMultiTool-Setup-v2.4.0-Windows-x86_64.exe", "browser_download_url": "https://x/a.exe", "size": 100},
-        {"name": "TTMultiTool-v2.4.0-Linux-x86_64.AppImage", "browser_download_url": "https://x/b.AppImage", "size": 200},
+        {"name": "ToonTownMultiTool-Setup-v2.4.0.exe", "browser_download_url": "https://x/a.exe", "size": 100},
+        {"name": "ToonTownMultiTool-v2.4.0.AppImage", "browser_download_url": "https://x/b.AppImage", "size": 200},
     ]
     chosen = pick_asset(assets, suffix=".exe")
     assert chosen["name"].endswith(".exe")
 
 
 def test_pick_asset_returns_none_when_missing():
-    assets = [{"name": "TTMultiTool-v2.4.0.flatpak", "browser_download_url": "https://x/c", "size": 1}]
+    assets = [{"name": "ToonTownMultiTool-v2.4.0.flatpak", "browser_download_url": "https://x/c", "size": 1}]
     assert pick_asset(assets, suffix=".exe") is None
 
 
@@ -78,7 +81,7 @@ def test_runner_dispatches_aur_to_terminal(monkeypatch):
 
 
 _FLATPAK_ASSET = {
-    "name": "TTMultiTool-v2.4.0-Linux-x86_64.flatpak",
+    "name": "ToonTownMultiTool-v2.4.0.flatpak",
     "browser_download_url": "https://x/bundle",
     "size": 1,
 }
@@ -204,7 +207,7 @@ def test_windows_installer_launched_silent_with_relaunch_flag(monkeypatch):
     monkeypatch.setattr("utils.update_runner.subprocess.Popen",
                         lambda argv, *a, **k: popened.append(argv) or MagicMock())
     runner.run_update({"tag_name": "v2.4.0", "html_url": "https://example/r",
-                       "assets": [{"name": "ToonTownMultiTool-Setup-v2.4.0-Windows-x86_64.exe",
+                       "assets": [{"name": "ToonTownMultiTool-Setup-v2.4.0.exe",
                                    "browser_download_url": "https://x/s.exe", "size": 1}]})
     assert popened, "installer was not launched"
     argv = popened[0]
