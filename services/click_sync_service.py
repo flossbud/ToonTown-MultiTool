@@ -4,8 +4,10 @@ Observe-only capture (XRecord), per-gesture geometry snapshot, XSendEvent
 injection. Spec: docs/superpowers/specs/2026-06-10-click-sync-design.md.
 
 Threading: capture events arrive on the XRecord thread; UI calls arrive on
-the GUI thread. ALL state mutation goes through self._lock. Qt signals are
-emitted while NOT holding the lock (queued delivery to the GUI is fine).
+the GUI thread. ALL state mutation goes through self._lock (an RLock). Qt
+signals are emitted via _emit_if_current, whose generation check and emit
+are atomic under the lock (see its docstring for why that is safe); capture
+start()/stop() always run with the lock released.
 """
 from __future__ import annotations
 
@@ -193,15 +195,19 @@ class ClickSyncService(QObject):
     def _emit_if_current(self, states, gen, error_msg=None, trace_msg=None):
         """Emit a state snapshot only if no newer state change superseded it
         (a slow path's stale emission must not land after, say, a user
-        recovery already flipped the buttons back)."""
+        recovery already flipped the buttons back). The check AND the emit
+        happen under the lock — atomically — which is safe because the lock
+        is an RLock (a same-thread direct-connected slot reenters fine) and
+        cross-thread consumers get queued delivery (their slots never run
+        under this lock)."""
         with self._lock:
             if gen != self._states_gen:
                 return
-        if trace_msg:
-            _trace(trace_msg)
-        self.slot_states_changed.emit(states)
-        if error_msg is not None:
-            self.service_error.emit(error_msg)
+            if trace_msg:
+                _trace(trace_msg)
+            self.slot_states_changed.emit(states)
+            if error_msg is not None:
+                self.service_error.emit(error_msg)
 
     def _make_capture_callback(self):
         """Generation-gated event callback: a capture that lost the publish
