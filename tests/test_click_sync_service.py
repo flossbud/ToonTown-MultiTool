@@ -247,6 +247,19 @@ def test_press_zero_size_fresh_geometry_ignored(svc):
     assert backend.calls == []
 
 
+def test_press_zero_size_fresh_target_skipped(svc):
+    # A zero-size TARGET (mid-teardown) is skipped, not injected at (0, 0);
+    # healthy targets still receive the press.
+    s, backend, _ = svc
+    s.toggle_slot(0); s.toggle_slot(1); s.toggle_slot(2)
+    fresh = {"10": (0, 0, 1000, 500), "20": (1100, 0, 0, 0),
+             "30": (0, 600, 2000, 1000)}
+    s._fresh_geometry_provider = lambda wid: fresh.get(wid)
+    _press(s, 500, 250)
+    presses = [c for c in backend.calls if c[0] == "press"]
+    assert [p[1] for p in presses] == ["30"]
+
+
 def test_capture_died_drains_and_errors(svc):
     s, backend, _ = svc
     s.toggle_slot(0); s.toggle_slot(1)

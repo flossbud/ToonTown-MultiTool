@@ -378,8 +378,8 @@ class ClickSyncService(QObject):
             if s == src_slot or wid == src_wid:
                 continue
             g = self._fresh_geometry_provider(wid)
-            if g is None:
-                continue
+            if g is None or g[2] <= 0 or g[3] <= 0:
+                continue  # zero-size = mid-teardown window; never inject
             tx, ty = map_point(src_geom, g, root_x, root_y)
             targets[s] = (wid, g, (tx, ty))
         if not targets:
