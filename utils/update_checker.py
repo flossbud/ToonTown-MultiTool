@@ -25,11 +25,39 @@ from utils.version_compare import (
     is_newer,
     parse,
 )
+from utils.source_release_state import (
+    ReleaseState,
+    classify as _classify,
+    head_sha as _head_sha,
+    resolve_release_commit as _resolve_release_commit,
+)
 
 
 GITHUB_API = "https://api.github.com/repos/flossbud/ToonTown-MultiTool/releases"
 CACHE_TTL_SECONDS = 6 * 60 * 60  # 6 hours
 HTTP_TIMEOUT = 5.0
+
+GITHUB_API_ROOT = "https://api.github.com/repos/flossbud/ToonTown-MultiTool"
+
+
+def _api_get(path: str):
+    """GET a GitHub API path (e.g. /git/ref/tags/v1.2.3) -> JSON dict or
+    None. Errors (incl. 403/429 rate limits) map to None, which callers
+    treat as UNPROVABLE."""
+    try:
+        resp = requests.get(
+            f"{GITHUB_API_ROOT}{path}",
+            headers={
+                "User-Agent": f"ToonTownMultiTool/{version.APP_VERSION}",
+                "Accept": "application/vnd.github+json",
+            },
+            timeout=HTTP_TIMEOUT,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return data if isinstance(data, dict) else None
+    except (requests.RequestException, ValueError, json.JSONDecodeError):
+        return None
 
 
 _BUILD_RE = re.compile(r"^Build:\s*(\d+)\s*$", re.MULTILINE)
@@ -177,20 +205,39 @@ class UpdateChecker(QObject):
 
 def _perform_check(sm, *, manual: bool) -> dict:
     """Pure(ish) function: takes a settings_manager, returns a dict.
-    Not on a thread; the worker calls this on its thread."""
+    Not on a thread; the worker calls this on its thread.
+
+    Policy (version compare -> skip list -> source adjudication) is
+    re-applied on EVERY read path - cache hits included - so a cached
+    release can never bypass a policy that would have suppressed it."""
     local_app_version = version.APP_VERSION
     local_build = build_info.build_number()
     local_parsed = parse(f"v{local_app_version}")
     if local_parsed is None:
         return {"kind": "failed", "reason": f"can't parse local version {local_app_version}"}
+    source_run = build_info.is_source_run()
+    local_head = _head_sha() if source_run else None
 
-    # 1. Try cache (auto only, not manual).
+    ctx = {
+        "sm": sm,
+        "manual": manual,
+        "source_run": source_run,
+        "local_parsed": local_parsed,
+        "local_build": local_build,
+        "local_app_version": local_app_version,
+        "local_head": local_head,
+    }
+
+    # 1. Cache (auto only).
     if not manual:
-        cached = _read_cache(sm, local_app_version, local_build)
-        if cached is not None:
-            return cached
+        hit = _read_cache(sm, local_app_version, local_build, local_head)
+        if hit is not None:
+            release, resolved_sha = hit
+            if release is None:
+                return {"kind": "none"}
+            return _apply_policy(release, resolved_sha, ctx, from_cache=True)
 
-    # 2. Network call.
+    # 2. Network.
     try:
         resp = requests.get(
             f"{GITHUB_API}?per_page=30",
@@ -209,34 +256,61 @@ def _perform_check(sm, *, manual: bool) -> dict:
 
     chosen = select_release(releases)
     if chosen is None:
-        _write_cache(sm, None, local_app_version, local_build)
+        _write_cache(sm, None, None, local_app_version, local_build, local_head)
+        return {"kind": "none"}
+    return _apply_policy(chosen, None, ctx, from_cache=False)
+
+
+def _apply_policy(release, resolved_sha, ctx, *, from_cache: bool) -> dict:
+    """Single policy funnel for cache hits AND fresh fetches."""
+    sm = ctx["sm"]
+
+    def cache(sha):
+        if not from_cache:
+            _write_cache(sm, release, sha, ctx["local_app_version"],
+                         ctx["local_build"], ctx["local_head"])
+
+    remote_parsed = parse(release["tag_name"])
+    remote_build = release.get("build_number", 0)
+    if not is_newer(ctx["local_parsed"], ctx["local_build"],
+                    remote_parsed, remote_build):
+        if not from_cache:
+            _write_cache(sm, None, None, ctx["local_app_version"],
+                         ctx["local_build"], ctx["local_head"])
         return {"kind": "none"}
 
-    remote_parsed = parse(chosen["tag_name"])
-    remote_build = chosen.get("build_number", 0)
-
-    if not is_newer(local_parsed, local_build, remote_parsed, remote_build):
-        _write_cache(sm, None, local_app_version, local_build)
+    skipped = sm.get(UPDATE_SKIPPED_VERSION) if not ctx["manual"] else None
+    if skipped and skipped == release["tag_name"]:
+        cache(resolved_sha)
         return {"kind": "none"}
 
-    # 3. Skip list (auto only).
-    skipped = sm.get(UPDATE_SKIPPED_VERSION) if not manual else None
-    if skipped and skipped == chosen["tag_name"]:
-        _write_cache(sm, chosen, local_app_version, local_build)
-        return {"kind": "none"}
+    if ctx["source_run"] and not ctx["manual"]:
+        if resolved_sha is None:
+            resolved_sha = _resolve_release_commit(release["tag_name"], _api_get)
+        state = (_classify(resolved_sha) if resolved_sha
+                 else ReleaseState.UNPROVABLE)
+        if state in (ReleaseState.AT_OR_PAST, ReleaseState.DIVERGENT):
+            print(f"[update] source run {state.name.lower()} vs "
+                  f"{release['tag_name']}; banner suppressed")
+            cache(resolved_sha)
+            return {"kind": "none"}
 
     info = {
-        "tag_name": chosen["tag_name"],
-        "body": chosen.get("body", ""),
-        "html_url": chosen.get("html_url", ""),
+        "tag_name": release["tag_name"],
+        "body": release.get("body", ""),
+        "html_url": release.get("html_url", ""),
         "build_number": remote_build,
-        "assets": chosen.get("assets", []),
+        "assets": release.get("assets", []),
     }
-    _write_cache(sm, chosen, local_app_version, local_build)
+    cache(resolved_sha)
     return {"kind": "update", "info": info}
 
 
-def _read_cache(sm, local_app_version: str, local_build: int) -> Optional[dict]:
+def _read_cache(sm, local_app_version: str, local_build: int,
+                local_head):
+    """Returns None on miss; (None, None) for a cached version-compare
+    no-update; (release_dict, resolved_sha_or_None) for a cached release.
+    Policy is NOT applied here - the caller re-applies it."""
     last_at = sm.get(UPDATE_LAST_CHECK_AT)
     try:
         last_at_f = float(last_at) if last_at is not None else None
@@ -251,45 +325,34 @@ def _read_cache(sm, local_app_version: str, local_build: int) -> Optional[dict]:
         cached = json.loads(raw)
     except (TypeError, ValueError):
         return None
+    if (cached.get("stamped_app_version") != local_app_version
+            or cached.get("stamped_build") != local_build
+            or cached.get("stamped_head") != local_head):
+        return None
     release = cached.get("release")
     if release is None:
-        # Cached "no update" - still valid only if stamps match.
-        stamped_v = cached.get("stamped_app_version")
-        stamped_b = cached.get("stamped_build")
-        if stamped_v == local_app_version and stamped_b == local_build:
-            return {"kind": "none"}
+        return (None, None)
+    if "tag_name" not in release:
         return None
-    if release.get("stamped_app_version") != local_app_version or release.get("stamped_build") != local_build:
-        return None
-    info = {
-        "tag_name": release["tag_name"],
-        "body": release["body"],
-        "html_url": release["html_url"],
-        "build_number": release["build_number"],
-        "assets": release.get("assets", []),
+    return (release, cached.get("resolved_sha"))
+
+
+def _write_cache(sm, chosen, resolved_sha, local_app_version: str,
+                 local_build: int, local_head) -> None:
+    payload = {
+        "stamped_app_version": local_app_version,
+        "stamped_build": local_build,
+        "stamped_head": local_head,
+        "resolved_sha": resolved_sha,
+        "release": None,
     }
-    return {"kind": "update", "info": info}
-
-
-def _write_cache(sm, chosen: Optional[dict], local_app_version: str, local_build: int) -> None:
-    payload: dict
-    if chosen is None:
-        payload = {
-            "release": None,
-            "stamped_app_version": local_app_version,
-            "stamped_build": local_build,
-        }
-    else:
-        payload = {
-            "release": {
-                "tag_name": chosen["tag_name"],
-                "body": chosen.get("body", ""),
-                "html_url": chosen.get("html_url", ""),
-                "build_number": chosen.get("build_number", 0),
-                "assets": chosen.get("assets", []),
-                "stamped_app_version": local_app_version,
-                "stamped_build": local_build,
-            },
+    if chosen is not None:
+        payload["release"] = {
+            "tag_name": chosen["tag_name"],
+            "body": chosen.get("body", ""),
+            "html_url": chosen.get("html_url", ""),
+            "build_number": chosen.get("build_number", 0),
+            "assets": chosen.get("assets", []),
         }
     try:
         sm.set(UPDATE_LAST_CHECK_AT, time.time())
