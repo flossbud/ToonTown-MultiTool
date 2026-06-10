@@ -56,13 +56,13 @@ Install on Windows (installer, portable ZIP, or source) or on Linux (Arch, Flatp
 
 #### Installer (recommended)
 
-Download `ToonTownMultiTool-Setup-vX.Y.Z-Windows-x86_64.exe` from the [Releases page](https://github.com/flossbud/ToonTown-MultiTool/releases) and run it. The wizard asks whether to install for just you (no admin needed) or for all users.
+Download `ToonTownMultiTool-Setup-vX.Y.Z.exe` from the [Releases page](https://github.com/flossbud/ToonTown-MultiTool/releases) and run it. The wizard asks whether to install for just you (no admin needed) or for all users.
 
 On first download, Windows SmartScreen will show "Windows protected your PC". This is expected for unsigned installers, click "More info" then "Run anyway".
 
 #### Portable (no install)
 
-Download `ToonTownMultiTool-vX.Y.Z-Windows-x86_64.zip`, extract anywhere, and run `ToonTownMultiTool.exe` from the extracted folder. No Start Menu entry, no uninstaller.
+Download `ToonTownMultiTool-Portable-vX.Y.Z.zip`, extract anywhere, and run `ToonTownMultiTool.exe` from the extracted folder. No Start Menu entry, no uninstaller.
 
 #### Run from source
 
@@ -95,7 +95,7 @@ After install, launch from your application menu or run `toontown-multitool` (sh
 Download the `.flatpak` from the [Releases page](https://github.com/flossbud/ToonTown-MultiTool/releases):
 
 ```bash
-flatpak install --user ./TTMultiTool-vX.Y.Z-Linux-x86_64.flatpak
+flatpak install --user ./ToonTownMultiTool-vX.Y.Z.flatpak
 flatpak run io.github.flossbud.ToonTownMultiTool
 ```
 
@@ -104,8 +104,8 @@ You need TTR or CC already installed on your system; the Flatpak doesn't bundle 
 #### AppImage
 
 ```bash
-chmod +x TTMultiTool-vX.Y.Z-Linux-x86_64.AppImage
-./TTMultiTool-vX.Y.Z-Linux-x86_64.AppImage
+chmod +x ToonTownMultiTool-vX.Y.Z.AppImage
+./ToonTownMultiTool-vX.Y.Z.AppImage
 ```
 
 If double-clicking does nothing on Ubuntu 24.04 or Mint 22, either install `libfuse2` (`sudo apt install libfuse2`) or run with `--appimage-extract-and-run`.
@@ -113,7 +113,7 @@ If double-clicking does nothing on Ubuntu 24.04 or Mint 22, either install `libf
 #### Debian / Ubuntu / Mint (.deb)
 
 ```bash
-sudo apt install ./ttmultitool_X.Y.Z_amd64.deb
+sudo apt install ./ToonTownMultiTool-vX.Y.Z.deb
 ```
 
 #### Run from source

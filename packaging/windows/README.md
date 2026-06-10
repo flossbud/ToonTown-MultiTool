@@ -32,11 +32,11 @@ for /f "tokens=1,* delims==" %A in (packaging\windows\guids.env) do set %A=%B
   /DMyAppId=%STABLE_APPID% ^
   /DMyAppFlavor=stable ^
   /DConfigDirName=toontown_multitool ^
-  /DOutputBaseFilename=ToonTownMultiTool-Setup-vDEV-Windows-x86_64 ^
+  /DOutputBaseFilename=ToonTownMultiTool-Setup-vDEV ^
   packaging\windows\installer.iss
 ```
 
-Output: `packaging\windows\Output\ToonTownMultiTool-Setup-vDEV-Windows-x86_64.exe`
+Output: `packaging\windows\Output\ToonTownMultiTool-Setup-vDEV.exe`
 
 ## Build the beta installer locally
 
@@ -47,7 +47,7 @@ Output: `packaging\windows\Output\ToonTownMultiTool-Setup-vDEV-Windows-x86_64.ex
   /DMyAppId=%BETA_APPID% ^
   /DMyAppFlavor=beta ^
   /DConfigDirName=toontown_multitool_beta ^
-  /DOutputBaseFilename=ToonTownMultiTool-Setup-vDEV-a-Windows-x86_64 ^
+  /DOutputBaseFilename=ToonTownMultiTool-Setup-vDEV-a ^
   packaging\windows\installer.iss
 ```
 
@@ -62,7 +62,7 @@ type nul > dist\ToonTownMultiTool\.beta_flavor
 ## Smoke-test the installer silently
 
 ```
-ToonTownMultiTool-Setup-vDEV-Windows-x86_64.exe /VERYSILENT /SUPPRESSMSGBOXES ^
+ToonTownMultiTool-Setup-vDEV.exe /VERYSILENT /SUPPRESSMSGBOXES ^
   /DIR=%TEMP%\ttmt-test /LOG=%TEMP%\install.log
 "%TEMP%\ttmt-test\ToonTownMultiTool.exe" --self-check
 "%TEMP%\ttmt-test\unins000.exe" /VERYSILENT

@@ -21,11 +21,11 @@ Adds four-mode chat handling, an F5 refresh hotkey, and Windows support for elev
 
 | Platform | Asset |
 |---|---|
-| Windows installer | `ToonTownMultiTool-Setup-v0.7.0-alpha.3-Windows-x86_64.exe` |
-| Windows portable | `ToonTownMultiTool-v0.7.0-alpha.3-Windows-x86_64.zip` |
-| Linux AppImage | `TTMultiTool-v0.7.0-alpha.3-Linux-x86_64.AppImage` |
-| Linux Flatpak | `TTMultiTool-v0.7.0-alpha.3-Linux-x86_64.flatpak` |
-| Linux .deb | `TTMultiTool-v0.7.0-alpha.3-Linux-x86_64.deb` |
+| Windows installer | `ToonTownMultiTool-Setup-v0.7.0-alpha.3.exe` |
+| Windows portable | `ToonTownMultiTool-Portable-v0.7.0-alpha.3.zip` |
+| Linux AppImage | `ToonTownMultiTool-v0.7.0-alpha.3.AppImage` |
+| Linux Flatpak | `ToonTownMultiTool-v0.7.0-alpha.3.flatpak` |
+| Linux .deb | `ToonTownMultiTool-v0.7.0-alpha.3.deb` |
 
 ## Running from Source
 
