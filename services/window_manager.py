@@ -51,6 +51,7 @@ class WindowManager(QObject):
             had_ids = bool(self.ttr_window_ids)
             self.ttr_window_ids = []
             self.window_games = {}
+            self.window_geometry = {}
             snapshot = list(self.ttr_window_ids)
         if had_ids:
             self.window_ids_updated.emit(snapshot)
@@ -73,6 +74,7 @@ class WindowManager(QObject):
         with self._lock:
             self.ttr_window_ids = []
             self.window_games = {}
+            self.window_geometry = {}
             snapshot = list(self.ttr_window_ids)
         self.window_ids_updated.emit(snapshot)
 
@@ -100,7 +102,9 @@ class WindowManager(QObject):
 
     def get_window_geometry(self, wid: str) -> tuple[int, int, int, int] | None:
         """Cached client-window geometry, with an on-demand live query as
-        fallback so per-gesture snapshots are never stale-or-missing."""
+        fallback so per-gesture snapshots are never stale-or-missing.
+        Non-None is NOT a liveness/membership test — untracked windows can
+        still resolve via the live query (returned uncached)."""
         with self._lock:
             cached = self.window_geometry.get(wid)
         if cached is not None:
@@ -108,7 +112,11 @@ class WindowManager(QObject):
         g = x11_discovery.get_window_geometry(wid)
         if g is not None:
             with self._lock:
-                self.window_geometry[wid] = g
+                # Cache only tracked windows: caching an untracked wid
+                # would resurrect it and spuriously fire the change signal
+                # on the next refresh.
+                if wid in self.ttr_window_ids:
+                    self.window_geometry[wid] = g
         return g
 
     @property
