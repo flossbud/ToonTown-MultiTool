@@ -17,6 +17,8 @@ from Xlib import X, display as xdisplay
 from Xlib.ext import record
 from Xlib.protocol import rq
 
+_EVENT_FIELD = rq.EventField(None)  # hoisted: allocated once, not per event
+
 
 class XRecordCapture:
     """on_event(kind, root_x, root_y, state, time) with kind in
@@ -38,6 +40,10 @@ class XRecordCapture:
     def start(self) -> bool:
         if self._running:
             return True
+        if self._thread is not None:
+            # A dead-but-unstopped capture (thread died, consumer never
+            # called stop()) still holds X connections; reclaim them first.
+            self.stop()
         try:
             self._ctl = xdisplay.Display()
             self._data = xdisplay.Display()
@@ -62,14 +68,24 @@ class XRecordCapture:
         self._stopping = False
         self._thread = threading.Thread(
             target=self._run, name="click-sync-xrecord", daemon=True)
-        self._thread.start()
+        # Set BEFORE start(): _run's finally clears it on instant failure,
+        # and setting it after would overwrite that back to True.
         self._running = True
+        self._thread.start()
         return True
 
     def stop(self):
         """Idempotent. Disables the context from the control display (the
         data display is blocked inside record_enable_context), joins the
-        thread, frees the context, closes both displays."""
+        thread, frees the context, closes both displays.
+
+        Safe to call from the capture thread itself (e.g. inside an
+        on_died callback): the self-join is skipped. A stop() issued
+        immediately after start() can race the enable and cost up to the
+        join timeout (self-healing). The forced data-display close is a
+        best-effort unblock; if the recv does not wake, a daemon zombie
+        may persist briefly, but both sockets are closed so no X client
+        slots leak."""
         if not self._running and self._thread is None:
             return
         self._stopping = True
@@ -79,18 +95,18 @@ class XRecordCapture:
                 self._ctl.flush()
         except Exception:
             pass
-        if self._thread is not None:
+        if self._thread is not None and self._thread is not threading.current_thread():
             self._thread.join(timeout=3.0)
             if self._thread.is_alive():
-                # Forced fallback: closing the data connection unblocks the
-                # recv inside record_enable_context.
+                # Forced fallback: closing the data connection should
+                # unblock the recv inside record_enable_context.
                 try:
                     if self._data is not None:
                         self._data.close()
                 except Exception:
                     pass
                 self._thread.join(timeout=2.0)
-            self._thread = None
+        self._thread = None
         try:
             if self._ctl is not None and self._ctx is not None:
                 self._ctl.record_free_context(self._ctx)
@@ -136,11 +152,21 @@ class XRecordCapture:
         buf = reply.data
         while len(buf) >= 32:
             try:
-                ev, buf = rq.EventField(None).parse_binary_value(
+                ev, buf = _EVENT_FIELD.parse_binary_value(
                     buf, self._data.display, None, None)
             except Exception:
-                return
-            self._dispatch(ev)
+                # Malformed chunk: core events are fixed 32 bytes, so skip
+                # just this chunk instead of dropping the rest of the
+                # reply (a dropped trailing release could wedge a gesture).
+                buf = buf[32:]
+                continue
+            try:
+                self._dispatch(ev)
+            except Exception:
+                # A consumer exception must not kill the capture stream:
+                # the enable request re-inserts itself only after this
+                # callback returns normally.
+                pass
 
     def _dispatch(self, ev):
         if getattr(ev, "send_event", 0):
