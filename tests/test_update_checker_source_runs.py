@@ -135,6 +135,32 @@ def test_cache_hit_does_not_resolve_again(env, monkeypatch):
     assert len(calls) == 1
 
 
+def test_sha_less_cache_hit_resolves_once_then_persists(env, monkeypatch):
+    """A cached release WITHOUT a resolved sha (e.g. written by a manual
+    check, which skips adjudication) may resolve once on the next auto
+    cache hit; the sha must be healed into the cached payload so further
+    hits within the TTL never resolve again, and the TTL timestamp must
+    not slide."""
+    calls = []
+    monkeypatch.setattr(update_checker, "_resolve_release_commit",
+                        lambda tag, api_get: calls.append(1) or SHA)
+    monkeypatch.setattr(update_checker, "_classify",
+                        lambda sha: ReleaseState.DIVERGENT)
+    assert _check(env, manual=True)["kind"] == "update"  # caches, sha=None
+    assert calls == []
+    ts = env.get(UPDATE_LAST_CHECK_AT)
+
+    def no_network(*a, **k):
+        raise AssertionError("auto within TTL must hit the cache")
+
+    monkeypatch.setattr("requests.get", no_network)
+    assert _check(env)["kind"] == "none"
+    assert len(calls) == 1  # resolved once on the first sha-less hit
+    assert _check(env)["kind"] == "none"
+    assert len(calls) == 1  # healed into the cache: no re-resolution
+    assert env.get(UPDATE_LAST_CHECK_AT) == ts  # TTL not slid
+
+
 def test_head_sha_change_invalidates_cache(env, monkeypatch):
     monkeypatch.setattr(update_checker, "_classify",
                         lambda sha: ReleaseState.DIVERGENT)

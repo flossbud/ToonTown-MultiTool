@@ -287,10 +287,16 @@ def _apply_policy(release, resolved_sha, ctx, *, from_cache: bool) -> dict:
     if ctx["source_run"] and not ctx["manual"]:
         if resolved_sha is None:
             resolved_sha = _resolve_release_commit(release["tag_name"], _api_get)
+            if from_cache and resolved_sha:
+                # Heal a sha-less cached payload (manual-written, skip-path,
+                # or earlier failed resolution) so later hits within the TTL
+                # never re-run API resolution. Timestamp untouched.
+                _update_cached_resolved_sha(sm, resolved_sha)
         state = (_classify(resolved_sha) if resolved_sha
                  else ReleaseState.UNPROVABLE)
         if state in (ReleaseState.AT_OR_PAST, ReleaseState.DIVERGENT):
-            print(f"[update] source run {state.name.lower()} vs "
+            label = state.name.lower().replace("_", "-")
+            print(f"[update] source run {label} from "
                   f"{release['tag_name']}; banner suppressed")
             cache(resolved_sha)
             return {"kind": "none"}
@@ -304,6 +310,22 @@ def _apply_policy(release, resolved_sha, ctx, *, from_cache: bool) -> dict:
     }
     cache(resolved_sha)
     return {"kind": "update", "info": info}
+
+
+def _update_cached_resolved_sha(sm, resolved_sha: str) -> None:
+    """Write a freshly resolved release sha into the EXISTING cached
+    payload without touching UPDATE_LAST_CHECK_AT (rewriting the timestamp
+    would slide the 6h TTL)."""
+    raw = sm.get(UPDATE_LAST_CHECK_RESULT)
+    if not raw:
+        return
+    try:
+        cached = json.loads(raw)
+        cached["resolved_sha"] = resolved_sha
+        sm.set(UPDATE_LAST_CHECK_RESULT, json.dumps(cached))
+    except Exception:
+        # Best-effort heal; the worst case is one re-resolution per check.
+        pass
 
 
 def _read_cache(sm, local_app_version: str, local_build: int,
