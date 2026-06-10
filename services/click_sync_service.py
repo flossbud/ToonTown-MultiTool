@@ -206,7 +206,10 @@ class ClickSyncService(QObject):
             if trace_msg:
                 _trace(trace_msg)
             self.slot_states_changed.emit(states)
-            if error_msg is not None:
+            # A same-thread direct slot may have reentered (RLock) during
+            # the emit and recovered the state; recheck before pairing the
+            # error message with a generation that no longer exists.
+            if error_msg is not None and gen == self._states_gen:
                 self.service_error.emit(error_msg)
 
     def _make_capture_callback(self):
