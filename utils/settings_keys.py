@@ -84,3 +84,7 @@ UIPI_ELEVATION_PROMPT_DISMISSED = "uipi_elevation_prompt_dismissed"
 
 # Windows administrator notice banner (added 2026-06-05)
 WINDOWS_ADMIN_NOTICE_DISMISSED = "windows_admin_notice_dismissed"
+
+# Click sync (added 2026-06-10): mirror left-button gestures between
+# same-aspect TTR windows. Default OFF (opt-in posture).
+CLICK_SYNC_ENABLED = "click_sync_enabled"
