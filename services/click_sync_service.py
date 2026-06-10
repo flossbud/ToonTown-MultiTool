@@ -144,26 +144,60 @@ class ClickSyncService(QObject):
             if new_states != self._states:
                 self._states = new_states
                 emit_states = dict(new_states)
+            emit_error = False
             if now_active:
-                if self._capture is None or not self._capture.is_running():
-                    # A dead-but-present capture still holds X connections;
-                    # reclaim it and start a fresh generation.
-                    to_stop, self._capture = self._capture, None
+                cap = self._capture
+                if cap is None:
                     start_new = True
+                elif not cap.is_running():
+                    # The capture died but its on_died notification hasn't
+                    # been processed yet. Treat it as the death HERE (latch,
+                    # reclaim, error) — never silently restart a new
+                    # generation ahead of the death notification; the late
+                    # on_died then identity-misses and is reclaim-only.
+                    to_stop, self._capture = cap, None
+                    self._service_failed = True
+                    self._drain_locked("capture dead at recompute")
+                    self._states = {
+                        s: ("error" if s in self._members else "off")
+                        for s in range(SLOT_COUNT)
+                    }
+                    emit_states = dict(self._states)
+                    emit_error = True
             else:
                 to_stop, self._capture = self._capture, None
-        # Outside the lock from here.
+        # Outside the lock from here. Emit BEFORE stop(): stop can block on
+        # a thread join and must not delay the UI state flip.
         if emit_states is not None:
             self.slot_states_changed.emit(emit_states)
+        if emit_error:
+            _trace("service error: capture dead at recompute")
+            self.service_error.emit("mouse capture stopped unexpectedly")
         if to_stop is not None:
             to_stop.stop()
         if start_new:
             self._start_capture_outside_lock()
 
+    def _make_capture_callback(self):
+        """Generation-gated event callback: a capture that lost the publish
+        race (or was replaced) may still deliver events from its stream;
+        only the CURRENTLY PUBLISHED generation's events may inject."""
+        holder = []
+
+        def cb(kind, root_x, root_y, state, time):
+            with self._lock:
+                if not holder or self._capture is not holder[0]:
+                    return
+            self._on_capture_event(kind, root_x, root_y, state, time)
+
+        return cb, holder
+
     def _start_capture_outside_lock(self) -> None:
         """Build and start a capture with no locks held, then publish it
         under the lock — or stop it if the service no longer wants it."""
-        new_cap = self._capture_factory(self._on_capture_event)
+        cb, holder = self._make_capture_callback()
+        new_cap = self._capture_factory(cb)
+        holder.append(new_cap)
         ok = new_cap.start()
         fail_states = None
         publish = False
@@ -215,8 +249,12 @@ class ClickSyncService(QObject):
             if self._shutdown:
                 return
             current = self._capture
-            if cap is not None and current is not None and cap is not current:
-                to_stop = cap  # stale generation: reclaim only
+            if cap is not None and cap is not current:
+                # Stale/detached generation (recompute already latched the
+                # death, or a replacement is mid-start): reclaim only —
+                # never relatch or re-emit over the current state. Covers
+                # current is None too.
+                to_stop = cap
             else:
                 to_stop = current if current is not None else cap
                 self._capture = None
@@ -227,12 +265,13 @@ class ClickSyncService(QObject):
                     for s in range(SLOT_COUNT)
                 }
                 states = dict(self._states)
-        if to_stop is not None:
-            to_stop.stop()
+        # Emit BEFORE the (potentially slow, thread-joining) stop().
         if states is not None:
             _trace("service error: capture died")
             self.slot_states_changed.emit(states)
             self.service_error.emit("mouse capture stopped unexpectedly")
+        if to_stop is not None:
+            to_stop.stop()
 
     # ── capture events (XRecord thread) ────────────────────────────────
 

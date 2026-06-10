@@ -288,3 +288,37 @@ def test_stale_capture_death_does_not_kill_current(svc):
     assert stale.started is False      # reclaimed (stopped)
     assert current.started is True     # healthy capture untouched
     assert s.slot_states()[0] == "active"
+
+
+def test_dead_capture_at_recompute_latches_no_restart(svc):
+    # A geometry tick noticing the capture is dead BEFORE on_died arrives
+    # must latch the failure (no silent restart); the late death
+    # notification is then reclaim-only (current is None).
+    s, backend, captures = svc
+    s.toggle_slot(0); s.toggle_slot(1)
+    gen1 = captures[-1]
+    gen1.started = False  # died; nobody has been told yet
+    n = len(captures)
+    s.recompute()
+    assert s.slot_states()[0] == "error"
+    assert len(captures) == n          # no new generation spawned
+    states_before = s.slot_states()
+    s.notify_capture_died(gen1)        # late notification: reclaim only
+    assert s.slot_states() == states_before
+
+
+def test_stale_generation_events_are_gated(svc):
+    # Events from a replaced generation's stream must never inject; only
+    # the currently published generation's callback flows.
+    s, backend, captures = svc
+    s.toggle_slot(0); s.toggle_slot(1)
+    gen1 = captures[-1]
+    s.notify_capture_died(gen1)        # death + recovery -> generation 2
+    s.toggle_slot(1); s.toggle_slot(1)
+    gen2 = captures[-1]
+    assert gen2 is not gen1 and gen2.started
+    backend.calls.clear()
+    gen1.on_event("press", 500, 250, 0, 1000)  # zombie stream: gated
+    assert backend.calls == []
+    gen2.on_event("press", 500, 250, 0, 1000)  # current stream: flows
+    assert [c[0] for c in backend.calls] == ["press"]
