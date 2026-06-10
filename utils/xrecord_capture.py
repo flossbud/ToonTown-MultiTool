@@ -164,6 +164,11 @@ class XRecordCapture:
     def _reply_callback(self, reply):
         if self._stopping:
             return
+        # Generation guard: this callback is shared; a zombie generation's
+        # stream must not dispatch events (or touch the new generation's
+        # _data) after a restart. Only the published thread may proceed.
+        if self._thread is not threading.current_thread():
+            return
         if reply.category != record.FromServer or reply.client_swapped:
             return
         if not reply.data or reply.data[0] < 2:

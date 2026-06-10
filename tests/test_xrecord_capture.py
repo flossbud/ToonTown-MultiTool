@@ -77,6 +77,9 @@ def _stub_data_display(cap, event_classes=None):
             # Window-field parsing calls display.get_resource_class();
             # None means "leave the value as a raw int", which is fine.
             get_resource_class=lambda name: None))
+    # Direct _reply_callback tests run on this thread; satisfy the
+    # generation guard the way a real capture thread would.
+    cap._thread = threading.current_thread()
 
 
 def test_reply_callback_guards_drop_non_event_replies():
@@ -117,6 +120,18 @@ def test_reply_callback_skips_malformed_chunk_keeps_rest():
     release = _binary_event(xevent.ButtonRelease, state=256)
     cap._reply_callback(_reply(data=press + release))
     assert [g[0] for g in got] == ["release"]  # bad chunk skipped, not the rest
+
+
+def test_stale_generation_reply_callback_rejected():
+    # After a restart publishes a NEW thread, a zombie generation's stream
+    # must not dispatch through the shared callback.
+    got = []
+    cap = XRecordCapture(lambda *a: got.append(a))
+    _stub_data_display(cap)
+    cap._thread = SimpleNamespace()  # newer generation, not us
+    press = _binary_event(xevent.ButtonPress)
+    cap._reply_callback(_reply(data=press))
+    assert got == []
 
 
 def test_consumer_exception_does_not_kill_stream():
