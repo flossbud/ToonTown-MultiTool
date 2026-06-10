@@ -149,8 +149,11 @@ class XRecordCapture:
         finally:
             # Generation guard: a zombie from a previous generation (a
             # stop() timed out and gave up on us, then start() launched a
-            # new thread) must not touch the new generation's state.
-            if self._thread is me or self._thread is None:
+            # new thread) must not touch the new generation's state — and
+            # must stay suppressed even if the new generation later stops
+            # (no `is None` escape hatch: production always publishes
+            # _thread via start(); tests calling _run() directly set it).
+            if self._thread is me:
                 self._running = False
                 if died and self._on_died is not None:
                     try:

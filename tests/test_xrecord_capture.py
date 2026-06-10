@@ -142,10 +142,12 @@ def test_on_died_fires_only_on_unexpected_death():
         raise RuntimeError("conn lost")
 
     cap._data = SimpleNamespace(record_enable_context=_raise)
+    cap._thread = threading.current_thread()  # direct _run(): we ARE the thread
     cap._stopping = False
     cap._run()
     assert died == [1]
     died.clear()
+    cap._thread = threading.current_thread()
     cap._stopping = True  # a normal stop() in flight: no death callback
     cap._run()
     assert died == []
