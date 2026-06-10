@@ -1,17 +1,19 @@
-## ToonTown MultiTool v0.7.0-alpha.2
+## ToonTown MultiTool v0.7.0-alpha.3
 
-Adds Windows support for strict keyset separation and fixes the Windows and Flatpak updaters.
+Adds four-mode chat handling, an F5 refresh hotkey, and Windows support for elevated games.
 
 ---
 
-### Bug Fixes
-
-- In-app update on Windows now completes and reopens the app. It previously closed the app without installing the update.
-- In-app update on Flatpak now installs the new version. It previously restarted the app on the old version without updating.
-
 ### Improvements
 
-- Strict keyset separation (TTR) now works on Windows, not just Linux. Each TTR window keeps responding to its own assigned movement keys no matter which window is in front.
+- Chat handling is now a Forwarding Logic selector in Settings with four modes (Focused Toon Only, All Toons, Keyset Dynamic, Per-Toon), each explained right in the card.
+- Press F5 to refresh the detected toon list (with a short cooldown so repeated presses don't spam).
+- On Windows, the app now detects when a game is running as administrator while the tool is not, shows a notice, and offers a one-click relaunch as administrator so multitooning keeps working.
+
+### Bug Fixes
+
+- Backspace pressed while chatting no longer reaches toons that are excluded from chat broadcasting.
+- Custom keysets that rebind non-movement actions now send those keys only to the toon that owns the binding.
 
 ---
 
@@ -19,18 +21,18 @@ Adds Windows support for strict keyset separation and fixes the Windows and Flat
 
 | Platform | Asset |
 |---|---|
-| Windows installer | `ToonTownMultiTool-Setup-v0.7.0-alpha.2-Windows-x86_64.exe` |
-| Windows portable | `ToonTownMultiTool-v0.7.0-alpha.2-Windows-x86_64.zip` |
-| Linux AppImage | `TTMultiTool-v0.7.0-alpha.2-Linux-x86_64.AppImage` |
-| Linux Flatpak | `TTMultiTool-v0.7.0-alpha.2-Linux-x86_64.flatpak` |
-| Linux .deb | `TTMultiTool-v0.7.0-alpha.2-Linux-x86_64.deb` |
+| Windows installer | `ToonTownMultiTool-Setup-v0.7.0-alpha.3-Windows-x86_64.exe` |
+| Windows portable | `ToonTownMultiTool-v0.7.0-alpha.3-Windows-x86_64.zip` |
+| Linux AppImage | `TTMultiTool-v0.7.0-alpha.3-Linux-x86_64.AppImage` |
+| Linux Flatpak | `TTMultiTool-v0.7.0-alpha.3-Linux-x86_64.flatpak` |
+| Linux .deb | `TTMultiTool-v0.7.0-alpha.3-Linux-x86_64.deb` |
 
 ## Running from Source
 
 ```bash
 git clone https://github.com/flossbud/ToonTown-MultiTool.git
 cd ToonTown-MultiTool
-git checkout v0.7.0-alpha.2
+git checkout v0.7.0-alpha.3
 python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 python main.py
