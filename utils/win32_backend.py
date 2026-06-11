@@ -117,6 +117,29 @@ EXTENDED_KEYSYMS = frozenset({
     'KP_Divide', 'KP_Enter',
 })
 
+# ── mouse injection (click sync) ────────────────────────────────────────
+# Message/flag literals instead of win32con so the mouse helpers are
+# unit-testable off-Windows (win32con only exists under pywin32).
+WM_MOUSEMOVE = 0x0200
+WM_LBUTTONDOWN = 0x0201
+WM_LBUTTONUP = 0x0202
+MK_LBUTTON = 0x0001
+_X_BUTTON1_MASK = 0x100  # the service's X-style state mask for button 1
+
+
+def pack_mouse_lparam(x: int, y: int) -> int:
+    """Client coords -> mouse-message lParam (LOWORD x, HIWORD y). Both
+    halves masked to 16 bits: map_point never clamps, so out-of-bounds
+    release coordinates can be negative and must wrap as signed words."""
+    return ((y & 0xFFFF) << 16) | (x & 0xFFFF)
+
+
+def mouse_wparam_from_state(state: int) -> int:
+    """X state mask -> MK_* wParam flags. Only the left button matters:
+    the service injects button-1 gestures and unclicked hover motion;
+    modifier MK flags are never set."""
+    return MK_LBUTTON if state & _X_BUTTON1_MASK else 0
+
 for c in 'abcdefghijklmnopqrstuvwxyz':
     VK_MAP[c] = ord(c.upper())
 
@@ -193,19 +216,54 @@ class Win32Backend:
     def send_key(self, win_id_str: str, keysym_str: str, modifiers: list = None) -> bool:
         mod_map = {"shift": "Shift_L", "ctrl": "Control_L", "alt": "Alt_L"}
         mods_to_send = [mod_map[m.lower()] for m in (modifiers or []) if m.lower() in mod_map]
-        
+
         success = True
         for mod in mods_to_send:
             if not self.send_keydown(win_id_str, mod, 0): success = False
-            
+
         if not self.send_keydown(win_id_str, keysym_str, 0): success = False
-        
+
         if not self.send_keyup(win_id_str, keysym_str, 0): success = False
-        
+
         for mod in reversed(mods_to_send):
             if not self.send_keyup(win_id_str, mod, 0): success = False
-            
+
         return success
+
+    # ── mouse injection (click sync; PostMessage = background delivery,
+    # never moves the real cursor; spike-verified against live TTR) ─────
+
+    def _post_mouse(self, win_id_str: str, msg: int, wparam: int,
+                    x: int, y: int) -> bool:
+        try:
+            hwnd = int(win_id_str)
+            if not win32gui.IsWindow(hwnd):
+                return False  # the XSendEvent BadWindow analogue
+            win32gui.PostMessage(hwnd, msg, wparam, pack_mouse_lparam(x, y))
+            return True
+        except Exception:
+            return False
+
+    def send_button_press(self, win_id_str: str, x: int, y: int,
+                          root_x: int, root_y: int, button: int = 1,
+                          state: int = 0, time: int = 0) -> bool:
+        # root_x/root_y/time accepted for XlibBackend signature parity;
+        # PostMessage carries neither screen coords nor a timestamp.
+        # WM_LBUTTONDOWN's wParam includes the button going down.
+        return self._post_mouse(win_id_str, WM_LBUTTONDOWN, MK_LBUTTON, x, y)
+
+    def send_button_release(self, win_id_str: str, x: int, y: int,
+                            root_x: int, root_y: int, button: int = 1,
+                            state: int = 0, time: int = 0) -> bool:
+        # WM_LBUTTONUP's wParam excludes the button being released, so it
+        # is 0 even for drains (which set Button1Mask in `state`).
+        return self._post_mouse(win_id_str, WM_LBUTTONUP, 0, x, y)
+
+    def send_motion(self, win_id_str: str, x: int, y: int,
+                    root_x: int, root_y: int,
+                    state: int = 0, time: int = 0) -> bool:
+        return self._post_mouse(win_id_str, WM_MOUSEMOVE,
+                                mouse_wparam_from_state(state), x, y)
 
     def sync(self):
         pass
