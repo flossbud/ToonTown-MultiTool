@@ -1,6 +1,7 @@
 """Pure-logic tests for click sync: no X, no Qt."""
 from services.click_sync_logic import (
     ASPECT_TOLERANCE, aspect_compatible, map_point, compute_slot_states, Gesture,
+    rect_hit_test,
 )
 
 
@@ -117,3 +118,34 @@ def test_gesture_records_targets_and_press():
     assert g.source_slot == 0
     assert g.targets[1][0] == "555"
     assert g.targets[1][2] == (20, 40)  # press position mapped into the target
+
+
+# ── rect_hit_test ───────────────────────────────────────────────────────
+
+
+def test_rect_hit_test_hit_and_miss():
+    geoms = {0: (0, 0, 100, 50), 1: (200, 0, 100, 50)}
+    assert rect_hit_test(geoms, 50, 25) == 0
+    assert rect_hit_test(geoms, 250, 25) == 1
+    assert rect_hit_test(geoms, 150, 25) is None
+
+
+def test_rect_hit_test_boundaries_half_open():
+    # [x, x+w) x [y, y+h): origin inclusive, far edge exclusive — matches
+    # the press path's containment convention.
+    geoms = {0: (10, 10, 100, 50)}
+    assert rect_hit_test(geoms, 10, 10) == 0
+    assert rect_hit_test(geoms, 109, 59) == 0
+    assert rect_hit_test(geoms, 110, 30) is None
+    assert rect_hit_test(geoms, 50, 60) is None
+
+
+def test_rect_hit_test_zero_size_skipped():
+    geoms = {0: (0, 0, 0, 50), 1: (0, 0, 100, 0)}
+    assert rect_hit_test(geoms, 0, 0) is None
+
+
+def test_rect_hit_test_overlap_lowest_slot_wins():
+    # Deterministic pick; the authoritative confirm corrects a wrong pick.
+    geoms = {2: (0, 0, 100, 100), 1: (0, 0, 100, 100)}
+    assert rect_hit_test(geoms, 50, 50) == 1

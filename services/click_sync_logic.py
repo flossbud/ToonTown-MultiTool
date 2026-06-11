@@ -102,3 +102,19 @@ class Gesture:
     press_time: int
     # slot -> (window_id, target_geom, (press_tx, press_ty))
     targets: dict[int, tuple[str, tuple[int, int, int, int], tuple[int, int]]]
+
+
+def rect_hit_test(geoms_by_slot: dict[int, tuple[int, int, int, int]],
+                  x: int, y: int) -> int | None:
+    """Cheap candidate hit test for hover forwarding: lowest slot whose
+    geometry contains (x, y) in the half-open rect [gx, gx+w) x [gy, gy+h).
+    Zero-size geometries never match (mid-teardown windows). Overlapping
+    rects pick the lowest slot deterministically — the caller's
+    authoritative stacking-aware confirm corrects any wrong pick."""
+    for s in sorted(geoms_by_slot):
+        gx, gy, gw, gh = geoms_by_slot[s]
+        if gw <= 0 or gh <= 0:
+            continue
+        if gx <= x < gx + gw and gy <= y < gy + gh:
+            return s
+    return None
