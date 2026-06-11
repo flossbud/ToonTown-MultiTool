@@ -174,6 +174,11 @@ def get_theme_colors(is_dark: bool) -> dict:
             "accent_orange_border": "#e0943a",
             "accent_orange_hover":  "#d48a34",
 
+            # Accent — pink (click sync)
+            "accent_pink":          "#b03064",
+            "accent_pink_border":   "#d4548a",
+            "accent_pink_hover":    "#c43d76",
+
             # Accent — yellow (settings panel stripe: Updates)
             "accent_yellow":        "#d4a017",
 
@@ -324,6 +329,11 @@ def get_theme_colors(is_dark: bool) -> dict:
             "accent_orange":        "#c2410c",
             "accent_orange_border": "#ea580c",
             "accent_orange_hover":  "#9a3412",
+
+            # Accent — pink (click sync)
+            "accent_pink":          "#be185d",
+            "accent_pink_border":   "#ec4899",
+            "accent_pink_hover":    "#9d174d",
 
             # Accent — yellow (settings panel stripe: Updates)
             "accent_yellow":        "#a16207",
