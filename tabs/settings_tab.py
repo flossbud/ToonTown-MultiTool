@@ -252,7 +252,7 @@ class SettingsPanel(QFrame):
         super().__init__(parent)
         assert stripe in (
             "ttr", "cc", "neutral",
-            "blue", "yellow", "orange", "green", "red",
+            "blue", "yellow", "orange", "green", "red", "pink",
         ), f"unknown stripe kind: {stripe!r}"
         self.setObjectName("settings_panel")  # targets the QSS selector
         self.setAttribute(Qt.WA_StyledBackground, True)
@@ -466,6 +466,11 @@ class SettingsPanel(QFrame):
             "orange": "accent_orange",
             "green": "accent_green",
             "red": "accent_red",
+            # Lighter border variant, not the darker base accent_pink: a 3px
+            # stripe reads more vividly in the brighter shade (matches the
+            # click-sync button's outline). Same "use the vivid variant"
+            # rationale as blue mapping to accent_blue_btn above.
+            "pink": "accent_pink_border",
         }[self.stripe_kind]
         return self._c.get(token, "#888888")
 

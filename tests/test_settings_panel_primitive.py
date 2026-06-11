@@ -95,6 +95,7 @@ def test_panel_cc_stripe(qapp):
     ("orange", "accent_orange"),
     ("green",  "accent_green"),
     ("red",    "accent_red"),
+    ("pink",   "accent_pink_border"),
 ])
 def test_panel_named_color_stripe_resolves_to_palette_token(qapp, stripe, token):
     """Settings panels can use named accent stripes (blue/yellow/orange/
