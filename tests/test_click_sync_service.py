@@ -622,8 +622,11 @@ def test_shutdown_cancels_hover_timer_and_drops_pending(hover_svc):
     _hover(s, 100, 100)
     clock["t"] += 0.001
     _hover(s, 130, 100)                 # pending + timer in flight
+    t = s._hover_flush_timer
+    assert t is not None
     s.shutdown()
     assert s._hover_flush_timer is None
+    assert t.finished.is_set()          # cancel() sets this synchronously
     before = len(backend.calls)
     _time.sleep(0.1)                    # a live timer would fire within 16ms
     assert len(backend.calls) == before
@@ -632,7 +635,33 @@ def test_shutdown_cancels_hover_timer_and_drops_pending(hover_svc):
 def test_disable_clears_hover_latch(hover_svc):
     s, backend, _, clock = hover_svc
     _hover(s, 100, 100)
+    clock["t"] += 0.001
+    _hover(s, 130, 100)                 # arm a pending sample too
     assert s._hover_source is not None
+    assert s._hover_pending is not None
     s.set_enabled(False)
+    assert s._hover_source is None
+    assert s._hover_pending is None
+
+
+def test_toggle_slot_clears_hover_latch(hover_svc):
+    s, backend, _, clock = hover_svc
+    _hover(s, 100, 100)
+    clock["t"] += 0.001
+    _hover(s, 130, 100)                 # latch + pending armed
+    s.toggle_slot(0)                    # membership change (source evicted)
+    assert s._hover_source is None
+    assert s._hover_pending is None
+
+
+def test_group_pause_clears_hover_latch(hover_svc):
+    s, backend, _, clock = hover_svc
+    _hover(s, 100, 100)
+    clock["t"] += 0.001
+    _hover(s, 130, 100)                 # latch + pending armed
+    orig = s._geometry_provider
+    s._geometry_provider = lambda wid: None if wid == "20" else orig(wid)
+    s.recompute()                       # member 1 unusable -> group pauses
+    assert "active" not in s.slot_states().values()
     assert s._hover_source is None
     assert s._hover_pending is None
