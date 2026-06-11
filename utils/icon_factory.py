@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from PySide6.QtGui import QPixmap, QPainter, QColor, QIcon, QPen, QPainterPath
-from PySide6.QtCore import Qt, QRectF
+from PySide6.QtCore import Qt, QPointF, QRectF
 import math
 
 
@@ -35,33 +35,64 @@ def make_chat_icon(size: int = 18) -> QIcon:
     return QIcon(pixmap)
 
 
-def make_click_sync_icon(size: int = 14) -> QIcon:
-    """Mouse pointer with a click ripple, matching the factory style."""
+def make_click_sync_icon(size: int = 14, color=None) -> QIcon:
+    """Physical mouse: rounded body, top split line, scroll wheel.
+    Stateless: callers pass the palette color (hex str or QColor)."""
+    if color is None:
+        color = QColor(255, 255, 255, 220)
+    elif isinstance(color, str):
+        color = QColor(color)
     pixmap = QPixmap(size, size)
     pixmap.fill(QColor(0, 0, 0, 0))
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.Antialiasing)
 
-    # Pointer arrow
-    painter.setBrush(QColor(255, 255, 255, 220))
-    painter.setPen(Qt.NoPen)
-    path = QPainterPath()
-    path.moveTo(size * 0.25, size * 0.15)
-    path.lineTo(size * 0.25, size * 0.78)
-    path.lineTo(size * 0.42, size * 0.62)
-    path.lineTo(size * 0.55, size * 0.88)
-    path.lineTo(size * 0.66, size * 0.82)
-    path.lineTo(size * 0.53, size * 0.57)
-    path.lineTo(size * 0.74, size * 0.55)
-    path.closeSubpath()
-    painter.drawPath(path)
-
-    # Click ripple (one arc top-right)
-    pen = QPen(QColor(255, 255, 255, 180), max(1.0, size / 12.0))
+    pen = QPen(color, max(1.0, size / 10.0))
     painter.setPen(pen)
     painter.setBrush(Qt.NoBrush)
-    r1 = QRectF(size * 0.55, size * 0.02, size * 0.4, size * 0.4)
-    painter.drawArc(r1, 0 * 16, 100 * 16)
+    body = QRectF(size * 0.25, size * 0.10, size * 0.50, size * 0.80)
+    painter.drawRoundedRect(body, size * 0.25, size * 0.25)
+    # Top split line down to the wheel.
+    painter.drawLine(QPointF(size * 0.50, size * 0.10),
+                     QPointF(size * 0.50, size * 0.34))
+    # Scroll wheel: a short thick rounded stroke.
+    wheel = QPen(color, max(1.5, size / 7.0), Qt.SolidLine, Qt.RoundCap)
+    painter.setPen(wheel)
+    painter.drawLine(QPointF(size * 0.50, size * 0.32),
+                     QPointF(size * 0.50, size * 0.46))
+
+    painter.end()
+    return QIcon(pixmap)
+
+
+def make_click_sync_warning_icon(size: int = 14, color=None) -> QIcon:
+    """Triangle-exclamation for the click sync error state."""
+    if color is None:
+        color = QColor(255, 255, 255, 230)
+    elif isinstance(color, str):
+        color = QColor(color)
+    pixmap = QPixmap(size, size)
+    pixmap.fill(QColor(0, 0, 0, 0))
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing)
+
+    pen = QPen(color, max(1.0, size / 10.0))
+    pen.setJoinStyle(Qt.RoundJoin)
+    painter.setPen(pen)
+    painter.setBrush(Qt.NoBrush)
+    tri = QPainterPath()
+    tri.moveTo(size * 0.50, size * 0.08)
+    tri.lineTo(size * 0.93, size * 0.86)
+    tri.lineTo(size * 0.07, size * 0.86)
+    tri.closeSubpath()
+    painter.drawPath(tri)
+
+    bang = QPen(color, max(1.4, size / 8.0), Qt.SolidLine, Qt.RoundCap)
+    painter.setPen(bang)
+    painter.drawLine(QPointF(size * 0.50, size * 0.36),
+                     QPointF(size * 0.50, size * 0.62))
+    painter.drawPoint(QPointF(size * 0.50, size * 0.76))
+
     painter.end()
     return QIcon(pixmap)
 
