@@ -81,8 +81,9 @@ def test_click_sync_toggle_lives_inside_the_pink_card(qapp, settings_manager):
         if p.stripe_kind == "pink"
     )
     labels = [f.label_widget.text() for f in pink.fields]
-    assert labels == ["Enable Click Sync"]
+    assert labels == ["Enable Click Sync", "Show ghost cursors"]
     assert isinstance(pink.fields[0].control_widget, Switch)
+    assert isinstance(pink.fields[1].control_widget, Switch)
 
 
 def test_click_sync_toggle_default_off(qapp, settings_manager):
@@ -124,3 +125,31 @@ def test_ttr_games_panel_no_longer_has_click_sync_field(qapp, settings_manager):
     # Case-insensitive so the guard catches both the old "Click sync (TTR)"
     # label and the new "Click Sync" / "Enable Click Sync" wording.
     assert not any("click sync" in lbl.lower() for lbl in labels)
+
+
+def test_ghost_cursor_toggle_default_on(qapp, settings_manager):
+    from tabs.settings_tab import SettingsTab
+    tab = SettingsTab(settings_manager)
+    field = _features_field(tab, "Show ghost cursors")
+    assert field is not None
+    assert field.control_widget.isChecked() is True
+
+
+def test_ghost_cursor_toggle_reflects_persisted_off(qapp, settings_manager):
+    from tabs.settings_tab import SettingsTab
+    from utils.settings_keys import GHOST_CURSORS_ENABLED
+    settings_manager.set(GHOST_CURSORS_ENABLED, False)
+    tab = SettingsTab(settings_manager)
+    field = _features_field(tab, "Show ghost cursors")
+    assert field.control_widget.isChecked() is False
+
+
+def test_ghost_cursor_toggle_writes_setting(qapp, settings_manager):
+    from tabs.settings_tab import SettingsTab
+    from utils.settings_keys import GHOST_CURSORS_ENABLED
+    tab = SettingsTab(settings_manager)
+    field = _features_field(tab, "Show ghost cursors")
+    field.control_widget.setChecked(False)
+    assert settings_manager.get(GHOST_CURSORS_ENABLED) is False
+    field.control_widget.setChecked(True)
+    assert settings_manager.get(GHOST_CURSORS_ENABLED) is True

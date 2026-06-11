@@ -25,7 +25,7 @@ from services.cc_login_service import (
 from services.wine_runtimes import install_signature
 from utils.settings_keys import (
     CC_ENGINE_INSTALL_SIGNATURE, SETTINGS_ACTIVE_CATEGORY, STRICT_TTR_SEPARATION,
-    CLICK_SYNC_ENABLED,
+    CLICK_SYNC_ENABLED, GHOST_CURSORS_ENABLED,
 )
 
 
@@ -1397,6 +1397,20 @@ class SettingsTab(QWidget):
         )
         field.set_control(switch)
         panel.add_field(field)
+
+        ghost_field = SettingsField(
+            "Show ghost cursors",
+            helper=(
+                "Show each toon's glove cursor on their window while click "
+                "sync mirrors your mouse there."
+            ),
+        )
+        ghost_switch = Switch(self.settings_manager.get(GHOST_CURSORS_ENABLED, True))
+        ghost_switch.toggled.connect(
+            lambda v: self.settings_manager.set(GHOST_CURSORS_ENABLED, v)
+        )
+        ghost_field.set_control(ghost_switch)
+        panel.add_field(ghost_field)
 
         lay.insertWidget(insert_at, panel)
 
