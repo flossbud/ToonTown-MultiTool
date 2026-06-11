@@ -541,6 +541,8 @@ class _CompactLayout(QWidget):
         self._tab.toon_buttons[i].setFixedWidth(88)
         self._tab.chat_buttons[i].setFixedHeight(32)
         self._tab.chat_buttons[i].setFixedWidth(32)
+        self._tab.click_sync_buttons[i].setFixedHeight(32)
+        self._tab.click_sync_buttons[i].setFixedWidth(32)
         self._tab.keep_alive_buttons[i].setFixedHeight(32)
         self._tab.keep_alive_buttons[i].setFixedWidth(32)
         # Help button: prewarm/Full scales it to 43×43 with an 18px icon to
@@ -551,6 +553,7 @@ class _CompactLayout(QWidget):
         self._tab.help_buttons[i].setFixedHeight(32)
         self._tab.help_buttons[i].setFixedWidth(32)
         self._tab.chat_buttons[i].setIconSize(QSize(14, 14))
+        self._tab.click_sync_buttons[i].setIconSize(QSize(14, 14))
         self._tab.keep_alive_buttons[i].setIconSize(QSize(14, 14))
         self._tab.help_buttons[i].setIconSize(QSize(14, 14))
         self._tab.laff_labels[i].setIconSize(QSize(16, 16))
@@ -620,6 +623,7 @@ class _CompactLayout(QWidget):
         clear_layout(slot["ka_group_layout"])
         slot["ctrl_row"].addWidget(self._tab.toon_buttons[i])
         slot["ka_group_layout"].addWidget(self._tab.chat_buttons[i])
+        slot["ka_group_layout"].addWidget(self._tab.click_sync_buttons[i])
         slot["ka_group_layout"].addWidget(self._tab.help_buttons[i])
         slot["ka_group_layout"].addWidget(self._tab.keep_alive_buttons[i])
         slot["ka_group_layout"].addWidget(self._tab.ka_progress_bars[i], 1)
@@ -702,9 +706,11 @@ class _CompactLayout(QWidget):
     def _collapsed_ka_group_width(self, slot_index: int) -> int:
         """Width that ka_group must hold when KA is collapsed.
 
-        ka_group's row contains chat + help + (hidden ka + hidden bar). When
-        collapsed, only chat and help are visible, so the frame must be wide
-        enough to fit BOTH plus inter-widget spacing plus contentsMargins.
+        ka_group's row contains chat + click-sync + help + (hidden ka +
+        hidden bar). When collapsed, chat and help are visible (plus the
+        click-sync button when its master switch shows it), so the frame
+        must be wide enough to fit them plus inter-widget spacing plus
+        contentsMargins.
 
         Each child's effective layout width is its `sizeHint().width()`
         clamped into `[minimumWidth, maximumWidth]`. Children with
@@ -722,16 +728,24 @@ class _CompactLayout(QWidget):
             return min(max(sh, min_w), max_w)
 
         chat_btn = self._tab.chat_buttons[slot_index]
+        cs_btn = self._tab.click_sync_buttons[slot_index]
         help_btn = self._tab.help_buttons[slot_index]
         layout = self._card_slots[slot_index]["ka_group"].layout()
         margins = layout.contentsMargins()
-        return (
+        width = (
             _layout_width(chat_btn)
             + _layout_width(help_btn)
             + layout.spacing()
             + margins.left()
             + margins.right()
         )
+        # The click-sync button only takes layout space when shown by the
+        # Settings master switch. isHidden() (not isVisible()) matches how
+        # QLayout allocates space — isVisible() is False for the whole tree
+        # before the window is shown.
+        if not cs_btn.isHidden():
+            width += _layout_width(cs_btn) + layout.spacing()
+        return width
 
     def _set_keep_alive_collapsed(self, collapsed: bool) -> None:
         """Flip ka_group's stretch factor in each card's middle layout.
@@ -900,15 +914,19 @@ class _CompactLayout(QWidget):
                     return _step
                 width_anim.valueChanged.connect(make_width_step(ka_group))
 
-                def make_collapse_done(group, mid, target_w):
+                def make_collapse_done(group, mid, slot):
                     def _done():
-                        group.setFixedWidth(target_w)
+                        # Recompute at finish time: a click-sync visibility
+                        # flip landing mid-animation changes the collapsed
+                        # width, and pinning the start-time value would bake
+                        # in a stale width.
+                        group.setFixedWidth(self._collapsed_ka_group_width(slot))
                         # ka_group stretch 0, addStretch absorbs leftover.
                         mid.setStretch(0, 0)
                         mid.setStretch(1, 1)
                     return _done
                 width_anim.finished.connect(
-                    make_collapse_done(ka_group, middle, chat_only_width)
+                    make_collapse_done(ka_group, middle, i)
                 )
                 QTimer.singleShot(80, width_anim.start)
                 self._ka_anims.append(width_anim)

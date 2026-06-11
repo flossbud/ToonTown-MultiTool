@@ -180,6 +180,65 @@ class XlibBackend:
         self._display.flush()
         return self._send(win_id_str, X.KeyRelease, keysym_str, state)
 
+    # ── Pointer events (click sync) ────────────────────────────────────
+    # Spike-resolved delivery mode: True = ButtonPressMask/etc.,
+    # False = event_mask=0 (deliver to the window's creator client).
+    _POINTER_MASKED = True
+
+    def _send_pointer_event(self, win_id_str: str, ev_cls, mask: int,
+                            x: int, y: int, root_x: int, root_y: int,
+                            detail: int, state: int, time: int) -> bool:
+        if not self._display:
+            return False
+        try:
+            win = self._display.create_resource_object("window", int(win_id_str))
+            ev = ev_cls(
+                # X.CurrentTime == 0; the sentinel passes through verbatim
+                # (SendEvent never substitutes server time).
+                time=time,
+                root=self._display.screen().root,
+                window=win,
+                same_screen=1,
+                child=X.NONE,
+                root_x=root_x, root_y=root_y,
+                event_x=x, event_y=y,
+                state=state,
+                detail=detail,
+            )
+            win.send_event(ev, propagate=False,
+                           event_mask=(mask if self._POINTER_MASKED else 0))
+            self._display.flush()
+            return True
+        except error.BadWindow:
+            return False
+        except Exception:
+            return False
+
+    def send_button_press(self, win_id_str: str, x: int, y: int,
+                          root_x: int, root_y: int, button: int = 1,
+                          state: int = 0, time: int = 0) -> bool:
+        return self._send_pointer_event(
+            win_id_str, xevent.ButtonPress, X.ButtonPressMask,
+            x, y, root_x, root_y, button, state, time)
+
+    def send_button_release(self, win_id_str: str, x: int, y: int,
+                            root_x: int, root_y: int, button: int = 1,
+                            state: int = 0, time: int = 0) -> bool:
+        return self._send_pointer_event(
+            win_id_str, xevent.ButtonRelease, X.ButtonReleaseMask,
+            x, y, root_x, root_y, button, state, time)
+
+    def send_motion(self, win_id_str: str, x: int, y: int,
+                    root_x: int, root_y: int,
+                    state: int = 0, time: int = 0) -> bool:
+        # Dragging clients select ButtonMotionMask/Button1MotionMask rather
+        # than PointerMotionMask; the masked variant must cover all three.
+        motion_mask = (X.PointerMotionMask | X.ButtonMotionMask
+                       | X.Button1MotionMask)
+        return self._send_pointer_event(
+            win_id_str, xevent.MotionNotify, motion_mask,
+            x, y, root_x, root_y, 0, state, time)
+
     def sync(self):
         if self._display:
             self._display.sync()

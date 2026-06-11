@@ -211,6 +211,73 @@ def get_window_root_x(wid: str) -> int | None:
         return None
 
 
+def get_window_geometry(wid: str) -> tuple[int, int, int, int] | None:
+    """(root_x, root_y, width, height) of the client window, root-space.
+
+    Origin via translate_coords against root (same approach as
+    get_window_root_x); size via get_geometry. None on any failure.
+    The two queries are separate round trips, so a window moved/resized
+    between them yields a torn tuple — acceptable: gestures snapshot
+    geometry once at press, bounding the blast radius to one gesture."""
+    d = _open_display()
+    if d is None:
+        return None
+    try:
+        win = d.create_resource_object("window", int(wid))
+        root = d.screen().root
+        coords = root.translate_coords(win, 0, 0)
+        geo = win.get_geometry()
+        return (int(coords.x), int(coords.y), int(geo.width), int(geo.height))
+    except Exception:
+        return None
+
+
+def toplevel_at_point(root_x: int, root_y: int) -> str | None:
+    """The topmost mapped direct child of root containing the point
+    (stacking-aware, pointer-independent: works on recorded coordinates).
+    Under a reparenting WM this is the frame window; compare it against
+    toplevel_ancestor(client_wid).
+
+    Tri-state result: a window id string when a toplevel contains the
+    point; "" (empty string) when the lookup SUCCEEDED but no toplevel is
+    there (bare root/desktop); None only on lookup FAILURE (no display /
+    X error). Callers use the distinction to ignore clean misses while
+    falling back on real failures."""
+    d = _open_display()
+    if d is None:
+        return None
+    try:
+        root = d.screen().root
+        res = root.translate_coords(root, int(root_x), int(root_y))
+        child = getattr(res, "child", None)
+        if child in (None, 0) or getattr(child, "id", 0) == 0:
+            return ""  # clean miss: the point is over the bare root
+        return str(child.id)
+    except Exception:
+        return None
+
+
+def toplevel_ancestor(wid: str) -> str | None:
+    """Walk parents until the direct child of root: the WM frame, or the
+    window itself when unparented. None on failure."""
+    d = _open_display()
+    if d is None:
+        return None
+    try:
+        win = d.create_resource_object("window", int(wid))
+        root_id = d.screen().root.id
+        for _ in range(32):  # parent chains are short; bound the walk
+            parent = win.query_tree().parent
+            if parent is None or getattr(parent, "id", 0) == 0:
+                return None
+            if parent.id == root_id:
+                return str(win.id)
+            win = parent
+        return None
+    except Exception:
+        return None
+
+
 def get_active_window_id() -> str | None:
     """Read ``_NET_ACTIVE_WINDOW`` from the root window. Returns the active
     window ID as a decimal string, or None on Wayland-only sessions / when

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import queue
+import sys
 import threading
 import time
 
@@ -15,7 +16,8 @@ from services.input_service import InputService
 from services.sleep_inhibitor import SleepInhibitor
 from utils.theme_manager import (
     resolve_theme, get_theme_colors, apply_card_shadow,
-    make_chat_icon, make_refresh_icon, make_lightning_icon,
+    make_chat_icon, make_click_sync_icon, make_click_sync_warning_icon,
+    make_refresh_icon, make_lightning_icon,
     make_heart_icon, make_jellybean_icon,
     get_set_color, SmoothProgressBar, make_section_label,
 )
@@ -26,6 +28,7 @@ from utils import cc_api
 from utils.game_registry import GameRegistry
 from utils import logical_actions
 from utils.toon_customizations_manager import ToonCustomizationsManager
+from utils.settings_keys import CLICK_SYNC_ENABLED
 from tabs.multitoon._keep_alive_help_button import KeepAliveHelpButton
 
 
@@ -1152,6 +1155,12 @@ class MultitoonTab(QWidget):
         self.game_badges = []       # list of QLabel game badges
         self.toon_buttons = []
         self.chat_buttons = []
+        self.click_sync_buttons = []
+        # Click sync visual state (single style-writer resolver; spec:
+        # 2026-06-10-click-sync-button-styling-design.md).
+        self._click_sync_states = {i: "off" for i in range(4)}
+        self._click_sync_icons = {}
+        self._click_sync_error_tip = None
         # Per-slot cached "game type supports chat button" intent. Updated by
         # CC/TTR paint paths via _set_chat_button_visible. Read by
         # apply_chat_handling_mode when the global mode flips so visibility
@@ -1212,6 +1221,10 @@ class MultitoonTab(QWidget):
         self.input_service.chat_state_changed.connect(self._on_chat_state_changed)
         self.input_service.input_log.connect(self._on_input_log)
         self.input_service.uipi_blocked_movement_detected.connect(self._on_uipi_blocked)
+        self.click_sync_service = None
+        self._click_sync_backend = None
+        if sys.platform != "win32":
+            self._build_click_sync()
         self._chat_glow_active = False
         self.window_manager.window_ids_updated.connect(self.update_toon_controls)
         self._toon_names_ready.connect(self._apply_toon_names)
@@ -1404,6 +1417,17 @@ class MultitoonTab(QWidget):
             chat_btn.setToolTip("Toggle chat broadcasting for this toon")
             chat_btn.clicked.connect(lambda checked, idx=i: self.toggle_chat(idx))
             self.chat_buttons.append(chat_btn)
+
+            cs_btn = QPushButton()
+            cs_btn.setCheckable(True)
+            cs_btn.setChecked(False)
+            cs_btn.setFixedHeight(32)
+            cs_btn.setFixedWidth(32)
+            cs_btn.setIcon(make_click_sync_icon(14))
+            cs_btn.setToolTip("Click sync: mirror clicks to this toon")
+            cs_btn.clicked.connect(lambda checked, idx=i: self.toggle_click_sync(idx))
+            cs_btn.setVisible(False)  # gated by the Settings master switch
+            self.click_sync_buttons.append(cs_btn)
 
             ka_bar = SmoothProgressBar()
             self.ka_progress_bars.append(ka_bar)
@@ -1734,6 +1758,7 @@ class MultitoonTab(QWidget):
     def refresh_theme(self):
         c = self._c()
         is_dark = resolve_theme(self.settings_manager) == "dark"
+        self._click_sync_icons = {}  # palette changed: rebuild tinted icons
 
         self.config_label.setStyleSheet(
             f"font-size: 10px; font-weight: 600; color: {c['text_muted']}; "
@@ -1825,6 +1850,11 @@ class MultitoonTab(QWidget):
         # widgets that Compact expects to look different.
         if self._mode == "full" and hasattr(self, "_full") and self._full is not None:
             self._full.apply_theme(c)
+
+        # Click sync buttons: restyle with the new palette (cache was
+        # cleared at the top of this method, so icons rebuild tinted).
+        for i in range(len(self.click_sync_buttons)):
+            self._apply_click_sync_btn_style(i, c)
 
         self.update_status_label()
 
@@ -1970,6 +2000,10 @@ class MultitoonTab(QWidget):
             """)
             selector.setEnabled(False)
 
+        # Click sync button is state-driven (service states), not driven by
+        # the toon-enable branches above; one resolver call per repaint.
+        self._apply_click_sync_btn_style(index, c)
+
         # Re-brand the card stripe (forward fill on enable, cross-fade
         # back when disabled). Pulls game from the slot's visible game
         # badge - same pattern as _CompactLayout.populate's initial pass.
@@ -2105,6 +2139,10 @@ class MultitoonTab(QWidget):
     def _shutdown_for_relaunch(self) -> None:
         try:
             self.input_service.shutdown()
+            if self.click_sync_service is not None:
+                self.click_sync_service.shutdown()
+            if self._click_sync_backend is not None:
+                self._click_sync_backend.disconnect()
         finally:
             from PySide6.QtWidgets import QApplication
             QApplication.quit()
@@ -2698,6 +2736,316 @@ class MultitoonTab(QWidget):
         self.log(f"[Input] {name} (slot {index + 1}): chat {state}")
         self.apply_visual_state(index)
 
+    def _build_click_sync(self) -> None:
+        from services.click_sync_service import ClickSyncService
+        from utils import x11_discovery as _x11d
+
+        def _cs_slot_wid(slot, _wm=self.window_manager):
+            ids = _wm.get_window_ids()
+            if slot < len(ids) and _wm.window_games.get(ids[slot]) == "ttr":
+                return ids[slot]
+            return None
+
+        def _cs_source_resolver(root_x, root_y, member_wids):
+            # Stacking-aware: the frame under the point must be a member's
+            # toplevel ancestor.
+            # Tri-state hit-test: wid string = a toplevel contains the
+            # point; "" = clean miss (bare root/desktop); None = lookup
+            # FAILURE (no display / X error).
+            frame = _x11d.toplevel_at_point(root_x, root_y)
+            lookup_failed = frame is None
+            if frame:
+                for wid in member_wids:
+                    anc = _x11d.toplevel_ancestor(wid)
+                    if anc is None:
+                        # Transient X error on this member's ancestor walk;
+                        # remember so the fallback below can cover for it.
+                        lookup_failed = True
+                    elif anc == frame:
+                        return wid
+                if not lookup_failed:
+                    # The point cleanly resolved to a non-member toplevel
+                    # (e.g. a foreign window overlapping a TTR window). Per
+                    # spec, that gesture must be ignored, never rect-matched
+                    # to the member window underneath.
+                    return None
+            elif frame == "":
+                # Clean miss: the point is over the bare root, no toplevel
+                # there at all. Ignore the gesture; never rect-match.
+                return None
+            # Rect-containment fallback: only for stacking-resolution
+            # FAILURES (toplevel_at_point or an ancestor lookup hit a
+            # transient X error), never for a clean miss or a clean
+            # foreign-window hit.
+            for wid in member_wids:
+                g = self.window_manager.get_window_geometry(wid)
+                if g and g[0] <= root_x < g[0] + g[2] and g[1] <= root_y < g[1] + g[3]:
+                    return wid
+            return None
+
+        def _cs_capture_factory(on_event):
+            from utils.xrecord_capture import XRecordCapture
+            # on_died closes over its own instance so the service can
+            # identity-check stale generations.
+            holder = []
+            cap = XRecordCapture(
+                on_event,
+                on_died=lambda: self.click_sync_service.notify_capture_died(
+                    holder[0]))
+            holder.append(cap)
+            return cap
+
+        # Dedicated injection connection. Do NOT share input_service._xlib:
+        # that Display belongs to the InputService worker thread, and click
+        # sync injects from the XRecord capture thread and the hover-flush
+        # timer threads (Xlib Displays must not be used CONCURRENTLY across
+        # threads; click sync's own calls are serialized under the service
+        # lock, so its one dedicated Display is safe).
+        from utils.xlib_backend import XlibBackend
+        self._click_sync_backend = XlibBackend()
+        try:
+            self._click_sync_backend.connect()
+        except Exception as e:
+            print(f"[MultitoonTab] click sync backend connect failed: {e}")
+
+        # The real WindowManager (services/window_manager.py) provides
+        # get_window_geometry + window_geometry_updated; offscreen tab tests
+        # pass duck-typed fakes that may omit them, so degrade gracefully
+        # (no geometry -> slots resolve unusable, capture never starts).
+        _geom = getattr(self.window_manager, "get_window_geometry", None)
+        if _geom is None:
+            print("[MultitoonTab] click sync: window manager lacks "
+                  "get_window_geometry; geometry lookups disabled")
+        # parent=self: the service's resolver closures capture the tab, so
+        # tab <-> service form a reference cycle between two QObjects. Qt
+        # parenting destroys the service's C++ object with the widget tree
+        # instead of leaving it to Python's GC, whose arbitrary destruction
+        # order segfaults Shiboken at interpreter teardown (Python 3.14 +
+        # PySide6 GC race).
+        self.click_sync_service = ClickSyncService(
+            slot_window_resolver=_cs_slot_wid,
+            geometry_provider=_geom if _geom is not None else (lambda _wid: None),
+            source_resolver=_cs_source_resolver,
+            backend=self._click_sync_backend,
+            capture_factory=_cs_capture_factory,
+            parent=self,
+            # Gesture snapshots need LIVE geometry: the WM cache can be ~2s
+            # stale after a window move, which would mismap the injection.
+            # The capture thread gets its own per-thread Display.
+            fresh_geometry_provider=_x11d.get_window_geometry,
+        )
+        self.click_sync_service.slot_states_changed.connect(
+            self._on_click_sync_states)
+        self.click_sync_service.service_error.connect(
+            self._on_click_sync_service_error)
+        self.window_manager.window_ids_updated.connect(
+            lambda _ids: self.click_sync_service.recompute())
+        # Resizes don't change the window list; the geometry signal drives
+        # the live aspect re-check (mismatch pause + auto-recovery).
+        if hasattr(self.window_manager, "window_geometry_updated"):
+            self.window_manager.window_geometry_updated.connect(
+                self.click_sync_service.recompute)
+        else:
+            print("[MultitoonTab] click sync: window manager lacks "
+                  "window_geometry_updated; live geometry re-check disabled")
+        if self.settings_manager is not None:
+            self.click_sync_service.set_enabled(
+                bool(self.settings_manager.get(CLICK_SYNC_ENABLED, False)))
+            self.settings_manager.on_change(self._on_click_sync_setting_changed)
+        self._apply_click_sync_visibility()
+
+    def toggle_click_sync(self, index: int) -> None:
+        if self.click_sync_service is None:  # win32
+            return
+        member = self.click_sync_service.toggle_slot(index)
+        self.click_sync_buttons[index].setChecked(member)
+
+    def _click_sync_visual_state(self, index: int) -> str:
+        state = self._click_sync_states.get(index, "off")
+        return state if state in ("off", "armed", "active", "error") else "off"
+
+    def _rebuild_click_sync_icons(self, c) -> None:
+        """Per-palette icon cache. Rebuilt on theme refresh so icons tinted
+        with the previous palette never survive a theme switch."""
+        self._click_sync_icons = {
+            "off": make_click_sync_icon(14, c["text_muted"]),
+            "armed": make_click_sync_icon(14, c["accent_pink_border"]),
+            "active": make_click_sync_icon(14, c["text_on_accent"]),
+            "error": make_click_sync_warning_icon(14, c["text_on_accent"]),
+            "disabled": make_click_sync_icon(14, c["text_disabled"]),
+        }
+
+    def _apply_click_sync_btn_style(self, index: int, c) -> None:
+        """SINGLE style writer for the click sync button (spec:
+        2026-06-10-click-sync-button-styling-design.md): stylesheet, icon,
+        checked flag, and tooltip all come from here."""
+        if index >= len(self.click_sync_buttons):
+            return
+        btn = self.click_sync_buttons[index]
+        state = self._click_sync_visual_state(index)
+        if not self._click_sync_icons:
+            self._rebuild_click_sync_icons(c)
+        # A slot with no TTR window renders disabled (chat-button disabled
+        # look) UNLESS it is still a member: an orphaned member must stay
+        # clickable so the user can evict it from the group (its red error
+        # state otherwise pauses the group with no affordance to fix it).
+        ids = self.window_manager.get_window_ids()
+        has_ttr = (index < len(ids)
+                   and self.window_manager.window_games.get(ids[index]) == "ttr")
+        member = state != "off"
+        if not has_ttr and not member:
+            btn.setEnabled(False)
+            btn.setChecked(False)
+            btn.setIcon(self._click_sync_icons["disabled"])
+            btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {c['btn_disabled']};
+                    color: {c['text_disabled']};
+                    border: none; border-radius: 6px;
+                }}
+            """)
+            btn.setToolTip("Click sync: no toon detected in this slot")
+            return
+        btn.setEnabled(True)
+        btn.setIcon(self._click_sync_icons[state])
+        btn.setChecked(state != "off")
+        if state == "active":
+            btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {c['accent_pink']};
+                    color: {c['text_on_accent']};
+                    border: 2px solid {c['accent_pink_border']};
+                    border-radius: 6px;
+                }}
+                QPushButton:hover {{
+                    background-color: {c['accent_pink_hover']};
+                    border: 2px solid {c['accent_pink_border']};
+                }}
+            """)
+        elif state == "armed":
+            btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {c['toon_btn_inactive_bg']};
+                    color: {c['text_muted']};
+                    border: 2px solid {c['accent_pink_border']};
+                    border-radius: 6px;
+                }}
+                QPushButton:hover {{
+                    background-color: {c['toon_btn_inactive_hover']};
+                    border: 2px solid {c['accent_pink_hover']};
+                }}
+            """)
+        elif state == "error":
+            btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {c['accent_red']};
+                    color: {c['text_on_accent']};
+                    border: 2px solid {c['accent_red_border']};
+                    border-radius: 6px;
+                }}
+                QPushButton:hover {{
+                    background-color: {c['accent_red_hover']};
+                    border: 2px solid {c['accent_red_border']};
+                }}
+            """)
+        else:  # off (also the unknown-state fallback)
+            btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {c['toon_btn_inactive_bg']};
+                    color: {c['text_muted']};
+                    border: 1px solid {c['toon_btn_inactive_border']};
+                    border-radius: 6px;
+                }}
+                QPushButton:hover {{
+                    background-color: {c['toon_btn_inactive_hover']};
+                    border: 1px solid {c['toon_btn_inactive_hover_border']};
+                }}
+            """)
+        tips = {
+            "off": "Click sync: mirror clicks to this toon",
+            "armed": "Click sync: waiting for a second toon",
+            "active": "Click sync: active",
+            "error": "Click sync: paused (window missing or proportions differ)",
+        }
+        if state == "error" and self._click_sync_error_tip:
+            btn.setToolTip(self._click_sync_error_tip)
+        else:
+            btn.setToolTip(tips[state])
+
+    def _on_click_sync_states(self, states: dict) -> None:
+        # Complete four-slot snapshot from the service: REPLACE the cache,
+        # never merge. A fresh snapshot supersedes any service-error
+        # tooltip override.
+        self._click_sync_states = dict(states)
+        self._click_sync_error_tip = None
+        c = self._c()
+        for i in range(len(self.click_sync_buttons)):
+            self._apply_click_sync_btn_style(i, c)
+
+    def _on_click_sync_service_error(self, message: str) -> None:
+        """A capture failure needs different user action than a window
+        mismatch. The service emits error STATES first, then this signal;
+        the override re-styles slots whose cached state is error and stays
+        until the next state snapshot clears it."""
+        self._click_sync_error_tip = (
+            f"Click sync: stopped ({message}). Toggle a toon button to retry."
+        )
+        c = self._c()
+        for i in range(len(self.click_sync_buttons)):
+            if self._click_sync_visual_state(i) == "error":
+                self._apply_click_sync_btn_style(i, c)
+        print(f"[MultitoonTab] click sync error: {message}")
+
+    def _apply_click_sync_visibility(self) -> None:
+        """Master switch ON + Linux: the button is ALWAYS present in the
+        row, like the keep-alive button; slots without a TTR window render
+        disabled via the style resolver instead of disappearing. Called on
+        setting change and from update_toon_controls (so per-slot
+        enabledness tracks windows coming and going)."""
+        master = (
+            sys.platform != "win32"
+            and self.settings_manager is not None
+            and bool(self.settings_manager.get(CLICK_SYNC_ENABLED, False))
+        )
+        for btn in self.click_sync_buttons:
+            btn.setVisible(master)
+        c = self._c()
+        for i in range(len(self.click_sync_buttons)):
+            self._apply_click_sync_btn_style(i, c)
+        self._repin_collapsed_ka_widths()
+
+    def _repin_collapsed_ka_widths(self) -> None:
+        """Re-pin each ka_group's collapsed fixed width after a click-sync
+        visibility flip.
+
+        When keep-alive is master-collapsed, the layouts' collapse animation
+        pins ka_group via setFixedWidth(_collapsed_ka_group_width(i)). A
+        click-sync visibility change alters that target width, so a stale
+        pin clips the row (button just shown) or leaves a gap (just hidden)
+        until the next KA animation. Only width-pinned groups are touched:
+        before any collapse animation has run ka_group carries no fixed
+        width and the stretch-0 layout reflows on its own."""
+        if self._keep_alive_globally_enabled():
+            return
+        QWIDGETSIZE_MAX_VAL = 16777215
+        for layout in (getattr(self, "_compact", None), getattr(self, "_full", None)):
+            if layout is None:
+                continue
+            # _FullLayout wraps the slot-owning content widget; _CompactLayout
+            # owns its slots (and _collapsed_ka_group_width) directly.
+            content = getattr(layout, "_content", layout)
+            for i, slot in enumerate(content._card_slots):
+                ka_group = slot["ka_group"]
+                if ka_group.maximumWidth() == QWIDGETSIZE_MAX_VAL:
+                    continue  # never pinned; follows the layout naturally
+                ka_group.setFixedWidth(content._collapsed_ka_group_width(i))
+
+    def _on_click_sync_setting_changed(self, key, value) -> None:
+        if key != CLICK_SYNC_ENABLED or self.click_sync_service is None:
+            return
+        self.click_sync_service.set_enabled(bool(value))
+        self._apply_click_sync_visibility()
+
     def toggle_rapid_fire(self, index, state):
         if not self._keep_alive_globally_enabled():
             # Symmetric to toggle_keep_alive's gate — guards against
@@ -2841,6 +3189,7 @@ class MultitoonTab(QWidget):
         self._refresh_toon_stats_labels()
         if not any(self.keep_alive_enabled):
             self._stop_keep_alive()
+        self._apply_click_sync_visibility()
 
     # ── Name handling ──────────────────────────────────────────────────────
 
@@ -3519,6 +3868,10 @@ class MultitoonTab(QWidget):
         # singleton; per-badge cancel() is no longer needed (stale results
         # are filtered by (dna, pose) match on the GUI thread).
         self.input_service.shutdown()
+        if self.click_sync_service is not None:
+            self.click_sync_service.shutdown()
+        if self._click_sync_backend is not None:
+            self._click_sync_backend.disconnect()
 
 
 def _dispatch_keep_alive_cycle(action, fire_toons, window_manager, keymap_manager,
