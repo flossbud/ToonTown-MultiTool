@@ -1,0 +1,124 @@
+"""Tests for the standalone Click Sync card on the Features page."""
+
+import os
+import sys
+
+import pytest
+from PySide6.QtWidgets import QApplication
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+os.environ.setdefault("TTMT_NO_VENV_REEXEC", "1")
+
+
+@pytest.fixture(scope="module")
+def qapp():
+    return QApplication.instance() or QApplication([])
+
+
+@pytest.fixture
+def settings_manager():
+    class _Stub:
+        def __init__(self):
+            self._d = {}
+            self._listeners = []
+
+        def get(self, key, default=None):
+            return self._d.get(key, default)
+
+        def set(self, key, value):
+            self._d[key] = value
+            for fn in list(self._listeners):
+                fn(key, value)
+
+        def on_change(self, fn):
+            self._listeners.append(fn)
+
+    return _Stub()
+
+
+def _features_field(tab, label):
+    from tabs.settings_tab import SettingsField
+    for f in tab.pages["features"].findChildren(SettingsField):
+        if f.label_widget.text() == label:
+            return f
+    return None
+
+
+def test_features_page_has_pink_click_sync_card(qapp, settings_manager):
+    from tabs.settings_tab import SettingsTab, SettingsPanel
+    tab = SettingsTab(settings_manager)
+    panels = tab.pages["features"].findChildren(SettingsPanel)
+    pink = [p for p in panels if p.stripe_kind == "pink"]
+    assert len(pink) == 1
+    assert pink[0].title_label.text() == "Click Sync"
+
+
+def test_features_card_order_keep_alive_click_sync_chat(qapp, settings_manager):
+    """Cards must appear in spec order: Keep-Alive, Click Sync, Chat Handling.
+    Assert against the actual page layout order (what the user sees), not
+    findChildren -- findChildren reflects QObject creation order, which can
+    diverge from layout order if an insertWidget index is wrong."""
+    from tabs.settings_tab import SettingsTab, SettingsPanel
+    tab = SettingsTab(settings_manager)
+    layout = tab.pages["features"]._panel_layout
+    titles = []
+    for i in range(layout.count()):
+        w = layout.itemAt(i).widget()
+        if isinstance(w, SettingsPanel):
+            titles.append(w.title_label.text())
+    assert titles == ["Keep-Alive", "Click Sync", "Chat Handling"]
+
+
+def test_click_sync_toggle_lives_inside_the_pink_card(qapp, settings_manager):
+    """The toggle must live INSIDE the pink Click Sync card, not merely
+    somewhere on the Features page."""
+    from tabs.settings_tab import SettingsTab, SettingsPanel, Switch
+    tab = SettingsTab(settings_manager)
+    pink = next(
+        p for p in tab.pages["features"].findChildren(SettingsPanel)
+        if p.stripe_kind == "pink"
+    )
+    labels = [f.label_widget.text() for f in pink.fields]
+    assert labels == ["Enable Click Sync"]
+    assert isinstance(pink.fields[0].control_widget, Switch)
+
+
+def test_click_sync_toggle_default_off(qapp, settings_manager):
+    from tabs.settings_tab import SettingsTab
+    tab = SettingsTab(settings_manager)
+    field = _features_field(tab, "Enable Click Sync")
+    assert field.control_widget.isChecked() is False
+
+
+def test_click_sync_toggle_reflects_persisted_enabled(qapp, settings_manager):
+    """When CLICK_SYNC_ENABLED is already True in settings, the switch must
+    render checked on build (spec: initial value reads the stored key)."""
+    from tabs.settings_tab import SettingsTab
+    from utils.settings_keys import CLICK_SYNC_ENABLED
+    settings_manager.set(CLICK_SYNC_ENABLED, True)
+    tab = SettingsTab(settings_manager)
+    field = _features_field(tab, "Enable Click Sync")
+    assert field.control_widget.isChecked() is True
+
+
+def test_click_sync_toggle_writes_setting(qapp, settings_manager):
+    from tabs.settings_tab import SettingsTab
+    from utils.settings_keys import CLICK_SYNC_ENABLED
+    tab = SettingsTab(settings_manager)
+    field = _features_field(tab, "Enable Click Sync")
+    field.control_widget.setChecked(True)
+    assert settings_manager.get(CLICK_SYNC_ENABLED) is True
+    field.control_widget.setChecked(False)
+    assert settings_manager.get(CLICK_SYNC_ENABLED) is False
+
+
+def test_ttr_games_panel_no_longer_has_click_sync_field(qapp, settings_manager):
+    from tabs.settings_tab import SettingsTab, SettingsField
+    tab = SettingsTab(settings_manager)
+    labels = {
+        f.label_widget.text()
+        for f in tab.pages["games"].findChildren(SettingsField)
+    }
+    assert not any("Click sync" in lbl for lbl in labels)

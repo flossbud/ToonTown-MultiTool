@@ -875,24 +875,6 @@ class SettingsTab(QWidget):
         strict_field.set_control(strict_switch)
         ttr_panel.add_field(strict_field)
 
-        # Click sync (TTR)
-        click_sync_field = SettingsField(
-            "Click sync (TTR)",
-            helper=(
-                "Mirror your mouse clicks in one toon's window to other "
-                "selected toons. Choose the toons with the click sync "
-                "button on each toon. Works when the windows have "
-                "matching proportions."
-            ),
-        )
-        click_sync_switch = Switch(
-            self.settings_manager.get(CLICK_SYNC_ENABLED, False))
-        click_sync_switch.toggled.connect(
-            lambda v: self.settings_manager.set(CLICK_SYNC_ENABLED, v)
-        )
-        click_sync_field.set_control(click_sync_switch)
-        ttr_panel.add_field(click_sync_field)
-
         lay.insertWidget(insert_at, ttr_panel)
         insert_at += 1
 
@@ -1322,6 +1304,7 @@ class SettingsTab(QWidget):
             "Optional broadcast and automation behaviors."
         )
         self._build_keep_alive_card(page)
+        self._build_click_sync_card(page)
         self._build_chat_handling_card(page)
 
     def _build_keep_alive_card(self, page):
@@ -1387,6 +1370,32 @@ class SettingsTab(QWidget):
         panel.add_field(delay_field)
 
         self._refresh_keep_alive_enabled_state(master_initial)
+
+        lay.insertWidget(insert_at, panel)
+
+    def _build_click_sync_card(self, page):
+        lay = page._panel_layout
+        insert_at = lay.count() - 1
+
+        panel = SettingsPanel(title="Click Sync", stripe="pink")
+        self._panels.append(panel)
+        self._click_sync_panel = panel
+
+        field = SettingsField(
+            "Enable Click Sync",
+            helper=(
+                "Mirror your mouse clicks in one Toontown Rewritten window to "
+                "your other selected toons. Choose the toons with the click "
+                "sync button on each toon. Works when the windows have "
+                "matching proportions."
+            ),
+        )
+        switch = Switch(self.settings_manager.get(CLICK_SYNC_ENABLED, False))
+        switch.toggled.connect(
+            lambda v: self.settings_manager.set(CLICK_SYNC_ENABLED, v)
+        )
+        field.set_control(switch)
+        panel.add_field(field)
 
         lay.insertWidget(insert_at, panel)
 
