@@ -6,8 +6,10 @@ injection. Spec: docs/superpowers/specs/2026-06-10-click-sync-design.md.
 Threading: capture events arrive on the XRecord thread; UI calls arrive on
 the GUI thread. ALL state mutation goes through self._lock (an RLock). Qt
 signals are emitted via _emit_if_current, whose generation check and emit
-are atomic under the lock (see its docstring for why that is safe); capture
-start()/stop() always run with the lock released.
+are atomic under the lock (see its docstring for why that is safe); the ghost
+signals are an event stream, not a state snapshot, so they are emitted directly
+under the lock and rely on queued delivery for cross-thread consumers. Capture
+start()/stop() always runs with the lock released.
 """
 from __future__ import annotations
 
@@ -46,6 +48,15 @@ class ClickSyncService(QObject):
     slot_states_changed = Signal(object)
     # Emitted once if the capture backend dies / cannot start.
     service_error = Signal(str)
+    # Ghost cursors: one batched sample per forwarded event. Payload is
+    # (kind, [(slot, screen_x, screen_y), ...]) with kind in
+    # "motion" | "press" | "release" and root-space coordinates.
+    # Signal(object) for the same marshaling reason as slot_states_changed.
+    ghost_pointer_event = Signal(object)
+    # All ghosts hide instantly: emitted from _clear_hover_locked, which
+    # runs at every stop moment (master off, membership change, group
+    # pause, capture death, shutdown).
+    ghost_clear = Signal()
 
     def __init__(self, slot_window_resolver, geometry_provider,
                  source_resolver, backend, capture_factory, parent=None,
@@ -435,6 +446,9 @@ class ClickSyncService(QObject):
         self._pending_motion = None
         self._hover_source = None    # re-latch via normal motion post-gesture
         self._hover_rejected = None  # the press just confirmed this point
+        self.ghost_pointer_event.emit(
+            ("press", [(slot, g0[0] + tx, g0[1] + ty)
+                       for slot, (_wid, g0, (tx, ty)) in delivered.items()]))
 
     def _handle_motion_locked(self, root_x, root_y, state, time):
         if self._gesture is None:
@@ -450,13 +464,17 @@ class ClickSyncService(QObject):
 
     def _emit_motion_locked(self, root_x, root_y, state, time):
         g = self._gesture
-        for wid, geom, _ in g.targets.values():
+        ghosts = []
+        for slot, (wid, geom, _) in g.targets.items():
             tx, ty = map_point(g.source_geom, geom, root_x, root_y)
             # Return value intentionally ignored (spec deviation, recorded
             # there): a target dying mid-gesture is reclaimed by window
             # re-detection and the next geometry tick within ~2s.
             self._backend.send_motion(
                 wid, tx, ty, geom[0] + tx, geom[1] + ty, state=state, time=time)
+            ghosts.append((slot, geom[0] + tx, geom[1] + ty))
+        if ghosts:
+            self.ghost_pointer_event.emit(("motion", ghosts))
 
     # ── hover forwarding (no gesture; lock held) ───────────────────────
 
@@ -501,6 +519,7 @@ class ClickSyncService(QObject):
             return
         src_slot, src_wid = src
         src_geom = geoms[src_slot]
+        ghosts = []
         for s, wid in wids_by_slot.items():
             if s == src_slot or wid == src_wid:
                 continue  # echo guard: never inject back into the source
@@ -512,6 +531,9 @@ class ClickSyncService(QObject):
             # is reclaimed by window re-detection within ~2s.
             self._backend.send_motion(
                 wid, tx, ty, g[0] + tx, g[1] + ty, state=state, time=time)
+            ghosts.append((s, g[0] + tx, g[1] + ty))
+        if ghosts:
+            self.ghost_pointer_event.emit(("motion", ghosts))
 
     def _resolve_hover_source_locked(self, wids_by_slot, geoms,
                                      root_x, root_y, now, allow_confirm):
@@ -597,6 +619,7 @@ class ClickSyncService(QObject):
         t, self._hover_flush_timer = self._hover_flush_timer, None
         if t is not None:
             t.cancel()
+        self.ghost_clear.emit()
 
     def _handle_release_locked(self, root_x, root_y, state, time):
         if self._gesture is None:
@@ -606,10 +629,14 @@ class ClickSyncService(QObject):
             self._pending_motion = None
         g, self._gesture = self._gesture, None
         _trace(f"release -> {len(g.targets)} targets")
-        for wid, geom, _ in g.targets.values():
+        ghosts = []
+        for slot, (wid, geom, _) in g.targets.items():
             tx, ty = map_point(g.source_geom, geom, root_x, root_y)
             self._backend.send_button_release(
                 wid, tx, ty, geom[0] + tx, geom[1] + ty, state=state, time=time)
+            ghosts.append((slot, geom[0] + tx, geom[1] + ty))
+        if ghosts:
+            self.ghost_pointer_event.emit(("release", ghosts))
 
     # ── drain (call with lock held) ────────────────────────────────────
 
