@@ -1,4 +1,6 @@
 """ClickSyncService orchestration tests with injected fakes."""
+import time as _time
+
 import pytest
 
 from services.click_sync_service import ClickSyncService, MOTION_COALESCE_S
@@ -579,3 +581,58 @@ def test_hover_member_to_member_candidate_change_reconfirms(hover_svc):
     assert len(resolver_calls) == 2      # candidate change forced a confirm
     last = [c for c in backend.calls if c[0] == "motion"][-1]
     assert last[1] == "10"               # target flipped: source is now "20"
+
+
+# ── real-timer trailing-flush and state-hygiene tests ─────────────────
+
+
+def test_hover_trailing_flush_emits_final_position(hover_svc):
+    s, backend, _, clock = hover_svc
+    _hover(s, 100, 100)                 # emitted immediately
+    clock["t"] += 0.001                 # inside coalesce window
+    _hover(s, 130, 100, t=2001)         # pending + schedules real timer
+    assert len([c for c in backend.calls if c[0] == "motion"]) == 1
+    deadline = _time.monotonic() + 2.0
+    while _time.monotonic() < deadline:
+        motions = [c for c in backend.calls if c[0] == "motion"]
+        if len(motions) == 2:
+            break
+        _time.sleep(0.01)
+    motions = [c for c in backend.calls if c[0] == "motion"]
+    assert len(motions) == 2
+    assert motions[1][2:4] == (130, 100)  # the FINAL sample landed
+    assert s._hover_flush_timer is None
+
+
+def test_hover_pending_flushes_before_press(hover_svc):
+    s, backend, _, clock = hover_svc
+    _hover(s, 100, 100)
+    clock["t"] += 0.001
+    _hover(s, 130, 100)                 # pending
+    clock["t"] += 0.001
+    _press(s, 130, 100)
+    kinds = [c[0] for c in backend.calls]
+    # hover(100), hover-flush(130), then the press — in that order.
+    assert kinds == ["motion", "motion", "press"]
+    assert backend.calls[1][2:4] == (130, 100)
+
+
+def test_shutdown_cancels_hover_timer_and_drops_pending(hover_svc):
+    s, backend, _, clock = hover_svc
+    _hover(s, 100, 100)
+    clock["t"] += 0.001
+    _hover(s, 130, 100)                 # pending + timer in flight
+    s.shutdown()
+    assert s._hover_flush_timer is None
+    before = len(backend.calls)
+    _time.sleep(0.1)                    # a live timer would fire within 16ms
+    assert len(backend.calls) == before
+
+
+def test_disable_clears_hover_latch(hover_svc):
+    s, backend, _, clock = hover_svc
+    _hover(s, 100, 100)
+    assert s._hover_source is not None
+    s.set_enabled(False)
+    assert s._hover_source is None
+    assert s._hover_pending is None
