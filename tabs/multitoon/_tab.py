@@ -2870,6 +2870,7 @@ class MultitoonTab(QWidget):
             "armed": make_click_sync_icon(14, c["accent_pink_border"]),
             "active": make_click_sync_icon(14, c["text_on_accent"]),
             "error": make_click_sync_warning_icon(14, c["text_on_accent"]),
+            "disabled": make_click_sync_icon(14, c["text_disabled"]),
         }
 
     def _apply_click_sync_btn_style(self, index: int, c) -> None:
@@ -2882,6 +2883,28 @@ class MultitoonTab(QWidget):
         state = self._click_sync_visual_state(index)
         if not self._click_sync_icons:
             self._rebuild_click_sync_icons(c)
+        # A slot with no TTR window renders disabled (chat-button disabled
+        # look) UNLESS it is still a member: an orphaned member must stay
+        # clickable so the user can evict it from the group (its red error
+        # state otherwise pauses the group with no affordance to fix it).
+        ids = self.window_manager.get_window_ids()
+        has_ttr = (index < len(ids)
+                   and self.window_manager.window_games.get(ids[index]) == "ttr")
+        member = state != "off"
+        if not has_ttr and not member:
+            btn.setEnabled(False)
+            btn.setChecked(False)
+            btn.setIcon(self._click_sync_icons["disabled"])
+            btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {c['btn_disabled']};
+                    color: {c['text_disabled']};
+                    border: none; border-radius: 6px;
+                }}
+            """)
+            btn.setToolTip("Click sync: no toon detected in this slot")
+            return
+        btn.setEnabled(True)
         btn.setIcon(self._click_sync_icons[state])
         btn.setChecked(state != "off")
         if state == "active":
@@ -2972,21 +2995,21 @@ class MultitoonTab(QWidget):
         print(f"[MultitoonTab] click sync error: {message}")
 
     def _apply_click_sync_visibility(self) -> None:
-        """Master switch ON + Linux + the slot currently holds a TTR window.
-        Called on setting change and from update_toon_controls (so slots
-        re-gate as windows come and go, mirroring the chat-button pattern)."""
+        """Master switch ON + Linux: the button is ALWAYS present in the
+        row, like the keep-alive button; slots without a TTR window render
+        disabled via the style resolver instead of disappearing. Called on
+        setting change and from update_toon_controls (so per-slot
+        enabledness tracks windows coming and going)."""
         master = (
             sys.platform != "win32"
             and self.settings_manager is not None
             and bool(self.settings_manager.get(CLICK_SYNC_ENABLED, False))
         )
-        ids = self.window_manager.get_window_ids()
-        for i, btn in enumerate(self.click_sync_buttons):
-            is_ttr_slot = (
-                i < len(ids)
-                and self.window_manager.window_games.get(ids[i]) == "ttr"
-            )
-            btn.setVisible(master and is_ttr_slot)
+        for btn in self.click_sync_buttons:
+            btn.setVisible(master)
+        c = self._c()
+        for i in range(len(self.click_sync_buttons)):
+            self._apply_click_sync_btn_style(i, c)
         self._repin_collapsed_ka_widths()
 
     def _repin_collapsed_ka_widths(self) -> None:

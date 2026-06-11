@@ -78,11 +78,39 @@ def test_buttons_exist_and_hidden_by_default(multitoon_tab):
 
 def test_master_switch_reveals_buttons(multitoon_tab):
     tab = multitoon_tab
-    _fill_ttr_slots(tab)
     # settings_manager.set(...) alone must reveal the buttons: the on_change
-    # registration in _build_click_sync is the wiring under test.
+    # registration in _build_click_sync is the wiring under test. Like the
+    # keep-alive button, presence does NOT depend on detected windows.
     tab.settings_manager.set("click_sync_enabled", True)
     assert all(b.isVisibleTo(b.parentWidget()) for b in tab.click_sync_buttons)
+
+
+def test_windowless_slot_is_disabled_not_hidden(multitoon_tab):
+    tab = multitoon_tab
+    tab.settings_manager.set("click_sync_enabled", True)
+    c = tab._c()
+    btn = tab.click_sync_buttons[0]  # no windows in the fake WM
+    assert btn.isVisibleTo(btn.parentWidget())
+    assert not btn.isEnabled()
+    assert c["btn_disabled"] in btn.styleSheet()
+    assert "no toon detected" in btn.toolTip()
+    # A TTR window appearing re-enables the slot.
+    _fill_ttr_slots(tab)
+    tab._apply_click_sync_visibility()
+    assert btn.isEnabled()
+
+
+def test_orphaned_member_stays_clickable(multitoon_tab):
+    # A member whose window vanished shows error AND remains enabled: the
+    # button is the only affordance to evict it and unpause the group.
+    tab = multitoon_tab
+    tab.settings_manager.set("click_sync_enabled", True)
+    tab.click_sync_service.slot_states_changed.emit(
+        {0: "error", 1: "armed", 2: "off", 3: "off"})
+    c = tab._c()
+    btn = tab.click_sync_buttons[0]  # member, but no window in the fake WM
+    assert btn.isEnabled()
+    assert c["accent_red"] in btn.styleSheet()
 
 
 def test_toggle_calls_service(multitoon_tab):
@@ -115,6 +143,7 @@ def test_service_error_sets_failure_tooltip(multitoon_tab):
 
 def test_state_styles_follow_palette(multitoon_tab):
     tab = multitoon_tab
+    _fill_ttr_slots(tab)  # windowless slots render disabled, not off
     svc = tab.click_sync_service
     svc.slot_states_changed.emit({0: "armed", 1: "active", 2: "error", 3: "off"})
     c = tab._c()
@@ -129,6 +158,7 @@ def test_state_styles_follow_palette(multitoon_tab):
 
 def test_unknown_state_resolves_off(multitoon_tab):
     tab = multitoon_tab
+    _fill_ttr_slots(tab)  # windowless slots render disabled, not off
     tab.click_sync_service.slot_states_changed.emit(
         {0: "garbage", 1: "off", 2: "off", 3: "off"})
     c = tab._c()
@@ -152,6 +182,7 @@ def test_master_toggle_restores_state_styling(multitoon_tab):
     # emits all-off (gray); master ON restores the retained membership's
     # states (red again). Pins emission -> resolver styling round trips.
     tab = multitoon_tab
+    _fill_ttr_slots(tab)  # windowless slots render disabled, not off
     svc = tab.click_sync_service
     c = tab._c()
     svc.set_enabled(True)
