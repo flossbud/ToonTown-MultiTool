@@ -1,3 +1,7 @@
+# Deferred annotations: the deb/AppImage bundles run Python 3.9, where a
+# def-time `tuple[...] | None` annotation raises TypeError without this.
+from __future__ import annotations
+
 import threading
 import time
 from PySide6.QtCore import QObject, Signal

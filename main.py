@@ -1585,6 +1585,9 @@ def _platform_only_modules(platform: str) -> set[str]:
         # utils.xlib_backend does an unguarded top-level `from Xlib import`;
         # Xlib is not bundled on non-Linux builds.
         excluded.add("utils.xlib_backend")
+        # utils.xrecord_capture likewise (X RECORD mouse capture for click
+        # sync; Linux/X11 only).
+        excluded.add("utils.xrecord_capture")
     return excluded
 
 
