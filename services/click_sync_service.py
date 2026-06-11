@@ -18,10 +18,12 @@ from time import monotonic
 from PySide6.QtCore import QObject, Signal
 
 from services.click_sync_logic import (
-    Gesture, aspect_compatible, compute_slot_states, map_point, SLOT_COUNT,
+    Gesture, aspect_compatible, compute_slot_states, map_point,
+    rect_hit_test, SLOT_COUNT,
 )
 
 MOTION_COALESCE_S = 0.016  # forward at most ~60 motion events/s per gesture
+HOVER_CONFIRM_S = 0.25  # re-run the authoritative hit test at most this often
 BUTTON1_MASK = 0x100  # X.Button1Mask; drains force it set on the release
 
 
@@ -76,6 +78,15 @@ class ClickSyncService(QObject):
         self._states = {s: "off" for s in range(SLOT_COUNT)}
         self._last_motion_emit = 0.0
         self._pending_motion = None  # (root_x, root_y, state, time)
+        # Hover forwarding (unclicked motion; spec
+        # 2026-06-10-hover-motion-forwarding-design.md). Separate from the
+        # gesture coalescer: the two paths are mutually exclusive but must not
+        # bleed state through a press.
+        self._hover_source = None        # (slot, wid) latched confirmed source
+        self._hover_last_confirm = 0.0
+        self._hover_last_emit = 0.0
+        self._hover_pending = None       # (root_x, root_y, state, time)
+        self._hover_flush_timer = None   # threading.Timer (trailing flush)
         self._shutdown = False
         # Sticky service-level failure latch (capture died / start failed).
         # Prevents the periodic recompute from auto-restarting a broken
@@ -98,6 +109,7 @@ class ClickSyncService(QObject):
             self._service_failed = False  # user action clears the latch
             if not self._enabled:
                 self._drain_locked("master disabled")
+                self._clear_hover_locked()
         self.recompute()
 
     def toggle_slot(self, slot: int) -> bool:
@@ -112,6 +124,7 @@ class ClickSyncService(QObject):
             else:
                 self._members.add(slot)
                 member = True
+            self._clear_hover_locked()
         self.recompute()
         return member
 
@@ -156,8 +169,10 @@ class ClickSyncService(QObject):
                 new_states = compute_slot_states(self._members, usable, compatible)
             was_active = "active" in self._states.values()
             now_active = "active" in new_states.values()
-            if was_active and not now_active and self._gesture is not None:
-                self._drain_locked("group paused")
+            if was_active and not now_active:
+                if self._gesture is not None:
+                    self._drain_locked("group paused")
+                self._clear_hover_locked()
             if new_states != self._states:
                 self._set_states_locked(new_states)
                 emit_states = dict(new_states)
@@ -285,6 +300,7 @@ class ClickSyncService(QObject):
                 return
             self._shutdown = True
             self._drain_locked("shutdown")
+            self._clear_hover_locked()
             cap, self._capture = self._capture, None
         if cap is not None:
             cap.stop()
@@ -318,6 +334,7 @@ class ClickSyncService(QObject):
             self._capture = None
             self._service_failed = True
             self._drain_locked("capture died")
+            self._clear_hover_locked()
             self._set_states_locked({
                 s: ("error" if s in self._members else "off")
                 for s in range(SLOT_COUNT)
@@ -360,6 +377,11 @@ class ClickSyncService(QObject):
         return out
 
     def _handle_press_locked(self, root_x, root_y, state, time):
+        pending, self._hover_pending = self._hover_pending, None
+        if pending is not None and "active" in self._states.values():
+            now = monotonic()
+            self._hover_last_emit = now
+            self._emit_hover_locked(*pending, now)
         if "active" not in self._states.values() or self._gesture is not None:
             return
         wids_by_slot = self._member_wids_locked()
@@ -408,9 +430,11 @@ class ClickSyncService(QObject):
             press_time=time, targets=delivered)
         self._last_motion_emit = 0.0
         self._pending_motion = None
+        self._hover_source = None  # re-latch via normal motion post-gesture
 
     def _handle_motion_locked(self, root_x, root_y, state, time):
         if self._gesture is None:
+            self._handle_hover_locked(root_x, root_y, state, time)
             return
         now = monotonic()
         if now - self._last_motion_emit >= MOTION_COALESCE_S:
@@ -429,6 +453,94 @@ class ClickSyncService(QObject):
             # re-detection and the next geometry tick within ~2s.
             self._backend.send_motion(
                 wid, tx, ty, geom[0] + tx, geom[1] + ty, state=state, time=time)
+
+    # ── hover forwarding (no gesture; lock held) ───────────────────────
+
+    def _handle_hover_locked(self, root_x, root_y, state, time):
+        if "active" not in self._states.values():
+            return
+        now = monotonic()
+        if now - self._hover_last_emit < MOTION_COALESCE_S:
+            self._hover_pending = (root_x, root_y, state, time)
+            self._schedule_hover_flush_locked()
+            return
+        self._hover_last_emit = now
+        self._hover_pending = None
+        self._emit_hover_locked(root_x, root_y, state, time, now)
+
+    def _emit_hover_locked(self, root_x, root_y, state, time, now):
+        """Resolve the hover source and forward one coalesced sample.
+        CACHED geometry on both sides — zero X round trips in the steady
+        state; the authoritative resolver runs only on candidate change or
+        the periodic re-confirm (occlusion check)."""
+        wids_by_slot = self._member_wids_locked()
+        geoms = {}
+        for s, wid in wids_by_slot.items():
+            g = self._geometry_provider(wid)
+            if g is not None:
+                geoms[s] = g
+        cand = rect_hit_test(geoms, root_x, root_y)
+        if cand is None:
+            self._hover_source = None
+            return
+        cand_wid = wids_by_slot[cand]
+        if (self._hover_source != (cand, cand_wid)
+                or now - self._hover_last_confirm >= HOVER_CONFIRM_S):
+            resolved = self._source_resolver(
+                root_x, root_y, list(wids_by_slot.values()))
+            self._hover_last_confirm = now
+            if resolved != cand_wid:
+                # Different window on top, clean miss, or resolver failure:
+                # all best-effort misses — never latch _service_failed.
+                _trace(f"hover confirm miss cand={cand_wid} got={resolved!r}")
+                self._hover_source = None
+                return
+            self._hover_source = (cand, cand_wid)
+        src_geom = geoms[cand]
+        for s, wid in wids_by_slot.items():
+            if s == cand or wid == cand_wid:
+                continue  # echo guard: never inject back into the source
+            g = geoms.get(s)
+            if g is None or g[2] <= 0 or g[3] <= 0:
+                continue
+            tx, ty = map_point(src_geom, g, root_x, root_y)
+            # Return value ignored (same as gesture motion): a dying target
+            # is reclaimed by window re-detection within ~2s.
+            self._backend.send_motion(
+                wid, tx, ty, g[0] + tx, g[1] + ty, state=state, time=time)
+
+    def _schedule_hover_flush_locked(self):
+        """Trailing flush: hover has no release event, but the final resting
+        position decides which menu item stays highlighted. One timer in
+        flight is enough — it reads whatever sample is pending when it
+        fires."""
+        if self._hover_flush_timer is not None:
+            return
+        t = threading.Timer(MOTION_COALESCE_S, self._hover_flush)
+        t.daemon = True
+        t.start()
+        self._hover_flush_timer = t
+
+    def _hover_flush(self):
+        with self._lock:
+            self._hover_flush_timer = None
+            pending, self._hover_pending = self._hover_pending, None
+            if (pending is None or self._shutdown or not self._enabled
+                    or self._gesture is not None
+                    or "active" not in self._states.values()):
+                return
+            now = monotonic()
+            self._hover_last_emit = now
+            self._emit_hover_locked(*pending, now)
+
+    def _clear_hover_locked(self):
+        self._hover_source = None
+        self._hover_pending = None
+        self._hover_last_emit = 0.0
+        self._hover_last_confirm = 0.0
+        t, self._hover_flush_timer = self._hover_flush_timer, None
+        if t is not None:
+            t.cancel()
 
     def _handle_release_locked(self, root_x, root_y, state, time):
         if self._gesture is None:

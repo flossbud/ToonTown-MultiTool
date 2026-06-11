@@ -145,10 +145,10 @@ def test_motion_coalesced_and_flushed_before_release(svc, monkeypatch):
     assert backend.calls[-1][0] == "release"
 
 
-def test_motion_without_gesture_ignored(svc):
+def test_motion_without_gesture_outside_members_ignored(svc):
     s, backend, _ = svc
     s.toggle_slot(0); s.toggle_slot(1)
-    s._on_capture_event("motion", 110, 100, 0, 1001)
+    s._on_capture_event("motion", 5000, 5000, 0, 1001)
     assert backend.calls == []
 
 
@@ -393,3 +393,135 @@ def test_stale_generation_events_are_gated(svc):
     assert backend.calls == []
     gen2.on_event("press", 500, 250, 0, 1000)  # current stream: flows
     assert [c[0] for c in backend.calls] == ["press"]
+
+
+# ── hover motion forwarding (no button held) ───────────────────────────
+
+
+@pytest.fixture
+def hover_svc(monkeypatch):
+    """Like svc, but with a call-counting authoritative resolver and a
+    controllable clock. Yields (service, backend, resolver_calls, clock)."""
+    geoms = {
+        "10": (0, 0, 1000, 500),
+        "20": (1100, 0, 1000, 500),
+        "30": (0, 600, 2000, 1000),
+    }
+    backend = FakeBackend()
+    resolver_calls = []
+
+    def resolver(rx, ry, wids):
+        resolver_calls.append((rx, ry))
+        return next(
+            (w for w in wids
+             if geoms.get(w)
+             and geoms[w][0] <= rx < geoms[w][0] + geoms[w][2]
+             and geoms[w][1] <= ry < geoms[w][1] + geoms[w][3]), None)
+
+    clock = {"t": 100.0}
+    monkeypatch.setattr("services.click_sync_service.monotonic",
+                        lambda: clock["t"])
+    s = ClickSyncService(
+        slot_window_resolver=lambda slot: {0: "10", 1: "20", 2: "30"}.get(slot),
+        geometry_provider=lambda wid: geoms.get(wid),
+        source_resolver=resolver,
+        backend=backend,
+        capture_factory=lambda on_event: FakeCapture(on_event),
+    )
+    s.set_enabled(True)
+    s.toggle_slot(0)
+    s.toggle_slot(1)
+    assert s.slot_states()[0] == "active"
+    yield s, backend, resolver_calls, clock
+    s.shutdown()
+
+
+def _hover(s, x, y, t=2000):
+    s._on_capture_event("motion", x, y, 0, t)
+
+
+def test_hover_inside_member_forwards_mapped_motion(hover_svc):
+    s, backend, _, _ = hover_svc
+    _hover(s, 500, 250)  # center of "10" -> center of "20"
+    motions = [c for c in backend.calls if c[0] == "motion"]
+    assert len(motions) == 1
+    kind, wid, x, y, rx, ry, state, t = motions[0]
+    assert wid == "20"
+    assert (x, y) == (500, 250)
+    assert (rx, ry) == (1100 + 500, 0 + 250)
+    assert state == 0          # unclicked: captured state passes through
+    assert t == 2000
+
+
+def test_hover_ignored_when_group_not_active(hover_svc):
+    s, backend, _, _ = hover_svc
+    s.toggle_slot(1)  # back to a single armed member
+    backend.calls.clear()
+    _hover(s, 500, 250)
+    assert backend.calls == []
+
+
+def test_hover_outside_members_ignored(hover_svc):
+    s, backend, resolver_calls, _ = hover_svc
+    _hover(s, 5000, 5000)
+    assert backend.calls == []
+    assert resolver_calls == []  # rect miss: no authoritative call either
+
+
+def test_hover_same_window_confirms_once_then_reconfirms_after_interval(hover_svc):
+    s, backend, resolver_calls, clock = hover_svc
+    _hover(s, 100, 100)
+    clock["t"] += 0.05  # past coalesce, inside confirm interval
+    _hover(s, 120, 100)
+    assert len(resolver_calls) == 1   # latched: no second confirm
+    assert len([c for c in backend.calls if c[0] == "motion"]) == 2
+    clock["t"] += 0.30  # past HOVER_CONFIRM_S
+    _hover(s, 140, 100)
+    assert len(resolver_calls) == 2   # periodic re-confirm
+
+
+def test_hover_confirm_rejection_blocks_forwarding(hover_svc, monkeypatch):
+    s, backend, _, clock = hover_svc
+    errors = []
+    s.service_error.connect(errors.append)
+    monkeypatch.setattr(s, "_source_resolver", lambda rx, ry, wids: None)
+    _hover(s, 500, 250)
+    clock["t"] += 0.05
+    _hover(s, 520, 250)
+    assert [c for c in backend.calls if c[0] == "motion"] == []
+    assert errors == []  # best-effort: never latches service error
+    assert s.slot_states()[0] == "active"
+
+
+def test_hover_gesture_takes_precedence(hover_svc):
+    s, backend, resolver_calls, clock = hover_svc
+    _hover(s, 500, 250)
+    confirms_before = len(resolver_calls)
+    clock["t"] += 0.05
+    _press(s, 500, 250)               # gesture begins (resolver call: press)
+    clock["t"] += 0.05
+    s._on_capture_event("motion", 510, 250, 256, 2100)  # held motion
+    # Held motion goes through the gesture path: no hover confirm happens.
+    assert len(resolver_calls) == confirms_before + 1  # press only
+    held = [c for c in backend.calls if c[0] == "motion" and c[6] == 256]
+    assert len(held) == 1
+
+
+def test_hover_echo_guard_duplicate_wid_skipped():
+    geoms = {"10": (0, 0, 1000, 500)}
+    backend = FakeBackend()
+    s = ClickSyncService(
+        slot_window_resolver=lambda slot: {0: "10", 1: "10"}.get(slot),
+        geometry_provider=lambda wid: geoms.get(wid),
+        source_resolver=lambda rx, ry, wids: "10",
+        backend=backend,
+        capture_factory=lambda on_event: FakeCapture(on_event),
+    )
+    try:
+        s.set_enabled(True)
+        s.toggle_slot(0)
+        s.toggle_slot(1)
+        _hover(s, 500, 250)
+        assert [c for c in backend.calls if c[0] == "motion"] == []
+    finally:
+        s.shutdown()
