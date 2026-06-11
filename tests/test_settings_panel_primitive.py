@@ -99,7 +99,7 @@ def test_panel_cc_stripe(qapp):
 ])
 def test_panel_named_color_stripe_resolves_to_palette_token(qapp, stripe, token):
     """Settings panels can use named accent stripes (blue/yellow/orange/
-    green/red). Each name must resolve to the matching palette token in
+    green/red/pink). Each name must resolve to the matching palette token in
     both themes so dark/light render consistently."""
     from tabs.settings_tab import SettingsPanel
     from utils.theme_manager import get_theme_colors

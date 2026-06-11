@@ -121,4 +121,6 @@ def test_ttr_games_panel_no_longer_has_click_sync_field(qapp, settings_manager):
         f.label_widget.text()
         for f in tab.pages["games"].findChildren(SettingsField)
     }
-    assert not any("Click sync" in lbl for lbl in labels)
+    # Case-insensitive so the guard catches both the old "Click sync (TTR)"
+    # label and the new "Click Sync" / "Enable Click Sync" wording.
+    assert not any("click sync" in lbl.lower() for lbl in labels)

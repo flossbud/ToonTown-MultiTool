@@ -233,8 +233,9 @@ class SettingsPanel(QFrame):
     """Bordered card with a brand-colored top stripe, header (logo + title +
     sub + optional buttons), and a body of SettingsFields.
 
-    `stripe` is one of "ttr", "cc", or "neutral" -- the value is resolved to
-    a theme token in apply_theme.
+    `stripe` is one of "ttr", "cc", "neutral", or a named accent
+    ("blue", "yellow", "orange", "green", "red", "pink") -- the value is
+    resolved to a theme token in apply_theme.
     """
 
     STRIPE_HEIGHT = 3
