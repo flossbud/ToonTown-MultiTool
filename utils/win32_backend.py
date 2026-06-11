@@ -7,6 +7,8 @@ Uses PostMessage to send keystrokes to background windows without stealing focus
 
 from __future__ import annotations
 
+from time import monotonic
+
 try:
     import win32api
     import win32con
@@ -133,6 +135,14 @@ WM_LBUTTONUP = 0x0202
 MK_LBUTTON = 0x0001
 _X_BUTTON1_MASK = 0x100  # the service's X-style state mask for button 1
 
+WM_XBUTTONDOWN = 0x020B
+WM_XBUTTONUP = 0x020C
+# Inactivity-aware carrier gate: re-arm (always carry) once a window has
+# had no motion request for this long; otherwise suppress exact-duplicate
+# mapped points. No distance threshold -- it would skip DirectGUI boundary
+# crossings. The service's ~60Hz coalescer already caps the real rate.
+CARRY_IDLE_S = 0.15
+
 
 def pack_mouse_lparam(x: int, y: int) -> int:
     """Client coords -> mouse-message lParam (LOWORD x, HIWORD y). Both
@@ -141,15 +151,20 @@ def pack_mouse_lparam(x: int, y: int) -> int:
     return ((y & 0xFFFF) << 16) | (x & 0xFFFF)
 
 
-def mouse_wparam_from_state(state: int) -> int:
-    """X state mask -> MK_* wParam flags. Only the left button matters:
-    the service injects button-1 gestures and unclicked hover motion;
-    modifier MK flags are never set."""
+def xbutton_carrier_wparam(state: int) -> int:
+    """wParam for the position-carrier: HIWORD = 0 (INVALID X-button
+    selector -> Panda sets the pointer from lParam but queues NO button
+    event and does not steal focus); LOWORD = MK_LBUTTON during a drag
+    (Button1Mask in state) so the carrier preserves the gesture's capture,
+    else 0 (hover; the UP then releases capture)."""
     return MK_LBUTTON if state & _X_BUTTON1_MASK else 0
+
 
 class Win32Backend:
     def __init__(self):
-        pass
+        # Per-wid carrier gate state (click sync hover/drag, Windows only).
+        self._carry_last_point: dict[str, tuple[int, int]] = {}
+        self._carry_last_request: dict[str, float] = {}
 
     def connect(self):
         pass
@@ -256,7 +271,11 @@ class Win32Backend:
         # WM_LBUTTONDOWN's wParam includes the button going down.
         if button != 1:
             return False  # left-button only: the service never injects others
-        return self._post_mouse(win_id_str, WM_LBUTTONDOWN, MK_LBUTTON, x, y)
+        ok = self._post_mouse(win_id_str, WM_LBUTTONDOWN, MK_LBUTTON, x, y)
+        if ok:
+            self._carry_last_point[win_id_str] = (x, y)
+            self._carry_last_request[win_id_str] = monotonic()
+        return ok
 
     def send_button_release(self, win_id_str: str, x: int, y: int,
                             root_x: int, root_y: int, button: int = 1,
@@ -270,8 +289,27 @@ class Win32Backend:
     def send_motion(self, win_id_str: str, x: int, y: int,
                     root_x: int, root_y: int,
                     state: int = 0, time: int = 0) -> bool:
-        return self._post_mouse(win_id_str, WM_MOUSEMOVE,
-                                mouse_wparam_from_state(state), x, y)
+        # Posted WM_MOUSEMOVE does not move TTR's GUI pointer on a
+        # background window (engine re-polls the real cursor); an inert
+        # invalid-selector X-button pair carries the position the way
+        # clicks do. See the Windows hover spec.
+        now = monotonic()
+        last_req = self._carry_last_request.get(win_id_str)
+        self._carry_last_request[win_id_str] = now
+        point = (x, y)
+        armed = last_req is None or (now - last_req) >= CARRY_IDLE_S
+        if not armed and self._carry_last_point.get(win_id_str) == point:
+            return True  # exact duplicate within the active window: suppress
+        wparam = xbutton_carrier_wparam(state)
+        down = self._post_mouse(win_id_str, WM_XBUTTONDOWN, wparam, x, y)
+        up = self._post_mouse(win_id_str, WM_XBUTTONUP, wparam, x, y)
+        if down and up:
+            self._carry_last_point[win_id_str] = point
+            return True
+        # Partial/failed pair: the position may not have stuck -- evict so
+        # the next call cannot dedupe against a stale point.
+        self._carry_last_point.pop(win_id_str, None)
+        return False
 
     def sync(self):
         pass
