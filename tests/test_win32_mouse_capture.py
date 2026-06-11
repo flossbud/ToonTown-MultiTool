@@ -16,6 +16,29 @@ class FakeListener:
         self.running = False
 
 
+class PynputLikeListener:
+    """Mimics real pynput: `running` set on start and NEVER cleared on
+    thread death; liveness only visible via is_alive()."""
+
+    def __init__(self):
+        self.running = False
+        self._alive = False
+
+    def start(self):
+        self.running = True
+        self._alive = True
+
+    def stop(self):
+        self.running = False
+        self._alive = False
+
+    def is_alive(self):
+        return self._alive
+
+    def die_silently(self):
+        self._alive = False  # thread died; `running` stays True
+
+
 class FakeButton:
     def __init__(self, name):
         self.name = name
@@ -118,3 +141,69 @@ def test_failed_listener_start_returns_false():
     c = Win32MouseCapture(lambda *e: None, listener_factory=factory)
     assert c.start() is False
     assert c.is_running() is False
+
+
+def test_dead_hook_thread_reports_not_running():
+    listeners = []
+
+    def factory(on_move, on_click):
+        l = PynputLikeListener()
+        listeners.append(l)
+        return l
+
+    c = Win32MouseCapture(lambda *e: None, listener_factory=factory)
+    assert c.start() is True
+    assert c.is_running() is True
+    listeners[0].die_silently()        # hook died; pynput keeps running=True
+    assert c.is_running() is False     # is_alive() exposes the death
+    c.stop()
+
+
+def test_startup_window_running_false_is_not_death():
+    class SlowStartListener(PynputLikeListener):
+        def start(self):
+            self._alive = True         # thread spawned...
+            self.running = False       # ...but run() not yet executing
+
+    c = Win32MouseCapture(
+        lambda *e: None, listener_factory=lambda m, k: SlowStartListener())
+    assert c.start() is True
+    assert c.is_running() is True      # liveness, not pynput's flag
+    c.stop()
+
+
+def test_no_emission_after_stop():
+    events = []
+    hooks = {}
+
+    def factory(on_move, on_click):
+        hooks["move"], hooks["click"] = on_move, on_click
+        return FakeListener()
+
+    c = Win32MouseCapture(lambda *e: events.append(e),
+                          listener_factory=factory)
+    c.start()
+    c.stop()
+    hooks["move"](1, 1)                          # post-stop straggler
+    hooks["click"](1, 1, LEFT, True)
+    assert events == []
+
+
+def test_release_without_seen_press_still_carries_button_mask(cap):
+    c, events, hooks = cap
+    hooks["click"](9, 9, LEFT, False)  # release with no prior press
+    assert events == [("release", 9, 9, 0x100, events[0][4])]
+
+
+def test_start_is_idempotent_single_factory_call():
+    built = []
+
+    def factory(on_move, on_click):
+        built.append(1)
+        return FakeListener()
+
+    c = Win32MouseCapture(lambda *e: None, listener_factory=factory)
+    assert c.start() is True
+    assert c.start() is True
+    assert built == [1]
+    c.stop()

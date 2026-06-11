@@ -91,15 +91,26 @@ class Win32MouseCapture:
         with self._lock:
             if not self._running or self._listener is None:
                 return False
-            # pynput's Listener exposes .running once started; a hook
-            # thread that died flips it False.
-            return bool(getattr(self._listener, "running", True))
+            listener = self._listener
+        # Thread liveness, NOT pynput's `.running` flag: pynput sets
+        # `running` True in run() and never clears it on hook-thread
+        # death (the win32 pump swallows exceptions), so a dead hook
+        # would report healthy forever; and `.running` is briefly False
+        # right after start(), which the service would misread as an
+        # instant-death start failure. is_alive() is correct on both
+        # edges. Fakes without is_alive() fall back to `running`.
+        is_alive = getattr(listener, "is_alive", None)
+        if callable(is_alive):
+            return bool(is_alive())
+        return bool(getattr(listener, "running", True))
 
     # -- listener callbacks (pynput hook thread) -------------------------
 
     def _on_move(self, x, y):
         try:
             with self._lock:
+                if not self._running:
+                    return
                 state = mask_for(self._held)
             self._on_event("motion", int(x), int(y), state, self._now_ms())
         except Exception:
@@ -111,6 +122,8 @@ class Win32MouseCapture:
             if num is None:
                 return  # x1/x2 etc.: invisible to the service
             with self._lock:
+                if not self._running:
+                    return
                 if pressed:
                     state = mask_for(self._held)  # press excludes itself
                     self._held.add(num)
