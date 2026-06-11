@@ -649,7 +649,10 @@ def test_toggle_slot_clears_hover_latch(hover_svc):
     _hover(s, 100, 100)
     clock["t"] += 0.001
     _hover(s, 130, 100)                 # latch + pending armed
-    s.toggle_slot(0)                    # membership change (source evicted)
+    assert s._hover_source is not None
+    assert s._hover_pending is not None
+    s.toggle_slot(2)                    # ADD a member; group stays active
+    assert "active" in s.slot_states().values()
     assert s._hover_source is None
     assert s._hover_pending is None
 
@@ -659,6 +662,8 @@ def test_group_pause_clears_hover_latch(hover_svc):
     _hover(s, 100, 100)
     clock["t"] += 0.001
     _hover(s, 130, 100)                 # latch + pending armed
+    assert s._hover_source is not None
+    assert s._hover_pending is not None
     orig = s._geometry_provider
     s._geometry_provider = lambda wid: None if wid == "20" else orig(wid)
     s.recompute()                       # member 1 unusable -> group pauses
