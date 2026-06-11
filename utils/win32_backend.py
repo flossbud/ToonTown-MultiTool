@@ -254,6 +254,8 @@ class Win32Backend:
         # root_x/root_y/time accepted for XlibBackend signature parity;
         # PostMessage carries neither screen coords nor a timestamp.
         # WM_LBUTTONDOWN's wParam includes the button going down.
+        if button != 1:
+            return False  # left-button only: the service never injects others
         return self._post_mouse(win_id_str, WM_LBUTTONDOWN, MK_LBUTTON, x, y)
 
     def send_button_release(self, win_id_str: str, x: int, y: int,
@@ -261,6 +263,8 @@ class Win32Backend:
                             state: int = 0, time: int = 0) -> bool:
         # WM_LBUTTONUP's wParam excludes the button being released, so it
         # is 0 even for drains (which set Button1Mask in `state`).
+        if button != 1:
+            return False  # left-button only: the service never injects others
         return self._post_mouse(win_id_str, WM_LBUTTONUP, 0, x, y)
 
     def send_motion(self, win_id_str: str, x: int, y: int,

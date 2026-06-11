@@ -73,3 +73,10 @@ def test_malformed_wid_returns_false(backend):
     b, posted = backend
     assert b.send_motion("0xNOPE", 1, 1, 0, 0) is False
     assert posted == []
+
+
+def test_non_left_button_refused(backend):
+    b, posted = backend
+    assert b.send_button_press("777", 1, 1, 0, 0, button=3) is False
+    assert b.send_button_release("777", 1, 1, 0, 0, button=2) is False
+    assert posted == []

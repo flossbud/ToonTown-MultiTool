@@ -121,14 +121,10 @@ def test_refresh_geometry_runs_on_win32(monkeypatch):
     from utils import win32_discovery
     monkeypatch.setattr(win32_discovery, "get_window_geometry",
                         lambda wid: (961, 31, 958, 1008))
-    wm = wm_mod.WindowManager.__new__(wm_mod.WindowManager)
-    import threading
-    wm._lock = threading.Lock()
+    wm = wm_mod.WindowManager()
     wm.ttr_window_ids = ["7407592"]
-    wm.window_geometry = {}
     fired = []
-    wm.window_geometry_updated = type(
-        "S", (), {"emit": lambda self: fired.append(1)})()
-    wm_mod.WindowManager.refresh_geometry(wm)
+    wm.window_geometry_updated.connect(lambda: fired.append(1))
+    wm.refresh_geometry()
     assert wm.window_geometry == {"7407592": (961, 31, 958, 1008)}
     assert fired == [1]
