@@ -2749,6 +2749,13 @@ class MultitoonTab(QWidget):
             from utils.win32_backend import Win32Backend
             from utils.win32_mouse_capture import Win32MouseCapture
 
+            # Threading note (Windows): capture events arrive INSIDE the
+            # WH_MOUSE_LL hook callback, so time spent handling them —
+            # including waiting on the service lock — delays ALL system
+            # mouse input, and a callback exceeding the OS hook timeout
+            # (~300ms) gets the hook silently removed. Work under the
+            # service lock must stay trivially fast.
+
             def _cs_source_resolver(root_x, root_y, member_wids):
                 # Tri-state hit test (wid | "" | None). Member wids ARE
                 # toplevel hwnds, so a direct comparison replaces the X11
@@ -2759,6 +2766,10 @@ class MultitoonTab(QWidget):
                 if frame:
                     return frame if frame in member_wids else None
                 if frame == "":
+                    # Clean miss. Near-unreachable on Windows: over a bare
+                    # desktop WindowFromPoint returns the Progman/WorkerW
+                    # window (a foreign toplevel hit above), not NULL —
+                    # kept for tri-state contract parity with X11.
                     return None
                 for wid in member_wids:
                     g = self.window_manager.get_window_geometry(wid)

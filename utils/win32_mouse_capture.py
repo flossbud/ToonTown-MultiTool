@@ -99,6 +99,10 @@ class Win32MouseCapture:
         # right after start(), which the service would misread as an
         # instant-death start failure. is_alive() is correct on both
         # edges. Fakes without is_alive() fall back to `running`.
+        # Note: neither probe detects a SILENT OS unhook (hook timeout
+        # eviction): the pump thread stays alive with no events. That
+        # failure mode surfaces only as "feature stopped working" until
+        # the user toggles the group (which rebuilds the capture).
         is_alive = getattr(listener, "is_alive", None)
         if callable(is_alive):
             return bool(is_alive())
