@@ -3,7 +3,6 @@ talk to the service. Uses the same construction pattern as the existing
 offscreen multitoon tab tests (test_card_accent_override.py)."""
 
 import os
-import sys
 
 import pytest
 
@@ -11,8 +10,6 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QApplication
-
-pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="Linux-only feature")
 
 
 @pytest.fixture(scope="module")

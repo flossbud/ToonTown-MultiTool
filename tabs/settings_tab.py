@@ -870,24 +870,23 @@ class SettingsTab(QWidget):
         strict_field.set_control(strict_switch)
         ttr_panel.add_field(strict_field)
 
-        # Click sync (TTR, Linux only)
-        if sys.platform != "win32":
-            click_sync_field = SettingsField(
-                "Click sync (TTR)",
-                helper=(
-                    "Mirror your mouse clicks in one toon's window to other "
-                    "selected toons. Choose the toons with the click sync "
-                    "button on each toon. Works when the windows have "
-                    "matching proportions."
-                ),
-            )
-            click_sync_switch = Switch(
-                self.settings_manager.get(CLICK_SYNC_ENABLED, False))
-            click_sync_switch.toggled.connect(
-                lambda v: self.settings_manager.set(CLICK_SYNC_ENABLED, v)
-            )
-            click_sync_field.set_control(click_sync_switch)
-            ttr_panel.add_field(click_sync_field)
+        # Click sync (TTR)
+        click_sync_field = SettingsField(
+            "Click sync (TTR)",
+            helper=(
+                "Mirror your mouse clicks in one toon's window to other "
+                "selected toons. Choose the toons with the click sync "
+                "button on each toon. Works when the windows have "
+                "matching proportions."
+            ),
+        )
+        click_sync_switch = Switch(
+            self.settings_manager.get(CLICK_SYNC_ENABLED, False))
+        click_sync_switch.toggled.connect(
+            lambda v: self.settings_manager.set(CLICK_SYNC_ENABLED, v)
+        )
+        click_sync_field.set_control(click_sync_switch)
+        ttr_panel.add_field(click_sync_field)
 
         lay.insertWidget(insert_at, ttr_panel)
         insert_at += 1
