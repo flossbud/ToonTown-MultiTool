@@ -7,13 +7,75 @@ Uses PostMessage to send keystrokes to background windows without stealing focus
 
 from __future__ import annotations
 
+from time import monotonic
+
 try:
     import win32api
     import win32con
     import win32gui
     import win32process
+
+    VK_MAP = {
+        'space': win32con.VK_SPACE,
+        'Return': win32con.VK_RETURN,
+        'BackSpace': win32con.VK_BACK,
+        'Tab': win32con.VK_TAB,
+        'Escape': win32con.VK_ESCAPE,
+        'Delete': win32con.VK_DELETE,
+        'Up': win32con.VK_UP,
+        'Down': win32con.VK_DOWN,
+        'Left': win32con.VK_LEFT,
+        'Right': win32con.VK_RIGHT,
+        # Navigation cluster (extended keys per Win32 spec)
+        'Home':   win32con.VK_HOME,
+        'End':    win32con.VK_END,
+        'Prior':  win32con.VK_PRIOR,   # Page Up
+        'Next':   win32con.VK_NEXT,    # Page Down
+        'Insert': win32con.VK_INSERT,
+        # Function keys
+        'F1':  win32con.VK_F1,  'F2':  win32con.VK_F2,  'F3':  win32con.VK_F3,
+        'F4':  win32con.VK_F4,  'F5':  win32con.VK_F5,  'F6':  win32con.VK_F6,
+        'F7':  win32con.VK_F7,  'F8':  win32con.VK_F8,  'F9':  win32con.VK_F9,
+        'F10': win32con.VK_F10, 'F11': win32con.VK_F11, 'F12': win32con.VK_F12,
+        # Numpad
+        'KP_0': win32con.VK_NUMPAD0,
+        'KP_1': win32con.VK_NUMPAD1,
+        'KP_2': win32con.VK_NUMPAD2,
+        'KP_3': win32con.VK_NUMPAD3,
+        'KP_4': win32con.VK_NUMPAD4,
+        'KP_5': win32con.VK_NUMPAD5,
+        'KP_6': win32con.VK_NUMPAD6,
+        'KP_7': win32con.VK_NUMPAD7,
+        'KP_8': win32con.VK_NUMPAD8,
+        'KP_9': win32con.VK_NUMPAD9,
+        'KP_Decimal': win32con.VK_DECIMAL,
+        'KP_Enter': win32con.VK_RETURN,
+        'KP_Add': win32con.VK_ADD,
+        'KP_Subtract': win32con.VK_SUBTRACT,
+        'KP_Multiply': win32con.VK_MULTIPLY,
+        'KP_Divide': win32con.VK_DIVIDE,
+        'minus': 0xBD,      # VK_OEM_MINUS
+        'equal': 0xBB,      # VK_OEM_PLUS
+        'bracketleft': 0xDB, # VK_OEM_4
+        'bracketright': 0xDD,# VK_OEM_6
+        'backslash': 0xDC,  # VK_OEM_5
+        'semicolon': 0xBA,  # VK_OEM_1
+        'apostrophe': 0xDE, # VK_OEM_7
+        'comma': 0xBC,      # VK_OEM_COMMA
+        'period': 0xBE,     # VK_OEM_PERIOD
+        'slash': 0xBF,      # VK_OEM_2
+        'grave': 0xC0,      # VK_OEM_3
+        '1': 0x31, '2': 0x32, '3': 0x33, '4': 0x34, '5': 0x35,
+        '6': 0x36, '7': 0x37, '8': 0x38, '9': 0x39, '0': 0x30,
+    }
+    for c in 'abcdefghijklmnopqrstuvwxyz':
+        VK_MAP[c] = ord(c.upper())
 except ImportError:
-    pass
+    # Not on Windows (or pywin32 absent): the module stays importable so
+    # cross-platform unit tests can exercise the pure mouse helpers; the
+    # key path needs the real pywin32 and is only reached on Windows.
+    win32api = win32con = win32gui = win32process = None
+    VK_MAP = {}
 
 # Real Windows keystrokes for L/R modifiers deliver the GENERIC virtual key
 # code (VK_CONTROL=0x11, VK_SHIFT=0x10, VK_MENU=0x12) as wparam — NOT the
@@ -39,59 +101,6 @@ WIN32_MODIFIER_OVERRIDES = {
     'Alt_R':     (0x12, 0x38, True),
 }
 
-VK_MAP = {
-    'space': win32con.VK_SPACE,
-    'Return': win32con.VK_RETURN,
-    'BackSpace': win32con.VK_BACK,
-    'Tab': win32con.VK_TAB,
-    'Escape': win32con.VK_ESCAPE,
-    'Delete': win32con.VK_DELETE,
-    'Up': win32con.VK_UP,
-    'Down': win32con.VK_DOWN,
-    'Left': win32con.VK_LEFT,
-    'Right': win32con.VK_RIGHT,
-    # Navigation cluster (extended keys per Win32 spec)
-    'Home':   win32con.VK_HOME,
-    'End':    win32con.VK_END,
-    'Prior':  win32con.VK_PRIOR,   # Page Up
-    'Next':   win32con.VK_NEXT,    # Page Down
-    'Insert': win32con.VK_INSERT,
-    # Function keys
-    'F1':  win32con.VK_F1,  'F2':  win32con.VK_F2,  'F3':  win32con.VK_F3,
-    'F4':  win32con.VK_F4,  'F5':  win32con.VK_F5,  'F6':  win32con.VK_F6,
-    'F7':  win32con.VK_F7,  'F8':  win32con.VK_F8,  'F9':  win32con.VK_F9,
-    'F10': win32con.VK_F10, 'F11': win32con.VK_F11, 'F12': win32con.VK_F12,
-    # Numpad
-    'KP_0': win32con.VK_NUMPAD0,
-    'KP_1': win32con.VK_NUMPAD1,
-    'KP_2': win32con.VK_NUMPAD2,
-    'KP_3': win32con.VK_NUMPAD3,
-    'KP_4': win32con.VK_NUMPAD4,
-    'KP_5': win32con.VK_NUMPAD5,
-    'KP_6': win32con.VK_NUMPAD6,
-    'KP_7': win32con.VK_NUMPAD7,
-    'KP_8': win32con.VK_NUMPAD8,
-    'KP_9': win32con.VK_NUMPAD9,
-    'KP_Decimal': win32con.VK_DECIMAL,
-    'KP_Enter': win32con.VK_RETURN,
-    'KP_Add': win32con.VK_ADD,
-    'KP_Subtract': win32con.VK_SUBTRACT,
-    'KP_Multiply': win32con.VK_MULTIPLY,
-    'KP_Divide': win32con.VK_DIVIDE,
-    'minus': 0xBD,      # VK_OEM_MINUS
-    'equal': 0xBB,      # VK_OEM_PLUS
-    'bracketleft': 0xDB, # VK_OEM_4
-    'bracketright': 0xDD,# VK_OEM_6
-    'backslash': 0xDC,  # VK_OEM_5
-    'semicolon': 0xBA,  # VK_OEM_1
-    'apostrophe': 0xDE, # VK_OEM_7
-    'comma': 0xBC,      # VK_OEM_COMMA
-    'period': 0xBE,     # VK_OEM_PERIOD
-    'slash': 0xBF,      # VK_OEM_2
-    'grave': 0xC0,      # VK_OEM_3
-    '1': 0x31, '2': 0x32, '3': 0x33, '4': 0x34, '5': 0x35,
-    '6': 0x36, '7': 0x37, '8': 0x38, '9': 0x39, '0': 0x30,
-}
 # Map common Windows nokeysym pynput KeyCode char overrides to standardized strings
 VK_TO_KEYSYM = {
     96: 'KP_0', 97: 'KP_1', 98: 'KP_2', 99: 'KP_3', 100: 'KP_4',
@@ -117,12 +126,45 @@ EXTENDED_KEYSYMS = frozenset({
     'KP_Divide', 'KP_Enter',
 })
 
-for c in 'abcdefghijklmnopqrstuvwxyz':
-    VK_MAP[c] = ord(c.upper())
+# ── mouse injection (click sync) ────────────────────────────────────────
+# Message/flag literals instead of win32con so the mouse helpers are
+# unit-testable off-Windows (win32con only exists under pywin32).
+WM_MOUSEMOVE = 0x0200
+WM_LBUTTONDOWN = 0x0201
+WM_LBUTTONUP = 0x0202
+MK_LBUTTON = 0x0001
+_X_BUTTON1_MASK = 0x100  # the service's X-style state mask for button 1
+
+WM_XBUTTONDOWN = 0x020B
+WM_XBUTTONUP = 0x020C
+# Inactivity-aware carrier gate: re-arm (always carry) once a window has
+# had no motion request for this long; otherwise suppress exact-duplicate
+# mapped points. No distance threshold -- it would skip DirectGUI boundary
+# crossings. The service's ~60Hz coalescer already caps the real rate.
+CARRY_IDLE_S = 0.15
+
+
+def pack_mouse_lparam(x: int, y: int) -> int:
+    """Client coords -> mouse-message lParam (LOWORD x, HIWORD y). Both
+    halves masked to 16 bits: map_point never clamps, so out-of-bounds
+    release coordinates can be negative and must wrap as signed words."""
+    return ((y & 0xFFFF) << 16) | (x & 0xFFFF)
+
+
+def xbutton_carrier_wparam(state: int) -> int:
+    """wParam for the position-carrier: HIWORD = 0 (INVALID X-button
+    selector -> Panda sets the pointer from lParam but queues NO button
+    event and does not steal focus); LOWORD = MK_LBUTTON during a drag
+    (Button1Mask in state) so the carrier preserves the gesture's capture,
+    else 0 (hover; the UP then releases capture)."""
+    return MK_LBUTTON if state & _X_BUTTON1_MASK else 0
+
 
 class Win32Backend:
     def __init__(self):
-        pass
+        # Per-wid carrier gate state (click sync hover/drag, Windows only).
+        self._carry_last_point: dict[str, tuple[int, int]] = {}
+        self._carry_last_request: dict[str, float] = {}
 
     def connect(self):
         pass
@@ -159,7 +201,7 @@ class Win32Backend:
             except Exception:
                 pass
         return None
-        
+
     def _send(self, win_id_str: str, msg: int, vk: int, keysym_str: str = "") -> bool:
         try:
             hwnd = int(win_id_str)
@@ -193,19 +235,84 @@ class Win32Backend:
     def send_key(self, win_id_str: str, keysym_str: str, modifiers: list = None) -> bool:
         mod_map = {"shift": "Shift_L", "ctrl": "Control_L", "alt": "Alt_L"}
         mods_to_send = [mod_map[m.lower()] for m in (modifiers or []) if m.lower() in mod_map]
-        
+
         success = True
         for mod in mods_to_send:
             if not self.send_keydown(win_id_str, mod, 0): success = False
-            
+
         if not self.send_keydown(win_id_str, keysym_str, 0): success = False
-        
+
         if not self.send_keyup(win_id_str, keysym_str, 0): success = False
-        
+
         for mod in reversed(mods_to_send):
             if not self.send_keyup(win_id_str, mod, 0): success = False
-            
+
         return success
+
+    # ── mouse injection (click sync; PostMessage = background delivery,
+    # never moves the real cursor; spike-verified against live TTR) ─────
+
+    def _post_mouse(self, win_id_str: str, msg: int, wparam: int,
+                    x: int, y: int) -> bool:
+        try:
+            hwnd = int(win_id_str)
+            if not win32gui.IsWindow(hwnd):
+                return False  # the XSendEvent BadWindow analogue
+            win32gui.PostMessage(hwnd, msg, wparam, pack_mouse_lparam(x, y))
+            return True
+        except Exception:
+            return False
+
+    def send_button_press(self, win_id_str: str, x: int, y: int,
+                          root_x: int, root_y: int, button: int = 1,
+                          state: int = 0, time: int = 0) -> bool:
+        # root_x/root_y/time accepted for XlibBackend signature parity;
+        # PostMessage carries neither screen coords nor a timestamp.
+        # WM_LBUTTONDOWN's wParam includes the button going down.
+        if button != 1:
+            return False  # left-button only: the service never injects others
+        ok = self._post_mouse(win_id_str, WM_LBUTTONDOWN, MK_LBUTTON, x, y)
+        if ok:
+            self._carry_last_point[win_id_str] = (x, y)
+            self._carry_last_request[win_id_str] = monotonic()
+        return ok
+
+    def send_button_release(self, win_id_str: str, x: int, y: int,
+                            root_x: int, root_y: int, button: int = 1,
+                            state: int = 0, time: int = 0) -> bool:
+        # WM_LBUTTONUP's wParam excludes the button being released, so it
+        # is 0 even for drains (which set Button1Mask in `state`).
+        if button != 1:
+            return False  # left-button only: the service never injects others
+        return self._post_mouse(win_id_str, WM_LBUTTONUP, 0, x, y)
+
+    def send_motion(self, win_id_str: str, x: int, y: int,
+                    root_x: int, root_y: int,
+                    state: int = 0, time: int = 0) -> bool:
+        # Posted WM_MOUSEMOVE does not move TTR's GUI pointer on a
+        # background window (engine re-polls the real cursor); an inert
+        # invalid-selector X-button pair carries the position the way
+        # clicks do. See the Windows hover spec.
+        now = monotonic()
+        last_req = self._carry_last_request.get(win_id_str)
+        self._carry_last_request[win_id_str] = now
+        point = (x, y)
+        armed = last_req is None or (now - last_req) >= CARRY_IDLE_S
+        if not armed and self._carry_last_point.get(win_id_str) == point:
+            return True  # exact duplicate within the active window: suppress
+        wparam = xbutton_carrier_wparam(state)
+        down = self._post_mouse(win_id_str, WM_XBUTTONDOWN, wparam, x, y)
+        up = self._post_mouse(win_id_str, WM_XBUTTONUP, wparam, x, y)
+        if down and up:
+            self._carry_last_point[win_id_str] = point
+            return True
+        # Partial/failed pair: the position may not have stuck -- evict so
+        # the next call cannot dedupe against a stale point. Drop both gate
+        # entries together so they never drift (a dead-hwnd key in one but
+        # not the other).
+        self._carry_last_point.pop(win_id_str, None)
+        self._carry_last_request.pop(win_id_str, None)
+        return False
 
     def sync(self):
         pass

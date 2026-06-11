@@ -2,11 +2,20 @@
 # def-time `tuple[...] | None` annotation raises TypeError without this.
 from __future__ import annotations
 
+import sys
 import threading
 import time
 from PySide6.QtCore import QObject, Signal
 from utils.game_registry import GameRegistry
 from utils import x11_discovery
+
+
+def _geometry_backend():
+    """Platform dispatch for window-geometry queries (click sync)."""
+    if sys.platform == "win32":
+        from utils import win32_discovery
+        return win32_discovery
+    return x11_discovery
 
 class WindowManager(QObject):
     window_ids_updated = Signal(list)
@@ -83,16 +92,14 @@ class WindowManager(QObject):
         self.window_ids_updated.emit(snapshot)
 
     def refresh_geometry(self):
-        """Refresh the geometry cache for all currently-tracked windows.
-        Linux only (the click sync feature is X11-only in v1)."""
-        import sys
-        if sys.platform == "win32":
-            return
+        """Refresh the geometry cache for all currently-tracked windows
+        (x11_discovery on Linux, win32_discovery on Windows)."""
         with self._lock:
             wids = list(self.ttr_window_ids)
+        backend = _geometry_backend()
         fresh = {}
         for wid in wids:
-            g = x11_discovery.get_window_geometry(wid)
+            g = backend.get_window_geometry(wid)
             if g is not None:
                 fresh[wid] = g
         with self._lock:
@@ -119,7 +126,7 @@ class WindowManager(QObject):
             cached = self.window_geometry.get(wid)
         if cached is not None:
             return cached
-        g = x11_discovery.get_window_geometry(wid)
+        g = _geometry_backend().get_window_geometry(wid)
         if g is not None:
             with self._lock:
                 # Cache only tracked windows: caching an untracked wid

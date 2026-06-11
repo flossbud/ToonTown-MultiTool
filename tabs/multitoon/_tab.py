@@ -1223,8 +1223,7 @@ class MultitoonTab(QWidget):
         self.input_service.uipi_blocked_movement_detected.connect(self._on_uipi_blocked)
         self.click_sync_service = None
         self._click_sync_backend = None
-        if sys.platform != "win32":
-            self._build_click_sync()
+        self._build_click_sync()
         self._chat_glow_active = False
         self.window_manager.window_ids_updated.connect(self.update_toon_controls)
         self._toon_names_ready.connect(self._apply_toon_names)
@@ -2738,7 +2737,6 @@ class MultitoonTab(QWidget):
 
     def _build_click_sync(self) -> None:
         from services.click_sync_service import ClickSyncService
-        from utils import x11_discovery as _x11d
 
         def _cs_slot_wid(slot, _wm=self.window_manager):
             ids = _wm.get_window_ids()
@@ -2746,65 +2744,119 @@ class MultitoonTab(QWidget):
                 return ids[slot]
             return None
 
-        def _cs_source_resolver(root_x, root_y, member_wids):
-            # Stacking-aware: the frame under the point must be a member's
-            # toplevel ancestor.
-            # Tri-state hit-test: wid string = a toplevel contains the
-            # point; "" = clean miss (bare root/desktop); None = lookup
-            # FAILURE (no display / X error).
-            frame = _x11d.toplevel_at_point(root_x, root_y)
-            lookup_failed = frame is None
-            if frame:
-                for wid in member_wids:
-                    anc = _x11d.toplevel_ancestor(wid)
-                    if anc is None:
-                        # Transient X error on this member's ancestor walk;
-                        # remember so the fallback below can cover for it.
-                        lookup_failed = True
-                    elif anc == frame:
-                        return wid
-                if not lookup_failed:
-                    # The point cleanly resolved to a non-member toplevel
-                    # (e.g. a foreign window overlapping a TTR window). Per
-                    # spec, that gesture must be ignored, never rect-matched
-                    # to the member window underneath.
+        if sys.platform == "win32":
+            from utils import win32_discovery as _disc
+            from utils.win32_backend import Win32Backend
+            from utils.win32_mouse_capture import Win32MouseCapture
+
+            # Threading note (Windows): capture events arrive INSIDE the
+            # WH_MOUSE_LL hook callback, so time spent handling them —
+            # including waiting on the service lock — delays ALL system
+            # mouse input, and a callback exceeding the OS hook timeout
+            # (~300ms) gets the hook silently removed. Work under the
+            # service lock must stay trivially fast.
+
+            def _cs_source_resolver(root_x, root_y, member_wids):
+                # Tri-state hit test (wid | "" | None). Member wids ARE
+                # toplevel hwnds, so a direct comparison replaces the X11
+                # ancestor walk. Clean misses and foreign toplevels are
+                # ignored; rect-containment ONLY on lookup failure (same
+                # policy as the X11 resolver below).
+                frame = _disc.toplevel_at_point(root_x, root_y)
+                if frame:
+                    return frame if frame in member_wids else None
+                if frame == "":
+                    # Clean miss. Near-unreachable on Windows: over a bare
+                    # desktop WindowFromPoint returns the Progman/WorkerW
+                    # window (a foreign toplevel hit above), not NULL —
+                    # kept for tri-state contract parity with X11.
                     return None
-            elif frame == "":
-                # Clean miss: the point is over the bare root, no toplevel
-                # there at all. Ignore the gesture; never rect-match.
+                for wid in member_wids:
+                    g = self.window_manager.get_window_geometry(wid)
+                    if (g and g[0] <= root_x < g[0] + g[2]
+                            and g[1] <= root_y < g[1] + g[3]):
+                        return wid
                 return None
-            # Rect-containment fallback: only for stacking-resolution
-            # FAILURES (toplevel_at_point or an ancestor lookup hit a
-            # transient X error), never for a clean miss or a clean
-            # foreign-window hit.
-            for wid in member_wids:
-                g = self.window_manager.get_window_geometry(wid)
-                if g and g[0] <= root_x < g[0] + g[2] and g[1] <= root_y < g[1] + g[3]:
-                    return wid
-            return None
 
-        def _cs_capture_factory(on_event):
-            from utils.xrecord_capture import XRecordCapture
-            # on_died closes over its own instance so the service can
-            # identity-check stale generations.
-            holder = []
-            cap = XRecordCapture(
-                on_event,
-                on_died=lambda: self.click_sync_service.notify_capture_died(
-                    holder[0]))
-            holder.append(cap)
-            return cap
+            def _cs_capture_factory(on_event):
+                # on_died closes over its own instance so the service can
+                # identity-check stale generations.
+                holder = []
+                cap = Win32MouseCapture(
+                    on_event,
+                    on_died=lambda: self.click_sync_service.notify_capture_died(
+                        holder[0]))
+                holder.append(cap)
+                return cap
 
-        # Dedicated injection connection. Do NOT share input_service._xlib:
-        # that Display belongs to the InputService worker thread, and click
-        # sync injects from the XRecord capture thread and the hover-flush
-        # timer threads (Xlib Displays must not be used CONCURRENTLY across
-        # threads; click sync's own calls are serialized under the service
-        # lock, so its one dedicated Display is safe).
-        from utils.xlib_backend import XlibBackend
-        self._click_sync_backend = XlibBackend()
+            # PostMessage is connection-less: a dedicated instance is free,
+            # and symmetric with the Linux dedicated-Display rule below.
+            self._click_sync_backend = Win32Backend()
+            _fresh_geom = _disc.get_window_geometry
+        else:
+            from utils import x11_discovery as _x11d
+
+            def _cs_source_resolver(root_x, root_y, member_wids):
+                # Stacking-aware: the frame under the point must be a member's
+                # toplevel ancestor.
+                # Tri-state hit-test: wid string = a toplevel contains the
+                # point; "" = clean miss (bare root/desktop); None = lookup
+                # FAILURE (no display / X error).
+                frame = _x11d.toplevel_at_point(root_x, root_y)
+                lookup_failed = frame is None
+                if frame:
+                    for wid in member_wids:
+                        anc = _x11d.toplevel_ancestor(wid)
+                        if anc is None:
+                            # Transient X error on this member's ancestor walk;
+                            # remember so the fallback below can cover for it.
+                            lookup_failed = True
+                        elif anc == frame:
+                            return wid
+                    if not lookup_failed:
+                        # The point cleanly resolved to a non-member toplevel
+                        # (e.g. a foreign window overlapping a TTR window). Per
+                        # spec, that gesture must be ignored, never rect-matched
+                        # to the member window underneath.
+                        return None
+                elif frame == "":
+                    # Clean miss: the point is over the bare root, no toplevel
+                    # there at all. Ignore the gesture; never rect-match.
+                    return None
+                # Rect-containment fallback: only for stacking-resolution
+                # FAILURES (toplevel_at_point or an ancestor lookup hit a
+                # transient X error), never for a clean miss or a clean
+                # foreign-window hit.
+                for wid in member_wids:
+                    g = self.window_manager.get_window_geometry(wid)
+                    if g and g[0] <= root_x < g[0] + g[2] and g[1] <= root_y < g[1] + g[3]:
+                        return wid
+                return None
+
+            def _cs_capture_factory(on_event):
+                from utils.xrecord_capture import XRecordCapture
+                # on_died closes over its own instance so the service can
+                # identity-check stale generations.
+                holder = []
+                cap = XRecordCapture(
+                    on_event,
+                    on_died=lambda: self.click_sync_service.notify_capture_died(
+                        holder[0]))
+                holder.append(cap)
+                return cap
+
+            # Dedicated injection connection. Do NOT share input_service._xlib:
+            # that Display belongs to the InputService worker thread, and click
+            # sync injects from the XRecord capture thread and the hover-flush
+            # timer threads (Xlib Displays must not be used CONCURRENTLY across
+            # threads; click sync's own calls are serialized under the service
+            # lock, so its one dedicated Display is safe).
+            from utils.xlib_backend import XlibBackend
+            self._click_sync_backend = XlibBackend()
+            _fresh_geom = _x11d.get_window_geometry
+
         try:
-            self._click_sync_backend.connect()
+            self._click_sync_backend.connect()   # no-op on Win32Backend
         except Exception as e:
             print(f"[MultitoonTab] click sync backend connect failed: {e}")
 
@@ -2832,7 +2884,7 @@ class MultitoonTab(QWidget):
             # Gesture snapshots need LIVE geometry: the WM cache can be ~2s
             # stale after a window move, which would mismap the injection.
             # The capture thread gets its own per-thread Display.
-            fresh_geometry_provider=_x11d.get_window_geometry,
+            fresh_geometry_provider=_fresh_geom,
         )
         self.click_sync_service.slot_states_changed.connect(
             self._on_click_sync_states)
@@ -2855,7 +2907,7 @@ class MultitoonTab(QWidget):
         self._apply_click_sync_visibility()
 
     def toggle_click_sync(self, index: int) -> None:
-        if self.click_sync_service is None:  # win32
+        if self.click_sync_service is None:
             return
         member = self.click_sync_service.toggle_slot(index)
         self.click_sync_buttons[index].setChecked(member)
@@ -2997,14 +3049,13 @@ class MultitoonTab(QWidget):
         print(f"[MultitoonTab] click sync error: {message}")
 
     def _apply_click_sync_visibility(self) -> None:
-        """Master switch ON + Linux: the button is ALWAYS present in the
-        row, like the keep-alive button; slots without a TTR window render
-        disabled via the style resolver instead of disappearing. Called on
-        setting change and from update_toon_controls (so per-slot
-        enabledness tracks windows coming and going)."""
+        """Master switch ON: the button is ALWAYS present in the row, like
+        the keep-alive button; slots without a TTR window render disabled
+        via the style resolver instead of disappearing. Called on setting
+        change and from update_toon_controls (so per-slot enabledness
+        tracks windows coming and going)."""
         master = (
-            sys.platform != "win32"
-            and self.settings_manager is not None
+            self.settings_manager is not None
             and bool(self.settings_manager.get(CLICK_SYNC_ENABLED, False))
         )
         for btn in self.click_sync_buttons:
