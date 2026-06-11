@@ -88,3 +88,8 @@ WINDOWS_ADMIN_NOTICE_DISMISSED = "windows_admin_notice_dismissed"
 # Click sync (added 2026-06-10): mirror left-button gestures between
 # same-aspect TTR windows. Default OFF (opt-in posture).
 CLICK_SYNC_ENABLED = "click_sync_enabled"
+
+# Ghost cursors (added 2026-06-11): per-toon glove overlays on windows
+# receiving synthetic click-sync input. Pure display (no input fired),
+# so default ON; no consent gate needed.
+GHOST_CURSORS_ENABLED = "click_sync_ghost_cursors"
