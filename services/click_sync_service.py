@@ -190,6 +190,7 @@ class ClickSyncService(QObject):
                     to_stop, self._capture = cap, None
                     self._service_failed = True
                     self._drain_locked("capture dead at recompute")
+                    self._clear_hover_locked()
                     self._set_states_locked({
                         s: ("error" if s in self._members else "off")
                         for s in range(SLOT_COUNT)
@@ -468,11 +469,17 @@ class ClickSyncService(QObject):
         self._hover_pending = None
         self._emit_hover_locked(root_x, root_y, state, time, now)
 
-    def _emit_hover_locked(self, root_x, root_y, state, time, now):
+    def _emit_hover_locked(self, root_x, root_y, state, time, now,
+                           allow_confirm=True):
         """Resolve the hover source and forward one coalesced sample.
         CACHED geometry on both sides — zero X round trips in the steady
         state; the authoritative resolver runs only on candidate change or
-        the periodic re-confirm (occlusion check)."""
+        the periodic re-confirm (occlusion check).
+
+        allow_confirm=False is used by the trailing-flush path (timer thread):
+        the production resolver opens a per-thread X Display, so the flush
+        must never call it. An unlatched candidate is dropped; a latched one
+        skips the (16ms-stale) periodic re-confirm and forwards directly."""
         wids_by_slot = self._member_wids_locked()
         geoms = {}
         for s, wid in wids_by_slot.items():
@@ -486,16 +493,25 @@ class ClickSyncService(QObject):
         cand_wid = wids_by_slot[cand]
         if (self._hover_source != (cand, cand_wid)
                 or now - self._hover_last_confirm >= HOVER_CONFIRM_S):
-            resolved = self._source_resolver(
-                root_x, root_y, list(wids_by_slot.values()))
-            self._hover_last_confirm = now
-            if resolved != cand_wid:
-                # Different window on top, clean miss, or resolver failure:
-                # all best-effort misses — never latch _service_failed.
-                _trace(f"hover confirm miss cand={cand_wid} got={resolved!r}")
-                self._hover_source = None
-                return
-            self._hover_source = (cand, cand_wid)
+            if not allow_confirm:
+                # Trailing flush runs on a throwaway timer thread; the
+                # production resolver opens a per-thread X Display, so the
+                # flush never confirms. An unlatched candidate is dropped;
+                # a latched one skips the (16ms-stale) periodic re-confirm.
+                if self._hover_source != (cand, cand_wid):
+                    return
+            else:
+                resolved = self._source_resolver(
+                    root_x, root_y, list(wids_by_slot.values()))
+                self._hover_last_confirm = now
+                if resolved != cand_wid:
+                    # Different window on top, clean miss, or resolver
+                    # failure: all best-effort misses — never latch
+                    # _service_failed.
+                    _trace(f"hover confirm miss cand={cand_wid} got={resolved!r}")
+                    self._hover_source = None
+                    return
+                self._hover_source = (cand, cand_wid)
         src_geom = geoms[cand]
         for s, wid in wids_by_slot.items():
             if s == cand or wid == cand_wid:
@@ -513,16 +529,19 @@ class ClickSyncService(QObject):
         """Trailing flush: hover has no release event, but the final resting
         position decides which menu item stays highlighted. One timer in
         flight is enough — it reads whatever sample is pending when it
-        fires."""
+        fires. Each timer owns its slot via identity check in _hover_flush,
+        so a fired-but-lock-blocked old timer cannot steal a newer sample."""
         if self._hover_flush_timer is not None:
             return
-        t = threading.Timer(MOTION_COALESCE_S, self._hover_flush)
+        t = threading.Timer(MOTION_COALESCE_S, lambda: self._hover_flush(t))
         t.daemon = True
         t.start()
         self._hover_flush_timer = t
 
-    def _hover_flush(self):
+    def _hover_flush(self, t):
         with self._lock:
+            if self._hover_flush_timer is not t:
+                return  # superseded/cancelled: a newer owner has the sample
             self._hover_flush_timer = None
             pending, self._hover_pending = self._hover_pending, None
             if (pending is None or self._shutdown or not self._enabled
@@ -531,7 +550,7 @@ class ClickSyncService(QObject):
                 return
             now = monotonic()
             self._hover_last_emit = now
-            self._emit_hover_locked(*pending, now)
+            self._emit_hover_locked(*pending, now, allow_confirm=False)
 
     def _clear_hover_locked(self):
         self._hover_source = None

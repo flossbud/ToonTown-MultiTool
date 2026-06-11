@@ -525,3 +525,57 @@ def test_hover_echo_guard_duplicate_wid_skipped():
         assert [c for c in backend.calls if c[0] == "motion"] == []
     finally:
         s.shutdown()
+
+
+# ── hover flush path (no real-time timers) ────────────────────────────
+
+
+def test_hover_flush_never_calls_resolver(hover_svc):
+    # The trailing flush runs on a throwaway timer thread. The production
+    # resolver opens a per-thread X Display, so the flush must never call
+    # it. For a latched candidate (same slot/wid) the flush skips the
+    # periodic re-confirm; the sample still lands.
+    s, backend, resolver_calls, clock = hover_svc
+    _hover(s, 100, 100)                  # latches "10" (1 resolver call)
+    clock["t"] += 0.001
+    _hover(s, 130, 100, t=2001)          # pending + timer scheduled
+    t = s._hover_flush_timer
+    t.cancel()                           # drive the flush ourselves
+    clock["t"] += 1.0                    # confirm interval long elapsed
+    s._hover_flush(t)
+    assert len(resolver_calls) == 1      # flush skipped the re-confirm
+    motions = [c for c in backend.calls if c[0] == "motion"]
+    assert motions[-1][2:4] == (130, 100)  # but the sample still landed
+
+
+def test_hover_flush_drops_unlatched_candidate(hover_svc):
+    # A pending sample that lands over a *different* member window (not the
+    # latched source) must be dropped by the flush; no confirm call either.
+    s, backend, resolver_calls, clock = hover_svc
+    _hover(s, 100, 100)                  # latches "10"
+    clock["t"] += 0.001
+    _hover(s, 1500, 100, t=2001)         # pending sample over "20": unlatched
+    t = s._hover_flush_timer
+    t.cancel()
+    before = len(resolver_calls)
+    s._hover_flush(t)
+    assert len(resolver_calls) == before                 # no confirm
+    motions = [c for c in backend.calls if c[0] == "motion"]
+    assert all(m[1] == "20" for m in motions)            # only the latched emits
+    assert len(motions) == 1                             # the dropped sample never forwarded
+
+
+def test_hover_member_to_member_candidate_change_reconfirms(hover_svc):
+    # Moving the cursor from one member to another on the MAIN (non-flush)
+    # path must trigger an authoritative re-confirm because the candidate
+    # changed, even inside HOVER_CONFIRM_S.
+    # Geometry: "10"=(0,0,1000,500), "20"=(1100,0,1000,500).
+    # Point (1600,250) is inside "20" at rel (0.5,0.5) -> maps to "10"
+    # client (500,250).
+    s, backend, resolver_calls, clock = hover_svc
+    _hover(s, 500, 250)                  # latch "10" (1 confirm)
+    clock["t"] += 0.05                   # inside HOVER_CONFIRM_S
+    _hover(s, 1600, 250, t=2001)         # cursor now over member "20"
+    assert len(resolver_calls) == 2      # candidate change forced a confirm
+    last = [c for c in backend.calls if c[0] == "motion"][-1]
+    assert last[1] == "10"               # target flipped: source is now "20"
