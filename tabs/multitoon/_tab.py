@@ -2797,8 +2797,10 @@ class MultitoonTab(QWidget):
 
         # Dedicated injection connection. Do NOT share input_service._xlib:
         # that Display belongs to the InputService worker thread, and click
-        # sync injects from the XRecord capture thread (Xlib Displays are
-        # not safe to share across threads).
+        # sync injects from the XRecord capture thread and the hover-flush
+        # timer threads (Xlib Displays must not be used CONCURRENTLY across
+        # threads; click sync's own calls are serialized under the service
+        # lock, so its one dedicated Display is safe).
         from utils.xlib_backend import XlibBackend
         self._click_sync_backend = XlibBackend()
         try:

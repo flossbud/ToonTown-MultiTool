@@ -509,6 +509,86 @@ def test_hover_gesture_takes_precedence(hover_svc):
     assert len(held) == 1
 
 
+def test_hover_held_button_motion_not_forwarded(hover_svc):
+    # A held button with NO synced gesture (press landed outside the
+    # members, or a non-left button) means a drag, not hover. Forwarding
+    # would deliver drag-mask motion to targets that never saw the press.
+    s, backend, resolver_calls, _ = hover_svc
+    s._on_capture_event("motion", 500, 250, 0x100, 2000)  # Button1Mask held
+    s._on_capture_event("motion", 500, 250, 0x400, 2001)  # Button3Mask held
+    assert backend.calls == []
+    assert resolver_calls == []
+
+
+def test_hover_rejected_candidate_throttled(hover_svc, monkeypatch):
+    # An occluded member must not re-confirm at the emit rate: rejection
+    # throttles exactly like a successful latch (HOVER_CONFIRM_S), or
+    # hovering over a foreign window on top of a member costs ~60 X
+    # round trips per second.
+    s, backend, _, clock = hover_svc
+    rejections = []
+
+    def deny(rx, ry, wids):
+        rejections.append((rx, ry))
+        return None
+
+    monkeypatch.setattr(s, "_source_resolver", deny)
+    _hover(s, 500, 250)
+    clock["t"] += 0.05
+    _hover(s, 520, 250)                  # same rejected candidate, inside interval
+    clock["t"] += 0.05
+    _hover(s, 540, 250)
+    assert len(rejections) == 1          # throttled
+    clock["t"] += 0.30                   # past HOVER_CONFIRM_S
+    _hover(s, 560, 250)
+    assert len(rejections) == 2          # periodic retry
+    assert [c for c in backend.calls if c[0] == "motion"] == []
+
+
+def test_hover_overlap_latches_resolved_member(monkeypatch):
+    # Two members share a rect (cascaded windows). The rect test picks the
+    # lower slot, but the resolver says member "20" is on top: latch "20"
+    # and forward to "10" instead of clearing (a clear would make hover
+    # permanently dead in any member-overlap region). And while that latch
+    # is fresh it wins over the rect pick, so the overlap does not
+    # re-confirm every tick.
+    geoms = {"10": (0, 0, 1000, 500), "20": (0, 0, 1000, 500)}
+    backend = FakeBackend()
+    resolver_calls = []
+
+    def resolver(rx, ry, wids):
+        resolver_calls.append((rx, ry))
+        return "20"
+
+    clock = {"t": 100.0}
+    monkeypatch.setattr("services.click_sync_service.monotonic",
+                        lambda: clock["t"])
+    s = ClickSyncService(
+        slot_window_resolver=lambda slot: {0: "10", 1: "20"}.get(slot),
+        geometry_provider=lambda wid: geoms.get(wid),
+        source_resolver=resolver,
+        backend=backend,
+        capture_factory=lambda on_event: FakeCapture(on_event),
+    )
+    try:
+        s.set_enabled(True)
+        s.toggle_slot(0)
+        s.toggle_slot(1)
+        _hover(s, 500, 250)
+        motions = [c for c in backend.calls if c[0] == "motion"]
+        assert len(motions) == 1
+        assert motions[0][1] == "10"     # source is "20": forwards TO "10"
+        assert s._hover_source == (1, "20")
+        assert len(resolver_calls) == 1
+        clock["t"] += 0.05               # inside the confirm interval
+        _hover(s, 520, 250, t=2001)
+        motions = [c for c in backend.calls if c[0] == "motion"]
+        assert len(motions) == 2
+        assert len(resolver_calls) == 1  # fresh latch wins: no confirm storm
+    finally:
+        s.shutdown()
+
+
 def test_hover_echo_guard_duplicate_wid_skipped():
     geoms = {"10": (0, 0, 1000, 500)}
     backend = FakeBackend()
@@ -563,7 +643,7 @@ def test_hover_flush_drops_unlatched_candidate(hover_svc):
     s._hover_flush(t)
     assert len(resolver_calls) == before                 # no confirm
     motions = [c for c in backend.calls if c[0] == "motion"]
-    assert all(m[1] == "20" for m in motions)            # only the latched emits
+    assert all(m[1] == "20" for m in motions)  # only the latched source's forward landed
     assert len(motions) == 1                             # the dropped sample never forwarded
 
 
