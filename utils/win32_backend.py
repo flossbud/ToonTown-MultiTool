@@ -12,8 +12,68 @@ try:
     import win32con
     import win32gui
     import win32process
+
+    VK_MAP = {
+        'space': win32con.VK_SPACE,
+        'Return': win32con.VK_RETURN,
+        'BackSpace': win32con.VK_BACK,
+        'Tab': win32con.VK_TAB,
+        'Escape': win32con.VK_ESCAPE,
+        'Delete': win32con.VK_DELETE,
+        'Up': win32con.VK_UP,
+        'Down': win32con.VK_DOWN,
+        'Left': win32con.VK_LEFT,
+        'Right': win32con.VK_RIGHT,
+        # Navigation cluster (extended keys per Win32 spec)
+        'Home':   win32con.VK_HOME,
+        'End':    win32con.VK_END,
+        'Prior':  win32con.VK_PRIOR,   # Page Up
+        'Next':   win32con.VK_NEXT,    # Page Down
+        'Insert': win32con.VK_INSERT,
+        # Function keys
+        'F1':  win32con.VK_F1,  'F2':  win32con.VK_F2,  'F3':  win32con.VK_F3,
+        'F4':  win32con.VK_F4,  'F5':  win32con.VK_F5,  'F6':  win32con.VK_F6,
+        'F7':  win32con.VK_F7,  'F8':  win32con.VK_F8,  'F9':  win32con.VK_F9,
+        'F10': win32con.VK_F10, 'F11': win32con.VK_F11, 'F12': win32con.VK_F12,
+        # Numpad
+        'KP_0': win32con.VK_NUMPAD0,
+        'KP_1': win32con.VK_NUMPAD1,
+        'KP_2': win32con.VK_NUMPAD2,
+        'KP_3': win32con.VK_NUMPAD3,
+        'KP_4': win32con.VK_NUMPAD4,
+        'KP_5': win32con.VK_NUMPAD5,
+        'KP_6': win32con.VK_NUMPAD6,
+        'KP_7': win32con.VK_NUMPAD7,
+        'KP_8': win32con.VK_NUMPAD8,
+        'KP_9': win32con.VK_NUMPAD9,
+        'KP_Decimal': win32con.VK_DECIMAL,
+        'KP_Enter': win32con.VK_RETURN,
+        'KP_Add': win32con.VK_ADD,
+        'KP_Subtract': win32con.VK_SUBTRACT,
+        'KP_Multiply': win32con.VK_MULTIPLY,
+        'KP_Divide': win32con.VK_DIVIDE,
+        'minus': 0xBD,      # VK_OEM_MINUS
+        'equal': 0xBB,      # VK_OEM_PLUS
+        'bracketleft': 0xDB, # VK_OEM_4
+        'bracketright': 0xDD,# VK_OEM_6
+        'backslash': 0xDC,  # VK_OEM_5
+        'semicolon': 0xBA,  # VK_OEM_1
+        'apostrophe': 0xDE, # VK_OEM_7
+        'comma': 0xBC,      # VK_OEM_COMMA
+        'period': 0xBE,     # VK_OEM_PERIOD
+        'slash': 0xBF,      # VK_OEM_2
+        'grave': 0xC0,      # VK_OEM_3
+        '1': 0x31, '2': 0x32, '3': 0x33, '4': 0x34, '5': 0x35,
+        '6': 0x36, '7': 0x37, '8': 0x38, '9': 0x39, '0': 0x30,
+    }
+    for c in 'abcdefghijklmnopqrstuvwxyz':
+        VK_MAP[c] = ord(c.upper())
 except ImportError:
-    pass
+    # Not on Windows (or pywin32 absent): the module stays importable so
+    # cross-platform unit tests can exercise the pure mouse helpers; the
+    # key path needs the real pywin32 and is only reached on Windows.
+    win32api = win32con = win32gui = win32process = None
+    VK_MAP = {}
 
 # Real Windows keystrokes for L/R modifiers deliver the GENERIC virtual key
 # code (VK_CONTROL=0x11, VK_SHIFT=0x10, VK_MENU=0x12) as wparam — NOT the
@@ -39,59 +99,6 @@ WIN32_MODIFIER_OVERRIDES = {
     'Alt_R':     (0x12, 0x38, True),
 }
 
-VK_MAP = {
-    'space': win32con.VK_SPACE,
-    'Return': win32con.VK_RETURN,
-    'BackSpace': win32con.VK_BACK,
-    'Tab': win32con.VK_TAB,
-    'Escape': win32con.VK_ESCAPE,
-    'Delete': win32con.VK_DELETE,
-    'Up': win32con.VK_UP,
-    'Down': win32con.VK_DOWN,
-    'Left': win32con.VK_LEFT,
-    'Right': win32con.VK_RIGHT,
-    # Navigation cluster (extended keys per Win32 spec)
-    'Home':   win32con.VK_HOME,
-    'End':    win32con.VK_END,
-    'Prior':  win32con.VK_PRIOR,   # Page Up
-    'Next':   win32con.VK_NEXT,    # Page Down
-    'Insert': win32con.VK_INSERT,
-    # Function keys
-    'F1':  win32con.VK_F1,  'F2':  win32con.VK_F2,  'F3':  win32con.VK_F3,
-    'F4':  win32con.VK_F4,  'F5':  win32con.VK_F5,  'F6':  win32con.VK_F6,
-    'F7':  win32con.VK_F7,  'F8':  win32con.VK_F8,  'F9':  win32con.VK_F9,
-    'F10': win32con.VK_F10, 'F11': win32con.VK_F11, 'F12': win32con.VK_F12,
-    # Numpad
-    'KP_0': win32con.VK_NUMPAD0,
-    'KP_1': win32con.VK_NUMPAD1,
-    'KP_2': win32con.VK_NUMPAD2,
-    'KP_3': win32con.VK_NUMPAD3,
-    'KP_4': win32con.VK_NUMPAD4,
-    'KP_5': win32con.VK_NUMPAD5,
-    'KP_6': win32con.VK_NUMPAD6,
-    'KP_7': win32con.VK_NUMPAD7,
-    'KP_8': win32con.VK_NUMPAD8,
-    'KP_9': win32con.VK_NUMPAD9,
-    'KP_Decimal': win32con.VK_DECIMAL,
-    'KP_Enter': win32con.VK_RETURN,
-    'KP_Add': win32con.VK_ADD,
-    'KP_Subtract': win32con.VK_SUBTRACT,
-    'KP_Multiply': win32con.VK_MULTIPLY,
-    'KP_Divide': win32con.VK_DIVIDE,
-    'minus': 0xBD,      # VK_OEM_MINUS
-    'equal': 0xBB,      # VK_OEM_PLUS
-    'bracketleft': 0xDB, # VK_OEM_4
-    'bracketright': 0xDD,# VK_OEM_6
-    'backslash': 0xDC,  # VK_OEM_5
-    'semicolon': 0xBA,  # VK_OEM_1
-    'apostrophe': 0xDE, # VK_OEM_7
-    'comma': 0xBC,      # VK_OEM_COMMA
-    'period': 0xBE,     # VK_OEM_PERIOD
-    'slash': 0xBF,      # VK_OEM_2
-    'grave': 0xC0,      # VK_OEM_3
-    '1': 0x31, '2': 0x32, '3': 0x33, '4': 0x34, '5': 0x35,
-    '6': 0x36, '7': 0x37, '8': 0x38, '9': 0x39, '0': 0x30,
-}
 # Map common Windows nokeysym pynput KeyCode char overrides to standardized strings
 VK_TO_KEYSYM = {
     96: 'KP_0', 97: 'KP_1', 98: 'KP_2', 99: 'KP_3', 100: 'KP_4',
@@ -140,9 +147,6 @@ def mouse_wparam_from_state(state: int) -> int:
     modifier MK flags are never set."""
     return MK_LBUTTON if state & _X_BUTTON1_MASK else 0
 
-for c in 'abcdefghijklmnopqrstuvwxyz':
-    VK_MAP[c] = ord(c.upper())
-
 class Win32Backend:
     def __init__(self):
         pass
@@ -182,7 +186,7 @@ class Win32Backend:
             except Exception:
                 pass
         return None
-        
+
     def _send(self, win_id_str: str, msg: int, vk: int, keysym_str: str = "") -> bool:
         try:
             hwnd = int(win_id_str)
