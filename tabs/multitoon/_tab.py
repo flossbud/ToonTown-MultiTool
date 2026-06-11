@@ -16,7 +16,8 @@ from services.input_service import InputService
 from services.sleep_inhibitor import SleepInhibitor
 from utils.theme_manager import (
     resolve_theme, get_theme_colors, apply_card_shadow,
-    make_chat_icon, make_click_sync_icon, make_refresh_icon, make_lightning_icon,
+    make_chat_icon, make_click_sync_icon, make_click_sync_warning_icon,
+    make_refresh_icon, make_lightning_icon,
     make_heart_icon, make_jellybean_icon,
     get_set_color, SmoothProgressBar, make_section_label,
 )
@@ -1155,6 +1156,11 @@ class MultitoonTab(QWidget):
         self.toon_buttons = []
         self.chat_buttons = []
         self.click_sync_buttons = []
+        # Click sync visual state (single style-writer resolver; spec:
+        # 2026-06-10-click-sync-button-styling-design.md).
+        self._click_sync_states = {i: "off" for i in range(4)}
+        self._click_sync_icons = {}
+        self._click_sync_error_tip = None
         # Per-slot cached "game type supports chat button" intent. Updated by
         # CC/TTR paint paths via _set_chat_button_visible. Read by
         # apply_chat_handling_mode when the global mode flips so visibility
@@ -1752,6 +1758,7 @@ class MultitoonTab(QWidget):
     def refresh_theme(self):
         c = self._c()
         is_dark = resolve_theme(self.settings_manager) == "dark"
+        self._click_sync_icons = {}  # palette changed: rebuild tinted icons
 
         self.config_label.setStyleSheet(
             f"font-size: 10px; font-weight: 600; color: {c['text_muted']}; "
@@ -1843,6 +1850,11 @@ class MultitoonTab(QWidget):
         # widgets that Compact expects to look different.
         if self._mode == "full" and hasattr(self, "_full") and self._full is not None:
             self._full.apply_theme(c)
+
+        # Click sync buttons: restyle with the new palette (cache was
+        # cleared at the top of this method, so icons rebuild tinted).
+        for i in range(len(self.click_sync_buttons)):
+            self._apply_click_sync_btn_style(i, c)
 
         self.update_status_label()
 
@@ -1987,6 +1999,10 @@ class MultitoonTab(QWidget):
                 }}
             """)
             selector.setEnabled(False)
+
+        # Click sync button is state-driven (service states), not driven by
+        # the toon-enable branches above; one resolver call per repaint.
+        self._apply_click_sync_btn_style(index, c)
 
         # Re-brand the card stripe (forward fill on enable, cross-fade
         # back when disabled). Pulls game from the slot's visible game
@@ -2842,36 +2858,117 @@ class MultitoonTab(QWidget):
         member = self.click_sync_service.toggle_slot(index)
         self.click_sync_buttons[index].setChecked(member)
 
-    _CLICK_SYNC_STYLES = {
-        "off": "",
-        "armed": "QPushButton { border: 1px solid #c9a227; }",
-        "active": "QPushButton { border: 1px solid #2e9e44; }",
-        "error": "QPushButton { border: 1px solid #cc3b3b; }",
-    }
-    _CLICK_SYNC_TIPS = {
-        "off": "Click sync: mirror clicks to this toon",
-        "armed": "Click sync: waiting for a second toon",
-        "active": "Click sync: active",
-        "error": "Click sync: paused (window missing or proportions differ)",
-    }
+    def _click_sync_visual_state(self, index: int) -> str:
+        state = self._click_sync_states.get(index, "off")
+        return state if state in ("off", "armed", "active", "error") else "off"
+
+    def _rebuild_click_sync_icons(self, c) -> None:
+        """Per-palette icon cache. Rebuilt on theme refresh so icons tinted
+        with the previous palette never survive a theme switch."""
+        self._click_sync_icons = {
+            "off": make_click_sync_icon(14, c["text_muted"]),
+            "armed": make_click_sync_icon(14, c["accent_pink_border"]),
+            "active": make_click_sync_icon(14, c["text_on_accent"]),
+            "error": make_click_sync_warning_icon(14, c["text_on_accent"]),
+        }
+
+    def _apply_click_sync_btn_style(self, index: int, c) -> None:
+        """SINGLE style writer for the click sync button (spec:
+        2026-06-10-click-sync-button-styling-design.md): stylesheet, icon,
+        checked flag, and tooltip all come from here."""
+        if index >= len(self.click_sync_buttons):
+            return
+        btn = self.click_sync_buttons[index]
+        state = self._click_sync_visual_state(index)
+        if not self._click_sync_icons:
+            self._rebuild_click_sync_icons(c)
+        btn.setIcon(self._click_sync_icons[state])
+        btn.setChecked(state != "off")
+        if state == "active":
+            btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {c['accent_pink']};
+                    color: {c['text_on_accent']};
+                    border: 2px solid {c['accent_pink_border']};
+                    border-radius: 6px;
+                }}
+                QPushButton:hover {{
+                    background-color: {c['accent_pink_hover']};
+                    border: 2px solid {c['accent_pink_border']};
+                }}
+            """)
+        elif state == "armed":
+            btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {c['toon_btn_inactive_bg']};
+                    color: {c['text_muted']};
+                    border: 2px solid {c['accent_pink_border']};
+                    border-radius: 6px;
+                }}
+                QPushButton:hover {{
+                    background-color: {c['toon_btn_inactive_hover']};
+                    border: 2px solid {c['accent_pink_hover']};
+                }}
+            """)
+        elif state == "error":
+            btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {c['accent_red']};
+                    color: {c['text_on_accent']};
+                    border: 2px solid {c['accent_red_border']};
+                    border-radius: 6px;
+                }}
+                QPushButton:hover {{
+                    background-color: {c['accent_red_hover']};
+                    border: 2px solid {c['accent_red_border']};
+                }}
+            """)
+        else:  # off (also the unknown-state fallback)
+            btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {c['toon_btn_inactive_bg']};
+                    color: {c['text_muted']};
+                    border: 1px solid {c['toon_btn_inactive_border']};
+                    border-radius: 6px;
+                }}
+                QPushButton:hover {{
+                    background-color: {c['toon_btn_inactive_hover']};
+                    border: 1px solid {c['toon_btn_inactive_hover_border']};
+                }}
+            """)
+        tips = {
+            "off": "Click sync: mirror clicks to this toon",
+            "armed": "Click sync: waiting for a second toon",
+            "active": "Click sync: active",
+            "error": "Click sync: paused (window missing or proportions differ)",
+        }
+        if state == "error" and self._click_sync_error_tip:
+            btn.setToolTip(self._click_sync_error_tip)
+        else:
+            btn.setToolTip(tips[state])
 
     def _on_click_sync_states(self, states: dict) -> None:
-        for i, btn in enumerate(self.click_sync_buttons):
-            state = states.get(i, "off")
-            btn.setChecked(state != "off")
-            btn.setStyleSheet(self._CLICK_SYNC_STYLES[state])
-            btn.setToolTip(self._CLICK_SYNC_TIPS[state])
+        # Complete four-slot snapshot from the service: REPLACE the cache,
+        # never merge. A fresh snapshot supersedes any service-error
+        # tooltip override.
+        self._click_sync_states = dict(states)
+        self._click_sync_error_tip = None
+        c = self._c()
+        for i in range(len(self.click_sync_buttons)):
+            self._apply_click_sync_btn_style(i, c)
 
     def _on_click_sync_service_error(self, message: str) -> None:
         """A capture failure needs different user action than a window
-        mismatch: replace the generic error tooltip on the member buttons.
-        The service emits states (error) before this signal, so the
-        generic tooltip is already applied; recovery (any toggle) goes
-        back through _on_click_sync_states, which resets it."""
-        tip = f"Click sync: stopped ({message}). Toggle a toon button to retry."
-        for btn in self.click_sync_buttons:
-            if btn.isChecked():
-                btn.setToolTip(tip)
+        mismatch. The service emits error STATES first, then this signal;
+        the override re-styles slots whose cached state is error and stays
+        until the next state snapshot clears it."""
+        self._click_sync_error_tip = (
+            f"Click sync: stopped ({message}). Toggle a toon button to retry."
+        )
+        c = self._c()
+        for i in range(len(self.click_sync_buttons)):
+            if self._click_sync_visual_state(i) == "error":
+                self._apply_click_sync_btn_style(i, c)
         print(f"[MultitoonTab] click sync error: {message}")
 
     def _apply_click_sync_visibility(self) -> None:

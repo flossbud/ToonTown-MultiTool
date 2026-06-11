@@ -96,14 +96,79 @@ def test_toggle_calls_service(multitoon_tab):
 def test_service_error_sets_failure_tooltip(multitoon_tab):
     # A capture failure must NOT leave the generic mismatch tooltip on the
     # member buttons (it would send the user resizing windows instead of
-    # retrying). The service emits error states first, then service_error.
+    # retrying). The service emits error STATES first, then service_error;
+    # the override applies to slots whose cached state is "error".
     tab = multitoon_tab
-    tab.click_sync_buttons[0].setChecked(True)
-    tab.click_sync_buttons[1].setChecked(True)
-    tab.click_sync_service.service_error.emit("mouse capture unavailable")
+    svc = tab.click_sync_service
+    svc.slot_states_changed.emit({0: "error", 1: "error", 2: "off", 3: "off"})
+    svc.service_error.emit("mouse capture unavailable")
     for i in (0, 1):
         tip = tab.click_sync_buttons[i].toolTip()
         assert "mouse capture unavailable" in tip
         assert "proportions" not in tip
     # Non-member button keeps its default tooltip.
     assert "stopped" not in tab.click_sync_buttons[2].toolTip()
+    # Recovery: any fresh snapshot supersedes the override.
+    svc.slot_states_changed.emit({0: "active", 1: "active", 2: "off", 3: "off"})
+    assert "stopped" not in tab.click_sync_buttons[0].toolTip()
+
+
+def test_state_styles_follow_palette(multitoon_tab):
+    tab = multitoon_tab
+    svc = tab.click_sync_service
+    svc.slot_states_changed.emit({0: "armed", 1: "active", 2: "error", 3: "off"})
+    c = tab._c()
+    s0 = tab.click_sync_buttons[0].styleSheet()
+    assert c["accent_pink_border"] in s0 and c["toon_btn_inactive_bg"] in s0
+    assert c["accent_pink"] in tab.click_sync_buttons[1].styleSheet()
+    assert c["accent_red"] in tab.click_sync_buttons[2].styleSheet()
+    s3 = tab.click_sync_buttons[3].styleSheet()
+    assert c["toon_btn_inactive_border"] in s3
+    assert c["accent_pink"] not in s3
+
+
+def test_unknown_state_resolves_off(multitoon_tab):
+    tab = multitoon_tab
+    tab.click_sync_service.slot_states_changed.emit(
+        {0: "garbage", 1: "off", 2: "off", 3: "off"})
+    c = tab._c()
+    assert c["toon_btn_inactive_bg"] in tab.click_sync_buttons[0].styleSheet()
+
+
+def test_error_icon_swaps_and_recovers(multitoon_tab):
+    tab = multitoon_tab
+    svc = tab.click_sync_service
+    svc.slot_states_changed.emit({0: "active", 1: "off", 2: "off", 3: "off"})
+    active_key = tab.click_sync_buttons[0].icon().cacheKey()
+    svc.slot_states_changed.emit({0: "error", 1: "off", 2: "off", 3: "off"})
+    assert tab.click_sync_buttons[0].icon().cacheKey() != active_key
+    svc.slot_states_changed.emit({0: "active", 1: "off", 2: "off", 3: "off"})
+    assert tab.click_sync_buttons[0].icon().cacheKey() == active_key
+
+
+def test_master_toggle_restores_state_styling(multitoon_tab):
+    # End-to-end through the REAL service: members whose windows can't
+    # resolve (fake WM has no geometry) style as error (red); master OFF
+    # emits all-off (gray); master ON restores the retained membership's
+    # states (red again). Pins emission -> resolver styling round trips.
+    tab = multitoon_tab
+    svc = tab.click_sync_service
+    c = tab._c()
+    svc.set_enabled(True)
+    svc.toggle_slot(0)
+    svc.toggle_slot(1)
+    assert c["accent_red"] in tab.click_sync_buttons[0].styleSheet()
+    svc.set_enabled(False)  # emits a real all-off snapshot
+    assert c["toon_btn_inactive_bg"] in tab.click_sync_buttons[0].styleSheet()
+    assert c["accent_red"] not in tab.click_sync_buttons[0].styleSheet()
+    svc.set_enabled(True)   # membership retained: states re-emit
+    assert c["accent_red"] in tab.click_sync_buttons[0].styleSheet()
+
+
+def test_theme_refresh_rebuilds_icon_cache(multitoon_tab):
+    tab = multitoon_tab
+    tab.click_sync_service.slot_states_changed.emit(
+        {0: "active", 1: "off", 2: "off", 3: "off"})
+    before = tab._click_sync_icons["active"].cacheKey()
+    tab.refresh_theme()
+    assert tab._click_sync_icons["active"].cacheKey() != before

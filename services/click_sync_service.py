@@ -35,8 +35,12 @@ def _trace(msg: str) -> None:
 
 
 class ClickSyncService(QObject):
-    # {slot: "off"|"armed"|"active"|"error"}; emitted on every state change.
-    slot_states_changed = Signal(dict)
+    # {slot(int): "off"|"armed"|"active"|"error"}; emitted on every state
+    # change. Signal(object), NOT Signal(dict): PySide6 marshals dict
+    # parameters through QVariantMap, which cannot represent int keys and
+    # delivers an EMPTY dict to slots (verified live). object passes the
+    # Python dict through untouched.
+    slot_states_changed = Signal(object)
     # Emitted once if the capture backend dies / cannot start.
     service_error = Signal(str)
 
