@@ -2738,6 +2738,11 @@ class MultitoonTab(QWidget):
     def _build_click_sync(self) -> None:
         from services.click_sync_service import ClickSyncService
 
+        # Set before the resolver closures below are built: they read this
+        # attribute at call time, and capture can start before the
+        # controller is constructed at the end of this method.
+        self.ghost_cursor_controller = None
+
         def _cs_slot_wid(slot, _wm=self.window_manager):
             ids = _wm.get_window_ids()
             if slot < len(ids) and _wm.window_games.get(ids[slot]) == "ttr":
@@ -2763,6 +2768,9 @@ class MultitoonTab(QWidget):
                 # ignored; rect-containment ONLY on lookup failure (same
                 # policy as the X11 resolver below).
                 frame = _disc.toplevel_at_point(root_x, root_y)
+                # Ghost overlays need no guard here: WindowFromPoint skips
+                # WS_EX_TRANSPARENT layered windows (what Qt's
+                # WindowTransparentForInput sets).
                 if frame:
                     return frame if frame in member_wids else None
                 if frame == "":
@@ -2803,6 +2811,16 @@ class MultitoonTab(QWidget):
                 # point; "" = clean miss (bare root/desktop); None = lookup
                 # FAILURE (no display / X error).
                 frame = _x11d.toplevel_at_point(root_x, root_y)
+                gc = self.ghost_cursor_controller
+                if frame and gc is not None and frame in gc.overlay_wids():
+                    # One of our own ghost overlays under the point (edge
+                    # spill / stacked member windows). It only ever sits on
+                    # top of a member window, so resolve via the rect-
+                    # containment fallback below, never classify it as a
+                    # foreign toplevel. (Belt-and-suspenders: the overlay's
+                    # empty input shape already hides it from
+                    # translate_coords on Xorg/XWayland.)
+                    frame = None
                 lookup_failed = frame is None
                 if frame:
                     for wid in member_wids:
@@ -2904,6 +2922,12 @@ class MultitoonTab(QWidget):
             self.click_sync_service.set_enabled(
                 bool(self.settings_manager.get(CLICK_SYNC_ENABLED, False)))
             self.settings_manager.on_change(self._on_click_sync_setting_changed)
+        # Ghost cursors: per-toon glove overlays on synced windows (spec
+        # 2026-06-11-click-sync-ghost-cursors-design.md). parent=self for
+        # the same Qt-parenting teardown reason as the service above.
+        from tabs.multitoon._ghost_cursors import GhostCursorController
+        self.ghost_cursor_controller = GhostCursorController(
+            self.click_sync_service, self.settings_manager, parent=self)
         self._apply_click_sync_visibility()
 
     def toggle_click_sync(self, index: int) -> None:
