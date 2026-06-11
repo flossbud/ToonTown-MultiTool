@@ -12,9 +12,16 @@ from __future__ import annotations
 
 def _get_ancestor_root(hwnd: int) -> int:
     """GetAncestor(GA_ROOT): the toplevel for any (child) hwnd. ctypes
-    rather than win32gui — present in every pywin32/ctypes combination."""
+    rather than win32gui — present in every pywin32/ctypes combination.
+    Explicit prototypes: the default c_int restype SIGN-EXTENDS handles
+    whose bit 31 is set, yielding negative ids that never string-match
+    the window manager's pywin32 hwnds."""
     import ctypes
-    return int(ctypes.windll.user32.GetAncestor(hwnd, 2))  # GA_ROOT = 2
+    from ctypes import wintypes
+    fn = ctypes.windll.user32.GetAncestor
+    fn.argtypes = (wintypes.HWND, wintypes.UINT)
+    fn.restype = wintypes.HWND  # void-p based: returns int or None
+    return int(fn(hwnd, 2) or 0)  # GA_ROOT = 2
 
 
 def get_window_geometry(wid: str) -> tuple[int, int, int, int] | None:

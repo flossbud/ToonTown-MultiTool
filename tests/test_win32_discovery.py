@@ -20,9 +20,21 @@ def fake_gui(monkeypatch):
 
 
 def test_get_window_geometry_client_area_screen_coords(fake_gui):
-    fake_gui.GetClientRect = lambda h: (0, 0, 958, 1008)
-    fake_gui.ClientToScreen = lambda h, pt: (961, 31)
+    calls = {}
+
+    def get_client_rect(h):
+        calls["rect_hwnd"] = h
+        return (0, 0, 958, 1008)
+
+    def client_to_screen(h, pt):
+        calls["cts"] = (h, pt)
+        return (961, 31)
+
+    fake_gui.GetClientRect = get_client_rect
+    fake_gui.ClientToScreen = client_to_screen
     assert win32_discovery.get_window_geometry("7407592") == (961, 31, 958, 1008)
+    assert calls["rect_hwnd"] == 7407592          # wid parsed to int hwnd
+    assert calls["cts"] == (7407592, (0, 0))      # client origin as ONE tuple
 
 
 def test_get_window_geometry_failure_returns_none(fake_gui):
@@ -34,10 +46,17 @@ def test_get_window_geometry_failure_returns_none(fake_gui):
 
 
 def test_toplevel_at_point_returns_root_ancestor(fake_gui, monkeypatch):
-    fake_gui.WindowFromPoint = lambda pt: 0x501  # deepest child
+    seen = {}
+
+    def window_from_point(pt):
+        seen["pt"] = pt
+        return 0x501  # deepest child
+
+    fake_gui.WindowFromPoint = window_from_point
     monkeypatch.setattr(win32_discovery, "_get_ancestor_root",
                         lambda hwnd: 0x700)
     assert win32_discovery.toplevel_at_point(500, 250) == str(0x700)
+    assert seen["pt"] == (500, 250)               # single POINT tuple
 
 
 def test_toplevel_at_point_clean_miss_is_empty_string(fake_gui):
