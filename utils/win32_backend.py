@@ -307,8 +307,11 @@ class Win32Backend:
             self._carry_last_point[win_id_str] = point
             return True
         # Partial/failed pair: the position may not have stuck -- evict so
-        # the next call cannot dedupe against a stale point.
+        # the next call cannot dedupe against a stale point. Drop both gate
+        # entries together so they never drift (a dead-hwnd key in one but
+        # not the other).
         self._carry_last_point.pop(win_id_str, None)
+        self._carry_last_request.pop(win_id_str, None)
         return False
 
     def sync(self):
