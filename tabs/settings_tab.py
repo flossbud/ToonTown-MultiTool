@@ -32,7 +32,9 @@ from utils.settings_keys import (
 # Full-UI content cap: pages stop growing at this width and center in the
 # scroll viewport (QScrollArea.widgetResizable bounds the resize by the
 # widget's maximumWidth, then positions it by alignment()). 880px panels
-# + 2 x 28px page margins. Unconditional — compact windows never reach it.
+# + 2 x 28px page margins. Unconditional by design: it engages whenever the
+# content area exceeds it, including wide-but-short windows that stay compact
+# by height; ordinary compact sizes (~445px content area) never reach it.
 SETTINGS_CONTENT_MAX_W = 936
 
 # ── New primitives (Settings tab redesign 2026-05-23) ─────────────────────────
