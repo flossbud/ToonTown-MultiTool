@@ -2927,7 +2927,21 @@ class MultitoonTab(QWidget):
         # the same Qt-parenting teardown reason as the service above.
         from tabs.multitoon._ghost_cursors import GhostCursorController
         self.ghost_cursor_controller = GhostCursorController(
-            self.click_sync_service, self.settings_manager, parent=self)
+            self.click_sync_service, self.settings_manager, parent=self,
+            slot_window_resolver=_cs_slot_wid)
+        # The focused window never shows a ghost (spec
+        # 2026-06-12-ghost-cursor-focus-suppress-design.md). Same
+        # duck-typed guard as window_geometry_updated above: offscreen
+        # fakes without the signal degrade to no focus suppression.
+        if hasattr(self.window_manager, "active_window_changed"):
+            self.window_manager.active_window_changed.connect(
+                self.ghost_cursor_controller.set_focused_window)
+        else:
+            print("[MultitoonTab] ghost cursors: window manager lacks "
+                  "active_window_changed; focus suppression disabled")
+        if hasattr(self.window_manager, "get_active_window"):
+            self.ghost_cursor_controller.set_focused_window(
+                self.window_manager.get_active_window() or "")
         self._apply_click_sync_visibility()
 
     def toggle_click_sync(self, index: int) -> None:

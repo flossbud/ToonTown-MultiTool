@@ -18,6 +18,7 @@ def qapp():
 class _FakeWindowManager(QObject):
     window_ids_updated = Signal(list)
     window_geometry_updated = Signal()
+    active_window_changed = Signal(str)
 
     def __init__(self):
         super().__init__()
@@ -92,3 +93,25 @@ def test_resolver_still_ignores_true_foreign_toplevels(multitoon_tab, monkeypatc
     resolver = tab.click_sync_service._source_resolver
     # A clean foreign-window hit must STILL be ignored (no rect fallback).
     assert resolver(50, 50, ["0x1"]) is None
+
+
+def test_focus_suppression_wired_to_window_manager(multitoon_tab):
+    tab = multitoon_tab
+    wm = tab.window_manager
+    wm.window_ids = ["0x1", "0x2"]
+    wm.window_games = {"0x1": "ttr", "0x2": "ttr"}
+    # Ghost appears on slot 1, then its window gains focus -> hidden.
+    tab.click_sync_service.ghost_pointer_event.emit(
+        ("motion", [(1, 200, 300)]))
+    ov = tab.ghost_cursor_controller._overlays[1]
+    assert ov.isVisible()
+    wm.active_window_changed.emit("0x2")     # slot 1's wid
+    assert not ov.isVisible()
+    # Suppressed while focused; renders again once focus moves away.
+    tab.click_sync_service.ghost_pointer_event.emit(
+        ("motion", [(1, 210, 310)]))
+    assert not ov.isVisible()
+    wm.active_window_changed.emit("0x1")
+    tab.click_sync_service.ghost_pointer_event.emit(
+        ("motion", [(1, 220, 320)]))
+    assert ov.isVisible()
