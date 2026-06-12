@@ -34,12 +34,12 @@ Past releases v1.0 through v2.3.0-a1 have been retagged to v0.1.0-alpha.1 throug
 - Pick which toons join with the click sync button on each toon card, then flip the master switch in Settings > Features. Works when the windows share proportions. Off by default.
 - Each synced window shows that toon's own glove cursor where the mirrored mouse lands, and never on the window you're actively using. On by default; toggle it in the same settings card.
 
-### <img src="assets/ttr.png" height="26" align="middle"> Toontown Rewritten support
+### <img src="assets/logos/ttr_readme.png" height="34" align="middle"> Toontown Rewritten support
 - Sign in to TTR from inside the app. If TTR has a login queue, you see your queue position and ETA.
 - Launches both the standard TTR install and the official Flatpak version.
 - See each toon's name, laff, jellybean count, and portrait update live while you play, across all your open TTR windows.
 
-### <img src="assets/cc.png" height="26" align="middle"> Corporate Clash support
+### <img src="assets/logos/cc_readme.png" height="34" align="middle"> Corporate Clash support
 - Sign in to CC from inside the app.
 - Plays nicely with however you have CC installed: native Windows, or any major Linux setup (Wine, Bottles, Lutris, Steam Proton, and similar).
 - Multi-toon for CC, which CC's official launcher doesn't support out of the box.
