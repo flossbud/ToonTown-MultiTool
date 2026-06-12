@@ -75,4 +75,6 @@ def test_main_resume_pending_mode_swap_propagates_to_tabs():
     assert instance._layout_mode == "full"
     assert instance._pending_mode_swap is None
     MultiToonTool._resume_pending_mode_swap(instance)  # re-entrant: no-op
+    instance.multitoon_tab.set_layout_mode.assert_called_once_with("full")
+    instance.launch_tab.set_layout_mode.assert_called_once_with("full")
     instance.settings_tab.set_layout_mode.assert_called_once_with("full")
