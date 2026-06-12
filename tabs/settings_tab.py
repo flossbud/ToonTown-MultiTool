@@ -684,6 +684,7 @@ class SettingsTab(QWidget):
         self.pages: dict[str, QWidget] = {}
         self._panels: list[SettingsPanel] = []
         self._current_page_key: str = "general"
+        self._layout_mode: str = "compact"
         self._update_checker = None
         self._check_now_field = None
         self._check_now_btn = None
@@ -1775,6 +1776,18 @@ class SettingsTab(QWidget):
             QTimer.singleShot(10000, lambda: helper.setText(default_text))
 
     # ── Public API ────────────────────────────────────────────────────────
+    def set_layout_mode(self, mode: str) -> None:
+        """Participate in the app-wide compact<->full layout swap (same
+        contract as MultitoonTab/LaunchTab). Full mode widens the category
+        rail; the content width cap is unconditional. Cheap no-op when the
+        mode is unchanged."""
+        if mode not in ("compact", "full"):
+            return
+        if mode == self._layout_mode:
+            return
+        self._layout_mode = mode
+        self.sidebar.set_expanded(mode == "full")
+
     def set_update_checker(self, checker):
         self._update_checker = checker
         checker.update_available.connect(self._on_check_complete_update)

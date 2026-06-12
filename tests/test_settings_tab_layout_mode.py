@@ -120,3 +120,32 @@ def test_wide_tab_centers_content_column(qapp, settings_manager):
     expected = rail_w + (2000 - rail_w - SETTINGS_CONTENT_MAX_W) // 2
     assert abs(x - expected) <= 30  # scrollbar gutter tolerance
     tab.hide()
+
+
+def test_set_layout_mode_drives_sidebar_expansion(qapp, settings_manager):
+    from tabs.settings_tab import SettingsTab
+    tab = SettingsTab(settings_manager)
+    assert tab.sidebar.width() == 130  # constructs compact
+    tab.set_layout_mode("full")
+    assert tab.sidebar.width() == 200
+    tab.set_layout_mode("compact")
+    assert tab.sidebar.width() == 130
+
+
+def test_set_layout_mode_ignores_unknown_modes(qapp, settings_manager):
+    from tabs.settings_tab import SettingsTab
+    tab = SettingsTab(settings_manager)
+    tab.set_layout_mode("full")
+    tab.set_layout_mode("banana")
+    assert tab.sidebar.width() == 200
+
+
+def test_set_layout_mode_is_idempotent(qapp, settings_manager):
+    from tabs.settings_tab import SettingsTab
+    tab = SettingsTab(settings_manager)
+    tab.set_layout_mode("full")
+    tab.set_layout_mode("full")
+    assert tab.sidebar.width() == 200
+    tab.set_layout_mode("compact")
+    tab.set_layout_mode("compact")
+    assert tab.sidebar.width() == 130

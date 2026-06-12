@@ -1165,6 +1165,8 @@ class MultiToonTool(QMainWindow):
         self.multitoon_tab.set_layout_mode(target)
         if hasattr(self, "launch_tab") and self.launch_tab is not None:
             self.launch_tab.set_layout_mode(target)
+        if hasattr(self, "settings_tab") and self.settings_tab is not None:
+            self.settings_tab.set_layout_mode(target)
 
     def _resume_pending_mode_swap(self) -> None:
         target = getattr(self, "_pending_mode_swap", None)
@@ -1175,6 +1177,8 @@ class MultiToonTool(QMainWindow):
         self.multitoon_tab.set_layout_mode(target)
         if hasattr(self, "launch_tab") and self.launch_tab is not None:
             self.launch_tab.set_layout_mode(target)
+        if hasattr(self, "settings_tab") and self.settings_tab is not None:
+            self.settings_tab.set_layout_mode(target)
 
     def open_customization(self, slot: int) -> None:
         """Open the customization overlay for the given slot. Lazy-
