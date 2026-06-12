@@ -168,3 +168,91 @@ def test_show_at_during_inflight_fade_keeps_overlay_visible(rig):
     assert ov.isVisible()
     assert ov.windowOpacity() == 1.0
     assert ov._fade.state() == QPropertyAnimation.State.Stopped
+
+
+@pytest.fixture
+def focus_rig(qapp):
+    from tabs.multitoon._ghost_cursors import GhostCursorController
+    svc = FakeService()
+    slot_map = {0: "0xa", 1: "0xb"}
+    ctl = GhostCursorController(
+        svc, StubSettings(), slot_window_resolver=slot_map.get)
+    yield svc, ctl, slot_map
+    ctl._hide_all()
+    for ov in ctl._overlays.values():
+        ov.deleteLater()
+
+
+def test_focus_hides_existing_ghost_and_stops_timer(focus_rig):
+    svc, ctl, _ = focus_rig
+    svc.ghost_pointer_event.emit(("motion", [(0, 50, 50), (1, 60, 60)]))
+    assert ctl._overlays[0].isVisible()
+    ctl.set_focused_window("0xa")
+    assert not ctl._overlays[0].isVisible()
+    assert not ctl._timers[0].isActive()
+    assert ctl._overlays[1].isVisible()      # other slot untouched
+    assert ctl._timers[1].isActive()
+
+
+def test_events_suppressed_while_focused(focus_rig):
+    svc, ctl, _ = focus_rig
+    ctl.set_focused_window("0xa")
+    svc.ghost_pointer_event.emit(("motion", [(0, 50, 50), (1, 60, 60)]))
+    assert 0 not in ctl._overlays            # never even created
+    assert ctl._overlays[1].isVisible()      # same batch still renders
+
+
+def test_focus_moving_away_reallows_rendering(focus_rig):
+    svc, ctl, _ = focus_rig
+    ctl.set_focused_window("0xa")
+    svc.ghost_pointer_event.emit(("motion", [(0, 50, 50)]))
+    assert 0 not in ctl._overlays
+    ctl.set_focused_window("0xb")
+    svc.ghost_pointer_event.emit(("motion", [(0, 70, 70)]))
+    assert ctl._overlays[0].isVisible()
+
+
+def test_empty_focus_clears_suppression(focus_rig):
+    svc, ctl, _ = focus_rig
+    ctl.set_focused_window("0xa")
+    ctl.set_focused_window(None)             # no active window: normalize to ""
+    svc.ghost_pointer_event.emit(("motion", [(0, 50, 50)]))
+    assert ctl._overlays[0].isVisible()
+
+
+def test_no_resolver_focus_calls_inert(rig):
+    svc, _, ctl = rig                        # rig has no resolver
+    ctl.set_focused_window("0xa")
+    svc.ghost_pointer_event.emit(("motion", [(0, 50, 50)]))
+    assert ctl._overlays[0].isVisible()      # today's behavior unchanged
+
+
+def test_focus_hide_lands_during_inflight_fade(focus_rig):
+    from PySide6.QtCore import QPropertyAnimation
+    svc, ctl, _ = focus_rig
+    svc.ghost_pointer_event.emit(("motion", [(0, 50, 50)]))
+    ov = ctl._overlays[0]
+    ov.fade_out()
+    ov._fade.setCurrentTime(75)
+    assert ov._fade.state() == QPropertyAnimation.State.Running
+    ctl.set_focused_window("0xa")
+    assert not ov.isVisible()
+    assert ov._fade.state() == QPropertyAnimation.State.Stopped
+
+
+def test_duplicate_wid_slots_all_suppressed(qapp):
+    from tabs.multitoon._ghost_cursors import GhostCursorController
+    svc = FakeService()
+    slot_map = {0: "0xa", 1: "0xa"}          # same window in both slots
+    ctl = GhostCursorController(
+        svc, StubSettings(), slot_window_resolver=slot_map.get)
+    try:
+        svc.ghost_pointer_event.emit(("motion", [(0, 50, 50), (1, 60, 60)]))
+        ctl.set_focused_window("0xa")
+        assert all(not ov.isVisible() for ov in ctl._overlays.values())
+        svc.ghost_pointer_event.emit(("motion", [(0, 70, 70), (1, 80, 80)]))
+        assert all(not ov.isVisible() for ov in ctl._overlays.values())
+    finally:
+        ctl._hide_all()
+        for ov in ctl._overlays.values():
+            ov.deleteLater()

@@ -98,7 +98,8 @@ class GhostCursorOverlay(QWidget):
 class GhostCursorController(QObject):
     """Drives up to four lazily-created overlays from the service signals."""
 
-    def __init__(self, service, settings_manager, parent=None):
+    def __init__(self, service, settings_manager, parent=None,
+                 slot_window_resolver=None):
         super().__init__(parent)
         self._enabled = True
         if settings_manager is not None:
@@ -108,6 +109,12 @@ class GhostCursorController(QObject):
         self._overlays: dict[int, GhostCursorOverlay] = {}
         self._timers: dict[int, QTimer] = {}
         self._wid_cache: frozenset[str] = frozenset()
+        # Focus suppression (spec
+        # 2026-06-12-ghost-cursor-focus-suppress-design.md): the focused
+        # window never shows a ghost. Resolver maps slot -> wid (the tab's
+        # _cs_slot_wid closure); without one, focus calls are inert.
+        self._slot_window_resolver = slot_window_resolver
+        self._focused_wid = ""
         self._disabled_reason = self._platform_unsupported()
         if self._disabled_reason:
             print(f"[GhostCursors] disabled: {self._disabled_reason}")
@@ -129,6 +136,21 @@ class GhostCursorController(QObject):
         id format toplevel_at_point returns). Safe from any thread."""
         return self._wid_cache
 
+    def set_focused_window(self, wid: str | None) -> None:
+        """Hide any ghost on the newly focused window and keep it
+        suppressed while focus stays (the per-point guard in
+        _on_pointer_event). GUI thread — queued from the WindowManager
+        poll thread. None normalizes to "" (no active window)."""
+        self._focused_wid = wid or ""
+        if self._slot_window_resolver is None or not self._focused_wid:
+            return
+        for slot, ov in self._overlays.items():
+            if self._slot_window_resolver(slot) == self._focused_wid:
+                ov.hide_now()
+                t = self._timers.get(slot)
+                if t is not None:
+                    t.stop()
+
     # -- signal handlers (GUI thread) -----------------------------------
 
     def _on_pointer_event(self, payload) -> None:
@@ -136,6 +158,8 @@ class GhostCursorController(QObject):
             return
         _kind, points = payload
         for slot, x, y in points:
+            if self._suppressed_by_focus(slot):
+                continue
             ov = self._overlay_for(slot)
             if ov is None:
                 if self._disabled_reason is not None:
@@ -153,6 +177,11 @@ class GhostCursorController(QObject):
         self._enabled = bool(value)
         if not self._enabled:
             self._hide_all()
+
+    def _suppressed_by_focus(self, slot: int) -> bool:
+        return (self._slot_window_resolver is not None
+                and bool(self._focused_wid)
+                and self._slot_window_resolver(slot) == self._focused_wid)
 
     # -- internals -------------------------------------------------------
 
