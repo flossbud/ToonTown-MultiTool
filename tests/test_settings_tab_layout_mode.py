@@ -59,3 +59,64 @@ def test_sidebar_expanded_sizing_survives_theme_refresh(qapp):
     sb.apply_theme(get_theme_colors(True), True)
     assert sb.width() == 200
     assert "14px" in sb.items[0].label_widget.styleSheet()
+
+
+@pytest.fixture
+def settings_manager():
+    class _Stub:
+        def __init__(self):
+            self._d = {"theme": "dark"}
+            self._listeners = []
+
+        def get(self, key, default=None):
+            return self._d.get(key, default)
+
+        def set(self, key, value):
+            self._d[key] = value
+            for fn in list(self._listeners):
+                fn(key, value)
+
+        def on_change(self, fn):
+            self._listeners.append(fn)
+
+    return _Stub()
+
+
+def test_every_page_is_width_capped(qapp, settings_manager):
+    from tabs.settings_tab import SettingsTab, SETTINGS_CONTENT_MAX_W
+    tab = SettingsTab(settings_manager)
+    for key, page in tab.pages.items():
+        assert page.maximumWidth() == SETTINGS_CONTENT_MAX_W, key
+
+
+def test_every_scroll_area_centers_its_page(qapp, settings_manager):
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QScrollArea
+    from tabs.settings_tab import SettingsTab
+    tab = SettingsTab(settings_manager)
+    scrolls = [
+        tab._stack.widget(i)
+        for i in range(tab._stack.count())
+    ]
+    assert scrolls and all(isinstance(s, QScrollArea) for s in scrolls)
+    for s in scrolls:
+        assert s.alignment() & Qt.AlignHCenter
+        assert s.alignment() & Qt.AlignTop
+
+
+def test_wide_tab_centers_content_column(qapp, settings_manager):
+    """At a maximized-like width the page sits centered between the rail
+    and the right edge, not glued to the rail."""
+    from PySide6.QtCore import QPoint
+    from tabs.settings_tab import SettingsTab, SETTINGS_CONTENT_MAX_W
+    tab = SettingsTab(settings_manager)
+    tab.resize(2000, 900)
+    tab.show()
+    QApplication.processEvents()
+    page = tab.pages["general"]
+    assert page.width() == SETTINGS_CONTENT_MAX_W
+    x = page.mapTo(tab, QPoint(0, 0)).x()
+    rail_w = tab.sidebar.width()
+    expected = rail_w + (2000 - rail_w - SETTINGS_CONTENT_MAX_W) // 2
+    assert abs(x - expected) <= 30  # scrollbar gutter tolerance
+    tab.hide()

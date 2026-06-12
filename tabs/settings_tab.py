@@ -29,6 +29,12 @@ from utils.settings_keys import (
 )
 
 
+# Full-UI content cap: pages stop growing at this width and center in the
+# scroll viewport (QScrollArea.widgetResizable bounds the resize by the
+# widget's maximumWidth, then positions it by alignment()). 880px panels
+# + 2 x 28px page margins. Unconditional — compact windows never reach it.
+SETTINGS_CONTENT_MAX_W = 936
+
 # ── New primitives (Settings tab redesign 2026-05-23) ─────────────────────────
 
 class SettingsField(QFrame):
@@ -722,6 +728,8 @@ class SettingsTab(QWidget):
             page._panel_layout = page_lay  # type: ignore[attr-defined]
             page_lay.addStretch(1)
 
+            page.setMaximumWidth(SETTINGS_CONTENT_MAX_W)
+            scroll.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
             scroll.setWidget(page)
             self.pages[key] = page
             self._stack.addWidget(scroll)
