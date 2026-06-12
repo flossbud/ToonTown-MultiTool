@@ -2962,9 +2962,11 @@ class MultitoonTab(QWidget):
         if not self._click_sync_icons:
             self._rebuild_click_sync_icons(c)
         # A slot with no TTR window renders disabled (chat-button disabled
-        # look) UNLESS it is still a member: an orphaned member must stay
-        # clickable so the user can evict it from the group (its red error
-        # state otherwise pauses the group with no affordance to fix it).
+        # look) UNLESS it is still a member. Windowless members are evicted
+        # service-side (spec 2026-06-12-click-sync-evict-windowless), so
+        # this guard only covers the instant between the window vanishing
+        # and the eviction snapshot landing; the checked flag below tracks
+        # the snapshot, so service-side eviction unchecks the button here.
         ids = self.window_manager.get_window_ids()
         has_ttr = (index < len(ids)
                    and self.window_manager.window_games.get(ids[index]) == "ttr")

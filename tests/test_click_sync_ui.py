@@ -97,17 +97,20 @@ def test_windowless_slot_is_disabled_not_hidden(multitoon_tab):
     assert btn.isEnabled()
 
 
-def test_orphaned_member_stays_clickable(multitoon_tab):
-    # A member whose window vanished shows error AND remains enabled: the
-    # button is the only affordance to evict it and unpause the group.
+def test_geometry_paused_member_stays_clickable(multitoon_tab):
+    # Error state now means "window exists but geometry lookup failed" (or
+    # aspect mismatch / service failure) — windowless members are evicted
+    # service-side and render off instead. A paused member stays enabled
+    # and red; checked tracks membership from the snapshot.
     tab = multitoon_tab
     tab.settings_manager.set("click_sync_enabled", True)
     tab.click_sync_service.slot_states_changed.emit(
         {0: "error", 1: "armed", 2: "off", 3: "off"})
     c = tab._c()
-    btn = tab.click_sync_buttons[0]  # member, but no window in the fake WM
+    btn = tab.click_sync_buttons[0]
     assert btn.isEnabled()
     assert c["accent_red"] in btn.styleSheet()
+    assert btn.isChecked()
 
 
 def test_toggle_calls_service(multitoon_tab):
@@ -200,3 +203,41 @@ def test_theme_refresh_rebuilds_icon_cache(multitoon_tab):
     before = tab._click_sync_icons["active"].cacheKey()
     tab.refresh_theme()
     assert tab._click_sync_icons["active"].cacheKey() != before
+
+
+def test_state_snapshot_syncs_checked(multitoon_tab):
+    # Membership can change service-side (windowless eviction), so checked
+    # must track the snapshot, not just manual toggles.
+    tab = multitoon_tab
+    tab.settings_manager.set("click_sync_enabled", True)
+    tab.click_sync_buttons[0].setChecked(True)   # stale manual check
+    tab.click_sync_service.slot_states_changed.emit(
+        {0: "off", 1: "armed", 2: "active", 3: "error"})
+    assert tab.click_sync_buttons[0].isChecked() is False
+    assert tab.click_sync_buttons[1].isChecked() is True
+    assert tab.click_sync_buttons[2].isChecked() is True
+    assert tab.click_sync_buttons[3].isChecked() is True
+
+
+def test_evicted_windowless_slot_renders_off_and_disabled(multitoon_tab):
+    # End-to-end shape of the eviction UX: the service emits an all-off
+    # snapshot (member evicted) and the slot has no window, so the button
+    # is unchecked AND disabled ("no toon detected").
+    tab = multitoon_tab
+    tab.settings_manager.set("click_sync_enabled", True)
+    _fill_ttr_slots(tab)
+    tab._apply_click_sync_visibility()
+    tab.click_sync_service.slot_states_changed.emit(
+        {0: "armed", 1: "armed", 2: "off", 3: "off"})
+    assert tab.click_sync_buttons[0].isChecked()
+    # Both windows close: detection empties the list, the service evicts
+    # and emits all-off.
+    tab.window_manager.window_ids = []
+    tab.window_manager.window_games = {}
+    tab.click_sync_service.slot_states_changed.emit(
+        {0: "off", 1: "off", 2: "off", 3: "off"})
+    tab._apply_click_sync_visibility()
+    btn = tab.click_sync_buttons[0]
+    assert btn.isChecked() is False
+    assert not btn.isEnabled()
+    assert "no toon detected" in btn.toolTip()
