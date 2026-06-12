@@ -21,7 +21,7 @@ Past releases v1.0 through v2.3.0-a1 have been retagged to v0.1.0-alpha.1 throug
 
 ## ✨ Features
 
-**Multitoon control**
+### 🎮 Multitoon control
 - Play up to 4 toons at the same time. What you do on the active toon (move, jump, talk, attack) happens on the others too.
 - Each toon can use a different set of movement keys (WASD, arrow keys, or your own custom layout).
 - Save up to 8 key layouts and assign a different one to each toon.
@@ -29,27 +29,27 @@ Past releases v1.0 through v2.3.0-a1 have been retagged to v0.1.0-alpha.1 throug
 - Decide where your chat goes: four chat handling modes (Focused Toon Only, All Toons, Keyset Dynamic, Per-Toon (manual)), switchable under Settings > Features. Focused Toon Only is the default.
 - Press F5 anywhere in the app to refresh the detected toon list.
 
-**Click Sync**
+### 🖱️ Click Sync
 - Turn it on and your mouse plays every synced toon at once: clicks, drags, and hover movement mirror from the window you're playing into your other selected TTR windows, landing at the corresponding spot in each.
 - Pick which toons join with the click sync button on each toon card, then flip the master switch in Settings > Features. Works when the windows share proportions. Off by default.
 - Each synced window shows that toon's own glove cursor where the mirrored mouse lands, and never on the window you're actively using. On by default; toggle it in the same settings card.
 
-**Toontown Rewritten support**
+### <img src="assets/ttr.png" height="22"> Toontown Rewritten support
 - Sign in to TTR from inside the app. If TTR has a login queue, you see your queue position and ETA.
 - Launches both the standard TTR install and the official Flatpak version.
 - See each toon's name, laff, jellybean count, and portrait update live while you play, across all your open TTR windows.
 
-**Corporate Clash support**
+### <img src="assets/cc.png" height="22"> Corporate Clash support
 - Sign in to CC from inside the app.
 - Plays nicely with however you have CC installed: native Windows, or any major Linux setup (Wine, Bottles, Lutris, Steam Proton, and similar).
 - Multi-toon for CC, which CC's official launcher doesn't support out of the box.
 - If CC reports the wrong species for one of your toons and the portrait shows the wrong character, set the right one per-toon and it sticks.
 
-**Accounts**
+### 🔑 Accounts
 - Save up to 16 accounts across both games, with one-click launch.
 - Passwords are stored securely; the app never writes them into plain files. See [PRIVACY.md](PRIVACY.md) for details.
 
-**Session profiles**
+### 💾 Session profiles
 - Save up to 5 named setups (which toons are active, plus their movement keys and anti-idle settings).
 - Switch setups instantly with Ctrl+1 through Ctrl+5.
 
