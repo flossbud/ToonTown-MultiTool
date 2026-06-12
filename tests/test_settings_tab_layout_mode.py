@@ -141,11 +141,18 @@ def test_set_layout_mode_ignores_unknown_modes(qapp, settings_manager):
 
 
 def test_set_layout_mode_is_idempotent(qapp, settings_manager):
+    """Re-applying the current mode must short-circuit at the tab level,
+    not just rely on Sidebar.set_expanded's own no-op guard."""
+    from unittest.mock import patch
     from tabs.settings_tab import SettingsTab
     tab = SettingsTab(settings_manager)
     tab.set_layout_mode("full")
-    tab.set_layout_mode("full")
+    with patch.object(tab.sidebar, "set_expanded") as spy:
+        tab.set_layout_mode("full")
+        spy.assert_not_called()
     assert tab.sidebar.width() == 200
     tab.set_layout_mode("compact")
-    tab.set_layout_mode("compact")
+    with patch.object(tab.sidebar, "set_expanded") as spy:
+        tab.set_layout_mode("compact")
+        spy.assert_not_called()
     assert tab.sidebar.width() == 130

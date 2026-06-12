@@ -58,7 +58,8 @@ def test_main_set_layout_mode_propagates_to_tabs():
 
 
 def test_main_resume_pending_mode_swap_propagates_to_tabs():
-    """The deferred-swap resume path drives the same tab contract."""
+    """The deferred-swap resume path drives the same tab contract and
+    clears the pending flag (a re-entrant resume must no-op)."""
     from unittest.mock import MagicMock
     from main import MultiToonTool
     instance = MultiToonTool.__new__(MultiToonTool)
@@ -72,3 +73,6 @@ def test_main_resume_pending_mode_swap_propagates_to_tabs():
     instance.launch_tab.set_layout_mode.assert_called_once_with("full")
     instance.settings_tab.set_layout_mode.assert_called_once_with("full")
     assert instance._layout_mode == "full"
+    assert instance._pending_mode_swap is None
+    MultiToonTool._resume_pending_mode_swap(instance)  # re-entrant: no-op
+    instance.settings_tab.set_layout_mode.assert_called_once_with("full")
