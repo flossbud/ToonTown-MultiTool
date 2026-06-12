@@ -26,6 +26,13 @@ Past releases v1.0 through v2.3.0-a1 have been retagged to v0.1.0-alpha.1 throug
 - Each toon can use a different set of movement keys (WASD, arrow keys, or your own custom layout).
 - Save up to 8 key layouts and assign a different one to each toon.
 - Keep background toons from going idle: pick a key and an interval, and the app presses it for them automatically. **(The use of Keep-Alive and other automation tools is against TTR and CC ToS, and thus is disabled by default. Enable in settings at your own risk.)**
+- Decide where your chat goes: four chat handling modes (Focused Toon Only, All Toons, Keyset Dynamic, Per-Toon (manual)), switchable under Settings > Features. Focused Toon Only is the default.
+- Press F5 anywhere in the app to refresh the detected toon list.
+
+**Click Sync**
+- Turn it on and your mouse plays every synced toon at once: clicks, drags, and hover movement mirror from the window you're playing into your other selected TTR windows, landing at the corresponding spot in each.
+- Pick which toons join with the click sync button on each toon card, then flip the master switch in Settings > Features. Works when the windows share proportions. Off by default.
+- Each synced window shows that toon's own glove cursor where the mirrored mouse lands, and never on the window you're actively using. On by default; toggle it in the same settings card.
 
 **Toontown Rewritten support**
 - Sign in to TTR from inside the app. If TTR has a login queue, you see your queue position and ETA.
@@ -152,11 +159,7 @@ For unsupported distros (openSUSE, Gentoo, NixOS), or if you already have Python
 
 #### Wayland
 
-If you're on Wayland and hit input issues, force xcb:
-
-```bash
-QT_QPA_PLATFORM=xcb python main.py
-```
+By default the app runs through XWayland (xcb) on Wayland sessions; this is what the multitoon input features need. Set `TTMT_USE_WAYLAND=1` to opt into native Wayland instead (multitoon input features won't work there).
 
 ---
 
