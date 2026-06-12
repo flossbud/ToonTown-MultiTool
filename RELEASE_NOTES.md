@@ -1,19 +1,16 @@
-## ToonTown MultiTool v0.7.0-alpha.3
+## ToonTown MultiTool v0.7.0-alpha.4
 
-Adds four-mode chat handling, an F5 refresh hotkey, and Windows support for elevated games.
+Adds Click Sync: Mouse Input Forwarding
 
 ---
 
 ### Improvements
 
-- Chat handling is now a Forwarding Logic selector in Settings with four modes (Focused Toon Only, All Toons, Keyset Dynamic, Per-Toon), each explained right in the card.
-- Press F5 to refresh the detected toon list (with a short cooldown so repeated presses don't spam).
-- On Windows, the app now detects when a game is running as administrator while the tool is not, shows a notice, and offers a one-click relaunch as administrator so multitooning keeps working.
-
-### Bug Fixes
-
-- Backspace pressed while chatting no longer reaches toons that are excluded from chat broadcasting.
-- Custom keysets that rebind non-movement actions now send those keys only to the toon that owns the binding.
+- New Click Sync feature: mirror mouse clicks, drags, and hover movement from the window you're playing to your other selected toons. Choose toons with the click sync button on each toon card; works on Windows and Linux when the windows have matching proportions. Off by default.
+- Ghost cursors: each synced toon shows its own glove cursor where the mirrored mouse lands, and never on the window you're actively using. Toggle it under Settings > Features.
+- Click Sync has its own card under Settings > Features, alongside Keep-Alive and Chat Handling.
+- A synced toon whose window closes now drops out of the sync group automatically; click its button again after relaunching to rejoin.
+- Running from source no longer shows an update banner when your checkout is already at or past the latest release.
 
 ---
 
@@ -21,18 +18,18 @@ Adds four-mode chat handling, an F5 refresh hotkey, and Windows support for elev
 
 | Platform | Asset |
 |---|---|
-| Windows installer | `ToonTownMultiTool-Setup-v0.7.0-alpha.3.exe` |
-| Windows portable | `ToonTownMultiTool-Portable-v0.7.0-alpha.3.zip` |
-| Linux AppImage | `ToonTownMultiTool-v0.7.0-alpha.3.AppImage` |
-| Linux Flatpak | `ToonTownMultiTool-v0.7.0-alpha.3.flatpak` |
-| Linux .deb | `ToonTownMultiTool-v0.7.0-alpha.3.deb` |
+| Windows installer | `ToonTownMultiTool-Setup-v0.7.0-alpha.4.exe` |
+| Windows portable | `ToonTownMultiTool-Portable-v0.7.0-alpha.4.zip` |
+| Linux AppImage | `ToonTownMultiTool-v0.7.0-alpha.4.AppImage` |
+| Linux Flatpak | `ToonTownMultiTool-v0.7.0-alpha.4.flatpak` |
+| Linux .deb | `ToonTownMultiTool-v0.7.0-alpha.4.deb` |
 
 ## Running from Source
 
 ```bash
 git clone https://github.com/flossbud/ToonTown-MultiTool.git
 cd ToonTown-MultiTool
-git checkout v0.7.0-alpha.3
+git checkout v0.7.0-alpha.4
 python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 python main.py
