@@ -50,7 +50,11 @@ class ClickSyncService(QObject):
     service_error = Signal(str)
     # Ghost cursors: one batched sample per forwarded event. Payload is
     # (kind, [(slot, screen_x, screen_y), ...]) with kind in
-    # "motion" | "press" | "release" and root-space coordinates.
+    # "motion" | "press" | "release". Coordinates are NATIVE root-space
+    # pixels (the OS units capture/geometry/injection run in); the
+    # renderer converts to Qt logical coordinates before positioning
+    # (_ghost_cursors._native_to_logical — the spaces differ whenever a
+    # screen's devicePixelRatio is not 1).
     # Signal(object) for the same marshaling reason as slot_states_changed.
     ghost_pointer_event = Signal(object)
     # All ghosts hide instantly: emitted from _clear_hover_locked, which

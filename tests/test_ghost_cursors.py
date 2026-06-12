@@ -9,7 +9,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("TTMT_NO_VENV_REEXEC", "1")
 
-from PySide6.QtCore import QObject, QPropertyAnimation, Qt, Signal
+from PySide6.QtCore import QObject, QPropertyAnimation, QRect, Qt, Signal
 from PySide6.QtWidgets import QApplication
 
 
@@ -256,3 +256,97 @@ def test_duplicate_wid_slots_all_suppressed(qapp):
         ctl._hide_all()
         for ov in ctl._overlays.values():
             ov.deleteLater()
+
+
+# -- native -> logical position mapping (Windows DPI-scaling bug) --------
+#
+# The service emits NATIVE (physical) screen pixels; QWidget.move() takes
+# LOGICAL coordinates. Qt scales each screen around a fixed origin: the
+# screen's top-left is numerically identical in both spaces, sizes divide
+# by devicePixelRatio. At DPR 1 the mapping is the identity, which is why
+# the mismatch only ever showed on a scaled-display Windows machine.
+
+
+class FakeScreen:
+    """Duck-typed QScreen: logical geometry + devicePixelRatio."""
+
+    def __init__(self, x, y, w, h, dpr):
+        self._g = QRect(x, y, w, h)
+        self._dpr = dpr
+
+    def geometry(self):
+        return self._g
+
+    def devicePixelRatio(self):
+        return self._dpr
+
+
+def test_native_to_logical_identity_at_dpr_1():
+    from tabs.multitoon._ghost_cursors import _native_to_logical
+    screens = [FakeScreen(0, 0, 1920, 1080, 1.0)]
+    assert _native_to_logical(800, 600, screens) == (800, 600)
+
+
+def test_native_to_logical_scales_around_screen_origin():
+    from tabs.multitoon._ghost_cursors import _native_to_logical
+    # 1920x1080 panel at 150% Windows scaling: logical size 1280x720.
+    # The user-reported shape: native 970 rendered at ~1455 physical;
+    # the correct logical position is 970/1.5.
+    screens = [FakeScreen(0, 0, 1280, 720, 1.5)]
+    assert _native_to_logical(970, 35, screens) == (647, 23)
+
+
+def test_native_to_logical_nonzero_screen_origin():
+    from tabs.multitoon._ghost_cursors import _native_to_logical
+    # Mirrors the measured xcb probe: screen origin (0,1080), DPR 1.5,
+    # native (800,1600) -> logical (533, 1080 + 520/1.5 = 1427).
+    screens = [FakeScreen(0, 1080, 1707, 960, 1.5)]
+    assert _native_to_logical(800, 1600, screens) == (533, 1427)
+
+
+def test_native_to_logical_picks_containing_screen():
+    from tabs.multitoon._ghost_cursors import _native_to_logical
+    # Mixed-DPI pair: 100% 1920-wide left, 200% panel right whose native
+    # rect spans x 1920..3840.
+    screens = [FakeScreen(0, 0, 1920, 1080, 1.0),
+               FakeScreen(1920, 0, 960, 540, 2.0)]
+    assert _native_to_logical(100, 100, screens) == (100, 100)
+    assert _native_to_logical(2320, 200, screens) == (2120, 100)
+
+
+def test_native_to_logical_fallback_first_screen_then_identity():
+    from tabs.multitoon._ghost_cursors import _native_to_logical
+    # Point outside every native rect (transient geometry race): map via
+    # the first listed screen rather than dropping the event.
+    screens = [FakeScreen(0, 0, 1280, 720, 1.5)]
+    assert _native_to_logical(5000, 35, screens) == (3333, 23)
+    # No screens at all: identity.
+    assert _native_to_logical(800, 600, []) == (800, 600)
+
+
+def test_pointer_event_positions_through_native_to_logical(rig, monkeypatch):
+    from tabs.multitoon import _ghost_cursors as gc
+    svc, _, ctl = rig
+    monkeypatch.setattr(gc, "_native_to_logical",
+                        lambda x, y, screens=None: (x // 2, y // 2))
+    svc.ghost_pointer_event.emit(("motion", [(0, 800, 600)]))
+    ov = ctl._overlays[0]
+    # Converted first, then the fingertip hotspot offset in logical space.
+    assert (ov.x(), ov.y()) == (399, 297)
+
+
+def test_native_to_logical_screen_rects_are_half_open():
+    from tabs.multitoon._ghost_cursors import _native_to_logical
+    # Native x exactly at the right screen's origin belongs to the RIGHT
+    # screen (half-open rects): no off-by-one screen selection.
+    screens = [FakeScreen(0, 0, 1920, 1080, 1.0),
+               FakeScreen(1920, 0, 960, 540, 2.0)]
+    assert _native_to_logical(1920, 100, screens) == (1920, 50)
+
+
+def test_native_to_logical_negative_screen_origin():
+    from tabs.multitoon._ghost_cursors import _native_to_logical
+    # Left-of-primary monitor: scaling anchors at -1920, not 0.
+    # native (-1620, 300) -> (-1920 + 300/1.5, 200) = (-1720, 200)
+    screens = [FakeScreen(-1920, 0, 1280, 720, 1.5)]
+    assert _native_to_logical(-1620, 300, screens) == (-1720, 200)

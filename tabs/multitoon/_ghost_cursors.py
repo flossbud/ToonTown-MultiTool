@@ -47,6 +47,38 @@ def _cursor_path(slot: int) -> str:
     return os.path.join(base, "assets", "cursors", f"toon{slot + 1}.png")
 
 
+def _native_to_logical(x, y, screens=None):
+    """Map a native (physical) screen point into Qt's logical coordinate
+    space. The service emits NATIVE pixels (capture, geometry, and
+    injection all run in OS coordinates); QWidget.move() takes LOGICAL
+    coordinates. Qt scales each screen around a fixed origin — the
+    screen's top-left is numerically identical in both spaces and sizes
+    divide by devicePixelRatio — so the containing screen is the one
+    whose half-open native rect (origin, logical size * dpr) holds the
+    point, and logical = origin + (native - origin) / dpr. At DPR 1 this
+    is the identity, which is why the unit mismatch only ever showed on
+    scaled-display Windows. A point inside no screen (transient geometry
+    race) maps via the first screen rather than dropping the event."""
+    if screens is None:
+        screens = QGuiApplication.screens()
+    target = None
+    for s in screens:
+        g = s.geometry()
+        dpr = s.devicePixelRatio()
+        if (g.x() <= x < g.x() + g.width() * dpr
+                and g.y() <= y < g.y() + g.height() * dpr):
+            target = s
+            break
+    if target is None:
+        if not screens:
+            return int(x), int(y)
+        target = screens[0]
+    g = target.geometry()
+    dpr = target.devicePixelRatio()
+    return (round(g.x() + (x - g.x()) / dpr),
+            round(g.y() + (y - g.y()) / dpr))
+
+
 class GhostCursorOverlay(QWidget):
     """One toon's glove: a 32x32 frameless, always-on-top, input-transparent
     toplevel. The EMPTY input shape (WindowTransparentForInput) is
@@ -165,7 +197,7 @@ class GhostCursorController(QObject):
                 if self._disabled_reason is not None:
                     return  # asset failure just disabled the feature
                 continue    # out-of-range slot: drop it, keep the batch
-            ov.show_at(x, y)
+            ov.show_at(*_native_to_logical(x, y))
             self._restart_idle_timer(slot)
 
     def _on_clear(self) -> None:
