@@ -20,7 +20,7 @@ jobs:
   build-windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -39,7 +39,7 @@ jobs:
           Get-Content utils/_build_info.py
           "BUILD_NUMBER=$buildNumber" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
@@ -55,7 +55,7 @@ jobs:
           $tag = "${{ inputs.version_label }}"
           Compress-Archive -Path "dist\ToonTownMultiTool\*" -DestinationPath "ToonTownMultiTool-Portable-$tag.zip"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: windows-zip
           path: ToonTownMultiTool-Portable-*.zip
@@ -64,7 +64,7 @@ jobs:
     needs: build-windows
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -84,7 +84,7 @@ jobs:
           "BUILD_NUMBER=$buildNumber" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
       - name: Download windows onedir zip
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: windows-zip
           path: zip-in
@@ -145,7 +145,7 @@ jobs:
             packaging\windows\installer.iss
           if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit $LASTEXITCODE" }
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: windows-installer
           path: packaging/windows/Output/*.exe

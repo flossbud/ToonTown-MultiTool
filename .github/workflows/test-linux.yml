@@ -41,7 +41,7 @@ jobs:
     container:
       image: ${{ matrix.image }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install system + Qt runtime dependencies (apt)
         if: ${{ startsWith(matrix.image, 'debian') || startsWith(matrix.image, 'ubuntu') }}
@@ -97,7 +97,7 @@ jobs:
       image: ${{ matrix.image }}
     steps:
       - name: Download the AppImage
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: linux-appimage
 
@@ -143,7 +143,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Download the Flatpak bundle
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: linux-flatpak
 
@@ -175,7 +175,7 @@ jobs:
       image: ${{ matrix.image }}
     steps:
       - name: Download the .deb
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: linux-deb
 
@@ -196,9 +196,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
@@ -226,9 +226,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
