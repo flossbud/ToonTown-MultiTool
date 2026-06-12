@@ -481,14 +481,18 @@ class _SidebarItem(QFrame):
 
     clicked = Signal(str)  # emits self.key
 
+    HEIGHT_COMPACT = 36
+    HEIGHT_EXPANDED = 44
+
     def __init__(self, key: str, label: str, parent=None):
         super().__init__(parent)
         self.key = key
         self._active = False
         self._hovered = False
+        self._expanded = False
         self.setAttribute(Qt.WA_Hover)
         self.setCursor(Qt.PointingHandCursor)
-        self.setFixedHeight(36)
+        self.setFixedHeight(self.HEIGHT_COMPACT)
         self._c = None
         self._is_dark = True
 
@@ -504,6 +508,18 @@ class _SidebarItem(QFrame):
         # left padding from 16 to 13.
         margins = (13 if self._active else 16, 0, 16, 0)
         self.layout().setContentsMargins(*margins)
+        if self._c is not None:
+            self._apply_styles()
+        self.update()
+
+    def set_expanded(self, expanded: bool) -> None:
+        expanded = bool(expanded)
+        if expanded == self._expanded:
+            return
+        self._expanded = expanded
+        self.setFixedHeight(
+            self.HEIGHT_EXPANDED if expanded else self.HEIGHT_COMPACT
+        )
         if self._c is not None:
             self._apply_styles()
         self.update()
@@ -537,8 +553,9 @@ class _SidebarItem(QFrame):
         c = self._c
         text_color = c["sidebar_text_sel"] if self._active else c["sidebar_text"]
         weight = "600" if self._active else "400"
+        size = "14px" if self._expanded else "12.5px"
         self.label_widget.setStyleSheet(
-            f"font-size: 12.5px; font-weight: {weight}; "
+            f"font-size: {size}; font-weight: {weight}; "
             f"color: {text_color}; background: transparent; border: none;"
         )
 
@@ -570,13 +587,17 @@ class Sidebar(QFrame):
 
     category_selected = Signal(str)
 
+    WIDTH_COMPACT = 130
+    WIDTH_EXPANDED = 200
+
     def __init__(self, categories: list[tuple[str, str]], parent=None):
         super().__init__(parent)
         self.items: list[_SidebarItem] = []
         self.active_key: str = categories[0][0] if categories else ""
         self._c = None
         self._is_dark = True
-        self.setFixedWidth(130)
+        self._expanded = False
+        self.setFixedWidth(self.WIDTH_COMPACT)
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 14, 0, 14)
@@ -602,6 +623,18 @@ class Sidebar(QFrame):
         self.active_key = key
         for item in self.items:
             item.set_active(item.key == key)
+
+    def set_expanded(self, expanded: bool) -> None:
+        """Full-UI sizing: wider rail with roomier rows. Idempotent."""
+        expanded = bool(expanded)
+        if expanded == self._expanded:
+            return
+        self._expanded = expanded
+        self.setFixedWidth(
+            self.WIDTH_EXPANDED if expanded else self.WIDTH_COMPACT
+        )
+        for item in self.items:
+            item.set_expanded(expanded)
 
     def _on_item_clicked(self, key: str) -> None:
         if key == self.active_key:
