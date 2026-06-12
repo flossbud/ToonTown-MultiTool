@@ -150,6 +150,12 @@ class ClickSyncService(QObject):
         capture. Called on toggles, the master switch, window-list updates,
         and the periodic geometry tick.
 
+        Members whose slot no longer resolves to a window are EVICTED here
+        (final — no auto-rejoin; spec
+        2026-06-12-click-sync-evict-windowless-design.md). Geometry-lookup
+        failures on a live window do NOT evict: they pause the group via
+        the error state and auto-recover.
+
         Capture lifecycle changes are DECIDED under the lock but EXECUTED
         outside it: start() opens X connections (multiple round trips) and
         stop() joins a thread whose callback takes this same lock. A new
@@ -171,10 +177,23 @@ class ClickSyncService(QObject):
                     for s in range(SLOT_COUNT)
                 }
             else:
+                # Evict members whose slot no longer has a window (the game
+                # window was closed). Eviction is FINAL: a relaunched toon
+                # needs a re-click (spec
+                # 2026-06-12-click-sync-evict-windowless-design.md). A
+                # member whose window EXISTS but fails geometry lookup is
+                # NOT evicted — that is a transient pause (error state),
+                # not an assignment loss.
+                wids = {s: self._slot_window_resolver(s) for s in self._members}
+                evicted = {s for s, wid in wids.items() if wid is None}
+                if evicted:
+                    self._members -= evicted
+                    if self._gesture is not None:
+                        self._drain_locked("member window lost")
+                    self._clear_hover_locked()
                 usable, geoms = {}, []
                 for s in self._members:
-                    wid = self._slot_window_resolver(s)
-                    g = self._geometry_provider(wid) if wid else None
+                    g = self._geometry_provider(wids[s])
                     usable[s] = g is not None
                     if g is not None:
                         geoms.append(g)

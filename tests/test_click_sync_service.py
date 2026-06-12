@@ -198,12 +198,13 @@ def test_mismatch_pauses_group(svc):
     assert backend.calls == []  # paused: nothing forwarded
 
 
-def test_missing_window_slot_error_others_armed(svc):
+def test_missing_window_slot_evicted_others_active(svc):
     s, backend, _ = svc
     s.toggle_slot(0); s.toggle_slot(1); s.toggle_slot(3)  # slot 3 has no window
     states = s.slot_states()
-    assert states[3] == "error"
-    assert states[0] == "armed" and states[1] == "armed"
+    assert states[3] == "off"  # evicted: no window assigned
+    # With slot 3 evicted, only 0 and 1 remain: the group is active
+    assert states[0] == "active" and states[1] == "active"
 
 
 def test_press_inject_failure_drops_target(svc):
@@ -750,3 +751,104 @@ def test_group_pause_clears_hover_latch(hover_svc):
     assert "active" not in s.slot_states().values()
     assert s._hover_source is None
     assert s._hover_pending is None
+
+
+# ── eviction tests (windowless member removal) ─────────────────────────────
+
+
+@pytest.fixture
+def evict_rig():
+    """Two same-size windows in a 2-member group, with a MUTABLE slot map so
+    tests can close a window (delete the slot's entry) and recompute."""
+    geoms = {
+        "10": (0, 0, 1000, 500),
+        "20": (1100, 0, 1000, 500),
+    }
+    slot_map = {0: "10", 1: "20"}
+    backend = FakeBackend()
+    captures = []
+
+    def capture_factory(on_event):
+        c = FakeCapture(on_event)
+        captures.append(c)
+        return c
+
+    s = ClickSyncService(
+        slot_window_resolver=lambda slot: slot_map.get(slot),
+        geometry_provider=lambda wid: geoms.get(wid),
+        source_resolver=lambda rx, ry, wids: next(
+            (w for w in wids
+             if geoms.get(w)
+             and geoms[w][0] <= rx < geoms[w][0] + geoms[w][2]
+             and geoms[w][1] <= ry < geoms[w][1] + geoms[w][3]), None),
+        backend=backend,
+        capture_factory=capture_factory,
+    )
+    s.set_enabled(True)
+    s.toggle_slot(0)
+    s.toggle_slot(1)
+    yield s, backend, geoms, slot_map
+    s.shutdown()
+
+
+def test_windowless_member_evicted_to_off(evict_rig):
+    s, _, _, slot_map = evict_rig
+    assert s.slot_states()[1] == "active"
+    del slot_map[1]            # window closed: slot 1 unassigned
+    s.recompute()
+    states = s.slot_states()
+    assert states[1] == "off"          # evicted, not error
+    assert states[0] == "armed"        # survivor waits for a second toon
+
+
+def test_eviction_is_final_on_window_return(evict_rig):
+    s, _, _, slot_map = evict_rig
+    del slot_map[1]
+    s.recompute()
+    slot_map[1] = "20"         # window came back
+    s.recompute()
+    assert s.slot_states()[1] == "off"  # needs a re-click to rejoin
+
+
+def test_all_members_evicted_when_all_windows_close(evict_rig):
+    s, _, _, slot_map = evict_rig
+    slot_map.clear()
+    s.recompute()
+    assert all(st == "off" for st in s.slot_states().values())
+
+
+def test_eviction_mid_gesture_drains(evict_rig):
+    s, backend, _, slot_map = evict_rig
+    s._on_capture_event("press", 500, 250, 0, 1000)   # source "10" -> target "20"
+    del slot_map[0]            # the SOURCE window closes mid-gesture
+    s.recompute()
+    releases = [c for c in backend.calls if c[0] == "release"]
+    # Drain releases the gesture's snapshot target at the press point with
+    # Button1Mask forced (existing drain semantics).
+    assert len(releases) == 1
+    assert releases[0][1] == "20"
+    assert releases[0][6] & 0x100
+
+
+def test_eviction_emits_ghost_clear(evict_rig):
+    s, _, _, slot_map = evict_rig
+    clears = []
+    s.ghost_clear.connect(lambda: clears.append(True))
+    del slot_map[1]
+    s.recompute()
+    assert clears
+
+
+def test_geometry_failure_keeps_membership_as_error(evict_rig):
+    """A window that still EXISTS but fails geometry lookup is a transient
+    pause (error state + auto-recovery), NOT an eviction. Pins the
+    spec's evict-only-on-unassigned-slot distinction."""
+    s, _, geoms, _ = evict_rig
+    saved = geoms.pop("20")    # window assigned; geometry lookup fails
+    s.recompute()
+    states = s.slot_states()
+    assert states[1] == "error"        # paused, NOT evicted
+    assert states[0] == "armed"
+    geoms["20"] = saved
+    s.recompute()
+    assert s.slot_states()[1] == "active"  # auto-recovered with the group
