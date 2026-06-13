@@ -11,10 +11,11 @@ def test_count_for_game_reads_window_games_map():
 
 
 def test_assign_windows_populates_games_linux(monkeypatch):
+    # Pin the platform so this exercises the Linux x11 discovery branch on any
+    # host (the macOS dev box would otherwise take the new darwin branch and
+    # bypass the x11_discovery monkeypatches below).
     import sys
-    if sys.platform == "win32":
-        import pytest
-        pytest.skip("Linux discovery branch")
+    monkeypatch.setattr(sys, "platform", "linux")
 
     from utils import x11_discovery
     from utils.game_registry import GameRegistry

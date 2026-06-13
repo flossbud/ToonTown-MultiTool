@@ -163,8 +163,15 @@ class WindowManager(QObject):
                 except Exception:
                     current_active = None
             elif sys.platform == "darwin":
-                from utils import macos_discovery
-                current_active = macos_discovery.get_active_window_id()
+                # macos_discovery.get_active_window_id() touches CGWindowList /
+                # NSWorkspace and is not internally guarded the way
+                # x11_discovery is, so wrap it like the win32 branch: a transient
+                # CG/AppKit error must not crash the poll thread.
+                try:
+                    from utils import macos_discovery
+                    current_active = macos_discovery.get_active_window_id()
+                except Exception:
+                    current_active = None
             else:
                 current_active = x11_discovery.get_active_window_id()
                 

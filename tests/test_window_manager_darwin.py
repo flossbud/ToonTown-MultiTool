@@ -1,6 +1,5 @@
 """Tests for darwin branches in services/window_manager.py."""
 import importlib
-import sys
 
 wm = importlib.import_module("services.window_manager")
 
@@ -18,7 +17,7 @@ def test_assign_windows_darwin_sort(monkeypatch):
     from services.window_manager import WindowManager
 
     # Patch platform so the darwin branch is taken on any host OS.
-    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(wm.sys, "platform", "darwin", raising=False)
 
     # Two TTR windows: "11" is far right (x=100), "33" is far left (x=5).
     monkeypatch.setattr(
@@ -30,8 +29,9 @@ def test_assign_windows_darwin_sort(monkeypatch):
         macos_discovery, "get_window_root_x",
         lambda wid: root_x_map.get(wid),
     )
-    # classify_window_for_filtering returns (game, confirmed=False) so
-    # _accept_candidate_window returns True for both windows.
+    # classify_window_for_filtering returns (game="ttr", confirmed=True), so
+    # _accept_candidate_window (`not confirmed or game is not None`) is True for
+    # both windows.
     monkeypatch.setattr(
         GameRegistry.instance(), "classify_window_for_filtering",
         lambda wid: ("ttr", True),
