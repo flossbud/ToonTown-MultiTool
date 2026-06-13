@@ -2736,12 +2736,22 @@ class MultitoonTab(QWidget):
         self.apply_visual_state(index)
 
     def _build_click_sync(self) -> None:
-        from services.click_sync_service import ClickSyncService
-
         # Set before the resolver closures below are built: they read this
         # attribute at call time, and capture can start before the
         # controller is constructed at the end of this method.
         self.ghost_cursor_controller = None
+
+        # Click sync (mouse mirroring) is Linux/X11 + Windows only; it is out of
+        # scope on macOS. Leave click_sync_service / _click_sync_backend as None
+        # (set in __init__) so the feature is simply absent, and -- critically --
+        # never import utils.xlib_backend here (it imports python-xlib, which is
+        # not installed on macOS) which would crash the app at startup. Downstream
+        # (shutdown, the per-toon toggle, state styling) already guards on None.
+        import sys
+        if sys.platform not in ("win32", "linux"):
+            return
+
+        from services.click_sync_service import ClickSyncService
 
         def _cs_slot_wid(slot, _wm=self.window_manager):
             ids = _wm.get_window_ids()
