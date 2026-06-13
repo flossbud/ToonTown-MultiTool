@@ -76,9 +76,14 @@ del _install_keyring_macos_stub
 
 # Environment must be configured before any Qt module is imported,
 # because PySide6 reads QT_QPA_PLATFORM at first import time.
-if sys.platform != "win32":
-    _session_type = os.getenv("XDG_SESSION_TYPE", "").lower()
-    _force_wayland = os.getenv("TTMT_USE_WAYLAND") == "1"
+import sys as _sys
+from utils.platform_qt import qt_platform_for
+_qt_plat = qt_platform_for(
+    _sys.platform,
+    os.getenv("XDG_SESSION_TYPE", "").lower(),
+    os.getenv("TTMT_USE_WAYLAND") == "1",
+)
+if _qt_plat is not None:
     # Default the Linux Qt platform to xcb (XWayland on Wayland sessions).
     # This app's input/window plumbing — services.window_manager (xdotool),
     # services.hotkey_manager (pynput), and the broadcast-while-self-focused
@@ -90,10 +95,8 @@ if sys.platform != "win32":
     # symptom that surfaced the platform-default question, but the reason
     # to default to xcb stands on its own. TTMT_USE_WAYLAND=1 opts back
     # into native Wayland for diagnostics.
-    os.environ.setdefault(
-        "QT_QPA_PLATFORM",
-        "wayland" if _force_wayland and _session_type == "wayland" else "xcb",
-    )
+    # macOS returns None from qt_platform_for — Qt defaults to cocoa.
+    os.environ.setdefault("QT_QPA_PLATFORM", _qt_plat)
 # On GNOME-like Linux desktops, prefer the xdg-desktop-portal Qt platform
 # theme so Qt's styleHints().colorScheme() reflects the OS appearance
 # setting. Without this, Qt returns ColorScheme.Light regardless of the
