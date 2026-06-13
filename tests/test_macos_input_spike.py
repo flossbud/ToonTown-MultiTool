@@ -3,6 +3,7 @@ import dataclasses
 import importlib.util
 import pathlib
 import sys
+import types
 
 import pytest
 
@@ -39,6 +40,60 @@ def test_main_routes_every_command_and_forwards_args(monkeypatch, cmd, func):
     monkeypatch.setattr(spike, func, lambda rest: (calls.append(rest), 0)[1])
     assert spike.main([cmd, "x", "y"]) == 0
     assert calls == [["x", "y"]]
+
+
+# ── Task 8: preflight fallback + cmd_list branching (monkeypatched, no PyObjC) ─
+def test_preflight_screen_recording_true_when_api_absent(monkeypatch):
+    # Older macOS lacks CGPreflightScreenCaptureAccess -> tolerant default True.
+    monkeypatch.setattr(spike, "_quartz", lambda: types.SimpleNamespace())
+    assert spike.preflight_screen_recording() is True
+
+
+def test_preflight_screen_recording_reflects_api_when_present(monkeypatch):
+    monkeypatch.setattr(spike, "_quartz",
+                        lambda: types.SimpleNamespace(CGPreflightScreenCaptureAccess=lambda: False))
+    assert spike.preflight_screen_recording() is False
+    monkeypatch.setattr(spike, "_quartz",
+                        lambda: types.SimpleNamespace(CGPreflightScreenCaptureAccess=lambda: True))
+    assert spike.preflight_screen_recording() is True
+
+
+def _stub_preflights(monkeypatch, *, post=True, listen=True, screen=True):
+    monkeypatch.setattr(spike, "preflight_post_access", lambda: post)
+    monkeypatch.setattr(spike, "preflight_listen_access", lambda: listen)
+    monkeypatch.setattr(spike, "preflight_screen_recording", lambda: screen)
+
+
+def test_cmd_list_no_windows_screen_recording_hint(monkeypatch, capsys):
+    _stub_preflights(monkeypatch, screen=False)
+    monkeypatch.setattr(spike, "frontmost_pid", lambda: 555)
+    monkeypatch.setattr(spike, "enumerate_windows", lambda: [])
+    assert spike.cmd_list([]) == 1
+    assert "Screen Recording" in capsys.readouterr().out
+
+
+def test_cmd_list_no_windows_launch_hint(monkeypatch, capsys):
+    _stub_preflights(monkeypatch, screen=True)
+    monkeypatch.setattr(spike, "frontmost_pid", lambda: 555)
+    monkeypatch.setattr(spike, "enumerate_windows", lambda: [])
+    assert spike.cmd_list([]) == 1
+    assert "Launch Toontown Rewritten" in capsys.readouterr().out
+
+
+def test_cmd_list_marks_frontmost_window(monkeypatch, capsys):
+    _stub_preflights(monkeypatch)
+    recs = [
+        spike.WindowRecord(101, 11, "Toontown Rewritten", (0, 0, 800, 600), "com.x"),
+        spike.WindowRecord(202, 22, "Toontown Rewritten", (0, 0, 800, 600), "com.x"),
+    ]
+    monkeypatch.setattr(spike, "frontmost_pid", lambda: 202)
+    monkeypatch.setattr(spike, "enumerate_windows", lambda: recs)
+    assert spike.cmd_list([]) == 0
+    out = capsys.readouterr().out
+    assert "pid=101" in out and "pid=202" in out
+    # Exactly the frontmost (202) line carries the marker.
+    front_lines = [ln for ln in out.splitlines() if "<FRONT>" in ln]
+    assert len(front_lines) == 1 and "pid=202" in front_lines[0]
 
 
 # ── Task 3: keycode map ──────────────────────────────────────────────────────
