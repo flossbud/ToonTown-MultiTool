@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import utils.macos_discovery as md
 from utils.macos_discovery import GameWindow, identify_game_windows
 
 
@@ -90,3 +91,40 @@ def test_malformed_record_skipped_not_aborting():
 def test_individual_zero_or_negative_dimension_skipped():
     assert identify_game_windows([_w(1, 1, "Toontown Rewritten", w=10, h=0)]) == []
     assert identify_game_windows([_w(1, 1, "Toontown Rewritten", w=-5, h=10)]) == []
+
+
+def _gw(pid, wid, game, owner, bounds=(0, 0, 800, 600), bundle_id=None):
+    return GameWindow(
+        pid=pid, window_id=wid, game=game, owner=owner, bounds=bounds, bundle_id=bundle_id
+    )
+
+
+def test_find_game_windows_pairs_ids_and_games(monkeypatch):
+    recs = [
+        _gw(101, 11, "ttr", "Toontown Rewritten"),
+        _gw(103, 33, "cc", "Corporate Clash"),
+    ]
+    monkeypatch.setattr(md, "_enumerate_game_windows", lambda: recs)
+    assert md.find_game_windows() == [("11", "ttr"), ("33", "cc")]
+
+
+def test_get_window_root_x(monkeypatch):
+    recs = [_gw(101, 11, "ttr", "Toontown Rewritten", bounds=(42, 0, 800, 600))]
+    monkeypatch.setattr(md, "_enumerate_game_windows", lambda: recs)
+    assert md.get_window_root_x("11") == 42
+    assert md.get_window_root_x("999") is None
+
+
+def test_geometry_pid_game_for_window(monkeypatch):
+    recs = [_gw(101, 11, "ttr", "Toontown Rewritten", bounds=(42, 7, 800, 600))]
+    monkeypatch.setattr(md, "_enumerate_game_windows", lambda: recs)
+    assert md.get_window_geometry("11") == (42, 7, 800, 600)
+    assert md.get_window_pid("11") == 101
+    assert md.game_for_window_id("11") == "ttr"
+    assert md.get_window_geometry("999") is None
+    assert md.get_window_pid("999") is None
+    assert md.game_for_window_id("999") is None
+
+
+def test_toplevel_at_point_returns_none():
+    assert md.toplevel_at_point(10, 20) is None

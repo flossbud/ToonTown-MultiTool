@@ -69,3 +69,81 @@ def identify_game_windows(window_info) -> list:
         except (TypeError, ValueError, AttributeError):
             continue
     return games
+
+
+def _quartz():
+    import Quartz
+    return Quartz
+
+
+def process_bundle_id(pid: int):
+    """Stable identity for a PID via NSRunningApplication, or None."""
+    from AppKit import NSRunningApplication
+    app = NSRunningApplication.runningApplicationWithProcessIdentifier_(pid)
+    if app is None:
+        return None
+    bid = app.bundleIdentifier()
+    return str(bid) if bid is not None else None
+
+
+def _enumerate_game_windows() -> list:
+    """Live GameWindow records (with bundle_id) from the on-screen window list."""
+    Q = _quartz()
+    import objc
+    with objc.autorelease_pool():
+        opts = Q.kCGWindowListOptionOnScreenOnly | Q.kCGWindowListExcludeDesktopElements
+        info = Q.CGWindowListCopyWindowInfo(opts, Q.kCGNullWindowID) or []
+        recs = identify_game_windows(list(info))
+        return [dataclasses.replace(r, bundle_id=process_bundle_id(r.pid)) for r in recs]
+
+
+def find_game_windows() -> list:
+    """[(window_id_str, game)] for every on-screen TTR/CC window (matches x11_discovery.find_game_windows())."""
+    return [(str(r.window_id), r.game) for r in _enumerate_game_windows()]
+
+
+def _record_for_wid(wid):
+    for r in _enumerate_game_windows():
+        if str(r.window_id) == str(wid):
+            return r
+    return None
+
+
+def get_window_root_x(wid):
+    r = _record_for_wid(wid)
+    return r.bounds[0] if r else None
+
+
+def get_window_geometry(wid):
+    r = _record_for_wid(wid)
+    return r.bounds if r else None
+
+
+def get_window_pid(wid):
+    r = _record_for_wid(wid)
+    return r.pid if r else None
+
+
+def game_for_window_id(wid):
+    """'ttr' | 'cc' | None for a window id, by owner name."""
+    r = _record_for_wid(wid)
+    return r.game if r else None
+
+
+def get_active_window_id():
+    """CGWindowID (str) of the frontmost app's game window, or None. Focus is the
+    frontmost application's PID (NSWorkspace)."""
+    from AppKit import NSWorkspace
+    app = NSWorkspace.sharedWorkspace().frontmostApplication()
+    if app is None:
+        return None
+    fpid = int(app.processIdentifier())
+    for r in _enumerate_game_windows():
+        if r.pid == fpid:
+            return str(r.window_id)
+    return None
+
+
+def toplevel_at_point(x, y):
+    """Out of scope for keyboard Phase 1 (mouse/click-sync). Returns None."""
+    return None
