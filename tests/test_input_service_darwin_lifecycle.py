@@ -166,6 +166,7 @@ def test_focus_game_to_game_reinstalls_safely(monkeypatch, tmp_path):
     svc, _ = _make_service(
         monkeypatch, tmp_path, active_wid="ttr-1",
         windows=["ttr-1", "ttr-2"], games={"ttr-1": "ttr", "ttr-2": "ttr"},
+        assignments=[0, 0],
     )
     try:
         svc._start_key_grabber()
@@ -200,6 +201,10 @@ def test_readiness_loss_disables_suppression(monkeypatch, tmp_path):
         assert svc._delivery_backend_ready() is False
 
         svc._on_active_window_changed_for_grabber("ttr-1")  # re-focus
+        # Grabs ARE (re)installed (the focus gate reads UIPI safety, not backend
+        # health)...
+        assert svc._ttr_grabs_active is True
+        # ...but suppression is degraded OFF by the consume-gate -> not frozen.
         assert svc._key_grabber.should_suppress("w") is False
     finally:
         svc.shutdown()
@@ -228,14 +233,14 @@ def test_shutdown_stops_grabber(monkeypatch, tmp_path):
         monkeypatch, tmp_path, active_wid="ttr-1",
         windows=["ttr-1"], games={"ttr-1": "ttr"}, assignments=[0],
     )
-    svc._start_key_grabber()
-    g = svc._key_grabber  # capture before shutdown() nulls it
-    assert g.should_suppress("w") is True
-
-    svc.shutdown()
+    try:
+        svc._start_key_grabber()
+        g = svc._key_grabber  # capture before shutdown() nulls it
+        assert g.should_suppress("w") is True
+    finally:
+        svc.shutdown()
     assert svc._key_grabber is None       # service dropped the reference
     assert g.should_suppress("w") is False  # stop() uninstalled the grab set
-
     svc.shutdown()  # guard against double-shutdown: must not raise
 
 
