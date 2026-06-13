@@ -130,6 +130,40 @@ def _run_list(timeout=_LIST_CALL_TIMEOUT):
         return ""
 
 
+# Power-assertion types caffeinate -dis holds; the trio we require to verify.
+_CAFFEINATE_TYPES = (
+    "PreventUserIdleSystemSleep",
+    "PreventUserIdleDisplaySleep",
+    "PreventSystemSleep",
+)
+
+
+def _caffeinate_types_for_pid(text, pid):
+    """Return the set of power-assertion type names whose `pmset -g assertions`
+    Details line references our holder as `(pid <pid>)`.
+
+    pmset lists each assertion as a `pid N(owner): [...] <TYPE> named: ...`
+    header followed by a `Details:` line. For the `caffeinate -dis -- cat`
+    holder the Details line reads `asserting on behalf of 'cat' (pid <cat_pid>)`,
+    and <cat_pid> is our Popen's pid (caffeinate runs cat as a utility). Matching
+    that parenthesized form ties the assertion to our own spawned process and is
+    collision-proof (the macOS analog of the Linux per-acquire UUID token)."""
+    key = "(pid %d)" % pid
+    types = set()
+    current = None
+    for line in text.splitlines():
+        s = line.strip()
+        if s.startswith("pid ") and "named:" in s:
+            parts = s.split()
+            try:
+                current = parts[parts.index("named:") - 1]
+            except (ValueError, IndexError):
+                current = None
+        elif current is not None and key in s:
+            types.add(current)
+    return types
+
+
 def _close_fd(fd):
     try:
         os.close(fd)
