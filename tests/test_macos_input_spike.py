@@ -248,7 +248,7 @@ def test_cmd_map_per_pid_fallback_on_access_denied(monkeypatch, capsys):
         raise psutil.AccessDenied()
     monkeypatch.setattr(psutil, "net_connections", _denied)
 
-    # Per-process pconn records have NO .pid field (the bug the review caught).
+    # Per-process pconn records have NO .pid field.
     pconn = collections.namedtuple("pconn", "fd family type laddr raddr status")
     addr = collections.namedtuple("addr", "ip port")
 

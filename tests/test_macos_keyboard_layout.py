@@ -105,7 +105,7 @@ def test_install_noop_off_darwin(monkeypatch):
 @pytest.mark.skipif(sys.platform != "darwin",
                     reason="exercises pynput's real macOS Listener._run")
 def test_pynput_run_resolves_patched_keycode_context_global(monkeypatch):
-    """Upgrade guard (peer review): pynput's REAL darwin Listener._run must
+    """Upgrade guard: pynput's REAL darwin Listener._run must
     resolve the keyboard-module `keycode_context` GLOBAL (the exact symbol the
     shim replaces). If a future pynput captured it differently / moved it, _run
     would bypass our shim and the off-main TIS crash would return -- this test
@@ -133,7 +133,7 @@ def test_pynput_run_resolves_patched_keycode_context_global(monkeypatch):
 
 
 def test_start_listener_skips_when_shim_unavailable_on_darwin(monkeypatch):
-    """Fail-safe (peer review): if the shim could not be installed on darwin,
+    """Fail-safe: if the shim could not be installed on darwin,
     HotkeyManager must NOT start the pynput listener (which would SIGTRAP);
     capture degrades to off."""
     from services.hotkey_manager import HotkeyManager
