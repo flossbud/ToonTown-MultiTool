@@ -770,6 +770,9 @@ class InputService(QObject):
                           f"synthetic input disabled: {e}")
                     self._xlib = None
                     self._xlib_backend_failed = True
+                    # Leave _xlib_unavailable_logged as-is: it is reset only on
+                    # recovery, so the drop message surfaces once per failure
+                    # episode rather than every keystroke (mirrors win32/xlib).
                     if self.logging_enabled:
                         self.input_log.emit(
                             "[Input] Input delivery unavailable; the input backend failed to start."
@@ -1030,7 +1033,7 @@ class InputService(QObject):
         delivery (the toon still moves)."""
         import sys
         if self._xlib is not None:
-            return True                       # Win32Backend or XlibBackend connected
+            return True                       # XlibBackend / Win32Backend / MacOSBackend connected
         if self._xlib_backend_failed:
             return False                      # requested backend failed -> events dropped
         return sys.platform == "linux"        # _xlib None, not failed: only Linux has the explicit-xdotool delivery path
@@ -1871,9 +1874,10 @@ class InputService(QObject):
         ]
 
     def _send_via_backend(self, action: str, win_id: str, keysym: str, modifiers: list = None):
-        """Route a synthetic key event through the active backend: the xlib
-        backend, dropped-with-notice when the xlib backend failed to
-        initialize, or the user's explicit xdotool backend."""
+        """Route a synthetic key event through the active backend: the
+        platform backend (Xlib / Win32 / MacOS), dropped-with-notice when that
+        backend failed to initialize or is unavailable (win32/darwin have no
+        fallback), or the Linux user's explicit xdotool backend."""
         if _ITRACE:
             try:
                 _active = self.window_manager.get_active_window()

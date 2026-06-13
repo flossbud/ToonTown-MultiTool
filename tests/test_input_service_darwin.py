@@ -3,12 +3,11 @@
 These tests pin sys.platform to "darwin" and verify:
 - _ttr_strict_supported includes darwin
 - _delivery_backend_ready requires a connected backend on darwin (no xdotool)
+- _apply_backend_setting constructs/handles MacOSBackend on darwin
 - _send_via_backend never calls _safe_run (xdotool) on darwin
 """
 import importlib
 import sys
-
-import pytest
 
 isvc = importlib.import_module("services.input_service")
 
@@ -40,6 +39,56 @@ def test_delivery_ready_darwin_requires_connected_backend(monkeypatch):
     s._xlib = None
     s._xlib_backend_failed = True
     assert s._delivery_backend_ready() is False
+
+
+def test_apply_backend_setting_darwin_constructs_macos_backend(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "darwin")
+    import utils.macos_backend as mb_mod
+    events = []
+
+    class _FakeBackend:
+        def __init__(self):
+            events.append("init")
+
+        def connect(self):
+            events.append("connect")
+
+    monkeypatch.setattr(mb_mod, "MacOSBackend", _FakeBackend)
+    s = _bare()
+    s._apply_backend_setting()
+    assert isinstance(s._xlib, _FakeBackend)
+    assert events == ["init", "connect"]
+    assert s._xlib_backend_failed is False
+
+
+def test_apply_backend_setting_darwin_failure_sets_failed_flag(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "darwin")
+    import utils.macos_backend as mb_mod
+
+    class _BoomBackend:
+        def connect(self):
+            raise RuntimeError("Accessibility not granted")
+
+    monkeypatch.setattr(mb_mod, "MacOSBackend", _BoomBackend)
+    s = _bare()
+    s._apply_backend_setting()
+    assert s._xlib is None
+    assert s._xlib_backend_failed is True
+
+
+def test_apply_backend_setting_darwin_idempotent_when_backend_present(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "darwin")
+    import utils.macos_backend as mb_mod
+
+    def _should_not_construct():
+        raise AssertionError("MacOSBackend must not be constructed when _xlib is set")
+
+    monkeypatch.setattr(mb_mod, "MacOSBackend", _should_not_construct)
+    s = _bare()
+    sentinel = object()
+    s._xlib = sentinel
+    s._apply_backend_setting()  # _xlib already set -> no reconstruction
+    assert s._xlib is sentinel
 
 
 class _StubWindowManager:

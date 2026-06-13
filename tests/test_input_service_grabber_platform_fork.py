@@ -84,6 +84,45 @@ class TestPlatformFork:
         svc._start_key_grabber()
         assert svc._key_grabber is None
 
+    def test_darwin_uses_macos_movement_key_grabber(self, monkeypatch):
+        monkeypatch.setattr(sys, "platform", "darwin")
+        from utils import macos_movement_grabber as mmg
+
+        stub = MagicMock()
+        stub.prepare.return_value = True
+        monkeypatch.setattr(mmg, "MacOSMovementKeyGrabber", lambda: stub)
+
+        svc = _make_service()
+        svc._start_key_grabber()
+        assert svc._key_grabber is stub
+        stub.prepare.assert_called_once()
+
+    def test_darwin_prepare_failure_clears_grabber(self, monkeypatch):
+        monkeypatch.setattr(sys, "platform", "darwin")
+        from utils import macos_movement_grabber as mmg
+
+        stub = MagicMock()
+        stub.prepare.return_value = False
+        monkeypatch.setattr(mmg, "MacOSMovementKeyGrabber", lambda: stub)
+
+        svc = _make_service()
+        svc._start_key_grabber()
+        assert svc._key_grabber is None
+
+    def test_darwin_wires_callbacks(self, monkeypatch):
+        monkeypatch.setattr(sys, "platform", "darwin")
+        from utils import macos_movement_grabber as mmg
+
+        stub = MagicMock()
+        stub.prepare.return_value = True
+        monkeypatch.setattr(mmg, "MacOSMovementKeyGrabber", lambda: stub)
+
+        svc = _make_service()
+        svc._start_key_grabber()
+        _, kwargs = stub.prepare.call_args
+        assert kwargs.get("on_grabs_changed") == svc._on_grabs_changed
+        assert kwargs.get("should_consume") == svc._should_consume_grabbed_key
+
     def test_idempotent_when_already_initialized(self, monkeypatch):
         monkeypatch.setattr(sys, "platform", "win32")
         svc = _make_service()
