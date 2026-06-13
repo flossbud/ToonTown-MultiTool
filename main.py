@@ -76,10 +76,9 @@ del _install_keyring_macos_stub
 
 # Environment must be configured before any Qt module is imported,
 # because PySide6 reads QT_QPA_PLATFORM at first import time.
-import sys as _sys
 from utils.platform_qt import qt_platform_for
 _qt_plat = qt_platform_for(
-    _sys.platform,
+    sys.platform,
     os.getenv("XDG_SESSION_TYPE", "").lower(),
     os.getenv("TTMT_USE_WAYLAND") == "1",
 )

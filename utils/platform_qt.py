@@ -4,7 +4,7 @@ cocoa / windows). Importable everywhere."""
 from __future__ import annotations
 
 
-def qt_platform_for(platform: str, session: str, force_wayland: bool):
+def qt_platform_for(platform: str, session: str, force_wayland: bool) -> str | None:
     if platform != "linux":
         return None
     if force_wayland and session == "wayland":
