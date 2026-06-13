@@ -88,3 +88,49 @@ def test_run_pmset_assertions_empty_on_exception(monkeypatch):
         raise subprocess.TimeoutExpired(argv, 0.5)
     monkeypatch.setattr(si.subprocess, "run", boom)
     assert si._run_pmset_assertions(timeout=0.5) == ""
+
+
+def test_popen_caffeinate_builds_argv_and_wires_pipe_stdin(monkeypatch):
+    captured = {}
+
+    class FakeProc:
+        pid = 4242
+
+    def fake_popen(argv, **kwargs):
+        captured["argv"] = argv
+        captured["kwargs"] = kwargs
+        return FakeProc()
+
+    monkeypatch.setattr(si.subprocess, "Popen", fake_popen)
+
+    proc, w_fd = si._popen_caffeinate()
+    try:
+        assert captured["argv"] == ["/usr/bin/caffeinate", "-dis", "--", "/bin/cat"]
+        kw = captured["kwargs"]
+        assert isinstance(kw["stdin"], int)        # pipe read end as stdin
+        assert kw["stdin"] in kw["pass_fds"]
+        assert isinstance(w_fd, int)
+        assert proc.pid == 4242
+    finally:
+        si._close_write_fd(w_fd)
+
+
+def test_popen_caffeinate_closes_both_fds_on_spawn_failure(monkeypatch):
+    made = {}
+    real_pipe = os.pipe
+
+    def fake_pipe():
+        r, w = real_pipe()
+        made["r"], made["w"] = r, w
+        return r, w
+
+    monkeypatch.setattr(os, "pipe", fake_pipe)
+    monkeypatch.setattr(si.subprocess, "Popen",
+                        lambda *a, **k: (_ for _ in ()).throw(FileNotFoundError("caffeinate")))
+
+    with pytest.raises(FileNotFoundError):
+        si._popen_caffeinate()
+
+    for fd in (made["r"], made["w"]):
+        with pytest.raises(OSError):
+            os.fstat(fd)   # closed -> EBADF

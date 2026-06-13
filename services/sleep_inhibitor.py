@@ -92,6 +92,29 @@ def _popen_holder(token):
     return proc, w_fd
 
 
+def _popen_caffeinate():
+    """Spawn `/usr/bin/caffeinate -dis -- /bin/cat` with a parent-owned pipe as
+    cat's stdin. Returns (proc, write_fd). Closing write_fd (or the parent
+    dying) EOFs cat, which exits and releases caffeinate's power assertions.
+
+    Plain subprocess.Popen (no host_popen/_clean_host_env: macOS has neither
+    Flatpak nor AppImage). NOTE: with a utility, proc.pid is the `cat` process;
+    caffeinate owns the assertions on cat's behalf and references cat's pid in
+    its pmset Details line (see _caffeinate_types_for_pid)."""
+    r_fd, w_fd = os.pipe()
+    argv = ["/usr/bin/caffeinate", "-dis", "--", "/bin/cat"]
+    try:
+        proc = subprocess.Popen(argv, stdin=r_fd, pass_fds=(r_fd,))
+    except BaseException:
+        # Spawn failed after the pipe was created: close both ends so neither
+        # leaks, then re-raise so the caller can degrade (mirrors _popen_holder).
+        _close_write_fd(r_fd)
+        _close_write_fd(w_fd)
+        raise
+    os.close(r_fd)  # parent keeps only the write end
+    return proc, w_fd
+
+
 def _close_write_fd(fd):
     try:
         os.close(fd)
