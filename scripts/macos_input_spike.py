@@ -26,8 +26,9 @@ import sys
 # synthetic traffic regardless of what the P0b echo measurement concludes.
 SPIKE_EVENT_TAG = 0x7474_6D74  # "ttmt" in hex; arbitrary non-zero marker
 
-# TTR's macOS app reports this as the window owner name. Matched case-sensitively
-# as a substring so a future "(Beta)" suffix still matches. Title is NOT used:
+# TTR's macOS app reports this as the window owner name. Matched with startswith
+# so a future "Toontown Rewritten (Beta)" suffix still matches, without admitting
+# unrelated names that merely contain the marker mid-string. Title is NOT used:
 # kCGWindowName may be withheld without Screen Recording.
 TTR_OWNER_MARKER = "Toontown Rewritten"
 
@@ -51,7 +52,7 @@ def identify_ttr_windows(window_info) -> list:
     out = []
     for w in window_info:
         owner = w.get("kCGWindowOwnerName") or ""
-        if TTR_OWNER_MARKER not in owner:
+        if not owner.startswith(TTR_OWNER_MARKER):
             continue
         pid = w.get("kCGWindowOwnerPID")
         num = w.get("kCGWindowNumber")
@@ -112,7 +113,9 @@ def is_spike_event(user_data: int) -> bool:
 # The TTR local API binds to loopback; only loopback-bound listeners are the
 # game's API. Wildcard (0.0.0.0/::) and LAN-bound sockets are excluded so an
 # unrelated socket on a TTR PID is never mistaken for the API port.
-_LOOPBACK_IPS = {"127.0.0.1", "::1"}
+def _is_loopback(ip) -> bool:
+    """True for any IPv4 127.0.0.0/8 address or the IPv6 loopback ::1."""
+    return isinstance(ip, str) and (ip == "::1" or ip.startswith("127."))
 
 
 def resolve_port_pid_window(connections, windows) -> dict:
@@ -135,7 +138,7 @@ def resolve_port_pid_window(connections, windows) -> dict:
         laddr = c.laddr
         ip = getattr(laddr, "ip", None)
         port = getattr(laddr, "port", None)
-        if port is None or ip not in _LOOPBACK_IPS:
+        if port is None or not _is_loopback(ip):
             continue
         mapping[int(port)] = (int(pid), pid_to_window[pid])
     return mapping

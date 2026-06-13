@@ -23,6 +23,17 @@ def test_module_imports_without_pyobjc():
     assert callable(spike.main)
 
 
+def test_main_no_args_and_unknown_return_2():
+    assert spike.main([]) == 2
+    assert spike.main(["bogus-command"]) == 2
+
+
+def test_main_dispatches_to_command_stub():
+    # Routing reaches the (not-yet-implemented) command body.
+    with pytest.raises(NotImplementedError):
+        spike.main(["list"])
+
+
 # ── Task 3: keycode map ──────────────────────────────────────────────────────
 def test_vk_for_key_movement_and_specials():
     assert spike.vk_for_key("w") == 0x0D
@@ -87,6 +98,20 @@ def test_identify_ttr_windows_records_are_immutable():
         rec.pid = 999
 
 
+def test_identify_ttr_windows_bundle_id_defaults_none():
+    rec = spike.identify_ttr_windows([_win(101, 11, "Toontown Rewritten")])[0]
+    assert rec.bundle_id is None
+
+
+def test_identify_ttr_windows_suffix_matches_but_not_midstring():
+    info = [
+        _win(101, 11, "Toontown Rewritten (Beta)"),  # suffix: matches
+        _win(202, 22, "Not Toontown Rewritten Yet"),  # mid-string: excluded
+    ]
+    recs = spike.identify_ttr_windows(info)
+    assert [r.pid for r in recs] == [101]
+
+
 # ── Task 5: pynput callback compat shim ──────────────────────────────────────
 def test_call_pynput_handler_one_arg_version():
     seen = []
@@ -144,5 +169,6 @@ def test_resolve_port_pid_window_excludes_non_loopback():
         _Conn(pid=101, laddr=_Addr("0.0.0.0", 7000), status="LISTEN"),     # wildcard: excluded
         _Conn(pid=101, laddr=_Addr("192.168.1.5", 7001), status="LISTEN"), # LAN: excluded
         _Conn(pid=101, laddr=_Addr("127.0.0.1", 7002), status="LISTEN"),   # loopback: kept
+        _Conn(pid=101, laddr=_Addr("127.0.0.53", 7003), status="LISTEN"),  # 127/8 loopback: kept
     ]
-    assert spike.resolve_port_pid_window(conns, windows) == {7002: (101, 11)}
+    assert spike.resolve_port_pid_window(conns, windows) == {7002: (101, 11), 7003: (101, 11)}
