@@ -10,7 +10,17 @@ import queue
 import sys
 from unittest.mock import MagicMock
 
+import pytest
+
 from services.input_service import InputService
+
+
+@pytest.fixture(autouse=True)
+def _pin_linux(monkeypatch):
+    """These tests exercise the Linux xlib backend-init classification. Pin the
+    platform so they hold on any host; the one win32 test re-pins win32 itself.
+    Without this, the macOS dev box would take the new darwin backend branch."""
+    monkeypatch.setattr(sys, "platform", "linux")
 
 
 class _FakeWindowManager:

@@ -55,10 +55,13 @@ def test_apply_backend_setting_darwin_constructs_macos_backend(monkeypatch):
 
     monkeypatch.setattr(mb_mod, "MacOSBackend", _FakeBackend)
     s = _bare()
+    s._xlib_backend_failed = True        # simulate a prior failure episode...
+    s._xlib_unavailable_logged = True
     s._apply_backend_setting()
     assert isinstance(s._xlib, _FakeBackend)
     assert events == ["init", "connect"]
-    assert s._xlib_backend_failed is False
+    assert s._xlib_backend_failed is False        # ...both reset on recovery
+    assert s._xlib_unavailable_logged is False
 
 
 def test_apply_backend_setting_darwin_failure_sets_failed_flag(monkeypatch):

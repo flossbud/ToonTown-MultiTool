@@ -8,11 +8,21 @@ is True the event must be dropped. The user's explicit xdotool choice
 """
 
 import queue
+import sys
 from unittest.mock import MagicMock
 
 import pytest
 
 from services.input_service import InputService
+
+
+@pytest.fixture(autouse=True)
+def _pin_linux(monkeypatch):
+    """This module exercises the Linux xlib/xdotool delivery paths. Pin the
+    platform so the assertions hold on any host: on the macOS dev box the new
+    darwin branch in _send_via_backend would otherwise divert these paths and
+    drop instead of running xdotool."""
+    monkeypatch.setattr(sys, "platform", "linux")
 
 
 class _FakeWindowManager:

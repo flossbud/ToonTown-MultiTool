@@ -59,6 +59,11 @@ def test_send_to_window_returns_false_without_pid(monkeypatch):
 
 
 def test_input_service_uses_bridge_for_cc_before_xlib(monkeypatch):
+    # The CC wine-bridge path is Linux-only; pin the platform so this holds on
+    # the macOS dev box (where the darwin branch skips the wine bridge).
+    import sys
+    monkeypatch.setattr(sys, "platform", "linux")
+
     from services.input_service import InputService
     from utils.game_registry import GameRegistry
 
