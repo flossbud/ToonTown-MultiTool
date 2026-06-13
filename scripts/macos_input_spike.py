@@ -426,6 +426,11 @@ def cmd_loop(rest):
              "target_field_seen": 0, "failopen": 0, "tap_disabled": 0,
              "cb_press": 0, "cb_release": 0, "cb_injected": 0}
 
+    # pids currently holding watch_key via our reinjection -> their window id.
+    # Tracking this makes key-up target the SAME set as the key-down, so a
+    # background toon can never be left held by a down/up target mismatch.
+    held = {}
+
     def intercept(event_type, event):
         # Tap-health: the system disables the tap on timeout / heavy user input.
         # Observe and record it (pynput owns the tap port; Phase 1 may need to own
@@ -447,24 +452,37 @@ def cmd_loop(rest):
         keycode = Q.CGEventGetIntegerValueField(event, Q.kCGKeyboardEventKeycode)
         if keycode != vk_for_key(watch_key):
             return event
-        # Fail-open: if we cannot post, do NOT swallow the user's key.
-        if not preflight_post_access():
-            stats["failopen"] += 1
+        down = (event_type == Q.kCGEventKeyDown)
+
+        if down:
+            # Fail-open: if we cannot post, do NOT swallow the user's key.
+            if not preflight_post_access():
+                stats["failopen"] += 1
+                return event
+            stats["captured"] += 1
+            for pid, wid in targets:
+                if post_key(pid, wid, watch_key, True, expected_bundle=bundles.get(pid, "__unset__")):
+                    stats["reinjected"] += 1
+                    held[pid] = wid
+            if not held:
+                # Delivered nothing: fail open so the physical key isn't swallowed.
+                stats["failopen"] += 1
+                return event
+            stats["suppressed"] += 1
+            return None
+
+        # key-up: release EXACTLY the targets we delivered the down to.
+        if not held:
+            # We never delivered a matching down (we failed open on it); let the
+            # physical up pass through so nothing is left inconsistent.
             return event
         stats["captured"] += 1
-        down = (event_type == Q.kCGEventKeyDown)
-        delivered = 0
-        for pid, wid in targets:
-            if post_key(pid, wid, watch_key, down, expected_bundle=bundles.get(pid, "__unset__")):
-                delivered += 1
+        for pid, wid in list(held.items()):
+            if post_key(pid, wid, watch_key, False, expected_bundle=bundles.get(pid, "__unset__")):
                 stats["reinjected"] += 1
-        if delivered == 0:
-            # Reinjection delivered nothing (access lost mid-run / all targets
-            # stale): fail open so the user's physical key is not swallowed.
-            stats["failopen"] += 1
-            return event
+        held.clear()
         stats["suppressed"] += 1
-        return None  # suppress the physical event; we reinjected copies
+        return None
 
     # on_press/on_release via the pynput 1.7/1.8 compat shim: records that
     # callbacks fire (and the injected flag), to confirm callback-vs-interceptor
@@ -486,28 +504,37 @@ def cmd_loop(rest):
         on_release=call_pynput_handler(_on_release),
         darwin_intercept=intercept,
     )
+    loop_ok = True
     listener.start()
     listener.wait()  # block until the tap is actually running
-    try:
-        time.sleep(seconds)
-    finally:
-        listener.stop()
-        # Safety: release the watch key on every target.
-        for pid, wid in targets:
-            post_key(pid, wid, watch_key, False, expected_bundle=bundles.get(pid, "__unset__"))
-        # join() re-raises any exception from the callbacks/intercept so a tap
-        # that died mid-run is surfaced rather than reported as a clean success.
+    if not listener.running:
+        print("  ERROR: listener did not start (tap not created). Check Input Monitoring.")
+        loop_ok = False
+    else:
         try:
-            listener.join()
-        except Exception as e:  # noqa: BLE001 - diagnostic surface for the spike
-            print(f"  LISTENER ERROR (tap died during the run): {e!r}")
+            time.sleep(seconds)
+        finally:
+            if not listener.running:
+                print("  WARNING: the tap stopped during the run (see stats/tap_disabled).")
+                loop_ok = False
+            listener.stop()
+            # Safety: release the watch key on every target we may have held.
+            for pid, wid in targets:
+                post_key(pid, wid, watch_key, False, expected_bundle=bundles.get(pid, "__unset__"))
+            # join() re-raises any exception from the callbacks/intercept so a tap
+            # that died mid-run is surfaced rather than reported as a clean success.
+            try:
+                listener.join()
+            except Exception as e:  # noqa: BLE001 - diagnostic surface for the spike
+                print(f"  LISTENER ERROR (tap died during the run): {e!r}")
+                loop_ok = False
     print(f"[P0b] {stats}")
     print("  Interpret: echoed>0 => posted events re-enter our tap (need active guard);")
     print("             cb_injected>0 => pynput reports our posts as injected=True (guard option b);")
     print("             target_field_seen==0 => kCGEventTargetUnixProcessID NOT usable at tap;")
     print("             tap_disabled>0 => system disabled the tap (Phase 1 must re-enable);")
     print("             failopen>0 => access dropped mid-run and suppression correctly stopped.")
-    return 0
+    return 0 if loop_ok else 1
 
 
 def cmd_type(rest):
