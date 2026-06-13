@@ -95,6 +95,13 @@ _port_to_wid_fingerprint = None
 _port_to_wid_lock = threading.Lock()
 
 
+def _macos_game_pids():
+    """GameWindow records for the on-screen TTR/CC windows on macOS (each has
+    .pid and .window_id). Lazy-imports macos_discovery."""
+    from utils import macos_discovery
+    return macos_discovery._enumerate_game_windows()
+
+
 def _get_window_pids_xres(window_ids: list) -> dict:
     """Use XRes extension to get host PIDs for windows.
 
@@ -198,6 +205,11 @@ def _build_port_to_window_id(current_window_ids: list, active_ports: set | None 
                     port = conn.laddr.port
                     if TTR_API_PORT_START <= port <= TTR_API_PORT_END:
                         port_to_host_pid[port] = conn.pid
+            elif sys.platform == "darwin":
+                from utils import macos_ttr_ports
+                host_pids = {r.pid for r in _macos_game_pids()}
+                port_to_host_pid = macos_ttr_ports.port_to_host_pid(
+                    host_pids, TTR_API_PORT_START, TTR_API_PORT_END)
             else:
                 from utils.host_spawn import host_check_output
                 out = host_check_output(["ss", "-tlnp"], stderr=subprocess.DEVNULL, timeout=5).decode()
@@ -233,6 +245,14 @@ def _build_port_to_window_id(current_window_ids: list, active_ports: set | None 
                         continue
             except Exception:
                 pass
+        elif sys.platform == "darwin":
+            from utils import macos_discovery
+            wanted = set(current_window_ids or [])
+            wid_to_host_pid = {
+                str(r.window_id): r.pid
+                for r in macos_discovery._enumerate_game_windows()
+                if str(r.window_id) in wanted
+            }
         else:
             wid_to_host_pid = _get_window_pids_xres(current_window_ids)
             if not wid_to_host_pid:
