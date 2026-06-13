@@ -1,0 +1,178 @@
+#!/usr/bin/env python3
+"""macOS input feasibility spike (Phase 0). Standalone; do NOT import app modules.
+
+Gates (see docs/superpowers/specs/2026-06-12-macos-support-design.md):
+  P0a  inject  — background keyboard injection to a specific TTR PID
+  P0b  loop    — real capture -> suppress -> reinject loop + echo + fail-open
+  P0b  type    — typed-text + modifier delivery to a background TTR PID
+  P0c  map     — port -> PID -> window identity mapping
+
+Usage:
+  python3 scripts/macos_input_spike.py list
+  python3 scripts/macos_input_spike.py inject <pidA> <pidB> [--key w] [--reps 30]
+  python3 scripts/macos_input_spike.py loop [--seconds 30] [--key w]
+  python3 scripts/macos_input_spike.py type <pid> <text> [--mods shift,control,option]
+  python3 scripts/macos_input_spike.py map [--port-min 1024] [--port-max 65535]
+
+PyObjC is imported lazily inside the command functions so this file imports on
+any platform (the pure-logic helpers are unit-tested on Linux/Windows CI).
+"""
+from __future__ import annotations
+
+import dataclasses
+import sys
+
+# Sentinel stamped into every event we post, so capture can recognise our own
+# synthetic traffic regardless of what the P0b echo measurement concludes.
+SPIKE_EVENT_TAG = 0x7474_6D74  # "ttmt" in hex; arbitrary non-zero marker
+
+# TTR's macOS app reports this as the window owner name. Matched case-sensitively
+# as a substring so a future "(Beta)" suffix still matches. Title is NOT used:
+# kCGWindowName may be withheld without Screen Recording.
+TTR_OWNER_MARKER = "Toontown Rewritten"
+
+
+@dataclasses.dataclass(frozen=True)
+class WindowRecord:
+    pid: int
+    window_id: int
+    owner: str
+    bounds: tuple  # (x, y, width, height)
+    bundle_id: str = None  # filled by enumerate_windows (PyObjC layer); None in pure tests
+
+
+def identify_ttr_windows(window_info) -> list:
+    """Filter a CGWindowListCopyWindowInfo-shaped list down to TTR WindowRecords.
+
+    `window_info` is a list of dicts with string keys (kCGWindowOwnerPID,
+    kCGWindowNumber, kCGWindowOwnerName, kCGWindowBounds). Windows missing a
+    pid/number, or with zero area, are skipped.
+    """
+    out = []
+    for w in window_info:
+        owner = w.get("kCGWindowOwnerName") or ""
+        if TTR_OWNER_MARKER not in owner:
+            continue
+        pid = w.get("kCGWindowOwnerPID")
+        num = w.get("kCGWindowNumber")
+        b = w.get("kCGWindowBounds") or {}
+        width = int(b.get("Width", 0))
+        height = int(b.get("Height", 0))
+        if pid is None or num is None or width <= 0 or height <= 0:
+            continue
+        out.append(WindowRecord(
+            pid=int(pid),
+            window_id=int(num),
+            owner=str(owner),
+            bounds=(int(b.get("X", 0)), int(b.get("Y", 0)), width, height),
+        ))
+    return out
+
+
+# ANSI hardware virtual keycodes from <HIToolbox/Events.h>. Covers the movement
+# keyset plus the keys the spike exercises (chat letters, Return/Escape/Delete/Space).
+_VK = {
+    "a": 0x00, "s": 0x01, "d": 0x02, "f": 0x03, "h": 0x04, "g": 0x05,
+    "z": 0x06, "x": 0x07, "c": 0x08, "v": 0x09, "b": 0x0B, "q": 0x0C,
+    "w": 0x0D, "e": 0x0E, "r": 0x0F, "y": 0x10, "t": 0x11,
+    "o": 0x1F, "u": 0x20, "i": 0x22, "p": 0x23, "l": 0x25, "j": 0x26,
+    "k": 0x28, "n": 0x2D, "m": 0x2E,
+    "1": 0x12, "2": 0x13, "3": 0x14, "4": 0x15, "5": 0x17,
+    "6": 0x16, "7": 0x1A, "8": 0x1C, "9": 0x19, "0": 0x1D,
+    "space": 0x31, "return": 0x24, "escape": 0x35, "delete": 0x33, "tab": 0x30,
+    "up": 0x7E, "down": 0x7D, "left": 0x7B, "right": 0x7C,
+}
+
+
+def vk_for_key(name: str) -> int:
+    """Map a key name (single char or 'up'/'return'/etc.) to a CGKeyCode.
+
+    Case-insensitive. Raises KeyError for unmapped keys.
+    """
+    return _VK[name.lower()]
+
+
+def call_pynput_handler(handler):
+    """Wrap a `handler(key, injected)` so it works under pynput 1.7 and 1.8.
+
+    pynput 1.8 invokes callbacks as cb(key, injected); 1.7 as cb(key). The
+    returned callable accepts either and always forwards (key, injected) with
+    injected defaulting to False on 1.7.
+    """
+    def _cb(key, injected=False):
+        return handler(key, injected)
+    return _cb
+
+
+def is_spike_event(user_data: int) -> bool:
+    """True if a kCGEventSourceUserData value marks one of our injected events."""
+    return user_data == SPIKE_EVENT_TAG
+
+
+def resolve_port_pid_window(connections, windows) -> dict:
+    """Map listening localhost ports owned by TTR PIDs to (pid, window_id).
+
+    `connections` are psutil-sconn-like (`.pid`, `.laddr` with `.port`, `.status`).
+    `windows` are WindowRecords. A TTR PID with multiple windows takes the first.
+    """
+    pid_to_window = {}
+    for w in windows:
+        pid_to_window.setdefault(w.pid, w.window_id)
+    mapping = {}
+    for c in connections:
+        if c.status != "LISTEN":
+            continue
+        pid = c.pid
+        if pid not in pid_to_window:
+            continue
+        laddr = c.laddr
+        port = getattr(laddr, "port", None)
+        if port is None:
+            continue
+        mapping[int(port)] = (int(pid), pid_to_window[pid])
+    return mapping
+
+
+def main(argv=None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if not argv:
+        print(__doc__)
+        return 2
+    cmd, rest = argv[0], argv[1:]
+    if cmd == "list":
+        return cmd_list(rest)
+    if cmd == "inject":
+        return cmd_inject(rest)
+    if cmd == "loop":
+        return cmd_loop(rest)
+    if cmd == "type":
+        return cmd_type(rest)
+    if cmd == "map":
+        return cmd_map(rest)
+    print(__doc__)
+    return 2
+
+
+# Command + PyObjC-harness functions are added by the empirical tasks (8-12, 11b).
+def cmd_list(rest):
+    raise NotImplementedError
+
+
+def cmd_inject(rest):
+    raise NotImplementedError
+
+
+def cmd_loop(rest):
+    raise NotImplementedError
+
+
+def cmd_type(rest):
+    raise NotImplementedError
+
+
+def cmd_map(rest):
+    raise NotImplementedError
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
