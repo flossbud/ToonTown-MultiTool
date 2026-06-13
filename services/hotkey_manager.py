@@ -228,15 +228,15 @@ class HotkeyManager(QObject):
             Q = self._quartz_for_intercept()
         except Exception:
             return event
-        # Tap-health: re-enable a disabled tap so capture does not silently die.
-        if event_type in (Q.kCGEventTapDisabledByTimeout,
-                          Q.kCGEventTapDisabledByUserInput):
-            try:
-                tap = getattr(self.listener, "_tap", None)
-                if tap is not None:
-                    Q.CGEventTapEnable(tap, True)
-            except Exception:
-                pass
+        # Only key-down/up flow through the suppress logic. pynput's keyboard tap
+        # ALSO delivers flagsChanged (modifiers), NSSystemDefined (media keys),
+        # and tap-disabled notifications; reading kCGKeyboardEventKeycode on those
+        # is meaningless and could collide with a movement keycode, so pass them
+        # all through untouched. Tap-disabled note: pynput 1.8 keeps its event tap
+        # as a local and does not expose it, so it cannot be re-enabled from here;
+        # the tap is instead recreated whenever the listener restarts on a focus
+        # change (a dedicated tap-health monitor is deferred, spec Section 4).
+        if event_type not in (Q.kCGEventKeyDown, Q.kCGEventKeyUp):
             return event
         # Fail-open: the tap thread must NEVER raise (a raising suppress
         # predicate or a failed import would otherwise silently kill capture).

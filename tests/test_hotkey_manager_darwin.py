@@ -37,6 +37,8 @@ class FakeQuartz:
     # Event types
     kCGEventKeyDown = 10
     kCGEventKeyUp = 11
+    kCGEventFlagsChanged = 12      # modifier press/release (in the keyboard tap mask)
+    NSSystemDefined = 14           # media / special keys (in the keyboard tap mask)
     kCGEventTapDisabledByTimeout = 0xFFFFFFFE
     kCGEventTapDisabledByUserInput = 0xFFFFFFFF
 
@@ -62,11 +64,6 @@ def _event(keycode=None, target_pid=None):
     if target_pid is not None:
         ev[FakeQuartz.kCGEventTargetUnixProcessID] = target_pid
     return ev
-
-
-class _StubListenerWithTap:
-    def __init__(self):
-        self._tap = object()
 
 
 def _make_hk(quartz, *, suppress_predicate=None, game_pids=frozenset(), listener=None):
@@ -151,27 +148,51 @@ class TestDarwinIntercept:
         assert hk._darwin_intercept(q.kCGEventKeyUp, ev) is None  # suppress
         assert hk.key_event_queue.empty()  # still never enqueues
 
+    def test_raising_suppress_predicate_fails_open(self):
+        # A suppress predicate that raises must NEVER propagate into the pynput
+        # tap thread (that would silently kill capture). The interceptor is
+        # fail-open: on any error it passes the event through.
+        def _boom(_ks):
+            raise RuntimeError("grabber exploded")
 
-# ── Tap-health: re-enable a disabled tap ─────────────────────────────────────
-
-class TestTapDisabledReenable:
-    def test_tap_disabled_passes_event_and_reenables_tap(self):
         q = FakeQuartz()
-        listener = _StubListenerWithTap()
-        hk = _make_hk(q, suppress_predicate=lambda ks: True, listener=listener)
+        hk = _make_hk(q, suppress_predicate=_boom, game_pids=frozenset({101}))
         ev = _event(keycode=KC_W, target_pid=101)
-        result = hk._darwin_intercept(q.kCGEventTapDisabledByTimeout, ev)
-        assert result is ev  # tap-disabled events always pass through
-        assert q.tap_enable_calls == [(listener._tap, True)]
+        assert hk._darwin_intercept(q.kCGEventKeyDown, ev) is ev  # passed through
         assert hk.key_event_queue.empty()
 
-    def test_tap_disabled_without_tap_is_safe(self):
+
+# ── Non-key events pass through untouched ────────────────────────────────────
+# pynput's keyboard tap also delivers flagsChanged (modifiers), NSSystemDefined
+# (media) and tap-disabled notifications. The interceptor only runs the suppress
+# logic for key-down/up; everything else passes through and is never re-enabled
+# or suppressed (pynput 1.8 does not expose the tap to re-enable, and recovery
+# happens when the listener restarts on a focus change).
+
+class TestNonKeyEventsPassThrough:
+    def test_flags_changed_event_passes_through(self):
         q = FakeQuartz()
-        hk = _make_hk(q, suppress_predicate=lambda ks: True, listener=None)
+        hk = _make_hk(q, suppress_predicate=lambda ks: True, game_pids=frozenset({101}))
+        ev = _event(keycode=KC_W, target_pid=101)  # keycode is irrelevant for non-key types
+        assert hk._darwin_intercept(q.kCGEventFlagsChanged, ev) is ev
+        assert hk.key_event_queue.empty()
+
+    def test_system_defined_event_passes_through(self):
+        q = FakeQuartz()
+        hk = _make_hk(q, suppress_predicate=lambda ks: True, game_pids=frozenset({101}))
         ev = _event(keycode=KC_W, target_pid=101)
-        result = hk._darwin_intercept(q.kCGEventTapDisabledByUserInput, ev)
-        assert result is ev
-        assert q.tap_enable_calls == []  # no _tap to re-enable
+        assert hk._darwin_intercept(q.NSSystemDefined, ev) is ev
+        assert hk.key_event_queue.empty()
+
+    def test_tap_disabled_event_passes_through_without_reenable(self):
+        # pynput 1.8 keeps its tap as a local and does not expose it, so the
+        # interceptor cannot (and must not pretend to) re-enable it. It simply
+        # passes the notification through; recovery is via listener restart.
+        q = FakeQuartz()
+        hk = _make_hk(q, suppress_predicate=lambda ks: True, game_pids=frozenset({101}))
+        ev = _event(keycode=KC_W, target_pid=101)
+        assert hk._darwin_intercept(q.kCGEventTapDisabledByTimeout, ev) is ev
+        assert q.tap_enable_calls == []  # no bogus re-enable attempt
         assert hk.key_event_queue.empty()
 
 
