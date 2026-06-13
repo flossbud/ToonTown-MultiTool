@@ -84,6 +84,11 @@ class HotkeyManager(QObject):
         self.listener = None
         self.is_listening = False
 
+        # Known-game-PID set for the darwin target-PID suppression gate. Refreshed
+        # on focus changes (NOT on the per-keystroke hot path); empty means the
+        # gate is inactive / unknown. Off darwin it stays empty.
+        self._darwin_game_pids: frozenset = frozenset()
+
         # Tracks F5's physical down-state so OS auto-repeat does not re-fire the
         # refresh hotkey. Reset in _stop_listener (a focus-out can stop the
         # listener before the physical release arrives).
@@ -104,6 +109,14 @@ class HotkeyManager(QObject):
 
     def _on_active_window_changed(self, active_win_id: str):
         capture = self.window_manager.should_capture_input()
+        if sys.platform == "darwin":
+            # Refresh the darwin target-PID suppression gate off the hot path:
+            # populate it while a game is focused, clear it otherwise so the
+            # gate stays inactive when we are not capturing.
+            if capture:
+                self._refresh_darwin_game_pids()
+            else:
+                self._darwin_game_pids = frozenset()
         if _ITRACE:
             _itrace("hk_listener", f"active={active_win_id!r} should_capture={capture} "
                                    f"was_listening={self.is_listening} -> "
@@ -112,6 +125,20 @@ class HotkeyManager(QObject):
             self._start_listener()
         else:
             self._stop_listener()
+
+    def _refresh_darwin_game_pids(self) -> None:
+        """Refresh the known-game-PID set used by the darwin target-PID
+        suppression gate. Called on focus changes (NOT on the per-keystroke hot
+        path). No-op / empty off darwin or on any error."""
+        if sys.platform != "darwin":
+            return
+        try:
+            from utils import macos_discovery
+            self._darwin_game_pids = frozenset(
+                r.pid for r in macos_discovery._enumerate_game_windows()
+            )
+        except Exception:
+            self._darwin_game_pids = frozenset()
 
     def _start_listener(self):
         if not self.is_listening:
@@ -124,6 +151,12 @@ class HotkeyManager(QObject):
                     on_press=self.on_global_key_press,
                     on_release=self.on_global_key_release,
                     win32_event_filter=self._win32_event_filter,
+                )
+            elif sys.platform == "darwin":
+                self.listener = keyboard_module.Listener(
+                    on_press=self.on_global_key_press,
+                    on_release=self.on_global_key_release,
+                    darwin_intercept=self._darwin_intercept,
                 )
             else:
                 self.listener = keyboard_module.Listener(
@@ -181,6 +214,52 @@ class HotkeyManager(QObject):
             # Raises SuppressException (NOT an error we catch) → OS-level suppress.
             self.listener.suppress_event()
         return True
+
+    def _quartz_for_intercept(self):
+        import Quartz
+        return Quartz
+
+    def _darwin_intercept(self, event_type, event):
+        """macOS suppression channel (suppress-only; mirrors the Linux model).
+        Return None to suppress OS delivery, or the event to pass it through.
+        NEVER enqueues — on_global_key_press/on_global_key_release are the single
+        enqueue point and fire even for events suppressed here."""
+        try:
+            Q = self._quartz_for_intercept()
+        except Exception:
+            return event
+        # Tap-health: re-enable a disabled tap so capture does not silently die.
+        if event_type in (Q.kCGEventTapDisabledByTimeout,
+                          Q.kCGEventTapDisabledByUserInput):
+            try:
+                tap = getattr(self.listener, "_tap", None)
+                if tap is not None:
+                    Q.CGEventTapEnable(tap, True)
+            except Exception:
+                pass
+            return event
+        from utils import macos_keycodes
+        try:
+            keycode = Q.CGEventGetIntegerValueField(event, Q.kCGKeyboardEventKeycode)
+        except Exception:
+            return event
+        keysym = macos_keycodes.keysym_for_cgkeycode(keycode)
+        if keysym is None:
+            return event  # a key we don't translate -> normal processing
+        sp = self.suppress_predicate
+        if sp is None or not sp(keysym):
+            return event  # not suppressed right now
+        # Target-PID gate (amendment D): only suppress when the event targets a
+        # known game PID. 0/absent target or empty known set -> fall back to the
+        # suppress decision (do not over-suppress).
+        try:
+            target_pid = Q.CGEventGetIntegerValueField(event, Q.kCGEventTargetUnixProcessID)
+        except Exception:
+            target_pid = 0
+        if (self._darwin_game_pids and target_pid
+                and int(target_pid) not in self._darwin_game_pids):
+            return event  # targets a non-game process -> never eat it
+        return None  # suppress OS delivery (on_press/on_release still enqueue)
 
     def _stop_listener(self):
         if not self.is_listening or not self.listener:
