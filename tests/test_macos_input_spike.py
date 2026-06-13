@@ -96,6 +96,77 @@ def test_cmd_list_marks_frontmost_window(monkeypatch, capsys):
     assert len(front_lines) == 1 and "pid=202" in front_lines[0]
 
 
+# ── Task 9: pid re-validation + tagged posting (fake Quartz, no PyObjC) ───────
+def _ttr(pid, wid, bundle="com.x"):
+    return spike.WindowRecord(pid, wid, "Toontown Rewritten", (0, 0, 800, 600), bundle)
+
+
+def test_pid_alive_and_ttr_matches_and_checks_bundle(monkeypatch):
+    monkeypatch.setattr(spike, "enumerate_windows", lambda: [_ttr(101, 11, "com.ttr")])
+    assert spike.pid_alive_and_ttr(101, 11) is True                      # no bundle check
+    assert spike.pid_alive_and_ttr(101, 11, "com.ttr") is True           # bundle matches
+    assert spike.pid_alive_and_ttr(101, 11, "com.evil") is False         # PID reused
+    assert spike.pid_alive_and_ttr(101, 99) is False                     # window gone
+    assert spike.pid_alive_and_ttr(999, 11) is False                     # pid gone
+
+
+class _FakeQuartz:
+    kCGEventSourceUserData = "ud"
+    kCGEventSourceStateCombinedSessionState = "combined"
+    kCGEventSourceStatePrivate = "private"
+
+    def __init__(self):
+        self.posts = []
+        self.tagged = []
+        self.flagged = []
+
+    def CGEventSourceCreate(self, state):
+        return ("src", state)
+
+    def CGEventCreateKeyboardEvent(self, src, vk, down):
+        return {"src": src, "vk": vk, "down": down}
+
+    def CGEventSetIntegerValueField(self, ev, field, val):
+        self.tagged.append((field, val))
+
+    def CGEventSetFlags(self, ev, flags):
+        self.flagged.append(flags)
+
+    def CGEventPostToPid(self, pid, ev):
+        self.posts.append((pid, ev))
+
+
+def test_post_key_refuses_without_access(monkeypatch):
+    monkeypatch.setattr(spike, "_quartz", lambda: _FakeQuartz())
+    monkeypatch.setattr(spike, "preflight_post_access", lambda: False)
+    assert spike.post_key(101, 11, "w", True) is False
+
+
+def test_post_key_refuses_stale_target(monkeypatch):
+    fq = _FakeQuartz()
+    monkeypatch.setattr(spike, "_quartz", lambda: fq)
+    monkeypatch.setattr(spike, "preflight_post_access", lambda: True)
+    monkeypatch.setattr(spike, "enumerate_windows", lambda: [])  # target gone
+    assert spike.post_key(101, 11, "w", True) is False
+    assert fq.posts == []
+
+
+def test_post_key_happy_path_tags_and_posts(monkeypatch):
+    fq = _FakeQuartz()
+    monkeypatch.setattr(spike, "_quartz", lambda: fq)
+    monkeypatch.setattr(spike, "preflight_post_access", lambda: True)
+    monkeypatch.setattr(spike, "enumerate_windows", lambda: [_ttr(101, 11, "com.ttr")])
+    assert spike.post_key(101, 11, "w", True, expected_bundle="com.ttr") is True
+    assert fq.posts and fq.posts[0][0] == 101
+    assert (fq.kCGEventSourceUserData, spike.SPIKE_EVENT_TAG) in fq.tagged
+    assert fq.posts[0][1]["vk"] == spike.vk_for_key("w")
+
+
+def test_event_source_none_returns_none(monkeypatch):
+    monkeypatch.setattr(spike, "_quartz", lambda: _FakeQuartz())
+    assert spike._event_source("none") is None
+
+
 # ── Task 3: keycode map ──────────────────────────────────────────────────────
 def test_vk_for_key_movement_and_specials():
     assert spike.vk_for_key("w") == 0x0D

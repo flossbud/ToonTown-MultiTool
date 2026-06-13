@@ -209,6 +209,53 @@ def enumerate_windows() -> list:
         return [dataclasses.replace(r, bundle_id=process_bundle_id(r.pid)) for r in recs]
 
 
+def _event_source(state_name="combined"):
+    # Per spec: combined is primary; private/none are the conditional fallback
+    # matrix. HID state is intentionally NOT offered (spec: do not default to it).
+    Q = _quartz()
+    if state_name == "none":
+        return None
+    state = {
+        "combined": Q.kCGEventSourceStateCombinedSessionState,
+        "private": Q.kCGEventSourceStatePrivate,
+    }[state_name]
+    return Q.CGEventSourceCreate(state)
+
+
+def pid_alive_and_ttr(pid: int, window_id: int, expected_bundle="__unset__") -> bool:
+    """Re-validate immediately before posting: the window still exists, still
+    belongs to this PID, and (if a bundle id was captured) the PID's identity is
+    unchanged. Guards against PID and window-ID reuse (posting has no failure
+    result). `expected_bundle` defaults to a sentinel meaning 'do not check'."""
+    for r in enumerate_windows():
+        if r.window_id == window_id and r.pid == pid:
+            if expected_bundle != "__unset__" and r.bundle_id != expected_bundle:
+                return False  # PID reused by a different app
+            return True
+    return False
+
+
+def post_key(pid: int, window_id: int, key: str, down: bool,
+             source=None, state_name="combined", flags=None,
+             expected_bundle="__unset__") -> bool:
+    """Post one key event to `pid`, tagged for echo detection. Returns False
+    (does not raise) if the target failed re-validation or access is missing."""
+    Q = _quartz()
+    if not preflight_post_access():
+        print("  REFUSED: no post-event access (grant Accessibility)")
+        return False
+    if not pid_alive_and_ttr(pid, window_id, expected_bundle):
+        print(f"  REFUSED: target pid={pid} window_id={window_id} no longer valid")
+        return False
+    src = source if source is not None else _event_source(state_name)
+    ev = Q.CGEventCreateKeyboardEvent(src, vk_for_key(key), bool(down))
+    Q.CGEventSetIntegerValueField(ev, Q.kCGEventSourceUserData, SPIKE_EVENT_TAG)
+    if flags is not None:
+        Q.CGEventSetFlags(ev, flags)
+    Q.CGEventPostToPid(pid, ev)
+    return True
+
+
 def main(argv=None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if not argv:
