@@ -128,3 +128,37 @@ def test_geometry_pid_game_for_window(monkeypatch):
 
 def test_toplevel_at_point_returns_none():
     assert md.toplevel_at_point(10, 20) is None
+
+
+# ── Error contract: query functions never raise (match x11_discovery) ────────
+
+def test_enumerate_returns_empty_on_quartz_error(monkeypatch):
+    def _boom():
+        raise RuntimeError("Quartz unavailable")
+
+    monkeypatch.setattr(md, "_quartz", _boom)
+    assert md._enumerate_game_windows() == []
+
+
+def test_geometry_queries_return_none_when_enumeration_empty(monkeypatch):
+    monkeypatch.setattr(md, "_enumerate_game_windows", lambda: [])
+    assert md.get_window_root_x("11") is None
+    assert md.get_window_geometry("11") is None
+    assert md.get_window_pid("11") is None
+    assert md.game_for_window_id("11") is None
+    assert md.find_game_windows() == []
+
+
+def test_get_active_window_id_returns_none_on_error(monkeypatch):
+    def _boom():
+        raise RuntimeError("window server gone")
+
+    # Whether the AppKit import fails (CI/Linux) or _enumerate raises (macOS),
+    # get_active_window_id must swallow it and return None, never propagate.
+    monkeypatch.setattr(md, "_enumerate_game_windows", _boom)
+    assert md.get_active_window_id() is None
+
+
+def test_process_bundle_id_returns_none_on_error(monkeypatch):
+    # Not importable on non-macOS, and AppKit can raise; must yield None.
+    assert md.process_bundle_id(-1) is None
