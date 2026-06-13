@@ -97,6 +97,26 @@ class HotkeyManager(QObject):
         # We hook into active window changes to start/stop the listener dynamically
         self.window_manager.active_window_changed.connect(self._on_active_window_changed)
 
+        # macOS: precompute the keyboard layout on THIS (main) thread and shim
+        # pynput's keycode_context, so the pynput listener thread never calls the
+        # main-thread-only Text-Input-Source APIs (which SIGTRAP off-main around
+        # focus/input-source transitions). Must happen before any Listener starts;
+        # HotkeyManager is constructed on the main thread, so this is the place.
+        # If the shim cannot be installed on darwin, leave capture DISABLED
+        # rather than risk the off-main TIS SIGTRAP (see _start_listener).
+        self._darwin_capture_ready = True
+        self._darwin_capture_warned = False
+        if sys.platform == "darwin":
+            try:
+                from utils.macos_keyboard_layout import (
+                    install_main_thread_keycode_context,
+                )
+                self._darwin_capture_ready = bool(
+                    install_main_thread_keycode_context())
+            except Exception as e:  # noqa: BLE001 - never block construction
+                self._darwin_capture_ready = False
+                print(f"[HotkeyManager] macOS keycode_context shim failed: {e}")
+
     def start(self):
         """Start listening if the current window is an allowed target."""
         if self.is_listening:
@@ -142,6 +162,19 @@ class HotkeyManager(QObject):
 
     def _start_listener(self):
         if not self.is_listening:
+            # Fail-safe: on darwin, never start the pynput listener unless the
+            # main-thread keycode_context shim is installed. Without it the
+            # listener thread would call Text-Input-Source APIs off-main and
+            # SIGTRAP. Degrade to no capture (surfaced once) instead of crashing.
+            if sys.platform == "darwin" and not getattr(
+                    self, "_darwin_capture_ready", True):
+                if not getattr(self, "_darwin_capture_warned", False):
+                    self._darwin_capture_warned = True
+                    print("[HotkeyManager] macOS keyboard capture disabled: the "
+                          "keycode_context main-thread shim is unavailable, so "
+                          "starting the pynput listener would risk a Text-Input-"
+                          "Source SIGTRAP. Skipping listener start (no capture).")
+                return
             keyboard_module = _keyboard_module()
             if sys.platform == "win32":
                 # Windows suppression goes through the win32 event filter, NOT
