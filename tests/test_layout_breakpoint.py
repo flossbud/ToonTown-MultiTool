@@ -40,15 +40,41 @@ def test_decide_swaps_to_compact_when_either_dimension_drops():
     assert _decide_layout_mode("full", W_FULL + 100, H_FULL - DEADBAND_H) == "compact"
 
 
-def test_main_set_layout_mode_propagates_to_launch_tab():
-    """When main._set_layout_mode flips modes, launch_tab is updated too."""
+def test_main_set_layout_mode_propagates_to_tabs():
+    """When main._set_layout_mode flips modes, every mode-aware tab is updated."""
     from unittest.mock import MagicMock
     from main import MultiToonTool
     instance = MultiToonTool.__new__(MultiToonTool)
     instance._layout_mode = "compact"
+    instance.customization_overlay = None
     instance.multitoon_tab = MagicMock()
     instance.launch_tab = MagicMock()
+    instance.settings_tab = MagicMock()
     MultiToonTool._set_layout_mode(instance, "full")
     instance.multitoon_tab.set_layout_mode.assert_called_once_with("full")
     instance.launch_tab.set_layout_mode.assert_called_once_with("full")
+    instance.settings_tab.set_layout_mode.assert_called_once_with("full")
     assert instance._layout_mode == "full"
+
+
+def test_main_resume_pending_mode_swap_propagates_to_tabs():
+    """The deferred-swap resume path drives the same tab contract and
+    clears the pending flag (a re-entrant resume must no-op)."""
+    from unittest.mock import MagicMock
+    from main import MultiToonTool
+    instance = MultiToonTool.__new__(MultiToonTool)
+    instance._layout_mode = "compact"
+    instance._pending_mode_swap = "full"
+    instance.multitoon_tab = MagicMock()
+    instance.launch_tab = MagicMock()
+    instance.settings_tab = MagicMock()
+    MultiToonTool._resume_pending_mode_swap(instance)
+    instance.multitoon_tab.set_layout_mode.assert_called_once_with("full")
+    instance.launch_tab.set_layout_mode.assert_called_once_with("full")
+    instance.settings_tab.set_layout_mode.assert_called_once_with("full")
+    assert instance._layout_mode == "full"
+    assert instance._pending_mode_swap is None
+    MultiToonTool._resume_pending_mode_swap(instance)  # re-entrant: no-op
+    instance.multitoon_tab.set_layout_mode.assert_called_once_with("full")
+    instance.launch_tab.set_layout_mode.assert_called_once_with("full")
+    instance.settings_tab.set_layout_mode.assert_called_once_with("full")
