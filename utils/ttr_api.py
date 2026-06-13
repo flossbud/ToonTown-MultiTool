@@ -95,13 +95,6 @@ _port_to_wid_fingerprint = None
 _port_to_wid_lock = threading.Lock()
 
 
-def _macos_game_pids():
-    """GameWindow records for the on-screen TTR/CC windows on macOS (each has
-    .pid and .window_id). Lazy-imports macos_discovery."""
-    from utils import macos_discovery
-    return macos_discovery._enumerate_game_windows()
-
-
 def _get_window_pids_xres(window_ids: list) -> dict:
     """Use XRes extension to get host PIDs for windows.
 
@@ -192,6 +185,10 @@ def _build_port_to_window_id(current_window_ids: list, active_ports: set | None 
             return dict(_port_to_wid)
 
         port_to_host_pid = {}
+        # Single macOS window snapshot, shared by both the port fork and the
+        # window fork below so they describe the same instant (set in the darwin
+        # port branch). None on non-darwin / before the darwin branch runs.
+        _darwin_game_recs = None
         try:
             import sys
             if sys.platform == "win32":
@@ -206,8 +203,12 @@ def _build_port_to_window_id(current_window_ids: list, active_ports: set | None 
                     if TTR_API_PORT_START <= port <= TTR_API_PORT_END:
                         port_to_host_pid[port] = conn.pid
             elif sys.platform == "darwin":
-                from utils import macos_ttr_ports
-                host_pids = {r.pid for r in _macos_game_pids()}
+                # Enumerate the game windows ONCE; the window->pid fork below
+                # reuses this same snapshot so a process exiting mid-pass cannot
+                # leave a dangling port->window join.
+                from utils import macos_ttr_ports, macos_discovery
+                _darwin_game_recs = macos_discovery._enumerate_game_windows()
+                host_pids = {r.pid for r in _darwin_game_recs}
                 port_to_host_pid = macos_ttr_ports.port_to_host_pid(
                     host_pids, TTR_API_PORT_START, TTR_API_PORT_END)
             else:
@@ -246,11 +247,15 @@ def _build_port_to_window_id(current_window_ids: list, active_ports: set | None 
             except Exception:
                 pass
         elif sys.platform == "darwin":
-            from utils import macos_discovery
+            # Reuse the single enumeration taken in the port fork so both maps
+            # describe the same instant; re-enumerate only as a defensive fallback.
+            if _darwin_game_recs is None:
+                from utils import macos_discovery
+                _darwin_game_recs = macos_discovery._enumerate_game_windows()
             wanted = set(current_window_ids or [])
             wid_to_host_pid = {
                 str(r.window_id): r.pid
-                for r in macos_discovery._enumerate_game_windows()
+                for r in _darwin_game_recs
                 if str(r.window_id) in wanted
             }
         else:

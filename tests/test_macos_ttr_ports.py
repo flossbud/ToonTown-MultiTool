@@ -1,7 +1,6 @@
 import collections
 import importlib
 import sys
-import types
 
 mp = importlib.import_module("utils.macos_ttr_ports")
 
@@ -51,9 +50,21 @@ def test_listen_ports_for_pid_filters_loopback_and_listen(monkeypatch):
         def Process(pid):
             return FakeProc()
 
+    # _listen_ports_for_pid does `import psutil` lazily at call time, so patching
+    # sys.modules is enough -- no module reload needed.
     monkeypatch.setitem(sys.modules, "psutil", FakePsutil)
-    # Reload to pick up monkeypatched psutil inside the function's lazy import
-    importlib.reload(mp)
 
     result = mp._listen_ports_for_pid(4242)
     assert sorted(result) == [1547, 1548]
+
+
+def test_listen_ports_for_pid_returns_empty_on_error(monkeypatch):
+    """A psutil failure (e.g. NoSuchProcess) yields [] rather than raising into
+    ttr_api's port->pid loop."""
+    class _Boom:
+        @staticmethod
+        def Process(pid):
+            raise RuntimeError("no such process")
+
+    monkeypatch.setitem(sys.modules, "psutil", _Boom)
+    assert mp._listen_ports_for_pid(999999) == []
