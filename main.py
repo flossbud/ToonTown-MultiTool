@@ -1386,9 +1386,8 @@ class MultiToonTool(QMainWindow):
         box.setText(
             "Keep-Alive is running, but this computer's sleep or hibernate "
             "setting could not be held off. Your toons may be disconnected if "
-            "the machine sleeps.\n\nThis is unexpected on a standard Linux "
-            "desktop. You can keep the machine awake in your system's power "
-            "settings as a workaround."
+            "the machine sleeps.\n\nThis is unexpected. You can keep the machine "
+            "awake in your system's power settings as a workaround."
         )
         box.setStandardButtons(QMessageBox.Ok)
         box.exec()
