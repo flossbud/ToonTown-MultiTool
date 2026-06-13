@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import sys
-import pytest
 
 from utils import macos_movement_grabber as mmg
 
