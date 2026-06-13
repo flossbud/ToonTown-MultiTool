@@ -14,6 +14,15 @@ import pytest
 import services.sleep_inhibitor as si
 
 
+@pytest.fixture(autouse=True)
+def _pin_not_macos(monkeypatch):
+    """These tests assert the Linux/Windows acquire() branches. On the darwin
+    host the new _is_macos() branch would otherwise capture acquire(); pin it
+    False so they keep exercising their intended path
+    (project_platform_branch_breaks_unpinned_tests)."""
+    monkeypatch.setattr(si, "_is_macos", lambda: False, raising=False)
+
+
 class FakeHolder:
     """Stand-in for the systemd-inhibit Popen handle."""
     def __init__(self):

@@ -51,6 +51,10 @@ def _is_windows():
     return sys.platform == "win32"
 
 
+def _is_macos():
+    return sys.platform == "darwin"
+
+
 def _kernel32():
     import ctypes
     return ctypes.windll.kernel32
@@ -85,6 +89,29 @@ def _popen_holder(token):
         # denial, ENOMEM): close both ends so neither fd leaks, then re-raise
         # so the caller can degrade to the fallback. Close both defensively so
         # a failing read-fd close cannot skip the write-fd close.
+        _close_write_fd(r_fd)
+        _close_write_fd(w_fd)
+        raise
+    os.close(r_fd)  # parent keeps only the write end
+    return proc, w_fd
+
+
+def _popen_caffeinate():
+    """Spawn `/usr/bin/caffeinate -dis -- /bin/cat` with a parent-owned pipe as
+    cat's stdin. Returns (proc, write_fd). Closing write_fd (or the parent
+    dying) EOFs cat, which exits and releases caffeinate's power assertions.
+
+    Plain subprocess.Popen (no host_popen/_clean_host_env: macOS has neither
+    Flatpak nor AppImage). NOTE: with a utility, proc.pid is the `cat` process;
+    caffeinate owns the assertions on cat's behalf and references cat's pid in
+    its pmset Details line (see _caffeinate_types_for_pid)."""
+    r_fd, w_fd = os.pipe()
+    argv = ["/usr/bin/caffeinate", "-dis", "--", "/bin/cat"]
+    try:
+        proc = subprocess.Popen(argv, stdin=r_fd, pass_fds=(r_fd,))
+    except BaseException:
+        # Spawn failed after the pipe was created: close both ends so neither
+        # leaks, then re-raise so the caller can degrade (mirrors _popen_holder).
         _close_write_fd(r_fd)
         _close_write_fd(w_fd)
         raise
@@ -128,6 +155,59 @@ def _run_list(timeout=_LIST_CALL_TIMEOUT):
         return cp.stdout or ""
     except Exception:
         return ""
+
+
+def _run_pmset_assertions(timeout=_LIST_CALL_TIMEOUT):
+    """Return `pmset -g assertions` stdout (LC_ALL=C) on a clean exit, else "".
+
+    Mirrors _run_list but uses a plain subprocess (macOS has no Flatpak, so no
+    host_run/_clean_host_env) and gates on the return code, so a failed pmset is
+    never mistaken for "our assertion is absent". `timeout` is bounded by the
+    caller to the remaining verify budget."""
+    env = dict(os.environ)
+    env["LC_ALL"] = "C"
+    try:
+        cp = subprocess.run(
+            ["/usr/bin/pmset", "-g", "assertions"],
+            capture_output=True, text=True, timeout=timeout, env=env,
+        )
+    except Exception:
+        return ""
+    return cp.stdout if cp.returncode == 0 else ""
+
+
+# Power-assertion types caffeinate -dis holds; the trio we require to verify.
+_CAFFEINATE_TYPES = (
+    "PreventUserIdleSystemSleep",
+    "PreventUserIdleDisplaySleep",
+    "PreventSystemSleep",
+)
+
+
+def _caffeinate_types_for_pid(text, pid):
+    """Return the set of power-assertion type names whose `pmset -g assertions`
+    Details line references our holder as `(pid <pid>)`.
+
+    pmset lists each assertion as a `pid N(owner): [...] <TYPE> named: ...`
+    header followed by a `Details:` line. For the `caffeinate -dis -- cat`
+    holder the Details line reads `asserting on behalf of 'cat' (pid <cat_pid>)`,
+    and <cat_pid> is our Popen's pid (caffeinate runs cat as a utility). Matching
+    that parenthesized form ties the assertion to our own spawned process and is
+    collision-proof (the macOS analog of the Linux per-acquire UUID token)."""
+    key = "(pid %d)" % pid
+    types = set()
+    current = None
+    for line in text.splitlines():
+        s = line.strip()
+        if s.startswith("pid ") and "named:" in s:
+            parts = s.split()
+            try:
+                current = parts[parts.index("named:") - 1]
+            except (ValueError, IndexError):
+                current = None
+        elif current is not None and key in s:
+            types.add(current)
+    return types
 
 
 def _close_fd(fd):
@@ -253,6 +333,8 @@ class SleepInhibitor:
             self._acquired = True
             if _is_windows():
                 self.active_tier = self._acquire_windows()
+            elif _is_macos():
+                self.active_tier = self._acquire_macos()
             else:
                 self.active_tier = self._acquire_linux()
             return self.active_tier
@@ -301,6 +383,35 @@ class SleepInhibitor:
             tiers.append("screensaver")
         return "+".join(tiers)
 
+    # ── macOS ────────────────────────────────────────────────────────────────
+    def _acquire_macos(self):
+        """Hold a verified caffeinate -dis holder. Sets sleep_blocked +
+        screen_lock_cookie_held on success (the holder asserts all three power
+        assertions). Ownership-safe: once (proc, w_fd) exists, every non-success
+        path EOFs the holder and reaps it before returning, so nothing leaks."""
+        self.status = InhibitStatus()
+        try:
+            proc, w_fd = _popen_caffeinate()
+        except Exception:
+            # Spawn failed (no caffeinate, ENOMEM): nothing acquired.
+            return None
+        try:
+            verified = self._verify_caffeinate(proc)
+        except Exception:
+            verified = False
+        if verified:
+            self._releases.append(
+                ("caffeinate",
+                 lambda p=proc, fd=w_fd: (_close_write_fd(fd), _reap(p))))
+            self.status.sleep_blocked = True
+            self.status.screen_lock_cookie_held = True
+            self.status.method = "caffeinate"
+            return "caffeinate"
+        # Unverified or verifier error: EOF the holder and reap it (no leak).
+        _close_write_fd(w_fd)
+        _reap(proc)
+        return None
+
     def _acquire_sleep_layer(self):
         token = self._token = _uuid_token()
         try:
@@ -338,6 +449,24 @@ class SleepInhibitor:
                 return False
             # Never start a list call that could run past the overall deadline.
             if token in _run_list(timeout=min(_LIST_CALL_TIMEOUT, remaining)):
+                return True
+            time.sleep(min(_VERIFY_INTERVAL, max(0.0, deadline - time.monotonic())))
+
+    def _verify_caffeinate(self, proc):
+        """Poll pmset until our caffeinate holder is verified holding ALL THREE
+        power assertions, within the same budget as _verify_systemd. Takes the
+        holder `proc` (not just the pid) so a holder that exits mid-poll is
+        caught immediately: a dead holder holds nothing, so do not trust pmset."""
+        needed = set(_CAFFEINATE_TYPES)
+        deadline = time.monotonic() + _VERIFY_DEADLINE
+        while True:
+            if proc.poll() is not None:
+                return False  # holder exited -> nothing held
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            text = _run_pmset_assertions(timeout=min(_LIST_CALL_TIMEOUT, remaining))
+            if _caffeinate_types_for_pid(text, proc.pid) >= needed:
                 return True
             time.sleep(min(_VERIFY_INTERVAL, max(0.0, deadline - time.monotonic())))
 
