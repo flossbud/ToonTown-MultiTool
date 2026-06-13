@@ -316,6 +316,8 @@ def _parse_opts(rest, defaults):
             name = tok[2:]
             if name not in defaults:
                 raise SystemExit(f"unknown option --{name}")
+            if i + 1 >= len(rest) or rest[i + 1].startswith("--"):
+                raise SystemExit(f"option --{name} requires a value")
             typ = defaults[name][0]
             out[name] = typ(rest[i + 1])
             i += 2
@@ -325,10 +327,16 @@ def _parse_opts(rest, defaults):
     return pos, out
 
 
+_STATES = ("combined", "private", "none")
+
+
 def _hold(pid, window_id, key, seconds, state_name):
+    """Hold a key for `seconds`, ALWAYS releasing in finally. Returns True only
+    if the key-down post succeeded."""
     src = _event_source(state_name)
-    ok = post_key(pid, window_id, key, True, source=src, state_name=state_name)
+    ok = False
     try:
+        ok = post_key(pid, window_id, key, True, source=src, state_name=state_name)
         time.sleep(seconds)
     finally:
         post_key(pid, window_id, key, False, source=src, state_name=state_name)
@@ -342,42 +350,55 @@ def cmd_inject(rest):
     if len(pos) != 2:
         print("usage: inject <pidA> <pidB> [--key w] [--reps 30] [--state combined|private|none]")
         return 2
+    if opts["state"] not in _STATES:
+        print(f"invalid --state {opts['state']!r}; choose from {'|'.join(_STATES)}")
+        return 2
     pidA, pidB = int(pos[0]), int(pos[1])
+    if pidA == pidB:
+        print("pidA and pidB must differ (background isolation needs two processes).")
+        return 2
     wins = {r.pid: r.window_id for r in enumerate_windows()}
     if pidA not in wins or pidB not in wins:
         print(f"pidA/pidB not both present as TTR windows; found {sorted(wins)}")
         return 1
     widA, widB = wins[pidA], wins[pidB]
     key, reps, state = opts["key"], opts["reps"], opts["state"]
+    refused = 0  # count posts the backend refused (no access / stale target)
 
     print(f"[baseline] bring pid={pidB} to FRONT, then watch it move on '{key}'.")
     input("  press Enter when pidB is frontmost... ")
-    _hold(pidB, widB, key, 0.6, state)
+    refused += not _hold(pidB, widB, key, 0.6, state)
 
     print(f"[central] keep pid={pidA} FRONT; posting '{key}' ONLY to background pid={pidB}.")
     input("  press Enter when pidA is frontmost... ")
     print("  -> expect: pidB moves, pidA does NOT.")
-    _hold(pidB, widB, key, 0.8, state)
+    refused += not _hold(pidB, widB, key, 0.8, state)
 
     print(f"[reverse] keep pid={pidB} FRONT; posting '{key}' ONLY to background pid={pidA}.")
     input("  press Enter when pidB is frontmost... ")
     print("  -> expect: pidA moves, pidB does NOT.")
-    _hold(pidA, widA, key, 0.8, state)
+    refused += not _hold(pidA, widA, key, 0.8, state)
 
     print(f"[third-app] bring Finder/Terminal FRONT; posting '{key}' to pid={pidB}.")
     input("  press Enter when a non-game app is frontmost... ")
     print("  -> expect: pidB still moves while neither game is frontmost.")
-    _hold(pidB, widB, key, 0.8, state)
+    refused += not _hold(pidB, widB, key, 0.8, state)
 
-    print(f"[stress] {reps} alternating taps/holds to background pid={pidB}...")
+    print(f"[stress] {reps} alternating taps/holds to background pid={pidB}.")
+    input("  press Enter to start the stress loop... ")
     for n in range(reps):
         src = _event_source(state)
-        post_key(pidB, widB, key, True, source=src, state_name=state)
         try:
+            if not post_key(pidB, widB, key, True, source=src, state_name=state):
+                refused += 1
             time.sleep(0.05 if n % 2 else 0.25)
         finally:
             post_key(pidB, widB, key, False, source=src, state_name=state)
     print("  -> expect: no stuck key after the loop (tap 'key' in pidB to confirm released).")
+
+    if refused:
+        print(f"WARNING: {refused} post(s) were REFUSED (no access / stale target). "
+              f"Grant Accessibility and re-check the results above.")
     return 0
 
 

@@ -189,6 +189,21 @@ def test_parse_opts_unknown_flag_raises():
         spike._parse_opts(["--bogus", "1"], {"key": (str, "w")})
 
 
+def test_parse_opts_missing_value_raises():
+    with pytest.raises(SystemExit):
+        spike._parse_opts(["--key"], {"key": (str, "w")})
+    # A following flag is not silently consumed as the value.
+    with pytest.raises(SystemExit):
+        spike._parse_opts(["--key", "--reps"], {"key": (str, "w"), "reps": (int, 1)})
+
+
+def test_cmd_inject_rejects_bad_args_before_pyobjc():
+    # These early returns must not touch enumerate_windows (no PyObjC needed).
+    assert spike.cmd_inject(["1"]) == 2                         # wrong arg count
+    assert spike.cmd_inject(["1", "2", "--state", "hid"]) == 2  # invalid state
+    assert spike.cmd_inject(["5", "5"]) == 2                    # identical pids
+
+
 # ── Task 3: keycode map ──────────────────────────────────────────────────────
 def test_vk_for_key_movement_and_specials():
     assert spike.vk_for_key("w") == 0x0D
