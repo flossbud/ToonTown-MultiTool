@@ -112,6 +112,17 @@ class TestDarwinIntercept:
         assert hk._darwin_intercept(q.kCGEventKeyDown, ev) is None  # suppress
         assert hk.key_event_queue.empty()
 
+    def test_absent_target_pid_field_falls_back_to_suppress(self):
+        # The target-PID field may not be populated at the tap (the plan flags
+        # this as a live risk). FakeQuartz raises KeyError on the missing field;
+        # the interceptor must treat that as target_pid=0 and fall back to
+        # suppress, never raise into the tap thread.
+        q = FakeQuartz()
+        hk = _make_hk(q, suppress_predicate=lambda ks: True, game_pids=frozenset({101}))
+        ev = _event(keycode=KC_W)  # no target_pid field at all
+        assert hk._darwin_intercept(q.kCGEventKeyDown, ev) is None  # suppress
+        assert hk.key_event_queue.empty()
+
     def test_empty_game_pid_set_falls_back_to_suppress(self):
         q = FakeQuartz()
         hk = _make_hk(q, suppress_predicate=lambda ks: True, game_pids=frozenset())

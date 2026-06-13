@@ -238,28 +238,42 @@ class HotkeyManager(QObject):
             except Exception:
                 pass
             return event
-        from utils import macos_keycodes
+        # Fail-open: the tap thread must NEVER raise (a raising suppress
+        # predicate or a failed import would otherwise silently kill capture).
+        # Mirrors _win32_event_filter's broad guard; on any error pass the event
+        # through unchanged.
         try:
+            from utils import macos_keycodes
             keycode = Q.CGEventGetIntegerValueField(event, Q.kCGKeyboardEventKeycode)
-        except Exception:
+            keysym = macos_keycodes.keysym_for_cgkeycode(keycode)
+            if keysym is None:
+                return event  # a key we don't translate -> normal processing
+            sp = self.suppress_predicate
+            if sp is None or not sp(keysym):
+                return event  # not suppressed right now
+            # Target-PID gate (amendment D): only suppress when the event targets
+            # a known game PID. 0/absent target or empty known set -> fall back to
+            # the suppress decision (do not over-suppress). Snapshot the set once:
+            # it is read here on the pynput tap thread while the focus-change
+            # thread may reassign it.
+            try:
+                target_pid = Q.CGEventGetIntegerValueField(
+                    event, Q.kCGEventTargetUnixProcessID)
+            except Exception:
+                target_pid = 0
+            pids = self._darwin_game_pids
+            if pids and target_pid and int(target_pid) not in pids:
+                if _ITRACE:
+                    _itrace("hk_intercept",
+                            f"pass (non-game target) keysym={keysym} pid={target_pid}")
+                return event  # targets a non-game process -> never eat it
+            if _ITRACE:
+                _itrace("hk_intercept", f"suppress keysym={keysym} pid={target_pid}")
+            return None  # suppress OS delivery (on_press/on_release still enqueue)
+        except Exception as e:  # noqa: BLE001
+            if _ITRACE:
+                _itrace("hk_intercept", f"error keysym-path err={e}")
             return event
-        keysym = macos_keycodes.keysym_for_cgkeycode(keycode)
-        if keysym is None:
-            return event  # a key we don't translate -> normal processing
-        sp = self.suppress_predicate
-        if sp is None or not sp(keysym):
-            return event  # not suppressed right now
-        # Target-PID gate (amendment D): only suppress when the event targets a
-        # known game PID. 0/absent target or empty known set -> fall back to the
-        # suppress decision (do not over-suppress).
-        try:
-            target_pid = Q.CGEventGetIntegerValueField(event, Q.kCGEventTargetUnixProcessID)
-        except Exception:
-            target_pid = 0
-        if (self._darwin_game_pids and target_pid
-                and int(target_pid) not in self._darwin_game_pids):
-            return event  # targets a non-game process -> never eat it
-        return None  # suppress OS delivery (on_press/on_release still enqueue)
 
     def _stop_listener(self):
         if not self.is_listening or not self.listener:
