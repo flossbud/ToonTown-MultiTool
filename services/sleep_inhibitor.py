@@ -417,6 +417,24 @@ class SleepInhibitor:
                 return True
             time.sleep(min(_VERIFY_INTERVAL, max(0.0, deadline - time.monotonic())))
 
+    def _verify_caffeinate(self, proc):
+        """Poll pmset until our caffeinate holder is verified holding ALL THREE
+        power assertions, within the same budget as _verify_systemd. Takes the
+        holder `proc` (not just the pid) so a holder that exits mid-poll is
+        caught immediately: a dead holder holds nothing, so do not trust pmset."""
+        needed = set(_CAFFEINATE_TYPES)
+        deadline = time.monotonic() + _VERIFY_DEADLINE
+        while True:
+            if proc.poll() is not None:
+                return False  # holder exited -> nothing held
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            text = _run_pmset_assertions(timeout=min(_LIST_CALL_TIMEOUT, remaining))
+            if _caffeinate_types_for_pid(text, proc.pid) >= needed:
+                return True
+            time.sleep(min(_VERIFY_INTERVAL, max(0.0, deadline - time.monotonic())))
+
     # QtDBus seams (screensaver implemented in Task 3).
     def _acquire_login1_qtdbus(self):
         """Hold a logind sleep:idle inhibitor over QtDBus, verifying that our

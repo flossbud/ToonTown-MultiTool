@@ -134,3 +134,42 @@ def test_popen_caffeinate_closes_both_fds_on_spawn_failure(monkeypatch):
     for fd in (made["r"], made["w"]):
         with pytest.raises(OSError):
             os.fstat(fd)   # closed -> EBADF
+
+
+class FakeCaffeinate:
+    """Stand-in for the caffeinate -- cat Popen handle. pid is the cat pid."""
+    def __init__(self, pid=4242, alive=True):
+        self.pid = pid
+        self._alive = alive
+        self.waited = False
+    def poll(self):
+        return None if self._alive else 0
+    def wait(self, timeout=None):
+        self.waited = True
+        return 0
+
+
+def test_verify_caffeinate_true_when_all_three_present(monkeypatch):
+    monkeypatch.setattr(si, "_run_pmset_assertions", lambda timeout=None: PMSET_ALL_THREE)
+    inh = si.SleepInhibitor()
+    assert inh._verify_caffeinate(FakeCaffeinate(pid=4242)) is True
+
+
+def test_verify_caffeinate_false_on_partial_coverage(monkeypatch):
+    # Only two of the three types reference our pid -> not verified.
+    monkeypatch.setattr(si, "_run_pmset_assertions", lambda timeout=None: PMSET_ONLY_TWO)
+    monkeypatch.setattr(si, "_VERIFY_DEADLINE", 0.2)  # don't poll the full 1.5s
+    inh = si.SleepInhibitor()
+    assert inh._verify_caffeinate(FakeCaffeinate(pid=4242)) is False
+
+
+def test_verify_caffeinate_false_when_holder_exited(monkeypatch):
+    # A dead holder holds nothing; verify must short-circuit without trusting pmset.
+    called = {"pmset": False}
+    def fake_pmset(timeout=None):
+        called["pmset"] = True
+        return PMSET_ALL_THREE
+    monkeypatch.setattr(si, "_run_pmset_assertions", fake_pmset)
+    inh = si.SleepInhibitor()
+    assert inh._verify_caffeinate(FakeCaffeinate(pid=4242, alive=False)) is False
+    assert called["pmset"] is False   # liveness checked BEFORE polling pmset
