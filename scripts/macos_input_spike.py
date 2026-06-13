@@ -109,11 +109,18 @@ def is_spike_event(user_data: int) -> bool:
     return user_data == SPIKE_EVENT_TAG
 
 
-def resolve_port_pid_window(connections, windows) -> dict:
-    """Map listening localhost ports owned by TTR PIDs to (pid, window_id).
+# The TTR local API binds to loopback; only loopback-bound listeners are the
+# game's API. Wildcard (0.0.0.0/::) and LAN-bound sockets are excluded so an
+# unrelated socket on a TTR PID is never mistaken for the API port.
+_LOOPBACK_IPS = {"127.0.0.1", "::1"}
 
-    `connections` are psutil-sconn-like (`.pid`, `.laddr` with `.port`, `.status`).
-    `windows` are WindowRecords. A TTR PID with multiple windows takes the first.
+
+def resolve_port_pid_window(connections, windows) -> dict:
+    """Map listening loopback ports owned by TTR PIDs to (pid, window_id).
+
+    `connections` are psutil-sconn-like (`.pid`, `.laddr` with `.ip`/`.port`,
+    `.status`). `windows` are WindowRecords. A TTR PID with multiple windows
+    takes the first. Only loopback-bound LISTEN sockets are considered.
     """
     pid_to_window = {}
     for w in windows:
@@ -126,8 +133,9 @@ def resolve_port_pid_window(connections, windows) -> dict:
         if pid not in pid_to_window:
             continue
         laddr = c.laddr
+        ip = getattr(laddr, "ip", None)
         port = getattr(laddr, "port", None)
-        if port is None:
+        if port is None or ip not in _LOOPBACK_IPS:
             continue
         mapping[int(port)] = (int(pid), pid_to_window[pid])
     return mapping

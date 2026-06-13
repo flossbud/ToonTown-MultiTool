@@ -136,3 +136,13 @@ def test_resolve_port_pid_window_ignores_no_laddr():
     windows = [spike.WindowRecord(pid=101, window_id=11, owner="Toontown Rewritten", bounds=(0, 0, 1, 1))]
     conns = [_Conn(pid=101, laddr=(), status="LISTEN")]
     assert spike.resolve_port_pid_window(conns, windows) == {}
+
+
+def test_resolve_port_pid_window_excludes_non_loopback():
+    windows = [spike.WindowRecord(pid=101, window_id=11, owner="Toontown Rewritten", bounds=(0, 0, 1, 1))]
+    conns = [
+        _Conn(pid=101, laddr=_Addr("0.0.0.0", 7000), status="LISTEN"),     # wildcard: excluded
+        _Conn(pid=101, laddr=_Addr("192.168.1.5", 7001), status="LISTEN"), # LAN: excluded
+        _Conn(pid=101, laddr=_Addr("127.0.0.1", 7002), status="LISTEN"),   # loopback: kept
+    ]
+    assert spike.resolve_port_pid_window(conns, windows) == {7002: (101, 11)}
