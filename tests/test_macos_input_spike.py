@@ -221,6 +221,12 @@ def test_cmd_type_rejects_bad_args_before_pyobjc():
     assert spike.cmd_type(["123", "hi", "--modkey", "f99"]) == 2         # unmapped modkey
 
 
+# ── Task 12: cmd_map no-windows early return ─────────────────────────────────
+def test_cmd_map_returns_1_without_windows(monkeypatch):
+    monkeypatch.setattr(spike, "enumerate_windows", lambda: [])
+    assert spike.cmd_map([]) == 1
+
+
 # ── Task 3: keycode map ──────────────────────────────────────────────────────
 def test_vk_for_key_movement_and_specials():
     assert spike.vk_for_key("w") == 0x0D

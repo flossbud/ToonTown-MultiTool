@@ -633,7 +633,44 @@ def cmd_type(rest):
 
 
 def cmd_map(rest):
-    raise NotImplementedError
+    _pos, opts = _parse_opts(rest, {"port-min": (int, 1024), "port-max": (int, 65535)})
+    import psutil
+    windows = enumerate_windows()
+    if not windows:
+        print("No TTR windows; launch the game first.")
+        return 1
+    used_fallback = False
+    try:
+        conns = psutil.net_connections(kind="inet")
+    except psutil.AccessDenied:
+        # Global enumeration needs elevation on macOS; fall back to per-PID,
+        # which can succeed for same-user processes without sudo. Record which
+        # path worked so Phase 1 picks the right production strategy.
+        print("AccessDenied on global net_connections; trying per-PID fallback...")
+        used_fallback = True
+        conns = []
+        for pid in {r.pid for r in windows}:
+            try:
+                proc = psutil.Process(pid)
+                # Process.net_connections() is psutil>=6.0; older uses .connections().
+                getter = getattr(proc, "net_connections", None) or proc.connections
+                for c in getter(kind="inet"):
+                    # Per-PID results omit .pid; reattach it for the resolver.
+                    conns.append(c._replace(pid=pid) if hasattr(c, "_replace") else c)
+            except (psutil.AccessDenied, psutil.NoSuchProcess) as e:
+                print(f"  pid={pid}: {type(e).__name__}")
+    conns = [c for c in conns
+             if c.laddr and opts["port-min"] <= getattr(c.laddr, "port", 0) <= opts["port-max"]]
+    mapping = resolve_port_pid_window(conns, windows)
+    if not mapping:
+        print("No TTR listening ports resolved. Is the in-game local API enabled?")
+        return 1
+    for port, (pid, wid) in sorted(mapping.items()):
+        print(f"port={port} -> pid={pid} window_id={wid}")
+    distinct = {wid for _p, (_pid, wid) in mapping.items()}
+    print(f"resolved {len(mapping)} port(s) across {len(distinct)} distinct window(s) "
+          f"via {'per-PID fallback' if used_fallback else 'global net_connections'}.")
+    return 0
 
 
 if __name__ == "__main__":
