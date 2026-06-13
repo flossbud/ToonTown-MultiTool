@@ -1033,6 +1033,16 @@ class InputService(QObject):
         delivery (the toon still moves)."""
         import sys
         if self._xlib is not None:
+            # On darwin a connected backend is NOT sufficient: CGEventPostToPid
+            # silently no-ops without Accessibility (TCC), which is revocable at
+            # runtime. If posting permission is gone, reporting ready would let
+            # strict suppression eat native movement while delivery fails ->
+            # frozen focused toon. Require live post-permission so suppression
+            # instead degrades to native delivery.
+            if sys.platform == "darwin":
+                check = getattr(self._xlib, "has_post_access", None)
+                if check is not None and not check():
+                    return False
             return True                       # XlibBackend / Win32Backend / MacOSBackend connected
         if self._xlib_backend_failed:
             return False                      # requested backend failed -> events dropped

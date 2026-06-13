@@ -2,8 +2,19 @@
 
 from __future__ import annotations
 
+import pytest
+
 import utils.macos_discovery as md
 from utils.macos_discovery import GameWindow, identify_game_windows
+
+
+@pytest.fixture(autouse=True)
+def _reset_enum_cache():
+    """Keep the module-level enumeration snapshot cache from leaking between
+    tests (the real-_enumerate tests would otherwise pollute later ones)."""
+    md._reset_enum_cache()
+    yield
+    md._reset_enum_cache()
 
 
 def _w(pid, num, name, x=0, y=0, w=800, h=600):
@@ -138,6 +149,26 @@ def test_enumerate_returns_empty_on_quartz_error(monkeypatch):
 
     monkeypatch.setattr(md, "_quartz", _boom)
     assert md._enumerate_game_windows() == []
+
+
+def test_enumerate_is_cached_within_ttl(monkeypatch):
+    """The expensive window-server enumeration is served from a snapshot cache on
+    repeated calls within the TTL (the per-keystroke + N+1-per-poll fix), and a
+    reset forces a fresh enumeration."""
+    calls = {"n": 0}
+
+    def _fake_uncached():
+        calls["n"] += 1
+        return [GameWindow(1, 1, "ttr", "Toontown Rewritten", (0, 0, 800, 600))]
+
+    monkeypatch.setattr(md, "_enumerate_game_windows_uncached", _fake_uncached)
+    r1 = md._enumerate_game_windows()
+    r2 = md._enumerate_game_windows()
+    assert calls["n"] == 1              # second call served from the cache
+    assert r1 == r2
+    md._reset_enum_cache()
+    md._enumerate_game_windows()
+    assert calls["n"] == 2              # reset forces a fresh enumeration
 
 
 def test_geometry_queries_return_none_when_enumeration_empty(monkeypatch):

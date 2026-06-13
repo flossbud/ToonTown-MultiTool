@@ -38,9 +38,13 @@ class _StubBackend:
     def __init__(self) -> None:
         self.keydowns: list[tuple[str, str]] = []
         self.keyups: list[tuple[str, str]] = []
+        self.post_access = True  # has_post_access() result (Accessibility/TCC)
 
     def disconnect(self) -> None:
         pass
+
+    def has_post_access(self) -> bool:
+        return self.post_access
 
     def send_keydown(self, win_id, keysym) -> bool:
         self.keydowns.append((str(win_id), keysym))
@@ -229,6 +233,29 @@ def test_readiness_loss_disables_suppression(monkeypatch, tmp_path):
         assert svc._ttr_grabs_active is True
         # ...but suppression is degraded OFF by the consume-gate -> not frozen.
         assert svc._key_grabber.should_suppress("w") is False
+    finally:
+        svc.shutdown()
+
+
+def test_accessibility_revoked_disables_suppression_no_freeze(monkeypatch, tmp_path):
+    """Review finding I-1: a CONNECTED backend whose Accessibility (post) access
+    is revoked must still degrade suppression. CGEventPostToPid silently no-ops
+    without post-permission, so if suppression stayed on the focused toon would
+    freeze. Here the backend is non-None (unlike the backend-death test above) but
+    has_post_access() is False; _delivery_backend_ready() must therefore be False
+    and should_suppress() must degrade to native delivery -- live, per keystroke.
+    """
+    svc, _ = _make_service(
+        monkeypatch, tmp_path, active_wid="ttr-1",
+        windows=["ttr-1"], games={"ttr-1": "ttr"}, assignments=[0],
+    )
+    try:
+        svc._start_key_grabber()
+        assert svc._key_grabber.should_suppress("w") is True   # post-access OK
+        # Accessibility revoked mid-session: backend object still present.
+        svc._xlib.post_access = False
+        assert svc._delivery_backend_ready() is False
+        assert svc._key_grabber.should_suppress("w") is False  # degraded -> no freeze
     finally:
         svc.shutdown()
 

@@ -13,6 +13,9 @@ SPIKE_EVENT_TAG = 0x7474_6D74  # kCGEventSourceUserData marker (echo insurance)
 # residual staleness window is acceptable. 0.25s keeps reuse exposure tiny while
 # still avoiding a full enumeration on every keystroke.
 _CACHE_TTL = 0.25
+# CGPreflightPostEventAccess cache TTL. Accessibility (post) permission is
+# revocable at runtime, so re-check on a cadence rather than once at connect.
+_ACCESS_TTL = 1.0
 
 
 class MacOSBackend:
@@ -20,6 +23,7 @@ class MacOSBackend:
         self._source = None
         self._cache = {"t": -1.0, "valid": {}}  # wid_str -> (pid, bundle_id)
         self._trusted = {}  # wid_str -> bundle_id (first-sight identity lock)
+        self._access = {"t": -1.0, "ok": True}  # CGPreflightPostEventAccess cache
 
     def _quartz(self):
         import Quartz
@@ -33,6 +37,30 @@ class MacOSBackend:
         self._source = None
         self._cache = {"t": -1.0, "valid": {}}
         self._trusted = {}
+        self._access = {"t": -1.0, "ok": True}
+
+    def has_post_access(self) -> bool:
+        """Whether this process currently has permission to POST synthetic events
+        (Accessibility). CGEventPostToPid SILENTLY no-ops without it, so readiness
+        must treat False as not-deliverable: otherwise strict suppression would
+        suppress native movement while delivery fails, FREEZING the focused toon.
+        Cached for _ACCESS_TTL (TCC is revocable). Acts only on a DETECTED denial
+        (preflight returns False); a check error or a missing symbol (older macOS)
+        is treated as access-OK so a transient check glitch never disables a
+        working setup."""
+        now = time.time()
+        if now - self._access["t"] <= _ACCESS_TTL:
+            return self._access["ok"]
+        ok = True
+        try:
+            Q = self._quartz()
+            preflight = getattr(Q, "CGPreflightPostEventAccess", None)
+            if preflight is not None:
+                ok = bool(preflight())
+        except Exception:
+            ok = True
+        self._access = {"t": now, "ok": ok}
+        return ok
 
     def sync(self):
         pass

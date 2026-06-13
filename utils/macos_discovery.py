@@ -9,6 +9,17 @@ module imports cleanly on any platform.
 from __future__ import annotations
 
 import dataclasses
+import threading
+import time
+
+# Snapshot-cache TTL for the (expensive) window-server enumeration. The same
+# enumeration feeds the per-keystroke suppression-classification path (pynput
+# tap thread, via get_game_for_window) AND the ~250ms window poll, so caching it
+# briefly collapses what was a per-keystroke + N+1-per-poll storm of
+# CGWindowListCopyWindowInfo calls into roughly one call per TTL.
+_ENUM_TTL = 0.5
+_enum_lock = threading.Lock()
+_enum_cache = {"t": -1.0, "recs": []}
 
 # Owner-name startswith markers mapped to a game tag. Window titles are NOT
 # used for matching because reading them may require Screen Recording
@@ -91,7 +102,14 @@ def process_bundle_id(pid: int):
         return None
 
 
-def _enumerate_game_windows() -> list:
+def _reset_enum_cache() -> None:
+    """Invalidate the enumeration snapshot cache (tests / explicit refresh)."""
+    with _enum_lock:
+        _enum_cache["t"] = -1.0
+        _enum_cache["recs"] = []
+
+
+def _enumerate_game_windows_uncached() -> list:
     """Live GameWindow records (with bundle_id) from the on-screen window list.
 
     Returns [] on any error. This honors the same contract as x11_discovery:
@@ -107,6 +125,24 @@ def _enumerate_game_windows() -> list:
             return [dataclasses.replace(r, bundle_id=process_bundle_id(r.pid)) for r in recs]
     except Exception:
         return []
+
+
+def _enumerate_game_windows() -> list:
+    """Cached snapshot of the on-screen game windows (see _ENUM_TTL).
+
+    The lock guards only the fast cache dict ops; the slow enumeration runs
+    OUTSIDE the lock so the pynput tap thread never blocks on the poll thread's
+    in-flight enumeration. A simultaneous cache miss on both threads just
+    enumerates twice (harmless). Never raises (the uncached core returns [])."""
+    now = time.monotonic()
+    with _enum_lock:
+        if now - _enum_cache["t"] <= _ENUM_TTL:
+            return _enum_cache["recs"]
+    recs = _enumerate_game_windows_uncached()
+    with _enum_lock:
+        _enum_cache["t"] = time.monotonic()
+        _enum_cache["recs"] = recs
+    return recs
 
 
 def find_game_windows() -> list:

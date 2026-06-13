@@ -16,6 +16,12 @@ class _FakeQuartz:
         self.posts = []  # list of (pid, ev)
         self.flags = []  # list of (ev, flags)
         self.raise_on_post = False
+        self.preflight_result = True   # CGPreflightPostEventAccess return
+        self.preflight_calls = 0
+
+    def CGPreflightPostEventAccess(self):
+        self.preflight_calls += 1
+        return self.preflight_result
 
     def CGEventSourceCreate(self, state):
         return ("source", state)
@@ -41,6 +47,49 @@ def _backend_with_fake(monkeypatch, fake):
     monkeypatch.setattr(be, "_quartz", lambda: fake)
     be.connect()
     return be
+
+
+def test_has_post_access_reflects_preflight(monkeypatch):
+    fake = _FakeQuartz()
+    be = _backend_with_fake(monkeypatch, fake)
+    fake.preflight_result = True
+    assert be.has_post_access() is True
+    # Cached within the TTL: a flip is not seen until the cache expires, and the
+    # preflight is not re-called on every query (avoids a per-keystroke syscall).
+    fake.preflight_result = False
+    assert be.has_post_access() is True       # still cached True
+    assert fake.preflight_calls == 1
+    # Force a re-check (simulate cache expiry) -> now reflects the denial.
+    be._access = {"t": -1.0, "ok": True}
+    assert be.has_post_access() is False
+
+
+def test_has_post_access_fails_open_on_check_error(monkeypatch):
+    fake = _FakeQuartz()
+    be = _backend_with_fake(monkeypatch, fake)
+    be._access = {"t": -1.0, "ok": True}
+
+    def _raise():
+        raise RuntimeError("preflight blew up")
+
+    monkeypatch.setattr(fake, "CGPreflightPostEventAccess", _raise)
+    # A check ERROR (not a definitive denial) must not disable a working setup.
+    assert be.has_post_access() is True
+
+
+def test_has_post_access_true_when_symbol_missing(monkeypatch):
+    # Older macOS without CGPreflightPostEventAccess -> best-effort access-OK.
+    class _NoPreflight:
+        kCGEventSourceStateCombinedSessionState = 99
+
+        def CGEventSourceCreate(self, state):
+            return ("source", state)
+
+    fake = _NoPreflight()
+    be = MacOSBackend()
+    monkeypatch.setattr(be, "_quartz", lambda: fake)
+    be._access = {"t": -1.0, "ok": True}
+    assert be.has_post_access() is True
 
 
 def test_send_keydown_valid_pid(monkeypatch):

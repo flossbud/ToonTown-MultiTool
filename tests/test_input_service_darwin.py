@@ -41,6 +41,27 @@ def test_delivery_ready_darwin_requires_connected_backend(monkeypatch):
     assert s._delivery_backend_ready() is False
 
 
+def test_delivery_ready_darwin_requires_post_access(monkeypatch):
+    """A connected MacOSBackend is not enough on darwin: without Accessibility
+    (CGEventPostToPid silently no-ops), readiness must be False so strict
+    suppression degrades to native delivery instead of freezing the focused toon.
+    """
+    monkeypatch.setattr(sys, "platform", "darwin")
+    s = _bare()
+
+    class _BE:
+        def __init__(self, ok):
+            self._ok = ok
+
+        def has_post_access(self):
+            return self._ok
+
+    s._xlib = _BE(True)
+    assert s._delivery_backend_ready() is True
+    s._xlib = _BE(False)
+    assert s._delivery_backend_ready() is False   # no Accessibility -> not ready
+
+
 def test_apply_backend_setting_darwin_constructs_macos_backend(monkeypatch):
     monkeypatch.setattr(sys, "platform", "darwin")
     import utils.macos_backend as mb_mod
