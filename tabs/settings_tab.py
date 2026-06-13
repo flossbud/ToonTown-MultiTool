@@ -16,7 +16,11 @@ from PySide6.QtGui import QColor, QPainter, QPen
 from utils.theme_manager import apply_theme, get_theme_colors, resolve_theme
 from utils.shared_widgets import MENU_TEXT_ROLE, SettingsComboBox, Switch
 from utils.widgets import install_modern_scrollbar
-from services.ttr_login_service import find_engine_path, get_engine_executable_name
+from services.ttr_login_service import (
+    engine_binary_path,
+    find_engine_path,
+    get_engine_executable_name,
+)
 from services.cc_login_service import (
     find_cc_engine_path,
     get_cc_engine_executable_name,
@@ -1056,6 +1060,14 @@ class SettingsTab(QWidget):
             return get_engine_executable_name()
         return get_cc_engine_executable_name()
 
+    def _engine_binary_in(self, game: str, dir_path: str) -> str:
+        """Absolute path to the game's engine binary inside dir_path. TTR routes
+        through engine_binary_path so the macOS .app nesting is honored; CC keeps
+        the flat layout (no macOS CC client)."""
+        if game == "ttr":
+            return engine_binary_path(dir_path)
+        return os.path.join(dir_path, self._exe_name(game))
+
     def _find_path(self, game: str):
         if game == "ttr":
             return find_engine_path()
@@ -1104,7 +1116,7 @@ class SettingsTab(QWidget):
         )
         if not dir_path:
             return
-        engine = os.path.join(dir_path, exe_name)
+        engine = self._engine_binary_in(game, dir_path)
         if os.path.isfile(engine):
             self.settings_manager.set(self._settings_key_for(game), dir_path)
             self.settings_manager.set(self._approval_key_for(game), os.path.realpath(dir_path))

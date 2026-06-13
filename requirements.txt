@@ -25,6 +25,10 @@ PySide6>=6.8,<6.9; python_version < "3.13"
 # existing major-version policy.
 PySide6>=6.10,<7; python_version >= "3.13"
 pynput>=1.7.6
+# Pin (macOS): the darwin_intercept Listener kwarg used by the HotkeyManager
+# suppression channel needs pynput 1.8+. Keep the unbounded floor above for
+# other platforms.
+pynput>=1.8; sys_platform == "darwin"
 requests>=2.28.0
 keyring>=24.0.0
 certifi>=2023.7.22
@@ -36,6 +40,12 @@ jeepney>=0.7.0; sys_platform == "linux"
 
 # Linux only — Xlib input backend and XRes PID resolution
 python-xlib>=0.33; sys_platform == "linux"
+
+# macOS only — PyObjC bridges for CGEvent injection, CGWindowList discovery,
+# CGEventTap capture (Quartz) and NSWorkspace/NSRunningApplication (Cocoa).
+# Declared explicitly rather than relying on pynput's transitive PyObjC deps.
+pyobjc-framework-Quartz>=10.0; sys_platform == "darwin"
+pyobjc-framework-Cocoa>=10.0; sys_platform == "darwin"
 
 # Linux only — YAML parsing for Bottles and Lutris config files
 PyYAML>=6.0; sys_platform == "linux"

@@ -25,6 +25,11 @@ _FLATPAK_PATH = os.path.expanduser(
     "~/.var/app/com.toontownrewritten.Launcher/data/settings.json"
 )
 
+# Native macOS TTR client writes settings.json under Application Support.
+_MACOS_PATH = os.path.expanduser(
+    "~/Library/Application Support/Toontown Rewritten/settings.json"
+)
+
 
 def _engine_dir_from_settings():
     """Hook for callers / tests to inject the discovered engine dir.
@@ -54,6 +59,7 @@ def locate_settings_file(engine_dir: str | None = None) -> Path | None:
     if discovered:
         candidates.append(Path(discovered) / "settings.json")
     candidates.append(Path(_FLATPAK_PATH))
+    candidates.append(Path(_MACOS_PATH))
     for c in candidates:
         if c.exists():
             return c

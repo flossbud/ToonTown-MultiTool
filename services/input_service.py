@@ -252,6 +252,16 @@ class InputService(QObject):
             if not ok:
                 return
             self._key_grabber = grabber
+        elif _sys.platform == "darwin":
+            from utils.macos_movement_grabber import MacOSMovementKeyGrabber
+            grabber = MacOSMovementKeyGrabber()
+            ok = grabber.prepare(
+                should_consume=self._should_consume_grabbed_key,
+                on_grabs_changed=self._on_grabs_changed,
+            )
+            if not ok:
+                return
+            self._key_grabber = grabber
         else:
             try:
                 from utils.x11_movement_grabber import MovementKeyGrabber, xlib_available
@@ -747,6 +757,28 @@ class InputService(QObject):
     def _apply_backend_setting(self):
         """Connect or disconnect backend based on platform and current settings."""
         import sys
+        if sys.platform == "darwin":
+            if self._xlib is None:
+                try:
+                    from utils.macos_backend import MacOSBackend
+                    self._xlib = MacOSBackend()
+                    self._xlib.connect()
+                    self._xlib_backend_failed = False
+                    self._xlib_unavailable_logged = False
+                except Exception as e:
+                    print(f"[InputService] macOS input backend unavailable; "
+                          f"synthetic input disabled: {e}")
+                    self._xlib = None
+                    self._xlib_backend_failed = True
+                    # Leave _xlib_unavailable_logged as-is: it is reset only on
+                    # recovery, so the drop message surfaces once per failure
+                    # episode rather than every keystroke (mirrors win32/xlib).
+                    if self.logging_enabled:
+                        self.input_log.emit(
+                            "[Input] Input delivery unavailable; the input backend failed to start."
+                        )
+            return
+
         if sys.platform == "win32":
             if self._xlib is None:
                 try:
@@ -987,11 +1019,11 @@ class InputService(QObject):
                 pass
 
     def _ttr_strict_supported(self) -> bool:
-        """TTR strict separation is implemented for Linux/X11 and Windows. macOS
-        and any other platform stay unsupported (out of scope). This is the single
+        """TTR strict separation is implemented for Linux/X11, Windows, and
+        macOS. Any other platform stays unsupported. This is the single
         platform-capability gate."""
         import sys
-        return sys.platform in ("linux", "win32")
+        return sys.platform in ("linux", "win32", "darwin")
 
     def _delivery_backend_ready(self) -> bool:
         """Whether _send_via_backend can ACTUALLY deliver synthetic input right
@@ -1001,10 +1033,20 @@ class InputService(QObject):
         delivery (the toon still moves)."""
         import sys
         if self._xlib is not None:
-            return True                       # Win32Backend or XlibBackend connected
+            # On darwin a connected backend is NOT sufficient: CGEventPostToPid
+            # silently no-ops without Accessibility (TCC), which is revocable at
+            # runtime. If posting permission is gone, reporting ready would let
+            # strict suppression eat native movement while delivery fails ->
+            # frozen focused toon. Require live post-permission so suppression
+            # instead degrades to native delivery.
+            if sys.platform == "darwin":
+                check = getattr(self._xlib, "has_post_access", None)
+                if check is not None and not check():
+                    return False
+            return True                       # XlibBackend / Win32Backend / MacOSBackend connected
         if self._xlib_backend_failed:
             return False                      # requested backend failed -> events dropped
-        return sys.platform != "win32"        # _xlib None, not failed: Linux explicit-xdotool delivers; win32 has no xdotool
+        return sys.platform == "linux"        # _xlib None, not failed: only Linux has the explicit-xdotool delivery path
 
     # ── Keymap-aware send methods ──────────────────────────────────────────
 
@@ -1842,9 +1884,10 @@ class InputService(QObject):
         ]
 
     def _send_via_backend(self, action: str, win_id: str, keysym: str, modifiers: list = None):
-        """Route a synthetic key event through the active backend: the xlib
-        backend, dropped-with-notice when the xlib backend failed to
-        initialize, or the user's explicit xdotool backend."""
+        """Route a synthetic key event through the active backend: the
+        platform backend (Xlib / Win32 / MacOS), dropped-with-notice when that
+        backend failed to initialize or is unavailable (win32/darwin have no
+        fallback), or the Linux user's explicit xdotool backend."""
         if _ITRACE:
             try:
                 _active = self.window_manager.get_active_window()
@@ -1853,7 +1896,7 @@ class InputService(QObject):
             _itrace("send", f"action={action} target={win_id} active={_active} "
                             f"keysym={keysym} mods={modifiers}")
         import sys
-        if sys.platform != "win32":
+        if sys.platform == "linux":
             try:
                 from utils.game_registry import GameRegistry
                 if GameRegistry.instance().get_game_for_window(str(win_id)) == "cc":
@@ -1878,11 +1921,12 @@ class InputService(QObject):
                 success = self._xlib.send_keyup(win_id, keysym)
             elif action == "key":
                 success = self._xlib.send_key(win_id, keysym, modifiers)
-        elif self._xlib_backend_failed:
-            # The requested xlib backend failed to initialize. NEVER silently
-            # emulate via xdotool/XTEST here: XTEST re-triggers the Wayland
-            # input-control portal the app deliberately avoids and can leave a
-            # stuck auto-repeating key. Drop the event and surface once.
+        elif self._xlib_backend_failed or sys.platform != "linux":
+            # The requested backend failed to initialize, OR this is darwin/win32
+            # which have no xdotool fallback. NEVER silently emulate via
+            # xdotool/XTEST here: XTEST re-triggers the Wayland input-control
+            # portal the app deliberately avoids and can leave a stuck
+            # auto-repeating key. Drop the event and surface once.
             if _ITRACE:
                 _itrace("send", f"DROP (xlib unavailable) action={action} "
                                 f"target={win_id} keysym={keysym}")

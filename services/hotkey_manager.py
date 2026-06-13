@@ -84,6 +84,11 @@ class HotkeyManager(QObject):
         self.listener = None
         self.is_listening = False
 
+        # Known-game-PID set for the darwin target-PID suppression gate. Refreshed
+        # on focus changes (NOT on the per-keystroke hot path); empty means the
+        # gate is inactive / unknown. Off darwin it stays empty.
+        self._darwin_game_pids: frozenset = frozenset()
+
         # Tracks F5's physical down-state so OS auto-repeat does not re-fire the
         # refresh hotkey. Reset in _stop_listener (a focus-out can stop the
         # listener before the physical release arrives).
@@ -91,6 +96,26 @@ class HotkeyManager(QObject):
 
         # We hook into active window changes to start/stop the listener dynamically
         self.window_manager.active_window_changed.connect(self._on_active_window_changed)
+
+        # macOS: precompute the keyboard layout on THIS (main) thread and shim
+        # pynput's keycode_context, so the pynput listener thread never calls the
+        # main-thread-only Text-Input-Source APIs (which SIGTRAP off-main around
+        # focus/input-source transitions). Must happen before any Listener starts;
+        # HotkeyManager is constructed on the main thread, so this is the place.
+        # If the shim cannot be installed on darwin, leave capture DISABLED
+        # rather than risk the off-main TIS SIGTRAP (see _start_listener).
+        self._darwin_capture_ready = True
+        self._darwin_capture_warned = False
+        if sys.platform == "darwin":
+            try:
+                from utils.macos_keyboard_layout import (
+                    install_main_thread_keycode_context,
+                )
+                self._darwin_capture_ready = bool(
+                    install_main_thread_keycode_context())
+            except Exception as e:  # noqa: BLE001 - never block construction
+                self._darwin_capture_ready = False
+                print(f"[HotkeyManager] macOS keycode_context shim failed: {e}")
 
     def start(self):
         """Start listening if the current window is an allowed target."""
@@ -104,6 +129,14 @@ class HotkeyManager(QObject):
 
     def _on_active_window_changed(self, active_win_id: str):
         capture = self.window_manager.should_capture_input()
+        if sys.platform == "darwin":
+            # Refresh the darwin target-PID suppression gate off the hot path:
+            # populate it while a game is focused, clear it otherwise so the
+            # gate stays inactive when we are not capturing.
+            if capture:
+                self._refresh_darwin_game_pids()
+            else:
+                self._darwin_game_pids = frozenset()
         if _ITRACE:
             _itrace("hk_listener", f"active={active_win_id!r} should_capture={capture} "
                                    f"was_listening={self.is_listening} -> "
@@ -113,8 +146,35 @@ class HotkeyManager(QObject):
         else:
             self._stop_listener()
 
+    def _refresh_darwin_game_pids(self) -> None:
+        """Refresh the known-game-PID set used by the darwin target-PID
+        suppression gate. Called on focus changes (NOT on the per-keystroke hot
+        path). No-op / empty off darwin or on any error."""
+        if sys.platform != "darwin":
+            return
+        try:
+            from utils import macos_discovery
+            self._darwin_game_pids = frozenset(
+                r.pid for r in macos_discovery._enumerate_game_windows()
+            )
+        except Exception:
+            self._darwin_game_pids = frozenset()
+
     def _start_listener(self):
         if not self.is_listening:
+            # Fail-safe: on darwin, never start the pynput listener unless the
+            # main-thread keycode_context shim is installed. Without it the
+            # listener thread would call Text-Input-Source APIs off-main and
+            # SIGTRAP. Degrade to no capture (surfaced once) instead of crashing.
+            if sys.platform == "darwin" and not getattr(
+                    self, "_darwin_capture_ready", True):
+                if not getattr(self, "_darwin_capture_warned", False):
+                    self._darwin_capture_warned = True
+                    print("[HotkeyManager] macOS keyboard capture disabled: the "
+                          "keycode_context main-thread shim is unavailable, so "
+                          "starting the pynput listener would risk a Text-Input-"
+                          "Source SIGTRAP. Skipping listener start (no capture).")
+                return
             keyboard_module = _keyboard_module()
             if sys.platform == "win32":
                 # Windows suppression goes through the win32 event filter, NOT
@@ -124,6 +184,12 @@ class HotkeyManager(QObject):
                     on_press=self.on_global_key_press,
                     on_release=self.on_global_key_release,
                     win32_event_filter=self._win32_event_filter,
+                )
+            elif sys.platform == "darwin":
+                self.listener = keyboard_module.Listener(
+                    on_press=self.on_global_key_press,
+                    on_release=self.on_global_key_release,
+                    darwin_intercept=self._darwin_intercept,
                 )
             else:
                 self.listener = keyboard_module.Listener(
@@ -181,6 +247,66 @@ class HotkeyManager(QObject):
             # Raises SuppressException (NOT an error we catch) → OS-level suppress.
             self.listener.suppress_event()
         return True
+
+    def _quartz_for_intercept(self):
+        import Quartz
+        return Quartz
+
+    def _darwin_intercept(self, event_type, event):
+        """macOS suppression channel (suppress-only; mirrors the Linux model).
+        Return None to suppress OS delivery, or the event to pass it through.
+        NEVER enqueues — on_global_key_press/on_global_key_release are the single
+        enqueue point and fire even for events suppressed here."""
+        try:
+            Q = self._quartz_for_intercept()
+        except Exception:
+            return event
+        # Only key-down/up flow through the suppress logic. pynput's keyboard tap
+        # ALSO delivers flagsChanged (modifiers), NSSystemDefined (media keys),
+        # and tap-disabled notifications; reading kCGKeyboardEventKeycode on those
+        # is meaningless and could collide with a movement keycode, so pass them
+        # all through untouched. Tap-disabled note: pynput 1.8 keeps its event tap
+        # as a local and does not expose it, so it cannot be re-enabled from here;
+        # the tap is instead recreated whenever the listener restarts on a focus
+        # change (a dedicated tap-health monitor is deferred, spec Section 4).
+        if event_type not in (Q.kCGEventKeyDown, Q.kCGEventKeyUp):
+            return event
+        # Fail-open: the tap thread must NEVER raise (a raising suppress
+        # predicate or a failed import would otherwise silently kill capture).
+        # Mirrors _win32_event_filter's broad guard; on any error pass the event
+        # through unchanged.
+        try:
+            from utils import macos_keycodes
+            keycode = Q.CGEventGetIntegerValueField(event, Q.kCGKeyboardEventKeycode)
+            keysym = macos_keycodes.keysym_for_cgkeycode(keycode)
+            if keysym is None:
+                return event  # a key we don't translate -> normal processing
+            sp = self.suppress_predicate
+            if sp is None or not sp(keysym):
+                return event  # not suppressed right now
+            # Target-PID gate (amendment D): only suppress when the event targets
+            # a known game PID. 0/absent target or empty known set -> fall back to
+            # the suppress decision (do not over-suppress). Snapshot the set once:
+            # it is read here on the pynput tap thread while the focus-change
+            # thread may reassign it.
+            try:
+                target_pid = Q.CGEventGetIntegerValueField(
+                    event, Q.kCGEventTargetUnixProcessID)
+            except Exception:
+                target_pid = 0
+            pids = self._darwin_game_pids
+            if pids and target_pid and int(target_pid) not in pids:
+                if _ITRACE:
+                    _itrace("hk_intercept",
+                            f"pass (non-game target) keysym={keysym} pid={target_pid}")
+                return event  # targets a non-game process -> never eat it
+            if _ITRACE:
+                _itrace("hk_intercept", f"suppress keysym={keysym} pid={target_pid}")
+            return None  # suppress OS delivery (on_press/on_release still enqueue)
+        except Exception as e:  # noqa: BLE001
+            if _ITRACE:
+                _itrace("hk_intercept", f"error keysym-path err={e}")
+            return event
 
     def _stop_listener(self):
         if not self.is_listening or not self.listener:

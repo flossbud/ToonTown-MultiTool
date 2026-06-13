@@ -13,6 +13,17 @@ from PySide6.QtWidgets import QApplication
 from services import ttr_launcher
 
 
+@pytest.fixture(autouse=True)
+def _pin_linux_platform(monkeypatch):
+    """These tests assert the FLAT engine-dir layout (binary directly in
+    engine_dir) -- the Linux/Windows contract. On the macOS host the launcher
+    nests the binary in the .app bundle via engine_binary_path, so pin the
+    platform to keep them exercising the flat layout
+    (memory project_platform_branch_breaks_unpinned_tests)."""
+    import sys
+    monkeypatch.setattr(sys, "platform", "linux")
+
+
 def _qapp():
     return QApplication.instance() or QApplication([])
 

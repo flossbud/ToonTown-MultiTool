@@ -1,0 +1,780 @@
+#!/usr/bin/env python3
+"""macOS input feasibility spike (Phase 0). Standalone; do NOT import app modules.
+
+Gates (see docs/superpowers/specs/2026-06-12-macos-support-design.md):
+  P0a  inject  - background keyboard injection to a specific TTR PID
+  P0b  loop    - real capture -> suppress -> reinject loop + echo + fail-open
+  P0b  type    - typed-text + modifier delivery to a background TTR PID
+  P0c  map     - port -> PID -> window identity mapping
+
+Usage:
+  python3 scripts/macos_input_spike.py list
+  python3 scripts/macos_input_spike.py inject <pidA> <pidB> [--key w] [--reps 30]
+  python3 scripts/macos_input_spike.py loop [--seconds 30] [--key w]
+  python3 scripts/macos_input_spike.py type <pid> <text> [--mods shift,control,option]
+  python3 scripts/macos_input_spike.py map [--port-min 1024] [--port-max 65535]
+
+PyObjC is imported lazily inside the command functions so this file imports on
+any platform (the pure-logic helpers are unit-tested on Linux/Windows CI).
+"""
+from __future__ import annotations
+
+import collections
+import dataclasses
+import sys
+import time
+
+# Minimal connection shape the resolver needs. Per-PID psutil records (pconn)
+# lack a .pid field, so the AccessDenied fallback re-wraps them with the known pid.
+_PidConn = collections.namedtuple("_PidConn", "pid laddr status")
+
+# Sentinel stamped into every event we post, so capture can recognise our own
+# synthetic traffic regardless of what the P0b echo measurement concludes.
+SPIKE_EVENT_TAG = 0x7474_6D74  # "ttmt" in hex; arbitrary non-zero marker
+
+# TTR's macOS app reports this as the window owner name. Matched with startswith
+# so a future "Toontown Rewritten (Beta)" suffix still matches, without admitting
+# unrelated names that merely contain the marker mid-string. Title is NOT used:
+# kCGWindowName may be withheld without Screen Recording.
+TTR_OWNER_MARKER = "Toontown Rewritten"
+
+
+@dataclasses.dataclass(frozen=True)
+class WindowRecord:
+    pid: int
+    window_id: int
+    owner: str
+    bounds: tuple  # (x, y, width, height)
+    bundle_id: str | None = None  # filled by enumerate_windows (PyObjC layer); None in pure tests
+
+
+def identify_ttr_windows(window_info) -> list:
+    """Filter a CGWindowListCopyWindowInfo-shaped list down to TTR WindowRecords.
+
+    `window_info` is a list of dicts with string keys (kCGWindowOwnerPID,
+    kCGWindowNumber, kCGWindowOwnerName, kCGWindowBounds). Windows missing a
+    pid/number, or with zero area, are skipped.
+    """
+    out = []
+    for w in window_info:
+        owner = w.get("kCGWindowOwnerName") or ""
+        if not owner.startswith(TTR_OWNER_MARKER):
+            continue
+        pid = w.get("kCGWindowOwnerPID")
+        num = w.get("kCGWindowNumber")
+        b = w.get("kCGWindowBounds") or {}
+        width = int(b.get("Width", 0))
+        height = int(b.get("Height", 0))
+        if pid is None or num is None or width <= 0 or height <= 0:
+            continue
+        out.append(WindowRecord(
+            pid=int(pid),
+            window_id=int(num),
+            owner=str(owner),
+            bounds=(int(b.get("X", 0)), int(b.get("Y", 0)), width, height),
+        ))
+    return out
+
+
+# ANSI hardware virtual keycodes from <HIToolbox/Events.h>. Covers the movement
+# keyset plus the keys the spike exercises (chat letters, Return/Escape/Delete/Space).
+_VK = {
+    "a": 0x00, "s": 0x01, "d": 0x02, "f": 0x03, "h": 0x04, "g": 0x05,
+    "z": 0x06, "x": 0x07, "c": 0x08, "v": 0x09, "b": 0x0B, "q": 0x0C,
+    "w": 0x0D, "e": 0x0E, "r": 0x0F, "y": 0x10, "t": 0x11,
+    "o": 0x1F, "u": 0x20, "i": 0x22, "p": 0x23, "l": 0x25, "j": 0x26,
+    "k": 0x28, "n": 0x2D, "m": 0x2E,
+    "1": 0x12, "2": 0x13, "3": 0x14, "4": 0x15, "5": 0x17,
+    "6": 0x16, "7": 0x1A, "8": 0x1C, "9": 0x19, "0": 0x1D,
+    "space": 0x31, "return": 0x24, "escape": 0x35, "delete": 0x33, "tab": 0x30,
+    "up": 0x7E, "down": 0x7D, "left": 0x7B, "right": 0x7C,
+}
+
+
+def vk_for_key(name: str) -> int:
+    """Map a key name (single char or 'up'/'return'/etc.) to a CGKeyCode.
+
+    Case-insensitive. Raises KeyError for unmapped keys.
+    """
+    return _VK[name.lower()]
+
+
+def call_pynput_handler(handler):
+    """Wrap a `handler(key, injected)` so it works under pynput 1.7 and 1.8.
+
+    pynput 1.8 invokes callbacks as cb(key, injected); 1.7 as cb(key). The
+    returned callable accepts either and always forwards (key, injected) with
+    injected defaulting to False on 1.7.
+    """
+    def _cb(key, injected=False):
+        return handler(key, injected)
+    return _cb
+
+
+def is_spike_event(user_data: int) -> bool:
+    """True if a kCGEventSourceUserData value marks one of our injected events."""
+    return user_data == SPIKE_EVENT_TAG
+
+
+# The TTR local API binds to loopback; only loopback-bound listeners are the
+# game's API. Wildcard (0.0.0.0/::) and LAN-bound sockets are excluded so an
+# unrelated socket on a TTR PID is never mistaken for the API port.
+def _is_loopback(ip) -> bool:
+    """True for any IPv4 127.0.0.0/8 address or the IPv6 loopback ::1."""
+    return isinstance(ip, str) and (ip == "::1" or ip.startswith("127."))
+
+
+def resolve_port_pid_window(connections, windows) -> dict:
+    """Map listening loopback ports owned by TTR PIDs to (pid, window_id).
+
+    `connections` are psutil-sconn-like (`.pid`, `.laddr` with `.ip`/`.port`,
+    `.status`). `windows` are WindowRecords. A TTR PID with multiple windows
+    takes the first. Only loopback-bound LISTEN sockets are considered.
+    """
+    pid_to_window = {}
+    for w in windows:
+        pid_to_window.setdefault(w.pid, w.window_id)
+    mapping = {}
+    for c in connections:
+        if c.status != "LISTEN":
+            continue
+        pid = c.pid
+        if pid not in pid_to_window:
+            continue
+        laddr = c.laddr
+        ip = getattr(laddr, "ip", None)
+        port = getattr(laddr, "port", None)
+        if port is None or not _is_loopback(ip):
+            continue
+        mapping[int(port)] = (int(pid), pid_to_window[pid])
+    return mapping
+
+
+# ── PyObjC harness (lazy imports; only runs on macOS) ────────────────────────
+def _quartz():
+    """Lazy import of the Quartz bridge (raises on non-macOS)."""
+    import Quartz
+    return Quartz
+
+
+def preflight_post_access() -> bool:
+    """Whether this process may post synthetic events (Accessibility)."""
+    Q = _quartz()
+    return bool(Q.CGPreflightPostEventAccess())
+
+
+def preflight_listen_access() -> bool:
+    """Whether this process may listen to events (Input Monitoring)."""
+    Q = _quartz()
+    return bool(Q.CGPreflightListenEventAccess())
+
+
+def preflight_screen_recording() -> bool:
+    """Whether this process may read OTHER apps' window info / titles.
+
+    On macOS Tahoe, CGWindowListCopyWindowInfo only returns the caller's own
+    windows (plus Window Server) unless Screen Recording is granted, so this
+    gates whether enumerate_windows can see TTR at all. Returns True on older
+    systems where the preflight API is unavailable.
+    """
+    Q = _quartz()
+    fn = getattr(Q, "CGPreflightScreenCaptureAccess", None)
+    return True if fn is None else bool(fn())
+
+
+def process_bundle_id(pid: int):
+    """Stable process identity for a PID via NSRunningApplication (or None).
+
+    Used to harden against PID reuse: we record the bundle id at enumeration and
+    re-confirm it is unchanged before posting (see pid_alive_and_ttr). This does
+    NOT hardcode TTR's bundle id - it checks identity *consistency* for the PID.
+    """
+    from AppKit import NSRunningApplication
+    app = NSRunningApplication.runningApplicationWithProcessIdentifier_(pid)
+    if app is None:
+        return None
+    bid = app.bundleIdentifier()
+    return str(bid) if bid is not None else None
+
+
+def frontmost_pid():
+    """PID of the frontmost application (NSWorkspace), or None."""
+    from AppKit import NSWorkspace
+    app = NSWorkspace.sharedWorkspace().frontmostApplication()
+    return int(app.processIdentifier()) if app is not None else None
+
+
+def enumerate_windows() -> list:
+    """Return TTR WindowRecords (with bundle_id) from the live window list."""
+    Q = _quartz()
+    import objc
+    with objc.autorelease_pool():
+        opts = Q.kCGWindowListOptionOnScreenOnly | Q.kCGWindowListExcludeDesktopElements
+        info = Q.CGWindowListCopyWindowInfo(opts, Q.kCGNullWindowID) or []
+        recs = identify_ttr_windows(list(info))
+        return [dataclasses.replace(r, bundle_id=process_bundle_id(r.pid)) for r in recs]
+
+
+def _event_source(state_name="combined"):
+    # Per spec: combined is primary; private/none are the conditional fallback
+    # matrix. HID state is intentionally NOT offered (spec: do not default to it).
+    Q = _quartz()
+    if state_name == "none":
+        return None
+    state = {
+        "combined": Q.kCGEventSourceStateCombinedSessionState,
+        "private": Q.kCGEventSourceStatePrivate,
+    }[state_name]
+    return Q.CGEventSourceCreate(state)
+
+
+def pid_alive_and_ttr(pid: int, window_id: int, expected_bundle="__unset__") -> bool:
+    """Re-validate immediately before posting: the window still exists, still
+    belongs to this PID, and (if a bundle id was captured) the PID's identity is
+    unchanged. Guards against PID and window-ID reuse (posting has no failure
+    result). `expected_bundle` defaults to a sentinel meaning 'do not check'."""
+    for r in enumerate_windows():
+        if r.window_id == window_id and r.pid == pid:
+            if expected_bundle != "__unset__" and r.bundle_id != expected_bundle:
+                return False  # PID reused by a different app
+            return True
+    return False
+
+
+def post_key(pid: int, window_id: int, key: str, down: bool,
+             source=None, state_name="combined", flags=None,
+             expected_bundle="__unset__", revalidate=True) -> bool:
+    """Post one key event to `pid`, tagged for echo detection. Returns False
+    (does not raise) if the target failed re-validation or access is missing.
+
+    `revalidate=False` skips the per-call window enumeration (used by the loop's
+    hot path, which validates targets on an interval instead (see cmd_loop), so
+    a full CGWindowListCopyWindowInfo does not run inside the tap callback on
+    every keystroke). The Accessibility preflight is ALWAYS checked."""
+    Q = _quartz()
+    if not preflight_post_access():
+        print("  REFUSED: no post-event access (grant Accessibility)")
+        return False
+    if revalidate and not pid_alive_and_ttr(pid, window_id, expected_bundle):
+        print(f"  REFUSED: target pid={pid} window_id={window_id} no longer valid")
+        return False
+    src = source if source is not None else _event_source(state_name)
+    ev = Q.CGEventCreateKeyboardEvent(src, vk_for_key(key), bool(down))
+    Q.CGEventSetIntegerValueField(ev, Q.kCGEventSourceUserData, SPIKE_EVENT_TAG)
+    if flags is not None:
+        Q.CGEventSetFlags(ev, flags)
+    Q.CGEventPostToPid(pid, ev)
+    return True
+
+
+def main(argv=None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if not argv:
+        print(__doc__)
+        return 2
+    cmd, rest = argv[0], argv[1:]
+    if cmd == "list":
+        return cmd_list(rest)
+    if cmd == "inject":
+        return cmd_inject(rest)
+    if cmd == "loop":
+        return cmd_loop(rest)
+    if cmd == "type":
+        return cmd_type(rest)
+    if cmd == "map":
+        return cmd_map(rest)
+    print(__doc__)
+    return 2
+
+
+# Command + PyObjC-harness functions are added by the empirical tasks (8-12, 11b).
+def cmd_list(rest):
+    screen = preflight_screen_recording()
+    print(f"post-access(Accessibility)={preflight_post_access()} "
+          f"listen-access(Input Monitoring)={preflight_listen_access()} "
+          f"screen-recording={screen}")
+    front = frontmost_pid()
+    print(f"frontmost_pid={front}")
+    recs = enumerate_windows()
+    if not recs:
+        if not screen:
+            print("No TTR windows visible AND Screen Recording is not granted. On "
+                  "macOS Tahoe, window enumeration of other apps requires Screen "
+                  "Recording - grant it to this terminal and retry.")
+        else:
+            print("No TTR windows found. Launch Toontown Rewritten first.")
+        return 1
+    for r in recs:
+        x, y, w, h = r.bounds
+        mark = " <FRONT>" if r.pid == front else ""
+        print(f"pid={r.pid} window_id={r.window_id} pos=({x},{y}) size={w}x{h} "
+              f"owner={r.owner!r} bundle={r.bundle_id!r}{mark}")
+    return 0
+
+
+def _parse_opts(rest, defaults):
+    """Tiny --flag value parser. defaults is {flag: (type, value)}.
+
+    Returns (positional_args, options_dict). Unknown --flags raise SystemExit.
+    """
+    out = {k: v for k, (t, v) in defaults.items()}
+    i = 0
+    pos = []
+    while i < len(rest):
+        tok = rest[i]
+        if tok.startswith("--"):
+            name = tok[2:]
+            if name not in defaults:
+                raise SystemExit(f"unknown option --{name}")
+            if i + 1 >= len(rest) or rest[i + 1].startswith("--"):
+                raise SystemExit(f"option --{name} requires a value")
+            typ = defaults[name][0]
+            out[name] = typ(rest[i + 1])
+            i += 2
+        else:
+            pos.append(tok)
+            i += 1
+    return pos, out
+
+
+_STATES = ("combined", "private", "none")
+
+
+def _hold(pid, window_id, key, seconds, state_name, expected_bundle="__unset__"):
+    """Hold a key for `seconds`, ALWAYS releasing in finally. Returns the number
+    of REFUSED posts (0, 1, or 2) across the key-down and the key-up."""
+    src = _event_source(state_name)
+    refused = 0
+    try:
+        if not post_key(pid, window_id, key, True, source=src, state_name=state_name,
+                        expected_bundle=expected_bundle):
+            refused += 1
+        time.sleep(seconds)
+    finally:
+        if not post_key(pid, window_id, key, False, source=src, state_name=state_name,
+                        expected_bundle=expected_bundle):
+            refused += 1
+    return refused
+
+
+def cmd_inject(rest):
+    pos, opts = _parse_opts(rest, {
+        "key": (str, "w"), "reps": (int, 30), "state": (str, "combined"),
+    })
+    if len(pos) != 2:
+        print("usage: inject <pidA> <pidB> [--key w] [--reps 30] [--state combined|private|none]")
+        return 2
+    if opts["state"] not in _STATES:
+        print(f"invalid --state {opts['state']!r}; choose from {'|'.join(_STATES)}")
+        return 2
+    pidA, pidB = int(pos[0]), int(pos[1])
+    if pidA == pidB:
+        print("pidA and pidB must differ (background isolation needs two processes).")
+        return 2
+    recs = {r.pid: r for r in enumerate_windows()}
+    if pidA not in recs or pidB not in recs:
+        print(f"pidA/pidB not both present as TTR windows; found {sorted(recs)}")
+        return 1
+    widA, widB = recs[pidA].window_id, recs[pidB].window_id
+    bunA, bunB = recs[pidA].bundle_id, recs[pidB].bundle_id
+    key, reps, state = opts["key"], opts["reps"], opts["state"]
+    refused = 0  # every post (down OR up) the backend refused (no access / stale target)
+
+    print(f"[baseline] bring pid={pidB} to FRONT, then watch it move on '{key}'.")
+    input("  press Enter when pidB is frontmost... ")
+    refused += _hold(pidB, widB, key, 0.6, state, expected_bundle=bunB)
+
+    print(f"[central] keep pid={pidA} FRONT; posting '{key}' ONLY to background pid={pidB}.")
+    input("  press Enter when pidA is frontmost... ")
+    print("  -> expect: pidB moves, pidA does NOT.")
+    refused += _hold(pidB, widB, key, 0.8, state, expected_bundle=bunB)
+
+    print(f"[reverse] keep pid={pidB} FRONT; posting '{key}' ONLY to background pid={pidA}.")
+    input("  press Enter when pidB is frontmost... ")
+    print("  -> expect: pidA moves, pidB does NOT.")
+    refused += _hold(pidA, widA, key, 0.8, state, expected_bundle=bunA)
+
+    print(f"[third-app] bring Finder/Terminal FRONT; posting '{key}' to pid={pidB}.")
+    input("  press Enter when a non-game app is frontmost... ")
+    print("  -> expect: pidB still moves while neither game is frontmost.")
+    refused += _hold(pidB, widB, key, 0.8, state, expected_bundle=bunB)
+
+    print(f"[stress] {reps} alternating taps/holds to background pid={pidB}.")
+    input("  press Enter to start the stress loop... ")
+    for n in range(reps):
+        src = _event_source(state)
+        try:
+            if not post_key(pidB, widB, key, True, source=src, state_name=state,
+                            expected_bundle=bunB):
+                refused += 1
+            time.sleep(0.05 if n % 2 else 0.25)
+        finally:
+            if not post_key(pidB, widB, key, False, source=src, state_name=state,
+                            expected_bundle=bunB):
+                refused += 1
+    print("  -> expect: no stuck key after the loop (tap 'key' in pidB to confirm released).")
+
+    if refused:
+        print(f"WARNING: {refused} post(s) were REFUSED (no access / stale target). "
+              f"Grant Accessibility and re-check the results above.")
+    # Non-zero exit on any refusal so a failed run is never recorded as a P0a pass.
+    return 1 if refused else 0
+
+
+def cmd_loop(rest):
+    _pos, opts = _parse_opts(rest, {"seconds": (int, 30), "key": (str, "w")})
+    seconds, watch_key = opts["seconds"], opts["key"]
+    Q = _quartz()
+    from pynput import keyboard
+
+    recs = enumerate_windows()
+    targets = sorted({r.pid: r.window_id for r in recs}.items())
+    if not targets:
+        print("No TTR windows; launch the game first.")
+        return 1
+    if not preflight_listen_access():
+        print("No listen access; grant Input Monitoring to your terminal/python.")
+        return 1
+
+    # Captured once for the final safety-release path (full re-validation there).
+    bundles = {r.pid: r.bundle_id for r in recs}
+    stats = {"captured": 0, "suppressed": 0, "reinjected": 0, "echoed": 0,
+             "target_field_seen": 0, "failopen": 0, "tap_disabled": 0,
+             "release_failures": 0, "cb_press": 0, "cb_release": 0, "cb_injected": 0}
+
+    # Interval-cached target validity so a full CGWindowListCopyWindowInfo does
+    # NOT run inside the tap callback on every keystroke (that cost can itself
+    # trip kCGEventTapDisabledByTimeout and confound the tap_disabled stat).
+    # Refreshes at most once per second; maps live TTR pid -> (window_id, bundle).
+    _cache = {"t": -1.0, "valid": {}}
+
+    def _valid_targets():
+        now = time.time()
+        if now - _cache["t"] > 1.0:
+            _cache["valid"] = {r.pid: (r.window_id, r.bundle_id) for r in enumerate_windows()}
+            _cache["t"] = now
+        return _cache["valid"]
+
+    # pids currently holding watch_key via our reinjection -> their window id.
+    # Tracking this makes key-up target the SAME set as the key-down, so a
+    # background toon can never be left held by a down/up target mismatch.
+    held = {}
+
+    def intercept(event_type, event):
+        # Tap-health: the system disables the tap on timeout / heavy user input.
+        # pynput 1.8 does NOT re-enable it and listener.running stays True, so we
+        # both record it AND let the post-run check fail the run (see below).
+        if event_type in (Q.kCGEventTapDisabledByTimeout,
+                          Q.kCGEventTapDisabledByUserInput):
+            stats["tap_disabled"] += 1
+            return event
+        # Echo measurement: did one of OUR posted events come back through the tap?
+        ud = Q.CGEventGetIntegerValueField(event, Q.kCGEventSourceUserData)
+        if is_spike_event(ud):
+            stats["echoed"] += 1
+            return event  # never suppress our own traffic; pass it through
+        # Is the per-event target PID populated at this tap location?
+        tgt = Q.CGEventGetIntegerValueField(event, Q.kCGEventTargetUnixProcessID)
+        if tgt:
+            stats["target_field_seen"] += 1
+        # Only act on our watch key (keep the spike scoped + safe).
+        keycode = Q.CGEventGetIntegerValueField(event, Q.kCGKeyboardEventKeycode)
+        if keycode != vk_for_key(watch_key):
+            return event
+        down = (event_type == Q.kCGEventKeyDown)
+        valid = _valid_targets()  # cached; cheap
+
+        if down:
+            # Fail-open: if we cannot post, do NOT swallow the user's key.
+            if not preflight_post_access():
+                stats["failopen"] += 1
+                return event
+            stats["captured"] += 1
+            for pid, wid in targets:
+                if pid not in valid:
+                    continue  # toon gone since the last refresh
+                if post_key(pid, wid, watch_key, True, revalidate=False):
+                    stats["reinjected"] += 1
+                    held[pid] = wid
+            if not held:
+                # Delivered nothing: fail open so the physical key isn't swallowed.
+                stats["failopen"] += 1
+                return event
+            stats["suppressed"] += 1
+            return None
+
+        # key-up: release EXACTLY the targets we delivered the down to.
+        if not held:
+            # We never delivered a matching down (we failed open on it); let the
+            # physical up pass through so nothing is left inconsistent.
+            return event
+        stats["captured"] += 1
+        release_failed = False
+        for pid, wid in list(held.items()):
+            if pid not in valid:
+                del held[pid]  # process gone => nothing is held; not a failure
+                continue
+            if post_key(pid, wid, watch_key, False, revalidate=False):
+                stats["reinjected"] += 1
+                del held[pid]
+            else:
+                # Release refused for a still-live target: it may stay held.
+                stats["release_failures"] += 1
+                release_failed = True
+        if release_failed:
+            # Could not release everything: fail open so the physical up is not
+            # swallowed, and keep the unreleased pids in `held` for final cleanup.
+            stats["failopen"] += 1
+            return event
+        stats["suppressed"] += 1
+        return None
+
+    # on_press/on_release via the pynput 1.7/1.8 compat shim: records that
+    # callbacks fire (and the injected flag), to confirm callback-vs-interceptor
+    # ordering and whether posted events are reported as injected=True.
+    def _on_press(key, injected):
+        stats["cb_press"] += 1
+        if injected:
+            stats["cb_injected"] += 1
+
+    def _on_release(key, injected):
+        stats["cb_release"] += 1
+        if injected:
+            stats["cb_injected"] += 1
+
+    print(f"[P0b] focus a TTR window and hold/tap '{watch_key}' for {seconds}s.")
+    print("  expect: every game window moves together; no stuck key; watch the stats.")
+    listener = keyboard.Listener(
+        on_press=call_pynput_handler(_on_press),
+        on_release=call_pynput_handler(_on_release),
+        darwin_intercept=intercept,
+    )
+    loop_ok = True
+    listener.start()
+    listener.wait()  # block until the tap is actually running
+    if not listener.running:
+        print("  ERROR: listener did not start (tap not created). Check Input Monitoring.")
+        loop_ok = False
+    else:
+        try:
+            time.sleep(seconds)
+        finally:
+            if not listener.running:
+                print("  WARNING: the tap stopped during the run (see stats/tap_disabled).")
+                loop_ok = False
+            listener.stop()
+            # Safety: release the watch key on every target we may have held; a
+            # refused release here is a real failure (a key may be left down).
+            for pid, wid in targets:
+                if not post_key(pid, wid, watch_key, False, expected_bundle=bundles.get(pid, "__unset__")):
+                    stats["release_failures"] += 1
+            # join() re-raises any exception from the callbacks/intercept so a tap
+            # that died mid-run is surfaced rather than reported as a clean success.
+            try:
+                listener.join()
+            except Exception as e:  # noqa: BLE001 - diagnostic surface for the spike
+                print(f"  LISTENER ERROR (tap died during the run): {e!r}")
+                loop_ok = False
+    # A disabled tap or any refused release means the run is NOT a clean pass:
+    # capture may have silently stopped, or a key may have been left held.
+    if stats["tap_disabled"]:
+        print("  FAIL: the tap was disabled during the run (capture is unreliable; "
+              "pynput does not re-enable it). Treat this run as inconclusive.")
+        loop_ok = False
+    if stats["release_failures"]:
+        print(f"  FAIL: {stats['release_failures']} key release(s) were refused; a key "
+              f"may be left held on a target.")
+        loop_ok = False
+    print(f"[P0b] {stats}")
+    print("  Interpret: echoed>0 => posted events re-enter our tap (need active guard);")
+    print("             cb_injected>0 => pynput reports our posts as injected=True (guard option b);")
+    print("             target_field_seen==0 => kCGEventTargetUnixProcessID NOT usable at tap;")
+    print("             tap_disabled>0 => system disabled the tap (Phase 1 must re-enable);")
+    print("             release_failures>0 => a release was refused (possible stuck key);")
+    print("             failopen>0 => access dropped mid-run and suppression correctly stopped.")
+    return 0 if loop_ok else 1
+
+
+def _modifier_mask(names):
+    """OR together CGEvent flag masks for modifier names (shift/control/option)."""
+    Q = _quartz()
+    table = {
+        "shift": Q.kCGEventFlagMaskShift,
+        "control": Q.kCGEventFlagMaskControl,
+        "option": Q.kCGEventFlagMaskAlternate,
+    }
+    mask = 0
+    for n in names:
+        mask |= table[n]
+    return mask
+
+
+# Explicit (left-variant) modifier keycodes, for the down/up modifier variant.
+_MODIFIER_KEYCODES = {"shift": 0x38, "control": 0x3B, "option": 0x3A}
+
+
+def cmd_type(rest):
+    pos, opts = _parse_opts(rest, {
+        "mods": (str, ""), "state": (str, "combined"), "modkey": (str, "j"),
+    })
+    if len(pos) != 2:
+        print("usage: type <pid> <text> [--mods shift,control,option] [--modkey j] [--state combined]")
+        return 2
+    if opts["state"] not in _STATES:
+        print(f"invalid --state {opts['state']!r}; choose from {'|'.join(_STATES)}")
+        return 2
+    mods = [m for m in opts["mods"].split(",") if m]
+    bad = [m for m in mods if m not in _MODIFIER_KEYCODES]
+    if bad:
+        print(f"invalid --mods {bad}; choose from {'|'.join(_MODIFIER_KEYCODES)}")
+        return 2
+    try:
+        vk_for_key(opts["modkey"])
+    except KeyError:
+        print(f"invalid --modkey {opts['modkey']!r} (not a mapped key)")
+        return 2
+    pid, text = int(pos[0]), pos[1]
+    rec = next((r for r in enumerate_windows() if r.pid == pid), None)
+    if rec is None:
+        print(f"pid={pid} is not a current TTR window.")
+        return 1
+    wid, bundle, state = rec.window_id, rec.bundle_id, opts["state"]
+
+    refused = 0  # required posts the backend refused (no access / stale target)
+
+    print(f"[text] sending {text!r} char-by-char to background pid={pid}.")
+    print("  note: text is lowercased; capitals/symbols are out of scope for this path.")
+    print("  open chat in that toon first; expect the text to appear there.")
+    input("  press Enter when the background toon's chat is open... ")
+    for ch in text.lower():
+        ch = "space" if ch == " " else ch
+        try:
+            vk_for_key(ch)
+        except KeyError:
+            print(f"  (skipping unmapped char {ch!r})")
+            continue
+        # Each char releases in finally so an interrupt cannot leave it held.
+        try:
+            if not post_key(pid, wid, ch, True, state_name=state, expected_bundle=bundle):
+                refused += 1
+            time.sleep(0.03)
+        finally:
+            if not post_key(pid, wid, ch, False, state_name=state, expected_bundle=bundle):
+                refused += 1
+            time.sleep(0.03)
+
+    if mods:
+        modkey = opts["modkey"]
+        mask = _modifier_mask(mods)
+        print(f"[modifier] '{'+'.join(mods)}+{modkey}' via CGEventSetFlags...")
+        src = _event_source(state)
+        # Release the flag-carrying key in finally too.
+        try:
+            if not post_key(pid, wid, modkey, True, source=src, state_name=state,
+                            flags=mask, expected_bundle=bundle):
+                refused += 1
+            time.sleep(0.1)
+        finally:
+            if not post_key(pid, wid, modkey, False, source=src, state_name=state,
+                            flags=mask, expected_bundle=bundle):
+                refused += 1
+
+        print(f"[modifier] '{'+'.join(mods)}+{modkey}' via explicit modifier down/up...")
+        # Guard the explicit-modifier path with the SAME preflight + stale-target
+        # checks post_key enforces, so raw CGEventPostToPid never targets a stale/
+        # reused PID without access. Skip (and count) if the guard fails.
+        if not preflight_post_access():
+            print("  REFUSED: no post-event access for the explicit-modifier variant.")
+            refused += 1
+        elif not pid_alive_and_ttr(pid, wid, bundle):
+            print(f"  REFUSED: pid={pid} window_id={wid} no longer valid for modifiers.")
+            refused += 1
+        else:
+            Q = _quartz()
+            src = _event_source(state)
+
+            def _post_modifier(m, down):
+                ev = Q.CGEventCreateKeyboardEvent(src, _MODIFIER_KEYCODES[m], down)
+                Q.CGEventSetIntegerValueField(ev, Q.kCGEventSourceUserData, SPIKE_EVENT_TAG)
+                Q.CGEventPostToPid(pid, ev)
+
+            pressed = []
+            try:
+                for m in mods:
+                    _post_modifier(m, True)
+                    pressed.append(m)
+                if not post_key(pid, wid, modkey, True, source=src, state_name=state,
+                                expected_bundle=bundle):
+                    refused += 1
+                if not post_key(pid, wid, modkey, False, source=src, state_name=state,
+                                expected_bundle=bundle):
+                    refused += 1
+            finally:
+                # Always release every modifier we pressed, even on interrupt/error.
+                for m in reversed(pressed):
+                    _post_modifier(m, False)
+        print("  -> record which variant (flags vs explicit) the game honored.")
+
+    if refused:
+        print(f"WARNING: {refused} post(s) were REFUSED (no access / stale target).")
+    return 1 if refused else 0
+
+
+def cmd_map(rest):
+    _pos, opts = _parse_opts(rest, {"port-min": (int, 1024), "port-max": (int, 65535)})
+    import psutil
+    windows = enumerate_windows()
+    if not windows:
+        print("No TTR windows; launch the game first.")
+        return 1
+    used_fallback = False
+    try:
+        conns = psutil.net_connections(kind="inet")
+    except psutil.AccessDenied:
+        # Global enumeration needs elevation on macOS; fall back to per-PID,
+        # which can succeed for same-user processes without sudo. Record which
+        # path worked so Phase 1 picks the right production strategy.
+        print("AccessDenied on global net_connections; trying per-PID fallback...")
+        used_fallback = True
+        conns = []
+        for pid in {r.pid for r in windows}:
+            try:
+                proc = psutil.Process(pid)
+                # Process.net_connections() is psutil>=6.0; older uses .connections().
+                getter = getattr(proc, "net_connections", None) or proc.connections
+                for c in getter(kind="inet"):
+                    # Per-PID records (pconn) have no .pid field, so re-wrap with the
+                    # known pid in the shape resolve_port_pid_window expects.
+                    conns.append(_PidConn(pid=pid, laddr=c.laddr, status=c.status))
+            except (psutil.AccessDenied, psutil.NoSuchProcess) as e:
+                print(f"  pid={pid}: {type(e).__name__}")
+    conns = [c for c in conns
+             if c.laddr and opts["port-min"] <= getattr(c.laddr, "port", 0) <= opts["port-max"]]
+    mapping = resolve_port_pid_window(conns, windows)
+    if not mapping:
+        print("No TTR listening ports resolved. Is the in-game local API enabled?")
+        return 1
+    for port, (pid, wid) in sorted(mapping.items()):
+        print(f"port={port} -> pid={pid} window_id={wid}")
+    distinct = {wid for _p, (_pid, wid) in mapping.items()}
+    print(f"resolved {len(mapping)} port(s) across {len(distinct)} distinct window(s) "
+          f"via {'per-PID fallback' if used_fallback else 'global net_connections'}.")
+
+    # Loopback binding is necessary but not sufficient to identify THE local-API
+    # port: a TTR PID with several loopback listeners is ambiguous. Surface it so
+    # P0c is not falsely recorded as a clean pass.
+    ports_per_pid = {}
+    for port, (pid, _wid) in mapping.items():
+        ports_per_pid.setdefault(pid, []).append(port)
+    ambiguous = {pid: ps for pid, ps in ports_per_pid.items() if len(ps) > 1}
+    if ambiguous:
+        print("WARNING: AMBIGUOUS mapping - these PIDs have multiple loopback "
+              "listeners, so the true local-API port cannot be determined by "
+              "binding alone (probe /all.json to disambiguate in Phase 1):")
+        for pid, ps in sorted(ambiguous.items()):
+            print(f"  pid={pid}: ports {sorted(ps)}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

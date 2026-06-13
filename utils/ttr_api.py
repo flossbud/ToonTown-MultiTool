@@ -185,6 +185,10 @@ def _build_port_to_window_id(current_window_ids: list, active_ports: set | None 
             return dict(_port_to_wid)
 
         port_to_host_pid = {}
+        # Single macOS window snapshot, shared by both the port fork and the
+        # window fork below so they describe the same instant (set in the darwin
+        # port branch). None on non-darwin / before the darwin branch runs.
+        _darwin_game_recs = None
         try:
             import sys
             if sys.platform == "win32":
@@ -198,6 +202,15 @@ def _build_port_to_window_id(current_window_ids: list, active_ports: set | None 
                     port = conn.laddr.port
                     if TTR_API_PORT_START <= port <= TTR_API_PORT_END:
                         port_to_host_pid[port] = conn.pid
+            elif sys.platform == "darwin":
+                # Enumerate the game windows ONCE; the window->pid fork below
+                # reuses this same snapshot so a process exiting mid-pass cannot
+                # leave a dangling port->window join.
+                from utils import macos_ttr_ports, macos_discovery
+                _darwin_game_recs = macos_discovery._enumerate_game_windows()
+                host_pids = {r.pid for r in _darwin_game_recs}
+                port_to_host_pid = macos_ttr_ports.port_to_host_pid(
+                    host_pids, TTR_API_PORT_START, TTR_API_PORT_END)
             else:
                 from utils.host_spawn import host_check_output
                 out = host_check_output(["ss", "-tlnp"], stderr=subprocess.DEVNULL, timeout=5).decode()
@@ -233,6 +246,18 @@ def _build_port_to_window_id(current_window_ids: list, active_ports: set | None 
                         continue
             except Exception:
                 pass
+        elif sys.platform == "darwin":
+            # Reuse the single enumeration taken in the port fork so both maps
+            # describe the same instant; re-enumerate only as a defensive fallback.
+            if _darwin_game_recs is None:
+                from utils import macos_discovery
+                _darwin_game_recs = macos_discovery._enumerate_game_windows()
+            wanted = set(current_window_ids or [])
+            wid_to_host_pid = {
+                str(r.window_id): r.pid
+                for r in _darwin_game_recs
+                if str(r.window_id) in wanted
+            }
         else:
             wid_to_host_pid = _get_window_pids_xres(current_window_ids)
             if not wid_to_host_pid:

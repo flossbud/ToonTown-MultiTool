@@ -81,9 +81,11 @@ class GameRegistry:
         Falls back to process-name identification for externally-launched windows,
         then to argv[0] inspection when the process is a Wine helper hosting a
         Windows .exe (the CC-on-Linux case: exe=wine64-preloader,
-        argv[0]=...\\CorporateClash.exe), and finally to X11 WM_CLASS when /proc
-        lookups fail (e.g. inside Flatpak, where the sandbox PID namespace
-        makes /proc/<host_pid>/exe unreadable).
+        argv[0]=...\\CorporateClash.exe), and finally to X11 WM_CLASS (Linux) or
+        CGWindowList owner-name identification (macOS, via
+        macos_discovery.game_for_window_id) when /proc lookups fail (e.g. inside
+        Flatpak, where the sandbox PID namespace makes /proc/<host_pid>/exe
+        unreadable).
         """
         pid = self._get_pid_for_window(wid)
         if pid is not None:
@@ -99,6 +101,9 @@ class GameRegistry:
             if by_wine is not None:
                 return by_wine
 
+        if sys.platform == "darwin":
+            from utils import macos_discovery
+            return macos_discovery.game_for_window_id(wid)
         if sys.platform != "win32":
             return self._tag_from_x11_class(wid)
         return None
@@ -115,9 +120,13 @@ class GameRegistry:
 
         On Linux this only uses the XRes host PID path; the xdotool PID fallback
         is intentionally excluded here because namespace PID mismatches can make
-        it unsuitable for negative trust decisions on Flatpak installs.
+        it unsuitable for negative trust decisions on Flatpak installs. On macOS
+        and Windows the PID comes from _get_pid_for_window (CGWindowList /
+        GetWindowThreadProcessId); on darwin process-name identity is
+        unavailable (no /proc), so classify returns (None, False) and defers to
+        the owner-name identification done by find_game_windows.
         """
-        if sys.platform == "win32":
+        if sys.platform == "win32" or sys.platform == "darwin":
             pid = self._get_pid_for_window(wid)
         else:
             pid = self._get_host_pid_for_window_xres(wid)
@@ -152,6 +161,9 @@ class GameRegistry:
                 hwnd = int(wid)
                 _, pid = win32process.GetWindowThreadProcessId(hwnd)
                 return pid
+            elif sys.platform == "darwin":
+                from utils import macos_discovery
+                return macos_discovery.get_window_pid(wid)
             else:
                 # Prefer XRes host PID to avoid Flatpak namespace PID mismatches.
                 host_pid = GameRegistry._get_host_pid_for_window_xres(wid)

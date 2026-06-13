@@ -23,6 +23,7 @@ from utils.credentials_manager import CredentialsManager, set_debug_log_callback
 from utils.open_url import open_url
 from services.ttr_login_service import (
     TTRLoginWorker, LoginState, find_engine_path, get_engine_executable_name,
+    engine_binary_path,
 )
 from services.ttr_launcher import TTRLauncher
 from services.ttr_patcher import TTRPatcher
@@ -408,8 +409,11 @@ class LaunchTab(QWidget):
             key, exe_fn, find_fn = "cc_engine_dir", get_cc_engine_executable_name, find_cc_engine_path
 
         path = self.settings_manager.get(key, "") if self.settings_manager else ""
-        if path and os.path.isfile(os.path.join(path, exe_fn())):
-            return path
+        if path:
+            engine_bin = (engine_binary_path(path) if game == "ttr"
+                          else os.path.join(path, exe_fn()))
+            if os.path.isfile(engine_bin):
+                return path
         detected = find_fn()
         return detected or ""
 
@@ -1152,7 +1156,12 @@ class LaunchTab(QWidget):
         # Check engine path
         engine_dir = self._get_engine_dir(game)
         exe_fn = get_engine_executable_name if game == "ttr" else get_cc_engine_executable_name
-        engine_bin = os.path.join(engine_dir, exe_fn()) if engine_dir else ""
+        if not engine_dir:
+            engine_bin = ""
+        elif game == "ttr":
+            engine_bin = engine_binary_path(engine_dir)
+        else:
+            engine_bin = os.path.join(engine_dir, exe_fn())
         if not engine_dir or not os.path.isfile(engine_bin):
             _dbg(f"[Credentials] _on_launch: engine not found (dir='{engine_dir}' bin='{engine_bin}')")
             msg = "Game path not set. Configure in Settings."

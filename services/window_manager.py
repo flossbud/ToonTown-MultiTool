@@ -11,10 +11,13 @@ from utils import x11_discovery
 
 
 def _geometry_backend():
-    """Platform dispatch for window-geometry queries (click sync)."""
+    """Platform dispatch for window-geometry queries."""
     if sys.platform == "win32":
         from utils import win32_discovery
         return win32_discovery
+    if sys.platform == "darwin":
+        from utils import macos_discovery
+        return macos_discovery
     return x11_discovery
 
 class WindowManager(QObject):
@@ -159,6 +162,16 @@ class WindowManager(QObject):
                     current_active = str(hwnd) if hwnd else None
                 except Exception:
                     current_active = None
+            elif sys.platform == "darwin":
+                # macos_discovery.get_active_window_id() touches CGWindowList /
+                # NSWorkspace and is not internally guarded the way
+                # x11_discovery is, so wrap it like the win32 branch: a transient
+                # CG/AppKit error must not crash the poll thread.
+                try:
+                    from utils import macos_discovery
+                    current_active = macos_discovery.get_active_window_id()
+                except Exception:
+                    current_active = None
             else:
                 current_active = x11_discovery.get_active_window_id()
                 
@@ -241,6 +254,22 @@ class WindowManager(QObject):
                                 "ttr" if "Toontown Rewritten" in title else "cc"
                             )
                 win32gui.EnumWindows(enum_windows_proc, 0)
+                visible.sort(key=lambda item: (item[1], item[0]))
+                new_ids = list(dict.fromkeys(w for w, _ in visible))[:16]
+            except Exception:
+                new_ids = []
+        elif sys.platform == "darwin":
+            try:
+                from utils import macos_discovery
+                visible = []
+                for wid, game in macos_discovery.find_game_windows():
+                    if not _accept_candidate_window(wid):
+                        continue
+                    x = macos_discovery.get_window_root_x(wid)
+                    if x is None:
+                        continue
+                    visible.append((wid, x))
+                    game_by_wid[wid] = game
                 visible.sort(key=lambda item: (item[1], item[0]))
                 new_ids = list(dict.fromkeys(w for w, _ in visible))[:16]
             except Exception:

@@ -440,11 +440,11 @@ def test_ttr_strict_supported_true_on_windows(monkeypatch, tmp_path):
     assert svc._strict_ttr_active() is True
 
 
-def test_ttr_strict_supported_false_on_macos(monkeypatch, tmp_path):
+def test_ttr_strict_supported_true_on_macos(monkeypatch, tmp_path):
     import sys
     svc, _ = _make_service(monkeypatch, tmp_path)
     monkeypatch.setattr(sys, "platform", "darwin")
-    assert svc._ttr_strict_supported() is False
+    assert svc._ttr_strict_supported() is True
 
 
 def test_delivery_backend_ready_with_xlib(monkeypatch, tmp_path):
