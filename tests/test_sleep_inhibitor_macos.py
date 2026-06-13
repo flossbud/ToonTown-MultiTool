@@ -59,3 +59,32 @@ def test_types_for_pid_partial_returns_subset():
 def test_types_for_pid_absent_returns_empty():
     assert si._caffeinate_types_for_pid(PMSET_ALL_THREE, 1234) == set()
     assert si._caffeinate_types_for_pid("", 4242) == set()
+
+
+def test_run_pmset_assertions_returns_stdout_on_clean_exit(monkeypatch):
+    captured = {}
+
+    def fake_run(argv, **kwargs):
+        captured["argv"] = argv
+        captured["kwargs"] = kwargs
+        return subprocess.CompletedProcess(argv, 0, stdout="OUT", stderr="")
+
+    monkeypatch.setattr(si.subprocess, "run", fake_run)
+    out = si._run_pmset_assertions(timeout=0.5)
+    assert out == "OUT"
+    assert captured["argv"] == ["/usr/bin/pmset", "-g", "assertions"]
+    assert captured["kwargs"]["timeout"] == 0.5
+    assert captured["kwargs"]["env"]["LC_ALL"] == "C"
+
+
+def test_run_pmset_assertions_empty_on_nonzero_exit(monkeypatch):
+    monkeypatch.setattr(si.subprocess, "run",
+                        lambda argv, **k: subprocess.CompletedProcess(argv, 1, stdout="JUNK", stderr=""))
+    assert si._run_pmset_assertions(timeout=0.5) == ""
+
+
+def test_run_pmset_assertions_empty_on_exception(monkeypatch):
+    def boom(argv, **k):
+        raise subprocess.TimeoutExpired(argv, 0.5)
+    monkeypatch.setattr(si.subprocess, "run", boom)
+    assert si._run_pmset_assertions(timeout=0.5) == ""

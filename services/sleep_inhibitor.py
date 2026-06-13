@@ -130,6 +130,25 @@ def _run_list(timeout=_LIST_CALL_TIMEOUT):
         return ""
 
 
+def _run_pmset_assertions(timeout=_LIST_CALL_TIMEOUT):
+    """Return `pmset -g assertions` stdout (LC_ALL=C) on a clean exit, else "".
+
+    Mirrors _run_list but uses a plain subprocess (macOS has no Flatpak, so no
+    host_run/_clean_host_env) and gates on the return code, so a failed pmset is
+    never mistaken for "our assertion is absent". `timeout` is bounded by the
+    caller to the remaining verify budget."""
+    env = dict(os.environ)
+    env["LC_ALL"] = "C"
+    try:
+        cp = subprocess.run(
+            ["/usr/bin/pmset", "-g", "assertions"],
+            capture_output=True, text=True, timeout=timeout, env=env,
+        )
+    except Exception:
+        return ""
+    return cp.stdout if cp.returncode == 0 else ""
+
+
 # Power-assertion types caffeinate -dis holds; the trio we require to verify.
 _CAFFEINATE_TYPES = (
     "PreventUserIdleSystemSleep",
