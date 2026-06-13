@@ -144,6 +144,71 @@ def resolve_port_pid_window(connections, windows) -> dict:
     return mapping
 
 
+# ── PyObjC harness (lazy imports; only runs on macOS) ────────────────────────
+def _quartz():
+    """Lazy import of the Quartz bridge (raises on non-macOS)."""
+    import Quartz
+    return Quartz
+
+
+def preflight_post_access() -> bool:
+    """Whether this process may post synthetic events (Accessibility)."""
+    Q = _quartz()
+    return bool(Q.CGPreflightPostEventAccess())
+
+
+def preflight_listen_access() -> bool:
+    """Whether this process may listen to events (Input Monitoring)."""
+    Q = _quartz()
+    return bool(Q.CGPreflightListenEventAccess())
+
+
+def preflight_screen_recording() -> bool:
+    """Whether this process may read OTHER apps' window info / titles.
+
+    On macOS Tahoe, CGWindowListCopyWindowInfo only returns the caller's own
+    windows (plus Window Server) unless Screen Recording is granted, so this
+    gates whether enumerate_windows can see TTR at all. Returns True on older
+    systems where the preflight API is unavailable.
+    """
+    Q = _quartz()
+    fn = getattr(Q, "CGPreflightScreenCaptureAccess", None)
+    return True if fn is None else bool(fn())
+
+
+def process_bundle_id(pid: int):
+    """Stable process identity for a PID via NSRunningApplication (or None).
+
+    Used to harden against PID reuse: we record the bundle id at enumeration and
+    re-confirm it is unchanged before posting (see pid_alive_and_ttr). This does
+    NOT hardcode TTR's bundle id — it checks identity *consistency* for the PID.
+    """
+    from AppKit import NSRunningApplication
+    app = NSRunningApplication.runningApplicationWithProcessIdentifier_(pid)
+    if app is None:
+        return None
+    bid = app.bundleIdentifier()
+    return str(bid) if bid is not None else None
+
+
+def frontmost_pid():
+    """PID of the frontmost application (NSWorkspace), or None."""
+    from AppKit import NSWorkspace
+    app = NSWorkspace.sharedWorkspace().frontmostApplication()
+    return int(app.processIdentifier()) if app is not None else None
+
+
+def enumerate_windows() -> list:
+    """Return TTR WindowRecords (with bundle_id) from the live window list."""
+    Q = _quartz()
+    import objc
+    with objc.autorelease_pool():
+        opts = Q.kCGWindowListOptionOnScreenOnly | Q.kCGWindowListExcludeDesktopElements
+        info = Q.CGWindowListCopyWindowInfo(opts, Q.kCGNullWindowID) or []
+        recs = identify_ttr_windows(list(info))
+        return [dataclasses.replace(r, bundle_id=process_bundle_id(r.pid)) for r in recs]
+
+
 def main(argv=None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if not argv:
@@ -166,7 +231,27 @@ def main(argv=None) -> int:
 
 # Command + PyObjC-harness functions are added by the empirical tasks (8-12, 11b).
 def cmd_list(rest):
-    raise NotImplementedError
+    screen = preflight_screen_recording()
+    print(f"post-access(Accessibility)={preflight_post_access()} "
+          f"listen-access(Input Monitoring)={preflight_listen_access()} "
+          f"screen-recording={screen}")
+    front = frontmost_pid()
+    print(f"frontmost_pid={front}")
+    recs = enumerate_windows()
+    if not recs:
+        if not screen:
+            print("No TTR windows visible AND Screen Recording is not granted. On "
+                  "macOS Tahoe, window enumeration of other apps requires Screen "
+                  "Recording — grant it to this terminal and retry.")
+        else:
+            print("No TTR windows found. Launch Toontown Rewritten first.")
+        return 1
+    for r in recs:
+        x, y, w, h = r.bounds
+        mark = " <FRONT>" if r.pid == front else ""
+        print(f"pid={r.pid} window_id={r.window_id} pos=({x},{y}) size={w}x{h} "
+              f"owner={r.owner!r} bundle={r.bundle_id!r}{mark}")
+    return 0
 
 
 def cmd_inject(rest):

@@ -28,12 +28,17 @@ def test_main_no_args_and_unknown_return_2():
     assert spike.main(["bogus-command"]) == 2
 
 
-@pytest.mark.parametrize("cmd", ["list", "inject", "loop", "type", "map"])
-def test_main_routes_every_command_to_its_body(cmd):
-    # Each known command routes to its (not-yet-implemented) body; a routing
-    # regression for any of the five would raise something other than NotImplementedError.
-    with pytest.raises(NotImplementedError):
-        spike.main([cmd])
+@pytest.mark.parametrize("cmd,func", [
+    ("list", "cmd_list"), ("inject", "cmd_inject"), ("loop", "cmd_loop"),
+    ("type", "cmd_type"), ("map", "cmd_map"),
+])
+def test_main_routes_every_command_and_forwards_args(monkeypatch, cmd, func):
+    # Routing is verified independently of each command's real body: every known
+    # command dispatches to its handler and forwards the remaining argv.
+    calls = []
+    monkeypatch.setattr(spike, func, lambda rest: (calls.append(rest), 0)[1])
+    assert spike.main([cmd, "x", "y"]) == 0
+    assert calls == [["x", "y"]]
 
 
 # ── Task 3: keycode map ──────────────────────────────────────────────────────
