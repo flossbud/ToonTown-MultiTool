@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import dataclasses
 import sys
+import time
 
 # Sentinel stamped into every event we post, so capture can recognise our own
 # synthetic traffic regardless of what the P0b echo measurement concludes.
@@ -301,8 +302,83 @@ def cmd_list(rest):
     return 0
 
 
+def _parse_opts(rest, defaults):
+    """Tiny --flag value parser. defaults is {flag: (type, value)}.
+
+    Returns (positional_args, options_dict). Unknown --flags raise SystemExit.
+    """
+    out = {k: v for k, (t, v) in defaults.items()}
+    i = 0
+    pos = []
+    while i < len(rest):
+        tok = rest[i]
+        if tok.startswith("--"):
+            name = tok[2:]
+            if name not in defaults:
+                raise SystemExit(f"unknown option --{name}")
+            typ = defaults[name][0]
+            out[name] = typ(rest[i + 1])
+            i += 2
+        else:
+            pos.append(tok)
+            i += 1
+    return pos, out
+
+
+def _hold(pid, window_id, key, seconds, state_name):
+    src = _event_source(state_name)
+    ok = post_key(pid, window_id, key, True, source=src, state_name=state_name)
+    try:
+        time.sleep(seconds)
+    finally:
+        post_key(pid, window_id, key, False, source=src, state_name=state_name)
+    return ok
+
+
 def cmd_inject(rest):
-    raise NotImplementedError
+    pos, opts = _parse_opts(rest, {
+        "key": (str, "w"), "reps": (int, 30), "state": (str, "combined"),
+    })
+    if len(pos) != 2:
+        print("usage: inject <pidA> <pidB> [--key w] [--reps 30] [--state combined|private|none]")
+        return 2
+    pidA, pidB = int(pos[0]), int(pos[1])
+    wins = {r.pid: r.window_id for r in enumerate_windows()}
+    if pidA not in wins or pidB not in wins:
+        print(f"pidA/pidB not both present as TTR windows; found {sorted(wins)}")
+        return 1
+    widA, widB = wins[pidA], wins[pidB]
+    key, reps, state = opts["key"], opts["reps"], opts["state"]
+
+    print(f"[baseline] bring pid={pidB} to FRONT, then watch it move on '{key}'.")
+    input("  press Enter when pidB is frontmost... ")
+    _hold(pidB, widB, key, 0.6, state)
+
+    print(f"[central] keep pid={pidA} FRONT; posting '{key}' ONLY to background pid={pidB}.")
+    input("  press Enter when pidA is frontmost... ")
+    print("  -> expect: pidB moves, pidA does NOT.")
+    _hold(pidB, widB, key, 0.8, state)
+
+    print(f"[reverse] keep pid={pidB} FRONT; posting '{key}' ONLY to background pid={pidA}.")
+    input("  press Enter when pidB is frontmost... ")
+    print("  -> expect: pidA moves, pidB does NOT.")
+    _hold(pidA, widA, key, 0.8, state)
+
+    print(f"[third-app] bring Finder/Terminal FRONT; posting '{key}' to pid={pidB}.")
+    input("  press Enter when a non-game app is frontmost... ")
+    print("  -> expect: pidB still moves while neither game is frontmost.")
+    _hold(pidB, widB, key, 0.8, state)
+
+    print(f"[stress] {reps} alternating taps/holds to background pid={pidB}...")
+    for n in range(reps):
+        src = _event_source(state)
+        post_key(pidB, widB, key, True, source=src, state_name=state)
+        try:
+            time.sleep(0.05 if n % 2 else 0.25)
+        finally:
+            post_key(pidB, widB, key, False, source=src, state_name=state)
+    print("  -> expect: no stuck key after the loop (tap 'key' in pidB to confirm released).")
+    return 0
 
 
 def cmd_loop(rest):

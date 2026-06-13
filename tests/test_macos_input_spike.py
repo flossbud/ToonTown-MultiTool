@@ -176,6 +176,19 @@ def test_event_source_maps_states_and_rejects_hid(monkeypatch):
         spike._event_source("hid")
 
 
+# ── Task 10: _parse_opts (pure arg parser) ───────────────────────────────────
+def test_parse_opts_defaults_and_overrides():
+    defaults = {"key": (str, "w"), "reps": (int, 30), "state": (str, "combined")}
+    pos, opts = spike._parse_opts(["10", "20", "--key", "a", "--reps", "5"], defaults)
+    assert pos == ["10", "20"]
+    assert opts == {"key": "a", "reps": 5, "state": "combined"}
+
+
+def test_parse_opts_unknown_flag_raises():
+    with pytest.raises(SystemExit):
+        spike._parse_opts(["--bogus", "1"], {"key": (str, "w")})
+
+
 # ── Task 3: keycode map ──────────────────────────────────────────────────────
 def test_vk_for_key_movement_and_specials():
     assert spike.vk_for_key("w") == 0x0D
