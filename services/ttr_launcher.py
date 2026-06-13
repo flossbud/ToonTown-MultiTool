@@ -11,7 +11,7 @@ import threading
 import tempfile
 from PySide6.QtCore import QObject, Signal
 from services.launcher_env import build_launcher_env
-from services.ttr_login_service import ENGINE_SEARCH_PATHS, get_engine_executable_name
+from services.ttr_login_service import ENGINE_SEARCH_PATHS, engine_binary_path
 from utils.game_registry import GameRegistry
 from utils.host_spawn import host_popen
 
@@ -39,16 +39,22 @@ def _approved_custom_engine_dir(settings_manager) -> str | None:
     return os.path.realpath(approved) if approved else None
 
 
-def _is_trusted_engine_path(engine_path: str, settings_manager=None) -> bool:
-    """Return True if the engine path is explicitly trusted or user-approved."""
+def _is_trusted_engine_path(engine_path: str, engine_dir: str, settings_manager=None) -> bool:
+    """Return True if the engine path is explicitly trusted or user-approved.
+
+    Trust is keyed on engine_dir (the game-data directory the user selects /
+    auto-detects), not the binary's immediate parent: on macOS the binary is
+    nested in the .app bundle (dirname == .../Contents/MacOS) while the trusted
+    unit is the data dir. On Linux/Windows engine_dir == dirname(engine_path),
+    so behavior is unchanged there."""
     real_path = os.path.realpath(engine_path)
     if not os.path.isfile(real_path):
         return False
-    engine_dir = os.path.realpath(os.path.dirname(engine_path))
-    if engine_dir in _TRUSTED_ENGINE_DIRS:
+    real_dir = os.path.realpath(engine_dir)
+    if real_dir in _TRUSTED_ENGINE_DIRS:
         return True
     approved_custom = _approved_custom_engine_dir(settings_manager)
-    return bool(approved_custom and engine_dir == approved_custom)
+    return bool(approved_custom and real_dir == approved_custom)
 
 class TTRLauncher(QObject):
     game_launched = Signal(int)     # (pid)
@@ -62,14 +68,13 @@ class TTRLauncher(QObject):
 
     def launch(self, gameserver: str, cookie: str, engine_dir: str):
         """Launch TTREngine with credentials in a background thread."""
-        binary_name = get_engine_executable_name()
-        engine_path = os.path.join(engine_dir, binary_name)
+        engine_path = engine_binary_path(engine_dir)
 
         if not os.path.isfile(engine_path):
             self.launch_failed.emit(f"TTREngine not found at {engine_path}")
             return
 
-        if not _is_trusted_engine_path(engine_path, self.settings_manager):
+        if not _is_trusted_engine_path(engine_path, engine_dir, self.settings_manager):
             self.launch_failed.emit(
                 "TTREngine path is not in the trusted install list. "
                 "Re-select it in Settings to approve a custom install."
