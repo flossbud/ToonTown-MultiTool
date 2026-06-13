@@ -30,17 +30,24 @@ _SUBPROCESS_CODE = """
 import sys, importlib
 
 # Shadow every PyObjC top-level module so a module-level import would raise.
-for _m in ("objc", "Quartz", "AppKit", "Foundation", "CoreGraphics", "Cocoa"):
+_PYOBJC = ("objc", "Quartz", "AppKit", "Foundation", "CoreGraphics", "Cocoa")
+for _m in _PYOBJC:
     sys.modules[_m] = None
 
-# Control: confirm the shadowing actually makes PyObjC imports fail (so a
-# passing import below is meaningful, not a no-op).
+# Control: confirm the shadowing is actually ACTIVE -- the None sentinel must be
+# set for every PyObjC module. This proves the simulation is real on ANY host,
+# including Linux CI where PyObjC is naturally absent (so a bare `import Quartz`
+# would raise regardless and could NOT prove shadowing on its own).
+for _m in _PYOBJC:
+    if sys.modules.get(_m, "MISSING") is not None:
+        print("CONTROL_FAILED: shadow sentinel not set for " + _m)
+        sys.exit(2)
 try:
     import Quartz  # noqa: F401
 except ImportError:
     pass
 else:
-    print("CONTROL_FAILED: Quartz import did not raise")
+    print("CONTROL_FAILED: Quartz import did not raise under shadowing")
     sys.exit(2)
 
 for _name in {modules!r}:
@@ -60,6 +67,7 @@ def test_macos_modules_import_without_pyobjc():
         capture_output=True,
         text=True,
         timeout=60,
+        env=env,
     )
     assert result.returncode == 0, (
         f"macOS modules failed to import with PyObjC shadowed:\n"
