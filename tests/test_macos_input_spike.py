@@ -28,10 +28,12 @@ def test_main_no_args_and_unknown_return_2():
     assert spike.main(["bogus-command"]) == 2
 
 
-def test_main_dispatches_to_command_stub():
-    # Routing reaches the (not-yet-implemented) command body.
+@pytest.mark.parametrize("cmd", ["list", "inject", "loop", "type", "map"])
+def test_main_routes_every_command_to_its_body(cmd):
+    # Each known command routes to its (not-yet-implemented) body; a routing
+    # regression for any of the five would raise something other than NotImplementedError.
     with pytest.raises(NotImplementedError):
-        spike.main(["list"])
+        spike.main([cmd])
 
 
 # ── Task 3: keycode map ──────────────────────────────────────────────────────
