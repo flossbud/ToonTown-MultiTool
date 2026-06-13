@@ -171,6 +171,45 @@ def test_enumerate_is_cached_within_ttl(monkeypatch):
     assert calls["n"] == 2              # reset forces a fresh enumeration
 
 
+def test_concurrent_miss_older_started_does_not_clobber_newer(monkeypatch):
+    """Race fix: a slow OLDER-started enumeration that finishes AFTER a newer one
+    must not overwrite the newer snapshot or restart its TTL (serving stale data
+    past the TTL). Deterministic via events: the older call is held in-flight
+    while a newer call completes and publishes, then the older is released."""
+    import threading
+
+    md._reset_enum_cache()
+    started_evt = threading.Event()   # set once the older enumeration is in-flight
+    release_evt = threading.Event()   # release the older enumeration to finish
+    calls = {"n": 0}
+    OLD = [GameWindow(1, 1, "ttr", "old", (0, 0, 1, 1))]
+    NEW = [GameWindow(2, 2, "ttr", "new", (0, 0, 1, 1))]
+
+    def _fake_uncached():
+        calls["n"] += 1
+        if calls["n"] == 1:           # older: started first, blocks, finishes last
+            started_evt.set()
+            release_evt.wait(timeout=5)
+            return OLD
+        return NEW                    # newer: started later, finishes first
+
+    monkeypatch.setattr(md, "_enumerate_game_windows_uncached", _fake_uncached)
+
+    older = {}
+    t = threading.Thread(
+        target=lambda: older.setdefault("r", md._enumerate_game_windows()))
+    t.start()
+    assert started_evt.wait(timeout=5)         # older enumeration now in-flight
+    newer = md._enumerate_game_windows()        # newer: started later, publishes NEW
+    assert newer == NEW
+    release_evt.set()                           # older finishes, attempts a stale write
+    t.join(timeout=5)
+    assert not t.is_alive()
+    # The older snapshot must NOT have clobbered the newer one or reset the TTL.
+    assert md._enumerate_game_windows() == NEW
+    md._reset_enum_cache()
+
+
 def test_geometry_queries_return_none_when_enumeration_empty(monkeypatch):
     monkeypatch.setattr(md, "_enumerate_game_windows", lambda: [])
     assert md.get_window_root_x("11") is None

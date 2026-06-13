@@ -134,15 +134,20 @@ def _enumerate_game_windows() -> list:
     OUTSIDE the lock so the pynput tap thread never blocks on the poll thread's
     in-flight enumeration. A simultaneous cache miss on both threads just
     enumerates twice (harmless). Never raises (the uncached core returns [])."""
-    now = time.monotonic()
+    started = time.monotonic()
     with _enum_lock:
-        if now - _enum_cache["t"] <= _ENUM_TTL:
+        if started - _enum_cache["t"] <= _ENUM_TTL:
             return _enum_cache["recs"]
     recs = _enumerate_game_windows_uncached()
     with _enum_lock:
-        _enum_cache["t"] = time.monotonic()
-        _enum_cache["recs"] = recs
-    return recs
+        # Stamp with the snapshot's START time and publish only if this snapshot
+        # is at least as new as the cached one. Otherwise a slow OLDER-started
+        # enumeration that finishes after a newer one would both clobber the
+        # newer snapshot AND restart its TTL, serving stale data past _ENUM_TTL.
+        if started >= _enum_cache["t"]:
+            _enum_cache["t"] = started
+            _enum_cache["recs"] = recs
+        return _enum_cache["recs"]
 
 
 def find_game_windows() -> list:

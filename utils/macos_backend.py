@@ -48,7 +48,7 @@ class MacOSBackend:
         (preflight returns False); a check error or a missing symbol (older macOS)
         is treated as access-OK so a transient check glitch never disables a
         working setup."""
-        now = time.time()
+        now = time.monotonic()
         if now - self._access["t"] <= _ACCESS_TTL:
             return self._access["ok"]
         ok = True
