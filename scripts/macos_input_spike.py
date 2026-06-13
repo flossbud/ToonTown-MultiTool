@@ -331,16 +331,18 @@ _STATES = ("combined", "private", "none")
 
 
 def _hold(pid, window_id, key, seconds, state_name):
-    """Hold a key for `seconds`, ALWAYS releasing in finally. Returns True only
-    if the key-down post succeeded."""
+    """Hold a key for `seconds`, ALWAYS releasing in finally. Returns the number
+    of REFUSED posts (0, 1, or 2) across the key-down and the key-up."""
     src = _event_source(state_name)
-    ok = False
+    refused = 0
     try:
-        ok = post_key(pid, window_id, key, True, source=src, state_name=state_name)
+        if not post_key(pid, window_id, key, True, source=src, state_name=state_name):
+            refused += 1
         time.sleep(seconds)
     finally:
-        post_key(pid, window_id, key, False, source=src, state_name=state_name)
-    return ok
+        if not post_key(pid, window_id, key, False, source=src, state_name=state_name):
+            refused += 1
+    return refused
 
 
 def cmd_inject(rest):
@@ -363,26 +365,26 @@ def cmd_inject(rest):
         return 1
     widA, widB = wins[pidA], wins[pidB]
     key, reps, state = opts["key"], opts["reps"], opts["state"]
-    refused = 0  # count posts the backend refused (no access / stale target)
+    refused = 0  # every post (down OR up) the backend refused (no access / stale target)
 
     print(f"[baseline] bring pid={pidB} to FRONT, then watch it move on '{key}'.")
     input("  press Enter when pidB is frontmost... ")
-    refused += not _hold(pidB, widB, key, 0.6, state)
+    refused += _hold(pidB, widB, key, 0.6, state)
 
     print(f"[central] keep pid={pidA} FRONT; posting '{key}' ONLY to background pid={pidB}.")
     input("  press Enter when pidA is frontmost... ")
     print("  -> expect: pidB moves, pidA does NOT.")
-    refused += not _hold(pidB, widB, key, 0.8, state)
+    refused += _hold(pidB, widB, key, 0.8, state)
 
     print(f"[reverse] keep pid={pidB} FRONT; posting '{key}' ONLY to background pid={pidA}.")
     input("  press Enter when pidB is frontmost... ")
     print("  -> expect: pidA moves, pidB does NOT.")
-    refused += not _hold(pidA, widA, key, 0.8, state)
+    refused += _hold(pidA, widA, key, 0.8, state)
 
     print(f"[third-app] bring Finder/Terminal FRONT; posting '{key}' to pid={pidB}.")
     input("  press Enter when a non-game app is frontmost... ")
     print("  -> expect: pidB still moves while neither game is frontmost.")
-    refused += not _hold(pidB, widB, key, 0.8, state)
+    refused += _hold(pidB, widB, key, 0.8, state)
 
     print(f"[stress] {reps} alternating taps/holds to background pid={pidB}.")
     input("  press Enter to start the stress loop... ")
@@ -393,7 +395,8 @@ def cmd_inject(rest):
                 refused += 1
             time.sleep(0.05 if n % 2 else 0.25)
         finally:
-            post_key(pidB, widB, key, False, source=src, state_name=state)
+            if not post_key(pidB, widB, key, False, source=src, state_name=state):
+                refused += 1
     print("  -> expect: no stuck key after the loop (tap 'key' in pidB to confirm released).")
 
     if refused:
