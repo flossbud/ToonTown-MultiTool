@@ -67,7 +67,7 @@ def test_cc_prefix_and_beta_suffix_match():
         _w(2, 2, "Corporate Clash (Test)"),
         _w(3, 3, "Not Corporate Clash"),
     ]
-    recs = md.identify_game_windows(info)
+    recs = identify_game_windows(info)
     assert [(r.pid, r.game) for r in recs] == [(1, "cc"), (2, "cc")]
 
 
@@ -83,10 +83,10 @@ def test_malformed_record_skipped_not_aborting():
     bad_pid = {"kCGWindowOwnerName": "Toontown Rewritten", "kCGWindowOwnerPID": "nope",
                "kCGWindowNumber": 9, "kCGWindowBounds": {"X": 0, "Y": 0, "Width": 8, "Height": 8}}
     good2 = _w(20, 21, "Corporate Clash")
-    recs = md.identify_game_windows([good1, bad_owner, bad_bounds, bad_dims, bad_pid, good2])
+    recs = identify_game_windows([good1, bad_owner, bad_bounds, bad_dims, bad_pid, good2])
     assert [(r.pid, r.window_id) for r in recs] == [(10, 11), (20, 21)]
 
 
 def test_individual_zero_or_negative_dimension_skipped():
-    assert md.identify_game_windows([_w(1, 1, "Toontown Rewritten", w=10, h=0)]) == []
-    assert md.identify_game_windows([_w(1, 1, "Toontown Rewritten", w=-5, h=10)]) == []
+    assert identify_game_windows([_w(1, 1, "Toontown Rewritten", w=10, h=0)]) == []
+    assert identify_game_windows([_w(1, 1, "Toontown Rewritten", w=-5, h=10)]) == []
