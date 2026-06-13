@@ -77,7 +77,8 @@ class TestX11ClassFallback:
 
     def test_falls_back_to_x11_class_when_pid_unresolvable(self):
         reg = GameRegistry.instance()
-        with patch.object(GameRegistry, "_get_pid_for_window", return_value=None), \
+        with patch("sys.platform", "linux"), \
+             patch.object(GameRegistry, "_get_pid_for_window", return_value=None), \
              patch.object(GameRegistry, "_tag_from_x11_class", return_value="ttr") as m:
             assert reg.get_game_for_window("0x1234") == "ttr"
             m.assert_called_once_with("0x1234")
@@ -87,7 +88,8 @@ class TestX11ClassFallback:
         unreadable from inside the sandbox, so _tag_from_process_name returns
         None. We must still classify via WM_CLASS, not give up."""
         reg = GameRegistry.instance()
-        with patch.object(GameRegistry, "_get_pid_for_window", return_value=PID_A), \
+        with patch("sys.platform", "linux"), \
+             patch.object(GameRegistry, "_get_pid_for_window", return_value=PID_A), \
              patch.object(GameRegistry, "_tag_from_process_name", return_value=None), \
              patch.object(GameRegistry, "_tag_from_x11_class", return_value="cc") as m:
             # PID_A is not registered so get_game(PID_A) returns None too.
@@ -212,7 +214,7 @@ class TestWineHelperCmdline:
         With the wine-cmdline branch it now returns ('cc', True) and the
         window is kept."""
         reg = GameRegistry.instance()
-        with patch.object(
+        with patch("sys.platform", "linux"), patch.object(
             GameRegistry,
             "_get_host_pid_for_window_xres",
             return_value=PID_A,
@@ -229,7 +231,7 @@ class TestWineHelperCmdline:
         sibling) must still be confirmed-not-a-game so window_manager
         rejects it."""
         reg = GameRegistry.instance()
-        with patch.object(
+        with patch("sys.platform", "linux"), patch.object(
             GameRegistry,
             "_get_host_pid_for_window_xres",
             return_value=PID_A,

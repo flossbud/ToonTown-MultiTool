@@ -99,6 +99,9 @@ class GameRegistry:
             if by_wine is not None:
                 return by_wine
 
+        if sys.platform == "darwin":
+            from utils import macos_discovery
+            return macos_discovery.game_for_window_id(wid)
         if sys.platform != "win32":
             return self._tag_from_x11_class(wid)
         return None
@@ -117,7 +120,7 @@ class GameRegistry:
         is intentionally excluded here because namespace PID mismatches can make
         it unsuitable for negative trust decisions on Flatpak installs.
         """
-        if sys.platform == "win32":
+        if sys.platform == "win32" or sys.platform == "darwin":
             pid = self._get_pid_for_window(wid)
         else:
             pid = self._get_host_pid_for_window_xres(wid)
@@ -152,6 +155,9 @@ class GameRegistry:
                 hwnd = int(wid)
                 _, pid = win32process.GetWindowThreadProcessId(hwnd)
                 return pid
+            if sys.platform == "darwin":
+                from utils import macos_discovery
+                return macos_discovery.get_window_pid(wid)
             else:
                 # Prefer XRes host PID to avoid Flatpak namespace PID mismatches.
                 host_pid = GameRegistry._get_host_pid_for_window_xres(wid)
