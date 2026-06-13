@@ -406,7 +406,94 @@ def cmd_inject(rest):
 
 
 def cmd_loop(rest):
-    raise NotImplementedError
+    _pos, opts = _parse_opts(rest, {"seconds": (int, 30), "key": (str, "w")})
+    seconds, watch_key = opts["seconds"], opts["key"]
+    Q = _quartz()
+    from pynput import keyboard
+
+    recs = enumerate_windows()
+    targets = sorted({r.pid: r.window_id for r in recs}.items())
+    if not targets:
+        print("No TTR windows; launch the game first.")
+        return 1
+    if not preflight_listen_access():
+        print("No listen access; grant Input Monitoring to your terminal/python.")
+        return 1
+
+    # Capture bundle ids once so reinjection can pass them for stale-target checks.
+    bundles = {r.pid: r.bundle_id for r in recs}
+    stats = {"captured": 0, "suppressed": 0, "reinjected": 0, "echoed": 0,
+             "target_field_seen": 0, "failopen": 0, "tap_disabled": 0,
+             "cb_press": 0, "cb_release": 0, "cb_injected": 0}
+
+    def intercept(event_type, event):
+        # Tap-health: the system disables the tap on timeout / heavy user input.
+        # Observe and record it (pynput owns the tap port; Phase 1 may need to own
+        # the tap to call CGEventTapEnable). Measure how often it happens.
+        if event_type in (Q.kCGEventTapDisabledByTimeout,
+                          Q.kCGEventTapDisabledByUserInput):
+            stats["tap_disabled"] += 1
+            return event
+        # Echo measurement: did one of OUR posted events come back through the tap?
+        ud = Q.CGEventGetIntegerValueField(event, Q.kCGEventSourceUserData)
+        if is_spike_event(ud):
+            stats["echoed"] += 1
+            return event  # never suppress our own traffic; pass it through
+        # Is the per-event target PID populated at this tap location?
+        tgt = Q.CGEventGetIntegerValueField(event, Q.kCGEventTargetUnixProcessID)
+        if tgt:
+            stats["target_field_seen"] += 1
+        # Only act on our watch key (keep the spike scoped + safe).
+        keycode = Q.CGEventGetIntegerValueField(event, Q.kCGKeyboardEventKeycode)
+        if keycode != vk_for_key(watch_key):
+            return event
+        # Fail-open: if we cannot post, do NOT swallow the user's key.
+        if not preflight_post_access():
+            stats["failopen"] += 1
+            return event
+        stats["captured"] += 1
+        down = (event_type == Q.kCGEventKeyDown)
+        for pid, wid in targets:
+            if post_key(pid, wid, watch_key, down, expected_bundle=bundles.get(pid, "__unset__")):
+                stats["reinjected"] += 1
+        stats["suppressed"] += 1
+        return None  # suppress the physical event; we reinjected copies
+
+    # on_press/on_release via the pynput 1.7/1.8 compat shim: records that
+    # callbacks fire (and the injected flag), to confirm callback-vs-interceptor
+    # ordering and whether posted events are reported as injected=True.
+    def _on_press(key, injected):
+        stats["cb_press"] += 1
+        if injected:
+            stats["cb_injected"] += 1
+
+    def _on_release(key, injected):
+        stats["cb_release"] += 1
+        if injected:
+            stats["cb_injected"] += 1
+
+    print(f"[P0b] focus a TTR window and hold/tap '{watch_key}' for {seconds}s.")
+    print("  expect: every game window moves together; no stuck key; watch the stats.")
+    listener = keyboard.Listener(
+        on_press=call_pynput_handler(_on_press),
+        on_release=call_pynput_handler(_on_release),
+        darwin_intercept=intercept,
+    )
+    listener.start()
+    try:
+        time.sleep(seconds)
+    finally:
+        listener.stop()
+        # Safety: release the watch key on every target.
+        for pid, wid in targets:
+            post_key(pid, wid, watch_key, False, expected_bundle=bundles.get(pid, "__unset__"))
+    print(f"[P0b] {stats}")
+    print("  Interpret: echoed>0 => posted events re-enter our tap (need active guard);")
+    print("             cb_injected>0 => pynput reports our posts as injected=True (guard option b);")
+    print("             target_field_seen==0 => kCGEventTargetUnixProcessID NOT usable at tap;")
+    print("             tap_disabled>0 => system disabled the tap (Phase 1 must re-enable);")
+    print("             failopen>0 => access dropped mid-run and suppression correctly stopped.")
+    return 0
 
 
 def cmd_type(rest):
