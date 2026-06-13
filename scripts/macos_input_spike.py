@@ -570,6 +570,11 @@ def cmd_type(rest):
     if bad:
         print(f"invalid --mods {bad}; choose from {'|'.join(_MODIFIER_KEYCODES)}")
         return 2
+    try:
+        vk_for_key(opts["modkey"])
+    except KeyError:
+        print(f"invalid --modkey {opts['modkey']!r} (not a mapped key)")
+        return 2
     pid, text = int(pos[0]), pos[1]
     rec = next((r for r in enumerate_windows() if r.pid == pid), None)
     if rec is None:
@@ -606,16 +611,23 @@ def cmd_type(rest):
         print(f"[modifier] '{'+'.join(mods)}+{modkey}' via explicit modifier down/up...")
         Q = _quartz()
         src = _event_source(state)
-        for m in mods:
-            ev = Q.CGEventCreateKeyboardEvent(src, _MODIFIER_KEYCODES[m], True)
+
+        def _post_modifier(m, down):
+            ev = Q.CGEventCreateKeyboardEvent(src, _MODIFIER_KEYCODES[m], down)
             Q.CGEventSetIntegerValueField(ev, Q.kCGEventSourceUserData, SPIKE_EVENT_TAG)
             Q.CGEventPostToPid(pid, ev)
-        post_key(pid, wid, modkey, True, source=src, state_name=state, expected_bundle=bundle)
-        post_key(pid, wid, modkey, False, source=src, state_name=state, expected_bundle=bundle)
-        for m in reversed(mods):
-            ev = Q.CGEventCreateKeyboardEvent(src, _MODIFIER_KEYCODES[m], False)
-            Q.CGEventSetIntegerValueField(ev, Q.kCGEventSourceUserData, SPIKE_EVENT_TAG)
-            Q.CGEventPostToPid(pid, ev)
+
+        pressed = []
+        try:
+            for m in mods:
+                _post_modifier(m, True)
+                pressed.append(m)
+            post_key(pid, wid, modkey, True, source=src, state_name=state, expected_bundle=bundle)
+            post_key(pid, wid, modkey, False, source=src, state_name=state, expected_bundle=bundle)
+        finally:
+            # Always release every modifier we pressed, even on interrupt/error.
+            for m in reversed(pressed):
+                _post_modifier(m, False)
         print("  -> record which variant (flags vs explicit) the game honored.")
     return 0
 

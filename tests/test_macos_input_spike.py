@@ -218,6 +218,7 @@ def test_cmd_type_rejects_bad_args_before_pyobjc():
     assert spike.cmd_type(["123"]) == 2                                  # wrong arg count
     assert spike.cmd_type(["123", "hi", "--state", "hid"]) == 2          # invalid state
     assert spike.cmd_type(["123", "hi", "--mods", "command"]) == 2       # invalid modifier
+    assert spike.cmd_type(["123", "hi", "--modkey", "f99"]) == 2         # unmapped modkey
 
 
 # ── Task 3: keycode map ──────────────────────────────────────────────────────
