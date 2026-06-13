@@ -37,6 +37,12 @@ jeepney>=0.7.0; sys_platform == "linux"
 # Linux only — Xlib input backend and XRes PID resolution
 python-xlib>=0.33; sys_platform == "linux"
 
+# macOS only — PyObjC bridges for CGEvent injection, CGWindowList discovery,
+# CGEventTap capture (Quartz) and NSWorkspace/NSRunningApplication (Cocoa).
+# Declared explicitly rather than relying on pynput's transitive PyObjC deps.
+pyobjc-framework-Quartz>=10.0; sys_platform == "darwin"
+pyobjc-framework-Cocoa>=10.0; sys_platform == "darwin"
+
 # Linux only — YAML parsing for Bottles and Lutris config files
 PyYAML>=6.0; sys_platform == "linux"
 
