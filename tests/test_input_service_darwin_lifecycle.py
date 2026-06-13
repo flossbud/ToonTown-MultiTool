@@ -153,7 +153,16 @@ def test_focus_game_to_nongame_uninstalls(monkeypatch, tmp_path):
     try:
         svc._start_key_grabber()
         assert svc._key_grabber.should_suppress("w") is True  # seeded TTR focus
-        svc._on_active_window_changed_for_grabber("")  # focus away to non-game
+        # Focus a REAL non-game window: get_game_for_window -> None -> the
+        # "game not in (cc, ttr)" uninstall branch (distinct from the empty-wid
+        # focus-loss branch).
+        svc._on_active_window_changed_for_grabber("finder-1")
+        assert svc._key_grabber.should_suppress("w") is False
+        assert svc._ttr_grabs_active is False
+        # The empty-window focus-loss path also keeps grabs uninstalled.
+        svc._on_active_window_changed_for_grabber("ttr-1")  # re-arm
+        assert svc._key_grabber.should_suppress("w") is True
+        svc._on_active_window_changed_for_grabber("")
         assert svc._key_grabber.should_suppress("w") is False
         assert svc._ttr_grabs_active is False
     finally:
@@ -171,7 +180,21 @@ def test_focus_game_to_game_reinstalls_safely(monkeypatch, tmp_path):
     try:
         svc._start_key_grabber()
         assert svc._key_grabber.should_suppress("w") is True
+        # Spy on the REAL grabber's install_grabs to PROVE the game->game focus
+        # actually re-applies the grab set, rather than just observing that
+        # suppression is still on from the ttr-1 seed (which would pass even if
+        # the ttr-2 focus did nothing).
+        installs = []
+        _real_install = svc._key_grabber.install_grabs
+
+        def _spy_install(*args, **kwargs):
+            installs.append((args, kwargs))
+            return _real_install(*args, **kwargs)
+
+        svc._key_grabber.install_grabs = _spy_install
         svc._on_active_window_changed_for_grabber("ttr-2")
+        assert installs, "focusing ttr-2 must (re)install the grab set"
+        assert installs[-1][1].get("route_all") is True  # route_all reinstall
         assert svc._key_grabber.should_suppress("w") is True
         assert svc._ttr_grabs_active is True
     finally:
