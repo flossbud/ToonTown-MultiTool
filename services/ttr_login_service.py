@@ -39,6 +39,9 @@ ENGINE_SEARCH_PATHS = [
     os.path.expanduser("~/Games/Toontown Rewritten"),
     os.path.expanduser("~/Games/toontown-rewritten"),
     os.path.expanduser("~/.local/share/toontown-rewritten"),
+    # Native macOS (TTREngine is nested in the .app bundle inside this data
+    # dir; engine_binary_path() resolves the nesting).
+    os.path.expanduser("~/Library/Application Support/Toontown Rewritten"),
     os.path.join(os.environ.get("PROGRAMFILES(X86)", "C:\\Program Files (x86)"), "Toontown Rewritten"),
     os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~\\AppData\\Local")), "Toontown Rewritten"),
 ]
@@ -49,15 +52,30 @@ def get_engine_executable_name() -> str:
     import sys
     return "TTREngine64.exe" if sys.platform == "win32" else "TTREngine"
 
+
+def engine_binary_path(engine_dir: str) -> str:
+    """Absolute path to the TTREngine binary given the game-data directory.
+
+    On macOS the binary is nested inside the .app bundle while engine_dir is the
+    data dir (settings.json / phase files / the engine's cwd live there). On
+    Linux/Windows the binary sits directly in engine_dir. Pure path math — never
+    touches the filesystem; callers do the existence check.
+    """
+    import sys
+    if sys.platform == "darwin":
+        return os.path.join(
+            engine_dir, "Toontown Rewritten.app", "Contents", "MacOS", "TTREngine"
+        )
+    return os.path.join(engine_dir, get_engine_executable_name())
+
+
 def find_engine_path() -> str | None:
-    """Auto-detect TTREngine binary. Returns path to directory containing it, or None."""
-    binary_name = get_engine_executable_name()
-
-    # Check standard paths
+    """Auto-detect the TTR engine. Returns the game-data directory that holds it
+    (on macOS the binary is nested in the .app bundle inside that directory), or
+    None."""
     for path in ENGINE_SEARCH_PATHS:
-        if os.path.isfile(os.path.join(path, binary_name)):
+        if os.path.isfile(engine_binary_path(path)):
             return path
-
     return None
 
 
