@@ -19,9 +19,14 @@ any platform (the pure-logic helpers are unit-tested on Linux/Windows CI).
 """
 from __future__ import annotations
 
+import collections
 import dataclasses
 import sys
 import time
+
+# Minimal connection shape the resolver needs. Per-PID psutil records (pconn)
+# lack a .pid field, so the AccessDenied fallback re-wraps them with the known pid.
+_PidConn = collections.namedtuple("_PidConn", "pid laddr status")
 
 # Sentinel stamped into every event we post, so capture can recognise our own
 # synthetic traffic regardless of what the P0b echo measurement concludes.
@@ -655,8 +660,9 @@ def cmd_map(rest):
                 # Process.net_connections() is psutil>=6.0; older uses .connections().
                 getter = getattr(proc, "net_connections", None) or proc.connections
                 for c in getter(kind="inet"):
-                    # Per-PID results omit .pid; reattach it for the resolver.
-                    conns.append(c._replace(pid=pid) if hasattr(c, "_replace") else c)
+                    # Per-PID records (pconn) have no .pid field, so re-wrap with the
+                    # known pid in the shape resolve_port_pid_window expects.
+                    conns.append(_PidConn(pid=pid, laddr=c.laddr, status=c.status))
             except (psutil.AccessDenied, psutil.NoSuchProcess) as e:
                 print(f"  pid={pid}: {type(e).__name__}")
     conns = [c for c in conns

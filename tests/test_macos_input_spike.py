@@ -227,6 +227,33 @@ def test_cmd_map_returns_1_without_windows(monkeypatch):
     assert spike.cmd_map([]) == 1
 
 
+def test_cmd_map_per_pid_fallback_on_access_denied(monkeypatch, capsys):
+    import psutil
+    monkeypatch.setattr(spike, "enumerate_windows",
+                        lambda: [_ttr(101, 11, "com.ttr")])
+
+    def _denied(*a, **k):
+        raise psutil.AccessDenied()
+    monkeypatch.setattr(psutil, "net_connections", _denied)
+
+    # Per-process pconn records have NO .pid field (the bug the review caught).
+    pconn = collections.namedtuple("pconn", "fd family type laddr raddr status")
+    addr = collections.namedtuple("addr", "ip port")
+
+    class _Proc:
+        def __init__(self, pid):
+            pass
+
+        def net_connections(self, kind="inet"):
+            return [pconn(5, 2, 1, addr("127.0.0.1", 7000), (), "LISTEN")]
+    monkeypatch.setattr(psutil, "Process", _Proc)
+
+    assert spike.cmd_map([]) == 0
+    out = capsys.readouterr().out
+    assert "port=7000 -> pid=101 window_id=11" in out
+    assert "per-PID fallback" in out
+
+
 # ── Task 3: keycode map ──────────────────────────────────────────────────────
 def test_vk_for_key_movement_and_specials():
     assert spike.vk_for_key("w") == 0x0D
