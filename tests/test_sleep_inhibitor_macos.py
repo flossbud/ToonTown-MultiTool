@@ -173,3 +173,100 @@ def test_verify_caffeinate_false_when_holder_exited(monkeypatch):
     inh = si.SleepInhibitor()
     assert inh._verify_caffeinate(FakeCaffeinate(pid=4242, alive=False)) is False
     assert called["pmset"] is False   # liveness checked BEFORE polling pmset
+
+
+def _patch_macos_success(monkeypatch, holder):
+    """Pin darwin, stub a successful caffeinate spawn + verification. Returns a
+    recorder dict: closed_fds (write-fds closed) and reaped (procs reaped)."""
+    monkeypatch.setattr(si, "_is_macos", lambda: True)
+    monkeypatch.setattr(si, "_is_windows", lambda: False)
+    monkeypatch.setattr(si, "_run_pmset_assertions", lambda timeout=None: PMSET_ALL_THREE)
+    rec = {"closed_fds": [], "reaped": []}
+    monkeypatch.setattr(si, "_popen_caffeinate", lambda: (holder, 99))
+    monkeypatch.setattr(si, "_close_write_fd", lambda fd: rec["closed_fds"].append(fd))
+    monkeypatch.setattr(si, "_reap", lambda proc: rec["reaped"].append(proc))
+    return rec
+
+
+def test_acquire_macos_success_sets_status_and_release(monkeypatch):
+    holder = FakeCaffeinate(pid=4242)
+    rec = _patch_macos_success(monkeypatch, holder)
+
+    inh = si.SleepInhibitor()
+    tier = inh.acquire()                       # dispatch -> _acquire_macos
+    assert tier == "caffeinate"
+    assert inh.active_tier == "caffeinate"
+    assert inh.is_active() is True
+    assert inh.status.sleep_blocked is True
+    assert inh.status.screen_lock_cookie_held is True
+    assert inh.status.method == "caffeinate"
+    assert rec["reaped"] == []                 # nothing released yet
+
+    inh.release()                              # EOF + reap the holder
+    assert 99 in rec["closed_fds"]
+    assert holder in rec["reaped"]
+    assert inh.is_active() is False
+    assert inh.status.sleep_blocked is False
+
+
+def test_acquire_macos_unverified_cleans_up_and_returns_none(monkeypatch):
+    holder = FakeCaffeinate(pid=4242)
+    monkeypatch.setattr(si, "_is_macos", lambda: True)
+    monkeypatch.setattr(si, "_is_windows", lambda: False)
+    monkeypatch.setattr(si, "_VERIFY_DEADLINE", 0.2)
+    monkeypatch.setattr(si, "_run_pmset_assertions", lambda timeout=None: "no match\n")
+    closed = {"write": False, "reaped": False}
+    monkeypatch.setattr(si, "_popen_caffeinate", lambda: (holder, 99))
+    monkeypatch.setattr(si, "_close_write_fd", lambda fd: closed.update(write=True))
+    monkeypatch.setattr(si, "_reap", lambda proc: closed.update(reaped=True))
+
+    inh = si.SleepInhibitor()
+    assert inh.acquire() is None
+    assert inh.status.sleep_blocked is False
+    assert closed["write"] is True and closed["reaped"] is True   # holder not leaked
+
+
+def test_acquire_macos_spawn_failure_returns_none(monkeypatch):
+    monkeypatch.setattr(si, "_is_macos", lambda: True)
+    monkeypatch.setattr(si, "_is_windows", lambda: False)
+    monkeypatch.setattr(si, "_popen_caffeinate",
+                        lambda: (_ for _ in ()).throw(FileNotFoundError("caffeinate")))
+    inh = si.SleepInhibitor()
+    assert inh.acquire() is None
+    assert inh.status.sleep_blocked is False
+
+
+def test_acquire_macos_verifier_exception_cleans_up(monkeypatch):
+    holder = FakeCaffeinate(pid=4242)
+    monkeypatch.setattr(si, "_is_macos", lambda: True)
+    monkeypatch.setattr(si, "_is_windows", lambda: False)
+    closed = {"write": False, "reaped": False}
+    monkeypatch.setattr(si, "_popen_caffeinate", lambda: (holder, 99))
+    monkeypatch.setattr(si, "_close_write_fd", lambda fd: closed.update(write=True))
+    monkeypatch.setattr(si, "_reap", lambda proc: closed.update(reaped=True))
+    monkeypatch.setattr(si.SleepInhibitor, "_verify_caffeinate",
+                        lambda self, proc: (_ for _ in ()).throw(RuntimeError("boom")))
+    inh = si.SleepInhibitor()
+    assert inh.acquire() is None                 # exception did not propagate
+    assert closed["write"] is True and closed["reaped"] is True   # cleaned up
+
+
+def test_acquire_macos_reacquire_releases_first(monkeypatch):
+    holder1 = FakeCaffeinate(pid=4242)
+    rec = _patch_macos_success(monkeypatch, holder1)
+    inh = si.SleepInhibitor()
+    assert inh.acquire() == "caffeinate"
+    # Second acquire: release-before-acquire must reap the first holder. holder2
+    # reuses pid 4242 so the pinned PMSET_ALL_THREE fixture still verifies it.
+    holder2 = FakeCaffeinate(pid=4242)
+    monkeypatch.setattr(si, "_popen_caffeinate", lambda: (holder2, 77))
+    assert inh.acquire() == "caffeinate"
+    assert holder1 in rec["reaped"]             # first holder released on re-acquire
+
+
+def test_release_macos_idempotent_and_never_raises(monkeypatch):
+    monkeypatch.setattr(si, "_is_macos", lambda: True)
+    inh = si.SleepInhibitor()
+    # release with nothing held is a safe no-op
+    inh.release()
+    assert inh.is_active() is False

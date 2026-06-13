@@ -51,6 +51,10 @@ def _is_windows():
     return sys.platform == "win32"
 
 
+def _is_macos():
+    return sys.platform == "darwin"
+
+
 def _kernel32():
     import ctypes
     return ctypes.windll.kernel32
@@ -329,6 +333,8 @@ class SleepInhibitor:
             self._acquired = True
             if _is_windows():
                 self.active_tier = self._acquire_windows()
+            elif _is_macos():
+                self.active_tier = self._acquire_macos()
             else:
                 self.active_tier = self._acquire_linux()
             return self.active_tier
@@ -376,6 +382,35 @@ class SleepInhibitor:
         if self.status.screen_lock_cookie_held:
             tiers.append("screensaver")
         return "+".join(tiers)
+
+    # ── macOS ────────────────────────────────────────────────────────────────
+    def _acquire_macos(self):
+        """Hold a verified caffeinate -dis holder. Sets sleep_blocked +
+        screen_lock_cookie_held on success (the holder asserts all three power
+        assertions). Ownership-safe: once (proc, w_fd) exists, every non-success
+        path EOFs the holder and reaps it before returning, so nothing leaks."""
+        self.status = InhibitStatus()
+        try:
+            proc, w_fd = _popen_caffeinate()
+        except Exception:
+            # Spawn failed (no caffeinate, ENOMEM): nothing acquired.
+            return None
+        try:
+            verified = self._verify_caffeinate(proc)
+        except Exception:
+            verified = False
+        if verified:
+            self._releases.append(
+                ("caffeinate",
+                 lambda p=proc, fd=w_fd: (_close_write_fd(fd), _reap(p))))
+            self.status.sleep_blocked = True
+            self.status.screen_lock_cookie_held = True
+            self.status.method = "caffeinate"
+            return "caffeinate"
+        # Unverified or verifier error: EOF the holder and reap it (no leak).
+        _close_write_fd(w_fd)
+        _reap(proc)
+        return None
 
     def _acquire_sleep_layer(self):
         token = self._token = _uuid_token()
