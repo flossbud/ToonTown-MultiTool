@@ -187,7 +187,7 @@ def process_bundle_id(pid: int):
 
     Used to harden against PID reuse: we record the bundle id at enumeration and
     re-confirm it is unchanged before posting (see pid_alive_and_ttr). This does
-    NOT hardcode TTR's bundle id — it checks identity *consistency* for the PID.
+    NOT hardcode TTR's bundle id - it checks identity *consistency* for the PID.
     """
     from AppKit import NSRunningApplication
     app = NSRunningApplication.runningApplicationWithProcessIdentifier_(pid)
@@ -248,7 +248,7 @@ def post_key(pid: int, window_id: int, key: str, down: bool,
     (does not raise) if the target failed re-validation or access is missing.
 
     `revalidate=False` skips the per-call window enumeration (used by the loop's
-    hot path, which validates targets on an interval instead — see cmd_loop — so
+    hot path, which validates targets on an interval instead (see cmd_loop), so
     a full CGWindowListCopyWindowInfo does not run inside the tap callback on
     every keystroke). The Accessibility preflight is ALWAYS checked."""
     Q = _quartz()
@@ -300,7 +300,7 @@ def cmd_list(rest):
         if not screen:
             print("No TTR windows visible AND Screen Recording is not granted. On "
                   "macOS Tahoe, window enumeration of other apps requires Screen "
-                  "Recording — grant it to this terminal and retry.")
+                  "Recording - grant it to this terminal and retry.")
         else:
             print("No TTR windows found. Launch Toontown Rewritten first.")
         return 1
