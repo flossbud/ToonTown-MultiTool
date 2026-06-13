@@ -22,35 +22,33 @@ Past releases v1.0 through v2.3.0-a1 have been retagged to v0.1.0-alpha.1 throug
 ## ✨ Features
 
 ### 🎮 Multitoon control
-- Play up to 4 toons at the same time. What you do on the active toon (move, jump, talk, attack) happens on the others too.
+- Control up to 4 toons at the same time
 - Each toon can use a different set of movement keys (WASD, arrow keys, or your own custom layout).
-- Save up to 8 key layouts and assign a different one to each toon.
-- Keep background toons from going idle: pick a key and an interval, and the app presses it for them automatically. **(The use of Keep-Alive and other automation tools is against TTR and CC ToS, and thus is disabled by default. Enable in settings at your own risk.)**
-- Decide where your chat goes: four chat handling modes (Focused Toon Only, All Toons, Keyset Dynamic, Per-Toon (manual)), switchable under Settings > Features. Focused Toon Only is the default.
+- Keep background toons from going idle: pick a key and an interval, and the app presses it for them automatically. Enable in Settings > Features. **(The use of Keep-Alive and other automation tools is against TTR and CC ToS, and thus is disabled by default. Enable in settings at your own risk.)**
+- Multitoon Chat ON/OFF Toggle: four chat handling modes (Focused Toon Only, All Toons, Keyset Dynamic, Per-Toon (manual)), switchable under Settings > Features. Focused Toon Only is the default.
 - Press F5 anywhere in the app to refresh the detected toon list.
 
 ### 🖱️ Click Sync
-- Turn it on and your mouse plays every synced toon at once: clicks, drags, and hover movement mirror from the window you're playing into your other selected TTR windows, landing at the corresponding spot in each.
-- Pick which toons join with the click sync button on each toon card, then flip the master switch in Settings > Features. Works when the windows share proportions. Off by default.
-- Each synced window shows that toon's own glove cursor where the mirrored mouse lands, and never on the window you're actively using. On by default; toggle it in the same settings card.
+- Mouse input forwarding: clicks, drags, and hover movement mirror from the window you're playing into your other selected TTR windows, landing at the corresponding spot in each.
+- Pick which toon's recieve input forwarding. Only works when the windows share proportions/aspect ratio. Enable in Settings > Features.
+- Ghost Cursors: A colored cursor will appear on each forwarded window as input is forwarded. Toggleable in Settings > Features > Click Sync
 
 ### <img src="assets/logos/ttr_readme.png" height="40" align="middle"> Toontown Rewritten support
-- Sign in to TTR from inside the app. If TTR has a login queue, you see your queue position and ETA.
-- Launches both the standard TTR install and the official Flatpak version.
-- See each toon's name, laff, jellybean count, and portrait update live while you play, across all your open TTR windows.
+- Sign in to TTR from inside the app. 
+- Launches both the standard TTR install (Windows) and the official Flatpak version (Linux).
+- See each toon's name, laff, jellybean count, and portrait update live while you play, across all your toons.
 
 ### <img src="assets/logos/cc_readme.png" height="40" align="middle"> Corporate Clash support
 - Sign in to CC from inside the app.
-- Plays nicely with however you have CC installed: native Windows, or any major Linux setup (Wine, Bottles, Lutris, Steam Proton, and similar).
+- Plays nicely with however you have CC installed: Windows, or any common Linux setup (Wine, Bottles, Lutris, Steam/Proton, Faugus, etc.).
 - Multi-toon for CC, which CC's official launcher doesn't support out of the box.
-- If CC reports the wrong species for one of your toons and the portrait shows the wrong character, set the right one per-toon and it sticks.
 
 ### 🔑 Accounts
 - Save up to 16 accounts across both games, with one-click launch.
 - Passwords are stored securely; the app never writes them into plain files. See [PRIVACY.md](PRIVACY.md) for details.
 
 ### 💾 Session profiles
-- Save up to 5 named setups (which toons are active, plus their movement keys and anti-idle settings).
+- Save up to 5 profiles (saves which toons are active, plus their movement keys and anti-idle settings).
 - Switch setups instantly with Ctrl+1 through Ctrl+5.
 
 ---
@@ -65,7 +63,7 @@ Install on Windows (installer, portable ZIP, or source) or on Linux (Arch, Flatp
 
 Download `ToonTownMultiTool-Setup-vX.Y.Z.exe` from the [Releases page](https://github.com/flossbud/ToonTown-MultiTool/releases) and run it. The wizard asks whether to install for just you (no admin needed) or for all users.
 
-On first download, Windows SmartScreen will show "Windows protected your PC". This is expected for unsigned installers, click "More info" then "Run anyway".
+On first download, Windows SmartScreen may show "Windows protected your PC". This is expected for unsigned installers, click "More info" then "Run anyway".
 
 #### Portable (no install)
 
