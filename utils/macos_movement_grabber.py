@@ -104,9 +104,17 @@ class MacOSMovementKeyGrabber:
             print(f"[macos_movement_grabber] on_grabs_changed raised: {e}")
 
     def should_suppress(self, keysym: str) -> bool:
-        if self._grabbed_keysyms is None:
+        # Snapshot the grab set once. should_suppress runs on the pynput tap
+        # thread while install_grabs/uninstall_grabs run on the focus-change
+        # thread, which can reassign _grabbed_keysyms to None between two reads.
+        # Reading the field twice would risk `keysym not in None` -> TypeError on
+        # that race; a single local read closes it (the set is an immutable
+        # frozenset that is only ever replaced, never mutated). This is a
+        # deliberate hardening over the win32 sibling, which reads it twice.
+        grabbed = self._grabbed_keysyms
+        if grabbed is None:
             return False
-        if keysym not in self._grabbed_keysyms:
+        if keysym not in grabbed:
             return False
         consume = self._should_consume
         if consume is None:
