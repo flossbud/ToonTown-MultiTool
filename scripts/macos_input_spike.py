@@ -537,8 +537,87 @@ def cmd_loop(rest):
     return 0 if loop_ok else 1
 
 
+def _modifier_mask(names):
+    """OR together CGEvent flag masks for modifier names (shift/control/option)."""
+    Q = _quartz()
+    table = {
+        "shift": Q.kCGEventFlagMaskShift,
+        "control": Q.kCGEventFlagMaskControl,
+        "option": Q.kCGEventFlagMaskAlternate,
+    }
+    mask = 0
+    for n in names:
+        mask |= table[n]
+    return mask
+
+
+# Explicit (left-variant) modifier keycodes, for the down/up modifier variant.
+_MODIFIER_KEYCODES = {"shift": 0x38, "control": 0x3B, "option": 0x3A}
+
+
 def cmd_type(rest):
-    raise NotImplementedError
+    pos, opts = _parse_opts(rest, {
+        "mods": (str, ""), "state": (str, "combined"), "modkey": (str, "j"),
+    })
+    if len(pos) != 2:
+        print("usage: type <pid> <text> [--mods shift,control,option] [--modkey j] [--state combined]")
+        return 2
+    if opts["state"] not in _STATES:
+        print(f"invalid --state {opts['state']!r}; choose from {'|'.join(_STATES)}")
+        return 2
+    mods = [m for m in opts["mods"].split(",") if m]
+    bad = [m for m in mods if m not in _MODIFIER_KEYCODES]
+    if bad:
+        print(f"invalid --mods {bad}; choose from {'|'.join(_MODIFIER_KEYCODES)}")
+        return 2
+    pid, text = int(pos[0]), pos[1]
+    rec = next((r for r in enumerate_windows() if r.pid == pid), None)
+    if rec is None:
+        print(f"pid={pid} is not a current TTR window.")
+        return 1
+    wid, bundle, state = rec.window_id, rec.bundle_id, opts["state"]
+
+    print(f"[text] sending {text!r} char-by-char to background pid={pid}.")
+    print("  open chat in that toon first; expect the text to appear there.")
+    input("  press Enter when the background toon's chat is open... ")
+    for ch in text.lower():
+        ch = "space" if ch == " " else ch
+        try:
+            vk_for_key(ch)
+        except KeyError:
+            print(f"  (skipping unmapped char {ch!r})")
+            continue
+        post_key(pid, wid, ch, True, state_name=state, expected_bundle=bundle)
+        time.sleep(0.03)
+        post_key(pid, wid, ch, False, state_name=state, expected_bundle=bundle)
+        time.sleep(0.03)
+
+    if mods:
+        modkey = opts["modkey"]
+        mask = _modifier_mask(mods)
+        print(f"[modifier] '{'+'.join(mods)}+{modkey}' via CGEventSetFlags...")
+        src = _event_source(state)
+        post_key(pid, wid, modkey, True, source=src, state_name=state,
+                 flags=mask, expected_bundle=bundle)
+        time.sleep(0.1)
+        post_key(pid, wid, modkey, False, source=src, state_name=state,
+                 flags=mask, expected_bundle=bundle)
+
+        print(f"[modifier] '{'+'.join(mods)}+{modkey}' via explicit modifier down/up...")
+        Q = _quartz()
+        src = _event_source(state)
+        for m in mods:
+            ev = Q.CGEventCreateKeyboardEvent(src, _MODIFIER_KEYCODES[m], True)
+            Q.CGEventSetIntegerValueField(ev, Q.kCGEventSourceUserData, SPIKE_EVENT_TAG)
+            Q.CGEventPostToPid(pid, ev)
+        post_key(pid, wid, modkey, True, source=src, state_name=state, expected_bundle=bundle)
+        post_key(pid, wid, modkey, False, source=src, state_name=state, expected_bundle=bundle)
+        for m in reversed(mods):
+            ev = Q.CGEventCreateKeyboardEvent(src, _MODIFIER_KEYCODES[m], False)
+            Q.CGEventSetIntegerValueField(ev, Q.kCGEventSourceUserData, SPIKE_EVENT_TAG)
+            Q.CGEventPostToPid(pid, ev)
+        print("  -> record which variant (flags vs explicit) the game honored.")
+    return 0
 
 
 def cmd_map(rest):

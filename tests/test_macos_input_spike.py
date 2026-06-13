@@ -204,6 +204,22 @@ def test_cmd_inject_rejects_bad_args_before_pyobjc():
     assert spike.cmd_inject(["5", "5"]) == 2                    # identical pids
 
 
+# ── Task 11b: _modifier_mask + cmd_type early validation ─────────────────────
+def test_modifier_mask_ors_flags(monkeypatch):
+    fakeq = types.SimpleNamespace(
+        kCGEventFlagMaskShift=0x1, kCGEventFlagMaskControl=0x2, kCGEventFlagMaskAlternate=0x4)
+    monkeypatch.setattr(spike, "_quartz", lambda: fakeq)
+    assert spike._modifier_mask([]) == 0
+    assert spike._modifier_mask(["shift"]) == 0x1
+    assert spike._modifier_mask(["shift", "option"]) == 0x5
+
+
+def test_cmd_type_rejects_bad_args_before_pyobjc():
+    assert spike.cmd_type(["123"]) == 2                                  # wrong arg count
+    assert spike.cmd_type(["123", "hi", "--state", "hid"]) == 2          # invalid state
+    assert spike.cmd_type(["123", "hi", "--mods", "command"]) == 2       # invalid modifier
+
+
 # ── Task 3: keycode map ──────────────────────────────────────────────────────
 def test_vk_for_key_movement_and_specials():
     assert spike.vk_for_key("w") == 0x0D
