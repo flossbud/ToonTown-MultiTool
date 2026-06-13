@@ -33,34 +33,39 @@ def identify_game_windows(window_info) -> list:
     """Filter a CGWindowListCopyWindowInfo-shaped list down to game windows."""
     games = []
     for entry in window_info:
-        owner = entry.get("kCGWindowOwnerName", "")
-        game = next(
-            (tag for marker, tag in _GAME_MARKERS if owner.startswith(marker)),
-            None,
-        )
-        if game is None:
-            continue
-
-        pid = entry.get("kCGWindowOwnerPID")
-        number = entry.get("kCGWindowNumber")
-        if pid is None or number is None:
-            continue
-
-        bounds = entry.get("kCGWindowBounds", {})
-        x = bounds.get("X", 0)
-        y = bounds.get("Y", 0)
-        width = bounds.get("Width", 0)
-        height = bounds.get("Height", 0)
-        if width <= 0 or height <= 0:
-            continue
-
-        games.append(
-            GameWindow(
-                pid=int(pid),
-                window_id=int(number),
-                game=game,
-                owner=owner,
-                bounds=(int(x), int(y), int(width), int(height)),
+        # A single malformed record (null/non-numeric values, missing Bounds)
+        # must never abort the whole scan - skip just the bad entry.
+        try:
+            owner = entry.get("kCGWindowOwnerName") or ""
+            game = next(
+                (tag for marker, tag in _GAME_MARKERS if owner.startswith(marker)),
+                None,
             )
-        )
+            if game is None:
+                continue
+
+            pid = entry.get("kCGWindowOwnerPID")
+            number = entry.get("kCGWindowNumber")
+            if pid is None or number is None:
+                continue
+
+            bounds = entry.get("kCGWindowBounds") or {}
+            x = int(bounds.get("X", 0))
+            y = int(bounds.get("Y", 0))
+            width = int(bounds.get("Width", 0))
+            height = int(bounds.get("Height", 0))
+            if width <= 0 or height <= 0:
+                continue
+
+            games.append(
+                GameWindow(
+                    pid=int(pid),
+                    window_id=int(number),
+                    game=game,
+                    owner=owner,
+                    bounds=(x, y, width, height),
+                )
+            )
+        except (TypeError, ValueError, AttributeError):
+            continue
     return games
