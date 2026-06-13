@@ -156,15 +156,24 @@ def test_post_key_happy_path_tags_and_posts(monkeypatch):
     monkeypatch.setattr(spike, "_quartz", lambda: fq)
     monkeypatch.setattr(spike, "preflight_post_access", lambda: True)
     monkeypatch.setattr(spike, "enumerate_windows", lambda: [_ttr(101, 11, "com.ttr")])
-    assert spike.post_key(101, 11, "w", True, expected_bundle="com.ttr") is True
+    assert spike.post_key(101, 11, "w", False, state_name="private", flags=0x20000,
+                          expected_bundle="com.ttr") is True
     assert fq.posts and fq.posts[0][0] == 101
+    ev = fq.posts[0][1]
+    assert ev["vk"] == spike.vk_for_key("w")
+    assert ev["down"] is False                                  # down forwarded
+    assert ev["src"] == ("src", "private")                     # source selected
     assert (fq.kCGEventSourceUserData, spike.SPIKE_EVENT_TAG) in fq.tagged
-    assert fq.posts[0][1]["vk"] == spike.vk_for_key("w")
+    assert fq.flagged == [0x20000]                             # flags applied
 
 
-def test_event_source_none_returns_none(monkeypatch):
+def test_event_source_maps_states_and_rejects_hid(monkeypatch):
     monkeypatch.setattr(spike, "_quartz", lambda: _FakeQuartz())
     assert spike._event_source("none") is None
+    assert spike._event_source("combined") == ("src", "combined")
+    assert spike._event_source("private") == ("src", "private")
+    with pytest.raises(KeyError):
+        spike._event_source("hid")
 
 
 # ── Task 3: keycode map ──────────────────────────────────────────────────────
