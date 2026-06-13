@@ -167,6 +167,18 @@ def test_post_key_happy_path_tags_and_posts(monkeypatch):
     assert fq.flagged == [0x20000]                             # flags applied
 
 
+def test_post_key_revalidate_false_skips_enumeration(monkeypatch):
+    fq = _FakeQuartz()
+    monkeypatch.setattr(spike, "_quartz", lambda: fq)
+    monkeypatch.setattr(spike, "preflight_post_access", lambda: True)
+
+    def _boom():
+        raise AssertionError("enumerate_windows must NOT run on the loop hot path")
+    monkeypatch.setattr(spike, "enumerate_windows", _boom)
+    assert spike.post_key(101, 11, "w", True, revalidate=False) is True
+    assert fq.posts and fq.posts[0][0] == 101
+
+
 def test_event_source_maps_states_and_rejects_hid(monkeypatch):
     monkeypatch.setattr(spike, "_quartz", lambda: _FakeQuartz())
     assert spike._event_source("none") is None
@@ -252,6 +264,23 @@ def test_cmd_map_per_pid_fallback_on_access_denied(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "port=7000 -> pid=101 window_id=11" in out
     assert "per-PID fallback" in out
+
+
+def test_cmd_map_warns_on_ambiguous_mapping(monkeypatch, capsys):
+    import psutil
+    monkeypatch.setattr(spike, "enumerate_windows", lambda: [_ttr(101, 11, "com.ttr")])
+    sconn = collections.namedtuple("sconn", "fd family type laddr raddr status pid")
+    addr = collections.namedtuple("addr", "ip port")
+
+    def _conns(kind="inet"):
+        return [
+            sconn(1, 2, 1, addr("127.0.0.1", 7000), (), "LISTEN", 101),
+            sconn(2, 2, 1, addr("127.0.0.1", 7001), (), "LISTEN", 101),
+        ]
+    monkeypatch.setattr(psutil, "net_connections", _conns)
+    assert spike.cmd_map([]) == 0
+    out = capsys.readouterr().out
+    assert "AMBIGUOUS" in out and "7000" in out and "7001" in out
 
 
 # ── Task 3: keycode map ──────────────────────────────────────────────────────
