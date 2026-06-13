@@ -68,3 +68,22 @@ def test_listen_ports_for_pid_returns_empty_on_error(monkeypatch):
 
     monkeypatch.setitem(sys.modules, "psutil", _Boom)
     assert mp._listen_ports_for_pid(999999) == []
+
+
+def test_listen_ports_for_pid_returns_empty_when_psutil_missing(monkeypatch):
+    """If psutil cannot be imported at all, the function yields [] (the import is
+    inside the never-raise guard)."""
+    monkeypatch.setitem(sys.modules, "psutil", None)  # makes `import psutil` raise
+    assert mp._listen_ports_for_pid(4242) == []
+
+
+def test_port_to_host_pid_skips_raising_pid(monkeypatch):
+    """A per-pid failure is skipped; the other pids still map (never raises)."""
+    def _maybe_boom(pid):
+        if pid == 1:
+            raise RuntimeError("boom")
+        return [1547]
+
+    monkeypatch.setattr(mp, "_listen_ports_for_pid", _maybe_boom)
+    out = mp.port_to_host_pid([1, 2], lo=1024, hi=65535)
+    assert out == {1547: 2}  # pid 1 skipped, pid 2 mapped

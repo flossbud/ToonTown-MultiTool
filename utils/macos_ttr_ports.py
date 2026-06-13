@@ -5,9 +5,10 @@ from __future__ import annotations
 
 
 def _listen_ports_for_pid(pid: int) -> list:
-    """Loopback LISTEN ports for one PID (per-PID; no sudo). [] on error."""
-    import psutil
+    """Loopback LISTEN ports for one PID (per-PID; no sudo). Never raises -- []
+    on any error, including a missing psutil (import is inside the guard)."""
     try:
+        import psutil
         proc = psutil.Process(pid)
         getter = getattr(proc, "net_connections", None) or proc.connections
         ports = []
@@ -23,10 +24,14 @@ def _listen_ports_for_pid(pid: int) -> list:
 
 
 def port_to_host_pid(pids, lo: int, hi: int) -> dict:
-    """{port: pid} for loopback LISTEN ports in [lo, hi] owned by the given pids."""
+    """{port: pid} for loopback LISTEN ports in [lo, hi] owned by the given pids.
+    Never raises: a failure for one pid is skipped, others still map."""
     out = {}
     for pid in pids:
-        for port in _listen_ports_for_pid(pid):
-            if lo <= port <= hi:
-                out[port] = pid
+        try:
+            for port in _listen_ports_for_pid(pid):
+                if lo <= port <= hi:
+                    out[port] = pid
+        except Exception:
+            continue
     return out
