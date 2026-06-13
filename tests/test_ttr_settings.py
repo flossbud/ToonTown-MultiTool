@@ -92,8 +92,24 @@ def test_locate_returns_none_when_no_path_exists(tmp_path, monkeypatch):
     from utils.ttr_settings import locate_settings_file
     monkeypatch.setenv("APPDATA", str(tmp_path / "no-such"))
     monkeypatch.setattr("utils.ttr_settings._FLATPAK_PATH", str(tmp_path / "no-such-flatpak"))
+    monkeypatch.setattr("utils.ttr_settings._MACOS_PATH", str(tmp_path / "no-such-macos"))
     monkeypatch.setattr("utils.ttr_settings._engine_dir_from_settings", lambda: None)
     assert locate_settings_file() is None
+
+
+def test_locate_returns_macos_path(tmp_path, monkeypatch):
+    """macOS fallback: the native client's
+    ~/Library/Application Support/Toontown Rewritten/settings.json is found even
+    with no engine_dir / APPDATA / Flatpak path."""
+    from utils.ttr_settings import locate_settings_file
+    macos = tmp_path / "Toontown Rewritten" / "settings.json"
+    macos.parent.mkdir(parents=True)
+    macos.write_text("{}")
+    monkeypatch.setenv("APPDATA", str(tmp_path / "no-such"))
+    monkeypatch.setattr("utils.ttr_settings._FLATPAK_PATH", str(tmp_path / "no-such-flatpak"))
+    monkeypatch.setattr("utils.ttr_settings._MACOS_PATH", str(macos))
+    monkeypatch.setattr("utils.ttr_settings._engine_dir_from_settings", lambda: None)
+    assert locate_settings_file() == macos
 
 
 def test_locate_returns_path_for_engine_dir(tmp_path, monkeypatch):
