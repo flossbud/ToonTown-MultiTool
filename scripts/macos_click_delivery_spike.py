@@ -67,6 +67,49 @@ def unpack_psn(buf: bytes) -> tuple[int, int]:
     return (int.from_bytes(buf[0:4], "little"), int.from_bytes(buf[4:8], "little"))
 
 
+# ── pure event field table + timing ────────────────────────────────────────
+# (field_id, value, via_private). Field ids + private-setter choice are taken
+# verbatim from cua's MouseInput.swift; the spike's positive control confirms.
+def mouse_event_fields(pid: int, window_id: int) -> list[tuple[int, int, bool]]:
+    """Ordered integer fields to stamp on every mouse CGEvent."""
+    return [
+        (1, 1, False),            # kCGMouseEventClickState
+        (3, 0, False),            # kCGMouseEventButtonNumber (left = 0)
+        (7, 3, False),            # kCGMouseEventSubtype
+        (40, int(pid), True),     # kCGEventTargetUnixProcessID (private setter)
+        (91, int(window_id), True),
+        (92, int(window_id), True),
+    ]
+
+
+_TIMING_BASE = {
+    "zero": {"after_move": 0.0, "primer_internal": 0.0,
+             "primer_to_target": 0.0, "down_to_up": 0.0},
+    "1ms": {"after_move": 0.001, "primer_internal": 0.001,
+            "primer_to_target": 0.001, "down_to_up": 0.001},
+    "16ms": {"after_move": 0.016, "primer_internal": 0.001,
+             "primer_to_target": 0.001, "down_to_up": 0.001},
+    "cua": {"after_move": 0.015, "primer_internal": 0.001,
+            "primer_to_target": 0.100, "down_to_up": 0.001},
+}
+TIMING_PROFILES = tuple(_TIMING_BASE)
+
+
+def timing_gaps(profile: str, has_primer: bool) -> dict:
+    """Per-phase-boundary sleeps (seconds) for a timing profile.
+
+    Without a primer, the two primer-related gaps are zeroed (there is no primer
+    pair to space out); the move and down->up gaps are unaffected.
+    """
+    if profile not in _TIMING_BASE:
+        raise ValueError(f"unknown timing profile {profile!r}; choose {TIMING_PROFILES}")
+    gaps = dict(_TIMING_BASE[profile])
+    if not has_primer:
+        gaps["primer_internal"] = 0.0
+        gaps["primer_to_target"] = 0.0
+    return gaps
+
+
 def cmd_list(rest):
     # One enumeration source across all spikes.
     return kb.cmd_list(rest)

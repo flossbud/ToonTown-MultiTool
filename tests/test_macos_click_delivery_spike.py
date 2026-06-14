@@ -62,3 +62,41 @@ def test_psn_pack_unpack_roundtrip():
     assert spike.pack_psn((0, 0x2A)) == (0).to_bytes(4, "little") + (0x2A).to_bytes(4, "little")
     assert spike.unpack_psn(spike.pack_psn((7, 99))) == (7, 99)
     assert len(spike.pack_psn((1, 1))) == 8
+
+
+def test_mouse_event_fields_values_and_setters():
+    fields = spike.mouse_event_fields(pid=4321, window_id=77)
+    # ordered (field_id, value, via_private)
+    assert fields == [
+        (1, 1, False),    # kCGMouseEventClickState
+        (3, 0, False),    # kCGMouseEventButtonNumber
+        (7, 3, False),    # kCGMouseEventSubtype
+        (40, 4321, True), # kCGEventTargetUnixProcessID (private setter, per cua)
+        (91, 77, True),   # window under pointer
+        (92, 77, True),   # window under pointer that can handle this event
+    ]
+
+
+def test_timing_profiles_with_primer():
+    assert spike.timing_gaps("zero", has_primer=True) == {
+        "after_move": 0.0, "primer_internal": 0.0,
+        "primer_to_target": 0.0, "down_to_up": 0.0,
+    }
+    assert spike.timing_gaps("cua", has_primer=True) == {
+        "after_move": 0.015, "primer_internal": 0.001,
+        "primer_to_target": 0.100, "down_to_up": 0.001,
+    }
+    assert spike.timing_gaps("16ms", has_primer=True)["after_move"] == 0.016
+
+
+def test_timing_profiles_without_primer_zero_the_primer_gaps():
+    g = spike.timing_gaps("cua", has_primer=False)
+    assert g["primer_internal"] == 0.0
+    assert g["primer_to_target"] == 0.0
+    assert g["after_move"] == 0.015  # non-primer gaps unaffected
+
+
+def test_timing_unknown_profile_raises():
+    import pytest as _pytest
+    with _pytest.raises(ValueError):
+        spike.timing_gaps("bogus", has_primer=False)
