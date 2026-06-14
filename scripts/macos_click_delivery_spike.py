@@ -773,9 +773,16 @@ def cmd_probe_rect(rest):
 
 
 def _all_int(positionals):
-    """True if every positional parses as an int, so a command can reject a
-    non-numeric pid/window_id with usage + 2 instead of crashing on int()."""
-    return all(p.lstrip("-").isdigit() for p in positionals)
+    """True if every positional actually parses with int(), so a command rejects a
+    non-numeric pid/window_id with usage + 2 instead of crashing. Uses int() itself
+    (not str.isdigit(), which is Unicode-aware and accepts e.g. superscript digits
+    that int() then rejects), so nothing int() refuses can slip past this guard."""
+    try:
+        for p in positionals:
+            int(p)
+        return True
+    except (ValueError, TypeError):
+        return False
 
 
 def cmd_sl_click(rest):

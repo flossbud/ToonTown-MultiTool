@@ -793,3 +793,5 @@ def test_sl_commands_reject_nonnumeric_positionals():
     assert spike.cmd_sl_gesture(["foo", "77", "--kind", "drag"]) == 2
     assert spike.cmd_sl_fanout(["a", "b", "c", "d"]) == 2
     assert spike.cmd_sl_positive_control(["x", "y"]) == 2
+    # a Unicode "digit" that str.isdigit() accepts but int() rejects is still caught
+    assert spike.cmd_sl_click(["²", "5"]) == 2
