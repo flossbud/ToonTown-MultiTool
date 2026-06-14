@@ -185,3 +185,50 @@ def test_cmd_probe_rect_clicks_five_points(monkeypatch):
 
 def test_cmd_click_rejects_equal_pids(monkeypatch):
     assert spike.cmd_click(["4242", "4242"]) == 2
+
+
+def test_cmd_motion_rejects_bad_mode_and_kind(monkeypatch):
+    _stub_window(monkeypatch, [4242])
+    assert spike.cmd_motion(["4242", "--mode", "bogus"]) == 2
+    assert spike.cmd_motion(["4242", "--kind", "bogus"]) == 2
+
+
+def _capture_motion(monkeypatch):
+    """Patch post_mouse to record (pid, wid, etype, gx, gy) per call (success),
+    fake kb._quartz, and silence time.sleep. Returns the list."""
+    calls = []
+    monkeypatch.setattr(spike.kb, "_quartz", lambda: _FakeQuartz())
+    monkeypatch.setattr(spike.time, "sleep", lambda *_a: None)
+    monkeypatch.setattr(spike, "post_mouse",
+                        lambda *a, **k: (calls.append(a), True)[1])
+    return calls
+
+
+def test_cmd_motion_hover_plain_sweeps_moves_left_to_right(monkeypatch):
+    _stub_window(monkeypatch, [4242])
+    monkeypatch.setattr("builtins.input", lambda *_a: "")
+    calls = _capture_motion(monkeypatch)
+    rc = spike.cmd_motion(["4242", "--kind", "hover", "--mode", "plain", "--steps", "5"])
+    assert rc == 0
+    moved = _FakeQuartz().kCGEventMouseMoved
+    # 5 hover samples, ALL mouseMoved, to pid 4242, sweeping strictly L->R.
+    assert len(calls) == 5
+    assert all(c[0] == 4242 and c[2] == moved for c in calls)
+    xs = [c[3] for c in calls]
+    assert xs == sorted(xs) and xs[0] < xs[-1]
+
+
+def test_cmd_motion_drag_plain_brackets_sweep_with_down_up(monkeypatch):
+    _stub_window(monkeypatch, [4242])
+    monkeypatch.setattr("builtins.input", lambda *_a: "")
+    calls = _capture_motion(monkeypatch)
+    rc = spike.cmd_motion(["4242", "--kind", "drag", "--mode", "plain", "--steps", "3"])
+    assert rc == 0
+    Q = _FakeQuartz()
+    # leftMouseDown, then 3x leftMouseDragged, then leftMouseUp.
+    assert [c[2] for c in calls] == [
+        Q.kCGEventLeftMouseDown,
+        Q.kCGEventLeftMouseDragged, Q.kCGEventLeftMouseDragged,
+        Q.kCGEventLeftMouseDragged,
+        Q.kCGEventLeftMouseUp,
+    ]

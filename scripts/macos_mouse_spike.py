@@ -213,8 +213,80 @@ def cmd_click(rest):
     return 1 if refused else 0
 
 
+_MOTION_MODES = ("plain", "carrier")
+_MOTION_KINDS = ("hover", "drag")
+
+
 def cmd_motion(rest):
-    raise NotImplementedError
+    pos, opts = kb._parse_opts(rest, {
+        "kind": (str, "hover"), "mode": (str, "plain"),
+        "inset": (int, 0), "steps": (int, 40),
+    })
+    if len(pos) != 1:
+        print("usage: motion <pid> [--kind hover|drag] [--mode plain|carrier] "
+              "[--inset 0] [--steps 40]")
+        return 2
+    if opts["mode"] not in _MOTION_MODES:
+        print(f"invalid --mode {opts['mode']!r}; choose {'|'.join(_MOTION_MODES)}")
+        return 2
+    if opts["kind"] not in _MOTION_KINDS:
+        print(f"invalid --kind {opts['kind']!r}; choose {'|'.join(_MOTION_KINDS)}")
+        return 2
+    pid = int(pos[0])
+    rec = next((r for r in kb.enumerate_windows() if r.pid == pid), None)
+    if rec is None:
+        print(f"pid={pid} is not a current TTR window.")
+        return 1
+    Q = kb._quartz()
+    kind, mode, inset, steps = opts["kind"], opts["mode"], opts["inset"], opts["steps"]
+    bundle, wid = rec.bundle_id, rec.window_id
+
+    # plain vs carrier choose the event type for the sweep samples.
+    if kind == "hover":
+        sweep_type = (Q.kCGEventMouseMoved if mode == "plain"
+                      else Q.kCGEventOtherMouseDragged)
+        sweep_button = (None if mode == "plain" else Q.kCGMouseButtonCenter)
+    else:  # drag
+        sweep_type = (Q.kCGEventLeftMouseDragged if mode == "plain"
+                      else Q.kCGEventOtherMouseDragged)
+        sweep_button = (Q.kCGMouseButtonLeft if mode == "plain"
+                        else Q.kCGMouseButtonCenter)
+
+    print(f"[motion] kind={kind} mode={mode}: sweeping pid={pid} content L->R "
+          f"in {steps} steps.")
+    print("  keep this toon in the BACKGROUND (focus another window first).")
+    print("  watch: does the in-game cursor track the sweep? ANY phantom click, "
+          "focus change, menu pop, or PHYSICAL cursor movement = side effect (reject).")
+    input("  press Enter when this toon is in the background... ")
+
+    refused = 0
+    # drag/plain needs a real left-down to start a drag, released in finally.
+    started_drag = False
+    try:
+        if kind == "drag" and mode == "plain":
+            gx, gy = content_point_to_global((0.05, 0.5), rec.bounds, inset)
+            if post_mouse(pid, wid, Q.kCGEventLeftMouseDown, gx, gy,
+                          expected_bundle=bundle):
+                started_drag = True
+            else:
+                refused += 1
+        for i in range(steps):
+            fx = 0.05 + 0.90 * (i / max(1, steps - 1))
+            gx, gy = content_point_to_global((fx, 0.5), rec.bounds, inset)
+            if not post_mouse(pid, wid, sweep_type, gx, gy, button=sweep_button,
+                              revalidate=False):
+                refused += 1
+            time.sleep(0.03)
+    finally:
+        if started_drag:
+            gx, gy = content_point_to_global((0.95, 0.5), rec.bounds, inset)
+            if not post_mouse(pid, wid, Q.kCGEventLeftMouseUp, gx, gy,
+                              expected_bundle=bundle):
+                refused += 1
+    print("  -> record: tracked? (yes/no) and any side effects.")
+    if refused:
+        print(f"WARNING: {refused} post(s) REFUSED (no access / stale target).")
+    return 1 if refused else 0
 
 
 def cmd_echo(rest):
