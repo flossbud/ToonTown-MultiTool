@@ -213,8 +213,38 @@ def cmd_click(rest):
     return 1 if refused else 0
 
 
-_MOTION_MODES = ("plain", "carrier")
+_MOTION_MODES = ("plain", "carrier", "ax")
 _MOTION_KINDS = ("hover", "drag")
+
+
+def _ax_probe(pid):
+    """Diagnostic: does AX expose any element tree inside the app's window?
+
+    Returns the first AX window's child count, or -1 if AX is unavailable / has
+    no windows. An opaque OpenGL surface typically returns 0 -> AX cannot drive a
+    hover pointer; that is the finding we want recorded. Never raises.
+    """
+    try:
+        from ApplicationServices import (
+            AXUIElementCreateApplication, AXUIElementCopyAttributeValue,
+        )
+    except Exception as e:
+        print(f"  AX unavailable: {type(e).__name__}: {e}")
+        return -1
+    try:
+        app = AXUIElementCreateApplication(pid)
+        err, windows = AXUIElementCopyAttributeValue(app, "AXWindows", None)
+        if err != 0 or not windows:
+            print(f"  AX: no windows (err={err}).")
+            return -1
+        err, children = AXUIElementCopyAttributeValue(windows[0], "AXChildren", None)
+        n = 0 if (err != 0 or children is None) else len(children)
+        print(f"  AX: first window AXChildren count = {n} "
+              f"(0 means an opaque OpenGL surface -> AX cannot move hover).")
+        return n
+    except Exception as e:
+        print(f"  AX probe error: {type(e).__name__}: {e}")
+        return -1
 
 
 def cmd_motion(rest):
@@ -223,7 +253,7 @@ def cmd_motion(rest):
         "inset": (int, 0), "steps": (int, 40),
     })
     if len(pos) != 1:
-        print("usage: motion <pid> [--kind hover|drag] [--mode plain|carrier] "
+        print("usage: motion <pid> [--kind hover|drag] [--mode plain|carrier|ax] "
               "[--inset 0] [--steps 40]")
         return 2
     if opts["mode"] not in _MOTION_MODES:
@@ -243,6 +273,12 @@ def cmd_motion(rest):
     Q = kb._quartz()
     kind, mode, inset, steps = opts["kind"], opts["mode"], opts["inset"], opts["steps"]
     bundle, wid = rec.bundle_id, rec.window_id
+
+    if mode == "ax":
+        print(f"[motion/ax] probing AX element tree of pid={pid} (diagnostic).")
+        _ax_probe(pid)
+        print("  -> if AXChildren==0, record AX as NOT viable for hover.")
+        return 0
 
     # plain vs carrier choose the event type for the sweep samples.
     if kind == "hover":

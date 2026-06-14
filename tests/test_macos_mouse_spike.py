@@ -271,3 +271,32 @@ def test_cmd_motion_drag_carrier_posts_other_dragged_no_bracket(monkeypatch):
     assert all(c[2] == Q.kCGEventOtherMouseDragged
                and c[5] == Q.kCGMouseButtonCenter and c[6] is False
                for c in calls)
+
+
+def test_motion_ax_mode_is_accepted_and_probes(monkeypatch):
+    _stub_window(monkeypatch, [4242])
+    monkeypatch.setattr("builtins.input", lambda *_a: "")
+    # cmd_motion calls kb._quartz() before the ax branch; fake it (no PyObjC).
+    monkeypatch.setattr(spike.kb, "_quartz", lambda: _FakeQuartz())
+    posts = []
+    monkeypatch.setattr(spike, "post_mouse", lambda *a, **k: posts.append(a) or True)
+    called = {}
+    monkeypatch.setattr(spike, "_ax_probe", lambda pid: called.setdefault("pid", pid) or 0)
+    # ax mode is a pure diagnostic: returns 0, calls _ax_probe, posts NO events.
+    assert spike.cmd_motion(["4242", "--mode", "ax"]) == 0
+    assert called["pid"] == 4242
+    assert posts == []
+
+
+def test_motion_ax_probe_handles_missing_framework(monkeypatch):
+    # _ax_probe must never raise; an unavailable AX framework returns -1.
+    import builtins
+    real_import = builtins.__import__
+
+    def _no_ax(name, *a, **k):
+        if name == "ApplicationServices":
+            raise ImportError("no AX here")
+        return real_import(name, *a, **k)
+
+    monkeypatch.setattr(builtins, "__import__", _no_ax)
+    assert spike._ax_probe(4242) == -1
