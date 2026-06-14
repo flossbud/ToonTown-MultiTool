@@ -1029,14 +1029,29 @@ def cmd_sl_echo(rest):
     return 0
 
 
-def parse_codesign_flags(codesign_output: str) -> dict:
-    """Pull the injection-relevant barriers out of `codesign -dvvv` text."""
+def parse_codesign_flags(codesign_output: str, entitlements: str = "") -> dict:
+    """Pull the injection-relevant barriers out of `codesign -dvvv` text (and, when
+    given, the `codesign -d --entitlements` blob). Real `-dvvv` encodes hardened
+    runtime + library validation as TOKENS inside `flags=0x..(...)` (`runtime`,
+    `library-validation`); get-task-allow is an ENTITLEMENT, present only in the
+    entitlements blob, never in `-dvvv`."""
     text = codesign_output.lower()
+    ent = entitlements.lower()
     return {
         "hardened_runtime": "runtime" in text and "flags=" in text,
-        "library_validation": "library validation: enabled" in text,
-        "get_task_allow": "get-task-allow" in text and "true" in text,
+        "library_validation": "library-validation" in text,
+        "get_task_allow": "get-task-allow" in ent and "true" in ent,
     }
+
+
+def timeslice_sequence(kind, frm, mid, to, center):
+    """The ordered (event_kind_name, point) GLOBAL posts for a timeslice gesture.
+    Pure (no Quartz) so the click-vs-drag contract is unit-testable: click = a
+    down/up at `center`; drag = move->down->dragged->dragged->up across frm/mid/to."""
+    if kind == "drag":
+        return [("move", frm), ("down", frm), ("dragged", mid),
+                ("dragged", to), ("up", to)]
+    return [("down", center), ("up", center)]
 
 
 def _task_for_pid_probe(pid):
@@ -1069,6 +1084,10 @@ def cmd_timeslice(rest, kind="click"):
     if pidA not in recs or pidB not in recs:
         print(f"both pids must be TTR windows; found {sorted(recs)}")
         return 1
+    if not kb.preflight_post_access():
+        print("  REFUSED: grant Accessibility (post-event access); aborting "
+              "(otherwise the raise/restore happen but nothing clicks -- a silent no-op).")
+        return 1
     Q = kb._quartz()
     b = recs[pidB]
     inset = opts["inset"]
@@ -1086,24 +1105,26 @@ def cmd_timeslice(rest, kind="click"):
         return 1
     appB.activateWithOptions_(NSApplicationActivateIgnoringOtherApps)
     time.sleep(0.05)
-    if kind == "drag":
-        frm = content_point_to_global((0.3, 0.5), b.bounds, inset)
-        mid = content_point_to_global((0.5, 0.5), b.bounds, inset)
-        to = content_point_to_global((0.7, 0.5), b.bounds, inset)
-        seq = [(Q.kCGEventMouseMoved, frm), (Q.kCGEventLeftMouseDown, frm),
-               (Q.kCGEventLeftMouseDragged, mid), (Q.kCGEventLeftMouseDragged, to),
-               (Q.kCGEventLeftMouseUp, to)]
-    else:
-        gx, gy = content_point_to_global((0.5, 0.5), b.bounds, inset)
-        seq = [(Q.kCGEventLeftMouseDown, (gx, gy)), (Q.kCGEventLeftMouseUp, (gx, gy))]
-    for etype, pt in seq:
-        ev = Q.CGEventCreateMouseEvent(None, etype, pt, Q.kCGMouseButtonLeft)
-        Q.CGEventPost(Q.kCGHIDEventTap, ev)
-        time.sleep(0.01)
-    time.sleep(0.05)
-    appA.activateWithOptions_(NSApplicationActivateIgnoringOtherApps)
-    warp = Q.CGEventCreateMouseEvent(None, Q.kCGEventMouseMoved, (saved.x, saved.y), 0)
-    Q.CGEventPost(Q.kCGHIDEventTap, warp)
+    name_to_type = {"move": Q.kCGEventMouseMoved, "down": Q.kCGEventLeftMouseDown,
+                    "dragged": Q.kCGEventLeftMouseDragged, "up": Q.kCGEventLeftMouseUp}
+    seq = timeslice_sequence(
+        kind,
+        content_point_to_global((0.3, 0.5), b.bounds, inset),
+        content_point_to_global((0.5, 0.5), b.bounds, inset),
+        content_point_to_global((0.7, 0.5), b.bounds, inset),
+        content_point_to_global((0.5, 0.5), b.bounds, inset))
+    try:
+        for kname, pt in seq:
+            ev = Q.CGEventCreateMouseEvent(None, name_to_type[kname], pt,
+                                           Q.kCGMouseButtonLeft)
+            Q.CGEventPost(Q.kCGHIDEventTap, ev)
+            time.sleep(0.01)
+    finally:
+        # always restore the foreground app + the real cursor, even on a mid-post error
+        time.sleep(0.05)
+        appA.activateWithOptions_(NSApplicationActivateIgnoringOtherApps)
+        warp = Q.CGEventCreateMouseEvent(None, Q.kCGEventMouseMoved, (saved.x, saved.y), 0)
+        Q.CGEventPost(Q.kCGHIDEventTap, warp)
     print(f"  record (DEGRADED schema): the {kind} landed on pidB? how disruptive was "
           f"the flicker/focus/cursor? "
           f"{'did the drag track?' if kind == 'drag' else '(hover not attemptable this way)'}")
@@ -1136,14 +1157,21 @@ def cmd_inject_preflight(rest):
     try:
         cs = subprocess.run(["codesign", "-dvvv", exe], capture_output=True,
                             text=True, timeout=10)
-        flags = parse_codesign_flags(cs.stdout + cs.stderr)
+        cs_text = (cs.stdout or "") + (cs.stderr or "")
     except Exception as e:
-        flags = {"error": str(e)}
+        cs_text = f"(codesign failed: {e})"
+    try:
+        ent = subprocess.run(["codesign", "-d", "--entitlements", ":-", exe],
+                             capture_output=True, text=True, timeout=10).stdout or ""
+    except Exception as e:
+        ent = f"(entitlements failed: {e})"
+    flags = parse_codesign_flags(cs_text, ent)
     try:
         arch = subprocess.run(["lipo", "-archs", exe], capture_output=True,
-                              text=True, timeout=10).stdout.strip()
-    except Exception as e:
-        arch = f"(lipo failed: {e})"
+                              text=True, timeout=10).stdout.strip() or "(empty)"
+    except Exception:
+        import platform
+        arch = platform.machine()   # host-arch fallback when lipo is unavailable
     try:
         kr = _task_for_pid_probe(pid)
         tfp = (f"kern_return={kr} "
@@ -1153,6 +1181,7 @@ def cmd_inject_preflight(rest):
     print(f"  codesign barriers: {flags}")
     print(f"  arch: {arch}")
     print(f"  task_for_pid (live Mach injection): {tfp}")
+    print(f"  raw codesign -dvvv (verify the parse): {cs_text.strip()[:400]}")
     print("  DYLD_INSERT_LIBRARIES is LAUNCH-time (needs relaunch + no library "
           "validation + a non-hardened or self-signed binary); task_for_pid is LIVE "
           "(needs get-task-allow OR SIP-off + root). A TRUE feasibility check needs a "

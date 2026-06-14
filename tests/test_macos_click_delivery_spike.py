@@ -824,8 +824,8 @@ def test_inject_preflight_bad_args_return_2():
 
 
 def test_parse_codesign_flags_extracts_runtime_and_library_validation():
-    out = ("CodeDirectory v=20500 ... flags=0x10000(runtime) ...\n"
-           "  Library Validation: enabled\n")
+    # real `codesign -dvvv` encodes both as TOKENS inside flags=0x..(...)
+    out = "CodeDirectory v=20500 ... flags=0x10002(runtime,library-validation) ...\n"
     flags = spike.parse_codesign_flags(out)
     assert flags["hardened_runtime"] is True
     assert flags["library_validation"] is True
@@ -835,3 +835,21 @@ def test_parse_codesign_flags_absent():
     flags = spike.parse_codesign_flags("flags=0x0(none)\n")
     assert flags["hardened_runtime"] is False
     assert flags["library_validation"] is False
+    assert flags["get_task_allow"] is False
+
+
+def test_parse_codesign_flags_get_task_allow_from_entitlements():
+    # get-task-allow is an ENTITLEMENT (not in -dvvv); read from the entitlements blob
+    flags = spike.parse_codesign_flags(
+        "flags=0x0(none)",
+        entitlements="<key>com.apple.security.get-task-allow</key><true/>")
+    assert flags["get_task_allow"] is True
+
+
+def test_timeslice_sequence_click_vs_drag_differ():
+    c = spike.timeslice_sequence("click", (3, 5), (5, 5), (7, 5), (9, 9))
+    assert [k for k, _ in c] == ["down", "up"]
+    assert all(pt == (9, 9) for _, pt in c)               # click is at center
+    d = spike.timeslice_sequence("drag", (3, 5), (5, 5), (7, 5), (9, 9))
+    assert [k for k, _ in d] == ["move", "down", "dragged", "dragged", "up"]
+    assert d[0][1] == (3, 5) and d[-1][1] == (7, 5)       # drag spans from..to
