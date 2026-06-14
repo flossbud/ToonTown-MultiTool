@@ -12,6 +12,39 @@ sys.modules[_spec.name] = spike
 _spec.loader.exec_module(spike)
 
 
+class _FakeSky:
+    """Minimal stand-in for the Quartz + SkyLight surface build_cg_event uses."""
+    def __init__(self):
+        self.fields = {}
+        self.window_locations = {}
+        self.locations = {}
+        self.source_user_data = {}
+        self.posted = []   # [(pid, kind), ...] recorded by post()
+
+    def make_event(self, kind, click_count, window_number):
+        ev = types.SimpleNamespace(kind=kind, cc=click_count, win=window_number)
+        self.fields[id(ev)] = {"public": {}, "private": {}}
+        return ev
+
+    def set_public_field(self, ev, field, value):
+        self.fields[id(ev)]["public"][field] = value
+
+    def set_private_field(self, ev, field, value):
+        self.fields[id(ev)]["private"][field] = value
+
+    def set_window_location(self, ev, pt):
+        self.window_locations[id(ev)] = pt
+
+    def set_location(self, ev, pt):
+        self.locations[id(ev)] = pt
+
+    def set_source_user_data(self, ev, tag):
+        self.source_user_data[id(ev)] = tag
+
+    def post(self, pid, ev):
+        self.posted.append((pid, getattr(ev, "kind", None)))
+
+
 def test_main_no_args_and_unknown_return_2():
     assert spike.main([]) == 2
     assert spike.main(["bogus"]) == 2
@@ -263,3 +296,33 @@ def test_parse_sl_args_rejects_nonpositive_reps_and_negative_inset():
     # a negative coordinate is still a valid value (single '-', not a flag)
     ok = spike.parse_sl_args(["1", "2", "--frac", "-0.1", "0.2"])
     assert ok.frac == (-0.1, 0.2)
+
+
+def test_skylight_symbol_table_exact_signatures():
+    # [AMENDMENT] assert the EXACT (restype, argtypes) per spec 2.2, not just names.
+    S = spike.SKYLIGHT_SYMBOLS
+    assert S["CGSMainConnectionID"] == ("uint32", ())
+    assert S["SLSGetWindowOwner"] == ("int32", ("uint32", "uint32", "ptr"))
+    assert S["SLSGetConnectionPSN"] == ("int32", ("uint32", "ptr"))
+    assert S["_SLPSGetFrontProcess"] == ("int32", ("ptr",))
+    assert S["SLPSPostEventRecordTo"] == ("int32", ("ptr", "ptr"))
+    assert S["CGEventSetWindowLocation"] == ("void", ("ptr", "cgpoint"))
+    assert S["SLEventSetIntegerValueField"] == ("void", ("ptr", "uint32", "int64"))
+    assert S["CGEventSetTimestamp"] == ("void", ("ptr", "uint64"))
+    assert S["SLEventPostToPid"] == ("void", ("pid", "ptr"))
+
+
+def test_build_cg_event_stamps_all_fields_and_window_location():
+    fake = _FakeSky()
+    ev = spike.build_cg_event(
+        fake, kind="down", win_point=(12.0, 34.0), screen_point=(112.0, 234.0),
+        click_count=1, pid=4321, window_id=77)
+    # [AMENDMENT] the NSEvent args make_event received: type(kind), click_count, window_number
+    assert ev.kind == "down" and ev.cc == 1 and ev.win == 77
+    f = fake.fields[id(ev)]
+    # public fields via set_public_field, private via set_private_field
+    assert f["public"][1] == 1 and f["public"][3] == 0 and f["public"][7] == 3
+    assert f["private"][40] == 4321 and f["private"][91] == 77 and f["private"][92] == 77
+    assert fake.window_locations[id(ev)] == (12.0, 34.0)
+    assert fake.locations[id(ev)] == (112.0, 234.0)
+    assert fake.source_user_data[id(ev)] == spike.SPIKE_EVENT_TAG

@@ -22,6 +22,7 @@ platform; the pure helpers below are unit-tested on Linux/Windows CI.
 """
 from __future__ import annotations
 
+import ctypes
 import dataclasses
 import os
 import sys
@@ -268,6 +269,128 @@ def parse_sl_args(rest: list) -> SLArgs:
     if out.inset < 0:
         raise ArgError("--inset must be >= 0")
     return out
+
+
+# ── native SkyLight glue (lazy; operator-validated) ────────────────────────
+# name -> (restype, argtypes). ctypes types resolved in _skylight(); kept as
+# strings here so the table is importable + unit-testable without ctypes loaded.
+SKYLIGHT_SYMBOLS = {
+    "CGSMainConnectionID":      ("uint32", ()),
+    "SLSGetWindowOwner":        ("int32", ("uint32", "uint32", "ptr")),
+    "SLSGetConnectionPSN":      ("int32", ("uint32", "ptr")),
+    "_SLPSGetFrontProcess":     ("int32", ("ptr",)),
+    "SLPSPostEventRecordTo":    ("int32", ("ptr", "ptr")),
+    "CGEventSetWindowLocation": ("void", ("ptr", "cgpoint")),
+    "SLEventSetIntegerValueField": ("void", ("ptr", "uint32", "int64")),
+    "CGEventSetTimestamp":      ("void", ("ptr", "uint64")),
+    "SLEventPostToPid":         ("void", ("pid", "ptr")),
+}
+
+
+class _CGPoint(ctypes.Structure):
+    _fields_ = [("x", ctypes.c_double), ("y", ctypes.c_double)]
+
+
+def _as_ptr(cg_event):
+    """A PyObjC CGEventRef -> a ctypes c_void_p for the private SkyLight calls."""
+    import objc
+    return ctypes.c_void_p(objc.pyobjc_id(cg_event))
+
+
+class _SkyPort:
+    """Seam over NSEvent construction + Quartz/SkyLight stamping. The fake in the
+    test mirrors this surface; the real one is built by _skylight()."""
+    def __init__(self, quartz, sky):
+        self._q = quartz      # Quartz module (PyObjC)
+        self._sky = sky       # ctypes-wrapped SkyLight symbols (dict name->callable)
+
+    def make_event(self, kind, click_count, window_number):
+        import Quartz
+        from AppKit import NSEvent
+        type_map = {
+            "move": Quartz.kCGEventMouseMoved,
+            "down": Quartz.kCGEventLeftMouseDown,
+            "up": Quartz.kCGEventLeftMouseUp,
+            "dragged": Quartz.kCGEventLeftMouseDragged,
+        }
+        ns_type_map = {  # NSEventType for the bridge
+            "move": 5, "down": 1, "up": 2, "dragged": 6,
+        }
+        ns = NSEvent.mouseEventWithType_location_modifierFlags_timestamp_windowNumber_context_eventNumber_clickCount_pressure_(
+            ns_type_map[kind], (0.0, 0.0), 0, 0.0, int(window_number), None, 0,
+            int(click_count), 1.0)
+        cg = ns.CGEvent()
+        self._q.CGEventSetType(cg, type_map[kind])
+        return cg
+
+    def set_public_field(self, ev, field, value):
+        self._q.CGEventSetIntegerValueField(ev, field, int(value))
+
+    def set_private_field(self, ev, field, value):
+        self._sky["SLEventSetIntegerValueField"](_as_ptr(ev), ctypes.c_uint32(field),
+                                                 ctypes.c_int64(int(value)))
+
+    def set_window_location(self, ev, pt):
+        self._sky["CGEventSetWindowLocation"](_as_ptr(ev), _CGPoint(pt[0], pt[1]))
+
+    def set_location(self, ev, pt):
+        self._q.CGEventSetLocation(ev, (float(pt[0]), float(pt[1])))
+
+    def set_source_user_data(self, ev, tag):
+        self._q.CGEventSetIntegerValueField(ev, self._q.kCGEventSourceUserData, tag)
+
+    def post(self, pid, ev):
+        """[AMENDMENT] stamp a fresh uptime timestamp, then post to the target PID.
+        Task 9's _post_one calls THIS (not SLEventPostToPid directly) so a fake port
+        intercepts every post for ordering tests."""
+        self._sky["CGEventSetTimestamp"](_as_ptr(ev), ctypes.c_uint64(time.monotonic_ns()))
+        self._sky["SLEventPostToPid"](ctypes.c_int32(int(pid)), _as_ptr(ev))
+
+
+def build_cg_event(port, kind, win_point, screen_point, click_count, pid, window_id):
+    """Build + fully stamp one mouse CGEvent via the given port (real or fake).
+
+    Stamps: the integer field table (public vs private setters), the private
+    window-local location, the screen location, and our echo marker. Returns the
+    event object the port created.
+    """
+    ev = port.make_event(kind, click_count, window_id)
+    for field, value, via_private in mouse_event_fields(pid, window_id):
+        (port.set_private_field if via_private else port.set_public_field)(ev, field, value)
+    port.set_window_location(ev, (float(win_point[0]), float(win_point[1])))
+    port.set_location(ev, (float(screen_point[0]), float(screen_point[1])))
+    port.set_source_user_data(ev, SPIKE_EVENT_TAG)
+    return ev
+
+
+_SKY_CACHE = {}
+
+
+def _skylight():
+    """Lazily dlopen SkyLight + declare the private symbols per SKYLIGHT_SYMBOLS.
+
+    Returns a dict name -> callable. Raises RuntimeError if a symbol is missing
+    (recorded by the command body as a hard finding for this macOS version).
+    """
+    if _SKY_CACHE:
+        return _SKY_CACHE
+    _CTYPE = {
+        "void": None, "uint32": ctypes.c_uint32, "int32": ctypes.c_int32,
+        "uint64": ctypes.c_uint64, "int64": ctypes.c_int64,
+        "pid": ctypes.c_int32, "ptr": ctypes.c_void_p, "cgpoint": _CGPoint,
+    }
+    sky = ctypes.CDLL("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight")
+    out = {}
+    for name, (restype, argtypes) in SKYLIGHT_SYMBOLS.items():
+        try:
+            fn = getattr(sky, name)
+        except AttributeError as e:
+            raise RuntimeError(f"SkyLight symbol {name} missing on this macOS") from e
+        fn.restype = _CTYPE[restype]
+        fn.argtypes = tuple(_CTYPE[a] for a in argtypes)
+        out[name] = fn
+    _SKY_CACHE.update(out)
+    return _SKY_CACHE
 
 
 def cmd_list(rest):
