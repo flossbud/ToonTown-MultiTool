@@ -208,7 +208,7 @@ class SLArgs:
     to: tuple = (0.95, 0.5)
     hold: float = 0.0
     reps: int = 1
-    kind: "str | None" = None
+    kind: str | None = None
 
 
 _BOOL_FLAGS = {"--focus": "focus", "--primer": "primer",
@@ -221,8 +221,17 @@ _VALUE_FLAGS = {"--timing": ("timing", str), "--inset": ("inset", int),
 
 def parse_sl_args(rest: list) -> SLArgs:
     """Parse the shared sl-* flag grammar into an SLArgs. Raises ArgError on
-    misuse (bad value, --restore-focus without --focus, unknown --timing/--kind)."""
+    misuse (missing/bad value, unknown flag, --restore-focus without --focus,
+    unknown --timing/--kind, non-positive --reps, negative --inset)."""
     out = SLArgs(positionals=[])
+
+    def _val(idx, tok):
+        # the next token as a value; a missing token or another flag (-- prefix,
+        # NOT a single '-' so negative numbers still parse) is a usage error.
+        if idx >= len(rest) or rest[idx].startswith("--"):
+            raise ArgError(f"{tok} needs a value")
+        return rest[idx]
+
     i = 0
     while i < len(rest):
         tok = rest[i]
@@ -231,16 +240,16 @@ def parse_sl_args(rest: list) -> SLArgs:
             i += 1
         elif tok in _PAIR_FLAGS:
             try:
-                fx, fy = float(rest[i + 1]), float(rest[i + 2])
-            except (IndexError, ValueError):
+                fx, fy = float(_val(i + 1, tok)), float(_val(i + 2, tok))
+            except ValueError:
                 raise ArgError(f"{tok} needs two float values")
             setattr(out, _PAIR_FLAGS[tok], (fx, fy))
             i += 3
         elif tok in _VALUE_FLAGS:
             attr, typ = _VALUE_FLAGS[tok]
             try:
-                setattr(out, attr, typ(rest[i + 1]))
-            except (IndexError, ValueError):
+                setattr(out, attr, typ(_val(i + 1, tok)))
+            except ValueError:
                 raise ArgError(f"{tok} needs a {typ.__name__} value")
             i += 2
         elif tok.startswith("--"):
@@ -254,6 +263,10 @@ def parse_sl_args(rest: list) -> SLArgs:
         raise ArgError("--kind must be hover or drag")
     if out.restore_focus and not out.focus:
         raise ArgError("--restore-focus requires --focus (nothing to restore otherwise)")
+    if out.reps < 1:
+        raise ArgError("--reps must be >= 1")
+    if out.inset < 0:
+        raise ArgError("--inset must be >= 0")
     return out
 
 

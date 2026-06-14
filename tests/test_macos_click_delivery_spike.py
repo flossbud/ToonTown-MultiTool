@@ -236,3 +236,30 @@ def test_parse_sl_args_rejects_unknown_kind():
     import pytest as _pytest
     with _pytest.raises(spike.ArgError):
         spike.parse_sl_args(["1", "2", "--kind", "wiggle"])
+
+
+def test_parse_sl_args_rejects_unknown_flag():
+    import pytest as _pytest
+    with _pytest.raises(spike.ArgError):
+        spike.parse_sl_args(["1", "2", "--bogus"])
+
+
+def test_parse_sl_args_rejects_missing_or_swallowed_value():
+    import pytest as _pytest
+    with _pytest.raises(spike.ArgError):
+        spike.parse_sl_args(["1", "2", "--timing"])            # value flag at end
+    with _pytest.raises(spike.ArgError):
+        spike.parse_sl_args(["1", "2", "--frac", "0.1"])       # pair flag, one value
+    with _pytest.raises(spike.ArgError):
+        spike.parse_sl_args(["1", "2", "--timing", "--focus"])  # next flag not swallowed
+
+
+def test_parse_sl_args_rejects_nonpositive_reps_and_negative_inset():
+    import pytest as _pytest
+    with _pytest.raises(spike.ArgError):
+        spike.parse_sl_args(["1", "2", "--reps", "0"])
+    with _pytest.raises(spike.ArgError):
+        spike.parse_sl_args(["1", "2", "--inset", "-1"])
+    # a negative coordinate is still a valid value (single '-', not a flag)
+    ok = spike.parse_sl_args(["1", "2", "--frac", "-0.1", "0.2"])
+    assert ok.frac == (-0.1, 0.2)
