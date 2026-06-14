@@ -37,6 +37,36 @@ content_rect = ms.content_rect
 content_point_to_global = ms.content_point_to_global
 
 
+# ── pure byte-layout helpers ───────────────────────────────────────────────
+FOCUS_RECORD_SIZE = 0xF8  # 248-byte SkyLight event record (cua, inferred ABI)
+
+
+def build_focus_record(window_id: int, mode: int) -> bytes:
+    """The 248-byte focus-without-raise record for SLPSPostEventRecordTo.
+
+    Offsets are cua's reverse-engineered layout (see spec 2.2): a header tag,
+    the target CGWindowID as a u32 LE, and a mode byte (0x01 focus, 0x02 defocus).
+    Everything else is zero. Treated as a hypothesis the live spike confirms.
+    """
+    rec = bytearray(FOCUS_RECORD_SIZE)
+    rec[0x04] = 0xF8
+    rec[0x08] = 0x0D
+    rec[0x3C:0x40] = int(window_id).to_bytes(4, "little")
+    rec[0x8A] = int(mode) & 0xFF
+    return bytes(rec)
+
+
+def pack_psn(psn: tuple[int, int]) -> bytes:
+    """A ProcessSerialNumber is two UInt32 (8 bytes total)."""
+    hi, lo = psn
+    return int(hi).to_bytes(4, "little") + int(lo).to_bytes(4, "little")
+
+
+def unpack_psn(buf: bytes) -> tuple[int, int]:
+    """Inverse of pack_psn; reads the first 8 bytes."""
+    return (int.from_bytes(buf[0:4], "little"), int.from_bytes(buf[4:8], "little"))
+
+
 def cmd_list(rest):
     # One enumeration source across all spikes.
     return kb.cmd_list(rest)
