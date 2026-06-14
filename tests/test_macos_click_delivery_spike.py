@@ -485,3 +485,128 @@ def test_sampler_reports_not_stopped_when_worker_parks():
     out = s.stop(join_timeout=0.05)    # worker still parked in cursor_fn
     assert out["thread_stopped"] is False
     release.set()                      # let the daemon finish
+
+
+def _winrec(pid=1, window_id=77, w=800, h=600):
+    return spike.kb.WindowRecord(pid=pid, window_id=window_id,
+                                 owner="Toontown Rewritten", bounds=(0, 0, w, h))
+
+
+def test_win_local_and_screen_point_roundtrip():
+    rec = spike.kb.WindowRecord(1, 77, "Toontown Rewritten", (100, 200, 800, 600))
+    wl = spike._win_local(rec, (0.5, 0.5), inset=0)
+    assert wl == (400.0, 300.0)
+    assert spike._screen_point(rec, wl, inset=0) == (500.0, 500.0)
+    # inset shifts the content origin down (and shrinks height)
+    wl2 = spike._win_local(rec, (0.0, 0.0), inset=28)
+    assert wl2 == (0.0, 0.0)
+    assert spike._screen_point(rec, wl2, inset=28) == (100.0, 228.0)
+
+
+def test_gap_after_selects_the_right_gap():
+    g = {"after_move": 0.9, "primer_internal": 0.1, "primer_to_target": 0.5, "down_to_up": 0.2}
+    move = spike.EventSpec("move", (0.0, 0.0), 0)
+    down = spike.EventSpec("down", (0.0, 0.0), 1)
+    up = spike.EventSpec("up", (0.0, 0.0), 1)
+    pdown = spike.EventSpec("down", spike.OFF_WINDOW_POINT, 1, primer=True)
+    pup = spike.EventSpec("up", spike.OFF_WINDOW_POINT, 1, primer=True)
+    assert spike._gap_after(move, g, hold=0.0) == 0.9
+    assert spike._gap_after(down, g, hold=0.3) == 0.2 + 0.3   # down_to_up + hold
+    assert spike._gap_after(up, g, hold=0.0) == 0.0
+    assert spike._gap_after(pdown, g, hold=0.3) == 0.1        # primer internal (no hold)
+    assert spike._gap_after(pup, g, hold=0.0) == 0.5          # primer -> target
+
+
+def test_post_one_posts_through_port_with_correct_points():
+    posts = []
+    class _P:
+        def make_event(self, kind, cc, win):
+            return __import__("types").SimpleNamespace(kind=kind, cc=cc, win=win)
+        def set_public_field(self, *a): pass
+        def set_private_field(self, *a): pass
+        def set_window_location(self, ev, pt): ev.wl = pt
+        def set_location(self, ev, pt): ev.sl = pt
+        def set_source_user_data(self, *a): pass
+        def post(self, pid, ev): posts.append((pid, ev.kind, ev.wl, ev.sl))
+    rec = _winrec(w=800, h=600)
+    # a non-primer event: win-local from spec.point, screen = content_origin + win-local
+    spike._post_one(_P(), 1, 77, rec, 0, spike.EventSpec("down", (10.0, 20.0), 1))
+    assert posts[-1] == (1, "down", (10.0, 20.0), (10.0, 20.0))
+    # a primer event posts off-window at OFF_WINDOW_POINT for both
+    spike._post_one(_P(), 1, 77, rec, 0, spike.EventSpec("down", (5.0, 5.0), 1, primer=True))
+    assert posts[-1] == (1, "down", spike.OFF_WINDOW_POINT, spike.OFF_WINDOW_POINT)
+
+
+def test_deliver_specs_orders_focus_then_posts_then_restore_and_pays_timing():
+    log = []
+    sleeps = []
+    class _P:
+        def make_event(self, kind, cc, win): return __import__("types").SimpleNamespace(kind=kind)
+        def set_public_field(self, *a): pass
+        def set_private_field(self, *a): pass
+        def set_window_location(self, *a): pass
+        def set_location(self, *a): pass
+        def set_source_user_data(self, *a): pass
+        def post(self, pid, ev): log.append(("post", ev.kind))
+    class _Nop:
+        def start(self): pass
+        def stop(self): return {"inconclusive": True}
+    def fake_apply(wid):
+        log.append(("focus", wid))
+        return {"prev_psn": b"p", "prev_window_id": 5, "target_psn": b"t",
+                "target_window_id": wid}
+    def fake_restore(ctx): log.append(("restore", ctx["target_window_id"]))
+    opts = spike.parse_sl_args(["1", "2", "--focus", "--restore-focus", "--timing", "zero"])
+    spike._deliver_specs(1, 77, _winrec(), 0,
+                         spike.click_event_specs((10.0, 20.0), primer=False),
+                         opts, port=_P(), sleep=lambda s: sleeps.append(s),
+                         apply_focus=fake_apply, restore_focus=fake_restore,
+                         make_sampler=lambda: _Nop())
+    assert log[0] == ("focus", 77)
+    assert [k for (t, k) in log if t == "post"] == ["move", "down", "up"]
+    assert log[-1] == ("restore", 77)
+    assert len(sleeps) == 3   # one gap per posted event
+
+
+def test_deliver_specs_preflight_refusal_is_inconclusive(monkeypatch):
+    monkeypatch.setattr(spike.kb, "preflight_post_access", lambda: False)
+    opts = spike.parse_sl_args(["1", "2"])
+    out = spike._deliver_specs(1, 77, _winrec(), 0,
+                               spike.click_event_specs((1.0, 1.0), primer=False), opts)
+    assert out == {"inconclusive": True}
+
+
+def test_resolve_psns_assembles_and_surfaces_status_errors():
+    out = spike._resolve_psns(
+        77, main_cid_fn=lambda: 1, owner_fn=lambda cid, wid: (0, 99),
+        psn_fn=lambda owner: (0, b"\x01\x00\x00\x00\x02\x00\x00\x00"),
+        front_psn_fn=lambda: b"\xaa" * 8, front_pid_fn=lambda: 4321)
+    assert out == (b"\x01\x00\x00\x00\x02\x00\x00\x00", b"\xaa" * 8, 4321)
+    import pytest as _pytest
+    with _pytest.raises(RuntimeError):
+        spike._resolve_psns(77, main_cid_fn=lambda: 1, owner_fn=lambda c, w: (-1, 0),
+                            psn_fn=lambda o: (0, b""), front_psn_fn=lambda: b"",
+                            front_pid_fn=lambda: 1)
+
+
+def test_apply_and_restore_focus_post_the_right_records():
+    posts = []
+    ctx = spike._apply_focus(
+        77, resolve_psns_fn=lambda: (b"TGT", b"PREV", 4321),
+        front_window_fn=lambda pid: 5,
+        sky_post=lambda psn, rec: posts.append((psn, rec[0x8A])), sleep=lambda s: None)
+    # defocus prev (mode 2) then focus target (mode 1)
+    assert posts == [(b"PREV", 0x02), (b"TGT", 0x01)]
+    assert ctx["prev_window_id"] == 5 and ctx["target_window_id"] == 77
+    posts.clear()
+    spike._restore_focus(ctx, sky_post=lambda psn, rec: posts.append((psn, rec[0x8A])))
+    # defocus target (mode 2) then re-focus prev window (mode 1)
+    assert posts == [(b"TGT", 0x02), (b"PREV", 0x01)]
+
+
+def test_front_window_id_picks_owner_window():
+    wins = [{"kCGWindowOwnerPID": 9, "kCGWindowNumber": 111},
+            {"kCGWindowOwnerPID": 4321, "kCGWindowNumber": 222},
+            {"kCGWindowOwnerPID": 4321, "kCGWindowNumber": 333}]
+    assert spike._front_window_id(4321, window_list_fn=lambda: wins) == 222
+    assert spike._front_window_id(7, window_list_fn=lambda: wins) is None

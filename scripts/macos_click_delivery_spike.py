@@ -528,6 +528,189 @@ class FocusCursorSampler:
         return out
 
 
+# ── delivery engine (native via injectable seams; orchestration unit-tested) ──
+def _resolve_rec(pid):
+    return next((r for r in kb.enumerate_windows() if r.pid == pid), None)
+
+
+def _win_local(rec, frac, inset):
+    """A content-relative fraction -> window-LOCAL pixel offset ((0,0)=content
+    top-left). This is the point stamped via CGEventSetWindowLocation."""
+    _, _, cw, ch = content_rect(rec.bounds, inset)
+    return (frac[0] * cw, frac[1] * ch)
+
+
+def _screen_point(rec, win_local, inset):
+    """Window-local pixel offset -> global screen point for CGEventSetLocation."""
+    cx, cy, _, _ = content_rect(rec.bounds, inset)
+    return (cx + win_local[0], cy + win_local[1])
+
+
+def _post_one(port, pid, window_id, rec, inset, spec):
+    """Build + post a single EventSpec THROUGH port.post (so a fake port intercepts
+    it). Primer events post off-window at OFF_WINDOW_POINT for both points."""
+    if spec.primer:
+        win_pt = screen_pt = OFF_WINDOW_POINT
+    else:
+        win_pt = spec.point
+        screen_pt = _screen_point(rec, spec.point, inset)
+    ev = build_cg_event(port, spec.kind, win_pt, screen_pt, spec.click_count,
+                        pid, window_id)
+    port.post(pid, ev)
+
+
+def _gap_after(spec, gaps, hold):
+    if spec.kind == "move":
+        return gaps["after_move"]
+    if spec.kind == "down":
+        return gaps["primer_internal"] if spec.primer else gaps["down_to_up"] + hold
+    if spec.kind == "up":
+        return gaps["primer_to_target"] if spec.primer else 0.0
+    return 0.0  # dragged: rely on --timing/observation; no inter-step sleep
+
+
+# native PSN/window accessors (wrapped so _resolve_psns is seam-testable) ──────
+def _native_main_cid():
+    return _skylight()["CGSMainConnectionID"]()
+
+
+def _native_window_owner(cid, window_id):
+    sky = _skylight()
+    owner = ctypes.c_uint32(0)
+    err = sky["SLSGetWindowOwner"](ctypes.c_uint32(int(cid)),
+                                   ctypes.c_uint32(int(window_id)), ctypes.byref(owner))
+    return (int(err), int(owner.value))
+
+
+def _native_connection_psn(owner_cid):
+    sky = _skylight()
+    psn = (ctypes.c_uint32 * 2)()
+    err = sky["SLSGetConnectionPSN"](ctypes.c_uint32(int(owner_cid)), ctypes.byref(psn))
+    return (int(err), bytes(psn))
+
+
+def _native_front_psn():
+    sky = _skylight()
+    prev = (ctypes.c_uint32 * 2)()
+    sky["_SLPSGetFrontProcess"](ctypes.byref(prev))
+    return bytes(prev)
+
+
+def _native_frontmost_pid():
+    from AppKit import NSWorkspace
+    app = NSWorkspace.sharedWorkspace().frontmostApplication()
+    return int(app.processIdentifier()) if app is not None else None
+
+
+def _native_window_list():
+    import Quartz
+    return Quartz.CGWindowListCopyWindowInfo(
+        Quartz.kCGWindowListOptionOnScreenOnly
+        | Quartz.kCGWindowListExcludeDesktopElements,
+        Quartz.kCGNullWindowID) or []
+
+
+def _native_focus_post(psn_bytes, record_bytes):
+    _skylight()["SLPSPostEventRecordTo"](psn_bytes, record_bytes)
+
+
+def _resolve_psns(window_id, *, main_cid_fn=None, owner_fn=None, psn_fn=None,
+                  front_psn_fn=None, front_pid_fn=None):
+    """Resolve (target_psn_bytes, prev_frontmost_psn_bytes, prev_frontmost_pid) for
+    the focus record. The accessor fns are injectable for tests; defaults wrap the
+    native ctypes calls. Raises RuntimeError on a non-zero SkyLight status."""
+    main_cid_fn = main_cid_fn or _native_main_cid
+    owner_fn = owner_fn or _native_window_owner
+    psn_fn = psn_fn or _native_connection_psn
+    front_psn_fn = front_psn_fn or _native_front_psn
+    front_pid_fn = front_pid_fn or _native_frontmost_pid
+    cid = main_cid_fn()
+    err, owner = owner_fn(cid, window_id)
+    if err != 0:
+        raise RuntimeError(f"SLSGetWindowOwner failed: status={err}")
+    err, target_psn = psn_fn(owner)
+    if err != 0:
+        raise RuntimeError(f"SLSGetConnectionPSN failed: status={err}")
+    return (target_psn, front_psn_fn(), front_pid_fn())
+
+
+def _front_window_id(pid, *, window_list_fn=None):
+    """The frontmost on-screen window id owned by `pid`, or None -- the prior key
+    window to restore. `window_list_fn` injectable for tests."""
+    window_list_fn = window_list_fn or _native_window_list
+    if pid is None:
+        return None
+    for w in window_list_fn():
+        if w.get("kCGWindowOwnerPID") == pid and w.get("kCGWindowNumber"):
+            return int(w["kCGWindowNumber"])
+    return None
+
+
+def _apply_focus(window_id, *, resolve_psns_fn=None, front_window_fn=None,
+                 sky_post=None, sleep=None):
+    """focus-without-raise: defocus the prior frontmost, focus the target window.
+    Returns a restore-context dict for _restore_focus. Spec 2.2. Seams injectable."""
+    resolve_psns_fn = resolve_psns_fn or (lambda: _resolve_psns(window_id))
+    front_window_fn = front_window_fn or _front_window_id
+    sky_post = sky_post or _native_focus_post
+    _sleep = sleep or time.sleep
+    target_psn, prev_psn, prev_pid = resolve_psns_fn()
+    prev_window_id = front_window_fn(prev_pid) if prev_pid is not None else None
+    if prev_psn is not None:
+        sky_post(prev_psn, build_focus_record(window_id, mode=0x02))
+    sky_post(target_psn, build_focus_record(window_id, mode=0x01))
+    _sleep(0.05)
+    return {"prev_psn": prev_psn, "prev_window_id": prev_window_id,
+            "target_psn": target_psn, "target_window_id": window_id}
+
+
+def _restore_focus(ctx, *, sky_post=None, sleep=None, settle=0.0):
+    """Invert _apply_focus: defocus the target, re-focus the prior window. Best-effort
+    if the prior focused window id was unresolved (None)."""
+    sky_post = sky_post or _native_focus_post
+    if ctx.get("target_psn") is not None:
+        sky_post(ctx["target_psn"], build_focus_record(ctx["target_window_id"], mode=0x02))
+    pw = ctx.get("prev_window_id")
+    if ctx.get("prev_psn") is not None and pw is not None:
+        sky_post(ctx["prev_psn"], build_focus_record(pw, mode=0x01))
+    if settle and sleep:
+        sleep(settle)
+
+
+def _deliver_specs(pid, window_id, rec, inset, specs, opts, *,
+                   port=None, sleep=None, apply_focus=None, restore_focus=None,
+                   make_sampler=None):
+    """Post a spec list with concurrent sampler instrumentation, optional
+    focus-without-raise (+ restore), and per-spec timing. Returns the sampler
+    summary. Best-effort; never raises through. The keyword seams (port, sleep,
+    apply_focus, restore_focus, make_sampler) are for unit tests; the live path
+    builds the real ones. When no port seam is given, the Accessibility preflight
+    gates delivery."""
+    if port is None and not kb.preflight_post_access():
+        print("  REFUSED: grant Accessibility/Input Monitoring; aborting.")
+        return {"inconclusive": True}
+    port = port or _SkyPort(kb._quartz(), _skylight())
+    _sleep = sleep or time.sleep
+    _apply = apply_focus or _apply_focus
+    _restore = restore_focus or _restore_focus
+    make_sampler = make_sampler or (lambda: FocusCursorSampler(target_pid=pid))
+    sampler = make_sampler()
+    sampler.start()
+    focus_ctx = None
+    try:
+        if opts.focus:
+            focus_ctx = _apply(window_id)
+        gaps = timing_gaps(opts.timing, has_primer=opts.primer)
+        for spec in specs:
+            _post_one(port, pid, window_id, rec, inset, spec)
+            _sleep(_gap_after(spec, gaps, opts.hold))
+        if opts.restore_focus and focus_ctx is not None:
+            _restore(focus_ctx)
+    finally:
+        summary = sampler.stop()
+    return summary
+
+
 def cmd_list(rest):
     # One enumeration source across all spikes.
     return kb.cmd_list(rest)
