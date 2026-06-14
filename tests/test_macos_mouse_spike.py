@@ -64,6 +64,7 @@ class _FakeQuartz:
     kCGEventLeftMouseDown = 1
     kCGEventLeftMouseUp = 2
     kCGEventLeftMouseDragged = 6
+    kCGEventOtherMouseDragged = 27
 
     def __init__(self):
         self.posted = []        # (pid, event)
@@ -232,3 +233,27 @@ def test_cmd_motion_drag_plain_brackets_sweep_with_down_up(monkeypatch):
         Q.kCGEventLeftMouseDragged,
         Q.kCGEventLeftMouseUp,
     ]
+
+
+def test_cmd_motion_hover_carrier_posts_other_dragged(monkeypatch):
+    _stub_window(monkeypatch, [4242])
+    monkeypatch.setattr("builtins.input", lambda *_a: "")
+    calls = _capture_motion(monkeypatch)
+    rc = spike.cmd_motion(["4242", "--kind", "hover", "--mode", "carrier", "--steps", "3"])
+    assert rc == 0
+    other = _FakeQuartz().kCGEventOtherMouseDragged
+    # carrier hover: the inert center-button carrier, no bracket -> 3x otherDragged.
+    assert len(calls) == 3
+    assert all(c[2] == other for c in calls)
+
+
+def test_cmd_motion_drag_carrier_posts_other_dragged_no_bracket(monkeypatch):
+    _stub_window(monkeypatch, [4242])
+    monkeypatch.setattr("builtins.input", lambda *_a: "")
+    calls = _capture_motion(monkeypatch)
+    rc = spike.cmd_motion(["4242", "--kind", "drag", "--mode", "carrier", "--steps", "3"])
+    assert rc == 0
+    other = _FakeQuartz().kCGEventOtherMouseDragged
+    # carrier drag uses the same inert carrier and NO real LeftMouseDown/Up bracket.
+    assert len(calls) == 3
+    assert all(c[2] == other for c in calls)
