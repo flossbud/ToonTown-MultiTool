@@ -172,6 +172,23 @@ def drag_event_specs(from_pt: tuple, to_pt: tuple, steps: int) -> list[EventSpec
     return specs
 
 
+def fanout_phase_plan(target_ids: list, point: tuple) -> list[tuple]:
+    """Phase-wise broadcast plan to N targets: ALL moves, then ALL downs, then ALL
+    ups. Returns [(phase, target_id, EventSpec), ...].
+
+    This is the production fan-out shape (spec 2.4): the per-click delay is paid
+    ONCE per phase, not once per target, so N toons do not stack N x timing lag.
+    """
+    if not target_ids:
+        raise ValueError("fanout needs at least one target")
+    phases = [("move", 0), ("down", 1), ("up", 1)]
+    plan = []
+    for kind, cc in phases:
+        for tid in target_ids:
+            plan.append((kind, tid, EventSpec(kind, point, cc)))
+    return plan
+
+
 def cmd_list(rest):
     # One enumeration source across all spikes.
     return kb.cmd_list(rest)

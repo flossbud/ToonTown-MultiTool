@@ -167,3 +167,28 @@ def test_builders_coerce_int_coords_to_float():
         assert all(isinstance(v, float) for v in s.point)
     for s in spike.drag_event_specs((1, 2), (3, 4), steps=1):
         assert all(isinstance(v, float) for v in s.point)
+
+
+def test_fanout_plan_is_phase_wise_not_serial():
+    # two targets; plan groups ALL moves, then ALL downs, then ALL ups.
+    plan = spike.fanout_phase_plan(["A", "B"], (3.0, 4.0))
+    assert [(phase, tid) for (phase, tid, spec) in plan] == [
+        ("move", "A"), ("move", "B"),
+        ("down", "A"), ("down", "B"),
+        ("up", "A"), ("up", "B"),
+    ]
+    # every spec carries the shared point; downs/ups are click_count 1, moves 0
+    for phase, tid, spec in plan:
+        assert spec.point == (3.0, 4.0)
+        assert spec.click_count == (0 if phase == "move" else 1)
+
+
+def test_fanout_plan_single_target_still_phase_ordered():
+    plan = spike.fanout_phase_plan(["only"], (0.0, 0.0))
+    assert [phase for (phase, _t, _s) in plan] == ["move", "down", "up"]
+
+
+def test_fanout_plan_rejects_empty_targets():
+    import pytest as _pytest
+    with _pytest.raises(ValueError):
+        spike.fanout_phase_plan([], (0.0, 0.0))
