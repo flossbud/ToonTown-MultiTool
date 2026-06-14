@@ -104,3 +104,31 @@ def test_post_mouse_refuses_without_access(monkeypatch):
     assert spike.post_mouse(4242, 7, fq.kCGEventLeftMouseDown, 1.0, 2.0,
                             source=object(), revalidate=False) is False
     assert fq.posted == []
+
+
+def _stub_window(monkeypatch, pids):
+    # enumerate_windows() -> one WindowRecord per pid, frame (0,0,800,600).
+    recs = [spike.kb.WindowRecord(pid=p, window_id=p * 10, owner="Toontown Rewritten",
+                                  bounds=(0, 0, 800, 600), bundle_id="com.ttr")
+            for p in pids]
+    monkeypatch.setattr(spike.kb, "enumerate_windows", lambda: recs)
+    return recs
+
+
+def test_cmd_click_returns_nonzero_when_posts_refused(monkeypatch):
+    _stub_window(monkeypatch, [4242, 5252])
+    monkeypatch.setattr("builtins.input", lambda *_a: "")
+    # Every post refused -> click must report failure (non-zero exit).
+    monkeypatch.setattr(spike, "post_mouse", lambda *a, **k: False)
+    assert spike.cmd_click(["4242", "5252"]) != 0
+
+
+def test_cmd_click_ok_when_posts_succeed(monkeypatch):
+    _stub_window(monkeypatch, [4242, 5252])
+    monkeypatch.setattr("builtins.input", lambda *_a: "")
+    monkeypatch.setattr(spike, "post_mouse", lambda *a, **k: True)
+    assert spike.cmd_click(["4242", "5252"]) == 0
+
+
+def test_cmd_click_rejects_equal_pids(monkeypatch):
+    assert spike.cmd_click(["4242", "4242"]) == 2

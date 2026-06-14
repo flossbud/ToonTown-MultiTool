@@ -110,12 +110,102 @@ def cmd_list(rest):
     return kb.cmd_list(rest)
 
 
+def _click_at(pid, wid, frac, inset, bundle, hold=0.05):
+    """Post a left down, hold for `hold`s, then up, at a content-relative point.
+
+    A longer `hold` lets the operator observe the DOWN state (button press /
+    hover-highlight) separately from the UP (release/activation), so the spec's
+    'judge leftMouseDown and leftMouseUp separately' is operator-observable.
+    Returns the refused-post count (0, 1, or 2).
+    """
+    Q = kb._quartz()
+    recs = {r.pid: r for r in kb.enumerate_windows()}
+    rec = recs.get(pid)
+    if rec is None:
+        print(f"  REFUSED: pid={pid} not a current TTR window")
+        return 1
+    gx, gy = content_point_to_global(frac, rec.bounds, inset)
+    refused = 0
+    if not post_mouse(pid, wid, Q.kCGEventLeftMouseDown, gx, gy,
+                      expected_bundle=bundle):
+        refused += 1
+    time.sleep(hold)
+    if not post_mouse(pid, wid, Q.kCGEventLeftMouseUp, gx, gy,
+                      expected_bundle=bundle):
+        refused += 1
+    return refused
+
+
 def cmd_probe_rect(rest):
-    raise NotImplementedError
+    pos, opts = kb._parse_opts(rest, {"inset": (int, 0)})
+    if len(pos) != 1:
+        print("usage: probe-rect <pid> [--inset 0]")
+        return 2
+    pid = int(pos[0])
+    rec = next((r for r in kb.enumerate_windows() if r.pid == pid), None)
+    if rec is None:
+        print(f"pid={pid} is not a current TTR window.")
+        return 1
+    inset = opts["inset"]
+    print(f"[content] frame={rec.bounds} inset_top={inset} -> "
+          f"content={content_rect(rec.bounds, inset)}")
+    print("  bring this toon to the FRONT so you can see where each click lands.")
+    input("  press Enter when it is frontmost... ")
+    refused = 0
+    corners = [("top-left", (0.02, 0.02)), ("top-right", (0.98, 0.02)),
+               ("bottom-left", (0.02, 0.98)), ("bottom-right", (0.98, 0.98)),
+               ("center", (0.5, 0.5))]
+    for name, frac in corners:
+        print(f"  clicking {name} (frac={frac}); watch where the in-game cursor lands.")
+        refused += _click_at(pid, rec.window_id, frac, inset, rec.bundle_id)
+        time.sleep(0.8)
+    print("  -> if the TOP corners land on the title bar, increase --inset and re-run")
+    print("     until top-left/right land just inside the game content.")
+    if refused:
+        print(f"WARNING: {refused} post(s) REFUSED (grant Accessibility).")
+    return 1 if refused else 0
 
 
 def cmd_click(rest):
-    raise NotImplementedError
+    pos, opts = kb._parse_opts(rest, {"inset": (int, 0)})
+    if len(pos) != 2:
+        print("usage: click <pidA> <pidB> [--inset 0]")
+        return 2
+    pidA, pidB = int(pos[0]), int(pos[1])
+    if pidA == pidB:
+        print("pidA and pidB must differ (background isolation needs two processes).")
+        return 2
+    recs = {r.pid: r for r in kb.enumerate_windows()}
+    if pidA not in recs or pidB not in recs:
+        print(f"pidA/pidB not both present as TTR windows; found {sorted(recs)}")
+        return 1
+    inset = opts["inset"]
+    a, b = recs[pidA], recs[pidB]
+    refused = 0
+
+    print(f"[baseline] bring pid={pidB} FRONT; clicking its CENTER.")
+    input("  press Enter when pidB is frontmost... ")
+    refused += _click_at(pidB, b.window_id, (0.5, 0.5), inset, b.bundle_id)
+
+    print(f"[central] keep pid={pidA} FRONT; clicking ONLY background pid={pidB} center.")
+    input("  press Enter when pidA is frontmost... ")
+    print("  -> hold ~0.6s: watch pidB for a DOWN state (press/hover-highlight),")
+    print("     then the UP (release). Judge down and up SEPARATELY; pidA unaffected.")
+    refused += _click_at(pidB, b.window_id, (0.5, 0.5), inset, b.bundle_id, hold=0.6)
+
+    print(f"[reverse] keep pid={pidB} FRONT; clicking ONLY background pid={pidA} center.")
+    input("  press Enter when pidB is frontmost... ")
+    print("  -> expect: the click registers in pidA (background), pidB unaffected.")
+    refused += _click_at(pidA, a.window_id, (0.5, 0.5), inset, a.bundle_id)
+
+    print(f"[third-app] bring Finder/Terminal FRONT; clicking pid={pidB}.")
+    input("  press Enter when a non-game app is frontmost... ")
+    print("  -> expect: the click still registers in pidB while neither game is front.")
+    refused += _click_at(pidB, b.window_id, (0.5, 0.5), inset, b.bundle_id)
+
+    if refused:
+        print(f"WARNING: {refused} post(s) REFUSED (no access / stale target).")
+    return 1 if refused else 0
 
 
 def cmd_motion(rest):
