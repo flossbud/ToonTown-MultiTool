@@ -772,13 +772,19 @@ def cmd_probe_rect(rest):
     return ms.cmd_probe_rect(rest)
 
 
+def _all_int(positionals):
+    """True if every positional parses as an int, so a command can reject a
+    non-numeric pid/window_id with usage + 2 instead of crashing on int()."""
+    return all(p.lstrip("-").isdigit() for p in positionals)
+
+
 def cmd_sl_click(rest):
     try:
         opts = parse_sl_args(rest)
     except ArgError as e:
         print(f"usage: sl-click <pid> <window_id> [flags]; {e}")
         return 2
-    if len(opts.positionals) != 2:
+    if len(opts.positionals) != 2 or not _all_int(opts.positionals):
         print("usage: sl-click <pid> <window_id> [--focus] [--primer] "
               "[--restore-focus] [--timing P] [--inset N] [--frac FX FY] "
               "[--hold S] [--reps N]")
@@ -810,7 +816,7 @@ def cmd_sl_gesture(rest):
     except ArgError as e:
         print(f"usage: sl-gesture <pid> <window_id> --kind drag|hover [flags]; {e}")
         return 2
-    if len(opts.positionals) != 2 or opts.kind is None:
+    if len(opts.positionals) != 2 or opts.kind is None or not _all_int(opts.positionals):
         print("usage: sl-gesture <pid> <window_id> --kind drag|hover "
               "[--from FX FY] [--to FX FY] [--inset N] [--timing P] [--reps N]")
         return 2
@@ -847,7 +853,8 @@ def cmd_sl_fanout(rest):
     except ArgError as e:
         print(f"usage: sl-fanout <pidA> <widA> <pidB> <widB> [flags]; {e}")
         return 2
-    if len(opts.positionals) < 4 or len(opts.positionals) % 2 != 0:
+    if (len(opts.positionals) < 4 or len(opts.positionals) % 2 != 0
+            or not _all_int(opts.positionals)):
         print("usage: sl-fanout <pidA> <widA> <pidB> <widB> [...] "
               "[--frac FX FY] [--timing P] [--reps N]  (a neutral app must be FRONT)")
         return 2
@@ -906,7 +913,7 @@ def cmd_sl_positive_control(rest):
     except ArgError as e:
         print(f"usage: sl-positive-control <fg_pid> <window_id> [--frac FX FY]; {e}")
         return 2
-    if len(opts.positionals) != 2:
+    if len(opts.positionals) != 2 or not _all_int(opts.positionals):
         print("usage: sl-positive-control <fg_pid> <window_id> [--frac FX FY]")
         return 2
     pid, window_id = int(opts.positionals[0]), int(opts.positionals[1])

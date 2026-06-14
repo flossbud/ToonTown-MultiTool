@@ -785,3 +785,11 @@ def test_sl_gesture_hover_dispatches_three_moves(monkeypatch):
     assert spike.cmd_sl_gesture(["1", "77", "--kind", "hover"]) == 0
     specs = calls[0][4]
     assert [s.kind for s in specs] == ["move", "move", "move"]   # start, mid, end hover samples
+
+
+def test_sl_commands_reject_nonnumeric_positionals():
+    # a non-numeric pid/window_id is a usage error (clean 2), not a ValueError crash.
+    assert spike.cmd_sl_click(["foo", "bar"]) == 2
+    assert spike.cmd_sl_gesture(["foo", "77", "--kind", "drag"]) == 2
+    assert spike.cmd_sl_fanout(["a", "b", "c", "d"]) == 2
+    assert spike.cmd_sl_positive_control(["x", "y"]) == 2
