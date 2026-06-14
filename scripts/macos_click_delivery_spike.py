@@ -683,19 +683,27 @@ def _apply_focus(window_id, *, resolve_psns_fn=None, front_window_fn=None,
 
 def _restore_focus(ctx, *, sky_post=None, sleep=None, settle=0.0):
     """Invert _apply_focus: defocus the target, re-focus the prior window. Best-effort
-    if the prior focused window id was unresolved (None). The target-defocus is
-    independently guarded so its failure does not skip re-focusing the prior window."""
+    if the prior focused window id was unresolved (None). BOTH posts are attempted
+    even if the first fails (so a target-defocus failure never skips re-focusing the
+    prior window); if any post failed, the error is raised AFTER both are attempted,
+    so _deliver_specs surfaces it in the summary rather than swallowing it."""
     sky_post = sky_post or _native_focus_post
+    err = None
     if ctx.get("target_psn") is not None:
         try:
             sky_post(ctx["target_psn"], build_focus_record(ctx["target_window_id"], mode=0x02))
         except Exception as e:
-            print(f"  restore: target defocus failed: {type(e).__name__}: {e}")
+            err = e
     pw = ctx.get("prev_window_id")
     if ctx.get("prev_psn") is not None and pw is not None:
-        sky_post(ctx["prev_psn"], build_focus_record(pw, mode=0x01))
+        try:
+            sky_post(ctx["prev_psn"], build_focus_record(pw, mode=0x01))
+        except Exception as e:
+            err = e
     if settle and sleep:
         sleep(settle)
+    if err is not None:
+        raise err
 
 
 def _deliver_specs(pid, window_id, rec, inset, specs, opts, *,

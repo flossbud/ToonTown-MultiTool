@@ -637,6 +637,22 @@ def test_apply_focus_rolls_back_prev_defocus_on_target_focus_failure():
     assert posts == [(b"PREV", 0x02, 77), (b"TGT", 0x01, 77), (b"PREV", 0x01, 5)]
 
 
+def test_restore_focus_attempts_both_posts_then_raises_on_failure():
+    posts = []
+
+    def sky_post(psn, rec):
+        posts.append(rec[0x8A])
+        if rec[0x8A] == 0x02:   # target-defocus fails
+            raise RuntimeError("defocus boom")
+
+    ctx = {"prev_psn": b"P", "prev_window_id": 5, "target_psn": b"T", "target_window_id": 77}
+    import pytest as _pytest
+    with _pytest.raises(RuntimeError):
+        spike._restore_focus(ctx, sky_post=sky_post)
+    # both posts attempted (prev re-focus still runs) despite the first failing
+    assert posts == [0x02, 0x01]
+
+
 def test_deliver_specs_restores_focus_and_surfaces_error_on_post_failure():
     log = []
 
