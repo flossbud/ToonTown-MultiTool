@@ -444,7 +444,7 @@ def test_sampler_ipc_probes_run_on_subcadence_not_every_tick():
 
     def isactive_fn(pid):
         c["isactive"] += 1   # called for src AND tgt on each IPC-cadence tick
-        return None
+        return f"act{pid}"   # distinct per pid so the value in the sample is verifiable
 
     def ax_fn(fp):
         c["ax"] += 1
@@ -461,8 +461,10 @@ def test_sampler_ipc_probes_run_on_subcadence_not_every_tick():
     assert c["frontmost"] == c["cursor"]          # frontmost is every-tick (cheap)
     assert c["ax"] < c["cursor"] // 10            # ax is sub-cadence
     assert c["isactive"] < c["cursor"] // 5       # isactive (2 per IPC tick) sub-cadence
-    assert s.samples[0][5] == "AXWIN"             # tick 0 sampled IPC
-    assert s.samples[1][5] == "AXWIN"             # carried forward on an intervening cheap tick
+    # tick-0 IPC values (src isActive, tgt isActive, ax) reach the sample...
+    assert s.samples[0][3] == "act1" and s.samples[0][4] == "act2" and s.samples[0][5] == "AXWIN"
+    # ...and carry forward unchanged on the next intervening cheap-only tick.
+    assert s.samples[1][3] == "act1" and s.samples[1][4] == "act2" and s.samples[1][5] == "AXWIN"
 
 
 def test_sampler_reports_not_stopped_when_worker_parks():
