@@ -65,7 +65,10 @@ def pack_psn(psn: tuple[int, int]) -> bytes:
 
 
 def unpack_psn(buf: bytes) -> tuple[int, int]:
-    """Inverse of pack_psn; reads the first 8 bytes."""
+    """Inverse of pack_psn; requires at least the 8 PSN bytes (a short buffer is a
+    malformed native read, not a silently-truncated value)."""
+    if len(buf) < 8:
+        raise ValueError(f"PSN buffer must be >= 8 bytes, got {len(buf)}")
     return (int.from_bytes(buf[0:4], "little"), int.from_bytes(buf[4:8], "little"))
 
 
@@ -243,6 +246,8 @@ def parse_sl_args(rest: list) -> SLArgs:
         elif tok in _PAIR_FLAGS:
             try:
                 fx, fy = float(_val(i + 1, tok)), float(_val(i + 2, tok))
+            except ArgError:
+                raise                       # _val's specific "needs a value" message
             except ValueError:
                 raise ArgError(f"{tok} needs two float values")
             setattr(out, _PAIR_FLAGS[tok], (fx, fy))
@@ -251,6 +256,8 @@ def parse_sl_args(rest: list) -> SLArgs:
             attr, typ = _VALUE_FLAGS[tok]
             try:
                 setattr(out, attr, typ(_val(i + 1, tok)))
+            except ArgError:
+                raise                       # _val's specific "needs a value" message
             except ValueError:
                 raise ArgError(f"{tok} needs a {typ.__name__} value")
             i += 2

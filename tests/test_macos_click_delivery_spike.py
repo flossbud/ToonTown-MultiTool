@@ -95,6 +95,12 @@ def test_psn_pack_unpack_roundtrip():
     assert len(spike.pack_psn((1, 1))) == 8
 
 
+def test_unpack_psn_rejects_short_buffer():
+    import pytest as _pytest
+    with _pytest.raises(ValueError):
+        spike.unpack_psn(b"\x01\x02\x03")   # fewer than 8 bytes is malformed
+
+
 def test_mouse_event_fields_values_and_setters():
     fields = spike.mouse_event_fields(pid=4321, window_id=77)
     # ordered (field_id, value, via_private)
@@ -125,6 +131,8 @@ def test_timing_profiles_without_primer_zero_the_primer_gaps():
     assert g["primer_internal"] == 0.0
     assert g["primer_to_target"] == 0.0
     assert g["after_move"] == 0.015  # non-primer gaps unaffected
+    # returns a COPY: the prior call's zeroing must not poison the shared base table
+    assert spike.timing_gaps("cua", has_primer=True)["primer_to_target"] == 0.100
 
 
 def test_timing_unknown_profile_raises():
@@ -152,6 +160,8 @@ def test_click_specs_with_primer_inserts_offwindow_pair():
         ("down", (10.0, 20.0), False),
         ("up",   (10.0, 20.0), False),
     ]
+    # the primer down/up carry click_count 1 too (move=0, the rest=1)
+    assert [s.click_count for s in specs] == [0, 1, 1, 1, 1]
 
 
 def test_hover_specs_are_all_moves():
@@ -212,6 +222,7 @@ def test_fanout_plan_is_phase_wise_not_serial():
     ]
     # every spec carries the shared point; downs/ups are click_count 1, moves 0
     for phase, tid, spec in plan:
+        assert spec.kind == phase                 # the spec kind matches its phase
         assert spec.point == (3.0, 4.0)
         assert spec.click_count == (0 if phase == "move" else 1)
 
@@ -308,6 +319,7 @@ def test_skylight_symbol_table_exact_signatures():
     assert S["SLEventSetIntegerValueField"] == ("void", ("ptr", "uint32", "int64"))
     assert S["CGEventSetTimestamp"] == ("void", ("ptr", "uint64"))
     assert S["SLEventPostToPid"] == ("void", ("pid", "ptr"))
+    assert len(S) == 9   # exactly these symbols, no extra/missing declaration
 
 
 def test_build_cg_event_stamps_all_fields_and_window_location():
