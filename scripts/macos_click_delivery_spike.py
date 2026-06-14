@@ -1029,14 +1029,136 @@ def cmd_sl_echo(rest):
     return 0
 
 
-def cmd_timeslice(rest):
-    print("cmd_timeslice: implemented in Task 10")
-    return 2
+def parse_codesign_flags(codesign_output: str) -> dict:
+    """Pull the injection-relevant barriers out of `codesign -dvvv` text."""
+    text = codesign_output.lower()
+    return {
+        "hardened_runtime": "runtime" in text and "flags=" in text,
+        "library_validation": "library validation: enabled" in text,
+        "get_task_allow": "get-task-allow" in text and "true" in text,
+    }
+
+
+def _task_for_pid_probe(pid):
+    """Attempt task_for_pid(self, pid) and return the mach kern_return (0 = got the
+    task port -> live injection feasible; non-zero = blocked, the usual case without
+    SIP-off + root or a get-task-allow entitlement). Native; live-only."""
+    libc = ctypes.CDLL(None)
+    self_task = ctypes.c_uint.in_dll(libc, "mach_task_self_").value
+    libc.task_for_pid.restype = ctypes.c_int
+    out = ctypes.c_uint(0)
+    return int(libc.task_for_pid(ctypes.c_uint(self_task), ctypes.c_int(int(pid)),
+                                 ctypes.byref(out)))
+
+
+def cmd_timeslice(rest, kind="click"):
+    usage = "usage: timeslice-click|timeslice-drag <pidA> <pidB> [--inset N]"
+    try:
+        pos, opts = kb._parse_opts(rest, {"inset": (int, 0)})
+    except (ValueError, SystemExit):
+        print(usage)
+        return 2
+    if len(pos) != 2 or not _all_int(pos):
+        print(usage)
+        return 2
+    pidA, pidB = int(pos[0]), int(pos[1])
+    if pidA == pidB:
+        print("pidA and pidB must differ.")
+        return 2
+    recs = {r.pid: r for r in kb.enumerate_windows()}
+    if pidA not in recs or pidB not in recs:
+        print(f"both pids must be TTR windows; found {sorted(recs)}")
+        return 1
+    Q = kb._quartz()
+    b = recs[pidB]
+    inset = opts["inset"]
+    print(f"[timeslice-{kind}] DEGRADED-FALLBACK rung: keep pid={pidA} FRONT; this will "
+          f"briefly raise pid={pidB}, GLOBAL-{kind} it, and restore.")
+    print("  watch for: focus flicker, the REAL cursor jumping, the source toon "
+          "losing focus. This rung CANNOT preserve cursor/focus by design.")
+    input("  press Enter when pidA is frontmost... ")
+    from AppKit import NSRunningApplication, NSApplicationActivateIgnoringOtherApps
+    saved = Q.CGEventGetLocation(Q.CGEventCreate(None))
+    appB = NSRunningApplication.runningApplicationWithProcessIdentifier_(pidB)
+    appA = NSRunningApplication.runningApplicationWithProcessIdentifier_(pidA)
+    if appB is None or appA is None:
+        print("  could not resolve NSRunningApplication for both pids.")
+        return 1
+    appB.activateWithOptions_(NSApplicationActivateIgnoringOtherApps)
+    time.sleep(0.05)
+    if kind == "drag":
+        frm = content_point_to_global((0.3, 0.5), b.bounds, inset)
+        mid = content_point_to_global((0.5, 0.5), b.bounds, inset)
+        to = content_point_to_global((0.7, 0.5), b.bounds, inset)
+        seq = [(Q.kCGEventMouseMoved, frm), (Q.kCGEventLeftMouseDown, frm),
+               (Q.kCGEventLeftMouseDragged, mid), (Q.kCGEventLeftMouseDragged, to),
+               (Q.kCGEventLeftMouseUp, to)]
+    else:
+        gx, gy = content_point_to_global((0.5, 0.5), b.bounds, inset)
+        seq = [(Q.kCGEventLeftMouseDown, (gx, gy)), (Q.kCGEventLeftMouseUp, (gx, gy))]
+    for etype, pt in seq:
+        ev = Q.CGEventCreateMouseEvent(None, etype, pt, Q.kCGMouseButtonLeft)
+        Q.CGEventPost(Q.kCGHIDEventTap, ev)
+        time.sleep(0.01)
+    time.sleep(0.05)
+    appA.activateWithOptions_(NSApplicationActivateIgnoringOtherApps)
+    warp = Q.CGEventCreateMouseEvent(None, Q.kCGEventMouseMoved, (saved.x, saved.y), 0)
+    Q.CGEventPost(Q.kCGHIDEventTap, warp)
+    print(f"  record (DEGRADED schema): the {kind} landed on pidB? how disruptive was "
+          f"the flicker/focus/cursor? "
+          f"{'did the drag track?' if kind == 'drag' else '(hover not attemptable this way)'}")
+    return 0
 
 
 def cmd_inject_preflight(rest):
-    print("cmd_inject_preflight: implemented in Task 10")
-    return 2
+    usage = "usage: inject-preflight <pid>"
+    try:
+        pos, _opts = kb._parse_opts(rest, {})
+    except (ValueError, SystemExit):
+        print(usage)
+        return 2
+    if len(pos) != 1 or not _all_int(pos):
+        print(usage)
+        return 2
+    pid = int(pos[0])
+    rec = next((r for r in kb.enumerate_windows() if r.pid == pid), None)
+    if rec is None:
+        print(f"pid={pid} is not a current TTR window.")
+        return 1
+    import subprocess
+    try:
+        import psutil
+        exe = psutil.Process(pid).exe()
+    except Exception as e:
+        print(f"  could not resolve executable path: {e}")
+        return 1
+    print(f"[inject-preflight] pid={pid} exe={exe} (BARRIER report only; no hook).")
+    try:
+        cs = subprocess.run(["codesign", "-dvvv", exe], capture_output=True,
+                            text=True, timeout=10)
+        flags = parse_codesign_flags(cs.stdout + cs.stderr)
+    except Exception as e:
+        flags = {"error": str(e)}
+    try:
+        arch = subprocess.run(["lipo", "-archs", exe], capture_output=True,
+                              text=True, timeout=10).stdout.strip()
+    except Exception as e:
+        arch = f"(lipo failed: {e})"
+    try:
+        kr = _task_for_pid_probe(pid)
+        tfp = (f"kern_return={kr} "
+               f"({'GOT task port (live injection feasible)' if kr == 0 else 'blocked'})")
+    except Exception as e:
+        tfp = f"(probe failed: {type(e).__name__}: {e})"
+    print(f"  codesign barriers: {flags}")
+    print(f"  arch: {arch}")
+    print(f"  task_for_pid (live Mach injection): {tfp}")
+    print("  DYLD_INSERT_LIBRARIES is LAUNCH-time (needs relaunch + no library "
+          "validation + a non-hardened or self-signed binary); task_for_pid is LIVE "
+          "(needs get-task-allow OR SIP-off + root). A TRUE feasibility check needs a "
+          "no-op dylib that signals back; this reports BARRIERS only. Record the "
+          "codesign flags, arch, and the task_for_pid kern_return as the rung-3 sizing.")
+    return 0
 
 
 def main(argv=None) -> int:
@@ -1045,6 +1167,10 @@ def main(argv=None) -> int:
         print(__doc__)
         return 2
     cmd, rest = argv[0], argv[1:]
+    if cmd == "timeslice-click":
+        return cmd_timeslice(rest, kind="click")
+    if cmd == "timeslice-drag":
+        return cmd_timeslice(rest, kind="drag")
     dispatch = {
         "list": cmd_list,
         "probe-rect": cmd_probe_rect,
@@ -1053,8 +1179,6 @@ def main(argv=None) -> int:
         "sl-fanout": cmd_sl_fanout,
         "sl-positive-control": cmd_sl_positive_control,
         "sl-echo": cmd_sl_echo,
-        "timeslice-click": cmd_timeslice,
-        "timeslice-drag": cmd_timeslice,
         "inject-preflight": cmd_inject_preflight,
     }
     fn = dispatch.get(cmd)

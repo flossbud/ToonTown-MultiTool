@@ -58,8 +58,6 @@ def test_main_no_args_and_unknown_return_2():
     ("sl-fanout", "cmd_sl_fanout"),
     ("sl-positive-control", "cmd_sl_positive_control"),
     ("sl-echo", "cmd_sl_echo"),
-    ("timeslice-click", "cmd_timeslice"),
-    ("timeslice-drag", "cmd_timeslice"),
     ("inject-preflight", "cmd_inject_preflight"),
 ])
 def test_main_routes_every_command_and_forwards_args(monkeypatch, cmd, func):
@@ -802,3 +800,38 @@ def test_sl_echo_bad_args_return_2():
     assert spike.cmd_sl_echo(["1"]) == 2          # needs both pid and window_id
     assert spike.cmd_sl_echo(["foo", "bar"]) == 2  # non-numeric -> usage, not a crash
     assert spike.cmd_sl_echo(["1", "77", "--seconds", "nope"]) == 2  # bad opt value -> usage
+
+
+def test_main_threads_timeslice_subcommand_kind(monkeypatch):
+    seen = []
+    monkeypatch.setattr(spike, "cmd_timeslice",
+                        lambda rest, kind="click": (seen.append((rest, kind)), 0)[1])
+    assert spike.main(["timeslice-click", "x", "y"]) == 0
+    assert spike.main(["timeslice-drag", "x", "y"]) == 0
+    assert seen == [(["x", "y"], "click"), (["x", "y"], "drag")]
+
+
+def test_timeslice_bad_args_return_2():
+    assert spike.cmd_timeslice([]) == 2
+    assert spike.cmd_timeslice(["5", "5"]) == 2          # pidA must differ from pidB
+    assert spike.cmd_timeslice(["foo", "bar"]) == 2       # non-numeric
+    assert spike.cmd_timeslice(["1", "2", "--inset", "x"]) == 2  # bad opt value
+
+
+def test_inject_preflight_bad_args_return_2():
+    assert spike.cmd_inject_preflight([]) == 2
+    assert spike.cmd_inject_preflight(["foo"]) == 2       # non-numeric
+
+
+def test_parse_codesign_flags_extracts_runtime_and_library_validation():
+    out = ("CodeDirectory v=20500 ... flags=0x10000(runtime) ...\n"
+           "  Library Validation: enabled\n")
+    flags = spike.parse_codesign_flags(out)
+    assert flags["hardened_runtime"] is True
+    assert flags["library_validation"] is True
+
+
+def test_parse_codesign_flags_absent():
+    flags = spike.parse_codesign_flags("flags=0x0(none)\n")
+    assert flags["hardened_runtime"] is False
+    assert flags["library_validation"] is False
