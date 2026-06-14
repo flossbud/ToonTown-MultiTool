@@ -801,3 +801,4 @@ def test_sl_echo_bad_args_return_2():
     assert spike.cmd_sl_echo([]) == 2
     assert spike.cmd_sl_echo(["1"]) == 2          # needs both pid and window_id
     assert spike.cmd_sl_echo(["foo", "bar"]) == 2  # non-numeric -> usage, not a crash
+    assert spike.cmd_sl_echo(["1", "77", "--seconds", "nope"]) == 2  # bad opt value -> usage

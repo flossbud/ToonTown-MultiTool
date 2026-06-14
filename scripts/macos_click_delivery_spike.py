@@ -946,9 +946,14 @@ def cmd_sl_echo(rest):
     the SkyLight path while a listen-only tap classifies ours vs foreign (spec
     3.1 echo guard / 4.1 criterion 7). The tap scaffold mirrors
     scripts/macos_mouse_spike.py cmd_echo; only the POST path differs."""
-    pos, opts = kb._parse_opts(rest, {"seconds": (int, 15), "inset": (int, 0)})
+    usage = "usage: sl-echo <pid> <window_id> [--seconds N] [--inset N]"
+    try:
+        pos, opts = kb._parse_opts(rest, {"seconds": (int, 15), "inset": (int, 0)})
+    except (ValueError, SystemExit):   # bad option value / unknown flag -> usage, not a crash
+        print(usage)
+        return 2
     if len(pos) != 2 or not _all_int(pos):
-        print("usage: sl-echo <pid> <window_id> [--seconds N] [--inset N]")
+        print(usage)
         return 2
     pid, window_id = int(pos[0]), int(pos[1])
     rec = _resolve_rec(pid)
