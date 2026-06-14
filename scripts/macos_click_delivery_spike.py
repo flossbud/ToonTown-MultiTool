@@ -545,10 +545,11 @@ def _resolve_rec(pid, window_id=None):
     com.toontownrewritten.engine, not whatever else shares the 'Toontown Rewritten'
     owner name; and (b) when `window_id` is given, that it actually belongs to a
     trusted window of that pid -- so a wrong/typo'd id can never address or focus
-    ANOTHER process's window. A record with no bundle id (a unit-test fake) passes
-    the bundle gate; live enumeration fills it."""
+    ANOTHER process's window. FAILS CLOSED: a window whose bundle id is missing/None
+    or anything other than TRUSTED_BUNDLE is refused (live enumeration fills the
+    bundle id; a window that can't prove it is the trusted engine is not trusted)."""
     recs = [r for r in kb.enumerate_windows()
-            if r.pid == pid and getattr(r, "bundle_id", None) in (None, TRUSTED_BUNDLE)]
+            if r.pid == pid and getattr(r, "bundle_id", None) == TRUSTED_BUNDLE]
     if not recs:
         print(f"  REFUSED: pid={pid} has no trusted {TRUSTED_BUNDLE} window.")
         return None

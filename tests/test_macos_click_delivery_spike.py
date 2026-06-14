@@ -499,7 +499,8 @@ def test_sampler_reports_not_stopped_when_worker_parks():
 
 def _winrec(pid=1, window_id=77, w=800, h=600):
     return spike.kb.WindowRecord(pid=pid, window_id=window_id,
-                                 owner="Toontown Rewritten", bounds=(0, 0, w, h))
+                                 owner="Toontown Rewritten", bounds=(0, 0, w, h),
+                                 bundle_id=spike.TRUSTED_BUNDLE)
 
 
 def test_win_local_and_screen_point_roundtrip():
@@ -756,6 +757,14 @@ def test_resolve_rec_refuses_untrusted_bundle(monkeypatch):
                                 bounds=(0, 0, 800, 600), bundle_id="com.evil.app")
     monkeypatch.setattr(spike.kb, "enumerate_windows", lambda: [bad])
     assert spike._resolve_rec(9) is None           # wrong bundle -> refused
+
+
+def test_resolve_rec_fails_closed_on_missing_bundle(monkeypatch):
+    # a window whose bundle could not be resolved (None) must FAIL CLOSED, not open
+    nobund = spike.kb.WindowRecord(pid=9, window_id=77, owner="Toontown Rewritten",
+                                   bounds=(0, 0, 800, 600), bundle_id=None)
+    monkeypatch.setattr(spike.kb, "enumerate_windows", lambda: [nobund])
+    assert spike._resolve_rec(9) is None
 
 
 def test_sl_click_bad_args_return_2():
