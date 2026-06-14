@@ -115,23 +115,62 @@ def _stub_window(monkeypatch, pids):
     return recs
 
 
-def test_cmd_click_returns_nonzero_when_posts_refused(monkeypatch):
-    _stub_window(monkeypatch, [4242, 5252])
-    monkeypatch.setattr("builtins.input", lambda *_a: "")
-    # _click_at reads event-type constants from kb._quartz(); fake it so the
-    # command tests run without real PyObjC (matches the keyboard spike pattern).
+def _capture_posts(monkeypatch, ok=True):
+    """Patch post_mouse to record (pid, etype) per call and return `ok`.
+
+    Lets the click/probe-rect tests assert the real choreography (which pid,
+    which event, in what order) instead of only a coarse exit code. Also fakes
+    kb._quartz (event-type constants) and spike.time.sleep (no real waiting).
+    """
+    posts = []
+
+    def _rec(pid, wid, etype, gx, gy, *a, **k):
+        posts.append((pid, etype))
+        return ok
+
     monkeypatch.setattr(spike.kb, "_quartz", lambda: _FakeQuartz())
-    # Every post refused -> click must report failure (non-zero exit).
-    monkeypatch.setattr(spike, "post_mouse", lambda *a, **k: False)
-    assert spike.cmd_click(["4242", "5252"]) != 0
+    monkeypatch.setattr(spike.time, "sleep", lambda *_a: None)
+    monkeypatch.setattr(spike, "post_mouse", _rec)
+    return posts
 
 
-def test_cmd_click_ok_when_posts_succeed(monkeypatch):
-    _stub_window(monkeypatch, [4242, 5252])
+def test_cmd_click_drives_all_four_stages_to_right_targets(monkeypatch):
+    _stub_window(monkeypatch, [4242, 5252])  # pidA=4242, pidB=5252
     monkeypatch.setattr("builtins.input", lambda *_a: "")
-    monkeypatch.setattr(spike.kb, "_quartz", lambda: _FakeQuartz())
-    monkeypatch.setattr(spike, "post_mouse", lambda *a, **k: True)
+    posts = _capture_posts(monkeypatch)
     assert spike.cmd_click(["4242", "5252"]) == 0
+    Q = _FakeQuartz()
+    down, up = Q.kCGEventLeftMouseDown, Q.kCGEventLeftMouseUp
+    # baseline B, central B, reverse A, third-app B -- each a down then an up.
+    assert posts == [
+        (5252, down), (5252, up),   # baseline  -> pidB
+        (5252, down), (5252, up),   # central   -> pidB
+        (4242, down), (4242, up),   # reverse   -> pidA
+        (5252, down), (5252, up),   # third-app -> pidB
+    ]
+
+
+def test_cmd_click_refused_returns_exactly_one(monkeypatch):
+    _stub_window(monkeypatch, [4242, 5252])
+    monkeypatch.setattr("builtins.input", lambda *_a: "")
+    _capture_posts(monkeypatch, ok=False)  # every post refused
+    assert spike.cmd_click(["4242", "5252"]) == 1
+
+
+def test_click_at_returns_one_when_window_gone(monkeypatch):
+    _stub_window(monkeypatch, [4242])  # target 9999 is absent from the list
+    monkeypatch.setattr(spike.kb, "_quartz", lambda: _FakeQuartz())
+    assert spike._click_at(9999, 90, (0.5, 0.5), 0, "com.ttr") == 1
+
+
+def test_cmd_probe_rect_clicks_five_points(monkeypatch):
+    _stub_window(monkeypatch, [4242])
+    monkeypatch.setattr("builtins.input", lambda *_a: "")
+    posts = _capture_posts(monkeypatch)
+    assert spike.cmd_probe_rect(["4242"]) == 0
+    # 4 corners + center = 5 points, each a down+up = 10 posts, all to pid 4242.
+    assert len(posts) == 10
+    assert all(pid == 4242 for pid, _etype in posts)
 
 
 def test_cmd_click_rejects_equal_pids(monkeypatch):

@@ -129,10 +129,15 @@ def _click_at(pid, wid, frac, inset, bundle, hold=0.05):
     if not post_mouse(pid, wid, Q.kCGEventLeftMouseDown, gx, gy,
                       expected_bundle=bundle):
         refused += 1
-    time.sleep(hold)
-    if not post_mouse(pid, wid, Q.kCGEventLeftMouseUp, gx, gy,
-                      expected_bundle=bundle):
-        refused += 1
+    try:
+        time.sleep(hold)
+    finally:
+        # Always release, even on an interrupt during the hold, so the target
+        # is never left with an unmatched mouse-down (mirrors the keyboard
+        # spike's _hold).
+        if not post_mouse(pid, wid, Q.kCGEventLeftMouseUp, gx, gy,
+                          expected_bundle=bundle):
+            refused += 1
     return refused
 
 
