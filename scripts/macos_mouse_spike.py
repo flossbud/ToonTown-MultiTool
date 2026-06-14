@@ -404,6 +404,9 @@ def cmd_echo(rest):
     rl = runloop_holder.get("rl")
     if rl is not None:
         _Q.CFRunLoopStop(rl)
+    # Drain the tap thread before reading stats, so no in-flight callback is
+    # still writing the dict (mirrors the keyboard spike's listener.join()).
+    t.join(timeout=1.0)
     print(f"[echo] {stats}")
     print("  Interpret: ours>0 => our posts RE-ENTER the tap (marker filter is "
           "load-bearing); ours==0 => PID-posted events do not re-enter (marker is "
