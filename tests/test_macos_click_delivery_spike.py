@@ -426,32 +426,43 @@ def test_sampler_double_start_raises():
 
 
 def test_sampler_ipc_probes_run_on_subcadence_not_every_tick():
-    # locks the cadence split: cheap probes every tick, IPC on a sub-cadence,
-    # tick-0 IPC sampled, value carried forward on intervening cheap-only ticks.
+    # locks the FULL cadence split: cheap probes (cursor, frontmost) every tick,
+    # IPC probes (isActive, AX) only on the sub-cadence, carried forward, tick-0 IPC.
     import threading as _th
     enough = _th.Event()
-    counts = {"cursor": 0, "ipc": 0}
+    c = {"cursor": 0, "frontmost": 0, "isactive": 0, "ax": 0}
 
     def cursor_fn():
-        counts["cursor"] += 1
-        if counts["cursor"] >= 60:
+        c["cursor"] += 1
+        if c["cursor"] >= 60:
             enough.set()
         return (0.0, 0.0)
 
+    def frontmost_fn():
+        c["frontmost"] += 1
+        return 1
+
+    def isactive_fn(pid):
+        c["isactive"] += 1   # called for src AND tgt on each IPC-cadence tick
+        return None
+
     def ax_fn(fp):
-        counts["ipc"] += 1   # one increment per IPC-cadence tick
+        c["ax"] += 1
         return "AXWIN"
 
     s = spike.FocusCursorSampler(
         source_pid=1, target_pid=2, interval=0.001, ipc_interval=0.05,  # _ipc_every=50
-        cursor_fn=cursor_fn, frontmost_fn=lambda: 1,
-        isactive_fn=lambda p: None, ax_fn=ax_fn)
+        cursor_fn=cursor_fn, frontmost_fn=frontmost_fn,
+        isactive_fn=isactive_fn, ax_fn=ax_fn)
     s.start()
     assert enough.wait(2.0)
     s.stop()
-    assert counts["ipc"] < counts["cursor"] // 10     # IPC far rarer than every tick
-    assert s.samples[0][5] == "AXWIN"                  # tick 0 sampled IPC
-    assert s.samples[1][5] == "AXWIN"                  # carried forward on a cheap tick
+    # cheap probes run EVERY tick; IPC probes run far less often (sub-cadence).
+    assert c["frontmost"] == c["cursor"]          # frontmost is every-tick (cheap)
+    assert c["ax"] < c["cursor"] // 10            # ax is sub-cadence
+    assert c["isactive"] < c["cursor"] // 5       # isactive (2 per IPC tick) sub-cadence
+    assert s.samples[0][5] == "AXWIN"             # tick 0 sampled IPC
+    assert s.samples[1][5] == "AXWIN"             # carried forward on an intervening cheap tick
 
 
 def test_sampler_reports_not_stopped_when_worker_parks():
