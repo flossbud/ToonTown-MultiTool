@@ -761,3 +761,27 @@ def test_sl_fanout_preflight_refusal_returns_1(monkeypatch):
     monkeypatch.setattr(spike.kb, "preflight_post_access", lambda: False)
     monkeypatch.setattr(spike, "_resolve_rec", lambda pid: _winrec(pid=pid))
     assert spike.cmd_sl_fanout(["1", "11", "2", "22"]) == 1
+
+
+def test_sl_positive_control_dispatches_primer_free_click(monkeypatch):
+    monkeypatch.setattr("builtins.input", lambda *a: "")
+    monkeypatch.setattr(spike, "_resolve_rec", lambda pid: _winrec(pid=pid))
+    calls = []
+    monkeypatch.setattr(spike, "_deliver_specs",
+                        lambda *a, **k: (calls.append(a), {"inconclusive": False})[1])
+    assert spike.cmd_sl_positive_control(["1", "77"]) == 0
+    assert len(calls) == 1
+    specs = calls[0][4]                                     # (pid, wid, rec, inset, specs, opts)
+    assert [s.kind for s in specs] == ["move", "down", "up"]
+    assert all(not s.primer for s in specs)                # positive control is primer-free
+
+
+def test_sl_gesture_hover_dispatches_three_moves(monkeypatch):
+    monkeypatch.setattr("builtins.input", lambda *a: "")
+    monkeypatch.setattr(spike, "_resolve_rec", lambda pid: _winrec(pid=pid))
+    calls = []
+    monkeypatch.setattr(spike, "_deliver_specs",
+                        lambda *a, **k: (calls.append(a), {"inconclusive": False})[1])
+    assert spike.cmd_sl_gesture(["1", "77", "--kind", "hover"]) == 0
+    specs = calls[0][4]
+    assert [s.kind for s in specs] == ["move", "move", "move"]   # start, mid, end hover samples
