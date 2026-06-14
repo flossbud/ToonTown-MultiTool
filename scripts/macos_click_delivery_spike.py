@@ -402,7 +402,9 @@ def summarize_samples(samples: list) -> dict:
     sampler never ran / produced nothing)."""
     if not samples:
         return {"inconclusive": True, "frontmost_pids": [], "cursor_moved": False,
-                "focus_changed": False, "isactive_changed": False}
+                "focus_changed": False, "isactive_changed": False,
+                "cursor_x_range": None, "cursor_y_range": None,
+                "ax_focused_windows": []}
     pids, xs, ys = [], [], []
     src_seen, tgt_seen, ax_wins = set(), set(), []
     for s in samples:
@@ -437,10 +439,16 @@ class FocusCursorSampler:
     tests (the real ones use PyObjC lazily). A probe exception is swallowed so the
     thread keeps sampling. start() then stop() -> summarize_samples(self.samples)."""
     def __init__(self, source_pid=None, target_pid=None, interval=0.002,
-                 cursor_fn=None, frontmost_fn=None, isactive_fn=None, ax_fn=None):
+                 ipc_interval=0.05, cursor_fn=None, frontmost_fn=None,
+                 isactive_fn=None, ax_fn=None):
         self._src = source_pid
         self._tgt = target_pid
         self._interval = interval
+        # The cheap cursor+frontmost probes run every tick; the expensive IPC
+        # probes (isActive, AX) run on a coarser sub-cadence so the slow probe
+        # does not govern the loop period (the sub-ms excursion the sampler exists
+        # to catch must be sampled finely). Carried-forward between IPC ticks.
+        self._ipc_every = max(1, round(ipc_interval / interval)) if interval else 1
         self._stop = threading.Event()
         self._t = None
         self.samples = []
@@ -472,35 +480,52 @@ class FocusCursorSampler:
         try:
             from ApplicationServices import (
                 AXUIElementCreateApplication, AXUIElementCopyAttributeValue,
+                AXUIElementSetMessagingTimeout,
             )
             app = AXUIElementCreateApplication(frontmost_pid)
+            # Bound the AX IPC so an unresponsive (mid-render) OpenGL app cannot
+            # park the sampler thread on the ~6s default messaging timeout.
+            AXUIElementSetMessagingTimeout(app, 0.05)
             err, win = AXUIElementCopyAttributeValue(app, "AXFocusedWindow", None)
             return None if err != 0 else repr(win)
         except Exception:
             return None
 
     def _run(self):
+        tick = 0
+        sa = ta = ax = None   # carried forward between IPC sub-cadence ticks
         while not self._stop.is_set():
             try:
                 cx, cy = self._cursor_fn()
                 fp = self._frontmost_fn()
-                sa = self._isactive_fn(self._src)
-                ta = self._isactive_fn(self._tgt)
-                ax = self._ax_fn(fp)
+                if tick % self._ipc_every == 0:
+                    sa = self._isactive_fn(self._src)
+                    ta = self._isactive_fn(self._tgt)
+                    ax = self._ax_fn(fp)
                 self.samples.append((fp, cx, cy, sa, ta, ax))
             except Exception:
                 pass
+            tick += 1
             time.sleep(self._interval)
 
     def start(self):
+        if self._t is not None:
+            raise RuntimeError("sampler already started")
         self._t = threading.Thread(target=self._run, daemon=True)
         self._t.start()
 
     def stop(self):
+        """Stop the thread and return the summary. `thread_stopped` is False if the
+        worker did not exit within the join window (e.g. parked in a slow native
+        probe) -- a signal the summary may be slightly truncated."""
         self._stop.set()
+        alive_after = False
         if self._t is not None:
             self._t.join(timeout=1.0)
-        return summarize_samples(self.samples)
+            alive_after = self._t.is_alive()
+        out = summarize_samples(self.samples)
+        out["thread_stopped"] = not alive_after
+        return out
 
 
 def cmd_list(rest):

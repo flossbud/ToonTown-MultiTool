@@ -386,4 +386,40 @@ def test_sampler_lifecycle_with_injected_probes_survives_raising_probe():
     assert enough.wait(timeout=2.0)   # survived the raising tick and kept going
     summary = sampler.stop()
     assert summary["inconclusive"] is False
+    assert summary["thread_stopped"] is True
     assert len(sampler.samples) >= 2   # successful ticks recorded (raising one skipped)
+
+
+def test_summarize_inconclusive_has_all_keys():
+    # callers may read ranges/ax without first gating on `inconclusive`.
+    s = spike.summarize_samples([])
+    for k in ("cursor_x_range", "cursor_y_range", "ax_focused_windows",
+              "isactive_changed", "frontmost_pids"):
+        assert k in s
+
+
+def test_summarize_isactive_single_value_does_not_flag():
+    # a None followed by a single real value is NOT a flip.
+    samples = [(1, 0.0, 0.0, None, None, None), (1, 0.0, 0.0, True, False, None)]
+    s = spike.summarize_samples(samples)
+    assert s["isactive_changed"] is False
+
+
+def test_sampler_stop_before_start_is_inconclusive():
+    s = spike.FocusCursorSampler(cursor_fn=lambda: (0.0, 0.0), frontmost_fn=lambda: 1,
+                                 isactive_fn=lambda p: None, ax_fn=lambda f: None)
+    out = s.stop()
+    assert out["inconclusive"] is True and out["thread_stopped"] is True
+
+
+def test_sampler_double_start_raises():
+    import pytest as _pytest
+    s = spike.FocusCursorSampler(cursor_fn=lambda: (0.0, 0.0), frontmost_fn=lambda: 1,
+                                 isactive_fn=lambda p: None, ax_fn=lambda f: None,
+                                 interval=0.001)
+    s.start()
+    try:
+        with _pytest.raises(RuntimeError):
+            s.start()
+    finally:
+        s.stop()
