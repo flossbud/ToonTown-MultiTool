@@ -148,3 +148,22 @@ def test_drag_steps_must_be_at_least_one():
     import pytest as _pytest
     with _pytest.raises(ValueError):
         spike.drag_event_specs((0, 0), (1, 1), steps=0)
+
+
+def test_drag_specs_interpolate_both_axes():
+    # diagonal drag: pins the EXACT interpolated value on BOTH axes (a forward-only
+    # sorted-xs check cannot catch a wrong y term).
+    specs = spike.drag_event_specs((0.0, 0.0), (10.0, 20.0), steps=2)
+    assert specs[2].kind == "dragged" and specs[2].point == (5.0, 10.0)
+    assert specs[3].kind == "dragged" and specs[3].point == (10.0, 20.0)
+    assert specs[-1].kind == "up" and specs[-1].point == (10.0, 20.0)
+
+
+def test_builders_coerce_int_coords_to_float():
+    # click/hover/drag all coerce int inputs to float (uniform across builders).
+    for s in spike.click_event_specs((3, 4), primer=True):
+        assert all(isinstance(v, float) for v in s.point)
+    for s in spike.hover_event_specs([(1, 2)]):
+        assert all(isinstance(v, float) for v in s.point)
+    for s in spike.drag_event_specs((1, 2), (3, 4), steps=1):
+        assert all(isinstance(v, float) for v in s.point)

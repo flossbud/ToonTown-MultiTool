@@ -111,6 +111,15 @@ def timing_gaps(profile: str, has_primer: bool) -> dict:
 
 
 # ── pure event-spec builders ───────────────────────────────────────────────
+OFF_WINDOW_POINT = (-1.0, -1.0)  # the off-window primer pair's position (cua)
+
+
+def _as_point(p) -> tuple:
+    """Coerce a coordinate pair to (float, float) so every spec carries floats
+    regardless of int/float input (uniform across all builders)."""
+    return (float(p[0]), float(p[1]))
+
+
 @dataclasses.dataclass(frozen=True)
 class EventSpec:
     """One event to post. `point` is a window-LOCAL point (the native layer also
@@ -129,10 +138,11 @@ def click_event_specs(point: tuple, primer: bool) -> list[EventSpec]:
     motion event, not from the down (spec 1.2). The primer pair is an optional
     Chromium-style user-activation hack, tested with and without.
     """
+    point = _as_point(point)
     specs = [EventSpec("move", point, 0)]
     if primer:
-        specs.append(EventSpec("down", (-1.0, -1.0), 1, primer=True))
-        specs.append(EventSpec("up", (-1.0, -1.0), 1, primer=True))
+        specs.append(EventSpec("down", OFF_WINDOW_POINT, 1, primer=True))
+        specs.append(EventSpec("up", OFF_WINDOW_POINT, 1, primer=True))
     specs.append(EventSpec("down", point, 1))
     specs.append(EventSpec("up", point, 1))
     return specs
@@ -140,7 +150,7 @@ def click_event_specs(point: tuple, primer: bool) -> list[EventSpec]:
 
 def hover_event_specs(points: list[tuple]) -> list[EventSpec]:
     """Unclicked motion: a mouseMoved per point, no buttons."""
-    return [EventSpec("move", p, 0) for p in points]
+    return [EventSpec("move", _as_point(p), 0) for p in points]
 
 
 def drag_event_specs(from_pt: tuple, to_pt: tuple, steps: int) -> list[EventSpec]:
@@ -152,8 +162,8 @@ def drag_event_specs(from_pt: tuple, to_pt: tuple, steps: int) -> list[EventSpec
     """
     if steps < 1:
         raise ValueError("drag needs steps >= 1")
-    fx, fy = float(from_pt[0]), float(from_pt[1])
-    tx, ty = float(to_pt[0]), float(to_pt[1])
+    fx, fy = _as_point(from_pt)
+    tx, ty = _as_point(to_pt)
     specs = [EventSpec("move", (fx, fy), 0), EventSpec("down", (fx, fy), 1)]
     for i in range(1, steps + 1):
         t = i / steps
