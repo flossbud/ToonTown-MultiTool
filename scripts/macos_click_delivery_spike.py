@@ -190,6 +190,73 @@ def fanout_phase_plan(target_ids: list, point: tuple) -> list[tuple]:
     return plan
 
 
+# ── pure CLI parsing ───────────────────────────────────────────────────────
+class ArgError(ValueError):
+    """Raised for invalid spike CLI arguments (caught by command bodies)."""
+
+
+@dataclasses.dataclass
+class SLArgs:
+    positionals: list
+    focus: bool = False
+    primer: bool = False
+    restore_focus: bool = False
+    timing: str = "1ms"
+    inset: int = 0
+    frac: tuple = (0.5, 0.5)
+    frm: tuple = (0.05, 0.5)
+    to: tuple = (0.95, 0.5)
+    hold: float = 0.0
+    reps: int = 1
+    kind: "str | None" = None
+
+
+_BOOL_FLAGS = {"--focus": "focus", "--primer": "primer",
+               "--restore-focus": "restore_focus"}
+_PAIR_FLAGS = {"--frac": "frac", "--from": "frm", "--to": "to"}
+_VALUE_FLAGS = {"--timing": ("timing", str), "--inset": ("inset", int),
+                "--hold": ("hold", float), "--reps": ("reps", int),
+                "--kind": ("kind", str)}
+
+
+def parse_sl_args(rest: list) -> SLArgs:
+    """Parse the shared sl-* flag grammar into an SLArgs. Raises ArgError on
+    misuse (bad value, --restore-focus without --focus, unknown --timing/--kind)."""
+    out = SLArgs(positionals=[])
+    i = 0
+    while i < len(rest):
+        tok = rest[i]
+        if tok in _BOOL_FLAGS:
+            setattr(out, _BOOL_FLAGS[tok], True)
+            i += 1
+        elif tok in _PAIR_FLAGS:
+            try:
+                fx, fy = float(rest[i + 1]), float(rest[i + 2])
+            except (IndexError, ValueError):
+                raise ArgError(f"{tok} needs two float values")
+            setattr(out, _PAIR_FLAGS[tok], (fx, fy))
+            i += 3
+        elif tok in _VALUE_FLAGS:
+            attr, typ = _VALUE_FLAGS[tok]
+            try:
+                setattr(out, attr, typ(rest[i + 1]))
+            except (IndexError, ValueError):
+                raise ArgError(f"{tok} needs a {typ.__name__} value")
+            i += 2
+        elif tok.startswith("--"):
+            raise ArgError(f"unknown flag {tok!r}")
+        else:
+            out.positionals.append(tok)
+            i += 1
+    if out.timing not in TIMING_PROFILES:
+        raise ArgError(f"--timing must be one of {TIMING_PROFILES}")
+    if out.kind is not None and out.kind not in ("hover", "drag"):
+        raise ArgError("--kind must be hover or drag")
+    if out.restore_focus and not out.focus:
+        raise ArgError("--restore-focus requires --focus (nothing to restore otherwise)")
+    return out
+
+
 def cmd_list(rest):
     # One enumeration source across all spikes.
     return kb.cmd_list(rest)

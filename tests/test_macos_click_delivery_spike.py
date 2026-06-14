@@ -194,3 +194,45 @@ def test_fanout_plan_rejects_empty_targets():
     import pytest as _pytest
     with _pytest.raises(ValueError):
         spike.fanout_phase_plan([], (0.0, 0.0))
+
+
+def test_parse_sl_args_defaults_are_minimal():
+    opts = spike.parse_sl_args(["123", "77"])
+    assert opts.positionals == ["123", "77"]
+    assert opts.focus is False and opts.primer is False and opts.restore_focus is False
+    assert opts.timing == "1ms"
+    assert opts.inset == 0
+    assert opts.frac == (0.5, 0.5)
+    assert opts.reps == 1
+    assert opts.kind is None   # amendment: --kind is required for gesture, no default
+
+
+def test_parse_sl_args_flags_and_values():
+    opts = spike.parse_sl_args(
+        ["9", "8", "--focus", "--primer", "--restore-focus",
+         "--timing", "cua", "--inset", "28", "--frac", "0.1", "0.2",
+         "--hold", "0.6", "--reps", "10", "--kind", "drag",
+         "--from", "0.05", "0.5", "--to", "0.95", "0.5"])
+    assert opts.focus and opts.primer and opts.restore_focus
+    assert opts.timing == "cua" and opts.inset == 28
+    assert opts.frac == (0.1, 0.2) and opts.hold == 0.6 and opts.reps == 10
+    assert opts.kind == "drag"
+    assert opts.frm == (0.05, 0.5) and opts.to == (0.95, 0.5)
+
+
+def test_parse_sl_args_rejects_restore_without_focus():
+    import pytest as _pytest
+    with _pytest.raises(spike.ArgError):
+        spike.parse_sl_args(["1", "2", "--restore-focus"])
+
+
+def test_parse_sl_args_rejects_unknown_timing():
+    import pytest as _pytest
+    with _pytest.raises(spike.ArgError):
+        spike.parse_sl_args(["1", "2", "--timing", "fast"])
+
+
+def test_parse_sl_args_rejects_unknown_kind():
+    import pytest as _pytest
+    with _pytest.raises(spike.ArgError):
+        spike.parse_sl_args(["1", "2", "--kind", "wiggle"])
