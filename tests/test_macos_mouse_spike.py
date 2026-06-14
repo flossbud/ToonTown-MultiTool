@@ -300,3 +300,23 @@ def test_motion_ax_probe_handles_missing_framework(monkeypatch):
 
     monkeypatch.setattr(builtins, "__import__", _no_ax)
     assert spike._ax_probe(4242) == -1
+
+
+def test_classify_tapped_recognizes_our_marker():
+    assert spike.classify_tapped(spike.SPIKE_EVENT_TAG) == "ours"
+    assert spike.classify_tapped(0) == "foreign"
+    assert spike.classify_tapped(12345) == "foreign"
+
+
+def test_cmd_echo_requires_listen_access(monkeypatch):
+    _stub_window(monkeypatch, [4242])
+    monkeypatch.setattr(spike.kb, "preflight_listen_access", lambda: False)
+    assert spike.cmd_echo(["--pid", "4242"]) == 1
+
+
+def test_cmd_echo_unknown_pid_returns_one(monkeypatch):
+    # With listen access granted but the requested pid absent, echo bails (1)
+    # BEFORE creating any tap (the pid check precedes Q = kb._quartz()).
+    _stub_window(monkeypatch, [4242])
+    monkeypatch.setattr(spike.kb, "preflight_listen_access", lambda: True)
+    assert spike.cmd_echo(["--pid", "9999"]) == 1

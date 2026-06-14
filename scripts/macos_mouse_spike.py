@@ -57,6 +57,11 @@ def content_point_to_global(frac_xy, frame_bounds, inset_top=0):
     return (cx + fx * cw, cy + fy * ch)
 
 
+def classify_tapped(user_data) -> str:
+    """A tapped event's kCGEventSourceUserData -> 'ours' | 'foreign'."""
+    return "ours" if kb.is_spike_event(user_data) else "foreign"
+
+
 def post_mouse(pid, window_id, etype, global_x, global_y, button=None,
                source=None, state_name="combined", expected_bundle="__unset__",
                revalidate=True) -> bool:
@@ -335,7 +340,76 @@ def cmd_motion(rest):
 
 
 def cmd_echo(rest):
-    raise NotImplementedError
+    _pos, opts = kb._parse_opts(rest, {"seconds": (int, 20), "pid": (int, 0),
+                                       "inset": (int, 0)})
+    if not kb.preflight_listen_access():
+        print("No listen access; grant Input Monitoring to your terminal/python.")
+        return 1
+    recs = {r.pid: r for r in kb.enumerate_windows()}
+    pid = opts["pid"] or (sorted(recs)[0] if recs else 0)
+    if pid not in recs:
+        print(f"pid={pid} not a current TTR window; found {sorted(recs)}")
+        return 1
+    Q = kb._quartz()
+    import threading
+    import Quartz as _Q  # CFRunLoop access
+
+    stats = {"tapped": 0, "ours": 0, "foreign": 0, "tap_disabled": 0}
+
+    mask = ((1 << Q.kCGEventMouseMoved) | (1 << Q.kCGEventLeftMouseDown)
+            | (1 << Q.kCGEventLeftMouseUp) | (1 << Q.kCGEventLeftMouseDragged)
+            | (1 << Q.kCGEventOtherMouseDragged))
+
+    def _cb(proxy, etype, event, refcon):
+        if etype in (Q.kCGEventTapDisabledByTimeout, Q.kCGEventTapDisabledByUserInput):
+            stats["tap_disabled"] += 1
+            Q.CGEventTapEnable(tap, True)
+            return event
+        stats["tapped"] += 1
+        ud = Q.CGEventGetIntegerValueField(event, Q.kCGEventSourceUserData)
+        stats[classify_tapped(ud)] += 1
+        return event  # listen-only: returning the event is a no-op pass-through
+
+    tap = Q.CGEventTapCreate(
+        Q.kCGSessionEventTap, Q.kCGHeadInsertEventTap,
+        Q.kCGEventTapOptionListenOnly, mask, _cb, None)
+    if not tap:
+        print("  ERROR: could not create the listen-only tap (check Input Monitoring).")
+        return 1
+    src = Q.CFMachPortCreateRunLoopSource(None, tap, 0)
+    runloop_holder = {}
+
+    def _run():
+        rl = _Q.CFRunLoopGetCurrent()
+        runloop_holder["rl"] = rl
+        _Q.CFRunLoopAddSource(rl, src, _Q.kCFRunLoopCommonModes)
+        Q.CGEventTapEnable(tap, True)
+        _Q.CFRunLoopRun()
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    time.sleep(0.3)  # let the run loop spin up
+
+    rec = recs[pid]
+    gx, gy = content_point_to_global((0.5, 0.5), rec.bounds, opts["inset"])
+    print(f"[echo] posting 10 tagged mouse events to pid={pid}; tap is listen-only.")
+    for i in range(10):
+        post_mouse(pid, rec.window_id, Q.kCGEventMouseMoved, gx + i, gy,
+                   revalidate=False)
+        time.sleep(0.05)
+    print(f"[echo] now move/click your REAL mouse for ~{opts['seconds']}s so the tap "
+          "sees physical input too.")
+    time.sleep(opts["seconds"])
+
+    rl = runloop_holder.get("rl")
+    if rl is not None:
+        _Q.CFRunLoopStop(rl)
+    print(f"[echo] {stats}")
+    print("  Interpret: ours>0 => our posts RE-ENTER the tap (marker filter is "
+          "load-bearing); ours==0 => PID-posted events do not re-enter (marker is "
+          "belt-and-suspenders). foreign>0 confirms physical input is seen. "
+          "tap_disabled>0 => Phase 1 must handle re-enable.")
+    return 0
 
 
 if __name__ == "__main__":
