@@ -1013,10 +1013,14 @@ def cmd_sl_echo(rest):
         _Q.CFRunLoopStop(rl)
     t.join(timeout=1.0)
     print(f"[sl-echo] {stats}")
-    print("  ours>0 => SPIKE_EVENT_TAG SURVIVES SLEventPostToPid: production capture "
-          "can de-dup on the marker. ours==0 => marker lost through the SkyLight path "
-          "-> production needs a timing/held-state de-dup. foreign>0 confirms the tap "
-          "sees physical input.")
+    print("  ours>0 (the ONLY unambiguous signal) => the SkyLight-posted event RE-ENTERS "
+          "this session tap AND carries SPIKE_EVENT_TAG: production capture can de-dup on "
+          "the marker. ours==0 is AMBIGUOUS: either the marker was stripped, OR "
+          "SLEventPostToPid delivery simply does not re-enter a session tap at all (a "
+          "different path than the CGEventPostToPid the sibling echo exercised) -- so "
+          "production may still need a timing/held-state de-dup; record WHICH, do not "
+          "assume 'marker lost'. foreign>0 confirms the tap is alive on physical input "
+          "(control; free-MOVE the mouse, since the mask omits dragged events).")
     return 0
 
 
