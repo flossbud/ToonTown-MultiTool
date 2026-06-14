@@ -167,6 +167,8 @@ def test_builders_coerce_int_coords_to_float():
         assert all(isinstance(v, float) for v in s.point)
     for s in spike.drag_event_specs((1, 2), (3, 4), steps=1):
         assert all(isinstance(v, float) for v in s.point)
+    for _phase, _tid, s in spike.fanout_phase_plan(["A"], (5, 6)):
+        assert all(isinstance(v, float) for v in s.point)
 
 
 def test_fanout_plan_is_phase_wise_not_serial():

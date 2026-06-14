@@ -181,6 +181,7 @@ def fanout_phase_plan(target_ids: list, point: tuple) -> list[tuple]:
     """
     if not target_ids:
         raise ValueError("fanout needs at least one target")
+    point = _as_point(point)  # uniform with the other builders
     phases = [("move", 0), ("down", 1), ("up", 1)]
     plan = []
     for kind, cc in phases:
