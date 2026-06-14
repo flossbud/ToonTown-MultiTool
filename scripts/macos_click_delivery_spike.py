@@ -1173,8 +1173,8 @@ def cmd_inject_preflight(rest):
         r = subprocess.run(["lipo", "-archs", exe], capture_output=True,
                            text=True, timeout=10)
         arch = r.stdout.strip()
-        if not arch:                # non-zero exit / no output: fall through to fallback
-            raise RuntimeError(r.stderr.strip() or "lipo produced no output")
+        if r.returncode != 0 or not arch:   # any failure -> use the fallback
+            raise RuntimeError(r.stderr.strip() or f"lipo exit {r.returncode}")
     except Exception:
         import platform
         arch = platform.machine()   # host-arch fallback when lipo is unavailable/fails
