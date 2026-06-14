@@ -694,3 +694,70 @@ def test_front_window_id_picks_owner_window():
             {"kCGWindowOwnerPID": 4321, "kCGWindowNumber": 333}]
     assert spike._front_window_id(4321, window_list_fn=lambda: wins) == 222
     assert spike._front_window_id(7, window_list_fn=lambda: wins) is None
+
+
+def test_sl_click_bad_args_return_2():
+    assert spike.cmd_sl_click([]) == 2                      # missing positionals
+    assert spike.cmd_sl_click(["1", "2", "--restore-focus"]) == 2   # invalid flag combo
+
+
+def test_sl_gesture_requires_kind():
+    # no positionals -> 2; two positionals but no --kind -> 2 (amendment #6)
+    assert spike.cmd_sl_gesture([]) == 2
+    assert spike.cmd_sl_gesture(["1", "2"]) == 2
+
+
+def test_sl_fanout_and_positive_control_bad_args_return_2():
+    assert spike.cmd_sl_fanout(["1"]) == 2                  # not enough / odd positionals
+    assert spike.cmd_sl_positive_control([]) == 2
+
+
+def test_sl_click_dispatches_click_specs_and_loops_reps(monkeypatch):
+    monkeypatch.setattr("builtins.input", lambda *a: "")
+    monkeypatch.setattr(spike, "_resolve_rec", lambda pid: _winrec(pid=pid))
+    calls = []
+    monkeypatch.setattr(spike, "_deliver_specs",
+                        lambda *a, **k: (calls.append(a), {"inconclusive": False})[1])
+    assert spike.cmd_sl_click(["1", "77", "--reps", "3"]) == 0
+    assert len(calls) == 3                                  # looped reps=3
+    specs = calls[0][4]                                     # (pid, wid, rec, inset, specs, opts)
+    assert [s.kind for s in specs] == ["move", "down", "up"]
+
+
+def test_sl_gesture_drag_dispatches_drag_specs(monkeypatch):
+    monkeypatch.setattr("builtins.input", lambda *a: "")
+    monkeypatch.setattr(spike, "_resolve_rec", lambda pid: _winrec(pid=pid))
+    calls = []
+    monkeypatch.setattr(spike, "_deliver_specs",
+                        lambda *a, **k: (calls.append(a), {"inconclusive": False})[1])
+    assert spike.cmd_sl_gesture(["1", "77", "--kind", "drag"]) == 0
+    specs = calls[0][4]
+    assert [s.kind for s in specs][:2] == ["move", "down"] and specs[-1].kind == "up"
+
+
+def test_sl_fanout_posts_phase_wise_across_targets(monkeypatch):
+    monkeypatch.setattr("builtins.input", lambda *a: "")
+    monkeypatch.setattr(spike.kb, "preflight_post_access", lambda: True)
+    monkeypatch.setattr(spike, "_resolve_rec", lambda pid: _winrec(pid=pid))
+    monkeypatch.setattr(spike, "_SkyPort", lambda *a: object())
+    monkeypatch.setattr(spike, "_skylight", lambda: {})
+    monkeypatch.setattr(spike.kb, "_quartz", lambda: object())
+    posted = []
+    monkeypatch.setattr(spike, "_post_one",
+                        lambda port, pid, wid, rec, inset, spec: posted.append((pid, spec.kind)))
+
+    class _Nop:
+        def start(self): pass
+        def stop(self): return {"inconclusive": True}
+    monkeypatch.setattr(spike, "FocusCursorSampler", lambda *a, **k: _Nop())
+    assert spike.cmd_sl_fanout(["1", "11", "2", "22", "--reps", "1"]) == 0
+    # phase-wise: ALL moves, then ALL downs, then ALL ups across both targets
+    assert posted == [(1, "move"), (2, "move"), (1, "down"), (2, "down"),
+                      (1, "up"), (2, "up")]
+
+
+def test_sl_fanout_preflight_refusal_returns_1(monkeypatch):
+    monkeypatch.setattr("builtins.input", lambda *a: "")
+    monkeypatch.setattr(spike.kb, "preflight_post_access", lambda: False)
+    monkeypatch.setattr(spike, "_resolve_rec", lambda pid: _winrec(pid=pid))
+    assert spike.cmd_sl_fanout(["1", "11", "2", "22"]) == 1

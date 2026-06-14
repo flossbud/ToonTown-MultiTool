@@ -773,23 +773,158 @@ def cmd_probe_rect(rest):
 
 
 def cmd_sl_click(rest):
-    print("cmd_sl_click: implemented in Task 9")
-    return 2
+    try:
+        opts = parse_sl_args(rest)
+    except ArgError as e:
+        print(f"usage: sl-click <pid> <window_id> [flags]; {e}")
+        return 2
+    if len(opts.positionals) != 2:
+        print("usage: sl-click <pid> <window_id> [--focus] [--primer] "
+              "[--restore-focus] [--timing P] [--inset N] [--frac FX FY] "
+              "[--hold S] [--reps N]")
+        return 2
+    pid, window_id = int(opts.positionals[0]), int(opts.positionals[1])
+    rec = _resolve_rec(pid)
+    if rec is None:
+        print(f"pid={pid} is not a current TTR window.")
+        return 1
+    win_pt = _win_local(rec, opts.frac, opts.inset)
+    specs = click_event_specs(win_pt, primer=opts.primer)
+    print(f"[sl-click] pid={pid} wid={window_id} focus={opts.focus} "
+          f"primer={opts.primer} timing={opts.timing} frac={opts.frac} reps={opts.reps}")
+    print("  put the SOURCE toon FOREGROUND and the TARGET toon BACKGROUND;")
+    print("  hold movement in the source. Watch: does the TARGET register the click")
+    print("  at the right spot? does the source/cursor/focus stay put?")
+    input("  press Enter when positioned... ")
+    last = {}
+    for _ in range(opts.reps):
+        last = _deliver_specs(pid, window_id, rec, opts.inset, specs, opts)
+    print(f"  sampler(last rep): {last}")
+    print("  record: registered? (N/reps), position correct?, focus/cursor changed?")
+    return 0
 
 
 def cmd_sl_gesture(rest):
-    print("cmd_sl_gesture: implemented in Task 9")
-    return 2
+    try:
+        opts = parse_sl_args(rest)
+    except ArgError as e:
+        print(f"usage: sl-gesture <pid> <window_id> --kind drag|hover [flags]; {e}")
+        return 2
+    if len(opts.positionals) != 2 or opts.kind is None:
+        print("usage: sl-gesture <pid> <window_id> --kind drag|hover "
+              "[--from FX FY] [--to FX FY] [--inset N] [--timing P] [--reps N]")
+        return 2
+    pid, window_id = int(opts.positionals[0]), int(opts.positionals[1])
+    rec = _resolve_rec(pid)
+    if rec is None:
+        print(f"pid={pid} is not a current TTR window.")
+        return 1
+    if opts.kind == "hover":
+        pts = [_win_local(rec, (opts.frm[0] + (opts.to[0] - opts.frm[0]) * t,
+                                opts.frm[1] + (opts.to[1] - opts.frm[1]) * t),
+                          opts.inset) for t in (0.0, 0.5, 1.0)]
+        specs = hover_event_specs(pts)
+    else:
+        frm = _win_local(rec, opts.frm, opts.inset)
+        to = _win_local(rec, opts.to, opts.inset)
+        specs = drag_event_specs(frm, to, steps=4)
+    print(f"[sl-gesture] pid={pid} wid={window_id} kind={opts.kind} "
+          f"from={opts.frm} to={opts.to} timing={opts.timing}")
+    print("  TARGET toon BACKGROUND. Watch the cursor/selection TRACK the path; "
+          "check start, two mid points, and the end.")
+    input("  press Enter when positioned... ")
+    last = {}
+    for _ in range(opts.reps):
+        last = _deliver_specs(pid, window_id, rec, opts.inset, specs, opts)
+    print(f"  sampler(last rep): {last}")
+    print("  record: tracked at every sampled point? side effects?")
+    return 0
 
 
 def cmd_sl_fanout(rest):
-    print("cmd_sl_fanout: implemented in Task 9")
-    return 2
+    try:
+        opts = parse_sl_args(rest)
+    except ArgError as e:
+        print(f"usage: sl-fanout <pidA> <widA> <pidB> <widB> [flags]; {e}")
+        return 2
+    if len(opts.positionals) < 4 or len(opts.positionals) % 2 != 0:
+        print("usage: sl-fanout <pidA> <widA> <pidB> <widB> [...] "
+              "[--frac FX FY] [--timing P] [--reps N]  (a neutral app must be FRONT)")
+        return 2
+    pairs = [(int(opts.positionals[i]), int(opts.positionals[i + 1]))
+             for i in range(0, len(opts.positionals), 2)]
+    recs = {}
+    for pid, wid in pairs:
+        rec = _resolve_rec(pid)
+        if rec is None:
+            print(f"pid={pid} is not a current TTR window.")
+            return 1
+        recs[pid] = (wid, rec)
+    if not kb.preflight_post_access():
+        print("  REFUSED: grant Accessibility/Input Monitoring; aborting.")
+        return 1
+    print(f"[sl-fanout] targets={[p for p, _ in pairs]} timing={opts.timing} "
+          f"frac={opts.frac} reps={opts.reps}")
+    print("  bring a NEUTRAL app (Terminal/Finder) FRONT so BOTH toons are background.")
+    print("  watch BOTH toons register the click; note any added lag with 2 vs 1.")
+    input("  press Enter when a neutral app is frontmost... ")
+    port = _SkyPort(kb._quartz(), _skylight())
+    gaps = timing_gaps(opts.timing, has_primer=False)
+    points = {pid: _win_local(rec, opts.frac, opts.inset)
+              for pid, (wid, rec) in recs.items()}
+    target_ids = [pid for pid, _ in pairs]
+    for rep in range(opts.reps):
+        sampler = FocusCursorSampler()
+        sampler.start()
+        plan = fanout_phase_plan(target_ids, (0.0, 0.0))  # ordering only
+        prev_phase, phase_t0, phase_ms = None, time.monotonic(), {}
+        try:
+            # phase-wise: pay the gap + record the elapsed ONCE per phase boundary.
+            for phase, tid, spec in plan:
+                if prev_phase is not None and phase != prev_phase:
+                    phase_ms[prev_phase] = round((time.monotonic() - phase_t0) * 1000, 2)
+                    time.sleep(gaps["after_move"] if prev_phase == "move"
+                               else gaps["down_to_up"])
+                    phase_t0 = time.monotonic()
+                wid, rec = recs[tid]
+                _post_one(port, tid, wid, rec, opts.inset,
+                          EventSpec(spec.kind, points[tid], spec.click_count))
+                prev_phase = phase
+            if prev_phase is not None:
+                phase_ms[prev_phase] = round((time.monotonic() - phase_t0) * 1000, 2)
+        finally:
+            summary = sampler.stop()
+        print(f"  rep {rep + 1}/{opts.reps}: per-phase ms={phase_ms} "
+              f"for {len(target_ids)} targets; sampler: {summary}")
+    print("  record: both registered? per-target correct? per-phase latency acceptable?")
+    return 0
 
 
 def cmd_sl_positive_control(rest):
-    print("cmd_sl_positive_control: implemented in Task 9")
-    return 2
+    try:
+        opts = parse_sl_args(rest)
+    except ArgError as e:
+        print(f"usage: sl-positive-control <fg_pid> <window_id> [--frac FX FY]; {e}")
+        return 2
+    if len(opts.positionals) != 2:
+        print("usage: sl-positive-control <fg_pid> <window_id> [--frac FX FY]")
+        return 2
+    pid, window_id = int(opts.positionals[0]), int(opts.positionals[1])
+    rec = _resolve_rec(pid)
+    if rec is None:
+        print(f"pid={pid} is not a current TTR window.")
+        return 1
+    win_pt = _win_local(rec, opts.frac, opts.inset)
+    specs = click_event_specs(win_pt, primer=False)
+    print(f"[sl-positive-control] FORCES the SkyLight path to the FOREGROUND key "
+          f"window pid={pid}. This validates event CONSTRUCTION only (diagnostic):")
+    print("  a foreground failure can coexist with background success (cua routes "
+          "frontmost via HID). Bring this toon to the FRONT.")
+    input("  press Enter when it is frontmost... ")
+    summary = _deliver_specs(pid, window_id, rec, opts.inset, specs, opts)
+    print(f"  sampler: {summary}")
+    print("  record: did the foreground toon register it? (diagnostic, not a gate)")
+    return 0
 
 
 def cmd_sl_echo(rest):
