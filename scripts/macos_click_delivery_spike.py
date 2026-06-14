@@ -1035,12 +1035,15 @@ def parse_codesign_flags(codesign_output: str, entitlements: str = "") -> dict:
     runtime + library validation as TOKENS inside `flags=0x..(...)` (`runtime`,
     `library-validation`); get-task-allow is an ENTITLEMENT, present only in the
     entitlements blob, never in `-dvvv`."""
+    import re
     text = codesign_output.lower()
-    ent = entitlements.lower()
     return {
         "hardened_runtime": "runtime" in text and "flags=" in text,
         "library_validation": "library-validation" in text,
-        "get_task_allow": "get-task-allow" in ent and "true" in ent,
+        # the get-task-allow KEY must be immediately followed by <true/> -- not merely
+        # present alongside some other true entitlement.
+        "get_task_allow": bool(re.search(
+            r"get-task-allow\s*</key>\s*<true\s*/?>", entitlements, re.I)),
     }
 
 
@@ -1167,11 +1170,14 @@ def cmd_inject_preflight(rest):
         ent = f"(entitlements failed: {e})"
     flags = parse_codesign_flags(cs_text, ent)
     try:
-        arch = subprocess.run(["lipo", "-archs", exe], capture_output=True,
-                              text=True, timeout=10).stdout.strip() or "(empty)"
+        r = subprocess.run(["lipo", "-archs", exe], capture_output=True,
+                           text=True, timeout=10)
+        arch = r.stdout.strip()
+        if not arch:                # non-zero exit / no output: fall through to fallback
+            raise RuntimeError(r.stderr.strip() or "lipo produced no output")
     except Exception:
         import platform
-        arch = platform.machine()   # host-arch fallback when lipo is unavailable
+        arch = platform.machine()   # host-arch fallback when lipo is unavailable/fails
     try:
         kr = _task_for_pid_probe(pid)
         tfp = (f"kern_return={kr} "

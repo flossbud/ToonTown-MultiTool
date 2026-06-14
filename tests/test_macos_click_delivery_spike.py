@@ -840,10 +840,16 @@ def test_parse_codesign_flags_absent():
 
 def test_parse_codesign_flags_get_task_allow_from_entitlements():
     # get-task-allow is an ENTITLEMENT (not in -dvvv); read from the entitlements blob
-    flags = spike.parse_codesign_flags(
+    yes = spike.parse_codesign_flags(
         "flags=0x0(none)",
         entitlements="<key>com.apple.security.get-task-allow</key><true/>")
-    assert flags["get_task_allow"] is True
+    assert yes["get_task_allow"] is True
+    # present-but-FALSE (with an unrelated true elsewhere) must NOT report true
+    no = spike.parse_codesign_flags(
+        "flags=0x0(none)",
+        entitlements=("<key>com.apple.security.get-task-allow</key><false/>"
+                      "<key>com.apple.security.cs.allow-jit</key><true/>"))
+    assert no["get_task_allow"] is False
 
 
 def test_timeslice_sequence_click_vs_drag_differ():
