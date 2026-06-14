@@ -232,6 +232,9 @@ def cmd_motion(rest):
     if opts["kind"] not in _MOTION_KINDS:
         print(f"invalid --kind {opts['kind']!r}; choose {'|'.join(_MOTION_KINDS)}")
         return 2
+    if opts["steps"] < 2:
+        print(f"invalid --steps {opts['steps']!r}; need >= 2 (a sweep needs both ends)")
+        return 2
     pid = int(pos[0])
     rec = next((r for r in kb.enumerate_windows() if r.pid == pid), None)
     if rec is None:
@@ -258,6 +261,12 @@ def cmd_motion(rest):
     print("  watch: does the in-game cursor track the sweep? ANY phantom click, "
           "focus change, menu pop, or PHYSICAL cursor movement = side effect (reject).")
     input("  press Enter when this toon is in the background... ")
+    # Revalidate ONCE after the (unbounded) prompt: the sweep posts with
+    # revalidate=False for speed, so without this a window closed/moved during
+    # the wait would be swept blind against a stale/reused PID.
+    if not kb.pid_alive_and_ttr(pid, wid, bundle):
+        print(f"  REFUSED: pid={pid} window_id={wid} no longer valid after the prompt.")
+        return 1
 
     refused = 0
     # drag/plain needs a real left-down to start a drag, released in finally.

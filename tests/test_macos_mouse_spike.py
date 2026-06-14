@@ -192,16 +192,24 @@ def test_cmd_motion_rejects_bad_mode_and_kind(monkeypatch):
     _stub_window(monkeypatch, [4242])
     assert spike.cmd_motion(["4242", "--mode", "bogus"]) == 2
     assert spike.cmd_motion(["4242", "--kind", "bogus"]) == 2
+    # A sweep needs both ends: --steps < 2 is rejected (before any PyObjC).
+    assert spike.cmd_motion(["4242", "--steps", "1"]) == 2
+    assert spike.cmd_motion(["4242", "--steps", "0"]) == 2
 
 
 def _capture_motion(monkeypatch):
-    """Patch post_mouse to record (pid, wid, etype, gx, gy) per call (success),
-    fake kb._quartz, and silence time.sleep. Returns the list."""
+    """Patch post_mouse to record (pid, wid, etype, gx, gy, button, revalidate)
+    per call (success), fake kb._quartz, and silence time.sleep. Also stubs
+    enumerate_windows via _stub_window so the post-prompt revalidation passes."""
     calls = []
+
+    def _rec(pid, wid, etype, gx, gy, *a, **k):
+        calls.append((pid, wid, etype, gx, gy, k.get("button"), k.get("revalidate")))
+        return True
+
     monkeypatch.setattr(spike.kb, "_quartz", lambda: _FakeQuartz())
     monkeypatch.setattr(spike.time, "sleep", lambda *_a: None)
-    monkeypatch.setattr(spike, "post_mouse",
-                        lambda *a, **k: (calls.append(a), True)[1])
+    monkeypatch.setattr(spike, "post_mouse", _rec)
     return calls
 
 
@@ -212,9 +220,11 @@ def test_cmd_motion_hover_plain_sweeps_moves_left_to_right(monkeypatch):
     rc = spike.cmd_motion(["4242", "--kind", "hover", "--mode", "plain", "--steps", "5"])
     assert rc == 0
     moved = _FakeQuartz().kCGEventMouseMoved
-    # 5 hover samples, ALL mouseMoved, to pid 4242, sweeping strictly L->R.
+    # 5 hover samples, ALL mouseMoved, to pid 4242, sweeping strictly L->R, with
+    # no button override and the hot-path revalidate=False.
     assert len(calls) == 5
     assert all(c[0] == 4242 and c[2] == moved for c in calls)
+    assert all(c[5] is None and c[6] is False for c in calls)
     xs = [c[3] for c in calls]
     assert xs == sorted(xs) and xs[0] < xs[-1]
 
@@ -241,10 +251,12 @@ def test_cmd_motion_hover_carrier_posts_other_dragged(monkeypatch):
     calls = _capture_motion(monkeypatch)
     rc = spike.cmd_motion(["4242", "--kind", "hover", "--mode", "carrier", "--steps", "3"])
     assert rc == 0
-    other = _FakeQuartz().kCGEventOtherMouseDragged
-    # carrier hover: the inert center-button carrier, no bracket -> 3x otherDragged.
+    Q = _FakeQuartz()
+    # carrier hover: the inert CENTER-button carrier, no bracket -> 3x otherDragged.
     assert len(calls) == 3
-    assert all(c[2] == other for c in calls)
+    assert all(c[2] == Q.kCGEventOtherMouseDragged
+               and c[5] == Q.kCGMouseButtonCenter and c[6] is False
+               for c in calls)
 
 
 def test_cmd_motion_drag_carrier_posts_other_dragged_no_bracket(monkeypatch):
@@ -253,7 +265,9 @@ def test_cmd_motion_drag_carrier_posts_other_dragged_no_bracket(monkeypatch):
     calls = _capture_motion(monkeypatch)
     rc = spike.cmd_motion(["4242", "--kind", "drag", "--mode", "carrier", "--steps", "3"])
     assert rc == 0
-    other = _FakeQuartz().kCGEventOtherMouseDragged
-    # carrier drag uses the same inert carrier and NO real LeftMouseDown/Up bracket.
+    Q = _FakeQuartz()
+    # carrier drag uses the same inert CENTER carrier and NO real down/up bracket.
     assert len(calls) == 3
-    assert all(c[2] == other for c in calls)
+    assert all(c[2] == Q.kCGEventOtherMouseDragged
+               and c[5] == Q.kCGMouseButtonCenter and c[6] is False
+               for c in calls)
