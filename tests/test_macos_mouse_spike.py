@@ -118,6 +118,9 @@ def _stub_window(monkeypatch, pids):
 def test_cmd_click_returns_nonzero_when_posts_refused(monkeypatch):
     _stub_window(monkeypatch, [4242, 5252])
     monkeypatch.setattr("builtins.input", lambda *_a: "")
+    # _click_at reads event-type constants from kb._quartz(); fake it so the
+    # command tests run without real PyObjC (matches the keyboard spike pattern).
+    monkeypatch.setattr(spike.kb, "_quartz", lambda: _FakeQuartz())
     # Every post refused -> click must report failure (non-zero exit).
     monkeypatch.setattr(spike, "post_mouse", lambda *a, **k: False)
     assert spike.cmd_click(["4242", "5252"]) != 0
@@ -126,6 +129,7 @@ def test_cmd_click_returns_nonzero_when_posts_refused(monkeypatch):
 def test_cmd_click_ok_when_posts_succeed(monkeypatch):
     _stub_window(monkeypatch, [4242, 5252])
     monkeypatch.setattr("builtins.input", lambda *_a: "")
+    monkeypatch.setattr(spike.kb, "_quartz", lambda: _FakeQuartz())
     monkeypatch.setattr(spike, "post_mouse", lambda *a, **k: True)
     assert spike.cmd_click(["4242", "5252"]) == 0
 
