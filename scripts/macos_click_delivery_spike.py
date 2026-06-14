@@ -539,19 +539,27 @@ class FocusCursorSampler:
 TRUSTED_BUNDLE = "com.toontownrewritten.engine"
 
 
-def _resolve_rec(pid):
-    """The TTR WindowRecord for `pid`, or None. Enforces the trusted bundle id -- a
-    spike that posts synthetic input must only target com.toontownrewritten.engine,
-    not whatever else might share the 'Toontown Rewritten' owner name. (A record with
-    no bundle id -- e.g. a unit-test fake -- is allowed; live enumeration fills it.)"""
-    rec = next((r for r in kb.enumerate_windows() if r.pid == pid), None)
-    if rec is None:
+def _resolve_rec(pid, window_id=None):
+    """A trusted TTR WindowRecord for `pid`, or None. Enforces BOTH guards a spike
+    that posts synthetic input needs: (a) the trusted bundle id -- only
+    com.toontownrewritten.engine, not whatever else shares the 'Toontown Rewritten'
+    owner name; and (b) when `window_id` is given, that it actually belongs to a
+    trusted window of that pid -- so a wrong/typo'd id can never address or focus
+    ANOTHER process's window. A record with no bundle id (a unit-test fake) passes
+    the bundle gate; live enumeration fills it."""
+    recs = [r for r in kb.enumerate_windows()
+            if r.pid == pid and getattr(r, "bundle_id", None) in (None, TRUSTED_BUNDLE)]
+    if not recs:
+        print(f"  REFUSED: pid={pid} has no trusted {TRUSTED_BUNDLE} window.")
         return None
-    if getattr(rec, "bundle_id", None) not in (None, TRUSTED_BUNDLE):
-        print(f"  REFUSED: pid={pid} bundle={rec.bundle_id!r} is not the trusted "
-              f"{TRUSTED_BUNDLE}; refusing to post.")
+    if window_id is None:
+        return recs[0]
+    match = next((r for r in recs if r.window_id == window_id), None)
+    if match is None:
+        print(f"  REFUSED: window_id={window_id} is not a {TRUSTED_BUNDLE} window of "
+              f"pid={pid} (its trusted windows: {[r.window_id for r in recs]}).")
         return None
-    return rec
+    return match
 
 
 def _win_local(rec, frac, inset):
@@ -831,7 +839,7 @@ def cmd_sl_click(rest):
               "[--hold S] [--reps N]")
         return 2
     pid, window_id = int(opts.positionals[0]), int(opts.positionals[1])
-    rec = _resolve_rec(pid)
+    rec = _resolve_rec(pid, window_id)
     if rec is None:
         print(f"pid={pid} is not a current TTR window.")
         return 1
@@ -866,7 +874,7 @@ def cmd_sl_gesture(rest):
               "[--from FX FY] [--to FX FY] [--inset N] [--timing P] [--reps N]")
         return 2
     pid, window_id = int(opts.positionals[0]), int(opts.positionals[1])
-    rec = _resolve_rec(pid)
+    rec = _resolve_rec(pid, window_id)
     if rec is None:
         print(f"pid={pid} is not a current TTR window.")
         return 1
@@ -911,7 +919,7 @@ def cmd_sl_fanout(rest):
              for i in range(0, len(opts.positionals), 2)]
     recs = {}
     for pid, wid in pairs:
-        rec = _resolve_rec(pid)
+        rec = _resolve_rec(pid, wid)
         if rec is None:
             print(f"pid={pid} is not a current TTR window.")
             return 1
@@ -934,7 +942,7 @@ def cmd_sl_fanout(rest):
         sampler.start()
         plan = fanout_phase_plan(target_ids, (0.0, 0.0))  # ordering only
         prev_phase, phase_t0, phase_ms = None, time.monotonic(), {}
-        rep_error, button_down = None, False
+        rep_error, any_down = None, False
         try:
             # phase-wise: pay the gap + record the elapsed ONCE per phase boundary.
             for phase, tid, spec in plan:
@@ -946,14 +954,16 @@ def cmd_sl_fanout(rest):
                 wid, rec = recs[tid]
                 _post_one(port, tid, wid, rec, opts.inset,
                           EventSpec(spec.kind, points[tid], spec.click_count))
-                button_down = phase in ("down",) or (button_down and phase != "up")
+                if phase == "down":
+                    any_down = True   # some target may hold a button past this point
                 prev_phase = phase
             if prev_phase is not None:
                 phase_ms[prev_phase] = round((time.monotonic() - phase_t0) * 1000, 2)
         except Exception as e:   # a mid-fanout post failure must not crash the run...
             rep_error = f"{type(e).__name__}: {e}"
             print(f"  ERROR during fan-out: {rep_error}")
-            if button_down:      # ...nor leave any target holding the button
+            if any_down:         # ...nor leave ANY target holding the button (a stray
+                #                  up to an already-released target is harmless)
                 for tid in target_ids:
                     wid, rec = recs[tid]
                     try:
@@ -981,7 +991,7 @@ def cmd_sl_positive_control(rest):
         print("usage: sl-positive-control <fg_pid> <window_id> [--frac FX FY]")
         return 2
     pid, window_id = int(opts.positionals[0]), int(opts.positionals[1])
-    rec = _resolve_rec(pid)
+    rec = _resolve_rec(pid, window_id)
     if rec is None:
         print(f"pid={pid} is not a current TTR window.")
         return 1
@@ -1013,7 +1023,7 @@ def cmd_sl_echo(rest):
         print(usage)
         return 2
     pid, window_id = int(pos[0]), int(pos[1])
-    rec = _resolve_rec(pid)
+    rec = _resolve_rec(pid, window_id)
     if rec is None:
         print(f"pid={pid} is not a current TTR window.")
         return 1
@@ -1230,11 +1240,11 @@ def cmd_inject_preflight(rest):
         r = subprocess.run(["lipo", "-archs", exe], capture_output=True,
                            text=True, timeout=10)
         arch = r.stdout.strip()
-        if r.returncode != 0 or not arch:   # any failure -> use the fallback
+        if r.returncode != 0 or not arch:
             raise RuntimeError(r.stderr.strip() or f"lipo exit {r.returncode}")
     except Exception:
-        import platform
-        arch = platform.machine()   # host-arch fallback when lipo is unavailable/fails
+        arch = None   # TARGET arch unknown -- do NOT substitute the host arch (that
+        #               would falsely report compatible=True)
     try:
         kr = _task_for_pid_probe(pid)
         tfp = (f"kern_return={kr} "
@@ -1243,10 +1253,10 @@ def cmd_inject_preflight(rest):
         tfp = f"(probe failed: {type(e).__name__}: {e})"
     import platform
     host_arch = platform.machine()   # the injector's arch
-    arch_compat = (host_arch in arch.split()) if arch and "(" not in arch else None
+    arch_compat = (host_arch in arch.split()) if arch else None   # None = inconclusive
     print(f"  codesign barriers: {flags}")
-    print(f"  arch: target={arch} injector={host_arch} compatible={arch_compat} "
-          f"(injection requires a SHARED arch between injector and target)")
+    print(f"  arch: target={arch or '(unknown - lipo failed)'} injector={host_arch} "
+          f"compatible={arch_compat} (None=inconclusive; injection needs a SHARED arch)")
     print(f"  task_for_pid (live Mach injection): {tfp}")
     print(f"  raw codesign -dvvv (verify the parse): {cs_text.strip()[:400]}")
     print("  DYLD_INSERT_LIBRARIES is LAUNCH-time (needs relaunch + no library "

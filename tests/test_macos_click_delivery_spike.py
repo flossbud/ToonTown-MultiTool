@@ -743,6 +743,21 @@ def test_front_window_id_picks_owner_window():
     assert spike._front_window_id(7, window_list_fn=lambda: wins) is None
 
 
+def test_resolve_rec_validates_window_id_belongs_to_pid(monkeypatch):
+    rec = _winrec(pid=9, window_id=77)
+    monkeypatch.setattr(spike.kb, "enumerate_windows", lambda: [rec])
+    assert spike._resolve_rec(9, 77) is rec       # matching id -> the rec
+    assert spike._resolve_rec(9, 999) is None      # wrong id -> refused (other window)
+    assert spike._resolve_rec(9) is rec            # no id -> first trusted window
+
+
+def test_resolve_rec_refuses_untrusted_bundle(monkeypatch):
+    bad = spike.kb.WindowRecord(pid=9, window_id=77, owner="Toontown Rewritten",
+                                bounds=(0, 0, 800, 600), bundle_id="com.evil.app")
+    monkeypatch.setattr(spike.kb, "enumerate_windows", lambda: [bad])
+    assert spike._resolve_rec(9) is None           # wrong bundle -> refused
+
+
 def test_sl_click_bad_args_return_2():
     assert spike.cmd_sl_click([]) == 2                      # missing positionals
     assert spike.cmd_sl_click(["1", "2", "--restore-focus"]) == 2   # invalid flag combo
@@ -761,7 +776,8 @@ def test_sl_fanout_and_positive_control_bad_args_return_2():
 
 def test_sl_click_dispatches_click_specs_and_loops_reps(monkeypatch):
     monkeypatch.setattr("builtins.input", lambda *a: "")
-    monkeypatch.setattr(spike, "_resolve_rec", lambda pid: _winrec(pid=pid))
+    monkeypatch.setattr(spike, "_resolve_rec",
+                        lambda pid, window_id=None: _winrec(pid=pid, window_id=window_id or 77))
     calls = []
     monkeypatch.setattr(spike, "_deliver_specs",
                         lambda *a, **k: (calls.append(a), {"inconclusive": False})[1])
@@ -773,7 +789,8 @@ def test_sl_click_dispatches_click_specs_and_loops_reps(monkeypatch):
 
 def test_sl_gesture_drag_dispatches_drag_specs(monkeypatch):
     monkeypatch.setattr("builtins.input", lambda *a: "")
-    monkeypatch.setattr(spike, "_resolve_rec", lambda pid: _winrec(pid=pid))
+    monkeypatch.setattr(spike, "_resolve_rec",
+                        lambda pid, window_id=None: _winrec(pid=pid, window_id=window_id or 77))
     calls = []
     monkeypatch.setattr(spike, "_deliver_specs",
                         lambda *a, **k: (calls.append(a), {"inconclusive": False})[1])
@@ -785,7 +802,8 @@ def test_sl_gesture_drag_dispatches_drag_specs(monkeypatch):
 def test_sl_fanout_posts_phase_wise_across_targets(monkeypatch):
     monkeypatch.setattr("builtins.input", lambda *a: "")
     monkeypatch.setattr(spike.kb, "preflight_post_access", lambda: True)
-    monkeypatch.setattr(spike, "_resolve_rec", lambda pid: _winrec(pid=pid))
+    monkeypatch.setattr(spike, "_resolve_rec",
+                        lambda pid, window_id=None: _winrec(pid=pid, window_id=window_id or 77))
     monkeypatch.setattr(spike, "_SkyPort", lambda *a: object())
     monkeypatch.setattr(spike, "_skylight", lambda: {})
     monkeypatch.setattr(spike.kb, "_quartz", lambda: object())
@@ -806,13 +824,15 @@ def test_sl_fanout_posts_phase_wise_across_targets(monkeypatch):
 def test_sl_fanout_preflight_refusal_returns_1(monkeypatch):
     monkeypatch.setattr("builtins.input", lambda *a: "")
     monkeypatch.setattr(spike.kb, "preflight_post_access", lambda: False)
-    monkeypatch.setattr(spike, "_resolve_rec", lambda pid: _winrec(pid=pid))
+    monkeypatch.setattr(spike, "_resolve_rec",
+                        lambda pid, window_id=None: _winrec(pid=pid, window_id=window_id or 77))
     assert spike.cmd_sl_fanout(["1", "11", "2", "22"]) == 1
 
 
 def test_sl_positive_control_dispatches_primer_free_click(monkeypatch):
     monkeypatch.setattr("builtins.input", lambda *a: "")
-    monkeypatch.setattr(spike, "_resolve_rec", lambda pid: _winrec(pid=pid))
+    monkeypatch.setattr(spike, "_resolve_rec",
+                        lambda pid, window_id=None: _winrec(pid=pid, window_id=window_id or 77))
     calls = []
     monkeypatch.setattr(spike, "_deliver_specs",
                         lambda *a, **k: (calls.append(a), {"inconclusive": False})[1])
@@ -825,7 +845,8 @@ def test_sl_positive_control_dispatches_primer_free_click(monkeypatch):
 
 def test_sl_gesture_hover_dispatches_three_moves(monkeypatch):
     monkeypatch.setattr("builtins.input", lambda *a: "")
-    monkeypatch.setattr(spike, "_resolve_rec", lambda pid: _winrec(pid=pid))
+    monkeypatch.setattr(spike, "_resolve_rec",
+                        lambda pid, window_id=None: _winrec(pid=pid, window_id=window_id or 77))
     calls = []
     monkeypatch.setattr(spike, "_deliver_specs",
                         lambda *a, **k: (calls.append(a), {"inconclusive": False})[1])
