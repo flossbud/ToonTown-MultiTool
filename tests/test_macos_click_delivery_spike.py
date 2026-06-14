@@ -326,3 +326,64 @@ def test_build_cg_event_stamps_all_fields_and_window_location():
     assert fake.window_locations[id(ev)] == (12.0, 34.0)
     assert fake.locations[id(ev)] == (112.0, 234.0)
     assert fake.source_user_data[id(ev)] == spike.SPIKE_EVENT_TAG
+
+
+def test_summarize_samples_detects_change():
+    samples = [(100, 10.0, 20.0), (100, 10.0, 20.0), (100, 10.5, 20.0)]
+    s = spike.summarize_samples(samples)
+    assert s["frontmost_pids"] == [100]
+    assert s["cursor_moved"] is True
+    assert s["cursor_x_range"] == (10.0, 10.5)
+
+
+def test_summarize_samples_stable_when_no_change():
+    samples = [(7, 5.0, 5.0), (7, 5.0, 5.0)]
+    s = spike.summarize_samples(samples)
+    assert s["frontmost_pids"] == [7]
+    assert s["cursor_moved"] is False
+    assert s["focus_changed"] is False
+
+
+def test_summarize_samples_flags_focus_change():
+    samples = [(1, 0.0, 0.0), (2, 0.0, 0.0)]
+    s = spike.summarize_samples(samples)
+    assert s["focus_changed"] is True
+    assert set(s["frontmost_pids"]) == {1, 2}
+
+
+def test_summarize_empty_is_inconclusive():
+    s = spike.summarize_samples([])
+    assert s["inconclusive"] is True
+
+
+def test_summarize_samples_flags_isactive_change():
+    # [AMENDMENT] 6-tuples (fp, cx, cy, src_active, tgt_active, ax): source active flips
+    samples = [(9, 0.0, 0.0, True, False, None), (9, 0.0, 0.0, False, False, None)]
+    s = spike.summarize_samples(samples)
+    assert s["isactive_changed"] is True
+    assert s["focus_changed"] is False and s["cursor_moved"] is False
+
+
+def test_sampler_lifecycle_with_injected_probes_survives_raising_probe():
+    # [AMENDMENT] a raising probe must not kill the thread; ticks continue.
+    import threading as _th
+    enough = _th.Event()
+    calls = {"n": 0}
+
+    def cursor_fn():
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise RuntimeError("transient cursor read failure")
+        if calls["n"] >= 4:
+            enough.set()
+        return (float(calls["n"]), 0.0)
+
+    sampler = spike.FocusCursorSampler(
+        source_pid=1, target_pid=2, interval=0.001,
+        cursor_fn=cursor_fn, frontmost_fn=lambda: 1,
+        isactive_fn=lambda pid: True, ax_fn=lambda fp: None)
+    sampler.start()
+    assert enough.wait(timeout=2.0)   # survived the raising tick and kept going
+    summary = sampler.stop()
+    assert summary["inconclusive"] is False
+    assert len(sampler.samples) >= 2   # successful ticks recorded (raising one skipped)

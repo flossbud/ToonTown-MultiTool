@@ -26,6 +26,7 @@ import ctypes
 import dataclasses
 import os
 import sys
+import threading
 import time
 
 # Reuse the sibling spikes' tested helpers (same dir).
@@ -391,6 +392,115 @@ def _skylight():
         out[name] = fn
     _SKY_CACHE.update(out)
     return _SKY_CACHE
+
+
+def summarize_samples(samples: list) -> dict:
+    """Aggregate samples taken DURING a post. Each sample is
+    (frontmost_pid, cursor_x, cursor_y[, src_active, tgt_active, ax_focused_win]).
+    Reports whether the real cursor moved, the frontmost app changed, or the
+    source/target AppKit-active state flipped. Empty input is inconclusive (the
+    sampler never ran / produced nothing)."""
+    if not samples:
+        return {"inconclusive": True, "frontmost_pids": [], "cursor_moved": False,
+                "focus_changed": False, "isactive_changed": False}
+    pids, xs, ys = [], [], []
+    src_seen, tgt_seen, ax_wins = set(), set(), []
+    for s in samples:
+        fp, cx, cy = s[0], s[1], s[2]
+        if fp not in pids:
+            pids.append(fp)
+        xs.append(cx)
+        ys.append(cy)
+        if len(s) > 3 and s[3] is not None:
+            src_seen.add(s[3])
+        if len(s) > 4 and s[4] is not None:
+            tgt_seen.add(s[4])
+        if len(s) > 5 and s[5] not in ax_wins:
+            ax_wins.append(s[5])
+    return {
+        "inconclusive": False,
+        "frontmost_pids": pids,
+        "focus_changed": len(pids) > 1,
+        "cursor_moved": (min(xs) != max(xs)) or (min(ys) != max(ys)),
+        "cursor_x_range": (min(xs), max(xs)),
+        "cursor_y_range": (min(ys), max(ys)),
+        "isactive_changed": len(src_seen) > 1 or len(tgt_seen) > 1,
+        "ax_focused_windows": ax_wins,
+    }
+
+
+class FocusCursorSampler:
+    """Polls (on a daemon thread) the real cursor, the frontmost PID, the source/
+    target apps' AppKit-active state, and the frontmost app's AX focused window,
+    every `interval` s -- so a transient excursion during a zero/1ms post is not
+    missed by before/after sampling alone. The probe fns are injectable for unit
+    tests (the real ones use PyObjC lazily). A probe exception is swallowed so the
+    thread keeps sampling. start() then stop() -> summarize_samples(self.samples)."""
+    def __init__(self, source_pid=None, target_pid=None, interval=0.002,
+                 cursor_fn=None, frontmost_fn=None, isactive_fn=None, ax_fn=None):
+        self._src = source_pid
+        self._tgt = target_pid
+        self._interval = interval
+        self._stop = threading.Event()
+        self._t = None
+        self.samples = []
+        self._cursor_fn = cursor_fn or self._cursor
+        self._frontmost_fn = frontmost_fn or self._frontmost_pid
+        self._isactive_fn = isactive_fn or self._isactive
+        self._ax_fn = ax_fn or self._ax_focused_window
+
+    def _frontmost_pid(self):
+        from AppKit import NSWorkspace
+        app = NSWorkspace.sharedWorkspace().frontmostApplication()
+        return int(app.processIdentifier()) if app is not None else -1
+
+    def _cursor(self):
+        Q = kb._quartz()
+        loc = Q.CGEventGetLocation(Q.CGEventCreate(None))
+        return (float(loc.x), float(loc.y))
+
+    def _isactive(self, pid):
+        if pid is None:
+            return None
+        from AppKit import NSRunningApplication
+        app = NSRunningApplication.runningApplicationWithProcessIdentifier_(pid)
+        return bool(app.isActive()) if app is not None else None
+
+    def _ax_focused_window(self, frontmost_pid):
+        # best-effort: the AX focused window of the frontmost app; None if AX is
+        # unavailable or (typical for an OpenGL surface) exposes nothing. Never raises.
+        try:
+            from ApplicationServices import (
+                AXUIElementCreateApplication, AXUIElementCopyAttributeValue,
+            )
+            app = AXUIElementCreateApplication(frontmost_pid)
+            err, win = AXUIElementCopyAttributeValue(app, "AXFocusedWindow", None)
+            return None if err != 0 else repr(win)
+        except Exception:
+            return None
+
+    def _run(self):
+        while not self._stop.is_set():
+            try:
+                cx, cy = self._cursor_fn()
+                fp = self._frontmost_fn()
+                sa = self._isactive_fn(self._src)
+                ta = self._isactive_fn(self._tgt)
+                ax = self._ax_fn(fp)
+                self.samples.append((fp, cx, cy, sa, ta, ax))
+            except Exception:
+                pass
+            time.sleep(self._interval)
+
+    def start(self):
+        self._t = threading.Thread(target=self._run, daemon=True)
+        self._t.start()
+
+    def stop(self):
+        self._stop.set()
+        if self._t is not None:
+            self._t.join(timeout=1.0)
+        return summarize_samples(self.samples)
 
 
 def cmd_list(rest):
