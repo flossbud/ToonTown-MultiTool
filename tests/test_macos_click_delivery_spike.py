@@ -795,3 +795,9 @@ def test_sl_commands_reject_nonnumeric_positionals():
     assert spike.cmd_sl_positive_control(["x", "y"]) == 2
     # a Unicode "digit" that str.isdigit() accepts but int() rejects is still caught
     assert spike.cmd_sl_click(["²", "5"]) == 2
+
+
+def test_sl_echo_bad_args_return_2():
+    assert spike.cmd_sl_echo([]) == 2
+    assert spike.cmd_sl_echo(["1"]) == 2          # needs both pid and window_id
+    assert spike.cmd_sl_echo(["foo", "bar"]) == 2  # non-numeric -> usage, not a crash

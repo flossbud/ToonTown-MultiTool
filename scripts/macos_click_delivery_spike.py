@@ -942,8 +942,82 @@ def cmd_sl_positive_control(rest):
 
 
 def cmd_sl_echo(rest):
-    print("cmd_sl_echo: implemented in Task 10")
-    return 2
+    """Does SPIKE_EVENT_TAG survive SLEventPostToPid? Posts 10 tagged moves through
+    the SkyLight path while a listen-only tap classifies ours vs foreign (spec
+    3.1 echo guard / 4.1 criterion 7). The tap scaffold mirrors
+    scripts/macos_mouse_spike.py cmd_echo; only the POST path differs."""
+    pos, opts = kb._parse_opts(rest, {"seconds": (int, 15), "inset": (int, 0)})
+    if len(pos) != 2 or not _all_int(pos):
+        print("usage: sl-echo <pid> <window_id> [--seconds N] [--inset N]")
+        return 2
+    pid, window_id = int(pos[0]), int(pos[1])
+    rec = _resolve_rec(pid)
+    if rec is None:
+        print(f"pid={pid} is not a current TTR window.")
+        return 1
+    if not kb.preflight_listen_access():
+        print("No listen access; grant Input Monitoring to your terminal/python.")
+        return 1
+    Q = kb._quartz()
+    import Quartz as _Q
+
+    stats = {"tapped": 0, "ours": 0, "foreign": 0, "tap_disabled": 0}
+    mask = ((1 << Q.kCGEventMouseMoved) | (1 << Q.kCGEventLeftMouseDown)
+            | (1 << Q.kCGEventLeftMouseUp))
+
+    def _cb(proxy, etype, event, refcon):
+        if etype in (Q.kCGEventTapDisabledByTimeout, Q.kCGEventTapDisabledByUserInput):
+            stats["tap_disabled"] += 1
+            Q.CGEventTapEnable(tap, True)
+            return event
+        stats["tapped"] += 1
+        ud = Q.CGEventGetIntegerValueField(event, Q.kCGEventSourceUserData)
+        stats["ours" if kb.is_spike_event(ud) else "foreign"] += 1
+        return event
+
+    tap = Q.CGEventTapCreate(Q.kCGSessionEventTap, Q.kCGHeadInsertEventTap,
+                             Q.kCGEventTapOptionListenOnly, mask, _cb, None)
+    if not tap:
+        print("  ERROR: could not create the listen-only tap (Input Monitoring?).")
+        return 1
+    src = Q.CFMachPortCreateRunLoopSource(None, tap, 0)
+    holder, ready = {}, threading.Event()
+
+    def _run():
+        rl = _Q.CFRunLoopGetCurrent()
+        holder["rl"] = rl
+        _Q.CFRunLoopAddSource(rl, src, _Q.kCFRunLoopCommonModes)
+        Q.CGEventTapEnable(tap, True)
+        ready.set()
+        _Q.CFRunLoopRun()
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    if not ready.wait(timeout=2.0):
+        print("  ERROR: tap thread not ready within 2s.")
+        return 1
+    time.sleep(0.1)
+
+    port = _SkyPort(Q, _skylight())
+    win_pt = _win_local(rec, (0.5, 0.5), opts["inset"])
+    print(f"[sl-echo] posting 10 SkyLight-tagged moves to pid={pid}; tap is listen-only.")
+    for i in range(10):
+        _post_one(port, pid, window_id, rec, opts["inset"],
+                  EventSpec("move", (win_pt[0] + i, win_pt[1]), 0))
+        time.sleep(0.05)
+    print(f"[sl-echo] now move your REAL mouse ~{opts['seconds']}s so the tap sees "
+          "physical input too.")
+    time.sleep(opts["seconds"])
+    rl = holder.get("rl")
+    if rl is not None:
+        _Q.CFRunLoopStop(rl)
+    t.join(timeout=1.0)
+    print(f"[sl-echo] {stats}")
+    print("  ours>0 => SPIKE_EVENT_TAG SURVIVES SLEventPostToPid: production capture "
+          "can de-dup on the marker. ours==0 => marker lost through the SkyLight path "
+          "-> production needs a timing/held-state de-dup. foreign>0 confirms the tap "
+          "sees physical input.")
+    return 0
 
 
 def cmd_timeslice(rest):
