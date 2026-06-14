@@ -618,6 +618,25 @@ def test_apply_and_restore_focus_post_the_right_records():
     assert posts == [(b"TGT", 0x02, 77), (b"PREV", 0x01, 5)]
 
 
+def test_apply_focus_rolls_back_prev_defocus_on_target_focus_failure():
+    posts = []
+    calls = {"n": 0}
+
+    def sky_post(psn, rec):
+        calls["n"] += 1
+        posts.append((psn, rec[0x8A], int.from_bytes(rec[0x3C:0x40], "little")))
+        if calls["n"] == 2:   # the target-focus post fails
+            raise RuntimeError("focus boom")
+
+    import pytest as _pytest
+    with _pytest.raises(RuntimeError):
+        spike._apply_focus(77, resolve_psns_fn=lambda: (b"TGT", b"PREV", 4321),
+                           front_window_fn=lambda pid: 5, sky_post=sky_post,
+                           sleep=lambda s: None)
+    # defocus prev (77/m2), focus target (raises), then ROLLBACK re-focus prev (5/m1)
+    assert posts == [(b"PREV", 0x02, 77), (b"TGT", 0x01, 77), (b"PREV", 0x01, 5)]
+
+
 def test_deliver_specs_restores_focus_and_surfaces_error_on_post_failure():
     log = []
 

@@ -653,7 +653,11 @@ def _front_window_id(pid, *, window_list_fn=None):
 def _apply_focus(window_id, *, resolve_psns_fn=None, front_window_fn=None,
                  sky_post=None, sleep=None):
     """focus-without-raise: defocus the prior frontmost, focus the target window.
-    Returns a restore-context dict for _restore_focus. Spec 2.2. Seams injectable."""
+    Returns a restore-context dict for _restore_focus. Spec 2.2. Seams injectable.
+
+    Transactional: if focusing the target fails AFTER the prior app was already
+    defocused, the prior app is re-focused before the error propagates, so a partial
+    failure never strands the prior app defocused."""
     resolve_psns_fn = resolve_psns_fn or (lambda: _resolve_psns(window_id))
     front_window_fn = front_window_fn or _front_window_id
     sky_post = sky_post or _native_focus_post
@@ -662,7 +666,16 @@ def _apply_focus(window_id, *, resolve_psns_fn=None, front_window_fn=None,
     prev_window_id = front_window_fn(prev_pid) if prev_pid is not None else None
     if prev_psn is not None:
         sky_post(prev_psn, build_focus_record(window_id, mode=0x02))
-    sky_post(target_psn, build_focus_record(window_id, mode=0x01))
+    try:
+        sky_post(target_psn, build_focus_record(window_id, mode=0x01))
+    except Exception:
+        # roll back the prior-app defocus so we don't leave it stranded
+        if prev_psn is not None and prev_window_id is not None:
+            try:
+                sky_post(prev_psn, build_focus_record(prev_window_id, mode=0x01))
+            except Exception:
+                pass
+        raise
     _sleep(0.05)
     return {"prev_psn": prev_psn, "prev_window_id": prev_window_id,
             "target_psn": target_psn, "target_window_id": window_id}
@@ -670,10 +683,14 @@ def _apply_focus(window_id, *, resolve_psns_fn=None, front_window_fn=None,
 
 def _restore_focus(ctx, *, sky_post=None, sleep=None, settle=0.0):
     """Invert _apply_focus: defocus the target, re-focus the prior window. Best-effort
-    if the prior focused window id was unresolved (None)."""
+    if the prior focused window id was unresolved (None). The target-defocus is
+    independently guarded so its failure does not skip re-focusing the prior window."""
     sky_post = sky_post or _native_focus_post
     if ctx.get("target_psn") is not None:
-        sky_post(ctx["target_psn"], build_focus_record(ctx["target_window_id"], mode=0x02))
+        try:
+            sky_post(ctx["target_psn"], build_focus_record(ctx["target_window_id"], mode=0x02))
+        except Exception as e:
+            print(f"  restore: target defocus failed: {type(e).__name__}: {e}")
     pw = ctx.get("prev_window_id")
     if ctx.get("prev_psn") is not None and pw is not None:
         sky_post(ctx["prev_psn"], build_focus_record(pw, mode=0x01))
@@ -686,12 +703,15 @@ def _deliver_specs(pid, window_id, rec, inset, specs, opts, *,
                    make_sampler=None):
     """Post a spec list with concurrent sampler instrumentation, optional
     focus-without-raise (+ restore), and per-spec timing. Returns the sampler
-    summary. Best-effort: this never raises through -- a native failure during
-    focus or delivery is caught, the focus is restored (if it was applied), the
-    sampler is always stopped, and the failure is surfaced as `summary['error']`
-    with `inconclusive` set. The keyword seams (port, sleep, apply_focus,
-    restore_focus, make_sampler) are for unit tests; the live path builds the real
-    ones. When no port seam is given, the Accessibility preflight gates delivery."""
+    summary. Best-effort: a native failure DURING focus or delivery (or during
+    restore) is caught -- the focus is restored if it was applied, the sampler is
+    always stopped, and the failure is surfaced as `summary['error']` with
+    `inconclusive` set; this never raises through for focus/delivery/restore. (A
+    SETUP failure -- missing SkyLight symbol, or the sampler thread failing to
+    start -- surfaces as an exception by design, so a broken environment is loud.)
+    The keyword seams (port, sleep, apply_focus, restore_focus, make_sampler) are
+    for unit tests; the live path builds the real ones. When no port seam is given,
+    the Accessibility preflight gates delivery."""
     if port is None and not kb.preflight_post_access():
         print("  REFUSED: grant Accessibility/Input Monitoring; aborting.")
         return {"inconclusive": True}
@@ -722,7 +742,10 @@ def _deliver_specs(pid, window_id, rec, inset, specs, opts, *,
                 try:
                     _restore(focus_ctx)
                 except Exception as e:
-                    print(f"  ERROR during focus restore: {type(e).__name__}: {e}")
+                    restore_err = f"restore failed: {type(e).__name__}: {e}"
+                    print(f"  ERROR during focus restore: {restore_err}")
+                    if error is None:
+                        error = restore_err
     finally:
         summary = sampler.stop()
     if error is not None:
