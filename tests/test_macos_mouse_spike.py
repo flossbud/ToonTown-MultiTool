@@ -1,6 +1,7 @@
 import importlib.util
 import pathlib
 import sys
+import types
 
 import pytest
 
@@ -36,9 +37,6 @@ def test_content_point_to_global_respects_inset():
     frame = (0, 0, 200, 120)
     # inset 20 -> content (0,20,200,100); center maps to (100, 70).
     assert spike.content_point_to_global((0.5, 0.5), frame, 20) == (100.0, 70.0)
-
-
-import types
 
 
 def test_main_no_args_and_unknown_return_2():
