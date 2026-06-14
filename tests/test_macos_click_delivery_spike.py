@@ -698,6 +698,43 @@ def test_deliver_specs_restores_focus_and_surfaces_error_on_post_failure():
     assert log == ["focus", "restore"]
 
 
+def test_deliver_specs_releases_held_button_on_mid_gesture_failure():
+    posts = []
+
+    class _Port:
+        def __init__(self):
+            self.ups = 0
+
+        def make_event(self, kind, cc, win):
+            return __import__("types").SimpleNamespace(kind=kind)
+
+        def set_public_field(self, *a): pass
+        def set_private_field(self, *a): pass
+        def set_window_location(self, *a): pass
+        def set_location(self, *a): pass
+        def set_source_user_data(self, *a): pass
+
+        def post(self, pid, ev):
+            posts.append(ev.kind)
+            if ev.kind == "up":
+                self.ups += 1
+                if self.ups == 1:          # fail the gesture's closing up
+                    raise RuntimeError("up boom")
+
+    class _Nop:
+        def start(self): pass
+        def stop(self): return {"inconclusive": False}
+
+    opts = spike.parse_sl_args(["1", "2", "--timing", "zero"])
+    out = spike._deliver_specs(1, 77, _winrec(), 0,
+                               spike.click_event_specs((5.0, 5.0), primer=False), opts,
+                               port=_Port(), sleep=lambda s: None,
+                               make_sampler=lambda: _Nop())
+    # the failed up triggered a COMPENSATING up -> the button is never left held
+    assert posts == ["move", "down", "up", "up"]
+    assert out["inconclusive"] is True and "up boom" in out["error"]
+
+
 def test_front_window_id_picks_owner_window():
     wins = [{"kCGWindowOwnerPID": 9, "kCGWindowNumber": 111},
             {"kCGWindowOwnerPID": 4321, "kCGWindowNumber": 222},

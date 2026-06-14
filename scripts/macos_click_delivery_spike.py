@@ -536,8 +536,22 @@ class FocusCursorSampler:
 
 
 # ── delivery engine (native via injectable seams; orchestration unit-tested) ──
+TRUSTED_BUNDLE = "com.toontownrewritten.engine"
+
+
 def _resolve_rec(pid):
-    return next((r for r in kb.enumerate_windows() if r.pid == pid), None)
+    """The TTR WindowRecord for `pid`, or None. Enforces the trusted bundle id -- a
+    spike that posts synthetic input must only target com.toontownrewritten.engine,
+    not whatever else might share the 'Toontown Rewritten' owner name. (A record with
+    no bundle id -- e.g. a unit-test fake -- is allowed; live enumeration fills it.)"""
+    rec = next((r for r in kb.enumerate_windows() if r.pid == pid), None)
+    if rec is None:
+        return None
+    if getattr(rec, "bundle_id", None) not in (None, TRUSTED_BUNDLE):
+        print(f"  REFUSED: pid={pid} bundle={rec.bundle_id!r} is not the trusted "
+              f"{TRUSTED_BUNDLE}; refusing to post.")
+        return None
+    return rec
 
 
 def _win_local(rec, frac, inset):
@@ -739,6 +753,8 @@ def _deliver_specs(pid, window_id, rec, inset, specs, opts, *,
     sampler.start()
     focus_ctx = None
     error = None
+    button_down = False
+    last_point = OFF_WINDOW_POINT
     try:
         try:
             if opts.focus:
@@ -746,12 +762,23 @@ def _deliver_specs(pid, window_id, rec, inset, specs, opts, *,
             gaps = timing_gaps(opts.timing, has_primer=opts.primer)
             for spec in specs:
                 _post_one(port, pid, window_id, rec, inset, spec)
+                if spec.kind in ("down", "dragged"):
+                    button_down, last_point = True, spec.point
+                elif spec.kind == "up":
+                    button_down = False
                 _sleep(_gap_after(spec, gaps, opts.hold))
         except Exception as e:
             # A native focus/delivery failure must not crash the operator run; it
             # also must not skip restoring a focus we already stole.
             error = f"{type(e).__name__}: {e}"
             print(f"  ERROR during delivery: {error}")
+            if button_down:   # never leave a held button on the target (spec 4.1 #6)
+                try:
+                    _post_one(port, pid, window_id, rec, inset,
+                              EventSpec("up", last_point, 1))
+                    print("  posted a compensating release (avoid a stuck button).")
+                except Exception:
+                    pass
         finally:
             if opts.restore_focus and focus_ctx is not None:
                 try:
@@ -816,10 +843,14 @@ def cmd_sl_click(rest):
     print("  hold movement in the source. Watch: does the TARGET register the click")
     print("  at the right spot? does the source/cursor/focus stay put?")
     input("  press Enter when positioned... ")
-    last = {}
-    for _ in range(opts.reps):
-        last = _deliver_specs(pid, window_id, rec, opts.inset, specs, opts)
-    print(f"  sampler(last rep): {last}")
+    results = []
+    for i in range(opts.reps):
+        s = _deliver_specs(pid, window_id, rec, opts.inset, specs, opts)
+        results.append(s)
+        print(f"  rep {i + 1}/{opts.reps}: {s}")
+    clean = sum(1 for s in results if not s.get("error") and not s.get("inconclusive"))
+    print(f"  {clean}/{opts.reps} reps completed without error/inconclusive "
+          "(REGISTERED is operator-judged: how many did the target visibly react to?)")
     print("  record: registered? (N/reps), position correct?, focus/cursor changed?")
     return 0
 
@@ -853,10 +884,14 @@ def cmd_sl_gesture(rest):
     print("  TARGET toon BACKGROUND. Watch the cursor/selection TRACK the path; "
           "check start, two mid points, and the end.")
     input("  press Enter when positioned... ")
-    last = {}
-    for _ in range(opts.reps):
-        last = _deliver_specs(pid, window_id, rec, opts.inset, specs, opts)
-    print(f"  sampler(last rep): {last}")
+    results = []
+    for i in range(opts.reps):
+        s = _deliver_specs(pid, window_id, rec, opts.inset, specs, opts)
+        results.append(s)
+        print(f"  rep {i + 1}/{opts.reps}: {s}")
+    clean = sum(1 for s in results if not s.get("error") and not s.get("inconclusive"))
+    print(f"  {clean}/{opts.reps} reps completed without error/inconclusive "
+          "(REGISTERED is operator-judged: how many did the target visibly react to?)")
     print("  record: tracked at every sampled point? side effects?")
     return 0
 
@@ -899,6 +934,7 @@ def cmd_sl_fanout(rest):
         sampler.start()
         plan = fanout_phase_plan(target_ids, (0.0, 0.0))  # ordering only
         prev_phase, phase_t0, phase_ms = None, time.monotonic(), {}
+        rep_error, button_down = None, False
         try:
             # phase-wise: pay the gap + record the elapsed ONCE per phase boundary.
             for phase, tid, spec in plan:
@@ -910,13 +946,27 @@ def cmd_sl_fanout(rest):
                 wid, rec = recs[tid]
                 _post_one(port, tid, wid, rec, opts.inset,
                           EventSpec(spec.kind, points[tid], spec.click_count))
+                button_down = phase in ("down",) or (button_down and phase != "up")
                 prev_phase = phase
             if prev_phase is not None:
                 phase_ms[prev_phase] = round((time.monotonic() - phase_t0) * 1000, 2)
+        except Exception as e:   # a mid-fanout post failure must not crash the run...
+            rep_error = f"{type(e).__name__}: {e}"
+            print(f"  ERROR during fan-out: {rep_error}")
+            if button_down:      # ...nor leave any target holding the button
+                for tid in target_ids:
+                    wid, rec = recs[tid]
+                    try:
+                        _post_one(port, tid, wid, rec, opts.inset,
+                                  EventSpec("up", points[tid], 1))
+                    except Exception:
+                        pass
+                print("  posted compensating releases to all targets.")
         finally:
             summary = sampler.stop()
         print(f"  rep {rep + 1}/{opts.reps}: per-phase ms={phase_ms} "
-              f"for {len(target_ids)} targets; sampler: {summary}")
+              f"for {len(target_ids)} targets; sampler: {summary}"
+              f"{'; ERROR=' + rep_error if rep_error else ''}")
     print("  record: both registered? per-target correct? per-phase latency acceptable?")
     return 0
 
@@ -1191,8 +1241,12 @@ def cmd_inject_preflight(rest):
                f"({'GOT task port (live injection feasible)' if kr == 0 else 'blocked'})")
     except Exception as e:
         tfp = f"(probe failed: {type(e).__name__}: {e})"
+    import platform
+    host_arch = platform.machine()   # the injector's arch
+    arch_compat = (host_arch in arch.split()) if arch and "(" not in arch else None
     print(f"  codesign barriers: {flags}")
-    print(f"  arch: {arch}")
+    print(f"  arch: target={arch} injector={host_arch} compatible={arch_compat} "
+          f"(injection requires a SHARED arch between injector and target)")
     print(f"  task_for_pid (live Mach injection): {tfp}")
     print(f"  raw codesign -dvvv (verify the parse): {cs_text.strip()[:400]}")
     print("  DYLD_INSERT_LIBRARIES is LAUNCH-time (needs relaunch + no library "
