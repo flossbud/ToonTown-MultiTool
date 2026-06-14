@@ -110,6 +110,58 @@ def timing_gaps(profile: str, has_primer: bool) -> dict:
     return gaps
 
 
+# ── pure event-spec builders ───────────────────────────────────────────────
+@dataclasses.dataclass(frozen=True)
+class EventSpec:
+    """One event to post. `point` is a window-LOCAL point (the native layer also
+    derives the screen point). `primer` marks the off-window user-activation pair.
+    kind in {move, down, up, dragged}."""
+    kind: str
+    point: tuple
+    click_count: int
+    primer: bool = False
+
+
+def click_event_specs(point: tuple, primer: bool) -> list[EventSpec]:
+    """move(point) -> [primer down/up off-window] -> down(point) -> up(point).
+
+    The leading move is required: Panda reads click position from the preceding
+    motion event, not from the down (spec 1.2). The primer pair is an optional
+    Chromium-style user-activation hack, tested with and without.
+    """
+    specs = [EventSpec("move", point, 0)]
+    if primer:
+        specs.append(EventSpec("down", (-1.0, -1.0), 1, primer=True))
+        specs.append(EventSpec("up", (-1.0, -1.0), 1, primer=True))
+    specs.append(EventSpec("down", point, 1))
+    specs.append(EventSpec("up", point, 1))
+    return specs
+
+
+def hover_event_specs(points: list[tuple]) -> list[EventSpec]:
+    """Unclicked motion: a mouseMoved per point, no buttons."""
+    return [EventSpec("move", p, 0) for p in points]
+
+
+def drag_event_specs(from_pt: tuple, to_pt: tuple, steps: int) -> list[EventSpec]:
+    """move(from) -> down(from) -> `steps` dragged points -> up(to).
+
+    `steps` interior dragged events are linearly interpolated from `from_pt`
+    (exclusive) toward `to_pt` (inclusive of the final dragged sample); the
+    closing up is at `to_pt`. Every event after the move carries click_count 1.
+    """
+    if steps < 1:
+        raise ValueError("drag needs steps >= 1")
+    fx, fy = float(from_pt[0]), float(from_pt[1])
+    tx, ty = float(to_pt[0]), float(to_pt[1])
+    specs = [EventSpec("move", (fx, fy), 0), EventSpec("down", (fx, fy), 1)]
+    for i in range(1, steps + 1):
+        t = i / steps
+        specs.append(EventSpec("dragged", (fx + (tx - fx) * t, fy + (ty - fy) * t), 1))
+    specs.append(EventSpec("up", (tx, ty), 1))
+    return specs
+
+
 def cmd_list(rest):
     # One enumeration source across all spikes.
     return kb.cmd_list(rest)

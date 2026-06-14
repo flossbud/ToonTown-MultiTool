@@ -100,3 +100,51 @@ def test_timing_unknown_profile_raises():
     import pytest as _pytest
     with _pytest.raises(ValueError):
         spike.timing_gaps("bogus", has_primer=False)
+
+
+def test_click_specs_minimal_no_primer():
+    specs = spike.click_event_specs((100.0, 50.0), primer=False)
+    assert [(s.kind, s.point, s.click_count, s.primer) for s in specs] == [
+        ("move", (100.0, 50.0), 0, False),
+        ("down", (100.0, 50.0), 1, False),
+        ("up",   (100.0, 50.0), 1, False),
+    ]
+
+
+def test_click_specs_with_primer_inserts_offwindow_pair():
+    specs = spike.click_event_specs((10.0, 20.0), primer=True)
+    kinds = [(s.kind, s.point, s.primer) for s in specs]
+    assert kinds == [
+        ("move", (10.0, 20.0), False),
+        ("down", (-1.0, -1.0), True),
+        ("up",   (-1.0, -1.0), True),
+        ("down", (10.0, 20.0), False),
+        ("up",   (10.0, 20.0), False),
+    ]
+
+
+def test_hover_specs_are_all_moves():
+    pts = [(0.0, 0.0), (5.0, 5.0), (9.0, 9.0)]
+    specs = spike.hover_event_specs(pts)
+    assert all(s.kind == "move" and s.click_count == 0 for s in specs)
+    assert [s.point for s in specs] == pts
+
+
+def test_drag_specs_prime_down_drag_up_with_intermediate_points():
+    specs = spike.drag_event_specs((0.0, 0.0), (10.0, 0.0), steps=2)
+    kinds = [s.kind for s in specs]
+    # move (prime), down, 2 dragged, up
+    assert kinds == ["move", "down", "dragged", "dragged", "up"]
+    assert specs[0].point == (0.0, 0.0) and specs[1].point == (0.0, 0.0)
+    assert specs[-1].point == (10.0, 0.0)
+    # every drag event carries click_count 1 from down through up
+    assert all(s.click_count == 1 for s in specs[1:])
+    # intermediate points strictly advance toward the target
+    xs = [s.point[0] for s in specs]
+    assert xs == sorted(xs)
+
+
+def test_drag_steps_must_be_at_least_one():
+    import pytest as _pytest
+    with _pytest.raises(ValueError):
+        spike.drag_event_specs((0, 0), (1, 1), steps=0)
