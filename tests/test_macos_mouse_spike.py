@@ -36,3 +36,73 @@ def test_content_point_to_global_respects_inset():
     frame = (0, 0, 200, 120)
     # inset 20 -> content (0,20,200,100); center maps to (100, 70).
     assert spike.content_point_to_global((0.5, 0.5), frame, 20) == (100.0, 70.0)
+
+
+import types
+
+
+def test_main_no_args_and_unknown_return_2():
+    assert spike.main([]) == 2
+    assert spike.main(["bogus"]) == 2
+
+
+@pytest.mark.parametrize("cmd,func", [
+    ("list", "cmd_list"), ("probe-rect", "cmd_probe_rect"), ("click", "cmd_click"),
+    ("motion", "cmd_motion"), ("echo", "cmd_echo"),
+])
+def test_main_routes_every_command_and_forwards_args(monkeypatch, cmd, func):
+    calls = []
+    monkeypatch.setattr(spike, func, lambda rest: (calls.append(rest), 0)[1])
+    assert spike.main([cmd, "x", "y"]) == 0
+    assert calls == [["x", "y"]]
+
+
+class _FakeQuartz:
+    # Records the CGEvent the spike builds so the test can assert the stamp.
+    kCGEventSourceUserData = 111
+    kCGMouseButtonLeft = 0
+    kCGMouseButtonCenter = 2
+    kCGEventMouseMoved = 5
+    kCGEventLeftMouseDown = 1
+    kCGEventLeftMouseUp = 2
+    kCGEventLeftMouseDragged = 6
+
+    def __init__(self):
+        self.posted = []        # (pid, event)
+        self.fields = {}        # id(event) -> {field: value}
+
+    def CGEventCreateMouseEvent(self, src, etype, pos, button):
+        ev = types.SimpleNamespace(etype=etype, pos=pos, button=button)
+        self.fields[id(ev)] = {}
+        return ev
+
+    def CGEventSetIntegerValueField(self, ev, field, value):
+        self.fields[id(ev)][field] = value
+
+    def CGEventPostToPid(self, pid, ev):
+        self.posted.append((pid, ev))
+
+
+def test_post_mouse_stamps_marker_and_posts(monkeypatch):
+    fq = _FakeQuartz()
+    monkeypatch.setattr(spike.kb, "_quartz", lambda: fq)
+    monkeypatch.setattr(spike.kb, "preflight_post_access", lambda: True)
+    # Pass an explicit source so post_mouse does NOT call kb._event_source()
+    # (which the fake Quartz does not implement); this isolates the stamp path.
+    ok = spike.post_mouse(4242, 7, fq.kCGEventLeftMouseDown, 120.0, 240.0,
+                          button=fq.kCGMouseButtonLeft, source=object(),
+                          revalidate=False)
+    assert ok is True
+    assert len(fq.posted) == 1
+    pid, ev = fq.posted[0]
+    assert pid == 4242
+    assert fq.fields[id(ev)][fq.kCGEventSourceUserData] == spike.SPIKE_EVENT_TAG
+
+
+def test_post_mouse_refuses_without_access(monkeypatch):
+    fq = _FakeQuartz()
+    monkeypatch.setattr(spike.kb, "_quartz", lambda: fq)
+    monkeypatch.setattr(spike.kb, "preflight_post_access", lambda: False)
+    assert spike.post_mouse(4242, 7, fq.kCGEventLeftMouseDown, 1.0, 2.0,
+                            source=object(), revalidate=False) is False
+    assert fq.posted == []

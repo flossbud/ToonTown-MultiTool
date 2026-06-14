@@ -57,6 +57,31 @@ def content_point_to_global(frac_xy, frame_bounds, inset_top=0):
     return (cx + fx * cw, cy + fy * ch)
 
 
+def post_mouse(pid, window_id, etype, global_x, global_y, button=None,
+               source=None, state_name="combined", expected_bundle="__unset__",
+               revalidate=True) -> bool:
+    """Post one mouse event to `pid` at a GLOBAL point, tagged for echo detection.
+
+    Returns False (never raises) if access is missing or the target failed
+    re-validation. `revalidate=False` skips the per-call enumeration for hot
+    paths (motion sweeps); the Accessibility preflight is ALWAYS checked.
+    """
+    Q = kb._quartz()
+    if not kb.preflight_post_access():
+        print("  REFUSED: no post-event access (grant Accessibility)")
+        return False
+    if revalidate and not kb.pid_alive_and_ttr(pid, window_id, expected_bundle):
+        print(f"  REFUSED: target pid={pid} window_id={window_id} no longer valid")
+        return False
+    if button is None:
+        button = Q.kCGMouseButtonLeft
+    src = source if source is not None else kb._event_source(state_name)
+    ev = Q.CGEventCreateMouseEvent(src, etype, (float(global_x), float(global_y)), button)
+    Q.CGEventSetIntegerValueField(ev, Q.kCGEventSourceUserData, SPIKE_EVENT_TAG)
+    Q.CGEventPostToPid(pid, ev)
+    return True
+
+
 def main(argv=None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if not argv:
@@ -80,7 +105,9 @@ def main(argv=None) -> int:
 # Command bodies are added by Tasks 2-5; defined here so main() routing is
 # testable in isolation (each is monkeypatched in the routing test).
 def cmd_list(rest):
-    raise NotImplementedError
+    # The keyboard spike's list already prints preflight + TTR windows; reuse it
+    # verbatim so the operator has one enumeration source across both spikes.
+    return kb.cmd_list(rest)
 
 
 def cmd_probe_rect(rest):
