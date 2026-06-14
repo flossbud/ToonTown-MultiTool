@@ -125,7 +125,7 @@ def _capture_posts(monkeypatch, ok=True):
     posts = []
 
     def _rec(pid, wid, etype, gx, gy, *a, **k):
-        posts.append((pid, etype))
+        posts.append((pid, etype, gx, gy))
         return ok
 
     monkeypatch.setattr(spike.kb, "_quartz", lambda: _FakeQuartz())
@@ -141,12 +141,14 @@ def test_cmd_click_drives_all_four_stages_to_right_targets(monkeypatch):
     assert spike.cmd_click(["4242", "5252"]) == 0
     Q = _FakeQuartz()
     down, up = Q.kCGEventLeftMouseDown, Q.kCGEventLeftMouseUp
-    # baseline B, central B, reverse A, third-app B -- each a down then an up.
+    c = (400.0, 300.0)  # content center of the (0,0,800,600) frame at inset 0
+    # baseline B, central B, reverse A, third-app B -- each a down then an up,
+    # always at the window center.
     assert posts == [
-        (5252, down), (5252, up),   # baseline  -> pidB
-        (5252, down), (5252, up),   # central   -> pidB
-        (4242, down), (4242, up),   # reverse   -> pidA
-        (5252, down), (5252, up),   # third-app -> pidB
+        (5252, down, *c), (5252, up, *c),   # baseline  -> pidB
+        (5252, down, *c), (5252, up, *c),   # central   -> pidB
+        (4242, down, *c), (4242, up, *c),   # reverse   -> pidA
+        (5252, down, *c), (5252, up, *c),   # third-app -> pidB
     ]
 
 
@@ -168,9 +170,17 @@ def test_cmd_probe_rect_clicks_five_points(monkeypatch):
     monkeypatch.setattr("builtins.input", lambda *_a: "")
     posts = _capture_posts(monkeypatch)
     assert spike.cmd_probe_rect(["4242"]) == 0
-    # 4 corners + center = 5 points, each a down+up = 10 posts, all to pid 4242.
-    assert len(posts) == 10
-    assert all(pid == 4242 for pid, _etype in posts)
+    Q = _FakeQuartz()
+    down, up = Q.kCGEventLeftMouseDown, Q.kCGEventLeftMouseUp
+    # 4 corners (0.02/0.98) + center, each a down+up, at the exact global points
+    # for the (0,0,800,600) frame at inset 0 -- verifies the corner walk.
+    assert posts == [
+        (4242, down, 16.0, 12.0),   (4242, up, 16.0, 12.0),     # top-left
+        (4242, down, 784.0, 12.0),  (4242, up, 784.0, 12.0),    # top-right
+        (4242, down, 16.0, 588.0),  (4242, up, 16.0, 588.0),    # bottom-left
+        (4242, down, 784.0, 588.0), (4242, up, 784.0, 588.0),   # bottom-right
+        (4242, down, 400.0, 300.0), (4242, up, 400.0, 300.0),   # center
+    ]
 
 
 def test_cmd_click_rejects_equal_pids(monkeypatch):
