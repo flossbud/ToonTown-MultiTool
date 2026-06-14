@@ -515,6 +515,8 @@ def test_gap_after_selects_the_right_gap():
     assert spike._gap_after(up, g, hold=0.0) == 0.0
     assert spike._gap_after(pdown, g, hold=0.3) == 0.1        # primer internal (no hold)
     assert spike._gap_after(pup, g, hold=0.0) == 0.5          # primer -> target
+    drag = spike.EventSpec("dragged", (0.0, 0.0), 1)
+    assert spike._gap_after(drag, g, hold=0.3) == 0.0         # no inter-step sleep
 
 
 def test_post_one_posts_through_port_with_correct_points():
@@ -583,25 +585,72 @@ def test_resolve_psns_assembles_and_surfaces_status_errors():
         front_psn_fn=lambda: b"\xaa" * 8, front_pid_fn=lambda: 4321)
     assert out == (b"\x01\x00\x00\x00\x02\x00\x00\x00", b"\xaa" * 8, 4321)
     import pytest as _pytest
+    # non-zero owner status raises...
     with _pytest.raises(RuntimeError):
         spike._resolve_psns(77, main_cid_fn=lambda: 1, owner_fn=lambda c, w: (-1, 0),
                             psn_fn=lambda o: (0, b""), front_psn_fn=lambda: b"",
                             front_pid_fn=lambda: 1)
+    # ...and so does a non-zero connection-PSN status (the second branch)
+    with _pytest.raises(RuntimeError):
+        spike._resolve_psns(77, main_cid_fn=lambda: 1, owner_fn=lambda c, w: (0, 9),
+                            psn_fn=lambda o: (-2, b""), front_psn_fn=lambda: b"",
+                            front_pid_fn=lambda: 1)
 
 
 def test_apply_and_restore_focus_post_the_right_records():
+    # record (psn, mode_byte, embedded_window_id) for each focus post.
     posts = []
+
+    def rec_post(psn, rec):
+        posts.append((psn, rec[0x8A], int.from_bytes(rec[0x3C:0x40], "little")))
+
     ctx = spike._apply_focus(
         77, resolve_psns_fn=lambda: (b"TGT", b"PREV", 4321),
-        front_window_fn=lambda pid: 5,
-        sky_post=lambda psn, rec: posts.append((psn, rec[0x8A])), sleep=lambda s: None)
-    # defocus prev (mode 2) then focus target (mode 1)
-    assert posts == [(b"PREV", 0x02), (b"TGT", 0x01)]
+        front_window_fn=lambda pid: 5, sky_post=rec_post, sleep=lambda s: None)
+    # apply: defocus prev (mode 2) then focus target (mode 1); BOTH carry the TARGET
+    # window id (77) -- cua reuses the one target-wid record (spec 2.2).
+    assert posts == [(b"PREV", 0x02, 77), (b"TGT", 0x01, 77)]
     assert ctx["prev_window_id"] == 5 and ctx["target_window_id"] == 77
     posts.clear()
-    spike._restore_focus(ctx, sky_post=lambda psn, rec: posts.append((psn, rec[0x8A])))
-    # defocus target (mode 2) then re-focus prev window (mode 1)
-    assert posts == [(b"TGT", 0x02), (b"PREV", 0x01)]
+    spike._restore_focus(ctx, sky_post=rec_post)
+    # restore inverse pair: defocus target (mode 2, target wid 77) then focus prev
+    # (mode 1, with the PRIOR window id 5).
+    assert posts == [(b"TGT", 0x02, 77), (b"PREV", 0x01, 5)]
+
+
+def test_deliver_specs_restores_focus_and_surfaces_error_on_post_failure():
+    log = []
+
+    class _BoomPort:
+        def make_event(self, *a): return __import__("types").SimpleNamespace(kind="x")
+        def set_public_field(self, *a): pass
+        def set_private_field(self, *a): pass
+        def set_window_location(self, *a): pass
+        def set_location(self, *a): pass
+        def set_source_user_data(self, *a): pass
+        def post(self, pid, ev): raise RuntimeError("post boom")
+
+    class _Nop:
+        def start(self): pass
+        def stop(self): return {"inconclusive": False}
+
+    def fake_apply(wid):
+        log.append("focus")
+        return {"prev_psn": b"p", "prev_window_id": 5, "target_psn": b"t",
+                "target_window_id": wid}
+
+    def fake_restore(ctx): log.append("restore")
+
+    opts = spike.parse_sl_args(["1", "2", "--focus", "--restore-focus", "--timing", "zero"])
+    out = spike._deliver_specs(1, 77, _winrec(), 0,
+                               spike.click_event_specs((1.0, 1.0), primer=False), opts,
+                               port=_BoomPort(), sleep=lambda s: None,
+                               apply_focus=fake_apply, restore_focus=fake_restore,
+                               make_sampler=lambda: _Nop())
+    # never raised through; surfaced the error + marked inconclusive; restored focus
+    # despite the mid-delivery failure.
+    assert out["inconclusive"] is True and "post boom" in out["error"]
+    assert log == ["focus", "restore"]
 
 
 def test_front_window_id_picks_owner_window():

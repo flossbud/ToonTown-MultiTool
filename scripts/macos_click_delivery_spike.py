@@ -592,7 +592,9 @@ def _native_connection_psn(owner_cid):
 def _native_front_psn():
     sky = _skylight()
     prev = (ctypes.c_uint32 * 2)()
-    sky["_SLPSGetFrontProcess"](ctypes.byref(prev))
+    err = sky["_SLPSGetFrontProcess"](ctypes.byref(prev))
+    if err != 0:
+        raise RuntimeError(f"_SLPSGetFrontProcess failed: status={err}")
     return bytes(prev)
 
 
@@ -611,7 +613,9 @@ def _native_window_list():
 
 
 def _native_focus_post(psn_bytes, record_bytes):
-    _skylight()["SLPSPostEventRecordTo"](psn_bytes, record_bytes)
+    err = _skylight()["SLPSPostEventRecordTo"](psn_bytes, record_bytes)
+    if err != 0:
+        raise RuntimeError(f"SLPSPostEventRecordTo failed: status={err}")
 
 
 def _resolve_psns(window_id, *, main_cid_fn=None, owner_fn=None, psn_fn=None,
@@ -682,10 +686,12 @@ def _deliver_specs(pid, window_id, rec, inset, specs, opts, *,
                    make_sampler=None):
     """Post a spec list with concurrent sampler instrumentation, optional
     focus-without-raise (+ restore), and per-spec timing. Returns the sampler
-    summary. Best-effort; never raises through. The keyword seams (port, sleep,
-    apply_focus, restore_focus, make_sampler) are for unit tests; the live path
-    builds the real ones. When no port seam is given, the Accessibility preflight
-    gates delivery."""
+    summary. Best-effort: this never raises through -- a native failure during
+    focus or delivery is caught, the focus is restored (if it was applied), the
+    sampler is always stopped, and the failure is surfaced as `summary['error']`
+    with `inconclusive` set. The keyword seams (port, sleep, apply_focus,
+    restore_focus, make_sampler) are for unit tests; the live path builds the real
+    ones. When no port seam is given, the Accessibility preflight gates delivery."""
     if port is None and not kb.preflight_post_access():
         print("  REFUSED: grant Accessibility/Input Monitoring; aborting.")
         return {"inconclusive": True}
@@ -697,17 +703,31 @@ def _deliver_specs(pid, window_id, rec, inset, specs, opts, *,
     sampler = make_sampler()
     sampler.start()
     focus_ctx = None
+    error = None
     try:
-        if opts.focus:
-            focus_ctx = _apply(window_id)
-        gaps = timing_gaps(opts.timing, has_primer=opts.primer)
-        for spec in specs:
-            _post_one(port, pid, window_id, rec, inset, spec)
-            _sleep(_gap_after(spec, gaps, opts.hold))
-        if opts.restore_focus and focus_ctx is not None:
-            _restore(focus_ctx)
+        try:
+            if opts.focus:
+                focus_ctx = _apply(window_id)
+            gaps = timing_gaps(opts.timing, has_primer=opts.primer)
+            for spec in specs:
+                _post_one(port, pid, window_id, rec, inset, spec)
+                _sleep(_gap_after(spec, gaps, opts.hold))
+        except Exception as e:
+            # A native focus/delivery failure must not crash the operator run; it
+            # also must not skip restoring a focus we already stole.
+            error = f"{type(e).__name__}: {e}"
+            print(f"  ERROR during delivery: {error}")
+        finally:
+            if opts.restore_focus and focus_ctx is not None:
+                try:
+                    _restore(focus_ctx)
+                except Exception as e:
+                    print(f"  ERROR during focus restore: {type(e).__name__}: {e}")
     finally:
         summary = sampler.stop()
+    if error is not None:
+        summary["inconclusive"] = True
+        summary["error"] = error
     return summary
 
 
