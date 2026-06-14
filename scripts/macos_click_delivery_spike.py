@@ -514,14 +514,14 @@ class FocusCursorSampler:
         self._t = threading.Thread(target=self._run, daemon=True)
         self._t.start()
 
-    def stop(self):
+    def stop(self, join_timeout=1.0):
         """Stop the thread and return the summary. `thread_stopped` is False if the
-        worker did not exit within the join window (e.g. parked in a slow native
+        worker did not exit within `join_timeout` (e.g. parked in a slow native
         probe) -- a signal the summary may be slightly truncated."""
         self._stop.set()
         alive_after = False
         if self._t is not None:
-            self._t.join(timeout=1.0)
+            self._t.join(timeout=join_timeout)
             alive_after = self._t.is_alive()
         out = summarize_samples(self.samples)
         out["thread_stopped"] = not alive_after

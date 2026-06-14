@@ -423,3 +423,52 @@ def test_sampler_double_start_raises():
             s.start()
     finally:
         s.stop()
+
+
+def test_sampler_ipc_probes_run_on_subcadence_not_every_tick():
+    # locks the cadence split: cheap probes every tick, IPC on a sub-cadence,
+    # tick-0 IPC sampled, value carried forward on intervening cheap-only ticks.
+    import threading as _th
+    enough = _th.Event()
+    counts = {"cursor": 0, "ipc": 0}
+
+    def cursor_fn():
+        counts["cursor"] += 1
+        if counts["cursor"] >= 60:
+            enough.set()
+        return (0.0, 0.0)
+
+    def ax_fn(fp):
+        counts["ipc"] += 1   # one increment per IPC-cadence tick
+        return "AXWIN"
+
+    s = spike.FocusCursorSampler(
+        source_pid=1, target_pid=2, interval=0.001, ipc_interval=0.05,  # _ipc_every=50
+        cursor_fn=cursor_fn, frontmost_fn=lambda: 1,
+        isactive_fn=lambda p: None, ax_fn=ax_fn)
+    s.start()
+    assert enough.wait(2.0)
+    s.stop()
+    assert counts["ipc"] < counts["cursor"] // 10     # IPC far rarer than every tick
+    assert s.samples[0][5] == "AXWIN"                  # tick 0 sampled IPC
+    assert s.samples[1][5] == "AXWIN"                  # carried forward on a cheap tick
+
+
+def test_sampler_reports_not_stopped_when_worker_parks():
+    # the thread_stopped flag surfaces a worker parked in a slow probe.
+    import threading as _th
+    started, release = _th.Event(), _th.Event()
+
+    def cursor_fn():
+        started.set()
+        release.wait(timeout=2.0)   # park the worker until the test releases it
+        return (0.0, 0.0)
+
+    s = spike.FocusCursorSampler(cursor_fn=cursor_fn, frontmost_fn=lambda: 1,
+                                 isactive_fn=lambda p: None, ax_fn=lambda f: None,
+                                 interval=0.001)
+    s.start()
+    assert started.wait(1.0)
+    out = s.stop(join_timeout=0.05)    # worker still parked in cursor_fn
+    assert out["thread_stopped"] is False
+    release.set()                      # let the daemon finish
