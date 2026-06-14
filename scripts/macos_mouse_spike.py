@@ -379,24 +379,38 @@ def cmd_echo(rest):
     src = Q.CFMachPortCreateRunLoopSource(None, tap, 0)
     runloop_holder = {}
 
+    ready = threading.Event()
+
     def _run():
         rl = _Q.CFRunLoopGetCurrent()
         runloop_holder["rl"] = rl
         _Q.CFRunLoopAddSource(rl, src, _Q.kCFRunLoopCommonModes)
         Q.CGEventTapEnable(tap, True)
+        ready.set()          # tap enabled + source attached -> safe to post
         _Q.CFRunLoopRun()
 
     t = threading.Thread(target=_run, daemon=True)
     t.start()
-    time.sleep(0.3)  # let the run loop spin up
+    # Readiness handshake (not a blind sleep): wait until the tap is enabled and
+    # attached, then a brief settle for CFRunLoopRun to enter its service cycle.
+    # Avoids a false ours==0 from posting before the tap is live.
+    if not ready.wait(timeout=2.0):
+        print("  ERROR: the tap thread did not become ready within 2s.")
+        return 1
+    time.sleep(0.1)
 
     rec = recs[pid]
     gx, gy = content_point_to_global((0.5, 0.5), rec.bounds, opts["inset"])
     print(f"[echo] posting 10 tagged mouse events to pid={pid}; tap is listen-only.")
+    posted_ok = 0
     for i in range(10):
-        post_mouse(pid, rec.window_id, Q.kCGEventMouseMoved, gx + i, gy,
-                   revalidate=False)
+        if post_mouse(pid, rec.window_id, Q.kCGEventMouseMoved, gx + i, gy,
+                      revalidate=False):
+            posted_ok += 1
         time.sleep(0.05)
+    if posted_ok == 0:
+        print("  WARNING: all 10 posts were REFUSED (grant Accessibility); the echo "
+              "result below is INCONCLUSIVE - no tagged events were sent.")
     print(f"[echo] now move/click your REAL mouse for ~{opts['seconds']}s so the tap "
           "sees physical input too.")
     time.sleep(opts["seconds"])
