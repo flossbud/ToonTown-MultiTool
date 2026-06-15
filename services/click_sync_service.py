@@ -64,7 +64,7 @@ class ClickSyncService(QObject):
 
     def __init__(self, slot_window_resolver, geometry_provider,
                  source_resolver, backend, capture_factory, parent=None,
-                 fresh_geometry_provider=None):
+                 fresh_geometry_provider=None, delivery_ready=None):
         """slot_window_resolver(slot:int) -> wid|None
         geometry_provider(wid:str) -> (x, y, w, h)|None  (cached is fine:
             drives the periodic aspect-compatibility re-check)
@@ -85,6 +85,10 @@ class ClickSyncService(QObject):
         self._source_resolver = source_resolver
         self._backend = backend
         self._capture_factory = capture_factory
+        # Optional (ready: bool, reason: str|None) probe consulted before going
+        # active and on every recompute tick. Default = always-ready so Linux/
+        # Windows are unchanged; darwin passes backend.mouse_delivery_ready.
+        self._delivery_ready_fn = delivery_ready or (lambda: (True, None))
 
         self._lock = threading.RLock()
         self._enabled = False
@@ -148,6 +152,30 @@ class ClickSyncService(QObject):
     def slot_states(self) -> dict[int, str]:
         with self._lock:
             return dict(self._states)
+
+    def _delivery_ready(self):
+        """(ready, reason). FAIL-CLOSED: a probe exception returns NOT-ready. Mouse
+        delivery rides a private-ABI path, so an unverifiable state must NOT be treated
+        as working (contrast has_post_access, which fails open for keyboard)."""
+        try:
+            ready, reason = self._delivery_ready_fn()
+            return (bool(ready), reason)
+        except Exception as e:
+            return (False, f"delivery-readiness probe error: {type(e).__name__}")
+
+    def _fail_delivery_locked(self, reason):
+        """Stop the capture, drain any in-flight gesture, and put members into the
+        error state with `reason`. Caller holds self._lock. Returns the capture to stop
+        (the caller stops it OUTSIDE the lock, like the recompute path). Idempotent."""
+        to_stop, self._capture = self._capture, None
+        self._service_failed = True
+        if self._gesture is not None:
+            self._drain_locked(reason)
+        self._clear_hover_locked()
+        self._set_states_locked({
+            s: ("error" if s in self._members else "off") for s in range(SLOT_COUNT)
+        })
+        return to_stop
 
     def recompute(self) -> None:
         """Re-evaluate usability + aspect compatibility and (re)start or stop
@@ -213,7 +241,19 @@ class ClickSyncService(QObject):
                 self._set_states_locked(new_states)
                 emit_states = dict(new_states)
             emit_error = False
-            if now_active:
+            err_reason = None
+            err_trace = None   # distinct trace string (preserves existing diagnostics)
+            dr_ok, dr_reason = self._delivery_ready() if now_active else (True, None)
+            if now_active and not dr_ok:
+                # Delivery unavailable (missing SkyLight symbols / revoked access /
+                # a sticky engine fault): refuse/stop the capture and latch the error
+                # with the reason, exactly like the capture-dead branch. (Probe ONCE so a
+                # stateful probe can't report a different reason than it gated on.)
+                err_reason = dr_reason or "mouse delivery unavailable"
+                to_stop = self._fail_delivery_locked(err_reason)
+                emit_states = dict(self._states)
+                emit_error = True
+            elif now_active:
                 cap = self._capture
                 if cap is None:
                     start_new = True
@@ -233,6 +273,8 @@ class ClickSyncService(QObject):
                     })
                     emit_states = dict(self._states)
                     emit_error = True
+                    err_reason = "mouse capture stopped unexpectedly"
+                    err_trace = "service error: capture dead at recompute"  # original (unchanged)
             else:
                 to_stop, self._capture = self._capture, None
             emit_gen = self._states_gen
@@ -241,9 +283,8 @@ class ClickSyncService(QObject):
         if emit_states is not None:
             self._emit_if_current(
                 emit_states, emit_gen,
-                error_msg=("mouse capture stopped unexpectedly"
-                           if emit_error else None),
-                trace_msg=("service error: capture dead at recompute"
+                error_msg=(err_reason if emit_error else None),
+                trace_msg=((err_trace or ("service error: " + err_reason))
                            if emit_error else None))
         if to_stop is not None:
             to_stop.stop()
@@ -447,6 +488,19 @@ class ClickSyncService(QObject):
             targets[s] = (wid, g, (tx, ty))
         if not targets:
             return
+        # (b) pre-press: refuse to start a gesture into unavailable delivery.
+        p_ready, p_reason = self._delivery_ready()
+        if not p_ready:
+            p_err = p_reason or "mouse delivery unavailable"
+            to_stop = self._fail_delivery_locked(p_err)
+            fail_states = dict(self._states)
+            fail_gen = self._states_gen
+            if to_stop is not None:
+                threading.Thread(target=to_stop.stop, daemon=True).start()
+            self._emit_if_current(fail_states, fail_gen,
+                                  error_msg=p_err,
+                                  trace_msg=f"service error: {p_err}")
+            return
         _trace(f"press src=slot{src_slot} rel=({(root_x - src_geom[0]) / src_geom[2]:.3f},"
                f"{(root_y - src_geom[1]) / src_geom[3]:.3f}) -> {len(targets)} targets")
         delivered = {}
@@ -459,6 +513,30 @@ class ClickSyncService(QObject):
                 # Spec: backend failure (BadWindow) drops that target from
                 # the gesture; WindowManager re-detection restores the slot.
                 _trace(f"press inject failed slot{slot} wid={wid}; target dropped")
+                # (c) sticky: a press that failed AND left delivery not-ready
+                # stops NOW rather than waiting for the next recompute tick.
+                if not self._delivery_ready()[0]:
+                    c_err = "mouse delivery faulted mid-gesture"
+                    # Release any target already pressed in THIS loop so an abort mid-fan-out
+                    # never strands a held button (the gesture is aborted; self._gesture is not
+                    # set yet, so _fail_delivery_locked's drain cannot reach these). Best-effort
+                    # (a fully-faulted engine may not deliver the up; documented limitation).
+                    for d_slot, (d_wid, d_g, (d_tx, d_ty)) in delivered.items():
+                        try:
+                            self._backend.send_button_release(
+                                d_wid, d_tx, d_ty, d_g[0] + d_tx, d_g[1] + d_ty,
+                                state=state, time=time)
+                        except Exception:
+                            pass
+                    to_stop = self._fail_delivery_locked(c_err)
+                    fail_states = dict(self._states)
+                    fail_gen = self._states_gen
+                    if to_stop is not None:
+                        threading.Thread(target=to_stop.stop, daemon=True).start()
+                    self._emit_if_current(fail_states, fail_gen,
+                                          error_msg=c_err,
+                                          trace_msg=f"service error: {c_err}")
+                    return
         if not delivered:
             return
         self._gesture = Gesture(

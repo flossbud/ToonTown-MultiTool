@@ -2741,14 +2741,15 @@ class MultitoonTab(QWidget):
         # controller is constructed at the end of this method.
         self.ghost_cursor_controller = None
 
-        # Click sync (mouse mirroring) is Linux/X11 + Windows only; it is out of
-        # scope on macOS. Leave click_sync_service / _click_sync_backend as None
-        # (set in __init__) so the feature is simply absent, and -- critically --
-        # never import utils.xlib_backend here (it imports python-xlib, which is
-        # not installed on macOS) which would crash the app at startup. Downstream
-        # (shutdown, the per-toon toggle, state styling) already guards on None.
+        # Click sync (mouse mirroring) runs on Linux/X11, Windows, and macOS. On any
+        # OTHER platform leave click_sync_service / _click_sync_backend as None (set in
+        # __init__) so the feature is simply absent, and -- critically -- never import a
+        # platform backend here (e.g. utils.xlib_backend imports python-xlib, absent on
+        # macOS) which would crash the app at startup. Downstream (shutdown, the per-toon
+        # toggle, state styling) already guards on None. Each platform's backend is
+        # imported lazily inside its own branch below.
         import sys
-        if sys.platform not in ("win32", "linux"):
+        if sys.platform not in ("win32", "linux", "darwin"):
             return
 
         from services.click_sync_service import ClickSyncService
@@ -2758,6 +2759,8 @@ class MultitoonTab(QWidget):
             if slot < len(ids) and _wm.window_games.get(ids[slot]) == "ttr":
                 return ids[slot]
             return None
+
+        _cs_delivery_ready = None   # darwin sets this to backend.mouse_delivery_ready
 
         if sys.platform == "win32":
             from utils import win32_discovery as _disc
@@ -2811,7 +2814,7 @@ class MultitoonTab(QWidget):
             # and symmetric with the Linux dedicated-Display rule below.
             self._click_sync_backend = Win32Backend()
             _fresh_geom = _disc.get_window_geometry
-        else:
+        elif sys.platform == "linux":
             from utils import x11_discovery as _x11d
 
             def _cs_source_resolver(root_x, root_y, member_wids):
@@ -2882,6 +2885,35 @@ class MultitoonTab(QWidget):
             from utils.xlib_backend import XlibBackend
             self._click_sync_backend = XlibBackend()
             _fresh_geom = _x11d.get_window_geometry
+        elif sys.platform == "darwin":
+            from utils import macos_discovery as _macd
+            from utils.macos_backend import MacOSBackend
+            from utils.macos_mouse_capture import MacOSMouseCapture
+            from utils.macos_mouse_delivery import EchoLedger
+
+            # ONE shared EchoLedger: the delivery engine records every posted event into
+            # it; the capture's EchoGuard matches against it (marker-stripped echo defense).
+            _cs_echo_ledger = EchoLedger()
+
+            def _cs_source_resolver(root_x, root_y, member_wids):
+                # Safe active-window resolver (spec §3.4): the frontmost game window
+                # must be a member AND contain the point. The key-flip never changes
+                # system-front, so the active window is a reliable source.
+                return _macd.active_source_window(root_x, root_y, member_wids)
+
+            def _cs_capture_factory(on_event):
+                holder = []
+                cap = MacOSMouseCapture(
+                    on_event, ledger=_cs_echo_ledger,
+                    on_died=lambda: self.click_sync_service.notify_capture_died(
+                        holder[0]))
+                holder.append(cap)
+                return cap
+
+            self._click_sync_backend = MacOSBackend()
+            self._click_sync_backend.set_echo_ledger(_cs_echo_ledger)   # same instance into both
+            _fresh_geom = _macd.get_window_geometry_fresh
+            _cs_delivery_ready = self._click_sync_backend.mouse_delivery_ready
 
         try:
             self._click_sync_backend.connect()   # no-op on Win32Backend
@@ -2913,6 +2945,7 @@ class MultitoonTab(QWidget):
             # stale after a window move, which would mismap the injection.
             # The capture thread gets its own per-thread Display.
             fresh_geometry_provider=_fresh_geom,
+            delivery_ready=_cs_delivery_ready,
         )
         self.click_sync_service.slot_states_changed.connect(
             self._on_click_sync_states)
@@ -2935,23 +2968,25 @@ class MultitoonTab(QWidget):
         # Ghost cursors: per-toon glove overlays on synced windows (spec
         # 2026-06-11-click-sync-ghost-cursors-design.md). parent=self for
         # the same Qt-parenting teardown reason as the service above.
-        from tabs.multitoon._ghost_cursors import GhostCursorController
-        self.ghost_cursor_controller = GhostCursorController(
-            self.click_sync_service, self.settings_manager, parent=self,
-            slot_window_resolver=_cs_slot_wid)
-        # The focused window never shows a ghost (spec
-        # 2026-06-12-ghost-cursor-focus-suppress-design.md). Same
-        # duck-typed guard as window_geometry_updated above: offscreen
-        # fakes without the signal degrade to no focus suppression.
-        if hasattr(self.window_manager, "active_window_changed"):
-            self.window_manager.active_window_changed.connect(
-                self.ghost_cursor_controller.set_focused_window)
-        else:
-            print("[MultitoonTab] ghost cursors: window manager lacks "
-                  "active_window_changed; focus suppression disabled")
-        if hasattr(self.window_manager, "get_active_window"):
-            self.ghost_cursor_controller.set_focused_window(
-                self.window_manager.get_active_window() or "")
+        # Ghost cursors are NOT constructed on darwin (spec §3.6 / v1).
+        if sys.platform != "darwin":
+            from tabs.multitoon._ghost_cursors import GhostCursorController
+            self.ghost_cursor_controller = GhostCursorController(
+                self.click_sync_service, self.settings_manager, parent=self,
+                slot_window_resolver=_cs_slot_wid)
+            # The focused window never shows a ghost (spec
+            # 2026-06-12-ghost-cursor-focus-suppress-design.md). Same
+            # duck-typed guard as window_geometry_updated above: offscreen
+            # fakes without the signal degrade to no focus suppression.
+            if hasattr(self.window_manager, "active_window_changed"):
+                self.window_manager.active_window_changed.connect(
+                    self.ghost_cursor_controller.set_focused_window)
+            else:
+                print("[MultitoonTab] ghost cursors: window manager lacks "
+                      "active_window_changed; focus suppression disabled")
+            if hasattr(self.window_manager, "get_active_window"):
+                self.ghost_cursor_controller.set_focused_window(
+                    self.window_manager.get_active_window() or "")
         self._apply_click_sync_visibility()
 
     def toggle_click_sync(self, index: int) -> None:

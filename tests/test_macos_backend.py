@@ -215,8 +215,12 @@ def test_post_exception_returns_false(monkeypatch):
     assert fake.posts == []  # nothing recorded (raised before append)
 
 
-def test_mouse_methods_return_false():
+def test_mouse_methods_return_false(monkeypatch):
+    # Monkeypatch _refresh so the mouse methods never reach the real
+    # Quartz/SkyLight layer (which would pollute sys.modules for the
+    # test_module_imports_without_pyobjc assertion that follows).
     be = MacOSBackend()
+    monkeypatch.setattr(be, "_refresh", lambda: {})   # no valid game windows
     assert be.send_button_press("11", 1, 2, 3, 4) is False
     assert be.send_button_release("11", 1, 2, 3, 4) is False
     assert be.send_motion("11", 1, 2, 3, 4) is False

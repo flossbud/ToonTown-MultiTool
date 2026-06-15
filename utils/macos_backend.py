@@ -16,6 +16,8 @@ _CACHE_TTL = 0.25
 # CGPreflightPostEventAccess cache TTL. Accessibility (post) permission is
 # revocable at runtime, so re-check on a cadence rather than once at connect.
 _ACCESS_TTL = 1.0
+# X.Button1Mask in the service's X-style state mask (matches services.click_sync_service).
+_BUTTON1_MASK = 0x100
 
 
 class MacOSBackend:
@@ -24,6 +26,9 @@ class MacOSBackend:
         self._cache = {"t": -1.0, "valid": {}}  # wid_str -> (pid, bundle_id)
         self._trusted = {}  # wid_str -> bundle_id (first-sight identity lock)
         self._access = {"t": -1.0, "ok": True}  # CGPreflightPostEventAccess cache
+        self._delivery = None             # MacOSMouseDelivery (lazy)
+        self._echo_ledger = None          # shared EchoLedger (Task 8 wires it; the engine records into it)
+        self._bindings = {}               # wid_str -> (pid, wid, psn, owner, creation) for the live gesture
 
     def _quartz(self):
         import Quartz
@@ -38,6 +43,8 @@ class MacOSBackend:
         self._cache = {"t": -1.0, "valid": {}}
         self._trusted = {}
         self._access = {"t": -1.0, "ok": True}
+        self._delivery = None             # drop engine (clears any sticky delivery fault)
+        self._bindings = {}
 
     def has_post_access(self) -> bool:
         """Whether this process currently has permission to POST synthetic events
@@ -154,14 +161,117 @@ class MacOSBackend:
         up_ok = self._post_to_pid(pid, vk, False, flags)
         return down_ok and up_ok
 
+    def _engine(self):
+        if self._delivery is None:
+            from utils.macos_mouse_delivery import MacOSMouseDelivery
+            self._delivery = MacOSMouseDelivery(ledger=self._echo_ledger)
+        return self._delivery
+
+    def set_echo_ledger(self, ledger):
+        """Share the EchoLedger the capture uses, so every posted event is recorded for
+        the capture's marker-stripped-echo detection (Task 8 wires the SAME instance into
+        the backend + the capture). Rebuilds the engine so it picks the ledger up."""
+        self._echo_ledger = ledger
+        self._delivery = None
+
+    def mouse_delivery_ready(self):
+        """(ready: bool, reason: str | None). SEPARATE from has_post_access() so a
+        mouse-SPI break never disables working keyboard delivery (spec §3.2/§3.5).
+        Fail-CLOSED: ANY probe error (e.g. the engine's lazy import raising) returns
+        not-ready with a reason, NEVER ready (mirrors _creation_identity's discipline)."""
+        try:
+            if not self.has_post_access():
+                return (False, "accessibility (post-event) access not granted")
+            if not self._engine().available:
+                return (False, "macOS per-window mouse delivery unavailable "
+                               "(private SkyLight symbols missing or a delivery fault)")
+            return (True, None)
+        except Exception as e:
+            return (False, f"mouse delivery probe failed: {type(e).__name__}: {e}")
+
+    def _creation_identity(self, pid):
+        """A stable per-process token (NSRunningApplication launch date) so a reused PID
+        is detectable across a gesture. None if unavailable. Never raises."""
+        try:
+            from AppKit import NSRunningApplication
+            app = NSRunningApplication.runningApplicationWithProcessIdentifier_(int(pid))
+            if app is None:
+                return None
+            launched = app.launchDate()
+            return None if launched is None else float(launched.timeIntervalSince1970())
+        except Exception:
+            return None
+
+    def _reuse_detected(self, pid, wid, bound_creation, bound_owner) -> bool:
+        """True ONLY on positive evidence the bound wid/pid was recycled: a re-probed
+        identity that is non-None AND differs from a non-None bound value. A transient
+        None re-probe yields no positive evidence (proceeds), so a valid release is never
+        dropped; a both-None case proceeds best-effort (owner-connection is the stronger,
+        usually-available guard and catches a different process reusing the wid)."""
+        cur_creation = self._creation_identity(pid)
+        if bound_creation is not None and cur_creation is not None and cur_creation != bound_creation:
+            return True
+        try:
+            cur_owner = self._engine().resolve_owner(wid)
+        except Exception:
+            cur_owner = None
+        if bound_owner is not None and cur_owner is not None and cur_owner != bound_owner:
+            return True
+        return False
+
+    def _resolve_target(self, win_id_str):
+        """(pid, window_id_int, psn, owner_conn, creation_identity) for a current trusted
+        game window, or None. owner_conn + creation_identity freeze the gesture against
+        same-bundle PID/window-id reuse (all TTR toons share ONE bundle, so the trusted-
+        bundle lock in _resolve_pid is not enough to catch a different toon reusing a wid)."""
+        pid = self._resolve_pid(win_id_str)
+        if pid is None:
+            return None
+        try:
+            wid = int(win_id_str)
+        except (TypeError, ValueError):
+            return None
+        psn = self._engine().resolve_psn(wid)
+        if psn is None:
+            return None
+        return (pid, wid, psn, self._engine().resolve_owner(wid), self._creation_identity(pid))
+
     def send_button_press(self, win_id_str, x, y, root_x, root_y,
                           button=1, state=0, time=0) -> bool:
-        return False
+        target = self._resolve_target(win_id_str)
+        if target is None:
+            return False
+        pid, wid, psn, owner, creation = target
+        ok = self._engine().press(pid, wid, psn, (x, y), (root_x, root_y))
+        if ok:
+            self._bindings[str(win_id_str)] = (pid, wid, psn, owner, creation)   # freeze identity
+        return ok
 
     def send_button_release(self, win_id_str, x, y, root_x, root_y,
                             button=1, state=0, time=0) -> bool:
-        return False
+        bound = self._bindings.pop(str(win_id_str), None)
+        if bound is None:
+            return False   # never release into a freshly-resolved process (spec §3.2)
+        pid, wid, psn, owner, creation = bound
+        # Reuse guard: drop the up ONLY on POSITIVE evidence the bound wid/pid was recycled
+        # by a different process. A transient/unavailable (None) re-probe is NOT a mismatch,
+        # so a valid release is never dropped (which would STRAND a button-down on the target).
+        if self._reuse_detected(pid, wid, creation, owner):
+            return False
+        return self._engine().release(pid, wid, psn, (x, y), (root_x, root_y))
 
     def send_motion(self, win_id_str, x, y, root_x, root_y,
                     state=0, time=0) -> bool:
-        return False
+        dragging = bool(state & _BUTTON1_MASK)   # left-button held = the drag we mirror
+        if dragging:
+            bound = self._bindings.get(str(win_id_str))
+            if bound is None:
+                return False   # a drag with NO press binding is DROPPED, never fresh-resolved (spec §3.2)
+            pid, wid, psn, _owner, _creation = bound       # frozen press binding
+            return self._engine().motion(pid, wid, psn, (x, y), (root_x, root_y), dragging=True)
+        # HOVER (no button held): fresh-resolve (no gesture binding exists for hover)
+        target = self._resolve_target(win_id_str)
+        if target is None:
+            return False
+        pid, wid, psn, _owner, _creation = target
+        return self._engine().motion(pid, wid, psn, (x, y), (root_x, root_y), dragging=False)
