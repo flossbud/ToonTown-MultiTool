@@ -59,7 +59,7 @@ def test_darwin_wiring_builds_service_and_skips_ghost_cursors(monkeypatch):
         assert tab._click_sync_backend.mouse_delivery_ready() == (True, "darwin-probe")
         assert tab.click_sync_service._delivery_ready_fn() == (True, "darwin-probe")
         # the SAME EchoLedger instance must reach BOTH the backend and the capture, or the
-        # marker-stripped-echo de-dup is broken (review touchpoint #1 #1).
+        # marker-stripped-echo de-dup is broken.
         be_ledger = tab._click_sync_backend.ledger
         assert be_ledger is not None
         tab.click_sync_service._capture_factory(lambda *a: None)   # build a capture via the WIRED factory
