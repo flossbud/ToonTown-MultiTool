@@ -75,6 +75,19 @@ def test_breaker_constants():
     assert c.ECHO_WINDOW_S == 0.5
 
 
+def test_reenable_decision():
+    # a VERIFIED-failed re-enable stops NOW regardless of count (a dead tap emits no more
+    # callbacks, so waiting for the flap bound would hang silently with no on_died)
+    assert c.reenable_decision(1, 5, False) == "stop"
+    assert c.reenable_decision(3, 5, False) == "stop"
+    # re-enabled OK -> retry; could-not-verify (None) under the bound -> retry
+    assert c.reenable_decision(1, 5, True) == "retry"
+    assert c.reenable_decision(2, 5, None) == "retry"
+    # too many flaps -> stop even if the latest re-enable looked OK / unverifiable
+    assert c.reenable_decision(6, 5, True) == "stop"
+    assert c.reenable_decision(6, 5, None) == "stop"
+
+
 def test_circuit_breaker_evicts_hits_outside_window():
     # markerless+signature-matched hits spread > ECHO_WINDOW_S apart must NOT accumulate
     # (the sliding window evicts old hits), so the breaker never trips.

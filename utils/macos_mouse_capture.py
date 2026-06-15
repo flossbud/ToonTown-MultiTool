@@ -42,6 +42,22 @@ def classify_event(cg_type):
     return _CG_EVENT.get(int(cg_type), (None, None))
 
 
+def reenable_decision(count, max_reenable, enabled_after) -> str:
+    """After a tap-disable re-enable attempt, decide "stop" or "retry" (pure/testable).
+
+    `count` = consecutive-disable count (post-increment); `max_reenable` = the flap bound;
+    `enabled_after` = whether CGEventTapIsEnabled is True after the re-enable (None if it
+    could not be verified). A VERIFIED-failed re-enable (enabled_after is False) must STOP
+    NOW: a disabled tap emits no further callbacks, so waiting for `count` to reach the
+    bound would hang silently and on_died would never fire. Too many flaps (count >
+    max_reenable) also stops. Otherwise retry (re-enabled OK, or could not verify)."""
+    if count > max_reenable:
+        return "stop"
+    if enabled_after is False:
+        return "stop"
+    return "retry"
+
+
 class ButtonState:
     """X-semantics held-button tracker (a press excludes its own button, a release
     includes it). Not thread-safe on its own; the capture serializes access."""
@@ -357,19 +373,20 @@ class _QuartzTapNative:
             try:
                 if etype in (Quartz.kCGEventTapDisabledByTimeout,
                              Quartz.kCGEventTapDisabledByUserInput):
-                    # Re-enable + VERIFY, bounded. Persistent failure -> stop the runloop
-                    # so _run's finally fires on_died (never silently loop a dead tap).
+                    # Re-enable + VERIFY. A verified-failed re-enable stops NOW (a dead tap
+                    # emits no further callbacks, so waiting for the flap bound would hang
+                    # silently); too many flaps also stops. Either way _run's finally fires
+                    # on_died - we never silently loop or hang on a dead tap.
                     self._reenable_count += 1
-                    if self._reenable_count > self._MAX_REENABLE or self._tap is None:
-                        if self._runloop is not None:
-                            Quartz.CFRunLoopStop(self._runloop)
-                        return event
-                    Quartz.CGEventTapEnable(self._tap, True)
-                    is_enabled = getattr(Quartz, "CGEventTapIsEnabled", None)
-                    if is_enabled is not None and not is_enabled(self._tap) \
-                            and self._reenable_count >= self._MAX_REENABLE \
-                            and self._runloop is not None:
-                        Quartz.CFRunLoopStop(self._runloop)   # verified-still-dead at the bound
+                    enabled_after = None
+                    if self._tap is not None and self._reenable_count <= self._MAX_REENABLE:
+                        Quartz.CGEventTapEnable(self._tap, True)
+                        is_enabled = getattr(Quartz, "CGEventTapIsEnabled", None)
+                        if is_enabled is not None:
+                            enabled_after = bool(is_enabled(self._tap))
+                    if reenable_decision(self._reenable_count, self._MAX_REENABLE,
+                                         enabled_after) == "stop" and self._runloop is not None:
+                        Quartz.CFRunLoopStop(self._runloop)
                     return event
                 loc = Quartz.CGEventGetLocation(event)
                 marker = Quartz.CGEventGetIntegerValueField(event, Quartz.kCGEventSourceUserData)
