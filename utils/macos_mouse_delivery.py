@@ -89,14 +89,20 @@ class EchoLedger:
     def _sig(event_type: int, root_x: float, root_y: float) -> tuple[int, int, int]:
         return (int(event_type), round(float(root_x) / 2), round(float(root_y) / 2))
 
+    def _evict(self, t: float) -> None:
+        """Drop expired signatures. Called from BOTH record() and matches() so the
+        dict stays bounded even when one side is idle (e.g. the delivery engine posts
+        while capture is stopped, so matches() is never called)."""
+        for k in [k for k, exp in self._sigs.items() if exp < t]:
+            self._sigs.pop(k, None)
+
     def record(self, event_type: int, root_x: float, root_y: float, now: float | None = None) -> None:
         t = time.monotonic() if now is None else now
+        self._evict(t)
         self._sigs[self._sig(event_type, root_x, root_y)] = t + self._ttl
 
     def matches(self, event_type: int, root_x: float, root_y: float, now: float | None = None) -> bool:
         t = time.monotonic() if now is None else now
-        # opportunistically evict expired entries so the dict cannot grow unbounded.
-        for k in [k for k, exp in self._sigs.items() if exp < t]:
-            self._sigs.pop(k, None)
+        self._evict(t)
         exp = self._sigs.get(self._sig(event_type, root_x, root_y))
         return exp is not None and exp >= t
