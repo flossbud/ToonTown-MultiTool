@@ -313,3 +313,104 @@ class MacOSMouseCapture:
     @staticmethod
     def _default_native(on_tap_event, on_ready, on_died):
         return _QuartzTapNative(on_tap_event, on_ready, on_died)
+
+
+class _QuartzTapNative:
+    """Real listen-only CGEventTap + CFRunLoop on a dedicated thread. OPERATOR/LIVE-
+    validated (Task 9), not unit-tested against real PyObjC. The capture drives all
+    state through the three callbacks; this class only owns the tap + runloop."""
+
+    _MASK_TYPES = (1, 2, 3, 4, 5, 6, 7, 25, 26, 27)  # left/right/other down/up/drag + moved
+    _MAX_REENABLE = 5   # consecutive tap-disable re-enables before giving up -> on_died
+
+    def __init__(self, on_tap_event, on_ready, on_died):
+        self._on_tap_event = on_tap_event
+        self._on_ready = on_ready
+        self._on_died = on_died
+        self._thread = None
+        self._runloop = None
+        self._tap = None
+        self._src = None
+        self._reenable_count = 0   # consecutive disables since the last good event
+
+    def start(self) -> bool:
+        import Quartz
+        preflight = getattr(Quartz, "CGPreflightListenEventAccess", None)
+        if preflight is not None and not preflight():
+            return False
+        mask = 0
+        for t in self._MASK_TYPES:
+            mask |= Quartz.CGEventMaskBit(t)
+
+        def _cb(proxy, etype, event, refcon):
+            try:
+                if etype in (Quartz.kCGEventTapDisabledByTimeout,
+                             Quartz.kCGEventTapDisabledByUserInput):
+                    # Re-enable + VERIFY, bounded. Persistent failure -> stop the runloop
+                    # so _run's finally fires on_died (never silently loop a dead tap).
+                    self._reenable_count += 1
+                    if self._reenable_count > self._MAX_REENABLE or self._tap is None:
+                        if self._runloop is not None:
+                            Quartz.CFRunLoopStop(self._runloop)
+                        return event
+                    Quartz.CGEventTapEnable(self._tap, True)
+                    is_enabled = getattr(Quartz, "CGEventTapIsEnabled", None)
+                    if is_enabled is not None and not is_enabled(self._tap) \
+                            and self._reenable_count >= self._MAX_REENABLE \
+                            and self._runloop is not None:
+                        Quartz.CFRunLoopStop(self._runloop)   # verified-still-dead at the bound
+                    return event
+                loc = Quartz.CGEventGetLocation(event)
+                marker = Quartz.CGEventGetIntegerValueField(event, Quartz.kCGEventSourceUserData)
+                pid = Quartz.CGEventGetIntegerValueField(event, Quartz.kCGEventSourceUnixProcessID)
+                self._reenable_count = 0   # a good event resets the disable streak
+                self._on_tap_event(int(etype), float(loc.x), float(loc.y),
+                                   int(marker), int(pid) or None)
+            except Exception:
+                pass
+            return event
+
+        self._tap = Quartz.CGEventTapCreate(
+            Quartz.kCGSessionEventTap, Quartz.kCGHeadInsertEventTap,
+            Quartz.kCGEventTapOptionListenOnly, mask, _cb, None)
+        if self._tap is None:
+            return False
+        self._cb = _cb   # retain
+        self._thread = threading.Thread(target=self._run, name="ttmt-cs-runloop", daemon=True)
+        self._thread.start()
+        return True
+
+    def _run(self):
+        import Quartz
+        try:
+            self._runloop = Quartz.CFRunLoopGetCurrent()
+            self._src = Quartz.CFMachPortCreateRunLoopSource(None, self._tap, 0)
+            Quartz.CFRunLoopAddSource(self._runloop, self._src, Quartz.kCFRunLoopCommonModes)
+            Quartz.CGEventTapEnable(self._tap, True)
+            self._on_ready()
+            Quartz.CFRunLoopRun()
+        except Exception:
+            pass
+        finally:
+            try:
+                Quartz.CFMachPortInvalidate(self._tap)
+            except Exception:
+                pass
+            self._on_died()
+
+    def stop(self) -> None:
+        import Quartz
+        rl = self._runloop
+        if rl is not None:
+            try:
+                Quartz.CFRunLoopStop(rl)   # cross-thread wake; safe from any thread
+            except Exception:
+                pass
+        # Deterministic join, self-join-safe: if stop() is called FROM the runloop thread
+        # (e.g. the echo breaker / overflow path inside the tap callback), skip the join.
+        th = self._thread
+        if th is not None and th is not threading.current_thread() and th.is_alive():
+            th.join(timeout=2.0)
+
+    def is_alive(self) -> bool:
+        return bool(self._thread and self._thread.is_alive())
