@@ -150,15 +150,15 @@ class MacOSMouseCapture:
         with self._lifelock:
             if self._running:
                 return True
+            # Bump the generation as the VERY FIRST mutation so a stale callback/dispatcher
+            # from a previous run sees gen != self._generation and no-ops (closes the
+            # window between the per-run setup and the bump).
+            self._generation += 1
+            gen = self._generation
             self._running = True
             self._died = False
             self._stopping = False
             self._state.reset()
-            # Bump the generation FIRST (before anything else this run touches) so a stale
-            # callback/dispatcher from a previous run sees gen != self._generation and
-            # no-ops - closing the TOCTOU window between reset and the bump.
-            self._generation += 1
-            gen = self._generation
             # A FRESH per-run readiness event, captured locally: a stale run's callback can
             # never satisfy THIS run's wait, nor can a new run's readiness satisfy an old
             # wait (each run waits on its own event).
