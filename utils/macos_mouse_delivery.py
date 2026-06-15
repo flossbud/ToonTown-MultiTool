@@ -261,8 +261,11 @@ class MacOSMouseDelivery:
                 import Quartz
                 sky = _load_skylight()
                 self._port = _NativePort(Quartz, sky) if sky is not None else None
+                if self._port is None:
+                    self._diag_once("load")   # framework/symbol missing
             except Exception:
                 self._port = None
+                self._diag_once("load")       # surface real PyObjC/ctypes load failures
         return self._port
 
     @property
@@ -295,12 +298,18 @@ class MacOSMouseDelivery:
         if getattr(self, "_diag_done", False):
             return
         self._diag_done = True
-        import platform
+        import platform, os
         port = self._port
         n_sym = len(port._sky) if (port is not None and hasattr(port, "_sky")) else 0
-        line = (f"[macos_mouse_delivery] DIAG phase={phase} mac={platform.mac_ver()[0]!r} "
-                f"arch={platform.machine()!r} symbols={n_sym}/{len(_SKYLIGHT_SYMBOLS)} "
-                f"faulted={self._faulted}")
+        # mac_ver()[0] is the product VERSION (e.g. "26.0"), not the build; the Darwin
+        # kernel release (uname) is the closest no-subprocess proxy for ABI correlation.
+        try:
+            darwin = os.uname().release
+        except Exception:
+            darwin = "?"
+        line = (f"[macos_mouse_delivery] DIAG phase={phase} macos={platform.mac_ver()[0]!r} "
+                f"darwin={darwin!r} arch={platform.machine()!r} "
+                f"symbols={n_sym}/{len(_SKYLIGHT_SYMBOLS)} faulted={self._faulted}")
         _DIAG_LOG.append(line)
         print(line)
 

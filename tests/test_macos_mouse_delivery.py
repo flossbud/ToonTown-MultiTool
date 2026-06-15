@@ -1,4 +1,9 @@
-"""Pure-helper tests for the macOS mouse delivery engine (no PyObjC)."""
+"""Pure-helper tests (no PyObjC) + macOS-gated native smoke tests for the mouse
+delivery engine."""
+import sys
+
+import pytest
+
 import utils.macos_mouse_delivery as d
 
 
@@ -174,3 +179,47 @@ def test_abi_diagnostics_logged_once(monkeypatch):
 def test_resolve_owner_delegates_to_port():
     eng = _eng(_FakePort())
     assert eng.resolve_owner(77) == 9077
+
+
+# ── macOS-gated native smoke tests ──────────────────────────────────────────────
+# Run on the dev/test host where PyObjC is present; SKIPPED on Linux/Windows CI. They
+# catch private-ABI regressions the _FakePort orchestration tests cannot (a renamed or
+# removed SkyLight symbol, a broken ctypes signature, the NSEvent->CGEvent bridge, the
+# _CGPoint by-value marshalling). No event is ever POSTED to any process.
+_darwin_only = pytest.mark.skipif(sys.platform != "darwin", reason="native SkyLight/PyObjC is macOS-only")
+
+
+@_darwin_only
+def test_native_loads_all_skylight_symbols():
+    sky = d._load_skylight()
+    assert sky is not None
+    assert set(sky) == set(d._SKYLIGHT_SYMBOLS)        # every declared symbol resolved
+    assert all(callable(fn) for fn in sky.values())
+
+
+@_darwin_only
+def test_native_port_builds_and_stamps_event():
+    import Quartz
+    port = d._NativePort(Quartz, d._load_skylight())
+    ev = port.make_event("move", 0, 0)                 # NSEvent -> CGEvent bridge
+    assert ev is not None
+    # every stamping path runs against a real CGEvent without raising (ctypes shapes OK)
+    for field, value, via_private in d.mouse_event_fields(4242, 77):
+        (port.set_private_field if via_private else port.set_public_field)(ev, field, value)
+    port.set_window_location(ev, (10.0, 20.0))         # _CGPoint by-value marshalling
+    port.set_location(ev, (100.0, 200.0))
+    port.set_source_user_data(ev, d.SPIKE_EVENT_TAG)
+
+
+@_darwin_only
+def test_native_resolve_psn_invalid_window_is_none():
+    import Quartz
+    port = d._NativePort(Quartz, d._load_skylight())
+    assert port.resolve_psn(0x7FFFFFFF) is None        # bogus wid -> no owner -> None, no crash
+
+
+@_darwin_only
+def test_engine_available_and_lazy_loads_on_macos():
+    eng = d.MacOSMouseDelivery()                       # omit port -> lazy-load the native port
+    assert eng.available is True
+    assert eng.resolve_psn(0x7FFFFFFF) is None         # graceful on a bogus wid
