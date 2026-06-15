@@ -3,6 +3,7 @@ talk to the service. Uses the same construction pattern as the existing
 offscreen multitoon tab tests (test_card_accent_override.py)."""
 
 import os
+import sys
 
 import pytest
 
@@ -16,6 +17,13 @@ from PySide6.QtWidgets import QApplication
 def qapp():
     app = QApplication.instance() or QApplication([])
     yield app
+
+
+@pytest.fixture(autouse=True)
+def _pin_linux(monkeypatch):
+    # This file's click-sync expectations assume the Linux branch; pin it so the new
+    # darwin branch (and the host's real platform) cannot change the outcome.
+    monkeypatch.setattr(sys, "platform", "linux")
 
 
 class _FakeWindowManager(QObject):
@@ -35,6 +43,26 @@ class _FakeWindowManager(QObject):
     def assign_windows(self): pass
     def enable_detection(self): pass
     def disable_detection(self): pass
+
+
+def build_multitoon_tab(monkeypatch):
+    """Build a MultitoonTab with config isolation. Returns the tab; caller must call
+    tab.input_service.shutdown() in a finally block to avoid the non-daemon thread leak."""
+    import tempfile
+    from PySide6.QtWidgets import QApplication
+
+    QApplication.instance() or QApplication([])
+    tmp = tempfile.mkdtemp()
+    monkeypatch.setenv("HOME", tmp)
+    monkeypatch.setenv("TTMT_CONFIG_DIR", tmp)
+
+    from tabs.multitoon._tab import MultitoonTab
+    from utils.settings_manager import SettingsManager
+
+    return MultitoonTab(
+        settings_manager=SettingsManager(),
+        window_manager=_FakeWindowManager(),
+    )
 
 
 @pytest.fixture
