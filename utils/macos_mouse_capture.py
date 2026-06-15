@@ -8,7 +8,6 @@ own button, a release includes it). The pure helpers carry NO PyObjC import.
 """
 from __future__ import annotations
 
-import threading
 from time import monotonic
 
 from utils.macos_mouse_delivery import SPIKE_EVENT_TAG, EchoLedger
