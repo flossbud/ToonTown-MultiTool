@@ -116,3 +116,15 @@ def test_mouse_delivery_ready_reason(monkeypatch):
     ready, reason = _backend(monkeypatch, _FakeEngine(False), access=True).mouse_delivery_ready()
     assert ready is False and reason
     assert _backend(monkeypatch, _FakeEngine(True), access=True).mouse_delivery_ready() == (True, None)
+
+
+def test_mouse_delivery_ready_fails_closed_on_probe_exception(monkeypatch):
+    # the engine's lazy import (or .available) raising must yield (False, reason), never ready
+    b = MacOSBackend()
+    monkeypatch.setattr(b, "has_post_access", lambda: True)
+    def _boom():
+        raise ImportError("no SkyLight on this host")
+    monkeypatch.setattr(b, "_engine", _boom)
+    ready, reason = b.mouse_delivery_ready()
+    assert ready is False
+    assert "probe failed" in reason and "ImportError" in reason

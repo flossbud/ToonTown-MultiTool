@@ -176,13 +176,18 @@ class MacOSBackend:
 
     def mouse_delivery_ready(self):
         """(ready: bool, reason: str | None). SEPARATE from has_post_access() so a
-        mouse-SPI break never disables working keyboard delivery (spec §3.2/§3.5)."""
-        if not self.has_post_access():
-            return (False, "accessibility (post-event) access not granted")
-        if not self._engine().available:
-            return (False, "macOS per-window mouse delivery unavailable "
-                           "(private SkyLight symbols missing or a delivery fault)")
-        return (True, None)
+        mouse-SPI break never disables working keyboard delivery (spec §3.2/§3.5).
+        Fail-CLOSED: ANY probe error (e.g. the engine's lazy import raising) returns
+        not-ready with a reason, NEVER ready (mirrors _creation_identity's discipline)."""
+        try:
+            if not self.has_post_access():
+                return (False, "accessibility (post-event) access not granted")
+            if not self._engine().available:
+                return (False, "macOS per-window mouse delivery unavailable "
+                               "(private SkyLight symbols missing or a delivery fault)")
+            return (True, None)
+        except Exception as e:
+            return (False, f"mouse delivery probe failed: {type(e).__name__}: {e}")
 
     def _creation_identity(self, pid):
         """A stable per-process token (NSRunningApplication launch date) so a reused PID
