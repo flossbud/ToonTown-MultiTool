@@ -143,51 +143,55 @@ class MacOSMouseCapture:
         self._generation = 0
 
     def start(self) -> bool:
+        """Start capture. NOTE: start()/stop() are NOT safe to call CONCURRENTLY from
+        multiple threads - the owner (the tab/service) calls them serially on one thread.
+        The only cross-thread call supported is stop() from a death callback (handled by
+        the self-join guard). Within that contract this is race-free."""
         with self._lifelock:
             if self._running:
                 return True
             self._running = True
             self._died = False
             self._stopping = False
-            self._ready.clear()
             self._state.reset()
-            # Bump generation so stale callbacks and dispatchers from a previous
-            # run (whose join timed out) can detect they are orphaned and exit.
+            # Bump the generation FIRST (before anything else this run touches) so a stale
+            # callback/dispatcher from a previous run sees gen != self._generation and
+            # no-ops - closing the TOCTOU window between reset and the bump.
             self._generation += 1
             gen = self._generation
-            self._dispatcher = threading.Thread(target=self._dispatch_loop,
-                                                name="ttmt-cs-dispatch", daemon=True,
-                                                args=(gen,))
-            self._dispatcher.start()
-            # Wrap each native callback with a generation guard so that a delayed
-            # callback from a previous run cannot satisfy our readiness event,
-            # kill a restarted capture, or enqueue events into the new run's queue.
+            # A FRESH per-run readiness event, captured locally: a stale run's callback can
+            # never satisfy THIS run's wait, nor can a new run's readiness satisfy an old
+            # wait (each run waits on its own event).
+            ready = threading.Event()
+            self._ready = ready
+            self._dispatcher = threading.Thread(target=self._dispatch_loop, args=(gen,),
+                                                name="ttmt-cs-dispatch", daemon=True)
+            dispatcher = self._dispatcher           # local: immune to a concurrent null-out
+            # Each native callback is generation-guarded; the ready callback sets THIS run's
+            # event directly (not a shared field) so a stale ready cannot leak across runs.
             def _tap_cb(*args):
-                if gen != self._generation:
-                    return
-                self._on_tap_event(*args)
+                if gen == self._generation:
+                    self._on_tap_event(*args)
             def _ready_cb():
-                if gen != self._generation:
-                    return
-                self._on_ready()
+                if gen == self._generation:
+                    ready.set()
             def _died_cb():
-                if gen != self._generation:
-                    return
-                self._on_native_died()
+                if gen == self._generation:
+                    self._on_native_died()
             self._native = self._native_factory(_tap_cb, _ready_cb, _died_cb)
-            # FIX 1: capture native locally so a concurrent stop()/_teardown() that
-            # sets self._native=None after we release _lifelock cannot cause a
-            # NoneType dereference on the .start() / _ready.wait() calls below.
-            native = self._native
-        # Wake any stale dispatcher that survived a timed-out join from the previous
-        # stop().  It will see gen != self._generation and exit harmlessly.
+            native = self._native                   # local: immune to a concurrent null-out
+        # Clear the queue (dropping any stale SENTINEL left by a previous timed-out join) and
+        # wake any orphaned old-gen dispatcher to re-check its generation and exit - BEFORE
+        # starting the NEW dispatcher, so the new dispatcher can never consume an old sentinel
+        # (which would silently blackout event delivery).
         with self._qcond:
             self._queue.clear()
             self._qcond.notify_all()
+        dispatcher.start()
         if not native.start():
             self._teardown()
             return False
-        if not self._ready.wait(self._READY_TIMEOUT_S):
+        if not ready.wait(self._READY_TIMEOUT_S):
             self._teardown()
             return False
         return True
@@ -221,9 +225,6 @@ class MacOSMouseCapture:
         cur = threading.current_thread()
         if dispatcher is not None and dispatcher is not cur and dispatcher.is_alive():
             dispatcher.join(timeout=1.0)
-
-    def _on_ready(self):
-        self._ready.set()
 
     def _on_native_died(self):
         self._die()

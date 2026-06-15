@@ -348,9 +348,15 @@ def test_stale_callback_ignored_after_restart():
     n1.on_ready()                            # should NOT satisfy the new _ready event
     n1.on_died()                             # should NOT fire on_died or teardown
 
-    sleep(0.05)          # give async paths a moment to settle
-    assert died == []    # on_died was never triggered
+    # poll briefly to confirm NOTHING from the stale callbacks leaks into the new run
+    assert _wait(lambda: len(events) > 0 or died != [], timeout=0.05) is False
+    assert died == []
     assert cap.is_running() is True
+
+    # the NEW run is fully functional (proves is_running isn't just a stale flag):
+    n2.on_tap_event(5, 7.0, 8.0, 0, 999)     # a real motion on gen=2
+    assert _wait(lambda: len(events) == 1)
+    assert events[0][0] == "motion" and events[0][1] == 7
 
     cap.stop()
     assert died == []
