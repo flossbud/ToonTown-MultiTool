@@ -202,6 +202,23 @@ class MacOSBackend:
         except Exception:
             return None
 
+    def _reuse_detected(self, pid, wid, bound_creation, bound_owner) -> bool:
+        """True ONLY on positive evidence the bound wid/pid was recycled: a re-probed
+        identity that is non-None AND differs from a non-None bound value. A transient
+        None re-probe yields no positive evidence (proceeds), so a valid release is never
+        dropped; a both-None case proceeds best-effort (owner-connection is the stronger,
+        usually-available guard and catches a different process reusing the wid)."""
+        cur_creation = self._creation_identity(pid)
+        if bound_creation is not None and cur_creation is not None and cur_creation != bound_creation:
+            return True
+        try:
+            cur_owner = self._engine().resolve_owner(wid)
+        except Exception:
+            cur_owner = None
+        if bound_owner is not None and cur_owner is not None and cur_owner != bound_owner:
+            return True
+        return False
+
     def _resolve_target(self, win_id_str):
         """(pid, window_id_int, psn, owner_conn, creation_identity) for a current trusted
         game window, or None. owner_conn + creation_identity freeze the gesture against
@@ -236,10 +253,10 @@ class MacOSBackend:
         if bound is None:
             return False   # never release into a freshly-resolved process (spec §3.2)
         pid, wid, psn, owner, creation = bound
-        # Reuse guard: the bound PID must still be the SAME process (same launch identity
-        # + owner connection) before we up into it, else a reused wid/pid gets a stray
-        # button-up. Mismatch -> drop the up (binding already cleared by pop).
-        if (self._creation_identity(pid), self._engine().resolve_owner(wid)) != (creation, owner):
+        # Reuse guard: drop the up ONLY on POSITIVE evidence the bound wid/pid was recycled
+        # by a different process. A transient/unavailable (None) re-probe is NOT a mismatch,
+        # so a valid release is never dropped (which would STRAND a button-down on the target).
+        if self._reuse_detected(pid, wid, creation, owner):
             return False
         return self._engine().release(pid, wid, psn, (x, y), (root_x, root_y))
 

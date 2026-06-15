@@ -128,3 +128,76 @@ def test_mouse_delivery_ready_fails_closed_on_probe_exception(monkeypatch):
     ready, reason = b.mouse_delivery_ready()
     assert ready is False
     assert "probe failed" in reason and "ImportError" in reason
+
+
+def _spy_resolve(monkeypatch, b, pid=4242):
+    """Wrap _resolve_pid with a call counter to PROVE fresh-resolve vs binding reuse."""
+    calls = {"n": 0}
+    def _rp(wid):
+        calls["n"] += 1
+        return pid
+    monkeypatch.setattr(b, "_resolve_pid", _rp)
+    return calls
+
+
+def test_drag_and_release_do_not_fresh_resolve(monkeypatch):
+    eng = _FakeEngine()
+    b = _backend(monkeypatch, eng)
+    calls = _spy_resolve(monkeypatch, b)
+    assert b.send_button_press("9", 1, 1, 10, 20) is True       # resolves once -> binds
+    n_after_press = calls["n"]
+    b.send_motion("9", 2, 2, 11, 21, state=0x100)               # drag uses the frozen binding
+    b.send_button_release("9", 2, 2, 11, 21)                    # release uses the frozen binding
+    assert calls["n"] == n_after_press                          # ZERO extra resolves
+
+
+def test_hover_fresh_resolves(monkeypatch):
+    eng = _FakeEngine()
+    b = _backend(monkeypatch, eng)
+    calls = _spy_resolve(monkeypatch, b)
+    b.send_motion("9", 2, 2, 11, 21, state=0)                   # hover -> fresh-resolve
+    assert calls["n"] == 1
+
+
+def test_non_button1_state_is_hover(monkeypatch):
+    eng = _FakeEngine()
+    b = _backend(monkeypatch, eng)
+    calls = _spy_resolve(monkeypatch, b)
+    b.send_motion("9", 2, 2, 11, 21, state=0x200)              # button-2 held, NOT Button1 -> hover
+    assert calls["n"] == 1                                      # fresh-resolved, not treated as drag
+    assert eng.calls[-1][0] == "motion" and eng.calls[-1][-1] is False   # dragging=False
+
+
+def test_release_owner_mismatch_rejects_no_release(monkeypatch):
+    eng = _FakeEngine()
+    b = _backend(monkeypatch, eng)
+    b.send_button_press("9", 1, 1, 10, 20)                      # binds owner=555
+    monkeypatch.setattr(eng, "resolve_owner", lambda wid: 999)  # wid now a different connection
+    assert b.send_button_release("9", 1, 1, 10, 20) is False
+    assert not any(c[0] == "release" for c in eng.calls)       # NO up posted into a reused wid
+
+
+def test_release_survives_transient_none_identity(monkeypatch):
+    # a transient None creation-identity must NOT drop the release (would strand a button-down)
+    eng = _FakeEngine()
+    b = _backend(monkeypatch, eng)
+    b.send_button_press("9", 1, 1, 10, 20)                      # binds creation="C1", owner=555
+    monkeypatch.setattr(b, "_creation_identity", lambda pid: None)   # transiently unavailable
+    assert b.send_button_release("9", 1, 1, 10, 20) is True     # still releases (owner still matches)
+    assert any(c[0] == "release" for c in eng.calls)
+
+
+def test_disconnect_clears_bindings(monkeypatch):
+    eng = _FakeEngine()
+    b = _backend(monkeypatch, eng)
+    b.send_button_press("9", 1, 1, 10, 20)
+    b.disconnect()
+    assert b.send_button_release("9", 1, 1, 10, 20) is False    # binding gone -> dropped
+
+
+def test_set_echo_ledger_reaches_rebuilt_engine():
+    import utils.macos_mouse_delivery as d
+    b = MacOSBackend()
+    led = d.EchoLedger()
+    b.set_echo_ledger(led)
+    assert b._engine()._ledger is led                          # rebuilt engine carries the shared ledger
