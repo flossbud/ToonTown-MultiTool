@@ -1,4 +1,8 @@
-"""Pure-helper tests for the macOS mouse capture (no PyObjC)."""
+"""Pure-helper + orchestration tests (fake native) + a macOS-gated native smoke test."""
+import sys
+
+import pytest
+
 import utils.macos_mouse_capture as c
 
 
@@ -370,3 +374,18 @@ def test_stop_is_idempotent():
     cap.stop()    # second call is a no-op
     assert cap.is_running() is False
     assert died == []
+
+
+# ── macOS-gated native smoke test ───────────────────────────────────────────────
+# Constructs the real _QuartzTapNative and calls the preflight; it does NOT start() a
+# real CGEventTap (that grabs global input + needs Input Monitoring + spawns a runloop).
+# Skipped on CI; on the dev host it confirms the Quartz symbols resolve and __init__
+# doesn't crash.
+@pytest.mark.skipif(sys.platform != "darwin", reason="native CGEventTap is macOS-only")
+def test_quartz_tap_native_constructs_and_preflights():
+    import Quartz
+    n = c._QuartzTapNative(lambda *a: None, lambda: None, lambda: None)
+    assert n.is_alive() is False                       # not started -> no thread
+    assert isinstance(bool(Quartz.CGPreflightListenEventAccess()), bool)
+    n.stop()                                           # stop without start is a safe no-op
+    assert n.is_alive() is False

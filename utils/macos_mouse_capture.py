@@ -318,7 +318,12 @@ class MacOSMouseCapture:
 class _QuartzTapNative:
     """Real listen-only CGEventTap + CFRunLoop on a dedicated thread. OPERATOR/LIVE-
     validated (Task 9), not unit-tested against real PyObjC. The capture drives all
-    state through the three callbacks; this class only owns the tap + runloop."""
+    state through the three callbacks; this class only owns the tap + runloop.
+
+    Lifecycle contract: on a STARTUP failure (source/tap-enable raising) on_died may fire
+    WITHOUT a preceding on_ready; the owner (MacOSMouseCapture) treats that as a failed
+    start (its readiness wait times out) and tears down - it does not assume a strict
+    on_ready->on_died ordering."""
 
     _MASK_TYPES = (1, 2, 3, 4, 5, 6, 7, 25, 26, 27)  # left/right/other down/up/drag + moved
     _MAX_REENABLE = 5   # consecutive tap-disable re-enables before giving up -> on_died
@@ -331,7 +336,13 @@ class _QuartzTapNative:
         self._runloop = None
         self._tap = None
         self._src = None
+        self._cb = None
         self._reenable_count = 0   # consecutive disables since the last good event
+        # Published by _run() once CFRunLoopGetCurrent() is captured, so stop() can ALWAYS
+        # obtain the runloop ref to wake it (closes the start-thread -> runloop-capture window
+        # where a stop() would otherwise miss the runloop and leak a spinning thread + tap).
+        self._rl_ready = threading.Event()
+        self._stop_requested = False
 
     def start(self) -> bool:
         import Quartz
@@ -384,14 +395,24 @@ class _QuartzTapNative:
         import Quartz
         try:
             self._runloop = Quartz.CFRunLoopGetCurrent()
+            self._rl_ready.set()                 # publish the runloop ref BEFORE running
+            if self._stop_requested:             # a stop() raced in before we started running
+                return
             self._src = Quartz.CFMachPortCreateRunLoopSource(None, self._tap, 0)
             Quartz.CFRunLoopAddSource(self._runloop, self._src, Quartz.kCFRunLoopCommonModes)
             Quartz.CGEventTapEnable(self._tap, True)
             self._on_ready()
             Quartz.CFRunLoopRun()
-        except Exception:
-            pass
+        except Exception as e:
+            # startup/runloop failure: surface it (don't silently swallow) - on_died fires
+            # in the finally (may be WITHOUT a prior on_ready; see the class contract).
+            print(f"[macos_mouse_capture] _QuartzTapNative run error: {type(e).__name__}: {e}")
         finally:
+            try:
+                if self._runloop is not None and self._src is not None:
+                    Quartz.CFRunLoopRemoveSource(self._runloop, self._src, Quartz.kCFRunLoopCommonModes)
+            except Exception:
+                pass
             try:
                 Quartz.CFMachPortInvalidate(self._tap)
             except Exception:
@@ -400,6 +421,12 @@ class _QuartzTapNative:
 
     def stop(self) -> None:
         import Quartz
+        self._stop_requested = True
+        th = self._thread
+        if th is not None:
+            # Wait for _run() to publish the runloop ref so CFRunLoopStop can't miss it (the
+            # start-thread -> runloop-capture window). Bounded so a wedged startup can't hang.
+            self._rl_ready.wait(2.0)
         rl = self._runloop
         if rl is not None:
             try:
@@ -408,7 +435,6 @@ class _QuartzTapNative:
                 pass
         # Deterministic join, self-join-safe: if stop() is called FROM the runloop thread
         # (e.g. the echo breaker / overflow path inside the tap callback), skip the join.
-        th = self._thread
         if th is not None and th is not threading.current_thread() and th.is_alive():
             th.join(timeout=2.0)
 
