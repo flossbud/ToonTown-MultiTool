@@ -140,6 +140,7 @@ class MacOSMouseCapture:
         self._ready = threading.Event()
         self._native = None
         self._dispatcher = None
+        self._generation = 0
 
     def start(self) -> bool:
         with self._lifelock:
@@ -150,13 +151,40 @@ class MacOSMouseCapture:
             self._stopping = False
             self._ready.clear()
             self._state.reset()
-            self._queue.clear()
+            # Bump generation so stale callbacks and dispatchers from a previous
+            # run (whose join timed out) can detect they are orphaned and exit.
+            self._generation += 1
+            gen = self._generation
             self._dispatcher = threading.Thread(target=self._dispatch_loop,
-                                                name="ttmt-cs-dispatch", daemon=True)
+                                                name="ttmt-cs-dispatch", daemon=True,
+                                                args=(gen,))
             self._dispatcher.start()
-            self._native = self._native_factory(self._on_tap_event, self._on_ready,
-                                                self._on_native_died)
-        if not self._native.start():
+            # Wrap each native callback with a generation guard so that a delayed
+            # callback from a previous run cannot satisfy our readiness event,
+            # kill a restarted capture, or enqueue events into the new run's queue.
+            def _tap_cb(*args):
+                if gen != self._generation:
+                    return
+                self._on_tap_event(*args)
+            def _ready_cb():
+                if gen != self._generation:
+                    return
+                self._on_ready()
+            def _died_cb():
+                if gen != self._generation:
+                    return
+                self._on_native_died()
+            self._native = self._native_factory(_tap_cb, _ready_cb, _died_cb)
+            # FIX 1: capture native locally so a concurrent stop()/_teardown() that
+            # sets self._native=None after we release _lifelock cannot cause a
+            # NoneType dereference on the .start() / _ready.wait() calls below.
+            native = self._native
+        # Wake any stale dispatcher that survived a timed-out join from the previous
+        # stop().  It will see gen != self._generation and exit harmlessly.
+        with self._qcond:
+            self._queue.clear()
+            self._qcond.notify_all()
+        if not native.start():
             self._teardown()
             return False
         if not self._ready.wait(self._READY_TIMEOUT_S):
@@ -254,11 +282,20 @@ class MacOSMouseCapture:
             self._qcond.notify()
             return overflow
 
-    def _dispatch_loop(self):
+    def _dispatch_loop(self, gen):
         while True:
             with self._qcond:
                 while not self._queue:
+                    # Exit immediately if our generation is stale (a new start()
+                    # has run).  We must check inside _qcond so we see any
+                    # notify_all() that start() fires after clearing the queue.
+                    if gen != self._generation:
+                        return
                     self._qcond.wait()
+                # Check again after waking (start() may have bumped generation
+                # and cleared the queue between the notify and our re-acquire).
+                if gen != self._generation:
+                    return
                 item = self._queue.popleft()
             if item is _SENTINEL:
                 return

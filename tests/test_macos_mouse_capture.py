@@ -103,6 +103,7 @@ def test_echo_guard_ttl_inclusive_boundary():
     assert g.is_synthetic(1, 100, 50, marker=0, src_pid=None) is False
 
 
+import threading
 from time import monotonic, sleep
 
 
@@ -231,3 +232,135 @@ def test_enqueue_coalesces_consecutive_motion():
     assert list(cap._queue) == [("motion", 2, 2, 0, 0),
                                 ("press", 3, 3, 0x100, 0),
                                 ("motion", 4, 4, 0, 0)]
+
+
+# ── new concurrency / lifecycle tests ───────────────────────────────────────────
+
+class _FakeNativeNoReady:
+    """Native whose start() returns True but never signals readiness."""
+    def __init__(self, on_tap, on_ready, on_died):
+        self.on_tap_event = on_tap
+        self.on_ready = on_ready
+        self.on_died = on_died
+        self._alive = False
+
+    def start(self):
+        self._alive = True
+        return True  # intentionally omit on_ready() call
+
+    def stop(self):
+        self._alive = False
+
+    def is_alive(self):
+        return self._alive
+
+
+def test_queue_overflow_fires_on_died_and_keeps_events():
+    """MAX_QUEUE overflow -> _die -> on_died fires; press/release NOT silently dropped."""
+    block = threading.Event()
+    delivered, died = [], []
+
+    def on_event(*args):
+        block.wait(timeout=5.0)   # stall delivery so the queue fills up
+        delivered.append(args)
+
+    holder = {}
+    def factory(on_tap, on_ready, on_died_cb):
+        holder["n"] = _FakeNative(on_tap, on_ready, on_died_cb)
+        return holder["n"]
+
+    cap = c.MacOSMouseCapture(on_event, on_died=lambda: died.append(True),
+                              ledger=c.EchoLedger(), own_pid=1234, native_factory=factory)
+    cap.MAX_QUEUE = 4
+    assert cap.start() is True
+    n = holder["n"]
+
+    # Send 5 LeftDown events (cg_type=1): queue fills at 4, 5th overflows -> _die.
+    for i in range(5):
+        n.on_tap_event(1, float(i), 0.0, 0, 999)
+
+    assert _wait(lambda: died == [True])
+    assert cap.is_running() is False
+
+    # Unblock the dispatcher so it can drain; all 5 items must be delivered (never dropped).
+    block.set()
+    assert _wait(lambda: len(delivered) == 5)
+
+
+def test_dispatcher_exception_fires_on_died_and_stop_does_not_deadlock():
+    """on_event raises -> dispatcher calls _die -> on_died fires once;
+    a subsequent stop() must not deadlock (self-join guard)."""
+    died = []
+
+    def on_event(*args):
+        raise RuntimeError("injected failure")
+
+    holder = {}
+    def factory(on_tap, on_ready, on_died_cb):
+        holder["n"] = _FakeNative(on_tap, on_ready, on_died_cb)
+        return holder["n"]
+
+    cap = c.MacOSMouseCapture(on_event, on_died=lambda: died.append(True),
+                              ledger=c.EchoLedger(), own_pid=1234, native_factory=factory)
+    assert cap.start() is True
+    holder["n"].on_tap_event(1, 0.0, 0.0, 0, 999)   # delivered, raises, -> _die
+
+    assert _wait(lambda: died == [True])
+    assert cap.is_running() is False
+    cap.stop()   # must return quickly (self-join guard prevents deadlock)
+    assert died == [True]
+
+
+def test_start_readiness_timeout_returns_false(monkeypatch):
+    """Native that never calls on_ready -> start() returns False within the timeout."""
+    monkeypatch.setattr(c.MacOSMouseCapture, "_READY_TIMEOUT_S", 0.1)
+
+    cap = c.MacOSMouseCapture(lambda *a: None,
+                              native_factory=lambda ot, or_, od: _FakeNativeNoReady(ot, or_, od))
+    assert cap.start() is False
+    assert cap.is_running() is False
+
+
+def test_repeated_native_death_fires_on_died_exactly_once():
+    """Calling the native's die() twice must fire on_died exactly once."""
+    cap, events, died, holder = _capture()
+    cap.start()
+    n = holder["n"]
+    n.die()   # first unexpected death
+    n.die()   # second call: _die() guard (self._died / self._stopping) absorbs it
+    assert _wait(lambda: died == [True])
+    assert died == [True]   # exactly once
+
+
+def test_stale_callback_ignored_after_restart():
+    """After start()+stop()+start(), the OLD native's callbacks are no-ops
+    (generation guard); the new run is unaffected."""
+    cap, events, died, holder = _capture()
+    cap.start()
+    n1 = holder["n"]   # gen=1 native
+
+    cap.stop()
+    cap.start()        # bumps generation; factory replaces holder["n"]
+    n2 = holder["n"]   # gen=2 native
+
+    # Stale callbacks from gen=1 must all be no-ops.
+    n1.on_tap_event(1, 0.0, 0.0, 0, 999)   # should NOT enqueue into the new run
+    n1.on_ready()                            # should NOT satisfy the new _ready event
+    n1.on_died()                             # should NOT fire on_died or teardown
+
+    sleep(0.05)          # give async paths a moment to settle
+    assert died == []    # on_died was never triggered
+    assert cap.is_running() is True
+
+    cap.stop()
+    assert died == []
+
+
+def test_stop_is_idempotent():
+    """Calling stop() twice in succession must not raise or deadlock."""
+    cap, events, died, holder = _capture()
+    cap.start()
+    cap.stop()
+    cap.stop()    # second call is a no-op
+    assert cap.is_running() is False
+    assert died == []
