@@ -30,7 +30,7 @@ def test_darwin_wiring_builds_service_and_skips_ghost_cursors(monkeypatch):
         def set_echo_ledger(self, ledger):
             self.ledger = ledger            # record the shared-ledger wiring call
         def mouse_delivery_ready(self):
-            return (True, None)
+            return (True, "darwin-probe")       # distinctive: proves THIS probe is the wired one
 
     class _FakeCapture:
         def __init__(self, on_event, on_died=None, ledger=None, **kw):
@@ -53,7 +53,11 @@ def test_darwin_wiring_builds_service_and_skips_ghost_cursors(monkeypatch):
     try:
         assert tab.click_sync_service is not None          # darwin is wired, not excluded
         assert tab.ghost_cursor_controller is None         # ghost cursors OFF on darwin (spec §3.6)
-        assert tab._click_sync_backend.mouse_delivery_ready() == (True, None)
+        # delivery_ready must be WIRED INTO the service, not just present on the backend: the
+        # service's probe must return the BACKEND's distinctive value (the default always-ready
+        # would be (True, None)), so a dropped `delivery_ready=` arg in _tab.py is caught.
+        assert tab._click_sync_backend.mouse_delivery_ready() == (True, "darwin-probe")
+        assert tab.click_sync_service._delivery_ready_fn() == (True, "darwin-probe")
         # the SAME EchoLedger instance must reach BOTH the backend and the capture, or the
         # marker-stripped-echo de-dup is broken (review touchpoint #1 #1).
         be_ledger = tab._click_sync_backend.ledger
