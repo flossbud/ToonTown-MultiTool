@@ -2741,12 +2741,13 @@ class MultitoonTab(QWidget):
         # controller is constructed at the end of this method.
         self.ghost_cursor_controller = None
 
-        # Click sync (mouse mirroring) is Linux/X11 + Windows only; it is out of
-        # scope on macOS. Leave click_sync_service / _click_sync_backend as None
-        # (set in __init__) so the feature is simply absent, and -- critically --
-        # never import utils.xlib_backend here (it imports python-xlib, which is
-        # not installed on macOS) which would crash the app at startup. Downstream
-        # (shutdown, the per-toon toggle, state styling) already guards on None.
+        # Click sync (mouse mirroring) runs on Linux/X11, Windows, and macOS. On any
+        # OTHER platform leave click_sync_service / _click_sync_backend as None (set in
+        # __init__) so the feature is simply absent, and -- critically -- never import a
+        # platform backend here (e.g. utils.xlib_backend imports python-xlib, absent on
+        # macOS) which would crash the app at startup. Downstream (shutdown, the per-toon
+        # toggle, state styling) already guards on None. Each platform's backend is
+        # imported lazily inside its own branch below.
         import sys
         if sys.platform not in ("win32", "linux", "darwin"):
             return

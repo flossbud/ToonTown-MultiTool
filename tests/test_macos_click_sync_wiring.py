@@ -22,15 +22,20 @@ def test_darwin_wiring_builds_service_and_skips_ghost_cursors(monkeypatch):
     from tests.test_click_sync_ui import build_multitoon_tab
     monkeypatch.setattr(sys, "platform", "darwin")
 
+    captures = []
+
     class _FakeBackend:
+        def __init__(self):
+            self.ledger = None
         def set_echo_ledger(self, ledger):
-            pass                                # absorb the shared-ledger wiring call
+            self.ledger = ledger            # record the shared-ledger wiring call
         def mouse_delivery_ready(self):
             return (True, None)
 
     class _FakeCapture:
-        def __init__(self, on_event, on_died=None, **kw):
-            self.on_event, self.on_died = on_event, on_died
+        def __init__(self, on_event, on_died=None, ledger=None, **kw):
+            self.on_event, self.on_died, self.ledger = on_event, on_died, ledger
+            captures.append(self)
         def start(self):
             return True
         def stop(self):
@@ -49,5 +54,11 @@ def test_darwin_wiring_builds_service_and_skips_ghost_cursors(monkeypatch):
         assert tab.click_sync_service is not None          # darwin is wired, not excluded
         assert tab.ghost_cursor_controller is None         # ghost cursors OFF on darwin (spec §3.6)
         assert tab._click_sync_backend.mouse_delivery_ready() == (True, None)
+        # the SAME EchoLedger instance must reach BOTH the backend and the capture, or the
+        # marker-stripped-echo de-dup is broken (review touchpoint #1 #1).
+        be_ledger = tab._click_sync_backend.ledger
+        assert be_ledger is not None
+        tab.click_sync_service._capture_factory(lambda *a: None)   # build a capture via the WIRED factory
+        assert captures and captures[0].ledger is be_ledger        # identical instance
     finally:
         tab.input_service.shutdown()   # avoid the non-daemon InputService thread leak
