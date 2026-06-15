@@ -242,12 +242,13 @@ class ClickSyncService(QObject):
                 emit_states = dict(new_states)
             emit_error = False
             err_reason = None
-            if now_active and not self._delivery_ready()[0]:
+            dr_ok, dr_reason = self._delivery_ready() if now_active else (True, None)
+            if now_active and not dr_ok:
                 # Delivery unavailable (missing SkyLight symbols / revoked access /
                 # a sticky engine fault): refuse/stop the capture and latch the error
-                # with the reason, exactly like the capture-dead branch.
-                _dr, reason = self._delivery_ready()
-                err_reason = reason or "mouse delivery unavailable"
+                # with the reason, exactly like the capture-dead branch. (Probe ONCE so a
+                # stateful probe can't report a different reason than it gated on.)
+                err_reason = dr_reason or "mouse delivery unavailable"
                 to_stop = self._fail_delivery_locked(err_reason)
                 emit_states = dict(self._states)
                 emit_error = True
