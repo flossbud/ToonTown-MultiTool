@@ -242,6 +242,7 @@ class ClickSyncService(QObject):
                 emit_states = dict(new_states)
             emit_error = False
             err_reason = None
+            err_trace = None   # distinct trace string (preserves existing diagnostics)
             dr_ok, dr_reason = self._delivery_ready() if now_active else (True, None)
             if now_active and not dr_ok:
                 # Delivery unavailable (missing SkyLight symbols / revoked access /
@@ -273,6 +274,7 @@ class ClickSyncService(QObject):
                     emit_states = dict(self._states)
                     emit_error = True
                     err_reason = "mouse capture stopped unexpectedly"
+                    err_trace = "service error: capture dead at recompute"  # original (unchanged)
             else:
                 to_stop, self._capture = self._capture, None
             emit_gen = self._states_gen
@@ -282,7 +284,7 @@ class ClickSyncService(QObject):
             self._emit_if_current(
                 emit_states, emit_gen,
                 error_msg=(err_reason if emit_error else None),
-                trace_msg=(("service error: " + err_reason)
+                trace_msg=((err_trace or ("service error: " + err_reason))
                            if emit_error else None))
         if to_stop is not None:
             to_stop.stop()
@@ -515,6 +517,17 @@ class ClickSyncService(QObject):
                 # stops NOW rather than waiting for the next recompute tick.
                 if not self._delivery_ready()[0]:
                     c_err = "mouse delivery faulted mid-gesture"
+                    # Release any target already pressed in THIS loop so an abort mid-fan-out
+                    # never strands a held button (the gesture is aborted; self._gesture is not
+                    # set yet, so _fail_delivery_locked's drain cannot reach these). Best-effort
+                    # (a fully-faulted engine may not deliver the up; documented limitation).
+                    for d_slot, (d_wid, d_g, (d_tx, d_ty)) in delivered.items():
+                        try:
+                            self._backend.send_button_release(
+                                d_wid, d_tx, d_ty, d_g[0] + d_tx, d_g[1] + d_ty,
+                                state=state, time=time)
+                        except Exception:
+                            pass
                     to_stop = self._fail_delivery_locked(c_err)
                     fail_states = dict(self._states)
                     fail_gen = self._states_gen

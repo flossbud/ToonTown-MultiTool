@@ -102,3 +102,53 @@ def test_mid_run_flip_to_not_ready_latches_error_on_recompute(qapp):
     state["ready"] = False
     svc.recompute()
     assert svc.slot_states()[0] == "error"
+
+
+class _PressBackend:
+    """First target press succeeds, then the engine faults so a LATER target's press fails
+    - exercises the (c) sticky mid-gesture abort + the stranded-press release."""
+    def __init__(self):
+        self.presses, self.releases, self.faulted = [], [], False
+
+    def send_button_press(self, wid, x, y, rx, ry, state=0, time=0):
+        self.presses.append(wid)
+        if len(self.presses) == 1:
+            return True            # first target delivered
+        self.faulted = True        # engine faults on the next target
+        return False
+
+    def send_button_release(self, wid, x, y, rx, ry, state=0, time=0):
+        self.releases.append(wid)
+        return True
+
+    def send_motion(self, *a, **k):
+        return True
+
+
+_THREE_MEMBERS = {0: "100", 1: "200", 2: "300"}
+
+
+def test_press_fault_releases_already_pressed_targets(qapp):
+    # source = slot 0 ("100"); targets = slots 1 ("200") + 2 ("300"). 200 is pressed OK, then
+    # the engine faults so 300's press fails -> the (c) sticky guard must RELEASE 200 (no
+    # stranded button), stop capture, and fire service_error.
+    be = _PressBackend()
+    caps, errors = [], []
+    svc = ClickSyncService(
+        slot_window_resolver=lambda s: _THREE_MEMBERS.get(s),
+        geometry_provider=lambda wid: (0, 0, 800, 600),
+        source_resolver=lambda rx, ry, wids: "100",      # slot 0 is the source
+        backend=be,
+        capture_factory=lambda cb: caps.append(_Cap(cb)) or caps[-1],
+        delivery_ready=lambda: (not be.faulted,
+                                None if not be.faulted else "faulted mid-gesture"),
+    )
+    svc.service_error.connect(lambda m: errors.append(m), Qt.DirectConnection)
+    svc.toggle_slot(0); svc.toggle_slot(1); svc.toggle_slot(2)
+    svc.set_enabled(True)
+    assert svc.slot_states()[0] == "active" and caps and caps[0].started
+    caps[0].cb("press", 400, 300, 0, 0)                  # drive a press at the source
+    assert be.presses == ["200", "300"]                  # both attempted (200 ok, 300 faulted)
+    assert be.releases == ["200"]                        # already-pressed target RELEASED, not stranded
+    assert errors and "faulted mid-gesture" in errors[-1]
+    assert svc.slot_states()[0] == "error"
