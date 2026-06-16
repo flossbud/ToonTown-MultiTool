@@ -71,6 +71,15 @@ class PermissionManager:
     transition. UI-agnostic + native-injectable for tests."""
     PERMS = ("accessibility", "input_monitoring")
 
+    # Whether a perm's native check is trustworthy IN-PROCESS right after we
+    # fire its OS request this session. Accessibility's AXIsProcessTrusted
+    # reflects durable trust live, so True. Input Monitoring's
+    # CGPreflightListenEventAccess can read a FALSE True in the same process
+    # after CGRequestListenEventAccess (it reports current-process effective
+    # access, which diverges from the durable, Settings-visible grant), so
+    # False: only a fresh-process preflight (next launch) is authoritative.
+    _RELIABLE_INPROCESS_RECHECK = {"accessibility": True, "input_monitoring": False}
+
     def __init__(self, native=None):
         self._n = native if native is not None else _default_native()
         self._requested = set()
@@ -79,15 +88,24 @@ class PermissionManager:
         return (self._n.accessibility_granted() if perm == "accessibility"
                 else self._n.input_monitoring_granted())
 
+    def _confirmed_granted(self, perm):
+        """True only when the native check can be TRUSTED. Once we've fired the
+        request this session for a perm whose in-process recheck is unreliable
+        (Input Monitoring), the check is not authoritative until the app is
+        relaunched, so report not-granted and route the user to Settings."""
+        if perm in self._requested and not self._RELIABLE_INPROCESS_RECHECK[perm]:
+            return False
+        return bool(self._granted(perm))
+
     def status(self):
-        return {p: bool(self._granted(p)) for p in self.PERMS}
+        return {p: self._confirmed_granted(p) for p in self.PERMS}
 
     def all_granted(self):
         return all(self.status().values())
 
     def next_action(self, perm):
         """'granted' | 'request' (prompt not yet fired) | 'open_settings'."""
-        if self._granted(perm):
+        if self._confirmed_granted(perm):
             return "granted"
         return "open_settings" if perm in self._requested else "request"
 

@@ -79,6 +79,49 @@ def test_next_action_granted_is_granted():
     assert pm.next_action("input_monitoring") == "granted"
 
 
+# --- Input Monitoring: post-request in-process preflight is NOT authoritative ---
+# CGRequestListenEventAccess can make a same-process CGPreflightListenEventAccess
+# read a false True without a durable Settings grant. The onboarding must not
+# report "granted" from that; only a fresh-process preflight is trustworthy.
+class _IMFlipNative(_FakeNative):
+    """Input Monitoring preflight reads False until the request fires, then
+    flips to a (false) True in the same process."""
+    def request_input_monitoring(self):
+        super().request_input_monitoring()
+        self.im = True
+
+
+def test_input_monitoring_post_request_inprocess_flip_is_not_granted():
+    nat = _IMFlipNative(ax=False, im=False)
+    pm = mp.PermissionManager(native=nat)
+    assert pm.next_action("input_monitoring") == "request"
+    pm.request("input_monitoring")          # preflight now (falsely) reads True
+    assert pm.next_action("input_monitoring") == "open_settings"
+    assert pm.status()["input_monitoring"] is False
+    assert pm.all_granted() is False
+
+
+def test_input_monitoring_confirmed_on_fresh_process():
+    # A fresh process (no request fired this session) trusts the preflight: an
+    # actually-granted permission confirms as granted on next launch.
+    pm = mp.PermissionManager(native=_FakeNative(ax=False, im=True))
+    assert pm.next_action("input_monitoring") == "granted"
+    assert pm.status()["input_monitoring"] is True
+
+
+def test_accessibility_post_request_inprocess_recheck_still_trusted():
+    # Regression guard: AX trust IS reliable in-process, so a post-request flip
+    # to granted MUST still confirm granted (do not over-correct Input
+    # Monitoring's fix onto Accessibility).
+    class _AXFlip(_FakeNative):
+        def request_accessibility(self):
+            super().request_accessibility()
+            self.ax = True
+    pm = mp.PermissionManager(native=_AXFlip(ax=False, im=False))
+    pm.request("accessibility")
+    assert pm.next_action("accessibility") == "granted"
+
+
 # --- Task 11: System Settings deep-links ---
 def test_settings_url_for_each_perm():
     assert mp.settings_url("accessibility").endswith("Privacy_Accessibility")

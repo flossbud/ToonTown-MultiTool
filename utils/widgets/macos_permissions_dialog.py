@@ -27,7 +27,8 @@ class MacOSPermissionsDialog(QDialog):
         intro = QLabel(
             "ToonTown MultiTool needs these permissions to control your "
             "background toons. Beta and stable are separate apps, so each "
-            "needs its own grant.")
+            "needs its own grant. After you enable Input Monitoring in System "
+            "Settings, restart ToonTown MultiTool for it to take effect.")
         intro.setWordWrap(True)
         lay.addWidget(intro)
         for perm in mp.PermissionManager.PERMS:
