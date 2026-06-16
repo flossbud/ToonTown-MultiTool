@@ -26,8 +26,12 @@ jobs:
       - name: Install build toolchain and Qt runtime libraries
         run: |
           export DEBIAN_FRONTEND=noninteractive
-          apt-get update
-          apt-get install -y \
+          # Retry transient mirror failures (deb.debian.org occasionally resets
+          # the connection mid-fetch). Without this a single dropped packet
+          # fails the job, which forces a rerun and splits the run's artifacts
+          # across attempts in the UI.
+          apt-get -o Acquire::Retries=5 update
+          apt-get -o Acquire::Retries=5 install -y \
             python3 python3-pip python3-venv python3-dev \
             git wget file binutils xz-utils ca-certificates \
             libglib2.0-0 libgl1 libegl1 libopengl0 libdbus-1-3 \
