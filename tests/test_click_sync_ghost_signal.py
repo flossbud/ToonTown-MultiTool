@@ -150,6 +150,42 @@ def test_clear_emitted_on_disable_and_membership_change(svc):
     assert clears
 
 
+def test_drag_ghost_decoupled_from_injection_throttle(svc, monkeypatch):
+    """The ghost emits on EVERY drag motion (display rate) while injection stays
+    throttled to MOTION_COALESCE_S. Re-coupling them (one ghost per injected
+    motion) would make the overlay choppy on a high-refresh monitor."""
+    s, backend, events, _ = svc
+    s.toggle_slot(0); s.toggle_slot(1)
+    clock = {"t": 100.0}
+    monkeypatch.setattr("services.click_sync_service.monotonic", lambda: clock["t"])
+    s._on_capture_event("press", 500, 250, 0, 1000)
+    events.clear(); backend.calls.clear()
+    # Three drag motions at the SAME instant (2nd/3rd within MOTION_COALESCE_S).
+    s._on_capture_event("motion", 600, 250, 256, 1001)
+    s._on_capture_event("motion", 610, 250, 256, 1002)
+    s._on_capture_event("motion", 620, 250, 256, 1003)
+    ghost_motions = [e for e in events if e[0] == "motion"]
+    injected = [c for c in backend.calls if c[0] == "motion"]
+    assert len(ghost_motions) == 3        # ghost on every motion (display rate)
+    assert len(injected) == 1             # injection throttled to one
+
+
+def test_hover_ghost_decoupled_from_injection_throttle(svc, monkeypatch):
+    """Same decoupling on the hover path: ghost every motion, injection throttled."""
+    s, backend, events, _ = svc
+    s.toggle_slot(0); s.toggle_slot(1)
+    clock = {"t": 100.0}
+    monkeypatch.setattr("services.click_sync_service.monotonic", lambda: clock["t"])
+    events.clear(); backend.calls.clear()
+    s._on_capture_event("motion", 500, 250, 0, 1000)   # latches hover source "10"
+    s._on_capture_event("motion", 510, 250, 0, 1001)   # within COALESCE -> ghost only
+    s._on_capture_event("motion", 520, 250, 0, 1002)
+    ghost_motions = [e for e in events if e[0] == "motion"]
+    injected = [c for c in backend.calls if c[0] == "motion"]
+    assert len(ghost_motions) == 3
+    assert len(injected) == 1
+
+
 def test_press_does_not_emit_ghost_clear(svc):
     """A press resets hover state by direct assignment, NOT via
     _clear_hover_locked: ghosts must never blink off at gesture start. A

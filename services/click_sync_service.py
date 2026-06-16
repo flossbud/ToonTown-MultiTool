@@ -556,23 +556,29 @@ class ClickSyncService(QObject):
             self._handle_hover_locked(root_x, root_y, state, time)
             return
         now = monotonic()
-        if now - self._last_motion_emit >= MOTION_COALESCE_S:
-            self._emit_motion_locked(root_x, root_y, state, time)
+        # INJECTION is throttled to MOTION_COALESCE_S (the background games do not
+        # need >60Hz mouse input). The GHOST overlay is pure display, so it is
+        # emitted on EVERY motion to track the cursor at the monitor refresh rate
+        # rather than the injection rate.
+        inject = now - self._last_motion_emit >= MOTION_COALESCE_S
+        if inject:
             self._last_motion_emit = now
             self._pending_motion = None
         else:
             self._pending_motion = (root_x, root_y, state, time)
+        self._emit_motion_locked(root_x, root_y, state, time, inject=inject)
 
-    def _emit_motion_locked(self, root_x, root_y, state, time):
+    def _emit_motion_locked(self, root_x, root_y, state, time, inject=True):
         g = self._gesture
         ghosts = []
         for slot, (wid, geom, _) in g.targets.items():
             tx, ty = map_point(g.source_geom, geom, root_x, root_y)
-            # Return value intentionally ignored (spec deviation, recorded
-            # there): a target dying mid-gesture is reclaimed by window
-            # re-detection and the next geometry tick within ~2s.
-            self._backend.send_motion(
-                wid, tx, ty, geom[0] + tx, geom[1] + ty, state=state, time=time)
+            if inject:
+                # Return value intentionally ignored (spec deviation, recorded
+                # there): a target dying mid-gesture is reclaimed by window
+                # re-detection and the next geometry tick within ~2s.
+                self._backend.send_motion(
+                    wid, tx, ty, geom[0] + tx, geom[1] + ty, state=state, time=time)
             ghosts.append((slot, geom[0] + tx, geom[1] + ty))
         if ghosts:
             self.ghost_pointer_event.emit(("motion", ghosts))
@@ -589,16 +595,22 @@ class ClickSyncService(QObject):
             # drag-mask motion to targets that never saw the press.
             return
         now = monotonic()
-        if now - self._hover_last_emit < MOTION_COALESCE_S:
+        # Same injection-vs-ghost split as drag (above): inject at <=60Hz, but
+        # emit the ghost on every motion so it tracks at the monitor refresh.
+        if now - self._hover_last_emit >= MOTION_COALESCE_S:
+            self._hover_last_emit = now
+            self._hover_pending = None
+            self._emit_hover_locked(root_x, root_y, state, time, now, inject=True)
+        else:
             self._hover_pending = (root_x, root_y, state, time)
             self._schedule_hover_flush_locked()
-            return
-        self._hover_last_emit = now
-        self._hover_pending = None
-        self._emit_hover_locked(root_x, root_y, state, time, now)
+            # Ghost-only between throttle ticks: use the latched source (no
+            # authoritative re-confirm) and do NOT inject.
+            self._emit_hover_locked(root_x, root_y, state, time, now,
+                                    allow_confirm=False, inject=False)
 
     def _emit_hover_locked(self, root_x, root_y, state, time, now,
-                           allow_confirm=True):
+                           allow_confirm=True, inject=True):
         """Forward one coalesced hover sample. CACHED geometry on both
         sides — zero X round trips in the steady state; the authoritative
         resolver runs at most once per HOVER_CONFIRM_S (see
@@ -628,10 +640,11 @@ class ClickSyncService(QObject):
             if g is None or g[2] <= 0 or g[3] <= 0:
                 continue
             tx, ty = map_point(src_geom, g, root_x, root_y)
-            # Return value ignored (same as gesture motion): a dying target
-            # is reclaimed by window re-detection within ~2s.
-            self._backend.send_motion(
-                wid, tx, ty, g[0] + tx, g[1] + ty, state=state, time=time)
+            if inject:
+                # Return value ignored (same as gesture motion): a dying target
+                # is reclaimed by window re-detection within ~2s.
+                self._backend.send_motion(
+                    wid, tx, ty, g[0] + tx, g[1] + ty, state=state, time=time)
             ghosts.append((s, g[0] + tx, g[1] + ty))
         if ghosts:
             self.ghost_pointer_event.emit(("motion", ghosts))
