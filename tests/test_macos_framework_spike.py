@@ -21,3 +21,8 @@ def test_provenance_has_required_keys():
     for key in ("sys.executable", "sys.frozen", "platform.machine",
                 "PYTHONFRAMEWORK", "libpython", "bundlePath"):
         assert key in info
+
+
+def test_parse_xy_handles_ints_floats_and_spaces():
+    assert spike._parse_xy("40,40") == (40.0, 40.0)
+    assert spike._parse_xy(" 12.5 , 7 ") == (12.5, 7.0)
