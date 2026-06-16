@@ -15,7 +15,13 @@ Add --recipe N to cycle the candidate NSWindow recipes (see RECIPE_CANDIDATES).
 from __future__ import annotations
 
 import argparse
+import os
 import sys
+
+# Run-as-script: put the repo root on sys.path so the follow mode's
+# `from utils import macos_discovery` resolves (otherwise sys.path[0] is
+# scripts/ and `utils` is not importable).
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from PySide6.QtCore import QEvent, QPoint, Qt, QTimer
 from PySide6.QtGui import QColor, QGuiApplication, QPainter
