@@ -31,6 +31,10 @@ def test_install_location_downloads():
 def test_install_location_applications_is_ok():
     assert mp.classify_location("/Applications/ToonTown MultiTool.app") == "ok"
 
+def test_install_location_user_applications_is_ok():
+    assert mp.classify_location(
+        os.path.expanduser("~/Applications/ToonTown MultiTool.app")) == "ok"
+
 def test_is_install_location_ok():
     assert mp.is_install_location_ok("/Applications/ToonTown MultiTool.app") is True
     assert mp.is_install_location_ok("/Volumes/X/ToonTown MultiTool.app") is False
@@ -56,6 +60,23 @@ def test_request_is_one_shot_then_settings():
     assert pm.next_action("accessibility") == "open_settings"
     pm.request("accessibility")
     assert nat.ax_requested == 1
+
+def test_request_input_monitoring_is_one_shot():
+    # Pins the input-monitoring arm of the request dispatch (a routing swap to
+    # request_accessibility would otherwise pass every other test).
+    nat = _FakeNative(ax=False, im=False)
+    pm = mp.PermissionManager(native=nat)
+    assert pm.next_action("input_monitoring") == "request"
+    pm.request("input_monitoring")
+    assert nat.im_requested == 1
+    assert pm.next_action("input_monitoring") == "open_settings"
+    pm.request("input_monitoring")
+    assert nat.im_requested == 1
+
+def test_next_action_granted_is_granted():
+    pm = mp.PermissionManager(native=_FakeNative(ax=True, im=True))
+    assert pm.next_action("accessibility") == "granted"
+    assert pm.next_action("input_monitoring") == "granted"
 
 
 # --- Task 11: System Settings deep-links ---
