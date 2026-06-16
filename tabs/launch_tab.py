@@ -523,6 +523,12 @@ class LaunchTab(QWidget):
                 pass
 
     def _start_keyring_probe(self):
+        # --self-check (build oracle) must not touch the keychain: a frozen app's
+        # keychain read can BLOCK (different code identity than the dev Python),
+        # leaving this probe QThread running at interpreter teardown -> abort
+        # (QThread destroyed while running).
+        if os.environ.get("TTMT_SELF_CHECK"):
+            return
         if self._probe_thread is not None:
             return
         self._probe_thread = QThread(self)

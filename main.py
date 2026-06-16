@@ -590,6 +590,13 @@ class MultiToonTool(QMainWindow):
             self.settings_tab.set_update_checker(self.update_checker)
 
     def _maybe_kick_off_startup_check(self):
+        # --self-check is a build oracle (does the frozen app import + build the
+        # UI?). It must NOT start the update-check QThread / network / keychain
+        # work: that thread can block mid-flight (e.g. a frozen app's keychain
+        # read) and abort at interpreter teardown (QThread destroyed while
+        # running).
+        if os.environ.get("TTMT_SELF_CHECK"):
+            return
         if not bool(self.settings_manager.get("check_for_updates_at_startup", False)):
             return
         self.update_checker.check_async(manual=False)
@@ -1634,6 +1641,7 @@ def _run_self_check() -> int:
     pumps the event loop briefly, and reports success/failure via exit code.
     CI runs this under xvfb with the real xcb platform."""
     try:
+        os.environ["TTMT_SELF_CHECK"] = "1"   # gate startup network/keychain work
         _import_all_modules()
         QApplication.setApplicationName(app_name())
         QApplication.setOrganizationName("flossbud")
@@ -1642,7 +1650,9 @@ def _run_self_check() -> int:
         apply_theme(app, resolve_theme(settings))
         window = MultiToonTool()
         app.processEvents()
+        window.shutdown()        # stop service threads BEFORE the Qt/Python teardown
         window.close()
+        app.processEvents()
         sys.stdout.write("self-check OK\n")
         return 0
     except Exception:
