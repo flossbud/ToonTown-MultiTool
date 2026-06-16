@@ -25,6 +25,7 @@ class SettingsManager:
             "advanced_collapsed":            True,
             "launch_section_ttr_collapsed":  False,
             "launch_section_cc_collapsed":   False,
+            "macos_permissions_onboarding_shown": False,
         }
         self._callbacks = []
         self._load()

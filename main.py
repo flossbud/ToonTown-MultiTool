@@ -1849,6 +1849,26 @@ if __name__ == "__main__":
     _wire_app_lifecycle(app, window)
     window.show()
     _lock_cc_prefs_silently()
+    # macOS first-run permission onboarding. Fired POST-show (so --self-check,
+    # which exits before this block and never shows the window, never triggers
+    # it). Non-blocking .show() keeps the app usable; shows on first run or any
+    # later run where a required grant is still missing (nags until granted).
+    if sys.platform == "darwin":
+        from utils import macos_permissions as _mp
+        _pm = _mp.PermissionManager()
+        if not settings.get("macos_permissions_onboarding_shown", False) \
+                or not _pm.all_granted():
+            try:
+                import AppKit
+                _bundle_path = AppKit.NSBundle.mainBundle().bundlePath()
+            except Exception:
+                _bundle_path = sys.executable
+            from utils.widgets.macos_permissions_dialog import MacOSPermissionsDialog
+            _perm_dlg = MacOSPermissionsDialog(
+                _pm, location_ok=_mp.is_install_location_ok(_bundle_path),
+                parent=window)
+            _perm_dlg.show()
+            settings.set("macos_permissions_onboarding_shown", True)
     # Fire the multi-install picker on a 0-delay timer so Qt has finished
     # processing the show event before any modal dialog steals focus.
     QTimer.singleShot(0, lambda: _maybe_prompt_for_cc_install(window, window.settings_manager))
