@@ -43,10 +43,20 @@ def config_dir() -> str:
     override = os.environ.get("TTMT_CONFIG_DIR")
     if override:
         return override
+    name = config_dir_name()
+    if sys.platform == "darwin":
+        return os.path.expanduser(f"~/Library/Application Support/{name}")
     config_home = os.environ.get("XDG_CONFIG_HOME")
     if config_home:
-        return os.path.join(config_home, config_dir_name())
-    return os.path.expanduser(f"~/.config/{config_dir_name()}")
+        return os.path.join(config_home, name)
+    return os.path.expanduser(f"~/.config/{name}")
+
+
+def bundle_id() -> str:
+    """Reverse-DNS macOS bundle identifier, stable forever per channel.
+    Matches the Flatpak app-id family (io.github.flossbud.*)."""
+    base = "io.github.flossbud.ToonTownMultiTool"
+    return f"{base}.beta" if is_beta() else base
 
 
 def keyring_service() -> str:

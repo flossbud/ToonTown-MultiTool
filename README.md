@@ -2,7 +2,7 @@
   <img src="assets/logos/ttmt_logo_icon+text.png" alt="ToonTown MultiTool" width="480">
 </p>
 
-A multitoon controller for **Toontown Rewritten** and **Corporate Clash** on Linux and Windows.
+A multitoon controller for **Toontown Rewritten** and **Corporate Clash** on Linux, macOS, and Windows.
 
 <!-- Hero screenshot goes here. Suggested: top-of-app multitoon tab with
      4 toons enabled, 1200x700 PNG. Drop the file into assets/ and add
@@ -57,7 +57,7 @@ Past releases v1.0 through v2.3.0-a1 have been retagged to v0.1.0-alpha.1 throug
 
 ## 📥 Installation
 
-Install on Windows (installer, portable ZIP, or source) or on Linux (Arch, Flatpak, AppImage, .deb, or source). The latest release is always at `https://github.com/flossbud/ToonTown-MultiTool/releases/latest`.
+Install on Windows (installer, portable ZIP, or source), on Linux (Arch, Flatpak, AppImage, .deb, or source), or on macOS (DMG). The latest release is always at `https://github.com/flossbud/ToonTown-MultiTool/releases/latest`.
 
 ### Windows
 
@@ -161,11 +161,29 @@ For unsupported distros (openSUSE, Gentoo, NixOS), or if you already have Python
 
 By default the app runs through XWayland (xcb) on Wayland sessions; this is what the multitoon input features need. Set `TTMT_USE_WAYLAND=1` to opt into native Wayland instead (multitoon input features won't work there).
 
+### macOS
+
+Works on Apple Silicon and Intel Macs. Download `ToonTownMultiTool-vX.Y.Z.dmg` from the [Releases page](https://github.com/flossbud/ToonTown-MultiTool/releases), open it, and drag ToonTown MultiTool into your Applications folder.
+
+#### First launch
+
+The app is not yet notarized by Apple, so the first time you open it macOS will say it "cannot be opened because Apple cannot check it for malicious software." Right-click (or Control-click) the app in Applications, choose **Open**, and confirm. You only need to do this once. If you prefer the terminal:
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/ToonTown MultiTool.app"
+```
+
+#### Permissions
+
+To control your background toons, ToonTown MultiTool needs two macOS permissions: **Accessibility** and **Input Monitoring**. On first run the app shows a setup guide that walks you through granting them in System Settings, and you can reopen it any time from **Settings > macOS > Permissions**. Grant both and the synced input features will work.
+
+Because the app is not yet code-signed, macOS may ask you to grant these permissions again after an update.
+
 ---
 
 ## Configuration
 
-Your settings, profiles, and account list live in `C:\Users\<username>\.config\toontown_multitool\` (Windows) or `~/.config/toontown_multitool/` (Linux). Back it up, copy it between machines, or delete it to start fresh.
+Your settings, profiles, and account list live in `C:\Users\<username>\.config\toontown_multitool\` (Windows), `~/.config/toontown_multitool/` (Linux), or `~/Library/Application Support/toontown_multitool/` (macOS). Back it up, copy it between machines, or delete it to start fresh.
 
 See [PRIVACY.md](PRIVACY.md) for the full breakdown of what's stored on your device and what gets sent to the game servers.
 

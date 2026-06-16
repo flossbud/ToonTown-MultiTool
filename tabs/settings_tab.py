@@ -862,6 +862,37 @@ class SettingsTab(QWidget):
 
         lay.insertWidget(insert_at, updates)
 
+        # ── macOS permissions (darwin only) ──────────────────────────────
+        if sys.platform == "darwin":
+            insert_at += 1
+            macos = SettingsPanel(title="macOS", stripe="blue")
+            self._panels.append(macos)
+            perms_field = SettingsField(
+                "Permissions",
+                helper="Accessibility and Input Monitoring let the app control "
+                       "your background toons. Open the setup guide to grant them.",
+            )
+            perms_btn = QPushButton("Open guide…")
+            perms_btn.setCursor(Qt.PointingHandCursor)
+            perms_btn.setFixedHeight(28)
+            perms_btn.clicked.connect(self._open_macos_permissions)
+            perms_field.set_control(perms_btn)
+            macos.add_field(perms_field)
+            lay.insertWidget(insert_at, macos)
+
+    def _open_macos_permissions(self):
+        import sys
+        from utils import macos_permissions as _mp
+        from utils.widgets.macos_permissions_dialog import MacOSPermissionsDialog
+        pm = _mp.PermissionManager()
+        try:
+            import AppKit
+            bp = AppKit.NSBundle.mainBundle().bundlePath()
+        except Exception:
+            bp = sys.executable
+        MacOSPermissionsDialog(
+            pm, location_ok=_mp.is_install_location_ok(bp), parent=self).show()
+
     def _build_games_page(self, page):
         from utils.settings_keys import (
             CC_ENGINE_INSTALL_SIGNATURE,
