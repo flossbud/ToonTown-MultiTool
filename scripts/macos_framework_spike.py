@@ -18,6 +18,14 @@ import platform
 import sys
 import time
 
+# Run unfrozen as a loose script (python scripts/macos_framework_spike.py): sys.path[0]
+# is scripts/, so the repo-root `utils` package isn't importable. Add the repo root.
+# Frozen builds bundle `utils`, so this is a no-op there.
+if not getattr(sys, "frozen", False):
+    _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if _REPO_ROOT not in sys.path:
+        sys.path.insert(0, _REPO_ROOT)
+
 
 def _sysconfig_framework():
     import sysconfig
@@ -153,11 +161,23 @@ def main(argv=None) -> int:
     ap.add_argument("--provenance-only", action="store_true",
                     help="log provenance and exit 0 (topology gate / relocatability "
                          "smoke test - no gesture, no target needed)")
+    ap.add_argument("--list", action="store_true",
+                    help="print discovered TTR/CC game windows (wid/pid/bounds) and exit")
     args = ap.parse_args(argv)
 
     info = provenance()
     _log(args.trace, "PROVENANCE\n" + format_provenance(info))
     if args.provenance_only:
+        return 0
+    if args.list:
+        from utils import macos_discovery as disc
+        wins = disc.find_game_windows()        # [(window_id_str, game)]
+        if not wins:
+            _log(args.trace, "no TTR/CC game windows found (is a toon running?)")
+        for wid_str, game in wins:
+            _log(args.trace, f"WINDOW game={game} wid={wid_str} "
+                             f"pid={disc.get_window_pid(wid_str)} "
+                             f"bounds={disc.get_window_geometry(wid_str)}")
         return 0
     if args.wid is None:
         _log(args.trace, "ERROR: --wid is required for a gesture")
