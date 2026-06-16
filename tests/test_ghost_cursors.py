@@ -327,6 +327,10 @@ def test_native_to_logical_fallback_first_screen_then_identity():
 def test_pointer_event_positions_through_native_to_logical(rig, monkeypatch):
     from tabs.multitoon import _ghost_cursors as gc
     svc, _, ctl = rig
+    # Pin to a non-darwin platform: this exercises the physical-pixel -> logical
+    # DPR-division path; on darwin _emitted_to_logical is identity and bypasses
+    # _native_to_logical entirely (project_platform_branch_breaks_unpinned_tests).
+    monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.setattr(gc, "_native_to_logical",
                         lambda x, y, screens=None: (x // 2, y // 2))
     svc.ghost_pointer_event.emit(("motion", [(0, 800, 600)]))

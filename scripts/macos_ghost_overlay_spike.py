@@ -242,9 +242,10 @@ def anchor_point(geom, anchor):
 
 
 def _list_ttr_windows():
-    """Live TTR windows via the real discovery path (operator-run on the Mac)."""
+    """Live TTR window ids via the real discovery path (operator-run on the Mac).
+    find_game_windows() returns (window_id_str, game) tuples."""
     from utils import macos_discovery as macd
-    return [gw for gw in macd.find_game_windows() if gw.game == "ttr"]
+    return [wid for (wid, game) in macd.find_game_windows() if game == "ttr"]
 
 
 def _schedule_measurement(ov, emitted, delay_ms=300):
@@ -275,12 +276,15 @@ def _run_follow(recipe, anchor, index, harden_enabled):
     if not wins:
         print("[follow] no TTR windows found; open a toon first")
         return None
-    gw = wins[min(index, len(wins) - 1)]
-    geom = macd.get_window_geometry_fresh(str(gw.window_id)) or gw.bounds
+    wid = wins[min(index, len(wins) - 1)]
+    geom = macd.get_window_geometry_fresh(str(wid))
+    if not geom:
+        print(f"[follow] no live geometry for window {wid}")
+        return None
     pt = anchor_point(geom, anchor)
     ov = SpikeOverlay(recipe, harden_enabled=harden_enabled)
     ov.show_at(*pt)
-    print(f"[follow] window_id={gw.window_id} owner={gw.owner!r} geom={geom}")
+    print(f"[follow] window_id={wid} geom={geom} anchor={anchor} -> point={pt}")
     print(f"[follow] {describe_recipe(recipe)} harden_enabled={harden_enabled}")
     _schedule_measurement(ov, pt)
     return ov

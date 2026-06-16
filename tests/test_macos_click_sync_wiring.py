@@ -13,7 +13,7 @@ def test_darwin_resolver_uses_active_source_window(monkeypatch):
     assert disc.active_source_window(10, 10, ["77"]) is None     # point outside
 
 
-def test_darwin_wiring_builds_service_and_skips_ghost_cursors(monkeypatch):
+def test_darwin_wiring_builds_service_and_ghost_cursors(monkeypatch):
     # INSTANTIATE the darwin branch with FAKES (not a source grep): pin darwin, stub the
     # macOS collaborators, build the real tab, and assert the wiring. Reuse the tab
     # builder from tests/test_click_sync_ui.py (the same construction + config isolation
@@ -52,7 +52,7 @@ def test_darwin_wiring_builds_service_and_skips_ghost_cursors(monkeypatch):
     tab = build_multitoon_tab(monkeypatch)
     try:
         assert tab.click_sync_service is not None          # darwin is wired, not excluded
-        assert tab.ghost_cursor_controller is None         # ghost cursors OFF on darwin (spec §3.6)
+        assert tab.ghost_cursor_controller is not None     # ghost cursors built on darwin (spike-proven 2026-06-15)
         # delivery_ready must be WIRED INTO the service, not just present on the backend: the
         # service's probe must return the BACKEND's distinctive value (the default always-ready
         # would be (True, None)), so a dropped `delivery_ready=` arg in _tab.py is caught.

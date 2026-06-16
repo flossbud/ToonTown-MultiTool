@@ -30,10 +30,12 @@ HOTSPOT = (1, 3)   # fingertip offset at 32 px (measured at (2, 12) in the
 IDLE_HIDE_S = 1.5  # fade out this long after a slot's last event
 FADE_MS = 150
 SLOT_COUNT = 4
-# "offscreen" is the test platform (widget geometry works there). Native
-# Wayland is unsupported: clients cannot position global windows (the app
-# defaults to xcb, so this only triggers under TTMT_USE_WAYLAND=1).
-_SUPPORTED_PLATFORMS = ("xcb", "windows", "offscreen")
+# "offscreen" is the test platform (widget geometry works there). "cocoa" is
+# macOS, where the overlay floats via a native NSWindow recipe (utils.macos_overlay;
+# spike-proven 2026-06-15). Native Wayland is unsupported: clients cannot position
+# global windows (the app defaults to xcb, so that only triggers under
+# TTMT_USE_WAYLAND=1).
+_SUPPORTED_PLATFORMS = ("xcb", "windows", "offscreen", "cocoa")
 
 
 def _cursor_path(slot: int) -> str:
@@ -79,6 +81,19 @@ def _native_to_logical(x, y, screens=None):
             round(g.y() + (y - g.y()) / dpr))
 
 
+def _emitted_to_logical(x, y, screens=None):
+    """Map the service's emitted point into Qt's logical coordinate space.
+
+    On macOS the service emits LOGICAL POINTS (all macOS geometry/capture/
+    injection runs in points), and Qt's QWidget geometry is also points, so the
+    mapping is the identity (negative multi-display coords preserved). Everywhere
+    else the service emits physical pixels, so delegate to _native_to_logical
+    (which divides by devicePixelRatio)."""
+    if sys.platform == "darwin":
+        return (int(x), int(y))
+    return _native_to_logical(x, y, screens)
+
+
 class GhostCursorOverlay(QWidget):
     """One toon's glove: a 32x32 frameless, always-on-top, input-transparent
     toplevel. The EMPTY input shape (WindowTransparentForInput) is
@@ -98,6 +113,9 @@ class GhostCursorOverlay(QWidget):
         self.setAttribute(Qt.WA_ShowWithoutActivating)
         self.setFixedSize(CURSOR_SIZE, CURSOR_SIZE)
         self._pixmap = pixmap
+        # macOS NSWindow hardening state (no-op off cocoa).
+        self._hardened = False
+        self._harden_failed = False
         # windowOpacity is a toplevel property: animating it avoids
         # QGraphicsOpacityEffect, which conflicts with custom paintEvent.
         self._fade = QPropertyAnimation(self, b"windowOpacity", self)
@@ -110,11 +128,43 @@ class GhostCursorOverlay(QWidget):
         p.drawPixmap(0, 0, self._pixmap)
 
     def show_at(self, x: int, y: int) -> None:
+        if self._harden_failed:
+            return   # macOS fail-closed: never show an un-hardenable ghost
         self._fade.stop()
         self.setWindowOpacity(1.0)
         self.move(int(x) - HOTSPOT[0], int(y) - HOTSPOT[1])
         if not self.isVisible():
             self.show()
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        # Gate on the REAL cocoa backend, not sys.platform: under the offscreen
+        # QPA (tests on a Mac) winId() is not an NSView, so hardening must not
+        # run (project_qt_winid_objc_offscreen_segv).
+        if QGuiApplication.platformName() == "cocoa":
+            # Harden after the native surface is realized (queued so .window()
+            # is non-nil), matching the proven spike timing.
+            QTimer.singleShot(0, self._harden_darwin)
+
+    def event(self, e):
+        from PySide6.QtCore import QEvent
+        if (e.type() == QEvent.PlatformSurface
+                and QGuiApplication.platformName() == "cocoa"):
+            self._hardened = False               # surface (re)created
+            QTimer.singleShot(0, self._harden_darwin)
+        return super().event(e)
+
+    def _harden_darwin(self) -> None:
+        """Apply the floating-overlay NSWindow recipe (utils.macos_overlay). Fail
+        CLOSED: a cosmetic ghost must never risk a misbehaving overlay, so if it
+        has NEVER hardened and this attempt fails, hide and stay hidden."""
+        from utils.macos_overlay import harden_overlay_window
+        ok, _reason = harden_overlay_window(self)
+        if ok:
+            self._hardened = True
+        elif not self._hardened:
+            self._harden_failed = True
+            self.hide_now()
 
     def fade_out(self) -> None:
         if not self.isVisible():
@@ -197,7 +247,7 @@ class GhostCursorController(QObject):
                 if self._disabled_reason is not None:
                     return  # asset failure just disabled the feature
                 continue    # out-of-range slot: drop it, keep the batch
-            ov.show_at(*_native_to_logical(x, y))
+            ov.show_at(*_emitted_to_logical(x, y))
             self._restart_idle_timer(slot)
 
     def _on_clear(self) -> None:

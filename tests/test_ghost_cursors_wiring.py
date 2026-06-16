@@ -1,5 +1,6 @@
 """MultitoonTab wiring: ghost cursor controller + resolver guard."""
 import os
+import sys
 
 import pytest
 
@@ -70,7 +71,7 @@ def test_controller_constructed_and_listening(multitoon_tab):
     assert not ov.isVisible()
 
 
-@pytest.mark.skipif(os.name == "nt", reason="X11 resolver path")
+@pytest.mark.skipif(sys.platform != "linux", reason="X11 resolver path (darwin uses active_source_window)")
 def test_resolver_treats_own_overlay_as_lookup_failure(multitoon_tab, monkeypatch):
     tab = multitoon_tab
     tab.window_manager.geoms["0x1"] = (0, 0, 100, 100)
@@ -83,7 +84,7 @@ def test_resolver_treats_own_overlay_as_lookup_failure(multitoon_tab, monkeypatc
     assert resolver(50, 50, ["0x1"]) == "0x1"
 
 
-@pytest.mark.skipif(os.name == "nt", reason="X11 resolver path")
+@pytest.mark.skipif(sys.platform != "linux", reason="X11 resolver path (darwin uses active_source_window)")
 def test_resolver_still_ignores_true_foreign_toplevels(multitoon_tab, monkeypatch):
     tab = multitoon_tab
     tab.window_manager.geoms["0x1"] = (0, 0, 100, 100)
