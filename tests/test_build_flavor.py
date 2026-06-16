@@ -6,6 +6,7 @@ the flag with monkeypatch without an importlib.reload dance.
 """
 
 import os
+import sys
 
 import pytest
 
@@ -41,12 +42,14 @@ def test_config_dir_name_beta(monkeypatch):
 
 
 def test_config_dir_stable(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.delenv("TTMT_BETA", raising=False)
     from utils import build_flavor
     assert build_flavor.config_dir().endswith("/.config/toontown_multitool")
 
 
 def test_config_dir_beta(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.setenv("TTMT_BETA", "1")
     from utils import build_flavor
     assert build_flavor.config_dir().endswith("/.config/toontown_multitool_beta")
