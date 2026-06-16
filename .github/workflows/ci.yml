@@ -36,3 +36,12 @@ jobs:
   test-windows:
     needs: build-windows
     uses: ./.github/workflows/test-windows.yml
+
+  build-macos:
+    uses: ./.github/workflows/build-macos.yml
+    with:
+      version_label: dev
+
+  test-macos:
+    needs: build-macos
+    uses: ./.github/workflows/test-macos.yml

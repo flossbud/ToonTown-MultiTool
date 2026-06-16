@@ -58,8 +58,19 @@ jobs:
     needs: build-windows
     uses: ./.github/workflows/test-windows.yml
 
+  build-macos:
+    needs: channel
+    uses: ./.github/workflows/build-macos.yml
+    with:
+      version_label: ${{ github.ref_name }}
+      beta: ${{ needs.channel.outputs.beta == 'true' }}
+
+  test-macos:
+    needs: build-macos
+    uses: ./.github/workflows/test-macos.yml
+
   publish:
-    needs: [channel, test-linux, test-windows]
+    needs: [channel, test-linux, test-windows, test-macos]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -120,6 +131,7 @@ jobs:
             linux-appimage/ToonTownMultiTool-*.AppImage
             linux-flatpak/ToonTownMultiTool-*.flatpak
             linux-deb/ToonTownMultiTool-*.deb
+            macos-dmg/ToonTownMultiTool-*.dmg
             SMOKETEST.md
 
       - name: Demote prior Latest
