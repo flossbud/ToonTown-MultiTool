@@ -193,7 +193,10 @@ class SpikeOverlay(QWidget):
         if not self._harden_enabled:
             print(f"[harden:{why}] skipped (--no-harden: true fail-open control)")
             return
-        if sys.platform != "darwin":
+        # Only poke the native NSWindow on the REAL cocoa backend. Under any
+        # other QPA (offscreen in tests, or a stray non-cocoa run) winId() is
+        # not an NSView pointer, so resolving it through objc would segfault.
+        if sys.platform != "darwin" or QGuiApplication.platformName() != "cocoa":
             return
         res = harden_widget(view_resolver=self._resolve_view, recipe=self._recipe)
         print(f"[harden:{why}] ok={res['ok']} reason={res['reason']} "
@@ -217,3 +220,106 @@ class SpikeOverlay(QWidget):
             # Native surface (re)created, e.g. on screen change -> re-harden.
             QTimer.singleShot(0, lambda: self._harden("platformSurface"))
         return super().event(e)
+
+
+def anchor_point(geom, anchor):
+    """Map a TTR window content-rect (x, y, w, h) + anchor name to a screen
+    point. Pure."""
+    x, y, w, h = geom
+    if anchor == "center":
+        return (x + w // 2, y + h // 2)
+    if anchor == "corner":
+        return (x, y)
+    if anchor == "br":
+        return (x + w, y + h)
+    raise ValueError(f"unknown anchor {anchor!r}")
+
+
+def _list_ttr_windows():
+    """Live TTR windows via the real discovery path (operator-run on the Mac)."""
+    from utils import macos_discovery as macd
+    return [gw for gw in macd.find_game_windows() if gw.game == "ttr"]
+
+
+def _schedule_measurement(ov, emitted, delay_ms=300):
+    """After the event loop has realized AND positioned the overlay, measure
+    where it ACTUALLY landed (realized Qt geometry) vs where we asked. Reading
+    ov.x()/ov.y() synchronously right after move() would be self-referential."""
+    def _measure():
+        origin = ov.frameGeometry().topLeft()
+        ghot = ov.mapToGlobal(QPoint(*HOTSPOT))   # realized global pos of hotspot
+        r = coordinate_readout(emitted=emitted,
+                               qt_global=(ghot.x(), ghot.y()),
+                               overlay_origin=(origin.x(), origin.y()))
+        print(f"[coords:realized] {r}")
+    QTimer.singleShot(delay_ms, _measure)
+
+
+def _run_point(recipe, x, y, harden_enabled):
+    ov = SpikeOverlay(recipe, harden_enabled=harden_enabled)
+    ov.show_at(x, y)
+    print(f"[point] {describe_recipe(recipe)} harden_enabled={harden_enabled}")
+    _schedule_measurement(ov, (x, y))
+    return ov
+
+
+def _run_follow(recipe, anchor, index, harden_enabled):
+    from utils import macos_discovery as macd
+    wins = _list_ttr_windows()
+    if not wins:
+        print("[follow] no TTR windows found; open a toon first")
+        return None
+    gw = wins[min(index, len(wins) - 1)]
+    geom = macd.get_window_geometry_fresh(str(gw.window_id)) or gw.bounds
+    pt = anchor_point(geom, anchor)
+    ov = SpikeOverlay(recipe, harden_enabled=harden_enabled)
+    ov.show_at(*pt)
+    print(f"[follow] window_id={gw.window_id} owner={gw.owner!r} geom={geom}")
+    print(f"[follow] {describe_recipe(recipe)} harden_enabled={harden_enabled}")
+    _schedule_measurement(ov, pt)
+    return ov
+
+
+def _build_parser():
+    ap = argparse.ArgumentParser(description="macOS ghost-overlay spike")
+    ap.add_argument("--mode", choices=("point", "follow"), default="point")
+    ap.add_argument("--x", type=int, default=800)
+    ap.add_argument("--y", type=int, default=600)
+    ap.add_argument("--anchor", choices=("center", "corner", "br"), default="center")
+    ap.add_argument("--index", type=int, default=0, help="which TTR window (follow)")
+    ap.add_argument("--recipe", type=int, default=0,
+                    help=f"0..{len(RECIPE_CANDIDATES) - 1}")
+    ap.add_argument("--no-harden", action="store_true",
+                    help="skip ALL native NSWindow hardening: the true fail-open "
+                         "control (is Qt's WindowTransparentForInput alone "
+                         "click-through?)")
+    ap.add_argument("--seconds", type=int, default=20, help="how long to show")
+    return ap
+
+
+def main(argv=None):
+    args = _build_parser().parse_args(argv)
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication(sys.argv)
+    # A misleading-facts guard: a Mac run on the wrong backend (e.g. offscreen)
+    # must be obvious in the log.
+    print(f"[spike] Qt platform = {QGuiApplication.platformName()!r} "
+          f"(expect 'cocoa' on a real Mac run)")
+    recipe = RECIPE_CANDIDATES[args.recipe]
+    harden_enabled = not args.no_harden
+
+    if args.mode == "point":
+        ov = _run_point(recipe, args.x, args.y, harden_enabled)
+    else:
+        ov = _run_follow(recipe, args.anchor, args.index, harden_enabled)
+    if ov is None:
+        return 1
+    QTimer.singleShot(args.seconds * 1000, app.quit)
+    print(f"[spike] showing for {args.seconds}s; focus a TTR toon and observe "
+          f"z-order + click-through. Ctrl-C to stop early.")
+    app.exec()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

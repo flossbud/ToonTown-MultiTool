@@ -171,3 +171,32 @@ def test_spike_overlay_harden_disabled_flag(qapp_spike):
         assert ov._harden_enabled is False
     finally:
         ov.deleteLater()
+
+
+def test_anchor_point_center_and_corner():
+    spike = _load_spike()
+    geom = (100, 200, 800, 600)   # x, y, w, h (points, top-left)
+    assert spike.anchor_point(geom, "center") == (500, 500)   # 100+400, 200+300
+    assert spike.anchor_point(geom, "corner") == (100, 200)   # top-left
+    assert spike.anchor_point(geom, "br") == (900, 800)       # bottom-right
+
+
+def test_build_parser_accepts_no_harden():
+    spike = _load_spike()
+    args = spike._build_parser().parse_args(["--no-harden", "--mode", "point"])
+    assert args.no_harden is True
+    assert spike._build_parser().parse_args(["--mode", "point"]).no_harden is False
+
+
+def test_show_at_does_not_harden_off_cocoa(qapp_spike):
+    # Regression: under offscreen (non-cocoa) on a Mac, sys.platform is 'darwin'
+    # but winId() is NOT an NSView -> resolving it through objc would segfault.
+    # show_at must skip native hardening on any non-cocoa backend and return.
+    spike = _load_spike()
+    ov = spike.SpikeOverlay(spike.RECIPE_CANDIDATES[0])
+    try:
+        ov.show_at(50, 50)          # must NOT crash
+        assert ov.isVisible()
+    finally:
+        ov.hide()
+        ov.deleteLater()
