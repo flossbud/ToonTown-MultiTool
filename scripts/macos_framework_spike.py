@@ -138,7 +138,7 @@ def run_gesture(pid: int, wid: int, win_xy, screen_xy, trace_path: str) -> int:
     time.sleep(0.4)
     moved = []
     for dx in (0, 12, 24, 12, 0):     # hover sweep so the operator sees rollover
-        moved.append(eng.motion(pid, wid, (win_xy[0] + dx, win_xy[1]),
+        moved.append(eng.motion(pid, wid, psn, (win_xy[0] + dx, win_xy[1]),
                                 (screen_xy[0] + dx, screen_xy[1]), dragging=False))
         time.sleep(0.05)
     _log(trace_path, f"hover sweep moves={moved}")
