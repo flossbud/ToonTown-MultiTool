@@ -10,6 +10,7 @@
 set -euo pipefail
 ARM="$1"; X86="$2"; OUT="$3"
 rm -rf "$OUT"
+mkdir -p "$(dirname "$OUT")"
 cp -R "$ARM" "$OUT"
 while IFS= read -r -d '' f; do
   rel="${f#"$OUT"/}"

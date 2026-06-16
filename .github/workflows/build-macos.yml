@@ -17,39 +17,32 @@ on:
         default: false
 
 jobs:
-  # One single-arch .app per runner. macos-13 is Intel (x86_64), macos-14 is
-  # Apple Silicon (arm64); both pinned during the Task 3 bring-up. The two
-  # trees are fused into one universal2 .app in merge-sign-dmg.
-  build-arch:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { runner: macos-13, arch: x86_64 }   # Intel (pinned, Task 3)
-          - { runner: macos-14, arch: arm64 }    # Apple Silicon (pinned, Task 3)
-    runs-on: ${{ matrix.runner }}
+  # One Apple-Silicon runner builds BOTH slices of the universal2 .app: the
+  # x86_64 slice under Rosetta 2, the arm64 slice natively, then lipo-merges
+  # them. GitHub no longer reliably serves Intel (macos-13) runners, so the
+  # old two-runner matrix would queue forever. Both slices use the same
+  # python-build-standalone interpreter (build_env.sh) so the trees are
+  # structurally identical before lipo.
+  build-macos:
+    runs-on: macos-14
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
-      - name: Assert runner architecture
-        run: |
-          got="$(uname -m)"
-          [ "$got" = "${{ matrix.arch }}" ] || { echo "expected ${{ matrix.arch }}, runner is $got" >&2; exit 1; }
-
       - name: Source pinned build env
         run: |
           source packaging/macos/build_env.sh
-          echo "TTMT_LSMINVER=$TTMT_LSMINVER" >> "$GITHUB_ENV"
-          echo "BUILD_PY=$BUILD_PY" >> "$GITHUB_ENV"
+          {
+            echo "PBS_RELEASE=$PBS_RELEASE"
+            echo "PBS_PYTHON=$PBS_PYTHON"
+            echo "TTMT_LSMINVER=$TTMT_LSMINVER"
+          } >> "$GITHUB_ENV"
 
-      - uses: actions/setup-python@v6
-        with:
-          python-version: ${{ env.BUILD_PY }}   # single source of truth: build_env.sh (Task 3)
+      - name: Ensure Rosetta 2 (to run the x86_64 toolchain)
+        run: sudo softwareupdate --install-rosetta --agree-to-license
 
       - name: Write build info
-        id: buildinfo
         run: |
           BUILD_NUMBER=$(git rev-list --count HEAD)
           cat > utils/_build_info.py <<EOF
@@ -59,58 +52,41 @@ jobs:
           EOF
           echo "BUILD_NUMBER=$BUILD_NUMBER" >> "$GITHUB_ENV"
 
-      - name: Install dependencies
-        run: pip install -r requirements.txt
+      - name: Fetch python-build-standalone (both arches)
+        run: |
+          base="https://github.com/astral-sh/python-build-standalone/releases/download/${PBS_RELEASE}"
+          mkdir -p pbs/x86 pbs/arm
+          curl -sSL "$base/cpython-${PBS_PYTHON}%2B${PBS_RELEASE}-x86_64-apple-darwin-install_only.tar.gz" | tar -xz -C pbs/x86
+          curl -sSL "$base/cpython-${PBS_PYTHON}%2B${PBS_RELEASE}-aarch64-apple-darwin-install_only.tar.gz" | tar -xz -C pbs/arm
+          {
+            echo "PY_X86=$PWD/pbs/x86/python/bin/python3"
+            echo "PY_ARM=$PWD/pbs/arm/python/bin/python3"
+          } >> "$GITHUB_ENV"
 
-      - name: Build .app
+      - name: Build x86_64 slice (under Rosetta)
         env:
           TTMT_VERSION: ${{ inputs.version_label }}
           TTMT_BUILD_NUMBER: ${{ env.BUILD_NUMBER }}
           TTMT_BETA: ${{ inputs.beta && '1' || '' }}
-        run: pyinstaller --noconfirm ToonTownMultiTool.spec
-
-      - name: Pack .app for transport
-        # upload-artifact resolves symlinks and drops the +x bit; a raw .app
-        # upload would arrive with a broken Python.framework and a
-        # non-executable launcher. ditto's zip preserves symlinks, perms, and
-        # bundle metadata so the merge job gets a faithful tree.
         run: |
-          APP_NAME="$(basename "$(ls -d dist/*.app)")"
-          ditto -c -k --keepParent "dist/$APP_NAME" "macos-app-${{ matrix.arch }}.zip"
+          arch -x86_64 "$PY_X86" -m pip install --quiet --upgrade pip
+          arch -x86_64 "$PY_X86" -m pip install --quiet -r requirements.txt
+          arch -x86_64 "$PY_X86" -m PyInstaller --noconfirm --distpath dist_x86 --workpath build_x86 ToonTownMultiTool.spec
 
-      - uses: actions/upload-artifact@v7
-        with:
-          name: macos-app-${{ matrix.arch }}
-          path: macos-app-${{ matrix.arch }}.zip
-
-  merge-sign-dmg:
-    needs: build-arch
-    runs-on: macos-14
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      - uses: actions/download-artifact@v8
-        with:
-          name: macos-app-arm64
-          path: arm64-in
-      - uses: actions/download-artifact@v8
-        with:
-          name: macos-app-x86_64
-          path: x86_64-in
-
-      - name: Unpack both single-arch .app trees
+      - name: Build arm64 slice (native)
+        env:
+          TTMT_VERSION: ${{ inputs.version_label }}
+          TTMT_BUILD_NUMBER: ${{ env.BUILD_NUMBER }}
+          TTMT_BETA: ${{ inputs.beta && '1' || '' }}
         run: |
-          mkdir -p arm64 x86_64
-          ditto -x -k arm64-in/macos-app-arm64.zip arm64
-          ditto -x -k x86_64-in/macos-app-x86_64.zip x86_64
+          "$PY_ARM" -m pip install --quiet --upgrade pip
+          "$PY_ARM" -m pip install --quiet -r requirements.txt
+          "$PY_ARM" -m PyInstaller --noconfirm --distpath dist_arm --workpath build_arm ToonTownMultiTool.spec
 
       - name: Merge to universal2 (mutate bundle BEFORE signing)
         run: |
-          APP_NAME="$(basename "$(ls -d arm64/*.app)")"
-          mkdir -p dist
-          bash packaging/macos/lipo_merge.sh "arm64/$APP_NAME" "x86_64/$APP_NAME" "dist/$APP_NAME"
+          APP_NAME="$(basename "$(ls -d dist_arm/*.app)")"
+          bash packaging/macos/lipo_merge.sh "dist_arm/$APP_NAME" "dist_x86/$APP_NAME" "dist/$APP_NAME"
           # Every bundle mutation MUST happen here, BEFORE signing. The beta
           # sentinel sits next to the executable so build_flavor finds it next
           # to sys.executable in the packaged app at runtime.

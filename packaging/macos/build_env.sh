@@ -1,14 +1,16 @@
-# build_env.sh - pinned macOS build outputs. Single source of truth, sourced by
-# the workflows and exported into the PyInstaller spec env (TTMT_LSMINVER).
+# build_env.sh - pinned macOS build outputs, validated during the Task 3 bring-up.
+# Sourced by build-macos.yml / test-macos.yml and exported into the PyInstaller
+# spec env (TTMT_LSMINVER).
 #
-# These are PINNED during the Task 3 universal2 bring-up on CI: both the Intel
-# (x86_64) and Apple-Silicon (arm64) runners MUST install the same BUILD_PY and
-# PYSIDE_PIN against a hashed requirements lock, so the two .app trees are
-# structurally identical before lipo merges them. LSMINVER is the min-OS tag of
-# the resolved PySide6 wheel (the floor below which the app will not launch).
-#
-# Values below are the starting hypothesis; the bring-up replaces them with the
-# empirically-resolved versions and re-commits this file.
-export TTMT_LSMINVER="13.0"        # PySide6 wheel min-OS tag -> LSMinimumSystemVersion
-export BUILD_PY="3.12"             # build Python minor (identical on both arches)
-export PYSIDE_PIN="PySide6==6.8.3" # exact PySide6 both arches resolve
+# GitHub no longer reliably serves Intel (macos-13) runners, so the universal2
+# .app is built on ONE Apple-Silicon runner: the x86_64 slice under Rosetta 2,
+# the arm64 slice natively, then lipo-merged. Both slices use the SAME
+# python-build-standalone (PBS) interpreter so the two trees are structurally
+# identical before lipo. Validated locally on Apple Silicon: both slices build,
+# merge to a fully-fat bundle, sign under the hardened runtime, and --self-check
+# clean (arm64 native AND x86_64 under Rosetta).
+export PBS_RELEASE="20260610"      # python-build-standalone release tag
+export PBS_PYTHON="3.12.13"        # cpython version (identical on both arches)
+export TTMT_LSMINVER="12.0"        # max minOS across bundled Mach-O (Qt 6.8 floor)
+# Informational: PySide6 both arches resolve from requirements.txt (the lock).
+export PYSIDE_RESOLVED="6.8.3"
