@@ -28,6 +28,11 @@ def test_parse_xy_handles_ints_floats_and_spaces():
     assert spike._parse_xy(" 12.5 , 7 ") == (12.5, 7.0)
 
 
+def test_screen_point_from_bounds_offsets_window_local_by_origin():
+    # bounds = (x, y, w, h); window-local (40, 40) -> screen (x+40, y+40)
+    assert spike.screen_point_from_bounds((100, 200, 800, 600), (40, 40)) == (140.0, 240.0)
+
+
 import macos_inspect_topology as topo
 
 

@@ -14,6 +14,7 @@ a = Analysis(
     datas=[],
     hiddenimports=[
         'utils.macos_mouse_delivery',
+        'utils.macos_discovery',
         'Quartz', 'AppKit', 'objc',
     ],
     hookspath=[], hooksconfig={}, runtime_hooks=[], excludes=['tkinter'],

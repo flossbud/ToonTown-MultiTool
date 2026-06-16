@@ -87,6 +87,29 @@ def _parse_xy(text: str) -> tuple[float, float]:
     return (float(a), float(b))
 
 
+def screen_point_from_bounds(bounds, win_xy) -> tuple[float, float]:
+    """Window-local (wx,wy) -> absolute screen point, given (x,y,w,h) bounds. TTR is
+    borderless so kCGWindowBounds is the content rect (production maps the same way)."""
+    return (float(bounds[0]) + float(win_xy[0]), float(bounds[1]) + float(win_xy[1]))
+
+
+def resolve_target(wid, win_xy, pid_opt, screen_opt, trace_path):
+    """Fill in pid + screen point from fresh window discovery when not supplied.
+    Returns (pid, screen_xy), or (None, None) on failure."""
+    from utils import macos_discovery as disc
+    pid = pid_opt if pid_opt is not None else disc.get_window_pid(wid)
+    if pid is None:
+        _log(trace_path, f"could not resolve pid for wid={wid}")
+        return None, None
+    if screen_opt is not None:
+        return int(pid), _parse_xy(screen_opt)
+    bounds = disc.get_window_geometry_fresh(wid)
+    if not bounds:
+        _log(trace_path, f"could not resolve geometry for wid={wid}")
+        return None, None
+    return int(pid), screen_point_from_bounds(bounds, win_xy)
+
+
 def run_gesture(pid: int, wid: int, win_xy, screen_xy, trace_path: str) -> int:
     """Drive the PRODUCTION delivery engine (utils.macos_mouse_delivery) directly:
     key_flip + move + down + up (click), then a short hover sweep. Returns 0 on a
@@ -119,10 +142,10 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(
         description="Framework-python provenance spike: logs provenance, then drives "
                     "the production delivery engine inside a real QApplication.")
-    ap.add_argument("--pid", type=int, help="target (BACKGROUND) toon process id")
-    ap.add_argument("--wid", type=int, help="target window id")
+    ap.add_argument("--wid", type=int, help="target (BACKGROUND) toon window id")
+    ap.add_argument("--pid", type=int, help="target process id (default: resolve from --wid)")
     ap.add_argument("--win", default="40,40", help="window-local x,y (default 40,40)")
-    ap.add_argument("--screen", help="screen x,y on the target (required for a gesture)")
+    ap.add_argument("--screen", help="screen x,y override (default: window origin + --win)")
     ap.add_argument("--countdown", type=float, default=5.0,
                     help="seconds before firing, so the operator can focus the "
                          "FOREGROUND toon after launch")
@@ -136,10 +159,13 @@ def main(argv=None) -> int:
     _log(args.trace, "PROVENANCE\n" + format_provenance(info))
     if args.provenance_only:
         return 0
-    if args.pid is None or args.wid is None or args.screen is None:
-        _log(args.trace, "ERROR: --pid, --wid, --screen are required for a gesture")
+    if args.wid is None:
+        _log(args.trace, "ERROR: --wid is required for a gesture")
         return 64
-    win_xy, screen_xy = _parse_xy(args.win), _parse_xy(args.screen)
+    win_xy = _parse_xy(args.win)
+    pid, screen_xy = resolve_target(args.wid, win_xy, args.pid, args.screen, args.trace)
+    if pid is None or screen_xy is None:
+        return 65
 
     # A real QApplication so the process has the production Qt/NSApplication context
     # (the provenance may ride on a live event loop - spec Phase 0 'isomorphic').
@@ -150,7 +176,7 @@ def main(argv=None) -> int:
 
     def fire():
         try:
-            rc_box["rc"] = run_gesture(args.pid, args.wid, win_xy, screen_xy, args.trace)
+            rc_box["rc"] = run_gesture(pid, args.wid, win_xy, screen_xy, args.trace)
         except Exception as e:
             _log(args.trace, f"EXCEPTION {e!r}")
             rc_box["rc"] = 70
