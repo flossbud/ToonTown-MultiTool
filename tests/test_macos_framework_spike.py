@@ -26,3 +26,25 @@ def test_provenance_has_required_keys():
 def test_parse_xy_handles_ints_floats_and_spaces():
     assert spike._parse_xy("40,40") == (40.0, 40.0)
     assert spike._parse_xy(" 12.5 , 7 ") == (12.5, 7.0)
+
+
+import macos_inspect_topology as topo
+
+
+def test_otool_flags_library_frameworks_dependency():
+    otool_out = (
+        "App:\n"
+        "\t@rpath/Python.framework/Versions/3.12/Python (compatibility ...)\n"
+        "\t/usr/lib/libSystem.B.dylib (compatibility ...)\n"
+    )
+    findings = topo.analyze_otool(otool_out)
+    assert findings["global_framework_refs"] == []
+    assert findings["has_rpath_python"] is True
+
+
+def test_otool_detects_absolute_library_frameworks_leak():
+    otool_out = "App:\n\t/Library/Frameworks/Python.framework/Versions/3.12/Python (...)\n"
+    findings = topo.analyze_otool(otool_out)
+    assert findings["global_framework_refs"] == [
+        "/Library/Frameworks/Python.framework/Versions/3.12/Python"
+    ]
