@@ -12,14 +12,10 @@ jobs:
       # before the artifact download or it would wipe the downloaded DMG.
       - uses: actions/checkout@v6
 
-      - name: Source pinned build env
-        run: |
-          source packaging/macos/build_env.sh
-          echo "BUILD_PY=$BUILD_PY" >> "$GITHUB_ENV"
-
       - uses: actions/setup-python@v6
         with:
-          python-version: ${{ env.BUILD_PY }}   # single source of truth: build_env.sh (Task 3)
+          python-version: '3.12'   # the from-source run only needs a 3.12 interpreter;
+                                   # the packaged .app carries its own pinned PBS python
 
       - name: Install dependencies
         run: |
