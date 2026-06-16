@@ -96,7 +96,8 @@ elif sys.platform == "darwin":
     _minver = os.environ.get("TTMT_LSMINVER", "12.0")
     _icns = os.path.join("assets", "ToonTownMultiTool.icns")
     if not os.path.exists(_icns):
-        _icns = None   # generic icon until the .icns is generated (follow-up)
+        _icns = None   # fall back to the generic icon if the .icns is missing
+                       # (regenerate via scripts/build_icons.py on macOS)
 
     exe = EXE(
         pyz,
