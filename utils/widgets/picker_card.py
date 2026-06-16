@@ -29,6 +29,7 @@ from utils.launcher_chip import (
     LAUNCHER_CHIP_LABEL,
     chip_style_for,
 )
+from utils.shared_widgets import repolish
 
 
 class PickerChip:
@@ -196,9 +197,7 @@ class PickerCard(QFrame):
             return
         self.setProperty("selected", new)
         # Qt requires unpolish + polish to re-evaluate property-based QSS rules.
-        self.style().unpolish(self)
-        self.style().polish(self)
-        self.update()
+        repolish(self)
 
     def paintEvent(self, event) -> None:
         super().paintEvent(event)

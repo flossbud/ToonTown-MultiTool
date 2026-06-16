@@ -21,6 +21,8 @@ from PySide6.QtWidgets import (
     QFrame, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QWidget,
 )
 
+from utils.shared_widgets import repolish
+
 # Re-exported from _tab.py so both the legacy and new widgets can share
 # the same dots painting. If StatusDots later moves to its own module,
 # update the import here.
@@ -142,8 +144,7 @@ class ServiceStatusBar(QFrame):
         self.refresh_button.setIcon(make_refresh_icon(14, fg))
 
         # Force a style recompute so the bar's fill/border QSS still cascades.
-        self.style().unpolish(self)
-        self.style().polish(self)
+        repolish(self)
         # Dots are painted by Python; push the per-state palette now.
         self._apply_dot_palette()
         self.update()

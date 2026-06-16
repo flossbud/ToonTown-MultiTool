@@ -23,6 +23,24 @@ from PySide6.QtCore import (
 from PySide6.QtGui import QColor, QPainter, QPen, QFont, QRadialGradient, QFontMetrics
 
 
+def repolish(widget) -> None:
+    """Re-evaluate a widget's QSS after a dynamic property change.
+
+    The unpolish/polish pair is the standard way to make property-based QSS
+    selectors (e.g. [state="..."]) take effect after setProperty(). Guards a
+    PySide6/Shiboken quirk seen in frozen macOS builds: widget.style() can
+    intermittently return a miscached wrapper (a QWidgetItem) instead of the
+    QStyle, which crashes on .unpolish(). When that happens, skip the explicit
+    repolish; the property is already set, so Qt re-applies the stylesheet on
+    the next natural polish (e.g. on show). update() always runs.
+    """
+    style = widget.style()
+    if hasattr(style, "unpolish") and hasattr(style, "polish"):
+        style.unpolish(widget)
+        style.polish(widget)
+    widget.update()
+
+
 # ── Accent-blue Switch ───────────────────────────────────────────────────────
 
 class Switch(QWidget):
@@ -722,9 +740,7 @@ class SettingsRadioList(QWidget):
 
     @staticmethod
     def _repolish(w) -> None:
-        w.style().unpolish(w)
-        w.style().polish(w)
-        w.update()
+        repolish(w)
 
 
 # ── Settings ComboBox ─────────────────────────────────────────────────────────

@@ -26,6 +26,7 @@ from utils.motion import push_slide_pages
 
 from utils import logical_actions
 from utils.key_registry import NAMED_KEY_REGISTRY, DISPLAY_NAMES_FROM_REGISTRY
+from utils.shared_widgets import repolish
 
 _GAME_INDEX = {"ttr": 0, "cc": 1}
 """Stack page index per game. TTR sits on the left page, CC on the right,
@@ -99,8 +100,7 @@ class MovementKeyField(QLineEdit):
     def _update_display(self):
         self.setText("Press a key…" if self._awaiting else _display(self._key))
         self.setProperty("awaiting", self._awaiting)
-        self.style().unpolish(self)
-        self.style().polish(self)
+        repolish(self)
 
     def set_key(self, key: str):
         self._key = key
@@ -1260,8 +1260,7 @@ class KeymapTab(QWidget):
                 continue
             in_conflict = action in conflicting_actions
             field.setProperty("conflict", "true" if in_conflict else "false")
-            field.style().unpolish(field)
-            field.style().polish(field)
+            repolish(field)
             if in_conflict:
                 others = set()
                 for x, y in pairs:
