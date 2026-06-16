@@ -47,3 +47,19 @@ def test_coordinate_readout_preserves_negative_coordinates():
         emitted=(-1620, -300), qt_global=(-1620, -300), overlay_origin=(-1621, -303))
     assert r["emitted_vs_qt_delta"] == (0, 0)
     assert r["origin_error"] == (0, 0)
+
+
+def test_recipe_candidates_nonempty_and_indexable():
+    spike = _load_spike()
+    assert len(spike.RECIPE_CANDIDATES) >= 1
+    r0 = spike.RECIPE_CANDIDATES[0]
+    # Each recipe is a dict with the four knobs the spike tunes.
+    assert set(r0) == {"name", "level_name", "collection_behavior", "ignores_mouse"}
+    assert isinstance(r0["collection_behavior"], tuple)
+
+
+def test_describe_recipe_is_human_readable():
+    spike = _load_spike()
+    s = spike.describe_recipe(spike.RECIPE_CANDIDATES[0])
+    assert spike.RECIPE_CANDIDATES[0]["name"] in s
+    assert spike.RECIPE_CANDIDATES[0]["level_name"] in s

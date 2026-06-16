@@ -44,3 +44,48 @@ def coordinate_readout(emitted, qt_global, overlay_origin, hotspot=HOTSPOT):
         "expected_origin": expected_origin,
         "origin_error": (ox - expected_origin[0], oy - expected_origin[1]),
     }
+
+
+# Candidate NSWindow recipes, tried in order by --recipe N. The operator finds
+# which one floats above the frontmost TTR window; the winner is recorded in
+# spec Section 11. level_name / collection_behavior entries are AppKit symbol
+# NAMES, resolved lazily when applied (Task 3) so this module imports anywhere.
+RECIPE_CANDIDATES = [
+    {
+        "name": "floating",
+        "level_name": "NSFloatingWindowLevel",
+        "collection_behavior": ("NSWindowCollectionBehaviorCanJoinAllSpaces",
+                                "NSWindowCollectionBehaviorStationary"),
+        "ignores_mouse": True,
+    },
+    {
+        "name": "status",
+        "level_name": "NSStatusWindowLevel",
+        "collection_behavior": ("NSWindowCollectionBehaviorCanJoinAllSpaces",
+                                "NSWindowCollectionBehaviorStationary"),
+        "ignores_mouse": True,
+    },
+    {
+        "name": "popup",
+        "level_name": "NSPopUpMenuWindowLevel",
+        "collection_behavior": ("NSWindowCollectionBehaviorCanJoinAllSpaces",
+                                "NSWindowCollectionBehaviorStationary",
+                                "NSWindowCollectionBehaviorFullScreenAuxiliary"),
+        "ignores_mouse": True,
+    },
+    {
+        # Control: Qt flags only, no native ignoresMouseEvents. Tells us whether
+        # WindowTransparentForInput alone guarantees click-through (fail-open) or
+        # native ignoresMouseEvents is load-bearing (fail-closed).
+        "name": "qt-flags-only",
+        "level_name": "NSFloatingWindowLevel",
+        "collection_behavior": ("NSWindowCollectionBehaviorCanJoinAllSpaces",),
+        "ignores_mouse": False,
+    },
+]
+
+
+def describe_recipe(recipe) -> str:
+    cb = " | ".join(recipe["collection_behavior"]) or "(none)"
+    return (f"recipe '{recipe['name']}': level={recipe['level_name']} "
+            f"collectionBehavior=[{cb}] ignoresMouseEvents={recipe['ignores_mouse']}")
