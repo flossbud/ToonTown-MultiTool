@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!--
+    Hardened-runtime entitlements for the packaged app.
+
+    disable-library-validation: the bundle ships a PyInstaller Python framework
+    and many third-party dylibs (PySide6, PyObjC, cryptography, psutil). Under
+    the hardened runtime, library validation requires every loaded Mach-O to
+    carry the SAME Team ID as the main executable. Ad-hoc signing sets no Team
+    ID, so the loader rejects the Python framework ("different Team IDs"). This
+    entitlement turns that check off so the inside-out ad-hoc signature loads.
+    It is also standard for notarized PyInstaller apps, so the same file works
+    once a Developer ID identity is supplied via TTMT_CODESIGN_ID.
+
+    allow-unsigned-executable-memory / allow-dyld-environment-variables: CPython
+    and the PyInstaller bootloader JIT/relocate code and consult DYLD_* during
+    startup; both are required for the interpreter to come up under the runtime.
+  -->
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+  <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+  <true/>
+</dict>
+</plist>
