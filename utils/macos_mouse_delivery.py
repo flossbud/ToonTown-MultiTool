@@ -245,7 +245,11 @@ class MacOSMouseDelivery:
     "post attempted," NOT delivery accepted (SLEventPostToPid is fire-and-forget).
     `port` is injectable for tests; pass port=None to force unavailable (no lazy load)."""
 
-    AFTER_MOVE_S = 0.016   # let the move register before the down (spike 16ms profile)
+    # No move->down gap: Panda's AppKit event queue preserves order, so the move
+    # (rollover) is processed before the down (actuation) without an inter-phase
+    # sleep. The spike's 16ms was conservative cargo (spec §2.3 flagged it as such);
+    # 0 is live-validated reliable and removes the perceptible per-click delay.
+    AFTER_MOVE_S = 0.0
     DOWN_TO_UP_S = 0.001
 
     def __init__(self, port=_UNSET, ledger=None):
