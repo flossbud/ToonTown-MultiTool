@@ -11,6 +11,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -44,6 +45,23 @@ FLATPAK_SIZE_OUTPUTS = [
 ]
 BETA_OUTPUT = REPO_ROOT / "assets" / "ToonTownMultiTool-beta.png"
 ICO_OUTPUT = REPO_ROOT / "assets" / "ToonTownMultiTool.ico"
+ICNS_OUTPUT = REPO_ROOT / "assets" / "ToonTownMultiTool.icns"
+
+# Standard Apple .iconset slots as (filename, pixel size). The canonical source
+# is 512x512, so the 512x512@2x (1024) slot is intentionally omitted rather than
+# upscaled: a baked-in blurry 1024 is worse than letting macOS scale the crisp
+# 512 on demand. Add the 1024 slot here only once a >=1024 master exists.
+ICONSET_SLOTS = (
+    ("icon_16x16.png", 16),
+    ("icon_16x16@2x.png", 32),
+    ("icon_32x32.png", 32),
+    ("icon_32x32@2x.png", 64),
+    ("icon_128x128.png", 128),
+    ("icon_128x128@2x.png", 256),
+    ("icon_256x256.png", 256),
+    ("icon_256x256@2x.png", 512),
+    ("icon_512x512.png", 512),
+)
 
 
 def _load_source() -> QPixmap:
@@ -138,13 +156,19 @@ def _write_beta_png(source: QPixmap) -> None:
 
 
 def _write_ico() -> None:
+    # magick (.ico) and iconutil (.icns) are each single-platform tools, and a
+    # given machine rarely has both. Skip-with-note rather than hard-fail so the
+    # script always finishes the cross-platform PNG set and emits whatever
+    # platform-specific icon the current host can; regenerate the missing format
+    # on a host that has its tool when the source changes.
     if shutil.which("magick") is None:
         print(
-            "error: 'magick' (ImageMagick) not on PATH — skipping .ico generation.\n"
-            "  install: pacman -S imagemagick  (or apt install imagemagick)",
+            "note: 'magick' (ImageMagick) not on PATH -- skipping .ico generation.\n"
+            "  install: pacman -S imagemagick  (or apt install imagemagick), "
+            "then re-run to refresh the .ico.",
             file=sys.stderr,
         )
-        sys.exit(1)
+        return
     cmd = [
         "magick",
         str(SOURCE),
@@ -159,6 +183,39 @@ def _write_ico() -> None:
     print(f"  wrote {ICO_OUTPUT.relative_to(REPO_ROOT)}")
 
 
+def _write_icns(source: QPixmap) -> None:
+    """Build the macOS .icns from the canonical source via iconutil.
+
+    iconutil is the macOS-canonical packer (part of the Xcode command line
+    tools) and is macOS-only; on other platforms this step is skipped with a
+    note so a Linux dev regenerating the PNG/.ico set is not blocked. The
+    iconset PNGs are produced with the same QPixmap smooth downscale as the
+    other outputs.
+    """
+    if shutil.which("iconutil") is None:
+        print(
+            "note: 'iconutil' not on PATH (macOS only) -- skipping .icns "
+            "generation. Regenerate the .icns on macOS when the source changes.",
+            file=sys.stderr,
+        )
+        return
+    with tempfile.TemporaryDirectory(suffix=".iconset") as tmp:
+        iconset = Path(tmp)
+        for name, size in ICONSET_SLOTS:
+            scaled = source.scaled(
+                size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation
+            )
+            if not scaled.save(str(iconset / name), "PNG"):
+                print(f"error: failed to write iconset slot {name}", file=sys.stderr)
+                sys.exit(1)
+        cmd = ["iconutil", "-c", "icns", str(iconset), "-o", str(ICNS_OUTPUT)]
+        result = subprocess.run(cmd, check=False)
+        if result.returncode != 0:
+            print(f"error: iconutil failed (exit {result.returncode})", file=sys.stderr)
+            sys.exit(1)
+    print(f"  wrote {ICNS_OUTPUT.relative_to(REPO_ROOT)}")
+
+
 def main() -> int:
     app = QGuiApplication.instance() or QGuiApplication(sys.argv)  # noqa: F841
 
@@ -168,6 +225,7 @@ def main() -> int:
     _write_flatpak_size_pngs(source)
     _write_beta_png(source)
     _write_ico()
+    _write_icns(source)
     print("done.")
     return 0
 
