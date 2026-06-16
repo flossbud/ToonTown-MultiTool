@@ -17,6 +17,10 @@ from __future__ import annotations
 import argparse
 import sys
 
+from PySide6.QtCore import QEvent, QPoint, Qt, QTimer
+from PySide6.QtGui import QColor, QGuiApplication, QPainter
+from PySide6.QtWidgets import QWidget
+
 # Fingertip hotspot at 32px, identical to the shipped GhostCursorOverlay.
 HOTSPOT = (1, 3)
 CURSOR_SIZE = 32
@@ -154,3 +158,62 @@ def harden_widget(*, view_resolver, recipe):
     except Exception as e:
         return {"ok": False, "reason": f"apply failed: {e}", "facts": facts}
     return {"ok": True, "reason": None, "facts": facts}
+
+
+class SpikeOverlay(QWidget):
+    """Mirrors the shipped GhostCursorOverlay flags. Paints a solid glove-sized
+    marker (no asset dependency in the spike) and hardens its NSWindow after the
+    native surface is realized, printing the hard facts each time. harden_enabled
+    False is the true fail-open control: shown with ZERO native hardening."""
+
+    def __init__(self, recipe, parent=None, harden_enabled=True):
+        flags = (Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
+                 | Qt.Tool | Qt.WindowTransparentForInput
+                 | Qt.WindowDoesNotAcceptFocus)
+        super().__init__(parent, flags)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WA_ShowWithoutActivating)
+        self.setFixedSize(CURSOR_SIZE, CURSOR_SIZE)
+        self._recipe = recipe
+        self._harden_enabled = harden_enabled
+
+    def paintEvent(self, _event):
+        p = QPainter(self)
+        p.setBrush(QColor(255, 0, 200, 220))   # vivid so z-order is obvious
+        p.setPen(QColor(0, 0, 0, 255))
+        p.drawEllipse(2, 2, CURSOR_SIZE - 4, CURSOR_SIZE - 4)
+
+    def _resolve_view(self):
+        import objc
+        # On cocoa, winId() is an NSView*; wrap the pointer as an objc id.
+        # (c_void_p is PyObjC's keyword-arg name, not ctypes.c_void_p.)
+        return objc.objc_object(c_void_p=int(self.winId()))
+
+    def _harden(self, why):
+        if not self._harden_enabled:
+            print(f"[harden:{why}] skipped (--no-harden: true fail-open control)")
+            return
+        if sys.platform != "darwin":
+            return
+        res = harden_widget(view_resolver=self._resolve_view, recipe=self._recipe)
+        print(f"[harden:{why}] ok={res['ok']} reason={res['reason']} "
+              f"facts={res.get('facts')}")
+
+    def show_at(self, x, y):
+        self.move(int(x) - HOTSPOT[0], int(y) - HOTSPOT[1])
+        # Probe view.window() nil-ness BEFORE show (winId() may realize it),
+        # per the spec's before / after / queued-after timing matrix.
+        self._harden("pre-show")
+        if not self.isVisible():
+            self.show()
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        self._harden("showEvent")
+        QTimer.singleShot(0, lambda: self._harden("singleShot"))
+
+    def event(self, e):
+        if e.type() == QEvent.PlatformSurface:
+            # Native surface (re)created, e.g. on screen change -> re-harden.
+            QTimer.singleShot(0, lambda: self._harden("platformSurface"))
+        return super().event(e)

@@ -9,6 +9,8 @@ os.environ.setdefault("TTMT_NO_VENV_REEXEC", "1")
 
 import importlib.util
 
+import pytest
+
 _SPIKE = os.path.join(os.path.dirname(__file__), "..", "scripts",
                       "macos_ghost_overlay_spike.py")
 
@@ -18,6 +20,13 @@ def _load_spike():
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
+
+
+@pytest.fixture(scope="module")
+def qapp_spike():
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    return QApplication.instance() or QApplication([])
 
 
 def test_coordinate_readout_identity_is_zero_error():
@@ -137,3 +146,28 @@ def test_harden_never_raises_on_resolver_exception():
                               recipe=spike.RECIPE_CANDIDATES[0])
     assert res["ok"] is False
     assert "no winId" in res["reason"]
+
+
+def test_spike_overlay_has_shipped_flags(qapp_spike):
+    spike = _load_spike()
+    from PySide6.QtCore import Qt
+    ov = spike.SpikeOverlay(recipe=spike.RECIPE_CANDIDATES[0])
+    try:
+        fl = ov.windowFlags()
+        assert fl & Qt.WindowTransparentForInput
+        assert fl & Qt.WindowStaysOnTopHint
+        assert fl & Qt.FramelessWindowHint
+        assert fl & Qt.WindowDoesNotAcceptFocus
+    finally:
+        ov.deleteLater()
+
+
+def test_spike_overlay_harden_disabled_flag(qapp_spike):
+    # --no-harden -> harden_enabled=False: the true fail-open control (overlay
+    # shown with ZERO native NSWindow hardening, relying only on Qt's flags).
+    spike = _load_spike()
+    ov = spike.SpikeOverlay(spike.RECIPE_CANDIDATES[0], harden_enabled=False)
+    try:
+        assert ov._harden_enabled is False
+    finally:
+        ov.deleteLater()
