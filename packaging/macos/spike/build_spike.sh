@@ -10,10 +10,10 @@ RUN=(); [ "$ARCH" = "x86_64" ] && RUN=(arch -x86_64)
 VENV="/tmp/ttmt_spike_${ARCH}"
 
 rm -rf "$VENV"
-"${RUN[@]}" "$PYBIN" -m venv "$VENV"
-"${RUN[@]}" "$VENV/bin/python" -m pip install --quiet --upgrade pip
-"${RUN[@]}" "$VENV/bin/python" -m pip install --quiet -r "$ROOT/requirements.txt" pyinstaller
-"${RUN[@]}" "$VENV/bin/python" -m PyInstaller --noconfirm \
+${RUN[@]+"${RUN[@]}"} "$PYBIN" -m venv "$VENV"
+${RUN[@]+"${RUN[@]}"} "$VENV/bin/python" -m pip install --quiet --upgrade pip
+${RUN[@]+"${RUN[@]}"} "$VENV/bin/python" -m pip install --quiet -r "$ROOT/requirements.txt" pyinstaller
+${RUN[@]+"${RUN[@]}"} "$VENV/bin/python" -m PyInstaller --noconfirm \
     --distpath "$ROOT/dist_spike_${ARCH}" --workpath "$ROOT/build_spike_${ARCH}" \
     "$ROOT/scripts/macos_framework_spike.spec"
 APP="$ROOT/dist_spike_${ARCH}/Framework Spike.app"
