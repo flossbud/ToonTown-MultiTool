@@ -63,3 +63,77 @@ def test_describe_recipe_is_human_readable():
     s = spike.describe_recipe(spike.RECIPE_CANDIDATES[0])
     assert spike.RECIPE_CANDIDATES[0]["name"] in s
     assert spike.RECIPE_CANDIDATES[0]["level_name"] in s
+
+
+class _FakeView:
+    def __init__(self, window):
+        self._window = window
+    def window(self):
+        return self._window
+
+
+class _FakeWindow:
+    def __init__(self, is_panel=False):
+        self.level = None
+        self.collection_behavior = None
+        self.ignores = None
+        self.hides_on_deactivate = None
+        self._is_panel = is_panel
+    def setLevel_(self, v):
+        self.level = v
+    def setCollectionBehavior_(self, v):
+        self.collection_behavior = v
+    def setIgnoresMouseEvents_(self, v):
+        self.ignores = v
+    def setHidesOnDeactivate_(self, v):
+        self.hides_on_deactivate = v
+
+
+def test_apply_recipe_sets_all_knobs_on_window():
+    spike = _load_spike()
+    win = _FakeWindow()
+    # Inject symbol resolution + panel check so no AppKit is needed on the host.
+    res = spike.apply_recipe_to_window(
+        win,
+        spike.RECIPE_CANDIDATES[0],
+        resolve_level=lambda name: 3 if name == "NSFloatingWindowLevel" else -1,
+        resolve_behavior=lambda names: sum(1 for _ in names),  # fake bitmask
+        is_panel=lambda w: False,
+    )
+    assert res["ok"] is True
+    assert win.level == 3
+    assert win.collection_behavior == 2          # two flags -> fake "bitmask" 2
+    assert win.ignores is True
+    assert win.hides_on_deactivate is None       # not a panel -> not set
+
+
+def test_apply_recipe_sets_hides_on_deactivate_for_panel():
+    spike = _load_spike()
+    win = _FakeWindow(is_panel=True)
+    res = spike.apply_recipe_to_window(
+        win, spike.RECIPE_CANDIDATES[0],
+        resolve_level=lambda name: 5,
+        resolve_behavior=lambda names: 0,
+        is_panel=lambda w: True,
+    )
+    assert res["ok"] is True
+    assert win.hides_on_deactivate is False      # NSPanel -> set False
+
+
+def test_harden_returns_reason_when_window_nil():
+    spike = _load_spike()
+    view = _FakeView(window=None)                # view.window() is nil
+    res = spike.harden_widget(view_resolver=lambda: view,
+                              recipe=spike.RECIPE_CANDIDATES[0])
+    assert res["ok"] is False
+    assert "window" in res["reason"].lower()
+
+
+def test_harden_never_raises_on_resolver_exception():
+    spike = _load_spike()
+    def boom():
+        raise RuntimeError("no winId")
+    res = spike.harden_widget(view_resolver=boom,
+                              recipe=spike.RECIPE_CANDIDATES[0])
+    assert res["ok"] is False
+    assert "no winId" in res["reason"]

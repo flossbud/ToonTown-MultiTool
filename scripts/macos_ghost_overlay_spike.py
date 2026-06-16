@@ -89,3 +89,68 @@ def describe_recipe(recipe) -> str:
     cb = " | ".join(recipe["collection_behavior"]) or "(none)"
     return (f"recipe '{recipe['name']}': level={recipe['level_name']} "
             f"collectionBehavior=[{cb}] ignoresMouseEvents={recipe['ignores_mouse']}")
+
+
+def apply_recipe_to_window(window, recipe, *, resolve_level, resolve_behavior,
+                           is_panel):
+    """Apply a recipe's knobs to an NSWindow-like object. Pure given the three
+    injected resolvers (so it is unit-tested on the host with fakes)."""
+    window.setLevel_(resolve_level(recipe["level_name"]))
+    window.setCollectionBehavior_(resolve_behavior(recipe["collection_behavior"]))
+    window.setIgnoresMouseEvents_(bool(recipe["ignores_mouse"]))
+    if is_panel(window):
+        # Tool windows realized as NSPanel hide when the app deactivates; we want
+        # the overlay to persist while TTR (another app) is frontmost.
+        window.setHidesOnDeactivate_(False)
+    return {"ok": True, "reason": None}
+
+
+def _appkit_resolvers():
+    """Lazily build the AppKit symbol resolvers. Raises if PyObjC/AppKit is
+    unavailable; callers wrap this in try/except."""
+    import AppKit  # noqa: F401  (PyObjC)
+    import objc    # noqa: F401
+
+    def resolve_level(name):
+        return int(getattr(AppKit, name))
+
+    def resolve_behavior(names):
+        bits = 0
+        for n in names:
+            bits |= int(getattr(AppKit, n))
+        return bits
+
+    def is_panel(window):
+        return bool(window.isKindOfClass_(AppKit.NSPanel))
+
+    return resolve_level, resolve_behavior, is_panel
+
+
+def harden_widget(*, view_resolver, recipe):
+    """Resolve the NSWindow from a view (view_resolver() -> NSView) and apply the
+    recipe. Never raises; returns {ok, reason, facts}. The facts dict records the
+    hard observations the spike exists to capture."""
+    facts = {"recipe": recipe["name"]}
+    try:
+        view = view_resolver()
+    except Exception as e:  # winId() / objc wrap failure
+        return {"ok": False, "reason": f"view resolve failed: {e}", "facts": facts}
+    facts["view_type"] = type(view).__name__
+    try:
+        window = view.window()
+    except Exception as e:
+        return {"ok": False, "reason": f"view.window() raised: {e}", "facts": facts}
+    facts["window_is_nil"] = window is None
+    if window is None:
+        return {"ok": False, "reason": "view.window() is nil (not realized yet)",
+                "facts": facts}
+    try:
+        resolve_level, resolve_behavior, is_panel = _appkit_resolvers()
+    except Exception as e:
+        return {"ok": False, "reason": f"AppKit unavailable: {e}", "facts": facts}
+    try:
+        apply_recipe_to_window(window, recipe, resolve_level=resolve_level,
+                               resolve_behavior=resolve_behavior, is_panel=is_panel)
+    except Exception as e:
+        return {"ok": False, "reason": f"apply failed: {e}", "facts": facts}
+    return {"ok": True, "reason": None, "facts": facts}
