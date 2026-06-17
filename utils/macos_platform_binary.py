@@ -14,9 +14,18 @@ def decode(flags: int) -> bool:
 
 
 def csflags() -> int:
-    libc = ctypes.CDLL(None)
+    libc = ctypes.CDLL(None, use_errno=True)
+    # Pin the ABI so usersize is passed as a 64-bit size_t (not a default C int)
+    # and the return code is read as int. csops(2) returns 0 on success and -1
+    # with errno set on failure; trusting out.value without checking rc would
+    # silently read a stale 0 on error.
+    libc.csops.argtypes = [ctypes.c_int, ctypes.c_uint, ctypes.c_void_p, ctypes.c_size_t]
+    libc.csops.restype = ctypes.c_int
     out = ctypes.c_uint32(0)
-    libc.csops(os.getpid(), _CS_OPS_STATUS, ctypes.byref(out), ctypes.sizeof(out))
+    rc = libc.csops(os.getpid(), _CS_OPS_STATUS, ctypes.byref(out), ctypes.sizeof(out))
+    if rc != 0:
+        err = ctypes.get_errno()
+        raise OSError(err, os.strerror(err) if err else "csops failed")
     return int(out.value)
 
 

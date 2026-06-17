@@ -49,3 +49,27 @@ def test_engine_gate_dev_override(monkeypatch):
     b = macos_backend.MacOSBackend()
     b._delivery = None
     assert isinstance(b._engine(), _Remote)
+
+
+def test_engine_gate_force_inprocess_overrides_non_platform(monkeypatch):
+    """force-inprocess pins the in-process engine even on a non-platform binary."""
+    from utils import macos_backend, macos_platform_binary
+
+    _patch_engines(monkeypatch)
+    monkeypatch.setattr(macos_platform_binary, "is_platform_binary", lambda: False)
+    monkeypatch.setenv("TTMT_MACOS_INJECT", "force-inprocess")
+    b = macos_backend.MacOSBackend()
+    b._delivery = None
+    assert isinstance(b._engine(), _InProc)
+
+
+def test_engine_gate_disable_returns_none(monkeypatch):
+    """disable yields no engine; readiness then fail-closes upstream."""
+    from utils import macos_backend, macos_platform_binary
+
+    _patch_engines(monkeypatch)
+    monkeypatch.setattr(macos_platform_binary, "is_platform_binary", lambda: True)
+    monkeypatch.setenv("TTMT_MACOS_INJECT", "disable")
+    b = macos_backend.MacOSBackend()
+    b._delivery = None
+    assert b._engine() is None
