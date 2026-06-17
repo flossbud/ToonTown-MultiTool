@@ -74,10 +74,16 @@ def _selftest():
     detectable by the parent before any real injection is attempted."""
     sky = mmd._load_skylight()
     objc_ok = False
+    # Wrap the bridge exercise in an autorelease pool (same as the engine's real post
+    # paths) so the autoreleased NSEvent doesn't leak / log a "no pool in place"
+    # warning to the helper log under the run-loop-less CLI python.
+    pool = mmd._push_autorelease_pool()
     try:
         objc_ok = bool(mmd._build_ns_cgevent(1, 1, 0))  # exercise the ObjC bridge
     except Exception:
         objc_ok = False
+    finally:
+        mmd._pop_autorelease_pool(pool)
     pf = None
     try:
         cg = ctypes.CDLL("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")
@@ -142,12 +148,20 @@ for line in sys.stdin:
     except Exception as e:
         import traceback
         traceback.print_exc(file=sys.stderr)
-        try:
-            err = {"ok": False, "error": f"{type(e).__name__}: {e}"}
-            if isinstance(req, dict) and "id" in req:
-                err["id"] = req["id"]
-            reply(err)
-        except Exception:
-            pass
+        # Emit an error reply ONLY for an op the parent is actually awaiting. For a
+        # fire-and-forget post op (failing in arg-parse before the engine's own guards)
+        # or an unparseable / non-dict line, stay SILENT on stdout: the parent's
+        # _send_noreply never reads, so a stray line would be misread as the NEXT
+        # replying op's reply and desync the channel. This mirrors the success path's
+        # "write a line only for REPLYING_OPS" invariant.
+        op = req.get("op") if isinstance(req, dict) else None
+        if op in REPLYING_OPS:
+            try:
+                err = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+                if "id" in req:
+                    err["id"] = req["id"]
+                reply(err)
+            except Exception:
+                pass
 
 log("stdin closed; exiting")

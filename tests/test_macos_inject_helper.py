@@ -1,9 +1,9 @@
-"""Subprocess smoke test for the self-contained injection helper.
+"""Subprocess smoke tests for the self-contained injection helper.
 
 macOS-only. Spawns scripts/macos_inject_helper.py under /usr/bin/python3 -s
 (the Apple CLT python, which IS a platform binary on this host) with a scrubbed
-environment, performs the `hello` handshake over JSON-line RPC, and asserts the
-self-test reports a working platform-binary + SkyLight + ObjC bridge.
+environment, then drives it over JSON-line RPC. Covers the `hello` handshake
+self-test and the reply / fire-and-forget channel invariant.
 """
 import json
 import os
@@ -22,8 +22,12 @@ _HELPER = pathlib.Path(__file__).resolve().parents[1] / "scripts" / "macos_injec
 _CLT_PYTHON = "/usr/bin/python3"
 
 
-def test_hello_handshake_selftest():
+def _run_helper(requests):
+    """Spawn the helper under the scrubbed CLT python, pipe one JSON line per request,
+    and return (stdout_reply_lines, stderr). Skips cleanly if the CLT python is absent."""
     assert _HELPER.exists(), f"helper not found at {_HELPER}"
+    if not os.path.exists(_CLT_PYTHON):
+        pytest.skip(f"CLT python not present at {_CLT_PYTHON}")
     # Scrubbed env (env -i style): only a minimal PATH, no venv / PyObjC leakage,
     # so this exercises the helper exactly as the shipped platform-binary child runs.
     proc = subprocess.Popen(
@@ -31,8 +35,9 @@ def test_hello_handshake_selftest():
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         env={"PATH": "/usr/bin:/bin"}, text=True, bufsize=1,
     )
+    payload = "".join(json.dumps(r) + "\n" for r in requests)
     try:
-        out, err = proc.communicate(input=json.dumps({"op": "hello", "id": 7}) + "\n", timeout=30)
+        out, err = proc.communicate(input=payload, timeout=30)
     except subprocess.TimeoutExpired:
         proc.kill()
         out, err = proc.communicate()
@@ -40,15 +45,29 @@ def test_hello_handshake_selftest():
     finally:
         if proc.poll() is None:
             proc.terminate()
+    return [ln for ln in out.splitlines() if ln.strip()], err
 
-    # The first non-empty stdout line is the JSON reply (stdout is JSON-only).
-    line = next((ln for ln in out.splitlines() if ln.strip()), "")
-    assert line, f"no reply on stdout; stderr=\n{err}"
-    reply = json.loads(line)
 
+def test_hello_handshake_selftest():
+    lines, err = _run_helper([{"op": "hello", "id": 7}])
+    assert lines, f"no reply on stdout; stderr=\n{err}"
+    reply = json.loads(lines[0])  # stdout is JSON-only; first line is the reply
     assert reply.get("ok") is True, reply
     assert reply.get("id") == 7, reply
     assert reply.get("protocol") == 1, reply
     assert reply.get("platform_binary") is True, reply
     assert reply.get("skylight_ok") is True, reply
     assert reply.get("objc_ok") is True, reply
+
+
+def test_post_ops_are_fire_and_forget_and_keep_channel_in_sync():
+    """A failing fire-and-forget post op (it raises in arg-parse before the engine,
+    missing pid/wid) must NOT emit a stdout line; the following ping reply must be the
+    FIRST and ONLY line. This locks the channel invariant (a stray line would be
+    misread as the ping reply and desync the parent)."""
+    lines, err = _run_helper([{"op": "press"}, {"op": "ping", "id": 3}])
+    assert len(lines) == 1, f"expected exactly one reply line, got {lines}; stderr=\n{err}"
+    reply = json.loads(lines[0])
+    assert reply.get("ok") is True, reply
+    assert reply.get("id") == 3, reply
+    assert "available" in reply, reply
