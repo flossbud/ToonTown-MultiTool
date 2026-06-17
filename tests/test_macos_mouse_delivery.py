@@ -199,8 +199,7 @@ def test_native_loads_all_skylight_symbols():
 
 @_darwin_only
 def test_native_port_builds_and_stamps_event():
-    import Quartz
-    port = d._NativePort(Quartz, d._load_skylight())
+    port = d._NativePort(d._load_coregraphics(), d._load_skylight())
     ev = port.make_event("move", 0, 0)                 # NSEvent -> CGEvent bridge
     assert ev is not None
     # every stamping path runs against a real CGEvent without raising (ctypes shapes OK)
@@ -213,8 +212,7 @@ def test_native_port_builds_and_stamps_event():
 
 @_darwin_only
 def test_native_resolve_psn_invalid_window_is_none():
-    import Quartz
-    port = d._NativePort(Quartz, d._load_skylight())
+    port = d._NativePort(d._load_coregraphics(), d._load_skylight())
     assert port.resolve_psn(0x7FFFFFFF) is None        # bogus wid -> no owner -> None, no crash
 
 

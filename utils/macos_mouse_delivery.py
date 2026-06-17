@@ -154,46 +154,171 @@ def _load_skylight():
     return out
 
 
-def _as_ptr(cg_event):
-    import objc
-    return ctypes.c_void_p(objc.pyobjc_id(cg_event))
+# ── pure-ctypes Objective-C bridge (NO PyObjC) ─────────────────────────────────
+# The shipped engine injects through a /usr/bin/python3 (Apple platform-binary)
+# helper that has NO PyObjC, so the NSEvent->CGEvent construction must run on raw
+# libobjc objc_msgSend. This keeps the exact `NSEvent.CGEvent()` semantics (NOT
+# CGEventCreateMouseEvent, which WindowServer treats differently). Ported verbatim
+# from the live-proven scripts/macos_clicksync_ctypes_spike.py.
+
+
+class _NSPoint(ctypes.Structure):
+    _fields_ = [("x", ctypes.c_double), ("y", ctypes.c_double)]
+
+
+_MOUSE_EVENT_SEL = ("mouseEventWithType:location:modifierFlags:timestamp:windowNumber:"
+                    "context:eventNumber:clickCount:pressure:")
+
+# selector -> (restype, argtypes AFTER the leading (id self, SEL op)). The two leading
+# pointer slots are prepended in _msg(); these argtypes describe the explicit method args.
+_OBJC_SELECTOR_SIGS = {
+    _MOUSE_EVENT_SEL: (
+        ctypes.c_void_p,
+        (ctypes.c_ulong,   # NSEventType type (NSUInteger)
+         _NSPoint,         # location (by value)
+         ctypes.c_ulong,   # modifierFlags (NSUInteger)
+         ctypes.c_double,  # timestamp (NSTimeInterval)
+         ctypes.c_long,    # windowNumber (NSInteger)
+         ctypes.c_void_p,  # context (id, nil)
+         ctypes.c_long,    # eventNumber (NSInteger)
+         ctypes.c_long,    # clickCount (NSInteger)
+         ctypes.c_double), # pressure (CGFloat)
+    ),
+    "CGEvent": (ctypes.c_void_p, ()),  # -[NSEvent CGEvent] -> CGEventRef
+}
+
+_libobjc = None
+
+
+def _objc():
+    """dlopen libobjc + AppKit (so the NSEvent class exists); argtypes pinned once.
+    Returns the libobjc handle. Pure ctypes, safe under a scrubbed no-PyObjC python."""
+    global _libobjc
+    if _libobjc is None:
+        lib = ctypes.CDLL("/usr/lib/libobjc.A.dylib")
+        lib.objc_getClass.restype = ctypes.c_void_p
+        lib.objc_getClass.argtypes = [ctypes.c_char_p]
+        lib.sel_registerName.restype = ctypes.c_void_p
+        lib.sel_registerName.argtypes = [ctypes.c_char_p]
+        lib.objc_autoreleasePoolPush.restype = ctypes.c_void_p
+        lib.objc_autoreleasePoolPush.argtypes = []
+        lib.objc_autoreleasePoolPop.restype = None
+        lib.objc_autoreleasePoolPop.argtypes = [ctypes.c_void_p]
+        # AppKit must be loaded so the NSEvent class exists.
+        ctypes.CDLL("/System/Library/Frameworks/AppKit.framework/AppKit")
+        _libobjc = lib
+    return _libobjc
+
+
+def _msg(receiver, selector_name, restype, arg_types, args):
+    """Typed objc_msgSend call: cast a fresh function pointer per selector (never mutate
+    a global). receiver is an id/Class pointer; selector_name resolved to a SEL."""
+    objc = _objc()
+    sel = objc.sel_registerName(selector_name.encode())
+    proto = ctypes.CFUNCTYPE(restype, ctypes.c_void_p, ctypes.c_void_p, *arg_types)
+    fn = proto(("objc_msgSend", objc))
+    return fn(ctypes.c_void_p(receiver), ctypes.c_void_p(sel), *args)
+
+
+def _build_ns_cgevent(ns_event_type, click_count, window_number):
+    """Return a CGEventRef (int address) for a mouse NSEvent built via objc_msgSend,
+    keeping the exact NSEvent.CGEvent() semantics with zero PyObjC. None on failure."""
+    objc = _objc()
+    ns_event_cls = objc.objc_getClass(b"NSEvent")
+    restype, argtypes = _OBJC_SELECTOR_SIGS[_MOUSE_EVENT_SEL]
+    ev = _msg(ns_event_cls, _MOUSE_EVENT_SEL, restype, argtypes,
+              (ctypes.c_ulong(int(ns_event_type)),
+               _NSPoint(0.0, 0.0),
+               ctypes.c_ulong(0),
+               ctypes.c_double(0.0),
+               ctypes.c_long(int(window_number)),
+               None,
+               ctypes.c_long(0),
+               ctypes.c_long(int(click_count)),
+               ctypes.c_double(1.0)))
+    if not ev:
+        return None
+    cg_rt, cg_at = _OBJC_SELECTOR_SIGS["CGEvent"]
+    return _msg(ev, "CGEvent", cg_rt, cg_at, ())
+
+
+# kCGEventSourceUserData=42; kCGEvent* {down:1,up:2,moved:5,dragged:6}. Stable OS ABI
+# values confirmed live against Quartz on macOS 26.
+_CG_USER_DATA_FIELD = 42
+_CGEVENT_TYPE = {"move": 5, "down": 1, "up": 2, "dragged": 6}
+
+
+def _load_coregraphics():
+    """CoreGraphics public CGEvent setters with argtypes pinned once (pure ctypes, no
+    PyObjC). Returns the CDLL handle the native port calls."""
+    cg = ctypes.CDLL("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")
+    cg.CGEventSetType.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+    cg.CGEventSetType.restype = None
+    cg.CGEventSetIntegerValueField.argtypes = [ctypes.c_void_p, ctypes.c_uint32, ctypes.c_int64]
+    cg.CGEventSetIntegerValueField.restype = None
+    cg.CGEventSetLocation.argtypes = [ctypes.c_void_p, _CGPoint]
+    cg.CGEventSetLocation.restype = None
+    return cg
+
+
+def _push_autorelease_pool():
+    """Push an ObjC autorelease pool so the autoreleased NSEvents built in make_event
+    get reclaimed when popped (there is no run loop to drain them). Returns the pool
+    token, or None when the ObjC runtime is unavailable (non-macOS hosts running the
+    engine orchestration tests against an injected fake port)."""
+    try:
+        return _objc().objc_autoreleasePoolPush()
+    except Exception:
+        return None
+
+
+def _pop_autorelease_pool(pool):
+    if pool is None:
+        return
+    try:
+        _objc().objc_autoreleasePoolPop(pool)
+    except Exception:
+        pass
 
 
 class _NativePort:
-    """Real Quartz/SkyLight port; the engine's single native seam."""
-    def __init__(self, quartz, sky):
-        self._q = quartz
+    """Real CoreGraphics/SkyLight port via pure ctypes (NO PyObjC); the engine's single
+    native seam. Events flow as raw CGEventRef integer addresses (from _build_ns_cgevent)
+    and every native call wraps them in c_void_p."""
+    def __init__(self, cg, sky):
+        self._cg = cg
         self._sky = sky
 
     def make_event(self, kind, click_count, window_number):
-        import Quartz
-        from AppKit import NSEvent
-        ns_type, cg_attr = EVENT_KINDS[kind]
-        ns = NSEvent.mouseEventWithType_location_modifierFlags_timestamp_windowNumber_context_eventNumber_clickCount_pressure_(
-            ns_type, (0.0, 0.0), 0, 0.0, int(window_number), None, 0, int(click_count), 1.0)
-        cg = ns.CGEvent()
-        self._q.CGEventSetType(cg, getattr(Quartz, cg_attr))
-        return cg
+        ns_type = EVENT_KINDS[kind][0]
+        ev = _build_ns_cgevent(ns_type, click_count, window_number)
+        self._cg.CGEventSetType(ctypes.c_void_p(ev), _CGEVENT_TYPE[kind])
+        return ev
 
     def set_public_field(self, ev, field, value):
-        self._q.CGEventSetIntegerValueField(ev, int(field), int(value))
+        self._cg.CGEventSetIntegerValueField(
+            ctypes.c_void_p(ev), ctypes.c_uint32(int(field)), ctypes.c_int64(int(value)))
 
     def set_private_field(self, ev, field, value):
         self._sky["SLEventSetIntegerValueField"](
-            _as_ptr(ev), ctypes.c_uint32(int(field)), ctypes.c_int64(int(value)))
+            ctypes.c_void_p(ev), ctypes.c_uint32(int(field)), ctypes.c_int64(int(value)))
 
     def set_window_location(self, ev, pt):
-        self._sky["CGEventSetWindowLocation"](_as_ptr(ev), _CGPoint(float(pt[0]), float(pt[1])))
+        self._sky["CGEventSetWindowLocation"](
+            ctypes.c_void_p(ev), _CGPoint(float(pt[0]), float(pt[1])))
 
     def set_location(self, ev, pt):
-        self._q.CGEventSetLocation(ev, (float(pt[0]), float(pt[1])))
+        self._cg.CGEventSetLocation(ctypes.c_void_p(ev), _CGPoint(float(pt[0]), float(pt[1])))
 
     def set_source_user_data(self, ev, tag):
-        self._q.CGEventSetIntegerValueField(ev, self._q.kCGEventSourceUserData, int(tag))
+        self._cg.CGEventSetIntegerValueField(
+            ctypes.c_void_p(ev), ctypes.c_uint32(_CG_USER_DATA_FIELD), ctypes.c_int64(int(tag)))
 
     def post(self, pid, ev):
-        self._sky["CGEventSetTimestamp"](_as_ptr(ev), ctypes.c_uint64(time.monotonic_ns()))
-        self._sky["SLEventPostToPid"](ctypes.c_int32(int(pid)), _as_ptr(ev))
+        # LOAD-BEARING: WindowServer silently drops a 0-timestamp event as stale; a real
+        # monotonic_ns stamp is required (live-proven 2026-06-17 in the ctypes spike).
+        self._sky["CGEventSetTimestamp"](ctypes.c_void_p(ev), ctypes.c_uint64(time.monotonic_ns()))
+        self._sky["SLEventPostToPid"](ctypes.c_int32(int(pid)), ctypes.c_void_p(ev))
 
     def post_record(self, psn_bytes, record_bytes) -> int:
         return int(self._sky["SLPSPostEventRecordTo"](psn_bytes, record_bytes))
@@ -262,14 +387,13 @@ class MacOSMouseDelivery:
         if self._port is None and not self._tried_load:
             self._tried_load = True
             try:
-                import Quartz
                 sky = _load_skylight()
-                self._port = _NativePort(Quartz, sky) if sky is not None else None
+                self._port = _NativePort(_load_coregraphics(), sky) if sky is not None else None
                 if self._port is None:
                     self._diag_once("load")   # framework/symbol missing
             except Exception:
                 self._port = None
-                self._diag_once("load")       # surface real PyObjC/ctypes load failures
+                self._diag_once("load")       # surface real ctypes load failures
         return self._port
 
     @property
@@ -323,6 +447,7 @@ class MacOSMouseDelivery:
         port = self._get_port()
         if port is None:
             return False
+        pool = _push_autorelease_pool()
         try:
             for rec in (build_activate_record(window_id),
                         make_key_record(window_id, 0x01),
@@ -336,11 +461,14 @@ class MacOSMouseDelivery:
             self._faulted = True
             self._diag_once("record")
             return False
+        finally:
+            _pop_autorelease_pool(pool)
 
     def _post(self, kind, pid, wid, win_xy, screen_xy) -> bool:
         port = self._get_port()
         if port is None:
             return False
+        pool = _push_autorelease_pool()
         try:
             port.post(pid, _build_event(port, kind, win_xy, screen_xy, pid, wid))
             if self._ledger is not None:
@@ -353,6 +481,8 @@ class MacOSMouseDelivery:
             self._faulted = True
             self._diag_once("post")
             return False
+        finally:
+            _pop_autorelease_pool(pool)
 
     def press(self, pid, wid, psn, win_xy, screen_xy) -> bool:
         """key_flip -> move -> down. On a down failure (it may have partially posted),
