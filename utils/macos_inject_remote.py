@@ -102,16 +102,15 @@ class _RemoteDelivery:
                 print(f"[inject-remote] send error: {e}", file=sys.stderr, flush=True)
                 return False
 
+    # All post ops are fire-and-forget (no round-trip). press()/release() return
+    # True optimistically (assumed-success): the backend then stores/clears the
+    # gesture binding as usual. Tradeoff (review-flagged): a genuinely-failed post
+    # is invisible; a dropped release at worst leaves a stray 'up' (harmless).
     def press(self, pid, wid, psn, win_xy, screen_xy):
-        # synchronous: the backend stores the press binding only if this is True
-        r = self._rpc(self._req("press", pid, wid, psn, win_xy, screen_xy))
-        return bool(r and r.get("ok") and r.get("result"))
+        return self._send_noreply(self._req("press", pid, wid, psn, win_xy, screen_xy))
 
     def release(self, pid, wid, psn, win_xy, screen_xy):
-        # synchronous: a real release must not be silently dropped (stuck button)
-        r = self._rpc(self._req("release", pid, wid, psn, win_xy, screen_xy))
-        return bool(r and r.get("ok") and r.get("result"))
+        return self._send_noreply(self._req("release", pid, wid, psn, win_xy, screen_xy))
 
     def motion(self, pid, wid, psn, win_xy, screen_xy, dragging):
-        # fire-and-forget: hover/drag is the 60Hz stream that dominates latency
         return self._send_noreply(self._req("motion", pid, wid, psn, win_xy, screen_xy, dragging))

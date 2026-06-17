@@ -90,9 +90,11 @@ for line in sys.stdin:
     try:
         req = json.loads(line)
         resp = handle(req)
-        # motion (hover/drag) is FIRE-AND-FORGET: no reply, so the parent never
-        # blocks on the 60Hz hover stream. press/release/resolve/ping still reply.
-        if req.get("op") != "motion":
+        # ALL post ops (press/release/motion) are FIRE-AND-FORGET: no reply, so the
+        # parent never blocks on a post. Only resolve_psn/resolve_owner/ping reply
+        # (their values are used by the backend). This keeps the channel in sync:
+        # the proxy reads a reply ONLY for ops the helper actually replies to.
+        if req.get("op") in ("resolve_psn", "resolve_owner", "ping"):
             reply(resp)
     except Exception as e:
         import traceback
