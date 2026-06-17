@@ -15,6 +15,7 @@ pytestmark = pytest.mark.skipif(
 _DEFINED_REASONS = {
     "clt-missing", "helper-spawn-failed", "helper-not-platform-binary",
     "objc-init-failed", "skylight-symbol-missing", "helper-timeout",
+    "helper-crashed",
 }
 
 

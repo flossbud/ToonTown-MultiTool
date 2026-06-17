@@ -44,8 +44,21 @@ class MacOSBackend:
         self._cache = {"t": -1.0, "valid": {}}
         self._trusted = {}
         self._access = {"t": -1.0, "ok": True}
-        self._delivery = None             # drop engine (clears any sticky delivery fault)
+        self._drop_delivery()             # drop engine (clears any sticky delivery fault)
         self._bindings = {}
+
+    def _drop_delivery(self):
+        """Release the current delivery engine, shutting down a _RemoteDelivery's helper
+        subprocess + pipes FIRST so they are not leaked. The in-process MacOSMouseDelivery
+        has no shutdown() (records into the app-process ledger directly), so guard with
+        getattr - this is the ONLY safe drop point for either engine type."""
+        shutdown = getattr(self._delivery, "shutdown", None)
+        if callable(shutdown):
+            try:
+                shutdown()
+            except Exception:
+                pass
+        self._delivery = None
 
     def has_post_access(self) -> bool:
         """Whether this process currently has permission to POST synthetic events
@@ -173,7 +186,11 @@ class MacOSBackend:
                 override != "force-inprocess" and not macos_platform_binary.is_platform_binary())
             if use_helper:
                 from utils.macos_inject_remote import _RemoteDelivery
-                self._delivery = _RemoteDelivery()   # ledger threaded in a later task
+                # No ledger: the helper posts in its OWN process (cannot record into this
+                # process's EchoLedger), and its per-window SLEventPostToPid path does not
+                # re-enter the app's global capture tap, so there is no echo to guard. See
+                # _RemoteDelivery.__init__ for the full rationale + live-validation flag.
+                self._delivery = _RemoteDelivery()
             else:
                 from utils.macos_mouse_delivery import MacOSMouseDelivery
                 self._delivery = MacOSMouseDelivery(ledger=self._echo_ledger)
@@ -184,7 +201,7 @@ class MacOSBackend:
         the capture's marker-stripped-echo detection (Task 8 wires the SAME instance into
         the backend + the capture). Rebuilds the engine so it picks the ledger up."""
         self._echo_ledger = ledger
-        self._delivery = None
+        self._drop_delivery()   # shut a helper subprocess down before rebuilding (no leak)
 
     def mouse_delivery_ready(self):
         """(ready: bool, reason: str | None). SEPARATE from has_post_access() so a

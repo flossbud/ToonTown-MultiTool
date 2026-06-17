@@ -11,11 +11,14 @@ binary) and forwards the delivery interface to it.
 NO in-process fallback by design: a helper failure surfaces as not-available with
 a single latched reason, so readiness upstream fail-closes unambiguously.
 
-Task 4b scope: helper-path resolution, scrubbed-env spawn of the CLT python, a
-validated `hello` handshake, and correlation-id-validated synchronous RPC (which
-fixes a late-reply desync: a stale reply from a prior timed-out request can no
-longer be misread as the next request's reply). Respawn-on-crash, the circuit
-breaker, RPC-timeout->kill+respawn, and full no-zombie lifecycle are Task 4c.
+Lifecycle (Task 4c): when an op finds the helper dead it attempts a respawn,
+bounded by a circuit breaker - after N consecutive spawn/handshake failures the
+circuit OPENS for a cooldown (stays not-available, reason `helper-crashed`) so a
+tight motion loop cannot storm respawns; a successful respawn closes it. A
+synchronous RPC that times out (the reader is deadline-bounded) treats the helper
+as wedged: it latches `helper-timeout`, kills+reaps the child, and a short backoff
+defers the respawn to the next op. Every kill is followed by a wait() (reap), and a
+respawn reaps the prior child first, so no zombie accumulates.
 """
 from __future__ import annotations
 
@@ -30,6 +33,18 @@ import time
 from utils import macos_clt
 
 _RPC_TIMEOUT_S = 5.0
+
+# Circuit breaker: after this many CONSECUTIVE spawn/handshake failures, OPEN the
+# circuit (stop respawning, report `helper-crashed`) for the cooldown. A successful
+# respawn resets the count and closes it. "Consecutive" + reset-on-success gives the
+# "within a short window" semantics: a success between failures clears the count, and
+# the per-attempt backoff naturally clusters consecutive attempts into a short span.
+_CIRCUIT_THRESHOLD = 3
+_CIRCUIT_COOLDOWN_S = 30.0
+# Bounded backoff deferred before the NEXT respawn after a sub-threshold spawn failure
+# OR an RPC-timeout kill. This is the rate-limit that stops a 60Hz hover/drag stream
+# from respawning on every motion event (the circuit cooldown handles the give-up case).
+_RESPAWN_BACKOFF_S = 1.0
 
 # Helper script location RELATIVE to a bundle/_MEIPASS resources root. The .app and
 # the PyInstaller bundle both ship the helper (and macos_mouse_delivery.py) FLAT in
@@ -109,38 +124,78 @@ class _RemoteDelivery:
     `last_reason()` returns the single latched fault token when not available."""
 
     def __init__(self, ledger=None):
-        self._lock = threading.Lock()
+        # RLock (not Lock): a respawn holds the lock across spawn+handshake, and the
+        # handshake's _rpc("hello") re-acquires it - reentrancy avoids a self-deadlock.
+        self._lock = threading.RLock()
         self._proc = None
         self._next_id = 1
         self._available = False
         self._reason: str | None = None
-        # Accepted for signature parity with the in-process engine. The helper records
-        # into its OWN ledger (it runs the engine), so it is intentionally unused here.
+        # Accepted for signature parity with the in-process engine, and INTENTIONALLY
+        # UNUSED. Two independent reasons it cannot be wired through to record echoes:
+        #   1. The helper posts in its OWN process and runs its OWN delivery engine, so
+        #      it physically cannot record into THIS app-process EchoLedger instance.
+        #   2. The per-window SkyLight SLEventPostToPid path delivers an event ONLY into
+        #      the target PID's event queue; it does NOT re-enter the app's global
+        #      capture tap (which observes the session/HID stream), so the capture's
+        #      marker-stripped-echo guard never sees a helper-posted event in the first
+        #      place - there is nothing to record.
+        # LIVE-VALIDATION FLAG: if a future build shows an echo loop on the helper path
+        # (a posted event re-entering the capture), revisit assumption (2).
         self._ledger = ledger
         self._logf = None
         self._rbuf = b""   # byte buffer for the deadline-bounded line reader
-        self._spawn_and_handshake()
+        # ---- lifecycle / circuit-breaker state (all guarded by _lock) ----
+        self._closed = False             # shutdown() latches this; gates all respawns
+        self._consec_failures = 0        # consecutive spawn/handshake failures
+        self._circuit_open_until = 0.0   # monotonic deadline; now < this => respawn gated
+        with self._lock:
+            self._attempt_spawn(time.monotonic())
 
     # ---- spawn + handshake ----------------------------------------------------
 
-    def _spawn_and_handshake(self) -> None:
+    def _attempt_spawn(self, now: float) -> bool:
+        """Reap any prior child, then spawn+handshake ONCE, updating the breaker. Caller
+        holds _lock. Returns True iff the helper is now available. On failure, advances
+        the consecutive-failure count and arms a backoff (or, at the threshold, opens the
+        circuit for the cooldown and latches `helper-crashed`)."""
+        self._teardown_proc()   # reap a prior dead child first (no zombie across respawn)
+        if self._try_spawn_handshake():
+            self._consec_failures = 0
+            self._circuit_open_until = 0.0
+            return True
+        self._consec_failures += 1
+        if self._consec_failures >= _CIRCUIT_THRESHOLD:
+            self._circuit_open_until = now + _CIRCUIT_COOLDOWN_S
+            self._reason = "helper-crashed"   # circuit OPEN: give up for the cooldown
+        else:
+            self._circuit_open_until = now + _RESPAWN_BACKOFF_S   # bounded inter-attempt backoff
+        return False
+
+    def _try_spawn_handshake(self) -> bool:
+        """Spawn the CLT python helper and validate it with a `hello` handshake. On
+        success: `_available` True, `_reason` None, returns True. On failure: latches a
+        single reason, tears down (reaps) any spawned-but-unusable child, returns False.
+        Does NOT touch the breaker (the caller owns that)."""
         ok, _reason, clt_python = macos_clt.clt_state()
         if not (ok and clt_python):
             # CLT absent: do NOT spawn (spawning /usr/bin/python3 with no developer dir
             # would pop the Xcode installer). Latch and stay unavailable.
             self._reason = "clt-missing"
-            return
+            return False
         helper = _helper_path()
         if not self._spawn(clt_python, helper):
             self._reason = "helper-spawn-failed"
-            return
+            return False
+        self._rbuf = b""   # fresh reader buffer for the new child
         if not self._handshake():
             # Spawned but unusable (wrong identity / objc / skylight / no reply). The
-            # child is otherwise healthy and would block on stdin forever, so tear it
-            # down NOW rather than leak a resident helper + pipes + logfile for the whole
-            # session (this is the common unsupported-machine path). shutdown() preserves
-            # the latched reason; the full respawn lifecycle is Task 4c.
-            self.shutdown()
+            # child is otherwise healthy and would block on stdin forever, so reap it NOW
+            # rather than leak a resident helper + pipes + logfile. _teardown_proc()
+            # preserves the latched reason.
+            self._teardown_proc()
+            return False
+        return True
 
     def _spawn(self, clt_python: str, helper_path: str) -> bool:
         try:
@@ -189,6 +244,37 @@ class _RemoteDelivery:
         self._diag("handshake validated; helper available")
         return True
 
+    # ---- respawn lifecycle ----------------------------------------------------
+
+    def _proc_alive(self) -> bool:
+        """True iff a child exists and has not exited. Lock-free + cheap (a waitpid
+        WNOHANG via Popen.poll), so the per-motion liveness check costs nothing on the
+        healthy path."""
+        proc = self._proc
+        return proc is not None and proc.poll() is None
+
+    def _ensure_alive(self) -> bool:
+        """Fast path for every op: alive -> True with no lock. Dead -> attempt a respawn
+        (gated by the circuit breaker / backoff). Returns whether a usable helper exists."""
+        if self._proc_alive():
+            return True
+        return self._maybe_respawn()
+
+    def _maybe_respawn(self) -> bool:
+        """Respawn a dead helper, subject to the circuit breaker. Returns True iff a live,
+        validated helper exists afterwards. Rate-limited: while the circuit is open (or
+        within the inter-attempt backoff) this short-circuits WITHOUT spawning, so a tight
+        motion loop can never storm respawns."""
+        with self._lock:
+            if self._closed:
+                return False
+            if self._proc_alive():
+                return True   # another thread already respawned while we waited on the lock
+            now = time.monotonic()
+            if now < self._circuit_open_until:
+                return False  # circuit OPEN (helper-crashed) or inter-attempt backoff
+            return self._attempt_spawn(now)
+
     # ---- RPC ------------------------------------------------------------------
 
     def _read_line(self, remaining: float):
@@ -196,7 +282,7 @@ class _RemoteDelivery:
         / EOF (helper gone). DEADLINE-BOUNDED: reads raw bytes via select+os.read into a
         persistent buffer, so a partial line from a stalled/truncated helper can NEVER
         block past the timeout. (A plain readline() after select() would block waiting for
-        the newline, holding the lock and defeating 4c's RPC-timeout->kill.) Leftover
+        the newline, holding the lock and defeating the RPC-timeout->kill.) Leftover
         bytes after a line stay buffered for the next call."""
         proc = self._proc
         if proc is None or proc.stdout is None:
@@ -252,11 +338,14 @@ class _RemoteDelivery:
 
     def _rpc(self, op: str, **fields):
         """Synchronous request/reply carrying a unique correlation id. Returns the
-        matching reply dict, or None on no-helper / write-error / timeout."""
-        proc = self._proc
-        if proc is None or proc.poll() is not None:
-            return None
+        matching reply dict, or None on no-helper / write-error / timeout. On a genuine
+        TIMEOUT (the child is still alive but did not reply) the helper is treated as
+        wedged: latch `helper-timeout`, kill+reap it, and arm a backoff so the NEXT op
+        respawns (not a tight loop)."""
         with self._lock:
+            proc = self._proc
+            if proc is None or proc.poll() is not None:
+                return None   # clean no-helper / already-dead: no timeout latch
             req_id = self._next_id
             self._next_id += 1
             req = {"op": op, "id": req_id, **fields}
@@ -266,7 +355,18 @@ class _RemoteDelivery:
             except Exception as e:
                 self._diag(f"RPC write error ({op}): {e}")
                 return None
-            return self._recv_matching(req_id, self._read_line, _RPC_TIMEOUT_S)
+            reply = self._recv_matching(req_id, self._read_line, _RPC_TIMEOUT_S)
+            if reply is not None:
+                return reply
+            # No reply within the deadline. A child that DIED mid-call (poll() != None) is
+            # a crash, left for the next op's _maybe_respawn (which may open the circuit ->
+            # helper-crashed). A child STILL ALIVE is genuinely wedged -> kill+reap it.
+            if proc.poll() is None:
+                self._diag(f"RPC timeout ({op}); killing wedged helper for respawn")
+                self._reason = "helper-timeout"
+                self._teardown_proc()
+                self._circuit_open_until = time.monotonic() + _RESPAWN_BACKOFF_S
+            return None
 
     # ---- public surface -------------------------------------------------------
 
@@ -278,6 +378,8 @@ class _RemoteDelivery:
         return self._reason
 
     def resolve_psn(self, wid):
+        if not self._ensure_alive():
+            return None
         r = self._rpc("resolve_psn", wid=int(wid))
         if not (r and r.get("ok")):
             return None
@@ -285,6 +387,8 @@ class _RemoteDelivery:
         return bytes.fromhex(h) if h else None
 
     def resolve_owner(self, wid):
+        if not self._ensure_alive():
+            return None
         r = self._rpc("resolve_owner", wid=int(wid))
         return (r or {}).get("owner")
 
@@ -302,11 +406,13 @@ class _RemoteDelivery:
     def _send_noreply(self, req) -> bool:
         """Fire-and-forget write (no id, no round-trip) for the high-frequency
         hover/drag stream, so the dispatch thread never blocks on a per-motion reply.
-        Post ops do NOT participate in correlation-id validation (no reply expected)."""
-        proc = self._proc
-        if proc is None or proc.poll() is not None:
-            return False
+        Post ops do NOT participate in correlation-id validation (no reply expected). A
+        write to a dead/closed pipe is caught -> False; the next op's _ensure_alive then
+        respawns."""
         with self._lock:
+            proc = self._proc
+            if proc is None or proc.poll() is not None:
+                return False
             try:
                 proc.stdin.write((json.dumps(req) + "\n").encode("utf-8"))
                 proc.stdin.flush()
@@ -316,32 +422,46 @@ class _RemoteDelivery:
                 return False
 
     # All post ops are fire-and-forget (no round-trip). press()/release() return True
-    # optimistically (assumed-success): the backend then stores/clears the gesture
-    # binding as usual. Tradeoff (review-flagged): a genuinely-failed post is invisible;
-    # a dropped release at worst leaves a stray 'up' (harmless).
+    # optimistically (assumed-success) when a live helper exists: the backend then
+    # stores/clears the gesture binding as usual. A dead helper that cannot be respawned
+    # (circuit open / backoff) returns False so the backend never binds an undeliverable
+    # gesture. Tradeoff (review-flagged): a genuinely-failed post is invisible; a dropped
+    # release at worst leaves a stray 'up' (harmless).
     def press(self, pid, wid, psn, win_xy, screen_xy):
+        if not self._ensure_alive():
+            return False
         return self._send_noreply(self._req("press", pid, wid, psn, win_xy, screen_xy))
 
     def release(self, pid, wid, psn, win_xy, screen_xy):
+        if not self._ensure_alive():
+            return False
         return self._send_noreply(self._req("release", pid, wid, psn, win_xy, screen_xy))
 
     def motion(self, pid, wid, psn, win_xy, screen_xy, dragging):
+        if not self._ensure_alive():
+            return False
         return self._send_noreply(self._req("motion", pid, wid, psn, win_xy, screen_xy, dragging))
 
     # ---- teardown -------------------------------------------------------------
 
     def shutdown(self) -> None:
-        """Minimal teardown so tests and process exit leave no helper behind. The full
-        lifecycle (respawn/backoff/circuit-breaker, RPC-timeout->kill+respawn) is
-        Task 4c.
+        """Permanent teardown: latch `_closed` (no further respawns), then reap the child
+        and release pipes + logfile. Idempotent. Under _lock so it interlocks with a
+        concurrent op/respawn (the RLock is reentrant; _teardown_proc never re-acquires)."""
+        with self._lock:
+            self._closed = True
+            self._teardown_proc()
 
-        Intentionally best-effort and lock-free: clearing `_proc` races a concurrent
-        `_rpc`/`_send_noreply`, but the outcome is benign (a concurrent writer hits a
-        closed stdin -> caught -> None/False; a blocked reader gets EOF when the child
-        is terminated -> unblocks). 4c's lifecycle pass owns proper interlocking."""
+    def _teardown_proc(self) -> None:
+        """Reap the current child (terminate -> wait; escalate to kill -> wait) and clear
+        the proc/available/reader state + close the captured-stderr logfile. EVERY kill is
+        followed by a wait() so no zombie is left behind, and a respawn calls this first so
+        the prior child is reaped before a new one starts. Lock-free: the caller owns
+        _lock. Preserves `_reason` and the breaker counters (so a respawn keeps the latch)."""
         proc = self._proc
         self._proc = None
         self._available = False
+        self._rbuf = b""   # discard any partial bytes from the dead child
         if proc is not None:
             try:
                 if proc.stdin:
@@ -353,7 +473,7 @@ class _RemoteDelivery:
             except Exception:
                 pass
             try:
-                proc.wait(timeout=2)
+                proc.wait(timeout=2)   # reap after terminate
             except Exception:
                 try:
                     proc.kill()
