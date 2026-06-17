@@ -254,6 +254,13 @@ class _RemoteDelivery:
         if reply.get("skylight_ok") is not True:
             self._reason = "skylight-symbol-missing"
             return False
+        # The HELPER's own post-event (Accessibility) access - distinct from the app's.
+        # The helper requested it at startup; act ONLY on a DEFINITE denial (False), not on
+        # None/unknown (a transient check glitch), mirroring backend has_post_access's
+        # fail-open discipline. A fresh user who granted the app but not the helper lands here.
+        if reply.get("preflight_post_access") is False:
+            self._reason = "tcc-denied"
+            return False
         self._reason = None
         self._available = True
         self._diag("handshake validated; helper available")

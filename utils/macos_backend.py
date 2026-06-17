@@ -263,6 +263,11 @@ class MacOSBackend:
                 last_reason = getattr(eng, "last_reason", None)
                 if callable(last_reason):
                     reason = last_reason()
+                if reason == "tcc-denied":
+                    # The HELPER (its own /usr/bin/python3 identity) lacks Accessibility even
+                    # though the app may have it. Surface the SAME actionable wording as the
+                    # app-side denial so the tooltip/dialog guides "grant Accessibility".
+                    return (False, "accessibility (post-event) access not granted")
                 return (False, reason or "macOS per-window mouse delivery unavailable "
                                          "(SkyLight symbols missing or a delivery fault)")
             return (True, None)

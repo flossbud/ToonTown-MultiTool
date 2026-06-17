@@ -64,6 +64,20 @@ def test_engine_unavailable_surfaces_helper_last_reason(monkeypatch):
     assert reason == "helper-crashed"
 
 
+def test_helper_tcc_denied_maps_to_readable_accessibility_reason(monkeypatch):
+    """The helper lacking its OWN post-event access (tcc-denied) - even when the app has
+    access - surfaces the SAME readable, actionable wording as the app-side denial, not the
+    raw token, so the tooltip/dialog guides 'grant Accessibility'."""
+    monkeypatch.setattr(macos_platform_binary, "is_platform_binary", lambda: True)
+    b = MacOSBackend()
+    monkeypatch.setattr(b, "has_post_access", lambda: True)   # the APP has access
+    monkeypatch.setattr(b, "_engine", lambda: _StubEngine(available=False, reason="tcc-denied"))
+    ready, reason = b.mouse_delivery_ready()
+    assert ready is False
+    assert "accessibility" in reason.lower()
+    assert reason != "tcc-denied"   # mapped to readable prose, not the raw token
+
+
 def test_engine_none_returns_disabled_reason(monkeypatch):
     # The TTMT_MACOS_INJECT=disable dev override -> _engine() is None: a clean reason, no AttributeError.
     monkeypatch.setattr(macos_platform_binary, "is_platform_binary", lambda: True)

@@ -15,7 +15,7 @@ pytestmark = pytest.mark.skipif(
 _DEFINED_REASONS = {
     "clt-missing", "helper-spawn-failed", "helper-not-platform-binary",
     "objc-init-failed", "skylight-symbol-missing", "helper-timeout",
-    "helper-crashed",
+    "helper-crashed", "tcc-denied",
 }
 
 
@@ -127,6 +127,9 @@ def test_handshake_success_sets_available(monkeypatch):
     ({"ok": True}, "helper-not-platform-binary"),                # platform_binary absent
     ({"platform_binary": True}, "objc-init-failed"),             # objc_ok absent
     ({"platform_binary": True, "objc_ok": True}, "skylight-symbol-missing"),  # skylight_ok absent
+    # all structural checks pass but the helper reports a DEFINITE post-access denial:
+    ({"platform_binary": True, "objc_ok": True, "skylight_ok": True,
+      "preflight_post_access": False}, "tcc-denied"),
 ])
 def test_handshake_reason_matrix(monkeypatch, reply, expected):
     """Each handshake field maps to its distinct latched reason, in spec order."""

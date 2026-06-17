@@ -98,8 +98,25 @@ def _selftest():
             "preflight_post_access": pf}
 
 
+def _request_post_access():
+    """First-use Accessibility trigger. CGRequestPostEventAccess() prompts the user to grant
+    post-event (Accessibility) access for THIS process identity if not already granted, then
+    returns the resulting state. Non-blocking (the prompt is async). Called ONCE at startup so
+    a fresh user gets the OS prompt the first time Click Sync engages the helper - whatever
+    identity macOS attributes it to (the app via the responsible process, or /usr/bin/python3).
+    Already-granted (e.g. this dev machine) returns True with no prompt."""
+    try:
+        cg = ctypes.CDLL("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")
+        cg.CGRequestPostEventAccess.restype = ctypes.c_bool
+        return bool(cg.CGRequestPostEventAccess())
+    except Exception:
+        return None
+
+
 log(f"start sys.executable={sys.executable} ppid={os.getppid()} cwd={os.getcwd()}")
 log(f"engine module={mmd.__file__}")
+# Trigger the Accessibility prompt for the helper identity ONCE at startup (first use).
+log(f"request_post_access={_request_post_access()}")
 eng = mmd.MacOSMouseDelivery()
 log(f"engine.available={eng.available}")
 
