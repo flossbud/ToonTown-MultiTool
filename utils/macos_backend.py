@@ -3,6 +3,7 @@ window's owning process via CGEventPostToPid. Window-ID-keyed externally (to
 match XlibBackend/Win32Backend); PID-resolved internally. Lazy PyObjC."""
 from __future__ import annotations
 
+import os
 import time
 
 from utils import macos_keycodes as _mk
@@ -16,6 +17,10 @@ _CACHE_TTL = 0.25
 # CGPreflightPostEventAccess cache TTL. Accessibility (post) permission is
 # revocable at runtime, so re-check on a cadence rather than once at connect.
 _ACCESS_TTL = 1.0
+# CLT-state cache TTL. clt_state() forks xcode-select, and readiness is probed per-recompute
+# (the production GUI app is non-platform-binary, so it always hits the CLT gate). A short TTL
+# avoids a fork/exec on every probe while still picking up a guided CLT install within seconds.
+_CLT_TTL = 5.0
 # X.Button1Mask in the service's X-style state mask (matches services.click_sync_service).
 _BUTTON1_MASK = 0x100
 
@@ -26,6 +31,7 @@ class MacOSBackend:
         self._cache = {"t": -1.0, "valid": {}}  # wid_str -> (pid, bundle_id)
         self._trusted = {}  # wid_str -> bundle_id (first-sight identity lock)
         self._access = {"t": -1.0, "ok": True}  # CGPreflightPostEventAccess cache
+        self._clt = {"t": None, "state": (True, None, None)}  # macos_clt.clt_state() cache (None = unprobed)
         self._delivery = None             # MacOSMouseDelivery (lazy)
         self._echo_ledger = None          # shared EchoLedger (Task 8 wires it; the engine records into it)
         self._bindings = {}               # wid_str -> (pid, wid, psn, owner, creation) for the live gesture
@@ -43,8 +49,26 @@ class MacOSBackend:
         self._cache = {"t": -1.0, "valid": {}}
         self._trusted = {}
         self._access = {"t": -1.0, "ok": True}
-        self._delivery = None             # drop engine (clears any sticky delivery fault)
+        self._drop_delivery()             # drop engine (clears any sticky delivery fault)
         self._bindings = {}
+
+    def _drop_delivery(self):
+        """Release the current delivery engine, shutting down a _RemoteDelivery's helper
+        subprocess + pipes FIRST so they are not leaked. The in-process MacOSMouseDelivery
+        has no shutdown() (records into the app-process ledger directly), so guard with
+        getattr - this is the ONLY safe drop point for either engine type.
+
+        PRECONDITION (both callers, disconnect/set_echo_ledger): STOP the click-sync service
+        first. The drop now does real work (kills the helper), and `_engine()` lazily
+        respawns one on the next send_*; a capture/hover thread still running would
+        immediately resurrect a fresh helper after this drop."""
+        shutdown = getattr(self._delivery, "shutdown", None)
+        if callable(shutdown):
+            try:
+                shutdown()
+            except Exception:
+                pass
+        self._delivery = None
 
     def has_post_access(self) -> bool:
         """Whether this process currently has permission to POST synthetic events
@@ -161,10 +185,37 @@ class MacOSBackend:
         up_ok = self._post_to_pid(pid, vk, False, flags)
         return down_ok and up_ok
 
+    def _uses_helper(self) -> bool:
+        """Whether delivery goes through the platform-binary helper subprocess (vs in-process,
+        or disabled). The SINGLE predicate that _engine() selects on AND mouse_delivery_ready()
+        gates CLT on, so readiness requires CLT exactly when the helper path is taken - honoring
+        the dev TTMT_MACOS_INJECT override, not just the raw platform-binary bit. 'disable'
+        spawns no helper (and no engine)."""
+        from utils import macos_platform_binary
+        override = os.environ.get("TTMT_MACOS_INJECT", "")  # dev only: force-helper/force-inprocess/disable
+        if override == "disable":
+            return False
+        if override == "force-helper":
+            return True
+        if override == "force-inprocess":
+            return False
+        return not macos_platform_binary.is_platform_binary()
+
     def _engine(self):
         if self._delivery is None:
-            from utils.macos_mouse_delivery import MacOSMouseDelivery
-            self._delivery = MacOSMouseDelivery(ledger=self._echo_ledger)
+            if os.environ.get("TTMT_MACOS_INJECT", "") == "disable":
+                self._delivery = None
+                return None
+            if self._uses_helper():
+                from utils.macos_inject_remote import _RemoteDelivery
+                # No ledger: the helper posts in its OWN process (cannot record into this
+                # process's EchoLedger), and its per-window SLEventPostToPid path does not
+                # re-enter the app's global capture tap, so there is no echo to guard. See
+                # _RemoteDelivery.__init__ for the full rationale + live-validation flag.
+                self._delivery = _RemoteDelivery()
+            else:
+                from utils.macos_mouse_delivery import MacOSMouseDelivery
+                self._delivery = MacOSMouseDelivery(ledger=self._echo_ledger)
         return self._delivery
 
     def set_echo_ledger(self, ledger):
@@ -172,19 +223,53 @@ class MacOSBackend:
         the capture's marker-stripped-echo detection (Task 8 wires the SAME instance into
         the backend + the capture). Rebuilds the engine so it picks the ledger up."""
         self._echo_ledger = ledger
-        self._delivery = None
+        self._drop_delivery()   # shut a helper subprocess down before rebuilding (no leak)
+
+    def _clt_state(self):
+        """Cached utils.macos_clt.clt_state() (TTL _CLT_TTL). clt_state() forks xcode-select;
+        readiness is probed per-recompute, so cache it like has_post_access()'s _access. The
+        short TTL still surfaces a guided CLT install within a few seconds."""
+        from utils import macos_clt
+        now = time.monotonic()
+        last = self._clt["t"]
+        if last is not None and now - last <= _CLT_TTL:   # None sentinel forces a first-call probe
+            return self._clt["state"]
+        state = macos_clt.clt_state()
+        self._clt = {"t": now, "state": state}
+        return state
 
     def mouse_delivery_ready(self):
-        """(ready: bool, reason: str | None). SEPARATE from has_post_access() so a
-        mouse-SPI break never disables working keyboard delivery (spec §3.2/§3.5).
-        Fail-CLOSED: ANY probe error (e.g. the engine's lazy import raising) returns
-        not-ready with a reason, NEVER ready (mirrors _creation_identity's discipline)."""
+        """(ready, reason). SEPARATE from has_post_access() so a mouse-SPI break never
+        disables working keyboard delivery (spec §3.2/§3.5). Fail-CLOSED: any probe
+        error -> not-ready with a reason, NEVER ready. Reasons are DISTINCT so the UI
+        can guide the user: CLT-missing (helper path only) vs accessibility-denied vs a
+        specific helper/SkyLight fault."""
         try:
+            # The helper path needs CLT; the in-process path does not. Gate on the SAME
+            # predicate _engine() selects on (incl. the dev override), not the raw platform
+            # bit, so readiness and the actual engine choice never disagree.
+            if self._uses_helper():
+                clt_ok, clt_reason, _py = self._clt_state()
+                if not clt_ok:
+                    return (False, clt_reason)
             if not self.has_post_access():
                 return (False, "accessibility (post-event) access not granted")
-            if not self._engine().available:
-                return (False, "macOS per-window mouse delivery unavailable "
-                               "(private SkyLight symbols missing or a delivery fault)")
+            eng = self._engine()
+            if eng is None:
+                return (False, "mouse delivery disabled")
+            if not eng.available:
+                # _RemoteDelivery exposes a specific latched fault; the in-process engine does not.
+                reason = None
+                last_reason = getattr(eng, "last_reason", None)
+                if callable(last_reason):
+                    reason = last_reason()
+                if reason == "tcc-denied":
+                    # The HELPER (its own /usr/bin/python3 identity) lacks Accessibility even
+                    # though the app may have it. Surface the SAME actionable wording as the
+                    # app-side denial so the tooltip/dialog guides "grant Accessibility".
+                    return (False, "accessibility (post-event) access not granted")
+                return (False, reason or "macOS per-window mouse delivery unavailable "
+                                         "(SkyLight symbols missing or a delivery fault)")
             return (True, None)
         except Exception as e:
             return (False, f"mouse delivery probe failed: {type(e).__name__}: {e}")
@@ -224,6 +309,9 @@ class MacOSBackend:
         game window, or None. owner_conn + creation_identity freeze the gesture against
         same-bundle PID/window-id reuse (all TTR toons share ONE bundle, so the trusted-
         bundle lock in _resolve_pid is not enough to catch a different toon reusing a wid)."""
+        eng = self._engine()
+        if eng is None:   # dev override TTMT_MACOS_INJECT=disable -> no delivery; degrade to no-op
+            return None
         pid = self._resolve_pid(win_id_str)
         if pid is None:
             return None
@@ -231,10 +319,10 @@ class MacOSBackend:
             wid = int(win_id_str)
         except (TypeError, ValueError):
             return None
-        psn = self._engine().resolve_psn(wid)
+        psn = eng.resolve_psn(wid)
         if psn is None:
             return None
-        return (pid, wid, psn, self._engine().resolve_owner(wid), self._creation_identity(pid))
+        return (pid, wid, psn, eng.resolve_owner(wid), self._creation_identity(pid))
 
     def send_button_press(self, win_id_str, x, y, root_x, root_y,
                           button=1, state=0, time=0) -> bool:

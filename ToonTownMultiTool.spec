@@ -3,14 +3,27 @@
 import sys
 
 
+datas = [
+    ('assets', 'assets'),
+    ('tools/wine_input_bridge/TTMTWineInputBridge.cs', 'tools/wine_input_bridge'),
+]
+
+if sys.platform == "darwin":
+    # macOS: ship the platform-binary injection helper + its (pyobjc-free) delivery engine as
+    # plain .py data files so the system /usr/bin/python3 can run them (the frozen bundle python
+    # is non-platform and cannot actuate the SkyLight mouse path). They live FLAT in ttmt_inject/
+    # so the helper imports macos_mouse_delivery by its own location.
+    # macos_inject_remote._helper_path() resolves Contents/Resources/ttmt_inject/macos_inject_helper.py.
+    datas += [
+        ('scripts/macos_inject_helper.py', 'ttmt_inject'),
+        ('utils/macos_mouse_delivery.py', 'ttmt_inject'),
+    ]
+
 a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[
-        ('assets', 'assets'),
-        ('tools/wine_input_bridge/TTMTWineInputBridge.cs', 'tools/wine_input_bridge'),
-    ],
+    datas=datas,
     hiddenimports=[
         'pynput.keyboard._xorg',
         'pynput.mouse._xorg',

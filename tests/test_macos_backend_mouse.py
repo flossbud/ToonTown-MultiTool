@@ -29,11 +29,15 @@ class _FakeEngine:
 
 
 def _backend(monkeypatch, engine, pid=4242, access=True):
+    from utils import macos_platform_binary
     b = MacOSBackend()
     b._delivery = engine
     monkeypatch.setattr(b, "_resolve_pid", lambda wid: pid)
     monkeypatch.setattr(b, "has_post_access", lambda: access)
     monkeypatch.setattr(b, "_creation_identity", lambda pid: "C1")  # stable launch token
+    # Pin platform-binary True so mouse_delivery_ready() skips the CLT gate (no real
+    # xcode-select shell-out): keeps this helper hermetic regardless of the host interpreter.
+    monkeypatch.setattr(macos_platform_binary, "is_platform_binary", lambda: True)
     return b
 
 
@@ -201,3 +205,49 @@ def test_set_echo_ledger_reaches_rebuilt_engine():
     led = d.EchoLedger()
     b.set_echo_ledger(led)
     assert b._engine()._ledger is led                          # rebuilt engine carries the shared ledger
+
+
+# ---- backend teardown: shut a _RemoteDelivery helper down before dropping (Task 4c) ----
+
+
+class _ShutdownRecorder:
+    """Stand-in for a _RemoteDelivery: has a shutdown() the backend must call before drop."""
+    def __init__(self):
+        self.shutdown_calls = 0
+
+    def shutdown(self):
+        self.shutdown_calls += 1
+
+
+class _NoShutdownEngine:
+    """Stand-in for the in-process MacOSMouseDelivery: NO shutdown() method."""
+    pass
+
+
+def test_disconnect_shuts_down_remote_delivery():
+    b = MacOSBackend()
+    stub = _ShutdownRecorder()
+    b._delivery = stub
+    b.disconnect()
+    assert stub.shutdown_calls == 1     # helper torn down BEFORE the reference is dropped
+    assert b._delivery is None
+
+
+def test_set_echo_ledger_shuts_down_remote_delivery():
+    b = MacOSBackend()
+    stub = _ShutdownRecorder()
+    b._delivery = stub
+    b.set_echo_ledger(object())
+    assert stub.shutdown_calls == 1
+    assert b._delivery is None
+
+
+def test_drop_inprocess_engine_without_shutdown_is_safe():
+    # the in-process engine has NO shutdown(); both drop sites must not raise on it
+    b = MacOSBackend()
+    b._delivery = _NoShutdownEngine()
+    b.disconnect()
+    assert b._delivery is None
+    b._delivery = _NoShutdownEngine()
+    b.set_echo_ledger(None)
+    assert b._delivery is None
