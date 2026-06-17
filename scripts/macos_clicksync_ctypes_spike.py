@@ -15,6 +15,7 @@ import argparse
 import ctypes
 import os
 import sys
+import time
 
 CS_PLATFORM_BINARY = 0x04000000
 CS_RUNTIME = 0x00010000
@@ -233,7 +234,11 @@ def _post_event(mmd, skylight, kind, pid, wid, win_xy, screen_xy):
     cg.CGEventSetIntegerValueField(
         ctypes.c_void_p(ev), ctypes.c_uint32(_SOURCE_USER_DATA_FIELD),
         ctypes.c_int64(mmd.SPIKE_EVENT_TAG))
-    skylight["CGEventSetTimestamp"](ctypes.c_void_p(ev), ctypes.c_uint64(0))
+    # LOAD-BEARING: a real timestamp is required. A 0 timestamp makes WindowServer treat
+    # the event as stale and silently drop it (live-proven 2026-06-17: the book click did
+    # NOT actuate with ts=0, DID with monotonic_ns). The production engine already stamps
+    # monotonic_ns in _NativePort.post; the ctypes rewrite must preserve it.
+    skylight["CGEventSetTimestamp"](ctypes.c_void_p(ev), ctypes.c_uint64(time.monotonic_ns()))
     skylight["SLEventPostToPid"](ctypes.c_int32(int(pid)), ctypes.c_void_p(ev))
     return True
 
