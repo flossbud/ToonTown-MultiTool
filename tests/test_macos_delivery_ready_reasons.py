@@ -97,3 +97,42 @@ def test_inprocess_engine_without_last_reason_gets_generic_message(monkeypatch):
     ready, reason = b.mouse_delivery_ready()
     assert ready is False
     assert "SkyLight" in reason or "unavailable" in reason
+
+
+def test_clt_state_cache_probes_once_per_ttl(monkeypatch):
+    """_clt_state(): the None sentinel forces a first-call probe; the result is reused within
+    _CLT_TTL; a reprobe happens after the TTL (so a guided CLT install is picked up). This
+    avoids a per-recompute xcode-select fork while staying fresh within seconds."""
+    import utils.macos_backend as mb
+
+    clock = {"t": 100.0}
+    monkeypatch.setattr(mb.time, "monotonic", lambda: clock["t"])
+    calls = {"n": 0}
+
+    def counting():
+        calls["n"] += 1
+        return (calls["n"] == 1, None, "/py")   # first probe True, later reprobe False
+
+    monkeypatch.setattr(macos_clt, "clt_state", counting)
+    b = MacOSBackend()
+
+    assert b._clt_state() == (True, None, "/py")   # first call probes (None sentinel)
+    assert calls["n"] == 1
+    clock["t"] += 1.0                              # within TTL -> cached, no reprobe
+    assert b._clt_state() == (True, None, "/py")
+    assert calls["n"] == 1
+    clock["t"] += mb._CLT_TTL + 1                  # past TTL -> reprobe
+    assert b._clt_state() == (False, None, "/py")
+    assert calls["n"] == 2
+
+
+def test_force_inprocess_skips_clt_gate(monkeypatch):
+    """Dev override force-inprocess uses the in-process engine, so readiness must NOT gate on
+    CLT even on a non-platform-binary process (the predicate must match _engine())."""
+    monkeypatch.setattr(macos_platform_binary, "is_platform_binary", lambda: False)
+    monkeypatch.setenv("TTMT_MACOS_INJECT", "force-inprocess")
+    monkeypatch.setattr(macos_clt, "clt_state", lambda: pytest.fail("CLT must be skipped for in-process"))
+    b = MacOSBackend()
+    monkeypatch.setattr(b, "has_post_access", lambda: True)
+    monkeypatch.setattr(b, "_engine", lambda: _StubEngine(available=True))
+    assert b.mouse_delivery_ready() == (True, None)

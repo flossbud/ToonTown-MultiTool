@@ -185,16 +185,28 @@ class MacOSBackend:
         up_ok = self._post_to_pid(pid, vk, False, flags)
         return down_ok and up_ok
 
+    def _uses_helper(self) -> bool:
+        """Whether delivery goes through the platform-binary helper subprocess (vs in-process,
+        or disabled). The SINGLE predicate that _engine() selects on AND mouse_delivery_ready()
+        gates CLT on, so readiness requires CLT exactly when the helper path is taken - honoring
+        the dev TTMT_MACOS_INJECT override, not just the raw platform-binary bit. 'disable'
+        spawns no helper (and no engine)."""
+        from utils import macos_platform_binary
+        override = os.environ.get("TTMT_MACOS_INJECT", "")  # dev only: force-helper/force-inprocess/disable
+        if override == "disable":
+            return False
+        if override == "force-helper":
+            return True
+        if override == "force-inprocess":
+            return False
+        return not macos_platform_binary.is_platform_binary()
+
     def _engine(self):
         if self._delivery is None:
-            from utils import macos_platform_binary
-            override = os.environ.get("TTMT_MACOS_INJECT", "")  # dev only: force-helper/force-inprocess/disable
-            if override == "disable":
+            if os.environ.get("TTMT_MACOS_INJECT", "") == "disable":
                 self._delivery = None
                 return None
-            use_helper = (override == "force-helper") or (
-                override != "force-inprocess" and not macos_platform_binary.is_platform_binary())
-            if use_helper:
+            if self._uses_helper():
                 from utils.macos_inject_remote import _RemoteDelivery
                 # No ledger: the helper posts in its OWN process (cannot record into this
                 # process's EchoLedger), and its per-window SLEventPostToPid path does not
@@ -233,10 +245,10 @@ class MacOSBackend:
         can guide the user: CLT-missing (helper path only) vs accessibility-denied vs a
         specific helper/SkyLight fault."""
         try:
-            from utils import macos_platform_binary
-            # The helper path (non-platform-binary process) needs CLT; the in-process path
-            # (already a platform binary) does not. Only gate on CLT when we'd use the helper.
-            if not macos_platform_binary.is_platform_binary():
+            # The helper path needs CLT; the in-process path does not. Gate on the SAME
+            # predicate _engine() selects on (incl. the dev override), not the raw platform
+            # bit, so readiness and the actual engine choice never disagree.
+            if self._uses_helper():
                 clt_ok, clt_reason, _py = self._clt_state()
                 if not clt_ok:
                     return (False, clt_reason)
