@@ -85,3 +85,26 @@ def test_xcode_select_p_subprocess_contract(monkeypatch):
 
     monkeypatch.setattr(macos_clt.subprocess, "run", boom)
     assert macos_clt._xcode_select_p() is None               # exception -> fail-closed
+
+
+def test_open_clt_installer_invokes_xcode_select_install(monkeypatch):
+    """User-initiated remediation: spawns `xcode-select --install` (the official GUI
+    installer), absolute path, no shell, returns True; any failure -> False."""
+    from utils import macos_clt
+
+    calls = {}
+
+    def fake_popen(argv, *a, **k):
+        calls["argv"], calls["kw"] = argv, k
+        return object()
+
+    monkeypatch.setattr(macos_clt.subprocess, "Popen", fake_popen)
+    assert macos_clt.open_clt_installer() is True
+    assert calls["argv"] == ["/usr/bin/xcode-select", "--install"]  # absolute, list (no shell)
+    assert calls["kw"].get("shell") is None                         # never shell=True
+
+    def boom(*a, **k):
+        raise OSError("xcode-select missing")
+
+    monkeypatch.setattr(macos_clt.subprocess, "Popen", boom)
+    assert macos_clt.open_clt_installer() is False                  # exception -> False

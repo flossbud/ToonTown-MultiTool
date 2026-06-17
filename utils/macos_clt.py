@@ -60,3 +60,13 @@ def clt_state() -> tuple[bool, str | None, str | None]:
         if _path_executable(py):
             return (True, None, py)
     return (False, REASON_CLT_MISSING, None)
+
+
+def open_clt_installer() -> bool:
+    """User-INITIATED only: trigger Apple's official Command Line Tools installer GUI.
+    (Detection must NEVER run this - it pops a system dialog.) Returns False on failure."""
+    try:
+        subprocess.Popen(["/usr/bin/xcode-select", "--install"])
+        return True
+    except Exception:
+        return False
