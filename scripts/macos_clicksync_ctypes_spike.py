@@ -140,6 +140,154 @@ def build_ns_cgevent(ns_event_type: int, click_count: int, window_number: int):
     return _msg(ev, "CGEvent", cg_rt, cg_at, ())
 
 
+# --- coordinate math + pinned ABI constants ---
+# kCGEventSourceUserData=42; kCGEvent* {down:1,up:2,moved:5,dragged:6}. Confirmed live
+# against Quartz on macOS 26 (these are stable OS ABI values).
+_SOURCE_USER_DATA_FIELD = 42
+CGEVENT_TYPE = {"move": 5, "down": 1, "up": 2, "dragged": 6}
+
+
+def point_from_fraction(bounds, fx, fy):
+    """bounds=(x,y,w,h) -> (screen_xy, window_local_xy) for a fractional point. Mirrors
+    scripts/macos_framework_spike.screen_point_from_bounds (TTR is borderless, inset 0)."""
+    x, y, w, h = bounds
+    return (x + w * fx, y + h * fy), (w * fx, h * fy)
+
+
+_cg_funcs_handle = None
+
+
+def _cg_funcs():
+    """CoreGraphics public setters with argtypes pinned once."""
+    global _cg_funcs_handle
+    if _cg_funcs_handle is None:
+        cg = _cg()
+        cg.CGEventSetType.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+        cg.CGEventSetType.restype = None
+        cg.CGEventSetIntegerValueField.argtypes = [ctypes.c_void_p, ctypes.c_uint32, ctypes.c_int64]
+        cg.CGEventSetIntegerValueField.restype = None
+        _cg_funcs_handle = cg
+    return _cg_funcs_handle
+
+
+def _engine_helpers():
+    """Import ONLY the pyobjc-free parts of the production engine. Safe under -s:
+    macos_mouse_delivery's top-level imports are stdlib+ctypes; PyObjC is lazy, inside
+    _NativePort methods we never call. Handles both the flat (.app Resources) layout and
+    the repo (utils/ package) layout."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    sys.path.insert(0, here)                            # flat (.app Resources)
+    sys.path.insert(0, os.path.join(here, os.pardir))   # repo root (utils/ package)
+    try:
+        import macos_mouse_delivery as mmd              # flat layout
+    except ImportError:
+        from utils import macos_mouse_delivery as mmd   # repo layout
+    return mmd
+
+
+def _resolve_psn(skylight, wid):
+    """PSN bytes for a window id via SkyLight (pure ctypes), or None. Mirrors
+    _NativePort.resolve_psn."""
+    cid = skylight["CGSMainConnectionID"]()
+    owner = ctypes.c_uint32(0)
+    if int(skylight["SLSGetWindowOwner"](ctypes.c_uint32(int(cid)),
+                                         ctypes.c_uint32(int(wid)),
+                                         ctypes.byref(owner))) != 0:
+        return None
+    psn = (ctypes.c_uint32 * 2)()
+    if int(skylight["SLSGetConnectionPSN"](ctypes.c_uint32(owner.value),
+                                           ctypes.byref(psn))) != 0:
+        return None
+    return bytes(psn)
+
+
+def _key_flip(mmd, skylight, wid, psn):
+    """The 0x0d activate + two make_key records to the TARGET psn (focus-for-input)."""
+    for rec in (mmd.build_activate_record(wid),
+                mmd.make_key_record(wid, 0x01),
+                mmd.make_key_record(wid, 0x02)):
+        skylight["SLPSPostEventRecordTo"](psn, rec)
+
+
+def _post_event(mmd, skylight, kind, pid, wid, win_xy, screen_xy):
+    """Build the mouse CGEvent (pure-ctypes bridge) + stamp the production fields, then
+    SLEventPostToPid. Mirrors _build_event + _NativePort.post with zero PyObjC."""
+    ns_type = mmd.EVENT_KINDS[kind][0]
+    cg = _cg_funcs()
+    ev = build_ns_cgevent(ns_type, mmd.click_count_for(kind), wid)
+    if not ev:
+        return False
+    cg.CGEventSetType(ctypes.c_void_p(ev), ctypes.c_uint32(CGEVENT_TYPE[kind]))
+    for field, value, via_private in mmd.mouse_event_fields(pid, wid):
+        if via_private:
+            skylight["SLEventSetIntegerValueField"](
+                ctypes.c_void_p(ev), ctypes.c_uint32(int(field)), ctypes.c_int64(int(value)))
+        else:
+            cg.CGEventSetIntegerValueField(
+                ctypes.c_void_p(ev), ctypes.c_uint32(int(field)), ctypes.c_int64(int(value)))
+    skylight["CGEventSetWindowLocation"](
+        ctypes.c_void_p(ev), mmd._CGPoint(float(win_xy[0]), float(win_xy[1])))
+    cg.CGEventSetLocation.argtypes = [ctypes.c_void_p, mmd._CGPoint]
+    cg.CGEventSetLocation.restype = None
+    cg.CGEventSetLocation(ctypes.c_void_p(ev), mmd._CGPoint(float(screen_xy[0]), float(screen_xy[1])))
+    cg.CGEventSetIntegerValueField(
+        ctypes.c_void_p(ev), ctypes.c_uint32(_SOURCE_USER_DATA_FIELD),
+        ctypes.c_int64(mmd.SPIKE_EVENT_TAG))
+    skylight["CGEventSetTimestamp"](ctypes.c_void_p(ev), ctypes.c_uint64(0))
+    skylight["SLEventPostToPid"](ctypes.c_int32(int(pid)), ctypes.c_void_p(ev))
+    return True
+
+
+def cmd_inject(args) -> int:
+    import time
+    mmd = _engine_helpers()
+    skylight = mmd._load_skylight()
+    if skylight is None:
+        print("inject: SkyLight unavailable")
+        return 1
+    psn = _resolve_psn(skylight, args.wid)
+    if psn is None:
+        print("inject: could not resolve PSN (window gone?)")
+        return 1
+    if args.countdown:
+        for n in range(args.countdown, 0, -1):
+            print(f"focus the TARGET background toon... {n}", flush=True)
+            time.sleep(1)
+    pool = _objc().objc_autoreleasePoolPush()
+    try:
+        for _ in range(max(1, args.repeat)):
+            if args.kind == "hover":
+                _post_event(mmd, skylight, "move", args.pid, args.wid,
+                            (args.win_x, args.win_y), (args.screen_x, args.screen_y))
+            else:
+                _key_flip(mmd, skylight, args.wid, psn)
+                _post_event(mmd, skylight, "move", args.pid, args.wid,
+                            (args.win_x, args.win_y), (args.screen_x, args.screen_y))
+                _post_event(mmd, skylight, "down", args.pid, args.wid,
+                            (args.win_x, args.win_y), (args.screen_x, args.screen_y))
+                _post_event(mmd, skylight, "up", args.pid, args.wid,
+                            (args.win_x, args.win_y), (args.screen_x, args.screen_y))
+    finally:
+        _objc().objc_autoreleasePoolPop(pool)
+    print(f"inject: posted {args.kind} pid={args.pid} wid={args.wid} x{max(1, args.repeat)}")
+    return 0
+
+
+def cmd_resolve(args) -> int:
+    """LAZY pyobjc (operator tooling): print a ready-to-paste `inject` arg line for a
+    window id + fractional click point. Reuses the proven macos_discovery resolution."""
+    from utils import macos_discovery as disc  # pyobjc; operator python only
+    bounds = disc.get_window_geometry_fresh(args.wid)
+    pid = disc.get_window_pid(args.wid)
+    if not bounds or pid is None:
+        print(f"resolve: could not resolve wid={args.wid} (bounds={bounds} pid={pid})")
+        return 1
+    scr, win = point_from_fraction(bounds, args.frac_x, args.frac_y)
+    print(f"--pid {pid} --wid {args.wid} --win-x {win[0]} --win-y {win[1]} "
+          f"--screen-x {scr[0]} --screen-y {scr[1]}")
+    return 0
+
+
 def cmd_provenance(args) -> int:
     flags = csflags_for_pid(os.getpid())
     info = {

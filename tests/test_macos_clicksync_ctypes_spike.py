@@ -42,3 +42,16 @@ def test_objc_selector_signatures_table():
     assert len(sigs[name][1]) == 9
     # CGEvent takes no explicit args
     assert len(sigs["CGEvent"][1]) == 0
+
+
+def test_window_point_from_fraction():
+    # bounds = (x, y, w, h); fraction -> screen point + window-local point
+    scr, win = cs.point_from_fraction(bounds=(100.0, 200.0, 640.0, 480.0), fx=0.5, fy=0.25)
+    assert scr == (100.0 + 320.0, 200.0 + 120.0)
+    assert win == (320.0, 120.0)
+
+
+def test_source_user_data_and_cgevent_types_pinned():
+    # ABI constants confirmed against live Quartz on macOS 26 (kCGEventSourceUserData=42)
+    assert cs._SOURCE_USER_DATA_FIELD == 42
+    assert cs.CGEVENT_TYPE == {"move": 5, "down": 1, "up": 2, "dragged": 6}
