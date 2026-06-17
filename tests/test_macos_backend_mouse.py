@@ -199,8 +199,14 @@ def test_disconnect_clears_bindings(monkeypatch):
     assert b.send_button_release("9", 1, 1, 10, 20) is False    # binding gone -> dropped
 
 
-def test_set_echo_ledger_reaches_rebuilt_engine():
+def test_set_echo_ledger_reaches_rebuilt_engine(monkeypatch):
     import utils.macos_mouse_delivery as d
+    from utils import macos_platform_binary
+    # This test is about the IN-PROCESS engine carrying the shared ledger; the helper path
+    # intentionally has ledger=None (it records in its own process). Pin platform-binary True
+    # so _engine() deterministically yields the in-process engine regardless of the host
+    # interpreter (a non-platform-binary test python, e.g. CI, would otherwise get the remote).
+    monkeypatch.setattr(macos_platform_binary, "is_platform_binary", lambda: True)
     b = MacOSBackend()
     led = d.EchoLedger()
     b.set_echo_ledger(led)
