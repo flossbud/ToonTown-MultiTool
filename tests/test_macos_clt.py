@@ -54,3 +54,34 @@ def test_clt_state_falls_back_to_canonical_clt_when_xcode_active(monkeypatch):
     monkeypatch.setattr(macos_clt, "_path_executable", lambda p: p == clt_py)
     ok, reason, py = macos_clt.clt_state()
     assert ok is True and reason is None and py == clt_py
+
+
+def test_xcode_select_p_subprocess_contract(monkeypatch):
+    """Verify the real subprocess contract: absolute xcode-select, no shell, a timeout,
+    rc/stdout handling, and fail-closed on exception."""
+    from utils import macos_clt
+
+    class _R:
+        def __init__(self, rc, out):
+            self.returncode, self.stdout = rc, out
+
+    calls = {}
+
+    def ok_run(argv, **kw):
+        calls["argv"], calls["kw"] = argv, kw
+        return _R(0, "/Library/Developer/CommandLineTools\n")
+
+    monkeypatch.setattr(macos_clt.subprocess, "run", ok_run)
+    assert macos_clt._xcode_select_p() == "/Library/Developer/CommandLineTools"
+    assert calls["argv"] == ["/usr/bin/xcode-select", "-p"]  # absolute path, list (no shell)
+    assert calls["kw"].get("timeout") == 5
+    assert calls["kw"].get("shell") is None                  # never shell=True
+
+    monkeypatch.setattr(macos_clt.subprocess, "run", lambda *a, **k: _R(1, ""))
+    assert macos_clt._xcode_select_p() is None               # nonzero rc -> None
+
+    def boom(*a, **k):
+        raise OSError("xcode-select missing")
+
+    monkeypatch.setattr(macos_clt.subprocess, "run", boom)
+    assert macos_clt._xcode_select_p() is None               # exception -> fail-closed
