@@ -88,7 +88,12 @@ for line in sys.stdin:
     if not line:
         continue
     try:
-        reply(handle(json.loads(line)))
+        req = json.loads(line)
+        resp = handle(req)
+        # motion (hover/drag) is FIRE-AND-FORGET: no reply, so the parent never
+        # blocks on the 60Hz hover stream. press/release/resolve/ping still reply.
+        if req.get("op") != "motion":
+            reply(resp)
     except Exception as e:
         import traceback
         traceback.print_exc(file=sys.stderr)

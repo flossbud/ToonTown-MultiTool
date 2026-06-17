@@ -76,7 +76,7 @@ class _RemoteDelivery:
         r = self._rpc({"op": "resolve_owner", "wid": int(wid)})
         return (r or {}).get("owner")
 
-    def _gesture(self, op, pid, wid, psn, win_xy, screen_xy, dragging=False):
+    def _req(self, op, pid, wid, psn, win_xy, screen_xy, dragging=False):
         req = {
             "op": op, "pid": int(pid), "wid": int(wid),
             "psn": psn.hex() if psn else "",
@@ -85,14 +85,33 @@ class _RemoteDelivery:
         }
         if op == "motion":
             req["dragging"] = bool(dragging)
-        r = self._rpc(req)
-        return bool(r and r.get("ok") and r.get("result"))
+        return req
+
+    def _send_noreply(self, req) -> bool:
+        """Fire-and-forget write (no round-trip) for the high-frequency hover/drag
+        stream, so the dispatch thread never blocks on a per-motion reply."""
+        proc = self._proc
+        if proc is None or proc.poll() is not None:
+            return False
+        with self._lock:
+            try:
+                proc.stdin.write(json.dumps(req) + "\n")
+                proc.stdin.flush()
+                return True
+            except Exception as e:
+                print(f"[inject-remote] send error: {e}", file=sys.stderr, flush=True)
+                return False
 
     def press(self, pid, wid, psn, win_xy, screen_xy):
-        return self._gesture("press", pid, wid, psn, win_xy, screen_xy)
+        # synchronous: the backend stores the press binding only if this is True
+        r = self._rpc(self._req("press", pid, wid, psn, win_xy, screen_xy))
+        return bool(r and r.get("ok") and r.get("result"))
 
     def release(self, pid, wid, psn, win_xy, screen_xy):
-        return self._gesture("release", pid, wid, psn, win_xy, screen_xy)
+        # synchronous: a real release must not be silently dropped (stuck button)
+        r = self._rpc(self._req("release", pid, wid, psn, win_xy, screen_xy))
+        return bool(r and r.get("ok") and r.get("result"))
 
     def motion(self, pid, wid, psn, win_xy, screen_xy, dragging):
-        return self._gesture("motion", pid, wid, psn, win_xy, screen_xy, dragging)
+        # fire-and-forget: hover/drag is the 60Hz stream that dominates latency
+        return self._send_noreply(self._req("motion", pid, wid, psn, win_xy, screen_xy, dragging))
