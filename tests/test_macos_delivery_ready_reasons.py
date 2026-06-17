@@ -81,3 +81,19 @@ def test_ready_path_returns_true_none(monkeypatch):
     monkeypatch.setattr(b, "has_post_access", lambda: True)
     monkeypatch.setattr(b, "_engine", lambda: _StubEngine(available=True))
     assert b.mouse_delivery_ready() == (True, None)
+
+
+def test_inprocess_engine_without_last_reason_gets_generic_message(monkeypatch):
+    """The in-process engine has NO last_reason(); the callable-guard must fall back to the
+    generic SkyLight message rather than crash on a missing attribute."""
+    monkeypatch.setattr(macos_platform_binary, "is_platform_binary", lambda: True)
+
+    class _NoReasonEngine:
+        available = False   # unavailable, and deliberately NO last_reason method
+
+    b = MacOSBackend()
+    monkeypatch.setattr(b, "has_post_access", lambda: True)
+    monkeypatch.setattr(b, "_engine", lambda: _NoReasonEngine())
+    ready, reason = b.mouse_delivery_ready()
+    assert ready is False
+    assert "SkyLight" in reason or "unavailable" in reason

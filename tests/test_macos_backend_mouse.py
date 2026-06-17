@@ -29,11 +29,15 @@ class _FakeEngine:
 
 
 def _backend(monkeypatch, engine, pid=4242, access=True):
+    from utils import macos_platform_binary
     b = MacOSBackend()
     b._delivery = engine
     monkeypatch.setattr(b, "_resolve_pid", lambda wid: pid)
     monkeypatch.setattr(b, "has_post_access", lambda: access)
     monkeypatch.setattr(b, "_creation_identity", lambda pid: "C1")  # stable launch token
+    # Pin platform-binary True so mouse_delivery_ready() skips the CLT gate (no real
+    # xcode-select shell-out): keeps this helper hermetic regardless of the host interpreter.
+    monkeypatch.setattr(macos_platform_binary, "is_platform_binary", lambda: True)
     return b
 
 

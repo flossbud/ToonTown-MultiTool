@@ -17,6 +17,10 @@ _CACHE_TTL = 0.25
 # CGPreflightPostEventAccess cache TTL. Accessibility (post) permission is
 # revocable at runtime, so re-check on a cadence rather than once at connect.
 _ACCESS_TTL = 1.0
+# CLT-state cache TTL. clt_state() forks xcode-select, and readiness is probed per-recompute
+# (the production GUI app is non-platform-binary, so it always hits the CLT gate). A short TTL
+# avoids a fork/exec on every probe while still picking up a guided CLT install within seconds.
+_CLT_TTL = 5.0
 # X.Button1Mask in the service's X-style state mask (matches services.click_sync_service).
 _BUTTON1_MASK = 0x100
 
@@ -27,6 +31,7 @@ class MacOSBackend:
         self._cache = {"t": -1.0, "valid": {}}  # wid_str -> (pid, bundle_id)
         self._trusted = {}  # wid_str -> bundle_id (first-sight identity lock)
         self._access = {"t": -1.0, "ok": True}  # CGPreflightPostEventAccess cache
+        self._clt = {"t": None, "state": (True, None, None)}  # macos_clt.clt_state() cache (None = unprobed)
         self._delivery = None             # MacOSMouseDelivery (lazy)
         self._echo_ledger = None          # shared EchoLedger (Task 8 wires it; the engine records into it)
         self._bindings = {}               # wid_str -> (pid, wid, psn, owner, creation) for the live gesture
@@ -208,6 +213,19 @@ class MacOSBackend:
         self._echo_ledger = ledger
         self._drop_delivery()   # shut a helper subprocess down before rebuilding (no leak)
 
+    def _clt_state(self):
+        """Cached utils.macos_clt.clt_state() (TTL _CLT_TTL). clt_state() forks xcode-select;
+        readiness is probed per-recompute, so cache it like has_post_access()'s _access. The
+        short TTL still surfaces a guided CLT install within a few seconds."""
+        from utils import macos_clt
+        now = time.monotonic()
+        last = self._clt["t"]
+        if last is not None and now - last <= _CLT_TTL:   # None sentinel forces a first-call probe
+            return self._clt["state"]
+        state = macos_clt.clt_state()
+        self._clt = {"t": now, "state": state}
+        return state
+
     def mouse_delivery_ready(self):
         """(ready, reason). SEPARATE from has_post_access() so a mouse-SPI break never
         disables working keyboard delivery (spec §3.2/§3.5). Fail-CLOSED: any probe
@@ -215,11 +233,11 @@ class MacOSBackend:
         can guide the user: CLT-missing (helper path only) vs accessibility-denied vs a
         specific helper/SkyLight fault."""
         try:
-            from utils import macos_platform_binary, macos_clt
+            from utils import macos_platform_binary
             # The helper path (non-platform-binary process) needs CLT; the in-process path
             # (already a platform binary) does not. Only gate on CLT when we'd use the helper.
             if not macos_platform_binary.is_platform_binary():
-                clt_ok, clt_reason, _py = macos_clt.clt_state()
+                clt_ok, clt_reason, _py = self._clt_state()
                 if not clt_ok:
                     return (False, clt_reason)
             if not self.has_post_access():
