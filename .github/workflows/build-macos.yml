@@ -94,6 +94,15 @@ jobs:
             touch "dist/$APP_NAME/Contents/MacOS/.beta_flavor"
           fi
 
+      - name: Assert injection helper bundled
+        run: |
+          APP="dist/$(basename "$(ls -d dist/*.app)")"
+          for f in macos_inject_helper.py macos_mouse_delivery.py; do
+            test -f "$APP/Contents/Resources/ttmt_inject/$f" \
+              || test -f "$APP/Contents/Frameworks/ttmt_inject/$f" \
+              || { echo "::error::ttmt_inject/$f missing from the .app bundle"; exit 1; }
+          done
+
       - name: Verify universal (fat-Mach-O gate)
         run: bash packaging/macos/verify_universal.sh "dist/$(basename "$(ls -d dist/*.app)")"
 
