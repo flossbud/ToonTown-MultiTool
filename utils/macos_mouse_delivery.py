@@ -292,7 +292,8 @@ class _NativePort:
     def make_event(self, kind, click_count, window_number):
         ns_type = EVENT_KINDS[kind][0]
         ev = _build_ns_cgevent(ns_type, click_count, window_number)
-        self._cg.CGEventSetType(ctypes.c_void_p(ev), _CGEVENT_TYPE[kind])
+        if ev:  # fail-closed: a null build (e.g. AppKit/objc init failed) must not be posted
+            self._cg.CGEventSetType(ctypes.c_void_p(ev), _CGEVENT_TYPE[kind])
         return ev
 
     def set_public_field(self, ev, field, value):
@@ -350,6 +351,8 @@ class _NativePort:
 
 def _build_event(port, kind, win_xy, screen_xy, pid, window_id):
     ev = port.make_event(kind, click_count_for(kind), window_id)
+    if ev is None:   # fail-closed: never stamp/post a NULL event
+        return None
     for field, value, via_private in mouse_event_fields(pid, window_id):
         (port.set_private_field if via_private else port.set_public_field)(ev, field, value)
     port.set_window_location(ev, (float(win_xy[0]), float(win_xy[1])))
@@ -470,7 +473,12 @@ class MacOSMouseDelivery:
             return False
         pool = _push_autorelease_pool()
         try:
-            port.post(pid, _build_event(port, kind, win_xy, screen_xy, pid, wid))
+            ev = _build_event(port, kind, win_xy, screen_xy, pid, wid)
+            if ev is None:   # null build -> fault, never post NULL / record a phantom echo
+                self._faulted = True
+                self._diag_once("post")
+                return False
+            port.post(pid, ev)
             if self._ledger is not None:
                 # Record the SCREEN signature so the capture's EchoGuard can recognize a
                 # marker-stripped echo of THIS post. EVENT_KINDS[kind][0] is the mouse
