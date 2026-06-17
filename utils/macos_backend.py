@@ -3,6 +3,7 @@ window's owning process via CGEventPostToPid. Window-ID-keyed externally (to
 match XlibBackend/Win32Backend); PID-resolved internally. Lazy PyObjC."""
 from __future__ import annotations
 
+import os
 import time
 
 from utils import macos_keycodes as _mk
@@ -163,8 +164,15 @@ class MacOSBackend:
 
     def _engine(self):
         if self._delivery is None:
-            from utils.macos_mouse_delivery import MacOSMouseDelivery
-            self._delivery = MacOSMouseDelivery(ledger=self._echo_ledger)
+            if os.environ.get("TTMT_MACOS_INJECT_HELPER"):
+                # THROWAWAY prototype (CS_PLATFORM_BINARY experiment): route the
+                # SkyLight injection through a platform-binary /usr/bin/python3
+                # helper. No in-process fallback, so a pass/fail is unambiguous.
+                from utils.macos_inject_remote import _RemoteDelivery
+                self._delivery = _RemoteDelivery()
+            else:
+                from utils.macos_mouse_delivery import MacOSMouseDelivery
+                self._delivery = MacOSMouseDelivery(ledger=self._echo_ledger)
         return self._delivery
 
     def set_echo_ledger(self, ledger):
