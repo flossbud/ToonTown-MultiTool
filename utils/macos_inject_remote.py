@@ -33,6 +33,13 @@ import time
 from utils import macos_clt
 
 _RPC_TIMEOUT_S = 5.0
+# A local `hello` over a pipe replies in milliseconds, so cap the handshake (and thus a
+# respawn attempt) well under the general RPC timeout. Respawn runs synchronously on the
+# CALLING thread (constructor, or the capture/hover thread via resolve_*), so this bounds
+# the worst-case per-op stall when a child wedges at handshake to ~_HANDSHAKE_TIMEOUT_S
+# rather than the full _RPC_TIMEOUT_S; the backoff then defers the next attempt to a later
+# op, and the circuit opens after 3 failures (30s of fast-fail).
+_HANDSHAKE_TIMEOUT_S = 2.0
 
 # Circuit breaker: after this many CONSECUTIVE spawn/handshake failures, OPEN the
 # circuit (stop respawning, report `helper-crashed`) for the cooldown. A successful
@@ -164,6 +171,14 @@ class _RemoteDelivery:
             self._consec_failures = 0
             self._circuit_open_until = 0.0
             return True
+        if self._reason == "clt-missing":
+            # A missing precondition (no developer dir) is NOT a crash and spawned NOTHING:
+            # keep the actionable `clt-missing` reason (do not let it decay to a misleading
+            # `helper-crashed`) and do NOT count it toward the crash breaker. Still arm the
+            # long cooldown so a 60Hz op stream does not re-run the xcode-select probe (a
+            # subprocess) on every event.
+            self._circuit_open_until = now + _CIRCUIT_COOLDOWN_S
+            return False
         self._consec_failures += 1
         if self._consec_failures >= _CIRCUIT_THRESHOLD:
             self._circuit_open_until = now + _CIRCUIT_COOLDOWN_S
@@ -226,7 +241,7 @@ class _RemoteDelivery:
         """Validate the helper before marking available. Failure latches exactly one
         reason and leaves `available` False (checks ordered per the production spec).
         Returns True only when fully validated."""
-        reply = self._rpc("hello")
+        reply = self._rpc("hello", timeout=_HANDSHAKE_TIMEOUT_S)
         if reply is None:
             self._reason = "helper-timeout"
             return False
@@ -264,7 +279,13 @@ class _RemoteDelivery:
         """Respawn a dead helper, subject to the circuit breaker. Returns True iff a live,
         validated helper exists afterwards. Rate-limited: while the circuit is open (or
         within the inter-attempt backoff) this short-circuits WITHOUT spawning, so a tight
-        motion loop can never storm respawns."""
+        motion loop can never storm respawns.
+
+        STALL BUDGET: an actual spawn runs Popen + a `hello` handshake SYNCHRONOUSLY on the
+        calling thread (the capture/hover thread, or the GUI thread on the first op), so a
+        wedged child stalls that thread up to ~_HANDSHAKE_TIMEOUT_S per attempt. The backoff
+        gates further attempts to later ops (one spawn per op at most), so it is bounded and
+        rate-limited, not a hot loop; the circuit opens after 3 failures for fast-fail."""
         with self._lock:
             if self._closed:
                 return False
@@ -336,12 +357,17 @@ class _RemoteDelivery:
                 return obj
             # stale/late reply (or non-dict): discard and keep reading for our id
 
-    def _rpc(self, op: str, **fields):
+    def _rpc(self, op: str, timeout: float = _RPC_TIMEOUT_S, **fields):
         """Synchronous request/reply carrying a unique correlation id. Returns the
         matching reply dict, or None on no-helper / write-error / timeout. On a genuine
         TIMEOUT (the child is still alive but did not reply) the helper is treated as
         wedged: latch `helper-timeout`, kill+reap it, and arm a backoff so the NEXT op
-        respawns (not a tight loop)."""
+        respawns (not a tight loop).
+
+        The _lock is held for the FULL read deadline (so the deadline-bounded reader cannot
+        race a concurrent teardown), which means a concurrent shutdown()/_send_noreply can
+        block up to `timeout` behind an in-flight wedged RPC. Bounded, never a deadlock; the
+        handshake uses the shorter _HANDSHAKE_TIMEOUT_S to keep the respawn stall tight."""
         with self._lock:
             proc = self._proc
             if proc is None or proc.poll() is not None:
@@ -355,7 +381,7 @@ class _RemoteDelivery:
             except Exception as e:
                 self._diag(f"RPC write error ({op}): {e}")
                 return None
-            reply = self._recv_matching(req_id, self._read_line, _RPC_TIMEOUT_S)
+            reply = self._recv_matching(req_id, self._read_line, timeout)
             if reply is not None:
                 return reply
             # No reply within the deadline. A child that DIED mid-call (poll() != None) is
@@ -466,6 +492,11 @@ class _RemoteDelivery:
             try:
                 if proc.stdin:
                     proc.stdin.close()
+            except Exception:
+                pass
+            try:
+                if proc.stdout:
+                    proc.stdout.close()   # close the read pipe fd now, don't wait for GC
             except Exception:
                 pass
             try:

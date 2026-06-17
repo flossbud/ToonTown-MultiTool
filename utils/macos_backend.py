@@ -51,7 +51,12 @@ class MacOSBackend:
         """Release the current delivery engine, shutting down a _RemoteDelivery's helper
         subprocess + pipes FIRST so they are not leaked. The in-process MacOSMouseDelivery
         has no shutdown() (records into the app-process ledger directly), so guard with
-        getattr - this is the ONLY safe drop point for either engine type."""
+        getattr - this is the ONLY safe drop point for either engine type.
+
+        PRECONDITION (both callers, disconnect/set_echo_ledger): STOP the click-sync service
+        first. The drop now does real work (kills the helper), and `_engine()` lazily
+        respawns one on the next send_*; a capture/hover thread still running would
+        immediately resurrect a fresh helper after this drop."""
         shutdown = getattr(self._delivery, "shutdown", None)
         if callable(shutdown):
             try:

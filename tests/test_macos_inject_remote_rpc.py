@@ -11,6 +11,7 @@ The lifecycle tests likewise drive a FAKE subprocess (no real helper, no real CL
 monkeypatched clock, so they are pure logic and run cross-platform too.
 """
 import json
+import subprocess
 import threading
 
 import utils.macos_inject_remote as rem
@@ -249,3 +250,115 @@ def test_rpc_no_helper_returns_none_without_timeout_latch():
     d._reason = None
     assert d._rpc("resolve_owner", wid=1) is None
     assert d.last_reason() is None     # NOT helper-timeout
+
+
+def _no_spawn(self, py, helper):
+    raise AssertionError("must NOT spawn")
+
+
+def test_respawn_handshake_reenters_lock_without_deadlock(monkeypatch):
+    """The respawn path holds the RLock across _attempt_spawn -> _try_spawn_handshake ->
+    _handshake -> _rpc('hello'), which RE-ACQUIRES the same lock. This verifies the
+    reentrancy the RLock (vs a plain Lock) exists for - a regression to threading.Lock
+    would self-deadlock here yet pass every other test. Run on a daemon worker with a join
+    timeout so a deadlock fails fast instead of hanging the suite."""
+    monkeypatch.setattr(rem.macos_clt, "clt_state", lambda: (True, None, "/fake/clt/python3"))
+
+    live = _FakeProc(alive=True)
+
+    def _good_spawn(self, py, helper):
+        self._proc = live
+        return True
+
+    monkeypatch.setattr(rem._RemoteDelivery, "_spawn", _good_spawn)
+    # A REAL _handshake runs (not stubbed): _rpc('hello') re-enters the held lock and reads
+    # one valid hello reply through the injected line reader.
+    hello = json.dumps({"ok": True, "platform_binary": True, "objc_ok": True,
+                        "skylight_ok": True, "id": 1})
+    replies = iter([hello])
+    monkeypatch.setattr(rem._RemoteDelivery, "_read_line",
+                        lambda self, remaining: next(replies, None))
+
+    d = _lifecycle_bare()
+    d._proc = _FakeProc(alive=False)   # dead -> an op triggers respawn
+    result = {}
+
+    def _run():
+        result["ok"] = d._ensure_alive()
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    t.join(timeout=5)
+    assert not t.is_alive(), "respawn handshake DEADLOCKED (RLock reentrancy regressed)"
+    assert result.get("ok") is True
+    assert d.available is True
+    d.shutdown()
+
+
+def test_clt_missing_does_not_escalate_to_helper_crashed(monkeypatch):
+    """A missing CLT precondition (no spawn attempted) keeps the actionable `clt-missing`
+    reason across repeated respawn attempts and never decays into `helper-crashed`."""
+    clock = {"t": 500.0}
+    monkeypatch.setattr(rem.time, "monotonic", lambda: clock["t"])
+    monkeypatch.setattr(rem.macos_clt, "clt_state", lambda: (False, "needs CLT", None))
+    monkeypatch.setattr(rem._RemoteDelivery, "_spawn", _no_spawn)   # must never spawn
+
+    d = rem._RemoteDelivery()
+    try:
+        assert d.last_reason() == "clt-missing"
+        assert d._consec_failures == 0
+        for _ in range(5):
+            clock["t"] += rem._CIRCUIT_COOLDOWN_S + 1   # past the cooldown each time
+            assert d._maybe_respawn() is False
+        assert d._consec_failures == 0                  # never counted toward the breaker
+        assert d.last_reason() == "clt-missing"         # NOT overwritten by helper-crashed
+    finally:
+        d.shutdown()
+
+
+def test_teardown_escalates_to_kill_when_wait_times_out():
+    """If terminate()+wait() does not reap, _teardown_proc escalates to kill()+wait()."""
+    class _StubbornProc(_FakeProc):
+        def __init__(self):
+            super().__init__(alive=True)
+            self._first_wait = True
+
+        def wait(self, timeout=None):
+            if self._first_wait:
+                self._first_wait = False
+                raise subprocess.TimeoutExpired(cmd="helper", timeout=timeout)
+            super().wait(timeout=timeout)
+            return 0
+
+    d = _lifecycle_bare()
+    proc = _StubbornProc()
+    d._proc = proc
+    d._teardown_proc()
+    assert proc.terminated is True
+    assert proc.killed is True       # escalated after the first wait timed out
+    assert d._proc is None
+
+
+def test_closed_gates_respawn_and_shutdown_is_idempotent(monkeypatch):
+    """After shutdown() no op resurrects the helper: _maybe_respawn short-circuits to False
+    with no spawn, ops fast-fail, and a second shutdown() is a harmless no-op."""
+    monkeypatch.setattr(rem.macos_clt, "clt_state", lambda: (True, None, "/fake/py"))
+    spawns = {"n": 0}
+
+    def _count_spawn(self, py, helper):
+        spawns["n"] += 1
+        self._proc = _FakeProc(alive=True)
+        return True
+
+    monkeypatch.setattr(rem._RemoteDelivery, "_spawn", _count_spawn)
+
+    d = _lifecycle_bare()
+    d._proc = _FakeProc(alive=True)
+    d.shutdown()
+    assert d._closed is True
+    assert d._maybe_respawn() is False
+    assert d.resolve_owner(1) is None
+    assert d.press(1, 2, None, (0, 0), (0, 0)) is False
+    assert d.motion(1, 2, None, (0, 0), (0, 0), False) is False
+    assert spawns["n"] == 0          # closed -> never spawns
+    d.shutdown()                     # idempotent: no raise
