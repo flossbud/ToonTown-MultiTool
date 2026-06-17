@@ -133,11 +133,19 @@ class _RemoteDelivery:
         if not self._spawn(clt_python, helper):
             self._reason = "helper-spawn-failed"
             return
-        self._handshake()
+        if not self._handshake():
+            # Spawned but unusable (wrong identity / objc / skylight / no reply). The
+            # child is otherwise healthy and would block on stdin forever, so tear it
+            # down NOW rather than leak a resident helper + pipes + logfile for the whole
+            # session (this is the common unsupported-machine path). shutdown() preserves
+            # the latched reason; the full respawn lifecycle is Task 4c.
+            self.shutdown()
 
     def _spawn(self, clt_python: str, helper_path: str) -> bool:
         try:
-            self._logf = open(_helper_log_path(), "a", buffering=1)
+            log_path = _helper_log_path()
+            os.makedirs(os.path.dirname(log_path), exist_ok=True)  # don't depend on main.py import order
+            self._logf = open(log_path, "a", buffering=1)
         except Exception:
             self._logf = subprocess.DEVNULL
         try:
@@ -154,31 +162,39 @@ class _RemoteDelivery:
             self._proc = None
             return False
 
-    def _handshake(self) -> None:
+    def _handshake(self) -> bool:
         """Validate the helper before marking available. Failure latches exactly one
-        reason and leaves `available` False (checks ordered per the production spec)."""
+        reason and leaves `available` False (checks ordered per the production spec).
+        Returns True only when fully validated."""
         reply = self._rpc("hello")
         if reply is None:
             self._reason = "helper-timeout"
-            return
+            return False
         if reply.get("platform_binary") is not True:
             self._reason = "helper-not-platform-binary"
-            return
+            return False
         if reply.get("objc_ok") is not True:
             self._reason = "objc-init-failed"
-            return
+            return False
         if reply.get("skylight_ok") is not True:
             self._reason = "skylight-symbol-missing"
-            return
+            return False
         self._reason = None
         self._available = True
         self._diag("handshake validated; helper available")
+        return True
 
     # ---- RPC ------------------------------------------------------------------
 
     def _make_reader(self, stdout):
         """A line-reader closure over the helper's stdout: read_line(remaining_s) ->
-        the next reply line, or None on timeout / EOF (helper gone)."""
+        the next reply line, or None on timeout / EOF (helper gone).
+
+        Correctness rests on the helper being strictly request-driven: it writes a
+        reply line ONLY in response to a replying-op and always emits a complete
+        json+'\\n', so select+readline consumes exactly one whole line and stale vs
+        fresh replies are time-separated. A future helper that volunteers stdout would
+        break this single-line-per-read assumption."""
         def read_line(remaining: float):
             try:
                 ready, _, _ = select.select([stdout], [], [], max(0.0, remaining))
@@ -298,7 +314,12 @@ class _RemoteDelivery:
     def shutdown(self) -> None:
         """Minimal teardown so tests and process exit leave no helper behind. The full
         lifecycle (respawn/backoff/circuit-breaker, RPC-timeout->kill+respawn) is
-        Task 4c."""
+        Task 4c.
+
+        Intentionally best-effort and lock-free: clearing `_proc` races a concurrent
+        `_rpc`/`_send_noreply`, but the outcome is benign (a concurrent writer hits a
+        closed stdin -> caught -> None/False; a blocked reader gets EOF when the child
+        is terminated -> unblocks). 4c's lifecycle pass owns proper interlocking."""
         proc = self._proc
         self._proc = None
         self._available = False

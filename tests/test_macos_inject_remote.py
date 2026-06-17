@@ -138,3 +138,72 @@ def test_correlation_id_timeout_when_only_stale(monkeypatch):
         return next(it, None)
 
     assert d._recv_matching(99, fake_read_line, timeout=5.0) is None
+
+
+def _bare(rem):
+    """A _RemoteDelivery whose __init__ (and thus spawn) is bypassed, with just the
+    attributes _handshake touches initialised. Lets us drive the handshake matrix by
+    stubbing _rpc, no real helper."""
+    d = rem._RemoteDelivery.__new__(rem._RemoteDelivery)
+    d._available = False
+    d._reason = None
+    return d
+
+
+def test_handshake_success_sets_available(monkeypatch):
+    """A reply with platform_binary + objc_ok + skylight_ok all True -> available, no reason."""
+    import utils.macos_inject_remote as rem
+
+    d = _bare(rem)
+    monkeypatch.setattr(d, "_rpc", lambda op, **k: {
+        "ok": True, "platform_binary": True, "objc_ok": True, "skylight_ok": True})
+    assert d._handshake() is True
+    assert d.available is True
+    assert d.last_reason() is None
+
+
+@pytest.mark.parametrize("reply,expected", [
+    (None, "helper-timeout"),                                    # no reply / timeout
+    ({"ok": True}, "helper-not-platform-binary"),                # platform_binary absent
+    ({"platform_binary": True}, "objc-init-failed"),             # objc_ok absent
+    ({"platform_binary": True, "objc_ok": True}, "skylight-symbol-missing"),  # skylight_ok absent
+])
+def test_handshake_reason_matrix(monkeypatch, reply, expected):
+    """Each handshake field maps to its distinct latched reason, in spec order."""
+    import utils.macos_inject_remote as rem
+
+    d = _bare(rem)
+    monkeypatch.setattr(d, "_rpc", lambda op, **k: reply)
+    assert d._handshake() is False
+    assert d.available is False
+    assert d.last_reason() == expected
+
+
+def test_spawn_env_is_scrubbed(monkeypatch):
+    """The child env must be EXACTLY {"PATH": "/usr/bin:/bin"} (no DYLD_*/PYTHON*/venv
+    leakage) and argv must pass -s. Capture the Popen kwargs, then abort the spawn."""
+    import utils.macos_inject_remote as rem
+
+    captured = {}
+
+    def fake_popen(argv, **kwargs):
+        captured["argv"] = argv
+        captured["env"] = kwargs.get("env")
+        raise OSError("captured; abort spawn before a real child starts")
+
+    monkeypatch.setattr(rem.macos_clt, "clt_state", lambda: (True, None, "/fake/clt/python3"))
+    monkeypatch.setattr(rem, "_helper_path", lambda: "/fake/ttmt_inject/macos_inject_helper.py")
+    monkeypatch.setattr(rem.subprocess, "Popen", fake_popen)
+
+    d = rem._RemoteDelivery()
+    try:
+        assert captured["argv"] == [
+            "/fake/clt/python3", "-s", "/fake/ttmt_inject/macos_inject_helper.py"]
+        env = captured["env"]
+        assert env == {"PATH": "/usr/bin:/bin"}
+        assert not any(k.startswith("DYLD_") or k.startswith("PYTHON") for k in env)
+        # Popen raised -> spawn failed -> latched reason, not-available.
+        assert d.available is False
+        assert d.last_reason() == "helper-spawn-failed"
+    finally:
+        d.shutdown()
