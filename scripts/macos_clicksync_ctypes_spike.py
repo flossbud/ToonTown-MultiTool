@@ -60,6 +60,86 @@ def ax_is_trusted():
         return None
 
 
+# --- pure-ctypes Objective-C bridge (no PyObjC) ---
+class NSPoint(ctypes.Structure):
+    _fields_ = [("x", ctypes.c_double), ("y", ctypes.c_double)]
+
+
+# selector -> (restype, argtypes AFTER the leading (id self, SEL op)). The two leading
+# pointer slots are prepended in _msg(); these argtypes describe the explicit method args.
+OBJC_SELECTOR_SIGS = {
+    ("mouseEventWithType:location:modifierFlags:timestamp:windowNumber:"
+     "context:eventNumber:clickCount:pressure:"): (
+        ctypes.c_void_p,
+        (ctypes.c_ulong,   # NSEventType type (NSUInteger)
+         NSPoint,          # location (by value)
+         ctypes.c_ulong,   # modifierFlags (NSUInteger)
+         ctypes.c_double,  # timestamp (NSTimeInterval)
+         ctypes.c_long,    # windowNumber (NSInteger)
+         ctypes.c_void_p,  # context (id, nil)
+         ctypes.c_long,    # eventNumber (NSInteger)
+         ctypes.c_long,    # clickCount (NSInteger)
+         ctypes.c_double), # pressure (CGFloat)
+    ),
+    "CGEvent": (ctypes.c_void_p, ()),  # -[NSEvent CGEvent] -> CGEventRef
+}
+
+_MOUSE_EVENT_SEL = ("mouseEventWithType:location:modifierFlags:timestamp:windowNumber:"
+                    "context:eventNumber:clickCount:pressure:")
+
+_libobjc = None
+
+
+def _objc():
+    global _libobjc
+    if _libobjc is None:
+        lib = ctypes.CDLL("/usr/lib/libobjc.A.dylib")
+        lib.objc_getClass.restype = ctypes.c_void_p
+        lib.objc_getClass.argtypes = [ctypes.c_char_p]
+        lib.sel_registerName.restype = ctypes.c_void_p
+        lib.sel_registerName.argtypes = [ctypes.c_char_p]
+        lib.objc_autoreleasePoolPush.restype = ctypes.c_void_p
+        lib.objc_autoreleasePoolPush.argtypes = []
+        lib.objc_autoreleasePoolPop.restype = None
+        lib.objc_autoreleasePoolPop.argtypes = [ctypes.c_void_p]
+        # AppKit must be loaded so the NSEvent class exists.
+        ctypes.CDLL("/System/Library/Frameworks/AppKit.framework/AppKit")
+        _libobjc = lib
+    return _libobjc
+
+
+def _msg(receiver, selector_name, restype, arg_types, args):
+    """Typed objc_msgSend call: cast a fresh function pointer per selector (never mutate
+    a global). receiver is an id/Class pointer; selector_name resolved to a SEL."""
+    objc = _objc()
+    sel = objc.sel_registerName(selector_name.encode())
+    proto = ctypes.CFUNCTYPE(restype, ctypes.c_void_p, ctypes.c_void_p, *arg_types)
+    fn = proto(("objc_msgSend", objc))
+    return fn(ctypes.c_void_p(receiver), ctypes.c_void_p(sel), *args)
+
+
+def build_ns_cgevent(ns_event_type: int, click_count: int, window_number: int):
+    """Return a CGEventRef (int address) for a mouse NSEvent built via objc_msgSend,
+    mirroring _NativePort.make_event but with zero PyObjC. None on failure."""
+    objc = _objc()
+    ns_event_cls = objc.objc_getClass(b"NSEvent")
+    restype, argtypes = OBJC_SELECTOR_SIGS[_MOUSE_EVENT_SEL]
+    ev = _msg(ns_event_cls, _MOUSE_EVENT_SEL, restype, argtypes,
+              (ctypes.c_ulong(int(ns_event_type)),
+               NSPoint(0.0, 0.0),
+               ctypes.c_ulong(0),
+               ctypes.c_double(0.0),
+               ctypes.c_long(int(window_number)),
+               None,
+               ctypes.c_long(0),
+               ctypes.c_long(int(click_count)),
+               ctypes.c_double(1.0)))
+    if not ev:
+        return None
+    cg_rt, cg_at = OBJC_SELECTOR_SIGS["CGEvent"]
+    return _msg(ev, "CGEvent", cg_rt, cg_at, ())
+
+
 def cmd_provenance(args) -> int:
     flags = csflags_for_pid(os.getpid())
     info = {

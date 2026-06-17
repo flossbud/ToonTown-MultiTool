@@ -28,3 +28,17 @@ def test_parser_inject_full():
         "--screen-x", "100", "--screen-y", "200", "--kind", "hover"])
     assert (ns.pid, ns.wid, ns.kind) == (42, 7, "hover")
     assert (ns.win_x, ns.win_y, ns.screen_x, ns.screen_y) == (10.0, 20.0, 100.0, 200.0)
+
+
+def test_objc_selector_signatures_table():
+    sigs = cs.OBJC_SELECTOR_SIGS
+    name = ("mouseEventWithType:location:modifierFlags:timestamp:windowNumber:"
+            "context:eventNumber:clickCount:pressure:")
+    assert name in sigs
+    assert "CGEvent" in sigs
+    for sel, (restype, argtypes) in sigs.items():
+        assert isinstance(argtypes, tuple)
+    # the mouse-event selector takes its 9 explicit args (after id self, SEL op)
+    assert len(sigs[name][1]) == 9
+    # CGEvent takes no explicit args
+    assert len(sigs["CGEvent"][1]) == 0
