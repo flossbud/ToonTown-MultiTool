@@ -414,3 +414,25 @@ def test_teardown_polls_when_both_waits_time_out():
     assert proc.terminated is True and proc.killed is True
     assert proc.polled is True        # final last-ditch reap attempt after both waits timed out
     assert d._proc is None
+
+
+def test_ensure_alive_requires_validated_not_just_live(monkeypatch):
+    """A live but UNVALIDATED helper (_available False, e.g. mid spawn/handshake) must NOT
+    short-circuit to usable; _ensure_alive routes it to _maybe_respawn so readiness never
+    reports an unvalidated child. Once validated, the fast path returns True with no respawn."""
+    d = _lifecycle_bare()
+    d._proc = _FakeProc(alive=True)
+    d._available = False
+    called = {"respawn": 0}
+
+    def fake_respawn():
+        called["respawn"] += 1
+        return False
+
+    monkeypatch.setattr(d, "_maybe_respawn", fake_respawn)
+    assert d._ensure_alive() is False     # alive but not validated -> not usable
+    assert called["respawn"] == 1         # routed to respawn, not fast-pathed to True
+
+    d._available = True                   # now validated
+    assert d._ensure_alive() is True      # fast path
+    assert called["respawn"] == 1         # no extra respawn when validated+live

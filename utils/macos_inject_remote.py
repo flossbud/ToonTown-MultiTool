@@ -269,9 +269,12 @@ class _RemoteDelivery:
         return proc is not None and proc.poll() is None
 
     def _ensure_alive(self) -> bool:
-        """Fast path for every op: alive -> True with no lock. Dead -> attempt a respawn
-        (gated by the circuit breaker / backoff). Returns whether a usable helper exists."""
-        if self._proc_alive():
+        """Fast path for every op: a VALIDATED, live helper -> True with no lock. Otherwise
+        (dead, OR alive-but-not-yet-handshake-validated) -> attempt a respawn (gated by the
+        circuit breaker / backoff). Returns whether a USABLE (validated AND live) helper
+        exists. Requiring _available - not just liveness - means readiness never reports True
+        for an unvalidated child (e.g. mid spawn/handshake, seen by a concurrent reader)."""
+        if self._available and self._proc_alive():
             return True
         return self._maybe_respawn()
 
@@ -289,8 +292,8 @@ class _RemoteDelivery:
         with self._lock:
             if self._closed:
                 return False
-            if self._proc_alive():
-                return True   # another thread already respawned while we waited on the lock
+            if self._available and self._proc_alive():
+                return True   # another thread already respawned + validated while we waited
             now = time.monotonic()
             if now < self._circuit_open_until:
                 return False  # circuit OPEN (helper-crashed) or inter-attempt backoff
