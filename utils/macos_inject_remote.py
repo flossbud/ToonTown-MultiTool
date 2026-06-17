@@ -459,7 +459,7 @@ class _RemoteDelivery:
     # optimistically (assumed-success) when a live helper exists: the backend then
     # stores/clears the gesture binding as usual. A dead helper that cannot be respawned
     # (circuit open / backoff) returns False so the backend never binds an undeliverable
-    # gesture. Tradeoff (review-flagged): a genuinely-failed post is invisible; a dropped
+    # gesture. Known tradeoff: a genuinely-failed post is invisible; a dropped
     # release at worst leaves a stray 'up' (harmless).
     def press(self, pid, wid, psn, win_xy, screen_xy):
         if not self._ensure_alive():
