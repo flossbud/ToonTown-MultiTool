@@ -164,12 +164,16 @@ class MacOSBackend:
 
     def _engine(self):
         if self._delivery is None:
-            if os.environ.get("TTMT_MACOS_INJECT_HELPER"):
-                # THROWAWAY prototype (CS_PLATFORM_BINARY experiment): route the
-                # SkyLight injection through a platform-binary /usr/bin/python3
-                # helper. No in-process fallback, so a pass/fail is unambiguous.
+            from utils import macos_platform_binary
+            override = os.environ.get("TTMT_MACOS_INJECT", "")  # dev only: force-helper/force-inprocess/disable
+            if override == "disable":
+                self._delivery = None
+                return None
+            use_helper = (override == "force-helper") or (
+                override != "force-inprocess" and not macos_platform_binary.is_platform_binary())
+            if use_helper:
                 from utils.macos_inject_remote import _RemoteDelivery
-                self._delivery = _RemoteDelivery()
+                self._delivery = _RemoteDelivery()   # ledger threaded in a later task
             else:
                 from utils.macos_mouse_delivery import MacOSMouseDelivery
                 self._delivery = MacOSMouseDelivery(ledger=self._echo_ledger)
