@@ -27,3 +27,20 @@ def test_fail_safe_to_false_on_probe_error(monkeypatch):
     monkeypatch.setattr(p, "_cached", None)  # clear the per-process cache for this test
     monkeypatch.setattr(p, "csflags", _boom)
     assert p.is_platform_binary() is False
+
+
+def test_is_platform_binary_probes_csflags_once(monkeypatch):
+    """The once-per-process contract: csflags() is invoked at most once, not per call."""
+    from utils import macos_platform_binary as p
+
+    calls = {"n": 0}
+
+    def _counting():
+        calls["n"] += 1
+        return 0x04000000
+
+    monkeypatch.setattr(p, "_cached", None)  # restored by monkeypatch after the test
+    monkeypatch.setattr(p, "csflags", _counting)
+    assert p.is_platform_binary() is True
+    assert p.is_platform_binary() is True
+    assert calls["n"] == 1  # cached after the first probe

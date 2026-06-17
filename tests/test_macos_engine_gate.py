@@ -11,12 +11,12 @@ pytestmark = pytest.mark.skipif(
 
 class _InProc:
     def __init__(self, **k):
-        pass
+        self.kwargs = k
 
 
 class _Remote:
     def __init__(self, **k):
-        pass
+        self.kwargs = k
 
 
 def _patch_engines(monkeypatch):
@@ -34,10 +34,14 @@ def test_engine_gate_selects_by_platform_binary(monkeypatch):
     b = macos_backend.MacOSBackend()
     monkeypatch.setattr(macos_platform_binary, "is_platform_binary", lambda: True)
     b._delivery = None
-    assert isinstance(b._engine(), _InProc)
+    eng = b._engine()
+    assert isinstance(eng, _InProc)
+    assert "ledger" in eng.kwargs   # in-process engine MUST receive the echo ledger
     monkeypatch.setattr(macos_platform_binary, "is_platform_binary", lambda: False)
     b._delivery = None
-    assert isinstance(b._engine(), _Remote)
+    eng = b._engine()
+    assert isinstance(eng, _Remote)
+    assert eng.kwargs == {}         # helper proxy ctor takes NO args (yet)
 
 
 def test_engine_gate_dev_override(monkeypatch):
@@ -73,3 +77,19 @@ def test_engine_gate_disable_returns_none(monkeypatch):
     b = macos_backend.MacOSBackend()
     b._delivery = None
     assert b._engine() is None
+
+
+def test_disable_send_paths_degrade_to_false(monkeypatch):
+    """With the engine disabled, the public send paths must return False, NOT raise
+    AttributeError on a None engine (even when a window otherwise resolves)."""
+    from utils import macos_backend, macos_platform_binary
+
+    _patch_engines(monkeypatch)
+    monkeypatch.setattr(macos_platform_binary, "is_platform_binary", lambda: True)
+    monkeypatch.setenv("TTMT_MACOS_INJECT", "disable")
+    b = macos_backend.MacOSBackend()
+    b._delivery = None
+    monkeypatch.setattr(b, "_resolve_pid", lambda w: 4321)  # a window would resolve
+    assert b._resolve_target("123") is None                 # guarded, no AttributeError
+    assert b.send_button_press("123", 1, 2, 3, 4) is False
+    assert b.send_motion("123", 1, 2, 3, 4) is False

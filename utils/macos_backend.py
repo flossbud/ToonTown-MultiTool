@@ -236,6 +236,9 @@ class MacOSBackend:
         game window, or None. owner_conn + creation_identity freeze the gesture against
         same-bundle PID/window-id reuse (all TTR toons share ONE bundle, so the trusted-
         bundle lock in _resolve_pid is not enough to catch a different toon reusing a wid)."""
+        eng = self._engine()
+        if eng is None:   # dev override TTMT_MACOS_INJECT=disable -> no delivery; degrade to no-op
+            return None
         pid = self._resolve_pid(win_id_str)
         if pid is None:
             return None
@@ -243,10 +246,10 @@ class MacOSBackend:
             wid = int(win_id_str)
         except (TypeError, ValueError):
             return None
-        psn = self._engine().resolve_psn(wid)
+        psn = eng.resolve_psn(wid)
         if psn is None:
             return None
-        return (pid, wid, psn, self._engine().resolve_owner(wid), self._creation_identity(pid))
+        return (pid, wid, psn, eng.resolve_owner(wid), self._creation_identity(pid))
 
     def send_button_press(self, win_id_str, x, y, root_x, root_y,
                           button=1, state=0, time=0) -> bool:
