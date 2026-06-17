@@ -116,7 +116,9 @@ def test_handshake_success_sets_available(monkeypatch):
     monkeypatch.setattr(d, "_rpc", lambda op, **k: {
         "ok": True, "platform_binary": True, "objc_ok": True, "skylight_ok": True})
     assert d._handshake() is True
-    assert d.available is True
+    # Check the raw flag _handshake sets (the `available` property layers liveness/respawn
+    # on top, which is exercised by the lifecycle tests; _bare() has no _proc/lock state).
+    assert d._available is True
     assert d.last_reason() is None
 
 
@@ -133,7 +135,7 @@ def test_handshake_reason_matrix(monkeypatch, reply, expected):
     d = _bare(rem)
     monkeypatch.setattr(d, "_rpc", lambda op, **k: reply)
     assert d._handshake() is False
-    assert d.available is False
+    assert d._available is False   # raw flag (the property layers liveness; see above)
     assert d.last_reason() == expected
 
 

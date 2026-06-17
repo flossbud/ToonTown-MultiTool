@@ -398,7 +398,12 @@ class _RemoteDelivery:
 
     @property
     def available(self) -> bool:
-        return self._available
+        # Liveness-aware + self-healing: if the helper has died, _ensure_alive attempts a
+        # respawn (gated by the circuit breaker / backoff), so the readiness surface
+        # (mouse_delivery_ready -> _engine().available) never reports a stale True on a dead
+        # helper AND a crashed helper is recovered on the next readiness probe rather than
+        # stranded not-ready. Cheap on the healthy path (a single poll()).
+        return self._ensure_alive()
 
     def last_reason(self) -> str | None:
         return self._reason
@@ -508,9 +513,19 @@ class _RemoteDelivery:
             except Exception:
                 try:
                     proc.kill()
-                    proc.wait(timeout=2)   # reap after kill so we don't leave a zombie
                 except Exception:
                     pass
+                # SIGKILL is uncatchable, so the child dies promptly; wait generously to
+                # REAP it (no zombie). The local `proc` handle is retained for the whole
+                # method, so a slow death is still reaped here; a final non-blocking poll()
+                # catches a child that exits just after the wait window.
+                try:
+                    proc.wait(timeout=5)
+                except Exception:
+                    try:
+                        proc.poll()
+                    except Exception:
+                        pass
         self._close_logf()
 
     def _close_logf(self) -> None:

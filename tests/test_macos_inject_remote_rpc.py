@@ -362,3 +362,55 @@ def test_closed_gates_respawn_and_shutdown_is_idempotent(monkeypatch):
     assert d.motion(1, 2, None, (0, 0), (0, 0), False) is False
     assert spawns["n"] == 0          # closed -> never spawns
     d.shutdown()                     # idempotent: no raise
+
+
+def test_available_property_respawns_dead_helper(monkeypatch):
+    """Reading the `available` property (the readiness surface) on a CRASHED helper triggers
+    a respawn (self-healing), so readiness never reports a stale True on a dead helper and a
+    crash is recovered on the next readiness probe rather than stranded not-ready."""
+    monkeypatch.setattr(rem.macos_clt, "clt_state", lambda: (True, None, "/fake/py"))
+    d = _lifecycle_bare()
+    d._proc = _FakeProc(alive=False)   # crashed since last op
+    live = _FakeProc(alive=True)
+
+    def _good_spawn(self, py, helper):
+        self._proc = live
+        return True
+
+    def _good_handshake(self):
+        self._available = True
+        self._reason = None
+        return True
+
+    monkeypatch.setattr(rem._RemoteDelivery, "_spawn", _good_spawn)
+    monkeypatch.setattr(rem._RemoteDelivery, "_handshake", _good_handshake)
+
+    assert d.available is True        # the property itself respawned the dead helper
+    assert d._proc is live
+
+
+def test_teardown_polls_when_both_waits_time_out():
+    """If BOTH the terminate-wait AND the post-kill wait time out, teardown still makes a
+    final non-blocking poll() reap attempt (no swallowed-handle zombie) and clears _proc."""
+    import subprocess as sp
+
+    class _AlwaysTimeoutWait(_FakeProc):
+        def __init__(self):
+            super().__init__(alive=True)
+            self.polled = False
+
+        def wait(self, timeout=None):
+            self.waited = True
+            raise sp.TimeoutExpired(cmd="helper", timeout=timeout)
+
+        def poll(self):
+            self.polled = True
+            return 0
+
+    d = _lifecycle_bare()
+    proc = _AlwaysTimeoutWait()
+    d._proc = proc
+    d._teardown_proc()
+    assert proc.terminated is True and proc.killed is True
+    assert proc.polled is True        # final last-ditch reap attempt after both waits timed out
+    assert d._proc is None
