@@ -118,6 +118,7 @@ class _RemoteDelivery:
         # into its OWN ledger (it runs the engine), so it is intentionally unused here.
         self._ledger = ledger
         self._logf = None
+        self._rbuf = b""   # byte buffer for the deadline-bounded line reader
         self._spawn_and_handshake()
 
     # ---- spawn + handshake ----------------------------------------------------
@@ -149,10 +150,13 @@ class _RemoteDelivery:
         except Exception:
             self._logf = subprocess.DEVNULL
         try:
+            # Binary, unbuffered: replies are read via select+os.read on the fd into a
+            # deadline-bounded buffer (see _read_line), so a partial/stalled line can
+            # never block past the RPC timeout. Requests are written as encoded bytes.
             self._proc = subprocess.Popen(
                 [clt_python, "-s", helper_path],
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self._logf,
-                env=dict(_SCRUBBED_ENV), text=True, bufsize=1,
+                env=dict(_SCRUBBED_ENV), bufsize=0,
             )
             self._diag(f"spawned platform-binary helper {clt_python} -s {helper_path} "
                        f"pid={self._proc.pid}")
@@ -160,6 +164,7 @@ class _RemoteDelivery:
         except Exception as e:
             self._diag(f"FAILED to spawn helper {clt_python} -s {helper_path}: {e}")
             self._proc = None
+            self._close_logf()   # don't leak the logfile fd when the spawn fails
             return False
 
     def _handshake(self) -> bool:
@@ -186,25 +191,39 @@ class _RemoteDelivery:
 
     # ---- RPC ------------------------------------------------------------------
 
-    def _make_reader(self, stdout):
-        """A line-reader closure over the helper's stdout: read_line(remaining_s) ->
-        the next reply line, or None on timeout / EOF (helper gone).
-
-        Correctness rests on the helper being strictly request-driven: it writes a
-        reply line ONLY in response to a replying-op and always emits a complete
-        json+'\\n', so select+readline consumes exactly one whole line and stale vs
-        fresh replies are time-separated. A future helper that volunteers stdout would
-        break this single-line-per-read assumption."""
-        def read_line(remaining: float):
+    def _read_line(self, remaining: float):
+        """Return one complete decoded reply line (newline stripped), or None on timeout
+        / EOF (helper gone). DEADLINE-BOUNDED: reads raw bytes via select+os.read into a
+        persistent buffer, so a partial line from a stalled/truncated helper can NEVER
+        block past the timeout. (A plain readline() after select() would block waiting for
+        the newline, holding the lock and defeating 4c's RPC-timeout->kill.) Leftover
+        bytes after a line stay buffered for the next call."""
+        proc = self._proc
+        if proc is None or proc.stdout is None:
+            return None
+        deadline = time.monotonic() + max(0.0, remaining)
+        while True:
+            nl = self._rbuf.find(b"\n")
+            if nl >= 0:
+                line = self._rbuf[:nl]
+                self._rbuf = self._rbuf[nl + 1:]
+                return line.decode("utf-8", "replace")
+            rem = deadline - time.monotonic()
+            if rem <= 0:
+                return None
             try:
-                ready, _, _ = select.select([stdout], [], [], max(0.0, remaining))
+                ready, _, _ = select.select([proc.stdout], [], [], rem)
             except Exception:
                 return None
             if not ready:
                 return None
-            line = stdout.readline()
-            return line if line else None
-        return read_line
+            try:
+                chunk = os.read(proc.stdout.fileno(), 65536)
+            except Exception:
+                return None
+            if not chunk:
+                return None  # EOF: helper gone
+            self._rbuf += chunk
 
     def _recv_matching(self, awaited_id: int, read_line, timeout: float):
         """Read JSON-line replies via read_line(remaining_seconds) until one whose
@@ -242,12 +261,12 @@ class _RemoteDelivery:
             self._next_id += 1
             req = {"op": op, "id": req_id, **fields}
             try:
-                proc.stdin.write(json.dumps(req) + "\n")
+                proc.stdin.write((json.dumps(req) + "\n").encode("utf-8"))
                 proc.stdin.flush()
             except Exception as e:
                 self._diag(f"RPC write error ({op}): {e}")
                 return None
-            return self._recv_matching(req_id, self._make_reader(proc.stdout), _RPC_TIMEOUT_S)
+            return self._recv_matching(req_id, self._read_line, _RPC_TIMEOUT_S)
 
     # ---- public surface -------------------------------------------------------
 
@@ -289,7 +308,7 @@ class _RemoteDelivery:
             return False
         with self._lock:
             try:
-                proc.stdin.write(json.dumps(req) + "\n")
+                proc.stdin.write((json.dumps(req) + "\n").encode("utf-8"))
                 proc.stdin.flush()
                 return True
             except Exception as e:
@@ -338,8 +357,13 @@ class _RemoteDelivery:
             except Exception:
                 try:
                     proc.kill()
+                    proc.wait(timeout=2)   # reap after kill so we don't leave a zombie
                 except Exception:
                     pass
+        self._close_logf()
+
+    def _close_logf(self) -> None:
+        """Close the captured-stderr logfile if we own a real handle (not None/DEVNULL)."""
         if self._logf not in (None, subprocess.DEVNULL):
             try:
                 self._logf.close()

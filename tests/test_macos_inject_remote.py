@@ -93,51 +93,8 @@ def test_clt_missing_latches_reason(monkeypatch):
     finally:
         d.shutdown()
 
-
-def test_correlation_id_discards_stale_reply(monkeypatch):
-    """The id-validation read must discard a stale/late reply (wrong id) and return the
-    matching-id reply. Driven through an injectable line-reader, no real helper."""
-    import json
-
-    import utils.macos_inject_remote as rem
-
-    # Build an instance WITHOUT spawning (bypass __init__'s spawn) so we can unit-test
-    # the pure read logic in isolation.
-    d = rem._RemoteDelivery.__new__(rem._RemoteDelivery)
-
-    awaited = 42
-    lines = [
-        json.dumps({"ok": True, "id": 7, "stale": True}),   # late reply for a prior req
-        json.dumps({"ok": True, "id": awaited, "psn": "ab"}),  # the one we want
-    ]
-    it = iter(lines)
-
-    def fake_read_line(remaining):
-        # remaining must stay positive across both reads (generous timeout below).
-        assert remaining > 0
-        return next(it, None)
-
-    reply = d._recv_matching(awaited, fake_read_line, timeout=5.0)
-    assert reply is not None
-    assert reply.get("id") == awaited
-    assert reply.get("psn") == "ab"
-
-
-def test_correlation_id_timeout_when_only_stale(monkeypatch):
-    """If only stale replies arrive then the reader signals EOF/timeout, the result is
-    None (never a stale reply misreported as ours)."""
-    import json
-
-    import utils.macos_inject_remote as rem
-
-    d = rem._RemoteDelivery.__new__(rem._RemoteDelivery)
-    lines = [json.dumps({"ok": True, "id": 1}), None]  # stale, then EOF
-    it = iter(lines)
-
-    def fake_read_line(remaining):
-        return next(it, None)
-
-    assert d._recv_matching(99, fake_read_line, timeout=5.0) is None
+# The pure correlation-id read tests (platform-independent) live in
+# tests/test_macos_inject_remote_rpc.py so they run on ALL CI, not just macOS.
 
 
 def _bare(rem):
