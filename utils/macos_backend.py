@@ -209,16 +209,32 @@ class MacOSBackend:
         self._drop_delivery()   # shut a helper subprocess down before rebuilding (no leak)
 
     def mouse_delivery_ready(self):
-        """(ready: bool, reason: str | None). SEPARATE from has_post_access() so a
-        mouse-SPI break never disables working keyboard delivery (spec §3.2/§3.5).
-        Fail-CLOSED: ANY probe error (e.g. the engine's lazy import raising) returns
-        not-ready with a reason, NEVER ready (mirrors _creation_identity's discipline)."""
+        """(ready, reason). SEPARATE from has_post_access() so a mouse-SPI break never
+        disables working keyboard delivery (spec §3.2/§3.5). Fail-CLOSED: any probe
+        error -> not-ready with a reason, NEVER ready. Reasons are DISTINCT so the UI
+        can guide the user: CLT-missing (helper path only) vs accessibility-denied vs a
+        specific helper/SkyLight fault."""
         try:
+            from utils import macos_platform_binary, macos_clt
+            # The helper path (non-platform-binary process) needs CLT; the in-process path
+            # (already a platform binary) does not. Only gate on CLT when we'd use the helper.
+            if not macos_platform_binary.is_platform_binary():
+                clt_ok, clt_reason, _py = macos_clt.clt_state()
+                if not clt_ok:
+                    return (False, clt_reason)
             if not self.has_post_access():
                 return (False, "accessibility (post-event) access not granted")
-            if not self._engine().available:
-                return (False, "macOS per-window mouse delivery unavailable "
-                               "(private SkyLight symbols missing or a delivery fault)")
+            eng = self._engine()
+            if eng is None:
+                return (False, "mouse delivery disabled")
+            if not eng.available:
+                # _RemoteDelivery exposes a specific latched fault; the in-process engine does not.
+                reason = None
+                last_reason = getattr(eng, "last_reason", None)
+                if callable(last_reason):
+                    reason = last_reason()
+                return (False, reason or "macOS per-window mouse delivery unavailable "
+                                         "(SkyLight symbols missing or a delivery fault)")
             return (True, None)
         except Exception as e:
             return (False, f"mouse delivery probe failed: {type(e).__name__}: {e}")
