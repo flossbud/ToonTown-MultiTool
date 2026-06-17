@@ -32,8 +32,9 @@ jobs:
         # plus non-daemon-thread leaks in other suites never let the shared
         # interpreter exit). This curated set is every darwin-specific suite,
         # validated to pass AND to let the interpreter exit cleanly when run as
-        # ONE invocation (248 passed, 1 skipped locally). Add a darwin suite
-        # here only after confirming the combined run still exits cleanly.
+        # ONE invocation. Add a darwin suite here only after confirming the
+        # combined run still exits cleanly (the Click Sync helper suites spawn a
+        # /usr/bin/python3 child + shut it down - verified no leak/hang at exit).
         run: |
           TTMT_NO_VENV_REEXEC=1 QT_QPA_PLATFORM=offscreen python -m pytest -q \
             tests/test_macos_backend.py tests/test_macos_backend_mouse.py \
@@ -48,7 +49,11 @@ jobs:
             tests/test_sleep_inhibitor_macos.py tests/test_ttr_launcher_macos.py \
             tests/test_launch_tab_macos_engine.py tests/test_settings_tab_ttr_macos_path.py \
             tests/test_macos_import_safety.py tests/test_build_flavor_macos.py \
-            tests/test_macos_permissions.py tests/test_macos_permissions_dialog.py
+            tests/test_macos_permissions.py tests/test_macos_permissions_dialog.py \
+            tests/test_macos_native_port_ctypes.py tests/test_macos_platform_binary.py \
+            tests/test_macos_engine_gate.py tests/test_macos_clt.py \
+            tests/test_macos_inject_helper.py tests/test_macos_inject_remote.py \
+            tests/test_macos_inject_remote_rpc.py tests/test_macos_delivery_ready_reasons.py
 
       - name: Download DMG
         uses: actions/download-artifact@v8
