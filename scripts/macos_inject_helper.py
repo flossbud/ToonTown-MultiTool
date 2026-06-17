@@ -16,17 +16,19 @@ stdout is JSON-ONLY. The engine's diagnostics use print() (-> fd 1), so we move
 fd 1 to stderr at startup and keep a private dup of the real stdout for replies.
 The parent captures fd 2 (stderr) to its helper logfile.
 """
-import ctypes
-import json
-import os
-import sys
+import os  # noqa: E402  (only os, needed for the fd dance, precedes the redirect)
 
 # ---- stdout discipline (do this FIRST, before any import that might print) ----
 # Save the real stdout pipe (to the parent) on a private fd, then point fd 1 at
-# fd 2 (stderr/logfile) so ANY print()/C-level stdout from the engine cannot
-# corrupt the JSON-RPC channel.
+# fd 2 (stderr/logfile) so ANY print()/C-level stdout from a LATER import or the
+# engine cannot corrupt the JSON-RPC channel. Only `os` is imported above this
+# point, and importing os does not write to stdout.
 _reply = os.fdopen(os.dup(1), "w")
 os.dup2(2, 1)
+
+import ctypes  # noqa: E402
+import json  # noqa: E402
+import sys  # noqa: E402
 
 # ---- own-location import (flat .app layout), with a repo-source fallback ------
 _HERE = os.path.dirname(os.path.abspath(__file__))
