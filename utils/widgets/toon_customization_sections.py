@@ -149,7 +149,7 @@ class _CardSection(QWidget):
         outer.setContentsMargins(8, 8, 8, 8)
         outer.setSpacing(6)
 
-        accent_label = QLabel("Accent (stripe + chip)")
+        accent_label = QLabel("Accent")
         accent_label.setStyleSheet("color: #c8c8d8; font-weight: bold;")
         outer.addWidget(accent_label)
 
