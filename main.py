@@ -862,20 +862,26 @@ class MultiToonTool(QMainWindow):
 
     def changeEvent(self, event):
         super().changeEvent(event)
-        if event.type() == QEvent.WindowStateChange and getattr(self, "_chrome", None) is not None:
-            flush_timer = getattr(self, "_perf_state_flush", None)
-            if flush_timer is not None:
-                if not flush_timer.isActive():
-                    # First fire of a new gesture: open it and reset the counter.
-                    self._perf_state_gid = perf_trace.begin_gesture("window_state")
-                    self._perf_state_fires = 0
-                self._perf_state_fires += 1
-                perf_trace.mark("statechange_fires", self._perf_state_gid,
-                                self._perf_state_fires)
-            self._apply_window_corner_state(self.isMaximized())
-            # Restart the debounce; flush once the gesture settles.
-            if flush_timer is not None:
-                flush_timer.start()
+        if event.type() == QEvent.WindowStateChange:
+            if getattr(self, "_chrome", None) is not None:
+                flush_timer = getattr(self, "_perf_state_flush", None)
+                if flush_timer is not None:
+                    if not flush_timer.isActive():
+                        # First fire of a new gesture: open it, reset the counter.
+                        self._perf_state_gid = perf_trace.begin_gesture("window_state")
+                        self._perf_state_fires = 0
+                    self._perf_state_fires += 1
+                    perf_trace.mark("statechange_fires", self._perf_state_gid,
+                                    self._perf_state_fires)
+                self._apply_window_corner_state(self.isMaximized())
+                # Restart the debounce; flush once the gesture settles.
+                if flush_timer is not None:
+                    flush_timer.start()
+            # Re-evaluate the Multitoon repaint timers on minimize/restore (the
+            # page gets no hideEvent when the window is minimized).
+            mt = getattr(self, "multitoon_tab", None)
+            if mt is not None:
+                mt._update_glow_timer()
 
     # ── Chip Rail ──────────────────────────────────────────────────────────
 
