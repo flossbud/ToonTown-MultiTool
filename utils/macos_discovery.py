@@ -24,10 +24,82 @@ _enum_cache = {"t": -1.0, "recs": []}
 # Owner-name startswith markers mapped to a game tag. Window titles are NOT
 # used for matching because reading them may require Screen Recording
 # permission; owner (application) names are available without it.
+#
+# Owner name alone is ambiguous: the TTR game ENGINE and the Toontown LAUNCHER
+# both run under owner name "Toontown Rewritten", so this prefix match counts the
+# launcher (and any login/news/patch window) as a game window. The records are
+# therefore refined by bundle id after enumeration (see _refine_game): bundle ids
+# come from NSRunningApplication and are readable WITHOUT Screen Recording.
 _GAME_MARKERS = (
     ("Toontown Rewritten", "ttr"),
     ("Corporate Clash", "cc"),
 )
+
+# Authoritative engine bundle ids -> game tag. A window owned by one of these is
+# definitively that game's engine (not a launcher/updater). Permission-free and
+# stable. Corporate Clash has no known NATIVE macOS engine bundle (it runs under
+# Wine / is unsupported on macOS), so it is intentionally absent and falls back
+# to owner-name identification.
+_ENGINE_BUNDLE_IDS = {
+    "com.toontownrewritten.engine": "ttr",
+}
+
+# Games for which we have an authoritative engine bundle id. For these, a
+# RESOLVED non-engine bundle under the same owner name is NOT the game window
+# (strict: "only the real game window"). Kept in sync with _ENGINE_BUNDLE_IDS.
+_STRICT_BUNDLE_GAMES = frozenset(_ENGINE_BUNDLE_IDS.values())
+
+
+def _is_launcher_bundle(bundle_id) -> bool:
+    """True if the bundle id looks like a game LAUNCHER/updater (never a game
+    window). Tokenized rather than a raw 'launcher' substring so unrelated ids
+    like 'com.x.relauncherator' are not falsely matched."""
+    if not bundle_id:
+        return False
+    b = bundle_id.lower()
+    return (
+        b.endswith("launcher")
+        or ".launcher" in b
+        or "-launcher" in b
+        or "_launcher" in b
+    )
+
+
+def _refine_game(candidate_game, bundle_id):
+    """Refine an owner-name game candidate using its resolved bundle id.
+
+    Returns the game tag to keep, or None to reject the window. Policy:
+      - a known engine bundle is authoritatively that game (wins outright);
+      - a launcher/updater bundle is never a game window;
+      - for a game WITH an authoritative engine id, a resolved non-engine bundle
+        is rejected (strict);
+      - bundle_id is None (NSRunningApplication could not resolve it) fails OPEN
+        to the owner-name candidate, so a transient resolver miss never strands
+        the real game;
+      - otherwise trust the owner-name candidate (e.g. Corporate Clash).
+    """
+    eng = _ENGINE_BUNDLE_IDS.get(bundle_id) if bundle_id else None
+    if eng is not None:
+        return eng
+    if _is_launcher_bundle(bundle_id):
+        return None
+    if candidate_game in _STRICT_BUNDLE_GAMES and bundle_id is not None:
+        return None
+    return candidate_game
+
+
+def _refine_records(records, bundle_id_fn):
+    """Refine owner-name candidate records by bundle id: drop launchers / non-game
+    windows and stamp survivors with their resolved bundle id. bundle_id_fn maps a
+    pid -> bundle id (or None); injected so the pipeline is unit-testable."""
+    out = []
+    for r in records:
+        bid = bundle_id_fn(r.pid)
+        game = _refine_game(r.game, bid)
+        if game is None:
+            continue
+        out.append(dataclasses.replace(r, game=game, bundle_id=bid))
+    return out
 
 
 @dataclasses.dataclass(frozen=True)
@@ -109,20 +181,29 @@ def _reset_enum_cache() -> None:
         _enum_cache["recs"] = []
 
 
-def _enumerate_game_windows_uncached() -> list:
-    """Live GameWindow records (with bundle_id) from the on-screen window list.
+def _raw_window_info() -> list:
+    """Raw CGWindowListCopyWindowInfo dicts for on-screen, non-desktop windows.
 
-    Returns [] on any error. This honors the same contract as x11_discovery:
-    discovery query functions never raise, so callers like window_manager's
-    poll/refresh_geometry loop and game_registry are crash-safe."""
+    Isolated as a seam so the identify + bundle-id refine pipeline is unit-testable
+    without touching the live window server."""
+    Q = _quartz()
+    import objc
+    with objc.autorelease_pool():
+        opts = Q.kCGWindowListOptionOnScreenOnly | Q.kCGWindowListExcludeDesktopElements
+        return list(Q.CGWindowListCopyWindowInfo(opts, Q.kCGNullWindowID) or [])
+
+
+def _enumerate_game_windows_uncached() -> list:
+    """Live GameWindow records (bundle-id refined) from the on-screen window list.
+
+    Owner-name candidates from identify_game_windows() are refined by bundle id so
+    launchers/updaters (which share a game's owner name) are excluded; see
+    _refine_game. Returns [] on any error. This honors the same contract as
+    x11_discovery: discovery query functions never raise, so callers like
+    window_manager's poll/refresh_geometry loop and game_registry are crash-safe."""
     try:
-        Q = _quartz()
-        import objc
-        with objc.autorelease_pool():
-            opts = Q.kCGWindowListOptionOnScreenOnly | Q.kCGWindowListExcludeDesktopElements
-            info = Q.CGWindowListCopyWindowInfo(opts, Q.kCGNullWindowID) or []
-            recs = identify_game_windows(list(info))
-            return [dataclasses.replace(r, bundle_id=process_bundle_id(r.pid)) for r in recs]
+        info = _raw_window_info()
+        return _refine_records(identify_game_windows(info), process_bundle_id)
     except Exception:
         return []
 
