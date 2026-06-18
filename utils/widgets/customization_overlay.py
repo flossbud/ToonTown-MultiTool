@@ -686,6 +686,72 @@ class _ConfirmPrompt(QWidget):
         outer.addLayout(row)
 
 
+class _ResetConfirm(QWidget):
+    """Inline confirm prompt shown over the panel when the user clicks
+    'Reset all'. Slides over the preview area; styling matches the panel
+    chrome. Only on Reset does the caller clear the draft."""
+
+    reset_clicked = Signal()
+    cancel_clicked = Signal()
+
+    def __init__(self, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.setObjectName("ResetConfirmPrompt")
+        self.setStyleSheet(
+            "QWidget#ResetConfirmPrompt {"
+            "  background: rgba(31, 34, 48, 245);"
+            "  border: 1px solid #4a5070;"
+            "  border-radius: 10px;"
+            "}"
+        )
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(20, 16, 20, 16)
+        outer.setSpacing(12)
+
+        title = QLabel("Reset all customizations?")
+        title.setStyleSheet(
+            "color: #e8e8f0; font-size: 15px; font-weight: 600;"
+        )
+        outer.addWidget(title)
+
+        body = QLabel("This will clear all your edits for this toon.")
+        body.setWordWrap(True)
+        body.setStyleSheet("color: #c8c8d0; font-size: 12px;")
+        outer.addWidget(body)
+
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        row.addStretch(1)
+
+        self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn.setFixedHeight(30)
+        self.cancel_btn.setStyleSheet(
+            "QPushButton {"
+            "  background: transparent; color: #a0a8c0;"
+            "  border: 1px solid #4a5070; border-radius: 6px;"
+            "  padding: 0 14px; font-size: 12px;"
+            "}"
+            "QPushButton:hover { background: rgba(74, 80, 112, 60); }"
+        )
+        self.cancel_btn.clicked.connect(self.cancel_clicked)
+
+        self.reset_btn = QPushButton("Reset")
+        self.reset_btn.setFixedHeight(30)
+        self.reset_btn.setStyleSheet(
+            "QPushButton {"
+            "  background: transparent; color: #e74a4a;"
+            "  border: 1px solid #e74a4a; border-radius: 6px;"
+            "  padding: 0 14px; font-size: 12px;"
+            "}"
+            "QPushButton:hover { background: rgba(231, 74, 74, 30); }"
+        )
+        self.reset_btn.clicked.connect(self.reset_clicked)
+
+        row.addWidget(self.cancel_btn)
+        row.addWidget(self.reset_btn)
+        outer.addLayout(row)
+
+
 class ToonCustomizationOverlay(QWidget):
     """Whole-window overlay that hosts the customization editor."""
 
@@ -721,6 +787,11 @@ class ToonCustomizationOverlay(QWidget):
         self._confirm_prompt.keep_clicked.connect(self._on_confirm_keep)
         self._confirm_prompt.discard_clicked.connect(self._on_confirm_discard)
 
+        self._reset_confirm = _ResetConfirm(self)
+        self._reset_confirm.hide()
+        self._reset_confirm.reset_clicked.connect(self._on_reset_confirm_reset)
+        self._reset_confirm.cancel_clicked.connect(self._on_reset_confirm_cancel)
+
         self.hide()
 
     # -- Public API -----------------------------------------------------
@@ -748,6 +819,7 @@ class ToonCustomizationOverlay(QWidget):
         self._refresh_geometry()
         self._refresh_backdrop_pixmap()
         self._confirm_prompt.hide()
+        self._reset_confirm.hide()
         self.show()
         self.raise_()
         self._panel.save_btn.setFocus()
@@ -798,7 +870,26 @@ class ToonCustomizationOverlay(QWidget):
         self.close_and_discard()
 
     def _on_reset_requested(self) -> None:
+        self._show_reset_confirm()
+
+    def _show_reset_confirm(self) -> None:
+        panel_geom = self._panel.geometry()
+        prompt_w = 380
+        prompt_h = 130
+        x = panel_geom.x() + (panel_geom.width() - prompt_w) // 2
+        y = panel_geom.y() + self._panel.HEADER_H + 30
+        self._reset_confirm.setGeometry(x, y, prompt_w, prompt_h)
+        self._reset_confirm.show()
+        self._reset_confirm.raise_()
+        self._reset_confirm.cancel_btn.setFocus()
+
+    def _on_reset_confirm_reset(self) -> None:
+        self._reset_confirm.hide()
         self._panel.reset_all()
+
+    def _on_reset_confirm_cancel(self) -> None:
+        self._reset_confirm.hide()
+        self._panel.setFocus()
 
     def _refresh_geometry(self) -> None:
         parent = self.parentWidget()
