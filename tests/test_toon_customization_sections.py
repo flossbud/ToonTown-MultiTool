@@ -71,9 +71,9 @@ def test_card_section_existing_body_starts_on(qapp):
 
 def test_pose_tile_pinned_dimensions(qapp):
     from utils.widgets.toon_customization_sections import _PoseTile
-    assert _PoseTile._TILE_W == 160
-    assert _PoseTile._TILE_H == 110
-    assert _PoseTile._BOX == 100
+    assert _PoseTile._TILE_W == 92
+    assert _PoseTile._TILE_H == 96
+    assert _PoseTile._BOX == 82
 
 
 def test_pose_tile_tooltip_matches_pose(qapp):
@@ -148,20 +148,37 @@ def test_pose_section_expanded_grid_uses_3_columns(qapp):
     )
 
 
-def test_pose_section_expanded_grid_width_fits_compact_viewport(qapp):
-    """The expanded pose grid's minimum width must be <= 527 (the compact-mode
-    panel section viewport width after the vertical scrollbar). The 3-column
-    grid of 160 px tiles fits at ~508 px; this guards against regressions."""
-    from utils.widgets.toon_customization_sections import _PoseSection
+def test_pose_rows_fit_min_section_viewport(qapp):
+    """Both pose rows must fit the section viewport at the panel's MINIMUM
+    responsive width so neither produces a horizontal scrollbar:
+
+    - the always-visible PRIMARY row (5 tiles) - previously 5*160=832px,
+      which overflowed the ~420px pane and is the bug this guards against;
+    - the EXPANDED grid (3 columns).
+
+    Viewport = panel min width - rail - vertical-scrollbar slack."""
+    from utils.widgets.customization_overlay import _Panel
+    from utils.widgets.toon_customization_sections import _PoseSection, _PoseTile
+
+    viewport = _Panel.MIN_W - _Panel.RAIL_W - 18  # ~502px
 
     section = _PoseSection(dna="dna-abc-123", current_pose="portrait")
     qapp.processEvents()
+
+    # Primary row: 5 tiles + 4 inter-tile gaps (4px) + body h-margins (8+8).
+    primary_row_w = 5 * _PoseTile._TILE_W + 4 * 4 + 16
+    assert primary_row_w <= viewport, (
+        f"primary pose row {primary_row_w}px exceeds section viewport "
+        f"({viewport}px); horizontal scroll will appear"
+    )
+
+    # Expanded 3-column grid.
     assert section._expanded_widget is not None
     section._expanded_widget.layout().activate()
     hint = section._expanded_widget.minimumSizeHint().width()
-    assert hint <= 527, (
-        f"expanded grid min width {hint} exceeds compact viewport (527 px); "
-        f"horizontal scroll will appear"
+    assert hint <= viewport, (
+        f"expanded grid min width {hint} exceeds section viewport "
+        f"({viewport}px); horizontal scroll will appear"
     )
 
 

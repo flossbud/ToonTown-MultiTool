@@ -287,10 +287,14 @@ class _PoseTile(QFrame):
     clicked_pose = Signal(str)
     retry_requested = Signal(str)
 
-    _TILE_W = 160  # wide enough for the bigger label-free thumbnail
-    _TILE_H = 110  # box + small padding only; labels live in tooltips
-    _BOX = 100
-    _CIRCLE_INSET = 10  # circle margin inside the box (scaled with _BOX)
+    # Sized so the always-visible primary row of 5 tiles fits the section
+    # viewport at the panel's MINIMUM responsive width without a horizontal
+    # scrollbar (5*92 + spacing + margins ~= 492 <= ~502px viewport). The
+    # earlier 160px tile forced an 832px row into a ~420px pane.
+    _TILE_W = 92  # box centered in the tile; label-free (labels are tooltips)
+    _TILE_H = 96
+    _BOX = 82
+    _CIRCLE_INSET = 8  # circle margin inside the box (scaled with _BOX)
     _BACKDROP = QColor("#4a4a4a")
     _LOAD_TIMEOUT_MS = 8000  # max wait before tile transitions to failed
 

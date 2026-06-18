@@ -60,13 +60,15 @@ def test_backdrop_blur_dim_color_present(qapp):
     assert bd.DIM_COLOR.blue() == 0
 
 
-def test_panel_has_pinned_dimensions(qapp):
+def test_panel_default_dimensions(qapp):
+    """A standalone _Panel (no fit_to call) uses the fallback default size;
+    the overlay resizes it responsively via fit_to() at open time."""
     from utils.widgets.customization_overlay import _Panel
     parent = QWidget()
     parent.resize(575, 770)
     panel = _Panel(parent)
-    assert panel.PANEL_W == 620
-    assert panel.PANEL_H == 470
+    assert panel.PANEL_W == 760
+    assert panel.PANEL_H == 620
     assert panel.HEADER_H == 44
     assert panel.FOOTER_H == 52
 

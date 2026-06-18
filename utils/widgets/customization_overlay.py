@@ -62,8 +62,20 @@ class _Panel(QFrame):
     """The editor card. Header / [rail: preview + nav | section stack] /
     footer. Emits high-level intent signals that the overlay routes."""
 
-    PANEL_W = 620
-    PANEL_H = 470
+    # Default (fallback) size. The overlay calls fit_to() to size the panel
+    # responsively to the window; PANEL_W/PANEL_H then become instance
+    # attributes that the geometry + entry-animation code read back.
+    PANEL_W = 760
+    PANEL_H = 620
+    # Responsive bounds. The panel is the primary editing surface, so it grows
+    # to use the (now larger) pinwheel window instead of staying a tiny fixed
+    # modal, clamped so it is never narrower than its own content (the Toon
+    # section's pose row) nor wider than a comfortable editor card.
+    MIN_W = 720
+    MAX_W = 820
+    MIN_H = 480
+    MAX_H = 760
+    MARGIN = 64  # breathing room reserved between the panel and the window edge
     HEADER_H = 44
     FOOTER_H = 52
     PREVIEW_H = 180
@@ -101,6 +113,25 @@ class _Panel(QFrame):
         outer.addWidget(self._build_header())
         outer.addWidget(self._build_body(), 1)
         outer.addWidget(self._build_footer())
+
+    def fit_to(self, available_w: int, available_h: int) -> None:
+        """Size the panel responsively to the available overlay area.
+
+        The old fixed 620x470 modal was far smaller than the enlarged
+        pinwheel window AND smaller than its own content (the Toon section
+        alone wants ~832x698), so content was clipped behind horizontal and
+        vertical scrollbars. Here the panel grows to use the window, clamped
+        to [MIN_W, MAX_W] x [MIN_H, MAX_H], and shrinks to fit rather than
+        clip on an unusually small overlay. PANEL_W/PANEL_H become instance
+        attributes the geometry + entry-animation code read back."""
+        w = max(self.MIN_W, min(self.MAX_W, available_w - self.MARGIN))
+        h = max(self.MIN_H, min(self.MAX_H, available_h - self.MARGIN))
+        # On an unusually small overlay, shrink to fit rather than clip.
+        w = min(w, max(360, available_w - 16))
+        h = min(h, max(320, available_h - 16))
+        self.PANEL_W = w
+        self.PANEL_H = h
+        self.setFixedSize(w, h)
 
     # -- subwidgets ------------------------------------------------------
 
@@ -965,6 +996,11 @@ class ToonCustomizationOverlay(QWidget):
             return
         self.setGeometry(parent.rect())
         self._backdrop.setGeometry(self.rect())
+        # Size the panel to the (possibly enlarged) window. Skipped while an
+        # entry/exit scale animation is running so we don't fight its
+        # interpolated setFixedSize.
+        if self._active_anim_group is None:
+            self._panel.fit_to(self.width(), self.height())
         px = (self.width() - self._panel.PANEL_W) // 2
         py = (self.height() - self._panel.PANEL_H) // 2
         self._panel.move(max(0, px), max(0, py))

@@ -58,10 +58,24 @@ def test_panel_centered_in_overlay(qapp):
     assert overlay._panel.y() == max(0, expected_y)
 
 
-def test_panel_pinned_dimensions_match_spec(qapp):
-    overlay, _ = _open_overlay(qapp)
-    assert overlay._panel.width() == 620
-    assert overlay._panel.height() == 470
+def test_panel_responsive_dimensions(qapp):
+    """The panel sizes itself to the window instead of staying a fixed
+    620x470 modal: clamped to MAX on a large window, available-MARGIN on a
+    mid window, and never wider than the overlay on a small one."""
+    from utils.widgets.customization_overlay import _Panel
+
+    # Large window -> clamps to the maximum editor size.
+    big, _ = _open_overlay(qapp, parent_size=(1200, 1100))
+    assert big._panel.width() == _Panel.MAX_W
+    assert big._panel.height() == _Panel.MAX_H
+
+    # Mid window -> panel = available - margin (between MIN and MAX).
+    mid, _ = _open_overlay(qapp, parent_size=(800, 640))
+    assert mid._panel.width() == max(_Panel.MIN_W, 800 - _Panel.MARGIN)
+
+    # Narrow window -> shrinks to fit rather than clipping past the edge.
+    small, _ = _open_overlay(qapp, parent_size=(575, 770))
+    assert small._panel.width() <= 575 - 16
 
 
 def test_pill_row_contents_match_ttr(qapp):
