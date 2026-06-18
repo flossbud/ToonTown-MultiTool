@@ -32,7 +32,7 @@ def test_set_draft_triggers_repaint_request(qapp):
     assert w.draft() == {"accent": "#56c856"}
 
 
-def test_fixed_size_in_range(qapp):
+def test_fixed_size_matches_constants(qapp):
     """The preview occupies a fixed footprint suitable for the dialog."""
     from utils.widgets.card_preview_widget import CardPreviewWidget, _PREVIEW_W, _PREVIEW_H
     w = CardPreviewWidget(game="ttr", toon_name="Flossbud", draft={})

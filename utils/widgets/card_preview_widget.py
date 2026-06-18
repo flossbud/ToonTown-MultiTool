@@ -198,8 +198,8 @@ class CardPreviewWidget(QWidget):
         grad.setColorAt(1.0, bot_col)
         p.fillPath(card_path, grad)
 
-        # 5px inner accent border: stroke at 2× width clipped to path so
-        # only the inner half survives — matching _QuadCardBackground's border.
+        # 5px inner accent border: stroke at 2x width clipped to path so
+        # only the inner half survives, matching _QuadCardBackground's border.
         p.save()
         p.setClipPath(card_path)
         p.setBrush(Qt.NoBrush)
@@ -312,8 +312,8 @@ class CardPreviewWidget(QWidget):
         fs.setBold(False)
         p.setFont(fs)
         p.drawText(
-            QRect(text_x, text_top + 30, text_w, 18),
+            QRect(text_x, text_top + 24 + 6, text_w, 18),
             Qt.AlignVCenter | Qt.AlignLeft,
-            "♥  ——      ◆  ——",
+            "♥  --      ◆  --",
         )
         p.end()
