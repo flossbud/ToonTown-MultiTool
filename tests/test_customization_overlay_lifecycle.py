@@ -177,12 +177,21 @@ def test_panel_populate_ttr_section_set(qapp):
 
 
 def test_panel_populate_cc_section_set(qapp):
+    """CC panel has no nav sections; gallery is right pane, controls are in the rail."""
+    from utils.widgets.race_icon_grid import RaceIconGridWidget
+    from utils.widgets.toon_customization_sections import _CardSection, _PortraitSection
+    from PySide6.QtWidgets import QWidget
     panel, _ = _build_panel(qapp, game="cc")
-    names = panel.section_names()
-    assert "Icon" in names
-    assert "Card" in names
-    assert "Portrait" in names
-    assert "Toon" not in names
+    assert panel.section_names() == []
+    assert "Toon" not in panel.section_names()
+    # Portrait (Disc) and Card controls are inside the rail.
+    rail = panel.findChild(QWidget, "panelRail")
+    assert rail is not None
+    assert len(rail.findChildren(_PortraitSection)) == 1
+    assert len(rail.findChildren(_CardSection)) == 1
+    # Race gallery is the right pane (not inside the rail).
+    grid = panel.findChild(RaceIconGridWidget)
+    assert grid is not None
 
 
 def test_panel_pill_buttons_match_sections(qapp):

@@ -67,9 +67,13 @@ def test_ttr_has_no_icon_section(qapp):
     assert "Icon" not in panel.section_names()
 
 
-def test_cc_has_icon_section(qapp):
+def test_cc_has_race_gallery_in_right_pane(qapp):
+    """CC panel has no nav sections; the race gallery lives in the right pane."""
+    from utils.widgets.race_icon_grid import RaceIconGridWidget
     panel, _, _, _parent = _build(qapp, game="cc")
-    assert "Icon" in panel.section_names()
+    assert panel.section_names() == []
+    grid = panel.findChild(RaceIconGridWidget)
+    assert grid is not None
 
 
 def test_save_writes_draft_to_manager(qapp):

@@ -74,6 +74,7 @@ def test_pill_row_contents_match_ttr(qapp):
 
 
 def test_pill_row_contents_match_cc(qapp):
+    """CC uses no nav pills; section_names() is empty and pill_group has no buttons."""
     from utils.widgets.customization_overlay import ToonCustomizationOverlay
     from PySide6.QtGui import QColor
     parent = QWidget()
@@ -85,8 +86,5 @@ def test_pill_row_contents_match_cc(qapp):
         0, "cc", "Flossbud", _FakeManager(),
         None, QColor("#d9a04e"), "dog",
     )
-    names = [
-        overlay._panel._pill_group.button(i).text()
-        for i in range(len(overlay._panel.section_names()))
-    ]
-    assert names == ["Icon", "Card", "Portrait"]
+    assert overlay._panel.section_names() == []
+    assert len(overlay._panel._pill_group.buttons()) == 0

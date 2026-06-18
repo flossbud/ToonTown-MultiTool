@@ -301,38 +301,108 @@ class _Panel(QFrame):
         )
         prev_layout.addWidget(self._preview, alignment=Qt.AlignHCenter)
 
-        # Build sections per game.
+        # Build layout per game.
         if self._game == "cc":
-            skin = self._skin or QColor("#d9a04e")
-            grid = RaceIconGridWidget(
-                skin_color=skin,
-                selected_stem=self._draft.get("icon_stem"),
-                auto_stem=self._auto_stem,
-            )
-            grid.selection_changed.connect(self._on_icon_stem)
-            self._add_section("Icon", grid)
+            self._build_cc_layout(saved_store=saved_store)
+        else:
+            self._build_ttr_layout(saved_store=saved_store)
 
-        if self._game == "ttr":
-            from utils.toon_customization_resolve import (
-                resolve_pose, resolve_portrait_transform,
-            )
-            current_pose = resolve_pose(self._draft, "portrait")
-            pose_section = _PoseSection(self._dna, current_pose, saved_store=saved_store)
-            pose_section.pose_changed.connect(self._on_pose_changed)
-            pose_section.transform_changed.connect(self._on_transform_changed)
-            pose_section.silhouette_outline_changed.connect(self._on_silhouette_outline)
-            pose_section.silhouette_shadow_changed.connect(self._on_silhouette_shadow)
-            pose_section.set_transform_from_draft(resolve_portrait_transform(self._draft))
-            sil = (self._draft.get("portrait") or {}).get("silhouette") or {}
-            outline = sil.get("outline") or {}
-            pose_section.set_silhouette_outline(
-                outline.get("color"), outline.get("width"),
-            )
-            shadow = sil.get("shadow") or {}
-            pose_section.set_silhouette_shadow(
-                shadow.get("color"), shadow.get("softness"),
-            )
-            self._add_section("Toon", pose_section)
+    def _build_cc_layout(self, *, saved_store=None) -> None:
+        """CC: purpose-built panel with no nav.
+
+        Left rail  - live preview (already installed) + Disc controls
+                     (_PortraitSection) + Card controls (_CardSection),
+                     wrapped in a scroll area so they fit.
+        Right pane - RaceIconGridWidget (gallery with pinned Auto row).
+        """
+        # Clear AlignTop so the scroll area can fill the rail below the preview.
+        self.pill_row.setAlignment(Qt.Alignment(0))
+
+        skin = self._skin or QColor("#d9a04e")
+
+        portrait_section = _PortraitSection(
+            self._draft.get("portrait") or {}, saved_store=saved_store
+        )
+        portrait_section.color_changed.connect(self._on_portrait_color)
+        portrait_section.gradient_changed.connect(self._on_portrait_gradient)
+        portrait_section.pattern_changed.connect(self._on_portrait_pattern)
+
+        card_section = _CardSection(
+            self._draft.get("accent"),
+            self._draft.get("body"),
+            saved_store=saved_store,
+        )
+        card_section.accent_changed.connect(self._on_accent_changed)
+        card_section.body_changed.connect(self._on_body_changed)
+
+        # Pack both control groups into a scrollable rail widget.
+        rail_controls = QWidget()
+        rail_controls.setStyleSheet("background: transparent;")
+        ctrl_vbox = QVBoxLayout(rail_controls)
+        ctrl_vbox.setContentsMargins(8, 8, 8, 8)
+        ctrl_vbox.setSpacing(6)
+
+        disc_lbl = QLabel("Disc")
+        disc_lbl.setStyleSheet(
+            "color: #aab; font-size: 11px; font-weight: 600;"
+        )
+        ctrl_vbox.addWidget(disc_lbl)
+        ctrl_vbox.addWidget(portrait_section)
+
+        card_lbl = QLabel("Card")
+        card_lbl.setStyleSheet(
+            "color: #aab; font-size: 11px; font-weight: 600;"
+        )
+        ctrl_vbox.addWidget(card_lbl)
+        ctrl_vbox.addWidget(card_section)
+        ctrl_vbox.addStretch(1)
+
+        rail_scroll = QScrollArea()
+        rail_scroll.setWidget(rail_controls)
+        rail_scroll.setWidgetResizable(True)
+        rail_scroll.setFrameShape(QScrollArea.NoFrame)
+        rail_scroll.setStyleSheet("QScrollArea { background: transparent; }")
+        self.pill_row.addWidget(rail_scroll)
+
+        # Right pane: race icon gallery with pinned Auto row.
+        grid = RaceIconGridWidget(
+            skin_color=skin,
+            selected_stem=self._draft.get("icon_stem"),
+            auto_stem=self._auto_stem,
+        )
+        grid.selection_changed.connect(self._on_icon_stem)
+        self.section_stack.addWidget(grid)
+
+        # Register for the public setter API (no nav entries for CC).
+        self._sections["Icon"] = grid
+        self._sections["Card"] = card_section
+        self._sections["Portrait"] = portrait_section
+
+    def _build_ttr_layout(self, *, saved_store=None) -> None:
+        """TTR: preview + nav pills in the rail; section_stack on the right."""
+        # Restore AlignTop so nav pills pack at the top.
+        self.pill_row.setAlignment(Qt.AlignTop)
+
+        from utils.toon_customization_resolve import (
+            resolve_pose, resolve_portrait_transform,
+        )
+        current_pose = resolve_pose(self._draft, "portrait")
+        pose_section = _PoseSection(self._dna, current_pose, saved_store=saved_store)
+        pose_section.pose_changed.connect(self._on_pose_changed)
+        pose_section.transform_changed.connect(self._on_transform_changed)
+        pose_section.silhouette_outline_changed.connect(self._on_silhouette_outline)
+        pose_section.silhouette_shadow_changed.connect(self._on_silhouette_shadow)
+        pose_section.set_transform_from_draft(resolve_portrait_transform(self._draft))
+        sil = (self._draft.get("portrait") or {}).get("silhouette") or {}
+        outline = sil.get("outline") or {}
+        pose_section.set_silhouette_outline(
+            outline.get("color"), outline.get("width"),
+        )
+        shadow = sil.get("shadow") or {}
+        pose_section.set_silhouette_shadow(
+            shadow.get("color"), shadow.get("softness"),
+        )
+        self._add_section("Toon", pose_section)
 
         card_section = _CardSection(
             self._draft.get("accent"),
@@ -343,7 +413,9 @@ class _Panel(QFrame):
         card_section.body_changed.connect(self._on_body_changed)
         self._add_section("Card", card_section)
 
-        portrait_section = _PortraitSection(self._draft.get("portrait") or {}, saved_store=saved_store)
+        portrait_section = _PortraitSection(
+            self._draft.get("portrait") or {}, saved_store=saved_store
+        )
         portrait_section.color_changed.connect(self._on_portrait_color)
         portrait_section.gradient_changed.connect(self._on_portrait_gradient)
         portrait_section.pattern_changed.connect(self._on_portrait_pattern)
@@ -384,6 +456,10 @@ class _Panel(QFrame):
         self.section_stack.addWidget(scroll)
 
     def section_names(self) -> list[str]:
+        # CC uses a purpose-built layout with no nav; sections are held only
+        # for the public setter API and are not navigable.
+        if getattr(self, "_game", None) == "cc":
+            return []
         return list(self._sections.keys())
 
     def section(self, name: str) -> QWidget:
