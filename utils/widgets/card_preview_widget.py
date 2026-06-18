@@ -6,14 +6,17 @@ from __future__ import annotations
 
 from typing import Optional
 
-from PySide6.QtCore import QRect, QSize, Qt
-from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtCore import QRect, QRectF, QSize, Qt
+from PySide6.QtGui import (
+    QColor, QFont, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap,
+)
 from PySide6.QtWidgets import QWidget
 
+from utils.cc_badge_paint import complementary_bg_color, paint_cc_badge
+from utils.color_math import darken_rgb
 from utils.toon_customization_resolve import (
     resolve_accent,
     resolve_body,
-    resolve_circle_outline,
     resolve_portrait_brush,
     resolve_portrait_pattern,
     resolve_silhouette_outline,
@@ -23,14 +26,20 @@ from utils.toon_pattern_assets import tinted_pattern_pixmap
 import utils.portrait_effects as portrait_effects
 
 
-_PREVIEW_W = 360
-_PREVIEW_H = 72
+_PREVIEW_W = 300
+_PREVIEW_H = 176
+
+# Geometry constants (proportional to live card in _compact_layout.py)
+_CARD_RADIUS = 20       # matches CARD_RADIUS in the live card
+_CARD_BORDER_W = 5      # matches CARD_BORDER in the live card
+_PORTRAIT_D = 80        # portrait circle diameter (mini scale of PORTRAIT=172)
+_PORTRAIT_X = 12        # left margin for portrait
+_PORTRAIT_RING = 3      # accent ring width around portrait circle
 
 # Brand color defaults mirror tabs/multitoon/_compact_layout.set_card_brand
 _TTR_BRAND = "#4A8FE7"
 _CC_BRAND = "#F26D21"
 _SLOT_DEFAULT_BG = "#4a4a4a"
-_CARD_BG = "#1a1d29"
 _TEXT = "#e8e8f0"
 _TEXT_DIM = "#9a9aa8"
 
@@ -52,12 +61,16 @@ class CardPreviewWidget(QWidget):
         parent=None,
         *,
         dna: Optional[str] = None,
+        skin_color: Optional[QColor] = None,
+        auto_stem: Optional[str] = None,
     ):
         super().__init__(parent)
         self._game = game
         self._toon_name = toon_name
         self._draft: dict = dict(draft)
         self._dna = dna
+        self._skin: Optional[QColor] = skin_color
+        self._auto_stem: Optional[str] = auto_stem
         self._pose_pixmap: Optional[QPixmap] = None
         self._silhouette_cache: dict[tuple, tuple] = {}
         # key: (id(pose_pm), pose_size_tuple, outline_color or None, outline_width,
@@ -68,7 +81,8 @@ class CardPreviewWidget(QWidget):
         self.setMaximumSize(_PREVIEW_W, _PREVIEW_H)
 
         # Subscribe to the fetcher for this widget's lifetime.
-        if self._dna:
+        # CC toons have no pose artwork; skip the fetch entirely for CC.
+        if self._dna and self._game != "cc":
             from utils.rendition_poses import RenditionPoseFetcher
             self._fetcher = RenditionPoseFetcher.instance()
             self._fetcher.pose_ready.connect(self._on_pose_ready)
@@ -168,144 +182,159 @@ class CardPreviewWidget(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         p.setRenderHint(QPainter.SmoothPixmapTransform)
-        rect = self.rect()
+        w, h = self.width(), self.height()
 
-        # Card background. When the user has picked a non-default body
-        # color the card paints it at full opacity so the on-card result
-        # matches the swatch. Default body (None) keeps the theme card bg.
-        body = resolve_body(self._draft)
-        if body is not None:
-            p.fillRect(rect, QColor(body))
-        else:
-            p.fillRect(rect, QColor(_CARD_BG))
-
-        # Accent stripe (top 5 px)
         accent = resolve_accent(self._draft, _brand_fallback(self._game))
-        p.fillRect(QRect(rect.left(), rect.top(), rect.width(), 5), accent)
+        body_override = resolve_body(self._draft)
 
-        # Portrait circle (40 px, vertically centered, 10 px from left)
-        circle_d = 40
-        circle_rect = QRect(
-            10,
-            (rect.height() - circle_d) // 2 + 1,
-            circle_d,
-            circle_d,
-        )
-        portrait_brush = resolve_portrait_brush(
-            self._draft, QColor(_SLOT_DEFAULT_BG)
-        )
-        p.setPen(Qt.NoPen)
-        p.setBrush(portrait_brush)
-        p.drawEllipse(circle_rect)
+        # Card body: rounded rectangle (no concave cutout in the preview)
+        # with a deep accent gradient, mirroring _QuadCardBackground.
+        # If body override is set, it drives the gradient base instead of accent.
+        base = QColor(body_override) if body_override is not None else accent
+        card_path = QPainterPath()
+        card_path.addRoundedRect(QRectF(0.5, 0.5, w - 1, h - 1), _CARD_RADIUS, _CARD_RADIUS)
 
-        pattern = resolve_portrait_pattern(self._draft)
-        if pattern is not None:
-            name, color = pattern
-            pm = tinted_pattern_pixmap(name, color, tile_size=24)
-            if not pm.isNull():
-                path = QPainterPath()
-                path.addEllipse(circle_rect)
+        # Body gradient: darken_rgb(base, 0.28) top → darken_rgb(base, 0.14) bottom,
+        # same formula as _QuadCardBackground for the lit (non-dimmed) state.
+        top_col = darken_rgb(base, 0.28)
+        bot_col = darken_rgb(base, 0.14)
+        grad = QLinearGradient(0, 0, w * 0.38, h)
+        grad.setColorAt(0.0, top_col)
+        grad.setColorAt(1.0, bot_col)
+        p.fillPath(card_path, grad)
+
+        # 5px inner accent border: stroke at 2x width clipped to path so
+        # only the inner half survives, matching _QuadCardBackground's border.
+        p.save()
+        p.setClipPath(card_path)
+        p.setBrush(Qt.NoBrush)
+        p.setPen(QPen(accent, _CARD_BORDER_W * 2))
+        p.drawPath(card_path)
+        p.restore()
+
+        # Portrait circle (80 px, vertically centred, _PORTRAIT_X from left)
+        circle_y = (h - _PORTRAIT_D) // 2
+        circle_rect = QRect(_PORTRAIT_X, circle_y, _PORTRAIT_D, _PORTRAIT_D)
+
+        if self._game == "cc":
+            # CC toons: paint the race badge (background + silhouette) via
+            # the shared badge painter. portrait_brush and pattern come from
+            # the same resolvers used for TTR so draft overrides propagate.
+            skin = self._skin or QColor("#5b8cde")
+            asset_stem = self._draft.get("icon_stem") or self._auto_stem
+            portrait_brush = resolve_portrait_brush(
+                self._draft, complementary_bg_color(skin)
+            )
+            pattern = resolve_portrait_pattern(self._draft)
+            paint_cc_badge(
+                p,
+                circle_rect,
+                skin,
+                asset_stem,
+                slot_number=1,
+                portrait_brush=portrait_brush,
+                pattern=pattern,
+            )
+        else:
+            # TTR toons: portrait disc + optional pattern + pose pixmap.
+
+            # Portrait fill (solid base from draft resolver)
+            portrait_brush = resolve_portrait_brush(
+                self._draft, QColor(_SLOT_DEFAULT_BG)
+            )
+            p.setPen(Qt.NoPen)
+            p.setBrush(portrait_brush)
+            p.drawEllipse(circle_rect)
+
+            # Portrait pattern overlay (clipped to circle)
+            pattern = resolve_portrait_pattern(self._draft)
+            if pattern is not None:
+                pat_name, pat_color = pattern
+                pm = tinted_pattern_pixmap(pat_name, pat_color, tile_size=24)
+                if not pm.isNull():
+                    clip = QPainterPath()
+                    clip.addEllipse(circle_rect)
+                    p.save()
+                    p.setClipPath(clip)
+                    for ty in range(circle_rect.top(), circle_rect.bottom() + 1, 24):
+                        for tx in range(circle_rect.left(), circle_rect.right() + 1, 24):
+                            p.drawPixmap(tx, ty, pm)
+                    p.restore()
+
+            # Pose pixmap (clipped to portrait circle, with draft transform)
+            if self._pose_pixmap is not None and not self._pose_pixmap.isNull():
+                from utils.toon_customization_resolve import resolve_portrait_transform
+                zoom, off_x, off_y, rot = resolve_portrait_transform(self._draft)
+                ox = int(off_x * circle_rect.width())
+                oy = int(off_y * circle_rect.height())
+                # Bake zoom into the downscale so the 512 source resamples once.
+                final_w = max(1, round(circle_rect.width() * zoom))
+                final_h = max(1, round(circle_rect.height() * zoom))
+                final_size = QSize(final_w, final_h)
+                pose_clip = QPainterPath()
+                pose_clip.addEllipse(circle_rect)
                 p.save()
-                p.setClipPath(path)
-                # Tile the pattern across the circle area.
-                for y in range(circle_rect.top(), circle_rect.bottom() + 1, 24):
-                    for x in range(circle_rect.left(), circle_rect.right() + 1, 24):
-                        p.drawPixmap(x, y, pm)
+                p.setClipPath(pose_clip)
+                p.translate(circle_rect.center())
+                p.rotate(rot)
+                # Offset is in unzoomed circle-fractions; scale by zoom so
+                # pan-while-zoomed matches the pre-refactor painter.scale path.
+                p.translate(ox * zoom, oy * zoom)
+                scaled = self._pose_pixmap.scaled(
+                    final_size, Qt.KeepAspectRatio, Qt.SmoothTransformation,
+                )
+                outline_pm, shadow_pm, sx, sy = self._get_silhouette_bundle(
+                    self._pose_pixmap, final_size,
+                )
+                if shadow_pm is not None and not shadow_pm.isNull():
+                    pad_x = (shadow_pm.width() - scaled.width()) // 2
+                    pad_y = (shadow_pm.height() - scaled.height()) // 2
+                    p.drawPixmap(
+                        -scaled.width() // 2 - pad_x + sx,
+                        -scaled.height() // 2 - pad_y + sy,
+                        shadow_pm,
+                    )
+                if outline_pm is not None and not outline_pm.isNull():
+                    p.drawPixmap(-scaled.width() // 2, -scaled.height() // 2, outline_pm)
+                p.drawPixmap(-scaled.width() // 2, -scaled.height() // 2, scaled)
                 p.restore()
 
-        # Pose pixmap layer (clipped to portrait circle, with transform).
-        if self._pose_pixmap is not None and not self._pose_pixmap.isNull():
-            from utils.toon_customization_resolve import resolve_portrait_transform
-            zoom, off_x, off_y, rot = resolve_portrait_transform(self._draft)
-            ox = int(off_x * circle_rect.width())
-            oy = int(off_y * circle_rect.height())
-            # Bake zoom into the downscale so the 512 source resamples once
-            # to its final visible size (no two-stage scale-then-zoom).
-            final_w = max(1, round(circle_rect.width() * zoom))
-            final_h = max(1, round(circle_rect.height() * zoom))
-            final_size = QSize(final_w, final_h)
-            path = QPainterPath()
-            path.addEllipse(circle_rect)
-            p.save()
-            p.setClipPath(path)
-            p.translate(circle_rect.center())
-            p.rotate(rot)
-            # Offset is in unzoomed circle-fractions; scale by zoom so the
-            # pan-while-zoomed behavior matches the pre-refactor painter.scale path.
-            p.translate(ox * zoom, oy * zoom)
-            scaled = self._pose_pixmap.scaled(
-                final_size,
-                Qt.KeepAspectRatio,
-                Qt.SmoothTransformation,
-            )
-            outline_pm, shadow_pm, sx, sy = self._get_silhouette_bundle(
-                self._pose_pixmap, final_size,
-            )
-            if shadow_pm is not None and not shadow_pm.isNull():
-                pad_x = (shadow_pm.width() - scaled.width()) // 2
-                pad_y = (shadow_pm.height() - scaled.height()) // 2
-                p.drawPixmap(
-                    -scaled.width() // 2 - pad_x + sx,
-                    -scaled.height() // 2 - pad_y + sy,
-                    shadow_pm,
-                )
-            if outline_pm is not None and not outline_pm.isNull():
-                p.drawPixmap(
-                    -scaled.width() // 2, -scaled.height() // 2, outline_pm,
-                )
-            p.drawPixmap(-scaled.width() // 2, -scaled.height() // 2, scaled)
-            p.restore()
+        # Accent portrait ring: drawn after the portrait content so it is
+        # always visible at the circle edge, mirroring _PortraitFrame's
+        # accent ring treatment. Drawn for both TTR and CC.
+        ring_inset = _PORTRAIT_RING // 2
+        p.setPen(QPen(accent, _PORTRAIT_RING))
+        p.setBrush(Qt.NoBrush)
+        p.drawEllipse(circle_rect.adjusted(ring_inset, ring_inset, -ring_inset, -ring_inset))
 
-        # Circle outline (drawn on top of pose, outside the clip).
-        circle_outline = resolve_circle_outline(self._draft)
-        if circle_outline is not None:
-            color, width = circle_outline
-            inset = max(0, width // 2)
-            p.setPen(QPen(color, width))
-            p.setBrush(Qt.NoBrush)
-            p.drawEllipse(circle_rect.adjusted(inset, inset, -inset, -inset))
+        # Text column: right of the portrait circle
+        text_x = _PORTRAIT_X + _PORTRAIT_D + 12
+        text_w = w - text_x - 10
+        # Centre the two-line block alongside the portrait
+        text_block_h = 24 + 6 + 18   # name + gap + stats
+        text_top = circle_y + (_PORTRAIT_D - text_block_h) // 2
 
-        # Toon name
+        # Toon name (bold, white)
         p.setPen(QColor(_TEXT))
-        f: QFont = p.font()
-        f.setPixelSize(16)
-        f.setBold(True)
-        p.setFont(f)
+        fn: QFont = p.font()
+        fn.setPixelSize(16)
+        fn.setBold(True)
+        p.setFont(fn)
         p.drawText(
-            QRect(60, 6, rect.width() - 70, 24),
+            QRect(text_x, text_top, text_w, 24),
             Qt.AlignVCenter | Qt.AlignLeft,
             self._toon_name or "Toon",
         )
 
-        # Chip on right (outlined pill, accent border + text)
-        chip_text = "TTR" if self._game == "ttr" else ("CC" if self._game == "cc" else "")
-        if chip_text:
-            chip_w = 38
-            chip_h = 18
-            chip_rect = QRect(
-                rect.width() - chip_w - 8,
-                (rect.height() - chip_h) // 2,
-                chip_w,
-                chip_h,
-            )
-            p.setPen(accent)
-            p.setBrush(Qt.NoBrush)
-            p.drawRoundedRect(chip_rect, 9, 9)
-            f2: QFont = p.font()
-            f2.setPixelSize(10)
-            f2.setBold(True)
-            p.setFont(f2)
-            p.drawText(chip_rect, Qt.AlignCenter, chip_text)
-
-        # Subtitle row
+        # Laff / beans placeholder row (dim, smaller font)
         p.setPen(QColor(_TEXT_DIM))
-        f3: QFont = p.font()
-        f3.setPixelSize(11)
-        f3.setBold(False)
-        p.setFont(f3)
+        fs: QFont = p.font()
+        fs.setPixelSize(11)
+        fs.setBold(False)
+        p.setFont(fs)
         p.drawText(
-            QRect(60, rect.height() - 26, rect.width() - 70, 20),
+            QRect(text_x, text_top + 24 + 6, text_w, 18),
             Qt.AlignVCenter | Qt.AlignLeft,
-            "Live preview",
+            "♥  --      ◆  --",
         )
         p.end()

@@ -67,9 +67,13 @@ def test_ttr_has_no_icon_section(qapp):
     assert "Icon" not in panel.section_names()
 
 
-def test_cc_has_icon_section(qapp):
+def test_cc_has_race_gallery_in_right_pane(qapp):
+    """CC panel has no nav sections; the race gallery lives in the right pane."""
+    from utils.widgets.race_icon_grid import RaceIconGridWidget
     panel, _, _, _parent = _build(qapp, game="cc")
-    assert "Icon" in panel.section_names()
+    assert panel.section_names() == []
+    grid = panel.findChild(RaceIconGridWidget)
+    assert grid is not None
 
 
 def test_save_writes_draft_to_manager(qapp):
@@ -92,25 +96,10 @@ def test_reset_all_empties_draft(qapp):
     assert panel.draft() == {}
 
 
-def test_reset_all_clears_portrait_circle_outline_visual_state(qapp):
-    """Reset all must clear the new outline picker visual state on
-    _PortraitSection, otherwise subsequent edits re-introduce stale
-    color into the draft."""
-    panel, _, _, _parent = _build(qapp, existing={
-        "portrait": {"outline": {"color": "#ff0000", "width": "thick"}},
-    })
-    panel.reset_all()
-    sec = panel.section("Portrait")
-    color, _width = sec.current_circle_outline()
-    assert color is None
-    assert panel.draft() == {}
-
-
 def test_reset_all_clears_silhouette_visual_state_on_pose_section(qapp, monkeypatch, tmp_path):
-    """Reset all must also clear the Adjust view's silhouette swatch
-    state if the adjust view was opened. Without this, the swatch row
-    retains the old color and the next chip click re-writes silhouette
-    back into the cleared draft."""
+    """Reset all must also clear the inline framing view's silhouette swatch
+    state. Without this, the swatch row retains the old color and the next
+    chip click re-writes silhouette back into the cleared draft."""
     monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
     _reset_singletons()
     panel, _, _, _parent = _build(qapp, dna="dna-test-123", existing={
@@ -120,11 +109,11 @@ def test_reset_all_clears_silhouette_visual_state_on_pose_section(qapp, monkeypa
         }},
     })
     sec = panel.section("Toon")
-    sec._ensure_adjust_view()  # force the lazy view to exist
+    # Inline framing view is always built when DNA is set.
     panel.reset_all()
     # Draft is empty.
     assert panel.draft() == {}
-    # Adjust view's pickers are at default.
+    # Framing view's pickers are at default.
     adjust = sec._adjust_view
     assert adjust._sil_outline_color_row.current() is None
     assert adjust._sil_shadow_color_row.current() is None
@@ -275,8 +264,8 @@ def test_ttr_panel_has_toon_section_first(qapp):
     panel, _, _, _parent = _build(qapp, game="ttr")
     names = panel.section_names()
     assert names[0] == "Toon"
-    # Order: Toon, Portrait, Accent, Body
-    assert names == ["Toon", "Portrait", "Accent", "Body"]
+    # Order: Toon, Card, Portrait
+    assert names == ["Toon", "Card", "Portrait"]
 
 
 def test_cc_panel_has_no_toon_section(qapp):
@@ -420,15 +409,17 @@ def test_pose_adjust_preview_wheel_changes_zoom(qapp):
 
 
 def test_pose_adjust_view_initial_transform(qapp):
+    from utils.saved_colors import SavedColorsStore
     from utils.widgets.toon_customization_sections import _PoseAdjustView
-    v = _PoseAdjustView(initial=(1.0, 0.0, 0.0, 0.0))
+    v = _PoseAdjustView(initial=(1.0, 0.0, 0.0, 0.0), saved_store=SavedColorsStore(None))
     assert v.transform() == (1.0, 0.0, 0.0, 0.0)
 
 
 def test_pose_adjust_view_zoom_slider_emits(qapp):
     from PySide6.QtTest import QSignalSpy
+    from utils.saved_colors import SavedColorsStore
     from utils.widgets.toon_customization_sections import _PoseAdjustView
-    v = _PoseAdjustView(initial=(1.0, 0.0, 0.0, 0.0))
+    v = _PoseAdjustView(initial=(1.0, 0.0, 0.0, 0.0), saved_store=SavedColorsStore(None))
     spy = QSignalSpy(v.transform_changed)
     v.set_zoom(1.5)
     assert v.transform()[0] == 1.5
@@ -437,8 +428,9 @@ def test_pose_adjust_view_zoom_slider_emits(qapp):
 
 def test_pose_adjust_view_rotate_slider_emits(qapp):
     from PySide6.QtTest import QSignalSpy
+    from utils.saved_colors import SavedColorsStore
     from utils.widgets.toon_customization_sections import _PoseAdjustView
-    v = _PoseAdjustView(initial=(1.0, 0.0, 0.0, 0.0))
+    v = _PoseAdjustView(initial=(1.0, 0.0, 0.0, 0.0), saved_store=SavedColorsStore(None))
     spy = QSignalSpy(v.transform_changed)
     v.set_rotate(30.0)
     assert v.transform()[3] == 30.0
@@ -447,8 +439,9 @@ def test_pose_adjust_view_rotate_slider_emits(qapp):
 
 def test_pose_adjust_view_nudge_emits(qapp):
     from PySide6.QtTest import QSignalSpy
+    from utils.saved_colors import SavedColorsStore
     from utils.widgets.toon_customization_sections import _PoseAdjustView
-    v = _PoseAdjustView(initial=(1.0, 0.0, 0.0, 0.0))
+    v = _PoseAdjustView(initial=(1.0, 0.0, 0.0, 0.0), saved_store=SavedColorsStore(None))
     spy = QSignalSpy(v.transform_changed)
     v.nudge_right()
     z, ox, oy, r = v.transform()
@@ -457,51 +450,56 @@ def test_pose_adjust_view_nudge_emits(qapp):
     assert spy.count() == 1
 
 
-def test_pose_adjust_view_back_button_emits_back_requested(qapp):
-    from PySide6.QtTest import QSignalSpy
+def test_pose_adjust_view_has_no_back_button(qapp):
+    """Back button is removed in the one-pane layout: framing is always inline."""
+    from utils.saved_colors import SavedColorsStore
     from utils.widgets.toon_customization_sections import _PoseAdjustView
-    v = _PoseAdjustView(initial=(1.0, 0.0, 0.0, 0.0))
-    spy = QSignalSpy(v.back_requested)
-    v.click_back()
-    assert spy.count() == 1
+    v = _PoseAdjustView(initial=(1.0, 0.0, 0.0, 0.0), saved_store=SavedColorsStore(None))
+    assert not hasattr(v, "back_requested")
+    assert not hasattr(v, "_back_btn")
 
 
 def test_pose_adjust_view_reset_restores_defaults_and_emits(qapp):
     from PySide6.QtTest import QSignalSpy
+    from utils.saved_colors import SavedColorsStore
     from utils.widgets.toon_customization_sections import _PoseAdjustView
-    v = _PoseAdjustView(initial=(1.5, 0.3, -0.2, 45.0))
+    v = _PoseAdjustView(initial=(1.5, 0.3, -0.2, 45.0), saved_store=SavedColorsStore(None))
     spy = QSignalSpy(v.transform_changed)
     v.click_reset()
     assert v.transform() == (1.0, 0.0, 0.0, 0.0)
     assert spy.count() >= 1
 
 
-def test_pose_section_starts_in_grid_mode(qapp):
+def test_pose_section_framing_always_accessible(qapp):
+    """In the one-pane layout, framing controls are always inline; no
+    Adjust button needed to reveal them."""
     panel, _, _, _parent = _build(qapp, game="ttr", dna="dna-test")
     sec = panel.section("Toon")
-    assert sec.is_adjusting() is False
+    assert sec.adjust_view() is not None
 
 
-def test_pose_section_adjust_button_switches_mode(qapp):
+def test_pose_section_expander_toggles(qapp):
+    """Expand reveals the secondary tile grid; collapse hides it again."""
     panel, _, _, _parent = _build(qapp, game="ttr", dna="dna-test")
     sec = panel.section("Toon")
-    sec.click_adjust()
-    assert sec.is_adjusting() is True
+    assert not sec.is_expanded()
+    sec.toggle_expand()
+    assert sec.is_expanded()
+    sec.toggle_expand()
+    assert not sec.is_expanded()
 
 
-def test_pose_section_back_returns_to_grid(qapp):
+def test_pose_section_primary_tiles_count(qapp):
+    """Primary row always holds exactly 5 tiles."""
     panel, _, _, _parent = _build(qapp, game="ttr", dna="dna-test")
     sec = panel.section("Toon")
-    sec.click_adjust()
-    assert sec.is_adjusting() is True
-    sec.click_back()
-    assert sec.is_adjusting() is False
+    assert len(sec.primary_tiles()) == 5
 
 
 def test_pose_section_adjust_writes_transform_to_draft(qapp):
+    """Framing controls are inline; zoom change writes through to the draft."""
     panel, mgr, overlay, _parent = _build(qapp, game="ttr", dna="dna-test")
     sec = panel.section("Toon")
-    sec.click_adjust()
     sec.adjust_view().set_zoom(1.5)
     assert panel.draft().get("portrait", {}).get("transform", {}).get("zoom") == 1.5
     overlay.close_and_save()
@@ -510,25 +508,24 @@ def test_pose_section_adjust_writes_transform_to_draft(qapp):
 
 
 def test_pose_section_reset_removes_transform_from_draft(qapp):
+    """Reset on the inline framing view clears the transform from the draft."""
     panel, _, _, _parent = _build(
         qapp, game="ttr", dna="dna-test",
         existing={"portrait": {"transform": {"zoom": 1.5, "offset_x": 0.2}}},
     )
     sec = panel.section("Toon")
-    sec.click_adjust()
     sec.adjust_view().click_reset()
     # Reset writes defaults; defaults are NOT stored (kept entry minimal).
     portrait = panel.draft().get("portrait", {})
     assert "transform" not in portrait
 
 
-def test_pose_section_adjust_button_disabled_without_dna(qapp):
+def test_pose_section_no_framing_without_dna(qapp):
+    """Placeholder mode: no tiles, no inline framing controls."""
     panel, _, _, _parent = _build(qapp, game="ttr")  # dna=None
     sec = panel.section("Toon")
-    # Placeholder mode; adjust button is either hidden or disabled.
-    # The contract: click_adjust() is a no-op in that mode.
-    sec.click_adjust()
-    assert sec.is_adjusting() is False
+    assert sec.adjust_view() is None
+    assert sec.has_placeholder()
 
 
 def test_chip_row_emits_value_changed_on_click(qapp):
@@ -579,49 +576,19 @@ def _reset_singletons():
     RenditionPoseFetcher._instance = None
 
 
-def test_portrait_section_emits_circle_outline_changed_with_color_and_width(qapp):
+def test_portrait_section_no_longer_exposes_circle_outline_api(qapp):
+    """circle_outline_changed Signal and set_circle_outline are removed;
+    fill + pattern signals must still be present."""
+    from utils.saved_colors import SavedColorsStore
     from utils.widgets.toon_customization_sections import _PortraitSection
-    from PySide6.QtTest import QSignalSpy
-    sec = _PortraitSection({})
-    spy = QSignalSpy(sec.circle_outline_changed)
-    sec.set_circle_outline("#ffd84a", "medium")
-    assert spy.count() == 1
-    args = spy.at(0)
-    assert args[0] == "#ffd84a"
-    assert args[1] == "medium"
-
-
-def test_portrait_section_set_circle_outline_to_none_clears_chip_state(qapp):
-    from utils.widgets.toon_customization_sections import _PortraitSection
-    sec = _PortraitSection({"outline": {"color": "#ff0000", "width": "thick"}})
-    # Initial state from `current`
-    assert sec.current_circle_outline() == ("#ff0000", "thick")
-    sec.set_circle_outline(None, None)
-    assert sec.current_circle_outline() == (None, "thick")  # width retained
-
-
-def test_panel_circle_outline_color_writes_to_draft(qapp, monkeypatch, tmp_path):
-    monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
-    _reset_singletons()
-    from utils.toon_customizations_manager import ToonCustomizationsManager
-    mgr = ToonCustomizationsManager()
-    panel, _, _, _parent = _build(qapp, manager=mgr, game="ttr")
-    panel.set_circle_outline("#ffd84a", "thick")
-    draft = panel.draft()
-    assert draft["portrait"]["outline"] == {"color": "#ffd84a", "width": "thick"}
-
-
-def test_panel_circle_outline_default_color_removes_outline_from_draft(qapp, monkeypatch, tmp_path):
-    monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
-    _reset_singletons()
-    from utils.toon_customizations_manager import ToonCustomizationsManager
-    mgr = ToonCustomizationsManager()
-    mgr.set("ttr", "Flossbud", {"portrait": {"outline": {"color": "#fff", "width": "medium"}}})
-    panel, _, _, _parent = _build(qapp, manager=mgr, game="ttr",
-                                   existing={"portrait": {"outline": {"color": "#fff", "width": "medium"}}})
-    assert panel.draft()["portrait"]["outline"]["color"] == "#fff"
-    panel.set_circle_outline(None, None)
-    assert "outline" not in (panel.draft().get("portrait") or {})
+    sec = _PortraitSection({}, saved_store=SavedColorsStore(None))
+    assert not hasattr(sec, "circle_outline_changed")
+    assert not hasattr(sec, "set_circle_outline")
+    assert not hasattr(sec, "current_circle_outline")
+    # Fill and pattern signals remain.
+    assert hasattr(sec, "color_changed")
+    assert hasattr(sec, "gradient_changed")
+    assert hasattr(sec, "pattern_changed")
 
 
 def test_pose_section_emits_silhouette_outline_changed(qapp):
@@ -711,7 +678,7 @@ def test_panel_removing_shadow_preserves_existing_outline(qapp, monkeypatch, tmp
 
 
 def test_adjust_view_reset_clears_silhouette_alongside_transform(qapp, monkeypatch, tmp_path):
-    """The in-Adjust-view Reset button must wipe both the transform AND
+    """The inline framing Reset button must wipe both the transform AND
     the silhouette outline/shadow under portrait."""
     monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
     _reset_singletons()
@@ -725,8 +692,71 @@ def test_adjust_view_reset_clears_silhouette_alongside_transform(qapp, monkeypat
         },
     })
     sec = panel.section("Toon")
-    sec._ensure_adjust_view()
+    # Inline framing view is always built when DNA is set.
     sec._adjust_view.click_reset()
     portrait = panel.draft().get("portrait") or {}
     assert "transform" not in portrait
     assert "silhouette" not in portrait
+
+
+def test_reset_all_resets_framing_sliders_to_neutral(qapp, monkeypatch, tmp_path):
+    """reset_all must reset the zoom/rotate sliders to the default neutral
+    position (zoom=1.0, rotate=0). Without this, the sliders keep their
+    prior values and the next nudge re-applies a stale transform."""
+    monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
+    _reset_singletons()
+    panel, _, _, _parent = _build(
+        qapp,
+        game="ttr",
+        dna="dna-test-sliders",
+        existing={
+            "portrait": {
+                "transform": {"zoom": 2.0, "offset_x": 0.3, "offset_y": 0.0, "rotate": 45.0}
+            }
+        },
+    )
+    sec = panel.section("Toon")
+    adjust = sec._adjust_view
+    # Confirm the sliders loaded the saved values.
+    assert adjust._zoom_slider.value() == 200
+    assert adjust._rot_slider.value() == 45
+
+    panel.reset_all()
+
+    # After reset the zoom slider must be back at 100 (== 1.0x).
+    assert adjust._zoom_slider.value() == 100
+    # Rotate slider must be back at 0.
+    assert adjust._rot_slider.value() == 0
+
+
+def test_set_transform_from_draft_syncs_sliders(qapp):
+    """set_transform_from_draft must sync the zoom slider, rotate slider, and
+    their value labels in addition to the preview. Regression: the view is
+    built eagerly with defaults (1.0, 0, 0, 0), then set_transform_from_draft
+    is called after construction. Before the fix, the sliders stayed at their
+    default positions while the preview showed the correct saved frame; the
+    first slider nudge then snapped the preview back to the stale slider value."""
+    from utils.widgets.toon_customization_sections import _PoseSection
+
+    sec = _PoseSection(dna="dna-test-slider-sync", current_pose="portrait")
+    # The _PoseAdjustView is always built when a DNA is set.
+    assert sec._adjust_view is not None
+
+    # Seed a non-default framing transform after construction, exactly as the
+    # overlay does (customization_overlay.py line 325).
+    sec.set_transform_from_draft((1.5, 0.1, -0.05, 30.0))
+
+    adjust = sec._adjust_view
+
+    # Preview must reflect the saved transform.
+    z, ox, oy, r = adjust._preview.transform()
+    assert abs(z - 1.5) < 1e-6
+    assert abs(r - 30.0) < 1e-6
+
+    # Zoom slider: range 50-300, value = zoom * 100.
+    assert adjust._zoom_slider.value() == 150
+    assert adjust._zoom_value.text() == "1.50x"
+
+    # Rotate slider: range -180..180, value = int(rot).
+    assert adjust._rot_slider.value() == 30
+    assert adjust._rot_value.text() == "30°"

@@ -1,8 +1,9 @@
 """In-app overlay that replaces the floating ToonCustomizationDialog.
 
 Owns:
-  - _Panel:        the editor card (header / preview / pill nav /
-                   section stack / footer)
+  - _Panel:        the editor card, a two-pane shell: header (top) /
+                   body [ left rail (preview + vertical section nav) |
+                   section stack ] / footer (bottom)
   - ToonCustomizationOverlay: the host widget. Public API:
                               open_for, request_close,
                               close_and_discard, close_and_save.
@@ -49,23 +50,24 @@ from utils.motion import reduced_motion_enabled
 from utils.widgets.backdrop_blur import BackdropBlur as _BackdropBlur
 from utils.widgets.card_preview_widget import CardPreviewWidget
 from utils.widgets.race_icon_grid import RaceIconGridWidget
+from utils.saved_colors import SavedColorsStore
 from utils.widgets.toon_customization_sections import (
+    _CardSection,
     _PortraitSection,
     _PoseSection,
-    _SimpleColorSection,
 )
 
 
 class _Panel(QFrame):
-    """The editor card. Header / preview / pill nav / section stack /
+    """The editor card. Header / [rail: preview + nav | section stack] /
     footer. Emits high-level intent signals that the overlay routes."""
 
-    PANEL_W = 543
-    PANEL_H = 738
+    PANEL_W = 620
+    PANEL_H = 470
     HEADER_H = 44
     FOOTER_H = 52
     PREVIEW_H = 180
-    PILL_ROW_H = 40
+    RAIL_W = 200
 
     close_requested = Signal()
     cancel_requested = Signal()
@@ -97,9 +99,7 @@ class _Panel(QFrame):
         outer.setSpacing(0)
 
         outer.addWidget(self._build_header())
-        outer.addWidget(self._build_preview_placeholder())
-        outer.addWidget(self._build_pill_row())
-        outer.addWidget(self._build_section_stack(), 1)
+        outer.addWidget(self._build_body(), 1)
         outer.addWidget(self._build_footer())
 
     # -- subwidgets ------------------------------------------------------
@@ -137,23 +137,52 @@ class _Panel(QFrame):
         row.addWidget(self.close_btn)
         return bar
 
-    def _build_preview_placeholder(self) -> QWidget:
-        # CardPreviewWidget is added by populate() in a later task;
-        # for now this is a fixed-height slot the layout reserves.
+    def _build_body(self) -> QWidget:
+        """Horizontal split: left rail (preview + nav) | right section_stack."""
+        body = QWidget()
+        body.setStyleSheet("background: transparent;")
+        row = QHBoxLayout(body)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(0)
+        row.addWidget(self._build_rail())
+        row.addWidget(self._build_section_stack(), 1)
+        return body
+
+    def _build_rail(self) -> QWidget:
+        """Left rail: preview host on top, vertical nav list below."""
+        rail = QFrame()
+        rail.setObjectName("panelRail")
+        rail.setFixedWidth(self.RAIL_W)
+        rail.setStyleSheet(
+            "QFrame#panelRail {"
+            "  background: rgba(20, 23, 36, 210);"
+            "  border-right: 1px solid #2a2f45;"
+            "}"
+        )
+        self._rail = rail
+
+        vbox = QVBoxLayout(rail)
+        vbox.setContentsMargins(0, 0, 0, 0)
+        vbox.setSpacing(0)
+
+        # Preview host: CardPreviewWidget is installed by populate().
         self.preview_host = QWidget()
         self.preview_host.setFixedHeight(self.PREVIEW_H)
-        return self.preview_host
+        vbox.addWidget(self.preview_host)
 
-    def _build_pill_row(self) -> QWidget:
-        row_widget = QWidget()
-        row_widget.setFixedHeight(self.PILL_ROW_H)
-        self.pill_row = QHBoxLayout(row_widget)
-        self.pill_row.setContentsMargins(16, 5, 16, 5)
-        self.pill_row.setSpacing(6)
-        self._pill_group = QButtonGroup(row_widget)
+        # Vertical nav list.
+        nav_widget = QWidget()
+        nav_widget.setStyleSheet("background: transparent;")
+        self.pill_row = QVBoxLayout(nav_widget)
+        self.pill_row.setContentsMargins(8, 8, 8, 8)
+        self.pill_row.setSpacing(4)
+        self.pill_row.setAlignment(Qt.AlignTop)
+        self._pill_group = QButtonGroup(nav_widget)
         self._pill_group.setExclusive(True)
-        self._pill_group.idClicked.connect(self._on_pill_clicked)
-        return row_widget
+        self._pill_group.idClicked.connect(self._on_nav_clicked)
+        vbox.addWidget(nav_widget, 1)
+
+        return rail
 
     def _build_section_stack(self) -> QWidget:
         self.section_stack = QStackedWidget()
@@ -213,7 +242,7 @@ class _Panel(QFrame):
             "QPushButton:hover { background: #5d8cff; }"
         )
 
-    def _on_pill_clicked(self, index: int) -> None:
+    def _on_nav_clicked(self, index: int) -> None:
         self.section_stack.setCurrentIndex(index)
         btn = self._pill_group.button(index)
         if btn is not None:
@@ -230,6 +259,7 @@ class _Panel(QFrame):
         dna: Optional[str] = None,
         skin_color: Optional[QColor] = None,
         auto_stem: Optional[str] = None,
+        saved_store=None,
     ) -> None:
         self._game = game
         self._toon_name = toon_name
@@ -268,78 +298,148 @@ class _Panel(QFrame):
             prev_layout.setContentsMargins(0, 0, 0, 0)
         self._preview = CardPreviewWidget(
             self._game, self._toon_name, self._draft, dna=self._dna,
+            skin_color=self._skin, auto_stem=self._auto_stem,
         )
         prev_layout.addWidget(self._preview, alignment=Qt.AlignHCenter)
 
-        # Build sections per game.
+        # Build layout per game.
         if self._game == "cc":
-            skin = self._skin or QColor("#d9a04e")
-            grid = RaceIconGridWidget(
-                skin_color=skin,
-                selected_stem=self._draft.get("icon_stem"),
-                auto_stem=self._auto_stem,
-            )
-            grid.selection_changed.connect(self._on_icon_stem)
-            self._add_section("Icon", grid)
+            self._build_cc_layout(saved_store=saved_store)
+        else:
+            self._build_ttr_layout(saved_store=saved_store)
 
-        if self._game == "ttr":
-            from utils.toon_customization_resolve import (
-                resolve_pose, resolve_portrait_transform,
-            )
-            current_pose = resolve_pose(self._draft, "portrait")
-            pose_section = _PoseSection(self._dna, current_pose)
-            pose_section.pose_changed.connect(self._on_pose_changed)
-            pose_section.transform_changed.connect(self._on_transform_changed)
-            pose_section.silhouette_outline_changed.connect(self._on_silhouette_outline)
-            pose_section.silhouette_shadow_changed.connect(self._on_silhouette_shadow)
-            pose_section.set_transform_from_draft(resolve_portrait_transform(self._draft))
-            sil = (self._draft.get("portrait") or {}).get("silhouette") or {}
-            outline = sil.get("outline") or {}
-            pose_section.set_silhouette_outline(
-                outline.get("color"), outline.get("width"),
-            )
-            shadow = sil.get("shadow") or {}
-            pose_section.set_silhouette_shadow(
-                shadow.get("color"), shadow.get("softness"),
-            )
-            self._add_section("Toon", pose_section)
+    def _build_cc_layout(self, *, saved_store=None) -> None:
+        """CC: purpose-built panel with no nav.
 
-        portrait_section = _PortraitSection(self._draft.get("portrait") or {})
-        portrait_section.color_changed.connect(self._on_portrait_color)
-        portrait_section.gradient_changed.connect(self._on_portrait_gradient)
-        portrait_section.pattern_changed.connect(self._on_portrait_pattern)
-        portrait_section.circle_outline_changed.connect(self._on_circle_outline)
+        Left rail  - live preview (already installed) + Disc controls
+                     (_PortraitSection) + Card controls (_CardSection),
+                     wrapped in a scroll area so they fit.
+        Right pane - RaceIconGridWidget (gallery with pinned Auto row).
+        """
+        # Clear AlignTop so the scroll area can fill the rail below the preview.
+        self.pill_row.setAlignment(Qt.Alignment(0))
+
+        skin = self._skin or QColor("#d9a04e")
+
+        portrait_section = self._make_portrait_section(saved_store)
+        card_section = self._make_card_section(saved_store)
+
+        # Pack both control groups into a scrollable rail widget.
+        rail_controls = QWidget()
+        rail_controls.setStyleSheet("background: transparent;")
+        ctrl_vbox = QVBoxLayout(rail_controls)
+        ctrl_vbox.setContentsMargins(8, 8, 8, 8)
+        ctrl_vbox.setSpacing(6)
+
+        disc_lbl = QLabel("Disc")
+        disc_lbl.setStyleSheet(
+            "color: #aab; font-size: 11px; font-weight: 600;"
+        )
+        ctrl_vbox.addWidget(disc_lbl)
+        ctrl_vbox.addWidget(portrait_section)
+
+        card_lbl = QLabel("Card")
+        card_lbl.setStyleSheet(
+            "color: #aab; font-size: 11px; font-weight: 600;"
+        )
+        ctrl_vbox.addWidget(card_lbl)
+        ctrl_vbox.addWidget(card_section)
+        ctrl_vbox.addStretch(1)
+
+        rail_scroll = QScrollArea()
+        rail_scroll.setWidget(rail_controls)
+        rail_scroll.setWidgetResizable(True)
+        rail_scroll.setFrameShape(QScrollArea.NoFrame)
+        rail_scroll.setStyleSheet("QScrollArea { background: transparent; }")
+        self.pill_row.addWidget(rail_scroll)
+
+        # Right pane: race icon gallery with pinned Auto row.
+        grid = RaceIconGridWidget(
+            skin_color=skin,
+            selected_stem=self._draft.get("icon_stem"),
+            auto_stem=self._auto_stem,
+        )
+        grid.selection_changed.connect(self._on_icon_stem)
+        self.section_stack.addWidget(grid)
+
+        # Register for the public setter API (no nav entries for CC).
+        self._sections["Icon"] = grid
+        self._sections["Card"] = card_section
+        self._sections["Portrait"] = portrait_section
+
+    def _build_ttr_layout(self, *, saved_store=None) -> None:
+        """TTR: preview + nav pills in the rail; section_stack on the right."""
+        # Restore AlignTop so nav pills pack at the top.
+        self.pill_row.setAlignment(Qt.AlignTop)
+
+        from utils.toon_customization_resolve import (
+            resolve_pose, resolve_portrait_transform,
+        )
+        current_pose = resolve_pose(self._draft, "portrait")
+        pose_section = _PoseSection(self._dna, current_pose, saved_store=saved_store)
+        pose_section.pose_changed.connect(self._on_pose_changed)
+        pose_section.transform_changed.connect(self._on_transform_changed)
+        pose_section.silhouette_outline_changed.connect(self._on_silhouette_outline)
+        pose_section.silhouette_shadow_changed.connect(self._on_silhouette_shadow)
+        pose_section.set_transform_from_draft(resolve_portrait_transform(self._draft))
+        sil = (self._draft.get("portrait") or {}).get("silhouette") or {}
+        outline = sil.get("outline") or {}
+        pose_section.set_silhouette_outline(
+            outline.get("color"), outline.get("width"),
+        )
+        shadow = sil.get("shadow") or {}
+        pose_section.set_silhouette_shadow(
+            shadow.get("color"), shadow.get("softness"),
+        )
+        self._add_section("Toon", pose_section)
+
+        card_section = self._make_card_section(saved_store)
+        self._add_section("Card", card_section)
+
+        portrait_section = self._make_portrait_section(saved_store)
         self._add_section("Portrait", portrait_section)
-
-        accent_section = _SimpleColorSection(
-            "Accent (stripe + chip)", self._draft.get("accent"),
-        )
-        accent_section.color_changed.connect(self._on_accent_changed)
-        self._add_section("Accent", accent_section)
-
-        body_section = _SimpleColorSection(
-            "Body tint", self._draft.get("body"),
-        )
-        body_section.color_changed.connect(self._on_body_changed)
-        self._add_section("Body", body_section)
 
         if self._pill_group.buttons():
             self._pill_group.button(0).setChecked(True)
             self.section_stack.setCurrentIndex(0)
 
+    def _make_card_section(self, saved_store) -> "_CardSection":
+        """Build and signal-wire a _CardSection from the current draft."""
+        sec = _CardSection(
+            self._draft.get("accent"),
+            self._draft.get("body"),
+            saved_store=saved_store,
+        )
+        sec.accent_changed.connect(self._on_accent_changed)
+        sec.body_changed.connect(self._on_body_changed)
+        return sec
+
+    def _make_portrait_section(self, saved_store) -> "_PortraitSection":
+        """Build and signal-wire a _PortraitSection from the current draft."""
+        sec = _PortraitSection(
+            self._draft.get("portrait") or {}, saved_store=saved_store
+        )
+        sec.color_changed.connect(self._on_portrait_color)
+        sec.gradient_changed.connect(self._on_portrait_gradient)
+        sec.pattern_changed.connect(self._on_portrait_pattern)
+        return sec
+
     def _add_section(self, name: str, widget: QWidget) -> None:
         self._sections[name] = widget
         btn = QPushButton(name)
         btn.setCheckable(True)
-        btn.setFixedHeight(30)
+        btn.setFixedHeight(32)
         btn.setStyleSheet(
             "QPushButton {"
-            "  background: #353a52; color: #c8c8d0;"
-            "  border: none; border-radius: 8px; padding: 0 12px;"
-            "  font-size: 12px;"
+            "  background: transparent; color: #aab;"
+            "  border: none; border-radius: 6px; padding: 0 12px;"
+            "  font-size: 12px; text-align: left;"
             "}"
             "QPushButton:checked {"
-            "  background: #4a7cff; color: #ffffff;"
+            "  background: #2a3553; color: #ffffff;"
+            "}"
+            "QPushButton:hover:!checked {"
+            "  background: rgba(255, 255, 255, 18);"
             "}"
         )
         idx = self.section_stack.count()
@@ -355,6 +455,10 @@ class _Panel(QFrame):
         self.section_stack.addWidget(scroll)
 
     def section_names(self) -> list[str]:
+        # CC uses a purpose-built layout with no nav; sections are held only
+        # for the public setter API and are not navigable.
+        if getattr(self, "_game", None) == "cc":
+            return []
         return list(self._sections.keys())
 
     def section(self, name: str) -> QWidget:
@@ -366,25 +470,25 @@ class _Panel(QFrame):
     # -- Public setters used by tests + outside callers -----------------
 
     def set_body(self, hex_: Optional[str]) -> None:
-        body_section: _SimpleColorSection = self._sections["Body"]
-        body_section.set_current(hex_)
+        card_section: _CardSection = self._sections["Card"]
+        card_section.set_body(hex_)
         self._on_body_changed(hex_)
 
     def set_accent(self, hex_: Optional[str]) -> None:
-        accent_section: _SimpleColorSection = self._sections["Accent"]
-        accent_section.set_current(hex_)
+        card_section: _CardSection = self._sections["Card"]
+        card_section.set_accent(hex_)
         self._on_accent_changed(hex_)
 
     def reset_all(self) -> None:
         self._draft = {}
         for name, w in self._sections.items():
-            if isinstance(w, _SimpleColorSection):
-                w.set_current(None)
+            if isinstance(w, _CardSection):
+                w.set_accent(None)
+                w.set_body(None)
             elif isinstance(w, _PortraitSection):
                 w.set_color(None)
                 w.set_gradient(None)
                 w.set_pattern(None, None)
-                w.set_circle_outline(None, None)
             elif isinstance(w, _PoseSection):
                 for t in w.tiles():
                     t.set_selected(t.pose == "portrait")
@@ -392,6 +496,12 @@ class _Panel(QFrame):
                 if w._adjust_view is not None:
                     w._adjust_view.set_silhouette_outline_from_draft(None, None)
                     w._adjust_view.set_silhouette_shadow_from_draft(None, None)
+                # Reset framing sliders to neutral so the zoom/rotate controls
+                # reflect the cleared draft. Without this the sliders keep the
+                # previous values and the next nudge re-applies a stale zoom.
+                w.set_transform_from_draft((1.0, 0.0, 0.0, 0.0))
+            elif isinstance(w, RaceIconGridWidget):
+                w.select_auto()
         self._preview.set_draft(self._draft)
 
     def set_pose(self, pose: str) -> None:
@@ -432,11 +542,6 @@ class _Panel(QFrame):
         sec = self._sections["Portrait"]
         sec.set_pattern(name, color)
         self._on_portrait_pattern(name, color)
-
-    def set_circle_outline(self, hex_, width_key) -> None:
-        sec = self._sections["Portrait"]
-        sec.set_circle_outline(hex_, width_key)
-        self._on_circle_outline(hex_, width_key or "medium")
 
     def set_silhouette_outline(self, hex_, width_key) -> None:
         if "Toon" in self._sections:
@@ -562,21 +667,12 @@ class _Panel(QFrame):
         self._prune_portrait()
         self._preview.set_draft(self._draft)
 
-    def _on_circle_outline(self, hex_: Optional[str], width_key: str) -> None:
-        sub = self._portrait_subdict()
-        if hex_ is None:
-            sub.pop("outline", None)
-        else:
-            sub["outline"] = {"color": hex_, "width": width_key}
-        self._prune_portrait()
-        self._preview.set_draft(self._draft)
-
-
 class _ConfirmPrompt(QWidget):
     """Inline confirm prompt shown over the panel when the user
     requests close with unsaved changes. Slides over the preview
     area; styling intentionally matches the panel chrome."""
 
+    save_clicked = Signal()
     keep_clicked = Signal()
     discard_clicked = Signal()
 
@@ -594,33 +690,49 @@ class _ConfirmPrompt(QWidget):
         outer.setContentsMargins(20, 16, 20, 16)
         outer.setSpacing(12)
 
-        title = QLabel("Discard unsaved changes?")
+        title = QLabel("Unsaved changes")
         title.setStyleSheet(
             "color: #e8e8f0; font-size: 15px; font-weight: 600;"
         )
         outer.addWidget(title)
 
         body = QLabel(
-            "Your edits will be lost. Save first, or keep editing."
+            "Save your edits, keep editing, or discard and close."
         )
         body.setWordWrap(True)
         body.setStyleSheet("color: #c8c8d0; font-size: 12px;")
         outer.addWidget(body)
 
         row = QHBoxLayout()
+        row.setSpacing(8)
         row.addStretch(1)
-        self.keep_btn = QPushButton("Keep editing")
-        self.keep_btn.setFixedHeight(30)
-        self.keep_btn.setStyleSheet(
+
+        self.save_btn = QPushButton("Save")
+        self.save_btn.setFixedHeight(30)
+        self.save_btn.setStyleSheet(
             "QPushButton {"
             "  background: #4a7cff; color: #ffffff;"
             "  border: none; border-radius: 6px;"
             "  padding: 0 14px; font-size: 12px; font-weight: 600;"
             "}"
+            "QPushButton:hover { background: #5d8cff; }"
         )
-        self.keep_btn.setDefault(True)
+        self.save_btn.setDefault(True)
+        self.save_btn.clicked.connect(self.save_clicked)
+
+        self.keep_btn = QPushButton("Keep editing")
+        self.keep_btn.setFixedHeight(30)
+        self.keep_btn.setStyleSheet(
+            "QPushButton {"
+            "  background: transparent; color: #a0a8c0;"
+            "  border: 1px solid #4a5070; border-radius: 6px;"
+            "  padding: 0 14px; font-size: 12px;"
+            "}"
+            "QPushButton:hover { background: rgba(74, 80, 112, 60); }"
+        )
         self.keep_btn.clicked.connect(self.keep_clicked)
-        self.discard_btn = QPushButton("Discard changes")
+
+        self.discard_btn = QPushButton("Discard")
         self.discard_btn.setFixedHeight(30)
         self.discard_btn.setStyleSheet(
             "QPushButton {"
@@ -631,8 +743,76 @@ class _ConfirmPrompt(QWidget):
             "QPushButton:hover { background: rgba(231, 74, 74, 30); }"
         )
         self.discard_btn.clicked.connect(self.discard_clicked)
-        row.addWidget(self.discard_btn)
+
+        row.addWidget(self.save_btn)
         row.addWidget(self.keep_btn)
+        row.addWidget(self.discard_btn)
+        outer.addLayout(row)
+
+
+class _ResetConfirm(QWidget):
+    """Inline confirm prompt shown over the panel when the user clicks
+    'Reset all'. Slides over the preview area; styling matches the panel
+    chrome. Only on Reset does the caller clear the draft."""
+
+    reset_clicked = Signal()
+    cancel_clicked = Signal()
+
+    def __init__(self, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.setObjectName("ResetConfirmPrompt")
+        self.setStyleSheet(
+            "QWidget#ResetConfirmPrompt {"
+            "  background: rgba(31, 34, 48, 245);"
+            "  border: 1px solid #4a5070;"
+            "  border-radius: 10px;"
+            "}"
+        )
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(20, 16, 20, 16)
+        outer.setSpacing(12)
+
+        title = QLabel("Reset all customizations?")
+        title.setStyleSheet(
+            "color: #e8e8f0; font-size: 15px; font-weight: 600;"
+        )
+        outer.addWidget(title)
+
+        body = QLabel("This will clear all your edits for this toon.")
+        body.setWordWrap(True)
+        body.setStyleSheet("color: #c8c8d0; font-size: 12px;")
+        outer.addWidget(body)
+
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        row.addStretch(1)
+
+        self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn.setFixedHeight(30)
+        self.cancel_btn.setStyleSheet(
+            "QPushButton {"
+            "  background: transparent; color: #a0a8c0;"
+            "  border: 1px solid #4a5070; border-radius: 6px;"
+            "  padding: 0 14px; font-size: 12px;"
+            "}"
+            "QPushButton:hover { background: rgba(74, 80, 112, 60); }"
+        )
+        self.cancel_btn.clicked.connect(self.cancel_clicked)
+
+        self.reset_btn = QPushButton("Reset")
+        self.reset_btn.setFixedHeight(30)
+        self.reset_btn.setStyleSheet(
+            "QPushButton {"
+            "  background: transparent; color: #e74a4a;"
+            "  border: 1px solid #e74a4a; border-radius: 6px;"
+            "  padding: 0 14px; font-size: 12px;"
+            "}"
+            "QPushButton:hover { background: rgba(231, 74, 74, 30); }"
+        )
+        self.reset_btn.clicked.connect(self.reset_clicked)
+
+        row.addWidget(self.cancel_btn)
+        row.addWidget(self.reset_btn)
         outer.addLayout(row)
 
 
@@ -667,8 +847,14 @@ class ToonCustomizationOverlay(QWidget):
 
         self._confirm_prompt = _ConfirmPrompt(self)
         self._confirm_prompt.hide()
+        self._confirm_prompt.save_clicked.connect(self.close_and_save)
         self._confirm_prompt.keep_clicked.connect(self._on_confirm_keep)
         self._confirm_prompt.discard_clicked.connect(self._on_confirm_discard)
+
+        self._reset_confirm = _ResetConfirm(self)
+        self._reset_confirm.hide()
+        self._reset_confirm.reset_clicked.connect(self._on_reset_confirm_reset)
+        self._reset_confirm.cancel_clicked.connect(self._on_reset_confirm_cancel)
 
         self.hide()
 
@@ -683,20 +869,25 @@ class ToonCustomizationOverlay(QWidget):
         dna: Optional[str] = None,
         skin_color: Optional[QColor] = None,
         auto_stem: Optional[str] = None,
+        *,
+        settings=None,
     ) -> None:
         self._slot = slot
         self._game = game
         self._manager = manager
+        self._saved_store = SavedColorsStore(settings)
 
         self._panel.populate(
             game=game, toon_name=toon_name, manager=manager,
             dna=dna, skin_color=skin_color, auto_stem=auto_stem,
+            saved_store=self._saved_store,
         )
         self._original = deepcopy(self._panel.draft())
 
         self._refresh_geometry()
         self._refresh_backdrop_pixmap()
         self._confirm_prompt.hide()
+        self._reset_confirm.hide()
         self.show()
         self.raise_()
         self._panel.save_btn.setFocus()
@@ -747,7 +938,26 @@ class ToonCustomizationOverlay(QWidget):
         self.close_and_discard()
 
     def _on_reset_requested(self) -> None:
+        self._show_reset_confirm()
+
+    def _show_reset_confirm(self) -> None:
+        panel_geom = self._panel.geometry()
+        prompt_w = 380
+        prompt_h = 130
+        x = panel_geom.x() + (panel_geom.width() - prompt_w) // 2
+        y = panel_geom.y() + self._panel.HEADER_H + 30
+        self._reset_confirm.setGeometry(x, y, prompt_w, prompt_h)
+        self._reset_confirm.show()
+        self._reset_confirm.raise_()
+        self._reset_confirm.cancel_btn.setFocus()
+
+    def _on_reset_confirm_reset(self) -> None:
+        self._reset_confirm.hide()
         self._panel.reset_all()
+
+    def _on_reset_confirm_cancel(self) -> None:
+        self._reset_confirm.hide()
+        self._panel.setFocus()
 
     def _refresh_geometry(self) -> None:
         parent = self.parentWidget()

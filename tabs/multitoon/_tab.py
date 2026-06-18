@@ -420,8 +420,6 @@ class ToonPortraitWidget(QWidget):
             portrait = entry.get("portrait") if isinstance(entry, dict) else None
             if isinstance(portrait, dict) and (portrait.get("color") or portrait.get("gradient")):
                 brush = resolve_portrait_brush(entry, self._cc_skin)
-            from utils.toon_customization_resolve import resolve_circle_outline
-            circle_outline = resolve_circle_outline(entry)
             silhouette_outline_pm = None
             silhouette_shadow_pm = None
             silhouette_shadow_off = (0, 0)
@@ -439,7 +437,6 @@ class ToonPortraitWidget(QWidget):
                 p, rect, self._cc_skin, stem, self._slot,
                 portrait_brush=brush,
                 pattern=resolve_portrait_pattern(entry),
-                circle_outline=circle_outline,
                 silhouette_outline_pixmap=silhouette_outline_pm,
                 silhouette_shadow_pixmap=silhouette_shadow_pm,
                 silhouette_shadow_offset=silhouette_shadow_off,
@@ -544,20 +541,6 @@ class ToonPortraitWidget(QWidget):
                     p.setFont(font)
                     p.setPen(self._text)
                     p.drawText(self.rect(), Qt.AlignCenter, str(self._slot))
-
-            # Circle outline (drawn on top of pose, outside the clip).
-            from utils.toon_customization_resolve import resolve_circle_outline
-            outline = resolve_circle_outline(entry)
-            if outline is not None:
-                color, width = outline
-                inset = max(0, width / 2.0)
-                p.setPen(QPen(color, width))
-                p.setBrush(Qt.NoBrush)
-                p.drawEllipse(
-                    QPointF(cx, cy),
-                    r - inset,
-                    r - inset,
-                )
 
         # Unified pencil overlay: paints in any mode where _can_show_pencil
         # is True (TTR + CC + future games).
@@ -1113,6 +1096,41 @@ def compute_effective_chat_enabled(
     ]
 
 
+# Net-new keep-alive orange (the theme's accent_orange #c47a2a reads too brown
+# for this surface). Pairs with a lighter border tint. Used by the pinwheel
+# layout's lightning toggle + progress fill.
+KA_ORANGE = "#ff9500"
+KA_ORANGE_BORDER = "#ffb04d"
+
+
+def _pin_toggle_qss(accent: str, on: bool) -> str:
+    """QSS for a 34x36 pinwheel toggle button. Active fills with the toggle's
+    accent; inactive is a recessed dark chip. Icon colour is set separately
+    (QSS can't tint a QIcon)."""
+    if on:
+        return (
+            f"QPushButton {{ background: {accent}; border: 1px solid {accent};"
+            f" border-radius: 9px; }}"
+        )
+    return (
+        "QPushButton { background: rgba(0,0,0,0.24);"
+        " border: 1px solid rgba(0,0,0,0.30); border-radius: 9px; }"
+        "QPushButton:hover { background: rgba(255,255,255,0.10); }"
+        "QPushButton:disabled { background: rgba(0,0,0,0.30);"
+        " border: 1px solid rgba(0,0,0,0.30); }"
+    )
+
+
+def _pin_ka_off_qss() -> str:
+    """QSS for the 28px keep-alive lightning toggle in its off state."""
+    return (
+        "QPushButton { background: rgba(0,0,0,0.35);"
+        " border: 1px solid rgba(255,255,255,0.16); border-radius: 14px; }"
+        "QPushButton:disabled { background: rgba(0,0,0,0.35);"
+        " border: 1px solid rgba(255,255,255,0.10); }"
+    )
+
+
 class MultitoonTab(QWidget):
     _toon_names_ready  = Signal(list)
     _toon_styles_ready = Signal(list)
@@ -1475,6 +1493,14 @@ class MultitoonTab(QWidget):
         self._init_keep_alive_visibility()
 
     def set_layout_mode(self, mode: str) -> None:
+        # The Multitoon tab uses a single fluid pinwheel layout at every window
+        # size, so it ignores the window-size breakpoint that the main window
+        # applies to the Launcher and Settings tabs. The pinwheel ("compact")
+        # is always active; this is a no-op so a window grown past the
+        # breakpoint never swaps the Multitoon tab to the retired full layout.
+        return
+
+    def _legacy_set_layout_mode(self, mode: str) -> None:
         if mode == self._mode:
             return
         # Cancel any in-flight KA animations BEFORE swapping layouts. The
@@ -1781,45 +1807,17 @@ class MultitoonTab(QWidget):
         self.status_bar.apply_theme(c)
         self.update_service_button_style()
 
-        if is_dark:
-            toon_card_bg = c['bg_card_inner']
-            toon_card_border = c['border_muted']
-        else:
-            # In light mode, Full UI card surfaces are the source of truth.
-            toon_card_bg = c['bg_card']
-            toon_card_border = c['border_card']
-
-        # Toon cards
-        for i, card in enumerate(self.toon_cards):
-            card.setStyleSheet(f"""
-                QFrame {{
-                    background-color: {toon_card_bg};
-                    border-radius: 8px;
-                    border: 1px solid {toon_card_border};
-                }}
-            """)
-            name_label, status_dot = self.toon_labels[i]
-            # Direction D compact header: 21 px bold name, 14 px medium stats.
-            # px units match the setPixelSize() calls in _compact_layout.py so
-            # refresh_theme does not override those QFont objects with a
-            # pt-based font (Qt resolves pt and px font-size stylesheet rules
-            # into different QFont states; using px here keeps pixelSize()
-            # queryable in tests).
-            name_label.setStyleSheet(
-                f"font-size: 21px; font-weight: bold; color: {c['text_primary']}; "
-                f"background: none; border: none; padding-left: 6px;"
-            )
-            stat_style = (
-                f"border: none; background: transparent; font-weight: 500; "
-                f"font-size: 14px; color: {c['text_primary']}; "
-                f"padding: 0; min-height: 0;"
-            )
-            self.laff_labels[i].setStyleSheet(stat_style)
-            self.bean_labels[i].setStyleSheet(stat_style)
+        # Pinwheel cells are transparent: their visible chrome (the concave
+        # gradient body + accent border + glow) is painted by the layout, and
+        # the name/stats fonts + colours are owned by set_card_brand. Keep the
+        # cell frames clear so the painted background shows through.
+        for card in self.toon_cards:
+            obj = card.objectName() or "QFrame"
+            card.setStyleSheet(f"#{obj} {{ background: transparent; border: none; }}")
 
         # Progress bar track color
         for ka_bar in self.ka_progress_bars:
-            ka_bar.set_bg_color(c['border_muted'])
+            ka_bar.set_bg_color("#0d0d0d")
 
         for help_btn in self.help_buttons:
             help_btn.refresh_theme(c)
@@ -1861,223 +1859,71 @@ class MultitoonTab(QWidget):
 
     def apply_visual_state(self, index):
         c = self._c()
-        name_label, status_dot = self.toon_labels[index]
-        badge    = self.slot_badges[index]
         btn      = self.toon_buttons[index]
-        chat_btn = self.chat_buttons[index]
         selector = self.set_selectors[index]
         wids = self.window_manager.ttr_window_ids if hasattr(self, 'input_service') else []
         window_available = index < len(wids)
 
-        slot_colors = self._slot_colors(c)
         active = window_available and self.enabled_toons[index] and self.service_running
-        state_str = "off"
-        tooltip_str = "Not Found"
 
-        if active:
-            state_str = "active"
-            tooltip_str = "Connected"
-        elif window_available:
-            if self.keep_alive_enabled[index]:
-                state_str = "keep_alive"
-                tooltip_str = "Keep-Alive Active (Input Disabled)"
-            else:
-                state_str = "disabled"
-                tooltip_str = "Input Disabled"
-
-        status_dot.set_state(state_str, tooltip_str)
-        self.dot_state_changed.emit(index, state_str)
-
+        # Resolve the slot's game and scope the keyset selector to it.
         if window_available:
             game_tag = GameRegistry.instance().get_game_for_window(str(wids[index]))
-            self._apply_chip_for_slot(index, game_tag)
-            if game_tag in ("cc", "ttr"):
-                self._set_card_brand_for_slot(
-                    index, game_tag,
-                    enabled=self.enabled_toons[index] and self.service_running,
-                )
-            else:
-                self._set_card_brand_for_slot(index, None, enabled=False)
-            # Keep this toon's set selector scoped to its game's set list.
-            if hasattr(self, "set_selectors") and index < len(self.set_selectors):
+            if game_tag not in ("cc", "ttr"):
+                game_tag = None
+            if index < len(self.set_selectors):
                 self.set_selectors[index].set_toon_game(game_tag)
         else:
+            game_tag = None
             self.game_badges[index].hide()
-            self._set_card_brand_for_slot(index, None, enabled=False)
 
-        # -- Slot badge --
-        if window_available and self.service_running:
-            badge.set_colors(slot_colors[index], "white")
+        # Header session-status signal. The pinwheel card's own status dot is
+        # owned by the layout (green when the toon is broadcasting, hidden
+        # otherwise); this signal feeds the window-chrome session indicator.
+        if active:
+            state_str = "active"
+        elif window_available and self.keep_alive_enabled[index]:
+            state_str = "keep_alive"
+        elif window_available:
+            state_str = "disabled"
         else:
-            badge.set_colors(c['slot_dim'], c['text_muted'])
+            state_str = "off"
+        self.dot_state_changed.emit(index, state_str)
 
-        service_and_window = self.service_running and window_available
+        # ── Per-control pinwheel styling. Each helper is the single
+        # style-writer for its control; the active layout's whole-card dim
+        # treatment desaturates them in place when the card is off/stopped. ──
+        from utils.icon_factory import make_nav_power
+        btn.setText("")
+        btn.setEnabled(window_available and self.service_running)
+        ink = QColor("#ffffff") if active else QColor(255, 255, 255, 209)
+        btn.setIcon(make_nav_power(17, ink))
+        btn.setStyleSheet(_pin_toggle_qss(c['accent_green'], active))
 
-        if not service_and_window:
-            # All controls disabled
-            btn.setEnabled(False)
-            btn.setText("Enable")
-            btn.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {c['btn_disabled']};
-                    color: {c['text_disabled']};
-                    border: none; border-radius: 6px; font-size: 12px;
-                }}
-                QPushButton:disabled {{
-                    background-color: {c['btn_disabled']};
-                    color: {c['text_disabled']};
-                    border: none; border-radius: 6px;
-                    /* Qt QSS does not support the 'opacity' property — it is
-                       silently ignored. The disabled visual distinction is
-                       fully carried by the btn_disabled/text_disabled tokens
-                       above; do not add 'opacity' here. */
-                }}
-            """)
-            chat_btn.setEnabled(False)
-            chat_btn.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {c['btn_disabled']};
-                    color: {c['text_disabled']};
-                    border: none; border-radius: 6px;
-                }}
-            """)
-            ka_btn = self.keep_alive_buttons[index]
-            ka_btn.setEnabled(False)
-            ka_btn.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {c['btn_disabled']};
-                    color: {c['text_disabled']};
-                    border: none; border-radius: 6px;
-                }}
-            """)
-            selector.setEnabled(False)
-
-        elif self.enabled_toons[index]:
-            # Toon enabled — full controls
-            btn.setEnabled(True)
-            btn.setText("Enabled")
-            btn.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {c['accent_green']};
-                    color: {c['text_on_accent']}; font-size: 12px; font-weight: bold;
-                    border: 2px solid {c['accent_green_border']};
-                    border-radius: 6px;
-                }}
-                QPushButton:hover {{
-                    background-color: {c['accent_green_hover']};
-                    border: 2px solid {c['accent_green_hover_border']};
-                }}
-            """)
-            self._apply_keep_alive_btn_style(index, c)
-            self._apply_chat_btn_style(index, c)
-            selector.setEnabled(True)
-
-        else:
-            # Toon available but not enabled
-            btn.setEnabled(True)
-            btn.setText("Enable")
-            btn.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {c['toon_btn_inactive_bg']};
-                    color: {c['text_primary']}; font-size: 12px;
-                    border: 1px solid {c['toon_btn_inactive_border']};
-                    border-radius: 6px;
-                }}
-                QPushButton:hover {{
-                    background-color: {c['toon_btn_inactive_hover']};
-                    border: 1px solid {c['toon_btn_inactive_hover_border']};
-                }}
-            """)
-            self._apply_keep_alive_btn_style(index, c)
-            chat_btn.setEnabled(False)
-            chat_btn.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {c['btn_disabled']};
-                    color: {c['text_disabled']};
-                    border: none; border-radius: 6px;
-                }}
-            """)
-            selector.setEnabled(False)
-
-        # Click sync button is state-driven (service states), not driven by
-        # the toon-enable branches above; one resolver call per repaint.
+        self._apply_chat_btn_style(index, c)
+        self._apply_keep_alive_btn_style(index, c)
         self._apply_click_sync_btn_style(index, c)
+        selector.setEnabled(window_available and self.service_running)
 
-        # Re-brand the card stripe (forward fill on enable, cross-fade
-        # back when disabled). Pulls game from the slot's visible game
-        # badge - same pattern as _CompactLayout.populate's initial pass.
-        compact = getattr(self, "_compact", None)
-        if compact is not None:
-            badge = (
-                self.game_badges[index]
-                if index < len(self.game_badges)
-                else None
-            )
-            game = None
-            if badge is not None and not badge.isHidden():
-                game = "cc" if badge.text() == "CC" else "ttr"
-            self._set_card_brand_for_slot(
-                index, game,
-                enabled=self.enabled_toons[index] and self.service_running,
-            )
-
-        # Disabled / off state opacity. Qt's disabled palette alone
-        # doesn't read as "off" against the body-tinted wrapper, so we
-        # fade controls when they are inert. Chat tracks the KA button
-        # at 70% in BOTH its disabled state AND its enabled-but-off
-        # state (the two sit next to each other and should match
-        # visually) - it only renders at full opacity when chat is
-        # actively broadcasting. Enable + Selector stay at 50% when
-        # setEnabled(False) so they read as more clearly inert.
-        # The KA button has its own opacity logic in
-        # _apply_keep_alive_btn_style (driven by keep_alive_enabled,
-        # not isEnabled) and is intentionally not handled here.
-        chat_active = chat_btn.isEnabled() and self.chat_enabled[index]
-        self._set_widget_opacity(chat_btn, 1.0 if chat_active else 0.7)
-        # Enable button: full opacity only when actively enabled (green
-        # "Enabled" state). Both off states fade to 50%:
-        #   - branch 1: no window/service, Qt-disabled, "Enable" grey
-        #   - branch 3: window+service present but toon not toggled on,
-        #     Qt-enabled but visually grey "Enable"
-        btn_active = (
-            btn.isEnabled()
-            and self.enabled_toons[index]
-            and self.service_running
+        # Hand the whole-card render (chrome, portrait, dim, status dot) to the
+        # active layout.
+        self._set_card_brand_for_slot(
+            index, game_tag,
+            enabled=self.enabled_toons[index] and self.service_running,
         )
-        self._set_widget_opacity(btn, 1.0 if btn_active else 0.85)
-        # Selector keeps the Qt-disabled-only rule (no enabled-but-off
-        # equivalent — when enabled, it is always interactive).
-        self._set_widget_opacity(selector, 0.5 if not selector.isEnabled() else 1.0)
 
     def _apply_chat_btn_style(self, index, c):
         chat_btn = self.chat_buttons[index]
-        chat_btn.setEnabled(True)
-        if self.chat_enabled[index]:
-            chat_btn.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {c['accent_blue_btn']};
-                    color: {c['text_on_accent']};
-                    border: 2px solid {c['accent_blue_btn_border']};
-                    border-radius: 6px;
-                }}
-                QPushButton:hover {{
-                    background-color: {c['accent_blue_btn_hover']};
-                    border: 2px solid {c['accent_blue_btn_border']};
-                }}
-            """)
-        else:
-            chat_btn.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {c['toon_btn_inactive_bg']};
-                    color: {c['text_muted']};
-                    border: 1px solid {c['toon_btn_inactive_border']};
-                    border-radius: 6px;
-                }}
-                QPushButton:hover {{
-                    background-color: {c['toon_btn_inactive_hover']};
-                    border: 1px solid {c['toon_btn_inactive_hover_border']};
-                }}
-            """)
+        wids = self.window_manager.ttr_window_ids if hasattr(self, 'input_service') else []
+        window_available = index < len(wids)
+        # Chat is only meaningful when the toon itself is broadcasting.
+        usable = window_available and self.service_running and self.enabled_toons[index]
+        chat_btn.setText("")
+        chat_btn.setEnabled(usable)
+        chat_btn.setIcon(make_chat_icon(17))
+        chat_btn.setStyleSheet(
+            _pin_toggle_qss(c['accent_blue_btn'], usable and self.chat_enabled[index])
+        )
 
     @Slot(bool)
     def _on_chat_state_changed(self, active):
@@ -2195,76 +2041,43 @@ class MultitoonTab(QWidget):
 
     def _apply_keep_alive_btn_style(self, index, c):
         ka_btn = self.keep_alive_buttons[index]
+        bar = self.ka_progress_bars[index] if index < len(self.ka_progress_bars) else None
+        wids = self.window_manager.ttr_window_ids if hasattr(self, 'input_service') else []
+        window_available = index < len(wids)
+        usable = window_available and self.service_running
+        if bar:
+            bar.set_bg_color("#0d0d0d")
         if not self._keep_alive_globally_enabled():
             ka_btn.setEnabled(False)
             ka_btn.setToolTip(
                 "Keep-Alive is disabled. Enable it in Settings → Keep-Alive."
             )
-            ka_btn.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {c['btn_disabled']};
-                    color: {c['text_disabled']};
-                    border: none; border-radius: 6px;
-                }}
-            """)
-            bar = self.ka_progress_bars[index] if index < len(self.ka_progress_bars) else None
+            ka_btn.setIcon(make_lightning_icon(13, QColor(255, 255, 255, 90)))
+            ka_btn.setStyleSheet(_pin_ka_off_qss())
             if bar:
-                bar.set_fill_color(c.get('text_muted', '#888888'))
-            self._set_widget_opacity(ka_btn, 1.0)
+                bar.set_fill_color(KA_ORANGE)
+                bar.set_progress(0.0)
             return
-        ka_btn.setEnabled(True)
+        ka_btn.setEnabled(usable)
         ka_btn.setToolTip("Toggle keep-alive for this toon")
         is_rf = getattr(self, 'rapid_fire_enabled', [False]*4)[index]
-        bar = self.ka_progress_bars[index] if index < len(self.ka_progress_bars) else None
-        if self.keep_alive_enabled[index]:
-            if is_rf:
-                ka_btn.setStyleSheet(f"""
-                    QPushButton {{
-                        background-color: {c['accent_red']};
-                        color: {c['text_on_accent']};
-                        border: 2px solid {c['accent_red_border']};
-                        border-radius: 6px;
-                    }}
-                    QPushButton:hover {{
-                        background-color: {c['accent_red_hover']};
-                        border: 2px solid {c['accent_red_border']};
-                    }}
-                """)
-                if bar:
-                    bar.set_fill_color("#E05252")  # red for rapid fire
-            else:
-                ka_btn.setStyleSheet(f"""
-                    QPushButton {{
-                        background-color: {c['accent_orange']};
-                        color: {c['text_on_accent']};
-                        border: 2px solid {c['accent_orange_border']};
-                        border-radius: 6px;
-                    }}
-                    QPushButton:hover {{
-                        background-color: {c['accent_orange_hover']};
-                        border: 2px solid {c['accent_orange_border']};
-                    }}
-                """)
-                if bar:
-                    bar.set_fill_color("#e0943a")  # orange to match keep-alive button
-            self._set_widget_opacity(ka_btn, 1.0)
+        if self.keep_alive_enabled[index] and usable:
+            fill = "#E05252" if is_rf else KA_ORANGE
+            border = "#ef8d8d" if is_rf else KA_ORANGE_BORDER
+            ka_btn.setIcon(make_lightning_icon(13, QColor("#ffffff")))
+            ka_btn.setStyleSheet(
+                f"QPushButton {{ background: {fill}; border: 1px solid {border};"
+                f" border-radius: 14px; }}"
+            )
+            if bar:
+                bar.set_fill_color(fill)
         else:
-            ka_btn.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {c['toon_btn_inactive_bg']};
-                    color: {c['text_muted']};
-                    border: 1px solid {c['toon_btn_inactive_border']};
-                    border-radius: 6px;
-                }}
-                QPushButton:hover {{
-                    background-color: {c['toon_btn_inactive_hover']};
-                    border: 1px solid {c['toon_btn_inactive_hover_border']};
-                }}
-            """)
-            # Idle state: KA is globally enabled but this toon's KA is
-            # toggled off. 70% opacity so the button reads as "available
-            # but quiet" against the body-tinted wrapper around it.
-            self._set_widget_opacity(ka_btn, 0.7)
+            ka_btn.setIcon(make_lightning_icon(13, QColor(255, 255, 255, 128)))
+            ka_btn.setStyleSheet(_pin_ka_off_qss())
+            # Fill width is 0 when keep-alive is off.
+            if bar:
+                bar.set_fill_color(KA_ORANGE)
+                bar.set_progress(0.0)
 
     # ── Glow animations ────────────────────────────────────────────────────
 
@@ -2310,8 +2123,8 @@ class MultitoonTab(QWidget):
                                 stop:1 #0077ff
                             );
                             color: white;
-                            border: 2px solid {c['accent_blue_btn_border']};
-                            border-radius: 6px;
+                            border: 1px solid {c['accent_blue_btn']};
+                            border-radius: 9px;
                         }}
                     """)
                     glow = QGraphicsDropShadowEffect(btn)
@@ -2470,23 +2283,22 @@ class MultitoonTab(QWidget):
     def _set_card_brand_for_slot(
         self, index: int, game: str | None, enabled: bool = False
     ) -> None:
-        """Forward to BOTH layouts' set_card_brand so per-card chrome
-        (stripe, header divider color, ka_group border, body tint) stays
-        in sync across compact and full. Both layouts hold their own
-        QFrame trees but share the brand-resolution logic via parallel
-        set_card_brand methods; both must be told whenever a slot's
-        game/enabled state changes so a layout-mode swap doesn't reveal
-        stale chrome. Also teaches the badge what game it represents so
-        it can look up its customization entry on next paint."""
+        """Render slot `index` via the active pinwheel layout's set_card_brand
+        (card chrome, controls, portrait, dim/glow). Also teaches the badge
+        what game it represents so it can look up its customization entry on
+        next paint.
+
+        Only the pinwheel layout (`_compact`) is driven: it is the single
+        Multitoon layout now, and it shares the per-slot widgets, so updating
+        the retired `_full` layout would restyle those shared widgets with the
+        old look right after the pinwheel set them.
+        """
         if index < len(self.slot_badges):
             self.slot_badges[index].set_game(game)
-        for layout_attr in ("_compact", "_full"):
-            layout = getattr(self, layout_attr, None)
-            if layout is None:
-                continue
-            set_brand = getattr(layout, "set_card_brand", None)
-            if callable(set_brand):
-                set_brand(index, game, enabled=enabled)
+        layout = getattr(self, "_compact", None)
+        set_brand = getattr(layout, "set_card_brand", None) if layout else None
+        if callable(set_brand):
+            set_brand(index, game, enabled=enabled)
 
     def _open_customization_dialog(self, slot: int) -> None:
         """Open the customization overlay for the given slot.
@@ -2525,36 +2337,14 @@ class MultitoonTab(QWidget):
         self.apply_visual_state(slot)
 
     def _apply_chip_for_slot(self, index: int, game_tag: str | None) -> None:
-        """Apply the CC/TTR chip stylesheet, consulting accent override."""
-        from utils.toon_customization_resolve import resolve_accent
-        from PySide6.QtGui import QColor
+        """Apply the CC/TTR chip stylesheet, consulting accent override.
+
+        The pinwheel layout does not surface a per-card game chip, so the
+        chip stays hidden; the game identity drives the card's accent instead.
+        """
         if index >= len(self.game_badges):
             return
-        chip = self.game_badges[index]
-        toon_name = self.toon_names[index] if index < len(self.toon_names) else None
-        entry: dict = {}
-        if game_tag in ("cc", "ttr") and toon_name and self.customizations is not None:
-            entry = self.customizations.get(game_tag, toon_name)
-        if game_tag == "cc":
-            color = resolve_accent(entry, QColor("#F26D21")).name()
-            chip.setText("CC")
-            chip.setStyleSheet(
-                f"background: transparent; color: {color}; "
-                f"border: 2px solid {color}; border-radius: 12px; "
-                f"padding: 3px 8px; font-weight: bold; font-size: 12px;"
-            )
-            chip.show()
-        elif game_tag == "ttr":
-            color = resolve_accent(entry, QColor("#4A8FE7")).name()
-            chip.setText("TTR")
-            chip.setStyleSheet(
-                f"background: transparent; color: {color}; "
-                f"border: 2px solid {color}; border-radius: 12px; "
-                f"padding: 3px 8px; font-weight: bold; font-size: 12px;"
-            )
-            chip.show()
-        else:
-            chip.hide()
+        self.game_badges[index].hide()
 
     def _refresh_is_coalesced(self, now: float) -> bool:
         """True if a refresh requested at monotonic time `now` falls within the
@@ -2679,6 +2469,12 @@ class MultitoonTab(QWidget):
             self.toggle_service()
 
     def disable_all_toon_controls(self):
+        """Service stopped: dim every card in place but KEEP each toon's
+        identity (name, portrait, stats) so the cards stay mounted exactly
+        where they are. Cards only empty out when the game window actually
+        closes (handled in update_toon_controls). This differs from the
+        legacy stack, which blanked every card on stop.
+        """
         self._stop_keep_alive()
         for i in range(4):
             self.toon_buttons[i].setChecked(False)
@@ -2689,14 +2485,9 @@ class MultitoonTab(QWidget):
             self.chat_enabled[i]  = True
             self.keep_alive_enabled[i] = False
             self.rapid_fire_enabled[i] = False
-            self.toon_names[i]    = None
-            self.toon_styles[i]   = None
-            self.toon_colors[i]   = None
-            if i < len(self.slot_badges):
-                self.slot_badges[i].set_dna(None)
-                self.slot_badges[i].set_toon_name(None)
-                self.slot_badges[i].set_cc_auto_species(None)
-                self.slot_badges[i].set_cc_mode(None, None, None, None)
+            # Identity (toon_names / styles / colors and the badge's DNA / CC
+            # paint) is intentionally preserved so the dimmed card keeps its
+            # portrait, name and stats.
             self.apply_visual_state(i)
         self._update_glow_timer()
         self._refresh_toon_name_labels()
@@ -3036,70 +2827,27 @@ class MultitoonTab(QWidget):
             btn.setEnabled(False)
             btn.setChecked(False)
             btn.setIcon(self._click_sync_icons["disabled"])
-            btn.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {c['btn_disabled']};
-                    color: {c['text_disabled']};
-                    border: none; border-radius: 6px;
-                }}
-            """)
+            btn.setStyleSheet(_pin_toggle_qss(c['accent_pink'], False))
             btn.setToolTip("Click sync: no toon detected in this slot")
             return
         btn.setEnabled(True)
         btn.setIcon(self._click_sync_icons[state])
         btn.setChecked(state != "off")
         if state == "active":
-            btn.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {c['accent_pink']};
-                    color: {c['text_on_accent']};
-                    border: 2px solid {c['accent_pink_border']};
-                    border-radius: 6px;
-                }}
-                QPushButton:hover {{
-                    background-color: {c['accent_pink_hover']};
-                    border: 2px solid {c['accent_pink_border']};
-                }}
-            """)
+            btn.setStyleSheet(_pin_toggle_qss(c['accent_pink'], True))
         elif state == "armed":
-            btn.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {c['toon_btn_inactive_bg']};
-                    color: {c['text_muted']};
-                    border: 2px solid {c['accent_pink_border']};
-                    border-radius: 6px;
-                }}
-                QPushButton:hover {{
-                    background-color: {c['toon_btn_inactive_hover']};
-                    border: 2px solid {c['accent_pink_hover']};
-                }}
-            """)
+            # Dark chip with a pink ring: armed but not yet mirroring.
+            btn.setStyleSheet(
+                f"QPushButton {{ background: rgba(0,0,0,0.24);"
+                f" border: 1px solid {c['accent_pink_border']}; border-radius: 9px; }}"
+            )
         elif state == "error":
-            btn.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {c['accent_red']};
-                    color: {c['text_on_accent']};
-                    border: 2px solid {c['accent_red_border']};
-                    border-radius: 6px;
-                }}
-                QPushButton:hover {{
-                    background-color: {c['accent_red_hover']};
-                    border: 2px solid {c['accent_red_border']};
-                }}
-            """)
+            btn.setStyleSheet(
+                f"QPushButton {{ background: rgba(0,0,0,0.24);"
+                f" border: 1px solid {c['accent_red_border']}; border-radius: 9px; }}"
+            )
         else:  # off (also the unknown-state fallback)
-            btn.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {c['toon_btn_inactive_bg']};
-                    color: {c['text_muted']};
-                    border: 1px solid {c['toon_btn_inactive_border']};
-                    border-radius: 6px;
-                }}
-                QPushButton:hover {{
-                    background-color: {c['toon_btn_inactive_hover']};
-                    border: 1px solid {c['toon_btn_inactive_hover_border']};
-                }}
-            """)
+            btn.setStyleSheet(_pin_toggle_qss(c['accent_pink'], False))
         tips = {
             "off": "Click sync: mirror clicks to this toon",
             "armed": "Click sync: waiting for a second toon",

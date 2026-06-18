@@ -7,11 +7,12 @@ No behavior change.
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Final, Optional
 
-from PySide6.QtCore import QPoint, QRect, QSize, Qt, Signal
+from PySide6.QtCore import QPoint, QRect, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPixmap
 from PySide6.QtWidgets import (
+    QCheckBox,
     QColorDialog,
     QFrame,
     QGridLayout,
@@ -19,20 +20,23 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QSlider,
-    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
 from utils.toon_pattern_assets import PATTERN_NAMES
+from utils.widgets.color_constants import PRESET_SWATCHES
+from utils.widgets.color_well import ColorWell
+from utils.widgets.pose_thumb_states import paint_shimmer, paint_failed_mark
 
-
-# Curated 12-color palette. Order matters - first row primaries, second
-# row accents, third row neutrals.
-PRESET_SWATCHES = (
-    "#e74a4a", "#e7894a", "#d9a04e", "#e6d35a",
-    "#56c856", "#4ae7d9", "#4a8fe7", "#4a5fe7",
-    "#b04ae7", "#e74ab0", "#7a7a8a", "#1a1d29",
+# The five primary poses shown in the collapsed pose row. Must all be members
+# of utils.rendition_poses.POSE_NAMES.
+PRIMARY_POSES: Final = (
+    "portrait",
+    "portrait-delighted",
+    "portrait-grin",
+    "portrait-surprise",
+    "portrait-thinking",
 )
 
 
@@ -107,11 +111,11 @@ class _SwatchRow(QWidget):
 
 
 class _SimpleColorSection(QWidget):
-    """A section that contains a single label + one _SwatchRow."""
+    """A section that contains a single label + one ColorWell."""
 
     color_changed = Signal(object)  # str or None
 
-    def __init__(self, label: str, current: Optional[str], parent=None):
+    def __init__(self, label: str, current: Optional[str], saved_store=None, parent=None):
         super().__init__(parent)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(8, 8, 8, 8)
@@ -119,7 +123,7 @@ class _SimpleColorSection(QWidget):
         title = QLabel(label)
         title.setStyleSheet("color: #c8c8d8; font-weight: bold;")
         outer.addWidget(title)
-        self._row = _SwatchRow(current)
+        self._row = ColorWell(current, saved_store=saved_store)
         self._row.color_picked.connect(self.color_changed.emit)
         outer.addWidget(self._row)
         outer.addStretch(1)
@@ -129,6 +133,72 @@ class _SimpleColorSection(QWidget):
 
     def set_current(self, hex_: Optional[str]) -> None:
         self._row.set_current(hex_)
+
+
+class _CardSection(QWidget):
+    """Combined Accent + Body card section.
+
+    An Accent color well is always visible. A 'Use a separate body color'
+    checkbox reveals a Body color well when checked. Body starts hidden
+    unless a pre-existing body value is supplied.
+    """
+
+    accent_changed = Signal(object)  # hex str | None
+    body_changed = Signal(object)    # hex str | None
+
+    def __init__(
+        self,
+        accent: Optional[str],
+        body: Optional[str],
+        saved_store=None,
+        parent=None,
+    ):
+        super().__init__(parent)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(8, 8, 8, 8)
+        outer.setSpacing(6)
+
+        accent_label = QLabel("Accent")
+        accent_label.setStyleSheet("color: #c8c8d8; font-weight: bold;")
+        outer.addWidget(accent_label)
+
+        self._accent_row = ColorWell(accent, saved_store=saved_store)
+        self._accent_row.color_picked.connect(self.accent_changed.emit)
+        outer.addWidget(self._accent_row)
+
+        self._body_toggle = QCheckBox("Use a separate body color")
+        self._body_toggle.setStyleSheet("color: #c8c8d8;")
+        self._body_toggle.setChecked(body is not None)
+        self._body_toggle.toggled.connect(self._on_body_toggle)
+        outer.addWidget(self._body_toggle)
+
+        self._body_row = ColorWell(body, saved_store=saved_store)
+        self._body_row.color_picked.connect(self.body_changed.emit)
+        self._body_row.setVisible(body is not None)
+        outer.addWidget(self._body_row)
+
+        outer.addStretch(1)
+
+    def _on_body_toggle(self, checked: bool) -> None:
+        self._body_row.setVisible(checked)
+        if not checked:
+            # Clear the hidden well so it can't show a stale color that diverges
+            # from the draft on a later re-check.
+            self._body_row.set_current(None)
+            self.body_changed.emit(None)
+
+    def set_accent(self, hex_: Optional[str]) -> None:
+        """Silently update the accent well (no emit)."""
+        self._accent_row.set_current(hex_)
+
+    def set_body(self, hex_: Optional[str]) -> None:
+        """Silently update the body well and toggle state (no emit)."""
+        checked = hex_ is not None
+        self._body_toggle.blockSignals(True)
+        self._body_toggle.setChecked(checked)
+        self._body_toggle.blockSignals(False)
+        self._body_row.setVisible(checked)
+        self._body_row.set_current(hex_)
 
 
 class _ChipRow(QWidget):
@@ -205,31 +275,64 @@ class _PoseTile(QFrame):
     """One pose option. Shows a circular crop of the fetched pixmap on
     a slot-default-grey backdrop, with the pose name underneath. Click
     to select. The tile itself does NOT apply user customizations -
-    the user is choosing the pose so we show it raw."""
+    the user is choosing the pose so we show it raw.
+
+    State machine:
+      loading - shimmer animates, no pixmap yet; clicks are ignored.
+      loaded  - pixmap displayed; click emits clicked_pose.
+      failed  - X mark shown (timeout or explicit failure); click emits
+                retry_requested and returns to loading.
+    """
 
     clicked_pose = Signal(str)
+    retry_requested = Signal(str)
 
     _TILE_W = 160  # wide enough for the bigger label-free thumbnail
     _TILE_H = 110  # box + small padding only; labels live in tooltips
     _BOX = 100
     _CIRCLE_INSET = 10  # circle margin inside the box (scaled with _BOX)
     _BACKDROP = QColor("#4a4a4a")
+    _LOAD_TIMEOUT_MS = 8000  # max wait before tile transitions to failed
+
+    # Internal state sentinels (not part of the public API).
+    _ST_LOADING = "loading"
+    _ST_LOADED = "loaded"
+    _ST_FAILED = "failed"
 
     def __init__(self, pose: str, parent=None):
         super().__init__(parent)
         self._pose = pose
-        self._pixmap: Optional[QPixmap] = None
         self._selected = False
+
         self.setFixedSize(QSize(self._TILE_W, self._TILE_H))
         self.setCursor(Qt.PointingHandCursor)
         self.setFrameShape(QFrame.NoFrame)
         self.setToolTip(pose)
+
+        # Shimmer animation - advance phase at ~25 fps.
+        self._shimmer_timer = QTimer(self)
+        self._shimmer_timer.setInterval(40)
+        self._shimmer_timer.timeout.connect(self._on_shimmer_tick)
+
+        # Load timeout - if no pixmap arrives in time, flip to failed.
+        self._timeout_timer = QTimer(self)
+        self._timeout_timer.setSingleShot(True)
+        self._timeout_timer.setInterval(self._LOAD_TIMEOUT_MS)
+        self._timeout_timer.timeout.connect(self._on_load_timeout)
+
+        self._enter_loading()
 
     # -- Public API ----------------------------------------------------------
 
     @property
     def pose(self) -> str:
         return self._pose
+
+    def is_loading(self) -> bool:
+        return self._state == self._ST_LOADING
+
+    def is_failed(self) -> bool:
+        return self._state == self._ST_FAILED
 
     def is_selected(self) -> bool:
         return self._selected
@@ -238,7 +341,24 @@ class _PoseTile(QFrame):
         return self._pixmap is not None and not self._pixmap.isNull()
 
     def set_pixmap(self, pixmap: Optional[QPixmap]) -> None:
-        self._pixmap = pixmap
+        """Provide (or clear) the thumbnail pixmap.
+
+        If *pixmap* is a valid, non-null pixmap: transition to loaded.
+        If *pixmap* is None or null: reset to loading (restart shimmer +
+        timeout), used by the refresh flow.
+        """
+        if pixmap is not None and not pixmap.isNull():
+            self._pixmap = pixmap
+            self._state = self._ST_LOADED
+            self._stop_loading_timers()
+        else:
+            self._enter_loading()
+        self.update()
+
+    def set_failed(self) -> None:
+        """Transition to failed state - stops animation and shows the X mark."""
+        self._state = self._ST_FAILED
+        self._stop_loading_timers()
         self.update()
 
     def set_selected(self, on: bool) -> None:
@@ -246,12 +366,52 @@ class _PoseTile(QFrame):
             self._selected = on
             self.update()
 
+    # -- Internal state helpers ----------------------------------------------
+
+    def _enter_loading(self) -> None:
+        """Transition to loading state: clear pixmap, reset shimmer, restart timers."""
+        self._pixmap = None
+        self._state = self._ST_LOADING
+        self._shimmer_phase = 0.0
+        self._shimmer_timer.start()
+        self._timeout_timer.start()
+
+    # -- Click logic (shared by mouse event and test hook) -------------------
+
+    def _handle_click(self) -> None:
+        """Apply the click action appropriate for the current state."""
+        if self._state == self._ST_FAILED:
+            # A broken thumbnail offers retry, not selection.
+            self._enter_loading()
+            self.update()
+            self.retry_requested.emit(self._pose)
+        else:
+            # Loaded OR loading: selecting the pose works regardless of the
+            # thumbnail state. Selection must not be gated on the rendition
+            # fetch, a slow or failing thumbnail must never block picking a pose.
+            self.clicked_pose.emit(self._pose)
+
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
-            self.clicked_pose.emit(self._pose)
+            self._handle_click()
         super().mousePressEvent(event)
 
-    # -- Paint --------------------------------------------------------------
+    # -- Timer handlers ------------------------------------------------------
+
+    def _on_shimmer_tick(self) -> None:
+        self._shimmer_phase = (self._shimmer_phase + 0.025) % 1.0
+        self.update()
+
+    def _on_load_timeout(self) -> None:
+        """Called when the load timeout fires. If still loading, fail."""
+        if self._state == self._ST_LOADING:
+            self.set_failed()
+
+    def _stop_loading_timers(self) -> None:
+        self._shimmer_timer.stop()
+        self._timeout_timer.stop()
+
+    # -- Paint ---------------------------------------------------------------
 
     def paintEvent(self, event):
         p = QPainter(self)
@@ -271,7 +431,7 @@ class _PoseTile(QFrame):
         p.setBrush(self._BACKDROP)
         p.drawEllipse(circle)
 
-        if self.has_pixmap():
+        if self._state == self._ST_LOADED and self.has_pixmap():
             path = QPainterPath()
             path.addEllipse(circle)
             p.save()
@@ -285,9 +445,10 @@ class _PoseTile(QFrame):
             dy = circle.y() + (circle.height() - scaled.height()) // 2
             p.drawPixmap(dx, dy, scaled)
             p.restore()
-        else:
-            p.setPen(QColor("#9a9aa8"))
-            p.drawText(circle, Qt.AlignCenter, "…")
+        elif self._state == self._ST_LOADING:
+            paint_shimmer(p, circle, self._shimmer_phase)
+        elif self._state == self._ST_FAILED:
+            paint_failed_mark(p, circle)
 
         p.end()
 
@@ -411,40 +572,36 @@ class _PoseAdjustPreview(QFrame):
 
 
 class _PoseAdjustView(QWidget):
-    """Adjust mode for the Toon section: drag-to-pan preview + zoom
-    slider + rotate slider + nudge arrow buttons + Back / Reset buttons
-    in the header. Emits transform_changed whenever any control changes
-    a value. Back / Reset have their own signals so _PoseSection can
-    drive the state transition."""
+    """Inline framing controls for the Toon section: drag-to-pan preview,
+    zoom slider, rotate slider, nudge arrow buttons, Reset button, and
+    silhouette outline/shadow pickers. Embedded directly in _PoseSection
+    (always visible when a DNA is set). Emits transform_changed whenever
+    any control changes a value."""
 
     transform_changed = Signal()
-    back_requested = Signal()
     reset_requested = Signal()
     silhouette_outline_changed = Signal(object, object)  # (hex or None, width key)
     silhouette_shadow_changed = Signal(object, object)  # (hex or None, softness key)
 
     _NUDGE_STEP = 1.0 / 180.0  # one pixel in the 180 px adjust preview
 
-    def __init__(self, initial: tuple[float, float, float, float], parent=None):
+    def __init__(self, initial: tuple[float, float, float, float], saved_store=None, parent=None):
         super().__init__(parent)
         zoom, off_x, off_y, rot = initial
-        self._build_ui(zoom, off_x, off_y, rot)
+        self._build_ui(zoom, off_x, off_y, rot, saved_store=saved_store)
 
     def _build_ui(
-        self, zoom: float, off_x: float, off_y: float, rot: float,
+        self, zoom: float, off_x: float, off_y: float, rot: float, saved_store=None,
     ) -> None:
         outer = QVBoxLayout(self)
         outer.setContentsMargins(8, 8, 8, 8)
         outer.setSpacing(8)
 
-        # Header row: Back + Reset (right-aligned)
+        # Header row: Reset (right-aligned)
         header = QHBoxLayout()
-        self._back_btn = QPushButton("← Back")
-        self._back_btn.clicked.connect(self.back_requested.emit)
         self._reset_btn = QPushButton("Reset")
         self._reset_btn.clicked.connect(self._on_reset_clicked)
         header.addStretch(1)
-        header.addWidget(self._back_btn)
         header.addWidget(self._reset_btn)
         outer.addLayout(header)
 
@@ -508,7 +665,7 @@ class _PoseAdjustView(QWidget):
         outline_label = QLabel("Outline (toon)")
         outline_label.setStyleSheet("color: #9a9aa8; font-size: 10px;")
         outer.addWidget(outline_label)
-        self._sil_outline_color_row = _SwatchRow(None)
+        self._sil_outline_color_row = ColorWell(None, saved_store=saved_store)
         self._sil_outline_color_row.color_picked.connect(self._on_sil_outline_color)
         outer.addWidget(self._sil_outline_color_row)
         self._sil_outline_chip = _ChipRow(
@@ -523,7 +680,7 @@ class _PoseAdjustView(QWidget):
         shadow_label = QLabel("Shadow (toon)")
         shadow_label.setStyleSheet("color: #9a9aa8; font-size: 10px;")
         outer.addWidget(shadow_label)
-        self._sil_shadow_color_row = _SwatchRow(None)
+        self._sil_shadow_color_row = ColorWell(None, saved_store=saved_store)
         self._sil_shadow_color_row.color_picked.connect(self._on_sil_shadow_color)
         outer.addWidget(self._sil_shadow_color_row)
         self._sil_shadow_chip = _ChipRow(
@@ -551,6 +708,22 @@ class _PoseAdjustView(QWidget):
     def set_rotate(self, rot: float) -> None:
         self._rot_slider.setValue(int(rot))
 
+    def set_transform(
+        self, zoom: float, off_x: float, off_y: float, rot: float
+    ) -> None:
+        """Restore all four framing components silently (no transform_changed
+        emitted). Sets the preview, zoom slider + label, and rotate slider +
+        label to consistent values. Use when loading a saved draft."""
+        self._preview.set_transform(zoom, off_x, off_y, rot)
+        self._zoom_slider.blockSignals(True)
+        self._zoom_slider.setValue(int(zoom * 100))
+        self._zoom_slider.blockSignals(False)
+        self._zoom_value.setText(f"{zoom:.2f}x")
+        self._rot_slider.blockSignals(True)
+        self._rot_slider.setValue(int(rot))
+        self._rot_slider.blockSignals(False)
+        self._rot_value.setText(f"{int(rot)}°")
+
     def nudge_left(self) -> None:
         self._apply_nudge(-self._NUDGE_STEP, 0.0)
 
@@ -562,9 +735,6 @@ class _PoseAdjustView(QWidget):
 
     def nudge_down(self) -> None:
         self._apply_nudge(0.0, self._NUDGE_STEP)
-
-    def click_back(self) -> None:
-        self.back_requested.emit()
 
     def click_reset(self) -> None:
         self._on_reset_clicked()
@@ -632,8 +802,8 @@ class _PoseAdjustView(QWidget):
     def set_silhouette_outline_from_draft(
         self, hex_: Optional[str], width_key: Optional[str],
     ) -> None:
-        """Initial-state setter used by _PoseSection when entering the
-        Adjust view. Does NOT emit silhouette_outline_changed - the
+        """Initial-state setter called by _PoseSection when loading a
+        saved draft. Does NOT emit silhouette_outline_changed - the
         dialog's draft already has this value."""
         self._sil_outline_color_row.set_current(hex_)
         if width_key:
@@ -655,8 +825,8 @@ class _PoseAdjustView(QWidget):
     def set_silhouette_shadow_from_draft(
         self, hex_: Optional[str], softness_key: Optional[str],
     ) -> None:
-        """Initial-state setter used by _PoseSection. Does NOT emit -
-        the dialog's draft already has this value."""
+        """Initial-state setter called by _PoseSection when loading a
+        saved draft. Does NOT emit - the dialog's draft already has this value."""
         self._sil_shadow_color_row.set_current(hex_)
         if softness_key:
             self._sil_shadow_chip.set_current(softness_key)
@@ -667,30 +837,32 @@ class _PoseAdjustView(QWidget):
 
 
 class _PoseSection(QWidget):
-    """Toon pose picker, 2-state. Page 0 = grid of 13 pose tiles. Page 1
-    = adjust view (drag + sliders + nudge). The user enters page 1 via
-    the 'Adjust' button in page 0's header; Back returns to page 0."""
+    """Toon pose picker, single-pane layout. A primary row of 5 pose tiles
+    is always visible; a circular expand button below the row reveals the
+    full 13-tile grid inline (chevron flips). The framing controls (drag-pan
+    preview, zoom/rotate sliders, nudge buttons, silhouette outline/shadow)
+    are embedded beneath the tile area and are always visible when a DNA is
+    set. No page flip."""
 
     pose_changed = Signal(str)
-    transform_changed = Signal()  # emitted when adjust view writes to transform
+    transform_changed = Signal()  # emitted when framing controls change
     silhouette_outline_changed = Signal(object, object)  # (hex or None, width key)
-    silhouette_shadow_changed = Signal(object, object)  # (hex or None, softness key)
+    silhouette_shadow_changed = Signal(object, object)   # (hex or None, softness key)
 
-    def __init__(self, dna: Optional[str], current_pose: str, parent=None):
+    def __init__(self, dna: Optional[str], current_pose: str, saved_store=None, parent=None):
         super().__init__(parent)
         self._dna = dna
         self._current_pose = current_pose
+        self._saved_store = saved_store
         self._tiles: list[_PoseTile] = []
+        self._primary_tile_list: list[_PoseTile] = []
         self._placeholder_label: Optional[QLabel] = None
-        self._grid_page: Optional[QWidget] = None
-        self._adjust_view: Optional[_PoseAdjustView] = None
-        self._stack: Optional[QStackedWidget] = None
-        self._adjust_btn: Optional[QPushButton] = None
         self._refresh_btn: Optional[QPushButton] = None
-        self._grid_header: Optional[QWidget] = None
-        self._header_stack: Optional[QStackedWidget] = None
-        # Mirror of the transform values pushed into / out of the adjust
-        # view; the dialog reads via _PoseSection.transform().
+        self._expand_btn: Optional[QPushButton] = None
+        self._expanded_widget: Optional[QWidget] = None
+        self._expanded: bool = False
+        self._adjust_view: Optional[_PoseAdjustView] = None
+        # Mirror of the framing transform; callers read via transform().
         self._transform: tuple[float, float, float, float] = (1.0, 0.0, 0.0, 0.0)
         self._build()
 
@@ -700,62 +872,13 @@ class _PoseSection(QWidget):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
+        outer.addWidget(self._build_header())
 
-        # Header is a QStackedWidget so we can swap "grid header"
-        # (Pose + Adjust + Refresh) and "adjust header" (Pose + Back +
-        # Reset) when the body page changes.
-        self._header_stack = QStackedWidget()
-        self._header_stack.addWidget(self._build_grid_header())
-        # adjust header is built lazily when the adjust view is created.
-        outer.addWidget(self._header_stack)
-
-        # Body stack
-        self._stack = QStackedWidget()
-        outer.addWidget(self._stack, 1)
-        self._grid_page = self._build_grid_page()
-        self._stack.addWidget(self._grid_page)
-
-    def _build_grid_header(self) -> QWidget:
-        header_w = QWidget()
-        header = QHBoxLayout(header_w)
-        header.setContentsMargins(8, 8, 8, 4)
-        title = QLabel("Pose")
-        title.setStyleSheet("color: #c8c8d8; font-weight: bold;")
-        header.addWidget(title)
-        header.addStretch(1)
-        self._adjust_btn = QPushButton("Adjust")
-        self._adjust_btn.setToolTip("Zoom / pan / rotate the toon inside the circle")
-        self._adjust_btn.clicked.connect(self.click_adjust)
-        if not self._dna:
-            self._adjust_btn.setEnabled(False)
-        # Pin Adjust to a known height so refresh (icon-only) matches.
-        self._adjust_btn.setFixedHeight(28)
-        header.addWidget(self._adjust_btn)
-        # Refresh button uses Qt's standard reload icon instead of "↻"
-        # text. KDE Breeze elides QPushButton text in tight buttons,
-        # which would otherwise render the ↻ glyph as ":" or "...".
-        # Icons are never elided.
-        from PySide6.QtWidgets import QStyle
-        self._refresh_btn = QPushButton()
-        self._refresh_btn.setIcon(
-            self.style().standardIcon(QStyle.StandardPixmap.SP_BrowserReload)
-        )
-        from PySide6.QtCore import QSize
-        self._refresh_btn.setIconSize(QSize(14, 14))
-        self._refresh_btn.setToolTip("Refresh pose thumbnails")
-        self._refresh_btn.setFixedSize(32, 28)
-        self._refresh_btn.clicked.connect(self._on_refresh_clicked)
-        if not self._dna:
-            self._refresh_btn.setEnabled(False)
-        header.addWidget(self._refresh_btn)
-        self._grid_header = header_w
-        return header_w
-
-    def _build_grid_page(self) -> QWidget:
-        page = QWidget()
-        outer = QVBoxLayout(page)
-        outer.setContentsMargins(8, 0, 8, 8)
-        outer.setSpacing(6)
+        body = QWidget()
+        body_layout = QVBoxLayout(body)
+        body_layout.setContentsMargins(8, 0, 8, 8)
+        body_layout.setSpacing(6)
+        outer.addWidget(body, 1)
 
         if not self._dna:
             self._placeholder_label = QLabel(
@@ -763,28 +886,92 @@ class _PoseSection(QWidget):
             )
             self._placeholder_label.setStyleSheet("color: #9a9aa8; padding: 24px;")
             self._placeholder_label.setAlignment(Qt.AlignCenter)
-            outer.addWidget(self._placeholder_label, 1)
-            return page
+            body_layout.addWidget(self._placeholder_label, 1)
+            return
 
         from utils.rendition_poses import POSE_NAMES, RenditionPoseFetcher
-        grid = QGridLayout()
-        grid.setSpacing(6)
-        for idx, pose in enumerate(POSE_NAMES):
+
+        # Primary row: 5 tiles (PRIMARY_POSES), always visible.
+        primary_row = QHBoxLayout()
+        primary_row.setSpacing(4)
+        for pose in PRIMARY_POSES:
             tile = _PoseTile(pose)
             tile.set_selected(pose == self._current_pose)
             tile.clicked_pose.connect(self._on_tile_clicked)
+            tile.retry_requested.connect(self._on_tile_retry_requested)
+            primary_row.addWidget(tile)
+            self._tiles.append(tile)
+            self._primary_tile_list.append(tile)
+        primary_row.addStretch(1)
+        body_layout.addLayout(primary_row)
+
+        # Circular expand button centered below the primary row.
+        # Uses a standard icon instead of a text glyph: KDE Breeze elides
+        # QPushButton text in tight buttons, rendering "▼" as ":" or "...".
+        # Icons are never elided.
+        expand_row = QHBoxLayout()
+        expand_row.addStretch(1)
+        from PySide6.QtWidgets import QStyle
+        self._expand_btn = QPushButton()
+        self._expand_btn.setIcon(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowDown)
+        )
+        self._expand_btn.setIconSize(QSize(12, 12))
+        self._expand_btn.setToolTip("Show all poses")
+        self._expand_btn.setFixedSize(28, 28)
+        self._expand_btn.setStyleSheet(
+            "QPushButton {"
+            "  background: #252a3d; color: #aab;"
+            "  border: 1px solid #3a3f55; border-radius: 14px;"
+            "  font-size: 11px;"
+            "}"
+            "QPushButton:hover { background: #2e3450; }"
+            "QPushButton:pressed { background: #1e2236; }"
+        )
+        self._expand_btn.clicked.connect(self.toggle_expand)
+        expand_row.addWidget(self._expand_btn)
+        expand_row.addStretch(1)
+        body_layout.addLayout(expand_row)
+
+        # Expanded grid (hidden initially): remaining 8 poses in 3 columns.
+        self._expanded_widget = QWidget()
+        exp_layout = QVBoxLayout(self._expanded_widget)
+        exp_layout.setContentsMargins(0, 0, 0, 0)
+        exp_layout.setSpacing(6)
+        secondary_poses = [p for p in POSE_NAMES if p not in PRIMARY_POSES]
+        grid = QGridLayout()
+        grid.setSpacing(6)
+        for idx, pose in enumerate(secondary_poses):
+            tile = _PoseTile(pose)
+            tile.set_selected(pose == self._current_pose)
+            tile.clicked_pose.connect(self._on_tile_clicked)
+            tile.retry_requested.connect(self._on_tile_retry_requested)
             grid.addWidget(tile, idx // 3, idx % 3)
             self._tiles.append(tile)
-        outer.addLayout(grid)
-        outer.addStretch(1)
+        exp_layout.addLayout(grid)
+        self._expanded_widget.setVisible(False)
+        body_layout.addWidget(self._expanded_widget)
 
+        # Inline framing controls (always visible when DNA is set).
+        self._adjust_view = _PoseAdjustView(
+            initial=self._transform, saved_store=self._saved_store,
+        )
+        self._adjust_view.transform_changed.connect(self._on_adjust_changed)
+        self._adjust_view.silhouette_outline_changed.connect(
+            self.silhouette_outline_changed.emit
+        )
+        self._adjust_view.silhouette_shadow_changed.connect(
+            self.silhouette_shadow_changed.emit
+        )
+        body_layout.addWidget(self._adjust_view)
+
+        # Kick off thumbnail fetches for all poses.
         fetcher = RenditionPoseFetcher.instance()
         fetcher.pose_ready.connect(self._on_pose_ready)
         for pose in POSE_NAMES:
             fetcher.request(self._dna, pose)
-        return page
 
-    def _build_adjust_header(self) -> QWidget:
+    def _build_header(self) -> QWidget:
         header_w = QWidget()
         header = QHBoxLayout(header_w)
         header.setContentsMargins(8, 8, 8, 4)
@@ -792,56 +979,57 @@ class _PoseSection(QWidget):
         title.setStyleSheet("color: #c8c8d8; font-weight: bold;")
         header.addWidget(title)
         header.addStretch(1)
-        # The Back / Reset buttons live INSIDE _PoseAdjustView's own
-        # header row; we don't duplicate them here. Just a static label.
+        # Refresh button uses Qt's standard reload icon instead of "↻"
+        # text. KDE Breeze elides QPushButton text in tight buttons,
+        # which would otherwise render the glyph as ":" or "...".
+        # Icons are never elided.
+        from PySide6.QtWidgets import QStyle
+        self._refresh_btn = QPushButton()
+        self._refresh_btn.setIcon(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_BrowserReload)
+        )
+        self._refresh_btn.setIconSize(QSize(14, 14))
+        self._refresh_btn.setToolTip("Refresh pose thumbnails")
+        self._refresh_btn.setFixedSize(32, 28)
+        self._refresh_btn.clicked.connect(self._on_refresh_clicked)
+        if not self._dna:
+            self._refresh_btn.setEnabled(False)
+        header.addWidget(self._refresh_btn)
         return header_w
 
     # -- Public API ----------------------------------------------------------
 
+    def primary_tiles(self) -> list:
+        """The 5 _PoseTile instances in the always-visible primary row."""
+        return list(self._primary_tile_list)
+
     def tiles(self) -> list:
+        """All _PoseTile instances (primary row + expanded grid)."""
         return list(self._tiles)
 
     def has_placeholder(self) -> bool:
         return self._placeholder_label is not None
 
+    def is_expanded(self) -> bool:
+        return self._expanded
+
+    def toggle_expand(self) -> None:
+        """Show or hide the full pose grid; swap the expander icon."""
+        self._expanded = not self._expanded
+        if self._expanded_widget is not None:
+            self._expanded_widget.setVisible(self._expanded)
+        if self._expand_btn is not None:
+            from PySide6.QtWidgets import QStyle
+            self._expand_btn.setIcon(
+                self.style().standardIcon(
+                    QStyle.StandardPixmap.SP_ArrowUp
+                    if self._expanded
+                    else QStyle.StandardPixmap.SP_ArrowDown
+                )
+            )
+
     def click_refresh(self) -> None:
         self._on_refresh_clicked()
-
-    def is_adjusting(self) -> bool:
-        return self._stack is not None and self._stack.currentIndex() == 1
-
-    def _ensure_adjust_view(self) -> None:
-        """Create the adjust view lazily on first access. Idempotent."""
-        if self._adjust_view is not None:
-            return
-        self._adjust_view = _PoseAdjustView(initial=self._transform)
-        for t in self._tiles:
-            if t.pose == self._current_pose and t.has_pixmap():
-                self._adjust_view.set_pixmap(t._pixmap)
-                break
-        self._adjust_view.transform_changed.connect(self._on_adjust_changed)
-        self._adjust_view.back_requested.connect(self.click_back)
-        self._adjust_view.silhouette_outline_changed.connect(
-            self.silhouette_outline_changed.emit
-        )
-        self._adjust_view.silhouette_shadow_changed.connect(
-            self.silhouette_shadow_changed.emit
-        )
-        self._stack.addWidget(self._adjust_view)
-        self._header_stack.addWidget(self._build_adjust_header())
-
-    def click_adjust(self) -> None:
-        if not self._dna:
-            return
-        self._ensure_adjust_view()
-        self._stack.setCurrentIndex(1)
-        self._header_stack.setCurrentIndex(1)
-
-    def click_back(self) -> None:
-        if self._stack is None:
-            return
-        self._stack.setCurrentIndex(0)
-        self._header_stack.setCurrentIndex(0)
 
     def adjust_view(self) -> Optional["_PoseAdjustView"]:
         return self._adjust_view
@@ -852,29 +1040,30 @@ class _PoseSection(QWidget):
     def set_transform_from_draft(
         self, transform: tuple[float, float, float, float],
     ) -> None:
-        """Called by the dialog when the section is constructed with a
-        pre-existing draft transform."""
+        """Called when the section is constructed with a pre-existing draft
+        transform. Syncs the preview AND the zoom/rotate sliders to the saved
+        values. The _PoseAdjustView is always built when a DNA is set."""
         self._transform = transform
         if self._adjust_view is not None:
-            self._adjust_view._preview.set_transform(*transform)
+            self._adjust_view.set_transform(*transform)
 
     def set_silhouette_outline(
         self, hex_: Optional[str], width_key: Optional[str],
     ) -> None:
-        """Forwarded from the dialog setter. Pushes through to the adjust
-        view (creating it if needed) and re-emits so the dialog handler
-        writes to the draft."""
-        self._ensure_adjust_view()
+        """Forwarded from the overlay setter. Pushes through to the inline
+        framing view and re-emits so the overlay handler writes to the draft."""
+        if self._adjust_view is None:
+            return
         self._adjust_view.set_silhouette_outline_from_draft(hex_, width_key)
         self.silhouette_outline_changed.emit(hex_, width_key)
 
     def set_silhouette_shadow(
         self, hex_: Optional[str], softness_key: Optional[str],
     ) -> None:
-        """Forwarded from the dialog setter. Pushes through to the adjust
-        view (creating it if needed) and re-emits so the dialog handler
-        writes to the draft."""
-        self._ensure_adjust_view()
+        """Forwarded from the overlay setter. Pushes through to the inline
+        framing view and re-emits so the overlay handler writes to the draft."""
+        if self._adjust_view is None:
+            return
         self._adjust_view.set_silhouette_shadow_from_draft(hex_, softness_key)
         self.silhouette_shadow_changed.emit(hex_, softness_key)
 
@@ -898,10 +1087,20 @@ class _PoseSection(QWidget):
             return
         for t in self._tiles:
             if t.pose == pose:
-                t.set_pixmap(pixmap)
-                if pose == self._current_pose and self._adjust_view is not None:
-                    self._adjust_view.set_pixmap(pixmap)
+                if pixmap is None or pixmap.isNull():
+                    t.set_failed()
+                else:
+                    t.set_pixmap(pixmap)
+                    if pose == self._current_pose and self._adjust_view is not None:
+                        self._adjust_view.set_pixmap(pixmap)
                 break
+
+    def _on_tile_retry_requested(self, pose: str) -> None:
+        """Re-request a single pose thumbnail after a tile timeout/failure."""
+        if not self._dna:
+            return
+        from utils.rendition_poses import RenditionPoseFetcher
+        RenditionPoseFetcher.instance().request(self._dna, pose)
 
     def _on_refresh_clicked(self) -> None:
         if not self._dna:
@@ -942,16 +1141,15 @@ class _PortraitSection(QWidget):
     color_changed = Signal(object)         # str or None
     gradient_changed = Signal(object)      # {"start", "end"} or None
     pattern_changed = Signal(object, object)  # (name or None, color or None)
-    circle_outline_changed = Signal(object, object)  # (color hex or None, width key str)
 
-    def __init__(self, current: dict, parent=None):
+    def __init__(self, current: dict, saved_store=None, parent=None):
         super().__init__(parent)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(8, 8, 8, 8)
         outer.setSpacing(8)
 
         outer.addWidget(self._label("Color"))
-        self._color_row = _SwatchRow(current.get("color"))
+        self._color_row = ColorWell(current.get("color"), saved_store=saved_store)
         self._color_row.color_picked.connect(self.color_changed.emit)
         outer.addWidget(self._color_row)
 
@@ -965,11 +1163,11 @@ class _PortraitSection(QWidget):
         grad_row.addStretch(1)
         outer.addLayout(grad_row)
 
-        self._grad_start = _SwatchRow(
-            (current.get("gradient") or {}).get("start")
+        self._grad_start = ColorWell(
+            (current.get("gradient") or {}).get("start"), saved_store=saved_store,
         )
-        self._grad_end = _SwatchRow(
-            (current.get("gradient") or {}).get("end")
+        self._grad_end = ColorWell(
+            (current.get("gradient") or {}).get("end"), saved_store=saved_store,
         )
         self._grad_start.color_picked.connect(lambda _: self._emit_gradient())
         self._grad_end.color_picked.connect(lambda _: self._emit_gradient())
@@ -1003,25 +1201,11 @@ class _PortraitSection(QWidget):
         outer.addLayout(pat_grid)
 
         outer.addWidget(self._label("Pattern color"))
-        self._pat_color_row = _SwatchRow(
-            (current.get("pattern") or {}).get("color")
+        self._pat_color_row = ColorWell(
+            (current.get("pattern") or {}).get("color"), saved_store=saved_store,
         )
         self._pat_color_row.color_picked.connect(lambda _: self._emit_pattern())
         outer.addWidget(self._pat_color_row)
-
-        outer.addWidget(self._label("Outline"))
-        outline_dict = current.get("outline") if isinstance(current.get("outline"), dict) else {}
-        self._outline_color_row = _SwatchRow(outline_dict.get("color"))
-        self._outline_color_row.color_picked.connect(self._on_outline_color_picked)
-        outer.addWidget(self._outline_color_row)
-
-        self._outline_chip_row = _ChipRow(
-            [("thin", "Thin"), ("medium", "Medium"), ("thick", "Thick")],
-            current=outline_dict.get("width", "medium"),
-        )
-        self._outline_chip_row.value_changed.connect(self._on_outline_width_picked)
-        outer.addWidget(self._outline_chip_row)
-        self._outline_chip_row.set_enabled_visual(bool(outline_dict.get("color")))
 
         outer.addStretch(1)
 
@@ -1105,24 +1289,3 @@ class _PortraitSection(QWidget):
         if color is not None:
             self._pat_color_row.set_current(color)
 
-    def _on_outline_color_picked(self, hex_: Optional[str]) -> None:
-        self._outline_chip_row.set_enabled_visual(hex_ is not None)
-        self.circle_outline_changed.emit(hex_, self._outline_chip_row.current())
-
-    def _on_outline_width_picked(self, width_key: str) -> None:
-        self.circle_outline_changed.emit(
-            self._outline_color_row.current(), width_key,
-        )
-
-    def set_circle_outline(
-        self, hex_: Optional[str], width_key: Optional[str],
-    ) -> None:
-        """Programmatic setter (for tests)."""
-        self._outline_color_row.set_current(hex_)
-        if width_key is not None:
-            self._outline_chip_row.set_current(width_key)
-        self._outline_chip_row.set_enabled_visual(hex_ is not None)
-        self.circle_outline_changed.emit(hex_, self._outline_chip_row.current())
-
-    def current_circle_outline(self) -> tuple[Optional[str], str]:
-        return self._outline_color_row.current(), self._outline_chip_row.current()

@@ -31,6 +31,7 @@ class _FakeWindowManager(QObject):
     def assign_windows(self): pass
     def enable_detection(self): pass
     def disable_detection(self): pass
+    def get_active_window(self): return None
 
 
 def _build_tab(qapp, tmp_path, monkeypatch):
@@ -51,36 +52,84 @@ def _build_tab(qapp, tmp_path, monkeypatch):
 
 
 def test_stripe_picks_up_accent_override(qapp, tmp_path, monkeypatch):
+    """Accent override flows into the card background widget (pinwheel layout)."""
     tab = _build_tab(qapp, tmp_path, monkeypatch)
     tab.toon_names[0] = "Flossbud"
     tab.slot_badges[0].set_toon_name("Flossbud")
     tab.customizations.set("ttr", "Flossbud", {"accent": "#56c856"})
     tab._set_card_brand_for_slot(0, "ttr", enabled=True)
-    stripe = tab._compact._card_slots[0]["card_stripe"]
-    # _CardStripe should now hold the override color.
-    assert stripe.target_color() == QColor("#56c856")
+    bg = tab._compact._card_slots[0]["bg"]
+    # _QuadCardBackground should now hold the override accent.
+    assert bg._accent == QColor("#56c856")
 
 
 def test_chip_qss_picks_up_accent_override(qapp, tmp_path, monkeypatch):
+    """Accent override is stored on the cell dict (pinwheel has no chip QSS)."""
     tab = _build_tab(qapp, tmp_path, monkeypatch)
     tab.toon_names[0] = "Flossbud"
     tab.slot_badges[0].set_toon_name("Flossbud")
     tab.customizations.set("ttr", "Flossbud", {"accent": "#56c856"})
-    tab._apply_chip_for_slot(0, "ttr")
-    qss = tab.game_badges[0].styleSheet()
-    assert "#56c856" in qss
-    assert "#4A8FE7" not in qss  # default TTR brand replaced
+    tab._set_card_brand_for_slot(0, "ttr", enabled=True)
+    cell = tab._compact._card_slots[0]
+    # Cell accent tracks the override; the portrait frame ring also uses it.
+    assert cell["accent"] == QColor("#56c856")
+    assert cell["portrait_frame"]._ring == QColor("#56c856")
 
 
 def test_stripe_falls_back_to_brand_when_no_override(qapp, tmp_path, monkeypatch):
+    """No override: card background uses the game brand color."""
     tab = _build_tab(qapp, tmp_path, monkeypatch)
     tab.toon_names[0] = "Flossbud"
     tab.slot_badges[0].set_toon_name("Flossbud")
     # No customization set.
     tab._set_card_brand_for_slot(0, "ttr", enabled=True)
-    stripe = tab._compact._card_slots[0]["card_stripe"]
+    bg = tab._compact._card_slots[0]["bg"]
     # Default TTR brand color from the theme.
     from utils.theme_manager import get_theme_colors, resolve_theme
     is_dark = resolve_theme(tab.settings_manager) == "dark"
     expected = QColor(get_theme_colors(is_dark)["game_pill_ttr"])
-    assert stripe.target_color() == expected
+    assert bg._accent == expected
+
+
+# ── Body-fill override tests ──────────────────────────────────────────────────
+
+def test_body_base_helper_uses_body_when_set(qapp):
+    """Pure helper: entry with body key returns the body color, not the accent."""
+    from tabs.multitoon._compact_layout import _resolve_body_base
+    accent = QColor("#4a7cff")
+    result = _resolve_body_base({"accent": "#4a7cff", "body": "#aa3377"}, accent)
+    assert result == QColor("#aa3377")
+
+
+def test_body_base_helper_falls_back_to_accent(qapp):
+    """Pure helper: entry without body key returns the accent color."""
+    from tabs.multitoon._compact_layout import _resolve_body_base
+    accent = QColor("#4a7cff")
+    result = _resolve_body_base({"accent": "#4a7cff"}, accent)
+    assert result == QColor("#4a7cff")
+
+
+def test_card_body_override_applied_to_background(qapp, tmp_path, monkeypatch):
+    """Integration: separate body color flows into _QuadCardBackground._body."""
+    tab = _build_tab(qapp, tmp_path, monkeypatch)
+    tab.toon_names[0] = "Flossbud"
+    tab.slot_badges[0].set_toon_name("Flossbud")
+    tab.customizations.set("ttr", "Flossbud", {"accent": "#4a7cff", "body": "#aa3377"})
+    tab._set_card_brand_for_slot(0, "ttr", enabled=True)
+    bg = tab._compact._card_slots[0]["bg"]
+    # Body fill must be the override, not the accent.
+    assert bg._body == QColor("#aa3377")
+    # Accent (border/ring) must NOT be replaced by the body color.
+    assert bg._accent == QColor("#4a7cff")
+
+
+def test_card_body_falls_back_without_override(qapp, tmp_path, monkeypatch):
+    """Integration: no body key means _body is None (paintEvent uses accent)."""
+    tab = _build_tab(qapp, tmp_path, monkeypatch)
+    tab.toon_names[0] = "Flossbud"
+    tab.slot_badges[0].set_toon_name("Flossbud")
+    tab.customizations.set("ttr", "Flossbud", {"accent": "#4a7cff"})
+    tab._set_card_brand_for_slot(0, "ttr", enabled=True)
+    bg = tab._compact._card_slots[0]["bg"]
+    # No body override stored: falls back to accent in paintEvent.
+    assert bg._body is None

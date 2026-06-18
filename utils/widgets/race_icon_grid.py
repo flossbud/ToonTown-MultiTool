@@ -12,7 +12,7 @@ from typing import Optional
 
 from PySide6.QtCore import QRect, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QPainter
-from PySide6.QtWidgets import QFrame, QGridLayout, QScrollArea, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFrame, QGridLayout, QHBoxLayout, QLabel, QScrollArea, QVBoxLayout, QWidget
 
 from utils import cc_race_assets
 from utils.cc_badge_paint import paint_cc_badge
@@ -97,13 +97,21 @@ class RaceIconGridWidget(QWidget):
         super().__init__(parent)
         self._skin = skin_color
         self._auto = auto_stem
-        self._selected: Optional[str] = selected_stem or auto_stem
+        # None means "auto mode" (no explicit selection stored in draft).
+        self._selected: Optional[str] = selected_stem
         self._tiles: list[_RaceTile] = []
+        self._auto_tile: Optional[_RaceTile] = None
         self._build()
 
     def _build(self) -> None:
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        # Pinned auto row above the scrollable grid.
+        if self._auto:
+            outer.addWidget(self._build_auto_row())
+
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         host = QWidget()
@@ -118,6 +126,32 @@ class RaceIconGridWidget(QWidget):
             self._tiles.append(tile)
         scroll.setWidget(host)
         outer.addWidget(scroll)
+
+    def _build_auto_row(self) -> QFrame:
+        """Pinned row above the grid showing the auto/default badge."""
+        row = QFrame()
+        row.setObjectName("autoRow")
+        row.setStyleSheet(
+            "QFrame#autoRow {"
+            "  background: rgba(40, 50, 80, 180);"
+            "  border-bottom: 1px solid #2a3555;"
+            "}"
+        )
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(12, 8, 12, 8)
+        layout.setSpacing(8)
+
+        self._auto_tile = _RaceTile(self._auto, self._skin)
+        self._auto_tile.set_auto(True)
+        # Auto tile is selected when no explicit selection.
+        self._auto_tile.set_selected(self._selected is None)
+        self._auto_tile.clicked_stem.connect(lambda _stem: self.select_auto())
+        layout.addWidget(self._auto_tile)
+
+        lbl = QLabel("Auto")
+        lbl.setStyleSheet("color: #c8c8d0; font-size: 12px; font-weight: 600;")
+        layout.addWidget(lbl, 1)
+        return row
 
     def _list_asset_stems(self) -> list[str]:
         d = cc_race_assets._asset_dir()
@@ -135,7 +169,8 @@ class RaceIconGridWidget(QWidget):
         return list(self._tiles)
 
     def selected_stem(self) -> Optional[str]:
-        return self._selected
+        # Return the explicit selection, or the auto stem when in auto mode.
+        return self._selected if self._selected is not None else self._auto
 
     def auto_marked_stem(self) -> Optional[str]:
         return self._auto
@@ -148,4 +183,19 @@ class RaceIconGridWidget(QWidget):
         self._selected = stem
         for t in self._tiles:
             t.set_selected(t.stem == stem)
+        if self._auto_tile is not None:
+            self._auto_tile.set_selected(False)
         self.selection_changed.emit(stem)
+
+    def select_auto(self) -> None:
+        """Switch to auto mode: deselect any explicit stem and emit empty string."""
+        if not self._auto:
+            return
+        if self._selected is None:
+            return  # Already in auto mode.
+        self._selected = None
+        for t in self._tiles:
+            t.set_selected(False)
+        if self._auto_tile is not None:
+            self._auto_tile.set_selected(True)
+        self.selection_changed.emit("")

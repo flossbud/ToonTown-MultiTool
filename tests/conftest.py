@@ -37,5 +37,19 @@ def _shutdown_multitoon_input_services():
                     svc.shutdown()
                 except Exception:
                     pass
-    for _ in range(3):
+    # Deterministically destroy any lingering top-level widget trees while the
+    # GIL is held. A built MultiToonTool window holds QGraphicsScene-backed
+    # effects (glow / blur) deep in its tree; if those survive to the
+    # interpreter's final GC, Python frees their Shiboken wrappers in a racy
+    # order against Qt's C++ destruction, double-freeing the scene and crashing
+    # the process with SIGSEGV (pytest then exits 139 even though every test
+    # passed). Closing + deleteLater + draining the event loop here destroys the
+    # C++ objects now, so the wrappers are already invalidated at exit.
+    for top in list(app.topLevelWidgets()):
+        try:
+            top.close()
+            top.deleteLater()
+        except Exception:
+            pass
+    for _ in range(5):
         app.processEvents()

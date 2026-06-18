@@ -70,8 +70,12 @@ def _paint_cc_on_slot(tab, slot_idx: int, name: str = "Flossbud"):
     assert badge._cc_mode is True, "precondition: CC paint applied"
 
 
-def test_disable_all_toon_controls_clears_cc_paint(qt_app, monkeypatch, tmp_path):
-    """When the service stops, every slot's CC paint must clear."""
+def test_disable_all_toon_controls_preserves_identity(qt_app, monkeypatch, tmp_path):
+    """Stopping the service dims every card in place but KEEPS each slot's
+    identity (CC paint, name, species) so the pinwheel cards stay mounted.
+    This is the pinwheel behaviour change: the legacy stack blanked the cards
+    on stop; now they only empty out when the game window actually closes
+    (see test_update_toon_controls_clears_cc_paint_when_window_disappears)."""
     tab = _make_tab(monkeypatch, tmp_path)
     _paint_cc_on_slot(tab, 0, "Flossbud")
     _paint_cc_on_slot(tab, 1, "Kubuntu")
@@ -80,9 +84,10 @@ def test_disable_all_toon_controls_clears_cc_paint(qt_app, monkeypatch, tmp_path
 
     for idx in (0, 1):
         b = tab.slot_badges[idx]
-        assert b._cc_mode is False, f"slot {idx} CC paint still on after service stop"
-        assert b._toon_name is None, f"slot {idx} toon name still set after service stop"
-        assert b._cc_auto_species is None, f"slot {idx} auto species still set after service stop"
+        assert b._cc_mode is True, f"slot {idx} CC paint must survive a service stop"
+        assert b._toon_name is not None, f"slot {idx} toon name must survive a service stop"
+        assert b._cc_auto_species is not None, f"slot {idx} species must survive a service stop"
+        assert tab.enabled_toons[idx] is False, f"slot {idx} must be disabled after stop"
 
 
 def test_update_toon_controls_clears_cc_paint_when_window_disappears(

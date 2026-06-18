@@ -99,3 +99,17 @@ def test_dirty_when_field_reverted_to_original(qapp):
     assert overlay._is_dirty() is True
     overlay._panel.set_body("#000000")
     assert overlay._is_dirty() is False
+
+
+def test_confirm_offers_save_keep_discard(qapp):
+    overlay, mgr, _parent = _build_overlay(qapp)
+    overlay._panel.set_accent("#ff0000")       # make the draft dirty
+    overlay.request_close()                     # dirty -> shows confirm
+    cp = overlay._confirm_prompt
+    labels = {b.text() for b in cp.findChildren(type(cp.keep_btn))}
+    assert {"Save", "Keep editing", "Discard"} <= labels
+    saved = []
+    overlay.customization_changed.connect(lambda s, g: saved.append((s, g)))
+    cp.save_btn.click()
+    assert saved == [(0, "ttr")]
+    assert mgr.get("ttr", "Flossbud").get("accent") == "#ff0000"

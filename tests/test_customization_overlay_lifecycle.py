@@ -65,8 +65,8 @@ def test_panel_has_pinned_dimensions(qapp):
     parent = QWidget()
     parent.resize(575, 770)
     panel = _Panel(parent)
-    assert panel.PANEL_W == 543
-    assert panel.PANEL_H == 738
+    assert panel.PANEL_W == 620
+    assert panel.PANEL_H == 470
     assert panel.HEADER_H == 44
     assert panel.FOOTER_H == 52
 
@@ -171,20 +171,28 @@ def test_panel_populate_ttr_section_set(qapp):
     panel, _ = _build_panel(qapp, game="ttr")
     names = panel.section_names()
     assert "Toon" in names
-    assert "Body" in names
-    assert "Accent" in names
+    assert "Card" in names
     assert "Portrait" in names
     assert "Icon" not in names
 
 
 def test_panel_populate_cc_section_set(qapp):
+    """CC panel has no nav sections; gallery is right pane, controls are in the rail."""
+    from utils.widgets.race_icon_grid import RaceIconGridWidget
+    from utils.widgets.toon_customization_sections import _CardSection, _PortraitSection
+    from PySide6.QtWidgets import QWidget
     panel, _ = _build_panel(qapp, game="cc")
-    names = panel.section_names()
-    assert "Icon" in names
-    assert "Body" in names
-    assert "Accent" in names
-    assert "Portrait" in names
-    assert "Toon" not in names
+    assert panel.section_names() == []
+    assert "Toon" not in panel.section_names()
+    # Portrait (Disc) and Card controls are inside the rail.
+    rail = panel.findChild(QWidget, "panelRail")
+    assert rail is not None
+    assert len(rail.findChildren(_PortraitSection)) == 1
+    assert len(rail.findChildren(_CardSection)) == 1
+    # Race gallery is the right pane (not inside the rail).
+    grid = panel.findChild(RaceIconGridWidget)
+    assert grid is not None
+    assert rail.findChild(RaceIconGridWidget) is None
 
 
 def test_panel_pill_buttons_match_sections(qapp):
@@ -301,3 +309,17 @@ def test_overlay_close_during_entry_animation_does_not_crash(qapp):
             break
     assert not overlay.isVisible(), "overlay must end hidden"
     assert overlay._active_anim_group is None, "no animation should be lingering"
+
+
+def test_cc_reset_all_resyncs_gallery(qapp):
+    """After reset_all on a CC panel with an explicit icon selection, the
+    race gallery must revert to auto mode (no explicit stem stored)."""
+    from utils.widgets.race_icon_grid import RaceIconGridWidget
+    panel, _ = _build_panel(qapp, game="cc", existing={"icon_stem": "cat"})
+    grid = panel.findChild(RaceIconGridWidget)
+    assert grid is not None
+    # Pre-condition: explicit selection in place.
+    assert grid.selected_stem() == "cat"
+    panel.reset_all()
+    # After reset, gallery must reflect the auto stem (no explicit selection).
+    assert grid.selected_stem() == "dog"  # auto_stem="dog" set in _build_panel
