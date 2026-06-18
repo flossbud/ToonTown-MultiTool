@@ -173,6 +173,9 @@ class _CardSection(QWidget):
     def _on_body_toggle(self, checked: bool) -> None:
         self._body_row.setVisible(checked)
         if not checked:
+            # Clear the hidden well so it can't show a stale color that diverges
+            # from the draft on a later re-check.
+            self._body_row.set_current(None)
             self.body_changed.emit(None)
 
     def set_accent(self, hex_: Optional[str]) -> None:

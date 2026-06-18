@@ -55,7 +55,6 @@ from utils.widgets.toon_customization_sections import (
     _CardSection,
     _PortraitSection,
     _PoseSection,
-    _SimpleColorSection,
 )
 
 
