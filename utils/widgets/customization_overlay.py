@@ -608,6 +608,7 @@ class _ConfirmPrompt(QWidget):
     requests close with unsaved changes. Slides over the preview
     area; styling intentionally matches the panel chrome."""
 
+    save_clicked = Signal()
     keep_clicked = Signal()
     discard_clicked = Signal()
 
@@ -625,33 +626,49 @@ class _ConfirmPrompt(QWidget):
         outer.setContentsMargins(20, 16, 20, 16)
         outer.setSpacing(12)
 
-        title = QLabel("Discard unsaved changes?")
+        title = QLabel("Unsaved changes")
         title.setStyleSheet(
             "color: #e8e8f0; font-size: 15px; font-weight: 600;"
         )
         outer.addWidget(title)
 
         body = QLabel(
-            "Your edits will be lost. Save first, or keep editing."
+            "Save your edits, keep editing, or discard and close."
         )
         body.setWordWrap(True)
         body.setStyleSheet("color: #c8c8d0; font-size: 12px;")
         outer.addWidget(body)
 
         row = QHBoxLayout()
+        row.setSpacing(8)
         row.addStretch(1)
-        self.keep_btn = QPushButton("Keep editing")
-        self.keep_btn.setFixedHeight(30)
-        self.keep_btn.setStyleSheet(
+
+        self.save_btn = QPushButton("Save")
+        self.save_btn.setFixedHeight(30)
+        self.save_btn.setStyleSheet(
             "QPushButton {"
             "  background: #4a7cff; color: #ffffff;"
             "  border: none; border-radius: 6px;"
             "  padding: 0 14px; font-size: 12px; font-weight: 600;"
             "}"
+            "QPushButton:hover { background: #5d8cff; }"
         )
-        self.keep_btn.setDefault(True)
+        self.save_btn.setDefault(True)
+        self.save_btn.clicked.connect(self.save_clicked)
+
+        self.keep_btn = QPushButton("Keep editing")
+        self.keep_btn.setFixedHeight(30)
+        self.keep_btn.setStyleSheet(
+            "QPushButton {"
+            "  background: transparent; color: #a0a8c0;"
+            "  border: 1px solid #4a5070; border-radius: 6px;"
+            "  padding: 0 14px; font-size: 12px;"
+            "}"
+            "QPushButton:hover { background: rgba(74, 80, 112, 60); }"
+        )
         self.keep_btn.clicked.connect(self.keep_clicked)
-        self.discard_btn = QPushButton("Discard changes")
+
+        self.discard_btn = QPushButton("Discard")
         self.discard_btn.setFixedHeight(30)
         self.discard_btn.setStyleSheet(
             "QPushButton {"
@@ -662,8 +679,10 @@ class _ConfirmPrompt(QWidget):
             "QPushButton:hover { background: rgba(231, 74, 74, 30); }"
         )
         self.discard_btn.clicked.connect(self.discard_clicked)
-        row.addWidget(self.discard_btn)
+
+        row.addWidget(self.save_btn)
         row.addWidget(self.keep_btn)
+        row.addWidget(self.discard_btn)
         outer.addLayout(row)
 
 
@@ -698,6 +717,7 @@ class ToonCustomizationOverlay(QWidget):
 
         self._confirm_prompt = _ConfirmPrompt(self)
         self._confirm_prompt.hide()
+        self._confirm_prompt.save_clicked.connect(self.close_and_save)
         self._confirm_prompt.keep_clicked.connect(self._on_confirm_keep)
         self._confirm_prompt.discard_clicked.connect(self._on_confirm_discard)
 
