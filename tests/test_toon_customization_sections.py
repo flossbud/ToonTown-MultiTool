@@ -22,6 +22,7 @@ def test_section_module_exports_widgets(qapp):
         PRESET_SWATCHES,
         _SwatchRow,
         _SimpleColorSection,
+        _CardSection,
         _ChipRow,
         _PoseTile,
         _PoseAdjustPreview,
@@ -32,12 +33,38 @@ def test_section_module_exports_widgets(qapp):
     assert isinstance(PRESET_SWATCHES, tuple)
     assert _SwatchRow is not None
     assert _SimpleColorSection is not None
+    assert _CardSection is not None
     assert _ChipRow is not None
     assert _PoseTile is not None
     assert _PoseAdjustPreview is not None
     assert _PoseAdjustView is not None
     assert _PoseSection is not None
     assert _PortraitSection is not None
+
+
+def test_card_section_body_toggle(qapp):
+    from utils.widgets.toon_customization_sections import _CardSection
+    sec = _CardSection("#4a7cff", None)  # body off by default
+    got = []
+    sec.body_changed.connect(got.append)
+    # Toggle ON -> body well un-hidden; no emit yet.
+    sec._body_toggle.setChecked(True)
+    assert not sec._body_row.isHidden()
+    assert len(got) == 0
+    # Pick a body color -> body_changed(hex).
+    sec._body_row._apply_committed("#aa3377")
+    assert got[-1] == "#aa3377"
+    # Toggle OFF -> body_changed(None).
+    sec._body_toggle.setChecked(False)
+    assert got[-1] is None
+
+
+def test_card_section_existing_body_starts_on(qapp):
+    from utils.widgets.toon_customization_sections import _CardSection
+    sec = _CardSection("#4a7cff", "#aa3377")
+    assert sec._body_toggle.isChecked()
+    assert not sec._body_row.isHidden()
+    assert sec._body_row.current() == "#aa3377"
 
 
 def test_pose_tile_pinned_dimensions(qapp):

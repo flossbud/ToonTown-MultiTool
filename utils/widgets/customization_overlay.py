@@ -52,6 +52,7 @@ from utils.widgets.card_preview_widget import CardPreviewWidget
 from utils.widgets.race_icon_grid import RaceIconGridWidget
 from utils.saved_colors import SavedColorsStore
 from utils.widgets.toon_customization_sections import (
+    _CardSection,
     _PortraitSection,
     _PoseSection,
     _SimpleColorSection,
@@ -334,24 +335,21 @@ class _Panel(QFrame):
             )
             self._add_section("Toon", pose_section)
 
+        card_section = _CardSection(
+            self._draft.get("accent"),
+            self._draft.get("body"),
+            saved_store=saved_store,
+        )
+        card_section.accent_changed.connect(self._on_accent_changed)
+        card_section.body_changed.connect(self._on_body_changed)
+        self._add_section("Card", card_section)
+
         portrait_section = _PortraitSection(self._draft.get("portrait") or {}, saved_store=saved_store)
         portrait_section.color_changed.connect(self._on_portrait_color)
         portrait_section.gradient_changed.connect(self._on_portrait_gradient)
         portrait_section.pattern_changed.connect(self._on_portrait_pattern)
         portrait_section.circle_outline_changed.connect(self._on_circle_outline)
         self._add_section("Portrait", portrait_section)
-
-        accent_section = _SimpleColorSection(
-            "Accent (stripe + chip)", self._draft.get("accent"), saved_store=saved_store,
-        )
-        accent_section.color_changed.connect(self._on_accent_changed)
-        self._add_section("Accent", accent_section)
-
-        body_section = _SimpleColorSection(
-            "Body tint", self._draft.get("body"), saved_store=saved_store,
-        )
-        body_section.color_changed.connect(self._on_body_changed)
-        self._add_section("Body", body_section)
 
         if self._pill_group.buttons():
             self._pill_group.button(0).setChecked(True)
@@ -399,20 +397,21 @@ class _Panel(QFrame):
     # -- Public setters used by tests + outside callers -----------------
 
     def set_body(self, hex_: Optional[str]) -> None:
-        body_section: _SimpleColorSection = self._sections["Body"]
-        body_section.set_current(hex_)
+        card_section: _CardSection = self._sections["Card"]
+        card_section.set_body(hex_)
         self._on_body_changed(hex_)
 
     def set_accent(self, hex_: Optional[str]) -> None:
-        accent_section: _SimpleColorSection = self._sections["Accent"]
-        accent_section.set_current(hex_)
+        card_section: _CardSection = self._sections["Card"]
+        card_section.set_accent(hex_)
         self._on_accent_changed(hex_)
 
     def reset_all(self) -> None:
         self._draft = {}
         for name, w in self._sections.items():
-            if isinstance(w, _SimpleColorSection):
-                w.set_current(None)
+            if isinstance(w, _CardSection):
+                w.set_accent(None)
+                w.set_body(None)
             elif isinstance(w, _PortraitSection):
                 w.set_color(None)
                 w.set_gradient(None)

@@ -12,6 +12,7 @@ from typing import Optional
 from PySide6.QtCore import QPoint, QRect, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPixmap
 from PySide6.QtWidgets import (
+    QCheckBox,
     QColorDialog,
     QFrame,
     QGridLayout,
@@ -123,6 +124,69 @@ class _SimpleColorSection(QWidget):
 
     def set_current(self, hex_: Optional[str]) -> None:
         self._row.set_current(hex_)
+
+
+class _CardSection(QWidget):
+    """Combined Accent + Body card section.
+
+    An Accent color well is always visible. A 'Use a separate body color'
+    checkbox reveals a Body color well when checked. Body starts hidden
+    unless a pre-existing body value is supplied.
+    """
+
+    accent_changed = Signal(object)  # hex str | None
+    body_changed = Signal(object)    # hex str | None
+
+    def __init__(
+        self,
+        accent: Optional[str],
+        body: Optional[str],
+        saved_store=None,
+        parent=None,
+    ):
+        super().__init__(parent)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(8, 8, 8, 8)
+        outer.setSpacing(6)
+
+        accent_label = QLabel("Accent (stripe + chip)")
+        accent_label.setStyleSheet("color: #c8c8d8; font-weight: bold;")
+        outer.addWidget(accent_label)
+
+        self._accent_row = ColorWell(accent, saved_store=saved_store)
+        self._accent_row.color_picked.connect(self.accent_changed.emit)
+        outer.addWidget(self._accent_row)
+
+        self._body_toggle = QCheckBox("Use a separate body color")
+        self._body_toggle.setStyleSheet("color: #c8c8d8;")
+        self._body_toggle.setChecked(body is not None)
+        self._body_toggle.toggled.connect(self._on_body_toggle)
+        outer.addWidget(self._body_toggle)
+
+        self._body_row = ColorWell(body, saved_store=saved_store)
+        self._body_row.color_picked.connect(self.body_changed.emit)
+        self._body_row.setVisible(body is not None)
+        outer.addWidget(self._body_row)
+
+        outer.addStretch(1)
+
+    def _on_body_toggle(self, checked: bool) -> None:
+        self._body_row.setVisible(checked)
+        if not checked:
+            self.body_changed.emit(None)
+
+    def set_accent(self, hex_: Optional[str]) -> None:
+        """Silently update the accent well (no emit)."""
+        self._accent_row.set_current(hex_)
+
+    def set_body(self, hex_: Optional[str]) -> None:
+        """Silently update the body well and toggle state (no emit)."""
+        checked = hex_ is not None
+        self._body_toggle.blockSignals(True)
+        self._body_toggle.setChecked(checked)
+        self._body_toggle.blockSignals(False)
+        self._body_row.setVisible(checked)
+        self._body_row.set_current(hex_)
 
 
 class _ChipRow(QWidget):

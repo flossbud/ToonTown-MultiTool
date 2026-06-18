@@ -70,7 +70,7 @@ def test_pill_row_contents_match_ttr(qapp):
         overlay._panel._pill_group.button(i).text()
         for i in range(len(overlay._panel.section_names()))
     ]
-    assert names == ["Toon", "Portrait", "Accent", "Body"]
+    assert names == ["Toon", "Card", "Portrait"]
 
 
 def test_pill_row_contents_match_cc(qapp):
@@ -89,4 +89,4 @@ def test_pill_row_contents_match_cc(qapp):
         overlay._panel._pill_group.button(i).text()
         for i in range(len(overlay._panel.section_names()))
     ]
-    assert names == ["Icon", "Portrait", "Accent", "Body"]
+    assert names == ["Icon", "Card", "Portrait"]

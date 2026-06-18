@@ -171,8 +171,7 @@ def test_panel_populate_ttr_section_set(qapp):
     panel, _ = _build_panel(qapp, game="ttr")
     names = panel.section_names()
     assert "Toon" in names
-    assert "Body" in names
-    assert "Accent" in names
+    assert "Card" in names
     assert "Portrait" in names
     assert "Icon" not in names
 
@@ -181,8 +180,7 @@ def test_panel_populate_cc_section_set(qapp):
     panel, _ = _build_panel(qapp, game="cc")
     names = panel.section_names()
     assert "Icon" in names
-    assert "Body" in names
-    assert "Accent" in names
+    assert "Card" in names
     assert "Portrait" in names
     assert "Toon" not in names
 

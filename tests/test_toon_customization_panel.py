@@ -275,8 +275,8 @@ def test_ttr_panel_has_toon_section_first(qapp):
     panel, _, _, _parent = _build(qapp, game="ttr")
     names = panel.section_names()
     assert names[0] == "Toon"
-    # Order: Toon, Portrait, Accent, Body
-    assert names == ["Toon", "Portrait", "Accent", "Body"]
+    # Order: Toon, Card, Portrait
+    assert names == ["Toon", "Card", "Portrait"]
 
 
 def test_cc_panel_has_no_toon_section(qapp):

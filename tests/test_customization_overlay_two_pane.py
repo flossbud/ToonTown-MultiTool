@@ -106,8 +106,7 @@ def test_section_stack_is_not_inside_rail(qapp):
 
 
 def test_ttr_section_names_order_preserved(qapp):
-    """TTR sections must appear in the canonical order established before
-    this refactor: Toon, Portrait, Accent, Body."""
+    """TTR sections must appear in the canonical order: Toon, Card, Portrait."""
     overlay, _, _parent = _build_overlay(qapp)
     panel = overlay._panel
-    assert panel.section_names() == ["Toon", "Portrait", "Accent", "Body"]
+    assert panel.section_names() == ["Toon", "Card", "Portrait"]
