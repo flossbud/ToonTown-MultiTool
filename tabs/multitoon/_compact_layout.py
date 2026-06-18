@@ -37,6 +37,18 @@ from tabs.multitoon._layout_utils import clear_layout
 from utils.color_math import darken_rgb
 
 
+def _resolve_body_base(entry: dict, accent: QColor) -> QColor:
+    """Return the color to use as the card body gradient base.
+
+    If the customization entry carries a separate `body` override, that
+    color drives the fill. Otherwise the accent does, preserving the
+    existing behavior (body == accent-derived gradient).
+    """
+    from utils.toon_customization_resolve import resolve_body
+    override = resolve_body(entry)
+    return override if override is not None else QColor(accent)
+
+
 # ── Geometry (exact values from the design handoff) ────────────────────────
 CARD_RADIUS = 20
 CARD_BORDER = 5
@@ -184,8 +196,13 @@ class _GlowLayer(QWidget):
 # ── Card background (custom paint: concave cutout + accent gradient) ────────
 class _QuadCardBackground(QWidget):
     """Paints one card body: a 20px rounded rect with one corner carved out by
-    a 96px circle, filled with a deep accent gradient and bordered by a 5px
+    a 96px circle, filled with a deep body-color gradient and bordered by a 5px
     inner accent stroke. The carved corner lets the central emblem nest in.
+
+    The body fill and the accent border are independent: `accent` drives the
+    5px border, portrait ring, glow, and status dot; `body` (optional) drives
+    the fill gradient. When `body` is None the fill gradient derives from
+    `accent` (the original behavior).
 
     Has no graphics effect of its own (the glow/dim effects live on ancestor
     frames), so this never trips the "one painter per device" conflict.
@@ -199,10 +216,14 @@ class _QuadCardBackground(QWidget):
         self.setStyleSheet("background: transparent;")
         self._cutout = cutout
         self._accent = QColor("#555555")
+        self._body: QColor | None = None
         self._dimmed = True
 
-    def configure(self, accent: QColor, dimmed: bool) -> None:
+    def configure(
+        self, accent: QColor, dimmed: bool, body: "QColor | None" = None
+    ) -> None:
         self._accent = QColor(accent)
+        self._body = QColor(body) if body is not None else None
         self._dimmed = bool(dimmed)
         self.update()
 
@@ -216,20 +237,23 @@ class _QuadCardBackground(QWidget):
         p.setRenderHint(QPainter.Antialiasing, True)
         path = self._body_path()
 
-        # Body gradient: deep, rich version of the accent. darken() multiplies
-        # each channel; the dim treatment scales brightness down further (the
-        # saturation half of saturate(0.45) is handled by the colorize effect).
+        # Body gradient: deep, rich version of the body-fill base. darken()
+        # multiplies each channel; the dim treatment scales brightness down
+        # further (the saturation half of saturate(0.45) is handled by the
+        # colorize effect). When no separate body override is set, the accent
+        # drives the fill (original behavior).
+        body_base = self._body if self._body is not None else self._accent
         bright = 0.75 if self._dimmed else 1.0
-        top = darken_rgb(darken_rgb(self._accent, 0.28), bright)
-        bot = darken_rgb(darken_rgb(self._accent, 0.14), bright)
+        top = darken_rgb(darken_rgb(body_base, 0.28), bright)
+        bot = darken_rgb(darken_rgb(body_base, 0.14), bright)
         grad = QLinearGradient(0, 0, self.width() * 0.38, self.height())
         grad.setColorAt(0.0, top)
         grad.setColorAt(1.0, bot)
         p.fillPath(path, grad)
 
-        # 5px inner border: stroke the body path at double width and clip to
-        # the path so only the inner half survives - a clean border that
-        # follows the concave curve.
+        # 5px inner border: accent-colored, stroke the body path at double
+        # width and clip to the path so only the inner half survives - a
+        # clean border that follows the concave curve.
         border = darken_rgb(self._accent, 0.62) if self._dimmed else self._accent
         p.save()
         p.setClipPath(path)
@@ -419,6 +443,11 @@ class _CompactLayout(QWidget):
         self._build_structure()
         self.populate()
 
+    @property
+    def _card_slots(self) -> list[dict]:
+        """Alias for _cells; consumed by MultitoonTab and tests."""
+        return self._cells
+
     # ── Structure ──────────────────────────────────────────────────────────
     def _build_structure(self):
         outer = QVBoxLayout(self)
@@ -555,6 +584,7 @@ class _CompactLayout(QWidget):
             "portrait_frame": portrait_frame,
             "toggle_row": toggle_row,
             "ka_pill": ka_pill,
+            "ka_group": ka_pill,  # alias consumed by MultitoonTab
             "ka_lay": ka_lay,
             "sel_holder": sel_holder,
             "name_holder": name_holder,
@@ -703,19 +733,26 @@ class _CompactLayout(QWidget):
         is_toon = game in ("cc", "ttr")
 
         # Accent: per-toon override, else the game brand colour.
+        # Body-fill override: separate `body` key when set, else None (the
+        # card background falls back to the accent for the fill gradient).
         if game == "cc":
-            accent = resolve_accent(self._entry(i, "cc"), QColor(c["game_pill_cc"]))
+            entry = self._entry(i, "cc")
+            accent = resolve_accent(entry, QColor(c["game_pill_cc"]))
         elif game == "ttr":
-            accent = resolve_accent(self._entry(i, "ttr"), QColor(c["game_pill_ttr"]))
+            entry = self._entry(i, "ttr")
+            accent = resolve_accent(entry, QColor(c["game_pill_ttr"]))
         else:
+            entry = {}
             accent = QColor(c["border_light"])
+        from utils.toon_customization_resolve import resolve_body
+        body_override = resolve_body(entry)
 
         active = bool(enabled) and window_available and is_toon
         cell["dimmed"] = not active
         cell["accent"] = QColor(accent)
         cell["active"] = active
 
-        cell["bg"].configure(accent, dimmed=not active)
+        cell["bg"].configure(accent, dimmed=not active, body=body_override)
         cell["portrait_frame"].configure(accent, dimmed=not active)
         self._apply_cell_effects(cell, accent, active)
         self._refresh_glow()
@@ -822,6 +859,15 @@ class _CompactLayout(QWidget):
         self._emblem.configure(broadcasting, c["bg_app"], c["accent_blue_btn"])
 
     # ── Keep-alive collapse (master switch) ──────────────────────────────────
+    def _collapsed_ka_group_width(self, i: int) -> int:
+        """Width the ka_group occupies when keep-alive is collapsed.
+        The pinwheel layout hides the ka_pill rather than width-pinning it,
+        so this is never called in practice; it satisfies the MultitoonTab
+        interface shared with the full layout."""
+        cell = self._cells[i] if i < len(self._cells) else {}
+        pill = cell.get("ka_pill")
+        return pill.minimumSizeHint().width() if pill is not None else 0
+
     def _set_keep_alive_collapsed(self, collapsed: bool) -> None:
         for cell in self._cells:
             pill = cell.get("ka_pill")
