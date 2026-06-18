@@ -60,8 +60,8 @@ def test_panel_centered_in_overlay(qapp):
 
 def test_panel_pinned_dimensions_match_spec(qapp):
     overlay, _ = _open_overlay(qapp)
-    assert overlay._panel.width() == 543
-    assert overlay._panel.height() == 738
+    assert overlay._panel.width() == 620
+    assert overlay._panel.height() == 470
 
 
 def test_pill_row_contents_match_ttr(qapp):

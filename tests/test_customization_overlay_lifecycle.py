@@ -65,8 +65,8 @@ def test_panel_has_pinned_dimensions(qapp):
     parent = QWidget()
     parent.resize(575, 770)
     panel = _Panel(parent)
-    assert panel.PANEL_W == 543
-    assert panel.PANEL_H == 738
+    assert panel.PANEL_W == 620
+    assert panel.PANEL_H == 470
     assert panel.HEADER_H == 44
     assert panel.FOOTER_H == 52
 

@@ -57,15 +57,16 @@ from utils.widgets.toon_customization_sections import (
 
 
 class _Panel(QFrame):
-    """The editor card. Header / preview / pill nav / section stack /
+    """The editor card. Header / [rail: preview + nav | section stack] /
     footer. Emits high-level intent signals that the overlay routes."""
 
-    PANEL_W = 543
-    PANEL_H = 738
+    PANEL_W = 620
+    PANEL_H = 470
     HEADER_H = 44
     FOOTER_H = 52
     PREVIEW_H = 180
-    PILL_ROW_H = 40
+    PILL_ROW_H = 40  # retained for compat; vertical nav uses natural height
+    RAIL_W = 200
 
     close_requested = Signal()
     cancel_requested = Signal()
@@ -97,9 +98,7 @@ class _Panel(QFrame):
         outer.setSpacing(0)
 
         outer.addWidget(self._build_header())
-        outer.addWidget(self._build_preview_placeholder())
-        outer.addWidget(self._build_pill_row())
-        outer.addWidget(self._build_section_stack(), 1)
+        outer.addWidget(self._build_body(), 1)
         outer.addWidget(self._build_footer())
 
     # -- subwidgets ------------------------------------------------------
@@ -137,23 +136,52 @@ class _Panel(QFrame):
         row.addWidget(self.close_btn)
         return bar
 
-    def _build_preview_placeholder(self) -> QWidget:
-        # CardPreviewWidget is added by populate() in a later task;
-        # for now this is a fixed-height slot the layout reserves.
+    def _build_body(self) -> QWidget:
+        """Horizontal split: left rail (preview + nav) | right section_stack."""
+        body = QWidget()
+        body.setStyleSheet("background: transparent;")
+        row = QHBoxLayout(body)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(0)
+        row.addWidget(self._build_rail())
+        row.addWidget(self._build_section_stack(), 1)
+        return body
+
+    def _build_rail(self) -> QWidget:
+        """Left rail: preview host on top, vertical nav list below."""
+        rail = QFrame()
+        rail.setObjectName("panelRail")
+        rail.setFixedWidth(self.RAIL_W)
+        rail.setStyleSheet(
+            "QFrame#panelRail {"
+            "  background: rgba(20, 23, 36, 210);"
+            "  border-right: 1px solid #2a2f45;"
+            "}"
+        )
+        self._rail = rail
+
+        vbox = QVBoxLayout(rail)
+        vbox.setContentsMargins(0, 0, 0, 0)
+        vbox.setSpacing(0)
+
+        # Preview host: CardPreviewWidget is installed by populate().
         self.preview_host = QWidget()
         self.preview_host.setFixedHeight(self.PREVIEW_H)
-        return self.preview_host
+        vbox.addWidget(self.preview_host)
 
-    def _build_pill_row(self) -> QWidget:
-        row_widget = QWidget()
-        row_widget.setFixedHeight(self.PILL_ROW_H)
-        self.pill_row = QHBoxLayout(row_widget)
-        self.pill_row.setContentsMargins(16, 5, 16, 5)
-        self.pill_row.setSpacing(6)
-        self._pill_group = QButtonGroup(row_widget)
+        # Vertical nav list.
+        nav_widget = QWidget()
+        nav_widget.setStyleSheet("background: transparent;")
+        self.pill_row = QVBoxLayout(nav_widget)
+        self.pill_row.setContentsMargins(8, 8, 8, 8)
+        self.pill_row.setSpacing(4)
+        self.pill_row.setAlignment(Qt.AlignTop)
+        self._pill_group = QButtonGroup(nav_widget)
         self._pill_group.setExclusive(True)
-        self._pill_group.idClicked.connect(self._on_pill_clicked)
-        return row_widget
+        self._pill_group.idClicked.connect(self._on_nav_clicked)
+        vbox.addWidget(nav_widget, 1)
+
+        return rail
 
     def _build_section_stack(self) -> QWidget:
         self.section_stack = QStackedWidget()
@@ -213,7 +241,7 @@ class _Panel(QFrame):
             "QPushButton:hover { background: #5d8cff; }"
         )
 
-    def _on_pill_clicked(self, index: int) -> None:
+    def _on_nav_clicked(self, index: int) -> None:
         self.section_stack.setCurrentIndex(index)
         btn = self._pill_group.button(index)
         if btn is not None:
@@ -331,15 +359,18 @@ class _Panel(QFrame):
         self._sections[name] = widget
         btn = QPushButton(name)
         btn.setCheckable(True)
-        btn.setFixedHeight(30)
+        btn.setFixedHeight(32)
         btn.setStyleSheet(
             "QPushButton {"
-            "  background: #353a52; color: #c8c8d0;"
-            "  border: none; border-radius: 8px; padding: 0 12px;"
-            "  font-size: 12px;"
+            "  background: transparent; color: #aab;"
+            "  border: none; border-radius: 6px; padding: 0 12px;"
+            "  font-size: 12px; text-align: left;"
             "}"
             "QPushButton:checked {"
-            "  background: #4a7cff; color: #ffffff;"
+            "  background: #2a3553; color: #ffffff;"
+            "}"
+            "QPushButton:hover:!checked {"
+            "  background: rgba(255, 255, 255, 18);"
             "}"
         )
         idx = self.section_stack.count()
