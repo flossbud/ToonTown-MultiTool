@@ -347,7 +347,6 @@ class _Panel(QFrame):
         portrait_section.color_changed.connect(self._on_portrait_color)
         portrait_section.gradient_changed.connect(self._on_portrait_gradient)
         portrait_section.pattern_changed.connect(self._on_portrait_pattern)
-        portrait_section.circle_outline_changed.connect(self._on_circle_outline)
         self._add_section("Portrait", portrait_section)
 
         if self._pill_group.buttons():
@@ -415,7 +414,6 @@ class _Panel(QFrame):
                 w.set_color(None)
                 w.set_gradient(None)
                 w.set_pattern(None, None)
-                w.set_circle_outline(None, None)
             elif isinstance(w, _PoseSection):
                 for t in w.tiles():
                     t.set_selected(t.pose == "portrait")
@@ -463,11 +461,6 @@ class _Panel(QFrame):
         sec = self._sections["Portrait"]
         sec.set_pattern(name, color)
         self._on_portrait_pattern(name, color)
-
-    def set_circle_outline(self, hex_, width_key) -> None:
-        sec = self._sections["Portrait"]
-        sec.set_circle_outline(hex_, width_key)
-        self._on_circle_outline(hex_, width_key or "medium")
 
     def set_silhouette_outline(self, hex_, width_key) -> None:
         if "Toon" in self._sections:
@@ -592,16 +585,6 @@ class _Panel(QFrame):
             sub["pattern"] = {"name": name, "color": color or "#ffffff"}
         self._prune_portrait()
         self._preview.set_draft(self._draft)
-
-    def _on_circle_outline(self, hex_: Optional[str], width_key: str) -> None:
-        sub = self._portrait_subdict()
-        if hex_ is None:
-            sub.pop("outline", None)
-        else:
-            sub["outline"] = {"color": hex_, "width": width_key}
-        self._prune_portrait()
-        self._preview.set_draft(self._draft)
-
 
 class _ConfirmPrompt(QWidget):
     """Inline confirm prompt shown over the panel when the user

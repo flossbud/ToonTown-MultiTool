@@ -16,7 +16,6 @@ from utils.color_math import darken_rgb
 from utils.toon_customization_resolve import (
     resolve_accent,
     resolve_body,
-    resolve_circle_outline,
     resolve_portrait_brush,
     resolve_portrait_pattern,
     resolve_silhouette_outline,
@@ -276,15 +275,6 @@ class CardPreviewWidget(QWidget):
         p.setPen(QPen(accent, _PORTRAIT_RING))
         p.setBrush(Qt.NoBrush)
         p.drawEllipse(circle_rect.adjusted(ring_inset, ring_inset, -ring_inset, -ring_inset))
-
-        # User-defined circle outline (drawn last, on top of the accent ring)
-        circle_outline = resolve_circle_outline(self._draft)
-        if circle_outline is not None:
-            out_color, out_width = circle_outline
-            inset = max(0, out_width // 2)
-            p.setPen(QPen(out_color, out_width))
-            p.setBrush(Qt.NoBrush)
-            p.drawEllipse(circle_rect.adjusted(inset, inset, -inset, -inset))
 
         # Text column: right of the portrait circle
         text_x = _PORTRAIT_X + _PORTRAIT_D + 12

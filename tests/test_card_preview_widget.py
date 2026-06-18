@@ -127,29 +127,6 @@ def test_preview_current_portrait_transform(qapp):
     assert w.current_portrait_transform() == (1.25, 0.1, 0.2, -15.0)
 
 
-def test_card_preview_draws_circle_outline_when_set(qapp):
-    """Painting with a circle outline set should produce a pixel ring
-    matching the outline color around the portrait circle's perimeter."""
-    from utils.widgets.card_preview_widget import CardPreviewWidget
-
-    draft = {"portrait": {
-        "color": "#000000",
-        "outline": {"color": "#ffd84a", "width": "thick"},
-    }}
-    w = CardPreviewWidget("ttr", "Test", draft)
-    w.show()
-    pm = w.grab()
-    img = pm.toImage()
-    # Portrait circle is at (12, 48, 80, 80) in the 300x176 clean card.
-    # "thick" outline (width=4, inset=2) is drawn centered at the circle
-    # edge; its leftmost stroke covers approx x=12..16 at y_center=88.
-    # Sample squarely in that stroke: (14, 88).
-    px = img.pixelColor(14, 88)
-    assert px.alpha() > 0
-    # Outline color is #ffd84a (very yellow). Tolerate AA.
-    assert px.red() > 200 and px.green() > 180 and px.blue() < 120
-
-
 def test_card_preview_invokes_silhouette_builders_when_set(qapp, monkeypatch):
     """When silhouette outline or shadow is set, the paint pipeline
     calls the effect builders. Verified via monkeypatch spies."""

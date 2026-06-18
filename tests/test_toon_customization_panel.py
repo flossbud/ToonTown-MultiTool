@@ -92,20 +92,6 @@ def test_reset_all_empties_draft(qapp):
     assert panel.draft() == {}
 
 
-def test_reset_all_clears_portrait_circle_outline_visual_state(qapp):
-    """Reset all must clear the new outline picker visual state on
-    _PortraitSection, otherwise subsequent edits re-introduce stale
-    color into the draft."""
-    panel, _, _, _parent = _build(qapp, existing={
-        "portrait": {"outline": {"color": "#ff0000", "width": "thick"}},
-    })
-    panel.reset_all()
-    sec = panel.section("Portrait")
-    color, _width = sec.current_circle_outline()
-    assert color is None
-    assert panel.draft() == {}
-
-
 def test_reset_all_clears_silhouette_visual_state_on_pose_section(qapp, monkeypatch, tmp_path):
     """Reset all must also clear the Adjust view's silhouette swatch
     state if the adjust view was opened. Without this, the swatch row
@@ -585,51 +571,19 @@ def _reset_singletons():
     RenditionPoseFetcher._instance = None
 
 
-def test_portrait_section_emits_circle_outline_changed_with_color_and_width(qapp):
+def test_portrait_section_no_longer_exposes_circle_outline_api(qapp):
+    """circle_outline_changed Signal and set_circle_outline are removed;
+    fill + pattern signals must still be present."""
     from utils.saved_colors import SavedColorsStore
     from utils.widgets.toon_customization_sections import _PortraitSection
-    from PySide6.QtTest import QSignalSpy
     sec = _PortraitSection({}, saved_store=SavedColorsStore(None))
-    spy = QSignalSpy(sec.circle_outline_changed)
-    sec.set_circle_outline("#ffd84a", "medium")
-    assert spy.count() == 1
-    args = spy.at(0)
-    assert args[0] == "#ffd84a"
-    assert args[1] == "medium"
-
-
-def test_portrait_section_set_circle_outline_to_none_clears_chip_state(qapp):
-    from utils.saved_colors import SavedColorsStore
-    from utils.widgets.toon_customization_sections import _PortraitSection
-    sec = _PortraitSection({"outline": {"color": "#ff0000", "width": "thick"}}, saved_store=SavedColorsStore(None))
-    # Initial state from `current`
-    assert sec.current_circle_outline() == ("#ff0000", "thick")
-    sec.set_circle_outline(None, None)
-    assert sec.current_circle_outline() == (None, "thick")  # width retained
-
-
-def test_panel_circle_outline_color_writes_to_draft(qapp, monkeypatch, tmp_path):
-    monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
-    _reset_singletons()
-    from utils.toon_customizations_manager import ToonCustomizationsManager
-    mgr = ToonCustomizationsManager()
-    panel, _, _, _parent = _build(qapp, manager=mgr, game="ttr")
-    panel.set_circle_outline("#ffd84a", "thick")
-    draft = panel.draft()
-    assert draft["portrait"]["outline"] == {"color": "#ffd84a", "width": "thick"}
-
-
-def test_panel_circle_outline_default_color_removes_outline_from_draft(qapp, monkeypatch, tmp_path):
-    monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
-    _reset_singletons()
-    from utils.toon_customizations_manager import ToonCustomizationsManager
-    mgr = ToonCustomizationsManager()
-    mgr.set("ttr", "Flossbud", {"portrait": {"outline": {"color": "#fff", "width": "medium"}}})
-    panel, _, _, _parent = _build(qapp, manager=mgr, game="ttr",
-                                   existing={"portrait": {"outline": {"color": "#fff", "width": "medium"}}})
-    assert panel.draft()["portrait"]["outline"]["color"] == "#fff"
-    panel.set_circle_outline(None, None)
-    assert "outline" not in (panel.draft().get("portrait") or {})
+    assert not hasattr(sec, "circle_outline_changed")
+    assert not hasattr(sec, "set_circle_outline")
+    assert not hasattr(sec, "current_circle_outline")
+    # Fill and pattern signals remain.
+    assert hasattr(sec, "color_changed")
+    assert hasattr(sec, "gradient_changed")
+    assert hasattr(sec, "pattern_changed")
 
 
 def test_pose_section_emits_silhouette_outline_changed(qapp):
