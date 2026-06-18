@@ -75,6 +75,7 @@ class ColorPickerOverlay(QWidget):
         super().__init__(parent)
         self._store = saved_store
         self.setObjectName("ColorPickerOverlay")
+        self._valid_hex: str = "#4a7cff"   # last known-good #rrggbb; never garbage
         self._build()
         self.hide()
 
@@ -96,7 +97,8 @@ class ColorPickerOverlay(QWidget):
         self._hue.blockSignals(True)
         self._hue.setValue(int(round(h * 359)))
         self._hue.blockSignals(False)
-        self._hex.setText(c.name())
+        self._valid_hex = c.name()
+        self._hex.setText(self._valid_hex)
         self._rebuild_saved()
         if self.parent() is not None:
             self.resize(self.parent().size())
@@ -107,6 +109,8 @@ class ColorPickerOverlay(QWidget):
         """Validate, normalise, update all controls and emit color_live."""
         c = QColor(hex_)
         if not c.isValid():
+            # Revert field to last known-good hex; do not emit.
+            self._hex.setText(self._valid_hex)
             return
         normalized = c.name()   # lowercase #rrggbb
         h, s, v, _ = c.getHsvF()
@@ -116,12 +120,13 @@ class ColorPickerOverlay(QWidget):
         self._hue.blockSignals(True)
         self._hue.setValue(int(round(h * 359)))
         self._hue.blockSignals(False)
+        self._valid_hex = normalized
         self._hex.setText(normalized)
         self.color_live.emit(normalized)
 
     def current_hex(self) -> str:
-        """Return the current hex string (lowercase #rrggbb)."""
-        return self._hex.text()
+        """Return the current hex string (lowercase #rrggbb); always valid."""
+        return self._valid_hex
 
     def commit(self):
         self.hide()
@@ -280,10 +285,10 @@ class ColorPickerOverlay(QWidget):
         self._sync_hex()
 
     def _sync_hex(self, emit: bool = True) -> None:
-        """Recompute hex from hue slider + square s/v, update the field and optionally emit."""
-        h = self._hue.value() / 359.0
-        _, s, v = self._square.hsv()
+        """Recompute hex from the square (single source of truth for h/s/v), update the field and optionally emit."""
+        h, s, v = self._square.hsv()
         normalized = QColor.fromHsvF(h, s, v).name()
+        self._valid_hex = normalized
         self._hex.setText(normalized)
         if emit:
             self.color_live.emit(normalized)
