@@ -4,6 +4,7 @@ from __future__ import annotations
 import pytest
 
 from utils.macos_backend import MacOSBackend, SPIKE_EVENT_TAG
+from utils import macos_keycodes as mk
 
 
 class _FakeQuartz:
@@ -245,3 +246,93 @@ def test_module_imports_without_pyobjc():
 
     # No PyObjC modules should be imported merely by importing the backend.
     assert "Quartz" not in sys.modules
+
+
+# ── Held-modifier flags: a forwarded key must carry currently-held modifiers ──
+# macOS CGEvents carry explicit per-event modifier flags. Posting every forwarded
+# keydown/keyup with flags=0 makes a held Shift "die" the moment another key is
+# forwarded (the focused/bg toon sees the new key with no modifiers). Track the
+# modifiers TTMT is forwarding and apply them to every posted event.
+
+def _be(monkeypatch, fake):
+    be = _backend_with_fake(monkeypatch, fake)
+    monkeypatch.setattr(be, "_refresh", lambda: {"11": (4242, "com.ttr")})
+    return be
+
+
+def _last_flags(fake):
+    return fake.posts[-1][1]["flags"]
+
+
+def test_held_shift_rides_on_subsequent_forwarded_key(monkeypatch):
+    fake = _FakeQuartz()
+    be = _be(monkeypatch, fake)
+    # Shift down: the modifier event itself carries FLAG_SHIFT.
+    be.send_keydown("11", "Shift_L")
+    assert _last_flags(fake) == mk.FLAG_SHIFT
+    # A forwarded 'w' while Shift is held must carry FLAG_SHIFT (not 0).
+    be.send_keydown("11", "w")
+    assert _last_flags(fake) == mk.FLAG_SHIFT
+    be.send_keyup("11", "w")
+    assert _last_flags(fake) == mk.FLAG_SHIFT
+    # Shift up: cleared on the release event, and subsequent keys are unmodified.
+    be.send_keyup("11", "Shift_L")
+    assert _last_flags(fake) == 0
+    be.send_keydown("11", "w")
+    assert _last_flags(fake) == 0
+
+
+def test_left_and_right_shift_refcount(monkeypatch):
+    fake = _FakeQuartz()
+    be = _be(monkeypatch, fake)
+    be.send_keydown("11", "Shift_L")
+    be.send_keydown("11", "Shift_R")
+    # Releasing ONE shift must NOT clear FLAG_SHIFT while the other is still held.
+    be.send_keyup("11", "Shift_L")
+    be.send_keydown("11", "w")
+    assert _last_flags(fake) == mk.FLAG_SHIFT
+    # Releasing the second clears it.
+    be.send_keyup("11", "Shift_R")
+    be.send_keydown("11", "w")
+    assert _last_flags(fake) == 0
+
+
+def test_multiple_distinct_modifiers_combine(monkeypatch):
+    fake = _FakeQuartz()
+    be = _be(monkeypatch, fake)
+    be.send_keydown("11", "Shift_L")
+    be.send_keydown("11", "Control_L")
+    be.send_keydown("11", "w")
+    assert _last_flags(fake) == mk.FLAG_SHIFT | mk.FLAG_CONTROL
+
+
+def test_connect_resets_held_modifiers(monkeypatch):
+    fake = _FakeQuartz()
+    be = _be(monkeypatch, fake)
+    be.send_keydown("11", "Shift_L")
+    assert be._held_mod_keys                 # Shift is held
+    be.connect()
+    assert be._held_mod_keys == set()        # a fresh connect starts clean
+
+
+def test_disconnect_clears_held_modifiers(monkeypatch):
+    fake = _FakeQuartz()
+    be = _be(monkeypatch, fake)
+    be.send_keydown("11", "Shift_L")
+    be.disconnect()
+    be.connect()
+    monkeypatch.setattr(be, "_refresh", lambda: {"11": (4242, "com.ttr")})
+    be.send_keydown("11", "w")
+    assert _last_flags(fake) == 0     # stale Shift must not survive a reconnect
+
+
+def test_send_key_includes_held_modifier_without_mutating_it(monkeypatch):
+    fake = _FakeQuartz()
+    be = _be(monkeypatch, fake)
+    be.send_keydown("11", "Shift_L")        # Shift held
+    # send_key (one-shot combo) must OR in the held Shift...
+    be.send_key("11", "w", ["Control_L"])
+    assert _last_flags(fake) == mk.FLAG_SHIFT | mk.FLAG_CONTROL
+    # ...but must NOT add its explicit modifier to the held set.
+    be.send_keydown("11", "a")
+    assert _last_flags(fake) == mk.FLAG_SHIFT
