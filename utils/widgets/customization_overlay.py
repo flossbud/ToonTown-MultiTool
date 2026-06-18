@@ -1,8 +1,9 @@
 """In-app overlay that replaces the floating ToonCustomizationDialog.
 
 Owns:
-  - _Panel:        the editor card (header / preview / pill nav /
-                   section stack / footer)
+  - _Panel:        the editor card, a two-pane shell: header (top) /
+                   body [ left rail (preview + vertical section nav) |
+                   section stack ] / footer (bottom)
   - ToonCustomizationOverlay: the host widget. Public API:
                               open_for, request_close,
                               close_and_discard, close_and_save.
@@ -65,7 +66,6 @@ class _Panel(QFrame):
     HEADER_H = 44
     FOOTER_H = 52
     PREVIEW_H = 180
-    PILL_ROW_H = 40  # retained for compat; vertical nav uses natural height
     RAIL_W = 200
 
     close_requested = Signal()
