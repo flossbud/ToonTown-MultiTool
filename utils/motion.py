@@ -17,6 +17,8 @@ from PySide6.QtCore import (
 )
 from PySide6.QtWidgets import QGraphicsOpacityEffect, QLabel
 
+from utils import perf_trace
+
 # ── Duration tokens (ms) ────────────────────────────────────────────────
 DURATION_PRESS   = 130   # press scale down/up
 DURATION_HOVER   = 180   # tint fade, icon morph
@@ -177,6 +179,7 @@ def push_slide_pages(stack, from_idx: int, to_idx: int, axis: str = "h", reverse
     """
     if is_reduced():
         stack.setCurrentIndex(to_idx)
+        perf_trace.flush()  # nothing timed in reduced mode; keep the log tidy
         return None
 
     # Cancel any in-flight (or pending) transition on this stack.
@@ -195,6 +198,7 @@ def push_slide_pages(stack, from_idx: int, to_idx: int, axis: str = "h", reverse
     if axis not in ("h", "v"):
         raise ValueError(f"axis must be 'h' or 'v', got {axis!r}")
 
+    _gid = perf_trace.begin_gesture("tab_switch")
     outgoing = stack.widget(from_idx)
     incoming = stack.widget(to_idx)
     w, h = stack.width(), stack.height()
@@ -204,13 +208,17 @@ def push_slide_pages(stack, from_idx: int, to_idx: int, axis: str = "h", reverse
     # It does NOT participate in the per-frame animation — proxies handle
     # all motion, so the no-layout-reflow guarantee still holds.
     if incoming.size() != stack.size():
-        incoming.resize(stack.size())
+        with perf_trace.perf_span("incoming.resize", _gid):
+            incoming.resize(stack.size())
 
-    out_pix = outgoing.grab()
-    in_pix = incoming.grab()
+    with perf_trace.perf_span("outgoing.grab", _gid):
+        out_pix = outgoing.grab()
+    with perf_trace.perf_span("incoming.grab", _gid):
+        in_pix = incoming.grab()
 
-    out_label = _make_proxy(stack, out_pix, w, h)
-    in_label = _make_proxy(stack, in_pix, w, h)
+    with perf_trace.perf_span("make_proxies", _gid):
+        out_label = _make_proxy(stack, out_pix, w, h)
+        in_label = _make_proxy(stack, in_pix, w, h)
 
     if axis == "h":
         direction = 1 if to_idx > from_idx else -1
@@ -239,7 +247,8 @@ def push_slide_pages(stack, from_idx: int, to_idx: int, axis: str = "h", reverse
     group.addAnimation(_anim_pos(out_label, QPoint(0, 0), out_end, duration))
     group.addAnimation(_anim_pos(in_label, in_start, in_end, duration))
 
-    if axis == "v":
+    from utils.effects_flags import effects_disabled
+    if axis == "v" and not effects_disabled():
         # Outgoing also fades for the brand-click feel.
         effect = QGraphicsOpacityEffect(out_label)
         out_label.setGraphicsEffect(effect)
@@ -259,6 +268,7 @@ def push_slide_pages(stack, from_idx: int, to_idx: int, axis: str = "h", reverse
                 stack._in_flight_anim = None
             if getattr(stack, "_in_flight_timer", None) is start_timer:
                 stack._in_flight_timer = None
+            perf_trace.flush()  # tab_switch gesture complete -> write spans
         except RuntimeError:
             # Stack/labels were already destroyed by Qt cleanup. No work to do.
             return

@@ -799,6 +799,11 @@ class _CompactLayout(QWidget):
             if cell_w.graphicsEffect() is not None:
                 cell_w.setGraphicsEffect(None)
         else:
+            from utils.effects_flags import effects_disabled
+            if effects_disabled():
+                if cell_w.graphicsEffect() is not None:
+                    cell_w.setGraphicsEffect(None)
+                return
             eff = cell_w.graphicsEffect()
             if not isinstance(eff, QGraphicsColorizeEffect):
                 eff = QGraphicsColorizeEffect(cell_w)

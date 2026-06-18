@@ -2139,8 +2139,20 @@ class MultitoonTab(QWidget):
         # animated visual tied to it. Including it here had the timer firing
         # 20 Hz the entire time the service was on, scheduling paintEvents on
         # all 4 keep-alive buttons even though nothing visual was changing.
-        needs_glow = any(self.keep_alive_enabled) or self._chat_glow_active
-        needs_bars = any(self.keep_alive_enabled)
+        #
+        # Visibility-gate too: these repaint timers only change pixels on the
+        # visible Multitoon page. Off-page or minimized, stop them. The
+        # keep-alive cycle anchor (_ka_cycle_start) is untouched, so rings/bars
+        # resume on their true monotonic schedule (phase preserved).
+        from tabs.multitoon._timer_gating import timers_should_run
+        win = self.window()
+        needs_glow, needs_bars = timers_should_run(
+            is_current_page=self.isVisible(),       # False for a non-current stacked page
+            window_visible=self.isVisible(),
+            window_minimized=bool(win and win.isMinimized()),
+            keep_alive_active=any(self.keep_alive_enabled),
+            chat_glow_active=self._chat_glow_active,
+        )
 
         if needs_glow and not self._glow_timer.isActive():
             self._glow_phase = 0.0
@@ -3603,6 +3615,13 @@ class MultitoonTab(QWidget):
         deferred-animation trigger point."""
         super().showEvent(event)
         self._maybe_animate_keep_alive_visibility()
+        self._update_glow_timer()  # resume repaint timers when back on-page
+
+    def hideEvent(self, event):
+        """Stop the glow/bar repaint timers when this tab leaves the screen
+        (page switch). Phase is preserved via the monotonic cycle anchor."""
+        super().hideEvent(event)
+        self._update_glow_timer()
 
     def _maybe_animate_keep_alive_visibility(self) -> None:
         """Compare each per-toon KA widget's hide-state to the master setting.

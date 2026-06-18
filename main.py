@@ -153,6 +153,15 @@ from utils.theme_manager import (
     SystemThemeWatcher,
 )
 from utils.build_flavor import window_title, app_name, is_beta
+from utils import perf_trace
+from utils.window_corner_state import corner_state_signature, should_skip_restyle
+
+# A/B experiment (spec Phase 2): on macOS, run the frameless window OPAQUE with a
+# rounded mask instead of WA_TranslucentBackground, to isolate translucent-
+# compositing cost. Chosen at startup (translucency cannot be toggled live).
+_OPAQUE_MASK_CHROME = (
+    sys.platform == "darwin" and os.environ.get("TTMT_OPAQUE_MASK_CHROME") == "1"
+)
 from utils.widgets.window_chrome_style import (
     RADIUS_NORMAL, RADIUS_MAXIMIZED, BOTTOM_INSET, STROKE_INSET,
     window_edge_colors, card_qss, header_top_radius_qss,
@@ -744,30 +753,52 @@ class MultiToonTool(QMainWindow):
         self._chrome = None
         self.container.setObjectName("app_card")
         self.container.setAttribute(Qt.WA_StyledBackground, True)
+        # perf_trace: window-state gestures have no terminal signal, so flush
+        # via a short debounce restarted on each WindowStateChange.
+        self._perf_state_flush = QTimer(self)
+        self._perf_state_flush.setSingleShot(True)
+        self._perf_state_flush.setInterval(150)
+        self._perf_state_flush.timeout.connect(perf_trace.flush)
+        self._perf_state_gid = ""
+        self._perf_state_fires = 0
         if bool(self.settings_manager.get("use_system_title_bar", False)):
             self.setAttribute(Qt.WA_TranslucentBackground, False)
-            self._apply_window_corner_state(self.isMaximized())
+            self._apply_window_corner_state(self.isMaximized(), force=True)
             return  # native decorations; no custom controls
         self.setWindowFlag(Qt.FramelessWindowHint, True)
-        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        if _OPAQUE_MASK_CHROME:
+            # Opaque experiment: keep an opaque surface, mask the corners.
+            self.setAttribute(Qt.WA_TranslucentBackground, False)
+            self._mask_cache = None  # (w, h, radius) last applied
+        else:
+            self.setAttribute(Qt.WA_TranslucentBackground, True)
         from utils.widgets.window_chrome import WindowChromeController
         self._chrome = WindowChromeController(self, self.header)
         self._chrome.reposition()
-        self._apply_window_corner_state(self.isMaximized())
+        self._apply_window_corner_state(self.isMaximized(), force=True)
+        self._update_window_mask()
         # Push the current theme now: the earlier _apply_full_theme() in __init__
         # ran before _chrome existed, so without this the unfocused dots would
         # keep the dark-default inactive grey under the light theme until the
         # next theme change.
         self._notify_chrome_theme()
 
-    def _apply_window_corner_state(self, is_maximized: bool):
+    def _apply_window_corner_state(self, is_maximized: bool, force: bool = False):
         """Apply rounded-card + outline + lit-rim + layout insets for the
         current state. Frameless + not maximized -> 16px rounded card with a
         1px theme-aware uniform outline and a lit top-rim on the header.
-        Maximized or native title bar -> square, plain bg, no insets."""
+        Maximized or native title bar -> square, plain bg, no insets.
+
+        The full-tree QWidget{} cascade is expensive, so skip it when neither
+        the corner state nor the theme changed; theme/dark-light changes pass
+        force=True to bypass the guard."""
         c = self._theme_colors()
         bg = c["bg_app"]
         native = bool(self.settings_manager.get("use_system_title_bar", False))
+        new_sig = corner_state_signature(is_maximized, native, bg)
+        if should_skip_restyle(getattr(self, "_last_corner_sig", None), new_sig, force):
+            return
+        self._last_corner_sig = new_sig
         rounded = (not native) and (not is_maximized)
         root = self.container.layout()
 
@@ -780,22 +811,46 @@ class MultiToonTool(QMainWindow):
         # while descendants still inherit bg_app. Emit both.
         cascade = f"\nQWidget {{ background: {bg}; }}"
 
-        if rounded:
-            edge = window_edge_colors(bg)
-            self.container.setStyleSheet(
-                card_qss("app_card", bg, RADIUS_NORMAL, edge["outline"]) + cascade)
-            self.header.setStyleSheet(
-                header_top_radius_qss(c["header_bg"], c["sidebar_border"],
-                                      RADIUS_NORMAL, top_rim=edge["rim"]))
-            if root is not None:
-                root.setContentsMargins(STROKE_INSET, STROKE_INSET, STROKE_INSET, BOTTOM_INSET)
-        else:
-            self.container.setStyleSheet(
-                card_qss("app_card", bg, RADIUS_MAXIMIZED, None) + cascade)
-            self.header.setStyleSheet(
-                header_top_radius_qss(c["header_bg"], c["sidebar_border"], RADIUS_MAXIMIZED))
-            if root is not None:
-                root.setContentsMargins(0, 0, 0, 0)
+        _gid = getattr(self, "_perf_state_gid", "")
+        with perf_trace.perf_span("apply_corner_state", _gid):
+            if rounded:
+                edge = window_edge_colors(bg)
+                self.container.setStyleSheet(
+                    card_qss("app_card", bg, RADIUS_NORMAL, edge["outline"]) + cascade)
+                self.header.setStyleSheet(
+                    header_top_radius_qss(c["header_bg"], c["sidebar_border"],
+                                          RADIUS_NORMAL, top_rim=edge["rim"]))
+                if root is not None:
+                    root.setContentsMargins(STROKE_INSET, STROKE_INSET, STROKE_INSET, BOTTOM_INSET)
+            else:
+                self.container.setStyleSheet(
+                    card_qss("app_card", bg, RADIUS_MAXIMIZED, None) + cascade)
+                self.header.setStyleSheet(
+                    header_top_radius_qss(c["header_bg"], c["sidebar_border"], RADIUS_MAXIMIZED))
+                if root is not None:
+                    root.setContentsMargins(0, 0, 0, 0)
+        self._update_window_mask()
+
+    def _update_window_mask(self):
+        """Opaque-chrome experiment only (TTMT_OPAQUE_MASK_CHROME). Mask the
+        top-level to rounded corners in normal state / clear it when maximized.
+        Rebuilds the QRegion only when (width, height, radius) changes."""
+        if not _OPAQUE_MASK_CHROME:
+            return
+        from utils.window_chrome_mask import rounded_region
+        native = bool(self.settings_manager.get("use_system_title_bar", False))
+        rounded = (not native) and (not self.isMaximized())
+        if not rounded:
+            if getattr(self, "_mask_cache", None) is not None:
+                self.clearMask()
+                self._mask_cache = None
+            return
+        w, h, radius = self.width(), self.height(), RADIUS_NORMAL
+        key = (w, h, radius)
+        if key == getattr(self, "_mask_cache", None):
+            return
+        self.setMask(rounded_region(w, h, radius))
+        self._mask_cache = key
 
     def _notify_chrome_theme(self):
         """Tell the window-chrome controller the current theme so the control
@@ -807,8 +862,26 @@ class MultiToonTool(QMainWindow):
 
     def changeEvent(self, event):
         super().changeEvent(event)
-        if event.type() == QEvent.WindowStateChange and getattr(self, "_chrome", None) is not None:
-            self._apply_window_corner_state(self.isMaximized())
+        if event.type() == QEvent.WindowStateChange:
+            if getattr(self, "_chrome", None) is not None:
+                flush_timer = getattr(self, "_perf_state_flush", None)
+                if flush_timer is not None:
+                    if not flush_timer.isActive():
+                        # First fire of a new gesture: open it, reset the counter.
+                        self._perf_state_gid = perf_trace.begin_gesture("window_state")
+                        self._perf_state_fires = 0
+                    self._perf_state_fires += 1
+                    perf_trace.mark("statechange_fires", self._perf_state_gid,
+                                    self._perf_state_fires)
+                self._apply_window_corner_state(self.isMaximized())
+                # Restart the debounce; flush once the gesture settles.
+                if flush_timer is not None:
+                    flush_timer.start()
+            # Re-evaluate the Multitoon repaint timers on minimize/restore (the
+            # page gets no hideEvent when the window is minimized).
+            mt = getattr(self, "multitoon_tab", None)
+            if mt is not None:
+                mt._update_glow_timer()
 
     # ── Chip Rail ──────────────────────────────────────────────────────────
 
@@ -1141,6 +1214,7 @@ class MultiToonTool(QMainWindow):
             except Exception as e:
                 if hasattr(self, "logger") and self.logger:
                     self.logger.append_log(f"[Layout] swap failed: {e}")
+        self._update_window_mask()
 
     def _set_layout_mode(self, target: str) -> None:
         # Snap layout instantly. Resize events drive the swap (titlebar drag,
@@ -1327,7 +1401,7 @@ class MultiToonTool(QMainWindow):
         c = self._theme_colors()
 
         # Container card + header corners/stroke (rounded vs native/maximized)
-        self._apply_window_corner_state(self.isMaximized())
+        self._apply_window_corner_state(self.isMaximized(), force=True)
         self._notify_chrome_theme()
         self._refresh_header_logo()
 
