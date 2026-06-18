@@ -10,7 +10,9 @@ _compact_layout.py."""
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QSize, QEvent, QTimer
+from PySide6.QtCore import (
+    Qt, QSize, QEvent, QTimer, Property, QPropertyAnimation, QEasingCurve,
+)
 from PySide6.QtGui import QFont, QColor, QPainter, QTransform
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QFrame,
@@ -19,11 +21,221 @@ from PySide6.QtWidgets import (
 
 from utils.theme_manager import make_heart_icon, make_jellybean_icon
 from tabs.multitoon._layout_utils import clear_layout
-from tabs.multitoon._compact_layout import (
-    _LOCKED_CONTENT_WIDTH,
-    _muted_brand,
-    _CardStripe,
-)
+
+# ── Legacy card chrome (only used by this retired full layout) ──────────
+# These moved here from _compact_layout.py when that file became the
+# pinwheel; the pinwheel does not use a stripe.
+
+def _muted_brand(color: QColor) -> QColor:
+    """Return `color` desaturated to 55% saturation, hue + lightness +
+    alpha preserved. Used by the card stripe for the "found but not
+    enabled" intermediate state."""
+    h = color.hslHue()
+    l = color.lightness()
+    a = color.alpha()
+    return QColor.fromHsl(h, int(255 * 0.55), l, a)
+
+
+def _is_descendant_of(widget, ancestor) -> bool:
+    """Return True iff `ancestor` is in `widget`'s parent chain. Guards
+    mapTo() calls when shared badges/rings are temporarily parented to the
+    other layout's card."""
+    walker = widget.parentWidget()
+    while walker is not None:
+        if walker is ancestor:
+            return True
+        walker = walker.parentWidget()
+    return False
+
+
+# Width the compact content column (service controls, config row, toon
+# cards) is locked to. Equals the natural card width at the app's 575 px
+# minimum window: 575 - outer_layout's 12 px horizontal margins (× 2) = 551.
+# Past min width the content stays at 551 and centers horizontally.
+_LOCKED_CONTENT_WIDTH = 551
+
+
+class _CardStripe(QFrame):
+    """5 px tall stripe painted at the top of a toon card. Animates
+    forward (left-to-right fill) when transitioning to a more-saturated
+    state (grey -> muted brand, muted brand -> full brand) and cross-
+    fades in place when transitioning backward.
+
+    Rank is derived from saturation alone (no theme dependency):
+        s < 30   -> rank 0 (empty / grey)
+        s < 165  -> rank 1 (muted brand at 55% saturation)
+        s >= 165 -> rank 2 (full brand)
+    """
+
+    _DUR_FORWARD = 600
+    _DUR_BACKWARD = 400
+
+    def __init__(self, parent: QWidget):
+        super().__init__(parent)
+        self.setFixedHeight(5)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        # Keep a Python-level reference to the parent so that callers
+        # holding only the stripe (e.g. test fixtures) don't accidentally
+        # allow the parent QWidget to be GC'd while the stripe is alive.
+        self._parent_ref = parent
+        self._color = QColor()           # invalid until first set_color
+        self._prev_color: QColor | None = None
+        self._progress: float = 0.0      # forward fill 0..1
+        self._blend: float = 0.0         # backward fade 0..1
+        self._anim = None                # in-flight QPropertyAnimation
+        self._anim_kind: str | None = None  # "forward" | "backward" | None
+
+    # -- Qt properties (so QPropertyAnimation can drive them) ----------
+
+    def get_progress(self) -> float:
+        return self._progress
+
+    def set_progress(self, v: float) -> None:
+        self._progress = float(v)
+        self.update()
+
+    progress = Property(float, get_progress, set_progress)
+
+    def get_blend(self) -> float:
+        return self._blend
+
+    def set_blend(self, v: float) -> None:
+        self._blend = float(v)
+        self.update()
+
+    blend = Property(float, get_blend, set_blend)
+
+    # -- API -----------------------------------------------------------
+
+    def set_color(self, color: QColor) -> None:
+        """Transition the stripe to `color`. Cancels any in-flight
+        animation. No-op if `color` equals the current target."""
+        # First-ever call: seed directly, no animation.
+        if not self._color.isValid():
+            self._color = QColor(color)
+            self._prev_color = None
+            self.update()
+            return
+
+        # Already animating toward (or sitting at) this exact colour:
+        # no work to do. self._color always holds the destination, so the
+        # check is correct whether or not an animation is in flight.
+        if self._color == color:
+            return
+
+        # Cancel any in-flight animation before starting a new one. We
+        # disconnect finished so the stale handler doesn't land.
+        if self._anim is not None:
+            self._anim.stop()
+            try:
+                self._anim.finished.disconnect()
+            except (RuntimeError, TypeError):
+                pass
+            self._anim = None
+            self._anim_kind = None
+
+        old_rank = self._rank(self._color)
+        new_rank = self._rank(color)
+        prev_color = QColor(self._color)
+        self._prev_color = prev_color
+        self._color = QColor(color)
+
+        if new_rank == old_rank:
+            # Same tier (e.g. theme swap landing on a different but same-
+            # rank colour): snap without animation.
+            self._prev_color = None
+            self.update()
+            return
+
+        if new_rank > old_rank:
+            self._anim_kind = "forward"
+            self._progress = 0.0
+            self._anim = QPropertyAnimation(self, b"progress")
+            self._anim.setDuration(self._DUR_FORWARD)
+            self._anim.setEasingCurve(QEasingCurve.InOutQuad)
+        else:
+            self._anim_kind = "backward"
+            self._blend = 0.0
+            self._anim = QPropertyAnimation(self, b"blend")
+            self._anim.setDuration(self._DUR_BACKWARD)
+            self._anim.setEasingCurve(QEasingCurve.InOutQuad)
+
+        self._anim.setStartValue(0.0)
+        self._anim.setEndValue(1.0)
+        self._anim.finished.connect(self._on_anim_finished)
+        self._anim.start()
+
+    def target_color(self) -> QColor:
+        """Return the color most recently passed to set_color()."""
+        return QColor(self._color)
+
+    def _on_anim_finished(self) -> None:
+        self._prev_color = None
+        self._anim = None
+        self._anim_kind = None
+        self._progress = 0.0
+        self._blend = 0.0
+        self.update()
+
+    @staticmethod
+    def _rank(color: QColor) -> int:
+        s = color.hslSaturation()
+        if s < 30:
+            return 0
+        if s < 165:
+            return 1
+        return 2
+
+    # -- Painting ------------------------------------------------------
+
+    def paintEvent(self, event):
+        from PySide6.QtGui import QPainter, QPainterPath
+        if not self._color.isValid():
+            return
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        p.setPen(Qt.NoPen)
+
+        w = self.width()
+        h = self.height()
+
+        # Clip to a path with rounded top corners so the stripe aligns
+        # with the card's 9 px border-radius. Bottom corners stay square
+        # because the stripe sits flush against the card body.
+        path = QPainterPath()
+        radius = 9.0
+        path.moveTo(0, h)
+        path.lineTo(0, radius)
+        path.quadTo(0, 0, radius, 0)
+        path.lineTo(w - radius, 0)
+        path.quadTo(w, 0, w, radius)
+        path.lineTo(w, h)
+        path.closeSubpath()
+        p.setClipPath(path)
+
+        if self._prev_color is None or self._anim_kind is None:
+            p.setBrush(self._color)
+            p.drawRect(0, 0, w, h)
+            p.end()
+            return
+
+        if self._anim_kind == "forward":
+            split = int(w * self._progress)
+            if split > 0:
+                p.setBrush(self._color)
+                p.drawRect(0, 0, split, h)
+            if split < w:
+                p.setBrush(self._prev_color)
+                p.drawRect(split, 0, w - split, h)
+        else:  # backward cross-fade
+            t = self._blend
+            r = int(self._prev_color.red()   + (self._color.red()   - self._prev_color.red())   * t)
+            g = int(self._prev_color.green() + (self._color.green() - self._prev_color.green()) * t)
+            b = int(self._prev_color.blue()  + (self._color.blue()  - self._prev_color.blue())  * t)
+            p.setBrush(QColor(r, g, b))
+            p.drawRect(0, 0, w, h)
+        p.end()
+
 
 
 # Full-mode card height. Replaces the prior `int(natural * 1.5)`
@@ -728,7 +940,7 @@ class _FullContent(QWidget):
         """Re-position the portrait status-dot overlays after Qt has
         resolved layout. Called from showEvent / resizeEvent /
         populate()."""
-        from tabs.multitoon._compact_layout import _is_descendant_of
+# _is_descendant_of is defined at module scope above.
         for i, slot in enumerate(self._card_slots):
             ring = slot.get("status_ring")
             if ring is None:

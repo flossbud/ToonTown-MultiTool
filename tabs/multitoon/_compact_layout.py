@@ -1,1115 +1,908 @@
-"""Compact UI layout for the Multitoon tab - the layout that ships at default
-window size. Content sits directly on the tab background and is centered
-vertically within the available tab content area via leading/trailing stretches."""
+"""Pinwheel layout for the Multitoon tab.
+
+Four controlled-toon cards pinwheel around a central app-icon emblem: each
+card's inner corner is carved concave by a circular cutout so the emblem nests
+into the middle. A broadcast status bar runs across the bottom.
+
+This is the single Multitoon layout at every window size (the old compact/full
+split is retired). It reuses the per-slot widgets owned by `MultitoonTab`
+(`tab.toon_buttons`, `tab.slot_badges`, ...) - reparenting + restyling them into
+the pinwheel arrangement on `populate()` - so all signal wiring and per-toon
+state survive. `MultitoonTab` drives rendering through `set_card_brand`.
+
+Two behaviours differ from the legacy stack (per the design handoff):
+  * Stopping the broadcast service dims every card in place (the cards keep
+    their toon identity); cards only empty out when the game window closes.
+  * Turning an individual toon's Enable toggle off dims just that one card.
+Both are expressed by the per-card lit/dimmed treatment driven from
+`set_card_brand`; `MultitoonTab` owns the state.
+"""
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QSize, Property, QPropertyAnimation, QEasingCurve, QTimer
-from PySide6.QtGui import QFont, QColor
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFrame
+import os
 
-from utils.theme_manager import make_heart_icon, make_jellybean_icon
+from PySide6.QtCore import (
+    Qt, QSize, QRectF, QPointF, Property, QPropertyAnimation, QEasingCurve,
+)
+from PySide6.QtGui import (
+    QColor, QFont, QPainter, QPainterPath, QPen, QPixmap, QLinearGradient,
+)
+from PySide6.QtWidgets import (
+    QWidget, QFrame, QVBoxLayout, QHBoxLayout, QGridLayout, QSizePolicy,
+    QGraphicsColorizeEffect,
+)
+
 from tabs.multitoon._layout_utils import clear_layout
+from utils.color_math import darken_rgb
 
 
-def _muted_brand(color: QColor) -> QColor:
-    """Return `color` desaturated to 55% saturation, hue + lightness +
-    alpha preserved. Used by the card stripe for the "found but not
-    enabled" intermediate state."""
-    h = color.hslHue()
-    l = color.lightness()
-    a = color.alpha()
-    return QColor.fromHsl(h, int(255 * 0.55), l, a)
+# ── Geometry (exact values from the design handoff) ────────────────────────
+CARD_RADIUS = 20
+CARD_BORDER = 5
+CARD_PAD = 18
+CARD_MIN_H = 232
+GRID_GAP = 18
+
+PORTRAIT = 172
+PORTRAIT_RING = 4
+CUTOUT_R = 96
+EMBLEM = 156
+
+CTRL_W = 158
+TOGGLE_W, TOGGLE_H = 34, 36
+KA_PILL_H = 38
+KEYSET_H = 38
+KA_DOT = 28              # lightning toggle diameter inside the KA pill
+
+STATUS_TOP_MARGIN = 14
+
+# Net-new design constant: keep-alive orange (the theme's `accent_orange`
+# #c47a2a reads too brown for this surface). Border tint pairs with it.
+KA_ORANGE = "#ff9500"
+KA_ORANGE_BORDER = "#ffb04d"
+
+# Per-quadrant configuration, indexed by slot 0..3 (tl, tr, bl, br).
+#   cutout   : which card-local corner the concave circle is centred on
+#   left     : True -> portrait hugs the left edge, controls toward centre
+#   stack_bottom : True -> name/stats row sits ABOVE the portrait+controls row
+_CFG = [
+    {"cutout": "br", "left": True,  "stack_bottom": False},   # 0 top-left
+    {"cutout": "bl", "left": False, "stack_bottom": False},   # 1 top-right
+    {"cutout": "tr", "left": True,  "stack_bottom": True},    # 2 bottom-left
+    {"cutout": "tl", "left": False, "stack_bottom": True},    # 3 bottom-right
+]
 
 
-# Width the compact content column (service controls, config row, toon
-# cards) is locked to. Equals the natural card width at the app's 575 px
-# minimum window: 575 - outer_layout's 12 px horizontal margins (× 2) = 551.
-# Past min width the content stays at 551 and centers horizontally.
-_LOCKED_CONTENT_WIDTH = 551
+def _app_icon_path() -> str:
+    here = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    return os.path.join(here, "assets", "multitool.png")
 
 
-def _is_descendant_of(widget, ancestor) -> bool:
-    """Return True iff `ancestor` is in `widget`'s parent chain.
+def _card_body_path(w: float, h: float, cutout: str) -> QPainterPath:
+    """The card body outline: a 20px rounded rect with one corner carved out by
+    a 96px circle. Shared by the card background and the glow so both follow the
+    exact same shape (including the concave cutout)."""
+    rect = QRectF(0.5, 0.5, w - 1, h - 1)
+    rounded = QPainterPath()
+    rounded.addRoundedRect(rect, CARD_RADIUS, CARD_RADIUS)
+    corners = {
+        "tl": QPointF(0, 0), "tr": QPointF(w, 0),
+        "bl": QPointF(0, h), "br": QPointF(w, h),
+    }
+    cut = QPainterPath()
+    cut.addEllipse(corners[cutout], CUTOUT_R, CUTOUT_R)
+    return rounded.subtracted(cut)
 
-    Used to guard `widget.mapTo(ancestor, ...)` calls in the position-
-    helper paths: badges + status rings are shared between the compact
-    and full layouts, so during a mode-swap or full-layout prewarm
-    they may be temporarily parented to the OTHER layout's card. Calling
-    mapTo against a non-ancestor target prints a Qt warning AND returns
-    meaningless coords."""
-    walker = widget.parentWidget()
-    while walker is not None:
-        if walker is ancestor:
-            return True
-        walker = walker.parentWidget()
-    return False
+
+# Accent glow. We PAINT it (a gaussian blur of the card shape, blitted behind
+# the cards) rather than use a QGraphicsDropShadowEffect: on macOS the effect's
+# output is clipped to the cell's square bounds, leaving sharp square corners
+# behind the rounded card. A painted pixmap has no such clipping, so the glow
+# follows the rounded body + concave cutout exactly.
+GLOW_BLUR = 22          # gaussian radius (smaller = tighter, less visible)
+GLOW_ALPHA = 105        # peak accent alpha of the glow source (lower = fainter)
+# Padding the grid keeps around the cards so the painted halo has room to fade.
+GLOW_ROOM = 34
 
 
-class _CompactLayout(QWidget):
-    """Reproduces the default Multitoon layout. Two-phase construction:
+def _make_glow_pixmap(w: int, h: int, cutout: str, accent: QColor):
+    """Return (pixmap, pad): the card shape filled with `accent` and gaussian-
+    blurred on a transparent canvas padded by `pad`. Blit at (x - pad, y - pad)
+    to lay a soft accent halo around the card that follows its exact shape."""
+    from PySide6.QtWidgets import (
+        QGraphicsScene, QGraphicsBlurEffect, QGraphicsPixmapItem,
+    )
+    pad = int(GLOW_BLUR * 2.5)
+    pw, ph = int(w + 2 * pad), int(h + 2 * pad)
+    src = QPixmap(pw, ph)
+    src.fill(Qt.transparent)
+    p = QPainter(src)
+    p.setRenderHint(QPainter.Antialiasing, True)
+    p.setPen(Qt.NoPen)
+    path = _card_body_path(w, h, cutout)
+    path.translate(pad, pad)
+    col = QColor(accent)
+    col.setAlpha(GLOW_ALPHA)
+    p.fillPath(path, col)
+    p.end()
 
-    - `_build_structure` creates the persistent QFrame/QLayout tree.
-    - `populate` (re-)adds the shared per-slot widgets into the cached slots.
+    scene = QGraphicsScene()
+    item = QGraphicsPixmapItem(src)
+    blur = QGraphicsBlurEffect()
+    blur.setBlurRadius(GLOW_BLUR)
+    item.setGraphicsEffect(blur)
+    scene.addItem(item)
+    out = QPixmap(pw, ph)
+    out.fill(Qt.transparent)
+    p2 = QPainter(out)
+    scene.render(p2, QRectF(0, 0, pw, ph), QRectF(0, 0, pw, ph))
+    p2.end()
+    scene.removeItem(item)
+    return out, pad
+
+
+class _GlowLayer(QWidget):
+    """Paints each lit card's accent halo (a cached gaussian pixmap of the card
+    shape). Lives behind the cards spanning the grid, so the halos are never
+    clipped to a square and follow the rounded body + cutout."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.setStyleSheet("background: transparent;")
+        self._cards = []   # [{"x","y","pm","pad"}]
+        self._cache = {}   # (w,h,cutout,accent_rgba) -> (pixmap, pad)
+
+    def set_cards(self, specs) -> None:
+        cards = []
+        for s in specs:
+            w, h = int(s["w"]), int(s["h"])
+            if w <= 0 or h <= 0:
+                continue
+            rw, rh = ((w + 7) // 8) * 8, ((h + 7) // 8) * 8   # round so drags reuse cache
+            accent = QColor(s["accent"])
+            key = (rw, rh, s["cutout"], accent.rgba())
+            entry = self._cache.get(key)
+            if entry is None:
+                entry = _make_glow_pixmap(rw, rh, s["cutout"], accent)
+                self._cache[key] = entry
+            pm, pad = entry
+            cards.append({"x": s["x"], "y": s["y"], "pm": pm, "pad": pad})
+        self._cards = cards
+        self.update()
+
+    def paintEvent(self, event):
+        if not self._cards:
+            return
+        p = QPainter(self)
+        for c in self._cards:
+            p.drawPixmap(int(c["x"] - c["pad"]), int(c["y"] - c["pad"]), c["pm"])
+        p.end()
+
+
+# ── Card background (custom paint: concave cutout + accent gradient) ────────
+class _QuadCardBackground(QWidget):
+    """Paints one card body: a 20px rounded rect with one corner carved out by
+    a 96px circle, filled with a deep accent gradient and bordered by a 5px
+    inner accent stroke. The carved corner lets the central emblem nest in.
+
+    Has no graphics effect of its own (the glow/dim effects live on ancestor
+    frames), so this never trips the "one painter per device" conflict.
     """
+
+    def __init__(self, cutout: str, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        # Defeat the app-global `QWidget { background-color }` rule so the
+        # carved cutout reads as transparent (only the painted body shows).
+        self.setStyleSheet("background: transparent;")
+        self._cutout = cutout
+        self._accent = QColor("#555555")
+        self._dimmed = True
+
+    def configure(self, accent: QColor, dimmed: bool) -> None:
+        self._accent = QColor(accent)
+        self._dimmed = bool(dimmed)
+        self.update()
+
+    def _body_path(self) -> QPainterPath:
+        return _card_body_path(self.width(), self.height(), self._cutout)
+
+    def paintEvent(self, event):
+        if self.width() <= 0 or self.height() <= 0:
+            return
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        path = self._body_path()
+
+        # Body gradient: deep, rich version of the accent. darken() multiplies
+        # each channel; the dim treatment scales brightness down further (the
+        # saturation half of saturate(0.45) is handled by the colorize effect).
+        bright = 0.75 if self._dimmed else 1.0
+        top = darken_rgb(darken_rgb(self._accent, 0.28), bright)
+        bot = darken_rgb(darken_rgb(self._accent, 0.14), bright)
+        grad = QLinearGradient(0, 0, self.width() * 0.38, self.height())
+        grad.setColorAt(0.0, top)
+        grad.setColorAt(1.0, bot)
+        p.fillPath(path, grad)
+
+        # 5px inner border: stroke the body path at double width and clip to
+        # the path so only the inner half survives - a clean border that
+        # follows the concave curve.
+        border = darken_rgb(self._accent, 0.62) if self._dimmed else self._accent
+        p.save()
+        p.setClipPath(path)
+        p.setBrush(Qt.NoBrush)
+        p.setPen(QPen(border, CARD_BORDER * 2))
+        p.drawPath(path)
+        p.restore()
+        p.end()
+
+
+# ── Portrait frame (4px accent ring + dark inner disc around the portrait) ──
+class _PortraitFrame(QWidget):
+    """172px circular frame: dark inner disc + 4px accent ring, hosting the
+    shared ToonPortraitWidget inset inside the ring."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(PORTRAIT, PORTRAIT)
+        self.setStyleSheet("background: transparent;")
+        self._ring = QColor("#555555")
+        self._dimmed = True
+
+    def configure(self, ring: QColor, dimmed: bool) -> None:
+        self._ring = QColor(ring)
+        self._dimmed = bool(dimmed)
+        self.update()
+
+    def host_geometry(self) -> tuple[int, int, int, int]:
+        inset = PORTRAIT_RING
+        return (inset, inset, PORTRAIT - 2 * inset, PORTRAIT - 2 * inset)
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        cx = cy = PORTRAIT / 2.0
+        # Dark inner background (rgba(0,0,0,0.22)).
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(0, 0, 0, 56))
+        p.drawEllipse(QPointF(cx, cy), cx - 0.5, cy - 0.5)
+        # 4px accent ring on the outer edge.
+        ring = darken_rgb(self._ring, 0.62) if self._dimmed else self._ring
+        pen = QPen(ring, PORTRAIT_RING)
+        p.setPen(pen)
+        p.setBrush(Qt.NoBrush)
+        r = (PORTRAIT - PORTRAIT_RING) / 2.0
+        p.drawEllipse(QPointF(cx, cy), r, r)
+        p.end()
+
+
+# ── Central emblem (app icon nested in the grid centre) ────────────────────
+class _Emblem(QWidget):
+    """156px circle: opaque bg-app fill + app icon, with a pulsing blue ring
+    when broadcasting. Passive - reflects state only, never interactive."""
+
+    _RING_MARGIN = 14  # room for the -4px ring + soft glow outside the disc
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        side = EMBLEM + 2 * self._RING_MARGIN
+        self.setFixedSize(side, side)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.setStyleSheet("background: transparent;")
+        self._broadcasting = False
+        self._bg_app = QColor("#1a1a1a")
+        self._ring = QColor("#0077ff")
+        self._pulse = 1.0
+
+        icon = QPixmap(_app_icon_path())
+        # Cap the source at the display size so the one-time grey pass below
+        # iterates ~160x160 pixels, not the full-res art.
+        if not icon.isNull() and max(icon.width(), icon.height()) > 160:
+            icon = icon.scaled(160, 160, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self._icon = icon
+        self._icon_grey = self._build_grey(self._icon)
+
+        # Smooth ping-pong pulse 1 -> 0.45 -> 1 over ~2.4s, looping forever.
+        # Keyframes (not a finished-handler bounce) so there is no stale-anim
+        # access at teardown.
+        self._anim = QPropertyAnimation(self, b"pulse")
+        self._anim.setDuration(2400)
+        self._anim.setEasingCurve(QEasingCurve.InOutSine)
+        self._anim.setKeyValueAt(0.0, 1.0)
+        self._anim.setKeyValueAt(0.5, 0.45)
+        self._anim.setKeyValueAt(1.0, 1.0)
+        self._anim.setLoopCount(-1)
+
+    @staticmethod
+    def _build_grey(pm: QPixmap) -> QPixmap:
+        """Desaturated + dimmed copy of the icon for the idle state."""
+        if pm.isNull():
+            return pm
+        img = pm.toImage().convertToFormat(img_fmt())
+        for y in range(img.height()):
+            for x in range(img.width()):
+                c = QColor(img.pixelColor(x, y))
+                if c.alpha() == 0:
+                    continue
+                lum = int(0.3 * c.red() + 0.59 * c.green() + 0.11 * c.blue())
+                # grayscale(0.5) brightness(0.7): mix halfway to luminance, *0.7
+                r = int((c.red() * 0.5 + lum * 0.5) * 0.7)
+                g = int((c.green() * 0.5 + lum * 0.5) * 0.7)
+                b = int((c.blue() * 0.5 + lum * 0.5) * 0.7)
+                img.setPixelColor(x, y, QColor(r, g, b, c.alpha()))
+        return QPixmap.fromImage(img)
+
+    def get_pulse(self) -> float:
+        return self._pulse
+
+    def set_pulse(self, v: float) -> None:
+        self._pulse = float(v)
+        self.update()
+
+    pulse = Property(float, get_pulse, set_pulse)
+
+    def configure(self, broadcasting: bool, bg_app: str, ring: str) -> None:
+        self._bg_app = QColor(bg_app)
+        self._ring = QColor(ring)
+        if broadcasting != self._broadcasting:
+            self._broadcasting = broadcasting
+            if broadcasting:
+                self._anim.start()
+            else:
+                self._anim.stop()
+                self._pulse = 1.0
+        self.update()
+
+    def stop(self) -> None:
+        self._anim.stop()
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        p.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        cx = cy = self.width() / 2.0
+        r = EMBLEM / 2.0
+
+        # Pulsing ring + soft glow just outside the disc (broadcasting only).
+        if self._broadcasting:
+            glow = QColor(self._ring)
+            glow.setAlphaF(0.55 * self._pulse)
+            p.setPen(QPen(glow, 8))
+            p.setBrush(Qt.NoBrush)
+            p.drawEllipse(QPointF(cx, cy), r + 4, r + 4)
+            ring = QColor(self._ring)
+            ring.setAlphaF(self._pulse)
+            p.setPen(QPen(ring, 2))
+            p.drawEllipse(QPointF(cx, cy), r + 4, r + 4)
+
+        # Opaque bg-app disc so the carved card cutouts read as a clean ring.
+        p.setPen(Qt.NoPen)
+        p.setBrush(self._bg_app)
+        p.drawEllipse(QPointF(cx, cy), r, r)
+
+        # App icon, inset 8px, clipped circular.
+        pm = self._icon if self._broadcasting else self._icon_grey
+        if not pm.isNull():
+            inset = 8
+            d = EMBLEM - 2 * inset
+            clip = QPainterPath()
+            clip.addEllipse(QPointF(cx, cy), d / 2.0, d / 2.0)
+            p.setClipPath(clip)
+            target = QRectF(cx - d / 2.0, cy - d / 2.0, d, d)
+            scaled = pm.scaled(int(d), int(d), Qt.KeepAspectRatioByExpanding,
+                               Qt.SmoothTransformation)
+            p.drawPixmap(target, scaled, QRectF(scaled.rect()))
+        p.end()
+
+
+def img_fmt():
+    from PySide6.QtGui import QImage
+    return QImage.Format_ARGB32
+
+
+# ── The layout ─────────────────────────────────────────────────────────────
+class _CompactLayout(QWidget):
+    """Pinwheel Multitoon layout. Public surface consumed by MultitoonTab:
+    `populate`, `set_card_brand`, `apply_theme`, `_set_keep_alive_collapsed`,
+    `_animate_keep_alive_visibility`, `deactivate`, `_position_cards`."""
 
     def __init__(self, tab, parent=None):
         super().__init__(parent)
         self._tab = tab
-        # Cached references to slot sub-layouts (populated in _build_structure)
-        self._service_layout = None
-        self._config_row = None
-        self._card_slots = []  # list of dicts per card with sub-layout refs
-        # During the cold-start window, set_card_brand still updates each
-        # card's chrome QSS but holds the stripe at its seeded grey state
-        # so the deferred brand pass can animate the fill once. Cleared
-        # by _exit_cold_start_and_apply_brands.
-        self._cold_start_in_progress = False
+        self._cells: list[dict] = []
+        self._emblem: _Emblem | None = None
+        self._glow: _GlowLayer | None = None
+        self._grid_host: QWidget | None = None
         self._build_structure()
         self.populate()
 
     # ── Structure ──────────────────────────────────────────────────────────
     def _build_structure(self):
-        outer_layout = QVBoxLayout(self)
-        outer_layout.setContentsMargins(12, 6, 12, 6)
-        outer_layout.setSpacing(0)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(8, 6, 8, 8)
+        outer.setSpacing(0)
 
-        # Direction D drops the grouped outer card. Pieces sit directly
-        # on the tab background; vertical centring is done by leading +
-        # trailing stretches added in the outer_layout below.
-        #
-        # Content (service controls, config row, toon cards) lives inside
-        # a fixed-width wrapper so the column doesn't grow with the window
-        # past its natural default width. See _LOCKED_CONTENT_WIDTH.
-        content = QWidget()
-        content.setFixedWidth(_LOCKED_CONTENT_WIDTH)
-        card_layout = QVBoxLayout(content)
-        card_layout.setContentsMargins(0, 0, 0, 0)
-        card_layout.setSpacing(8)
+        # Grid host holds the painted glow layer, the 2x2 cards, and the centre
+        # emblem. The grid's inner margin gives each painted halo room to fade.
+        self._grid_host = QWidget()
+        grid = QGridLayout(self._grid_host)
+        grid.setContentsMargins(GLOW_ROOM, GLOW_ROOM, GLOW_ROOM, GLOW_ROOM)
+        grid.setSpacing(GRID_GAP)
+        for col in range(2):
+            grid.setColumnStretch(col, 1)
+        for row in range(2):
+            grid.setRowStretch(row, 1)
 
-        # Service controls slot — empty until populate()
-        self._service_layout = QVBoxLayout()
-        self._service_layout.setContentsMargins(0, 0, 0, 0)
-        self._service_layout.setSpacing(6)
-        card_layout.addLayout(self._service_layout)
+        # Glow layer spans the grid host, behind the (transparent) cards.
+        self._glow = _GlowLayer(self._grid_host)
 
-        # (Section divider removed - the status bar carries enough visual
-        # weight as the separator between service controls and the
-        # configuration row.)
-
-        # Config row slot — empty until populate()
-        self._config_row = QHBoxLayout()
-        self._config_row.setSpacing(6)
-        card_layout.addLayout(self._config_row)
-
-        # Per-slot toon cards (4 frames, each with empty sub-layouts)
         for i in range(4):
-            card_layout.addWidget(self._build_card_structure(i))
+            cell = self._build_cell(i)
+            grid.addWidget(cell["cell"], i // 2, i % 2)
 
-        # Horizontal centring: stretches on either side of the locked
-        # content keep it centered as the window grows past min width.
-        # Vertical anchoring: trailing stretch only, so the content
-        # block hugs the top of the tab content area regardless of how
-        # tall the window grows.
-        center_row = QHBoxLayout()
-        center_row.setContentsMargins(0, 0, 0, 0)
-        center_row.addStretch(1)
-        center_row.addWidget(content)
-        center_row.addStretch(1)
+        self._emblem = _Emblem(self._grid_host)
+        self._emblem.raise_()
 
-        outer_layout.addLayout(center_row)
-        outer_layout.addStretch(1)
+        outer.addWidget(self._grid_host, 1)
 
-    def _build_card_structure(self, i: int) -> QFrame:
-        """Build the persistent QFrame + sub-layouts for one card slot.
-        Sub-layouts stay empty until populate() runs."""
-        card = QFrame()
-        card.setObjectName(f"toon_card_{i}")
-        layout = QVBoxLayout(card)
-        # Top padding shaved from 13 to 11 to move the header content
-        # (portrait + name + stats) up 2 px. The 2 px is added back
-        # below in the addSpacing above the header_divider, so divider
-        # and body-row positions are unchanged.
-        layout.setContentsMargins(14, 11, 14, 2)
-        layout.setSpacing(0)
+        # Bottom broadcast status bar (reuses the shared ServiceStatusBar).
+        self._status_host = QHBoxLayout()
+        self._status_host.setContentsMargins(0, STATUS_TOP_MARGIN, 0, 0)
+        outer.addLayout(self._status_host)
 
-        top_row = QHBoxLayout()
-        top_row.setSpacing(10)
+    def _build_cell(self, i: int) -> dict:
+        cfg = _CFG[i]
 
-        # Vertical meta column: name on top, stats/CC-subtitle sub-line
-        # underneath. Stretches inside top_row so the mode chip lands
-        # flush against the right edge.
+        # cell: holds the dim colorize effect (attached only when dimmed).
+        cell = QFrame()
+        cell.setObjectName(f"pin_cell_{i}")
+        cell.setStyleSheet(f"#pin_cell_{i} {{ background: transparent; border: none; }}")
+        cell.setMinimumSize(0, CARD_MIN_H)
+        cell.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+        # glow_host holds the accent drop-shadow (attached only when the card is
+        # lit). Its only child is the card background, so the shadow renders the
+        # card shape and is not invalidated by the animating controls (those live
+        # in the content layer, a sibling of glow_host).
+        glow_host = QWidget(cell)
+        glow_host.setStyleSheet("background: transparent;")
+        bg = _QuadCardBackground(cfg["cutout"], glow_host)
+
+        # ── Structural layout tree, assembled ONCE. populate() only refills
+        # the leaf layouts (toggle_row / ka_lay / sel_holder / name_holder /
+        # stats_row) with the shared per-slot widgets, so the structural
+        # nesting is never re-parented (which would warn on a 2nd populate). ──
+        content = QVBoxLayout(cell)
+        content.setContentsMargins(CARD_PAD, CARD_PAD, CARD_PAD, CARD_PAD)
+        content.setSpacing(12)
+
+        portrait_frame = _PortraitFrame(cell)
+
+        # Controls column: 3 toggles, KA pill, keyset pill.
+        toggle_row = QHBoxLayout()
+        toggle_row.setSpacing(9)
+        toggle_row.setContentsMargins(0, 0, 0, 0)
+
+        ka_pill = QFrame()
+        ka_pill.setObjectName(f"ka_pill_{i}")
+        ka_pill.setFixedHeight(KA_PILL_H)
+        ka_lay = QHBoxLayout(ka_pill)
+        ka_lay.setContentsMargins(5, 0, 11, 0)
+        ka_lay.setSpacing(9)
+
+        sel_holder = QHBoxLayout()
+        sel_holder.setContentsMargins(0, 0, 0, 0)
+        sel_holder.setSpacing(0)
+
+        ctrl_col = QVBoxLayout()
+        ctrl_col.setSpacing(10)
+        ctrl_col.setContentsMargins(0, 0, 0, 0)
+        ctrl_col.addLayout(toggle_row)
+        ctrl_col.addWidget(ka_pill)
+        ctrl_col.addLayout(sel_holder)
+        ctrl_wrap = QWidget()
+        ctrl_wrap.setFixedWidth(CTRL_W)
+        # Transparent so the controls sit directly on the accent body instead
+        # of a grey panel (the global QWidget rule would otherwise fill it).
+        ctrl_wrap.setStyleSheet("background: transparent;")
+        ctrl_wrap.setLayout(ctrl_col)
+
+        # Body row: portrait hugs the outer edge, controls toward the centre.
+        v_align = Qt.AlignBottom if cfg["stack_bottom"] else Qt.AlignTop
+        body_row = QHBoxLayout()
+        body_row.setSpacing(10)
+        body_row.setContentsMargins(0, 0, 0, 0)
+        if cfg["left"]:
+            body_row.addWidget(portrait_frame, 0, v_align)
+            body_row.addStretch(1)
+            body_row.addWidget(ctrl_wrap, 0, v_align)
+        else:
+            body_row.addWidget(ctrl_wrap, 0, v_align)
+            body_row.addStretch(1)
+            body_row.addWidget(portrait_frame, 0, v_align)
+
+        # Meta: name + stats, aligned to the card's outer edge.
+        name_holder = QHBoxLayout()
+        name_holder.setContentsMargins(0, 0, 0, 0)
+        name_holder.setSpacing(0)
+        stats_row = QHBoxLayout()
+        stats_row.setSpacing(16)
+        stats_row.setContentsMargins(0, 0, 0, 0)
         meta_col = QVBoxLayout()
+        meta_col.setSpacing(5)
         meta_col.setContentsMargins(0, 0, 0, 0)
-        meta_col.setSpacing(0)
+        meta_col.addLayout(name_holder)
+        meta_col.addLayout(stats_row)
+        meta_row = QHBoxLayout()
+        meta_row.setContentsMargins(0, 0, 0, 0)
+        meta_row.addLayout(meta_col, 1)
 
-        # Sub-line that hosts laff/bean (TTR) and cc_subtitle (CC) - the
-        # existing per-widget show/hide logic in _tab.py drives which one
-        # is visible per mode. We host all three here so neither mode
-        # needs structural changes when toggling.
-        sub_row = QHBoxLayout()
-        sub_row.setContentsMargins(0, 0, 0, 0)
-        sub_row.setSpacing(8)
+        # The bottom quadrants read [meta] then [portrait+controls].
+        if cfg["stack_bottom"]:
+            content.addLayout(meta_row)
+            content.addLayout(body_row, 1)
+        else:
+            content.addLayout(body_row, 1)
+            content.addLayout(meta_row)
 
-        layout.addLayout(top_row)
-
-        # Hairline between the header (portrait + name + stats + CC chips)
-        # and the body (Enable + chat + KA + bar + selector). Colour is
-        # set in set_card_brand so theme swaps re-tint it.
-        header_divider = QFrame()
-        # NoFrame (not HLine) so the widget paints purely as its QSS
-        # background. QFrame.HLine ignores the QSS background and draws
-        # its line via palette colors instead - which kept the divider
-        # reading as default gray even when set_card_brand set the
-        # background to the body-derived darkened color.
-        header_divider.setFrameShape(QFrame.NoFrame)
-        header_divider.setObjectName(f"toon_card_divider_{i}")
-        # 2 px so the body-derived color in set_card_brand actually reads
-        # against the card body. addSpacing above (line ~158) trimmed
-        # from 7 to 6 to keep total card height pixel-identical.
-        header_divider.setFixedHeight(2)
-        # 45% opacity so the divider reads as a soft separator rather
-        # than a hard line, regardless of whether body is set (darkened
-        # body color) or not (theme border_muted).
-        from PySide6.QtGui import QGuiApplication
-        if QGuiApplication.platformName() != "offscreen":
-            from PySide6.QtWidgets import QGraphicsOpacityEffect
-            _opacity = QGraphicsOpacityEffect(header_divider)
-            _opacity.setOpacity(0.45)
-            header_divider.setGraphicsEffect(_opacity)
-
-        # Push the header_divider (and everything below it) down. 3 px
-        # of this absorbs the reduced bottom contentsMargin (5 -> 2);
-        # the extra 2 px absorbs the reduced top contentsMargin
-        # (13 -> 11) so the divider and body row stay in place while
-        # the header content shifts up. +2 px (5 -> 7) drops the divider
-        # 2 px lower; paired with the addSpacing(4 -> 2) below the
-        # divider, the body row keeps its position and card height is
-        # unchanged.
-        # 6 px (was 7) to absorb the divider growing from 1 to 2 px so
-        # total card height is unchanged.
-        layout.addSpacing(6)
-        layout.addWidget(header_divider)
-
-        # 5 px animated top stripe. Position is set in _position_stripes().
-        card_stripe = _CardStripe(card)
-        card_stripe.hide()  # shown after the first position pass
-
-        # Portrait placeholder: reserves the original 50x50 layout slot in
-        # top_row so the row's geometry stays put while the real
-        # ToonPortraitWidget renders larger (64x64) as a free-floating
-        # overlay positioned manually in _position_portraits().
-        # The transparent QSS overrides main.py's container-level
-        # `QWidget { background: bg_app }` rule - without it the
-        # placeholder paints in bg_app and shows through the badge's
-        # transparent corners as darker squares.
-        portrait_placeholder = QWidget()
-        portrait_placeholder.setFixedSize(50, 50)
-        portrait_placeholder.setStyleSheet("background: transparent;")
-
-        ctrl_row = QHBoxLayout()
-        ctrl_row.setSpacing(8)
-
-        # Nested middle layout: ka_group | addStretch
-        # The middle wrapper exists so we can flip ka_group's stretch factor
-        # between 1 (master ON, fills row) and 0 (master OFF, sizes to chat
-        # alone) — and have addStretch absorb the leftover when ka_group is
-        # collapsed, keeping selector pinned at the right edge.
-        middle = QHBoxLayout()
-        middle.setSpacing(0)
-        middle.setContentsMargins(0, 0, 0, 0)
-
-        ka_group = QFrame()
-        ka_group.setObjectName("ka_group")
-        ka_group_layout = QHBoxLayout(ka_group)
-        ka_group_layout.setContentsMargins(4, 4, 4, 4)
-        ka_group_layout.setSpacing(4)
-
-        # Small breathing room between the hairline divider and the
-        # body row. Paired with a 4 px reduction in the card's bottom
-        # contentsMargin so total card height stays the same. Trimmed
-        # from 4 -> 2 to compensate for the +2 px above the divider
-        # (keeps body row position + card height unchanged).
-        layout.addSpacing(2)
-        layout.addLayout(ctrl_row)
-
-        # Cache slot refs for populate()
-        self._card_slots.append({
-            "card": card,
-            "top_row": top_row,
-            "meta_col": meta_col,
-            "sub_row": sub_row,
-            "ctrl_row": ctrl_row,
-            "middle": middle,
-            "ka_group": ka_group,
-            "ka_group_layout": ka_group_layout,
-            "header_divider": header_divider,
-            "card_stripe": card_stripe,
-            "portrait_placeholder": portrait_placeholder,
+        self._cells.append({
+            "cell": cell,
+            "glow_host": glow_host,
+            "bg": bg,
+            "portrait_frame": portrait_frame,
+            "toggle_row": toggle_row,
+            "ka_pill": ka_pill,
+            "ka_lay": ka_lay,
+            "sel_holder": sel_holder,
+            "name_holder": name_holder,
+            "stats_row": stats_row,
+            "cfg": cfg,
+            "accent": QColor("#555555"),
+            "active": False,
+            "dimmed": True,
         })
-        self._tab.toon_cards.append(card)
-        self._tab.ka_groups.append(ka_group)
-
-        # Status ring overlay - reuses the existing PulsingDot from
-        # `toon_labels[i][1]` so it inherits the legacy pulse+glow
-        # behaviour. Reparenting + positioning happens in populate()
-        # / _position_status_rings(). The slot dict's "status_ring"
-        # entry is left as a placeholder; populated in _populate_card.
-        self._card_slots[-1]["status_ring"] = None
-
-        return card
-
-    def set_card_brand(self, i: int, game: str | None, enabled: bool = False) -> None:
-        """Apply Direction D chrome to card `i`.
-
-        Stripe colour is driven by (game, enabled):
-            empty (game is None)            -> border_light  (rank 0)
-            found (game set, enabled False) -> _muted_brand  (rank 1)
-            enabled (game set, enabled True)-> full brand    (rank 2)
-
-        Card chrome QSS no longer writes a `border-top` - the painted
-        _CardStripe widget owns that 5 px region. We reserve the space
-        with `border-top: 5px solid transparent` so the card's interior
-        layout stays at its current dimensions.
-        """
-        from utils.theme_manager import get_theme_colors, resolve_theme
-        is_dark = resolve_theme(self._tab.settings_manager) == "dark"
-        c = get_theme_colors(is_dark)
-        card = self._card_slots[i]["card"]
-        stripe = self._card_slots[i]["card_stripe"]
-
-        from utils.toon_customization_resolve import resolve_accent
-        toon_name = self._tab.toon_names[i] if i < len(self._tab.toon_names) else None
-        entry: dict = {}
-        if game in ("cc", "ttr") and toon_name and self._tab.customizations is not None:
-            entry = self._tab.customizations.get(game, toon_name)
-
-        if game == "ttr":
-            brand = QColor(c["game_pill_ttr"])
-            brand = resolve_accent(entry, brand)
-            target = brand if enabled else _muted_brand(brand)
-            side_style = "solid"
-            side_color = c["border_card"]
-        elif game == "cc":
-            brand = QColor(c["game_pill_cc"])
-            brand = resolve_accent(entry, brand)
-            target = brand if enabled else _muted_brand(brand)
-            side_style = "solid"
-            side_color = c["border_card"]
-        else:
-            target = QColor(c["border_light"])
-            side_style = "solid"
-            side_color = c["border_card"]
-
-        card.setStyleSheet(
-            f"#toon_card_{i} {{"
-            f"  background: {c['bg_card']};"
-            f"  border-top: 5px solid transparent;"
-            f"  border-left: 1px {side_style} {side_color};"
-            f"  border-right: 1px {side_style} {side_color};"
-            f"  border-bottom: 1px {side_style} {side_color};"
-            f"  border-radius: 9px;"
-            f"}}"
-        )
-
-        # Drive the animated stripe. Held back during the cold-start
-        # window so all four stripes can animate together when the
-        # deferred brand pass fires (otherwise early game-detection
-        # would race ahead and complete the fill before the 1 s delay
-        # had even elapsed).
-        if not self._cold_start_in_progress:
-            stripe.set_color(target)
-
-        # Resolve any user-picked body color once; the border (divider +
-        # ka_group) and the tint widget both consume it.
-        from utils.toon_customization_resolve import resolve_body
-        from utils.widgets.card_body_tint import CardBodyTint
-        from utils.color_math import darken_hsl
-        body_color = None
-        if game in ("cc", "ttr") and toon_name and self._tab.customizations is not None:
-            body_color = resolve_body(entry)
-
-        # Body-derived chrome for the controls region. When the user picks
-        # a body color, three things follow it so the wrapper reads as
-        # unambiguously body-tinted (not "still grey same as idle"):
-        #   - Wrapper interior (ka_group bg): darken_hsl(body, 0.65) — a
-        #     visibly-tinted recessed shade, lighter than the border.
-        #   - Wrapper border (divider + ka_group outline): darken_hsl(
-        #     body, 0.4) — deep enough to define the wrapper's edge
-        #     against the interior and against the surrounding body.
-        #   - Progress bar track: matches border for cohesion.
-        # When body is None, all three fall back to today's theme colors.
-        if body_color is not None:
-            border_color = darken_hsl(body_color, 0.4).name()
-            wrapper_bg = darken_hsl(body_color, 0.65).name()
-        else:
-            border_color = c["border_muted"]
-            wrapper_bg = c["bg_input"]
-
-        # Refresh the portrait-overlay dot's cut-out ring so it tracks
-        # the card body. When the user picks a body color, the dot must
-        # match it to preserve the cutout illusion; otherwise it follows
-        # the theme card backdrop. Lives after body_color is resolved
-        # so re-brand triggers (theme refresh, body change, body clear)
-        # all flow through one resolution path.
-        dot = self._card_slots[i].get("status_ring")
-        if dot is not None and hasattr(dot, "set_cutout_border"):
-            ring_color = body_color.name() if body_color is not None else c["bg_card"]
-            dot.set_cutout_border(ring_color, width=2.5)
-
-        divider = self._card_slots[i].get("header_divider")
-        if divider is not None:
-            divider.setStyleSheet(
-                f"background: {border_color}; border: none;"
-            )
-        if i < len(self._tab.ka_groups):
-            ka_group = self._tab.ka_groups[i]
-            ka_group.setStyleSheet(
-                f"QFrame#ka_group {{"
-                f"  background: {wrapper_bg};"
-                f"  border: 2px solid {border_color};"
-                f"  border-radius: 8px;"
-                f"}}"
-            )
-        # Progress bar track inside the wrapper. Currently theme grey
-        # regardless of body, which is what dominates the user's
-        # perception of "the wrapper" (it is the largest grey surface
-        # inside the rounded rect). Follow the body-derived border_color
-        # so the whole wrapper reads as one coherent body-tinted unit.
-        if i < len(self._tab.ka_progress_bars):
-            ka_bar = self._tab.ka_progress_bars[i]
-            if hasattr(ka_bar, "set_bg_color"):
-                ka_bar.set_bg_color(border_color)
-
-        # Body tint widget (lazy; only created when an override is present).
-        slot = self._card_slots[i]
-        tint = slot.get("body_tint")
-        if body_color is None:
-            if tint is not None:
-                tint.hide()
-            return
-        if tint is None:
-            tint = CardBodyTint(body_color, parent=card)
-            slot["body_tint"] = tint
-            # Cover the card body, starting flush against the bottom
-            # edge of the 5 px stripe so no bg_card row shows between
-            # the accent stripe and the body color.
-            card_w = card.width()
-            card_h = card.height()
-            tint.setGeometry(1, 5, card_w - 2, card_h - 6)
-            tint.lower()
-        tint.set_color(body_color)
-        tint.show()
+        # MultitoonTab expects these registries populated by the layout.
+        self._tab.toon_cards.append(cell)
+        self._tab.ka_groups.append(ka_pill)
+        return self._cells[-1]
 
     # ── Populate ───────────────────────────────────────────────────────────
     def populate(self):
-        """Clear slot layouts and re-add shared widgets in the correct order.
-        Idempotent: safe to call after a layout-mode swap or theme refresh."""
-        # Service status bar (3-state). Replaces the legacy
-        # toggle_service_button + StatusBar pair.
-        clear_layout(self._service_layout)
-        self._service_layout.addWidget(self._tab.service_status_bar)
+        """Reparent the shared per-slot widgets into the pinwheel leaf
+        layouts. Idempotent: only the leaf layouts are cleared + refilled."""
+        clear_layout(self._status_host)
+        self._status_host.addWidget(self._tab.service_status_bar)
 
-        # Config row. Refresh button moved into the status bar; the
-        # profile-save button slot is filled in Task 5.
-        clear_layout(self._config_row)
-        self._config_row.addWidget(self._tab.config_label)
-        self._config_row.addStretch()
-        self._config_row.addWidget(self._tab.profile_pills_label)
-        self._config_row.addSpacing(8)
-        for pill in self._tab.profile_pills:
-            self._config_row.addWidget(pill)
-        self._config_row.addSpacing(6)
-        self._config_row.addWidget(self._tab.profile_save_button)
+        for i, cell in enumerate(self._cells):
+            self._populate_cell(i, cell)
 
-        # Each card slot
-        for i, slot in enumerate(self._card_slots):
-            self._populate_card(i, slot)
+        # Hidden-but-alive shared widgets the pinwheel design omits (kept so
+        # MultitoonTab's logic and hotkeys keep working): the CC/TTR chip, the
+        # click-sync help affordance, and the profile/config row.
+        for i in range(4):
+            if i < len(self._tab.game_badges):
+                self._tab.game_badges[i].hide()
+            if i < len(self._tab.help_buttons):
+                self._tab.help_buttons[i].setParent(self._cells[i]["cell"])
+                self._tab.help_buttons[i].hide()
+        for w in (
+            getattr(self._tab, "config_label", None),
+            getattr(self._tab, "profile_pills_label", None),
+            getattr(self._tab, "profile_save_button", None),
+        ):
+            if w is not None:
+                w.setParent(self)
+                w.hide()
+        for pill in getattr(self._tab, "profile_pills", []):
+            pill.setParent(self)
+            pill.hide()
 
-        # Seed each card stripe to the theme's empty colour BEFORE the
-        # initial brand pass. Two purposes: (1) the stripes paint
-        # immediately during the cold-start delay below, so the cards
-        # are not visually empty while we wait; (2) the initial brand
-        # pass then sees a valid current colour and animates the
-        # transition properly (without this seed, _CardStripe.set_color
-        # short-circuits its first call).
-        from utils.theme_manager import get_theme_colors, resolve_theme
-        is_dark = resolve_theme(self._tab.settings_manager) == "dark"
-        c = get_theme_colors(is_dark)
-        empty_color = QColor(c["border_light"])
-        for slot in self._card_slots:
-            stripe = slot.get("card_stripe")
-            if stripe is not None:
-                stripe.set_color(empty_color)
+        self._relayout_all()
+        self._apply_initial_brands()
 
-        self._position_portraits()
-        self._position_status_rings()
-        self._position_stripes()
+    def _populate_cell(self, i: int, cell: dict):
+        tab = self._tab
+        cfg = cell["cfg"]
+        align = Qt.AlignRight if not cfg["left"] else Qt.AlignLeft
 
-        # Apply initial brand chrome based on each slot's currently-known
-        # game. On the very first populate (app launch) hold the stripe
-        # at grey for 1 s so the user sees the cold-start fill animation
-        # play. During that window set_card_brand still updates each
-        # card's chrome (background, borders) but the stripe is gated
-        # off so early game-detection updates from the window-manager
-        # poll do not race ahead.
-        if not getattr(self, "_initial_brand_done", False):
-            self._initial_brand_done = True
-            self._cold_start_in_progress = True
-            QTimer.singleShot(1000, self._exit_cold_start_and_apply_brands)
+        # Portrait: host the shared 172px badge inside the ring frame.
+        badge = tab.slot_badges[i]
+        badge.setMinimumSize(0, 0)
+        hx, hy, hw, hh = cell["portrait_frame"].host_geometry()
+        badge.setParent(cell["portrait_frame"])
+        badge.setFixedSize(hw, hh)
+        badge.move(hx, hy)
+        badge.set_border_color(None)
+        badge.show()
+
+        # Status dot overlays the portrait's outer-bottom corner.
+        _, status_dot = tab.toon_labels[i]
+        status_dot.set_size(34)
+        status_dot.setParent(cell["portrait_frame"])
+
+        # Toggle row: enable / chat / click-sync.
+        for b in (tab.toon_buttons[i], tab.chat_buttons[i], tab.click_sync_buttons[i]):
+            b.setText("")
+            b.setFixedSize(TOGGLE_W, TOGGLE_H)
+            b.setIconSize(QSize(17, 17))
+        clear_layout(cell["toggle_row"])
+        cell["toggle_row"].addWidget(tab.toon_buttons[i])
+        cell["toggle_row"].addWidget(tab.chat_buttons[i])
+        cell["toggle_row"].addWidget(tab.click_sync_buttons[i])
+        cell["toggle_row"].addStretch(1)
+
+        # Keep-alive pill leaf: lightning toggle + progress bar.
+        ka_btn = tab.keep_alive_buttons[i]
+        ka_btn.setFixedSize(KA_DOT, KA_DOT)
+        ka_btn.setIconSize(QSize(13, 13))
+        ka_bar = tab.ka_progress_bars[i]
+        ka_bar.setFixedHeight(9)
+        ka_bar.setMinimumWidth(40)
+        ka_bar.setMaximumWidth(16777215)
+        clear_layout(cell["ka_lay"])
+        cell["ka_lay"].addWidget(ka_btn)
+        cell["ka_lay"].addWidget(ka_bar, 1)
+
+        # Keyset stepper leaf (shared SetSelectorWidget).
+        sel = tab.set_selectors[i]
+        sel.setFixedHeight(KEYSET_H)
+        sel.setMinimumWidth(0)
+        sel.setMaximumWidth(16777215)
+        if hasattr(sel, "set_paint_scale"):
+            sel.set_paint_scale(1.0)
+        clear_layout(cell["sel_holder"])
+        cell["sel_holder"].addWidget(sel)
+
+        # Name leaf: name expands to the card's outer edge so it elides.
+        name_label, _ = tab.toon_labels[i]
+        name_font = QFont()
+        name_font.setPixelSize(23)
+        name_font.setBold(True)
+        name_label.setFont(name_font)
+        name_label.setAlignment(align | Qt.AlignVCenter)
+        clear_layout(cell["name_holder"])
+        cell["name_holder"].addWidget(name_label, 1)
+
+        # Stats leaf: laff + beans, aligned to the outer edge.
+        for lbl in (tab.laff_labels[i], tab.bean_labels[i]):
+            lbl.setFixedHeight(22)
+            lbl.setIconSize(QSize(16, 16))
+            stat_font = QFont()
+            stat_font.setPixelSize(15)
+            stat_font.setWeight(QFont.DemiBold)
+            lbl.setFont(stat_font)
+            lbl.show()
+        clear_layout(cell["stats_row"])
+        if cfg["left"]:
+            cell["stats_row"].addWidget(tab.laff_labels[i])
+            cell["stats_row"].addWidget(tab.bean_labels[i])
+            cell["stats_row"].addStretch(1)
         else:
-            self._apply_initial_brands()
+            cell["stats_row"].addStretch(1)
+            cell["stats_row"].addWidget(tab.laff_labels[i])
+            cell["stats_row"].addWidget(tab.bean_labels[i])
 
-    def _exit_cold_start_and_apply_brands(self) -> None:
-        """End of the cold-start delay: re-enable stripe updates and run
-        the initial brand pass so all four stripes animate from grey to
-        their target colour together."""
-        self._cold_start_in_progress = False
+    # ── Brand / per-slot render ──────────────────────────────────────────────
+    def set_card_brand(self, i: int, game: str | None, enabled: bool = False) -> None:
+        """Render slot `i` end to end: card chrome, the five controls,
+        portrait, name/stats, dim/glow. `enabled` already folds in
+        service_running (MultitoonTab passes enabled & service_running)."""
+        if i >= len(self._cells):
+            return
+        from utils.theme_manager import get_theme_colors, resolve_theme
+        from utils.toon_customization_resolve import resolve_accent
+        c = get_theme_colors(resolve_theme(self._tab.settings_manager) == "dark")
+        cell = self._cells[i]
+        tab = self._tab
+
+        wids = tab.window_manager.ttr_window_ids if hasattr(tab, "window_manager") else []
+        window_available = i < len(wids)
+        is_toon = game in ("cc", "ttr")
+
+        # Accent: per-toon override, else the game brand colour.
+        if game == "cc":
+            accent = resolve_accent(self._entry(i, "cc"), QColor(c["game_pill_cc"]))
+        elif game == "ttr":
+            accent = resolve_accent(self._entry(i, "ttr"), QColor(c["game_pill_ttr"]))
+        else:
+            accent = QColor(c["border_light"])
+
+        active = bool(enabled) and window_available and is_toon
+        cell["dimmed"] = not active
+        cell["accent"] = QColor(accent)
+        cell["active"] = active
+
+        cell["bg"].configure(accent, dimmed=not active)
+        cell["portrait_frame"].configure(accent, dimmed=not active)
+        self._apply_cell_effects(cell, accent, active)
+        self._refresh_glow()
+
+        # Layout-owned control chrome: the KA pill container + the keyset
+        # stepper colour. The five toggle buttons themselves are styled by
+        # MultitoonTab (single style-writer per control); the cell's dim
+        # effect desaturates them in place when the card is off/stopped.
+        self._style_ka_pill(i)
+        self._style_keyset(i)
+
+        # Portrait background + status dot.
+        tab.slot_badges[i].set_border_color(None)
+        tab.slot_badges[i].set_colors("#101010", "#ffffff")
+        status_dot = tab.toon_labels[i][1]
+        if active:
+            status_dot.set_cutout_border(darken_rgb(accent, 0.21).name(), width=3.0)
+            status_dot.set_state("active", "Connected")
+            status_dot.show()
+        else:
+            status_dot.hide()
+
+        # Name + stats colour.
+        name_label = tab.toon_labels[i][0]
+        name_label.setStyleSheet(
+            "background: transparent; border: none; color: #ffffff;"
+        )
+        stat_style = (
+            "background: transparent; border: none; text-align: left; "
+            "padding: 0; color: rgba(255,255,255,0.9); font-weight: 600;"
+        )
+        tab.laff_labels[i].setStyleSheet(stat_style)
+        tab.bean_labels[i].setStyleSheet(stat_style)
+
+        self._position_status_dot(cell)
+        self._refresh_emblem()
+
+    def _apply_cell_effects(self, cell: dict, accent: QColor, active: bool) -> None:
+        """Dimmed cards get a desaturating colorize on the cell; lit cards have
+        no cell effect. The accent glow is painted by the _GlowLayer (not a
+        QGraphicsDropShadowEffect, which clips to a square on macOS)."""
+        cell_w = cell["cell"]
+        if active:
+            if cell_w.graphicsEffect() is not None:
+                cell_w.setGraphicsEffect(None)
+        else:
+            eff = cell_w.graphicsEffect()
+            if not isinstance(eff, QGraphicsColorizeEffect):
+                eff = QGraphicsColorizeEffect(cell_w)
+                eff.setColor(QColor("#808080"))
+                cell_w.setGraphicsEffect(eff)
+            eff.setStrength(0.55)
+
+    # ── Control chrome owned by the layout ───────────────────────────────────
+    def _style_ka_pill(self, i: int) -> None:
+        """The keep-alive pill is a layout-owned container (the lightning
+        toggle inside it + the progress bar are styled by MultitoonTab)."""
+        cell = self._cells[i]
+        ka_pill = cell.get("ka_pill")
+        if ka_pill is not None:
+            ka_pill.setStyleSheet(
+                f"QFrame#ka_pill_{i} {{ background: rgba(0,0,0,0.24);"
+                f" border: 1px solid rgba(0,0,0,0.30); border-radius: 19px; }}"
+            )
+
+    def _style_keyset(self, i: int) -> None:
+        sel = self._tab.set_selectors[i]
+        # SetSelectorWidget already renders a ‹ KeysetName › stepper coloured
+        # by the movement-set palette; just make sure it repaints.
+        sel.update()
+
+    # ── Misc state helpers ───────────────────────────────────────────────────
+    def _entry(self, i: int, game: str) -> dict:
+        tab = self._tab
+        name = tab.toon_names[i] if i < len(tab.toon_names) else None
+        if name and tab.customizations is not None:
+            return tab.customizations.get(game, name)
+        return {}
+
+    # ── Theme ────────────────────────────────────────────────────────────────
+    def apply_theme(self, c: dict) -> None:
+        if self._emblem is not None:
+            broadcasting = bool(getattr(self._tab, "service_running", False))
+            self._emblem.configure(broadcasting, c["bg_app"], c["accent_blue_btn"])
         self._apply_initial_brands()
 
     def _apply_initial_brands(self) -> None:
-        """Run the initial set_card_brand pass over all 4 slots. Reads
-        each slot's currently-known game from its game_badge. The
-        detection loop in _tab.py keeps calling set_card_brand again
-        whenever a slot's game changes."""
-        for i in range(4):
-            game = None
-            badge = self._tab.game_badges[i] if i < len(self._tab.game_badges) else None
-            if badge is not None and badge.isVisible():
-                game = "cc" if badge.text() == "CC" else "ttr"
-            self.set_card_brand(i, game)
+        for i in range(min(4, len(self._cells))):
+            game = self._tab.slot_badges[i].game if i < len(self._tab.slot_badges) else None
+            enabled = bool(
+                i < len(self._tab.enabled_toons)
+                and self._tab.enabled_toons[i]
+                and getattr(self._tab, "service_running", False)
+            )
+            self.set_card_brand(i, game, enabled=enabled)
+        self._refresh_emblem()
 
-    def _populate_card(self, i: int, slot: dict):
-        # Reset shared-widget sizes/styles that _FullLayout.populate_active
-        # mutated. Restore the *original* constraints from each widget's
-        # __init__, not just zero them out — Compact relies on the natural
-        # size constraints to keep the cards compact.
-        self._tab.set_selectors[i].setFixedHeight(28)  # Full scales dynamically; SetSelectorWidget defaults to 28
-        self._tab.set_selectors[i].setMinimumWidth(130)
-        self._tab.set_selectors[i].setMaximumWidth(16777215)
-        if hasattr(self._tab.set_selectors[i], "set_paint_scale"):
-            self._tab.set_selectors[i].set_paint_scale(1.0)
+    def _refresh_emblem(self) -> None:
+        if self._emblem is None:
+            return
+        from utils.theme_manager import get_theme_colors, resolve_theme
+        c = get_theme_colors(resolve_theme(self._tab.settings_manager) == "dark")
+        broadcasting = bool(getattr(self._tab, "service_running", False))
+        self._emblem.configure(broadcasting, c["bg_app"], c["accent_blue_btn"])
 
-        # Direction D portrait sizing: the visible portrait renders at 64x64
-        # as a free-floating overlay (reparented to the card, positioned in
-        # _position_portraits). The layout reserves a 50x50 placeholder so
-        # card height/row spacing stay unchanged; the extra size extends into
-        # the card's top and left padding via the offset in _position_portraits.
-        badge = self._tab.slot_badges[i]
-        badge.setMinimumSize(64, 64)
-        badge.setMaximumSize(64, 64)
-        badge.setParent(slot["card"])
+    # ── Keep-alive collapse (master switch) ──────────────────────────────────
+    def _set_keep_alive_collapsed(self, collapsed: bool) -> None:
+        for cell in self._cells:
+            pill = cell.get("ka_pill")
+            if pill is not None:
+                pill.setVisible(not collapsed)
 
-        # ka_bar: Full scales dynamically; SmoothProgressBar's constructor
-        # defaults are setFixedHeight(7) + setMinimumWidth(40), elastic max width.
-        # Without this reset the bar fills the row's 32px height (drawing only
-        # in a 7px stripe so the rest reads as transparent) AND has no minimum
-        # width (so the layout can collapse it to 0 wide — invisible).
-        ka_bar = self._tab.ka_progress_bars[i]
-        ka_bar.setMinimumWidth(40)
-        ka_bar.setMaximumWidth(16777215)  # QWIDGETSIZE_MAX
-        ka_bar.setFixedHeight(7)
+    def _animate_keep_alive_visibility(self, target_visible: bool) -> None:
+        # Snap visibility (the design's fade is cosmetic; snapping avoids the
+        # offscreen QGraphicsOpacityEffect crash path).
+        self._set_keep_alive_collapsed(not target_visible)
 
-        # Cap laff/bean QPushButton height so the sub_row fits inside
-        # the 50 px portrait placeholder. Without this the system style
-        # chrome inflates the button sizeHint to ~28-32 px in the real
-        # app (Fusion vertical padding), pushing meta_col content (name
-        # 29 px + button) past 50 and growing the card by ~11 px when
-        # laff data populates. Full layout re-asserts its own geometry
-        # via setGeometry in _full_card so this cap only affects compact.
-        self._tab.laff_labels[i].setIcon(make_heart_icon(16))
-        self._tab.bean_labels[i].setIcon(make_jellybean_icon(16))
-        self._tab.laff_labels[i].setFixedHeight(20)
-        self._tab.bean_labels[i].setFixedHeight(20)
+    # ── No-ops / lifecycle for the MultitoonTab contract ─────────────────────
+    def deactivate(self) -> None:
+        if self._emblem is not None:
+            self._emblem.stop()
 
-        game_badge = self._tab.game_badges[i]
-        game_badge.setMinimumSize(0, 0)
-        game_badge.setMaximumSize(16777215, 16777215)
+    def _position_cards(self) -> None:  # full-layout shim; unused here
+        pass
 
-        # Direction D header: name at 21 px bold for hierarchy against
-        # the smaller stats text. setPixelSize so rendered size matches
-        # the design mockup regardless of DPI scaling.
-        name_label, _ = self._tab.toon_labels[i]
-        name_font = QFont()
-        name_font.setPixelSize(21)
-        name_font.setBold(True)
-        name_label.setFont(name_font)
+    # ── Geometry positioning ─────────────────────────────────────────────────
+    def _relayout_all(self) -> None:
+        for cell in self._cells:
+            self._position_cell_bg(cell)
+            self._position_status_dot(cell)
+        if self._glow is not None and self._grid_host is not None:
+            self._glow.setGeometry(0, 0, self._grid_host.width(), self._grid_host.height())
+            self._glow.lower()
+        self._refresh_glow()
+        self._position_emblem()
 
-        # Buttons: Full scales dynamically; constructor defaults are
-        # 88×32 enable, 32×32 chat/KA/help, 14px icons.
-        self._tab.toon_buttons[i].setFixedHeight(32)
-        self._tab.toon_buttons[i].setFixedWidth(88)
-        self._tab.chat_buttons[i].setFixedHeight(32)
-        self._tab.chat_buttons[i].setFixedWidth(32)
-        self._tab.click_sync_buttons[i].setFixedHeight(32)
-        self._tab.click_sync_buttons[i].setFixedWidth(32)
-        self._tab.keep_alive_buttons[i].setFixedHeight(32)
-        self._tab.keep_alive_buttons[i].setFixedWidth(32)
-        # Help button: prewarm/Full scales it to 43×43 with an 18px icon to
-        # match the full-mode chat/KA reference size; without these resets
-        # those values leak into Compact and the help button renders bigger
-        # than the chat button next to it. Must come before iconSize so the
-        # button has its compact bounds when the icon is re-baked.
-        self._tab.help_buttons[i].setFixedHeight(32)
-        self._tab.help_buttons[i].setFixedWidth(32)
-        self._tab.chat_buttons[i].setIconSize(QSize(14, 14))
-        self._tab.click_sync_buttons[i].setIconSize(QSize(14, 14))
-        self._tab.keep_alive_buttons[i].setIconSize(QSize(14, 14))
-        self._tab.help_buttons[i].setIconSize(QSize(14, 14))
-        self._tab.laff_labels[i].setIconSize(QSize(16, 16))
-        self._tab.bean_labels[i].setIconSize(QSize(16, 16))
-
-        # Direction D stats font: 14 px Medium weight to balance the
-        # larger name above. setPixelSize so the rendered size matches
-        # the design mockup regardless of DPI scaling.
-        stats_font = QFont()
-        stats_font.setPixelSize(14)
-        stats_font.setWeight(QFont.Medium)
-        self._tab.laff_labels[i].setFont(stats_font)
-        self._tab.bean_labels[i].setFont(stats_font)
-
-        # top_row: portrait_placeholder | meta_col(name + sub_row) | game_badge
-        # The real 64x64 badge is overlaid on top of the placeholder via
-        # _position_portraits (free-floating child of the card).
-        clear_layout(slot["top_row"])
-        clear_layout(slot["meta_col"])
-        clear_layout(slot["sub_row"])
-
-        # sub_row hosts both mode-specific info sets. _tab.py drives the
-        # per-widget visibility: laff/bean stay hidden when no laff data
-        # is available (CC mode), and cc_subtitle is shown only when
-        # set_compact_cc_subtitle has been called with a non-None
-        # playground. Adding all three here means neither mode needs
-        # structural changes during runtime toggles.
-        slot["sub_row"].addWidget(self._tab.laff_labels[i])
-        slot["sub_row"].addWidget(self._tab.bean_labels[i])
-        slot["sub_row"].addWidget(
-            self._tab._compact_cc_subtitles[i],
-            alignment=Qt.AlignLeft,
-        )
-        slot["sub_row"].addStretch()
-
-        # meta_col: name on top, sub_row underneath. Stretches above and
-        # below the content vertically center the block in the top_row's
-        # 50 px slot — when sub_row is empty (no laff data and no CC
-        # subtitle) the name alone sits between the card top and the
-        # divider; when sub_row has content the stretches collapse and
-        # the 2-line stack fills the row.
-        name_label, status_dot = self._tab.toon_labels[i]
-        slot["meta_col"].addStretch()
-        slot["meta_col"].addWidget(name_label)
-        slot["meta_col"].addLayout(slot["sub_row"])
-        slot["meta_col"].addStretch()
-
-        # top_row: portrait_placeholder | meta_col (stretch=1) | game_badge.
-        # stretch on meta_col pushes the chip flush against the right
-        # edge of the header.
-        slot["top_row"].addWidget(slot["portrait_placeholder"])
-        slot["top_row"].addLayout(slot["meta_col"], 1)
-        slot["top_row"].addWidget(
-            self._tab.game_badges[i], alignment=Qt.AlignTop
-        )
-
-        # PulsingDot is no longer added next to the name. Instead it
-        # becomes the portrait status ring overlay (reparented to the
-        # card; positioned in _position_status_rings()). Stash it in
-        # the slot dict so the position helper can find it.
-        status_dot.setParent(slot["card"])
-        slot["status_ring"] = status_dot
-
-        # ctrl_row: toon_button | middle (ka_group + addStretch) | set_selector
-        clear_layout(slot["ctrl_row"])
-        clear_layout(slot["middle"])
-        clear_layout(slot["ka_group_layout"])
-        slot["ctrl_row"].addWidget(self._tab.toon_buttons[i])
-        slot["ka_group_layout"].addWidget(self._tab.chat_buttons[i])
-        slot["ka_group_layout"].addWidget(self._tab.click_sync_buttons[i])
-        slot["ka_group_layout"].addWidget(self._tab.help_buttons[i])
-        slot["ka_group_layout"].addWidget(self._tab.keep_alive_buttons[i])
-        slot["ka_group_layout"].addWidget(self._tab.ka_progress_bars[i], 1)
-        slot["middle"].addWidget(slot["ka_group"], 1)
-        slot["middle"].addStretch(1)
-        slot["ctrl_row"].addLayout(slot["middle"], 1)
-        slot["ctrl_row"].addWidget(self._tab.set_selectors[i])
-
-    def _position_portraits(self) -> None:
-        """Position each card's 64x64 portrait widget on top of its 50x50
-        placeholder, shifted 9 px left and 10 px up so the extra size
-        extends into the card's top/left padding instead of pushing the
-        layout. (The -10 was bumped from -8 so the portrait sits further
-        away from the header/controls divider.) Must be called AFTER Qt
-        has resolved the layout (so the placeholder has a real geometry)
-        and BEFORE _position_status_rings (which uses badge.mapTo for
-        the corner dot, so the dot tracks the badge automatically)."""
-        for i, slot in enumerate(self._card_slots):
-            placeholder = slot.get("portrait_placeholder")
-            if placeholder is None:
+    def _refresh_glow(self) -> None:
+        """Feed the glow layer each lit card's body rect (in grid-host coords)
+        + accent. Dimmed/empty cards contribute no glow."""
+        if self._glow is None:
+            return
+        specs = []
+        for cell in self._cells:
+            if not cell.get("active"):
                 continue
-            badge = self._tab.slot_badges[i]
-            top_left = placeholder.mapTo(slot["card"], placeholder.rect().topLeft())
-            badge.move(top_left.x() - 9, top_left.y() - 10)
-            badge.show()
-            badge.raise_()
+            geo = cell["cell"].geometry()   # cells live in the grid host
+            specs.append({
+                "x": geo.x(), "y": geo.y(), "w": geo.width(), "h": geo.height(),
+                "cutout": cell["cfg"]["cutout"], "accent": QColor(cell["accent"]),
+            })
+        self._glow.set_cards(specs)
 
-    def _position_status_rings(self) -> None:
-        """Re-position the portrait status-dot overlays after Qt has
-        resolved layout. Called from showEvent / resizeEvent /
-        populate()."""
-        for i, slot in enumerate(self._card_slots):
-            ring = slot.get("status_ring")
-            if ring is None:
-                continue
-            badge = self._tab.slot_badges[i]
-            if not badge.isVisible():
-                continue
-            card = slot["card"]
-            # Skip if the badge has been reparented out of this compact
-            # card (e.g., during full-mode prewarm at init). mapTo on a
-            # non-ancestor target prints a Qt warning and returns
-            # meaningless coords; the badge ring will be repositioned
-            # correctly when compact reclaims ownership.
-            if not _is_descendant_of(badge, card):
-                continue
-            # PulsingDot(13) widget is 21x21 (13 px core + 4 px padding
-            # for glow on each side). Anchor to badge.bottomRight() and
-            # offset (-18, -19) to nudge the dot 1 px left and 2 px up
-            # from sitting flush at the badge's bottom-right corner.
-            br = badge.mapTo(card, badge.rect().bottomRight())
-            ring.move(br.x() - 18, br.y() - 19)
-            ring.show()
-            ring.raise_()
+    def _position_cell_bg(self, cell: dict) -> None:
+        c = cell["cell"]
+        w, h = c.width(), c.height()
+        cell["glow_host"].setGeometry(0, 0, w, h)
+        cell["bg"].setGeometry(0, 0, w, h)
+        cell["glow_host"].lower()
 
-    def _position_stripes(self) -> None:
-        """Place each card's stripe widget at the top edge of the card.
-        Called from showEvent / resizeEvent and from populate()."""
-        for slot in self._card_slots:
-            stripe = slot.get("card_stripe")
-            if stripe is None:
-                continue
-            card = slot["card"]
-            stripe.setGeometry(0, 0, card.width(), 5)
-            stripe.show()
-            stripe.raise_()
+    def _position_status_dot(self, cell: dict) -> None:
+        frame = cell["portrait_frame"]
+        dot = None
+        # Find this cell's status dot among the shared toon_labels.
+        idx = self._cells.index(cell)
+        if idx < len(self._tab.toon_labels):
+            dot = self._tab.toon_labels[idx][1]
+        if dot is None or dot.parentWidget() is not frame:
+            return
+        # Bottom-right inner corner of the 172px circle.
+        d = dot.width()
+        off = int(PORTRAIT * 0.5 + (PORTRAIT * 0.5) * 0.70) - d // 2
+        dot.move(off, off)
+        dot.raise_()
+
+    def _position_emblem(self) -> None:
+        if self._emblem is None or self._grid_host is None:
+            return
+        gx = self._grid_host.width() / 2.0
+        gy = self._grid_host.height() / 2.0
+        s = self._emblem.width()
+        self._emblem.move(int(gx - s / 2.0), int(gy - s / 2.0))
+        self._emblem.raise_()
 
     def showEvent(self, event):
         super().showEvent(event)
-        self._position_portraits()
-        self._position_status_rings()
-        self._position_stripes()
+        self._relayout_all()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self._position_portraits()
-        self._position_status_rings()
-        self._position_stripes()
-
-    def _collapsed_ka_group_width(self, slot_index: int) -> int:
-        """Width that ka_group must hold when KA is collapsed.
-
-        ka_group's row contains chat + click-sync + help + (hidden ka +
-        hidden bar). When collapsed, chat and help are visible (plus the
-        click-sync button when its master switch shows it), so the frame
-        must be wide enough to fit them plus inter-widget spacing plus
-        contentsMargins.
-
-        Each child's effective layout width is its `sizeHint().width()`
-        clamped into `[minimumWidth, maximumWidth]`. Children with
-        setFixedWidth/setFixedSize have min == max == fixed value, so the
-        clamp pulls the sizeHint to the constrained value — matching how
-        Qt itself computes the parent's natural sizeHint. Without the
-        clamp, KeepAliveHelpButton (whose QToolButton sizeHint is 26 for
-        an empty button while its setFixedSize forces 32) under-allocates
-        and the help button is clipped on the right.
-        """
-        def _layout_width(w):
-            sh = w.sizeHint().width()
-            min_w = w.minimumWidth()
-            max_w = w.maximumWidth()
-            return min(max(sh, min_w), max_w)
-
-        chat_btn = self._tab.chat_buttons[slot_index]
-        cs_btn = self._tab.click_sync_buttons[slot_index]
-        help_btn = self._tab.help_buttons[slot_index]
-        layout = self._card_slots[slot_index]["ka_group"].layout()
-        margins = layout.contentsMargins()
-        width = (
-            _layout_width(chat_btn)
-            + _layout_width(help_btn)
-            + layout.spacing()
-            + margins.left()
-            + margins.right()
-        )
-        # The click-sync button only takes layout space when shown by the
-        # Settings master switch. isHidden() (not isVisible()) matches how
-        # QLayout allocates space — isVisible() is False for the whole tree
-        # before the window is shown.
-        if not cs_btn.isHidden():
-            width += _layout_width(cs_btn) + layout.spacing()
-        return width
-
-    def _set_keep_alive_collapsed(self, collapsed: bool) -> None:
-        """Flip ka_group's stretch factor in each card's middle layout.
-        collapsed=True  → ka_group=0, addStretch=1 (frame chat-only, spacer fills)
-        collapsed=False → ka_group=1, addStretch=0 (frame fills, spacer collapsed)
-
-        ka_group and addStretch must always be opposites — both at stretch 1
-        would split the middle layout's leftover space, shrinking ka_group to
-        roughly half of its pre-feature size."""
-        ka_stretch = 0 if collapsed else 1
-        spacer_stretch = 1 if collapsed else 0
-        for slot in self._card_slots:
-            middle = slot["middle"]
-            # ka_group is at index 0; addStretch is at index 1.
-            middle.setStretch(0, ka_stretch)
-            middle.setStretch(1, spacer_stretch)
-            middle.invalidate()
-
-    def _animate_keep_alive_visibility(self, target_visible: bool) -> None:
-        """Animate KA button + bar appearance/disappearance for all 4 cards.
-        Compact-specific behavior: ka_group's fixed-width animates via
-        QVariantAnimation between chat-only width and full row-filling width,
-        with concurrent opacity fade on KA button + bar.
-
-        Expand: 300 ms width 0→full + 250 ms opacity 0→1 (50 ms delay so
-        reveal trails frame expansion).
-        Collapse: 180 ms opacity 1→0 + 220 ms width full→chat (80 ms delay
-        so frame stays open while widgets fade).
-
-        Under the offscreen Qt platform plugin (used by the test suite), the
-        QGraphicsOpacityEffect path crashes intermittently with an access
-        violation in PySide6 6.11. The fade is purely cosmetic, so under
-        offscreen we keep the width animation but skip the opacity effect
-        and snap visibility instantly. Production never runs offscreen."""
-        from PySide6.QtCore import (
-            QVariantAnimation, QPropertyAnimation, QEasingCurve, QTimer,
-        )
-        from PySide6.QtGui import QGuiApplication
-        from PySide6.QtWidgets import QGraphicsOpacityEffect
-
-        use_opacity_fx = QGuiApplication.platformName() != "offscreen"
-
-        if not hasattr(self, "_ka_anims"):
-            self._ka_anims = []
-        for a in self._ka_anims:
-            a.stop()
-        self._ka_anims = []
-
-        QWIDGETSIZE_MAX_VAL = 16777215
-
-        for i, slot in enumerate(self._card_slots):
-            ka_group = slot["ka_group"]
-            middle = slot["middle"]
-            ka_btn = self._tab.keep_alive_buttons[i]
-            ka_bar = self._tab.ka_progress_bars[i]
-
-            # Width ka_group needs when collapsed (chat + help visible). See
-            # _collapsed_ka_group_width — formula must include the help
-            # button now that v2.1.1's discovery affordance occupies the slot
-            # alongside chat whenever KA is master-disabled.
-            chat_only_width = self._collapsed_ka_group_width(i)
-
-            if target_visible:
-                # Expand: ka_group must claim layout space first. Spacer goes
-                # to 0 so ka_group gets all of middle's leftover (otherwise
-                # they'd split it 50/50 and shrink the frame).
-                middle.setStretch(0, 1)
-                middle.setStretch(1, 0)
-                # Make widgets visible with opacity 0 so they can fade in.
-                ka_btn.setVisible(True)
-                ka_bar.setVisible(True)
-                if use_opacity_fx:
-                    for w in (ka_btn, ka_bar):
-                        effect = QGraphicsOpacityEffect(w)
-                        effect.setOpacity(0.0)
-                        w.setGraphicsEffect(effect)
-
-                # Width animation: chat_only_width → full row width.
-                # Use ka_group's current width as start (it's chat-only-sized
-                # because master was off).
-                width_start = ka_group.width()
-                # Compute target as middle layout's available width.
-                width_end = middle.geometry().width() if middle.geometry().width() > 0 else 600
-                ka_group.setFixedWidth(width_start)
-
-                width_anim = QVariantAnimation()
-                width_anim.setDuration(300)
-                width_anim.setStartValue(int(width_start))
-                width_anim.setEndValue(int(width_end))
-                width_anim.setEasingCurve(QEasingCurve.OutCubic)
-
-                def make_width_step(group):
-                    def _step(value):
-                        group.setFixedWidth(int(value))
-                    return _step
-                width_anim.valueChanged.connect(make_width_step(ka_group))
-
-                def make_width_done(group):
-                    def _done():
-                        group.setMaximumWidth(QWIDGETSIZE_MAX_VAL)
-                        group.setMinimumWidth(0)
-                    return _done
-                width_anim.finished.connect(make_width_done(ka_group))
-                width_anim.start()
-                self._ka_anims.append(width_anim)
-
-                # Opacity animations for ka_btn + ka_bar (delayed 50 ms).
-                if use_opacity_fx:
-                    for w in (ka_btn, ka_bar):
-                        effect = w.graphicsEffect()
-
-                        op_anim = QPropertyAnimation(effect, b"opacity")
-                        op_anim.setDuration(250)
-                        op_anim.setEasingCurve(QEasingCurve.OutCubic)
-                        op_anim.setStartValue(0.0)
-                        op_anim.setEndValue(1.0)
-
-                        def make_op_done(w_local):
-                            def _done():
-                                w_local.setGraphicsEffect(None)
-                            return _done
-                        op_anim.finished.connect(make_op_done(w))
-                        QTimer.singleShot(50, op_anim.start)
-                        self._ka_anims.append(op_anim)
-
-            else:
-                # Collapse: opacity fade-out first, then frame width collapses.
-                if use_opacity_fx:
-                    for w in (ka_btn, ka_bar):
-                        effect = QGraphicsOpacityEffect(w)
-                        effect.setOpacity(1.0)
-                        w.setGraphicsEffect(effect)
-
-                        op_anim = QPropertyAnimation(effect, b"opacity")
-                        op_anim.setDuration(180)
-                        op_anim.setEasingCurve(QEasingCurve.InCubic)
-                        op_anim.setStartValue(1.0)
-                        op_anim.setEndValue(0.0)
-
-                        def make_op_done(w_local):
-                            def _done():
-                                w_local.setVisible(False)
-                                w_local.setGraphicsEffect(None)
-                            return _done
-                        op_anim.finished.connect(make_op_done(w))
-                        op_anim.start()
-                        self._ka_anims.append(op_anim)
-                else:
-                    # Headless: skip the fade and hide widgets directly so
-                    # the rest of the collapse path (width animation) sees
-                    # the same end-state the fade would have produced.
-                    for w in (ka_btn, ka_bar):
-                        w.setVisible(False)
-
-                # Width collapse, delayed 80 ms.
-                width_start = ka_group.width()
-                width_anim = QVariantAnimation()
-                width_anim.setDuration(220)
-                width_anim.setStartValue(int(width_start))
-                width_anim.setEndValue(int(chat_only_width))
-                width_anim.setEasingCurve(QEasingCurve.InCubic)
-
-                def make_width_step(group):
-                    def _step(value):
-                        group.setFixedWidth(int(value))
-                    return _step
-                width_anim.valueChanged.connect(make_width_step(ka_group))
-
-                def make_collapse_done(group, mid, slot):
-                    def _done():
-                        # Recompute at finish time: a click-sync visibility
-                        # flip landing mid-animation changes the collapsed
-                        # width, and pinning the start-time value would bake
-                        # in a stale width.
-                        group.setFixedWidth(self._collapsed_ka_group_width(slot))
-                        # ka_group stretch 0, addStretch absorbs leftover.
-                        mid.setStretch(0, 0)
-                        mid.setStretch(1, 1)
-                    return _done
-                width_anim.finished.connect(
-                    make_collapse_done(ka_group, middle, i)
-                )
-                QTimer.singleShot(80, width_anim.start)
-                self._ka_anims.append(width_anim)
-
-
-class _CardStripe(QFrame):
-    """5 px tall stripe painted at the top of a toon card. Animates
-    forward (left-to-right fill) when transitioning to a more-saturated
-    state (grey -> muted brand, muted brand -> full brand) and cross-
-    fades in place when transitioning backward.
-
-    Rank is derived from saturation alone (no theme dependency):
-        s < 30   -> rank 0 (empty / grey)
-        s < 165  -> rank 1 (muted brand at 55% saturation)
-        s >= 165 -> rank 2 (full brand)
-    """
-
-    _DUR_FORWARD = 600
-    _DUR_BACKWARD = 400
-
-    def __init__(self, parent: QWidget):
-        super().__init__(parent)
-        self.setFixedHeight(5)
-        self.setAttribute(Qt.WA_TransparentForMouseEvents)
-        # Keep a Python-level reference to the parent so that callers
-        # holding only the stripe (e.g. test fixtures) don't accidentally
-        # allow the parent QWidget to be GC'd while the stripe is alive.
-        self._parent_ref = parent
-        self._color = QColor()           # invalid until first set_color
-        self._prev_color: QColor | None = None
-        self._progress: float = 0.0      # forward fill 0..1
-        self._blend: float = 0.0         # backward fade 0..1
-        self._anim = None                # in-flight QPropertyAnimation
-        self._anim_kind: str | None = None  # "forward" | "backward" | None
-
-    # -- Qt properties (so QPropertyAnimation can drive them) ----------
-
-    def get_progress(self) -> float:
-        return self._progress
-
-    def set_progress(self, v: float) -> None:
-        self._progress = float(v)
-        self.update()
-
-    progress = Property(float, get_progress, set_progress)
-
-    def get_blend(self) -> float:
-        return self._blend
-
-    def set_blend(self, v: float) -> None:
-        self._blend = float(v)
-        self.update()
-
-    blend = Property(float, get_blend, set_blend)
-
-    # -- API -----------------------------------------------------------
-
-    def set_color(self, color: QColor) -> None:
-        """Transition the stripe to `color`. Cancels any in-flight
-        animation. No-op if `color` equals the current target."""
-        # First-ever call: seed directly, no animation.
-        if not self._color.isValid():
-            self._color = QColor(color)
-            self._prev_color = None
-            self.update()
-            return
-
-        # Already animating toward (or sitting at) this exact colour:
-        # no work to do. self._color always holds the destination, so the
-        # check is correct whether or not an animation is in flight.
-        if self._color == color:
-            return
-
-        # Cancel any in-flight animation before starting a new one. We
-        # disconnect finished so the stale handler doesn't land.
-        if self._anim is not None:
-            self._anim.stop()
-            try:
-                self._anim.finished.disconnect()
-            except (RuntimeError, TypeError):
-                pass
-            self._anim = None
-            self._anim_kind = None
-
-        old_rank = self._rank(self._color)
-        new_rank = self._rank(color)
-        prev_color = QColor(self._color)
-        self._prev_color = prev_color
-        self._color = QColor(color)
-
-        if new_rank == old_rank:
-            # Same tier (e.g. theme swap landing on a different but same-
-            # rank colour): snap without animation.
-            self._prev_color = None
-            self.update()
-            return
-
-        if new_rank > old_rank:
-            self._anim_kind = "forward"
-            self._progress = 0.0
-            self._anim = QPropertyAnimation(self, b"progress")
-            self._anim.setDuration(self._DUR_FORWARD)
-            self._anim.setEasingCurve(QEasingCurve.InOutQuad)
-        else:
-            self._anim_kind = "backward"
-            self._blend = 0.0
-            self._anim = QPropertyAnimation(self, b"blend")
-            self._anim.setDuration(self._DUR_BACKWARD)
-            self._anim.setEasingCurve(QEasingCurve.InOutQuad)
-
-        self._anim.setStartValue(0.0)
-        self._anim.setEndValue(1.0)
-        self._anim.finished.connect(self._on_anim_finished)
-        self._anim.start()
-
-    def target_color(self) -> QColor:
-        """Return the color most recently passed to set_color()."""
-        return QColor(self._color)
-
-    def _on_anim_finished(self) -> None:
-        self._prev_color = None
-        self._anim = None
-        self._anim_kind = None
-        self._progress = 0.0
-        self._blend = 0.0
-        self.update()
-
-    @staticmethod
-    def _rank(color: QColor) -> int:
-        s = color.hslSaturation()
-        if s < 30:
-            return 0
-        if s < 165:
-            return 1
-        return 2
-
-    # -- Painting ------------------------------------------------------
-
-    def paintEvent(self, event):
-        from PySide6.QtGui import QPainter, QPainterPath
-        if not self._color.isValid():
-            return
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing, True)
-        p.setPen(Qt.NoPen)
-
-        w = self.width()
-        h = self.height()
-
-        # Clip to a path with rounded top corners so the stripe aligns
-        # with the card's 9 px border-radius. Bottom corners stay square
-        # because the stripe sits flush against the card body.
-        path = QPainterPath()
-        radius = 9.0
-        path.moveTo(0, h)
-        path.lineTo(0, radius)
-        path.quadTo(0, 0, radius, 0)
-        path.lineTo(w - radius, 0)
-        path.quadTo(w, 0, w, radius)
-        path.lineTo(w, h)
-        path.closeSubpath()
-        p.setClipPath(path)
-
-        if self._prev_color is None or self._anim_kind is None:
-            p.setBrush(self._color)
-            p.drawRect(0, 0, w, h)
-            p.end()
-            return
-
-        if self._anim_kind == "forward":
-            split = int(w * self._progress)
-            if split > 0:
-                p.setBrush(self._color)
-                p.drawRect(0, 0, split, h)
-            if split < w:
-                p.setBrush(self._prev_color)
-                p.drawRect(split, 0, w - split, h)
-        else:  # backward cross-fade
-            t = self._blend
-            r = int(self._prev_color.red()   + (self._color.red()   - self._prev_color.red())   * t)
-            g = int(self._prev_color.green() + (self._color.green() - self._prev_color.green()) * t)
-            b = int(self._prev_color.blue()  + (self._color.blue()  - self._prev_color.blue())  * t)
-            p.setBrush(QColor(r, g, b))
-            p.drawRect(0, 0, w, h)
-        p.end()
-
+        self._relayout_all()

@@ -201,7 +201,12 @@ LEGACY_DESKTOP_ID = "toontown-multitool"
 def _decide_layout_mode(current: str, width: int, height: int) -> str:
     """Pure state-machine: return the layout mode for the given size, given the
     current mode. Implements deadband hysteresis so a window dragged across the
-    breakpoint does not flicker."""
+    breakpoint does not flicker.
+
+    The Multitoon tab now uses a single fluid pinwheel layout and ignores this
+    breakpoint (see MultitoonTab.set_layout_mode), but the Launcher and Settings
+    tabs still switch compact/full on it, so the breakpoint is retained.
+    """
     if current == "compact":
         if width >= W_FULL + DEADBAND_W and height >= H_FULL + DEADBAND_H:
             return "full"
@@ -304,18 +309,18 @@ class MultiToonTool(QMainWindow):
         self._sleep_warning_shown = False
 
         self.setWindowTitle(window_title())
-        # Default height grew from 770 to ~862 to fit the taller 112px logo
-        # header (header 112 + chip rail 64 + tab natural ~686 = 862) without
-        # clipping the Multitoon content. Clamp to the usable screen height so
-        # small/scaled displays are not over-sized. Width stays 575 (compact);
-        # the full-mode gate also needs width >= 1360, so a taller window
-        # never trips it.
+        # The Multitoon pinwheel needs room for two cards side by side (each a
+        # 172px portrait + a 158px control column + padding), so the window is
+        # ~880px wide by default and clamps to a 820px minimum - the design
+        # reference is 820x840. Height (~862) fits header 112 + chip rail 64 +
+        # the pinwheel grid + status bar without clipping. Clamp height to the
+        # usable screen so small/scaled displays are not over-sized.
         from utils.window_layout import clamp_window_height
         screen = self.screen() or QGuiApplication.primaryScreen()
         avail_h = screen.availableGeometry().height() if screen else 0
         default_h = clamp_window_height(avail_h)
-        self.setGeometry(QRect(100, 100, 575, default_h))
-        self.setMinimumWidth(575)
+        self.setGeometry(QRect(100, 100, 880, default_h))
+        self.setMinimumWidth(820)
         self._layout_mode = "compact"
 
         self.pressed_keys = set()
@@ -504,10 +509,8 @@ class MultiToonTool(QMainWindow):
         )
 
         self.log(f"[Debug] {app_name()} launched.")
-        self.multitoon_tab.prewarm_full_layout(
-            QSize(W_FULL, H_FULL - HEADER_H - CHIP_RAIL_H),
-            include_active=True,
-        )
+        # The Multitoon tab uses a single fluid pinwheel layout now; there is
+        # no separate full layout to warm.
         self._maybe_show_admin_notice()
 
     def _capture_multitool_window_id(self):
