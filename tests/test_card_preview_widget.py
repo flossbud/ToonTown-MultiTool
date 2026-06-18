@@ -9,7 +9,7 @@ os.environ.setdefault("TTMT_NO_VENV_REEXEC", "1")
 
 import pytest
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QWidget
 
 
 @pytest.fixture(scope="module")
@@ -34,10 +34,10 @@ def test_set_draft_triggers_repaint_request(qapp):
 
 def test_fixed_size_in_range(qapp):
     """The preview occupies a fixed footprint suitable for the dialog."""
-    from utils.widgets.card_preview_widget import CardPreviewWidget
+    from utils.widgets.card_preview_widget import CardPreviewWidget, _PREVIEW_W, _PREVIEW_H
     w = CardPreviewWidget(game="ttr", toon_name="Flossbud", draft={})
-    assert w.minimumWidth() >= 320
-    assert w.minimumHeight() >= 60
+    assert w.minimumWidth() == _PREVIEW_W
+    assert w.minimumHeight() == _PREVIEW_H
 
 
 def test_paint_does_not_crash_with_full_draft(qapp):
@@ -137,13 +137,14 @@ def test_card_preview_draws_circle_outline_when_set(qapp):
         "outline": {"color": "#ffd84a", "width": "thick"},
     }}
     w = CardPreviewWidget("ttr", "Test", draft)
-    w.resize(360, 72)
+    w.show()
     pm = w.grab()
     img = pm.toImage()
-    # Portrait circle is at (10..50, 16..56) (40px diameter, centered
-    # vertically in 72px tall card with +1 offset).
-    # Sample a pixel right on the circle's left edge: (10, 36)
-    px = img.pixelColor(10, 36)
+    # Portrait circle is at (12, 48, 80, 80) in the 300x176 clean card.
+    # "thick" outline (width=4, inset=2) is drawn centered at the circle
+    # edge; its leftmost stroke covers approx x=12..16 at y_center=88.
+    # Sample squarely in that stroke: (14, 88).
+    px = img.pixelColor(14, 88)
     assert px.alpha() > 0
     # Outline color is #ffd84a (very yellow). Tolerate AA.
     assert px.red() > 200 and px.green() > 180 and px.blue() < 120
@@ -257,3 +258,25 @@ def test_card_preview_silhouette_cache_invalidated_when_pose_changes(qapp, monke
     w.repaint(); qapp.processEvents()
     # Pose changed → cache key (id(pose_pm)) differs → builder invoked again.
     assert calls == ["out", "out"]
+
+
+def test_clean_card_dimensions_and_body_override(qapp):
+    """New clean-card preview: correct fixed size and body override changes
+    the card body gradient visually."""
+    from utils.widgets.card_preview_widget import CardPreviewWidget, _PREVIEW_W, _PREVIEW_H
+    parent = QWidget()
+    parent.show()
+    qapp.processEvents()
+    w = CardPreviewWidget("ttr", "Sparkle", {"accent": "#4a7cff"}, parent=parent)
+    w.show()
+    qapp.processEvents()
+    assert (w.width(), w.height()) == (_PREVIEW_W, _PREVIEW_H)
+    img_a = w.grab().toImage()
+    w.set_draft({"accent": "#4a7cff", "body": "#aa3377"})
+    qapp.processEvents()
+    img_b = w.grab().toImage()
+    # The card body (bottom-center, clear of portrait at left and name at
+    # right) must change color when the body override is applied.
+    assert img_a.pixelColor(_PREVIEW_W // 2, _PREVIEW_H - 12) != img_b.pixelColor(
+        _PREVIEW_W // 2, _PREVIEW_H - 12
+    )
