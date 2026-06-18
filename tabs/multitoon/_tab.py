@@ -3298,14 +3298,19 @@ class MultitoonTab(QWidget):
 
     @Slot()
     def _refresh_toon_name_labels(self):
-        c = self._c()
+        # Update ONLY the label text. The name font (size/weight) and colour are
+        # owned by the active pinwheel layout: compact _populate_cell sets
+        # setFont(23, Bold) and set_card_brand writes the colour; full
+        # _populate_card sets a matching setFont + stylesheet. This method used to
+        # re-apply a stale `font-size: 21px` stylesheet on every refresh, which
+        # fought the layout-owned 23 px font — the name flipped 23->21->23 each
+        # 5 s cycle (visible judder) and the 3 px sizeHint delta nudged the
+        # bottom-row portraits whenever the 2x2 grid had little vertical slack.
+        # setText is a no-op when the text is unchanged, so genuine name updates
+        # still propagate without disturbing the layout-owned styling.
         for i, (name_label, _) in enumerate(self.toon_labels):
             display = self.toon_names[i] if self.toon_names[i] else f"Toon {i + 1}"
             name_label.setText(display)
-            name_label.setStyleSheet(
-                f"font-size: 21px; font-weight: bold; color: {c['text_primary']}; "
-                f"background: none; border: none; padding-left: 6px;"
-            )
 
     def set_compact_cc_subtitle(self, slot: int, playground, zone_name):
         """Update the Compact UI subtitle for a CC slot. Hides if both

@@ -78,10 +78,12 @@ def _layout_children(layout):
     return out
 
 
-def test_name_label_is_21_px(qapp, tmp_path, monkeypatch):
+def test_name_label_is_23_px(qapp, tmp_path, monkeypatch):
+    # Pinwheel compact name size: _CompactLayout._populate_cell sets
+    # setFont(pixelSize 23, Bold). (Pre-pinwheel this was 21 px.)
     tab = _build_tab(qapp, tmp_path, monkeypatch)
     name_label, _ = tab.toon_labels[0]
-    assert name_label.font().pixelSize() == 21
+    assert name_label.font().pixelSize() == 23
 
 
 def test_stats_labels_are_14_px(qapp, tmp_path, monkeypatch):
@@ -90,19 +92,23 @@ def test_stats_labels_are_14_px(qapp, tmp_path, monkeypatch):
     assert tab.bean_labels[0].font().pixelSize() == 14
 
 
-def test_name_stylesheet_survives_refresh(qapp, tmp_path, monkeypatch):
-    """Regression: _refresh_toon_name_labels runs every time a toon name
-    is discovered (7 callsites in _tab.py) and re-applies the name
-    stylesheet. It must keep the 21 px size, otherwise the runtime font
-    visually reverts even though the construction-time QFont test still
-    passes."""
+def test_name_size_survives_refresh(qapp, tmp_path, monkeypatch):
+    """Regression (pinwheel judder): _refresh_toon_name_labels runs on every
+    name discovery / 5 s auto-refresh. It must NOT impose its own font size —
+    the name font is owned by the layout (compact setFont(23)). Previously this
+    method re-applied a stale `font-size: 21px` stylesheet that fought the
+    layout's 23 px, so the name flipped 23<->21 each refresh (visible judder)
+    and the sizeHint delta shifted the bottom-row portraits. After a refresh the
+    rendered size must stay the layout-owned 23 px (and the text must update)."""
     tab = _build_tab(qapp, tmp_path, monkeypatch)
+    name_label, _ = tab.toon_labels[0]
+    before = name_label.font().pixelSize()
     tab.toon_names[0] = "Floss"
     tab._refresh_toon_name_labels()
-    name_label, _ = tab.toon_labels[0]
-    assert "font-size: 21px" in name_label.styleSheet(), (
-        f"_refresh_toon_name_labels stripped the 21 px font-size. "
-        f"Got stylesheet: {name_label.styleSheet()!r}"
+    assert name_label.text() == "Floss", "refresh must still update the label text"
+    assert name_label.font().pixelSize() == before == 23, (
+        f"refresh changed the name font size from {before} to "
+        f"{name_label.font().pixelSize()}; it must stay layout-owned 23 px"
     )
 
 
