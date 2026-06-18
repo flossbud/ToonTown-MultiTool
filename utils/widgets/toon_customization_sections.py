@@ -7,7 +7,7 @@ No behavior change.
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Final, Optional
 
 from PySide6.QtCore import QPoint, QRect, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPixmap
@@ -20,7 +20,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QSlider,
-    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -29,6 +28,16 @@ from utils.toon_pattern_assets import PATTERN_NAMES
 from utils.widgets.color_constants import PRESET_SWATCHES
 from utils.widgets.color_well import ColorWell
 from utils.widgets.pose_thumb_states import paint_shimmer, paint_failed_mark
+
+# The five primary poses shown in the collapsed pose row. Must all be members
+# of utils.rendition_poses.POSE_NAMES.
+PRIMARY_POSES: Final = (
+    "portrait",
+    "portrait-delighted",
+    "portrait-grin",
+    "portrait-surprise",
+    "portrait-thinking",
+)
 
 
 class _SwatchRow(QWidget):
@@ -563,14 +572,13 @@ class _PoseAdjustPreview(QFrame):
 
 
 class _PoseAdjustView(QWidget):
-    """Adjust mode for the Toon section: drag-to-pan preview + zoom
-    slider + rotate slider + nudge arrow buttons + Back / Reset buttons
-    in the header. Emits transform_changed whenever any control changes
-    a value. Back / Reset have their own signals so _PoseSection can
-    drive the state transition."""
+    """Inline framing controls for the Toon section: drag-to-pan preview,
+    zoom slider, rotate slider, nudge arrow buttons, Reset button, and
+    silhouette outline/shadow pickers. Embedded directly in _PoseSection
+    (always visible when a DNA is set). Emits transform_changed whenever
+    any control changes a value."""
 
     transform_changed = Signal()
-    back_requested = Signal()
     reset_requested = Signal()
     silhouette_outline_changed = Signal(object, object)  # (hex or None, width key)
     silhouette_shadow_changed = Signal(object, object)  # (hex or None, softness key)
@@ -589,14 +597,11 @@ class _PoseAdjustView(QWidget):
         outer.setContentsMargins(8, 8, 8, 8)
         outer.setSpacing(8)
 
-        # Header row: Back + Reset (right-aligned)
+        # Header row: Reset (right-aligned)
         header = QHBoxLayout()
-        self._back_btn = QPushButton("← Back")
-        self._back_btn.clicked.connect(self.back_requested.emit)
         self._reset_btn = QPushButton("Reset")
         self._reset_btn.clicked.connect(self._on_reset_clicked)
         header.addStretch(1)
-        header.addWidget(self._back_btn)
         header.addWidget(self._reset_btn)
         outer.addLayout(header)
 
@@ -715,9 +720,6 @@ class _PoseAdjustView(QWidget):
     def nudge_down(self) -> None:
         self._apply_nudge(0.0, self._NUDGE_STEP)
 
-    def click_back(self) -> None:
-        self.back_requested.emit()
-
     def click_reset(self) -> None:
         self._on_reset_clicked()
 
@@ -784,8 +786,8 @@ class _PoseAdjustView(QWidget):
     def set_silhouette_outline_from_draft(
         self, hex_: Optional[str], width_key: Optional[str],
     ) -> None:
-        """Initial-state setter used by _PoseSection when entering the
-        Adjust view. Does NOT emit silhouette_outline_changed - the
+        """Initial-state setter called by _PoseSection when loading a
+        saved draft. Does NOT emit silhouette_outline_changed - the
         dialog's draft already has this value."""
         self._sil_outline_color_row.set_current(hex_)
         if width_key:
@@ -807,8 +809,8 @@ class _PoseAdjustView(QWidget):
     def set_silhouette_shadow_from_draft(
         self, hex_: Optional[str], softness_key: Optional[str],
     ) -> None:
-        """Initial-state setter used by _PoseSection. Does NOT emit -
-        the dialog's draft already has this value."""
+        """Initial-state setter called by _PoseSection when loading a
+        saved draft. Does NOT emit - the dialog's draft already has this value."""
         self._sil_shadow_color_row.set_current(hex_)
         if softness_key:
             self._sil_shadow_chip.set_current(softness_key)
@@ -819,14 +821,17 @@ class _PoseAdjustView(QWidget):
 
 
 class _PoseSection(QWidget):
-    """Toon pose picker, 2-state. Page 0 = grid of 13 pose tiles. Page 1
-    = adjust view (drag + sliders + nudge). The user enters page 1 via
-    the 'Adjust' button in page 0's header; Back returns to page 0."""
+    """Toon pose picker, single-pane layout. A primary row of 5 pose tiles
+    is always visible; a circular expand button below the row reveals the
+    full 13-tile grid inline (chevron flips). The framing controls (drag-pan
+    preview, zoom/rotate sliders, nudge buttons, silhouette outline/shadow)
+    are embedded beneath the tile area and are always visible when a DNA is
+    set. No page flip."""
 
     pose_changed = Signal(str)
-    transform_changed = Signal()  # emitted when adjust view writes to transform
+    transform_changed = Signal()  # emitted when framing controls change
     silhouette_outline_changed = Signal(object, object)  # (hex or None, width key)
-    silhouette_shadow_changed = Signal(object, object)  # (hex or None, softness key)
+    silhouette_shadow_changed = Signal(object, object)   # (hex or None, softness key)
 
     def __init__(self, dna: Optional[str], current_pose: str, saved_store=None, parent=None):
         super().__init__(parent)
@@ -834,16 +839,14 @@ class _PoseSection(QWidget):
         self._current_pose = current_pose
         self._saved_store = saved_store
         self._tiles: list[_PoseTile] = []
+        self._primary_tile_list: list[_PoseTile] = []
         self._placeholder_label: Optional[QLabel] = None
-        self._grid_page: Optional[QWidget] = None
-        self._adjust_view: Optional[_PoseAdjustView] = None
-        self._stack: Optional[QStackedWidget] = None
-        self._adjust_btn: Optional[QPushButton] = None
         self._refresh_btn: Optional[QPushButton] = None
-        self._grid_header: Optional[QWidget] = None
-        self._header_stack: Optional[QStackedWidget] = None
-        # Mirror of the transform values pushed into / out of the adjust
-        # view; the dialog reads via _PoseSection.transform().
+        self._expand_btn: Optional[QPushButton] = None
+        self._expanded_widget: Optional[QWidget] = None
+        self._expanded: bool = False
+        self._adjust_view: Optional[_PoseAdjustView] = None
+        # Mirror of the framing transform; callers read via transform().
         self._transform: tuple[float, float, float, float] = (1.0, 0.0, 0.0, 0.0)
         self._build()
 
@@ -853,62 +856,13 @@ class _PoseSection(QWidget):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
+        outer.addWidget(self._build_header())
 
-        # Header is a QStackedWidget so we can swap "grid header"
-        # (Pose + Adjust + Refresh) and "adjust header" (Pose + Back +
-        # Reset) when the body page changes.
-        self._header_stack = QStackedWidget()
-        self._header_stack.addWidget(self._build_grid_header())
-        # adjust header is built lazily when the adjust view is created.
-        outer.addWidget(self._header_stack)
-
-        # Body stack
-        self._stack = QStackedWidget()
-        outer.addWidget(self._stack, 1)
-        self._grid_page = self._build_grid_page()
-        self._stack.addWidget(self._grid_page)
-
-    def _build_grid_header(self) -> QWidget:
-        header_w = QWidget()
-        header = QHBoxLayout(header_w)
-        header.setContentsMargins(8, 8, 8, 4)
-        title = QLabel("Pose")
-        title.setStyleSheet("color: #c8c8d8; font-weight: bold;")
-        header.addWidget(title)
-        header.addStretch(1)
-        self._adjust_btn = QPushButton("Adjust")
-        self._adjust_btn.setToolTip("Zoom / pan / rotate the toon inside the circle")
-        self._adjust_btn.clicked.connect(self.click_adjust)
-        if not self._dna:
-            self._adjust_btn.setEnabled(False)
-        # Pin Adjust to a known height so refresh (icon-only) matches.
-        self._adjust_btn.setFixedHeight(28)
-        header.addWidget(self._adjust_btn)
-        # Refresh button uses Qt's standard reload icon instead of "↻"
-        # text. KDE Breeze elides QPushButton text in tight buttons,
-        # which would otherwise render the ↻ glyph as ":" or "...".
-        # Icons are never elided.
-        from PySide6.QtWidgets import QStyle
-        self._refresh_btn = QPushButton()
-        self._refresh_btn.setIcon(
-            self.style().standardIcon(QStyle.StandardPixmap.SP_BrowserReload)
-        )
-        from PySide6.QtCore import QSize
-        self._refresh_btn.setIconSize(QSize(14, 14))
-        self._refresh_btn.setToolTip("Refresh pose thumbnails")
-        self._refresh_btn.setFixedSize(32, 28)
-        self._refresh_btn.clicked.connect(self._on_refresh_clicked)
-        if not self._dna:
-            self._refresh_btn.setEnabled(False)
-        header.addWidget(self._refresh_btn)
-        self._grid_header = header_w
-        return header_w
-
-    def _build_grid_page(self) -> QWidget:
-        page = QWidget()
-        outer = QVBoxLayout(page)
-        outer.setContentsMargins(8, 0, 8, 8)
-        outer.setSpacing(6)
+        body = QWidget()
+        body_layout = QVBoxLayout(body)
+        body_layout.setContentsMargins(8, 0, 8, 8)
+        body_layout.setSpacing(6)
+        outer.addWidget(body, 1)
 
         if not self._dna:
             self._placeholder_label = QLabel(
@@ -916,29 +870,84 @@ class _PoseSection(QWidget):
             )
             self._placeholder_label.setStyleSheet("color: #9a9aa8; padding: 24px;")
             self._placeholder_label.setAlignment(Qt.AlignCenter)
-            outer.addWidget(self._placeholder_label, 1)
-            return page
+            body_layout.addWidget(self._placeholder_label, 1)
+            return
 
         from utils.rendition_poses import POSE_NAMES, RenditionPoseFetcher
+
+        # Primary row: 5 tiles (PRIMARY_POSES), always visible.
+        primary_row = QHBoxLayout()
+        primary_row.setSpacing(4)
+        for pose in PRIMARY_POSES:
+            tile = _PoseTile(pose)
+            tile.set_selected(pose == self._current_pose)
+            tile.clicked_pose.connect(self._on_tile_clicked)
+            tile.retry_requested.connect(self._on_tile_retry_requested)
+            primary_row.addWidget(tile)
+            self._tiles.append(tile)
+            self._primary_tile_list.append(tile)
+        primary_row.addStretch(1)
+        body_layout.addLayout(primary_row)
+
+        # Circular expand button centered below the primary row.
+        expand_row = QHBoxLayout()
+        expand_row.addStretch(1)
+        self._expand_btn = QPushButton("▼")
+        self._expand_btn.setToolTip("Show all poses")
+        self._expand_btn.setFixedSize(28, 28)
+        self._expand_btn.setStyleSheet(
+            "QPushButton {"
+            "  background: #252a3d; color: #aab;"
+            "  border: 1px solid #3a3f55; border-radius: 14px;"
+            "  font-size: 11px;"
+            "}"
+            "QPushButton:hover { background: #2e3450; }"
+            "QPushButton:pressed { background: #1e2236; }"
+        )
+        self._expand_btn.clicked.connect(self.toggle_expand)
+        expand_row.addWidget(self._expand_btn)
+        expand_row.addStretch(1)
+        body_layout.addLayout(expand_row)
+
+        # Expanded grid (hidden initially): remaining 8 poses in 3 columns.
+        self._expanded_widget = QWidget()
+        exp_layout = QVBoxLayout(self._expanded_widget)
+        exp_layout.setContentsMargins(0, 0, 0, 0)
+        exp_layout.setSpacing(6)
+        secondary_poses = [p for p in POSE_NAMES if p not in PRIMARY_POSES]
         grid = QGridLayout()
         grid.setSpacing(6)
-        for idx, pose in enumerate(POSE_NAMES):
+        for idx, pose in enumerate(secondary_poses):
             tile = _PoseTile(pose)
             tile.set_selected(pose == self._current_pose)
             tile.clicked_pose.connect(self._on_tile_clicked)
             tile.retry_requested.connect(self._on_tile_retry_requested)
             grid.addWidget(tile, idx // 3, idx % 3)
             self._tiles.append(tile)
-        outer.addLayout(grid)
-        outer.addStretch(1)
+        exp_layout.addLayout(grid)
+        self._expanded_widget.setVisible(False)
+        body_layout.addWidget(self._expanded_widget)
 
+        # Inline framing controls (always visible when DNA is set).
+        self._adjust_view = _PoseAdjustView(
+            initial=self._transform, saved_store=self._saved_store,
+        )
+        self._adjust_view.transform_changed.connect(self._on_adjust_changed)
+        self._adjust_view.silhouette_outline_changed.connect(
+            self.silhouette_outline_changed.emit
+        )
+        self._adjust_view.silhouette_shadow_changed.connect(
+            self.silhouette_shadow_changed.emit
+        )
+        body_layout.addWidget(self._adjust_view)
+
+        # Kick off thumbnail fetches for all poses.
         fetcher = RenditionPoseFetcher.instance()
         fetcher.pose_ready.connect(self._on_pose_ready)
         for pose in POSE_NAMES:
             fetcher.request(self._dna, pose)
-        return page
 
-    def _build_adjust_header(self) -> QWidget:
+    def _build_header(self) -> QWidget:
         header_w = QWidget()
         header = QHBoxLayout(header_w)
         header.setContentsMargins(8, 8, 8, 4)
@@ -946,56 +955,50 @@ class _PoseSection(QWidget):
         title.setStyleSheet("color: #c8c8d8; font-weight: bold;")
         header.addWidget(title)
         header.addStretch(1)
-        # The Back / Reset buttons live INSIDE _PoseAdjustView's own
-        # header row; we don't duplicate them here. Just a static label.
+        # Refresh button uses Qt's standard reload icon instead of "↻"
+        # text. KDE Breeze elides QPushButton text in tight buttons,
+        # which would otherwise render the glyph as ":" or "...".
+        # Icons are never elided.
+        from PySide6.QtWidgets import QStyle
+        self._refresh_btn = QPushButton()
+        self._refresh_btn.setIcon(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_BrowserReload)
+        )
+        self._refresh_btn.setIconSize(QSize(14, 14))
+        self._refresh_btn.setToolTip("Refresh pose thumbnails")
+        self._refresh_btn.setFixedSize(32, 28)
+        self._refresh_btn.clicked.connect(self._on_refresh_clicked)
+        if not self._dna:
+            self._refresh_btn.setEnabled(False)
+        header.addWidget(self._refresh_btn)
         return header_w
 
     # -- Public API ----------------------------------------------------------
 
+    def primary_tiles(self) -> list:
+        """The 5 _PoseTile instances in the always-visible primary row."""
+        return list(self._primary_tile_list)
+
     def tiles(self) -> list:
+        """All _PoseTile instances (primary row + expanded grid)."""
         return list(self._tiles)
 
     def has_placeholder(self) -> bool:
         return self._placeholder_label is not None
 
+    def is_expanded(self) -> bool:
+        return self._expanded
+
+    def toggle_expand(self) -> None:
+        """Show or hide the full pose grid; flip the chevron icon."""
+        self._expanded = not self._expanded
+        if self._expanded_widget is not None:
+            self._expanded_widget.setVisible(self._expanded)
+        if self._expand_btn is not None:
+            self._expand_btn.setText("▲" if self._expanded else "▼")
+
     def click_refresh(self) -> None:
         self._on_refresh_clicked()
-
-    def is_adjusting(self) -> bool:
-        return self._stack is not None and self._stack.currentIndex() == 1
-
-    def _ensure_adjust_view(self) -> None:
-        """Create the adjust view lazily on first access. Idempotent."""
-        if self._adjust_view is not None:
-            return
-        self._adjust_view = _PoseAdjustView(initial=self._transform, saved_store=self._saved_store)
-        for t in self._tiles:
-            if t.pose == self._current_pose and t.has_pixmap():
-                self._adjust_view.set_pixmap(t._pixmap)
-                break
-        self._adjust_view.transform_changed.connect(self._on_adjust_changed)
-        self._adjust_view.back_requested.connect(self.click_back)
-        self._adjust_view.silhouette_outline_changed.connect(
-            self.silhouette_outline_changed.emit
-        )
-        self._adjust_view.silhouette_shadow_changed.connect(
-            self.silhouette_shadow_changed.emit
-        )
-        self._stack.addWidget(self._adjust_view)
-        self._header_stack.addWidget(self._build_adjust_header())
-
-    def click_adjust(self) -> None:
-        if not self._dna:
-            return
-        self._ensure_adjust_view()
-        self._stack.setCurrentIndex(1)
-        self._header_stack.setCurrentIndex(1)
-
-    def click_back(self) -> None:
-        if self._stack is None:
-            return
-        self._stack.setCurrentIndex(0)
-        self._header_stack.setCurrentIndex(0)
 
     def adjust_view(self) -> Optional["_PoseAdjustView"]:
         return self._adjust_view
@@ -1006,8 +1009,8 @@ class _PoseSection(QWidget):
     def set_transform_from_draft(
         self, transform: tuple[float, float, float, float],
     ) -> None:
-        """Called by the dialog when the section is constructed with a
-        pre-existing draft transform."""
+        """Called when the section is constructed with a pre-existing draft
+        transform. Pushes the values into the preview if it is already built."""
         self._transform = transform
         if self._adjust_view is not None:
             self._adjust_view._preview.set_transform(*transform)
@@ -1015,20 +1018,20 @@ class _PoseSection(QWidget):
     def set_silhouette_outline(
         self, hex_: Optional[str], width_key: Optional[str],
     ) -> None:
-        """Forwarded from the dialog setter. Pushes through to the adjust
-        view (creating it if needed) and re-emits so the dialog handler
-        writes to the draft."""
-        self._ensure_adjust_view()
+        """Forwarded from the overlay setter. Pushes through to the inline
+        framing view and re-emits so the overlay handler writes to the draft."""
+        if self._adjust_view is None:
+            return
         self._adjust_view.set_silhouette_outline_from_draft(hex_, width_key)
         self.silhouette_outline_changed.emit(hex_, width_key)
 
     def set_silhouette_shadow(
         self, hex_: Optional[str], softness_key: Optional[str],
     ) -> None:
-        """Forwarded from the dialog setter. Pushes through to the adjust
-        view (creating it if needed) and re-emits so the dialog handler
-        writes to the draft."""
-        self._ensure_adjust_view()
+        """Forwarded from the overlay setter. Pushes through to the inline
+        framing view and re-emits so the overlay handler writes to the draft."""
+        if self._adjust_view is None:
+            return
         self._adjust_view.set_silhouette_shadow_from_draft(hex_, softness_key)
         self.silhouette_shadow_changed.emit(hex_, softness_key)
 

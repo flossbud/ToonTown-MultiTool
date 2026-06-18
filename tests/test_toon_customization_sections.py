@@ -20,6 +20,7 @@ def qapp():
 def test_section_module_exports_widgets(qapp):
     from utils.widgets.toon_customization_sections import (
         PRESET_SWATCHES,
+        PRIMARY_POSES,
         _SwatchRow,
         _SimpleColorSection,
         _CardSection,
@@ -31,6 +32,7 @@ def test_section_module_exports_widgets(qapp):
         _PortraitSection,
     )
     assert isinstance(PRESET_SWATCHES, tuple)
+    assert len(PRIMARY_POSES) == 5
     assert _SwatchRow is not None
     assert _SimpleColorSection is not None
     assert _CardSection is not None
@@ -115,44 +117,50 @@ def test_pose_tile_no_label_pixels_below_box(qapp):
             )
 
 
-def test_pose_section_3_columns(qapp):
-    """Every tile lives in column 0, 1, or 2 — no column 3."""
-    from utils.widgets.toon_customization_sections import _PoseSection
+def test_pose_section_expanded_grid_uses_3_columns(qapp):
+    """The expanded grid (secondary poses) uses columns 0, 1, 2 only."""
+    from utils.widgets.toon_customization_sections import _PoseSection, PRIMARY_POSES
 
     section = _PoseSection(dna="dna-abc-123", current_pose="portrait")
     qapp.processEvents()
-    grid_page = section._grid_page
-    layout = grid_page.layout()
-    grid_idx = None
-    for i in range(layout.count()):
-        item = layout.itemAt(i)
+
+    # The expanded widget's VBoxLayout contains a QGridLayout.
+    assert section._expanded_widget is not None, "expanded widget must exist"
+    exp_layout = section._expanded_widget.layout()
+    grid = None
+    for i in range(exp_layout.count()):
+        item = exp_layout.itemAt(i)
         if item.layout() is not None and hasattr(item.layout(), "getItemPosition"):
-            grid_idx = i
+            grid = item.layout()
             break
-    assert grid_idx is not None, "could not find QGridLayout inside grid page"
-    grid = layout.itemAt(grid_idx).layout()
+    assert grid is not None, "could not find QGridLayout inside expanded widget"
+
+    # Secondary tiles are those not in the primary row.
+    secondary_tiles = [t for t in section._tiles if t not in section._primary_tile_list]
     columns_seen = set()
-    for tile in section._tiles:
+    for tile in secondary_tiles:
         idx_in_grid = grid.indexOf(tile)
-        assert idx_in_grid != -1, f"tile {tile.pose} not found in grid"
-        row, col, _rs, _cs = grid.getItemPosition(idx_in_grid)
+        assert idx_in_grid != -1, f"tile {tile.pose} not found in expanded grid"
+        _row, col, _rs, _cs = grid.getItemPosition(idx_in_grid)
         columns_seen.add(col)
     assert columns_seen == {0, 1, 2}, (
-        f"expected only columns 0,1,2; got {sorted(columns_seen)}"
+        f"expected only columns 0,1,2 in expanded grid; got {sorted(columns_seen)}"
     )
 
 
-def test_pose_section_grid_width_fits_compact_viewport(qapp):
-    """Grid page's minimum width must be <= 527 (the compact-mode
-    panel section viewport width after the vertical scrollbar)."""
+def test_pose_section_expanded_grid_width_fits_compact_viewport(qapp):
+    """The expanded pose grid's minimum width must be <= 527 (the compact-mode
+    panel section viewport width after the vertical scrollbar). The 3-column
+    grid of 160 px tiles fits at ~508 px; this guards against regressions."""
     from utils.widgets.toon_customization_sections import _PoseSection
 
     section = _PoseSection(dna="dna-abc-123", current_pose="portrait")
     qapp.processEvents()
-    section._grid_page.layout().activate()
-    hint = section._grid_page.minimumSizeHint().width()
+    assert section._expanded_widget is not None
+    section._expanded_widget.layout().activate()
+    hint = section._expanded_widget.minimumSizeHint().width()
     assert hint <= 527, (
-        f"grid page min width {hint} exceeds compact viewport (527 px); "
+        f"expanded grid min width {hint} exceeds compact viewport (527 px); "
         f"horizontal scroll will appear"
     )
 
@@ -163,9 +171,9 @@ def test_pose_adjust_preview_size_140(qapp):
 
 
 def test_pose_adjust_view_min_width_fits_compact(qapp):
-    """Adjust view's minimum width must be <= 527 so the
-    QStackedWidget (grid + adjust) doesn't inflate past the
-    compact panel viewport."""
+    """Framing view's minimum width must be <= 527 so the inline
+    framing controls don't inflate the section past the compact panel
+    viewport width."""
     from utils.saved_colors import SavedColorsStore
     from utils.widgets.toon_customization_sections import _PoseAdjustView
     view = _PoseAdjustView(initial=(1.0, 0.0, 0.0, 0.0), saved_store=SavedColorsStore(None))
@@ -177,29 +185,27 @@ def test_pose_adjust_view_min_width_fits_compact(qapp):
     )
 
 
-def test_pose_section_stack_min_width_fits_compact(qapp):
-    """Regression guard for the original bug: the QStackedWidget
-    that hosts the grid + adjust subview must not exceed 527 px
-    after the adjust view is constructed."""
+def test_pose_section_inline_framing_width_fits_compact(qapp):
+    """Regression guard: the inline framing view (always built when DNA is
+    set) must not exceed 527 px so the section doesn't force horizontal
+    scroll in the compact panel viewport."""
     from utils.widgets.toon_customization_sections import _PoseSection
     section = _PoseSection(dna="dna-abc-123", current_pose="portrait")
     qapp.processEvents()
-    # Force the adjust view to exist (same trigger as the production
-    # path: _Panel.populate calls set_silhouette_outline which
-    # lazy-builds the adjust view).
-    section._ensure_adjust_view()
-    qapp.processEvents()
-    section._stack.layout().activate() if section._stack.layout() else None
-    hint = section._stack.minimumSizeHint().width()
+    # Inline framing view is built unconditionally during _build().
+    assert section._adjust_view is not None, "inline framing view must be built"
+    section._adjust_view.layout().activate()
+    hint = section._adjust_view.minimumSizeHint().width()
     assert hint <= 527, (
-        f"pose-section stack min width {hint} exceeds compact "
+        f"inline framing view min width {hint} exceeds compact "
         f"viewport (527 px); horizontal scroll will appear"
     )
 
 
 def test_pose_adjust_view_attributes_preserved(qapp):
-    """The vertical-stack rewrite must keep every widget attribute
-    name + signal that consumers depend on."""
+    """The one-pane rewrite must keep every widget attribute name + signal
+    that consumers depend on. The Back button is intentionally absent
+    (no page to navigate back to)."""
     from utils.saved_colors import SavedColorsStore
     from utils.widgets.toon_customization_sections import _PoseAdjustView
     view = _PoseAdjustView(initial=(1.0, 0.0, 0.0, 0.0), saved_store=SavedColorsStore(None))
@@ -216,6 +222,32 @@ def test_pose_adjust_view_attributes_preserved(qapp):
     assert view._sil_outline_chip is not None
     assert view._sil_shadow_color_row is not None
     assert view._sil_shadow_chip is not None
-    assert view._back_btn is not None
     assert view._reset_btn is not None
+    # Back button removed in one-pane layout.
+    assert not hasattr(view, "_back_btn")
+
+
+def test_pose_primary_five_and_expand(qapp):
+    """Primary row has exactly 5 tiles; expand reveals all 13."""
+    from utils.rendition_poses import POSE_NAMES
+    from utils.widgets.toon_customization_sections import _PoseSection, PRIMARY_POSES
+
+    assert len(PRIMARY_POSES) == 5
+    s = _PoseSection("dna-test", PRIMARY_POSES[0])
+    qapp.processEvents()
+
+    assert len(s.primary_tiles()) == 5
+    assert not s.is_expanded()
+
+    s.toggle_expand()
+    assert s.is_expanded()
+    assert s._expanded_widget is not None
+    # isHidden() checks the explicit flag (not parent-chain visibility).
+    assert not s._expanded_widget.isHidden()
+
+    s.toggle_expand()
+    assert not s.is_expanded()
+    assert s._expanded_widget.isHidden()
+
+    assert len(s.tiles()) == len(POSE_NAMES)
 

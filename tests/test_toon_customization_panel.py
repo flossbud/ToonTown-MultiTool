@@ -93,10 +93,9 @@ def test_reset_all_empties_draft(qapp):
 
 
 def test_reset_all_clears_silhouette_visual_state_on_pose_section(qapp, monkeypatch, tmp_path):
-    """Reset all must also clear the Adjust view's silhouette swatch
-    state if the adjust view was opened. Without this, the swatch row
-    retains the old color and the next chip click re-writes silhouette
-    back into the cleared draft."""
+    """Reset all must also clear the inline framing view's silhouette swatch
+    state. Without this, the swatch row retains the old color and the next
+    chip click re-writes silhouette back into the cleared draft."""
     monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
     _reset_singletons()
     panel, _, _, _parent = _build(qapp, dna="dna-test-123", existing={
@@ -106,11 +105,11 @@ def test_reset_all_clears_silhouette_visual_state_on_pose_section(qapp, monkeypa
         }},
     })
     sec = panel.section("Toon")
-    sec._ensure_adjust_view()  # force the lazy view to exist
+    # Inline framing view is always built when DNA is set.
     panel.reset_all()
     # Draft is empty.
     assert panel.draft() == {}
-    # Adjust view's pickers are at default.
+    # Framing view's pickers are at default.
     adjust = sec._adjust_view
     assert adjust._sil_outline_color_row.current() is None
     assert adjust._sil_shadow_color_row.current() is None
@@ -447,14 +446,13 @@ def test_pose_adjust_view_nudge_emits(qapp):
     assert spy.count() == 1
 
 
-def test_pose_adjust_view_back_button_emits_back_requested(qapp):
-    from PySide6.QtTest import QSignalSpy
+def test_pose_adjust_view_has_no_back_button(qapp):
+    """Back button is removed in the one-pane layout: framing is always inline."""
     from utils.saved_colors import SavedColorsStore
     from utils.widgets.toon_customization_sections import _PoseAdjustView
     v = _PoseAdjustView(initial=(1.0, 0.0, 0.0, 0.0), saved_store=SavedColorsStore(None))
-    spy = QSignalSpy(v.back_requested)
-    v.click_back()
-    assert spy.count() == 1
+    assert not hasattr(v, "back_requested")
+    assert not hasattr(v, "_back_btn")
 
 
 def test_pose_adjust_view_reset_restores_defaults_and_emits(qapp):
@@ -468,32 +466,36 @@ def test_pose_adjust_view_reset_restores_defaults_and_emits(qapp):
     assert spy.count() >= 1
 
 
-def test_pose_section_starts_in_grid_mode(qapp):
+def test_pose_section_framing_always_accessible(qapp):
+    """In the one-pane layout, framing controls are always inline; no
+    Adjust button needed to reveal them."""
     panel, _, _, _parent = _build(qapp, game="ttr", dna="dna-test")
     sec = panel.section("Toon")
-    assert sec.is_adjusting() is False
+    assert sec.adjust_view() is not None
 
 
-def test_pose_section_adjust_button_switches_mode(qapp):
+def test_pose_section_expander_toggles(qapp):
+    """Expand reveals the secondary tile grid; collapse hides it again."""
     panel, _, _, _parent = _build(qapp, game="ttr", dna="dna-test")
     sec = panel.section("Toon")
-    sec.click_adjust()
-    assert sec.is_adjusting() is True
+    assert not sec.is_expanded()
+    sec.toggle_expand()
+    assert sec.is_expanded()
+    sec.toggle_expand()
+    assert not sec.is_expanded()
 
 
-def test_pose_section_back_returns_to_grid(qapp):
+def test_pose_section_primary_tiles_count(qapp):
+    """Primary row always holds exactly 5 tiles."""
     panel, _, _, _parent = _build(qapp, game="ttr", dna="dna-test")
     sec = panel.section("Toon")
-    sec.click_adjust()
-    assert sec.is_adjusting() is True
-    sec.click_back()
-    assert sec.is_adjusting() is False
+    assert len(sec.primary_tiles()) == 5
 
 
 def test_pose_section_adjust_writes_transform_to_draft(qapp):
+    """Framing controls are inline; zoom change writes through to the draft."""
     panel, mgr, overlay, _parent = _build(qapp, game="ttr", dna="dna-test")
     sec = panel.section("Toon")
-    sec.click_adjust()
     sec.adjust_view().set_zoom(1.5)
     assert panel.draft().get("portrait", {}).get("transform", {}).get("zoom") == 1.5
     overlay.close_and_save()
@@ -502,25 +504,24 @@ def test_pose_section_adjust_writes_transform_to_draft(qapp):
 
 
 def test_pose_section_reset_removes_transform_from_draft(qapp):
+    """Reset on the inline framing view clears the transform from the draft."""
     panel, _, _, _parent = _build(
         qapp, game="ttr", dna="dna-test",
         existing={"portrait": {"transform": {"zoom": 1.5, "offset_x": 0.2}}},
     )
     sec = panel.section("Toon")
-    sec.click_adjust()
     sec.adjust_view().click_reset()
     # Reset writes defaults; defaults are NOT stored (kept entry minimal).
     portrait = panel.draft().get("portrait", {})
     assert "transform" not in portrait
 
 
-def test_pose_section_adjust_button_disabled_without_dna(qapp):
+def test_pose_section_no_framing_without_dna(qapp):
+    """Placeholder mode: no tiles, no inline framing controls."""
     panel, _, _, _parent = _build(qapp, game="ttr")  # dna=None
     sec = panel.section("Toon")
-    # Placeholder mode; adjust button is either hidden or disabled.
-    # The contract: click_adjust() is a no-op in that mode.
-    sec.click_adjust()
-    assert sec.is_adjusting() is False
+    assert sec.adjust_view() is None
+    assert sec.has_placeholder()
 
 
 def test_chip_row_emits_value_changed_on_click(qapp):
@@ -673,7 +674,7 @@ def test_panel_removing_shadow_preserves_existing_outline(qapp, monkeypatch, tmp
 
 
 def test_adjust_view_reset_clears_silhouette_alongside_transform(qapp, monkeypatch, tmp_path):
-    """The in-Adjust-view Reset button must wipe both the transform AND
+    """The inline framing Reset button must wipe both the transform AND
     the silhouette outline/shadow under portrait."""
     monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
     _reset_singletons()
@@ -687,7 +688,7 @@ def test_adjust_view_reset_clears_silhouette_alongside_transform(qapp, monkeypat
         },
     })
     sec = panel.section("Toon")
-    sec._ensure_adjust_view()
+    # Inline framing view is always built when DNA is set.
     sec._adjust_view.click_reset()
     portrait = panel.draft().get("portrait") or {}
     assert "transform" not in portrait
