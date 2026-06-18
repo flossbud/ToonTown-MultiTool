@@ -71,8 +71,9 @@ def test_set_pixmap_before_timeout_is_loaded(qapp):
 # Additional correctness tests
 # ---------------------------------------------------------------------------
 
-def test_loading_tile_click_does_not_emit_clicked_pose(qapp):
-    """A click on a LOADING tile must not emit clicked_pose."""
+def test_loading_tile_click_emits_clicked_pose(qapp):
+    """A click on a LOADING tile still selects the pose: selection must not be
+    gated on the thumbnail fetch (a slow/failing thumbnail can't block picking)."""
     from utils.widgets.toon_customization_sections import _PoseTile
 
     t = _PoseTile("sit")
@@ -81,7 +82,7 @@ def test_loading_tile_click_does_not_emit_clicked_pose(qapp):
     picked = []
     t.clicked_pose.connect(picked.append)
     t._handle_click()
-    assert picked == []
+    assert picked == ["sit"]
 
 
 def test_loaded_tile_click_emits_clicked_pose(qapp):

@@ -311,14 +311,16 @@ class _PoseTile(QFrame):
 
     def _handle_click(self) -> None:
         """Apply the click action appropriate for the current state."""
-        if self._state == self._ST_LOADED:
-            self.clicked_pose.emit(self._pose)
-        elif self._state == self._ST_FAILED:
-            # Retry: transition back to loading, then notify the section.
+        if self._state == self._ST_FAILED:
+            # A broken thumbnail offers retry, not selection.
             self._enter_loading()
             self.update()
             self.retry_requested.emit(self._pose)
-        # LOADING: ignore the click (no-op).
+        else:
+            # Loaded OR loading: selecting the pose works regardless of the
+            # thumbnail state. Selection must not be gated on the rendition
+            # fetch, a slow or failing thumbnail must never block picking a pose.
+            self.clicked_pose.emit(self._pose)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
