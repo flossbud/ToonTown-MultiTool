@@ -247,7 +247,8 @@ def push_slide_pages(stack, from_idx: int, to_idx: int, axis: str = "h", reverse
     group.addAnimation(_anim_pos(out_label, QPoint(0, 0), out_end, duration))
     group.addAnimation(_anim_pos(in_label, in_start, in_end, duration))
 
-    if axis == "v":
+    from utils.effects_flags import effects_disabled
+    if axis == "v" and not effects_disabled():
         # Outgoing also fades for the brand-click feel.
         effect = QGraphicsOpacityEffect(out_label)
         out_label.setGraphicsEffect(effect)
