@@ -320,20 +320,8 @@ class _Panel(QFrame):
 
         skin = self._skin or QColor("#d9a04e")
 
-        portrait_section = _PortraitSection(
-            self._draft.get("portrait") or {}, saved_store=saved_store
-        )
-        portrait_section.color_changed.connect(self._on_portrait_color)
-        portrait_section.gradient_changed.connect(self._on_portrait_gradient)
-        portrait_section.pattern_changed.connect(self._on_portrait_pattern)
-
-        card_section = _CardSection(
-            self._draft.get("accent"),
-            self._draft.get("body"),
-            saved_store=saved_store,
-        )
-        card_section.accent_changed.connect(self._on_accent_changed)
-        card_section.body_changed.connect(self._on_body_changed)
+        portrait_section = self._make_portrait_section(saved_store)
+        card_section = self._make_card_section(saved_store)
 
         # Pack both control groups into a scrollable rail widget.
         rail_controls = QWidget()
@@ -404,26 +392,36 @@ class _Panel(QFrame):
         )
         self._add_section("Toon", pose_section)
 
-        card_section = _CardSection(
-            self._draft.get("accent"),
-            self._draft.get("body"),
-            saved_store=saved_store,
-        )
-        card_section.accent_changed.connect(self._on_accent_changed)
-        card_section.body_changed.connect(self._on_body_changed)
+        card_section = self._make_card_section(saved_store)
         self._add_section("Card", card_section)
 
-        portrait_section = _PortraitSection(
-            self._draft.get("portrait") or {}, saved_store=saved_store
-        )
-        portrait_section.color_changed.connect(self._on_portrait_color)
-        portrait_section.gradient_changed.connect(self._on_portrait_gradient)
-        portrait_section.pattern_changed.connect(self._on_portrait_pattern)
+        portrait_section = self._make_portrait_section(saved_store)
         self._add_section("Portrait", portrait_section)
 
         if self._pill_group.buttons():
             self._pill_group.button(0).setChecked(True)
             self.section_stack.setCurrentIndex(0)
+
+    def _make_card_section(self, saved_store) -> "_CardSection":
+        """Build and signal-wire a _CardSection from the current draft."""
+        sec = _CardSection(
+            self._draft.get("accent"),
+            self._draft.get("body"),
+            saved_store=saved_store,
+        )
+        sec.accent_changed.connect(self._on_accent_changed)
+        sec.body_changed.connect(self._on_body_changed)
+        return sec
+
+    def _make_portrait_section(self, saved_store) -> "_PortraitSection":
+        """Build and signal-wire a _PortraitSection from the current draft."""
+        sec = _PortraitSection(
+            self._draft.get("portrait") or {}, saved_store=saved_store
+        )
+        sec.color_changed.connect(self._on_portrait_color)
+        sec.gradient_changed.connect(self._on_portrait_gradient)
+        sec.pattern_changed.connect(self._on_portrait_pattern)
+        return sec
 
     def _add_section(self, name: str, widget: QWidget) -> None:
         self._sections[name] = widget
@@ -497,6 +495,8 @@ class _Panel(QFrame):
                 if w._adjust_view is not None:
                     w._adjust_view.set_silhouette_outline_from_draft(None, None)
                     w._adjust_view.set_silhouette_shadow_from_draft(None, None)
+            elif isinstance(w, RaceIconGridWidget):
+                w.select_auto()
         self._preview.set_draft(self._draft)
 
     def set_pose(self, pose: str) -> None:

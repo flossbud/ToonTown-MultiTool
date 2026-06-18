@@ -192,6 +192,7 @@ def test_panel_populate_cc_section_set(qapp):
     # Race gallery is the right pane (not inside the rail).
     grid = panel.findChild(RaceIconGridWidget)
     assert grid is not None
+    assert rail.findChild(RaceIconGridWidget) is None
 
 
 def test_panel_pill_buttons_match_sections(qapp):
@@ -308,3 +309,17 @@ def test_overlay_close_during_entry_animation_does_not_crash(qapp):
             break
     assert not overlay.isVisible(), "overlay must end hidden"
     assert overlay._active_anim_group is None, "no animation should be lingering"
+
+
+def test_cc_reset_all_resyncs_gallery(qapp):
+    """After reset_all on a CC panel with an explicit icon selection, the
+    race gallery must revert to auto mode (no explicit stem stored)."""
+    from utils.widgets.race_icon_grid import RaceIconGridWidget
+    panel, _ = _build_panel(qapp, game="cc", existing={"icon_stem": "cat"})
+    grid = panel.findChild(RaceIconGridWidget)
+    assert grid is not None
+    # Pre-condition: explicit selection in place.
+    assert grid.selected_stem() == "cat"
+    panel.reset_all()
+    # After reset, gallery must reflect the auto stem (no explicit selection).
+    assert grid.selected_stem() == "dog"  # auto_stem="dog" set in _build_panel
