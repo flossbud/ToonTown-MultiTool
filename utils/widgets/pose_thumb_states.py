@@ -10,7 +10,7 @@ Functions:
 
 from __future__ import annotations
 
-from PySide6.QtCore import QLineF, QPointF, QRect, Qt
+from PySide6.QtCore import QPointF, QRect, Qt
 from PySide6.QtGui import (
     QColor,
     QLinearGradient,

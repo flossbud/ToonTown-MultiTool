@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from utils.toon_pattern_assets import PATTERN_NAMES
+from utils.widgets.pose_thumb_states import paint_shimmer, paint_failed_mark
 
 
 # Curated 12-color palette. Order matters - first row primaries, second
@@ -232,10 +233,7 @@ class _PoseTile(QFrame):
     def __init__(self, pose: str, parent=None):
         super().__init__(parent)
         self._pose = pose
-        self._pixmap: Optional[QPixmap] = None
         self._selected = False
-        self._state = self._ST_LOADING
-        self._shimmer_phase: float = 0.0
 
         self.setFixedSize(QSize(self._TILE_W, self._TILE_H))
         self.setCursor(Qt.PointingHandCursor)
@@ -246,14 +244,14 @@ class _PoseTile(QFrame):
         self._shimmer_timer = QTimer(self)
         self._shimmer_timer.setInterval(40)
         self._shimmer_timer.timeout.connect(self._on_shimmer_tick)
-        self._shimmer_timer.start()
 
         # Load timeout - if no pixmap arrives in time, flip to failed.
         self._timeout_timer = QTimer(self)
         self._timeout_timer.setSingleShot(True)
         self._timeout_timer.setInterval(self._LOAD_TIMEOUT_MS)
         self._timeout_timer.timeout.connect(self._on_load_timeout)
-        self._timeout_timer.start()
+
+        self._enter_loading()
 
     # -- Public API ----------------------------------------------------------
 
@@ -285,11 +283,7 @@ class _PoseTile(QFrame):
             self._state = self._ST_LOADED
             self._stop_loading_timers()
         else:
-            self._pixmap = None
-            self._state = self._ST_LOADING
-            self._shimmer_phase = 0.0
-            self._shimmer_timer.start()
-            self._timeout_timer.start()
+            self._enter_loading()
         self.update()
 
     def set_failed(self) -> None:
@@ -303,6 +297,16 @@ class _PoseTile(QFrame):
             self._selected = on
             self.update()
 
+    # -- Internal state helpers ----------------------------------------------
+
+    def _enter_loading(self) -> None:
+        """Transition to loading state: clear pixmap, reset shimmer, restart timers."""
+        self._pixmap = None
+        self._state = self._ST_LOADING
+        self._shimmer_phase = 0.0
+        self._shimmer_timer.start()
+        self._timeout_timer.start()
+
     # -- Click logic (shared by mouse event and test hook) -------------------
 
     def _handle_click(self) -> None:
@@ -311,18 +315,10 @@ class _PoseTile(QFrame):
             self.clicked_pose.emit(self._pose)
         elif self._state == self._ST_FAILED:
             # Retry: transition back to loading, then notify the section.
-            self._pixmap = None
-            self._state = self._ST_LOADING
-            self._shimmer_phase = 0.0
-            self._shimmer_timer.start()
-            self._timeout_timer.start()
+            self._enter_loading()
             self.update()
             self.retry_requested.emit(self._pose)
         # LOADING: ignore the click (no-op).
-
-    def _emit_click_for_test(self) -> None:
-        """Test hook - invoke the same logic a left-click would trigger."""
-        self._handle_click()
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -347,8 +343,6 @@ class _PoseTile(QFrame):
     # -- Paint ---------------------------------------------------------------
 
     def paintEvent(self, event):
-        from utils.widgets.pose_thumb_states import paint_shimmer, paint_failed_mark
-
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
 
@@ -995,9 +989,12 @@ class _PoseSection(QWidget):
             return
         for t in self._tiles:
             if t.pose == pose:
-                t.set_pixmap(pixmap)
-                if pose == self._current_pose and self._adjust_view is not None:
-                    self._adjust_view.set_pixmap(pixmap)
+                if pixmap is None or pixmap.isNull():
+                    t.set_failed()
+                else:
+                    t.set_pixmap(pixmap)
+                    if pose == self._current_pose and self._adjust_view is not None:
+                        self._adjust_view.set_pixmap(pixmap)
                 break
 
     def _on_tile_retry_requested(self, pose: str) -> None:

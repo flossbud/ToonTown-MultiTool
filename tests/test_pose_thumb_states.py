@@ -51,7 +51,7 @@ def test_timeout_flips_to_failed_and_retry(qapp):
 
     got = []
     t.retry_requested.connect(got.append)
-    t._emit_click_for_test()  # triggers the failed-tile click path
+    t._handle_click()  # triggers the failed-tile click path
     assert got == ["portrait"] and t.is_loading()  # retry returns to loading
 
 
@@ -80,7 +80,7 @@ def test_loading_tile_click_does_not_emit_clicked_pose(qapp):
 
     picked = []
     t.clicked_pose.connect(picked.append)
-    t._emit_click_for_test()
+    t._handle_click()
     assert picked == []
 
 
@@ -96,7 +96,7 @@ def test_loaded_tile_click_emits_clicked_pose(qapp):
 
     picked = []
     t.clicked_pose.connect(picked.append)
-    t._emit_click_for_test()
+    t._handle_click()
     assert picked == ["run"]
 
 
@@ -110,7 +110,7 @@ def test_failed_tile_click_does_not_emit_clicked_pose(qapp):
 
     picked = []
     t.clicked_pose.connect(picked.append)
-    t._emit_click_for_test()
+    t._handle_click()
     assert picked == []
 
 
@@ -122,7 +122,7 @@ def test_failed_tile_retry_resets_to_loading(qapp):
     t._on_load_timeout()
     assert t.is_failed()
 
-    t._emit_click_for_test()
+    t._handle_click()
     assert t.is_loading() and not t.is_failed() and not t.has_pixmap()
 
 
@@ -182,3 +182,45 @@ def test_load_timeout_constant_exists(qapp):
     from utils.widgets.toon_customization_sections import _PoseTile
     assert isinstance(_PoseTile._LOAD_TIMEOUT_MS, int)
     assert _PoseTile._LOAD_TIMEOUT_MS > 0
+
+
+# ---------------------------------------------------------------------------
+# Fix 1: fetch failures must call set_failed, not set_pixmap(None)
+# ---------------------------------------------------------------------------
+
+def test_on_pose_ready_none_calls_set_failed(qapp):
+    """_on_pose_ready(dna, pose, None) must call tile.set_failed(), not
+    reset the tile to loading state. The X mark should appear immediately
+    instead of waiting for the 8s timeout to expire."""
+    from utils.widgets.toon_customization_sections import _PoseSection
+    from PySide6.QtGui import QPixmap
+
+    section = _PoseSection("dnatest-fix1", "portrait")
+    qapp.processEvents()
+
+    # Use the first tile for the failure case.
+    tile0 = section._tiles[0]
+    pose0 = tile0.pose
+
+    # Simulate a fetch failure signal (None pixmap).
+    section._on_pose_ready("dnatest-fix1", pose0, None)
+    assert tile0.is_failed(), (
+        "tile must enter failed state immediately on a None pixmap, not reload"
+    )
+    assert not tile0.is_loading(), "tile must not be reloading after a fetch failure"
+
+    # Use the second tile for the success case.
+    tile1 = section._tiles[1]
+    pose1 = tile1.pose
+    pm = QPixmap(80, 80)
+    pm.fill()
+    section._on_pose_ready("dnatest-fix1", pose1, pm)
+    assert tile1.has_pixmap(), "tile must have a pixmap after a successful fetch"
+    assert not tile1.is_loading()
+    assert not tile1.is_failed()
+
+    # A signal for a different dna must be ignored.
+    tile2 = section._tiles[2]
+    pose2 = tile2.pose
+    section._on_pose_ready("other-dna", pose2, None)
+    assert tile2.is_loading(), "tile must remain loading when dna does not match"
