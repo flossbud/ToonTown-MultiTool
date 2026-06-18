@@ -708,6 +708,22 @@ class _PoseAdjustView(QWidget):
     def set_rotate(self, rot: float) -> None:
         self._rot_slider.setValue(int(rot))
 
+    def set_transform(
+        self, zoom: float, off_x: float, off_y: float, rot: float
+    ) -> None:
+        """Restore all four framing components silently (no transform_changed
+        emitted). Sets the preview, zoom slider + label, and rotate slider +
+        label to consistent values. Use when loading a saved draft."""
+        self._preview.set_transform(zoom, off_x, off_y, rot)
+        self._zoom_slider.blockSignals(True)
+        self._zoom_slider.setValue(int(zoom * 100))
+        self._zoom_slider.blockSignals(False)
+        self._zoom_value.setText(f"{zoom:.2f}x")
+        self._rot_slider.blockSignals(True)
+        self._rot_slider.setValue(int(rot))
+        self._rot_slider.blockSignals(False)
+        self._rot_value.setText(f"{int(rot)}°")
+
     def nudge_left(self) -> None:
         self._apply_nudge(-self._NUDGE_STEP, 0.0)
 
@@ -890,9 +906,17 @@ class _PoseSection(QWidget):
         body_layout.addLayout(primary_row)
 
         # Circular expand button centered below the primary row.
+        # Uses a standard icon instead of a text glyph: KDE Breeze elides
+        # QPushButton text in tight buttons, rendering "▼" as ":" or "...".
+        # Icons are never elided.
         expand_row = QHBoxLayout()
         expand_row.addStretch(1)
-        self._expand_btn = QPushButton("▼")
+        from PySide6.QtWidgets import QStyle
+        self._expand_btn = QPushButton()
+        self._expand_btn.setIcon(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowDown)
+        )
+        self._expand_btn.setIconSize(QSize(12, 12))
         self._expand_btn.setToolTip("Show all poses")
         self._expand_btn.setFixedSize(28, 28)
         self._expand_btn.setStyleSheet(
@@ -990,12 +1014,19 @@ class _PoseSection(QWidget):
         return self._expanded
 
     def toggle_expand(self) -> None:
-        """Show or hide the full pose grid; flip the chevron icon."""
+        """Show or hide the full pose grid; swap the expander icon."""
         self._expanded = not self._expanded
         if self._expanded_widget is not None:
             self._expanded_widget.setVisible(self._expanded)
         if self._expand_btn is not None:
-            self._expand_btn.setText("▲" if self._expanded else "▼")
+            from PySide6.QtWidgets import QStyle
+            self._expand_btn.setIcon(
+                self.style().standardIcon(
+                    QStyle.StandardPixmap.SP_ArrowUp
+                    if self._expanded
+                    else QStyle.StandardPixmap.SP_ArrowDown
+                )
+            )
 
     def click_refresh(self) -> None:
         self._on_refresh_clicked()
@@ -1010,10 +1041,11 @@ class _PoseSection(QWidget):
         self, transform: tuple[float, float, float, float],
     ) -> None:
         """Called when the section is constructed with a pre-existing draft
-        transform. Pushes the values into the preview if it is already built."""
+        transform. Syncs the preview AND the zoom/rotate sliders to the saved
+        values. The _PoseAdjustView is always built when a DNA is set."""
         self._transform = transform
         if self._adjust_view is not None:
-            self._adjust_view._preview.set_transform(*transform)
+            self._adjust_view.set_transform(*transform)
 
     def set_silhouette_outline(
         self, hex_: Optional[str], width_key: Optional[str],

@@ -693,3 +693,36 @@ def test_adjust_view_reset_clears_silhouette_alongside_transform(qapp, monkeypat
     portrait = panel.draft().get("portrait") or {}
     assert "transform" not in portrait
     assert "silhouette" not in portrait
+
+
+def test_set_transform_from_draft_syncs_sliders(qapp):
+    """set_transform_from_draft must sync the zoom slider, rotate slider, and
+    their value labels in addition to the preview. Regression: the view is
+    built eagerly with defaults (1.0, 0, 0, 0), then set_transform_from_draft
+    is called after construction. Before the fix, the sliders stayed at their
+    default positions while the preview showed the correct saved frame; the
+    first slider nudge then snapped the preview back to the stale slider value."""
+    from utils.widgets.toon_customization_sections import _PoseSection
+
+    sec = _PoseSection(dna="dna-test-slider-sync", current_pose="portrait")
+    # The _PoseAdjustView is always built when a DNA is set.
+    assert sec._adjust_view is not None
+
+    # Seed a non-default framing transform after construction, exactly as the
+    # overlay does (customization_overlay.py line 325).
+    sec.set_transform_from_draft((1.5, 0.1, -0.05, 30.0))
+
+    adjust = sec._adjust_view
+
+    # Preview must reflect the saved transform.
+    z, ox, oy, r = adjust._preview.transform()
+    assert abs(z - 1.5) < 1e-6
+    assert abs(r - 30.0) < 1e-6
+
+    # Zoom slider: range 50-300, value = zoom * 100.
+    assert adjust._zoom_slider.value() == 150
+    assert adjust._zoom_value.text() == "1.50x"
+
+    # Rotate slider: range -180..180, value = int(rot).
+    assert adjust._rot_slider.value() == 30
+    assert adjust._rot_value.text() == "30°"
