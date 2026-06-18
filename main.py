@@ -153,6 +153,7 @@ from utils.theme_manager import (
     SystemThemeWatcher,
 )
 from utils.build_flavor import window_title, app_name, is_beta
+from utils import perf_trace
 from utils.widgets.window_chrome_style import (
     RADIUS_NORMAL, RADIUS_MAXIMIZED, BOTTOM_INSET, STROKE_INSET,
     window_edge_colors, card_qss, header_top_radius_qss,
@@ -744,6 +745,14 @@ class MultiToonTool(QMainWindow):
         self._chrome = None
         self.container.setObjectName("app_card")
         self.container.setAttribute(Qt.WA_StyledBackground, True)
+        # perf_trace: window-state gestures have no terminal signal, so flush
+        # via a short debounce restarted on each WindowStateChange.
+        self._perf_state_flush = QTimer(self)
+        self._perf_state_flush.setSingleShot(True)
+        self._perf_state_flush.setInterval(150)
+        self._perf_state_flush.timeout.connect(perf_trace.flush)
+        self._perf_state_gid = ""
+        self._perf_state_fires = 0
         if bool(self.settings_manager.get("use_system_title_bar", False)):
             self.setAttribute(Qt.WA_TranslucentBackground, False)
             self._apply_window_corner_state(self.isMaximized())
@@ -780,22 +789,24 @@ class MultiToonTool(QMainWindow):
         # while descendants still inherit bg_app. Emit both.
         cascade = f"\nQWidget {{ background: {bg}; }}"
 
-        if rounded:
-            edge = window_edge_colors(bg)
-            self.container.setStyleSheet(
-                card_qss("app_card", bg, RADIUS_NORMAL, edge["outline"]) + cascade)
-            self.header.setStyleSheet(
-                header_top_radius_qss(c["header_bg"], c["sidebar_border"],
-                                      RADIUS_NORMAL, top_rim=edge["rim"]))
-            if root is not None:
-                root.setContentsMargins(STROKE_INSET, STROKE_INSET, STROKE_INSET, BOTTOM_INSET)
-        else:
-            self.container.setStyleSheet(
-                card_qss("app_card", bg, RADIUS_MAXIMIZED, None) + cascade)
-            self.header.setStyleSheet(
-                header_top_radius_qss(c["header_bg"], c["sidebar_border"], RADIUS_MAXIMIZED))
-            if root is not None:
-                root.setContentsMargins(0, 0, 0, 0)
+        _gid = getattr(self, "_perf_state_gid", "")
+        with perf_trace.perf_span("apply_corner_state", _gid):
+            if rounded:
+                edge = window_edge_colors(bg)
+                self.container.setStyleSheet(
+                    card_qss("app_card", bg, RADIUS_NORMAL, edge["outline"]) + cascade)
+                self.header.setStyleSheet(
+                    header_top_radius_qss(c["header_bg"], c["sidebar_border"],
+                                          RADIUS_NORMAL, top_rim=edge["rim"]))
+                if root is not None:
+                    root.setContentsMargins(STROKE_INSET, STROKE_INSET, STROKE_INSET, BOTTOM_INSET)
+            else:
+                self.container.setStyleSheet(
+                    card_qss("app_card", bg, RADIUS_MAXIMIZED, None) + cascade)
+                self.header.setStyleSheet(
+                    header_top_radius_qss(c["header_bg"], c["sidebar_border"], RADIUS_MAXIMIZED))
+                if root is not None:
+                    root.setContentsMargins(0, 0, 0, 0)
 
     def _notify_chrome_theme(self):
         """Tell the window-chrome controller the current theme so the control
@@ -808,7 +819,16 @@ class MultiToonTool(QMainWindow):
     def changeEvent(self, event):
         super().changeEvent(event)
         if event.type() == QEvent.WindowStateChange and getattr(self, "_chrome", None) is not None:
+            if not self._perf_state_flush.isActive():
+                # First fire of a new gesture: open it and reset the counter.
+                self._perf_state_gid = perf_trace.begin_gesture("window_state")
+                self._perf_state_fires = 0
+            self._perf_state_fires += 1
+            perf_trace.mark("statechange_fires", self._perf_state_gid,
+                            self._perf_state_fires)
             self._apply_window_corner_state(self.isMaximized())
+            # Restart the debounce; flush once the gesture settles.
+            self._perf_state_flush.start()
 
     # ── Chip Rail ──────────────────────────────────────────────────────────
 
