@@ -1233,6 +1233,7 @@ class MultiToonTool(QMainWindow):
             slot=slot, game=game, toon_name=toon_name,
             manager=tab.customizations,
             dna=badge._dna, skin_color=skin, auto_stem=auto_stem,
+            settings=tab.settings_manager,
         )
 
     def _apply_chip_styles(self):

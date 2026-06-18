@@ -50,6 +50,7 @@ from utils.motion import reduced_motion_enabled
 from utils.widgets.backdrop_blur import BackdropBlur as _BackdropBlur
 from utils.widgets.card_preview_widget import CardPreviewWidget
 from utils.widgets.race_icon_grid import RaceIconGridWidget
+from utils.saved_colors import SavedColorsStore
 from utils.widgets.toon_customization_sections import (
     _PortraitSection,
     _PoseSection,
@@ -258,6 +259,7 @@ class _Panel(QFrame):
         dna: Optional[str] = None,
         skin_color: Optional[QColor] = None,
         auto_stem: Optional[str] = None,
+        saved_store=None,
     ) -> None:
         self._game = game
         self._toon_name = toon_name
@@ -315,7 +317,7 @@ class _Panel(QFrame):
                 resolve_pose, resolve_portrait_transform,
             )
             current_pose = resolve_pose(self._draft, "portrait")
-            pose_section = _PoseSection(self._dna, current_pose)
+            pose_section = _PoseSection(self._dna, current_pose, saved_store=saved_store)
             pose_section.pose_changed.connect(self._on_pose_changed)
             pose_section.transform_changed.connect(self._on_transform_changed)
             pose_section.silhouette_outline_changed.connect(self._on_silhouette_outline)
@@ -332,7 +334,7 @@ class _Panel(QFrame):
             )
             self._add_section("Toon", pose_section)
 
-        portrait_section = _PortraitSection(self._draft.get("portrait") or {})
+        portrait_section = _PortraitSection(self._draft.get("portrait") or {}, saved_store=saved_store)
         portrait_section.color_changed.connect(self._on_portrait_color)
         portrait_section.gradient_changed.connect(self._on_portrait_gradient)
         portrait_section.pattern_changed.connect(self._on_portrait_pattern)
@@ -340,13 +342,13 @@ class _Panel(QFrame):
         self._add_section("Portrait", portrait_section)
 
         accent_section = _SimpleColorSection(
-            "Accent (stripe + chip)", self._draft.get("accent"),
+            "Accent (stripe + chip)", self._draft.get("accent"), saved_store=saved_store,
         )
         accent_section.color_changed.connect(self._on_accent_changed)
         self._add_section("Accent", accent_section)
 
         body_section = _SimpleColorSection(
-            "Body tint", self._draft.get("body"),
+            "Body tint", self._draft.get("body"), saved_store=saved_store,
         )
         body_section.color_changed.connect(self._on_body_changed)
         self._add_section("Body", body_section)
@@ -805,14 +807,18 @@ class ToonCustomizationOverlay(QWidget):
         dna: Optional[str] = None,
         skin_color: Optional[QColor] = None,
         auto_stem: Optional[str] = None,
+        *,
+        settings=None,
     ) -> None:
         self._slot = slot
         self._game = game
         self._manager = manager
+        self._saved_store = SavedColorsStore(settings)
 
         self._panel.populate(
             game=game, toon_name=toon_name, manager=manager,
             dna=dna, skin_color=skin_color, auto_stem=auto_stem,
+            saved_store=self._saved_store,
         )
         self._original = deepcopy(self._panel.draft())
 

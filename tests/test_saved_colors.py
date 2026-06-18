@@ -29,3 +29,16 @@ def test_persists_through_settings():
     s = _FakeSettings()
     SavedColorsStore(s).save("#abcdef")
     assert s.get("saved_colors") == ["#abcdef"]
+
+
+def test_none_settings_save_and_get():
+    """SavedColorsStore(None) uses an in-memory palette - save/get work
+    without any SettingsManager."""
+    store = SavedColorsStore(None)
+    assert store.get() == []
+    store.save("#aabbcc")
+    assert store.get() == ["#aabbcc"]
+    store.save("#112233")
+    assert store.get() == ["#aabbcc", "#112233"]
+    store.clear(0)
+    assert store.get() == ["#112233"]

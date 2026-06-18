@@ -26,6 +26,9 @@ from PySide6.QtWidgets import (
 
 from utils.toon_pattern_assets import PATTERN_NAMES
 from utils.widgets.pose_thumb_states import paint_shimmer, paint_failed_mark
+# ColorWell is imported lazily inside the constructors that need it to
+# avoid a circular import: color_picker_overlay imports PRESET_SWATCHES
+# from this module, so a top-level ColorWell import here would form a cycle.
 
 
 # Curated 12-color palette. Order matters - first row primaries, second
@@ -108,11 +111,12 @@ class _SwatchRow(QWidget):
 
 
 class _SimpleColorSection(QWidget):
-    """A section that contains a single label + one _SwatchRow."""
+    """A section that contains a single label + one ColorWell."""
 
     color_changed = Signal(object)  # str or None
 
-    def __init__(self, label: str, current: Optional[str], parent=None):
+    def __init__(self, label: str, current: Optional[str], saved_store=None, parent=None):
+        from utils.widgets.color_well import ColorWell
         super().__init__(parent)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(8, 8, 8, 8)
@@ -120,7 +124,7 @@ class _SimpleColorSection(QWidget):
         title = QLabel(label)
         title.setStyleSheet("color: #c8c8d8; font-weight: bold;")
         outer.addWidget(title)
-        self._row = _SwatchRow(current)
+        self._row = ColorWell(current, saved_store=saved_store)
         self._row.color_picked.connect(self.color_changed.emit)
         outer.addWidget(self._row)
         outer.addStretch(1)
@@ -517,14 +521,15 @@ class _PoseAdjustView(QWidget):
 
     _NUDGE_STEP = 1.0 / 180.0  # one pixel in the 180 px adjust preview
 
-    def __init__(self, initial: tuple[float, float, float, float], parent=None):
+    def __init__(self, initial: tuple[float, float, float, float], saved_store=None, parent=None):
         super().__init__(parent)
         zoom, off_x, off_y, rot = initial
-        self._build_ui(zoom, off_x, off_y, rot)
+        self._build_ui(zoom, off_x, off_y, rot, saved_store=saved_store)
 
     def _build_ui(
-        self, zoom: float, off_x: float, off_y: float, rot: float,
+        self, zoom: float, off_x: float, off_y: float, rot: float, saved_store=None,
     ) -> None:
+        from utils.widgets.color_well import ColorWell
         outer = QVBoxLayout(self)
         outer.setContentsMargins(8, 8, 8, 8)
         outer.setSpacing(8)
@@ -600,7 +605,7 @@ class _PoseAdjustView(QWidget):
         outline_label = QLabel("Outline (toon)")
         outline_label.setStyleSheet("color: #9a9aa8; font-size: 10px;")
         outer.addWidget(outline_label)
-        self._sil_outline_color_row = _SwatchRow(None)
+        self._sil_outline_color_row = ColorWell(None, saved_store=saved_store)
         self._sil_outline_color_row.color_picked.connect(self._on_sil_outline_color)
         outer.addWidget(self._sil_outline_color_row)
         self._sil_outline_chip = _ChipRow(
@@ -615,7 +620,7 @@ class _PoseAdjustView(QWidget):
         shadow_label = QLabel("Shadow (toon)")
         shadow_label.setStyleSheet("color: #9a9aa8; font-size: 10px;")
         outer.addWidget(shadow_label)
-        self._sil_shadow_color_row = _SwatchRow(None)
+        self._sil_shadow_color_row = ColorWell(None, saved_store=saved_store)
         self._sil_shadow_color_row.color_picked.connect(self._on_sil_shadow_color)
         outer.addWidget(self._sil_shadow_color_row)
         self._sil_shadow_chip = _ChipRow(
@@ -768,10 +773,11 @@ class _PoseSection(QWidget):
     silhouette_outline_changed = Signal(object, object)  # (hex or None, width key)
     silhouette_shadow_changed = Signal(object, object)  # (hex or None, softness key)
 
-    def __init__(self, dna: Optional[str], current_pose: str, parent=None):
+    def __init__(self, dna: Optional[str], current_pose: str, saved_store=None, parent=None):
         super().__init__(parent)
         self._dna = dna
         self._current_pose = current_pose
+        self._saved_store = saved_store
         self._tiles: list[_PoseTile] = []
         self._placeholder_label: Optional[QLabel] = None
         self._grid_page: Optional[QWidget] = None
@@ -907,7 +913,7 @@ class _PoseSection(QWidget):
         """Create the adjust view lazily on first access. Idempotent."""
         if self._adjust_view is not None:
             return
-        self._adjust_view = _PoseAdjustView(initial=self._transform)
+        self._adjust_view = _PoseAdjustView(initial=self._transform, saved_store=self._saved_store)
         for t in self._tiles:
             if t.pose == self._current_pose and t.has_pixmap():
                 self._adjust_view.set_pixmap(t._pixmap)
@@ -1047,14 +1053,15 @@ class _PortraitSection(QWidget):
     pattern_changed = Signal(object, object)  # (name or None, color or None)
     circle_outline_changed = Signal(object, object)  # (color hex or None, width key str)
 
-    def __init__(self, current: dict, parent=None):
+    def __init__(self, current: dict, saved_store=None, parent=None):
+        from utils.widgets.color_well import ColorWell
         super().__init__(parent)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(8, 8, 8, 8)
         outer.setSpacing(8)
 
         outer.addWidget(self._label("Color"))
-        self._color_row = _SwatchRow(current.get("color"))
+        self._color_row = ColorWell(current.get("color"), saved_store=saved_store)
         self._color_row.color_picked.connect(self.color_changed.emit)
         outer.addWidget(self._color_row)
 
@@ -1068,11 +1075,11 @@ class _PortraitSection(QWidget):
         grad_row.addStretch(1)
         outer.addLayout(grad_row)
 
-        self._grad_start = _SwatchRow(
-            (current.get("gradient") or {}).get("start")
+        self._grad_start = ColorWell(
+            (current.get("gradient") or {}).get("start"), saved_store=saved_store,
         )
-        self._grad_end = _SwatchRow(
-            (current.get("gradient") or {}).get("end")
+        self._grad_end = ColorWell(
+            (current.get("gradient") or {}).get("end"), saved_store=saved_store,
         )
         self._grad_start.color_picked.connect(lambda _: self._emit_gradient())
         self._grad_end.color_picked.connect(lambda _: self._emit_gradient())
@@ -1106,15 +1113,15 @@ class _PortraitSection(QWidget):
         outer.addLayout(pat_grid)
 
         outer.addWidget(self._label("Pattern color"))
-        self._pat_color_row = _SwatchRow(
-            (current.get("pattern") or {}).get("color")
+        self._pat_color_row = ColorWell(
+            (current.get("pattern") or {}).get("color"), saved_store=saved_store,
         )
         self._pat_color_row.color_picked.connect(lambda _: self._emit_pattern())
         outer.addWidget(self._pat_color_row)
 
         outer.addWidget(self._label("Outline"))
         outline_dict = current.get("outline") if isinstance(current.get("outline"), dict) else {}
-        self._outline_color_row = _SwatchRow(outline_dict.get("color"))
+        self._outline_color_row = ColorWell(outline_dict.get("color"), saved_store=saved_store)
         self._outline_color_row.color_picked.connect(self._on_outline_color_picked)
         outer.addWidget(self._outline_color_row)
 

@@ -420,15 +420,17 @@ def test_pose_adjust_preview_wheel_changes_zoom(qapp):
 
 
 def test_pose_adjust_view_initial_transform(qapp):
+    from utils.saved_colors import SavedColorsStore
     from utils.widgets.toon_customization_sections import _PoseAdjustView
-    v = _PoseAdjustView(initial=(1.0, 0.0, 0.0, 0.0))
+    v = _PoseAdjustView(initial=(1.0, 0.0, 0.0, 0.0), saved_store=SavedColorsStore(None))
     assert v.transform() == (1.0, 0.0, 0.0, 0.0)
 
 
 def test_pose_adjust_view_zoom_slider_emits(qapp):
     from PySide6.QtTest import QSignalSpy
+    from utils.saved_colors import SavedColorsStore
     from utils.widgets.toon_customization_sections import _PoseAdjustView
-    v = _PoseAdjustView(initial=(1.0, 0.0, 0.0, 0.0))
+    v = _PoseAdjustView(initial=(1.0, 0.0, 0.0, 0.0), saved_store=SavedColorsStore(None))
     spy = QSignalSpy(v.transform_changed)
     v.set_zoom(1.5)
     assert v.transform()[0] == 1.5
@@ -437,8 +439,9 @@ def test_pose_adjust_view_zoom_slider_emits(qapp):
 
 def test_pose_adjust_view_rotate_slider_emits(qapp):
     from PySide6.QtTest import QSignalSpy
+    from utils.saved_colors import SavedColorsStore
     from utils.widgets.toon_customization_sections import _PoseAdjustView
-    v = _PoseAdjustView(initial=(1.0, 0.0, 0.0, 0.0))
+    v = _PoseAdjustView(initial=(1.0, 0.0, 0.0, 0.0), saved_store=SavedColorsStore(None))
     spy = QSignalSpy(v.transform_changed)
     v.set_rotate(30.0)
     assert v.transform()[3] == 30.0
@@ -447,8 +450,9 @@ def test_pose_adjust_view_rotate_slider_emits(qapp):
 
 def test_pose_adjust_view_nudge_emits(qapp):
     from PySide6.QtTest import QSignalSpy
+    from utils.saved_colors import SavedColorsStore
     from utils.widgets.toon_customization_sections import _PoseAdjustView
-    v = _PoseAdjustView(initial=(1.0, 0.0, 0.0, 0.0))
+    v = _PoseAdjustView(initial=(1.0, 0.0, 0.0, 0.0), saved_store=SavedColorsStore(None))
     spy = QSignalSpy(v.transform_changed)
     v.nudge_right()
     z, ox, oy, r = v.transform()
@@ -459,8 +463,9 @@ def test_pose_adjust_view_nudge_emits(qapp):
 
 def test_pose_adjust_view_back_button_emits_back_requested(qapp):
     from PySide6.QtTest import QSignalSpy
+    from utils.saved_colors import SavedColorsStore
     from utils.widgets.toon_customization_sections import _PoseAdjustView
-    v = _PoseAdjustView(initial=(1.0, 0.0, 0.0, 0.0))
+    v = _PoseAdjustView(initial=(1.0, 0.0, 0.0, 0.0), saved_store=SavedColorsStore(None))
     spy = QSignalSpy(v.back_requested)
     v.click_back()
     assert spy.count() == 1
@@ -468,8 +473,9 @@ def test_pose_adjust_view_back_button_emits_back_requested(qapp):
 
 def test_pose_adjust_view_reset_restores_defaults_and_emits(qapp):
     from PySide6.QtTest import QSignalSpy
+    from utils.saved_colors import SavedColorsStore
     from utils.widgets.toon_customization_sections import _PoseAdjustView
-    v = _PoseAdjustView(initial=(1.5, 0.3, -0.2, 45.0))
+    v = _PoseAdjustView(initial=(1.5, 0.3, -0.2, 45.0), saved_store=SavedColorsStore(None))
     spy = QSignalSpy(v.transform_changed)
     v.click_reset()
     assert v.transform() == (1.0, 0.0, 0.0, 0.0)
@@ -580,9 +586,10 @@ def _reset_singletons():
 
 
 def test_portrait_section_emits_circle_outline_changed_with_color_and_width(qapp):
+    from utils.saved_colors import SavedColorsStore
     from utils.widgets.toon_customization_sections import _PortraitSection
     from PySide6.QtTest import QSignalSpy
-    sec = _PortraitSection({})
+    sec = _PortraitSection({}, saved_store=SavedColorsStore(None))
     spy = QSignalSpy(sec.circle_outline_changed)
     sec.set_circle_outline("#ffd84a", "medium")
     assert spy.count() == 1
@@ -592,8 +599,9 @@ def test_portrait_section_emits_circle_outline_changed_with_color_and_width(qapp
 
 
 def test_portrait_section_set_circle_outline_to_none_clears_chip_state(qapp):
+    from utils.saved_colors import SavedColorsStore
     from utils.widgets.toon_customization_sections import _PortraitSection
-    sec = _PortraitSection({"outline": {"color": "#ff0000", "width": "thick"}})
+    sec = _PortraitSection({"outline": {"color": "#ff0000", "width": "thick"}}, saved_store=SavedColorsStore(None))
     # Initial state from `current`
     assert sec.current_circle_outline() == ("#ff0000", "thick")
     sec.set_circle_outline(None, None)

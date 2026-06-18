@@ -139,8 +139,9 @@ def test_pose_adjust_view_min_width_fits_compact(qapp):
     """Adjust view's minimum width must be <= 527 so the
     QStackedWidget (grid + adjust) doesn't inflate past the
     compact panel viewport."""
+    from utils.saved_colors import SavedColorsStore
     from utils.widgets.toon_customization_sections import _PoseAdjustView
-    view = _PoseAdjustView(initial=(1.0, 0.0, 0.0, 0.0))
+    view = _PoseAdjustView(initial=(1.0, 0.0, 0.0, 0.0), saved_store=SavedColorsStore(None))
     view.layout().activate()
     hint = view.minimumSizeHint().width()
     assert hint <= 527, (
@@ -172,8 +173,9 @@ def test_pose_section_stack_min_width_fits_compact(qapp):
 def test_pose_adjust_view_attributes_preserved(qapp):
     """The vertical-stack rewrite must keep every widget attribute
     name + signal that consumers depend on."""
+    from utils.saved_colors import SavedColorsStore
     from utils.widgets.toon_customization_sections import _PoseAdjustView
-    view = _PoseAdjustView(initial=(1.0, 0.0, 0.0, 0.0))
+    view = _PoseAdjustView(initial=(1.0, 0.0, 0.0, 0.0), saved_store=SavedColorsStore(None))
     assert view._preview is not None
     assert view._left_btn is not None
     assert view._up_btn is not None
