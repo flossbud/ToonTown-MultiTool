@@ -154,6 +154,13 @@ from utils.theme_manager import (
 )
 from utils.build_flavor import window_title, app_name, is_beta
 from utils import perf_trace
+
+# A/B experiment (spec Phase 2): on macOS, run the frameless window OPAQUE with a
+# rounded mask instead of WA_TranslucentBackground, to isolate translucent-
+# compositing cost. Chosen at startup (translucency cannot be toggled live).
+_OPAQUE_MASK_CHROME = (
+    sys.platform == "darwin" and os.environ.get("TTMT_OPAQUE_MASK_CHROME") == "1"
+)
 from utils.widgets.window_chrome_style import (
     RADIUS_NORMAL, RADIUS_MAXIMIZED, BOTTOM_INSET, STROKE_INSET,
     window_edge_colors, card_qss, header_top_radius_qss,
@@ -758,11 +765,17 @@ class MultiToonTool(QMainWindow):
             self._apply_window_corner_state(self.isMaximized())
             return  # native decorations; no custom controls
         self.setWindowFlag(Qt.FramelessWindowHint, True)
-        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        if _OPAQUE_MASK_CHROME:
+            # Opaque experiment: keep an opaque surface, mask the corners.
+            self.setAttribute(Qt.WA_TranslucentBackground, False)
+            self._mask_cache = None  # (w, h, radius) last applied
+        else:
+            self.setAttribute(Qt.WA_TranslucentBackground, True)
         from utils.widgets.window_chrome import WindowChromeController
         self._chrome = WindowChromeController(self, self.header)
         self._chrome.reposition()
         self._apply_window_corner_state(self.isMaximized())
+        self._update_window_mask()
         # Push the current theme now: the earlier _apply_full_theme() in __init__
         # ran before _chrome existed, so without this the unfocused dots would
         # keep the dark-default inactive grey under the light theme until the
@@ -807,6 +820,28 @@ class MultiToonTool(QMainWindow):
                     header_top_radius_qss(c["header_bg"], c["sidebar_border"], RADIUS_MAXIMIZED))
                 if root is not None:
                     root.setContentsMargins(0, 0, 0, 0)
+        self._update_window_mask()
+
+    def _update_window_mask(self):
+        """Opaque-chrome experiment only (TTMT_OPAQUE_MASK_CHROME). Mask the
+        top-level to rounded corners in normal state / clear it when maximized.
+        Rebuilds the QRegion only when (width, height, radius) changes."""
+        if not _OPAQUE_MASK_CHROME:
+            return
+        from utils.window_chrome_mask import rounded_region
+        native = bool(self.settings_manager.get("use_system_title_bar", False))
+        rounded = (not native) and (not self.isMaximized())
+        if not rounded:
+            if getattr(self, "_mask_cache", None) is not None:
+                self.clearMask()
+                self._mask_cache = None
+            return
+        w, h, radius = self.width(), self.height(), RADIUS_NORMAL
+        key = (w, h, radius)
+        if key == getattr(self, "_mask_cache", None):
+            return
+        self.setMask(rounded_region(w, h, radius))
+        self._mask_cache = key
 
     def _notify_chrome_theme(self):
         """Tell the window-chrome controller the current theme so the control
@@ -1161,6 +1196,7 @@ class MultiToonTool(QMainWindow):
             except Exception as e:
                 if hasattr(self, "logger") and self.logger:
                     self.logger.append_log(f"[Layout] swap failed: {e}")
+        self._update_window_mask()
 
     def _set_layout_mode(self, target: str) -> None:
         # Snap layout instantly. Resize events drive the swap (titlebar drag,
