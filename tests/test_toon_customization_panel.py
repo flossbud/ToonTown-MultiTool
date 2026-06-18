@@ -699,6 +699,36 @@ def test_adjust_view_reset_clears_silhouette_alongside_transform(qapp, monkeypat
     assert "silhouette" not in portrait
 
 
+def test_reset_all_resets_framing_sliders_to_neutral(qapp, monkeypatch, tmp_path):
+    """reset_all must reset the zoom/rotate sliders to the default neutral
+    position (zoom=1.0, rotate=0). Without this, the sliders keep their
+    prior values and the next nudge re-applies a stale transform."""
+    monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
+    _reset_singletons()
+    panel, _, _, _parent = _build(
+        qapp,
+        game="ttr",
+        dna="dna-test-sliders",
+        existing={
+            "portrait": {
+                "transform": {"zoom": 2.0, "offset_x": 0.3, "offset_y": 0.0, "rotate": 45.0}
+            }
+        },
+    )
+    sec = panel.section("Toon")
+    adjust = sec._adjust_view
+    # Confirm the sliders loaded the saved values.
+    assert adjust._zoom_slider.value() == 200
+    assert adjust._rot_slider.value() == 45
+
+    panel.reset_all()
+
+    # After reset the zoom slider must be back at 100 (== 1.0x).
+    assert adjust._zoom_slider.value() == 100
+    # Rotate slider must be back at 0.
+    assert adjust._rot_slider.value() == 0
+
+
 def test_set_transform_from_draft_syncs_sliders(qapp):
     """set_transform_from_draft must sync the zoom slider, rotate slider, and
     their value labels in addition to the preview. Regression: the view is

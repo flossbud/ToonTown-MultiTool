@@ -298,6 +298,7 @@ class _Panel(QFrame):
             prev_layout.setContentsMargins(0, 0, 0, 0)
         self._preview = CardPreviewWidget(
             self._game, self._toon_name, self._draft, dna=self._dna,
+            skin_color=self._skin, auto_stem=self._auto_stem,
         )
         prev_layout.addWidget(self._preview, alignment=Qt.AlignHCenter)
 
@@ -495,6 +496,10 @@ class _Panel(QFrame):
                 if w._adjust_view is not None:
                     w._adjust_view.set_silhouette_outline_from_draft(None, None)
                     w._adjust_view.set_silhouette_shadow_from_draft(None, None)
+                # Reset framing sliders to neutral so the zoom/rotate controls
+                # reflect the cleared draft. Without this the sliders keep the
+                # previous values and the next nudge re-applies a stale zoom.
+                w.set_transform_from_draft((1.0, 0.0, 0.0, 0.0))
             elif isinstance(w, RaceIconGridWidget):
                 w.select_auto()
         self._preview.set_draft(self._draft)

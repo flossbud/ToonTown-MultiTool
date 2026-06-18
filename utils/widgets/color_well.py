@@ -30,10 +30,24 @@ class ColorWell(QWidget):
 
     def _open_picker(self):
         host = self.window()
+        original = self._current
         picker = ColorPickerOverlay(host, saved_store=self._store)
+
+        def _on_live(hex_):
+            self._current = hex_
+            self._refresh()
+            self.color_picked.emit(hex_)
+
+        def _on_cancelled():
+            self._current = original
+            self._refresh()
+            self.color_picked.emit(original)
+            picker.deleteLater()
+
+        picker.color_live.connect(_on_live)
         picker.color_committed.connect(self._apply_committed)
         picker.color_committed.connect(lambda *_: picker.deleteLater())
-        picker.cancelled.connect(picker.deleteLater)
+        picker.cancelled.connect(_on_cancelled)
         picker.open_for(self._current)
 
     def _apply_committed(self, hex_):

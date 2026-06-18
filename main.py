@@ -1156,17 +1156,33 @@ class MultiToonTool(QMainWindow):
         if overlay is not None and overlay.isVisible():
             if overlay._is_dirty():
                 # Defer: remember the requested target, surface the confirm
-                # prompt. discard_clicked resumes the swap; keep_clicked
-                # abandons it.
+                # prompt. save_clicked and discard_clicked resume the swap;
+                # keep_clicked cancels it.
                 self._pending_mode_swap = target
-                try:
-                    overlay._confirm_prompt.discard_clicked.disconnect(
-                        self._resume_pending_mode_swap
-                    )
-                except (RuntimeError, TypeError):
-                    pass  # not connected yet, fine
+                # Disconnect stale one-shot handlers from any previous deferred
+                # swap so a later unrelated confirm cannot fire a stale resume.
+                for _sig, _slot in [
+                    (overlay._confirm_prompt.discard_clicked,
+                     self._resume_pending_mode_swap),
+                    (overlay._confirm_prompt.save_clicked,
+                     self._resume_pending_mode_swap),
+                    (overlay._confirm_prompt.keep_clicked,
+                     self._cancel_pending_mode_swap),
+                ]:
+                    try:
+                        _sig.disconnect(_slot)
+                    except (RuntimeError, TypeError):
+                        pass
                 overlay._confirm_prompt.discard_clicked.connect(
                     self._resume_pending_mode_swap
+                )
+                # save_clicked is already permanently wired to close_and_save;
+                # additionally resume the swap once the save completes.
+                overlay._confirm_prompt.save_clicked.connect(
+                    self._resume_pending_mode_swap
+                )
+                overlay._confirm_prompt.keep_clicked.connect(
+                    self._cancel_pending_mode_swap
                 )
                 overlay._show_confirm_prompt()
                 return
@@ -1191,6 +1207,9 @@ class MultiToonTool(QMainWindow):
             self.launch_tab.set_layout_mode(target)
         if hasattr(self, "settings_tab") and self.settings_tab is not None:
             self.settings_tab.set_layout_mode(target)
+
+    def _cancel_pending_mode_swap(self) -> None:
+        self._pending_mode_swap = None
 
     def open_customization(self, slot: int) -> None:
         """Open the customization overlay for the given slot. Lazy-

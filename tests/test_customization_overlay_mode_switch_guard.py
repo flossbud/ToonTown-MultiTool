@@ -58,6 +58,7 @@ def _open_overlay_on_main(qapp, tmp_path, monkeypatch):
     )
     win._set_layout_mode = MultiToonTool._set_layout_mode.__get__(win, type(win))
     win._resume_pending_mode_swap = MultiToonTool._resume_pending_mode_swap.__get__(win, type(win))
+    win._cancel_pending_mode_swap = MultiToonTool._cancel_pending_mode_swap.__get__(win, type(win))
     # MultiToonTool._set_layout_mode reaches for launch_tab; supply a noop stand-in.
     win.launch_tab = type("_LT", (), {"set_layout_mode": staticmethod(lambda m: None)})()
     return win, tab
@@ -115,5 +116,33 @@ def test_mode_swap_with_dirty_keep_aborts(qapp, tmp_path, monkeypatch):
     # Mode swap never happens.
     assert calls == []
     assert overlay.isVisible()
+    if hasattr(tab, "input_service") and tab.input_service:
+        tab.input_service.shutdown()
+
+
+def test_mode_swap_with_dirty_save_resumes_swap(qapp, tmp_path, monkeypatch):
+    """Clicking Save in the unsaved-changes confirm must save the draft AND
+    resume the deferred layout swap."""
+    win, tab = _open_overlay_on_main(qapp, tmp_path, monkeypatch)
+    overlay = win.customization_overlay
+    overlay._panel.set_body("#aabbcc")
+    calls = []
+    tab.set_layout_mode = lambda m: calls.append(m)
+
+    win._set_layout_mode("full")
+    # Confirm prompt must be showing; layout NOT swapped yet.
+    assert overlay._confirm_prompt.isVisible()
+    assert calls == []
+
+    # Click Save: draft is persisted AND the swap resumes.
+    overlay._confirm_prompt.save_btn.click()
+    qapp.processEvents()
+
+    # Layout swap happened.
+    assert calls == ["full"]
+    # Draft was saved to the manager.
+    mgr = overlay._manager
+    saved = mgr.get("ttr", "Flossbud")
+    assert saved.get("body") == "#aabbcc"
     if hasattr(tab, "input_service") and tab.input_service:
         tab.input_service.shutdown()

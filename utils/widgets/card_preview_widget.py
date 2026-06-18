@@ -12,6 +12,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import QWidget
 
+from utils.cc_badge_paint import complementary_bg_color, paint_cc_badge
 from utils.color_math import darken_rgb
 from utils.toon_customization_resolve import (
     resolve_accent,
@@ -60,12 +61,16 @@ class CardPreviewWidget(QWidget):
         parent=None,
         *,
         dna: Optional[str] = None,
+        skin_color: Optional[QColor] = None,
+        auto_stem: Optional[str] = None,
     ):
         super().__init__(parent)
         self._game = game
         self._toon_name = toon_name
         self._draft: dict = dict(draft)
         self._dna = dna
+        self._skin: Optional[QColor] = skin_color
+        self._auto_stem: Optional[str] = auto_stem
         self._pose_pixmap: Optional[QPixmap] = None
         self._silhouette_cache: dict[tuple, tuple] = {}
         # key: (id(pose_pm), pose_size_tuple, outline_color or None, outline_width,
@@ -76,7 +81,8 @@ class CardPreviewWidget(QWidget):
         self.setMaximumSize(_PREVIEW_W, _PREVIEW_H)
 
         # Subscribe to the fetcher for this widget's lifetime.
-        if self._dna:
+        # CC toons have no pose artwork; skip the fetch entirely for CC.
+        if self._dna and self._game != "cc":
             from utils.rendition_poses import RenditionPoseFetcher
             self._fetcher = RenditionPoseFetcher.instance()
             self._fetcher.pose_ready.connect(self._on_pose_ready)
@@ -210,67 +216,92 @@ class CardPreviewWidget(QWidget):
         circle_y = (h - _PORTRAIT_D) // 2
         circle_rect = QRect(_PORTRAIT_X, circle_y, _PORTRAIT_D, _PORTRAIT_D)
 
-        # Portrait fill (solid base from draft resolver)
-        portrait_brush = resolve_portrait_brush(self._draft, QColor(_SLOT_DEFAULT_BG))
-        p.setPen(Qt.NoPen)
-        p.setBrush(portrait_brush)
-        p.drawEllipse(circle_rect)
+        if self._game == "cc":
+            # CC toons: paint the race badge (background + silhouette) via
+            # the shared badge painter. portrait_brush and pattern come from
+            # the same resolvers used for TTR so draft overrides propagate.
+            skin = self._skin or QColor("#5b8cde")
+            asset_stem = self._draft.get("icon_stem") or self._auto_stem
+            portrait_brush = resolve_portrait_brush(
+                self._draft, complementary_bg_color(skin)
+            )
+            pattern = resolve_portrait_pattern(self._draft)
+            paint_cc_badge(
+                p,
+                circle_rect,
+                skin,
+                asset_stem,
+                slot_number=1,
+                portrait_brush=portrait_brush,
+                pattern=pattern,
+            )
+        else:
+            # TTR toons: portrait disc + optional pattern + pose pixmap.
 
-        # Portrait pattern overlay (clipped to circle)
-        pattern = resolve_portrait_pattern(self._draft)
-        if pattern is not None:
-            pat_name, pat_color = pattern
-            pm = tinted_pattern_pixmap(pat_name, pat_color, tile_size=24)
-            if not pm.isNull():
-                clip = QPainterPath()
-                clip.addEllipse(circle_rect)
+            # Portrait fill (solid base from draft resolver)
+            portrait_brush = resolve_portrait_brush(
+                self._draft, QColor(_SLOT_DEFAULT_BG)
+            )
+            p.setPen(Qt.NoPen)
+            p.setBrush(portrait_brush)
+            p.drawEllipse(circle_rect)
+
+            # Portrait pattern overlay (clipped to circle)
+            pattern = resolve_portrait_pattern(self._draft)
+            if pattern is not None:
+                pat_name, pat_color = pattern
+                pm = tinted_pattern_pixmap(pat_name, pat_color, tile_size=24)
+                if not pm.isNull():
+                    clip = QPainterPath()
+                    clip.addEllipse(circle_rect)
+                    p.save()
+                    p.setClipPath(clip)
+                    for ty in range(circle_rect.top(), circle_rect.bottom() + 1, 24):
+                        for tx in range(circle_rect.left(), circle_rect.right() + 1, 24):
+                            p.drawPixmap(tx, ty, pm)
+                    p.restore()
+
+            # Pose pixmap (clipped to portrait circle, with draft transform)
+            if self._pose_pixmap is not None and not self._pose_pixmap.isNull():
+                from utils.toon_customization_resolve import resolve_portrait_transform
+                zoom, off_x, off_y, rot = resolve_portrait_transform(self._draft)
+                ox = int(off_x * circle_rect.width())
+                oy = int(off_y * circle_rect.height())
+                # Bake zoom into the downscale so the 512 source resamples once.
+                final_w = max(1, round(circle_rect.width() * zoom))
+                final_h = max(1, round(circle_rect.height() * zoom))
+                final_size = QSize(final_w, final_h)
+                pose_clip = QPainterPath()
+                pose_clip.addEllipse(circle_rect)
                 p.save()
-                p.setClipPath(clip)
-                for ty in range(circle_rect.top(), circle_rect.bottom() + 1, 24):
-                    for tx in range(circle_rect.left(), circle_rect.right() + 1, 24):
-                        p.drawPixmap(tx, ty, pm)
+                p.setClipPath(pose_clip)
+                p.translate(circle_rect.center())
+                p.rotate(rot)
+                # Offset is in unzoomed circle-fractions; scale by zoom so
+                # pan-while-zoomed matches the pre-refactor painter.scale path.
+                p.translate(ox * zoom, oy * zoom)
+                scaled = self._pose_pixmap.scaled(
+                    final_size, Qt.KeepAspectRatio, Qt.SmoothTransformation,
+                )
+                outline_pm, shadow_pm, sx, sy = self._get_silhouette_bundle(
+                    self._pose_pixmap, final_size,
+                )
+                if shadow_pm is not None and not shadow_pm.isNull():
+                    pad_x = (shadow_pm.width() - scaled.width()) // 2
+                    pad_y = (shadow_pm.height() - scaled.height()) // 2
+                    p.drawPixmap(
+                        -scaled.width() // 2 - pad_x + sx,
+                        -scaled.height() // 2 - pad_y + sy,
+                        shadow_pm,
+                    )
+                if outline_pm is not None and not outline_pm.isNull():
+                    p.drawPixmap(-scaled.width() // 2, -scaled.height() // 2, outline_pm)
+                p.drawPixmap(-scaled.width() // 2, -scaled.height() // 2, scaled)
                 p.restore()
 
-        # Pose pixmap (clipped to portrait circle, with draft transform)
-        if self._pose_pixmap is not None and not self._pose_pixmap.isNull():
-            from utils.toon_customization_resolve import resolve_portrait_transform
-            zoom, off_x, off_y, rot = resolve_portrait_transform(self._draft)
-            ox = int(off_x * circle_rect.width())
-            oy = int(off_y * circle_rect.height())
-            # Bake zoom into the downscale so the 512 source resamples once.
-            final_w = max(1, round(circle_rect.width() * zoom))
-            final_h = max(1, round(circle_rect.height() * zoom))
-            final_size = QSize(final_w, final_h)
-            pose_clip = QPainterPath()
-            pose_clip.addEllipse(circle_rect)
-            p.save()
-            p.setClipPath(pose_clip)
-            p.translate(circle_rect.center())
-            p.rotate(rot)
-            # Offset is in unzoomed circle-fractions; scale by zoom so
-            # pan-while-zoomed matches the pre-refactor painter.scale path.
-            p.translate(ox * zoom, oy * zoom)
-            scaled = self._pose_pixmap.scaled(
-                final_size, Qt.KeepAspectRatio, Qt.SmoothTransformation,
-            )
-            outline_pm, shadow_pm, sx, sy = self._get_silhouette_bundle(
-                self._pose_pixmap, final_size,
-            )
-            if shadow_pm is not None and not shadow_pm.isNull():
-                pad_x = (shadow_pm.width() - scaled.width()) // 2
-                pad_y = (shadow_pm.height() - scaled.height()) // 2
-                p.drawPixmap(
-                    -scaled.width() // 2 - pad_x + sx,
-                    -scaled.height() // 2 - pad_y + sy,
-                    shadow_pm,
-                )
-            if outline_pm is not None and not outline_pm.isNull():
-                p.drawPixmap(-scaled.width() // 2, -scaled.height() // 2, outline_pm)
-            p.drawPixmap(-scaled.width() // 2, -scaled.height() // 2, scaled)
-            p.restore()
-
-        # Accent portrait ring: drawn after pose so it's always visible at
-        # the circle edge, mirroring _PortraitFrame's accent ring treatment.
+        # Accent portrait ring: drawn after the portrait content so it is
+        # always visible at the circle edge, mirroring _PortraitFrame's
+        # accent ring treatment. Drawn for both TTR and CC.
         ring_inset = _PORTRAIT_RING // 2
         p.setPen(QPen(accent, _PORTRAIT_RING))
         p.setBrush(Qt.NoBrush)

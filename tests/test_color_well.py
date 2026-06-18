@@ -31,6 +31,75 @@ def test_well_mirrors_swatchrow_api(qapp):
     assert w.current() == "#abcdef" and picks[-1] is None   # still the prior emit
 
 
+def test_live_color_updates_current_and_emits(qapp):
+    """color_live from the picker must update current() and emit color_picked
+    with the live hex while the picker is still open."""
+    from utils.widgets.color_well import ColorWell
+    from utils.saved_colors import SavedColorsStore
+    from utils.widgets.color_picker_overlay import ColorPickerOverlay
+
+    parent = QWidget(); parent.show()
+    w = ColorWell(current="#ff0000", saved_store=SavedColorsStore(_FakeSettings()), parent=parent)
+    picks = []
+    w.color_picked.connect(picks.append)
+
+    # Open the picker and capture the overlay instance.
+    w._open_picker()
+    picker = parent.findChild(ColorPickerOverlay)
+    assert picker is not None
+
+    # Simulate a live drag event.
+    picker.color_live.emit("#00ff00")
+    assert w.current() == "#00ff00"
+    assert picks == ["#00ff00"]
+
+
+def test_cancelled_reverts_to_original(qapp):
+    """Cancelling the picker must revert current() to the value when the
+    picker was opened and emit color_picked with the original hex."""
+    from utils.widgets.color_well import ColorWell
+    from utils.saved_colors import SavedColorsStore
+    from utils.widgets.color_picker_overlay import ColorPickerOverlay
+
+    parent = QWidget(); parent.show()
+    w = ColorWell(current="#ff0000", saved_store=SavedColorsStore(_FakeSettings()), parent=parent)
+    picks = []
+    w.color_picked.connect(picks.append)
+
+    w._open_picker()
+    picker = parent.findChild(ColorPickerOverlay)
+    assert picker is not None
+
+    # Simulate a live drag then a cancel.
+    picker.color_live.emit("#123456")
+    assert w.current() == "#123456"
+
+    picker.cancelled.emit()
+    assert w.current() == "#ff0000"
+    assert picks[-1] == "#ff0000"
+
+
+def test_committed_finalizes_color(qapp):
+    """color_committed must finalize current() to the committed hex and emit."""
+    from utils.widgets.color_well import ColorWell
+    from utils.saved_colors import SavedColorsStore
+    from utils.widgets.color_picker_overlay import ColorPickerOverlay
+
+    parent = QWidget(); parent.show()
+    w = ColorWell(current="#ff0000", saved_store=SavedColorsStore(_FakeSettings()), parent=parent)
+    picks = []
+    w.color_picked.connect(picks.append)
+
+    w._open_picker()
+    picker = parent.findChild(ColorPickerOverlay)
+    assert picker is not None
+
+    picker.color_live.emit("#abcdef")
+    picker.color_committed.emit("#abcdef")
+    assert w.current() == "#abcdef"
+    assert "#abcdef" in picks
+
+
 def test_well_none_store_opens_picker_without_crash(qapp):
     """ColorWell(saved_store=None) must coerce None to an in-memory store and
     open the picker without raising."""
