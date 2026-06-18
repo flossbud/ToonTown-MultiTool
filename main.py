@@ -154,6 +154,7 @@ from utils.theme_manager import (
 )
 from utils.build_flavor import window_title, app_name, is_beta
 from utils import perf_trace
+from utils.window_corner_state import corner_state_signature, should_skip_restyle
 
 # A/B experiment (spec Phase 2): on macOS, run the frameless window OPAQUE with a
 # rounded mask instead of WA_TranslucentBackground, to isolate translucent-
@@ -762,7 +763,7 @@ class MultiToonTool(QMainWindow):
         self._perf_state_fires = 0
         if bool(self.settings_manager.get("use_system_title_bar", False)):
             self.setAttribute(Qt.WA_TranslucentBackground, False)
-            self._apply_window_corner_state(self.isMaximized())
+            self._apply_window_corner_state(self.isMaximized(), force=True)
             return  # native decorations; no custom controls
         self.setWindowFlag(Qt.FramelessWindowHint, True)
         if _OPAQUE_MASK_CHROME:
@@ -774,7 +775,7 @@ class MultiToonTool(QMainWindow):
         from utils.widgets.window_chrome import WindowChromeController
         self._chrome = WindowChromeController(self, self.header)
         self._chrome.reposition()
-        self._apply_window_corner_state(self.isMaximized())
+        self._apply_window_corner_state(self.isMaximized(), force=True)
         self._update_window_mask()
         # Push the current theme now: the earlier _apply_full_theme() in __init__
         # ran before _chrome existed, so without this the unfocused dots would
@@ -782,14 +783,22 @@ class MultiToonTool(QMainWindow):
         # next theme change.
         self._notify_chrome_theme()
 
-    def _apply_window_corner_state(self, is_maximized: bool):
+    def _apply_window_corner_state(self, is_maximized: bool, force: bool = False):
         """Apply rounded-card + outline + lit-rim + layout insets for the
         current state. Frameless + not maximized -> 16px rounded card with a
         1px theme-aware uniform outline and a lit top-rim on the header.
-        Maximized or native title bar -> square, plain bg, no insets."""
+        Maximized or native title bar -> square, plain bg, no insets.
+
+        The full-tree QWidget{} cascade is expensive, so skip it when neither
+        the corner state nor the theme changed; theme/dark-light changes pass
+        force=True to bypass the guard."""
         c = self._theme_colors()
         bg = c["bg_app"]
         native = bool(self.settings_manager.get("use_system_title_bar", False))
+        new_sig = corner_state_signature(is_maximized, native, bg)
+        if should_skip_restyle(getattr(self, "_last_corner_sig", None), new_sig, force):
+            return
+        self._last_corner_sig = new_sig
         rounded = (not native) and (not is_maximized)
         root = self.container.layout()
 
@@ -1386,7 +1395,7 @@ class MultiToonTool(QMainWindow):
         c = self._theme_colors()
 
         # Container card + header corners/stroke (rounded vs native/maximized)
-        self._apply_window_corner_state(self.isMaximized())
+        self._apply_window_corner_state(self.isMaximized(), force=True)
         self._notify_chrome_theme()
         self._refresh_header_logo()
 
