@@ -25,12 +25,41 @@ cascade. Mitigations in this module:
 from __future__ import annotations
 
 import os
+import ssl
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import Final, Optional
 
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtGui import QImage, QPixmap
+
+
+_ssl_ctx_lock = threading.Lock()
+_ssl_ctx: Optional[ssl.SSLContext] = None
+
+
+def _ssl_context() -> ssl.SSLContext:
+    """A verifying SSL context backed by certifi's CA bundle.
+
+    The default context relies on OpenSSL's compiled-in cert paths, which are
+    frequently absent on macOS (the python.org framework build needs
+    `Install Certificates.command`, and PyInstaller-frozen apps may not ship a
+    default cert.pem). When they're missing, every HTTPS fetch dies with
+    `CERTIFICATE_VERIFY_FAILED` and portraits never load. The app already
+    bundles certifi, so we use it explicitly. Cached (and built once) because
+    create_default_context is not free and workers call this concurrently.
+    Falls back to the default context if certifi is unavailable.
+    """
+    global _ssl_ctx
+    if _ssl_ctx is None:
+        with _ssl_ctx_lock:
+            if _ssl_ctx is None:
+                try:
+                    import certifi
+                    _ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+                except Exception:
+                    _ssl_ctx = ssl.create_default_context()
+    return _ssl_ctx
 
 
 POSE_NAMES: Final = (
@@ -165,9 +194,13 @@ class RenditionPoseFetcher(QObject):
             req = urllib.request.Request(
                 url, headers={"User-Agent": "ToonTown MultiTool"}
             )
-            with urllib.request.urlopen(req, timeout=10) as resp:
+            with urllib.request.urlopen(req, timeout=10, context=_ssl_context()) as resp:
                 data = resp.read()
-        except Exception:
+        except Exception as exc:
+            # Surface the cause instead of failing silently: a bare swallow here
+            # hid a CERTIFICATE_VERIFY_FAILED for ages (see _ssl_context).
+            print(f"[Rendition] fetch failed for {dna}/{pose}: "
+                  f"{type(exc).__name__}: {exc}")
             self._bytes_ready.emit(dna, pose, None)
             return
         # Write to disk before signaling so a same-thread reader sees the
