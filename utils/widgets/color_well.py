@@ -3,6 +3,7 @@ from typing import Optional
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QWidget, QPushButton, QHBoxLayout
+from utils.saved_colors import SavedColorsStore
 from utils.widgets.color_picker_overlay import ColorPickerOverlay
 
 class ColorWell(QWidget):
@@ -11,7 +12,7 @@ class ColorWell(QWidget):
     def __init__(self, current: Optional[str] = None, *, saved_store, parent=None):
         super().__init__(parent)
         self._current = current
-        self._store = saved_store
+        self._store = saved_store if saved_store is not None else SavedColorsStore(None)
         lay = QHBoxLayout(self); lay.setContentsMargins(0,0,0,0)
         self._btn = QPushButton(); self._btn.setFixedSize(46, 30); self._btn.setCursor(Qt.PointingHandCursor)
         self._btn.clicked.connect(self._open_picker)

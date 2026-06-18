@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from utils.widgets.toon_customization_sections import PRESET_SWATCHES
+from utils.widgets.color_constants import PRESET_SWATCHES
 
 _PRESETS = list(PRESET_SWATCHES[:5])
 

@@ -29,3 +29,19 @@ def test_well_mirrors_swatchrow_api(qapp):
     assert picks[-1] is None and w.current() is None
     w.set_current("#abcdef")                # programmatic: no emit
     assert w.current() == "#abcdef" and picks[-1] is None   # still the prior emit
+
+
+def test_well_none_store_opens_picker_without_crash(qapp):
+    """ColorWell(saved_store=None) must coerce None to an in-memory store and
+    open the picker without raising."""
+    from utils.widgets.color_well import ColorWell
+    from utils.widgets.color_picker_overlay import ColorPickerOverlay
+    parent = QWidget(); parent.show()
+    w = ColorWell(current="#ff0000", saved_store=None, parent=parent)
+    # Store must be a live SavedColorsStore, not None.
+    from utils.saved_colors import SavedColorsStore
+    assert isinstance(w._store, SavedColorsStore)
+    # Opening the picker must not raise; a ColorPickerOverlay child is created.
+    w._open_picker()
+    overlays = [c for c in parent.findChildren(ColorPickerOverlay)]
+    assert len(overlays) >= 1

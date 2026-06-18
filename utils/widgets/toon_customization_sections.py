@@ -25,19 +25,9 @@ from PySide6.QtWidgets import (
 )
 
 from utils.toon_pattern_assets import PATTERN_NAMES
+from utils.widgets.color_constants import PRESET_SWATCHES
+from utils.widgets.color_well import ColorWell
 from utils.widgets.pose_thumb_states import paint_shimmer, paint_failed_mark
-# ColorWell is imported lazily inside the constructors that need it to
-# avoid a circular import: color_picker_overlay imports PRESET_SWATCHES
-# from this module, so a top-level ColorWell import here would form a cycle.
-
-
-# Curated 12-color palette. Order matters - first row primaries, second
-# row accents, third row neutrals.
-PRESET_SWATCHES = (
-    "#e74a4a", "#e7894a", "#d9a04e", "#e6d35a",
-    "#56c856", "#4ae7d9", "#4a8fe7", "#4a5fe7",
-    "#b04ae7", "#e74ab0", "#7a7a8a", "#1a1d29",
-)
 
 
 class _SwatchRow(QWidget):
@@ -116,7 +106,6 @@ class _SimpleColorSection(QWidget):
     color_changed = Signal(object)  # str or None
 
     def __init__(self, label: str, current: Optional[str], saved_store=None, parent=None):
-        from utils.widgets.color_well import ColorWell
         super().__init__(parent)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(8, 8, 8, 8)
@@ -529,7 +518,6 @@ class _PoseAdjustView(QWidget):
     def _build_ui(
         self, zoom: float, off_x: float, off_y: float, rot: float, saved_store=None,
     ) -> None:
-        from utils.widgets.color_well import ColorWell
         outer = QVBoxLayout(self)
         outer.setContentsMargins(8, 8, 8, 8)
         outer.setSpacing(8)
@@ -1054,7 +1042,6 @@ class _PortraitSection(QWidget):
     circle_outline_changed = Signal(object, object)  # (color hex or None, width key str)
 
     def __init__(self, current: dict, saved_store=None, parent=None):
-        from utils.widgets.color_well import ColorWell
         super().__init__(parent)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(8, 8, 8, 8)
