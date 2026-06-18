@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from PySide6.QtCore import QPoint, QRect, QSize, Qt, Signal
+from PySide6.QtCore import QPoint, QRect, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPixmap
 from PySide6.QtWidgets import (
     QColorDialog,
@@ -205,31 +205,67 @@ class _PoseTile(QFrame):
     """One pose option. Shows a circular crop of the fetched pixmap on
     a slot-default-grey backdrop, with the pose name underneath. Click
     to select. The tile itself does NOT apply user customizations -
-    the user is choosing the pose so we show it raw."""
+    the user is choosing the pose so we show it raw.
+
+    State machine:
+      loading - shimmer animates, no pixmap yet; clicks are ignored.
+      loaded  - pixmap displayed; click emits clicked_pose.
+      failed  - X mark shown (timeout or explicit failure); click emits
+                retry_requested and returns to loading.
+    """
 
     clicked_pose = Signal(str)
+    retry_requested = Signal(str)
 
     _TILE_W = 160  # wide enough for the bigger label-free thumbnail
     _TILE_H = 110  # box + small padding only; labels live in tooltips
     _BOX = 100
     _CIRCLE_INSET = 10  # circle margin inside the box (scaled with _BOX)
     _BACKDROP = QColor("#4a4a4a")
+    _LOAD_TIMEOUT_MS = 8000  # max wait before tile transitions to failed
+
+    # Internal state sentinels (not part of the public API).
+    _ST_LOADING = "loading"
+    _ST_LOADED = "loaded"
+    _ST_FAILED = "failed"
 
     def __init__(self, pose: str, parent=None):
         super().__init__(parent)
         self._pose = pose
         self._pixmap: Optional[QPixmap] = None
         self._selected = False
+        self._state = self._ST_LOADING
+        self._shimmer_phase: float = 0.0
+
         self.setFixedSize(QSize(self._TILE_W, self._TILE_H))
         self.setCursor(Qt.PointingHandCursor)
         self.setFrameShape(QFrame.NoFrame)
         self.setToolTip(pose)
+
+        # Shimmer animation - advance phase at ~25 fps.
+        self._shimmer_timer = QTimer(self)
+        self._shimmer_timer.setInterval(40)
+        self._shimmer_timer.timeout.connect(self._on_shimmer_tick)
+        self._shimmer_timer.start()
+
+        # Load timeout - if no pixmap arrives in time, flip to failed.
+        self._timeout_timer = QTimer(self)
+        self._timeout_timer.setSingleShot(True)
+        self._timeout_timer.setInterval(self._LOAD_TIMEOUT_MS)
+        self._timeout_timer.timeout.connect(self._on_load_timeout)
+        self._timeout_timer.start()
 
     # -- Public API ----------------------------------------------------------
 
     @property
     def pose(self) -> str:
         return self._pose
+
+    def is_loading(self) -> bool:
+        return self._state == self._ST_LOADING
+
+    def is_failed(self) -> bool:
+        return self._state == self._ST_FAILED
 
     def is_selected(self) -> bool:
         return self._selected
@@ -238,7 +274,28 @@ class _PoseTile(QFrame):
         return self._pixmap is not None and not self._pixmap.isNull()
 
     def set_pixmap(self, pixmap: Optional[QPixmap]) -> None:
-        self._pixmap = pixmap
+        """Provide (or clear) the thumbnail pixmap.
+
+        If *pixmap* is a valid, non-null pixmap: transition to loaded.
+        If *pixmap* is None or null: reset to loading (restart shimmer +
+        timeout), used by the refresh flow.
+        """
+        if pixmap is not None and not pixmap.isNull():
+            self._pixmap = pixmap
+            self._state = self._ST_LOADED
+            self._stop_loading_timers()
+        else:
+            self._pixmap = None
+            self._state = self._ST_LOADING
+            self._shimmer_phase = 0.0
+            self._shimmer_timer.start()
+            self._timeout_timer.start()
+        self.update()
+
+    def set_failed(self) -> None:
+        """Transition to failed state - stops animation and shows the X mark."""
+        self._state = self._ST_FAILED
+        self._stop_loading_timers()
         self.update()
 
     def set_selected(self, on: bool) -> None:
@@ -246,14 +303,52 @@ class _PoseTile(QFrame):
             self._selected = on
             self.update()
 
+    # -- Click logic (shared by mouse event and test hook) -------------------
+
+    def _handle_click(self) -> None:
+        """Apply the click action appropriate for the current state."""
+        if self._state == self._ST_LOADED:
+            self.clicked_pose.emit(self._pose)
+        elif self._state == self._ST_FAILED:
+            # Retry: transition back to loading, then notify the section.
+            self._pixmap = None
+            self._state = self._ST_LOADING
+            self._shimmer_phase = 0.0
+            self._shimmer_timer.start()
+            self._timeout_timer.start()
+            self.update()
+            self.retry_requested.emit(self._pose)
+        # LOADING: ignore the click (no-op).
+
+    def _emit_click_for_test(self) -> None:
+        """Test hook - invoke the same logic a left-click would trigger."""
+        self._handle_click()
+
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
-            self.clicked_pose.emit(self._pose)
+            self._handle_click()
         super().mousePressEvent(event)
 
-    # -- Paint --------------------------------------------------------------
+    # -- Timer handlers ------------------------------------------------------
+
+    def _on_shimmer_tick(self) -> None:
+        self._shimmer_phase = (self._shimmer_phase + 0.025) % 1.0
+        self.update()
+
+    def _on_load_timeout(self) -> None:
+        """Called when the load timeout fires. If still loading, fail."""
+        if self._state == self._ST_LOADING:
+            self.set_failed()
+
+    def _stop_loading_timers(self) -> None:
+        self._shimmer_timer.stop()
+        self._timeout_timer.stop()
+
+    # -- Paint ---------------------------------------------------------------
 
     def paintEvent(self, event):
+        from utils.widgets.pose_thumb_states import paint_shimmer, paint_failed_mark
+
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
 
@@ -271,7 +366,7 @@ class _PoseTile(QFrame):
         p.setBrush(self._BACKDROP)
         p.drawEllipse(circle)
 
-        if self.has_pixmap():
+        if self._state == self._ST_LOADED and self.has_pixmap():
             path = QPainterPath()
             path.addEllipse(circle)
             p.save()
@@ -285,9 +380,10 @@ class _PoseTile(QFrame):
             dy = circle.y() + (circle.height() - scaled.height()) // 2
             p.drawPixmap(dx, dy, scaled)
             p.restore()
-        else:
-            p.setPen(QColor("#9a9aa8"))
-            p.drawText(circle, Qt.AlignCenter, "…")
+        elif self._state == self._ST_LOADING:
+            paint_shimmer(p, circle, self._shimmer_phase)
+        elif self._state == self._ST_FAILED:
+            paint_failed_mark(p, circle)
 
         p.end()
 
@@ -773,6 +869,7 @@ class _PoseSection(QWidget):
             tile = _PoseTile(pose)
             tile.set_selected(pose == self._current_pose)
             tile.clicked_pose.connect(self._on_tile_clicked)
+            tile.retry_requested.connect(self._on_tile_retry_requested)
             grid.addWidget(tile, idx // 3, idx % 3)
             self._tiles.append(tile)
         outer.addLayout(grid)
@@ -902,6 +999,13 @@ class _PoseSection(QWidget):
                 if pose == self._current_pose and self._adjust_view is not None:
                     self._adjust_view.set_pixmap(pixmap)
                 break
+
+    def _on_tile_retry_requested(self, pose: str) -> None:
+        """Re-request a single pose thumbnail after a tile timeout/failure."""
+        if not self._dna:
+            return
+        from utils.rendition_poses import RenditionPoseFetcher
+        RenditionPoseFetcher.instance().request(self._dna, pose)
 
     def _on_refresh_clicked(self) -> None:
         if not self._dna:
