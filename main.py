@@ -854,16 +854,19 @@ class MultiToonTool(QMainWindow):
     def changeEvent(self, event):
         super().changeEvent(event)
         if event.type() == QEvent.WindowStateChange and getattr(self, "_chrome", None) is not None:
-            if not self._perf_state_flush.isActive():
-                # First fire of a new gesture: open it and reset the counter.
-                self._perf_state_gid = perf_trace.begin_gesture("window_state")
-                self._perf_state_fires = 0
-            self._perf_state_fires += 1
-            perf_trace.mark("statechange_fires", self._perf_state_gid,
-                            self._perf_state_fires)
+            flush_timer = getattr(self, "_perf_state_flush", None)
+            if flush_timer is not None:
+                if not flush_timer.isActive():
+                    # First fire of a new gesture: open it and reset the counter.
+                    self._perf_state_gid = perf_trace.begin_gesture("window_state")
+                    self._perf_state_fires = 0
+                self._perf_state_fires += 1
+                perf_trace.mark("statechange_fires", self._perf_state_gid,
+                                self._perf_state_fires)
             self._apply_window_corner_state(self.isMaximized())
             # Restart the debounce; flush once the gesture settles.
-            self._perf_state_flush.start()
+            if flush_timer is not None:
+                flush_timer.start()
 
     # ── Chip Rail ──────────────────────────────────────────────────────────
 
