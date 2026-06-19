@@ -24,6 +24,7 @@ import os
 
 from PySide6.QtCore import (
     Qt, QSize, QRectF, QPointF, Property, QPropertyAnimation, QEasingCurve,
+    Signal, QTimer,
 )
 from PySide6.QtGui import (
     QColor, QFont, QPainter, QPainterPath, QPen, QPixmap, QLinearGradient,
@@ -35,6 +36,7 @@ from PySide6.QtWidgets import (
 
 from tabs.multitoon._layout_utils import clear_layout
 from utils.color_math import darken_rgb
+from utils.overlay.gestures import is_drag
 
 
 def _resolve_body_base(entry: dict, accent: QColor) -> QColor:
@@ -306,7 +308,12 @@ class _PortraitFrame(QWidget):
 # ── Central emblem (app icon nested in the grid centre) ────────────────────
 class _Emblem(QWidget):
     """156px circle: opaque bg-app fill + app icon, with a pulsing blue ring
-    when broadcasting. Passive - reflects state only, never interactive."""
+    when broadcasting. Passive by default; call set_interactive(True) to enable
+    toggle/drag/resize gestures."""
+
+    toggle_requested = Signal()
+    move_requested = Signal()
+    resize_scrolled = Signal(int)
 
     _RING_MARGIN = 14  # room for the -4px ring + soft glow outside the disc
 
@@ -316,6 +323,18 @@ class _Emblem(QWidget):
         self.setFixedSize(side, side)
         self.setAttribute(Qt.WA_TransparentForMouseEvents)
         self.setStyleSheet("background: transparent;")
+        self._armed = False
+        self._dragging = False
+        self._press = None
+
+        # Single-shot dwell timer: fires after ~300ms hover to arm the emblem
+        # for scroll-to-resize. Created unconditionally; only started when
+        # interactive (enterEvent) so passive mode is unaffected.
+        self._dwell_timer = QTimer(self)
+        self._dwell_timer.setSingleShot(True)
+        self._dwell_timer.setInterval(300)
+        self._dwell_timer.timeout.connect(self._on_dwell_timeout)
+
         self._broadcasting = False
         self._bg_app = QColor("#1a1a1a")
         self._ring = QColor("#0077ff")
@@ -383,6 +402,52 @@ class _Emblem(QWidget):
     def stop(self) -> None:
         self._anim.stop()
 
+    # --- Interactivity ---
+
+    def set_interactive(self, on: bool) -> None:
+        """Enable (on=True) or disable (on=False) mouse interaction.
+        Default is passive (WA_TransparentForMouseEvents set)."""
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, not on)
+        self._armed = False
+
+    def _on_dwell_timeout(self) -> None:
+        self._armed = True
+        self.update()
+
+    def enterEvent(self, event):
+        self._dwell_timer.start()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._dwell_timer.stop()
+        self._armed = False
+        self.update()
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, event):
+        self._press = event.position().toPoint()
+        self._dragging = False
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._press is not None and not self._dragging:
+            if is_drag(self._press, event.position().toPoint()):
+                self._dragging = True
+                self.move_requested.emit()
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if not self._dragging:
+            self.toggle_requested.emit()
+        self._dragging = False
+        super().mouseReleaseEvent(event)
+
+    def wheelEvent(self, event):
+        if self._armed:
+            self.resize_scrolled.emit(1 if event.angleDelta().y() > 0 else -1)
+        else:
+            event.ignore()
+
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing, True)
@@ -419,6 +484,16 @@ class _Emblem(QWidget):
             scaled = pm.scaled(int(d), int(d), Qt.KeepAspectRatioByExpanding,
                                Qt.SmoothTransformation)
             p.drawPixmap(target, scaled, QRectF(scaled.rect()))
+
+        # Armed ring: thin static outer ring shown when dwell-armed for resize.
+        if self._armed:
+            p.setClipping(False)
+            armed_color = QColor(self._ring)
+            armed_color.setAlphaF(0.85)
+            p.setPen(QPen(armed_color, 2))
+            p.setBrush(Qt.NoBrush)
+            p.drawEllipse(QPointF(cx, cy), r + 9, r + 9)
+
         p.end()
 
 
