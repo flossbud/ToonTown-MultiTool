@@ -219,18 +219,31 @@ class OverlayGroupController:
     controller stays Framed (``is_transparent`` False, ``enter()`` returns
     ``False``).  The app is never left with a half-built overlay.
 
-    Real card widgets are NOT reparented here - that is Task 4.1b.  ``enter()``
-    drives the surface lifecycle with whatever surfaces the factory returns
-    (stub/empty in tests, real-but-empty overlay windows in production until the
-    reparent task lands).
+    Real card widgets (Task 4.1b): when a ``card_provider`` (the _CompactLayout)
+    is supplied, ``enter()`` reparents the REAL pinwheel cards + emblem into the
+    surfaces - capturing each widget's exact tab placement BEFORE host() so the
+    transaction can restore it - and ``leave()`` releases each widget from its
+    surface and restores it to that exact slot, then resets framed (scale-1.0)
+    metrics.  The fail-closed unwind returns every borrowed widget to the tab
+    before destroying the surfaces (a live card is never deleted or stranded).
+    When ``card_provider`` is None (the Task 3.2 orchestration tests), ``enter()``
+    builds EMPTY surfaces with no reparent, exactly as before.
     """
 
-    def __init__(self, window, backend=None, settings=None, surface_factory=None):
+    def __init__(self, window, backend=None, settings=None, surface_factory=None,
+                 card_provider=None):
         self._window = window
         self._backend = backend if backend is not None else get_overlay_backend()
         # Stored for Task 6.1 (anchor/scale persistence); unused in this task.
         self._settings = settings
         self._surface_factory = surface_factory or self._default_surface_factory
+        # The _CompactLayout (Task 4.1b). When present, enter() reparents the REAL
+        # pinwheel cards + emblem into the surfaces (and leave()/fail-closed
+        # restores them to the tab); when None, enter() builds EMPTY surfaces
+        # exactly as the Task 3.2 orchestration tests expect (no reparent). The
+        # provider must expose slot_widget(int) / emblem_widget() / capture_slot(w)
+        # -> record / restore_slot(record) / apply_metrics(CardMetrics).
+        self._card_provider = card_provider
 
         # Per-surface state: cards 0-3 then the emblem LAST.  Order is load
         # bearing: the emblem is built + shown last and raised above the cards
@@ -245,6 +258,11 @@ class OverlayGroupController:
         # Emblem-last is load bearing (built/shown/raised last for z-order).
         assert self._states[-1].is_emblem, "emblem must be the last surface state"
         self._surfaces: list = []          # parallel to _states; built on enter()
+        # Parallel to _surfaces when a card_provider is active: one
+        # (surface, SlotRecord) per reparented widget, captured BEFORE host() so
+        # leave()/fail-closed can restore each borrowed card/emblem to its EXACT
+        # tab placement. Empty when provider is None (no widgets borrowed).
+        self._captured: list = []
         # Surfaces whose release() failed during teardown: we KEEP a reference so
         # Python GC cannot destroy the parentless surface (which would delete the
         # still-hosted borrowed card). Leaks the surface to keep the card alive.
@@ -395,6 +413,86 @@ class OverlayGroupController:
                 self._orphans.append(surface)
 
     # ------------------------------------------------------------------
+    # Widget reparent (Task 4.1b): card_provider seam
+    # ------------------------------------------------------------------
+    def _provider_widget(self, state: SurfaceState):
+        """The REAL tab widget the surface for *state* will host.
+
+        Cards (slots 0-3) host the grid-managed card QFrame; the emblem state
+        hosts the manually-positioned emblem widget. Pulled from the provider
+        via small accessors so this module never reaches into _CompactLayout's
+        private _cells / _emblem internals.
+        """
+        provider = self._card_provider
+        if state.is_emblem:
+            return provider.emblem_widget()
+        return provider.slot_widget(state.surface_id)
+
+    def _restore_widgets(self, captured: list) -> None:
+        """Return every borrowed widget in *captured* to its EXACT tab slot.
+
+        release-before-restore: detach the widget from its surface FIRST, then
+        ``restore_slot`` it back into the tab (the card to its grid cell, the
+        emblem manual + raised). This is the critical fail-closed / leave step:
+        a borrowed LIVE card must never be deleted or stranded in a dead
+        surface. Each widget is independent (exception-isolated) so one failure
+        cannot orphan the rest; a surface whose release() raises is left for
+        _teardown to retain in _orphans (its widget may still be hosted, so the
+        surface must NOT be destroyed) rather than risk deleting the card.
+
+        No-op when *captured* is empty (the card_provider=None path), so the
+        Task 3.2 stub-surface flow is unchanged.
+        """
+        provider = self._card_provider
+        if provider is None:
+            return
+        for surface, record in captured:
+            # If release() raises the widget is still hosted: skip restore and
+            # let _teardown orphan the surface (deleting it would delete the
+            # borrowed card). restore_slot below re-parents the widget itself,
+            # so even a stale (host-raised) parent is corrected.
+            if not self._safe_call(surface, "release"):
+                continue
+            try:
+                provider.restore_slot(record)
+            except Exception:
+                # Defensive only: grid.removeWidget/addWidget (card) and
+                # setParent/setGeometry (emblem) do not raise for a valid widget.
+                # If one ever did, the widget was already released (parentless);
+                # as a LAST RESORT re-attach it to its captured parent so the
+                # borrowed card is returned to the tab's widget tree (never left
+                # floating/parentless, never deleted) - the next populate/relayout
+                # re-places it. Exact-cell can't be guaranteed when restore_slot
+                # itself (the exact-cell mechanism) is the failing step.
+                try:
+                    if record.parent is not None:
+                        record.widget.setParent(record.parent)
+                        # setParent hides the widget (Qt hides on reparent), so
+                        # restore its intrinsic visibility too - else the card is
+                        # back in the tab tree but stuck hidden.
+                        record.widget.setVisible(record.visible)
+                except Exception:
+                    pass
+
+    def _reset_provider_scale(self) -> None:
+        """Reset the tab's framed (scale-1.0) metrics after the cards return.
+
+        Spec section 5: leave (and the fail-closed unwind) restore NORMAL
+        metrics. This is a no-op for the framed look today, but matters once
+        Task 4.2 scales the hosted cards - the cards must come back at 1.0.
+        Guarded + lazy-imported so a metrics failure cannot abort the rest of
+        the restore/teardown. No-op when there is no provider.
+        """
+        provider = self._card_provider
+        if provider is None:
+            return
+        try:
+            from utils.overlay.card_metrics import CardMetrics
+            provider.apply_metrics(CardMetrics(1.0))
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
     def enter(self) -> bool:
@@ -413,6 +511,10 @@ class OverlayGroupController:
         if self._anchor == (0, 0):
             self._anchor = self._default_anchor()
         created: list = []
+        # (surface, SlotRecord) per reparented widget; stays empty in the
+        # card_provider=None path (no reparent), so that flow is unchanged.
+        captured: list = []
+        provider = self._card_provider
         minimized = False
         try:
             # Inside the try so a CardMetrics import/build failure is fail-closed too.
@@ -421,6 +523,16 @@ class OverlayGroupController:
                 surface = self._surface_factory(state)
                 created.append(surface)
                 rect = rects[self._key(state)]
+                # Provider mode: reparent the REAL card/emblem into this surface.
+                # Capture its exact tab placement BEFORE host() so a leave() or a
+                # fail-closed unwind can restore it byte-for-byte; record the
+                # (surface, record) pair so restoration knows which surface holds
+                # which widget. Reparent at the current scale (1.0); Task 4.2 owns
+                # the per-surface scale recompute.
+                if provider is not None:
+                    widget = self._provider_widget(state)
+                    captured.append((surface, provider.capture_slot(widget)))
+                    surface.host(widget)
                 surface.set_overlay_geometry(rect)
                 # show() MUST precede apply_shape(): the X11 ShapeInput needs a
                 # realized native handle (winId), which show() provides; shaping a
@@ -442,23 +554,41 @@ class OverlayGroupController:
             minimized = True
             self._window.showMinimized()
         except Exception:
-            # Fail-closed: unwind everything built so far and stay Framed.
+            # Fail-closed: return every borrowed widget to its EXACT tab slot
+            # FIRST (release from the surface, then restore_slot) so a live card
+            # is never deleted or stranded; THEN destroy the now-empty surfaces;
+            # reset framed (scale-1.0) metrics; restore the window. Stay Framed.
+            self._restore_widgets(captured)
             self._teardown(created)
+            self._reset_provider_scale()
             if minimized:
                 self._safe_call(self._window, "showNormal")
             self._surfaces = []
+            self._captured = []
             self._active = False
             return False
         self._surfaces = created
+        self._captured = captured
         self._active = True
         return True
 
     def leave(self) -> None:
-        """Tear down the cluster and restore the main window.  No-op if framed."""
+        """Restore the borrowed cards/emblem to the tab, tear down the cluster,
+        and restore the main window.  No-op if framed.
+
+        With a card_provider: first return each borrowed widget to its EXACT tab
+        slot (release-before-restore), then destroy the now-empty surfaces, then
+        reset framed (scale-1.0) metrics; finally showNormal + clear state. With
+        no provider (Task 3.2 stub flow) the restore/reset steps are no-ops, so
+        leave() is just teardown + restore as before.
+        """
         if not self._active:
             return
+        self._restore_widgets(self._captured)
         self._teardown(self._surfaces)
+        self._reset_provider_scale()
         self._surfaces = []
+        self._captured = []
         self._safe_call(self._window, "showNormal")
         self._active = False
 

@@ -1314,6 +1314,18 @@ class _CompactLayout(QWidget):
         self._emblem.move(int(gx - s / 2.0), int(gy - s / 2.0))
         self._emblem.raise_()
 
+    # ── Overlay / transparent-mode reparent accessors (Task 4.1b) ────────────
+    def slot_widget(self, slot: int) -> QWidget:
+        """The grid-managed card QFrame for `slot` (0-3) - the unit the overlay
+        controller hosts into a CardSurface on transparent-mode enter and
+        restores to the grid on leave. Pairs with capture_slot/restore_slot."""
+        return self._cells[slot]["cell"]
+
+    def emblem_widget(self) -> "_Emblem | None":
+        """The manually-positioned, raised emblem widget - hosted into the
+        EmblemSurface on enter and restored manual + raised on leave."""
+        return self._emblem
+
     # ── Overlay / transparent-mode geometry accessors ───────────────────────
     def card_body_paths(self):
         """Per-card painted body paths (rounded rect minus concave bite), in
