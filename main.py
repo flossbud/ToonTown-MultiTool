@@ -1904,12 +1904,30 @@ def _maybe_prompt_for_cc_install(main_window, settings_manager):
         settings_manager.set(CC_ENGINE_INSTALL_SET_HASH, current_set_hash)
 
 
+def _self_check_exit(code: int) -> None:
+    """Exit after a --self-check run.
+
+    On a SUCCESSFUL frozen macOS build, bypass interpreter finalization via
+    os._exit(0): the oracle's result is already known once _run_self_check
+    returns 0, and the frozen-bundle macOS teardown has a rare, CI-only native
+    finalization crash (Shiboken/PyObjC dtor ordering) that would otherwise fail
+    the gate AFTER success. Every other path -- source runs, non-macOS packages,
+    and ALL failures -- keeps normal sys.exit so genuine teardown regressions and
+    load errors stay visible. stdout/stderr are flushed first because os._exit
+    skips the normal buffer flush."""
+    sys.stdout.flush()
+    sys.stderr.flush()
+    if code == 0 and sys.platform == "darwin" and getattr(sys, "frozen", False):
+        os._exit(0)
+    sys.exit(code)
+
+
 if __name__ == "__main__":
     if "--self-check-keyring" in sys.argv:
         sys.exit(_run_self_check_keyring())
 
     if "--self-check" in sys.argv:
-        sys.exit(_run_self_check())
+        _self_check_exit(_run_self_check())
 
     if "--apply-installer-config" in sys.argv:
         # Invoked by the Windows Inno Setup installer's [Run] section to
