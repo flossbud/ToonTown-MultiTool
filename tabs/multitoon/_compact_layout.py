@@ -22,10 +22,11 @@ from __future__ import annotations
 
 import os
 from collections import OrderedDict
+from dataclasses import dataclass
 
 from PySide6.QtCore import (
-    Qt, QSize, QRectF, QPointF, Property, QPropertyAnimation, QEasingCurve,
-    Signal, QTimer,
+    Qt, QSize, QRect, QRectF, QPoint, QPointF, Property, QPropertyAnimation,
+    QEasingCurve, Signal, QTimer,
 )
 from PySide6.QtGui import (
     QColor, QFont, QPainter, QPainterPath, QPen, QPixmap, QLinearGradient,
@@ -605,6 +606,45 @@ class _Emblem(QWidget):
 def img_fmt():
     from PySide6.QtGui import QImage
     return QImage.Format_ARGB32
+
+
+# ── Slot save/restore (transparent-mode reparent foundation, Task 4.1b) ──────
+@dataclass
+class SlotRecord:
+    """Snapshot of a widget's EXACT place in the pinwheel, enough to reinsert it
+    byte-for-byte after a transactional reparent away (Task 4.1b reparents the
+    cards + emblem into per-window overlay surfaces on transparent-mode enter and
+    restores them to the tab on leave).
+
+    Two shapes, picked by a `kind` discriminator:
+      * "grid"   - a grid-managed card (one of the 4 QFrames): captured grid +
+        row/col/spans + the layout-item alignment, so restore re-inserts it at
+        the same cell.
+      * "manual" - the manually-positioned, raised emblem (NOT in the grid):
+        captured geometry + z-order, so restore re-parents it and restacks it
+        above the cards.
+
+    The record keeps a reference to the widget itself, so restore_slot needs only
+    the record. `size_policy` is held by value (a copied QSizePolicy) so a later
+    mutation of the live widget's policy cannot corrupt the snapshot.
+    """
+
+    widget: QWidget
+    kind: str                       # "grid" | "manual"
+    parent: "QWidget | None"
+    visible: bool
+    size_policy: QSizePolicy
+    # grid case
+    grid: "QGridLayout | None" = None
+    row: int = 0
+    col: int = 0
+    row_span: int = 1
+    col_span: int = 1
+    alignment: object = None        # Qt.Alignment captured from the layout item
+    # manual (emblem) case
+    geometry: "QRect | None" = None
+    pos: "QPoint | None" = None
+    raised: bool = False
 
 
 # ── The layout ─────────────────────────────────────────────────────────────
@@ -1305,6 +1345,103 @@ class _CompactLayout(QWidget):
             r = self._metrics.emblem / 2.0
             p.addEllipse(QPointF(cx, cy), r, r)
         return p
+
+    # ── Slot save/restore (foundation for the Task 4.1b reparent) ────────────
+    @staticmethod
+    def _is_topmost(widget: QWidget) -> bool:
+        """True if `widget` is the top-most among its parent's sibling widgets.
+        Qt keeps sibling widgets in stacking order in the parent's children
+        list, so the last QWidget child is the raised one."""
+        parent = widget.parentWidget()
+        if parent is None:
+            return False
+        siblings = [c for c in parent.children() if isinstance(c, QWidget)]
+        return bool(siblings) and siblings[-1] is widget
+
+    def capture_slot(self, widget: QWidget) -> SlotRecord:
+        """Snapshot `widget`'s exact place so restore_slot() can reinsert it
+        identically. Round-trips ANY of the pinwheel widgets - the 4 card
+        QFrames (grid-managed) and the emblem (manually positioned + raised).
+        The grid-vs-manual case is detected by membership in self._grid.
+
+        Captures, for a grid-managed widget: its grid + position
+        (row, col, rowSpan, colSpan via getItemPosition) + the layout-item
+        alignment, plus visibility + a copied size policy. For the manually
+        positioned emblem: its parent + geometry/pos + visibility + whether it
+        is raised above the cards, plus a copied size policy.
+
+        Scope (for Task 4.1b): this snapshot is PLACEMENT-only. It does NOT
+        capture interactivity (WA_TransparentForMouseEvents / the emblem's
+        set_interactive state) or attached QGraphicsEffects - those ride on the
+        widget across a reparent, and the emblem's interactivity toggle is
+        controller state the caller manages separately."""
+        parent = widget.parentWidget()
+        # QSizePolicy is a value type; copy it so a later mutation of the live
+        # widget's policy can't corrupt the captured snapshot.
+        size_policy = QSizePolicy(widget.sizePolicy())
+        # Capture the INTRINSIC hidden flag, not isVisible(): isVisible() is
+        # ancestor-dependent (False whenever any ancestor is hidden - e.g. the
+        # Multitoon tab page isn't current, or the main window is minimized, which
+        # is exactly the transparent-mode case). Pairing isVisible() with
+        # setVisible() on restore would explicitly hide a card that was only
+        # ancestor-hidden, leaving it stuck invisible. `not isHidden()` is the
+        # intrinsic state and is symmetric with setVisible().
+        visible = not widget.isHidden()
+
+        grid = self._grid
+        index = grid.indexOf(widget) if grid is not None else -1
+        if index >= 0:
+            row, col, row_span, col_span = grid.getItemPosition(index)
+            item = grid.itemAt(index)
+            alignment = item.alignment() if item is not None else Qt.Alignment()
+            return SlotRecord(
+                widget=widget, kind="grid", parent=parent, visible=visible,
+                size_policy=size_policy, grid=grid, row=row, col=col,
+                row_span=row_span, col_span=col_span, alignment=alignment,
+            )
+
+        # Manual case (the emblem): geometry + z-order, no layout.
+        return SlotRecord(
+            widget=widget, kind="manual", parent=parent, visible=visible,
+            size_policy=size_policy,
+            geometry=QRect(widget.geometry()), pos=QPoint(widget.pos()),
+            raised=self._is_topmost(widget),
+        )
+
+    def restore_slot(self, record: SlotRecord) -> None:
+        """Reinsert the widget captured by capture_slot() into its EXACT place.
+        Symmetric with capture_slot: capture(w) -> (reparent w away,
+        e.g. w.setParent(None)) -> restore leaves w exactly where it started.
+        Calling restore without reparenting away first is a safe near-no-op:
+        the widget is not duplicated in the grid and nothing errors."""
+        widget = record.widget
+        if record.kind == "grid":
+            grid = record.grid
+            if grid is not None:
+                # Idempotent: drop any existing layout item for this widget
+                # first so a restore-without-reparent can't create a duplicate
+                # grid item (removeWidget is a no-op when it isn't present).
+                grid.removeWidget(widget)
+                grid.addWidget(
+                    widget, record.row, record.col,
+                    record.row_span, record.col_span, record.alignment,
+                )
+            widget.setSizePolicy(record.size_policy)
+            widget.setVisible(record.visible)
+            return
+
+        # Manual case (the emblem): re-parent, restore geometry, restack.
+        if record.parent is not None:
+            widget.setParent(record.parent)
+        if record.geometry is not None:
+            widget.setGeometry(record.geometry)
+        elif record.pos is not None:
+            widget.move(record.pos)
+        widget.setSizePolicy(record.size_policy)
+        widget.setVisible(record.visible)
+        if record.raised:
+            # Keep the emblem above the cards (it nests in the carved centre).
+            widget.raise_()
 
     def showEvent(self, event):
         super().showEvent(event)
