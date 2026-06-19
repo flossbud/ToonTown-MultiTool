@@ -71,9 +71,55 @@ jobs:
           # Direct exec from the mount avoids the GUI translocation gate. This
           # is the authoritative hardened-runtime LOADING test (codesign
           # --verify only proves the signature, not that it loads).
+          #
+          # DIAGNOSTIC (temporary): a flaky non-zero exit (e.g. 16) appears AFTER
+          # the oracle prints "self-check OK", during frozen-bundle finalization,
+          # ONLY on the CI runner (8/8 clean locally on both arch slices). Loop
+          # the check and preserve faulthandler.log per iteration so a failing
+          # instance is captured; the next two steps gather the crash artifacts.
           DMG=$(ls dmg-in/ToonTownMultiTool-*.dmg | head -1)
           hdiutil attach "$DMG" -mountpoint /tmp/ttmt_dmg -nobrowse
           APP=$(ls -d /tmp/ttmt_dmg/*.app | head -1)
           codesign --verify --deep --strict --verbose=2 "$APP"
-          TTMT_NO_VENV_REEXEC=1 "$APP/Contents/MacOS/ToonTownMultiTool" --self-check
-          hdiutil detach /tmp/ttmt_dmg
+          DIAG="$RUNNER_TEMP/selfcheck-diag"
+          mkdir -p "$DIAG"
+          fail=0
+          for i in 1 2 3 4 5; do
+            export XDG_CACHE_HOME="$RUNNER_TEMP/cache-$i"
+            mkdir -p "$XDG_CACHE_HOME"
+            set +e
+            TTMT_NO_VENV_REEXEC=1 "$APP/Contents/MacOS/ToonTownMultiTool" --self-check
+            code=$?
+            set -e
+            echo "iteration $i: exit=$code"
+            echo "iter $i exit=$code" >> "$DIAG/exit_codes.txt"
+            cp -f "$XDG_CACHE_HOME/toontown-multitool/faulthandler.log" "$DIAG/faulthandler-$i.log" 2>/dev/null || true
+            if [ "$code" -ne 0 ]; then fail=1; fi
+          done
+          hdiutil detach /tmp/ttmt_dmg || true
+          echo "=== self-check exit codes ==="; cat "$DIAG/exit_codes.txt"
+          exit $fail
+
+      - name: Collect self-check crash diagnostics
+        if: always()
+        run: |
+          DIAG="$RUNNER_TEMP/selfcheck-diag"
+          mkdir -p "$DIAG/DiagnosticReports"
+          sleep 8   # let ReportCrash flush any crash report to disk
+          for d in "$HOME/Library/Logs/DiagnosticReports" "/Library/Logs/DiagnosticReports"; do
+            [ -d "$d" ] || continue
+            cp -f "$d"/*[Tt]oon[Tt]own* "$DIAG/DiagnosticReports/" 2>/dev/null || true
+            cp -f "$d"/Python* "$DIAG/DiagnosticReports/" 2>/dev/null || true
+            { echo "--- $d ---"; ls -lt "$d" 2>/dev/null | head -30; } >> "$DIAG/DiagnosticReports/listing.txt" || true
+          done
+          echo "=== captured faulthandler logs ==="
+          for f in "$DIAG"/faulthandler-*.log; do echo "--- $f ---"; cat "$f" 2>/dev/null || true; done
+          echo "=== crash reports captured ==="; ls -la "$DIAG/DiagnosticReports/" 2>/dev/null || true
+
+      - name: Upload self-check diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-selfcheck-diag
+          path: ${{ runner.temp }}/selfcheck-diag
+          if-no-files-found: warn
