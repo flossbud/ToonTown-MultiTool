@@ -818,6 +818,22 @@ class MultiToonTool(QMainWindow):
         The full-tree QWidget{} cascade is expensive, so skip it when neither
         the corner state nor the theme changed; theme/dark-light changes pass
         force=True to bypass the guard."""
+        # Transparent window mode: the central widget must NOT paint its opaque
+        # #app_card fill / `QWidget{background}` cascade, or it hides the window's
+        # translucency (the gaps would show the dark app bg, not the desktop).
+        # Routed through here (rather than a one-shot) so the resizes that scaling
+        # triggers can never silently restore the dark fill.
+        from utils.overlay.mode import WindowMode as _WindowMode
+        if getattr(self, "_mode_controller", None) is not None \
+                and self._mode_controller.mode() is _WindowMode.TRANSPARENT:
+            self.container.setStyleSheet(
+                "QWidget#app_card { background: transparent; border: none; } "
+                "QWidget { background: transparent; }")
+            _root = self.container.layout()
+            if _root is not None:
+                _root.setContentsMargins(0, 0, 0, 0)
+            self.clearMask()
+            return
         c = self._theme_colors()
         bg = c["bg_app"]
         native = bool(self.settings_manager.get("use_system_title_bar", False))

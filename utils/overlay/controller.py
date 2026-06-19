@@ -46,16 +46,20 @@ class WindowModeController(QObject):
         for name in _CHROME_ATTRS:
             getattr(self._win, name).hide()
         self._win.stack.setCurrentWidget(self._win.multitoon_tab)
-        self._apply_overlay()
+        # mode must be TRANSPARENT before _apply_overlay so the corner-state guard
+        # (which transparentizes the container) sees the right mode during entry.
         self._mode = WindowMode.TRANSPARENT
+        self._apply_overlay()
         self.mode_changed.emit(self._mode)
 
     def leave_transparent(self) -> None:
         if self._mode is WindowMode.FRAMED:
             return
+        # mode back to FRAMED before _remove_overlay so the forced corner-state
+        # call restores the normal opaque #app_card chrome.
+        self._mode = WindowMode.FRAMED
         self._remove_overlay()
         self._restore(self._snapshot or {})
-        self._mode = WindowMode.FRAMED
         self.mode_changed.emit(self._mode)
 
     # --- overlay hooks (Phase 3) ---
@@ -74,6 +78,11 @@ class WindowModeController(QObject):
         self._win.setWindowFlag(Qt.WindowStaysOnTopHint, True)
         self._win.setAttribute(Qt.WA_TranslucentBackground, True)
         self._win.setMinimumSize(0, 0)
+        # Transparentize the container (#app_card) so the window's translucency
+        # shows through the gaps instead of the dark app background.
+        _corner = getattr(self._win, "_apply_window_corner_state", None)
+        if _corner is not None:
+            _corner(self._win.isMaximized(), force=True)
         self._win.show()
         self._backend.set_overlay_hints(self._win)
         self._win.resize(self._host.size())
@@ -92,6 +101,10 @@ class WindowModeController(QObject):
         self._win.setWindowFlags(self._overlay_state["flags"])
         self._win.setMinimumSize(self._overlay_state["min_size"])
         self._win.stack.show()
+        # Restore the normal opaque #app_card chrome (mode is FRAMED again now).
+        _corner = getattr(self._win, "_apply_window_corner_state", None)
+        if _corner is not None:
+            _corner(self._win.isMaximized(), force=True)
         self._win.show()
 
     def update_region(self, badge_rect=None) -> None:
