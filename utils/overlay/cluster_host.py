@@ -16,7 +16,7 @@ MARGIN = 28  # room for glow halos + transient scale badge
 
 
 class ClusterHost(QGraphicsView):
-    def __init__(self, content, parent=None):
+    def __init__(self, content, content_size=None, parent=None):
         super().__init__(parent)
         self._scale = 1.0
         self.setFrameShape(QGraphicsView.NoFrame)
@@ -29,6 +29,10 @@ class ClusterHost(QGraphicsView):
         self._scene = QGraphicsScene(self)
         self._scene.setBackgroundBrush(Qt.transparent)
         self._proxy = self._scene.addWidget(content)
+        if content_size is not None:
+            # Preserve the size the framed layout gave the cluster; once reparented
+            # into the proxy the widget would otherwise collapse to its size hint.
+            self._proxy.resize(content_size.width(), content_size.height())
         # SPIKE-PROVEN (2026-06-19): translucency needs ALL THREE layers transparent.
         # The view paints through a viewport widget, and the proxy treats `content` as a
         # top-level widget - each paints the dark palette background in the gaps otherwise.

@@ -532,6 +532,10 @@ class _CompactLayout(QWidget):
         # Grid host holds the painted glow layer, the 2x2 cards, and the centre
         # emblem. The grid's inner margin gives each painted halo room to fade.
         self._grid_host = QWidget()
+        # Defeat the app-global `QWidget { background-color }` rule so the cluster
+        # container is transparent in the floating overlay (no visible change in
+        # framed mode, where it sits over the dark app background anyway).
+        self._grid_host.setStyleSheet("background: transparent;")
         grid = QGridLayout(self._grid_host)
         grid.setContentsMargins(GLOW_ROOM, GLOW_ROOM, GLOW_ROOM, GLOW_ROOM)
         grid.setSpacing(GRID_GAP)

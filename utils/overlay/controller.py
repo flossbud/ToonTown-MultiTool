@@ -67,7 +67,8 @@ class WindowModeController(QObject):
             "min_size": self._win.minimumSize(),
             "compact_index": mt._stack.indexOf(compact),
         }
-        self._host = ClusterHost(compact)
+        captured = compact.size()
+        self._host = ClusterHost(compact, content_size=captured)
         self._win.stack.hide()
         self._win.container.layout().addWidget(self._host)
         self._win.setWindowFlag(Qt.WindowStaysOnTopHint, True)
