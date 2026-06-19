@@ -935,6 +935,33 @@ class InputService(QObject):
             and self._focused_strict_delivery_safe()
         )
 
+    def _focused_native_key_suppressed(self, key) -> bool:
+        """Whether the grabber actually WITHHELD `key` from the focused window's
+        native delivery, so re-synthesizing it to the focused toon is correct
+        (the synth is the only delivery) rather than a double.
+
+        A full-grab grabber (X11, needs_focused_passthrough=True) redirects ALL
+        keyboard events, so every key is withheld. A NON-EXCLUSIVE grab
+        (macOS/Win32, needs_focused_passthrough=False) withholds only the keys it
+        actively suppresses; action keys that map to a logical action but are not
+        in the suppressed movement set (jump=space, tasks=t) reach the focused
+        window natively and must NOT be re-synthesized. should_suppress() is the
+        same predicate the OS hook uses to decide native suppression, so it is the
+        authoritative per-key truth. Defaults to True (pre-fix synth behavior) for
+        a missing grabber/predicate so this never strands the focused toon."""
+        grabber = self._key_grabber
+        if grabber is None:
+            return True
+        if getattr(grabber, "needs_focused_passthrough", True):
+            return True
+        should_suppress = getattr(grabber, "should_suppress", None)
+        if should_suppress is None:
+            return True
+        try:
+            return bool(should_suppress(key))
+        except Exception:
+            return True
+
     def _capability_for(self, win_id):
         """UIPI delivery capability for a window id, via the injected provider.
         Never raises; never coerces win_id (the provider owns conversion)."""
@@ -1159,17 +1186,23 @@ class InputService(QObject):
                 outbound = self.keymap_manager.get_key_for_action(toon_game, 0, toon_action)
                 if outbound is None:
                     continue
-                if win == active_window and not self._strict_ttr_active() \
-                        and not self._strict_drain_active:
-                    # Strict not enforceable (toggle OFF or grabs not installed):
-                    # the focused window still receives its native key -> skip.
-                    # When strict IS active, route_all suppressed the native key
-                    # for matched AND mismatched keys, so synthesize to the
-                    # focused toon too (no key == outbound skip).
+                if win == active_window and not self._strict_drain_active:
+                    # The focused window keeps its NATIVE key unless the grabber
+                    # actually withheld it; re-synthesizing a key it received
+                    # natively double-delivers (the macOS/Win32 "space/t double,
+                    # wasd don't" bug). Skip the focused-toon synth when strict is
+                    # not enforceable (toggle OFF or grabs not installed) OR this
+                    # specific key was not suppressed. A full-grab grabber (X11)
+                    # withholds every key, so its synth stays unconditional; a
+                    # non-exclusive grab (macOS/Win32) withholds only the keys it
+                    # suppresses, so action keys like jump/space reach the focused
+                    # window natively and must not be re-synthesized.
                     # _strict_drain_active bypasses this skip during an explicit
                     # synchronous drain on toggle-off / capture-open, so the
                     # focused toon's synthesized keydown is paired with a keyup.
-                    continue
+                    if not self._strict_ttr_active() \
+                            or not self._focused_native_key_suppressed(key):
+                        continue
                 keysym = self._resolve_keysym(outbound)
                 if keysym:
                     self._send_via_backend(action, win, keysym)

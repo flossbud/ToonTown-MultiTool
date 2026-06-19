@@ -35,6 +35,12 @@ class MacOSBackend:
         self._delivery = None             # MacOSMouseDelivery (lazy)
         self._echo_ledger = None          # shared EchoLedger (Task 8 wires it; the engine records into it)
         self._bindings = {}               # wid_str -> (pid, wid, psn, owner, creation) for the live gesture
+        # Modifier keysyms TTMT is currently forwarding as HELD keys (e.g.
+        # {"Shift_L"}). macOS CGEvents carry explicit per-event modifier flags, so
+        # every forwarded keydown/keyup must re-assert the held modifiers or the
+        # target sees the new key with no modifiers and the held Shift "dies". A
+        # key SET (not a bitmask) so Shift_L+Shift_R refcount independently.
+        self._held_mod_keys: set[str] = set()
 
     def _quartz(self):
         import Quartz
@@ -43,6 +49,7 @@ class MacOSBackend:
     def connect(self):
         Q = self._quartz()
         self._source = Q.CGEventSourceCreate(Q.kCGEventSourceStateCombinedSessionState)
+        self._held_mod_keys = set()       # a fresh connection starts with no held modifiers
 
     def disconnect(self):
         self._source = None
@@ -51,6 +58,7 @@ class MacOSBackend:
         self._access = {"t": -1.0, "ok": True}
         self._drop_delivery()             # drop engine (clears any sticky delivery fault)
         self._bindings = {}
+        self._held_mod_keys = set()       # never let a stale held modifier survive a reconnect
 
     def _drop_delivery(self):
         """Release the current delivery engine, shutting down a _RemoteDelivery's helper
@@ -166,13 +174,29 @@ class MacOSBackend:
         return self._post_to_pid(pid, vk, down, flags)
 
     def send_keydown(self, win_id_str, keysym_str, state=0) -> bool:
-        return self._send_once(win_id_str, keysym_str, True)
+        # A modifier keydown joins the held set BEFORE we compute flags, so its
+        # own event already carries the flag (e.g. Shift_L down -> FLAG_SHIFT).
+        if _mk.flag_for_modifier_keysym(keysym_str) is not None:
+            self._held_mod_keys.add(keysym_str)
+        return self._send_once(
+            win_id_str, keysym_str, True,
+            _mk.flags_for_modifiers(self._held_mod_keys))
 
     def send_keyup(self, win_id_str, keysym_str, state=0) -> bool:
-        return self._send_once(win_id_str, keysym_str, False)
+        # A modifier keyup leaves the held set BEFORE we compute flags, so the
+        # release event reflects the state AFTER release (Shift_L up -> flag
+        # cleared, unless the other Shift is still held).
+        if _mk.flag_for_modifier_keysym(keysym_str) is not None:
+            self._held_mod_keys.discard(keysym_str)
+        return self._send_once(
+            win_id_str, keysym_str, False,
+            _mk.flags_for_modifiers(self._held_mod_keys))
 
     def send_key(self, win_id_str, keysym_str, modifiers=None) -> bool:
-        flags = _mk.flags_for_modifiers(modifiers)
+        # One-shot combo: ride along any currently-held modifiers so it cannot
+        # clobber a held Shift, but do NOT mutate the held set (this is a tap
+        # path, not a hold path).
+        flags = _mk.flags_for_modifiers(self._held_mod_keys) | _mk.flags_for_modifiers(modifiers)
         vk = _mk.cgkeycode_for_keysym(keysym_str)
         if vk is None:
             return False

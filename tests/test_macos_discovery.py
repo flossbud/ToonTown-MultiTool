@@ -232,3 +232,97 @@ def test_get_active_window_id_returns_none_on_error(monkeypatch):
 def test_process_bundle_id_returns_none_on_error(monkeypatch):
     # Not importable on non-macOS, and AppKit can raise; must yield None.
     assert md.process_bundle_id(-1) is None
+
+
+# ── Bundle-id refinement: launcher exclusion + authoritative engine id ────────
+# Both the TTR engine and the Toontown Launcher run under owner name
+# "Toontown Rewritten", so owner-name matching alone counts the launcher as a
+# game window. The fix refines owner-name candidates by bundle id (resolved via
+# NSRunningApplication, permission-free) AFTER identify_game_windows().
+
+# Real identities observed live (TTMT + launcher + game window up):
+_ENGINE = "com.toontownrewritten.engine"
+_LAUNCHER = "com.toontownrewritten.Toontown-Launcher"
+
+
+def test_is_launcher_bundle_tokenized():
+    assert md._is_launcher_bundle(_LAUNCHER) is True          # trailing "-launcher"
+    assert md._is_launcher_bundle("com.x.Game-Launcher") is True
+    assert md._is_launcher_bundle("com.x.game_launcher") is True
+    assert md._is_launcher_bundle("com.x.launcher.thing") is True  # ".launcher"
+    assert md._is_launcher_bundle(_ENGINE) is False
+    assert md._is_launcher_bundle("com.x.relauncherator") is False  # not tokenized
+    assert md._is_launcher_bundle(None) is False
+    assert md._is_launcher_bundle("") is False
+
+
+def test_refine_game_ttr_engine_kept():
+    assert md._refine_game("ttr", _ENGINE) == "ttr"          # authoritative engine id
+
+
+def test_refine_game_ttr_launcher_dropped():
+    assert md._refine_game("ttr", _LAUNCHER) is None         # launcher is never a game
+
+
+def test_refine_game_ttr_unresolved_bundle_fails_open():
+    # NSRunningApplication could not resolve a bundle id -> never strand the real
+    # game on a transient resolver miss.
+    assert md._refine_game("ttr", None) == "ttr"
+
+
+def test_refine_game_ttr_resolved_unknown_bundle_rejected():
+    # Strict policy for games WITH an authoritative engine id: a resolved,
+    # non-engine TTR bundle (e.g. a future news/patch window) is NOT the game.
+    assert md._refine_game("ttr", "com.toontownrewritten.news") is None
+
+
+def test_refine_game_cc_owner_name_fallback_kept():
+    # CC has no known native macOS engine bundle, so owner-name identification is
+    # the authority; an unknown/None bundle must still count as CC.
+    assert md._refine_game("cc", None) == "cc"
+    assert md._refine_game("cc", "com.corporateclash.client") == "cc"
+
+
+def test_refine_game_cc_launcher_dropped():
+    assert md._refine_game("cc", "com.corporateclash.Game-Launcher") is None
+
+
+def test_refine_records_drops_launcher_keeps_engine():
+    recs = [
+        _gw(94197, 15053, "ttr", "Toontown Rewritten"),
+        _gw(94209, 15071, "ttr", "Toontown Rewritten"),
+    ]
+    bundles = {94197: _ENGINE, 94209: _LAUNCHER}
+    out = md._refine_records(recs, lambda pid: bundles.get(pid))
+    assert [(r.window_id, r.game, r.bundle_id) for r in out] == [
+        (15053, "ttr", _ENGINE),
+    ]
+
+
+def test_enumerate_uncached_excludes_launcher(monkeypatch):
+    """End-to-end through the enumerator (mocking only the window-server read):
+    the launcher window is excluded, the engine window kept and bundle-stamped."""
+    info = [
+        _w(94197, 15053, "Toontown Rewritten", w=1440, h=928),
+        _w(94209, 15071, "Toontown Rewritten", w=874, h=653),
+    ]
+    monkeypatch.setattr(md, "_raw_window_info", lambda: info)
+    bundles = {94197: _ENGINE, 94209: _LAUNCHER}
+    monkeypatch.setattr(md, "process_bundle_id", lambda pid: bundles.get(pid))
+    recs = md._enumerate_game_windows_uncached()
+    assert [(r.window_id, r.game) for r in recs] == [(15053, "ttr")]
+    assert recs[0].bundle_id == _ENGINE
+
+
+def test_get_window_geometry_fresh_excludes_launcher(monkeypatch):
+    """Click-sync's fresh-geometry path sees the SAME refined truth (no launcher)."""
+    info = [
+        _w(94197, 15053, "Toontown Rewritten", x=0, y=0, w=1440, h=928),
+        _w(94209, 15071, "Toontown Rewritten", x=5, y=5, w=874, h=653),
+    ]
+    monkeypatch.setattr(md, "_raw_window_info", lambda: info)
+    monkeypatch.setattr(
+        md, "process_bundle_id",
+        lambda pid: _ENGINE if pid == 94197 else _LAUNCHER)
+    assert md.get_window_geometry_fresh("15053") == (0, 0, 1440, 928)
+    assert md.get_window_geometry_fresh("15071") is None  # launcher excluded
