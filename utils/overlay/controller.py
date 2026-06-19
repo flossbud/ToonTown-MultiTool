@@ -72,7 +72,12 @@ class WindowModeController(QObject):
             "compact_index": mt._stack.indexOf(compact),
         }
         captured = compact.size()
+        # QGraphicsScene.addWidget requires a TOP-LEVEL widget; _compact is a child of
+        # mt._stack, so detach it first or the embed silently fails (blank cluster).
+        mt._stack.removeWidget(compact)
+        compact.setParent(None)
         self._host = ClusterHost(compact, content_size=captured)
+        compact.show()  # the embedded widget starts hidden; show it so the proxy paints it
         self._win.stack.hide()
         self._win.container.layout().addWidget(self._host)
         self._win.setWindowFlag(Qt.WindowStaysOnTopHint, True)
@@ -92,6 +97,9 @@ class WindowModeController(QObject):
         self._backend.clear_input_region(self._win)
         mt = self._win.multitoon_tab
         compact = mt._compact
+        # Release _compact from the proxy BEFORE deleting the host, else deleting the
+        # host destroys the embedded widget (the proxy owns its widget).
+        self._host._proxy.setWidget(None)
         mt._stack.insertWidget(self._overlay_state["compact_index"], compact)
         mt._stack.setCurrentWidget(compact)
         self._win.container.layout().removeWidget(self._host)
