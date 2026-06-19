@@ -484,6 +484,22 @@ class MultiToonTool(QMainWindow):
         self._maybe_kick_off_startup_check()
         self._update_hint_icon()
 
+        # Transparent overlay mode: wire backend + controller, then connect the
+        # central emblem so clicking/dragging/scrolling it drives mode transitions.
+        from utils.overlay.backend import get_overlay_backend
+        from utils.overlay.controller import WindowModeController
+        from utils.overlay.mode import WindowMode as _WindowMode
+        self._overlay_backend = get_overlay_backend()
+        self._mode_controller = WindowModeController(self, self._overlay_backend, self.settings_manager)
+        emblem = self.multitoon_tab._compact._emblem
+        if self._mode_controller.can_enter():
+            emblem.set_interactive(True)
+            emblem.toggle_requested.connect(self._mode_controller.toggle)
+            emblem.move_requested.connect(self._on_emblem_move)
+            emblem.resize_scrolled.connect(self._mode_controller.set_scale_by_notches)
+        else:
+            emblem.setToolTip("Transparent mode requires the X11 Shape extension")
+
         # Install event filter to globally block tooltips when hints disabled
         QApplication.instance().installEventFilter(self)
 
@@ -521,6 +537,16 @@ class MultiToonTool(QMainWindow):
         # The Multitoon tab uses a single fluid pinwheel layout now; there is
         # no separate full layout to warm.
         self._maybe_show_admin_notice()
+
+    # ── Overlay mode helpers ─────────────────────────────────────────────────
+
+    def _on_emblem_move(self) -> None:
+        """Start a system window drag when the emblem is dragged in transparent mode."""
+        from utils.overlay.mode import WindowMode as _WindowMode
+        if self._mode_controller.mode() is _WindowMode.TRANSPARENT:
+            wh = self.windowHandle()
+            if wh is not None:
+                wh.startSystemMove()
 
     def _capture_multitool_window_id(self):
         # xdotool is X11-only; the gate is on the Qt platform, not the

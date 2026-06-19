@@ -167,3 +167,10 @@ def test_leave_restores_cluster_to_stack(host):
         "_compact must be back in multitoon_tab._stack after leave"
     )
     assert c._host is None
+
+
+def test_set_scale_by_notches_is_noop_in_framed_mode(host):
+    """set_scale_by_notches must be a safe no-op (no AttributeError) when in framed mode."""
+    c = WindowModeController(host, _StubBackend(), settings=None)
+    assert c._host is None
+    c.set_scale_by_notches(1)  # must not raise

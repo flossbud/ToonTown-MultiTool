@@ -105,7 +105,12 @@ class WindowModeController(QObject):
         self._backend.apply_input_region(self._win, region)
 
     def set_scale_by_notches(self, notches: int) -> None:
-        """Step the cluster scale by `notches` wheel notches, resize the window, and reapply region."""
+        """Step the cluster scale by `notches` wheel notches, resize the window, and reapply region.
+
+        Safe no-op when called in framed mode (self._host is None), so a stray
+        scroll before entering transparent mode cannot raise AttributeError."""
+        if self._host is None:
+            return
         self._host.set_scale(step_scale(self._host.current_scale(), notches))
         self._win.resize(self._host.size())
         self.update_region()
