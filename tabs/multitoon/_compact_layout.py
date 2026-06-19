@@ -950,6 +950,34 @@ class _CompactLayout(QWidget):
         self._emblem.move(int(gx - s / 2.0), int(gy - s / 2.0))
         self._emblem.raise_()
 
+    # ── Overlay / transparent-mode geometry accessors ───────────────────────
+    def card_body_paths(self):
+        """Per-card painted body paths (rounded rect minus concave bite), in
+        grid-host coordinates. Used by the overlay controller to build the
+        X11 ShapeInput input region. Pure read — no behavior change."""
+        from PySide6.QtGui import QTransform
+        paths = []
+        for cell in self._cells:
+            frame = cell["cell"]           # QFrame — the grid child
+            cutout = cell["cfg"]["cutout"] # "tl"/"tr"/"bl"/"br"
+            geo = frame.geometry()         # position within _grid_host
+            local = _card_body_path(geo.width(), geo.height(), cutout)
+            paths.append(local * QTransform().translate(geo.x(), geo.y()))
+        return paths
+
+    def emblem_path(self):
+        """Emblem disc path in grid-host coordinates. Used alongside
+        card_body_paths() to compose the full input region. Pure read."""
+        from PySide6.QtGui import QPainterPath
+        from PySide6.QtCore import QPointF
+        p = QPainterPath()
+        if self._emblem is not None:
+            geo = self._emblem.geometry()
+            cx = geo.x() + geo.width() / 2.0
+            cy = geo.y() + geo.height() / 2.0
+            p.addEllipse(QPointF(cx, cy), EMBLEM / 2.0, EMBLEM / 2.0)
+        return p
+
     def showEvent(self, event):
         super().showEvent(event)
         self._relayout_all()
