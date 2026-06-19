@@ -19,6 +19,22 @@ def _path_to_region(path: QPainterPath, transform: QTransform) -> QRegion:
     return QRegion(polygon)
 
 
+def device_input_region(path: QPainterPath, dpr: float) -> QRegion:
+    """Return a device-pixel QRegion for *path* given device-pixel ratio *dpr*.
+
+    Scales the continuous path by *dpr* BEFORE polygonizing so the polygon is
+    already at device resolution.  This is the single logical->device conversion
+    point; callers stay in logical coords and never see device pixels directly.
+
+    Guards against a non-positive *dpr* (which Qt never reports, but would
+    collapse or reflect the shape): a bad ratio falls back to 1.0 so the shape
+    renders at logical size rather than vanishing - never crash the overlay.
+    """
+    if dpr <= 0:
+        dpr = 1.0
+    return _path_to_region(path, QTransform().scale(dpr, dpr))
+
+
 def build_input_region(
     card_paths: list[QPainterPath],
     emblem_path: QPainterPath,
