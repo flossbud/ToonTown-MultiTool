@@ -53,6 +53,26 @@ _CORNER = {"tl": (0, 0), "tr": (1, 0), "bl": (0, 1), "br": (1, 1)}
 _BACKEND = X11OverlayBackend()
 
 
+def set_skip_taskbar(widget) -> None:
+    """EWMH: hide an independent overlay window from the taskbar + pager. `Qt.Tool` alone does
+    NOT do this for a parentless top-level on KWin, so set _NET_WM_STATE_SKIP_TASKBAR explicitly."""
+    d = getattr(_BACKEND, "_display", None)
+    if d is None:
+        return
+    try:
+        from Xlib import X
+        from Xlib.protocol import event as xevent
+        win = d.create_resource_object("window", int(widget.winId()))
+        a = d.intern_atom
+        ev = xevent.ClientMessage(
+            window=win, client_type=a("_NET_WM_STATE"),
+            data=(32, [1, a("_NET_WM_STATE_SKIP_TASKBAR"), a("_NET_WM_STATE_SKIP_PAGER"), 1, 0]))
+        d.screen().root.send_event(ev, event_mask=X.SubstructureRedirectMask | X.SubstructureNotifyMask)
+        d.flush()
+    except Exception as exc:
+        log(f"skip_taskbar FAILED: {exc!r}")
+
+
 def card_body_path(w: float, h: float, cutout: str, radius: float, cutout_r: float) -> QPainterPath:
     """Rounded rect minus a concave bite at the `cutout` corner (matches the real card body)."""
     body = QPainterPath()
@@ -73,6 +93,7 @@ class Surface(QWidget):
         self.cutout = cutout
         self.label = label
         self._scale = 1.0
+        self._taskbar_skipped = False
         self.setWindowFlags(
             Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool
             | Qt.WindowDoesNotAcceptFocus
@@ -204,6 +225,9 @@ class Group:
         for surf in self._all():
             if not surf.isVisible():
                 surf.show()
+            if not surf._taskbar_skipped:
+                set_skip_taskbar(surf)
+                surf._taskbar_skipped = True
             surf.reshape()
         self.emblem.raise_()  # emblem above cards
         log(f"applied scale={s:.2f} center=({cx},{cy})")
