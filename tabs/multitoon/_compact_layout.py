@@ -21,6 +21,7 @@ Both are expressed by the per-card lit/dimmed treatment driven from
 from __future__ import annotations
 
 import os
+from collections import OrderedDict
 
 from PySide6.QtCore import (
     Qt, QSize, QRectF, QPointF, Property, QPropertyAnimation, QEasingCurve,
@@ -53,32 +54,36 @@ def _resolve_body_base(entry: dict, accent: QColor) -> QColor:
 
 
 # ── Geometry ────────────────────────────────────────────────────────────────
-# CardMetrics(1.0) is the canonical source for the card SIZING constants: at
-# scale 1.0 it yields exactly the integer values the design handoff specified,
-# so framed mode is byte-for-byte unchanged. The card-radius / border / cutout
-# radii stay as literals here because they are consumed by the card paint code
-# (parametrized separately); the remaining seven sizing values are sourced from
-# the value object so it is the single source of truth.
+# CardMetrics(1.0) is the canonical source for EVERY card dimension: at scale
+# 1.0 it yields exactly the integer values the design handoff specified, so
+# framed mode is byte-for-byte unchanged. The module-level constants below are
+# the canonical 1.0 exports (a couple of paths + tests read them); a live card
+# instance sources its sizes from its OWN CardMetrics (default 1.0) so it can be
+# re-scaled via apply_metrics() without touching this module.
 _METRICS = CardMetrics(1.0)
 
-CARD_RADIUS = 20
-CARD_BORDER = 5
+CARD_RADIUS = _METRICS.card_radius
+CARD_BORDER = _METRICS.card_border
+# NOTE: CARD_PAD / CARD_MIN_H / GRID_GAP / CTRL_W have no live consumer inside
+# this module anymore (the layout reads self._metrics.*), but they are the
+# canonical 1.0 exports asserted by tests/test_compact_layout_paths.py
+# (the value-object-as-single-source-of-truth contract); keep them.
 CARD_PAD = _METRICS.card_pad
 CARD_MIN_H = _METRICS.card_min_h
 GRID_GAP = _METRICS.grid_gap
 
 PORTRAIT = _METRICS.portrait
 PORTRAIT_RING = _METRICS.portrait_ring
-CUTOUT_R = 96
+CUTOUT_R = _METRICS.cutout_r
 EMBLEM = _METRICS.emblem
 
 CTRL_W = _METRICS.ctrl_w
-TOGGLE_W, TOGGLE_H = 34, 36
-KA_PILL_H = 38
-KEYSET_H = 38
-KA_DOT = 28              # lightning toggle diameter inside the KA pill
+TOGGLE_W, TOGGLE_H = _METRICS.toggle_w, _METRICS.toggle_h
+KA_PILL_H = _METRICS.ka_pill_h
+KEYSET_H = _METRICS.keyset_h
+KA_DOT = _METRICS.ka_dot              # lightning toggle diameter inside the KA pill
 
-STATUS_TOP_MARGIN = 14
+STATUS_TOP_MARGIN = _METRICS.status_top_margin
 
 # Net-new design constant: keep-alive orange (the theme's `accent_orange`
 # #c47a2a reads too brown for this surface). Border tint pairs with it.
@@ -102,19 +107,24 @@ def _app_icon_path() -> str:
     return os.path.join(here, "assets", "multitool.png")
 
 
-def _card_body_path(w: float, h: float, cutout: str) -> QPainterPath:
-    """The card body outline: a 20px rounded rect with one corner carved out by
-    a 96px circle. Shared by the card background and the glow so both follow the
-    exact same shape (including the concave cutout)."""
+def _card_body_path(
+    w: float, h: float, cutout: str,
+    radius: float = CARD_RADIUS, cutout_r: float = CUTOUT_R,
+) -> QPainterPath:
+    """The card body outline: a rounded rect with one corner carved out by a
+    circle. Shared by the card background and the glow so both follow the exact
+    same shape (including the concave cutout). `radius` and `cutout_r` are
+    sourced from a CardMetrics so the shape scales with the card; the defaults
+    are the canonical 1.0 values (rounded corner 20px, concave bite 96px)."""
     rect = QRectF(0.5, 0.5, w - 1, h - 1)
     rounded = QPainterPath()
-    rounded.addRoundedRect(rect, CARD_RADIUS, CARD_RADIUS)
+    rounded.addRoundedRect(rect, radius, radius)
     corners = {
         "tl": QPointF(0, 0), "tr": QPointF(w, 0),
         "bl": QPointF(0, h), "br": QPointF(w, h),
     }
     cut = QPainterPath()
-    cut.addEllipse(corners[cutout], CUTOUT_R, CUTOUT_R)
+    cut.addEllipse(corners[cutout], cutout_r, cutout_r)
     return rounded.subtracted(cut)
 
 
@@ -123,27 +133,46 @@ def _card_body_path(w: float, h: float, cutout: str) -> QPainterPath:
 # output is clipped to the cell's square bounds, leaving sharp square corners
 # behind the rounded card. A painted pixmap has no such clipping, so the glow
 # follows the rounded body + concave cutout exactly.
-GLOW_BLUR = 22          # gaussian radius (smaller = tighter, less visible)
+GLOW_BLUR = _METRICS.glow_blur   # gaussian radius (smaller = tighter, less visible)
 GLOW_ALPHA = 105        # peak accent alpha of the glow source (lower = fainter)
 # Padding the grid keeps around the cards so the painted halo has room to fade.
+# GLOW_ROOM is the grid host's *layout headroom* (a contents margin around the
+# whole 2x2 cluster), not a per-card geometry. It is deliberately NOT scaled by
+# apply_metrics: in framed mode apply_metrics is only ever called at scale 1.0,
+# and in overlay mode each card lives in its own surface that supplies its own
+# margin, so a scaled grid margin would have no consumer. The glow *blur* (the
+# halo softness) IS scaled per CardMetrics.glow_blur, which is the proportional
+# part that actually shows.
 GLOW_ROOM = 34
 
+# Bound the _GlowLayer pixmap cache (LRU). Each entry is a blurred QPixmap keyed
+# by (size, cutout, accent, radius, cutout_r, blur); without a cap, repeated
+# rescale / theme / accent changes would accumulate large pixmaps unbounded. 24
+# keeps a generous working set (4 cards x a few recent scales/accents) while the
+# least-recently-used entries are evicted.
+_GLOW_CACHE_MAX = 24
 
-def _make_glow_pixmap(w: int, h: int, cutout: str, accent: QColor):
+
+def _make_glow_pixmap(
+    w: int, h: int, cutout: str, accent: QColor,
+    radius: float = CARD_RADIUS, cutout_r: float = CUTOUT_R, blur: float = GLOW_BLUR,
+):
     """Return (pixmap, pad): the card shape filled with `accent` and gaussian-
     blurred on a transparent canvas padded by `pad`. Blit at (x - pad, y - pad)
-    to lay a soft accent halo around the card that follows its exact shape."""
+    to lay a soft accent halo around the card that follows its exact shape. The
+    body radii + blur are sourced from a CardMetrics so the halo scales with the
+    card (defaults reproduce the canonical 1.0 halo)."""
     from PySide6.QtWidgets import (
         QGraphicsScene, QGraphicsBlurEffect, QGraphicsPixmapItem,
     )
-    pad = int(GLOW_BLUR * 2.5)
+    pad = int(blur * 2.5)
     pw, ph = int(w + 2 * pad), int(h + 2 * pad)
     src = QPixmap(pw, ph)
     src.fill(Qt.transparent)
     p = QPainter(src)
     p.setRenderHint(QPainter.Antialiasing, True)
     p.setPen(Qt.NoPen)
-    path = _card_body_path(w, h, cutout)
+    path = _card_body_path(w, h, cutout, radius, cutout_r)
     path.translate(pad, pad)
     col = QColor(accent)
     col.setAlpha(GLOW_ALPHA)
@@ -152,9 +181,9 @@ def _make_glow_pixmap(w: int, h: int, cutout: str, accent: QColor):
 
     scene = QGraphicsScene()
     item = QGraphicsPixmapItem(src)
-    blur = QGraphicsBlurEffect()
-    blur.setBlurRadius(GLOW_BLUR)
-    item.setGraphicsEffect(blur)
+    blur_eff = QGraphicsBlurEffect()
+    blur_eff.setBlurRadius(blur)
+    item.setGraphicsEffect(blur_eff)
     scene.addItem(item)
     out = QPixmap(pw, ph)
     out.fill(Qt.transparent)
@@ -175,7 +204,15 @@ class _GlowLayer(QWidget):
         self.setAttribute(Qt.WA_TransparentForMouseEvents)
         self.setStyleSheet("background: transparent;")
         self._cards = []   # [{"x","y","pm","pad"}]
-        self._cache = {}   # (w,h,cutout,accent_rgba) -> (pixmap, pad)
+        # LRU cache of blurred halo pixmaps, bounded to _GLOW_CACHE_MAX entries
+        # so repeated rescale / theme / accent churn cannot accumulate large
+        # QPixmaps without limit. Key: (w,h,cutout,accent_rgba,radius,cutout_r,blur).
+        self._cache: "OrderedDict" = OrderedDict()
+        self._blur = GLOW_BLUR
+
+    def set_blur(self, blur: float) -> None:
+        """Set the gaussian halo radius (scaled per CardMetrics.glow_blur)."""
+        self._blur = blur
 
     def set_cards(self, specs) -> None:
         cards = []
@@ -185,11 +222,19 @@ class _GlowLayer(QWidget):
                 continue
             rw, rh = ((w + 7) // 8) * 8, ((h + 7) // 8) * 8   # round so drags reuse cache
             accent = QColor(s["accent"])
-            key = (rw, rh, s["cutout"], accent.rgba())
+            radius = s.get("radius", CARD_RADIUS)
+            cutout_r = s.get("cutout_r", CUTOUT_R)
+            key = (rw, rh, s["cutout"], accent.rgba(), radius, cutout_r, self._blur)
             entry = self._cache.get(key)
             if entry is None:
-                entry = _make_glow_pixmap(rw, rh, s["cutout"], accent)
+                entry = _make_glow_pixmap(
+                    rw, rh, s["cutout"], accent, radius, cutout_r, self._blur
+                )
                 self._cache[key] = entry
+                if len(self._cache) > _GLOW_CACHE_MAX:
+                    self._cache.popitem(last=False)   # evict least-recently used
+            else:
+                self._cache.move_to_end(key)          # mark most-recently used
             pm, pad = entry
             cards.append({"x": s["x"], "y": s["y"], "pm": pm, "pad": pad})
         self._cards = cards
@@ -229,6 +274,11 @@ class _QuadCardBackground(QWidget):
         self._accent = QColor("#555555")
         self._body: QColor | None = None
         self._dimmed = True
+        # Painted-body radii + border width, sourced from a CardMetrics so the
+        # shape scales with the card (defaults = canonical 1.0 values).
+        self._radius = CARD_RADIUS
+        self._cutout_r = CUTOUT_R
+        self._border = CARD_BORDER
 
     def configure(
         self, accent: QColor, dimmed: bool, body: "QColor | None" = None
@@ -238,8 +288,18 @@ class _QuadCardBackground(QWidget):
         self._dimmed = bool(dimmed)
         self.update()
 
+    def apply_metrics(self, metrics) -> None:
+        """Re-source the painted-body radii + border from `metrics` and repaint.
+        Idempotent; the colour/dim state set by configure() is preserved."""
+        self._radius = metrics.card_radius
+        self._cutout_r = metrics.cutout_r
+        self._border = metrics.card_border
+        self.update()
+
     def _body_path(self) -> QPainterPath:
-        return _card_body_path(self.width(), self.height(), self._cutout)
+        return _card_body_path(
+            self.width(), self.height(), self._cutout, self._radius, self._cutout_r
+        )
 
     def paintEvent(self, event):
         if self.width() <= 0 or self.height() <= 0:
@@ -269,7 +329,7 @@ class _QuadCardBackground(QWidget):
         p.save()
         p.setClipPath(path)
         p.setBrush(Qt.NoBrush)
-        p.setPen(QPen(border, CARD_BORDER * 2))
+        p.setPen(QPen(border, self._border * 2))
         p.drawPath(path)
         p.restore()
         p.end()
@@ -282,7 +342,11 @@ class _PortraitFrame(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedSize(PORTRAIT, PORTRAIT)
+        # Diameter + ring width source from a CardMetrics so the frame scales
+        # (defaults = canonical 1.0 values: 172px disc, 4px ring).
+        self._size = PORTRAIT
+        self._ring_w = PORTRAIT_RING
+        self.setFixedSize(self._size, self._size)
         self.setStyleSheet("background: transparent;")
         self._ring = QColor("#555555")
         self._dimmed = True
@@ -292,24 +356,33 @@ class _PortraitFrame(QWidget):
         self._dimmed = bool(dimmed)
         self.update()
 
+    def apply_metrics(self, metrics) -> None:
+        """Re-size the frame + ring width from `metrics` and repaint. The host
+        (the portrait badge inset) must be re-fit by the caller via
+        host_geometry()."""
+        self._size = metrics.portrait
+        self._ring_w = metrics.portrait_ring
+        self.setFixedSize(self._size, self._size)
+        self.update()
+
     def host_geometry(self) -> tuple[int, int, int, int]:
-        inset = PORTRAIT_RING
-        return (inset, inset, PORTRAIT - 2 * inset, PORTRAIT - 2 * inset)
+        inset = self._ring_w
+        return (inset, inset, self._size - 2 * inset, self._size - 2 * inset)
 
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing, True)
-        cx = cy = PORTRAIT / 2.0
+        cx = cy = self._size / 2.0
         # Dark inner background (rgba(0,0,0,0.22)).
         p.setPen(Qt.NoPen)
         p.setBrush(QColor(0, 0, 0, 56))
         p.drawEllipse(QPointF(cx, cy), cx - 0.5, cy - 0.5)
-        # 4px accent ring on the outer edge.
+        # accent ring on the outer edge.
         ring = darken_rgb(self._ring, 0.62) if self._dimmed else self._ring
-        pen = QPen(ring, PORTRAIT_RING)
+        pen = QPen(ring, self._ring_w)
         p.setPen(pen)
         p.setBrush(Qt.NoBrush)
-        r = (PORTRAIT - PORTRAIT_RING) / 2.0
+        r = (self._size - self._ring_w) / 2.0
         p.drawEllipse(QPointF(cx, cy), r, r)
         p.end()
 
@@ -325,10 +398,17 @@ class _Emblem(QWidget):
     resize_scrolled = Signal(int)
 
     _RING_MARGIN = 14  # room for the -4px ring + soft glow outside the disc
+    _BASE_ICON_INSET = 8  # app-icon inset inside the disc at scale 1.0
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        side = EMBLEM + 2 * self._RING_MARGIN
+        # Disc diameter + ring margin + icon inset source from a CardMetrics so
+        # the emblem scales (defaults = canonical 1.0: 156px disc, 14 margin).
+        self._d = EMBLEM
+        self._ring_margin = self._RING_MARGIN
+        self._icon_inset = self._BASE_ICON_INSET
+        self._scale = 1.0  # decorative ring offsets + pen widths scale with this
+        side = self._d + 2 * self._ring_margin
         self.setFixedSize(side, side)
         self.setAttribute(Qt.WA_TransparentForMouseEvents)
         self.setStyleSheet("background: transparent;")
@@ -408,6 +488,18 @@ class _Emblem(QWidget):
                 self._pulse = 1.0
         self.update()
 
+    def apply_metrics(self, metrics) -> None:
+        """Re-size the emblem disc + ring margin + icon inset from `metrics` and
+        repaint. The app-icon pixmaps are re-scaled at paint time (no rebuild),
+        so this is cheap and idempotent."""
+        self._d = metrics.emblem
+        self._ring_margin = metrics.icon_px(self._RING_MARGIN)
+        self._icon_inset = metrics.icon_px(self._BASE_ICON_INSET)
+        self._scale = metrics.scale
+        side = self._d + 2 * self._ring_margin
+        self.setFixedSize(side, side)
+        self.update()
+
     def stop(self) -> None:
         self._anim.stop()
 
@@ -462,19 +554,22 @@ class _Emblem(QWidget):
         p.setRenderHint(QPainter.Antialiasing, True)
         p.setRenderHint(QPainter.SmoothPixmapTransform, True)
         cx = cy = self.width() / 2.0
-        r = EMBLEM / 2.0
+        r = self._d / 2.0
 
         # Pulsing ring + soft glow just outside the disc (broadcasting only).
+        # Offsets + pen widths scale with the emblem so the decorative extent
+        # stays inside the (scaled) ring margin at every scale (no clipping).
         if self._broadcasting:
+            ring_off = 4 * self._scale
             glow = QColor(self._ring)
             glow.setAlphaF(0.55 * self._pulse)
-            p.setPen(QPen(glow, 8))
+            p.setPen(QPen(glow, 8 * self._scale))
             p.setBrush(Qt.NoBrush)
-            p.drawEllipse(QPointF(cx, cy), r + 4, r + 4)
+            p.drawEllipse(QPointF(cx, cy), r + ring_off, r + ring_off)
             ring = QColor(self._ring)
             ring.setAlphaF(self._pulse)
-            p.setPen(QPen(ring, 2))
-            p.drawEllipse(QPointF(cx, cy), r + 4, r + 4)
+            p.setPen(QPen(ring, 2 * self._scale))
+            p.drawEllipse(QPointF(cx, cy), r + ring_off, r + ring_off)
 
         # Opaque bg-app disc so the carved card cutouts read as a clean ring.
         p.setPen(Qt.NoPen)
@@ -484,8 +579,8 @@ class _Emblem(QWidget):
         # App icon, inset 8px, clipped circular.
         pm = self._icon if self._broadcasting else self._icon_grey
         if not pm.isNull():
-            inset = 8
-            d = EMBLEM - 2 * inset
+            inset = self._icon_inset
+            d = self._d - 2 * inset
             clip = QPainterPath()
             clip.addEllipse(QPointF(cx, cy), d / 2.0, d / 2.0)
             p.setClipPath(clip)
@@ -497,11 +592,12 @@ class _Emblem(QWidget):
         # Armed ring: thin static outer ring shown when dwell-armed for resize.
         if self._armed:
             p.setClipping(False)
+            armed_off = 9 * self._scale
             armed_color = QColor(self._ring)
             armed_color.setAlphaF(0.85)
-            p.setPen(QPen(armed_color, 2))
+            p.setPen(QPen(armed_color, 2 * self._scale))
             p.setBrush(Qt.NoBrush)
-            p.drawEllipse(QPointF(cx, cy), r + 9, r + 9)
+            p.drawEllipse(QPointF(cx, cy), r + armed_off, r + armed_off)
 
         p.end()
 
@@ -528,6 +624,8 @@ class _CompactLayout(QWidget):
         self._emblem: _Emblem | None = None
         self._glow: _GlowLayer | None = None
         self._grid_host: QWidget | None = None
+        self._grid: QGridLayout | None = None
+        self._outer: QVBoxLayout | None = None
         self._build_structure()
         self.populate()
 
@@ -541,6 +639,7 @@ class _CompactLayout(QWidget):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(8, 6, 8, 8)
         outer.setSpacing(0)
+        self._outer = outer   # scaled by apply_metrics (8,6,8,8 at scale 1.0)
 
         # Grid host holds the painted glow layer, the 2x2 cards, and the centre
         # emblem. The grid's inner margin gives each painted halo room to fade.
@@ -550,6 +649,7 @@ class _CompactLayout(QWidget):
         # framed mode, where it sits over the dark app background anyway).
         self._grid_host.setStyleSheet("background: transparent;")
         grid = QGridLayout(self._grid_host)
+        self._grid = grid
         grid.setContentsMargins(GLOW_ROOM, GLOW_ROOM, GLOW_ROOM, GLOW_ROOM)
         grid.setSpacing(self._metrics.grid_gap)
         for col in range(2):
@@ -674,6 +774,11 @@ class _CompactLayout(QWidget):
             "cell": cell,
             "glow_host": glow_host,
             "bg": bg,
+            "content": content,      # card content QVBoxLayout (card_pad margins)
+            "ctrl_col": ctrl_col,    # controls column QVBoxLayout (scaled spacing)
+            "body_row": body_row,    # portrait+controls row (scaled gap)
+            "meta_col": meta_col,    # name+stats column (scaled spacing)
+            "ctrl_wrap": ctrl_wrap,  # fixed-width controls column (ctrl_w)
             "portrait_frame": portrait_frame,
             "toggle_row": toggle_row,
             "ka_pill": ka_pill,
@@ -731,26 +836,21 @@ class _CompactLayout(QWidget):
         cfg = cell["cfg"]
         align = Qt.AlignRight if not cfg["left"] else Qt.AlignLeft
 
-        # Portrait: host the shared 172px badge inside the ring frame.
+        # Portrait: host the shared portrait badge inside the ring frame.
+        # (Its fixed size is set by _size_cell, from the current metrics.)
         badge = tab.slot_badges[i]
         badge.setMinimumSize(0, 0)
-        hx, hy, hw, hh = cell["portrait_frame"].host_geometry()
         badge.setParent(cell["portrait_frame"])
-        badge.setFixedSize(hw, hh)
-        badge.move(hx, hy)
         badge.set_border_color(None)
         badge.show()
 
         # Status dot overlays the portrait's outer-bottom corner.
         _, status_dot = tab.toon_labels[i]
-        status_dot.set_size(34)
         status_dot.setParent(cell["portrait_frame"])
 
         # Toggle row: enable / chat / click-sync.
         for b in (tab.toon_buttons[i], tab.chat_buttons[i], tab.click_sync_buttons[i]):
             b.setText("")
-            b.setFixedSize(TOGGLE_W, TOGGLE_H)
-            b.setIconSize(QSize(17, 17))
         clear_layout(cell["toggle_row"])
         cell["toggle_row"].addWidget(tab.toon_buttons[i])
         cell["toggle_row"].addWidget(tab.chat_buttons[i])
@@ -759,11 +859,7 @@ class _CompactLayout(QWidget):
 
         # Keep-alive pill leaf: lightning toggle + progress bar.
         ka_btn = tab.keep_alive_buttons[i]
-        ka_btn.setFixedSize(KA_DOT, KA_DOT)
-        ka_btn.setIconSize(QSize(13, 13))
         ka_bar = tab.ka_progress_bars[i]
-        ka_bar.setFixedHeight(9)
-        ka_bar.setMinimumWidth(40)
         ka_bar.setMaximumWidth(16777215)
         clear_layout(cell["ka_lay"])
         cell["ka_lay"].addWidget(ka_btn)
@@ -771,32 +867,19 @@ class _CompactLayout(QWidget):
 
         # Keyset stepper leaf (shared SetSelectorWidget).
         sel = tab.set_selectors[i]
-        sel.setFixedHeight(KEYSET_H)
         sel.setMinimumWidth(0)
         sel.setMaximumWidth(16777215)
-        if hasattr(sel, "set_paint_scale"):
-            sel.set_paint_scale(1.0)
         clear_layout(cell["sel_holder"])
         cell["sel_holder"].addWidget(sel)
 
         # Name leaf: name expands to the card's outer edge so it elides.
         name_label, _ = tab.toon_labels[i]
-        name_font = QFont()
-        name_font.setPixelSize(23)
-        name_font.setBold(True)
-        name_label.setFont(name_font)
         name_label.setAlignment(align | Qt.AlignVCenter)
         clear_layout(cell["name_holder"])
         cell["name_holder"].addWidget(name_label, 1)
 
         # Stats leaf: laff + beans, aligned to the outer edge.
         for lbl in (tab.laff_labels[i], tab.bean_labels[i]):
-            lbl.setFixedHeight(22)
-            lbl.setIconSize(QSize(16, 16))
-            stat_font = QFont()
-            stat_font.setPixelSize(15)
-            stat_font.setWeight(QFont.DemiBold)
-            lbl.setFont(stat_font)
             lbl.show()
         clear_layout(cell["stats_row"])
         if cfg["left"]:
@@ -807,6 +890,103 @@ class _CompactLayout(QWidget):
             cell["stats_row"].addStretch(1)
             cell["stats_row"].addWidget(tab.laff_labels[i])
             cell["stats_row"].addWidget(tab.bean_labels[i])
+
+        # Apply all metric-derived sizes/fonts/icons (defaults to scale 1.0).
+        self._size_cell(i, cell)
+
+    def _size_cell(self, i: int, cell: dict) -> None:
+        """Apply every metric-derived size / font / icon to slot `i`'s widgets
+        from self._metrics. Idempotent: re-run by apply_metrics() at any scale,
+        and once at the end of _populate_cell. Touches only the shared per-slot
+        widgets that the pinwheel already owns + the cell's own chrome, never the
+        structural layout nesting (so it is reparent-free)."""
+        tab = self._tab
+        m = self._metrics
+
+        # Cell envelope + content padding + controls column width.
+        cell["cell"].setMinimumSize(0, m.card_min_h)
+        pad = m.card_pad
+        cell["content"].setContentsMargins(pad, pad, pad, pad)
+        cell["ctrl_wrap"].setFixedWidth(m.ctrl_w)
+
+        # _CompactLayout-owned layout spacings that drive the card's proportions.
+        # Scaled here so apply_metrics re-applies them (at scale 1.0 each equals
+        # its build-time literal byte-for-byte). card_pad is handled above via
+        # m.card_pad; the outer cluster margins live in apply_metrics; GLOW_ROOM
+        # is intentionally NOT scaled (see its definition).
+        # DEFERRED to the scale-fidelity polish follow-up (NOT scaled here): the
+        # status-dot halo/pulse-glow offsets + cutout ring-width
+        # (utils/shared_widgets.py), the KA long-press charge-arc margin/pen, and
+        # the portrait-badge inset/border/pattern-tile/fallback-fonts
+        # (tabs/multitoon/_tab.py).
+        cell["content"].setSpacing(m.icon_px(12))
+        cell["toggle_row"].setSpacing(m.icon_px(9))
+        cell["ctrl_col"].setSpacing(m.icon_px(10))
+        cell["body_row"].setSpacing(m.icon_px(10))
+        cell["stats_row"].setSpacing(m.icon_px(16))
+        cell["meta_col"].setSpacing(m.icon_px(5))
+
+        # Painted body radii/border + portrait ring scale.
+        cell["bg"].apply_metrics(m)
+        cell["portrait_frame"].apply_metrics(m)
+
+        # Portrait badge fits inside the (now-resized) ring frame.
+        badge = tab.slot_badges[i]
+        hx, hy, hw, hh = cell["portrait_frame"].host_geometry()
+        badge.setFixedSize(hw, hh)
+        badge.move(hx, hy)
+
+        # Status dot diameter.
+        _, status_dot = tab.toon_labels[i]
+        status_dot.set_size(m.icon_px(34))
+
+        # Toggle buttons + their glyph icons.
+        ts = QSize(m.icon_px(17), m.icon_px(17))
+        for b in (tab.toon_buttons[i], tab.chat_buttons[i], tab.click_sync_buttons[i]):
+            b.setFixedSize(m.toggle_w, m.toggle_h)
+            b.setIconSize(ts)
+
+        # Keep-alive pill height + lightning dot + progress bar.
+        cell["ka_pill"].setFixedHeight(m.ka_pill_h)
+        # KA pill's own internal margins + spacing (layout-owned literals: 5/11
+        # margins, 9 spacing at scale 1.0) scale with the metric so the pill's
+        # interior keeps its proportions when rescaled.
+        cell["ka_lay"].setContentsMargins(m.icon_px(5), 0, m.icon_px(11), 0)
+        cell["ka_lay"].setSpacing(m.icon_px(9))
+        # Restyle the pill border-radius so it tracks the new height (stays a
+        # true capsule at non-1.0 scale; the radius is derived from m.ka_pill_h).
+        self._style_ka_pill(i)
+        ka_btn = tab.keep_alive_buttons[i]
+        ka_btn.setFixedSize(m.ka_dot, m.ka_dot)
+        ka_btn.setIconSize(QSize(m.icon_px(13), m.icon_px(13)))
+        ka_bar = tab.ka_progress_bars[i]
+        ka_bar.setFixedHeight(m.icon_px(9))
+        ka_bar.setMinimumWidth(m.icon_px(40))
+
+        # Keyset stepper height + its internal paint scale.
+        sel = tab.set_selectors[i]
+        sel.setFixedHeight(m.keyset_h)
+        if hasattr(sel, "set_paint_scale"):
+            sel.set_paint_scale(m.scale)
+
+        # Name font.
+        name_label, _ = tab.toon_labels[i]
+        name_font = QFont()
+        name_font.setPixelSize(round(m.font_pt(23)))
+        name_font.setBold(True)
+        name_label.setFont(name_font)
+
+        # Stats fonts + glyph icons + height cap.
+        stat_size = round(m.font_pt(15))
+        stat_icon = QSize(m.icon_px(16), m.icon_px(16))
+        stat_h = m.icon_px(22)
+        for lbl in (tab.laff_labels[i], tab.bean_labels[i]):
+            lbl.setFixedHeight(stat_h)
+            lbl.setIconSize(stat_icon)
+            stat_font = QFont()
+            stat_font.setPixelSize(stat_size)
+            stat_font.setWeight(QFont.DemiBold)
+            lbl.setFont(stat_font)
 
     # ── Brand / per-slot render ──────────────────────────────────────────────
     def set_card_brand(self, i: int, game: str | None, enabled: bool = False) -> None:
@@ -911,9 +1091,12 @@ class _CompactLayout(QWidget):
         cell = self._cells[i]
         ka_pill = cell.get("ka_pill")
         if ka_pill is not None:
+            # Radius tracks the (scaled) pill height so the capsule stays a true
+            # pill at every scale (1.0: round(38/2)==19, unchanged).
+            radius = round(self._metrics.ka_pill_h / 2)
             ka_pill.setStyleSheet(
                 f"QFrame#ka_pill_{i} {{ background: rgba(0,0,0,0.24);"
-                f" border: 1px solid rgba(0,0,0,0.30); border-radius: 19px; }}"
+                f" border: 1px solid rgba(0,0,0,0.30); border-radius: {radius}px; }}"
             )
 
     def _style_keyset(self, i: int) -> None:
@@ -977,6 +1160,51 @@ class _CompactLayout(QWidget):
         # offscreen QGraphicsOpacityEffect crash path).
         self._set_keep_alive_collapsed(not target_visible)
 
+    # ── Scale (transparent-mode resize) ──────────────────────────────────────
+    def apply_metrics(self, metrics) -> None:
+        """Recompute the whole card cluster's geometry from a single CardMetrics
+        at ANY scale (0.5-1.75), WITHOUT rebuilding the widget tree: mutate the
+        existing widgets' sizes/fonts/icons + the painted body-path radii, then
+        repaint. The structural nesting is never re-parented. Scale 1.0
+        reproduces the framed appearance byte-for-byte. Idempotent; safe to call
+        repeatedly (e.g. by the overlay controller across surfaces, Task 4.2)."""
+        self._metrics = metrics
+        # Inter-card grid spacing (the GLOW_ROOM grid margin is fixed by design;
+        # see its definition for why it is not scaled).
+        if self._grid is not None:
+            self._grid.setSpacing(metrics.grid_gap)
+        # Status bar's top margin scales too (it is a layout on the whole
+        # cluster, not per-cell, so it lives here rather than in _size_cell).
+        if getattr(self, "_status_host", None) is not None:
+            self._status_host.setContentsMargins(0, metrics.status_top_margin, 0, 0)
+        # Outer cluster content margins (the _CompactLayout's own QVBoxLayout):
+        # a layout-owned literal (8,6,8,8 at scale 1.0) that affects the cluster
+        # proportions, so it scales with the metric too.
+        if self._outer is not None:
+            self._outer.setContentsMargins(
+                metrics.icon_px(8), metrics.icon_px(6),
+                metrics.icon_px(8), metrics.icon_px(8),
+            )
+        # Per-cell sizes/fonts/icons + painted radii + portrait ring.
+        for i, cell in enumerate(self._cells):
+            self._size_cell(i, cell)
+        # Central emblem disc + glow halo softness.
+        if self._emblem is not None:
+            self._emblem.apply_metrics(metrics)
+        if self._glow is not None:
+            self._glow.set_blur(metrics.glow_blur)
+        # Force a synchronous layout pass before repositioning: changing fixed
+        # sizes / grid spacing only POSTS a layout request, so without this the
+        # manual bg/glow/status-dot positioning in _relayout_all could read
+        # stale cell geometry. Makes apply_metrics self-contained (the overlay
+        # controller, Task 4.2, can rely on geometry being current right after).
+        if self._grid is not None:
+            self._grid.activate()
+        # Reposition the painted backgrounds, status dots, glow + emblem at the
+        # new sizes, then repaint everything.
+        self._relayout_all()
+        self.update()
+
     # ── No-ops / lifecycle for the MultitoonTab contract ─────────────────────
     def deactivate(self) -> None:
         if self._emblem is not None:
@@ -1009,6 +1237,8 @@ class _CompactLayout(QWidget):
             specs.append({
                 "x": geo.x(), "y": geo.y(), "w": geo.width(), "h": geo.height(),
                 "cutout": cell["cfg"]["cutout"], "accent": QColor(cell["accent"]),
+                "radius": self._metrics.card_radius,
+                "cutout_r": self._metrics.cutout_r,
             })
         self._glow.set_cards(specs)
 
@@ -1028,9 +1258,10 @@ class _CompactLayout(QWidget):
             dot = self._tab.toon_labels[idx][1]
         if dot is None or dot.parentWidget() is not frame:
             return
-        # Bottom-right inner corner of the 172px circle.
+        # Bottom-right inner corner of the portrait circle.
+        portrait = self._metrics.portrait
         d = dot.width()
-        off = int(PORTRAIT * 0.5 + (PORTRAIT * 0.5) * 0.70) - d // 2
+        off = int(portrait * 0.5 + (portrait * 0.5) * 0.70) - d // 2
         dot.move(off, off)
         dot.raise_()
 
@@ -1054,7 +1285,10 @@ class _CompactLayout(QWidget):
             frame = cell["cell"]           # QFrame — the grid child
             cutout = cell["cfg"]["cutout"] # "tl"/"tr"/"bl"/"br"
             geo = frame.geometry()         # position within _grid_host
-            local = _card_body_path(geo.width(), geo.height(), cutout)
+            local = _card_body_path(
+                geo.width(), geo.height(), cutout,
+                self._metrics.card_radius, self._metrics.cutout_r,
+            )
             paths.append(local * QTransform().translate(geo.x(), geo.y()))
         return paths
 
@@ -1068,7 +1302,8 @@ class _CompactLayout(QWidget):
             geo = self._emblem.geometry()
             cx = geo.x() + geo.width() / 2.0
             cy = geo.y() + geo.height() / 2.0
-            p.addEllipse(QPointF(cx, cy), EMBLEM / 2.0, EMBLEM / 2.0)
+            r = self._metrics.emblem / 2.0
+            p.addEllipse(QPointF(cx, cy), r, r)
         return p
 
     def showEvent(self, event):

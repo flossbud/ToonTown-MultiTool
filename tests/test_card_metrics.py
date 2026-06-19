@@ -16,6 +16,23 @@ def test_base_metrics_at_scale_1():
     assert m.ctrl_w == 158 and m.portrait_ring == 4
 
 
+def test_control_metrics_at_scale_1():
+    """Control-chrome metrics (Task 1.2b additions) at scale 1.0 equal the
+    literal constants the framed card has always used."""
+    m = CardMetrics(scale=1.0)
+    assert m.toggle_w == 34 and m.toggle_h == 36
+    assert m.ka_pill_h == 38 and m.keyset_h == 38 and m.ka_dot == 28
+    assert m.status_top_margin == 14 and m.glow_blur == 22
+
+
+def test_control_metrics_scale_proportionally():
+    """Control-chrome metrics scale as round(base * scale)."""
+    m = CardMetrics(scale=0.5)
+    assert m.toggle_w == 17 and m.toggle_h == 18
+    assert m.ka_pill_h == 19 and m.keyset_h == 19 and m.ka_dot == 14
+    assert m.status_top_margin == 7 and m.glow_blur == 11
+
+
 def test_metrics_scale_proportionally():
     m = CardMetrics(scale=0.5)
     assert m.portrait == 86 and m.cutout_r == 48 and m.emblem == 78

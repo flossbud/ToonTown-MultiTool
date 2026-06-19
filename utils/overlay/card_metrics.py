@@ -15,6 +15,15 @@ _BASE_CUTOUT_R     = 96
 _BASE_EMBLEM       = 156
 _BASE_CTRL_W       = 158
 _BASE_PORTRAIT_RING = 4
+# Control-chrome / glow dimensions (Task 1.2b: drive the painted card's
+# controls + halo from the same value object).
+_BASE_TOGGLE_W     = 34
+_BASE_TOGGLE_H     = 36
+_BASE_KA_PILL_H    = 38
+_BASE_KEYSET_H     = 38
+_BASE_KA_DOT       = 28
+_BASE_STATUS_TOP_MARGIN = 14
+_BASE_GLOW_BLUR    = 22
 
 
 def _px(base: int | float, scale: float) -> int:
@@ -47,6 +56,13 @@ class CardMetrics:
         "emblem",
         "ctrl_w",
         "portrait_ring",
+        "toggle_w",
+        "toggle_h",
+        "ka_pill_h",
+        "keyset_h",
+        "ka_dot",
+        "status_top_margin",
+        "glow_blur",
     )
 
     def __init__(self, scale: float = 1.0) -> None:
@@ -62,6 +78,13 @@ class CardMetrics:
         object.__setattr__(self, "emblem",        _px(_BASE_EMBLEM,        s))
         object.__setattr__(self, "ctrl_w",        _px(_BASE_CTRL_W,        s))
         object.__setattr__(self, "portrait_ring", _px(_BASE_PORTRAIT_RING, s))
+        object.__setattr__(self, "toggle_w",      _px(_BASE_TOGGLE_W,      s))
+        object.__setattr__(self, "toggle_h",      _px(_BASE_TOGGLE_H,      s))
+        object.__setattr__(self, "ka_pill_h",     _px(_BASE_KA_PILL_H,     s))
+        object.__setattr__(self, "keyset_h",      _px(_BASE_KEYSET_H,      s))
+        object.__setattr__(self, "ka_dot",        _px(_BASE_KA_DOT,        s))
+        object.__setattr__(self, "status_top_margin", _px(_BASE_STATUS_TOP_MARGIN, s))
+        object.__setattr__(self, "glow_blur",     _px(_BASE_GLOW_BLUR,     s))
 
     def __setattr__(self, name: str, value: object) -> None:  # type: ignore[override]
         raise AttributeError(f"CardMetrics is read-only; cannot set '{name}'")
