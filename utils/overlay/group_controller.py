@@ -14,18 +14,19 @@ The emblem uses surface_id=-1 (a sentinel; callers must not depend on the
 specific value) plus is_emblem=True.  Always check is_emblem, never the
 sentinel value, when branching on emblem vs card.
 
-Controller integration note (Task 3.2 / 4.2 - NOT implemented here)
+Controller integration note (Task 4.2 - the size-reconcile contract)
 ----------------------------------------------------------------------
-The controller (Task 3.2+) will reconcile each surface's final QRect with the
-card's ACTUAL scaled sizeHint, which may differ from card_w*scale by rounding.
-pinwheel_rects() provides the OFFSET geometry only; the controller owns the
-size-reconcile step. Specifically: CardMetrics uses ``round(base * scale)``
-while this function uses ``int(base * scale)`` (matching the spike), so for some
-scales (e.g. 0.8, 1.3) the sizes differ by 1px. The controller resolves this by
-reading ``sizeHint()`` from the real card widget (Task 4.2), NOT by recomputing
-sizes here. The controller sources card_w/card_h from the live card's sizeHint
-and the inter-corner gap (spike GAP=24) + emblem (CardMetrics.emblem=156) as the
-base inputs to this function.
+With a real card_provider the controller reconciles each surface's QRect with
+the card's ACTUAL scaled sizeHint (which can differ from card_w*scale by
+rounding). pinwheel_rects() owns the OFFSET geometry; the controller owns the
+size-reconcile. CardMetrics uses ``round(base * scale)`` while this function
+uses ``int(base * scale)`` (matching the spike), so for some scales the sizes
+differ by 1px. The controller resolves this by reading the live card's
+``sizeHint()`` (provider.card_size()) + the emblem widget extent
+(provider.emblem_size()) and feeding them to pinwheel_rects ALREADY SCALED with
+``scale=1.0`` and a scaled gap - so each surface rect ends up EXACTLY the scaled
+sizeHint with no double-scaling. When no provider is present (the Task 3.2 tests)
+the controller falls back to the placeholder base sizes + self._scale below.
 """
 from __future__ import annotations
 
@@ -183,13 +184,11 @@ def pinwheel_rects(
 # ---------------------------------------------------------------------------
 # Controller base-layout inputs
 # ---------------------------------------------------------------------------
-# Base (scale-1.0) card WIDTH fed to pinwheel_rects.  This is a PLACEHOLDER:
-# Task 4.2 replaces it with the real card sizeHint() read from the live
-# MultitoonTab card widget (see the "Controller integration note" in the module
-# docstring above) - the card's true width is not a fixed constant once its
-# chrome reflows, so the controller will source card_w from the widget, not from
-# this constant.  card_h + emblem come from CardMetrics(1.0); only card_w lacks a
-# pure source until 4.2.
+# Base (scale-1.0) card WIDTH for the provider=None fallback path only. A live
+# card_provider sources the real scaled sizeHint instead (see _compute_rects +
+# the "Controller integration note" in the module docstring); this placeholder
+# is used solely by the Task 3.2 stub-surface orchestration tests, which have no
+# real card to measure. card_h + emblem come from CardMetrics(1.0) in that path.
 _BASE_CARD_W = 300
 # Inter-corner gap between each card and the group center, matching the spike
 # (scripts/transparent_multiwindow_spike.py GAP=24).
@@ -270,6 +269,12 @@ class OverlayGroupController:
         self._anchor: tuple[int, int] = self._default_anchor()
         self._scale: float = 1.0
         self._active: bool = False
+        # Debounce gate for the expensive provider recompute (apply_metrics +
+        # geometry + reshape). set_scale_by_notches updates self._scale
+        # synchronously but coalesces a burst of recomputes into ONE on the next
+        # event-loop tick; this flag is the single scheduling/cancel gate (see
+        # _schedule_recompute / _run_pending_recompute / flush_pending_recompute).
+        self._recompute_pending: bool = False
 
     # ------------------------------------------------------------------
     # State queries
@@ -313,13 +318,34 @@ class OverlayGroupController:
     def _compute_rects(self) -> "PinwheelRects":
         """Pinwheel rects at the current anchor + scale.
 
-        card_h + emblem come from CardMetrics(1.0); card_w is the placeholder
-        _BASE_CARD_W (Task 4.2 reconciliation).  Scale is applied INSIDE
-        pinwheel_rects, so the BASE (scale-1.0) dimensions are passed here.
+        Two contracts, by whether a card_provider is present:
+
+        * provider present (Task 4.2): the card + emblem sizes come from the LIVE
+          scaled widgets - the card's sizeHint (provider.card_size()) and the
+          emblem widget extent (provider.emblem_size()), already scaled by the
+          most recent apply_metrics(CardMetrics(scale)). They are fed to
+          pinwheel_rects
+          ALREADY SCALED, with ``scale=1.0`` and a scaled gap, so the function
+          does NOT scale them a second time. The surface rect width therefore
+          ends up EXACTLY the card's scaled sizeHint (no placeholder, no double-
+          scaling), resolving the CardMetrics(round)-vs-pinwheel(int) 1px
+          discrepancy in favour of the live widget.
+        * provider None (Task 3.2 orchestration tests): the placeholder base
+          sizes (_BASE_CARD_W) + CardMetrics(1.0) for card_h/emblem, with the
+          scale applied INSIDE pinwheel_rects exactly as before.
         """
         # CardMetrics is pure, but lazy-import it (per the module docstring) so
         # the pure geometry at the top never pulls anything at module load.
         from utils.overlay.card_metrics import CardMetrics
+        provider = self._card_provider
+        if provider is not None:
+            card_w, card_h = provider.card_size()
+            emblem = provider.emblem_size()
+            gap = round(_GROUP_GAP * self._scale)
+            # Already-scaled dimensions in -> scale=1.0 so pinwheel_rects keeps
+            # them verbatim (int(x * 1.0) == x). The contract: scaled sizes +
+            # scale=1.0, never base sizes + scale (that would double-scale).
+            return pinwheel_rects(self._anchor, 1.0, card_w, card_h, emblem, gap)
         base = CardMetrics(1.0)
         return pinwheel_rects(
             self._anchor, self._scale,
@@ -505,6 +531,9 @@ class OverlayGroupController:
         """
         if self._active:
             return True
+        # Defensive: no debounced recompute can be outstanding while framed, but
+        # clear the gate so a stray queued tick from a prior session is inert.
+        self._recompute_pending = False
         # Defensive: if the anchor is still the no-QApplication sentinel, recompute
         # now that a QApplication certainly exists (Task 6.1 persistence may also
         # have set it).
@@ -517,7 +546,17 @@ class OverlayGroupController:
         provider = self._card_provider
         minimized = False
         try:
-            # Inside the try so a CardMetrics import/build failure is fail-closed too.
+            # Apply the CURRENT group scale to the real cards BEFORE computing
+            # rects, so _compute_rects reads sizeHints at self._scale. This is
+            # load-bearing for a RE-ENTER at a remembered non-1.0 scale: leave()
+            # resets the framed cards to CardMetrics(1.0) but keeps self._scale as
+            # the remembered overlay scale (and Task 6.1 loads self._scale from
+            # persistence before enter). Without this, _compute_rects would read
+            # 1.0-sized hints while using the non-1.0 gap -> inconsistent cluster.
+            # Inside the try so a CardMetrics import/build failure is fail-closed.
+            if provider is not None:
+                from utils.overlay.card_metrics import CardMetrics
+                provider.apply_metrics(CardMetrics(self._scale))
             rects = self._compute_rects()
             for state in self._states:
                 surface = self._surface_factory(state)
@@ -527,8 +566,7 @@ class OverlayGroupController:
                 # Capture its exact tab placement BEFORE host() so a leave() or a
                 # fail-closed unwind can restore it byte-for-byte; record the
                 # (surface, record) pair so restoration knows which surface holds
-                # which widget. Reparent at the current scale (1.0); Task 4.2 owns
-                # the per-surface scale recompute.
+                # which widget. The cards were just scaled to self._scale above.
                 if provider is not None:
                     widget = self._provider_widget(state)
                     captured.append((surface, provider.capture_slot(widget)))
@@ -584,6 +622,11 @@ class OverlayGroupController:
         """
         if not self._active:
             return
+        # Cancel any debounced recompute: leave() resets to framed (scale-1.0)
+        # metrics, so a queued recompute at the old scale must NOT fire (its
+        # _run_pending_recompute will find the flag cleared + _active False and
+        # no-op - never recompute after teardown).
+        self._recompute_pending = False
         self._restore_widgets(self._captured)
         self._teardown(self._surfaces)
         self._reset_provider_scale()
@@ -601,8 +644,20 @@ class OverlayGroupController:
         return self._active
 
     def set_scale_by_notches(self, notches: int) -> None:
-        """Step the cluster scale by *notches* and re-geometry + re-shape all.
-        No-op if not active.
+        """Step the cluster scale by *notches*. No-op if not active.
+
+        The scale value updates SYNCHRONOUSLY (so any read of self._scale right
+        after this call is current). The EXPENSIVE recompute differs by mode:
+
+        * provider present (Task 4.2): rescale the real card content
+          (apply_metrics) + re-geometry/reshape to the new scaled sizeHint. This
+          is ~4x setStyleSheet + setFont + grid.activate, far too costly to run
+          per wheel notch, so it is DEBOUNCED: a burst of notches in one event-
+          loop tick collapses into ONE recompute at the FINAL scale (scheduled on
+          the next tick via _schedule_recompute; force it now with
+          flush_pending_recompute()).
+        * provider None (Task 3.2 stub flow): no content rescale; re-geometry +
+          reshape SYNCHRONOUSLY at the placeholder sizes, exactly as before.
 
         Unlike enter()/leave(), the re-layout mutators (this, move_group,
         update_shapes) are NOT transactional - they are idempotent re-layouts, so
@@ -614,6 +669,56 @@ class OverlayGroupController:
         self._scale = step_scale(self._scale, notches)
         for state in self._states:
             state.scale = self._scale
+        if self._card_provider is None:
+            # Task 3.2 path: no apply_metrics, placeholder geometry, synchronous.
+            self._place_all(reshape=True)
+            return
+        # Provider path: coalesce the expensive recompute to one per tick.
+        self._schedule_recompute()
+
+    def _schedule_recompute(self) -> None:
+        """Coalesce a burst of scale changes into ONE recompute on the next
+        event-loop tick. The pending flag is the single gate: a second call while
+        one is already pending does nothing (so N rapid notches -> one recompute
+        at the final scale). flush_pending_recompute()/leave() clear the flag, so
+        an already-queued tick that finds it cleared simply no-ops."""
+        if self._recompute_pending:
+            return
+        self._recompute_pending = True
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(0, self._run_pending_recompute)
+
+    def _run_pending_recompute(self) -> None:
+        """Event-loop callback for the debounced recompute. No-op if the pending
+        flag was already cleared (flushed/cancelled) or the cluster was torn down
+        before the tick fired (never recompute after teardown)."""
+        if not self._recompute_pending:
+            return
+        self._recompute_pending = False
+        if not self._active:
+            return
+        self._recompute_now()
+
+    def flush_pending_recompute(self) -> None:
+        """Run any pending debounced recompute synchronously NOW. Used by tests
+        today; the Task 5.1 gesture handler may force a sync settle. (leave()
+        CANCELS a pending recompute rather than flushing it.) Safe no-op when
+        nothing is pending or the cluster is framed."""
+        if not self._recompute_pending:
+            return
+        self._recompute_pending = False
+        if self._active:
+            self._recompute_now()
+
+    def _recompute_now(self) -> None:
+        """Rescale the real card content to the CURRENT scale, then re-geometry +
+        reshape + re-raise so every surface fits the freshly scaled card. Reads
+        the live scaled sizeHint AFTER apply_metrics (order is load-bearing).
+        Provider-only - the provider=None path never schedules this."""
+        provider = self._card_provider
+        if provider is not None:
+            from utils.overlay.card_metrics import CardMetrics
+            provider.apply_metrics(CardMetrics(self._scale))
         self._place_all(reshape=True)
 
     def move_group(self, dx: int, dy: int) -> None:

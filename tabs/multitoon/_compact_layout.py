@@ -1326,6 +1326,47 @@ class _CompactLayout(QWidget):
         EmblemSurface on enter and restored manual + raised on leave."""
         return self._emblem
 
+    def card_size(self) -> tuple[int, int]:
+        """The scaled (width, height) every card overlay surface must use: the MAX
+        cell sizeHint across ALL FOUR slots at the CURRENT metrics. The cluster is
+        a symmetric pinwheel (uniform surface size), so every surface is sized to
+        fit the WIDEST/TALLEST card. The cards are NOT identical in width - an
+        eliding name/keyset label reports its full text width as its sizeHint, so
+        a slot with a long toon name is wider than another; sizing all surfaces to
+        one slot would clamp/clip the wider slots. Used by the overlay controller
+        (Task 4.2) to reconcile each surface rect with the real scaled card,
+        resolving the CardMetrics(round)-vs-pinwheel_rects(int) 1px discrepancy in
+        favour of the live widget. Returns (0, 0) before the cells exist."""
+        if not self._cells:
+            return (0, 0)
+        w = h = 0
+        for cell_dict in self._cells:
+            cell = cell_dict["cell"]
+            # In overlay mode the cell is hosted OUTSIDE the grid (in its surface),
+            # so apply_metrics' grid.activate() cannot refresh the cell's own
+            # content-layout sizeHint. Invalidate+activate here so the read
+            # reflects the latest metrics synchronously (no event-loop tick).
+            lay = cell.layout()
+            if lay is not None:
+                lay.invalidate()
+                lay.activate()
+            hint = cell.sizeHint()
+            w = max(w, hint.width())
+            h = max(h, hint.height())
+        return (w, h)
+
+    def emblem_size(self) -> int:
+        """The scaled emblem surface side in px - the FULL emblem widget extent
+        (disc diameter + ring-margin chrome on both sides), read from the live
+        fixed-size emblem widget so the emblem surface fits it WITHOUT clipping.
+        The visible disc (CardMetrics.emblem) is centered inside this square; the
+        ring margin holds the broadcast pulse ring + glow. The widget is a fixed
+        square, so width() is authoritative (analogous to card_size() reading the
+        cell sizeHint). Returns 0 when there is no emblem."""
+        if self._emblem is None:
+            return 0
+        return self._emblem.width()
+
     # ── Overlay / transparent-mode geometry accessors ───────────────────────
     def card_body_paths(self):
         """Per-card painted body paths (rounded rect minus concave bite), in

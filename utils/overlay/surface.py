@@ -108,7 +108,21 @@ class OverlaySurface(QWidget):
     # ------------------------------------------------------------------
 
     def set_overlay_geometry(self, rect: QRect) -> None:
-        """Set size and position in ONE atomic call to avoid single-frame judder."""
+        """Set size and position in ONE atomic call to avoid single-frame judder.
+
+        Activate this surface's layout first so the hosted widget's CURRENT
+        minimum size (which the layout pushes onto this window's minimumSize
+        constraint) is up to date before setGeometry. Without this, after the
+        hosted card shrinks (apply_metrics on a scale-down), the window's
+        minimumSize can still hold the previous, larger value until a later
+        layout pass - and setGeometry would clamp the new, smaller width up to
+        the stale minimum (seen on the offscreen QPA, which does not propagate
+        size hints synchronously). The controller sizes the surface to the card's
+        sizeHint (>= its minimumSizeHint), so a current constraint never fights
+        the requested rect; a stale one does.
+        """
+        if self._layout is not None:
+            self._layout.activate()
         self.setGeometry(rect)
 
     # ------------------------------------------------------------------
