@@ -96,7 +96,7 @@ class SpikeView(QGraphicsView):
                 p = QPainterPath(); p.addRoundedRect(QRectF(geo), 20, 20)
                 card_paths.append(p)
             region = build_input_region(card_paths, QPainterPath(), transform)
-            rects = [(r.x(), r.y(), r.width(), r.height()) for r in region.rects()]
+            rects = [(r.x(), r.y(), r.width(), r.height()) for r in region]
             d = xdisplay.Display()
             w = d.create_resource_object("window", int(self.winId()))
             w.shape_rectangles(shape.SO.Set, shape.SK.Input, X.Unsorted, 0, 0, rects)
