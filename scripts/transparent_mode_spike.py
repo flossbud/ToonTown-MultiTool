@@ -10,7 +10,7 @@ Keys: '+'/'-' scale, 'r' reset to 100%, 'q' quit. Log -> ~/ttmt_transparent_spik
 from __future__ import annotations
 import os, sys, pathlib
 
-from PySide6.QtCore import Qt, QRectF, QPointF
+from PySide6.QtCore import Qt, QRectF, QTimer, QPointF
 from PySide6.QtGui import QPainterPath, QTransform, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QGraphicsScene, QGraphicsView, QWidget, QFrame, QLabel,
@@ -48,6 +48,10 @@ def _stub_card(name: str) -> QFrame:
 
 def _cluster() -> QWidget:
     root = QWidget()
+    # Embedded via QGraphicsProxyWidget the root is treated as a top-level widget and
+    # paints its dark palette background in the gaps -> make it translucent. The cards
+    # keep their own light-blue (#card) background; only the gaps go transparent.
+    root.setAttribute(Qt.WA_TranslucentBackground, True)
     grid = QGridLayout(root); grid.setSpacing(40)
     names = ["Flossbud", "Frutiger Aero", "Hector Pep.", "Gifted Str."]
     for i, n in enumerate(names):
@@ -67,12 +71,19 @@ class SpikeView(QGraphicsView):
         self.setFrameShape(QGraphicsView.NoFrame)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.setStyleSheet("background:transparent;")
+        self.setStyleSheet("background: transparent; border: none;")
         self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WA_NoSystemBackground, True)
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
         scene = QGraphicsScene(self)
+        scene.setBackgroundBrush(Qt.transparent)
         self._proxy = scene.addWidget(_cluster())
         self.setScene(scene)
+        # A QGraphicsView paints through a viewport widget; the dark-palette viewport
+        # background is what showed as the opaque navy rectangle. Make the viewport
+        # transparent too. This same fix belongs in the production ClusterHost.
+        self.viewport().setAutoFillBackground(False)
+        self.viewport().setStyleSheet("background: transparent;")
         self._apply_scale()
 
     def _apply_scale(self) -> None:
@@ -113,7 +124,7 @@ class SpikeView(QGraphicsView):
             self._scale = step_scale(self._scale, -1); self._apply_scale()
         elif key == Qt.Key_R:
             self._scale = 1.0; self._apply_scale()
-        elif key == Qt.Key_Q:
+        elif key in (Qt.Key_Q, Qt.Key_Escape):
             self.close()
 
 def main() -> None:
@@ -121,6 +132,10 @@ def main() -> None:
     app = QApplication(sys.argv)
     view = SpikeView()
     view.show()
+    timeout = int(os.environ.get("TTMT_SPIKE_TIMEOUT", "120"))
+    if timeout > 0:
+        QTimer.singleShot(timeout * 1000, view.close)  # safety auto-close; never gets stuck
+        log(f"auto-close in {timeout}s; press q or Esc to quit early")
     log("spike window shown; test click-through in gaps, interactions on cards, crispness at +/-")
     app.exec()
 
