@@ -5,10 +5,24 @@ paints nothing; the hosted widget paints its own opaque body.
 """
 from __future__ import annotations
 
+from enum import Enum
+
 from PySide6.QtCore import Qt, QRect
+from PySide6.QtGui import QPainterPath
 from PySide6.QtWidgets import QWidget, QVBoxLayout
 
 from utils.overlay.backend import OverlayBackend, get_overlay_backend
+
+
+class ShapeMode(Enum):
+    """Input-shape variants for card windows.
+
+    PINWHEEL_BITE: card body with the concave pinwheel bite cut out (used by
+        v1 cards while attached to the cluster).
+    ROUNDED_RECT:  plain rounded-rect card body, no bite (v2 detached cards).
+    """
+    PINWHEEL_BITE = "pinwheel_bite"
+    ROUNDED_RECT = "rounded_rect"
 
 
 class OverlaySurface(QWidget):
@@ -98,6 +112,27 @@ class OverlaySurface(QWidget):
         self.setGeometry(rect)
 
     # ------------------------------------------------------------------
+    # Input-shape delegation
+    # ------------------------------------------------------------------
+
+    def apply_shape(self, path: QPainterPath, dpr: float) -> None:
+        """Set the X11 ShapeInput region for this surface window.
+
+        Passes *path* (logical coordinates) and *dpr* straight through to the
+        backend.  The single logical->device-pixel conversion lives in
+        ``backend.apply_input_shape``; this method must NOT scale *path*.
+
+        The surface must be shown (native handle exists) for this to take
+        effect; calling before ``show()`` is a silent no-op (the X11 backend
+        swallows an invalid winId). The controller applies the shape after show.
+        """
+        self._backend.apply_input_shape(self, path, dpr)
+
+    def clear_shape(self) -> None:
+        """Remove any previously applied ShapeInput region."""
+        self._backend.clear_input_region(self)
+
+    # ------------------------------------------------------------------
     # Show event: apply backend hints once native window handle exists
     # ------------------------------------------------------------------
 
@@ -115,3 +150,57 @@ class OverlaySurface(QWidget):
                 self._backend.set_non_activating(self)
             except Exception:
                 pass
+
+
+# ---------------------------------------------------------------------------
+# Specialised surfaces
+# ---------------------------------------------------------------------------
+
+class CardSurface(OverlaySurface):
+    """Overlay surface for a single toon-card window (slot 0-3).
+
+    The controller (Tasks 3.2/4.x) computes the shaped card-body path from
+    CardMetrics and passes it to ``apply_shape``; this class only stores state.
+    """
+
+    def __init__(self, surface_id: int, backend: OverlayBackend | None = None) -> None:
+        super().__init__(backend=backend)
+        self._surface_id: int = surface_id
+        self._shape_mode: ShapeMode = ShapeMode.PINWHEEL_BITE
+        self._scale: float = 1.0
+
+    @property
+    def surface_id(self) -> int:
+        return self._surface_id
+
+    @property
+    def shape_mode(self) -> ShapeMode:
+        return self._shape_mode
+
+    def set_input_shape_mode(self, mode: ShapeMode) -> None:
+        """Switch between PINWHEEL_BITE (attached) and ROUNDED_RECT (detached)."""
+        self._shape_mode = mode
+
+    def set_scale(self, scale: float) -> None:
+        """Record the current overlay zoom factor (0.5-1.75).
+
+        This is the group/user scale, NOT the device-pixel ratio.  The
+        controller drives the actual path recompute; this just persists state.
+        """
+        self._scale = scale
+
+
+class EmblemSurface(OverlaySurface):
+    """Overlay surface for the emblem (pinwheel disc).
+
+    Always disc-shaped; no PINWHEEL_BITE/ROUNDED_RECT mode needed.
+    The controller passes the disc path to ``apply_shape``.
+    """
+
+    def __init__(self, backend: OverlayBackend | None = None) -> None:
+        super().__init__(backend=backend)
+        self._scale: float = 1.0
+
+    def set_scale(self, scale: float) -> None:
+        """Record the current overlay zoom factor (0.5-1.75)."""
+        self._scale = scale
