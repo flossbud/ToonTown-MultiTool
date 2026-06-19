@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
 
 from tabs.multitoon._layout_utils import clear_layout
 from utils.color_math import darken_rgb
+from utils.overlay.card_metrics import CardMetrics
 from utils.overlay.gestures import is_drag
 
 
@@ -51,19 +52,27 @@ def _resolve_body_base(entry: dict, accent: QColor) -> QColor:
     return override if override is not None else QColor(accent)
 
 
-# ── Geometry (exact values from the design handoff) ────────────────────────
+# ── Geometry ────────────────────────────────────────────────────────────────
+# CardMetrics(1.0) is the canonical source for the card SIZING constants: at
+# scale 1.0 it yields exactly the integer values the design handoff specified,
+# so framed mode is byte-for-byte unchanged. The card-radius / border / cutout
+# radii stay as literals here because they are consumed by the card paint code
+# (parametrized separately); the remaining seven sizing values are sourced from
+# the value object so it is the single source of truth.
+_METRICS = CardMetrics(1.0)
+
 CARD_RADIUS = 20
 CARD_BORDER = 5
-CARD_PAD = 18
-CARD_MIN_H = 232
-GRID_GAP = 18
+CARD_PAD = _METRICS.card_pad
+CARD_MIN_H = _METRICS.card_min_h
+GRID_GAP = _METRICS.grid_gap
 
-PORTRAIT = 172
-PORTRAIT_RING = 4
+PORTRAIT = _METRICS.portrait
+PORTRAIT_RING = _METRICS.portrait_ring
 CUTOUT_R = 96
-EMBLEM = 156
+EMBLEM = _METRICS.emblem
 
-CTRL_W = 158
+CTRL_W = _METRICS.ctrl_w
 TOGGLE_W, TOGGLE_H = 34, 36
 KA_PILL_H = 38
 KEYSET_H = 38
@@ -511,6 +520,10 @@ class _CompactLayout(QWidget):
     def __init__(self, tab, parent=None):
         super().__init__(parent)
         self._tab = tab
+        # Canonical card geometry for this layout. At scale 1.0 every value
+        # equals the module-level sizing constants; layout build sites source
+        # their sizes from here so the value object is the single source of truth.
+        self._metrics = CardMetrics(1.0)
         self._cells: list[dict] = []
         self._emblem: _Emblem | None = None
         self._glow: _GlowLayer | None = None
@@ -538,7 +551,7 @@ class _CompactLayout(QWidget):
         self._grid_host.setStyleSheet("background: transparent;")
         grid = QGridLayout(self._grid_host)
         grid.setContentsMargins(GLOW_ROOM, GLOW_ROOM, GLOW_ROOM, GLOW_ROOM)
-        grid.setSpacing(GRID_GAP)
+        grid.setSpacing(self._metrics.grid_gap)
         for col in range(2):
             grid.setColumnStretch(col, 1)
         for row in range(2):
@@ -568,7 +581,7 @@ class _CompactLayout(QWidget):
         cell = QFrame()
         cell.setObjectName(f"pin_cell_{i}")
         cell.setStyleSheet(f"#pin_cell_{i} {{ background: transparent; border: none; }}")
-        cell.setMinimumSize(0, CARD_MIN_H)
+        cell.setMinimumSize(0, self._metrics.card_min_h)
         cell.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
         # glow_host holds the accent drop-shadow (attached only when the card is
@@ -584,7 +597,8 @@ class _CompactLayout(QWidget):
         # stats_row) with the shared per-slot widgets, so the structural
         # nesting is never re-parented (which would warn on a 2nd populate). ──
         content = QVBoxLayout(cell)
-        content.setContentsMargins(CARD_PAD, CARD_PAD, CARD_PAD, CARD_PAD)
+        pad = self._metrics.card_pad
+        content.setContentsMargins(pad, pad, pad, pad)
         content.setSpacing(12)
 
         portrait_frame = _PortraitFrame(cell)
@@ -612,7 +626,7 @@ class _CompactLayout(QWidget):
         ctrl_col.addWidget(ka_pill)
         ctrl_col.addLayout(sel_holder)
         ctrl_wrap = QWidget()
-        ctrl_wrap.setFixedWidth(CTRL_W)
+        ctrl_wrap.setFixedWidth(self._metrics.ctrl_w)
         # Transparent so the controls sit directly on the accent body instead
         # of a grey panel (the global QWidget rule would otherwise fill it).
         ctrl_wrap.setStyleSheet("background: transparent;")
