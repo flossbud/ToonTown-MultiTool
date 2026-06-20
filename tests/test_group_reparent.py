@@ -131,7 +131,7 @@ class _HostRaisesCardSurface(CardSurface):
     """A CardSurface whose host() raises (a mid-enter failure AFTER the widget's
     placement is captured but during the reparent)."""
 
-    def host(self, widget):  # noqa: D401 - test double
+    def host(self, widget, base_size=None):  # noqa: D401 - test double
         raise RuntimeError("host boom")
 
 
@@ -163,13 +163,16 @@ def test_enter_reparents_cards_and_emblem_into_surfaces(qapp, tab):
     assert ctl.is_transparent is True
     qapp.processEvents()
 
-    # Each card cell is hosted in its own surface and is GONE from the grid.
+    # Each card cell is hosted in its own surface (THROUGH the ScaledCardView
+    # proxy, so its QObject parent is the proxy/scene, not the surface directly)
+    # and is GONE from the grid.
     for i in range(4):
         card = compact._cells[i]["cell"]
-        assert card.parent() is ctl._surfaces[i], f"card {i} not hosted in its surface"
+        assert ctl._surfaces[i]._scaled_view is not None, f"card {i} surface has no view"
+        assert ctl._surfaces[i]._scaled_view.card() is card, f"card {i} not hosted in its surface"
         assert grid.indexOf(card) == -1, f"card {i} should be removed from the grid"
 
-    # The emblem is hosted in the last (emblem) surface.
+    # The emblem is hosted plain (not proxied) in the last (emblem) surface.
     emblem = compact._emblem
     assert emblem.parent() is ctl._surfaces[4]
     assert grid.indexOf(emblem) == -1
@@ -228,7 +231,7 @@ def test_enter_leave_round_trip_is_repeatable(qapp, tab):
         assert ctl.enter() is True
         qapp.processEvents()
         for i in range(4):
-            assert compact._cells[i]["cell"].parent() is ctl._surfaces[i]
+            assert ctl._surfaces[i]._scaled_view.card() is compact._cells[i]["cell"]
         ctl.leave()
         qapp.processEvents()
         for i in range(4):
@@ -389,9 +392,13 @@ def test_fail_closed_keeps_card_alive_when_release_raises(qapp, tab):
 
     card0 = compact._cells[0]["cell"]
     # card0's surface release() raised -> NOT re-tabbed, but ALIVE and its surface
-    # retained so GC cannot destroy it (and delete the card).
+    # retained so GC cannot destroy it (and delete the card). card0 is still held
+    # by that orphaned surface's ScaledCardView (release raised before un-proxying).
     assert shiboken6.isValid(card0), "card 0 must not be deleted"
-    assert any(card0.parent() is s for s in ctl._orphans), "card0's surface must be retained"
+    assert any(
+        getattr(s, "_scaled_view", None) is not None and s._scaled_view.card() is card0
+        for s in ctl._orphans
+    ), "card0's surface (holding the card via its proxy) must be retained"
     # Cards 1 and 2 (captured before the #4 failure) are restored to the tab.
     for i in (1, 2):
         card = compact._cells[i]["cell"]

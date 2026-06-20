@@ -238,3 +238,68 @@ def test_device_input_region_bad_dpr_falls_back():
     bounds = region.boundingRect()
     assert bounds.width() > 0
     assert bounds.height() > 0
+
+
+# ---------------------------------------------------------------------------
+# CardSurface: ScaledCardView hosting
+# ---------------------------------------------------------------------------
+
+def test_card_surface_hosts_through_scaled_view(qapp):
+    from utils.overlay.surface import CardSurface
+    from utils.overlay.scaled_card_view import ScaledCardView
+    from PySide6.QtWidgets import QWidget
+    s = CardSurface(0)
+    card = QWidget(); card.resize(376, 232)
+    s.host(card, base_size=(376, 232))
+    assert isinstance(s._scaled_view, ScaledCardView)
+    assert s._scaled_view.card() is card
+    s.set_card_scale(1.5)
+    assert round(s._scaled_view.view_transform().m11(), 3) == 1.5
+
+
+def test_card_surface_hosts_a_parented_card(qapp):
+    """The controller hosts cards that are still children of the grid host;
+    set_card must detach so the embed actually succeeds (addWidget is top-level
+    only)."""
+    from utils.overlay.surface import CardSurface
+    from PySide6.QtWidgets import QWidget
+    grid = QWidget()
+    card = QWidget(grid)
+    s = CardSurface(0)
+    s.host(card, base_size=(376, 232))
+    assert s._scaled_view.card() is card
+    assert s._scaled_view._proxy.widget() is card   # actually embedded, not None
+    assert card.parent() is not grid
+
+
+def test_card_surface_close_releases_borrowed_card(qapp):
+    """closeEvent belt: close() releases the borrowed card so the scene never
+    deletes it on the close() path."""
+    from utils.overlay.surface import CardSurface
+    from PySide6.QtWidgets import QWidget
+    from shiboken6 import isValid
+    s = CardSurface(0)
+    card = QWidget()
+    s.host(card, base_size=(376, 232))
+    s.close()
+    qapp.processEvents()
+    assert isValid(card)
+    assert s._scaled_view is None
+
+
+def test_card_surface_release_returns_card_undeleted_and_unclamped(qapp):
+    from utils.overlay.surface import CardSurface
+    from PySide6.QtWidgets import QWidget
+    from shiboken6 import isValid
+    s = CardSurface(0)
+    card = QWidget()
+    s.host(card, base_size=(376, 232))
+    assert card.maximumSize().width() == 376  # fixed by host() for proxying
+    returned = s.release()
+    assert returned is card
+    assert card.parent() is None
+    assert isValid(card)
+    # The fixed size MUST be cleared so the framed grid can re-fit the card on restore.
+    assert card.maximumSize().width() >= 16777215
+    assert card.minimumSize().width() == 0
+    assert s._scaled_view is None

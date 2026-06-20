@@ -60,6 +60,10 @@ class ScaledCardView(QWidget):
         if self._card is card:
             return None
         displaced = self.release_card() if self._card is not None else None
+        # addWidget() requires a TOP-LEVEL widget: it silently rejects a parented
+        # one (proxy.widget() stays None, the card never embeds). The borrowed card
+        # arrives parented to its grid cell, so detach it first.
+        card.setParent(None)
         self._card = card
         self._proxy = self._scene.addWidget(card)  # reparents card into the scene
         self._proxy.setPos(0, 0)

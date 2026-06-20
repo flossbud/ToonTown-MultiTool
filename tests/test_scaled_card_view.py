@@ -27,6 +27,18 @@ def test_release_returns_card_undeleted(qapp):
     assert v.card() is None
 
 
+def test_hosts_a_parented_card(qapp):
+    """The borrowed card arrives parented to its grid cell; set_card must detach it
+    so QGraphicsScene.addWidget (top-level-only) actually embeds it."""
+    grid = QWidget()
+    card = QWidget(grid)            # parented, like a real grid cell
+    assert card.parent() is grid
+    v = ScaledCardView()
+    v.set_card(card)
+    assert v._proxy.widget() is card   # embed succeeded (not None)
+    assert card.parent() is not grid   # detached from the grid
+
+
 def test_rehost_returns_displaced_card(qapp):
     """Re-hosting must RETURN the displaced card (parentless, undeleted) so the
     caller can never silently lose it."""

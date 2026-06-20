@@ -207,6 +207,7 @@ class CardSurface(OverlaySurface):
         self._surface_id: int = surface_id
         self._shape_mode: ShapeMode = ShapeMode.PINWHEEL_BITE
         self._scale: float = 1.0
+        self._scaled_view = None  # ScaledCardView holding the borrowed card
 
     @property
     def surface_id(self) -> int:
@@ -227,6 +228,69 @@ class CardSurface(OverlaySurface):
         controller drives the actual path recompute; this just persists state.
         """
         self._scale = scale
+
+    def host(self, widget: QWidget, base_size=None) -> None:  # type: ignore[override]
+        """Host the borrowed card THROUGH a ScaledCardView so it scales as a unit.
+
+        base_size is the framed 1.0 card size as (w, h); the card is fixed to it
+        so the proxy scene rect is stable, and then scaled by the view transform
+        (driven later via set_card_scale).  Passing no base_size leaves the card
+        at its natural size.
+        """
+        if widget is None:
+            return
+        from utils.overlay.scaled_card_view import ScaledCardView
+        if self._scaled_view is not None:
+            self.release()
+        # NOTE: unlike OverlaySurface.host, this override does not run the
+        # cross-surface stale-_hosted guard, because cards are only ever hosted
+        # into CardSurfaces (tracked via _scaled_view, never _hosted) and the
+        # controller always release()s before re-hosting. ScaledCardView.set_card
+        # detaches the card from its grid parent before embedding it.
+        if base_size is not None:
+            widget.setFixedSize(int(base_size[0]), int(base_size[1]))
+        view = ScaledCardView()
+        view.set_card(widget)
+        self._scaled_view = view
+        self._layout.addWidget(view)
+
+    def release(self) -> "QWidget | None":  # type: ignore[override]
+        """Un-proxy the borrowed card, clear the fixed-size constraints, and
+        remove the ScaledCardView from the layout.
+
+        The fixed size imposed by host() (min==max==base_size) is cleared here
+        so the framed grid can re-fit the card when it is restored after leave.
+        Returns the card (parentless, undeleted) or None if nothing was hosted.
+        """
+        view = self._scaled_view
+        if view is None:
+            return None
+        card = view.release_card()
+        # Clear the fixed size we imposed for proxying: setFixedSize sets
+        # min==max==base, and the restore path only restores the size policy, not
+        # the min/max constraints, so without this the card stays clamped after
+        # leave and the grid cannot re-fit it.
+        if card is not None:
+            card.setMinimumSize(0, 0)
+            card.setMaximumSize(16777215, 16777215)
+        self._layout.removeWidget(view)
+        self._scaled_view = None
+        view.deleteLater()  # the view is owned by the surface; the card was borrowed
+        return card
+
+    def set_card_scale(self, scale: float) -> None:
+        """Drive the per-card QGraphicsView transform to zoom the hosted card."""
+        self._scale = float(scale)
+        if self._scaled_view is not None:
+            self._scaled_view.set_scale(scale)
+
+    def closeEvent(self, ev):
+        # Belt for the close() path: release the borrowed card before Qt's
+        # destruction cascade so the ScaledCardView's scene never deletes it. The
+        # deleteLater/GC path still relies on the documented contract that the
+        # caller (the controller's _teardown) release()s first.
+        self.release()
+        super().closeEvent(ev)
 
 
 class EmblemSurface(OverlaySurface):
