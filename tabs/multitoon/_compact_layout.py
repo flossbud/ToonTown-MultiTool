@@ -958,6 +958,33 @@ class _CompactLayout(QWidget):
             rects.append(QRect(top_left, size))
         return rects
 
+    def deliver_ghost_click(self, cell_index: int, x: int, y: int) -> None:
+        """Deliver a synthetic left-click (press+release) to the control widget at
+        the cell-root-local point (*x*, *y*) of the shell at *cell_index*.
+
+        Lets a click-sync ghost cursor press a card's controls the same way the
+        real cursor does (transparent peek mode). The overlay controller
+        constrains (*x*, *y*) to the control region via control_rects, so a body
+        point never reaches here; a point over no child widget (childAt None) is a
+        safe no-op. Works through the ScaledCardView proxy because it drives the
+        widget tree directly (childAt / mapFrom / sendEvent are widget-space)."""
+        from PySide6.QtGui import QMouseEvent
+        from PySide6.QtWidgets import QApplication
+        if not 0 <= cell_index < len(self._cells):
+            return
+        root = self._cells[cell_index]["cell"]
+        local = QPoint(int(x), int(y))
+        target = root.childAt(local)
+        if target is None:
+            return
+        tp = target.mapFrom(root, local)
+        local_f = QPointF(tp)
+        global_f = QPointF(target.mapToGlobal(tp))
+        for etype in (QEvent.MouseButtonPress, QEvent.MouseButtonRelease):
+            ev = QMouseEvent(etype, local_f, global_f,
+                             Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
+            QApplication.sendEvent(target, ev)
+
     def set_shell_extra_opacity(self, cell_index: int, bg_opacity: float,
                                 portrait_opacity: float) -> None:
         """Set the EXTRA hover-peek translucency factors for the two extra-dimmed
