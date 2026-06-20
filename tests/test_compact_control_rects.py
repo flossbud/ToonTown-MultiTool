@@ -1,0 +1,63 @@
+# tests/test_compact_control_rects.py
+import sys
+import pytest
+from PySide6.QtCore import QObject, Signal, QRect
+from PySide6.QtWidgets import QApplication
+
+
+@pytest.fixture(scope="module")
+def qt_app():
+    return QApplication.instance() or QApplication(sys.argv)
+
+
+class _FakeWindowManager(QObject):
+    window_ids_updated = Signal(list)
+    cell_assignment_changed = Signal(list)
+    window_geometry_updated = Signal()
+    active_window_changed = Signal(str)
+
+    def __init__(self):
+        super().__init__()
+        self.ttr_window_ids = []
+        self.slot_cells = [0, 1, 2, 3]
+
+    def get_window_ids(self): return []
+    def get_active_window(self): return None
+    def clear_window_ids(self): self.ttr_window_ids = []
+    def assign_windows(self): pass
+    def enable_detection(self): pass
+    def disable_detection(self): pass
+    def count_for_game(self, g): return 0
+    def get_window_geometry(self, wid): return None
+
+
+def _make_tab(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("TTMT_NO_VENV_REEXEC", "1")
+    monkeypatch.setenv("PYTHON_KEYRING_BACKEND", "keyring.backends.null.Keyring")
+    import tabs.launch_tab
+    tabs.launch_tab.discover_cc_installs = lambda *a, **k: []
+    from tabs.multitoon._tab import MultitoonTab
+    from utils.settings_manager import SettingsManager
+    return MultitoonTab(settings_manager=SettingsManager(),
+                        window_manager=_FakeWindowManager())
+
+
+def test_control_rects_returns_five_rects_within_card(qt_app, monkeypatch, tmp_path):
+    tab = _make_tab(monkeypatch, tmp_path)
+    qt_app.processEvents()
+    compact = tab._compact
+    tab._stack.setCurrentWidget(compact)
+    tab.show()
+    for _ in range(6):
+        qt_app.processEvents()
+
+    for slot in range(4):
+        rects = compact.control_rects(slot)
+        assert len(rects) == 5, f"slot {slot}: expected 5 control rects, got {len(rects)}"
+        cell = compact._cells[slot]["cell"]
+        card_rect = QRect(0, 0, cell.width(), cell.height())
+        for r in rects:
+            assert r.width() > 0 and r.height() > 0
+            assert card_rect.contains(r.topLeft()), f"slot {slot}: {r} outside card"

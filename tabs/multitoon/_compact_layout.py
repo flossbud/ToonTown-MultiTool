@@ -893,6 +893,39 @@ class _CompactLayout(QWidget):
         self._relayout_all()
         self._apply_initial_brands()
 
+    def control_rects(self, slot: int) -> list:
+        """Card-local QRects of the five interactive control widgets for *slot*.
+
+        These are the only widgets that stay opaque + clickable in transparent
+        peek mode (the toggles, the keep-alive pill as one unit, and the keyset
+        selector). Coordinates are relative to the card cell root at the current
+        (framed 1.0) size; the overlay controller scales them by the overlay zoom.
+        Skips any widget that is missing or zero-sized (defensive).
+        """
+        from PySide6.QtCore import QPoint, QRect
+        cell = self._cells[slot]
+        root = cell["cell"]
+        if root.layout() is not None:
+            root.layout().activate()
+        tab = self._tab
+        widgets = [
+            tab.toon_buttons[slot],
+            tab.chat_buttons[slot],
+            tab.click_sync_buttons[slot],
+            cell["ka_pill"],
+            tab.set_selectors[slot],
+        ]
+        rects = []
+        for w in widgets:
+            if w is None:
+                continue
+            size = w.size()
+            if size.width() <= 0 or size.height() <= 0:
+                continue
+            top_left = w.mapTo(root, QPoint(0, 0))
+            rects.append(QRect(top_left, size))
+        return rects
+
     def _populate_cell(self, i: int, cell: dict):
         tab = self._tab
         cfg = cell["cfg"]
