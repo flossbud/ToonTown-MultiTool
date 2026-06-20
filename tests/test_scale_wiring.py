@@ -436,6 +436,20 @@ def test_overlay_base_card_size_is_full_sizehint(qapp, tab):
     assert base[1] >= tab._compact.slot_widget(0).minimumSizeHint().height()
 
 
+def test_overlay_relayout_card_tracks_cell_size(qapp, tab):
+    """After the overlay setFixedSizes a cell, overlay_relayout_card must re-place
+    the painted body to the cell size (the parent layout's resizeEvent never fires
+    for a cell reparented into a surface), else card content spills past the painted
+    body (the 'right side cut off' bug)."""
+    compact = tab._compact
+    cell = compact._cells[0]["cell"]
+    bg = compact._cells[0]["bg"]
+    cell.setFixedSize(440, 320)
+    qapp.processEvents()
+    compact.overlay_relayout_card(cell)
+    assert bg.geometry().getRect() == (0, 0, 440, 320), "body must track the cell size"
+
+
 def test_scale_emblem_sizes_only_the_emblem(qapp, tab):
     """scale_emblem scales the emblem widget (emblem_size grows) WITHOUT touching
     the cards (they must stay at framed 1.0 for the proxy transform)."""

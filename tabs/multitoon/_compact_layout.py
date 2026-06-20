@@ -26,7 +26,7 @@ from dataclasses import dataclass
 
 from PySide6.QtCore import (
     Qt, QSize, QRect, QRectF, QPoint, QPointF, Property, QPropertyAnimation,
-    QEasingCurve, Signal, QTimer,
+    QEasingCurve, Signal, QTimer, QEvent,
 )
 from PySide6.QtGui import (
     QColor, QFont, QPainter, QPainterPath, QPen, QPixmap, QLinearGradient,
@@ -724,6 +724,12 @@ class _CompactLayout(QWidget):
         cell.setStyleSheet(f"#pin_cell_{i} {{ background: transparent; border: none; }}")
         cell.setMinimumSize(0, self._metrics.card_min_h)
         cell.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        # The painted body + status dot are MANUALLY positioned (not in a layout),
+        # normally re-placed by the parent layout's resizeEvent -> _relayout_all. In
+        # transparent mode the cell is reparented OUT into a per-card surface, so the
+        # parent never sees its resize; filter the cell's OWN resize so the body
+        # always tracks the cell size (else content spills past the body).
+        cell.installEventFilter(self)
 
         # glow_host holds the accent drop-shadow (attached only when the card is
         # lit). Its only child is the card background, so the shadow renders the
@@ -1374,6 +1380,19 @@ class _CompactLayout(QWidget):
         fit")."""
         return self.card_size()
 
+    def overlay_relayout_card(self, card_widget) -> None:
+        """Re-place a single card's manually-positioned body + status dot to the
+        cell's CURRENT size. The overlay setFixedSizes the cell when hosting it, but
+        the parent layout's resizeEvent (which normally drives _relayout_all) never
+        fires for a cell reparented out into a surface, so the body must be re-placed
+        explicitly here - else it stays at the framed size and the card content
+        spills past the painted body (the "right side cut off")."""
+        for cell in self._cells:
+            if cell["cell"] is card_widget:
+                self._position_cell_bg(cell)
+                self._position_status_dot(cell)
+                return
+
     def scale_emblem(self, scale: float) -> None:
         """Scale only the emblem disc to `scale` (the overlay scales cards via a
         view transform, but the emblem stays a single painted widget that scales
@@ -1532,3 +1551,16 @@ class _CompactLayout(QWidget):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._relayout_all()
+
+    def eventFilter(self, obj, event):
+        # Re-place a cell's manually-positioned body + status dot whenever the cell
+        # ITSELF resizes (e.g. setFixedSize when hosted in a transparent-mode
+        # surface), so they track the cell even when it is reparented out of this
+        # layout and this widget's own resizeEvent never fires for it.
+        if event.type() == QEvent.Resize:
+            for cell in self._cells:
+                if cell["cell"] is obj:
+                    self._position_cell_bg(cell)
+                    self._position_status_dot(cell)
+                    break
+        return super().eventFilter(obj, event)

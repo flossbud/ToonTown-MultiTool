@@ -820,6 +820,10 @@ class OverlayGroupController:
                     else:
                         base = provider.overlay_base_card_size()
                         surface.host(widget, base_size=base)       # card: proxied
+                        # Re-place the card's manual body/status-dot to the new fixed
+                        # size (the parent layout's resizeEvent never fires for a
+                        # reparented cell), else content spills past the painted body.
+                        provider.overlay_relayout_card(widget)
                         surface.set_card_scale(self._scale)
                 surface.set_overlay_geometry(rect)
                 # Set the EWMH initial state (above + skip-taskbar/pager) as a
