@@ -487,16 +487,19 @@ class MultiToonTool(QMainWindow):
         # Transparent overlay mode: wire backend + controller, then connect the
         # central emblem so clicking/dragging/scrolling it drives mode transitions.
         from utils.overlay.backend import get_overlay_backend
-        from utils.overlay.controller import WindowModeController
-        from utils.overlay.mode import WindowMode as _WindowMode
+        from utils.overlay.group_controller import OverlayGroupController
         self._overlay_backend = get_overlay_backend()
-        self._mode_controller = WindowModeController(self, self._overlay_backend, self.settings_manager)
+        # The multi-window overlay controller reparents the four cards + emblem
+        # into their own non-activating windows and minimizes this main window
+        # while transparent. card_provider is the _CompactLayout it borrows from.
+        self._mode_controller = OverlayGroupController(
+            self, self._overlay_backend, self.settings_manager,
+            card_provider=self.multitoon_tab._compact,
+        )
         emblem = self.multitoon_tab._compact._emblem
-        if self._mode_controller.can_enter():
+        if self._overlay_backend.is_available():
             emblem.set_interactive(True)
-            emblem.toggle_requested.connect(self._mode_controller.toggle)
-            emblem.move_requested.connect(self._on_emblem_move)
-            emblem.resize_scrolled.connect(self._mode_controller.set_scale_by_notches)
+            self._mode_controller.connect_emblem(emblem)
         else:
             emblem.setToolTip("Transparent mode requires the X11 Shape extension")
 
@@ -537,16 +540,6 @@ class MultiToonTool(QMainWindow):
         # The Multitoon tab uses a single fluid pinwheel layout now; there is
         # no separate full layout to warm.
         self._maybe_show_admin_notice()
-
-    # ── Overlay mode helpers ─────────────────────────────────────────────────
-
-    def _on_emblem_move(self) -> None:
-        """Start a system window drag when the emblem is dragged in transparent mode."""
-        from utils.overlay.mode import WindowMode as _WindowMode
-        if self._mode_controller.mode() is _WindowMode.TRANSPARENT:
-            wh = self.windowHandle()
-            if wh is not None:
-                wh.startSystemMove()
 
     def _capture_multitool_window_id(self):
         # xdotool is X11-only; the gate is on the Qt platform, not the
@@ -818,22 +811,10 @@ class MultiToonTool(QMainWindow):
         The full-tree QWidget{} cascade is expensive, so skip it when neither
         the corner state nor the theme changed; theme/dark-light changes pass
         force=True to bypass the guard."""
-        # Transparent window mode: the central widget must NOT paint its opaque
-        # #app_card fill / `QWidget{background}` cascade, or it hides the window's
-        # translucency (the gaps would show the dark app bg, not the desktop).
-        # Routed through here (rather than a one-shot) so the resizes that scaling
-        # triggers can never silently restore the dark fill.
-        from utils.overlay.mode import WindowMode as _WindowMode
-        if getattr(self, "_mode_controller", None) is not None \
-                and self._mode_controller.mode() is _WindowMode.TRANSPARENT:
-            self.container.setStyleSheet(
-                "QWidget#app_card { background: transparent; border: none; } "
-                "QWidget { background: transparent; }")
-            _root = self.container.layout()
-            if _root is not None:
-                _root.setContentsMargins(0, 0, 0, 0)
-            self.clearMask()
-            return
+        # (The multi-window overlay MINIMIZES this window while transparent rather
+        # than transparentizing the central container, so the old transparent-mode
+        # early-return that blanked #app_card here is gone - corner styling simply
+        # does not matter on a minimized window.)
         c = self._theme_colors()
         bg = c["bg_app"]
         native = bool(self.settings_manager.get("use_system_title_bar", False))
