@@ -86,6 +86,7 @@ class ToonPortraitWidget(QWidget):
     def __init__(self, slot: int, parent=None):
         super().__init__(parent)
         self._slot    = slot
+        self._peek_opacity = 1.0
         self._bg      = QColor("#4a4a4a")
         self._text    = QColor("#ffffff")
         self._border_color = None
@@ -397,8 +398,17 @@ class ToonPortraitWidget(QWidget):
     def _can_show_pencil(self) -> bool:
         return bool(self._toon_name) and self._game in ("cc", "ttr")
 
+    def set_peek_opacity(self, opacity: float) -> None:
+        """Transparent-mode hover-peek translucency (1.0 = opaque)."""
+        opacity = float(opacity)
+        if opacity != self._peek_opacity:
+            self._peek_opacity = opacity
+            self.update()
+
     def paintEvent(self, event):
         p = QPainter(self)
+        if self._peek_opacity < 1.0:
+            p.setOpacity(self._peek_opacity)
         p.setRenderHint(QPainter.Antialiasing)
         p.setRenderHint(QPainter.SmoothPixmapTransform)
         p.setPen(Qt.NoPen)

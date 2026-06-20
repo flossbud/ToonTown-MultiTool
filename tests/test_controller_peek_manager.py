@@ -1,6 +1,19 @@
 # tests/test_controller_peek_manager.py
+import pytest
 from PySide6.QtCore import QRect
 from utils.overlay.group_controller import OverlayGroupController, SurfaceState
+
+
+class _RecordingProvider:
+    """Records the body-dim opacity pushed per shell by the controller fade."""
+    def __init__(self):
+        self.calls = []  # (surface_id, opacity)
+
+    def set_shell_peek_opacity(self, surface_id, opacity):
+        self.calls.append((surface_id, round(float(opacity), 4)))
+
+    def control_rects(self, slot):
+        return []
 
 
 class _PeekStubSurface:
@@ -105,3 +118,37 @@ def test_stop_peek_timer_clears_ghost_store(qapp):
     assert c._peek_store.points() != []
     c._stop_peek_timer()
     assert c._peek_store.points() == []
+
+
+def test_peek_fade_lerps_toward_dim_then_restores(qapp):
+    c = OverlayGroupController(window=None, surface_factory=lambda s: None,
+                              card_provider=_RecordingProvider())
+    geoms = {0: QRect(0, 0, 100, 100), 1: QRect(200, 0, 100, 100),
+             2: QRect(0, 200, 100, 100), 3: QRect(200, 200, 100, 100)}
+    _wire(c, geoms)
+    prov = c._card_provider
+    for _ in range(10):           # hover card 0 -> body opacity lerps to 0.75
+        c._peek_tick((50, 50))
+    assert c._peek_opacity[0] == pytest.approx(0.75, abs=1e-6)
+    assert c._peek_opacity[1] == 1.0
+    card0 = [op for sid, op in prov.calls if sid == 0]
+    assert card0[-1] == pytest.approx(0.75, abs=1e-6)
+    assert card0 == sorted(card0, reverse=True)   # monotonic fade-down
+    assert all(sid == 0 for sid, _ in prov.calls)  # idle cards never repaint
+    for _ in range(10):           # move off -> lerps back to opaque
+        c._peek_tick((500, 500))
+    assert c._peek_opacity[0] == pytest.approx(1.0, abs=1e-6)
+
+
+def test_stop_peek_timer_restores_opacity(qapp):
+    c = OverlayGroupController(window=None, surface_factory=lambda s: None,
+                              card_provider=_RecordingProvider())
+    geoms = {0: QRect(0, 0, 100, 100), 1: QRect(200, 0, 100, 100),
+             2: QRect(0, 200, 100, 100), 3: QRect(200, 200, 100, 100)}
+    _wire(c, geoms)
+    for _ in range(10):
+        c._peek_tick((50, 50))
+    assert c._peek_opacity[0] == pytest.approx(0.75)
+    c._stop_peek_timer()
+    assert c._peek_opacity == [1.0, 1.0, 1.0, 1.0]
+    assert c._card_provider.calls[-1] == (0, 1.0)

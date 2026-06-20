@@ -274,6 +274,7 @@ class _QuadCardBackground(QWidget):
         self._accent = QColor("#555555")
         self._body: QColor | None = None
         self._dimmed = True
+        self._peek_opacity = 1.0  # transparent-mode hover-peek body translucency
         # Painted-body radii + border width, sourced from a CardMetrics so the
         # shape scales with the card (defaults = canonical 1.0 values).
         self._radius = CARD_RADIUS
@@ -301,10 +302,20 @@ class _QuadCardBackground(QWidget):
             self.width(), self.height(), self._cutout, self._radius, self._cutout_r
         )
 
+    def set_peek_opacity(self, opacity: float) -> None:
+        """Hover-peek body translucency (1.0 = opaque). The card body fades so the
+        game shows through, while the controls (separate widgets) stay opaque."""
+        opacity = float(opacity)
+        if opacity != self._peek_opacity:
+            self._peek_opacity = opacity
+            self.update()
+
     def paintEvent(self, event):
         if self.width() <= 0 or self.height() <= 0:
             return
         p = QPainter(self)
+        if self._peek_opacity < 1.0:
+            p.setOpacity(self._peek_opacity)
         p.setRenderHint(QPainter.Antialiasing, True)
         path = self._body_path()
 
@@ -350,6 +361,13 @@ class _PortraitFrame(QWidget):
         self.setStyleSheet("background: transparent;")
         self._ring = QColor("#555555")
         self._dimmed = True
+        self._peek_opacity = 1.0
+
+    def set_peek_opacity(self, opacity: float) -> None:
+        opacity = float(opacity)
+        if opacity != self._peek_opacity:
+            self._peek_opacity = opacity
+            self.update()
 
     def configure(self, ring: QColor, dimmed: bool) -> None:
         self._ring = QColor(ring)
@@ -935,6 +953,28 @@ class _CompactLayout(QWidget):
             top_left = w.mapTo(root, QPoint(0, 0))
             rects.append(QRect(top_left, size))
         return rects
+
+    def set_shell_peek_opacity(self, cell_index: int, opacity: float) -> None:
+        """Set transparent-mode hover-peek body translucency for the shell at
+        *cell_index* (the overlay surface_id, as in control_rects/slot_widget).
+
+        Dims the card BODY - the background fill, the portrait frame, and the
+        portrait image - so the game shows through, while the control widgets
+        (toggles, keep-alive pill, keyset) are left untouched and stay fully
+        opaque. This adjusts each body widget's own paint opacity (no overlay /
+        no rectangle masking), so rounded controls keep their real shape with no
+        opaque background corners."""
+        cell = self._cells[cell_index]
+        s = cell.get("content_slot", cell_index)
+        bg = cell.get("bg")
+        if bg is not None:
+            bg.set_peek_opacity(opacity)
+        frame = cell.get("portrait_frame")
+        if frame is not None:
+            frame.set_peek_opacity(opacity)
+        badge = self._tab.slot_badges[s] if s < len(self._tab.slot_badges) else None
+        if badge is not None and hasattr(badge, "set_peek_opacity"):
+            badge.set_peek_opacity(opacity)
 
     def _populate_cell(self, i: int, cell: dict):
         tab = self._tab

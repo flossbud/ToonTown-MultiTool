@@ -226,10 +226,7 @@ class CardSurface(OverlaySurface):
         self._shape_mode: ShapeMode = ShapeMode.PINWHEEL_BITE
         self._scale: float = 1.0
         self._scaled_view = None  # ScaledCardView holding the borrowed card
-        self._peeking = False  # transparent hover-peek state
-        self._peek_anim = None
-        self._peek_rects = None
-        self._peek_target = 1.0
+        self._peeking = False  # transparent hover-peek state (dim driven by controller)
 
     @property
     def surface_id(self) -> int:
@@ -247,73 +244,12 @@ class CardSurface(OverlaySurface):
     def is_peeking(self) -> bool:
         return self._peeking
 
-    BODY_PEEK_OPACITY = 0.75
-
-    def set_peek(self, active: bool, control_rects=None, animate: bool = True) -> None:
-        """Fade the card body to 75% (controls stay 100% + live) when *active*.
-
-        Re-called every peek tick: while already peeking it refreshes the live
-        control overlay (so the keep-alive bar keeps animating). Fail-closed: any
-        render error restores full opacity rather than leaving the card stuck
-        transparent."""
+    def set_peek(self, active: bool, control_rects=None) -> None:
+        """Record hover-peek state. The body-dim RENDERING is driven by the
+        controller through the card provider (it owns the body widgets and dims
+        their paint opacity directly); this surface only tracks the flag so other
+        code can query is_peeking."""
         self._peeking = bool(active)
-        self._peek_rects = control_rects
-        target = self.BODY_PEEK_OPACITY if active else 1.0
-        view = self._scaled_view
-        if view is None:
-            return
-        try:
-            if not animate:
-                self._stop_peek_anim()
-                self._peek_target = target
-                view.set_peek_opacity(target, control_rects)
-                return
-            if abs(self._peek_target - target) < 1e-3:
-                # Steady state (target unchanged): just refresh the live overlay
-                # at the current opacity; do not restart the fade animation.
-                view.set_peek_opacity(view.peek_opacity(), control_rects)
-                return
-            self._peek_target = target
-            self._start_peek_anim(view, target, control_rects)
-        except Exception:
-            # Never leave a card stuck dimmed.
-            self._stop_peek_anim()
-            self._peek_target = 1.0
-            try:
-                view.set_peek_opacity(1.0, None)
-            except Exception:
-                pass
-
-    def _start_peek_anim(self, view, target, control_rects):
-        from PySide6.QtCore import QVariantAnimation
-        self._stop_peek_anim()
-        start = view.peek_opacity()
-        anim = QVariantAnimation()
-        anim.setStartValue(float(start))
-        anim.setEndValue(float(target))
-        anim.setDuration(120)
-        anim.valueChanged.connect(
-            lambda v: self._on_peek_anim_value(view, float(v), control_rects))
-        anim.start()
-        self._peek_anim = anim
-
-    def _on_peek_anim_value(self, view, value, control_rects):
-        try:
-            view.set_peek_opacity(value, control_rects)
-        except Exception:
-            self._stop_peek_anim()
-            try:
-                view.set_peek_opacity(1.0, None)
-            except Exception:
-                pass
-
-    def _stop_peek_anim(self):
-        if self._peek_anim is not None:
-            try:
-                self._peek_anim.stop()
-            except Exception:
-                pass
-            self._peek_anim = None
 
     def set_scale(self, scale: float) -> None:
         """Record the current overlay zoom factor (0.5-1.75).

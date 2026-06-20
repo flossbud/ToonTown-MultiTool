@@ -104,3 +104,46 @@ def test_control_rects_follow_permuted_shells(qt_app, monkeypatch, tmp_path):
             _assert_shell_controls(compact, shell)
     finally:
         tab.input_service.shutdown()
+
+
+def test_set_shell_peek_opacity_dims_body_not_controls(qt_app, monkeypatch, tmp_path):
+    tab = _make_tab(monkeypatch, tmp_path)
+    try:
+        qt_app.processEvents()
+        compact = _show_compact(tab, qt_app)
+        cell = compact._cells[0]
+        s = cell.get("content_slot", 0)
+
+        compact.set_shell_peek_opacity(0, 0.75)
+        # Body widgets dim.
+        assert cell["bg"]._peek_opacity == 0.75
+        assert cell["portrait_frame"]._peek_opacity == 0.75
+        assert tab.slot_badges[s]._peek_opacity == 0.75
+        # Controls are NOT touched (no peek-opacity plumbing on them).
+        assert not hasattr(tab.toon_buttons[s], "_peek_opacity")
+        assert not hasattr(cell["ka_pill"], "_peek_opacity")
+
+        compact.set_shell_peek_opacity(0, 1.0)
+        assert cell["bg"]._peek_opacity == 1.0
+        assert tab.slot_badges[s]._peek_opacity == 1.0
+    finally:
+        tab.input_service.shutdown()
+
+
+def test_set_shell_peek_opacity_follows_content_slot(qt_app, monkeypatch, tmp_path):
+    # Under a permutation, dimming a shell must dim the badge of the slot routed
+    # into it (content_slot), not the shell-index slot.
+    tab = _make_tab(monkeypatch, tmp_path)
+    try:
+        qt_app.processEvents()
+        compact = _show_compact(tab, qt_app)
+        compact.apply_cell_permutation([1, 0, 3, 2])
+        for _ in range(6):
+            qt_app.processEvents()
+        s0 = compact._cells[0]["content_slot"]   # == 1
+        compact.set_shell_peek_opacity(0, 0.5)
+        assert tab.slot_badges[s0]._peek_opacity == 0.5
+        # The shell-index slot's badge (slot 0, now in shell 1) is untouched.
+        assert tab.slot_badges[0]._peek_opacity == 1.0
+    finally:
+        tab.input_service.shutdown()
