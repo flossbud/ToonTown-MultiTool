@@ -10,24 +10,25 @@ def test_geometry_backend_darwin(monkeypatch):
     assert wm._geometry_backend() is macos_discovery
 
 
-def test_assign_windows_darwin_sort(monkeypatch):
-    """darwin enumeration branch sorts windows left-to-right by root-x."""
+def test_assign_windows_darwin_orders_by_cell(monkeypatch):
+    """darwin enumeration orders windows by 2x2 cell; a side-by-side pair still
+    reads left-to-right (left -> cell 0, right -> cell 1)."""
     from utils import macos_discovery
     from utils.game_registry import GameRegistry
     from services.window_manager import WindowManager
 
-    # Patch platform so the darwin branch is taken on any host OS.
+    # Patch platform so the darwin branch (and _geometry_backend) is taken.
     monkeypatch.setattr(wm.sys, "platform", "darwin", raising=False)
 
-    # Two TTR windows: "11" is far right (x=100), "33" is far left (x=5).
+    # Two TTR windows side by side: "11" far right, "33" far left (same y).
     monkeypatch.setattr(
         macos_discovery, "find_game_windows",
         lambda: [("11", "ttr"), ("33", "ttr")],
     )
-    root_x_map = {"11": 100, "33": 5}
+    geoms = {"11": (100, 0, 50, 50), "33": (5, 0, 50, 50)}  # centers (125,25),(30,25)
     monkeypatch.setattr(
-        macos_discovery, "get_window_root_x",
-        lambda wid: root_x_map.get(wid),
+        macos_discovery, "get_window_geometry",
+        lambda wid: geoms.get(wid),
     )
     # classify_window_for_filtering returns (game="ttr", confirmed=True), so
     # _accept_candidate_window (`not confirmed or game is not None`) is True for
@@ -41,6 +42,6 @@ def test_assign_windows_darwin_sort(monkeypatch):
     wm_inst._detection_enabled = True
     wm_inst.assign_windows()
 
-    # "33" (x=5) must sort before "11" (x=100).
+    # Left window "33" -> cell 0, right window "11" -> cell 1.
     assert wm_inst.ttr_window_ids == ["33", "11"]
     assert wm_inst.window_games == {"33": "ttr", "11": "ttr"}

@@ -1244,6 +1244,10 @@ class MultitoonTab(QWidget):
         self._build_click_sync()
         self._chat_glow_active = False
         self.window_manager.window_ids_updated.connect(self.update_toon_controls)
+        if hasattr(self.window_manager, "cell_assignment_changed"):
+            self.window_manager.cell_assignment_changed.connect(
+                self._on_cell_assignment_changed
+            )
         self._toon_names_ready.connect(self._apply_toon_names)
         self._toon_styles_ready.connect(self._apply_toon_styles)
         self._toon_colors_ready.connect(self._apply_toon_colors)
@@ -1535,6 +1539,12 @@ class MultitoonTab(QWidget):
             # QFonts, not stylesheets. Re-issue Compact's stylesheets so the
             # shared widgets render at Compact sizes again.
             self.refresh_theme()
+            # populate() reset compact to identity routing; re-apply the current
+            # position-based permutation so content lands in the cell matching
+            # each window's on-screen quadrant (no-op for contiguous layouts).
+            self._compact.apply_cell_permutation(
+                getattr(self.window_manager, "slot_cells", [0, 1, 2, 3])
+            )
 
         # Re-apply per-toon visual state on every slot now that the
         # parent chain has changed (compact stack vs full's
@@ -2997,6 +3007,18 @@ class MultitoonTab(QWidget):
         self.update_status_label()
 
     # ── Window update handler ──────────────────────────────────────────────
+
+    def _on_cell_assignment_changed(self, slot_cells):
+        """Re-route compact card content when the per-slot 2x2 cell permutation
+        changes (e.g. two stacked windows move between columns without the window
+        list changing). Skipped in Full mode, where the full layout - not compact -
+        owns the shared per-slot widgets; the compact layout re-applies the current
+        permutation when it next becomes active (see the layout swap)."""
+        if getattr(self, "_mode", "compact") == "full":
+            return
+        compact = getattr(self, "_compact", None)
+        if compact is not None:
+            compact.apply_cell_permutation(slot_cells)
 
     def update_toon_controls(self, window_ids):
         ids_changed = window_ids != self._last_window_ids

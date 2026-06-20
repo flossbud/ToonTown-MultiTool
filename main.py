@@ -484,6 +484,25 @@ class MultiToonTool(QMainWindow):
         self._maybe_kick_off_startup_check()
         self._update_hint_icon()
 
+        # Transparent overlay mode: wire backend + controller, then connect the
+        # central emblem so clicking/dragging/scrolling it drives mode transitions.
+        from utils.overlay.backend import get_overlay_backend
+        from utils.overlay.group_controller import OverlayGroupController
+        self._overlay_backend = get_overlay_backend()
+        # The multi-window overlay controller reparents the four cards + emblem
+        # into their own non-activating windows and minimizes this main window
+        # while transparent. card_provider is the _CompactLayout it borrows from.
+        self._mode_controller = OverlayGroupController(
+            self, self._overlay_backend, self.settings_manager,
+            card_provider=self.multitoon_tab._compact,
+        )
+        emblem = self.multitoon_tab._compact._emblem
+        if self._overlay_backend.is_available():
+            emblem.set_interactive(True)
+            self._mode_controller.connect_emblem(emblem)
+        else:
+            emblem.setToolTip("Transparent mode requires the X11 Shape extension")
+
         # Install event filter to globally block tooltips when hints disabled
         QApplication.instance().installEventFilter(self)
 
@@ -792,6 +811,10 @@ class MultiToonTool(QMainWindow):
         The full-tree QWidget{} cascade is expensive, so skip it when neither
         the corner state nor the theme changed; theme/dark-light changes pass
         force=True to bypass the guard."""
+        # (The multi-window overlay MINIMIZES this window while transparent rather
+        # than transparentizing the central container, so the old transparent-mode
+        # early-return that blanked #app_card here is gone - corner styling simply
+        # does not matter on a minimized window.)
         c = self._theme_colors()
         bg = c["bg_app"]
         native = bool(self.settings_manager.get("use_system_title_bar", False))

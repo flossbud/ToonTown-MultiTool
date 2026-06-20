@@ -8,6 +8,7 @@ import time
 from PySide6.QtCore import QObject, Signal
 from utils.game_registry import GameRegistry
 from utils import x11_discovery
+from utils.window_cell_assignment import assign_window_cells
 
 
 def _geometry_backend():
@@ -24,6 +25,12 @@ class WindowManager(QObject):
     window_ids_updated = Signal(list)
     active_window_changed = Signal(str)
     window_geometry_updated = Signal()
+    # The per-slot 2x2 cluster cell (0=TL,1=TR,2=BL,3=BR) changed without the
+    # window LIST changing - e.g. two stacked windows move from the right column
+    # to the left (dense order stays [top,bottom] but cells flip {1,3}->{0,2}).
+    # window_ids_updated does NOT fire then, so the card layout listens to this to
+    # re-route content into the matching cell shells.
+    cell_assignment_changed = Signal(list)
 
     POLL_INTERVAL = 0.1
 
@@ -32,6 +39,9 @@ class WindowManager(QObject):
         self.settings_manager = settings_manager
 
         self.ttr_window_ids = []
+        # Per-card-slot 2x2 cluster cell (length 4 bijection of 0..3): slot i's
+        # window sits in cell slot_cells[i]; unused slots hold the empty cells.
+        self.slot_cells: list[int] = [0, 1, 2, 3]
         self.window_games: dict[str, str] = {}  # window_id -> "ttr" | "cc"
         self.window_geometry: dict[str, tuple[int, int, int, int]] = {}
         self._active_id = None
@@ -196,7 +206,14 @@ class WindowManager(QObject):
             return self._active_id
 
     def assign_windows(self):
-        """Detect TTR windows and sort left-to-right."""
+        """Detect TTR/CC windows and order them by 2x2 cluster cell.
+
+        Each platform branch collects the candidate window ids (in detection
+        order); a shared post-step (_order_wids_by_cell) maps each window to its
+        on-screen quadrant cell (TL/TR/BL/BR) so card slot i shows the window in
+        cell i. This replaces the old pure left-to-right (x) sort, which scrambled
+        the cards for any non-row arrangement.
+        """
         if not self._detection_enabled:
             return
 
@@ -207,12 +224,12 @@ class WindowManager(QObject):
             game, confirmed = registry.classify_window_for_filtering(wid)
             return not confirmed or game is not None
 
+        wids: list[str] = []
         import sys
         if sys.platform == "win32":
             try:
                 import win32gui
                 import win32con
-                visible = []
 
                 def _is_candidate_toon_window(hwnd, title: str) -> bool:
                     if not title:
@@ -247,62 +264,111 @@ class WindowManager(QObject):
                             wid = str(hwnd)
                             if not _accept_candidate_window(wid):
                                 return
-                            pt = win32gui.ClientToScreen(hwnd, (0, 0))
-                            x = pt[0]
-                            visible.append((wid, x))
+                            wids.append(wid)
                             game_by_wid[wid] = (
                                 "ttr" if "Toontown Rewritten" in title else "cc"
                             )
                 win32gui.EnumWindows(enum_windows_proc, 0)
-                visible.sort(key=lambda item: (item[1], item[0]))
-                new_ids = list(dict.fromkeys(w for w, _ in visible))[:16]
             except Exception:
-                new_ids = []
+                wids = []
         elif sys.platform == "darwin":
             try:
                 from utils import macos_discovery
-                visible = []
                 for wid, game in macos_discovery.find_game_windows():
                     if not _accept_candidate_window(wid):
                         continue
-                    x = macos_discovery.get_window_root_x(wid)
-                    if x is None:
-                        continue
-                    visible.append((wid, x))
+                    wids.append(wid)
                     game_by_wid[wid] = game
-                visible.sort(key=lambda item: (item[1], item[0]))
-                new_ids = list(dict.fromkeys(w for w, _ in visible))[:16]
             except Exception:
-                new_ids = []
+                wids = []
         else:
             try:
-                raw_pairs = x11_discovery.find_game_windows()
-
-                visible = []
-                for wid, game in raw_pairs:
+                for wid, game in x11_discovery.find_game_windows():
                     if not _accept_candidate_window(wid):
                         continue
-                    x = x11_discovery.get_window_root_x(wid)
-                    if x is None:
-                        continue
-                    visible.append((wid, x))
+                    wids.append(wid)
                     game_by_wid[wid] = game
-
-                visible.sort(key=lambda item: (item[1], item[0]))
-                new_ids = list(dict.fromkeys(w for w, _ in visible))[:16]
             except Exception:
-                new_ids = []
+                wids = []
+
+        ordered, slot_cells = self._assign_cells_to_wids(wids)
+        new_ids = ordered[:16]
 
         with self._lock:
             changed = new_ids != self.ttr_window_ids
+            cells_changed = slot_cells != self.slot_cells
             if changed:
                 self.ttr_window_ids = list(new_ids)
+            if cells_changed:
+                self.slot_cells = list(slot_cells)
             self.window_games = {
                 wid: game_by_wid[wid] for wid in new_ids if wid in game_by_wid
             }
             snapshot = list(self.ttr_window_ids)
+            cells_snapshot = list(self.slot_cells)
         if changed:
             self.window_ids_updated.emit(snapshot)
+        if cells_changed:
+            # Geometry-only cell changes (dense list unchanged) reach the layout
+            # only through this signal; window_ids_updated would not fire.
+            self.cell_assignment_changed.emit(cells_snapshot)
+
+    def _assign_cells_to_wids(self, wids):
+        """Return ``(ordered_wids, slot_cells)`` for the detected windows.
+
+        ordered_wids: ids ordered by their 2x2 cluster cell (0=TL, 1=TR, 2=BL,
+        3=BR) so card slot i shows the window in cell i. Dedupes preserving first
+        occurrence. Each window's center comes from the geometry backend; the pure
+        ``assign_window_cells`` does the matching. Windows whose geometry is
+        unavailable, and any beyond the four placed, keep detection order AFTER the
+        placed four, so an odd/partial set never drops a real window.
+
+        slot_cells: a length-4 bijection of cells - slot i's window sits in cell
+        slot_cells[i]; the unused slots hold the remaining (empty) cells. For
+        contiguous fills (4-window, side-by-side, 2-top-1-bottom) this is the
+        identity [0,1,2,3]; a vertical stack gives [0,2,1,3], etc.
+        """
+        seen: list[str] = []
+        for w in wids:
+            if w not in seen:
+                seen.append(w)
+        if not seen:
+            return [], [0, 1, 2, 3]
+        backend = _geometry_backend()
+        centers = []
+        for w in seen:
+            try:
+                g = backend.get_window_geometry(w)
+            except Exception:
+                g = None
+            if g is None:
+                centers.append(None)
+            else:
+                x, y, cw, ch = g
+                centers.append((x + cw // 2, y + ch // 2))
+        known = [i for i, c in enumerate(centers) if c is not None]
+        cells = assign_window_cells([centers[i] for i in known])
+        cell_of = {i: cells[pos] for pos, i in enumerate(known)}
+
+        def _key(i):
+            c = cell_of.get(i, -1)
+            if c is not None and c >= 0:
+                return (0, c, i)   # placed: grouped first, ordered by cell
+            return (1, 0, i)       # unknown geometry / extras: detection order, last
+
+        ordered = [seen[i] for i in sorted(range(len(seen)), key=_key)]
+
+        placed_cells = sorted(c for c in cell_of.values() if c is not None and c >= 0)
+        empty_cells = [c for c in range(4) if c not in placed_cells]
+        slot_cells = (placed_cells + empty_cells)[:4]
+        while len(slot_cells) < 4:  # belt: placed+empty already == 4
+            slot_cells.append(len(slot_cells))
+        return ordered, slot_cells
+
+    def _order_wids_by_cell(self, wids):
+        """Detected window ids ordered by 2x2 cluster cell (just the ordered ids;
+        see _assign_cells_to_wids for the slot->cell bijection)."""
+        return self._assign_cells_to_wids(wids)[0]
 
     def is_multitool_active(self) -> bool:
         active = self.active_window_id
