@@ -51,3 +51,18 @@ def test_ghost_store_ignores_unknown_kind():
     s = GhostPointStore()
     s.ingest(("nonsense", [(0, 1, 1)]))
     assert s.points() == []
+
+
+def test_ghost_store_ignores_press_kind():
+    # The service also emits a "press" kind; peek tracks positions only, so it
+    # must be ignored (and never leak a tracked point).
+    s = GhostPointStore()
+    s.ingest(("press", [(0, 1, 1)]))
+    assert s.points() == []
+
+
+def test_ghost_store_ignores_malformed_payload():
+    s = GhostPointStore()
+    s.ingest(None)
+    s.ingest(("motion",))            # 1-tuple: kind/items unpack fails
+    assert s.points() == []

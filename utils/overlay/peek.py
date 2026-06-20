@@ -9,7 +9,7 @@ Both are pure so they unit-test without a QApplication.
 from __future__ import annotations
 
 
-def peeking_indices(points, rects):
+def peeking_indices(points, rects) -> set:
     """Return the set of rect indices that contain at least one point.
 
     points: iterable of (x, y). rects: iterable of (x, y, w, h). A rect contains
@@ -33,7 +33,8 @@ class GhostPointStore:
         ("motion", [(slot, global_x, global_y), ...])
         ("release", [(slot, global_x, global_y), ...])
     "motion" upserts each slot's point; "release" drops those slots; clear()
-    drops everything (use on ghost_clear).
+    drops everything (use on ghost_clear). Any other kind (e.g. "press") and any
+    malformed payload are silently ignored - peek only tracks live positions.
     """
 
     def __init__(self):
@@ -54,5 +55,5 @@ class GhostPointStore:
     def clear(self) -> None:
         self._by_slot.clear()
 
-    def points(self):
+    def points(self) -> list:
         return list(self._by_slot.values())
