@@ -790,10 +790,17 @@ class OverlayGroupController:
         minimized = False
         try:
             # Scale the emblem BEFORE computing rects, so emblem_size() in
-            # _compute_rects reflects the current overlay scale.  Cards are laid
-            # out at their framed 1.0 base size and scaled only via the per-card
-            # view transform (set below), so apply_metrics is NOT called here.
+            # Normalize the cards to the canonical 1.0 layout BEFORE measuring the
+            # base size + hosting. The framed/window mode does not reliably leave the
+            # cards at 1.0 (it can lay them out at a window-fit metric), so without
+            # this the FIRST enter shows content sized for the wrong metric -
+            # overlapping the portrait / clipping the card edge - until an exit
+            # (which resets to 1.0) and re-enter. apply_metrics(1.0) here makes every
+            # enter start from the same 1.0 state the leave-reset leaves behind. The
+            # per-card view transform (set below) then scales the 1.0 card as a unit.
             if provider is not None:
+                from utils.overlay.card_metrics import CardMetrics
+                provider.apply_metrics(CardMetrics(1.0))
                 provider.scale_emblem(self._scale)
             rects = self._compute_rects()
             # Build the glow surface FIRST so it shows below the cards (it paints
