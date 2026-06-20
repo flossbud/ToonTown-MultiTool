@@ -495,6 +495,10 @@ class MultiToonTool(QMainWindow):
         self._mode_controller = OverlayGroupController(
             self, self._overlay_backend, self.settings_manager,
             card_provider=self.multitoon_tab._compact,
+            # Keep the keep-alive bar/glow repaint timers alive (and reconcile the
+            # borrowed bars' paint state) while the cluster is up and this window
+            # is minimized.
+            on_active_changed=self.multitoon_tab.set_overlay_active,
         )
         emblem = self.multitoon_tab._compact._emblem
         if self._overlay_backend.is_available():

@@ -1214,6 +1214,7 @@ class MultitoonTab(QWidget):
         self._keep_alive_thread = None
         self._ka_cycle_start = 0.0
         self._ka_cycle_event = threading.Event()
+        self._overlay_active = False  # True while the transparent-mode cluster is up
         self._sleep_inhibitor = SleepInhibitor()
         self._inhibit_worker = None
         self._inhibit_gen = 0
@@ -1399,6 +1400,14 @@ class MultitoonTab(QWidget):
             laff_lbl.setObjectName("laff_lbl")
             laff_lbl.setAttribute(Qt.WA_TransparentForMouseEvents)
             laff_lbl.setToolTip("Laff")
+            # Reserve the stats-row height even while hidden, so the card is a
+            # CONSISTENT size whether or not toon data has loaded. Without this the
+            # row collapses pre-data and the card grows ~one row taller when stats
+            # arrive - which clips a card sized before its data (e.g. entering
+            # transparent mode before the API responds).
+            _laff_sp = laff_lbl.sizePolicy()
+            _laff_sp.setRetainSizeWhenHidden(True)
+            laff_lbl.setSizePolicy(_laff_sp)
             laff_lbl.hide()
             self.laff_labels.append(laff_lbl)
 
@@ -1407,6 +1416,9 @@ class MultitoonTab(QWidget):
             bean_lbl.setObjectName("bean_lbl")
             bean_lbl.setAttribute(Qt.WA_TransparentForMouseEvents)
             bean_lbl.setToolTip("Bank Jellybeans")
+            _bean_sp = bean_lbl.sizePolicy()
+            _bean_sp.setRetainSizeWhenHidden(True)
+            bean_lbl.setSizePolicy(_bean_sp)
             bean_lbl.hide()
             self.bean_labels.append(bean_lbl)
 
@@ -2162,6 +2174,7 @@ class MultitoonTab(QWidget):
             window_minimized=bool(win and win.isMinimized()),
             keep_alive_active=any(self.keep_alive_enabled),
             chat_glow_active=self._chat_glow_active,
+            overlay_active=self._overlay_active,
         )
 
         if needs_glow and not self._glow_timer.isActive():
@@ -2180,6 +2193,48 @@ class MultitoonTab(QWidget):
             for i in range(4):
                 if i < len(self.ka_progress_bars):
                     self.ka_progress_bars[i].set_progress(0.0)
+
+    def set_overlay_active(self, active: bool) -> None:
+        """Called by the overlay controller on enter (True) / leave (False).
+
+        Flips the overlay flag so the repaint timers stay alive while the main
+        window is minimized (the cluster is visible in its own surfaces), and on
+        enter reconciles the borrowed keep-alive bars' paint state (clears any
+        stale graphics effect + restores visibility per the master setting) so
+        the bar paints in the overlay. Phase is preserved by the untouched
+        monotonic _ka_cycle_start anchor, so the bar resumes mid-cycle on either
+        side of the switch.
+        """
+        self._overlay_active = bool(active)
+        if active:
+            # Make sure the bars carry no leftover opacity effect from a fade
+            # animation and are visible per the master flag, so they paint in the
+            # borrowed/proxied overlay card.
+            self._reconcile_keep_alive_visibility_instant()
+            self._trace_ka_overlay("enter")
+        self._update_glow_timer()
+
+    def _trace_ka_overlay(self, tag: str) -> None:
+        """Diagnostic (no-op unless TTMT_KA_TRACE is set): log each keep-alive
+        bar's live paint state when the overlay goes active, so the borrowed-bar
+        visibility cause can be confirmed without self-injecting into the app."""
+        import os
+        if not os.environ.get("TTMT_KA_TRACE"):
+            return
+        from PySide6.QtCore import QPoint
+        active = self._bar_timer.isActive() if hasattr(self, "_bar_timer") else None
+        print(f"[KA_TRACE:{tag}] overlay_active={self._overlay_active} "
+              f"bar_timer_active={active} master={self._keep_alive_globally_enabled()} "
+              f"ka_enabled={list(self.keep_alive_enabled)}")
+        for i, bar in enumerate(self.ka_progress_bars):
+            try:
+                top = bar.mapTo(bar.window(), QPoint(0, 0))
+                print(f"  bar[{i}] hidden={bar.isHidden()} visible={bar.isVisible()} "
+                      f"size={bar.size().width()}x{bar.size().height()} "
+                      f"effect={bar.graphicsEffect()} parent={type(bar.parent()).__name__} "
+                      f"topInWindow=({top.x()},{top.y()}) progress={getattr(bar, '_progress', None)}")
+            except Exception as e:
+                print(f"  bar[{i}] trace error: {e}")
 
     def _tick_progress_bars(self):
         delay = self._get_keep_alive_delay()

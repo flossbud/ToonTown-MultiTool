@@ -228,8 +228,13 @@ class OverlayGroupController:
     """
 
     def __init__(self, window, backend=None, settings=None, surface_factory=None,
-                 card_provider=None):
+                 card_provider=None, on_active_changed=None):
         self._window = window
+        # Optional observer notified with the new active state after a successful
+        # enter() and after leave(). The tab uses it to keep the keep-alive
+        # bar/glow repaint timers running while the (minimized) main window would
+        # otherwise stop them. Best-effort: never invoked on a failed enter.
+        self._on_active_changed = on_active_changed
         self._backend = backend if backend is not None else get_overlay_backend()
         # Stored for Task 6.1 (anchor/scale persistence); unused in this task.
         self._settings = settings
@@ -762,6 +767,17 @@ class OverlayGroupController:
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
+    def _emit_active_changed(self) -> None:
+        """Notify the optional observer of the CURRENT active state. Best-effort:
+        an observer error must never corrupt the controller's enter/leave."""
+        cb = self._on_active_changed
+        if cb is None:
+            return
+        try:
+            cb(self._active)
+        except Exception:
+            pass
+
     def enter(self) -> bool:
         """Build + show + shape the cluster, then minimize the main window.
 
@@ -884,6 +900,7 @@ class OverlayGroupController:
         # the minimize settles (the 1.5s timer would also heal it, but with a
         # visible taskbar flicker), so the single-icon state is reached promptly.
         self._schedule_post_minimize_reassert()
+        self._emit_active_changed()   # self._active is True here
         return True
 
     def _schedule_post_minimize_reassert(self) -> None:
@@ -927,6 +944,7 @@ class OverlayGroupController:
         self._captured = []
         self._safe_call(self._window, "showNormal")
         self._active = False
+        self._emit_active_changed()   # self._active is False here
 
     def toggle(self) -> bool:
         """Leave if active, else enter.  Returns the resulting active state."""

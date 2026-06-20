@@ -94,3 +94,13 @@ def test_close_releases_borrowed_card(qapp):
     qapp.processEvents()
     assert isValid(card)                 # survived close()
     assert v.card() is None
+
+
+def test_view_uses_full_viewport_update_mode(qapp):
+    # Embedded-widget update()s (e.g. SmoothProgressBar.set_progress -> update())
+    # must reliably repaint in the proxy; the default partial update mode can
+    # skip the proxied child's region, so the keep-alive bar would not paint /
+    # advance in the overlay. Full viewport update guarantees the repaint.
+    from PySide6.QtWidgets import QGraphicsView
+    v = ScaledCardView()
+    assert v._view.viewportUpdateMode() == QGraphicsView.FullViewportUpdate
