@@ -1400,6 +1400,14 @@ class MultitoonTab(QWidget):
             laff_lbl.setObjectName("laff_lbl")
             laff_lbl.setAttribute(Qt.WA_TransparentForMouseEvents)
             laff_lbl.setToolTip("Laff")
+            # Reserve the stats-row height even while hidden, so the card is a
+            # CONSISTENT size whether or not toon data has loaded. Without this the
+            # row collapses pre-data and the card grows ~one row taller when stats
+            # arrive - which clips a card sized before its data (e.g. entering
+            # transparent mode before the API responds).
+            _laff_sp = laff_lbl.sizePolicy()
+            _laff_sp.setRetainSizeWhenHidden(True)
+            laff_lbl.setSizePolicy(_laff_sp)
             laff_lbl.hide()
             self.laff_labels.append(laff_lbl)
 
@@ -1408,6 +1416,9 @@ class MultitoonTab(QWidget):
             bean_lbl.setObjectName("bean_lbl")
             bean_lbl.setAttribute(Qt.WA_TransparentForMouseEvents)
             bean_lbl.setToolTip("Bank Jellybeans")
+            _bean_sp = bean_lbl.sizePolicy()
+            _bean_sp.setRetainSizeWhenHidden(True)
+            bean_lbl.setSizePolicy(_bean_sp)
             bean_lbl.hide()
             self.bean_labels.append(bean_lbl)
 
