@@ -282,6 +282,11 @@ class OverlayGroupController:
         self._emblem = None
         self._drag_timer = None
         self._drag_last = None
+        # Debounced persistence of the group anchor + scale + monitor (Task 6.1).
+        # A burst of drag/scale changes coalesces into one settings write. No-op
+        # when settings is None (the orchestration/stub tests).
+        self._save_timer = None
+        self._save_pending = False
 
     # ------------------------------------------------------------------
     # State queries
@@ -313,6 +318,78 @@ class OverlayGroupController:
             return (0, 0)
         geo = screen.geometry()
         return (geo.x() + geo.width() // 2, geo.y() + geo.height() // 2)
+
+    # ------------------------------------------------------------------
+    # Persistence (Task 6.1): group anchor + scale + monitor identity
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _screens():
+        """Connected screens as ``(name, left, top, right, bottom)`` logical
+        tuples (the primitive form the pure persistence helpers consume)."""
+        from PySide6.QtGui import QGuiApplication
+        out = []
+        for s in QGuiApplication.screens():
+            g = s.geometry()
+            out.append((s.name(), g.left(), g.top(), g.right(), g.bottom()))
+        return out
+
+    def _load_persisted_state(self) -> bool:
+        """Restore the saved group scale + anchor, clamping the anchor to a
+        currently-visible monitor (recenter if the saved monitor is gone). No-op
+        without a settings object (the stub/orchestration tests).
+
+        Returns True if a SAVED anchor was restored, so enter() skips the
+        default-anchor fallback: a saved anchor of (0, 0) is a VALID origin point
+        and must NOT be mistaken for the no-QApplication sentinel."""
+        if self._settings is None:
+            return False
+        from utils.overlay.persistence import (
+            load_overlay_state, clamp_anchor_to_screens,
+        )
+        anchor, scale, monitor = load_overlay_state(self._settings)
+        self._scale = scale
+        for state in self._states:
+            state.scale = scale
+        if anchor is not None:
+            self._anchor = clamp_anchor_to_screens(anchor, monitor, self._screens())
+            return True
+        return False
+
+    def _save_state(self) -> None:
+        """Persist the current group anchor + scale + the monitor it sits on."""
+        if self._settings is None:
+            return
+        from utils.overlay.persistence import save_overlay_state, monitor_for_anchor
+        monitor = monitor_for_anchor(self._anchor, self._screens())
+        save_overlay_state(self._settings, self._anchor, self._scale, monitor)
+
+    def _schedule_save(self) -> None:
+        """Debounce a persistence write: a burst of drag/scale changes collapses
+        into one settings write ~250ms after a change. No-op without settings."""
+        if self._settings is None or self._save_pending:
+            return
+        from PySide6.QtCore import QTimer
+        self._save_pending = True
+        if self._save_timer is None:
+            self._save_timer = QTimer()
+            self._save_timer.setSingleShot(True)
+            self._save_timer.setInterval(250)
+            self._save_timer.timeout.connect(self._run_pending_save)
+        self._save_timer.start()
+
+    def _run_pending_save(self) -> None:
+        if not self._save_pending:
+            return
+        self._save_pending = False
+        self._save_state()
+
+    def flush_pending_save(self) -> None:
+        """Write any pending debounced save synchronously NOW (tests + leave)."""
+        if self._save_pending:
+            self._save_pending = False
+            if self._save_timer is not None:
+                self._save_timer.stop()
+            self._save_state()
 
     # ------------------------------------------------------------------
     # Geometry + shape helpers
@@ -541,10 +618,12 @@ class OverlayGroupController:
         # Defensive: no debounced recompute can be outstanding while framed, but
         # clear the gate so a stray queued tick from a prior session is inert.
         self._recompute_pending = False
-        # Defensive: if the anchor is still the no-QApplication sentinel, recompute
-        # now that a QApplication certainly exists (Task 6.1 persistence may also
-        # have set it).
-        if self._anchor == (0, 0):
+        # Task 6.1: load the persisted group scale + anchor, clamping the anchor to
+        # a currently-visible monitor (recenter if the saved monitor is gone).
+        loaded_anchor = self._load_persisted_state()
+        # Only apply the default-anchor fallback when NO saved anchor was restored;
+        # a saved (0,0) is a valid origin anchor, not the no-QApplication sentinel.
+        if not loaded_anchor and self._anchor == (0, 0):
             self._anchor = self._default_anchor()
         created: list = []
         # (surface, SlotRecord) per reparented widget; stays empty in the
@@ -631,6 +710,9 @@ class OverlayGroupController:
             return
         # Cancel any in-progress group drag (the emblem window is going away).
         self._end_drag()
+        # Persist the FINAL group anchor + scale before teardown (the remembered
+        # overlay position, restored on the next enter).
+        self.flush_pending_save()
         # Cancel any debounced recompute: leave() resets to framed (scale-1.0)
         # metrics, so a queued recompute at the old scale must NOT fire (its
         # _run_pending_recompute will find the flag cleared + _active False and
@@ -755,6 +837,7 @@ class OverlayGroupController:
         self._scale = step_scale(self._scale, notches)
         for state in self._states:
             state.scale = self._scale
+        self._schedule_save()  # persist the new scale (debounced)
         if self._card_provider is None:
             # Task 3.2 path: no apply_metrics, placeholder geometry, synchronous.
             self._place_all(reshape=True)
@@ -818,6 +901,7 @@ class OverlayGroupController:
         for state in self._states:
             state.anchor = self._anchor
         self._place_all(reshape=False)
+        self._schedule_save()  # persist the new anchor (debounced)
 
     def update_shapes(self) -> None:
         """Re-place AND re-shape every surface (DPI / screen / monitor change,
