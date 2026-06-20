@@ -244,7 +244,8 @@ class OverlayGroupController:
         # restores them to the tab); when None, enter() builds EMPTY surfaces
         # exactly as the Task 3.2 orchestration tests expect (no reparent). The
         # provider must expose slot_widget(int) / emblem_widget() / capture_slot(w)
-        # -> record / restore_slot(record) / apply_metrics(CardMetrics).
+        # -> record / restore_slot(record) / apply_metrics(CardMetrics) /
+        # control_rects(int) -> list[QRect].
         self._card_provider = card_provider
 
         # Per-surface state: cards 0-3 then the emblem LAST.  Order is load
@@ -474,6 +475,30 @@ class OverlayGroupController:
         cutout = SLOT_CUTOUTS[state.surface_id]
         return _card_body_path(w, h, cutout, m.card_radius, m.cutout_r)
 
+    def _apply_input_region(self, state, surface, rect) -> None:
+        """Apply the click-through input region for one surface.
+
+        Emblem: the disc path (unchanged). Card: the controls-only region (Model B)
+        - the union of its control-widget rects, so the body is click-through and
+        only the buttons block clicks. Falls back to the legacy body path when no
+        card_provider is present (the orchestration stub tests) or when the
+        provider yields no rects (defensive)."""
+        dpr = surface.devicePixelRatio()
+        if state.is_emblem:
+            surface.apply_shape(self._shape_path(state, rect), dpr)
+            return
+        rects_base = []
+        if self._card_provider is not None:
+            try:
+                rects_base = self._card_provider.control_rects(state.surface_id)
+            except Exception:
+                rects_base = []
+        if rects_base:
+            from utils.overlay.region import controls_region
+            surface.apply_input_region(controls_region(rects_base, self._scale, dpr))
+        else:
+            surface.apply_shape(self._shape_path(state, rect), dpr)
+
     def _raise_emblem(self) -> None:
         """Raise the emblem above the four cards (spec section 8 z-order).
 
@@ -549,7 +574,7 @@ class OverlayGroupController:
             rect = rects[self._key(state)]
             surface.set_overlay_geometry(rect)
             if reshape:
-                surface.apply_shape(self._shape_path(state, rect), surface.devicePixelRatio())
+                self._apply_input_region(state, surface, rect)
         self._raise_emblem()
 
     # ------------------------------------------------------------------
@@ -861,7 +886,7 @@ class OverlayGroupController:
                 # INPUT only and the window is translucent, so there is no visual
                 # flash; do NOT reorder to shape-before-show (it would never apply).
                 surface.show()
-                surface.apply_shape(self._shape_path(state, rect), surface.devicePixelRatio())
+                self._apply_input_region(state, surface, rect)
                 # Snapshot the live anchor/scale into the state (v2 detach reads it).
                 state.anchor = self._anchor
                 state.scale = self._scale

@@ -160,6 +160,15 @@ class OverlaySurface(QWidget):
         """
         self._backend.apply_input_shape(self, path, dpr)
 
+    def apply_input_region(self, region) -> None:
+        """Set the X11 ShapeInput region directly from a device-pixel QRegion.
+
+        Used for disjoint regions (the card's controls-only click-through region),
+        where a single polygonized path is unreliable. Delegates to the backend's
+        region path; a no-op before show() (the backend swallows an invalid winId).
+        """
+        self._backend.apply_input_region(self, region)
+
     def clear_shape(self) -> None:
         """Remove any previously applied ShapeInput region."""
         self._backend.clear_input_region(self)
