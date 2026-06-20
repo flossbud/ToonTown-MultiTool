@@ -149,20 +149,23 @@ def _make(tab=None):
 # 1. Rescale + surface-size reconciliation
 # ---------------------------------------------------------------------------
 def test_scale_down_shrinks_cards_and_reconciles_surface_size(qapp, tab):
+    """Cards scale via view transform, not apply_metrics.  The surface WINDOW
+    shrinks to base*s; the card widget stays at its framed 1.0 base size and
+    the ScaledCardView transform zooms the render."""
     compact = tab._compact
     ctl, factory, win = _make(tab)
 
     assert ctl.enter() is True
     qapp.processEvents()
 
-    # Baseline (scale 1.0): the real card sizeHint, and the surfaces already fit
-    # it (no placeholder 300) right out of enter().
-    w0, h0 = compact.card_size()
-    assert w0 != 300, "card_size must be the REAL sizeHint, not the placeholder"
+    # Baseline (scale 1.0): surfaces fit the framed base size (overlay_base_card_size),
+    # NOT the raw sizeHint (which can be taller than the fixed cell height).
+    bw0, bh0 = compact.overlay_base_card_size()
+    assert bw0 != 300, "base card width must be the REAL card width, not the placeholder"
     for i in range(4):
         geo = ctl._surfaces[i].geometry()
-        assert (geo.width(), geo.height()) == (w0, h0), (
-            f"card {i} surface must fit the 1.0 sizeHint, got {geo}"
+        assert (geo.width(), geo.height()) == (round(bw0 * 1.0), round(bh0 * 1.0)), (
+            f"card {i} surface must fit the 1.0 base size, got {geo}"
         )
 
     # Scroll down a few notches -> smaller scale.
@@ -173,17 +176,19 @@ def test_scale_down_shrinks_cards_and_reconciles_surface_size(qapp, tab):
     # Drive the debounced recompute.
     qapp.processEvents()
 
-    # The real cards actually shrank.
-    w1, h1 = compact.card_size()
-    assert w1 < w0 and h1 < h0, "the live card content must shrink with scale"
+    s = ctl._scale
+    bw, bh = compact.overlay_base_card_size()
 
-    # Every card surface now fits the SCALED sizeHint exactly (reconciliation).
+    # Card WINDOWS shrink to base*s; card content stays at framed 1.0 and is
+    # scaled only by the per-card view transform (no apply_metrics on cards).
     for i in range(4):
         geo = ctl._surfaces[i].geometry()
-        assert geo.width() == w1, f"card {i} surface width != scaled sizeHint"
-        assert geo.height() == h1, f"card {i} surface height != scaled sizeHint"
+        assert geo.width() == round(bw * s), f"card {i} surface width != round(base_w*s)"
+        assert geo.height() == round(bh * s), f"card {i} surface height != round(base_h*s)"
+        assert round(ctl._surfaces[i]._scaled_view.view_transform().m11(), 3) == round(s, 3), \
+            f"card {i} view transform m11 must be {s:.3f}"
 
-    # The emblem surface tracks the scaled disc diameter.
+    # The emblem surface tracks the scaled disc diameter (emblem scales via metrics).
     emblem_geo = ctl._surfaces[4].geometry()
     assert emblem_geo.width() == compact.emblem_size()
 
@@ -191,7 +196,8 @@ def test_scale_down_shrinks_cards_and_reconciles_surface_size(qapp, tab):
 
 
 def test_flush_pending_recompute_is_synchronous(qapp, tab):
-    """flush_pending_recompute() applies the debounced recompute without a tick."""
+    """flush_pending_recompute() applies the debounced recompute without a tick.
+    Under the transform contract, surfaces are base*s and view transform == s."""
     compact = tab._compact
     ctl, factory, win = _make(tab)
     ctl.enter()
@@ -202,31 +208,36 @@ def test_flush_pending_recompute_is_synchronous(qapp, tab):
     ctl.flush_pending_recompute()
     assert ctl._recompute_pending is False
 
-    w, h = compact.card_size()
+    s = ctl._scale
+    bw, bh = compact.overlay_base_card_size()
     for i in range(4):
         geo = ctl._surfaces[i].geometry()
-        assert (geo.width(), geo.height()) == (w, h)
+        assert (geo.width(), geo.height()) == (round(bw * s), round(bh * s))
+        assert round(ctl._surfaces[i]._scaled_view.view_transform().m11(), 3) == round(s, 3)
     ctl.leave()
 
 
 # ---------------------------------------------------------------------------
 # 2. Debounce / coalesce
 # ---------------------------------------------------------------------------
-def test_rapid_scroll_coalesces_to_one_apply_metrics(qapp, tab):
+def test_rapid_scroll_coalesces_to_one_recompute(qapp, tab):
+    """A burst of notches in one tick must coalesce into ONE scale_emblem call
+    (the debounce signal under the view-transform contract)."""
     compact = tab._compact
     ctl, factory, win = _make(tab)
     ctl.enter()
     qapp.processEvents()
 
-    # Spy on apply_metrics (wrapping the real one, so the cards still rescale).
+    # Spy on scale_emblem (the new recompute signal; wrapping the real call so
+    # emblem still scales).
     calls: list = []
-    real_apply = compact.apply_metrics
+    real_se = compact.scale_emblem
 
-    def spy(metrics):
-        calls.append(metrics.scale)
-        return real_apply(metrics)
+    def spy(scale):
+        calls.append(scale)
+        return real_se(scale)
 
-    compact.apply_metrics = spy
+    compact.scale_emblem = spy
 
     # A rapid burst within one tick.
     ctl.set_scale_by_notches(-1)
@@ -238,10 +249,10 @@ def test_rapid_scroll_coalesces_to_one_apply_metrics(qapp, tab):
     assert ctl._scale == final, "scale updates synchronously to the final value"
 
     qapp.processEvents()
-    assert len(calls) == 1, "the burst must coalesce into ONE apply_metrics"
+    assert len(calls) == 1, "the burst must coalesce into ONE scale_emblem call"
     assert calls[0] == final, "the single recompute runs at the FINAL scale"
 
-    compact.apply_metrics = real_apply
+    compact.scale_emblem = real_se
     ctl.leave()
 
 
@@ -361,8 +372,9 @@ def test_glow_surface_built_on_enter_and_torn_down_on_leave(qapp, tab):
 def test_reenter_uses_remembered_scale(qapp, tab):
     """A scale-down then leave then re-enter must render at the REMEMBERED overlay
     scale: leave resets the framed cards to 1.0 but self._scale persists, and
-    enter() re-applies CardMetrics(self._scale) so the re-entered surfaces match
-    the scaled cards (not a 1.0-hint / non-1.0-gap mismatch)."""
+    enter() re-applies the scale via per-card view transform + window = base*s.
+    (Under the view-transform contract, card content stays at 1.0; the WINDOW and
+    transform carry the scale, so surfaces must NOT have 1.0 geometry on re-enter.)"""
     compact = tab._compact
     ctl, factory, win = _make(tab)
     ctl.enter()
@@ -371,21 +383,23 @@ def test_reenter_uses_remembered_scale(qapp, tab):
     qapp.processEvents()
     scaled = ctl._scale
     assert scaled < 1.0
-    w_scaled, h_scaled = compact.card_size()
+    bw, bh = compact.overlay_base_card_size()
     ctl.leave()
     qapp.processEvents()
 
-    # The remembered overlay scale persists across leave (framed cards reset to 1.0).
+    # The remembered overlay scale persists across leave.
     assert ctl._scale == scaled
 
     ctl.enter()
     qapp.processEvents()
-    # Re-enter re-applied the remembered scale: cards are scaled again and every
-    # surface is sized consistently from those scaled hints.
-    assert compact.card_size() == (w_scaled, h_scaled), "re-enter must restore the scaled card size"
+    # Re-enter re-applied the remembered scale: every card surface is base*s
+    # and the per-card view transform is s (cards are NOT apply_metrics'd).
     for i in range(4):
         geo = ctl._surfaces[i].geometry()
-        assert (geo.width(), geo.height()) == (w_scaled, h_scaled)
+        assert (geo.width(), geo.height()) == (round(bw * scaled), round(bh * scaled)), \
+            f"re-enter surface {i} must be base*s, got {geo}"
+        assert round(ctl._surfaces[i]._scaled_view.view_transform().m11(), 3) == round(scaled, 3), \
+            f"re-enter card {i} view transform must be {scaled:.3f}"
     ctl.leave()
 
 
@@ -427,3 +441,24 @@ def test_scale_emblem_sizes_only_the_emblem(qapp, tab):
     assert compact.emblem_size() > base_em                 # emblem grew
     assert compact.card_size() == card_before              # cards untouched
     compact.scale_emblem(1.0)
+
+
+def test_overlay_scales_via_transform_not_apply_metrics(qapp, tab):
+    """Scaling the overlay sets each card's view transform + window = base*s and
+    does NOT re-run apply_metrics (which is what floated)."""
+    calls = []
+    real = tab._compact.apply_metrics
+    tab._compact.apply_metrics = lambda m: (calls.append(m.scale), real(m))[1]
+    ctl, factory, win = _make(tab)
+    ctl.enter(); qapp.processEvents()
+    calls.clear()
+    ctl.set_scale_by_notches(3); ctl.flush_pending_recompute(); qapp.processEvents()
+    assert calls == [], "overlay scaling must NOT call apply_metrics"
+    s = ctl._scale
+    bw, bh = tab._compact.overlay_base_card_size()
+    for i in range(4):
+        g = factory.created[i].geometry()
+        assert g.width() == round(bw * s) and g.height() == round(bh * s)
+        assert round(factory.created[i]._scaled_view.view_transform().m11(), 3) == round(s, 3)
+    ctl.leave()
+    tab._compact.apply_metrics = real

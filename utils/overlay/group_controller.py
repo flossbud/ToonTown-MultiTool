@@ -14,19 +14,17 @@ The emblem uses surface_id=-1 (a sentinel; callers must not depend on the
 specific value) plus is_emblem=True.  Always check is_emblem, never the
 sentinel value, when branching on emblem vs card.
 
-Controller integration note (Task 4.2 - the size-reconcile contract)
-----------------------------------------------------------------------
-With a real card_provider the controller reconciles each surface's QRect with
-the card's ACTUAL scaled sizeHint (which can differ from card_w*scale by
-rounding). pinwheel_rects() owns the OFFSET geometry; the controller owns the
-size-reconcile. CardMetrics uses ``round(base * scale)`` while this function
-uses ``int(base * scale)`` (matching the spike), so for some scales the sizes
-differ by 1px. The controller resolves this by reading the live card's
-``sizeHint()`` (provider.card_size()) + the emblem widget extent
-(provider.emblem_size()) and feeding them to pinwheel_rects ALREADY SCALED with
-``scale=1.0`` and a scaled gap - so each surface rect ends up EXACTLY the scaled
-sizeHint with no double-scaling. When no provider is present (the Task 3.2 tests)
-the controller falls back to the placeholder base sizes + self._scale below.
+Controller integration note (unit-scaling contract)
+----------------------------------------------------
+With a real card_provider the cards scale as ONE locked unit: each card is laid
+out once at its framed 1.0 size and proxied into a per-card QGraphicsView whose
+transform applies the group scale (so the card content never re-layouts and
+nothing floats). The controller sizes each card window to the FRAMED 1.0 size
+(provider.overlay_base_card_size()) times the scale and sets each card view's
+transform; it does NOT call apply_metrics per scale. The emblem stays a single
+painted widget and keeps metric-scaling via provider.scale_emblem(scale). When no
+provider is present (the Task 3.2 tests) the controller falls back to the
+placeholder base sizes + self._scale below.
 """
 from __future__ import annotations
 
@@ -269,8 +267,8 @@ class OverlayGroupController:
         self._anchor: tuple[int, int] = self._default_anchor()
         self._scale: float = 1.0
         self._active: bool = False
-        # Debounce gate for the expensive provider recompute (apply_metrics +
-        # geometry + reshape). set_scale_by_notches updates self._scale
+        # Debounce gate for the provider recompute (scale_emblem + per-card
+        # set_card_scale transform + geometry + reshape). set_scale_by_notches updates self._scale
         # synchronously but coalesces a burst of recomputes into ONE on the next
         # event-loop tick; this flag is the single scheduling/cancel gate (see
         # _schedule_recompute / _run_pending_recompute / flush_pending_recompute).
@@ -413,16 +411,13 @@ class OverlayGroupController:
 
         Two contracts, by whether a card_provider is present:
 
-        * provider present (Task 4.2): the card + emblem sizes come from the LIVE
-          scaled widgets - the card's sizeHint (provider.card_size()) and the
-          emblem widget extent (provider.emblem_size()), already scaled by the
-          most recent apply_metrics(CardMetrics(scale)). They are fed to
-          pinwheel_rects
-          ALREADY SCALED, with ``scale=1.0`` and a scaled gap, so the function
-          does NOT scale them a second time. The surface rect width therefore
-          ends up EXACTLY the card's scaled sizeHint (no placeholder, no double-
-          scaling), resolving the CardMetrics(round)-vs-pinwheel(int) 1px
-          discrepancy in favour of the live widget.
+        * provider present (unit-scaling): each card window is the FRAMED 1.0 size
+          (provider.overlay_base_card_size()) multiplied by the group scale - the
+          card content itself is NOT re-laid-out per scale; it stays at 1.0 and the
+          per-card view transform zooms it (so nothing floats). The emblem extent
+          (provider.emblem_size()) reflects the most recent scale_emblem(scale).
+          Sizes are passed ALREADY SCALED with ``scale=1.0`` so pinwheel_rects keeps
+          them verbatim, and the gap derives from the framed grid_gap/2.
         * provider None (Task 3.2 orchestration tests): the placeholder base
           sizes (_BASE_CARD_W) + CardMetrics(1.0) for card_h/emblem, with the
           scale applied INSIDE pinwheel_rects exactly as before.
@@ -432,7 +427,8 @@ class OverlayGroupController:
         from utils.overlay.card_metrics import CardMetrics
         provider = self._card_provider
         if provider is not None:
-            card_w, card_h = provider.card_size()
+            base_w, base_h = provider.overlay_base_card_size()   # framed 1.0 size
+            card_w, card_h = round(base_w * self._scale), round(base_h * self._scale)
             emblem = provider.emblem_size()
             # Spacing must MATCH the framed 2x2 grid, not the spike's looser gap.
             # The framed grid puts cards `grid_gap` apart, so each card's inner
@@ -441,8 +437,8 @@ class OverlayGroupController:
             # leaving the emblem floating with large gaps. Derive from the live
             # grid_gap so the cluster nests exactly like the tab.
             gap = round(CardMetrics(self._scale).grid_gap / 2)
-            # Already-scaled dimensions in -> scale=1.0 so pinwheel_rects keeps
-            # them verbatim (int(x * 1.0) == x). The contract: scaled sizes +
+            # Card sizes are pre-scaled (base * scale); scale=1.0 so pinwheel_rects
+            # keeps them verbatim (int(x * 1.0) == x). The contract: scaled sizes +
             # scale=1.0, never base sizes + scale (that would double-scale).
             return pinwheel_rects(self._anchor, 1.0, card_w, card_h, emblem, gap)
         base = CardMetrics(1.0)
@@ -793,17 +789,12 @@ class OverlayGroupController:
         provider = self._card_provider
         minimized = False
         try:
-            # Apply the CURRENT group scale to the real cards BEFORE computing
-            # rects, so _compute_rects reads sizeHints at self._scale. This is
-            # load-bearing for a RE-ENTER at a remembered non-1.0 scale: leave()
-            # resets the framed cards to CardMetrics(1.0) but keeps self._scale as
-            # the remembered overlay scale (and Task 6.1 loads self._scale from
-            # persistence before enter). Without this, _compute_rects would read
-            # 1.0-sized hints while using the non-1.0 gap -> inconsistent cluster.
-            # Inside the try so a CardMetrics import/build failure is fail-closed.
+            # Scale the emblem BEFORE computing rects, so emblem_size() in
+            # _compute_rects reflects the current overlay scale.  Cards are laid
+            # out at their framed 1.0 base size and scaled only via the per-card
+            # view transform (set below), so apply_metrics is NOT called here.
             if provider is not None:
-                from utils.overlay.card_metrics import CardMetrics
-                provider.apply_metrics(CardMetrics(self._scale))
+                provider.scale_emblem(self._scale)
             rects = self._compute_rects()
             # Build the glow surface FIRST so it shows below the cards (it paints
             # the soft halo that fills the central hole). Best-effort: it never
@@ -817,11 +808,19 @@ class OverlayGroupController:
                 # Capture its exact tab placement BEFORE host() so a leave() or a
                 # fail-closed unwind can restore it byte-for-byte; record the
                 # (surface, record) pair so restoration knows which surface holds
-                # which widget. The cards were just scaled to self._scale above.
+                # which widget.  Cards are hosted through a ScaledCardView proxy
+                # at the framed 1.0 base size; the view transform (set_card_scale)
+                # is the sole zoom mechanism, so cards never re-layout and never
+                # float. The emblem is hosted plain (it scales via scale_emblem).
                 if provider is not None:
                     widget = self._provider_widget(state)
                     captured.append((surface, provider.capture_slot(widget)))
-                    surface.host(widget)
+                    if state.is_emblem:
+                        surface.host(widget)                       # emblem: plain
+                    else:
+                        base = provider.overlay_base_card_size()
+                        surface.host(widget, base_size=base)       # card: proxied
+                        surface.set_card_scale(self._scale)
                 surface.set_overlay_geometry(rect)
                 # Set the EWMH initial state (above + skip-taskbar/pager) as a
                 # property BEFORE mapping, so the WM honors it from the first frame
@@ -1007,15 +1006,15 @@ class OverlayGroupController:
         """Step the cluster scale by *notches*. No-op if not active.
 
         The scale value updates SYNCHRONOUSLY (so any read of self._scale right
-        after this call is current). The EXPENSIVE recompute differs by mode:
+        after this call is current). The recompute differs by mode:
 
-        * provider present (Task 4.2): rescale the real card content
-          (apply_metrics) + re-geometry/reshape to the new scaled sizeHint. This
-          is ~4x setStyleSheet + setFont + grid.activate, far too costly to run
-          per wheel notch, so it is DEBOUNCED: a burst of notches in one event-
-          loop tick collapses into ONE recompute at the FINAL scale (scheduled on
-          the next tick via _schedule_recompute; force it now with
-          flush_pending_recompute()).
+        * provider present (unit-scaling): scale the emblem disc (scale_emblem) +
+          set each card's view transform (set_card_scale) + re-geometry/reshape the
+          windows to base*scale. The cards do NOT re-layout (the transform zooms the
+          fixed 1.0 card), so this is cheaper than the old apply_metrics path, but it
+          is still DEBOUNCED: a burst of notches in one event-loop tick collapses
+          into ONE recompute at the FINAL scale (scheduled on the next tick via
+          _schedule_recompute; force it now with flush_pending_recompute()).
         * provider None (Task 3.2 stub flow): no content rescale; re-geometry +
           reshape SYNCHRONOUSLY at the placeholder sizes, exactly as before.
 
@@ -1073,14 +1072,16 @@ class OverlayGroupController:
             self._recompute_now()
 
     def _recompute_now(self) -> None:
-        """Rescale the real card content to the CURRENT scale, then re-geometry +
-        reshape + re-raise so every surface fits the freshly scaled card. Reads
-        the live scaled sizeHint AFTER apply_metrics (order is load-bearing).
-        Provider-only - the provider=None path never schedules this."""
+        """Re-place every surface at the current scale: scale ONLY the emblem via
+        metrics (single widget, never floats) and scale each card via its view
+        transform (the card stays at framed 1.0, so it never re-layouts/floats)."""
         provider = self._card_provider
         if provider is not None:
-            from utils.overlay.card_metrics import CardMetrics
-            provider.apply_metrics(CardMetrics(self._scale))
+            provider.scale_emblem(self._scale)
+        for surface in self._surfaces:
+            setter = getattr(surface, "set_card_scale", None)
+            if setter is not None:
+                setter(self._scale)
         self._place_all(reshape=True)
         self._reassert_topmost()  # re-assert ABOVE after a scale change (interaction)
 
