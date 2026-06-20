@@ -36,8 +36,7 @@ def _make_tab(monkeypatch, tmp_path):
     monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
     monkeypatch.setenv("TTMT_NO_VENV_REEXEC", "1")
     monkeypatch.setenv("PYTHON_KEYRING_BACKEND", "keyring.backends.null.Keyring")
-    import tabs.launch_tab
-    tabs.launch_tab.discover_cc_installs = lambda *a, **k: []
+    monkeypatch.setattr("tabs.launch_tab.discover_cc_installs", lambda *a, **k: [])
     from tabs.multitoon._tab import MultitoonTab
     from utils.settings_manager import SettingsManager
     return MultitoonTab(settings_manager=SettingsManager(),
@@ -61,7 +60,13 @@ def _assert_rects_within_correct_cell(compact, slot):
     card_rect = QRect(0, 0, cell.width(), cell.height())
     for r in rects:
         assert r.width() > 0 and r.height() > 0
-        assert card_rect.contains(r.topLeft()), f"slot {slot}: {r} outside card"
+        # Anchor check: the rect's origin must sit in THIS slot's cell. (We test
+        # top-left, not full containment: offscreen the card is not fixed to its
+        # base_size the way the real overlay host fixes it, so child widths are
+        # unconstrained here - full containment is not a valid invariant in this
+        # context. Under the slot->cell bug the origin lands in the wrong cell,
+        # which top-left containment catches.)
+        assert card_rect.contains(r.topLeft()), f"slot {slot}: {r} origin outside card {card_rect}"
 
 
 def test_control_rects_returns_five_rects_within_card(qt_app, monkeypatch, tmp_path):
