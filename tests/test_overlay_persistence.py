@@ -163,6 +163,46 @@ def test_controller_saves_anchor_and_scale_on_move_and_scale(qapp):
     assert s.get(KEY_MONITOR) is not None  # the (offscreen) screen the anchor sits on
 
 
+def test_move_group_clamps_anchor_to_parking_envelope(qapp):
+    from PySide6.QtGui import QGuiApplication
+    from utils.overlay.card_metrics import CardMetrics
+    s = _DictSettings()
+    ctl = _ctl(s)
+    ctl._active = True
+    g = QGuiApplication.primaryScreen().geometry()
+    ctl._anchor = (g.center().x(), g.bottom())
+    ctl.move_group(0, 100000)  # slam far past the bottom edge
+    margin = int(CardMetrics(ctl._scale).emblem // 4)
+    assert ctl._anchor[1] == g.bottom() + margin   # clamped to edge + margin
+    assert ctl._anchor[0] == g.center().x()        # x within band -> unchanged
+    # the mirror onto states uses the CLAMPED value
+    if ctl._states:
+        assert all(st.anchor == ctl._anchor for st in ctl._states)
+
+
+def test_move_group_keeps_cluster_rigid_when_clamped(qapp):
+    # Relative offsets between every surface rect must be identical before and
+    # after a clamped move: the cluster shifts as a UNIT, never compresses. Guards
+    # against ever reintroducing per-window positioning/clamping.
+    from PySide6.QtGui import QGuiApplication
+    s = _DictSettings()
+    ctl = _ctl(s)
+    ctl._active = True
+    g = QGuiApplication.primaryScreen().geometry()
+    ctl._anchor = (g.center().x(), g.center().y())
+    before = ctl._compute_rects()
+    em0 = before["emblem"]
+    rel_before = {k: (before[k].x() - em0.x(), before[k].y() - em0.y())
+                  for k in (0, 1, 2, 3)}
+    ctl.move_group(0, 100000)  # past the bottom edge -> anchor clamped
+    after = ctl._compute_rects()
+    em1 = after["emblem"]
+    rel_after = {k: (after[k].x() - em1.x(), after[k].y() - em1.y())
+                 for k in (0, 1, 2, 3)}
+    assert rel_after == rel_before, "cluster must shift as a unit, never compress"
+    assert em1.y() < g.center().y() + 100000, "the move must actually be clamped"
+
+
 def test_controller_restores_persisted_scale_and_clamped_anchor(qapp):
     # Pre-seed a saved state on the current (offscreen) monitor.
     from PySide6.QtGui import QGuiApplication

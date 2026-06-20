@@ -1039,6 +1039,7 @@ class OverlayGroupController:
         self._scale = step_scale(self._scale, notches)
         for state in self._states:
             state.scale = self._scale
+        self._clamp_anchor()  # emblem size changed -> re-clamp the parked anchor
         self._schedule_save()  # persist the new scale (debounced)
         if self._card_provider is None:
             # Task 3.2 path: no apply_metrics, placeholder geometry, synchronous.
@@ -1096,16 +1097,32 @@ class OverlayGroupController:
         self._place_all(reshape=True)
         self._reassert_topmost()  # re-assert ABOVE after a scale change (interaction)
 
+    def _clamp_anchor(self) -> None:
+        """Clamp self._anchor to the parking envelope at the current scale and
+        mirror it onto every surface state.
+
+        Envelope = the union of the connected screens, each inflated by
+        emblem_size/4, so the leading quarter of the emblem stays on-screen while
+        the rest of the cluster may slide off any edge. Pure-helper-backed, so it
+        is a safe identity with no screens. Centralizes the anchor->state mirror so
+        the CLAMPED value is what gets placed and persisted.
+        """
+        from utils.overlay.persistence import clamp_anchor_to_envelope
+        from utils.overlay.card_metrics import CardMetrics
+        margin = int(CardMetrics(self._scale).emblem // 4)
+        self._anchor = clamp_anchor_to_envelope(self._anchor, self._screens(), margin)
+        for state in self._states:
+            state.anchor = self._anchor
+
     def move_group(self, dx: int, dy: int) -> None:
-        """Shift the cluster anchor by (dx, dy) and re-position all surfaces.
-        Sizes are unchanged, so no reshape is needed (emblem is re-raised).
-        No-op if not active."""
+        """Shift the cluster anchor by (dx, dy), clamp it to the parking envelope,
+        and re-position all surfaces. Sizes are unchanged, so no reshape is needed
+        (emblem is re-raised). No-op if not active."""
         if not self._active:
             return
         cx, cy = self._anchor
         self._anchor = (cx + dx, cy + dy)
-        for state in self._states:
-            state.anchor = self._anchor
+        self._clamp_anchor()  # parking envelope + anchor->state mirror
         self._place_all(reshape=False)
         self._schedule_save()  # persist the new anchor (debounced)
 
