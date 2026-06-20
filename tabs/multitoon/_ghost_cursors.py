@@ -59,7 +59,11 @@ from utils.screen_coords import native_to_logical as _native_to_logical
 def _emitted_to_logical(x, y, screens=None):
     """Map the service's emitted point into Qt's logical space. On darwin the
     service emits logical points (identity); elsewhere delegate to the module
-    global `_native_to_logical` (so tests can monkeypatch it)."""
+    global `_native_to_logical` (so tests can monkeypatch it).
+
+    This is a thin local wrapper (not `screen_coords.emitted_to_logical`) only so
+    it keeps calling the module-global `_native_to_logical` that tests patch; keep
+    its darwin branch in sync with `utils.screen_coords.emitted_to_logical`."""
     if sys.platform == "darwin":
         return (int(x), int(y))
     return _native_to_logical(x, y, screens)

@@ -53,8 +53,8 @@ class ClickSyncService(QObject):
     # "motion" | "press" | "release". Coordinates are NATIVE root-space
     # pixels (the OS units capture/geometry/injection run in); the
     # renderer converts to Qt logical coordinates before positioning
-    # (_ghost_cursors._native_to_logical — the spaces differ whenever a
-    # screen's devicePixelRatio is not 1).
+    # (utils.screen_coords.native_to_logical, via _ghost_cursors — the spaces
+    # differ whenever a screen's devicePixelRatio is not 1).
     # Signal(object) for the same marshaling reason as slot_states_changed.
     ghost_pointer_event = Signal(object)
     # All ghosts hide instantly: emitted from _clear_hover_locked, which
