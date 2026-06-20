@@ -81,6 +81,46 @@ def test_order_wids_by_cell_empty(monkeypatch):
     _fake_backend(monkeypatch, lambda wid: None)
     wm = WindowManager()
     assert wm._order_wids_by_cell([]) == []
+
+
+def test_assign_cells_identity_for_full_grid(monkeypatch):
+    geoms = {
+        "10": (0, 0, 100, 100), "20": (200, 0, 100, 100),
+        "30": (0, 200, 100, 100), "40": (200, 200, 100, 100),
+    }
+    _fake_backend(monkeypatch, lambda wid: geoms.get(wid))
+    wm = WindowManager()
+    ordered, slot_cells = wm._assign_cells_to_wids(["30", "10", "40", "20"])
+    assert ordered == ["10", "20", "30", "40"]
+    assert slot_cells == [0, 1, 2, 3]   # contiguous -> identity permutation
+
+
+def test_assign_cells_vertical_stack_gives_left_column_permutation(monkeypatch):
+    geoms = {"10": (0, 0, 100, 100), "20": (0, 200, 100, 100)}  # top, bottom (same x)
+    _fake_backend(monkeypatch, lambda wid: geoms.get(wid))
+    wm = WindowManager()
+    ordered, slot_cells = wm._assign_cells_to_wids(["10", "20"])
+    assert ordered == ["10", "20"]       # top (cell 0), bottom (cell 2)
+    assert slot_cells == [0, 2, 1, 3]    # slot0->TL, slot1->BL; empties 1,3
+
+
+def test_assign_windows_emits_cell_assignment_changed_on_stack(monkeypatch):
+    from utils.game_registry import GameRegistry
+    from utils import x11_discovery
+    monkeypatch.setattr(wm_mod.sys, "platform", "linux", raising=False)
+    monkeypatch.setattr(x11_discovery, "find_game_windows",
+                        lambda: [("10", "ttr"), ("20", "ttr")])
+    geoms = {"10": (0, 0, 100, 100), "20": (0, 200, 100, 100)}  # vertical stack
+    _fake_backend(monkeypatch, lambda wid: geoms.get(wid))
+    monkeypatch.setattr(GameRegistry.instance(), "classify_window_for_filtering",
+                        lambda wid: ("ttr", True))
+    wm = WindowManager()
+    wm._detection_enabled = True
+    fired = []
+    wm.cell_assignment_changed.connect(lambda cells: fired.append(cells))
+    wm.assign_windows()
+    assert wm.slot_cells == [0, 2, 1, 3]
+    assert fired == [[0, 2, 1, 3]]
     assert "99" not in wm.window_geometry
 
 

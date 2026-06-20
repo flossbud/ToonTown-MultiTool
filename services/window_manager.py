@@ -25,6 +25,12 @@ class WindowManager(QObject):
     window_ids_updated = Signal(list)
     active_window_changed = Signal(str)
     window_geometry_updated = Signal()
+    # The per-slot 2x2 cluster cell (0=TL,1=TR,2=BL,3=BR) changed without the
+    # window LIST changing - e.g. two stacked windows move from the right column
+    # to the left (dense order stays [top,bottom] but cells flip {1,3}->{0,2}).
+    # window_ids_updated does NOT fire then, so the card layout listens to this to
+    # re-route content into the matching cell shells.
+    cell_assignment_changed = Signal(list)
 
     POLL_INTERVAL = 0.1
 
@@ -33,6 +39,9 @@ class WindowManager(QObject):
         self.settings_manager = settings_manager
 
         self.ttr_window_ids = []
+        # Per-card-slot 2x2 cluster cell (length 4 bijection of 0..3): slot i's
+        # window sits in cell slot_cells[i]; unused slots hold the empty cells.
+        self.slot_cells: list[int] = [0, 1, 2, 3]
         self.window_games: dict[str, str] = {}  # window_id -> "ttr" | "cc"
         self.window_geometry: dict[str, tuple[int, int, int, int]] = {}
         self._active_id = None
@@ -282,35 +291,49 @@ class WindowManager(QObject):
             except Exception:
                 wids = []
 
-        new_ids = self._order_wids_by_cell(wids)[:16]
+        ordered, slot_cells = self._assign_cells_to_wids(wids)
+        new_ids = ordered[:16]
 
         with self._lock:
             changed = new_ids != self.ttr_window_ids
+            cells_changed = slot_cells != self.slot_cells
             if changed:
                 self.ttr_window_ids = list(new_ids)
+            if cells_changed:
+                self.slot_cells = list(slot_cells)
             self.window_games = {
                 wid: game_by_wid[wid] for wid in new_ids if wid in game_by_wid
             }
             snapshot = list(self.ttr_window_ids)
+            cells_snapshot = list(self.slot_cells)
         if changed:
             self.window_ids_updated.emit(snapshot)
+        if cells_changed:
+            # Geometry-only cell changes (dense list unchanged) reach the layout
+            # only through this signal; window_ids_updated would not fire.
+            self.cell_assignment_changed.emit(cells_snapshot)
 
-    def _order_wids_by_cell(self, wids):
-        """Order detected window ids by their 2x2 cluster cell (0=TL, 1=TR, 2=BL,
-        3=BR) so card slot i shows the window in cell i.
+    def _assign_cells_to_wids(self, wids):
+        """Return ``(ordered_wids, slot_cells)`` for the detected windows.
 
-        Dedupes preserving first occurrence. Each window's center comes from the
-        geometry backend; the pure ``assign_window_cells`` does the matching.
-        Windows whose geometry is unavailable, and any beyond the four placed, keep
-        detection order AFTER the placed four, so an odd/partial set never drops a
-        real window.
+        ordered_wids: ids ordered by their 2x2 cluster cell (0=TL, 1=TR, 2=BL,
+        3=BR) so card slot i shows the window in cell i. Dedupes preserving first
+        occurrence. Each window's center comes from the geometry backend; the pure
+        ``assign_window_cells`` does the matching. Windows whose geometry is
+        unavailable, and any beyond the four placed, keep detection order AFTER the
+        placed four, so an odd/partial set never drops a real window.
+
+        slot_cells: a length-4 bijection of cells - slot i's window sits in cell
+        slot_cells[i]; the unused slots hold the remaining (empty) cells. For
+        contiguous fills (4-window, side-by-side, 2-top-1-bottom) this is the
+        identity [0,1,2,3]; a vertical stack gives [0,2,1,3], etc.
         """
         seen: list[str] = []
         for w in wids:
             if w not in seen:
                 seen.append(w)
         if not seen:
-            return []
+            return [], [0, 1, 2, 3]
         backend = _geometry_backend()
         centers = []
         for w in seen:
@@ -333,7 +356,19 @@ class WindowManager(QObject):
                 return (0, c, i)   # placed: grouped first, ordered by cell
             return (1, 0, i)       # unknown geometry / extras: detection order, last
 
-        return [seen[i] for i in sorted(range(len(seen)), key=_key)]
+        ordered = [seen[i] for i in sorted(range(len(seen)), key=_key)]
+
+        placed_cells = sorted(c for c in cell_of.values() if c is not None and c >= 0)
+        empty_cells = [c for c in range(4) if c not in placed_cells]
+        slot_cells = (placed_cells + empty_cells)[:4]
+        while len(slot_cells) < 4:  # belt: placed+empty already == 4
+            slot_cells.append(len(slot_cells))
+        return ordered, slot_cells
+
+    def _order_wids_by_cell(self, wids):
+        """Detected window ids ordered by 2x2 cluster cell (just the ordered ids;
+        see _assign_cells_to_wids for the slot->cell bijection)."""
+        return self._assign_cells_to_wids(wids)[0]
 
     def is_multitool_active(self) -> bool:
         active = self.active_window_id
