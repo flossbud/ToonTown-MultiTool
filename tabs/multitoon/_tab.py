@@ -29,6 +29,7 @@ from utils.game_registry import GameRegistry
 from utils import logical_actions
 from utils.toon_customizations_manager import ToonCustomizationsManager
 from utils.settings_keys import CLICK_SYNC_ENABLED
+from utils.color_math import lighten_rgb
 from tabs.multitoon._keep_alive_help_button import KeepAliveHelpButton
 
 
@@ -1118,11 +1119,13 @@ KA_ORANGE_BORDER = "#ffb04d"
 def _pin_toggle_qss(accent: str, on: bool) -> str:
     """QSS for a 34x36 pinwheel toggle button. Active fills with the toggle's
     accent; inactive is a recessed dark chip. Icon colour is set separately
-    (QSS can't tint a QIcon)."""
+    (QSS can't tint a QIcon). Both states brighten on hover."""
     if on:
+        hov = lighten_rgb(QColor(accent), 0.15).name()
         return (
             f"QPushButton {{ background: {accent}; border: 1px solid {accent};"
             f" border-radius: 9px; }}"
+            f"QPushButton:hover {{ background: {hov}; border: 1px solid {hov}; }}"
         )
     return (
         "QPushButton { background: rgba(0,0,0,0.24);"
@@ -1138,8 +1141,32 @@ def _pin_ka_off_qss() -> str:
     return (
         "QPushButton { background: rgba(0,0,0,0.35);"
         " border: 1px solid rgba(255,255,255,0.16); border-radius: 14px; }"
+        "QPushButton:hover { background: rgba(255,255,255,0.10);"
+        " border: 1px solid rgba(255,255,255,0.28); }"
         "QPushButton:disabled { background: rgba(0,0,0,0.35);"
         " border: 1px solid rgba(255,255,255,0.10); }"
+    )
+
+
+def _pin_ka_on_qss(fill: str, border: str) -> str:
+    """QSS for the keep-alive lightning toggle in its on state (orange/red),
+    brightening on hover."""
+    hov = lighten_rgb(QColor(fill), 0.15).name()
+    hov_b = lighten_rgb(QColor(border), 0.15).name()
+    return (
+        f"QPushButton {{ background: {fill}; border: 1px solid {border};"
+        f" border-radius: 14px; }}"
+        f"QPushButton:hover {{ background: {hov}; border: 1px solid {hov_b}; }}"
+    )
+
+
+def _pin_cs_chip_qss(border: str) -> str:
+    """QSS for the mouse-sync button's dark-chip states (armed/error): a recessed
+    chip with a coloured ring, brightening on hover like the off chip."""
+    return (
+        f"QPushButton {{ background: rgba(0,0,0,0.24);"
+        f" border: 1px solid {border}; border-radius: 9px; }}"
+        f"QPushButton:hover {{ background: rgba(255,255,255,0.10); }}"
     )
 
 
