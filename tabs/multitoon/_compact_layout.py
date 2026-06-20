@@ -33,7 +33,6 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QWidget, QFrame, QVBoxLayout, QHBoxLayout, QGridLayout, QSizePolicy,
-    QGraphicsColorizeEffect,
 )
 
 from tabs.multitoon._layout_utils import clear_layout
@@ -717,7 +716,9 @@ class _CompactLayout(QWidget):
     def _build_cell(self, i: int) -> dict:
         cfg = _CFG[i]
 
-        # cell: holds the dim colorize effect (attached only when dimmed).
+        # cell: the card QFrame; a CardDimOverlay sibling is lazy-created on the
+        # first _apply_cell_effects call (stored in cell["dim"]) and painted on
+        # top when the card is inactive (proxy-safe, replaces the old colorize).
         cell = QFrame()
         cell.setObjectName(f"pin_cell_{i}")
         cell.setStyleSheet(f"#pin_cell_{i} {{ background: transparent; border: none; }}")
@@ -1104,25 +1105,18 @@ class _CompactLayout(QWidget):
         self._refresh_emblem()
 
     def _apply_cell_effects(self, cell: dict, accent: QColor, active: bool) -> None:
-        """Dimmed cards get a desaturating colorize on the cell; lit cards have
-        no cell effect. The accent glow is painted by the _GlowLayer (not a
-        QGraphicsDropShadowEffect, which clips to a square on macOS)."""
+        """Dimmed cards get a painted grey wash (proxy-safe), not a live
+        QGraphicsColorizeEffect, which renders corrupt inside a QGraphicsProxyWidget."""
         cell_w = cell["cell"]
-        if active:
-            if cell_w.graphicsEffect() is not None:
-                cell_w.setGraphicsEffect(None)
-        else:
-            from utils.effects_flags import effects_disabled
-            if effects_disabled():
-                if cell_w.graphicsEffect() is not None:
-                    cell_w.setGraphicsEffect(None)
-                return
-            eff = cell_w.graphicsEffect()
-            if not isinstance(eff, QGraphicsColorizeEffect):
-                eff = QGraphicsColorizeEffect(cell_w)
-                eff.setColor(QColor("#808080"))
-                cell_w.setGraphicsEffect(eff)
-            eff.setStrength(0.55)
+        if cell_w.graphicsEffect() is not None:
+            cell_w.setGraphicsEffect(None)  # purge any legacy effect
+        dim = cell.get("dim")
+        if dim is None:
+            from tabs.multitoon._card_dim_overlay import CardDimOverlay
+            dim = CardDimOverlay(cell_w)
+            cell["dim"] = dim
+        from utils.effects_flags import effects_disabled
+        dim.set_dimmed(bool(not active and not effects_disabled()))
 
     # ── Control chrome owned by the layout ───────────────────────────────────
     def _style_ka_pill(self, i: int) -> None:
