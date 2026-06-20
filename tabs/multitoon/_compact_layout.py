@@ -274,6 +274,7 @@ class _QuadCardBackground(QWidget):
         self._accent = QColor("#555555")
         self._body: QColor | None = None
         self._dimmed = True
+        self._peek_opacity = 1.0  # transparent-mode hover-peek body translucency
         # Painted-body radii + border width, sourced from a CardMetrics so the
         # shape scales with the card (defaults = canonical 1.0 values).
         self._radius = CARD_RADIUS
@@ -301,10 +302,20 @@ class _QuadCardBackground(QWidget):
             self.width(), self.height(), self._cutout, self._radius, self._cutout_r
         )
 
+    def set_peek_opacity(self, opacity: float) -> None:
+        """Hover-peek body translucency (1.0 = opaque). The card body fades so the
+        game shows through, while the controls (separate widgets) stay opaque."""
+        opacity = float(opacity)
+        if opacity != self._peek_opacity:
+            self._peek_opacity = opacity
+            self.update()
+
     def paintEvent(self, event):
         if self.width() <= 0 or self.height() <= 0:
             return
         p = QPainter(self)
+        if self._peek_opacity < 1.0:
+            p.setOpacity(self._peek_opacity)
         p.setRenderHint(QPainter.Antialiasing, True)
         path = self._body_path()
 
@@ -350,6 +361,13 @@ class _PortraitFrame(QWidget):
         self.setStyleSheet("background: transparent;")
         self._ring = QColor("#555555")
         self._dimmed = True
+        self._peek_opacity = 1.0   # extra hover-peek dim for the circular frame
+
+    def set_peek_opacity(self, opacity: float) -> None:
+        opacity = float(opacity)
+        if opacity != self._peek_opacity:
+            self._peek_opacity = opacity
+            self.update()
 
     def configure(self, ring: QColor, dimmed: bool) -> None:
         self._ring = QColor(ring)
@@ -371,6 +389,8 @@ class _PortraitFrame(QWidget):
 
     def paintEvent(self, event):
         p = QPainter(self)
+        if self._peek_opacity < 1.0:
+            p.setOpacity(self._peek_opacity)
         p.setRenderHint(QPainter.Antialiasing, True)
         cx = cy = self._size / 2.0
         # Dark inner background (rgba(0,0,0,0.22)).
@@ -892,6 +912,75 @@ class _CompactLayout(QWidget):
 
         self._relayout_all()
         self._apply_initial_brands()
+
+    def control_rects(self, cell_index: int) -> list:
+        """Card-local QRects of the five interactive control widgets in the shell
+        at *cell_index*.
+
+        These are the only widgets that stay opaque + clickable in transparent
+        peek mode (the toggles, the keep-alive pill as one unit, and the keyset
+        selector). Coordinates are relative to the shell cell root at the current
+        (framed 1.0) size; the overlay controller scales them by the overlay zoom.
+        Skips any widget that is missing or zero-sized (defensive).
+
+        *cell_index* is the SHELL index (the overlay surface_id / screen quadrant -
+        the same index ``slot_widget`` hosts), NOT a logical slot. A shell holds
+        the shared widgets of the slot routed into it by ``apply_cell_permutation``
+        (recorded as ``content_slot``; identity for every contiguous arrangement),
+        so the per-slot widgets (toggles, keyset) come from ``content_slot`` while
+        the keep-alive pill is the shell's own. This MUST match what ``slot_widget``
+        hosts for that surface, or the peek dim/click-through lands on the wrong
+        widgets (the 2-toon permuted-cluster bug).
+        """
+        cell = self._cells[cell_index]
+        root = cell["cell"]
+        if root.layout() is not None:
+            root.layout().activate()
+        tab = self._tab
+        s = cell.get("content_slot", cell_index)
+        widgets = [
+            tab.toon_buttons[s],
+            tab.chat_buttons[s],
+            tab.click_sync_buttons[s],
+            cell["ka_pill"],
+            tab.set_selectors[s],
+        ]
+        rects = []
+        for w in widgets:
+            if w is None:
+                continue
+            size = w.size()
+            if size.width() <= 0 or size.height() <= 0:
+                continue
+            top_left = w.mapTo(root, QPoint(0, 0))
+            rects.append(QRect(top_left, size))
+        return rects
+
+    def set_shell_extra_opacity(self, cell_index: int, bg_opacity: float,
+                                portrait_opacity: float) -> None:
+        """Set the EXTRA hover-peek translucency factors for the two extra-dimmed
+        card elements of the shell at *cell_index* (the overlay surface_id, as in
+        control_rects / slot_widget): the background FILL (*bg_opacity*) and the
+        circular PORTRAIT - its frame ring AND the toon image (*portrait_opacity*).
+
+        The overlay composites the whole card uniformly (controls, text) via the
+        surface's set_content_opacity; these dim the background fill and the
+        portrait FURTHER, each by its own factor, so they read as more
+        see-through than the content (net = content * factor). Applied as each
+        widget's own paint opacity (no overlay, so rounded controls keep their real
+        shape with no opaque corners). The toon image is the slot ROUTED into this
+        shell (content_slot). 1.0 = no extra dim."""
+        cell = self._cells[cell_index]
+        bg = cell.get("bg")
+        if bg is not None:
+            bg.set_peek_opacity(bg_opacity)
+        frame = cell.get("portrait_frame")
+        if frame is not None and hasattr(frame, "set_peek_opacity"):
+            frame.set_peek_opacity(portrait_opacity)   # the circular frame
+        s = cell.get("content_slot", cell_index)
+        badge = self._tab.slot_badges[s] if s < len(self._tab.slot_badges) else None
+        if badge is not None and hasattr(badge, "set_peek_opacity"):
+            badge.set_peek_opacity(portrait_opacity)   # the toon image inside it
 
     def _populate_cell(self, i: int, cell: dict):
         tab = self._tab

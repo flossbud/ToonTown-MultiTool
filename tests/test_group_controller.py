@@ -61,6 +61,12 @@ class _StubSurface:
         self.shapes.append((path, dpr))
         self._log("apply_shape", (path, dpr))
 
+    def apply_input_region(self, region):
+        # Records the Model-B controls-region path. Unused by these tests (they
+        # inject no card_provider, so cards take the apply_shape fallback), but
+        # present so a future card_provider test does not hit AttributeError.
+        self._log("apply_input_region", region)
+
     def clear_shape(self):
         self._log("clear_shape")
 

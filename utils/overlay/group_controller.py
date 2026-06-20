@@ -34,6 +34,7 @@ from typing import Union
 from PySide6.QtCore import QRect
 
 from utils.overlay.backend import get_overlay_backend
+from utils.overlay.peek import GhostPointStore, peeking_indices
 from utils.overlay.scale import step_scale
 from utils.overlay.surface import CardSurface, EmblemSurface, ShapeMode
 
@@ -244,7 +245,8 @@ class OverlayGroupController:
         # restores them to the tab); when None, enter() builds EMPTY surfaces
         # exactly as the Task 3.2 orchestration tests expect (no reparent). The
         # provider must expose slot_widget(int) / emblem_widget() / capture_slot(w)
-        # -> record / restore_slot(record) / apply_metrics(CardMetrics).
+        # -> record / restore_slot(record) / apply_metrics(CardMetrics) /
+        # control_rects(int) -> list[QRect].
         self._card_provider = card_provider
 
         # Per-surface state: cards 0-3 then the emblem LAST.  Order is load
@@ -293,6 +295,15 @@ class OverlayGroupController:
         # Low-frequency ABOVE re-assert while transparent (Task 7.1): best-effort,
         # since some WMs drop _NET_WM_STATE_ABOVE when another window takes focus.
         self._above_timer = None
+        # Hover-peek (transparent mode): a ~30ms poll that unions the real cursor
+        # with click-sync ghost points and toggles each card's peek state. The
+        # GhostPointStore is fed by on_ghost_event/on_ghost_clear (wired in main.py).
+        self._peek_store = GhostPointStore()
+        self._peek_timer = None
+        # Per-card (surface_id 0-3) hover-peek progress 0.0 (normal) -> 1.0 (peeked),
+        # lerped each tick for a smooth fade. Drives two tiers: the whole card to
+        # CONTENT opacity (surface) + the background fill a bit further to BODY.
+        self._peek_progress = [0.0, 0.0, 0.0, 0.0]
         # Accent-glow surface behind the cluster: a single click-through window
         # spanning the four card rects that paints the same soft halo the framed
         # tab draws behind its cards (the _GlowLayer that fills the central hole so
@@ -474,6 +485,35 @@ class OverlayGroupController:
         cutout = SLOT_CUTOUTS[state.surface_id]
         return _card_body_path(w, h, cutout, m.card_radius, m.cutout_r)
 
+    def _apply_input_region(self, state, surface, rect) -> None:
+        """Apply the click-through input region for one surface.
+
+        Emblem: the disc path (unchanged). Card: the controls-only region (Model B)
+        - the union of its control-widget rects, so the body is click-through and
+        only the buttons block clicks. Falls back to the legacy body path when no
+        card_provider is present (the orchestration stub tests) or when the
+        provider yields no rects (defensive).
+        """
+        dpr = surface.devicePixelRatio()
+        if state.is_emblem:
+            surface.apply_shape(self._shape_path(state, rect), dpr)
+            return
+        rects_base = []
+        if self._card_provider is not None:
+            try:
+                rects_base = self._card_provider.control_rects(state.surface_id)
+            except Exception:
+                # Best-effort, matching the overlay's never-crash-on-shape ethos:
+                # a misbehaving provider must not break enter()/reshape, so fall
+                # back to the body path (a slightly more click-blocking card) rather
+                # than raise. Silent by module convention (the overlay has no logger).
+                rects_base = []
+        if rects_base:
+            from utils.overlay.region import controls_region
+            surface.apply_input_region(controls_region(rects_base, self._scale, dpr))
+        else:
+            surface.apply_shape(self._shape_path(state, rect), dpr)
+
     def _raise_emblem(self) -> None:
         """Raise the emblem above the four cards (spec section 8 z-order).
 
@@ -482,6 +522,127 @@ class OverlayGroupController:
         """
         if self._surfaces:
             self._surfaces[-1].raise_()
+
+    # ------------------------------------------------------------------
+    # Hover-peek detection (transparent mode)
+    # ------------------------------------------------------------------
+    def on_ghost_event(self, payload) -> None:
+        """Receive a click-sync ghost_pointer_event payload (motion/release)."""
+        self._peek_store.ingest(payload)
+
+    def on_ghost_clear(self) -> None:
+        """Receive click-sync ghost_clear: drop all ghost points."""
+        self._peek_store.clear()
+
+    def _card_surfaces(self):
+        """[(state, surface), ...] for the four card surfaces (emblem excluded)."""
+        return [(st, su) for st, su in zip(self._states, self._surfaces)
+                if not st.is_emblem]
+
+    PEEK_CONTENT_OPACITY = 0.80    # whole card (controls, text, portrait ring) on hover
+    PEEK_BODY_OPACITY = 0.65       # card BACKGROUND fill on hover (more see-through)
+    PEEK_PORTRAIT_OPACITY = 0.25   # circular portrait (frame + toon image) on hover
+    _PEEK_FADE_STEP = 0.25         # progress per 30ms tick -> ~120ms full fade
+
+    def _peek_tick(self, real_point) -> None:
+        """One detection pass: union real cursor + ghost points, apply per card.
+
+        real_point: (x, y) global, or None when the OS pointer is unavailable.
+        """
+        if not self._active:
+            return
+        cards = self._card_surfaces()
+        rects = []
+        for _st, su in cards:
+            g = su.geometry()
+            rects.append((g.x(), g.y(), g.width(), g.height()))
+        points = list(self._peek_store.points())
+        if real_point is not None:
+            points.append(real_point)
+        peeking = peeking_indices(points, rects)
+        for i, (st, su) in enumerate(cards):
+            active = i in peeking
+            # Direct call (not getattr): every card surface is a CardSurface with
+            # set_peek, so a missing method is a real bug that should fail loudly.
+            su.set_peek(active)
+            self._apply_peek_fade(st.surface_id, su, active)
+
+    def _peek_opacities(self, progress):
+        """Three-tier (content, body_extra, portrait_extra) opacities for a peek
+        *progress* 0..1.
+
+        content: whole-card opacity (1.0 -> CONTENT). body_extra / portrait_extra:
+        multiplicative factors on the background fill / toon image so their net
+        opacity (content * factor) reaches BODY / PORTRAIT at full peek."""
+        content = 1.0 - (1.0 - self.PEEK_CONTENT_OPACITY) * progress
+        body_factor = self.PEEK_BODY_OPACITY / self.PEEK_CONTENT_OPACITY
+        body_extra = 1.0 - (1.0 - body_factor) * progress
+        portrait_factor = self.PEEK_PORTRAIT_OPACITY / self.PEEK_CONTENT_OPACITY
+        portrait_extra = 1.0 - (1.0 - portrait_factor) * progress
+        return content, body_extra, portrait_extra
+
+    def _apply_peek_fade(self, surface_id, surface, active) -> None:
+        """Step one card's hover-peek progress toward its target and apply the
+        opacity tiers: the whole card via the surface (content), the background
+        fill + toon image a bit further via the card provider. No-op for the extra
+        tiers without a provider (stub tests still drive the surface tier)."""
+        target = 1.0 if active else 0.0
+        cur = self._peek_progress[surface_id]
+        if cur < target:
+            cur = min(target, cur + self._PEEK_FADE_STEP)
+        elif cur > target:
+            cur = max(target, cur - self._PEEK_FADE_STEP)
+        else:
+            return  # already settled; nothing to repaint
+        self._peek_progress[surface_id] = cur
+        content, body_extra, portrait_extra = self._peek_opacities(cur)
+        try:
+            surface.set_content_opacity(content)
+        except Exception:
+            pass
+        if self._card_provider is not None:
+            try:
+                self._card_provider.set_shell_extra_opacity(
+                    surface_id, body_extra, portrait_extra)
+            except Exception:
+                pass
+
+    def _on_peek_timer(self) -> None:
+        from PySide6.QtGui import QCursor
+        try:
+            p = QCursor.pos()
+            point = (p.x(), p.y())
+        except Exception:
+            point = None
+        self._peek_tick(point)
+
+    def _start_peek_timer(self) -> None:
+        from PySide6.QtCore import QTimer
+        if self._peek_timer is None:
+            self._peek_timer = QTimer()
+            self._peek_timer.setInterval(30)  # ~33Hz, light
+            self._peek_timer.timeout.connect(self._on_peek_timer)
+        self._peek_timer.start()
+
+    def _stop_peek_timer(self) -> None:
+        if self._peek_timer is not None:
+            self._peek_timer.stop()
+        self._peek_store.clear()
+        # Restore every card to fully opaque (both tiers) so a borrowed card never
+        # returns to the framed grid stuck dim.
+        card_surfaces = self._card_surfaces() if self._surfaces else []
+        for st, su in card_surfaces:
+            if self._peek_progress[st.surface_id] != 0.0:
+                try:
+                    su.set_content_opacity(1.0)
+                except Exception:
+                    pass
+                if self._card_provider is not None:
+                    try:
+                        self._card_provider.set_shell_extra_opacity(st.surface_id, 1.0, 1.0)
+                    except Exception:
+                        pass
+        self._peek_progress = [0.0, 0.0, 0.0, 0.0]
 
     # ------------------------------------------------------------------
     # Topmost re-assert + reshape-on-screen-change (Task 7.1)
@@ -549,7 +710,7 @@ class OverlayGroupController:
             rect = rects[self._key(state)]
             surface.set_overlay_geometry(rect)
             if reshape:
-                surface.apply_shape(self._shape_path(state, rect), surface.devicePixelRatio())
+                self._apply_input_region(state, surface, rect)
         self._raise_emblem()
 
     # ------------------------------------------------------------------
@@ -861,7 +1022,7 @@ class OverlayGroupController:
                 # INPUT only and the window is translucent, so there is no visual
                 # flash; do NOT reorder to shape-before-show (it would never apply).
                 surface.show()
-                surface.apply_shape(self._shape_path(state, rect), surface.devicePixelRatio())
+                self._apply_input_region(state, surface, rect)
                 # Snapshot the live anchor/scale into the state (v2 detach reads it).
                 state.anchor = self._anchor
                 state.scale = self._scale
@@ -894,6 +1055,7 @@ class OverlayGroupController:
         # low-frequency timer, and reshape if a surface changes monitor/DPI.
         self._reassert_topmost()
         self._start_above_timer()
+        self._start_peek_timer()
         self._connect_screen_change()
         # The main window was just minimized, which can make KWin re-add the
         # surfaces to the taskbar a few ms later. Re-assert skip-taskbar/above once
@@ -928,6 +1090,7 @@ class OverlayGroupController:
         self._end_drag()
         # Stop the topmost re-assert timer (no surfaces to keep above once framed).
         self._stop_above_timer()
+        self._stop_peek_timer()
         # Persist the FINAL group anchor + scale before teardown (the remembered
         # overlay position, restored on the next enter).
         self.flush_pending_save()

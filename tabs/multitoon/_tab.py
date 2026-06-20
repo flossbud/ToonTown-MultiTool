@@ -29,6 +29,8 @@ from utils.game_registry import GameRegistry
 from utils import logical_actions
 from utils.toon_customizations_manager import ToonCustomizationsManager
 from utils.settings_keys import CLICK_SYNC_ENABLED
+from utils.color_math import lighten_rgb
+from utils.widgets.scale_press import ScalePushButton
 from tabs.multitoon._keep_alive_help_button import KeepAliveHelpButton
 
 
@@ -86,6 +88,7 @@ class ToonPortraitWidget(QWidget):
     def __init__(self, slot: int, parent=None):
         super().__init__(parent)
         self._slot    = slot
+        self._peek_opacity = 1.0   # extra hover-peek dim factor for the toon image
         self._bg      = QColor("#4a4a4a")
         self._text    = QColor("#ffffff")
         self._border_color = None
@@ -397,8 +400,19 @@ class ToonPortraitWidget(QWidget):
     def _can_show_pencil(self) -> bool:
         return bool(self._toon_name) and self._game in ("cc", "ttr")
 
+    def set_peek_opacity(self, opacity: float) -> None:
+        """Extra hover-peek translucency factor for the toon image (1.0 = none).
+        Multiplies on top of the card's content opacity, so the image lands a bit
+        more see-through than the controls/text."""
+        opacity = float(opacity)
+        if opacity != self._peek_opacity:
+            self._peek_opacity = opacity
+            self.update()
+
     def paintEvent(self, event):
         p = QPainter(self)
+        if self._peek_opacity < 1.0:
+            p.setOpacity(self._peek_opacity)
         p.setRenderHint(QPainter.Antialiasing)
         p.setRenderHint(QPainter.SmoothPixmapTransform)
         p.setPen(Qt.NoPen)
@@ -614,7 +628,7 @@ class StatusDots(QWidget):
         p.end()
 
 
-class KeepAliveBtn(QPushButton):
+class KeepAliveBtn(ScalePushButton):
     """Keep-alive toggle button with a progress ring.
 
     Short click   → toggle keep-alive on/off.
@@ -716,25 +730,31 @@ class KeepAliveBtn(QPushButton):
         self.update()
 
     def paintEvent(self, event):
-        super().paintEvent(event)
-
-        # Only draw during an active hold-charge; the horizontal bar handles cycle progress
-        if not (self._charging and self._charge_progress > 0.001):
+        if self.paint_scale == 1.0:
+            super().paintEvent(event)          # ScalePushButton -> styled chrome
+            if self._charging and self._charge_progress > 0.001:
+                p = QPainter(self)
+                self._paint_charge_arc(p)
+                p.end()
             return
+        # Pressed/animating: draw the styled chrome AND the charge arc through one
+        # center-scaled painter so the whole button shrinks together.
+        p = self._begin_scaled_paint()
+        self._draw_button_chrome(p)
+        if self._charging and self._charge_progress > 0.001:
+            self._paint_charge_arc(p)
+        p.end()
 
-        p = QPainter(self)
+    def _paint_charge_arc(self, p):
         p.setRenderHint(QPainter.Antialiasing)
-
         margin = 3
         rect = QRectF(margin, margin,
                       self.width() - 2 * margin,
                       self.height() - 2 * margin)
-
         pen = QPen(QColor("#E05252"), 3, Qt.SolidLine, Qt.RoundCap)
         p.setPen(pen)
         p.setBrush(Qt.NoBrush)
         p.drawArc(rect, 90 * 16, int(-self._charge_progress * 360 * 16))
-        p.end()
 
 
 class SetSelectorWidget(QWidget):
@@ -1106,11 +1126,13 @@ KA_ORANGE_BORDER = "#ffb04d"
 def _pin_toggle_qss(accent: str, on: bool) -> str:
     """QSS for a 34x36 pinwheel toggle button. Active fills with the toggle's
     accent; inactive is a recessed dark chip. Icon colour is set separately
-    (QSS can't tint a QIcon)."""
+    (QSS can't tint a QIcon). Both states brighten on hover."""
     if on:
+        hov = lighten_rgb(QColor(accent), 0.15).name()
         return (
             f"QPushButton {{ background: {accent}; border: 1px solid {accent};"
             f" border-radius: 9px; }}"
+            f"QPushButton:hover {{ background: {hov}; border: 1px solid {hov}; }}"
         )
     return (
         "QPushButton { background: rgba(0,0,0,0.24);"
@@ -1126,8 +1148,32 @@ def _pin_ka_off_qss() -> str:
     return (
         "QPushButton { background: rgba(0,0,0,0.35);"
         " border: 1px solid rgba(255,255,255,0.16); border-radius: 14px; }"
+        "QPushButton:hover { background: rgba(255,255,255,0.10);"
+        " border: 1px solid rgba(255,255,255,0.28); }"
         "QPushButton:disabled { background: rgba(0,0,0,0.35);"
         " border: 1px solid rgba(255,255,255,0.10); }"
+    )
+
+
+def _pin_ka_on_qss(fill: str, border: str) -> str:
+    """QSS for the keep-alive lightning toggle in its on state (orange/red),
+    brightening on hover."""
+    hov = lighten_rgb(QColor(fill), 0.15).name()
+    hov_b = lighten_rgb(QColor(border), 0.15).name()
+    return (
+        f"QPushButton {{ background: {fill}; border: 1px solid {border};"
+        f" border-radius: 14px; }}"
+        f"QPushButton:hover {{ background: {hov}; border: 1px solid {hov_b}; }}"
+    )
+
+
+def _pin_cs_chip_qss(border: str) -> str:
+    """QSS for the mouse-sync button's dark-chip states (armed/error): a recessed
+    chip with a coloured ring, brightening on hover like the off chip."""
+    return (
+        f"QPushButton {{ background: rgba(0,0,0,0.24);"
+        f" border: 1px solid {border}; border-radius: 9px; }}"
+        f"QPushButton:hover {{ background: rgba(255,255,255,0.10); }}"
     )
 
 
@@ -1422,7 +1468,7 @@ class MultitoonTab(QWidget):
             bean_lbl.hide()
             self.bean_labels.append(bean_lbl)
 
-            btn = QPushButton("Enable")
+            btn = ScalePushButton("Enable")
             btn.setCheckable(True)
             btn.setFixedHeight(32)
             btn.setFixedWidth(88)
@@ -1441,7 +1487,7 @@ class MultitoonTab(QWidget):
             ka_btn.rapid_fire_toggled.connect(lambda state, idx=i: self.toggle_rapid_fire(idx, state))
             self.keep_alive_buttons.append(ka_btn)
 
-            chat_btn = QPushButton()
+            chat_btn = ScalePushButton()
             chat_btn.setCheckable(True)
             chat_btn.setChecked(True)
             chat_btn.setFixedHeight(32)
@@ -1451,7 +1497,7 @@ class MultitoonTab(QWidget):
             chat_btn.clicked.connect(lambda checked, idx=i: self.toggle_chat(idx))
             self.chat_buttons.append(chat_btn)
 
-            cs_btn = QPushButton()
+            cs_btn = ScalePushButton()
             cs_btn.setCheckable(True)
             cs_btn.setChecked(False)
             cs_btn.setFixedHeight(32)
@@ -2087,10 +2133,7 @@ class MultitoonTab(QWidget):
             fill = "#E05252" if is_rf else KA_ORANGE
             border = "#ef8d8d" if is_rf else KA_ORANGE_BORDER
             ka_btn.setIcon(make_lightning_icon(13, QColor("#ffffff")))
-            ka_btn.setStyleSheet(
-                f"QPushButton {{ background: {fill}; border: 1px solid {border};"
-                f" border-radius: 14px; }}"
-            )
+            ka_btn.setStyleSheet(_pin_ka_on_qss(fill, border))
             if bar:
                 bar.set_fill_color(fill)
         else:
@@ -2914,15 +2957,9 @@ class MultitoonTab(QWidget):
             btn.setStyleSheet(_pin_toggle_qss(c['accent_pink'], True))
         elif state == "armed":
             # Dark chip with a pink ring: armed but not yet mirroring.
-            btn.setStyleSheet(
-                f"QPushButton {{ background: rgba(0,0,0,0.24);"
-                f" border: 1px solid {c['accent_pink_border']}; border-radius: 9px; }}"
-            )
+            btn.setStyleSheet(_pin_cs_chip_qss(c['accent_pink_border']))
         elif state == "error":
-            btn.setStyleSheet(
-                f"QPushButton {{ background: rgba(0,0,0,0.24);"
-                f" border: 1px solid {c['accent_red_border']}; border-radius: 9px; }}"
-            )
+            btn.setStyleSheet(_pin_cs_chip_qss(c['accent_red_border']))
         else:  # off (also the unknown-state fallback)
             btn.setStyleSheet(_pin_toggle_qss(c['accent_pink'], False))
         tips = {

@@ -160,6 +160,15 @@ class OverlaySurface(QWidget):
         """
         self._backend.apply_input_shape(self, path, dpr)
 
+    def apply_input_region(self, region) -> None:
+        """Set the X11 ShapeInput region directly from a device-pixel QRegion.
+
+        Used for disjoint regions (the card's controls-only click-through region),
+        where a single polygonized path is unreliable. Delegates to the backend's
+        region path; a no-op before show() (the backend swallows an invalid winId).
+        """
+        self._backend.apply_input_region(self, region)
+
     def clear_shape(self) -> None:
         """Remove any previously applied ShapeInput region."""
         self._backend.clear_input_region(self)
@@ -217,6 +226,7 @@ class CardSurface(OverlaySurface):
         self._shape_mode: ShapeMode = ShapeMode.PINWHEEL_BITE
         self._scale: float = 1.0
         self._scaled_view = None  # ScaledCardView holding the borrowed card
+        self._peeking = False  # transparent hover-peek state (dim driven by controller)
 
     @property
     def surface_id(self) -> int:
@@ -229,6 +239,23 @@ class CardSurface(OverlaySurface):
     def set_input_shape_mode(self, mode: ShapeMode) -> None:
         """Switch between PINWHEEL_BITE (attached) and ROUNDED_RECT (detached)."""
         self._shape_mode = mode
+
+    @property
+    def is_peeking(self) -> bool:
+        return self._peeking
+
+    def set_peek(self, active: bool, control_rects=None) -> None:
+        """Record hover-peek state. The dim RENDERING is driven by the controller
+        (uniform card opacity here via set_content_opacity, plus an extra body-fill
+        dim through the card provider); this surface only tracks the flag so other
+        code can query is_peeking."""
+        self._peeking = bool(active)
+
+    def set_content_opacity(self, opacity: float) -> None:
+        """Composite the whole hosted card at *opacity* (hover-peek). Delegates to
+        the ScaledCardView proxy; no-op before a card is hosted."""
+        if self._scaled_view is not None:
+            self._scaled_view.set_content_opacity(opacity)
 
     def set_scale(self, scale: float) -> None:
         """Record the current overlay zoom factor (0.5-1.75).
