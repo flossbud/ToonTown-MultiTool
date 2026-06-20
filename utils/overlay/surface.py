@@ -57,11 +57,20 @@ class OverlaySurface(QWidget):
         # window's minimize, so they are plain frameless top-levels and rely on
         # the explicit _NET_WM_STATE_SKIP_TASKBAR/_SKIP_PAGER hints (set per show)
         # to stay out of the taskbar/pager.
+        # X11BypassWindowManagerHint makes the X window override-redirect under
+        # xcb/XWayland, so the window manager never manages or REPOSITIONS it. That
+        # is load-bearing: the controller's anchor becomes the single source of
+        # truth, so the cluster moves as one rigid unit and can be parked past a
+        # screen edge (the WM would otherwise clamp each window independently,
+        # compressing the cluster and blocking off-screen parking). Override-redirect
+        # windows are also inherently above managed windows and absent from the
+        # taskbar, so the EWMH above/skip-taskbar calls become belt-and-suspenders.
         self.setWindowFlags(
             Qt.Window
             | Qt.FramelessWindowHint
             | Qt.WindowStaysOnTopHint
             | Qt.WindowDoesNotAcceptFocus
+            | Qt.X11BypassWindowManagerHint
         )
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WA_ShowWithoutActivating, True)

@@ -56,6 +56,11 @@ def test_window_flags(qapp):
     window_type = flags & Qt.WindowType_Mask
     assert window_type == Qt.Window
     assert window_type != Qt.Tool
+    # Override-redirect: the WM must NOT manage/reposition the overlay windows, so
+    # the controller's anchor is the only thing that positions them (rigid cluster +
+    # off-screen parking). X11BypassWindowManagerHint is a hint bit OUTSIDE
+    # WindowType_Mask, so the window_type assertion above is unaffected.
+    assert flags & Qt.X11BypassWindowManagerHint
 
 
 def test_attributes_set(qapp):
