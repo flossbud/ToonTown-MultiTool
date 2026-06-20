@@ -106,10 +106,10 @@ def test_control_rects_follow_permuted_shells(qt_app, monkeypatch, tmp_path):
         tab.input_service.shutdown()
 
 
-def test_set_shell_body_opacity_dims_background_and_toon_image(qt_app, monkeypatch, tmp_path):
-    # The body tier dims the background fill AND the toon image (the extra
-    # see-through elements); controls, text, and the portrait ring are dimmed
-    # uniformly by the surface content opacity, not here.
+def test_set_shell_extra_opacity_dims_background_and_toon_image(qt_app, monkeypatch, tmp_path):
+    # The extra tier dims the background fill and the toon image each by its own
+    # factor; controls, text, and the portrait ring are dimmed uniformly by the
+    # surface content opacity, not here.
     tab = _make_tab(monkeypatch, tmp_path)
     try:
         qt_app.processEvents()
@@ -117,22 +117,22 @@ def test_set_shell_body_opacity_dims_background_and_toon_image(qt_app, monkeypat
         cell = compact._cells[0]
         s = cell.get("content_slot", 0)
 
-        compact.set_shell_body_opacity(0, 0.8125)
+        compact.set_shell_extra_opacity(0, 0.8125, 0.625)
         assert cell["bg"]._peek_opacity == 0.8125
-        assert tab.slot_badges[s]._peek_opacity == 0.8125   # toon image too
+        assert tab.slot_badges[s]._peek_opacity == 0.625   # toon image dimmed more
         # Controls and the portrait ring are NOT touched by this tier.
         assert not hasattr(cell["portrait_frame"], "_peek_opacity")
         assert not hasattr(tab.toon_buttons[s], "_peek_opacity")
         assert not hasattr(cell["ka_pill"], "_peek_opacity")
 
-        compact.set_shell_body_opacity(0, 1.0)
+        compact.set_shell_extra_opacity(0, 1.0, 1.0)
         assert cell["bg"]._peek_opacity == 1.0
         assert tab.slot_badges[s]._peek_opacity == 1.0
     finally:
         tab.input_service.shutdown()
 
 
-def test_set_shell_body_opacity_toon_image_follows_content_slot(qt_app, monkeypatch, tmp_path):
+def test_set_shell_extra_opacity_toon_image_follows_content_slot(qt_app, monkeypatch, tmp_path):
     # Under a permutation, the dimmed toon image is the slot routed into the shell.
     tab = _make_tab(monkeypatch, tmp_path)
     try:
@@ -142,7 +142,7 @@ def test_set_shell_body_opacity_toon_image_follows_content_slot(qt_app, monkeypa
         for _ in range(6):
             qt_app.processEvents()
         s0 = compact._cells[0]["content_slot"]   # == 1
-        compact.set_shell_body_opacity(0, 0.5)
+        compact.set_shell_extra_opacity(0, 0.8, 0.5)
         assert tab.slot_badges[s0]._peek_opacity == 0.5
         assert tab.slot_badges[0]._peek_opacity == 1.0   # slot 0 now lives in shell 1
     finally:

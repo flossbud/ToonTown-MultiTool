@@ -5,12 +5,13 @@ from utils.overlay.group_controller import OverlayGroupController, SurfaceState
 
 
 class _RecordingProvider:
-    """Records the body-tier opacity pushed per shell by the controller fade."""
+    """Records the extra-tier opacities pushed per shell by the controller fade."""
     def __init__(self):
-        self.calls = []  # (surface_id, body_extra_opacity)
+        self.calls = []  # (surface_id, bg_extra, portrait_extra)
 
-    def set_shell_body_opacity(self, surface_id, opacity):
-        self.calls.append((surface_id, round(float(opacity), 4)))
+    def set_shell_extra_opacity(self, surface_id, bg_opacity, portrait_opacity):
+        self.calls.append((surface_id, round(float(bg_opacity), 4),
+                           round(float(portrait_opacity), 4)))
 
     def control_rects(self, slot):
         return []
@@ -142,10 +143,12 @@ def test_peek_fade_reaches_two_tiers_then_restores(qapp):
     # Content tier: whole card to 0.80.
     assert su0.content[-1] == pytest.approx(0.80, abs=1e-6)
     assert su0.content == sorted(su0.content, reverse=True)   # monotonic fade-down
-    # Body tier: net body = content * body_extra == 0.65.
-    body0 = [op for sid, op in prov.calls if sid == 0]
-    assert su0.content[-1] * body0[-1] == pytest.approx(0.65, abs=1e-6)
-    assert all(sid == 0 for sid, _ in prov.calls)  # idle cards never repaint
+    # Extra tiers: net body = content*bg == 0.65; net portrait = content*portrait == 0.50.
+    last = [c for c in prov.calls if c[0] == 0][-1]
+    _, bg0, portrait0 = last
+    assert su0.content[-1] * bg0 == pytest.approx(0.65, abs=1e-6)
+    assert su0.content[-1] * portrait0 == pytest.approx(0.50, abs=1e-6)
+    assert all(c[0] == 0 for c in prov.calls)  # idle cards never repaint
     for _ in range(10):           # move off -> back to opaque
         c._peek_tick((500, 500))
     assert c._peek_progress[0] == pytest.approx(0.0, abs=1e-6)
@@ -165,4 +168,4 @@ def test_stop_peek_timer_restores_opacity(qapp):
     c._stop_peek_timer()
     assert c._peek_progress == [0.0, 0.0, 0.0, 0.0]
     assert su0.content[-1] == pytest.approx(1.0)
-    assert c._card_provider.calls[-1] == (0, 1.0)
+    assert c._card_provider.calls[-1] == (0, 1.0, 1.0)

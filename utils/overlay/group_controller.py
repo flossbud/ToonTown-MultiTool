@@ -539,8 +539,9 @@ class OverlayGroupController:
         return [(st, su) for st, su in zip(self._states, self._surfaces)
                 if not st.is_emblem]
 
-    PEEK_CONTENT_OPACITY = 0.80    # whole card (controls, portrait, text) on hover
+    PEEK_CONTENT_OPACITY = 0.80    # whole card (controls, text, portrait ring) on hover
     PEEK_BODY_OPACITY = 0.65       # card BACKGROUND fill on hover (more see-through)
+    PEEK_PORTRAIT_OPACITY = 0.50   # toon IMAGE on hover (most see-through)
     _PEEK_FADE_STEP = 0.25         # progress per 30ms tick -> ~120ms full fade
 
     def _peek_tick(self, real_point) -> None:
@@ -567,21 +568,24 @@ class OverlayGroupController:
             self._apply_peek_fade(st.surface_id, su, active)
 
     def _peek_opacities(self, progress):
-        """Two-tier (content, body_extra) opacities for a peek *progress* 0..1.
+        """Three-tier (content, body_extra, portrait_extra) opacities for a peek
+        *progress* 0..1.
 
-        content: whole-card opacity (1.0 -> CONTENT). body_extra: multiplicative
-        factor on the background fill so net body = content * body_extra reaches
-        BODY at full peek."""
+        content: whole-card opacity (1.0 -> CONTENT). body_extra / portrait_extra:
+        multiplicative factors on the background fill / toon image so their net
+        opacity (content * factor) reaches BODY / PORTRAIT at full peek."""
         content = 1.0 - (1.0 - self.PEEK_CONTENT_OPACITY) * progress
         body_factor = self.PEEK_BODY_OPACITY / self.PEEK_CONTENT_OPACITY
         body_extra = 1.0 - (1.0 - body_factor) * progress
-        return content, body_extra
+        portrait_factor = self.PEEK_PORTRAIT_OPACITY / self.PEEK_CONTENT_OPACITY
+        portrait_extra = 1.0 - (1.0 - portrait_factor) * progress
+        return content, body_extra, portrait_extra
 
     def _apply_peek_fade(self, surface_id, surface, active) -> None:
-        """Step one card's hover-peek progress toward its target and apply the two
+        """Step one card's hover-peek progress toward its target and apply the
         opacity tiers: the whole card via the surface (content), the background
-        fill a bit further via the card provider (body). No-op for the body tier
-        without a provider (stub tests still drive the surface tier)."""
+        fill + toon image a bit further via the card provider. No-op for the extra
+        tiers without a provider (stub tests still drive the surface tier)."""
         target = 1.0 if active else 0.0
         cur = self._peek_progress[surface_id]
         if cur < target:
@@ -591,14 +595,15 @@ class OverlayGroupController:
         else:
             return  # already settled; nothing to repaint
         self._peek_progress[surface_id] = cur
-        content, body_extra = self._peek_opacities(cur)
+        content, body_extra, portrait_extra = self._peek_opacities(cur)
         try:
             surface.set_content_opacity(content)
         except Exception:
             pass
         if self._card_provider is not None:
             try:
-                self._card_provider.set_shell_body_opacity(surface_id, body_extra)
+                self._card_provider.set_shell_extra_opacity(
+                    surface_id, body_extra, portrait_extra)
             except Exception:
                 pass
 
@@ -634,7 +639,7 @@ class OverlayGroupController:
                     pass
                 if self._card_provider is not None:
                     try:
-                        self._card_provider.set_shell_body_opacity(st.surface_id, 1.0)
+                        self._card_provider.set_shell_extra_opacity(st.surface_id, 1.0, 1.0)
                     except Exception:
                         pass
         self._peek_progress = [0.0, 0.0, 0.0, 0.0]
