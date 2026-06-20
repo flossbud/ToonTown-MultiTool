@@ -226,6 +226,7 @@ class CardSurface(OverlaySurface):
         self._shape_mode: ShapeMode = ShapeMode.PINWHEEL_BITE
         self._scale: float = 1.0
         self._scaled_view = None  # ScaledCardView holding the borrowed card
+        self._peeking = False  # transparent hover-peek state (rendering added later)
 
     @property
     def surface_id(self) -> int:
@@ -238,6 +239,16 @@ class CardSurface(OverlaySurface):
     def set_input_shape_mode(self, mode: ShapeMode) -> None:
         """Switch between PINWHEEL_BITE (attached) and ROUNDED_RECT (detached)."""
         self._shape_mode = mode
+
+    @property
+    def is_peeking(self) -> bool:
+        return self._peeking
+
+    def set_peek(self, active: bool, control_rects=None) -> None:
+        """Enter/leave hover-peek. Rendering (fade + 100% controls) is added in a
+        later task; for now this only records the state so detection can be wired
+        and tested independently."""
+        self._peeking = bool(active)
 
     def set_scale(self, scale: float) -> None:
         """Record the current overlay zoom factor (0.5-1.75).

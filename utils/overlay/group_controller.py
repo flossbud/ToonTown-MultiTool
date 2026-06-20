@@ -294,6 +294,12 @@ class OverlayGroupController:
         # Low-frequency ABOVE re-assert while transparent (Task 7.1): best-effort,
         # since some WMs drop _NET_WM_STATE_ABOVE when another window takes focus.
         self._above_timer = None
+        # Hover-peek (transparent mode): a ~30ms poll that unions the real cursor
+        # with click-sync ghost points and toggles each card's peek state. The
+        # GhostPointStore is fed by on_ghost_event/on_ghost_clear (wired in main.py).
+        from utils.overlay.peek import GhostPointStore
+        self._peek_store = GhostPointStore()
+        self._peek_timer = None
         # Accent-glow surface behind the cluster: a single click-through window
         # spanning the four card rects that paints the same soft halo the framed
         # tab draws behind its cards (the _GlowLayer that fills the central hole so
@@ -512,6 +518,73 @@ class OverlayGroupController:
         """
         if self._surfaces:
             self._surfaces[-1].raise_()
+
+    # ------------------------------------------------------------------
+    # Hover-peek detection (transparent mode)
+    # ------------------------------------------------------------------
+    def on_ghost_event(self, payload) -> None:
+        """Receive a click-sync ghost_pointer_event payload (motion/release)."""
+        self._peek_store.ingest(payload)
+
+    def on_ghost_clear(self) -> None:
+        """Receive click-sync ghost_clear: drop all ghost points."""
+        self._peek_store.clear()
+
+    def _card_surfaces(self):
+        """[(state, surface), ...] for the four card surfaces (emblem excluded)."""
+        return [(st, su) for st, su in zip(self._states, self._surfaces)
+                if not st.is_emblem]
+
+    def _peek_tick(self, real_point) -> None:
+        """One detection pass: union real cursor + ghost points, apply per card.
+
+        real_point: (x, y) global, or None when the OS pointer is unavailable.
+        """
+        if not self._active:
+            return
+        from utils.overlay.peek import peeking_indices
+        cards = self._card_surfaces()
+        rects = []
+        for _st, su in cards:
+            g = su.geometry()
+            rects.append((g.x(), g.y(), g.width(), g.height()))
+        points = list(self._peek_store.points())
+        if real_point is not None:
+            points.append(real_point)
+        peeking = peeking_indices(points, rects)
+        for i, (st, su) in enumerate(cards):
+            setter = getattr(su, "set_peek", None)
+            if setter is None:
+                continue
+            rects_arg = None
+            if i in peeking and self._card_provider is not None:
+                try:
+                    rects_arg = self._card_provider.control_rects(st.surface_id)
+                except Exception:
+                    rects_arg = None
+            setter(i in peeking, rects_arg)
+
+    def _on_peek_timer(self) -> None:
+        from PySide6.QtGui import QCursor
+        try:
+            p = QCursor.pos()
+            point = (p.x(), p.y())
+        except Exception:
+            point = None
+        self._peek_tick(point)
+
+    def _start_peek_timer(self) -> None:
+        from PySide6.QtCore import QTimer
+        if self._peek_timer is None:
+            self._peek_timer = QTimer()
+            self._peek_timer.setInterval(30)  # ~33Hz, light
+            self._peek_timer.timeout.connect(self._on_peek_timer)
+        self._peek_timer.start()
+
+    def _stop_peek_timer(self) -> None:
+        if self._peek_timer is not None:
+            self._peek_timer.stop()
+        self._peek_store.clear()
 
     # ------------------------------------------------------------------
     # Topmost re-assert + reshape-on-screen-change (Task 7.1)
@@ -924,6 +997,7 @@ class OverlayGroupController:
         # low-frequency timer, and reshape if a surface changes monitor/DPI.
         self._reassert_topmost()
         self._start_above_timer()
+        self._start_peek_timer()
         self._connect_screen_change()
         # The main window was just minimized, which can make KWin re-add the
         # surfaces to the taskbar a few ms later. Re-assert skip-taskbar/above once
@@ -958,6 +1032,7 @@ class OverlayGroupController:
         self._end_drag()
         # Stop the topmost re-assert timer (no surfaces to keep above once framed).
         self._stop_above_timer()
+        self._stop_peek_timer()
         # Persist the FINAL group anchor + scale before teardown (the remembered
         # overlay position, restored on the next enter).
         self.flush_pending_save()
