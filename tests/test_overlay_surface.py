@@ -47,8 +47,15 @@ def test_window_flags(qapp):
     flags = s.windowFlags()
     assert flags & Qt.FramelessWindowHint
     assert flags & Qt.WindowStaysOnTopHint
-    assert flags & Qt.Tool
     assert flags & Qt.WindowDoesNotAcceptFocus
+    # The window TYPE (masked) must be plain Qt.Window, NOT Qt.Tool: a Tool window
+    # is coupled to the app's main window and is minimized/destroyed along with it,
+    # which made the cluster vanish when transparent mode minimizes the main window.
+    # (Type flags are values within WindowType_Mask, not independent bits, so this
+    # must be an equality test on the masked type - Qt.Tool overlaps the Window bit.)
+    window_type = flags & Qt.WindowType_Mask
+    assert window_type == Qt.Window
+    assert window_type != Qt.Tool
 
 
 def test_attributes_set(qapp):
@@ -175,7 +182,10 @@ def test_backend_called_on_show(qapp):
     assert s in stub.non_activating_calls
 
 
-def test_backend_called_only_once(qapp):
+def test_backend_reapplied_on_every_show(qapp):
+    """Hints must re-apply on EVERY show, not once: if the native window handle is
+    recreated across a hide/show, a one-shot latch would leave the new X window
+    without SKIP_TASKBAR/ABOVE (the stray taskbar icons + drop-below-games bug)."""
     stub = StubBackend()
     s = OverlaySurface(backend=stub)
     s.show()
@@ -183,8 +193,8 @@ def test_backend_called_only_once(qapp):
     s.hide()
     s.show()
     QApplication.processEvents()
-    assert stub.above_calls.count(s) == 1
-    assert stub.non_activating_calls.count(s) == 1
+    assert stub.above_calls.count(s) == 2
+    assert stub.non_activating_calls.count(s) == 2
 
 
 def test_noop_backend_show_safe(qapp):

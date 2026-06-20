@@ -46,12 +46,21 @@ class OverlaySurface(QWidget):
 
         self._backend: OverlayBackend = backend if backend is not None else get_overlay_backend()
         self._hosted: QWidget | None = None
-        self._backend_applied: bool = False
 
+        # Independent top-level (Qt.Window), NOT Qt.Tool. A Qt.Tool window is
+        # coupled to the application's main window: when the main window is
+        # minimized in transparent mode, Qt/KWin minimizes (and destroys the
+        # native handle of) every Tool window along with it - which made the whole
+        # cluster vanish until each surface was clicked in the taskbar, and lost
+        # the SKIP_TASKBAR hint on the recreated handles (the stray taskbar icons).
+        # The spec's "independence rule" requires these to survive the main
+        # window's minimize, so they are plain frameless top-levels and rely on
+        # the explicit _NET_WM_STATE_SKIP_TASKBAR/_SKIP_PAGER hints (set per show)
+        # to stay out of the taskbar/pager.
         self.setWindowFlags(
-            Qt.FramelessWindowHint
+            Qt.Window
+            | Qt.FramelessWindowHint
             | Qt.WindowStaysOnTopHint
-            | Qt.Tool
             | Qt.WindowDoesNotAcceptFocus
         )
         self.setAttribute(Qt.WA_TranslucentBackground, True)
@@ -152,18 +161,21 @@ class OverlaySurface(QWidget):
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
-        if not self._backend_applied:
-            self._backend_applied = True
-            # Independent operations: a failure of one must not skip the other,
-            # or the surface could end up "above" but still activating.
-            try:
-                self._backend.set_above(self)
-            except Exception:
-                pass
-            try:
-                self._backend.set_non_activating(self)
-            except Exception:
-                pass
+        # Re-apply on EVERY show, not once: if the native window handle is ever
+        # recreated (e.g. a hide/show cycle), a one-shot latch would leave the new
+        # X window without SKIP_TASKBAR/ABOVE - so it would reappear in the taskbar
+        # and drop below the games. The EWMH _NET_WM_STATE ADD messages are
+        # idempotent, so re-sending them every show is safe.
+        # Independent operations: a failure of one must not skip the other, or the
+        # surface could end up "above" but still showing in the taskbar.
+        try:
+            self._backend.set_above(self)
+        except Exception:
+            pass
+        try:
+            self._backend.set_non_activating(self)
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------

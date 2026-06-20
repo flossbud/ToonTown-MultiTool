@@ -25,8 +25,22 @@ class X11OverlayBackend(OverlayBackend):
                 self._display = None
             else:
                 self._shape = shape
+                # Swallow asynchronous protocol errors on THIS connection. The
+                # EWMH/SHAPE requests are best-effort and fire-and-flush, so their
+                # errors (e.g. BadWindow if a surface's native handle was torn down
+                # between the winId() read and the server processing the request)
+                # arrive asynchronously and bypass the per-call try/except - Xlib's
+                # default handler would otherwise spam them to stderr. This handler
+                # is connection-local; Qt uses a separate display, so this never
+                # masks errors outside the overlay backend.
+                self._display.set_error_handler(self._on_x_error)
         except Exception:
             self._display = None
+
+    @staticmethod
+    def _on_x_error(*_args) -> None:
+        """Ignore async X protocol errors on the backend's own connection."""
+        return None
 
     def is_available(self) -> bool:
         return self._display is not None and self._shape is not None
