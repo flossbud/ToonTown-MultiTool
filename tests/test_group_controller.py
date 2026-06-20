@@ -118,13 +118,16 @@ class _StubWindow:
         self.calls.append("showNormal")
 
 
-def _make(fail_on=None, fail_method=None, fail_method_on=None):
+def _make(fail_on=None, fail_method=None, fail_method_on=None, on_active_changed=None):
     factory = _StubFactory(
         fail_on=fail_on, fail_method=fail_method, fail_method_on=fail_method_on
     )
     win = _StubWindow()
     # NoOp backend so __init__ never opens an Xlib display (X client-slot leak).
-    ctl = OverlayGroupController(win, backend=NoOpOverlayBackend(), surface_factory=factory)
+    ctl = OverlayGroupController(
+        win, backend=NoOpOverlayBackend(), surface_factory=factory,
+        on_active_changed=on_active_changed,
+    )
     return ctl, factory, win
 
 
@@ -412,3 +415,32 @@ class TestMisc:
         n = len(factory.created)
         assert ctl.enter() is True          # second enter: no-op
         assert len(factory.created) == n    # no new surfaces built
+
+
+# ---------------------------------------------------------------------------
+# on_active_changed callback (tab learns when the overlay goes up/down)
+# ---------------------------------------------------------------------------
+class TestActiveChangedCallback:
+    def test_fires_true_on_enter_then_false_on_leave(self, qapp):
+        seen: list = []
+        ctl, factory, win = _make(on_active_changed=seen.append)
+        assert ctl.enter() is True
+        assert seen == [True], "enter-success must report active=True after setup"
+        ctl.leave()
+        assert seen == [True, False], "leave must report active=False after teardown"
+
+    def test_not_fired_on_failed_enter(self, qapp):
+        # A fail-closed enter stays Framed: it never went active, so no transition.
+        seen: list = []
+        ctl, factory, win = _make(fail_on=1, on_active_changed=seen.append)
+        assert ctl.enter() is False
+        assert seen == []
+
+    def test_observer_error_does_not_break_enter(self, qapp):
+        def _boom(_active):
+            raise RuntimeError("observer blew up")
+        ctl, factory, win = _make(on_active_changed=_boom)
+        # Best-effort: a raising observer must not corrupt enter/leave.
+        assert ctl.enter() is True
+        ctl.leave()
+        assert ctl.is_active is False
