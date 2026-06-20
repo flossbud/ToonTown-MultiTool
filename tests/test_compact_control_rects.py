@@ -117,16 +117,17 @@ def test_set_shell_extra_opacity_dims_background_and_toon_image(qt_app, monkeypa
         cell = compact._cells[0]
         s = cell.get("content_slot", 0)
 
-        compact.set_shell_extra_opacity(0, 0.8125, 0.625)
+        compact.set_shell_extra_opacity(0, 0.8125, 0.3125)
         assert cell["bg"]._peek_opacity == 0.8125
-        assert tab.slot_badges[s]._peek_opacity == 0.625   # toon image dimmed more
-        # Controls and the portrait ring are NOT touched by this tier.
-        assert not hasattr(cell["portrait_frame"], "_peek_opacity")
+        assert cell["portrait_frame"]._peek_opacity == 0.3125   # circular frame
+        assert tab.slot_badges[s]._peek_opacity == 0.3125       # toon image
+        # Controls are NOT touched by this tier.
         assert not hasattr(tab.toon_buttons[s], "_peek_opacity")
         assert not hasattr(cell["ka_pill"], "_peek_opacity")
 
         compact.set_shell_extra_opacity(0, 1.0, 1.0)
         assert cell["bg"]._peek_opacity == 1.0
+        assert cell["portrait_frame"]._peek_opacity == 1.0
         assert tab.slot_badges[s]._peek_opacity == 1.0
     finally:
         tab.input_service.shutdown()

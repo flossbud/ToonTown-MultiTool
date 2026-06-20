@@ -147,7 +147,7 @@ def test_peek_fade_reaches_two_tiers_then_restores(qapp):
     last = [c for c in prov.calls if c[0] == 0][-1]
     _, bg0, portrait0 = last
     assert su0.content[-1] * bg0 == pytest.approx(0.65, abs=1e-6)
-    assert su0.content[-1] * portrait0 == pytest.approx(0.50, abs=1e-6)
+    assert su0.content[-1] * portrait0 == pytest.approx(0.25, abs=1e-6)
     assert all(c[0] == 0 for c in prov.calls)  # idle cards never repaint
     for _ in range(10):           # move off -> back to opaque
         c._peek_tick((500, 500))

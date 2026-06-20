@@ -541,7 +541,7 @@ class OverlayGroupController:
 
     PEEK_CONTENT_OPACITY = 0.80    # whole card (controls, text, portrait ring) on hover
     PEEK_BODY_OPACITY = 0.65       # card BACKGROUND fill on hover (more see-through)
-    PEEK_PORTRAIT_OPACITY = 0.50   # toon IMAGE on hover (most see-through)
+    PEEK_PORTRAIT_OPACITY = 0.25   # circular portrait (frame + toon image) on hover
     _PEEK_FADE_STEP = 0.25         # progress per 30ms tick -> ~120ms full fade
 
     def _peek_tick(self, real_point) -> None:

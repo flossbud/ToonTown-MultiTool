@@ -361,6 +361,13 @@ class _PortraitFrame(QWidget):
         self.setStyleSheet("background: transparent;")
         self._ring = QColor("#555555")
         self._dimmed = True
+        self._peek_opacity = 1.0   # extra hover-peek dim for the circular frame
+
+    def set_peek_opacity(self, opacity: float) -> None:
+        opacity = float(opacity)
+        if opacity != self._peek_opacity:
+            self._peek_opacity = opacity
+            self.update()
 
     def configure(self, ring: QColor, dimmed: bool) -> None:
         self._ring = QColor(ring)
@@ -382,6 +389,8 @@ class _PortraitFrame(QWidget):
 
     def paintEvent(self, event):
         p = QPainter(self)
+        if self._peek_opacity < 1.0:
+            p.setOpacity(self._peek_opacity)
         p.setRenderHint(QPainter.Antialiasing, True)
         cx = cy = self._size / 2.0
         # Dark inner background (rgba(0,0,0,0.22)).
@@ -952,11 +961,11 @@ class _CompactLayout(QWidget):
         """Set the EXTRA hover-peek translucency factors for the two extra-dimmed
         card elements of the shell at *cell_index* (the overlay surface_id, as in
         control_rects / slot_widget): the background FILL (*bg_opacity*) and the
-        TOON IMAGE (*portrait_opacity*).
+        circular PORTRAIT - its frame ring AND the toon image (*portrait_opacity*).
 
-        The overlay composites the whole card uniformly (controls, text, portrait
-        ring) via the surface's set_content_opacity; these dim the background fill
-        and the toon image FURTHER, each by its own factor, so they read as more
+        The overlay composites the whole card uniformly (controls, text) via the
+        surface's set_content_opacity; these dim the background fill and the
+        portrait FURTHER, each by its own factor, so they read as more
         see-through than the content (net = content * factor). Applied as each
         widget's own paint opacity (no overlay, so rounded controls keep their real
         shape with no opaque corners). The toon image is the slot ROUTED into this
@@ -965,10 +974,13 @@ class _CompactLayout(QWidget):
         bg = cell.get("bg")
         if bg is not None:
             bg.set_peek_opacity(bg_opacity)
+        frame = cell.get("portrait_frame")
+        if frame is not None and hasattr(frame, "set_peek_opacity"):
+            frame.set_peek_opacity(portrait_opacity)   # the circular frame
         s = cell.get("content_slot", cell_index)
         badge = self._tab.slot_badges[s] if s < len(self._tab.slot_badges) else None
         if badge is not None and hasattr(badge, "set_peek_opacity"):
-            badge.set_peek_opacity(portrait_opacity)
+            badge.set_peek_opacity(portrait_opacity)   # the toon image inside it
 
     def _populate_cell(self, i: int, cell: dict):
         tab = self._tab
