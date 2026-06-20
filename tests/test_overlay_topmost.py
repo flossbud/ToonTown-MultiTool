@@ -21,9 +21,13 @@ from utils.overlay.group_controller import OverlayGroupController
 class _AboveSpyBackend(NoOpOverlayBackend):
     def __init__(self):
         self.above_calls = []
+        self.skip_taskbar_calls = []
 
     def set_above(self, window):
         self.above_calls.append(window)
+
+    def set_non_activating(self, window):
+        self.skip_taskbar_calls.append(window)
 
 
 class _FakeSignal:
@@ -50,6 +54,9 @@ class _StubSurface:
     def __init__(self):
         self.raises = 0
         self._handle = _FakeWindowHandle()
+
+    def prepare_initial_state(self):
+        pass
 
     def set_overlay_geometry(self, rect):
         pass
@@ -121,6 +128,18 @@ def test_enter_reasserts_above_on_all_surfaces_and_starts_timer(qapp):
     assert len(backend.above_calls) == 5
     ctl.leave()
     assert not ctl._above_timer.isActive()  # ...and stops on leave
+
+
+def test_reassert_topmost_also_rehides_from_taskbar(qapp):
+    # KWin can re-add the surfaces to the taskbar after the main window minimizes,
+    # so the re-assert must re-apply skip-taskbar (set_non_activating), not just ABOVE.
+    ctl, backend, factory = _ctl()
+    ctl.enter()
+    backend.skip_taskbar_calls.clear()
+    ctl._reassert_topmost()
+    assert len(backend.skip_taskbar_calls) == 5
+    assert set(backend.skip_taskbar_calls) == set(factory.created)
+    ctl.leave()
 
 
 def test_reassert_topmost_raises_emblem_last(qapp):

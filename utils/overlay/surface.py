@@ -156,8 +156,21 @@ class OverlaySurface(QWidget):
         self._backend.clear_input_region(self)
 
     # ------------------------------------------------------------------
-    # Show event: apply backend hints once native window handle exists
+    # Window hints: initial state (pre-map) + re-assert (post-map)
     # ------------------------------------------------------------------
+
+    def prepare_initial_state(self) -> None:
+        """Realize the native window (unmapped) and set its EWMH initial state.
+
+        Call BEFORE show(): this sets _NET_WM_STATE (above + skip-taskbar/pager)
+        as a property the WM reads when it maps the window, so the surface never
+        flashes in the taskbar. showEvent() re-asserts the same state after map.
+        """
+        self.winId()  # force native-handle creation without mapping
+        try:
+            self._backend.set_initial_state(self)
+        except Exception:
+            pass
 
     def showEvent(self, event) -> None:
         super().showEvent(event)

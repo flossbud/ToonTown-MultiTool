@@ -44,6 +44,9 @@ class _StubSurface:
         if method == self._fail_method:
             raise RuntimeError(f"{self.key} boom on {method}")
 
+    def prepare_initial_state(self):
+        self._log("prepare_initial_state")
+
     def set_overlay_geometry(self, rect):
         self.geometry = rect
         self._log("set_overlay_geometry", rect)
@@ -147,6 +150,10 @@ class TestEnter:
             # live-validated spike). Lock the order so it is not "fixed" backwards.
             m = surf.methods()
             assert m.index("show") < m.index("apply_shape")
+            # prepare_initial_state() sets the EWMH initial state (skip-taskbar/
+            # above) as a property BEFORE the window maps, so it MUST precede show().
+            assert "prepare_initial_state" in m
+            assert m.index("prepare_initial_state") < m.index("show")
 
     def test_each_surface_gets_its_pinwheel_rect(self, qapp):
         ctl, factory, win = _make()

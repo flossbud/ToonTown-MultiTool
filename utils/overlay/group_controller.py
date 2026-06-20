@@ -474,12 +474,19 @@ class OverlayGroupController:
     # Topmost re-assert + reshape-on-screen-change (Task 7.1)
     # ------------------------------------------------------------------
     def _reassert_topmost(self) -> None:
-        """Re-apply ABOVE on every surface + the emblem-above-cards z-order.
-        Best-effort - some WMs drop ABOVE when another window takes focus, so this
-        runs on enter, after a scale change, and on a low-frequency timer."""
+        """Re-apply ABOVE + SKIP_TASKBAR/PAGER on every surface + the
+        emblem-above-cards z-order. Best-effort - some WMs drop ABOVE when another
+        window takes focus, and KWin can re-add the surfaces to the taskbar right
+        after the main window minimizes (they briefly become the app's only managed
+        windows), so both hints are re-asserted on enter, after a scale change, and
+        on a low-frequency timer."""
         for surface in self._surfaces:
             try:
                 self._backend.set_above(surface)
+            except Exception:
+                pass
+            try:
+                self._backend.set_non_activating(surface)  # re-hide from taskbar/pager
             except Exception:
                 pass
         self._raise_emblem()
@@ -707,6 +714,10 @@ class OverlayGroupController:
                     captured.append((surface, provider.capture_slot(widget)))
                     surface.host(widget)
                 surface.set_overlay_geometry(rect)
+                # Set the EWMH initial state (above + skip-taskbar/pager) as a
+                # property BEFORE mapping, so the WM honors it from the first frame
+                # and the surface never flashes into the taskbar.
+                surface.prepare_initial_state()
                 # show() MUST precede apply_shape(): the X11 ShapeInput needs a
                 # realized native handle (winId), which show() provides; shaping a
                 # not-yet-shown window is a silent no-op (see
@@ -748,7 +759,21 @@ class OverlayGroupController:
         self._reassert_topmost()
         self._start_above_timer()
         self._connect_screen_change()
+        # The main window was just minimized, which can make KWin re-add the
+        # surfaces to the taskbar a few ms later. Re-assert skip-taskbar/above once
+        # the minimize settles (the 1.5s timer would also heal it, but with a
+        # visible taskbar flicker), so the single-icon state is reached promptly.
+        self._schedule_post_minimize_reassert()
         return True
+
+    def _schedule_post_minimize_reassert(self) -> None:
+        from PySide6.QtCore import QTimer
+        for delay in (150, 600):
+            QTimer.singleShot(delay, self._reassert_if_active)
+
+    def _reassert_if_active(self) -> None:
+        if self._active:
+            self._reassert_topmost()
 
     def leave(self) -> None:
         """Restore the borrowed cards/emblem to the tab, tear down the cluster,

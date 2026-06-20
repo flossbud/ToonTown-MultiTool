@@ -46,8 +46,41 @@ class X11OverlayBackend(OverlayBackend):
         return self._display is not None and self._shape is not None
 
     def set_overlay_hints(self, window) -> None:
-        # Window flags (frameless/on-top/Tool) are set on the Qt side; nothing extra here yet.
+        # Window flags (frameless/on-top) are set on the Qt side; nothing extra here yet.
         return
+
+    def set_initial_state(self, window) -> None:
+        """Set _NET_WM_STATE as a PROPERTY before the window is mapped.
+
+        This is the EWMH-canonical way to request a window's INITIAL state: the WM
+        reads it when it manages (maps) the window, so above + skip-taskbar/pager
+        take effect from the first frame with no post-map race. The post-map
+        ClientMessages (set_above/set_non_activating) re-assert it afterwards in
+        case the WM re-evaluates the window (e.g. when the main window minimizes).
+        Must be called while the window is realized (winId valid) but NOT yet
+        mapped (before show()).
+        """
+        if not self.is_available():
+            return
+        try:
+            from Xlib import X, Xatom
+            d = self._display
+            win = d.create_resource_object("window", int(window.winId()))
+            a = d.intern_atom
+            win.change_property(
+                a("_NET_WM_STATE"),
+                Xatom.ATOM,
+                32,
+                [
+                    a("_NET_WM_STATE_ABOVE"),
+                    a("_NET_WM_STATE_SKIP_TASKBAR"),
+                    a("_NET_WM_STATE_SKIP_PAGER"),
+                ],
+                X.PropModeReplace,
+            )
+            d.flush()
+        except Exception:
+            pass
 
     def set_above(self, window) -> None:
         """EWMH: request the WM to keep this window above all others."""

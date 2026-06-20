@@ -153,6 +153,7 @@ def test_controller_recenters_when_saved_monitor_gone(qapp):
 
 
 class _StubSurface:
+    def prepare_initial_state(self): pass
     def set_overlay_geometry(self, rect): pass
     def show(self): pass
     def hide(self): pass
