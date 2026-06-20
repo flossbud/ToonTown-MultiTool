@@ -275,6 +275,13 @@ class OverlayGroupController:
         # event-loop tick; this flag is the single scheduling/cancel gate (see
         # _schedule_recompute / _run_pending_recompute / flush_pending_recompute).
         self._recompute_pending: bool = False
+        # Emblem gesture wiring (Task 5.1). The emblem reference + an active
+        # manual-drag poll: move_requested fires ONCE at drag-start and carries no
+        # delta, so the controller tracks the global cursor itself and moves the
+        # group anchor until the mouse button is released.
+        self._emblem = None
+        self._drag_timer = None
+        self._drag_last = None
 
     # ------------------------------------------------------------------
     # State queries
@@ -622,6 +629,8 @@ class OverlayGroupController:
         """
         if not self._active:
             return
+        # Cancel any in-progress group drag (the emblem window is going away).
+        self._end_drag()
         # Cancel any debounced recompute: leave() resets to framed (scale-1.0)
         # metrics, so a queued recompute at the old scale must NOT fire (its
         # _run_pending_recompute will find the flag cleared + _active False and
@@ -642,6 +651,83 @@ class OverlayGroupController:
         else:
             self.enter()
         return self._active
+
+    # ------------------------------------------------------------------
+    # Emblem gesture wiring (Task 5.1)
+    # ------------------------------------------------------------------
+    def connect_emblem(self, emblem) -> None:
+        """Wire an _Emblem's gesture signals to this controller. The connections
+        are live in BOTH modes; the controller methods are mode-aware (toggle
+        flips; move/scale no-op when framed):
+
+          * toggle_requested (click)        -> toggle()  (enter/leave)
+          * move_requested (drag start)     -> begin_group_drag()
+          * resize_scrolled (dwell wheel)   -> set_scale_by_notches(notches)
+
+        Idempotent and re-bindable: re-connecting the SAME emblem is a no-op (Qt
+        permits duplicate connections, which would double-fire), and connecting a
+        NEW emblem first drops the previous emblem's connections.
+        """
+        if emblem is self._emblem:
+            return
+        if self._emblem is not None:
+            for sig, slot in (
+                (self._emblem.toggle_requested, self.toggle),
+                (self._emblem.move_requested, self.begin_group_drag),
+                (self._emblem.resize_scrolled, self.set_scale_by_notches),
+            ):
+                try:
+                    sig.disconnect(slot)
+                except (TypeError, RuntimeError):
+                    pass
+        self._emblem = emblem
+        emblem.toggle_requested.connect(self.toggle)
+        emblem.move_requested.connect(self.begin_group_drag)
+        emblem.resize_scrolled.connect(self.set_scale_by_notches)
+
+    def begin_group_drag(self) -> None:
+        """Start a manual drag of the whole cluster, following the cursor.
+
+        move_requested fires ONCE at drag-start with no delta, so the controller
+        tracks the GLOBAL cursor itself (a ~16ms poll) and shifts the group anchor
+        until the left button is released. No-op when framed; re-entrant-safe
+        (restarts from the current cursor)."""
+        if not self._active:
+            return
+        from PySide6.QtGui import QCursor
+        from PySide6.QtCore import QTimer
+        self._drag_last = QCursor.pos()
+        if self._drag_timer is None:
+            self._drag_timer = QTimer()
+            self._drag_timer.setInterval(16)
+            self._drag_timer.timeout.connect(self._drag_step)
+        self._drag_timer.start()
+
+    def _drag_step(self) -> None:
+        """One poll of the manual drag: move the group by the cursor delta, or end
+        the drag when the left button is released / the cluster left transparent."""
+        from PySide6.QtGui import QCursor
+        from PySide6.QtWidgets import QApplication
+        from PySide6.QtCore import Qt
+        if not self._active:
+            self._end_drag()
+            return
+        if not (QApplication.mouseButtons() & Qt.LeftButton):
+            self._end_drag()
+            return
+        pos = QCursor.pos()
+        if self._drag_last is not None:
+            dx = pos.x() - self._drag_last.x()
+            dy = pos.y() - self._drag_last.y()
+            if dx or dy:
+                self.move_group(dx, dy)
+        self._drag_last = pos
+
+    def _end_drag(self) -> None:
+        """Stop the manual-drag poll (idempotent)."""
+        if self._drag_timer is not None:
+            self._drag_timer.stop()
+        self._drag_last = None
 
     def set_scale_by_notches(self, notches: int) -> None:
         """Step the cluster scale by *notches*. No-op if not active.
