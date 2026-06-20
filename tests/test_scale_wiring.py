@@ -403,3 +403,27 @@ def test_card_size_is_max_across_slots(qapp, tab):
     cells[2].sizeHint = lambda: QSize(wide, base_h)  # type: ignore[assignment]
     w, h = compact.card_size()
     assert w == wide, "card_size must report the widest slot (max), not slot 0"
+
+
+def test_overlay_base_card_size_is_framed_1_0(qapp, tab):
+    """Base size = uniform card width x card_min_h at scale 1.0 (the framed cell),
+    not the looser sizeHint height."""
+    from utils.overlay.card_metrics import CardMetrics
+    tab._compact.apply_metrics(CardMetrics(1.0))
+    qapp.processEvents()
+    w, h = tab._compact.overlay_base_card_size()
+    assert h == CardMetrics(1.0).card_min_h          # 232, the framed cell height
+    assert w == tab._compact.card_size()[0]          # the uniform (max) card width
+
+
+def test_scale_emblem_sizes_only_the_emblem(qapp, tab):
+    """scale_emblem scales the emblem widget (emblem_size grows) WITHOUT touching
+    the cards (they must stay at framed 1.0 for the proxy transform)."""
+    compact = tab._compact
+    base_em = compact.emblem_size()
+    card_before = compact.card_size()
+    compact.scale_emblem(1.5)
+    qapp.processEvents()
+    assert compact.emblem_size() > base_em                 # emblem grew
+    assert compact.card_size() == card_before              # cards untouched
+    compact.scale_emblem(1.0)

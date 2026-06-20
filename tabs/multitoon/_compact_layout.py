@@ -1361,6 +1361,24 @@ class _CompactLayout(QWidget):
             return 0
         return self._emblem.width()
 
+    def overlay_base_card_size(self) -> tuple[int, int]:
+        """The card's framed 1.0 size for the overlay proxy: the uniform (max) card
+        width and the framed cell height (card_min_h), not the looser sizeHint. The
+        overlay proxies the card at this fixed size and scales it via transform, so
+        it reproduces the framed card exactly at 1.0."""
+        from utils.overlay.card_metrics import CardMetrics
+        w, _h = self.card_size()
+        return (w, CardMetrics(1.0).card_min_h)
+
+    def scale_emblem(self, scale: float) -> None:
+        """Scale only the emblem disc to `scale` (the overlay scales cards via a
+        view transform, but the emblem stays a single painted widget that scales
+        cleanly via metrics and never floats). emblem_size() reflects the new
+        extent afterward."""
+        from utils.overlay.card_metrics import CardMetrics
+        if self._emblem is not None:
+            self._emblem.apply_metrics(CardMetrics(scale))
+
     def card_accents(self) -> list:
         """Per-slot accent QColor (slots 0-3) for the transparent-mode overlay
         glow. Mirrors the framed _GlowLayer's per-cell accent so the overlay can
