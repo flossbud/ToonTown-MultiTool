@@ -53,6 +53,34 @@ def test_geometry_fallback_does_not_cache_untracked(monkeypatch):
     wm = WindowManager()
     # "99" is not tracked: live value returned but never cached.
     assert wm.get_window_geometry("99") == (5, 6, 700, 500)
+
+
+# --- 2x2 cell ordering (position-based card placement) --------------------
+def test_order_wids_by_cell_maps_each_window_to_its_quadrant(monkeypatch):
+    geoms = {
+        "10": (0, 0, 100, 100),      # center (50,50)   TL
+        "20": (200, 0, 100, 100),    # center (250,50)  TR
+        "30": (0, 200, 100, 100),    # center (50,250)  BL
+        "40": (200, 200, 100, 100),  # center (250,250) BR
+    }
+    _fake_backend(monkeypatch, lambda wid: geoms.get(wid))
+    wm = WindowManager()
+    # Scrambled detection order -> reading order by cell (TL, TR, BL, BR).
+    assert wm._order_wids_by_cell(["30", "10", "40", "20"]) == ["10", "20", "30", "40"]
+
+
+def test_order_wids_by_cell_dedups_and_keeps_unknown_geometry_last(monkeypatch):
+    geoms = {"10": (0, 0, 100, 100), "20": (200, 0, 100, 100)}  # "30" has none
+    _fake_backend(monkeypatch, lambda wid: geoms.get(wid))
+    wm = WindowManager()
+    # Duplicate "10" deduped; "10","20" placed (top row); "30" (no geometry) last.
+    assert wm._order_wids_by_cell(["10", "20", "30", "10"]) == ["10", "20", "30"]
+
+
+def test_order_wids_by_cell_empty(monkeypatch):
+    _fake_backend(monkeypatch, lambda wid: None)
+    wm = WindowManager()
+    assert wm._order_wids_by_cell([]) == []
     assert "99" not in wm.window_geometry
 
 
