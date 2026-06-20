@@ -119,3 +119,13 @@ def test_malformed_permutation_is_ignored(qapp, tmp_path, monkeypatch):
     assert c._slot_to_cell == [0, 1, 2, 3]
     c.apply_cell_permutation([0, 1])          # wrong length -> ignored
     assert c._slot_to_cell == [0, 1, 2, 3]
+
+
+def test_cell_assignment_signal_reroutes_compact(qapp, tmp_path, monkeypatch):
+    """The window manager's cell_assignment_changed signal drives the compact
+    layout's re-routing (the wiring in MultitoonTab)."""
+    tab = _build_tab(qapp, tmp_path, monkeypatch)
+    tab.window_manager.cell_assignment_changed.emit([0, 2, 1, 3])
+    qapp.processEvents()
+    assert tab._compact._slot_to_cell == [0, 2, 1, 3]
+    assert tab.slot_badges[1].parentWidget() is tab._compact._cells[2]["portrait_frame"]
