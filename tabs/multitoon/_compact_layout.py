@@ -660,6 +660,12 @@ class _CompactLayout(QWidget):
         # their sizes from here so the value object is the single source of truth.
         self._metrics = CardMetrics(1.0)
         self._cells: list[dict] = []
+        # Position-based content routing: slot i's content lives in cell shell
+        # _slot_to_cell[i] (identity until a non-contiguous window arrangement -
+        # e.g. a vertical stack - routes content into a different shell). The
+        # shells themselves never move or change shape; only which slot's widgets
+        # they hold changes. See apply_cell_permutation.
+        self._slot_to_cell: list[int] = [0, 1, 2, 3]
         self._emblem: _Emblem | None = None
         self._glow: _GlowLayer | None = None
         self._grid_host: QWidget | None = None
@@ -835,6 +841,7 @@ class _CompactLayout(QWidget):
             "name_holder": name_holder,
             "stats_row": stats_row,
             "cfg": cfg,
+            "content_slot": i,       # which slot's widgets this shell holds (identity at build)
             "accent": QColor("#555555"),
             "active": False,
             "dimmed": True,
@@ -874,6 +881,14 @@ class _CompactLayout(QWidget):
         for pill in getattr(self._tab, "profile_pills", []):
             pill.setParent(self)
             pill.hide()
+
+        # populate() routed slot i -> cell i (identity); sync the permutation
+        # bookkeeping so a later apply_cell_permutation re-routes from a clean
+        # identity baseline (matters when re-populating after a prior permutation,
+        # e.g. switching back from the full layout).
+        self._slot_to_cell = [0, 1, 2, 3]
+        for idx, cell in enumerate(self._cells):
+            cell["content_slot"] = idx
 
         self._relayout_all()
         self._apply_initial_brands()
@@ -940,6 +955,34 @@ class _CompactLayout(QWidget):
 
         # Apply all metric-derived sizes/fonts/icons (defaults to scale 1.0).
         self._size_cell(i, cell)
+
+    def apply_cell_permutation(self, slot_cells) -> None:
+        """Route each slot's content into the shell of its 2x2 cluster cell.
+
+        ``slot_cells[i]`` is the cell (0=TL, 1=TR, 2=BL, 3=BR) that should display
+        slot i's content; it must be a length-4 bijection (unused slots map to the
+        empty cells). The four shells never move or change shape - only which
+        slot's shared widgets they hold. For the identity permutation (every
+        contiguous window arrangement) this is a no-op; only non-contiguous
+        arrangements (a vertical stack, a gapped L-shape) route content into a
+        shell other than its native one. Idempotent.
+        """
+        perm = list(slot_cells)[:4]
+        if len(perm) != 4 or sorted(perm) != [0, 1, 2, 3]:
+            return  # ignore a malformed permutation rather than scramble the cards
+        if perm == self._slot_to_cell:
+            return  # unchanged -> nothing to re-route
+        self._slot_to_cell = perm
+        # Route slot s's shared widgets into shell perm[s]; record which slot each
+        # shell now holds (content_slot) for the chrome/geometry helpers.
+        for slot, cell_idx in enumerate(perm):
+            cell = self._cells[cell_idx]
+            cell["content_slot"] = slot
+            self._populate_cell(slot, cell)
+        # Re-render every slot's chrome onto its (new) shell, then reposition the
+        # manually-placed body + status dot for the moved content.
+        self._apply_initial_brands()
+        self._relayout_all()
 
     def _size_cell(self, i: int, cell: dict) -> None:
         """Apply every metric-derived size / font / icon to slot `i`'s widgets
@@ -1045,7 +1088,11 @@ class _CompactLayout(QWidget):
         from utils.theme_manager import get_theme_colors, resolve_theme
         from utils.toon_customization_resolve import resolve_accent
         c = get_theme_colors(resolve_theme(self._tab.settings_manager) == "dark")
-        cell = self._cells[i]
+        # Slot i's content lives in shell _slot_to_cell[i] (identity unless a
+        # non-contiguous arrangement routed it elsewhere). Chrome for this slot
+        # goes onto that shell; the shared per-slot widgets stay indexed by i.
+        cell_idx = self._slot_to_cell[i]
+        cell = self._cells[cell_idx]
         tab = self._tab
 
         wids = tab.window_manager.ttr_window_ids if hasattr(tab, "window_manager") else []
@@ -1081,7 +1128,7 @@ class _CompactLayout(QWidget):
         # stepper colour. The five toggle buttons themselves are styled by
         # MultitoonTab (single style-writer per control); the cell's dim
         # effect desaturates them in place when the card is off/stopped.
-        self._style_ka_pill(i)
+        self._style_ka_pill(cell_idx)
         self._style_keyset(i)
 
         # Portrait background + status dot.
@@ -1125,17 +1172,19 @@ class _CompactLayout(QWidget):
         dim.set_dimmed(bool(not active and not effects_disabled()))
 
     # ── Control chrome owned by the layout ───────────────────────────────────
-    def _style_ka_pill(self, i: int) -> None:
-        """The keep-alive pill is a layout-owned container (the lightning
-        toggle inside it + the progress bar are styled by MultitoonTab)."""
-        cell = self._cells[i]
+    def _style_ka_pill(self, cell_idx: int) -> None:
+        """Style the keep-alive pill of SHELL `cell_idx` (a layout-owned container;
+        the lightning toggle + progress bar inside it are styled by MultitoonTab).
+        Indexed by shell, not slot: the pill is part of the shell structure
+        (objectName ka_pill_{cell_idx}), so content routed into this shell uses it."""
+        cell = self._cells[cell_idx]
         ka_pill = cell.get("ka_pill")
         if ka_pill is not None:
             # Radius tracks the (scaled) pill height so the capsule stays a true
             # pill at every scale (1.0: round(38/2)==19, unchanged).
             radius = round(self._metrics.ka_pill_h / 2)
             ka_pill.setStyleSheet(
-                f"QFrame#ka_pill_{i} {{ background: rgba(0,0,0,0.24);"
+                f"QFrame#ka_pill_{cell_idx} {{ background: rgba(0,0,0,0.24);"
                 f" border: 1px solid rgba(0,0,0,0.30); border-radius: {radius}px; }}"
             )
 
@@ -1185,7 +1234,7 @@ class _CompactLayout(QWidget):
         The pinwheel layout hides the ka_pill rather than width-pinning it,
         so this is never called in practice; it satisfies the MultitoonTab
         interface shared with the full layout."""
-        cell = self._cells[i] if i < len(self._cells) else {}
+        cell = self._cells[self._slot_to_cell[i]] if i < len(self._cells) else {}
         pill = cell.get("ka_pill")
         return pill.minimumSizeHint().width() if pill is not None else 0
 
@@ -1292,8 +1341,9 @@ class _CompactLayout(QWidget):
     def _position_status_dot(self, cell: dict) -> None:
         frame = cell["portrait_frame"]
         dot = None
-        # Find this cell's status dot among the shared toon_labels.
-        idx = self._cells.index(cell)
+        # The dot in this shell belongs to the slot whose content is routed here
+        # (content_slot), NOT the shell's own index.
+        idx = cell.get("content_slot", self._cells.index(cell))
         if idx < len(self._tab.toon_labels):
             dot = self._tab.toon_labels[idx][1]
         if dot is None or dot.parentWidget() is not frame:
