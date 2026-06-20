@@ -66,9 +66,12 @@ def _assert_shell_controls(compact, cell_index):
     # mapTo(root) would be nonsense (the bug). Independent of control_rects.
     assert root.isAncestorOf(tab.toon_buttons[s])
     assert root.isAncestorOf(tab.set_selectors[s])
+    assert root.isAncestorOf(tab.keep_alive_buttons[s])
+    # Only the keep-alive BUTTON blocks clicks, not the whole pill (the progress
+    # bar + pill padding stay click-through in transparent peek mode).
     expected = []
     for w in (tab.toon_buttons[s], tab.chat_buttons[s], tab.click_sync_buttons[s],
-              cell["ka_pill"], tab.set_selectors[s]):
+              tab.keep_alive_buttons[s], tab.set_selectors[s]):
         sz = w.size()
         if sz.width() > 0 and sz.height() > 0:
             expected.append(QRect(w.mapTo(root, QPoint(0, 0)), sz))
@@ -106,6 +109,30 @@ def test_control_rects_follow_permuted_shells(qt_app, monkeypatch, tmp_path):
         tab.input_service.shutdown()
 
 
+def test_keep_alive_control_rect_is_button_not_pill(qt_app, monkeypatch, tmp_path):
+    # Only the keep-alive lightning button blocks clicks; its enclosing pill (which
+    # also holds the progress bar) must stay click-through. The button rect must be
+    # the one in control_rects AND sit strictly inside the wider pill.
+    tab = _make_tab(monkeypatch, tmp_path)
+    try:
+        qt_app.processEvents()
+        compact = _show_compact(tab, qt_app)
+        cell = compact._cells[0]
+        root = cell["cell"]
+        s = cell.get("content_slot", 0)
+        ka_btn = tab.keep_alive_buttons[s]
+        btn_rect = QRect(ka_btn.mapTo(root, QPoint(0, 0)), ka_btn.size())
+        pill_rect = QRect(cell["ka_pill"].mapTo(root, QPoint(0, 0)), cell["ka_pill"].size())
+
+        rects = compact.control_rects(0)
+        assert btn_rect in rects                      # the button blocks clicks
+        assert pill_rect not in rects                 # the pill as a whole does not
+        assert pill_rect.contains(btn_rect)           # button lives inside the pill
+        assert btn_rect.width() < pill_rect.width()   # and is narrower than it
+    finally:
+        tab.input_service.shutdown()
+
+
 def test_set_shell_extra_opacity_dims_background_and_toon_image(qt_app, monkeypatch, tmp_path):
     # The extra tier dims the background fill and the toon image each by its own
     # factor; controls, text, and the portrait ring are dimmed uniformly by the
@@ -121,6 +148,7 @@ def test_set_shell_extra_opacity_dims_background_and_toon_image(qt_app, monkeypa
         assert cell["bg"]._peek_opacity == 0.8125
         assert cell["portrait_frame"]._peek_opacity == 0.3125   # circular frame
         assert tab.slot_badges[s]._peek_opacity == 0.3125       # toon image
+        assert tab.toon_labels[s][1]._peek_opacity == 0.3125    # status dot
         # Controls are NOT touched by this tier.
         assert not hasattr(tab.toon_buttons[s], "_peek_opacity")
         assert not hasattr(cell["ka_pill"], "_peek_opacity")
@@ -129,6 +157,7 @@ def test_set_shell_extra_opacity_dims_background_and_toon_image(qt_app, monkeypa
         assert cell["bg"]._peek_opacity == 1.0
         assert cell["portrait_frame"]._peek_opacity == 1.0
         assert tab.slot_badges[s]._peek_opacity == 1.0
+        assert tab.toon_labels[s][1]._peek_opacity == 1.0
     finally:
         tab.input_service.shutdown()
 

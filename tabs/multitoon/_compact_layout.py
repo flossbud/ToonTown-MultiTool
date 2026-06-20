@@ -918,8 +918,10 @@ class _CompactLayout(QWidget):
         at *cell_index*.
 
         These are the only widgets that stay opaque + clickable in transparent
-        peek mode (the toggles, the keep-alive pill as one unit, and the keyset
-        selector). Coordinates are relative to the shell cell root at the current
+        peek mode (the toggles, the keep-alive lightning button, and the keyset
+        selector). The keep-alive button alone blocks clicks - NOT its enclosing
+        pill, so the progress bar and the pill's padding stay click-through.
+        Coordinates are relative to the shell cell root at the current
         (framed 1.0) size; the overlay controller scales them by the overlay zoom.
         Skips any widget that is missing or zero-sized (defensive).
 
@@ -927,10 +929,10 @@ class _CompactLayout(QWidget):
         the same index ``slot_widget`` hosts), NOT a logical slot. A shell holds
         the shared widgets of the slot routed into it by ``apply_cell_permutation``
         (recorded as ``content_slot``; identity for every contiguous arrangement),
-        so the per-slot widgets (toggles, keyset) come from ``content_slot`` while
-        the keep-alive pill is the shell's own. This MUST match what ``slot_widget``
-        hosts for that surface, or the peek dim/click-through lands on the wrong
-        widgets (the 2-toon permuted-cluster bug).
+        so the per-slot widgets (toggles, keep-alive button, keyset) all come from
+        ``content_slot``. This MUST match what ``slot_widget`` hosts for that
+        surface, or the peek dim/click-through lands on the wrong widgets (the
+        2-toon permuted-cluster bug).
         """
         cell = self._cells[cell_index]
         root = cell["cell"]
@@ -942,7 +944,7 @@ class _CompactLayout(QWidget):
             tab.toon_buttons[s],
             tab.chat_buttons[s],
             tab.click_sync_buttons[s],
-            cell["ka_pill"],
+            tab.keep_alive_buttons[s],
             tab.set_selectors[s],
         ]
         rects = []
@@ -981,6 +983,10 @@ class _CompactLayout(QWidget):
         badge = self._tab.slot_badges[s] if s < len(self._tab.slot_badges) else None
         if badge is not None and hasattr(badge, "set_peek_opacity"):
             badge.set_peek_opacity(portrait_opacity)   # the toon image inside it
+        labels = self._tab.toon_labels
+        dot = labels[s][1] if s < len(labels) else None
+        if dot is not None and hasattr(dot, "set_peek_opacity"):
+            dot.set_peek_opacity(portrait_opacity)     # the status dot on the rim
 
     def _populate_cell(self, i: int, cell: dict):
         tab = self._tab

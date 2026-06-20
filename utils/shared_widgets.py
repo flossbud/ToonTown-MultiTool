@@ -268,6 +268,11 @@ class PulsingDot(QWidget):
         self._cutout_color: QColor | None = None
         self._cutout_width: float = 2.5
 
+        # Transparent-mode hover-peek translucency. 1.0 = no extra dim; the
+        # compact portrait overlay drops this in lockstep with the circular
+        # frame so the status dot fades to the same level on hover.
+        self._peek_opacity: float = 1.0
+
         self._anim = QVariantAnimation()
         self._anim.setStartValue(0.0)
         self._anim.setEndValue(1.0)
@@ -287,6 +292,15 @@ class PulsingDot(QWidget):
         self._dot_size = int(size)
         self.setFixedSize(self._dot_size + 8, self._dot_size + 8)
         self.update()
+
+    def set_peek_opacity(self, opacity: float) -> None:
+        """Set the hover-peek translucency factor (transparent mode). The whole
+        dot -- glow, cut-out ring, and core -- paints at this opacity so it
+        matches the portrait it sits on. 1.0 = fully opaque."""
+        opacity = float(opacity)
+        if opacity != self._peek_opacity:
+            self._peek_opacity = opacity
+            self.update()
 
     def set_cutout_border(self, color: str | None, width: float = 2.5) -> None:
         """Paint a ring in `color` just outside the core dot. Use the
@@ -334,6 +348,8 @@ class PulsingDot(QWidget):
 
     def paintEvent(self, event):
         p = QPainter(self)
+        if self._peek_opacity < 1.0:
+            p.setOpacity(self._peek_opacity)
         p.setRenderHint(QPainter.Antialiasing)
         p.setPen(Qt.NoPen)
 
