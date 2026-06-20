@@ -500,6 +500,13 @@ class MultiToonTool(QMainWindow):
             # is minimized.
             on_active_changed=self.multitoon_tab.set_overlay_active,
         )
+        # Hover-peek: feed click-sync ghost cursor positions into the overlay so a
+        # ghost over a card dims it too (mirrors the real pointer). Guarded - the
+        # click-sync service is None on platforms without click-sync.
+        _click_sync = getattr(self.multitoon_tab, "click_sync_service", None)
+        if _click_sync is not None:
+            _click_sync.ghost_pointer_event.connect(self._mode_controller.on_ghost_event)
+            _click_sync.ghost_clear.connect(self._mode_controller.on_ghost_clear)
         emblem = self.multitoon_tab._compact._emblem
         if self._overlay_backend.is_available():
             emblem.set_interactive(True)
