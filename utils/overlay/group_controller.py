@@ -34,6 +34,7 @@ from typing import Union
 from PySide6.QtCore import QRect
 
 from utils.overlay.backend import get_overlay_backend
+from utils.overlay.peek import GhostPointStore, peeking_indices
 from utils.overlay.scale import step_scale
 from utils.overlay.surface import CardSurface, EmblemSurface, ShapeMode
 
@@ -297,7 +298,6 @@ class OverlayGroupController:
         # Hover-peek (transparent mode): a ~30ms poll that unions the real cursor
         # with click-sync ghost points and toggles each card's peek state. The
         # GhostPointStore is fed by on_ghost_event/on_ghost_clear (wired in main.py).
-        from utils.overlay.peek import GhostPointStore
         self._peek_store = GhostPointStore()
         self._peek_timer = None
         # Accent-glow surface behind the cluster: a single click-through window
@@ -542,7 +542,6 @@ class OverlayGroupController:
         """
         if not self._active:
             return
-        from utils.overlay.peek import peeking_indices
         cards = self._card_surfaces()
         rects = []
         for _st, su in cards:
@@ -553,16 +552,15 @@ class OverlayGroupController:
             points.append(real_point)
         peeking = peeking_indices(points, rects)
         for i, (st, su) in enumerate(cards):
-            setter = getattr(su, "set_peek", None)
-            if setter is None:
-                continue
             rects_arg = None
             if i in peeking and self._card_provider is not None:
                 try:
                     rects_arg = self._card_provider.control_rects(st.surface_id)
                 except Exception:
                     rects_arg = None
-            setter(i in peeking, rects_arg)
+            # Direct call (not getattr): every card surface is a CardSurface with
+            # set_peek, so a missing method is a real bug that should fail loudly.
+            su.set_peek(i in peeking, rects_arg)
 
     def _on_peek_timer(self) -> None:
         from PySide6.QtGui import QCursor

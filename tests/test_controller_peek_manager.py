@@ -77,3 +77,31 @@ def test_peek_tick_noop_when_inactive(qapp):
     c._peek_tick((50, 50))
     cards = [s for s, st in zip(c._surfaces, c._states) if not st.is_emblem]
     assert cards[0].peeks == []     # nothing applied while inactive
+
+
+def test_real_cursor_and_ghost_peek_different_cards_together(qapp):
+    # The core union: real pointer over card 0 AND a ghost over card 2 -> both
+    # peek, the other two do not (the broadcasting case).
+    c = _controller()
+    geoms = {0: QRect(0, 0, 100, 100), 1: QRect(200, 0, 100, 100),
+             2: QRect(0, 200, 100, 100), 3: QRect(200, 200, 100, 100)}
+    _wire(c, geoms)
+    c.on_ghost_event(("motion", [(2, 50, 250)]))   # ghost over card 2
+    c._peek_tick((50, 50))                          # real cursor over card 0
+    cards = [s for s, st in zip(c._surfaces, c._states) if not st.is_emblem]
+    assert cards[0].peeks[-1] is True
+    assert cards[2].peeks[-1] is True
+    assert cards[1].peeks[-1] is False
+    assert cards[3].peeks[-1] is False
+
+
+def test_stop_peek_timer_clears_ghost_store(qapp):
+    # Ghost positions must not survive a leave()/enter() cycle.
+    c = _controller()
+    geoms = {0: QRect(0, 0, 100, 100), 1: QRect(200, 0, 100, 100),
+             2: QRect(0, 200, 100, 100), 3: QRect(200, 200, 100, 100)}
+    _wire(c, geoms)
+    c.on_ghost_event(("motion", [(1, 250, 50)]))
+    assert c._peek_store.points() != []
+    c._stop_peek_timer()
+    assert c._peek_store.points() == []
