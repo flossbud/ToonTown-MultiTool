@@ -893,31 +893,37 @@ class _CompactLayout(QWidget):
         self._relayout_all()
         self._apply_initial_brands()
 
-    def control_rects(self, slot: int) -> list:
-        """Card-local QRects of the five interactive control widgets for *slot*.
+    def control_rects(self, cell_index: int) -> list:
+        """Card-local QRects of the five interactive control widgets in the shell
+        at *cell_index*.
 
         These are the only widgets that stay opaque + clickable in transparent
         peek mode (the toggles, the keep-alive pill as one unit, and the keyset
-        selector). Coordinates are relative to the card cell root at the current
+        selector). Coordinates are relative to the shell cell root at the current
         (framed 1.0) size; the overlay controller scales them by the overlay zoom.
         Skips any widget that is missing or zero-sized (defensive).
 
-        Slot *slot*'s content lives in shell ``_slot_to_cell[slot]`` (identity
-        unless a non-contiguous window arrangement permuted the cells), so the
-        cell - and thus the mapTo root - must be looked up through that mapping,
-        matching every other slot->cell access in this class.
+        *cell_index* is the SHELL index (the overlay surface_id / screen quadrant -
+        the same index ``slot_widget`` hosts), NOT a logical slot. A shell holds
+        the shared widgets of the slot routed into it by ``apply_cell_permutation``
+        (recorded as ``content_slot``; identity for every contiguous arrangement),
+        so the per-slot widgets (toggles, keyset) come from ``content_slot`` while
+        the keep-alive pill is the shell's own. This MUST match what ``slot_widget``
+        hosts for that surface, or the peek dim/click-through lands on the wrong
+        widgets (the 2-toon permuted-cluster bug).
         """
-        cell = self._cells[self._slot_to_cell[slot]]
+        cell = self._cells[cell_index]
         root = cell["cell"]
         if root.layout() is not None:
             root.layout().activate()
         tab = self._tab
+        s = cell.get("content_slot", cell_index)
         widgets = [
-            tab.toon_buttons[slot],
-            tab.chat_buttons[slot],
-            tab.click_sync_buttons[slot],
+            tab.toon_buttons[s],
+            tab.chat_buttons[s],
+            tab.click_sync_buttons[s],
             cell["ka_pill"],
-            tab.set_selectors[slot],
+            tab.set_selectors[s],
         ]
         rects = []
         for w in widgets:

@@ -1,7 +1,7 @@
 # tests/test_compact_control_rects.py
 import sys
 import pytest
-from PySide6.QtCore import QObject, Signal, QRect
+from PySide6.QtCore import QObject, Signal, QRect, QPoint
 from PySide6.QtWidgets import QApplication
 
 
@@ -52,46 +52,55 @@ def _show_compact(tab, qt_app):
     return compact
 
 
-def _assert_rects_within_correct_cell(compact, slot):
-    rects = compact.control_rects(slot)
-    assert len(rects) == 5, f"slot {slot}: expected 5 control rects, got {len(rects)}"
-    # Slot content lives in shell _slot_to_cell[slot]; rects are relative to it.
-    cell = compact._cells[compact._slot_to_cell[slot]]["cell"]
-    card_rect = QRect(0, 0, cell.width(), cell.height())
-    for r in rects:
-        assert r.width() > 0 and r.height() > 0
-        # Anchor check: the rect's origin must sit in THIS slot's cell. (We test
-        # top-left, not full containment: offscreen the card is not fixed to its
-        # base_size the way the real overlay host fixes it, so child widths are
-        # unconstrained here - full containment is not a valid invariant in this
-        # context. Under the slot->cell bug the origin lands in the wrong cell,
-        # which top-left containment catches.)
-        assert card_rect.contains(r.topLeft()), f"slot {slot}: {r} origin outside card {card_rect}"
+def _assert_shell_controls(compact, cell_index):
+    """control_rects(shell) returns the 5 control rects of the slot ROUTED into
+    that shell (content_slot), mapped to the shell cell - matching exactly what the
+    overlay hosts via slot_widget(shell). This is the contract that broke for a
+    permuted (e.g. 2-toon TL+BR) cluster: control_rects is indexed by the SHELL,
+    not the logical slot."""
+    cell = compact._cells[cell_index]
+    root = cell["cell"]
+    s = cell.get("content_slot", cell_index)
+    tab = compact._tab
+    # The content_slot's shared widgets must genuinely live in THIS shell, else
+    # mapTo(root) would be nonsense (the bug). Independent of control_rects.
+    assert root.isAncestorOf(tab.toon_buttons[s])
+    assert root.isAncestorOf(tab.set_selectors[s])
+    expected = []
+    for w in (tab.toon_buttons[s], tab.chat_buttons[s], tab.click_sync_buttons[s],
+              cell["ka_pill"], tab.set_selectors[s]):
+        sz = w.size()
+        if sz.width() > 0 and sz.height() > 0:
+            expected.append(QRect(w.mapTo(root, QPoint(0, 0)), sz))
+    rects = compact.control_rects(cell_index)
+    assert len(rects) == 5, f"shell {cell_index}: expected 5 rects, got {len(rects)}"
+    assert rects == expected, f"shell {cell_index}: {rects} != {expected}"
 
 
-def test_control_rects_returns_five_rects_within_card(qt_app, monkeypatch, tmp_path):
+def test_control_rects_match_shell_content_identity(qt_app, monkeypatch, tmp_path):
     tab = _make_tab(monkeypatch, tmp_path)
     try:
         qt_app.processEvents()
         compact = _show_compact(tab, qt_app)
-        for slot in range(4):
-            _assert_rects_within_correct_cell(compact, slot)
+        for shell in range(4):
+            _assert_shell_controls(compact, shell)
     finally:
         tab.input_service.shutdown()
 
 
-def test_control_rects_follows_cell_permutation(qt_app, monkeypatch, tmp_path):
-    # Under a non-identity cell permutation, slot N's widgets live in cell
-    # _slot_to_cell[N]; control_rects must map to that cell, not self._cells[N].
+def test_control_rects_follow_permuted_shells(qt_app, monkeypatch, tmp_path):
+    # Non-contiguous arrangement (the 2-toon TL+BR case): slots routed into
+    # non-native shells. control_rects(shell) must follow the shell's content_slot.
     tab = _make_tab(monkeypatch, tmp_path)
     try:
         qt_app.processEvents()
         compact = _show_compact(tab, qt_app)
-        compact.apply_cell_permutation([1, 0, 3, 2])
+        compact.apply_cell_permutation([1, 0, 3, 2])  # self-inverse permutation
         for _ in range(6):
             qt_app.processEvents()
-        assert compact._slot_to_cell == [1, 0, 3, 2]
-        for slot in range(4):
-            _assert_rects_within_correct_cell(compact, slot)
+        # Each shell now holds the inverse slot's content.
+        assert [compact._cells[c]["content_slot"] for c in range(4)] == [1, 0, 3, 2]
+        for shell in range(4):
+            _assert_shell_controls(compact, shell)
     finally:
         tab.input_service.shutdown()
