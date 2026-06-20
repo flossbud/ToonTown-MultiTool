@@ -66,6 +66,10 @@ def test_cards_get_controls_region_emblem_gets_disc_path(qapp):
 
     assert len(card_surface.region_calls) == 1
     assert card_surface.shape_calls == []          # card no longer uses body path
+    # The region is actually controls_region([QRect(2,2,10,10)], scale 1, dpr 1).
+    region = card_surface.region_calls[0]
+    assert not region.isEmpty()
+    assert region.boundingRect() == QRect(2, 2, 10, 10)
     assert len(emblem_surface.shape_calls) == 1    # emblem still a disc path
     assert emblem_surface.region_calls == []
 
@@ -73,6 +77,22 @@ def test_cards_get_controls_region_emblem_gets_disc_path(qapp):
 def test_card_without_provider_rects_falls_back_to_body_path(qapp):
     c, _ = _controller()
     c._card_provider = None                          # no provider -> legacy body path
+    state_card = SurfaceState(surface_id=0)
+    card_surface = _StubSurface(state_card)
+    c._apply_input_region(state_card, card_surface, QRect(0, 0, 100, 100))
+    assert len(card_surface.shape_calls) == 1
+    assert card_surface.region_calls == []
+
+
+def test_card_with_empty_control_rects_falls_back_to_body_path(qapp):
+    # A provider that yields no rects (e.g. a card with no visible controls) must
+    # take the same body-path fallback as no-provider, not apply an empty region.
+    c, _ = _controller()
+
+    class _EmptyProvider(_StubProvider):
+        def control_rects(self, slot): return []
+
+    c._card_provider = _EmptyProvider()
     state_card = SurfaceState(surface_id=0)
     card_surface = _StubSurface(state_card)
     c._apply_input_region(state_card, card_surface, QRect(0, 0, 100, 100))

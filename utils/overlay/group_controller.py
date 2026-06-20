@@ -482,7 +482,8 @@ class OverlayGroupController:
         - the union of its control-widget rects, so the body is click-through and
         only the buttons block clicks. Falls back to the legacy body path when no
         card_provider is present (the orchestration stub tests) or when the
-        provider yields no rects (defensive)."""
+        provider yields no rects (defensive).
+        """
         dpr = surface.devicePixelRatio()
         if state.is_emblem:
             surface.apply_shape(self._shape_path(state, rect), dpr)
@@ -492,6 +493,10 @@ class OverlayGroupController:
             try:
                 rects_base = self._card_provider.control_rects(state.surface_id)
             except Exception:
+                # Best-effort, matching the overlay's never-crash-on-shape ethos:
+                # a misbehaving provider must not break enter()/reshape, so fall
+                # back to the body path (a slightly more click-blocking card) rather
+                # than raise. Silent by module convention (the overlay has no logger).
                 rects_base = []
         if rects_base:
             from utils.overlay.region import controls_region
