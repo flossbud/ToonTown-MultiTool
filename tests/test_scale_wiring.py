@@ -383,7 +383,6 @@ def test_reenter_uses_remembered_scale(qapp, tab):
     qapp.processEvents()
     scaled = ctl._scale
     assert scaled < 1.0
-    bw, bh = compact.overlay_base_card_size()
     ctl.leave()
     qapp.processEvents()
 
@@ -392,12 +391,16 @@ def test_reenter_uses_remembered_scale(qapp, tab):
 
     ctl.enter()
     qapp.processEvents()
-    # Re-enter re-applied the remembered scale: every card surface is base*s
-    # and the per-card view transform is s (cards are NOT apply_metrics'd).
+    # Re-enter re-applied the remembered scale: every card surface matches the
+    # controller's OWN computed rect (the authoritative base*s, no independent
+    # round() that could diverge by a pixel) and the view transform is s (cards are
+    # NOT apply_metrics'd).
+    rects = ctl._compute_rects()
     for i in range(4):
         geo = ctl._surfaces[i].geometry()
-        assert (geo.width(), geo.height()) == (round(bw * scaled), round(bh * scaled)), \
-            f"re-enter surface {i} must be base*s, got {geo}"
+        assert (geo.width(), geo.height()) == (rects[i].width(), rects[i].height()), \
+            f"re-enter surface {i} must match the scaled rect, got {geo}"
+        assert geo.width() < tab._compact.card_size()[0], "re-enter must be < 1.0-sized"
         assert round(ctl._surfaces[i]._scaled_view.view_transform().m11(), 3) == round(scaled, 3), \
             f"re-enter card {i} view transform must be {scaled:.3f}"
     ctl.leave()
@@ -419,15 +422,18 @@ def test_card_size_is_max_across_slots(qapp, tab):
     assert w == wide, "card_size must report the widest slot (max), not slot 0"
 
 
-def test_overlay_base_card_size_is_framed_1_0(qapp, tab):
-    """Base size = uniform card width x card_min_h at scale 1.0 (the framed cell),
-    not the looser sizeHint height."""
+def test_overlay_base_card_size_is_full_sizehint(qapp, tab):
+    """Base size = the FULL card sizeHint (max width AND height), so the proxied
+    card's content fits the window without overflow/scroll. Using card_min_h for
+    the height left content taller than the window and the view scrolled it."""
     from utils.overlay.card_metrics import CardMetrics
     tab._compact.apply_metrics(CardMetrics(1.0))
     qapp.processEvents()
-    w, h = tab._compact.overlay_base_card_size()
-    assert h == CardMetrics(1.0).card_min_h          # 232, the framed cell height
-    assert w == tab._compact.card_size()[0]          # the uniform (max) card width
+    base = tab._compact.overlay_base_card_size()
+    assert base == tab._compact.card_size()          # full sizeHint, not card_min_h
+    # The base height must accommodate the content's MINIMUM (which exceeds the
+    # card_min_h design floor) - else the card overflows its window.
+    assert base[1] >= tab._compact.slot_widget(0).minimumSizeHint().height()
 
 
 def test_scale_emblem_sizes_only_the_emblem(qapp, tab):

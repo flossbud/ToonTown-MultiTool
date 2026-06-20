@@ -27,6 +27,29 @@ def test_release_returns_card_undeleted(qapp):
     assert v.card() is None
 
 
+def test_scene_matches_fixed_size_not_oversized_sizehint(qapp):
+    """When the card is fixed SMALLER than its sizeHint (the overlay case: the
+    window is base*scale), the scene rect must match the FIXED size, not the larger
+    sizeHint - otherwise the view scrolls an oversized scene and the card 'does not
+    fit its window'. Guards both width and height."""
+    from PySide6.QtWidgets import QVBoxLayout, QLabel
+    card = QWidget()
+    lay = QVBoxLayout(card)
+    for _ in range(8):
+        lay.addWidget(QLabel("a fairly wide tall content line here"))
+    natural = card.sizeHint()
+    card.setFixedSize(180, 90)                     # fixed SMALLER than the hint
+    assert natural.width() > 180 and natural.height() > 90
+    v = ScaledCardView()
+    v.set_card(card)
+    qapp.processEvents()
+    rect = v._scene.sceneRect()
+    assert int(rect.width()) == 180 and int(rect.height()) == 90, (
+        f"scene {rect} must match the fixed 180x90, not the oversized sizeHint"
+    )
+    v.release_card()
+
+
 def test_hosts_a_parented_card(qapp):
     """The borrowed card arrives parented to its grid cell; set_card must detach it
     so QGraphicsScene.addWidget (top-level-only) actually embeds it."""

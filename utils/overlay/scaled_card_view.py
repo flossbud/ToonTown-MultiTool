@@ -105,11 +105,19 @@ class ScaledCardView(QWidget):
     def _sync_scene_rect(self) -> None:
         if self._card is None:
             return
-        hint = self._card.sizeHint()
+        # The scene rect must match the card's ACTUAL (fixed) size, NOT
+        # max(sizeHint, size). The overlay fixes the card to a window-sized box; if
+        # the card's preferred sizeHint exceeds that box (in width OR height), using
+        # the hint made the scene LARGER than the window and the view scrolled the
+        # oversized scene (the "card does not fit / scrolls" bug). The view must
+        # render exactly the widget's box; overflowing content is clipped (the card
+        # already elides), never scrolled. Fall back to the hint only before the
+        # widget has a real size.
         size = self._card.size()
-        w = max(hint.width(), size.width(), 1)
-        h = max(hint.height(), size.height(), 1)
-        self._scene.setSceneRect(0, 0, w, h)
+        hint = self._card.sizeHint()
+        w = size.width() if size.width() > 0 else hint.width()
+        h = size.height() if size.height() > 0 else hint.height()
+        self._scene.setSceneRect(0, 0, max(w, 1), max(h, 1))
 
     def eventFilter(self, obj, ev):
         if obj is self._card and ev.type() == QEvent.Resize:

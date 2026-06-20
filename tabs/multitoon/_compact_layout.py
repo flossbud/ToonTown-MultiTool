@@ -1362,13 +1362,17 @@ class _CompactLayout(QWidget):
         return self._emblem.width()
 
     def overlay_base_card_size(self) -> tuple[int, int]:
-        """The card's framed 1.0 size for the overlay proxy: the uniform (max) card
-        width and the framed cell height (card_min_h), not the looser sizeHint. The
-        overlay proxies the card at this fixed size and scales it via transform, so
-        it reproduces the framed card exactly at 1.0."""
-        from utils.overlay.card_metrics import CardMetrics
-        w, _h = self.card_size()
-        return (w, CardMetrics(1.0).card_min_h)
+        """The card's 1.0 size for the overlay proxy: the uniform card sizeHint
+        (max width AND max height across the four cells). The proxied card is fixed
+        to this size so its content FITS exactly, and the per-card view transform
+        then scales the whole card as one unit.
+
+        This MUST be the full sizeHint, NOT card_min_h for the height: a cell's real
+        content minimum (minimumSizeHint) exceeds card_min_h (which is only a design
+        floor), so sizing the window to card_min_h left the content taller than the
+        window and the QGraphicsView scrolled the oversized scene (cards "did not
+        fit")."""
+        return self.card_size()
 
     def scale_emblem(self, scale: float) -> None:
         """Scale only the emblem disc to `scale` (the overlay scales cards via a
