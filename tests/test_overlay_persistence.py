@@ -14,7 +14,7 @@ os.environ.setdefault("TTMT_NO_VENV_REEXEC", "1")
 
 from utils.overlay.persistence import (
     KEY_ANCHOR, KEY_SCALE, KEY_MONITOR,
-    clamp_anchor_to_screens, monitor_for_anchor,
+    clamp_anchor_to_screens, clamp_anchor_to_envelope, monitor_for_anchor,
     load_overlay_state, save_overlay_state,
 )
 
@@ -66,6 +66,45 @@ def test_monitor_for_anchor():
     assert monitor_for_anchor((2500, 500), TWO) == "DP-2"
     assert monitor_for_anchor((9999, 9999), TWO) == "DP-1"  # off-screen -> first
     assert monitor_for_anchor((0, 0), []) is None
+
+
+# --- parking envelope clamp (off-screen drag) ------------------------------
+def test_envelope_keeps_interior_anchor():
+    assert clamp_anchor_to_envelope((1000, 500), TWO, 50) == (1000, 500)
+
+
+def test_envelope_keeps_anchor_within_the_margin_band():
+    # 30px below DP-1's bottom edge (1079); margin 50 -> still inside inflated rect.
+    assert clamp_anchor_to_envelope((1000, 1109), TWO, 50) == (1000, 1109)
+
+
+def test_envelope_clamps_past_bottom_to_edge_plus_margin():
+    # Far below the bottom -> y clamped to 1079 + 50; x within band, unchanged.
+    assert clamp_anchor_to_envelope((1000, 1600), TWO, 50) == (1000, 1129)
+
+
+def test_envelope_clamps_past_corner_on_both_axes():
+    # Far past DP-1's top-left -> clamp both axes to (0-50, 0-50).
+    assert clamp_anchor_to_envelope((-500, -500), TWO, 50) == (-50, -50)
+
+
+def test_envelope_seam_between_adjacent_monitors_is_interior():
+    # x=1920 is DP-2's left edge and within DP-1's inflated right (1919+50) -> kept.
+    assert clamp_anchor_to_envelope((1920, 500), TWO, 50) == (1920, 500)
+
+
+def test_envelope_snaps_far_off_to_nearest_monitor():
+    # Far right of DP-2 -> x clamped to 3839 + 50; nearest candidate wins.
+    assert clamp_anchor_to_envelope((9000, 500), TWO, 50) == (3889, 500)
+
+
+def test_envelope_no_screens_returns_anchor_unchanged():
+    assert clamp_anchor_to_envelope((10, 20), [], 50) == (10, 20)
+
+
+def test_envelope_margin_scales_the_reach():
+    assert clamp_anchor_to_envelope((1000, 1200), TWO, 50) == (1000, 1129)
+    assert clamp_anchor_to_envelope((1000, 1200), TWO, 200) == (1000, 1200)
 
 
 # --- settings load/save ----------------------------------------------------

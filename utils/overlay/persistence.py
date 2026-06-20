@@ -45,6 +45,39 @@ def clamp_anchor_to_screens(anchor, monitor, screens):
     return (cx, cy)
 
 
+def clamp_anchor_to_envelope(anchor, screens, margin):
+    """Clamp an emblem-center anchor to the union of screen rects, each inflated
+    outward by *margin* px.
+
+    Lets the cluster slide past any edge while keeping the leading slice of the
+    emblem on-screen (margin == emblem_size // 4 -> a quarter stays visible).
+
+    anchor:  ``(cx, cy)`` logical-global emblem center.
+    screens: list of ``(name, left, top, right, bottom)`` (right/bottom inclusive).
+    margin:  px each screen rect is inflated outward by.
+
+    If the anchor lies inside any inflated screen rect, return it unchanged (so
+    movement across adjacent monitors and within the margin band is free).
+    Otherwise return the nearest point on the union of inflated rects (clamp to
+    each, pick the closest by squared distance). With no screens, identity.
+    """
+    cx, cy = anchor
+    if not screens:
+        return (cx, cy)
+    best = None
+    best_d2 = None
+    for (_name, l, t, r, b) in screens:
+        il, it, ir, ib = l - margin, t - margin, r + margin, b + margin
+        if il <= cx <= ir and it <= cy <= ib:
+            return (cx, cy)
+        qx = min(max(cx, il), ir)
+        qy = min(max(cy, it), ib)
+        d2 = (qx - cx) ** 2 + (qy - cy) ** 2
+        if best_d2 is None or d2 < best_d2:
+            best_d2, best = d2, (qx, qy)
+    return best
+
+
 def monitor_for_anchor(anchor, screens):
     """Return the NAME of the screen containing *anchor*, or the first screen's
     name (or None if there are no screens)."""
