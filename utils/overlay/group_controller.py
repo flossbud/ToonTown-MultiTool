@@ -287,6 +287,9 @@ class OverlayGroupController:
         # when settings is None (the orchestration/stub tests).
         self._save_timer = None
         self._save_pending = False
+        # Low-frequency ABOVE re-assert while transparent (Task 7.1): best-effort,
+        # since some WMs drop _NET_WM_STATE_ABOVE when another window takes focus.
+        self._above_timer = None
 
     # ------------------------------------------------------------------
     # State queries
@@ -466,6 +469,52 @@ class OverlayGroupController:
         """
         if self._surfaces:
             self._surfaces[-1].raise_()
+
+    # ------------------------------------------------------------------
+    # Topmost re-assert + reshape-on-screen-change (Task 7.1)
+    # ------------------------------------------------------------------
+    def _reassert_topmost(self) -> None:
+        """Re-apply ABOVE on every surface + the emblem-above-cards z-order.
+        Best-effort - some WMs drop ABOVE when another window takes focus, so this
+        runs on enter, after a scale change, and on a low-frequency timer."""
+        for surface in self._surfaces:
+            try:
+                self._backend.set_above(surface)
+            except Exception:
+                pass
+        self._raise_emblem()
+
+    def _start_above_timer(self) -> None:
+        from PySide6.QtCore import QTimer
+        if self._above_timer is None:
+            self._above_timer = QTimer()
+            self._above_timer.setInterval(1500)  # ~1.5s; droppable if the WM holds ABOVE
+            self._above_timer.timeout.connect(self._reassert_topmost)
+        self._above_timer.start()
+
+    def _stop_above_timer(self) -> None:
+        if self._above_timer is not None:
+            self._above_timer.stop()
+
+    def _connect_screen_change(self) -> None:
+        """Reshape on a monitor/DPI change (spec section 14): when the emblem
+        surface's native window moves to another screen, re-place + re-shape the
+        cluster (its device-pixel ratio - and thus the shape - may change)."""
+        if not self._surfaces:
+            return
+        get_handle = getattr(self._surfaces[-1], "windowHandle", None)  # emblem surface
+        if get_handle is None:
+            return
+        try:
+            wh = get_handle()
+            if wh is not None:
+                wh.screenChanged.connect(self._on_screen_changed)
+        except Exception:
+            pass
+
+    def _on_screen_changed(self, *_args) -> None:
+        if self._active:
+            self.update_shapes()
 
     def _place_all(self, reshape: bool) -> None:
         """Re-position (and optionally re-shape) every live surface, emblem last.
@@ -694,6 +743,11 @@ class OverlayGroupController:
         self._surfaces = created
         self._captured = captured
         self._active = True
+        # Task 7.1: re-assert ABOVE + z-order now, keep it best-effort via a
+        # low-frequency timer, and reshape if a surface changes monitor/DPI.
+        self._reassert_topmost()
+        self._start_above_timer()
+        self._connect_screen_change()
         return True
 
     def leave(self) -> None:
@@ -710,6 +764,8 @@ class OverlayGroupController:
             return
         # Cancel any in-progress group drag (the emblem window is going away).
         self._end_drag()
+        # Stop the topmost re-assert timer (no surfaces to keep above once framed).
+        self._stop_above_timer()
         # Persist the FINAL group anchor + scale before teardown (the remembered
         # overlay position, restored on the next enter).
         self.flush_pending_save()
@@ -841,6 +897,7 @@ class OverlayGroupController:
         if self._card_provider is None:
             # Task 3.2 path: no apply_metrics, placeholder geometry, synchronous.
             self._place_all(reshape=True)
+            self._reassert_topmost()  # re-assert ABOVE after a scale change
             return
         # Provider path: coalesce the expensive recompute to one per tick.
         self._schedule_recompute()
@@ -889,6 +946,7 @@ class OverlayGroupController:
             from utils.overlay.card_metrics import CardMetrics
             provider.apply_metrics(CardMetrics(self._scale))
         self._place_all(reshape=True)
+        self._reassert_topmost()  # re-assert ABOVE after a scale change (interaction)
 
     def move_group(self, dx: int, dy: int) -> None:
         """Shift the cluster anchor by (dx, dy) and re-position all surfaces.
@@ -911,3 +969,4 @@ class OverlayGroupController:
         if not self._active:
             return
         self._place_all(reshape=True)
+        self._reassert_topmost()  # screen/DPI change can also drop ABOVE

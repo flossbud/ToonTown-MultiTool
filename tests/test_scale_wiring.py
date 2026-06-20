@@ -107,6 +107,17 @@ def tab(qapp, tmp_path, monkeypatch):
     return tab
 
 
+class _AboveSpyBackend(NoOpOverlayBackend):
+    """NoOp backend that records every set_above target (for the topmost re-assert
+    coverage on the provider/debounced scale path)."""
+
+    def __init__(self):
+        self.above_calls: list = []
+
+    def set_above(self, window):
+        self.above_calls.append(window)
+
+
 class _RealSurfaceFactory:
     """Builds REAL CardSurface/EmblemSurface (NoOp backend)."""
 
@@ -288,6 +299,29 @@ def test_provider_none_is_synchronous_no_debounce(qapp):
         assert ctl._surfaces[i].geometry() == expected[i]
     assert ctl._surfaces[4].geometry() == expected["emblem"]
 
+    ctl.leave()
+
+
+def test_provider_path_reasserts_above_on_scale(qapp, tab):
+    """The PRIMARY (provider/debounced) scale path must re-assert ABOVE on every
+    surface after the recompute. A regression dropping the reassert in
+    _recompute_now() would otherwise go uncaught (the stub-path coverage in
+    tests/test_overlay_topmost.py only exercises the provider=None branch)."""
+    backend = _AboveSpyBackend()
+    factory = _RealSurfaceFactory(backend)
+    win = _StubWindow()
+    ctl = OverlayGroupController(
+        win, backend=backend, surface_factory=factory, card_provider=tab._compact
+    )
+    assert ctl.enter() is True
+    qapp.processEvents()
+
+    backend.above_calls.clear()
+    ctl.set_scale_by_notches(-2)          # schedules the debounced recompute
+    ctl.flush_pending_recompute()         # run the provider recompute now
+    # 4 cards + emblem each get ABOVE re-applied after the recompute.
+    assert len(backend.above_calls) == 5
+    assert set(backend.above_calls) == set(ctl._surfaces)
     ctl.leave()
 
 
