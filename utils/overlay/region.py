@@ -48,3 +48,24 @@ def build_input_region(
     if badge_rect is not None:
         region = region.united(QRegion(badge_rect))
     return region
+
+
+def controls_region(rects_base, scale, dpr):
+    """Device-pixel QRegion = union of card-local control rects scaled by scale*dpr.
+
+    rects_base: card-local (scale-1.0) control widget QRects. scale: overlay zoom
+    (the same factor the ScaledCardView transform applies). dpr: device-pixel
+    ratio. Unlike `device_input_region` (one continuous path), the controls are
+    DISJOINT rects, so this builds the QRegion directly (union of integer device
+    rects) rather than polygonizing a single path.
+    """
+    region = QRegion()
+    f = float(scale) * float(dpr if dpr > 0 else 1.0)
+    for r in rects_base:
+        dx = round(r.x() * f)
+        dy = round(r.y() * f)
+        dw = round(r.width() * f)
+        dh = round(r.height() * f)
+        if dw > 0 and dh > 0:
+            region = region.united(QRegion(dx, dy, dw, dh))
+    return region
