@@ -3,7 +3,11 @@
 The region is the union of each card's painted body path (rounded rect minus the concave
 bite), the emblem disc, and - while visible - the transient scale badge. Everything outside
 this region is a click-through hole. Window-relative coordinates; curves are approximated by
-polygon fill (sufficient for hit-testing)."""
+polygon fill (sufficient for hit-testing).
+
+`controls_region` is a separate entry point for transparent peek mode: the union of
+a card's individual control-widget rects (disjoint device-pixel rects, not a single
+continuous path), so only the buttons block clicks and the body stays click-through."""
 from __future__ import annotations
 
 from PySide6.QtCore import QRect
@@ -50,7 +54,7 @@ def build_input_region(
     return region
 
 
-def controls_region(rects_base, scale, dpr):
+def controls_region(rects_base: list[QRect], scale: float, dpr: float) -> QRegion:
     """Device-pixel QRegion = union of card-local control rects scaled by scale*dpr.
 
     rects_base: card-local (scale-1.0) control widget QRects. scale: overlay zoom
@@ -60,12 +64,12 @@ def controls_region(rects_base, scale, dpr):
     rects) rather than polygonizing a single path.
     """
     region = QRegion()
-    f = float(scale) * float(dpr if dpr > 0 else 1.0)
+    device_scale = float(scale) * float(dpr if dpr > 0 else 1.0)
     for r in rects_base:
-        dx = round(r.x() * f)
-        dy = round(r.y() * f)
-        dw = round(r.width() * f)
-        dh = round(r.height() * f)
+        dx = round(r.x() * device_scale)
+        dy = round(r.y() * device_scale)
+        dw = round(r.width() * device_scale)
+        dh = round(r.height() * device_scale)
         if dw > 0 and dh > 0:
             region = region.united(QRegion(dx, dy, dw, dh))
     return region
