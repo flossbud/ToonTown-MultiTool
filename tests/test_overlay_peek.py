@@ -106,3 +106,21 @@ def test_control_hits_zero_scale_falls_back_to_one():
     from utils.overlay.peek import control_hits
     cards = [(0, (0, 0, 100, 100), [(0, 0, 100, 100)])]
     assert control_hits([(20, 20)], cards, 0.0) == [(0, 20, 20)]
+
+
+def test_control_hits_multiple_points_accumulate():
+    from utils.overlay.peek import control_hits
+    cards = [
+        (0, (0, 0, 100, 100), [(0, 0, 50, 50)]),
+        (1, (200, 0, 100, 100), [(0, 0, 50, 50)]),
+    ]
+    # First point hits card 0's control, second is in card 1's body (no hit),
+    # third hits card 1's control. The batch returns only the two real hits.
+    pts = [(10, 10), (290, 90), (210, 10)]
+    assert control_hits(pts, cards, 1.0) == [(0, 10, 10), (1, 10, 10)]
+
+
+def test_control_hits_negative_scale_falls_back_to_one():
+    from utils.overlay.peek import control_hits
+    cards = [(0, (0, 0, 100, 100), [(0, 0, 100, 100)])]
+    assert control_hits([(20, 20)], cards, -2.0) == [(0, 20, 20)]

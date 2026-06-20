@@ -2,9 +2,10 @@
 """Pure helpers for overlay hover-peek detection (no Qt).
 
 `peeking_indices` answers "which cards have a cursor over them" given cursor
-points and card rects. `GhostPointStore` accumulates the latest click-sync
-ghost-cursor position per slot from the service's ghost_pointer_event payloads.
-Both are pure so they unit-test without a QApplication.
+points and card rects. `control_hits` maps cursor points to the specific card
+control each lands on (for ghost-cursor clicks). `GhostPointStore` accumulates
+the latest click-sync ghost-cursor position per slot from the service's
+ghost_pointer_event payloads. All are pure so they unit-test without a QApplication.
 """
 from __future__ import annotations
 
@@ -76,6 +77,7 @@ def control_hits(points, cards, scale) -> list:
     s = float(scale) if scale else 1.0
     if s <= 0:
         s = 1.0
+    cards = list(cards)  # re-scanned per point; never let a generator exhaust
     hits = []
     for (px, py) in points:
         for (surface_id, (sx, sy, sw, sh), control_rects) in cards:
