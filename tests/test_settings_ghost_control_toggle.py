@@ -19,23 +19,21 @@ def _settings_tab(monkeypatch, tmp_path):
     return SettingsTab(settings_manager=SettingsManager())
 
 
-def test_control_cards_setting_defaults_true():
-    from utils.settings_keys import GHOST_CURSORS_CONTROL_CARDS
-    from utils.settings_manager import SettingsManager
-    import tempfile, os
-    d = tempfile.mkdtemp()
-    os.environ["TTMT_CONFIG_DIR"] = d
-    sm = SettingsManager()
-    assert sm.get(GHOST_CURSORS_CONTROL_CARDS, True) is True
+def test_control_switch_defaults_checked(qt_app, monkeypatch, tmp_path):
+    # The toggle reflects the default-ON setting on a clean config. This exercises
+    # the real call-site default (get(KEY, True)) flowing into the Switch, unlike
+    # asserting get(KEY, True) is True (which is tautological).
+    tab = _settings_tab(monkeypatch, tmp_path)
+    assert tab._ghost_control_field.control_widget.isChecked() is True
 
 
 def test_control_field_greys_out_when_ghosts_off(qt_app, monkeypatch, tmp_path):
-    from utils.settings_keys import GHOST_CURSORS_ENABLED
+    # Fire the REAL ghost-cursors switch so this verifies the toggled.connect
+    # wiring, not just the _sync_ghost_control_enabled method in isolation.
     tab = _settings_tab(monkeypatch, tmp_path)
-    # The field exists and tracks the ghost-cursors switch.
     field = tab._ghost_control_field
-    tab.settings_manager.set(GHOST_CURSORS_ENABLED, False)
-    tab._sync_ghost_control_enabled(False)
+    assert field.isEnabled() is True            # ghosts default ON
+    tab._ghost_switch.setChecked(False)         # emits toggled(False)
     assert field.isEnabled() is False
-    tab._sync_ghost_control_enabled(True)
+    tab._ghost_switch.setChecked(True)          # emits toggled(True)
     assert field.isEnabled() is True

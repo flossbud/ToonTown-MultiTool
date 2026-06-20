@@ -1502,8 +1502,8 @@ class SettingsTab(QWidget):
         control_field = SettingsField(
             "Ghost cursors can use card controls",
             helper=(
-                "Let a toon's ghost cursor press that card's buttons when click "
-                "sync moves it over them, just like your own cursor can."
+                "When click sync moves a toon's ghost cursor over its card, let "
+                "it press the card's buttons, just like your own cursor can."
             ),
         )
         control_switch = Switch(
@@ -1514,6 +1514,7 @@ class SettingsTab(QWidget):
         control_field.set_control(control_switch)
         panel.add_field(control_field)
         self._ghost_control_field = control_field
+        self._ghost_switch = ghost_switch
 
         # Grey out the control-cards row whenever ghost cursors are off: the
         # feature is meaningless without ghosts, and the runtime gate ANDs the two.
