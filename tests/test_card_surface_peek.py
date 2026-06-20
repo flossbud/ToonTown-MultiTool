@@ -23,3 +23,15 @@ def test_set_peek_tracks_flag(qt_app):
     s.set_peek(False)
     assert s.is_peeking is False
     s.release()
+
+
+def test_set_content_opacity_dims_the_proxy(qt_app):
+    s = CardSurface(surface_id=0)
+    s.host(QLabel("card"), base_size=(120, 90))
+    s.show()
+    qt_app.processEvents()
+    s.set_content_opacity(0.8)
+    assert s._scaled_view._proxy.opacity() == pytest.approx(0.8)
+    s.set_content_opacity(1.0)
+    assert s._scaled_view._proxy.opacity() == pytest.approx(1.0)
+    s.release()

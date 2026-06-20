@@ -361,13 +361,6 @@ class _PortraitFrame(QWidget):
         self.setStyleSheet("background: transparent;")
         self._ring = QColor("#555555")
         self._dimmed = True
-        self._peek_opacity = 1.0
-
-    def set_peek_opacity(self, opacity: float) -> None:
-        opacity = float(opacity)
-        if opacity != self._peek_opacity:
-            self._peek_opacity = opacity
-            self.update()
 
     def configure(self, ring: QColor, dimmed: bool) -> None:
         self._ring = QColor(ring)
@@ -954,27 +947,22 @@ class _CompactLayout(QWidget):
             rects.append(QRect(top_left, size))
         return rects
 
-    def set_shell_peek_opacity(self, cell_index: int, opacity: float) -> None:
-        """Set transparent-mode hover-peek body translucency for the shell at
-        *cell_index* (the overlay surface_id, as in control_rects/slot_widget).
+    def set_shell_body_opacity(self, cell_index: int, opacity: float) -> None:
+        """Set the EXTRA hover-peek translucency of the card BODY FILL for the
+        shell at *cell_index* (the overlay surface_id, as in control_rects /
+        slot_widget).
 
-        Dims the card BODY - the background fill, the portrait frame, and the
-        portrait image - so the game shows through, while the control widgets
-        (toggles, keep-alive pill, keyset) are left untouched and stay fully
-        opaque. This adjusts each body widget's own paint opacity (no overlay /
-        no rectangle masking), so rounded controls keep their real shape with no
-        opaque background corners."""
+        The overlay composites the whole card uniformly (controls, portrait, text)
+        via the surface's set_content_opacity; this dims ONLY the background fill a
+        bit further, so the body reads as more see-through than its content. It is
+        a multiplicative factor on top of the content opacity (net body = content *
+        this), applied as the background widget's own paint opacity (no overlay, so
+        the rounded controls on top keep their real shape with no opaque corners).
+        1.0 = no extra dim."""
         cell = self._cells[cell_index]
-        s = cell.get("content_slot", cell_index)
         bg = cell.get("bg")
         if bg is not None:
             bg.set_peek_opacity(opacity)
-        frame = cell.get("portrait_frame")
-        if frame is not None:
-            frame.set_peek_opacity(opacity)
-        badge = self._tab.slot_badges[s] if s < len(self._tab.slot_badges) else None
-        if badge is not None and hasattr(badge, "set_peek_opacity"):
-            badge.set_peek_opacity(opacity)
 
     def _populate_cell(self, i: int, cell: dict):
         tab = self._tab

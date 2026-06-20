@@ -300,10 +300,10 @@ class OverlayGroupController:
         # GhostPointStore is fed by on_ghost_event/on_ghost_clear (wired in main.py).
         self._peek_store = GhostPointStore()
         self._peek_timer = None
-        # Per-card (surface_id 0-3) current body-dim opacity, lerped toward the
-        # target each tick for a smooth fade. Driven into the card provider, which
-        # dims the body widgets (background/portrait); controls stay opaque.
-        self._peek_opacity = [1.0, 1.0, 1.0, 1.0]
+        # Per-card (surface_id 0-3) hover-peek progress 0.0 (normal) -> 1.0 (peeked),
+        # lerped each tick for a smooth fade. Drives two tiers: the whole card to
+        # CONTENT opacity (surface) + the background fill a bit further to BODY.
+        self._peek_progress = [0.0, 0.0, 0.0, 0.0]
         # Accent-glow surface behind the cluster: a single click-through window
         # spanning the four card rects that paints the same soft halo the framed
         # tab draws behind its cards (the _GlowLayer that fills the central hole so
@@ -539,8 +539,9 @@ class OverlayGroupController:
         return [(st, su) for st, su in zip(self._states, self._surfaces)
                 if not st.is_emblem]
 
-    BODY_PEEK_OPACITY = 0.75       # dimmed card-body translucency on hover
-    _PEEK_FADE_STEP = 0.06         # per-30ms-tick lerp -> ~120ms over the 0.25 span
+    PEEK_CONTENT_OPACITY = 0.80    # whole card (controls, portrait, text) on hover
+    PEEK_BODY_OPACITY = 0.65       # card BACKGROUND fill on hover (more see-through)
+    _PEEK_FADE_STEP = 0.25         # progress per 30ms tick -> ~120ms full fade
 
     def _peek_tick(self, real_point) -> None:
         """One detection pass: union real cursor + ghost points, apply per card.
@@ -563,27 +564,43 @@ class OverlayGroupController:
             # Direct call (not getattr): every card surface is a CardSurface with
             # set_peek, so a missing method is a real bug that should fail loudly.
             su.set_peek(active)
-            self._apply_peek_fade(st.surface_id, active)
+            self._apply_peek_fade(st.surface_id, su, active)
 
-    def _apply_peek_fade(self, surface_id, active) -> None:
-        """Step one card's body-dim opacity toward its target and push it to the
-        card provider, which dims that card's body widgets (background + portrait)
-        while the controls stay opaque. No-op without a provider (stub tests)."""
-        if self._card_provider is None:
-            return
-        target = self.BODY_PEEK_OPACITY if active else 1.0
-        cur = self._peek_opacity[surface_id]
+    def _peek_opacities(self, progress):
+        """Two-tier (content, body_extra) opacities for a peek *progress* 0..1.
+
+        content: whole-card opacity (1.0 -> CONTENT). body_extra: multiplicative
+        factor on the background fill so net body = content * body_extra reaches
+        BODY at full peek."""
+        content = 1.0 - (1.0 - self.PEEK_CONTENT_OPACITY) * progress
+        body_factor = self.PEEK_BODY_OPACITY / self.PEEK_CONTENT_OPACITY
+        body_extra = 1.0 - (1.0 - body_factor) * progress
+        return content, body_extra
+
+    def _apply_peek_fade(self, surface_id, surface, active) -> None:
+        """Step one card's hover-peek progress toward its target and apply the two
+        opacity tiers: the whole card via the surface (content), the background
+        fill a bit further via the card provider (body). No-op for the body tier
+        without a provider (stub tests still drive the surface tier)."""
+        target = 1.0 if active else 0.0
+        cur = self._peek_progress[surface_id]
         if cur < target:
             cur = min(target, cur + self._PEEK_FADE_STEP)
         elif cur > target:
             cur = max(target, cur - self._PEEK_FADE_STEP)
         else:
-            return  # already at target; nothing to repaint
-        self._peek_opacity[surface_id] = cur
+            return  # already settled; nothing to repaint
+        self._peek_progress[surface_id] = cur
+        content, body_extra = self._peek_opacities(cur)
         try:
-            self._card_provider.set_shell_peek_opacity(surface_id, cur)
+            surface.set_content_opacity(content)
         except Exception:
             pass
+        if self._card_provider is not None:
+            try:
+                self._card_provider.set_shell_body_opacity(surface_id, body_extra)
+            except Exception:
+                pass
 
     def _on_peek_timer(self) -> None:
         from PySide6.QtGui import QCursor
@@ -606,16 +623,21 @@ class OverlayGroupController:
         if self._peek_timer is not None:
             self._peek_timer.stop()
         self._peek_store.clear()
-        # Restore every card body to fully opaque so a borrowed card never returns
-        # to the framed grid stuck dim.
-        if self._card_provider is not None:
-            for sid in range(len(self._peek_opacity)):
-                if self._peek_opacity[sid] != 1.0:
+        # Restore every card to fully opaque (both tiers) so a borrowed card never
+        # returns to the framed grid stuck dim.
+        card_surfaces = self._card_surfaces() if self._surfaces else []
+        for st, su in card_surfaces:
+            if self._peek_progress[st.surface_id] != 0.0:
+                try:
+                    su.set_content_opacity(1.0)
+                except Exception:
+                    pass
+                if self._card_provider is not None:
                     try:
-                        self._card_provider.set_shell_peek_opacity(sid, 1.0)
+                        self._card_provider.set_shell_body_opacity(st.surface_id, 1.0)
                     except Exception:
                         pass
-        self._peek_opacity = [1.0, 1.0, 1.0, 1.0]
+        self._peek_progress = [0.0, 0.0, 0.0, 0.0]
 
     # ------------------------------------------------------------------
     # Topmost re-assert + reshape-on-screen-change (Task 7.1)

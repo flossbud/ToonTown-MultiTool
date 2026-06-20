@@ -103,6 +103,15 @@ class ScaledCardView(QWidget):
     def view_transform(self) -> QTransform:
         return self._view.transform()
 
+    def set_content_opacity(self, opacity: float) -> None:
+        """Composite the whole card at *opacity* against the game behind it
+        (transparent-mode hover-peek). Sets the proxy item's opacity, so the real
+        card renders translucently as ONE unit - controls, portrait, and text all
+        at this level, with no overlay (the body is dimmed a bit further by its own
+        background widget). 1.0 = fully opaque."""
+        if self._proxy is not None:
+            self._proxy.setOpacity(float(opacity))
+
     def _apply_transform(self) -> None:
         # setTransform REPLACES (never multiplies) so repeated calls don't compound.
         self._view.setTransform(QTransform().scale(self._scale, self._scale))

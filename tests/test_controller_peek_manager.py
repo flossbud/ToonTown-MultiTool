@@ -5,11 +5,11 @@ from utils.overlay.group_controller import OverlayGroupController, SurfaceState
 
 
 class _RecordingProvider:
-    """Records the body-dim opacity pushed per shell by the controller fade."""
+    """Records the body-tier opacity pushed per shell by the controller fade."""
     def __init__(self):
-        self.calls = []  # (surface_id, opacity)
+        self.calls = []  # (surface_id, body_extra_opacity)
 
-    def set_shell_peek_opacity(self, surface_id, opacity):
+    def set_shell_body_opacity(self, surface_id, opacity):
         self.calls.append((surface_id, round(float(opacity), 4)))
 
     def control_rects(self, slot):
@@ -21,10 +21,13 @@ class _PeekStubSurface:
         self.state = state
         self._geom = geom
         self.peeks = []          # history of set_peek(active) calls
+        self.content = []        # history of set_content_opacity() values
 
     def geometry(self): return self._geom
     def set_peek(self, active, control_rects=None):
         self.peeks.append(bool(active))
+    def set_content_opacity(self, opacity):
+        self.content.append(round(float(opacity), 4))
 
 
 def _wire(c, geoms):
@@ -120,24 +123,33 @@ def test_stop_peek_timer_clears_ghost_store(qapp):
     assert c._peek_store.points() == []
 
 
-def test_peek_fade_lerps_toward_dim_then_restores(qapp):
+def _card_surfaces(c):
+    return [s for s, st in zip(c._surfaces, c._states) if not st.is_emblem]
+
+
+def test_peek_fade_reaches_two_tiers_then_restores(qapp):
     c = OverlayGroupController(window=None, surface_factory=lambda s: None,
                               card_provider=_RecordingProvider())
     geoms = {0: QRect(0, 0, 100, 100), 1: QRect(200, 0, 100, 100),
              2: QRect(0, 200, 100, 100), 3: QRect(200, 200, 100, 100)}
     _wire(c, geoms)
     prov = c._card_provider
-    for _ in range(10):           # hover card 0 -> body opacity lerps to 0.75
+    su0 = _card_surfaces(c)[0]
+    for _ in range(10):           # hover card 0 -> full peek
         c._peek_tick((50, 50))
-    assert c._peek_opacity[0] == pytest.approx(0.75, abs=1e-6)
-    assert c._peek_opacity[1] == 1.0
-    card0 = [op for sid, op in prov.calls if sid == 0]
-    assert card0[-1] == pytest.approx(0.75, abs=1e-6)
-    assert card0 == sorted(card0, reverse=True)   # monotonic fade-down
+    assert c._peek_progress[0] == pytest.approx(1.0, abs=1e-6)
+    assert c._peek_progress[1] == 0.0
+    # Content tier: whole card to 0.80.
+    assert su0.content[-1] == pytest.approx(0.80, abs=1e-6)
+    assert su0.content == sorted(su0.content, reverse=True)   # monotonic fade-down
+    # Body tier: net body = content * body_extra == 0.65.
+    body0 = [op for sid, op in prov.calls if sid == 0]
+    assert su0.content[-1] * body0[-1] == pytest.approx(0.65, abs=1e-6)
     assert all(sid == 0 for sid, _ in prov.calls)  # idle cards never repaint
-    for _ in range(10):           # move off -> lerps back to opaque
+    for _ in range(10):           # move off -> back to opaque
         c._peek_tick((500, 500))
-    assert c._peek_opacity[0] == pytest.approx(1.0, abs=1e-6)
+    assert c._peek_progress[0] == pytest.approx(0.0, abs=1e-6)
+    assert su0.content[-1] == pytest.approx(1.0, abs=1e-6)
 
 
 def test_stop_peek_timer_restores_opacity(qapp):
@@ -146,9 +158,11 @@ def test_stop_peek_timer_restores_opacity(qapp):
     geoms = {0: QRect(0, 0, 100, 100), 1: QRect(200, 0, 100, 100),
              2: QRect(0, 200, 100, 100), 3: QRect(200, 200, 100, 100)}
     _wire(c, geoms)
+    su0 = _card_surfaces(c)[0]
     for _ in range(10):
         c._peek_tick((50, 50))
-    assert c._peek_opacity[0] == pytest.approx(0.75)
+    assert c._peek_progress[0] == pytest.approx(1.0)
     c._stop_peek_timer()
-    assert c._peek_opacity == [1.0, 1.0, 1.0, 1.0]
+    assert c._peek_progress == [0.0, 0.0, 0.0, 0.0]
+    assert su0.content[-1] == pytest.approx(1.0)
     assert c._card_provider.calls[-1] == (0, 1.0)

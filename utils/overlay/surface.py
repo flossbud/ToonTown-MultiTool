@@ -245,11 +245,17 @@ class CardSurface(OverlaySurface):
         return self._peeking
 
     def set_peek(self, active: bool, control_rects=None) -> None:
-        """Record hover-peek state. The body-dim RENDERING is driven by the
-        controller through the card provider (it owns the body widgets and dims
-        their paint opacity directly); this surface only tracks the flag so other
+        """Record hover-peek state. The dim RENDERING is driven by the controller
+        (uniform card opacity here via set_content_opacity, plus an extra body-fill
+        dim through the card provider); this surface only tracks the flag so other
         code can query is_peeking."""
         self._peeking = bool(active)
+
+    def set_content_opacity(self, opacity: float) -> None:
+        """Composite the whole hosted card at *opacity* (hover-peek). Delegates to
+        the ScaledCardView proxy; no-op before a card is hosted."""
+        if self._scaled_view is not None:
+            self._scaled_view.set_content_opacity(opacity)
 
     def set_scale(self, scale: float) -> None:
         """Record the current overlay zoom factor (0.5-1.75).
