@@ -242,3 +242,26 @@ def test_deliver_ghost_click_out_of_range_is_noop(qt_app, monkeypatch, tmp_path)
         compact.deliver_ghost_click(0, -10000, -10000)
     finally:
         tab.input_service.shutdown()
+
+
+def test_deliver_ghost_click_disabled_control_is_inert(qt_app, monkeypatch, tmp_path):
+    # Safety property: a ghost click over a DISABLED control does nothing, exactly
+    # like a real click (Qt never dispatches mouse events to a disabled widget).
+    from PySide6.QtCore import QPoint
+    tab = _make_tab(monkeypatch, tmp_path)
+    try:
+        qt_app.processEvents()
+        compact = _show_compact(tab, qt_app)
+        cell = compact._cells[0]
+        root = cell["cell"]
+        s = cell.get("content_slot", 0)
+        btn = tab.toon_buttons[s]
+        btn.setEnabled(False)
+        seen = []
+        monkeypatch.setattr(btn, "mousePressEvent",
+                            lambda e: seen.append("press"), raising=False)
+        center = btn.mapTo(root, QPoint(btn.width() // 2, btn.height() // 2))
+        compact.deliver_ghost_click(0, center.x(), center.y())
+        assert seen == []
+    finally:
+        tab.input_service.shutdown()

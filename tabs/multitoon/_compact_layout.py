@@ -977,12 +977,16 @@ class _CompactLayout(QWidget):
         target = root.childAt(local)
         if target is None:
             return
-        tp = target.mapFrom(root, local)
-        local_f = QPointF(tp)
-        global_f = QPointF(target.mapToGlobal(tp))
+        target_local = target.mapFrom(root, local)
+        local_f = QPointF(target_local)
+        global_f = QPointF(target.mapToGlobal(target_local))
         for etype in (QEvent.MouseButtonPress, QEvent.MouseButtonRelease):
+            # buttons() is the still-held set: LeftButton during the press, none
+            # after the release - matching a genuine click (a release reporting
+            # the button still held would mislead any control gating on it).
+            held = Qt.LeftButton if etype == QEvent.MouseButtonPress else Qt.NoButton
             ev = QMouseEvent(etype, local_f, global_f,
-                             Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
+                             Qt.LeftButton, held, Qt.NoModifier)
             QApplication.sendEvent(target, ev)
 
     def set_shell_extra_opacity(self, cell_index: int, bg_opacity: float,
