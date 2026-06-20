@@ -901,9 +901,13 @@ class _CompactLayout(QWidget):
         selector). Coordinates are relative to the card cell root at the current
         (framed 1.0) size; the overlay controller scales them by the overlay zoom.
         Skips any widget that is missing or zero-sized (defensive).
+
+        Slot *slot*'s content lives in shell ``_slot_to_cell[slot]`` (identity
+        unless a non-contiguous window arrangement permuted the cells), so the
+        cell - and thus the mapTo root - must be looked up through that mapping,
+        matching every other slot->cell access in this class.
         """
-        from PySide6.QtCore import QPoint, QRect
-        cell = self._cells[slot]
+        cell = self._cells[self._slot_to_cell[slot]]
         root = cell["cell"]
         if root.layout() is not None:
             root.layout().activate()

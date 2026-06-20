@@ -44,20 +44,49 @@ def _make_tab(monkeypatch, tmp_path):
                         window_manager=_FakeWindowManager())
 
 
-def test_control_rects_returns_five_rects_within_card(qt_app, monkeypatch, tmp_path):
-    tab = _make_tab(monkeypatch, tmp_path)
-    qt_app.processEvents()
+def _show_compact(tab, qt_app):
     compact = tab._compact
     tab._stack.setCurrentWidget(compact)
     tab.show()
     for _ in range(6):
         qt_app.processEvents()
+    return compact
 
-    for slot in range(4):
-        rects = compact.control_rects(slot)
-        assert len(rects) == 5, f"slot {slot}: expected 5 control rects, got {len(rects)}"
-        cell = compact._cells[slot]["cell"]
-        card_rect = QRect(0, 0, cell.width(), cell.height())
-        for r in rects:
-            assert r.width() > 0 and r.height() > 0
-            assert card_rect.contains(r.topLeft()), f"slot {slot}: {r} outside card"
+
+def _assert_rects_within_correct_cell(compact, slot):
+    rects = compact.control_rects(slot)
+    assert len(rects) == 5, f"slot {slot}: expected 5 control rects, got {len(rects)}"
+    # Slot content lives in shell _slot_to_cell[slot]; rects are relative to it.
+    cell = compact._cells[compact._slot_to_cell[slot]]["cell"]
+    card_rect = QRect(0, 0, cell.width(), cell.height())
+    for r in rects:
+        assert r.width() > 0 and r.height() > 0
+        assert card_rect.contains(r.topLeft()), f"slot {slot}: {r} outside card"
+
+
+def test_control_rects_returns_five_rects_within_card(qt_app, monkeypatch, tmp_path):
+    tab = _make_tab(monkeypatch, tmp_path)
+    try:
+        qt_app.processEvents()
+        compact = _show_compact(tab, qt_app)
+        for slot in range(4):
+            _assert_rects_within_correct_cell(compact, slot)
+    finally:
+        tab.input_service.shutdown()
+
+
+def test_control_rects_follows_cell_permutation(qt_app, monkeypatch, tmp_path):
+    # Under a non-identity cell permutation, slot N's widgets live in cell
+    # _slot_to_cell[N]; control_rects must map to that cell, not self._cells[N].
+    tab = _make_tab(monkeypatch, tmp_path)
+    try:
+        qt_app.processEvents()
+        compact = _show_compact(tab, qt_app)
+        compact.apply_cell_permutation([1, 0, 3, 2])
+        for _ in range(6):
+            qt_app.processEvents()
+        assert compact._slot_to_cell == [1, 0, 3, 2]
+        for slot in range(4):
+            _assert_rects_within_correct_cell(compact, slot)
+    finally:
+        tab.input_service.shutdown()
