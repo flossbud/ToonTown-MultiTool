@@ -93,3 +93,9 @@ CLICK_SYNC_ENABLED = "click_sync_enabled"
 # receiving synthetic click-sync input. Pure display (no input fired),
 # so default ON; no consent gate needed.
 GHOST_CURSORS_ENABLED = "click_sync_ghost_cursors"
+
+# Ghost cursors can press card controls (added 2026-06-20): in transparent
+# overlay mode, a ghost cursor over a card control fires it like the real
+# cursor. Driven by a live user click on the app's own UI, so default ON; gated
+# at runtime on GHOST_CURSORS_ENABLED too.
+GHOST_CURSORS_CONTROL_CARDS = "click_sync_ghost_control_cards"
