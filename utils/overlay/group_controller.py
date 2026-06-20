@@ -290,6 +290,12 @@ class OverlayGroupController:
         # Low-frequency ABOVE re-assert while transparent (Task 7.1): best-effort,
         # since some WMs drop _NET_WM_STATE_ABOVE when another window takes focus.
         self._above_timer = None
+        # Accent-glow surface behind the cluster: a single click-through window
+        # spanning the four card rects that paints the same soft halo the framed
+        # tab draws behind its cards (the _GlowLayer that fills the central hole so
+        # the emblem nests). Owned (created/destroyed here), NOT a borrowed widget.
+        self._glow_surface = None
+        self._glow_widget = None
 
     # ------------------------------------------------------------------
     # State queries
@@ -428,7 +434,13 @@ class OverlayGroupController:
         if provider is not None:
             card_w, card_h = provider.card_size()
             emblem = provider.emblem_size()
-            gap = round(_GROUP_GAP * self._scale)
+            # Spacing must MATCH the framed 2x2 grid, not the spike's looser gap.
+            # The framed grid puts cards `grid_gap` apart, so each card's inner
+            # corner sits grid_gap/2 from the emblem center. The old _GROUP_GAP
+            # (24) flung the cards ~2.7x too far (central gap 48 vs framed 18),
+            # leaving the emblem floating with large gaps. Derive from the live
+            # grid_gap so the cluster nests exactly like the tab.
+            gap = round(CardMetrics(self._scale).grid_gap / 2)
             # Already-scaled dimensions in -> scale=1.0 so pinwheel_rects keeps
             # them verbatim (int(x * 1.0) == x). The contract: scaled sizes +
             # scale=1.0, never base sizes + scale (that would double-scale).
@@ -489,6 +501,7 @@ class OverlayGroupController:
                 self._backend.set_non_activating(surface)  # re-hide from taskbar/pager
             except Exception:
                 pass
+        self._reassert_glow()  # keep the glow above games but below the cards
         self._raise_emblem()
 
     def _start_above_timer(self) -> None:
@@ -530,12 +543,104 @@ class OverlayGroupController:
         reshape=True (scale): geometry + shape, since the sizes change.
         """
         rects = self._compute_rects()
+        self._place_glow(rects)  # keep the glow under the cluster on move/scale
         for state, surface in zip(self._states, self._surfaces):
             rect = rects[self._key(state)]
             surface.set_overlay_geometry(rect)
             if reshape:
                 surface.apply_shape(self._shape_path(state, rect), surface.devicePixelRatio())
         self._raise_emblem()
+
+    # ------------------------------------------------------------------
+    # Accent glow behind the cluster (parity with the framed _GlowLayer)
+    # ------------------------------------------------------------------
+    def _cluster_bbox(self, rects):
+        """Bounding QRect of the four card rects in screen coords."""
+        from PySide6.QtCore import QRect
+        cards = [rects[i] for i in (0, 1, 2, 3)]
+        left = min(r.x() for r in cards)
+        top = min(r.y() for r in cards)
+        right = max(r.x() + r.width() for r in cards)
+        bottom = max(r.y() + r.height() for r in cards)
+        return QRect(left, top, right - left, bottom - top)
+
+    def _build_glow(self, rects) -> None:
+        """Create + show the click-through accent-glow surface BELOW the cards.
+
+        Mirrors the framed tab's _GlowLayer (a soft halo of the card shapes that
+        fills the central hole so the emblem nests). Best-effort: a glow failure
+        must NEVER break the enter transaction, so it self-tears-down on error and
+        the cluster proceeds without the (decorative) glow."""
+        if self._card_provider is None:
+            return  # stub/orchestration path has no real cards to glow
+        try:
+            from tabs.multitoon._compact_layout import _GlowLayer
+            from utils.overlay.surface import OverlaySurface
+            from PySide6.QtGui import QPainterPath
+            surface = OverlaySurface(backend=self._backend)
+            self._glow_surface = surface
+            self._glow_widget = _GlowLayer()
+            surface.host(self._glow_widget)
+            self._place_glow(rects)
+            surface.prepare_initial_state()
+            surface.show()
+            surface.lower()  # bottom of the overlay group (below the cards)
+            # Fully click-through: an EMPTY input region so clicks in the glow's
+            # gaps reach the games. The glow only PAINTS; it must never grab input.
+            surface.apply_shape(QPainterPath(), surface.devicePixelRatio())
+        except Exception:
+            self._teardown_glow()
+
+    def _place_glow(self, rects) -> None:
+        """Position the glow surface to the cluster bbox and feed the _GlowLayer
+        each card's body spec at bbox-relative coords. No-op without a glow."""
+        if self._glow_surface is None or self._glow_widget is None:
+            return
+        from PySide6.QtGui import QColor
+        from utils.overlay.card_metrics import CardMetrics
+        m = CardMetrics(self._scale)
+        bbox = self._cluster_bbox(rects)
+        try:
+            accents = self._card_provider.card_accents()
+        except Exception:
+            accents = []
+        default = QColor("#555555")
+        specs = []
+        for slot in (0, 1, 2, 3):
+            r = rects[slot]
+            specs.append({
+                "x": r.x() - bbox.x(), "y": r.y() - bbox.y(),
+                "w": r.width(), "h": r.height(),
+                "cutout": SLOT_CUTOUTS[slot],
+                "accent": accents[slot] if slot < len(accents) else default,
+                "radius": m.card_radius, "cutout_r": m.cutout_r,
+            })
+        self._glow_widget.set_blur(m.glow_blur)
+        self._glow_widget.set_cards(specs)
+        self._glow_surface.set_overlay_geometry(bbox)
+
+    def _reassert_glow(self) -> None:
+        """Keep the glow above the games but below the cards (best-effort)."""
+        if self._glow_surface is None:
+            return
+        try:
+            self._backend.set_above(self._glow_surface)
+        except Exception:
+            pass
+        try:
+            self._glow_surface.lower()
+        except Exception:
+            pass
+
+    def _teardown_glow(self) -> None:
+        """Destroy the OWNED glow surface (+ its _GlowLayer child). Unlike the
+        borrowed cards, the glow widget is ours, so the surface deletes it."""
+        surface = self._glow_surface
+        self._glow_surface = None
+        self._glow_widget = None
+        if surface is not None:
+            self._safe_call(surface, "hide")
+            self._safe_call(surface, "deleteLater")
 
     # ------------------------------------------------------------------
     # Teardown
@@ -700,6 +805,10 @@ class OverlayGroupController:
                 from utils.overlay.card_metrics import CardMetrics
                 provider.apply_metrics(CardMetrics(self._scale))
             rects = self._compute_rects()
+            # Build the glow surface FIRST so it shows below the cards (it paints
+            # the soft halo that fills the central hole). Best-effort: it never
+            # raises into this transaction.
+            self._build_glow(rects)
             for state in self._states:
                 surface = self._surface_factory(state)
                 created.append(surface)
@@ -744,6 +853,7 @@ class OverlayGroupController:
             # reset framed (scale-1.0) metrics; restore the window. Stay Framed.
             self._restore_widgets(captured)
             self._teardown(created)
+            self._teardown_glow()
             self._reset_provider_scale()
             if minimized:
                 self._safe_call(self._window, "showNormal")
@@ -801,6 +911,7 @@ class OverlayGroupController:
         self._recompute_pending = False
         self._restore_widgets(self._captured)
         self._teardown(self._surfaces)
+        self._teardown_glow()  # destroy the owned glow surface (+ its _GlowLayer)
         self._reset_provider_scale()
         self._surfaces = []
         self._captured = []

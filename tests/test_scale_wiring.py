@@ -319,10 +319,43 @@ def test_provider_path_reasserts_above_on_scale(qapp, tab):
     backend.above_calls.clear()
     ctl.set_scale_by_notches(-2)          # schedules the debounced recompute
     ctl.flush_pending_recompute()         # run the provider recompute now
-    # 4 cards + emblem each get ABOVE re-applied after the recompute.
-    assert len(backend.above_calls) == 5
-    assert set(backend.above_calls) == set(ctl._surfaces)
+    # Every one of the 4 cards + emblem gets ABOVE re-applied after the recompute
+    # (the glow surface is also re-asserted, so it is a superset, not exactly 5).
+    assert set(ctl._surfaces).issubset(set(backend.above_calls))
+    assert len(ctl._surfaces) == 5
     ctl.leave()
+
+
+def test_cluster_spacing_matches_framed_grid_gap(qapp, tab):
+    """The overlay must place cards at the FRAMED grid spacing (grid_gap/2 from
+    center), not the spike's loose _GROUP_GAP=24. A regression to the loose gap
+    flings the cards far from the emblem (the 'completely offset' bug)."""
+    ctl, factory, win = _make(tab)
+    ctl.enter()
+    qapp.processEvents()
+    rects = ctl._compute_rects()
+    r0, r1 = rects[0], rects[1]
+    central_gap = r1.x() - (r0.x() + r0.width())  # between the two top cards
+    expected = 2 * round(CardMetrics(ctl._scale).grid_gap / 2)
+    assert central_gap == expected, f"central gap {central_gap} != framed {expected}"
+    assert central_gap < 40, "must be the tight framed gap, not the loose spike gap (48)"
+    ctl.leave()
+
+
+def test_glow_surface_built_on_enter_and_torn_down_on_leave(qapp, tab):
+    """The accent-glow surface (framed-parity halo behind the cluster) is created
+    below the cards on enter and destroyed on leave."""
+    import shiboken6
+    ctl, factory, win = _make(tab)
+    assert ctl._glow_surface is None
+    ctl.enter()
+    qapp.processEvents()
+    glow = ctl._glow_surface
+    assert glow is not None and ctl._glow_widget is not None
+    assert glow.isVisible()
+    ctl.leave()
+    qapp.processEvents()
+    assert ctl._glow_surface is None and ctl._glow_widget is None
 
 
 def test_reenter_uses_remembered_scale(qapp, tab):

@@ -1367,6 +1367,19 @@ class _CompactLayout(QWidget):
             return 0
         return self._emblem.width()
 
+    def card_accents(self) -> list:
+        """Per-slot accent QColor (slots 0-3) for the transparent-mode overlay
+        glow. Mirrors the framed _GlowLayer's per-cell accent so the overlay can
+        paint the same soft halo behind its card surfaces. Falls back to the
+        canonical idle grey when a cell has no accent yet."""
+        from PySide6.QtGui import QColor
+        out = []
+        for i in range(4):
+            cell = self._cells[i] if i < len(self._cells) else None
+            accent = cell.get("accent") if cell else None
+            out.append(QColor(accent) if accent is not None else QColor("#555555"))
+        return out
+
     # ── Overlay / transparent-mode geometry accessors ───────────────────────
     def card_body_paths(self):
         """Per-card painted body paths (rounded rect minus concave bite), in
