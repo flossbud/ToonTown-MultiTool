@@ -25,6 +25,7 @@ class ScaledCardView(QWidget):
         self._scale = 1.0
         self._card: QWidget | None = None
         self._proxy = None
+        self._peek_overlay = None  # QGraphicsPixmapItem of the controls at 100%
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
@@ -80,6 +81,11 @@ class ScaledCardView(QWidget):
         card = self._card
         if card is None:
             return None
+        # Drop any peek overlay first so a borrowed card is never left with a
+        # stale controls pixmap item floating in the scene.
+        if self._peek_overlay is not None:
+            self._scene.removeItem(self._peek_overlay)
+            self._peek_overlay = None
         card.removeEventFilter(self)
         if self._proxy is not None:
             self._proxy.setWidget(None)     # detach + un-own the card (NOT deleted)
@@ -102,6 +108,47 @@ class ScaledCardView(QWidget):
 
     def view_transform(self) -> QTransform:
         return self._view.transform()
+
+    def peek_opacity(self) -> float:
+        """Current body (proxy) opacity; 1.0 when nothing is hosted."""
+        return self._proxy.opacity() if self._proxy is not None else 1.0
+
+    def set_peek_opacity(self, body_opacity: float, control_rects=None) -> None:
+        """Dim the whole card to *body_opacity* and redraw *control_rects* at 100%.
+
+        The proxy item opacity dims everything (composited translucently against
+        the game behind the surface); a pixmap overlay of just the control rects,
+        grabbed live from the card, restores those widgets to full opacity on top.
+        Called every peek tick while dimmed so the keep-alive bar stays live.
+        body_opacity >= ~1.0 (or no rects) removes the overlay.
+        """
+        from PySide6.QtCore import Qt, QRect
+        from PySide6.QtGui import QPainter, QPixmap
+        if self._proxy is None:
+            return
+        self._proxy.setOpacity(body_opacity)
+        if body_opacity >= 0.999 or not control_rects or self._card is None:
+            if self._peek_overlay is not None:
+                self._scene.removeItem(self._peek_overlay)
+                self._peek_overlay = None
+            return
+        full = self._card.grab()
+        dpr = int(full.devicePixelRatio()) or 1
+        overlay = QPixmap(full.size())
+        overlay.setDevicePixelRatio(full.devicePixelRatio())
+        overlay.fill(Qt.transparent)
+        painter = QPainter(overlay)
+        for r in control_rects:
+            src = QRect(r.x() * dpr, r.y() * dpr, r.width() * dpr, r.height() * dpr)
+            painter.drawPixmap(r, full, src)
+        painter.end()
+        if self._peek_overlay is None:
+            self._peek_overlay = self._scene.addPixmap(overlay)
+            self._peek_overlay.setZValue(100)  # above the proxied card
+        else:
+            self._peek_overlay.setPixmap(overlay)
+        self._peek_overlay.setPos(0, 0)
+        self._peek_overlay.setOpacity(1.0)
 
     def _apply_transform(self) -> None:
         # setTransform REPLACES (never multiplies) so repeated calls don't compound.
