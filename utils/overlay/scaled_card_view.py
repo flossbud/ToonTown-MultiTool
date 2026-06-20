@@ -32,6 +32,11 @@ class ScaledCardView(QWidget):
 
         self._scene = QGraphicsScene(self)
         self._view = QGraphicsView(self._scene, self)
+        # Embedded-widget update()s (the keep-alive SmoothProgressBar repainting
+        # on each tick) must reliably reach the screen; the default partial
+        # update mode can skip the proxied child's region, so the bar would not
+        # paint/advance in the overlay. Full viewport update guarantees it.
+        self._view.setViewportUpdateMode(QGraphicsView.FullViewportUpdate)
         self._view.setRenderHints(
             QPainter.Antialiasing | QPainter.SmoothPixmapTransform | QPainter.TextAntialiasing
         )
