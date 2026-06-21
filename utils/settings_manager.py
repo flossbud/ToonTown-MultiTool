@@ -27,6 +27,7 @@ class SettingsManager:
             "launch_section_cc_collapsed":   False,
             "macos_permissions_onboarding_shown": False,
             "saved_colors":                       [],
+            "window_compositing_cache":           {},
         }
         self._callbacks = []
         self._load()
