@@ -92,7 +92,13 @@ def cached_mode_for(settings, signature):
 def cache_resolved_mode(settings, signature, mode):
     """Replace the cache with a single entry for this signature. Keyed to the
     current environment to prevent unbounded growth across environment changes
-    (any prior signature's entry is intentionally dropped)."""
+    (any prior signature's entry is intentionally dropped).
+
+    NOTE: has no runtime callers by design. The runner's deep-failure fallback
+    persists the native title bar via the global use_system_title_bar setting,
+    not this cache. This helper exists to pin BORDER_ONLY (or NATIVE_TITLE_BAR)
+    for a specific environment via spike/manual settings intervention; that is
+    the only way resolve_window_mode's BORDER_ONLY cache branch is reached."""
     settings.set(_CACHE_KEY, {signature: mode})
 
 
@@ -170,6 +176,12 @@ def run_frame_then_strip(window, *, settings, border_only=False):
         p = w.get_full_property(fe, 0)
         return list(p.value) if p else None
 
+    def _close():
+        try:
+            d.close()
+        except Exception:
+            pass
+
     try:
         _set_opacity(_STAGE_OPACITY)
         _set_motif(DECOR_BORDER if border_only else DECOR_ALL)
@@ -178,6 +190,7 @@ def run_frame_then_strip(window, *, settings, border_only=False):
             _reveal()
         except Exception:
             pass
+        _close()
         window.show()
         return
     window.show()
@@ -192,6 +205,7 @@ def run_frame_then_strip(window, *, settings, border_only=False):
             _set_motif(DECOR_NONE)
         window.setGeometry(*geom)
         _reveal()
+        _close()
 
     elapsed = {"t": 0}
 
@@ -210,6 +224,7 @@ def run_frame_then_strip(window, *, settings, border_only=False):
             done["v"] = True
             settings.set("use_system_title_bar", True)
             _reveal()
+            _close()
             return
         QTimer.singleShot(10, _poll)
 
@@ -218,5 +233,6 @@ def run_frame_then_strip(window, *, settings, border_only=False):
             return
         done["v"] = True
         _reveal()
+        _close()
     QTimer.singleShot(WATCHDOG_MS, _watchdog)
     QTimer.singleShot(10, _poll)
