@@ -51,7 +51,9 @@ def motif_hints_value(decorations):
 
 
 def environment_signature(*, qpa_platform, session_type, wm_name, qt_version):
-    """Stable cache key for the current environment."""
+    """Stable cache key for the current environment. The '|' separator assumes
+    the components contain no pipe; _NET_WM_NAME values are clean identifiers in
+    practice. A None wm_name renders as the literal 'None' (stable + distinct)."""
     return f"{qpa_platform}|{session_type}|{wm_name}|{qt_version}"
 
 
@@ -87,6 +89,7 @@ def cached_mode_for(settings, signature):
 
 
 def cache_resolved_mode(settings, signature, mode):
-    """Persist the resolved working mode for this signature. Stores a single
-    entry (the current environment) to avoid unbounded growth."""
+    """Replace the cache with a single entry for this signature. Keyed to the
+    current environment to prevent unbounded growth across environment changes
+    (any prior signature's entry is intentionally dropped)."""
     settings.set(_CACHE_KEY, {signature: mode})

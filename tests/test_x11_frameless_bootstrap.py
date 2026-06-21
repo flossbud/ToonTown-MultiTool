@@ -1,4 +1,3 @@
-import pytest
 from utils import x11_frameless_bootstrap as fb
 
 
@@ -133,3 +132,17 @@ def test_cache_miss_on_different_signature():
     s = _DictSettings()
     fb.cache_resolved_mode(s, "sig-A", fb.NATIVE_TITLE_BAR)
     assert fb.cached_mode_for(s, "sig-B") is None
+
+
+def test_frame_then_strip_on_unknown_wm():
+    # Unknown WM (None) on XWayland: default to bootstrap rather than skip it.
+    assert fb.resolve_window_mode(
+        platform="linux", session_type="wayland", qpa_platform="xcb",
+        wm_name=None, use_system_title_bar=False, cached_mode=None,
+    ) == fb.FRAME_THEN_STRIP
+
+
+def test_detect_wm_name_none_when_support_window_has_no_name():
+    # Support window present but _NET_WM_NAME absent -> None.
+    d = _FakeDisplay(wm_name=None, support_id=4242)
+    assert fb.detect_wm_name(d) is None
