@@ -93,3 +93,108 @@ def cache_resolved_mode(settings, signature, mode):
     current environment to prevent unbounded growth across environment changes
     (any prior signature's entry is intentionally dropped)."""
     settings.set(_CACHE_KEY, {signature: mode})
+
+
+# Strip timeout from the Task 1 spike (frame-extents appeared at ~10ms; 500ms is safe).
+FRAME_EXTENTS_TIMEOUT_MS = 500
+WATCHDOG_MS = 1500
+_STAGE_OPACITY = 1  # near-invisible; avoids 'exactly 0 optimized away'
+
+
+def show_with_bootstrap(window, *, settings, env, _run_frame_then_strip=None):
+    """Resolve the window mode and either show() normally or run the bootstrap.
+    `env` is a dict with keys: platform, session_type, qpa_platform, wm_name,
+    use_system_title_bar, qt_version. `_run_frame_then_strip` is injectable for
+    tests; defaults to the live runner."""
+    sig = environment_signature(
+        qpa_platform=env["qpa_platform"], session_type=env["session_type"],
+        wm_name=env["wm_name"], qt_version=env["qt_version"])
+    mode = resolve_window_mode(
+        platform=env["platform"], session_type=env["session_type"],
+        qpa_platform=env["qpa_platform"], wm_name=env["wm_name"],
+        use_system_title_bar=env["use_system_title_bar"],
+        cached_mode=cached_mode_for(settings, sig))
+
+    if mode in (PURE_FRAMELESS, NATIVE_TITLE_BAR):
+        window.show()
+        return
+
+    runner = _run_frame_then_strip or run_frame_then_strip
+    runner(window, settings=settings, signature=sig,
+           border_only=(mode == BORDER_ONLY))
+
+
+def run_frame_then_strip(window, *, settings, signature, border_only=False):
+    """Live frame-then-strip on the realized window. Stages near-invisible,
+    forces a server frame, strips it once Mutter creates the frame (keeps the
+    border when border_only=True), reasserts geometry, then reveals. On a
+    frame-extents timeout, persists the native title bar for the next launch.
+    Imports Qt/Xlib lazily so the module stays import-pure off X."""
+    from PySide6.QtCore import QTimer
+    from Xlib import display as _xd, Xatom
+
+    geom = (window.x(), window.y(), window.width(), window.height())
+    d = _xd.Display()
+    mwh = d.intern_atom("_MOTIF_WM_HINTS")
+    opacity = d.intern_atom("_NET_WM_WINDOW_OPACITY")
+    fe = d.intern_atom("_NET_FRAME_EXTENTS")
+    xid = int(window.winId())
+
+    def _set_motif(dec):
+        w = d.create_resource_object("window", xid)
+        w.change_property(mwh, mwh, 32, motif_hints_value(dec)); d.sync()
+
+    def _set_opacity(val):
+        w = d.create_resource_object("window", xid)
+        w.change_property(opacity, Xatom.CARDINAL, 32, [val]); d.sync()
+
+    def _del_opacity():
+        w = d.create_resource_object("window", xid)
+        w.delete_property(opacity); d.sync()
+
+    def _frame_extents():
+        w = d.create_resource_object("window", xid)
+        p = w.get_full_property(fe, 0)
+        return list(p.value) if p else None
+
+    _set_opacity(_STAGE_OPACITY)
+    _set_motif(DECOR_BORDER if border_only else DECOR_ALL)
+    window.show()
+
+    done = {"v": False}
+
+    def _finish_strip():
+        if done["v"]:
+            return
+        done["v"] = True
+        if not border_only:
+            _set_motif(DECOR_NONE)
+        window.setGeometry(*geom)
+        _del_opacity()
+
+    elapsed = {"t": 0}
+
+    def _poll():
+        if done["v"]:
+            return
+        elapsed["t"] += 10
+        ext = _frame_extents()
+        if ext and any(ext):
+            _finish_strip()
+            return
+        if elapsed["t"] >= FRAME_EXTENTS_TIMEOUT_MS:
+            # Decorated frame never appeared (deep failure). border_only needs
+            # the SAME frame, so escalate straight to the native title bar for
+            # the NEXT launch (via the existing setting) and reveal as-is now.
+            done["v"] = True
+            settings.set("use_system_title_bar", True)
+            _del_opacity()
+            return
+        QTimer.singleShot(10, _poll)
+
+    def _watchdog():
+        if not done["v"]:
+            done["v"] = True
+            _del_opacity()
+    QTimer.singleShot(WATCHDOG_MS, _watchdog)
+    QTimer.singleShot(10, _poll)

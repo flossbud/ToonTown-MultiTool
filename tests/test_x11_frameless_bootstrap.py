@@ -146,3 +146,31 @@ def test_detect_wm_name_none_when_support_window_has_no_name():
     # Support window present but _NET_WM_NAME absent -> None.
     d = _FakeDisplay(wm_name=None, support_id=4242)
     assert fb.detect_wm_name(d) is None
+
+
+def test_show_with_bootstrap_pure_path_calls_plain_show():
+    calls = {"show": 0, "boot": 0}
+    class W:
+        def show(self): calls["show"] += 1
+    fb.show_with_bootstrap(
+        W(), settings=_DictSettings(), env={
+            "platform": "darwin", "session_type": "", "qpa_platform": "cocoa",
+            "wm_name": None, "use_system_title_bar": False, "qt_version": "6.10.2",
+        },
+        _run_frame_then_strip=lambda *a, **k: calls.__setitem__("boot", calls["boot"] + 1),
+    )
+    assert calls["show"] == 1 and calls["boot"] == 0
+
+
+def test_show_with_bootstrap_invokes_runner_on_mutter():
+    calls = {"show": 0, "boot": 0}
+    class W:
+        def show(self): calls["show"] += 1
+    fb.show_with_bootstrap(
+        W(), settings=_DictSettings(), env={
+            "platform": "linux", "session_type": "wayland", "qpa_platform": "xcb",
+            "wm_name": "GNOME Shell", "use_system_title_bar": False, "qt_version": "6.10.2",
+        },
+        _run_frame_then_strip=lambda *a, **k: calls.__setitem__("boot", calls["boot"] + 1),
+    )
+    assert calls["boot"] == 1 and calls["show"] == 0  # runner owns the show
