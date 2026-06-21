@@ -672,6 +672,12 @@ class _CompactLayout(QWidget):
     `populate`, `set_card_brand`, `apply_theme`, `_set_keep_alive_collapsed`,
     `_animate_keep_alive_visibility`, `deactivate`, `_position_cards`."""
 
+    # Emitted (argless nudge) after content routing settles whenever the set of
+    # cells holding a detected window MAY have changed. The transparent-mode
+    # overlay controller subscribes to this and re-reads occupied_cells() to
+    # show/hide card surfaces. De-duped: only fires when the set actually changes.
+    occupied_cells_changed = Signal()
+
     def __init__(self, tab, parent=None):
         super().__init__(parent)
         self._tab = tab
@@ -686,6 +692,19 @@ class _CompactLayout(QWidget):
         # shells themselves never move or change shape; only which slot's widgets
         # they hold changes. See apply_cell_permutation.
         self._slot_to_cell: list[int] = [0, 1, 2, 3]
+        # Last-emitted occupied-cell set, for de-duping occupied_cells_changed.
+        self._last_occupied: frozenset[int] = frozenset()
+        # A window open/close changes the COUNT (window_ids_updated) but not the
+        # permutation; cell moves change the permutation (apply_cell_permutation).
+        # Self-wire the count path here so all occupancy notification lives in the
+        # provider; the permutation path notifies at the end of
+        # apply_cell_permutation. Ordering vs the tab's own update_toon_controls
+        # handler does not matter: the window manager sets ttr_window_ids BEFORE
+        # emitting window_ids_updated, so whichever slot fires first reads the
+        # already-updated count (and the de-dup makes a redundant notify a no-op).
+        wm = getattr(self._tab, "window_manager", None)
+        if wm is not None and hasattr(wm, "window_ids_updated"):
+            wm.window_ids_updated.connect(lambda _ids=None: self._notify_occupancy())
         self._emblem: _Emblem | None = None
         self._glow: _GlowLayer | None = None
         self._grid_host: QWidget | None = None
@@ -912,6 +931,7 @@ class _CompactLayout(QWidget):
 
         self._relayout_all()
         self._apply_initial_brands()
+        self._notify_occupancy()
 
     def control_rects(self, cell_index: int) -> list:
         """Card-local QRects of the five interactive control widgets in the shell
@@ -1109,6 +1129,7 @@ class _CompactLayout(QWidget):
         # manually-placed body + status dot for the moved content.
         self._apply_initial_brands()
         self._relayout_all()
+        self._notify_occupancy()
 
     def _size_cell(self, i: int, cell: dict) -> None:
         """Apply every metric-derived size / font / icon to slot `i`'s widgets
@@ -1489,6 +1510,26 @@ class _CompactLayout(QWidget):
         s = self._emblem.width()
         self._emblem.move(int(gx - s / 2.0), int(gy - s / 2.0))
         self._emblem.raise_()
+
+    def occupied_cells(self) -> frozenset[int]:
+        """Cells (0-3) whose routed slot currently has a detected game window.
+
+        Reads the live window count + this layout's own slot->cell routing, so it
+        agrees with what the cards actually display. Pure read; never raises."""
+        # Local import: the pure helper shares this method's name, so keeping the
+        # import in-scope avoids a confusing module-global shadow of the method.
+        from utils.window_cell_assignment import occupied_cells
+        wm = getattr(self._tab, "window_manager", None)
+        count = len(getattr(wm, "ttr_window_ids", [])) if wm is not None else 0
+        return occupied_cells(self._slot_to_cell, count)
+
+    def _notify_occupancy(self) -> None:
+        """Emit occupied_cells_changed iff the occupied set changed since last
+        emit. Called after the count or the permutation settles."""
+        cells = self.occupied_cells()
+        if cells != self._last_occupied:
+            self._last_occupied = cells
+            self.occupied_cells_changed.emit()
 
     # ── Overlay / transparent-mode reparent accessors (Task 4.1b) ────────────
     def slot_widget(self, slot: int) -> QWidget:

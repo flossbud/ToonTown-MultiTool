@@ -75,57 +75,144 @@ def _build_tab(qapp, tmp_path, monkeypatch):
 
 def test_identity_permutation_is_noop(qapp, tmp_path, monkeypatch):
     tab = _build_tab(qapp, tmp_path, monkeypatch)
-    c = tab._compact
-    c.apply_cell_permutation([0, 1, 2, 3])
-    assert c._slot_to_cell == [0, 1, 2, 3]
-    for i in range(4):
-        assert c._cells[i]["content_slot"] == i
-        assert tab.slot_badges[i].parentWidget() is c._cells[i]["portrait_frame"]
+    try:
+        c = tab._compact
+        c.apply_cell_permutation([0, 1, 2, 3])
+        assert c._slot_to_cell == [0, 1, 2, 3]
+        for i in range(4):
+            assert c._cells[i]["content_slot"] == i
+            assert tab.slot_badges[i].parentWidget() is c._cells[i]["portrait_frame"]
+    finally:
+        tab.input_service.shutdown()
 
 
 def test_vertical_stack_routes_content_to_left_column(qapp, tmp_path, monkeypatch):
     tab = _build_tab(qapp, tmp_path, monkeypatch)
-    c = tab._compact
-    # stack: slot0->cell0(TL), slot1->cell2(BL); empties slot2->cell1, slot3->cell3
-    c.apply_cell_permutation([0, 2, 1, 3])
-    assert c._slot_to_cell == [0, 2, 1, 3]
-    assert c._cells[0]["content_slot"] == 0   # TL shell holds slot 0 (top window)
-    assert c._cells[2]["content_slot"] == 1   # BL shell holds slot 1 (bottom window)
-    assert c._cells[1]["content_slot"] == 2
-    assert c._cells[3]["content_slot"] == 3
-    # slot 1's shared widgets are routed into the BL shell (cell 2)
-    assert tab.slot_badges[1].parentWidget() is c._cells[2]["portrait_frame"]
-    assert tab.toon_labels[1][1].parentWidget() is c._cells[2]["portrait_frame"]
-    assert c._cells[2]["cell"].isAncestorOf(tab.toon_buttons[1])
-    # and cell 0 still holds slot 0
-    assert tab.slot_badges[0].parentWidget() is c._cells[0]["portrait_frame"]
+    try:
+        c = tab._compact
+        # stack: slot0->cell0(TL), slot1->cell2(BL); empties slot2->cell1, slot3->cell3
+        c.apply_cell_permutation([0, 2, 1, 3])
+        assert c._slot_to_cell == [0, 2, 1, 3]
+        assert c._cells[0]["content_slot"] == 0   # TL shell holds slot 0 (top window)
+        assert c._cells[2]["content_slot"] == 1   # BL shell holds slot 1 (bottom window)
+        assert c._cells[1]["content_slot"] == 2
+        assert c._cells[3]["content_slot"] == 3
+        # slot 1's shared widgets are routed into the BL shell (cell 2)
+        assert tab.slot_badges[1].parentWidget() is c._cells[2]["portrait_frame"]
+        assert tab.toon_labels[1][1].parentWidget() is c._cells[2]["portrait_frame"]
+        assert c._cells[2]["cell"].isAncestorOf(tab.toon_buttons[1])
+        # and cell 0 still holds slot 0
+        assert tab.slot_badges[0].parentWidget() is c._cells[0]["portrait_frame"]
+    finally:
+        tab.input_service.shutdown()
 
 
 def test_permutation_then_identity_restores(qapp, tmp_path, monkeypatch):
     tab = _build_tab(qapp, tmp_path, monkeypatch)
-    c = tab._compact
-    c.apply_cell_permutation([0, 2, 1, 3])
-    c.apply_cell_permutation([0, 1, 2, 3])
-    assert c._slot_to_cell == [0, 1, 2, 3]
-    for i in range(4):
-        assert c._cells[i]["content_slot"] == i
-        assert tab.slot_badges[i].parentWidget() is c._cells[i]["portrait_frame"]
+    try:
+        c = tab._compact
+        c.apply_cell_permutation([0, 2, 1, 3])
+        c.apply_cell_permutation([0, 1, 2, 3])
+        assert c._slot_to_cell == [0, 1, 2, 3]
+        for i in range(4):
+            assert c._cells[i]["content_slot"] == i
+            assert tab.slot_badges[i].parentWidget() is c._cells[i]["portrait_frame"]
+    finally:
+        tab.input_service.shutdown()
 
 
 def test_malformed_permutation_is_ignored(qapp, tmp_path, monkeypatch):
     tab = _build_tab(qapp, tmp_path, monkeypatch)
-    c = tab._compact
-    c.apply_cell_permutation([0, 0, 1, 2])   # not a bijection -> ignored
-    assert c._slot_to_cell == [0, 1, 2, 3]
-    c.apply_cell_permutation([0, 1])          # wrong length -> ignored
-    assert c._slot_to_cell == [0, 1, 2, 3]
+    try:
+        c = tab._compact
+        c.apply_cell_permutation([0, 0, 1, 2])   # not a bijection -> ignored
+        assert c._slot_to_cell == [0, 1, 2, 3]
+        c.apply_cell_permutation([0, 1])          # wrong length -> ignored
+        assert c._slot_to_cell == [0, 1, 2, 3]
+    finally:
+        tab.input_service.shutdown()
 
 
 def test_cell_assignment_signal_reroutes_compact(qapp, tmp_path, monkeypatch):
     """The window manager's cell_assignment_changed signal drives the compact
     layout's re-routing (the wiring in MultitoonTab)."""
     tab = _build_tab(qapp, tmp_path, monkeypatch)
-    tab.window_manager.cell_assignment_changed.emit([0, 2, 1, 3])
-    qapp.processEvents()
-    assert tab._compact._slot_to_cell == [0, 2, 1, 3]
-    assert tab.slot_badges[1].parentWidget() is tab._compact._cells[2]["portrait_frame"]
+    try:
+        tab.window_manager.cell_assignment_changed.emit([0, 2, 1, 3])
+        qapp.processEvents()
+        assert tab._compact._slot_to_cell == [0, 2, 1, 3]
+        assert tab.slot_badges[1].parentWidget() is tab._compact._cells[2]["portrait_frame"]
+    finally:
+        tab.input_service.shutdown()
+
+
+def test_occupied_cells_tracks_count_and_permutation(qapp, tmp_path, monkeypatch):
+    tab = _build_tab(qapp, tmp_path, monkeypatch)
+    try:
+        compact = tab._compact
+        tab.window_manager.ttr_window_ids = ["a", "b"]
+        assert compact.occupied_cells() == frozenset({0, 1})       # identity
+        compact.apply_cell_permutation([0, 2, 1, 3])               # stack
+        assert compact.occupied_cells() == frozenset({0, 2})
+    finally:
+        tab.input_service.shutdown()
+
+
+def test_apply_cell_permutation_emits_occupancy_after_routing(qapp, tmp_path, monkeypatch):
+    tab = _build_tab(qapp, tmp_path, monkeypatch)
+    try:
+        compact = tab._compact
+        tab.window_manager.ttr_window_ids = ["a", "b"]
+        seen = []
+        compact.occupied_cells_changed.connect(
+            lambda: seen.append(compact.occupied_cells()))
+        compact.apply_cell_permutation([0, 2, 1, 3])
+        assert seen and seen[-1] == frozenset({0, 2})
+    finally:
+        tab.input_service.shutdown()
+
+
+def test_window_ids_change_emits_occupancy(qapp, tmp_path, monkeypatch):
+    tab = _build_tab(qapp, tmp_path, monkeypatch)
+    try:
+        compact = tab._compact
+        seen = []
+        compact.occupied_cells_changed.connect(lambda: seen.append(True))
+        tab.window_manager.ttr_window_ids = ["a"]
+        tab.window_manager.window_ids_updated.emit(["a"])
+        qapp.processEvents()
+        assert seen  # the count change fired an occupancy notification
+    finally:
+        tab.input_service.shutdown()
+
+
+def test_occupancy_emit_is_deduped(qapp, tmp_path, monkeypatch):
+    tab = _build_tab(qapp, tmp_path, monkeypatch)
+    try:
+        compact = tab._compact
+        tab.window_manager.ttr_window_ids = ["a", "b"]
+        count = []
+        compact.occupied_cells_changed.connect(lambda: count.append(1))
+        compact.apply_cell_permutation([0, 2, 1, 3])   # change -> 1 emit
+        compact.apply_cell_permutation([0, 2, 1, 3])   # no-op perm -> no emit
+        assert len(count) == 1
+    finally:
+        tab.input_service.shutdown()
+
+
+def test_window_ids_emit_deduped_when_count_unchanged(qapp, tmp_path, monkeypatch):
+    # Isolates _notify_occupancy's OWN de-dup: the window_ids path always reaches
+    # it (unlike apply_cell_permutation's early-return), so two emits at the same
+    # count must fire occupied_cells_changed only once.
+    tab = _build_tab(qapp, tmp_path, monkeypatch)
+    try:
+        compact = tab._compact
+        count = []
+        compact.occupied_cells_changed.connect(lambda: count.append(1))
+        tab.window_manager.ttr_window_ids = ["a"]
+        tab.window_manager.window_ids_updated.emit(["a"])
+        tab.window_manager.window_ids_updated.emit(["a"])   # unchanged count
+        qapp.processEvents()
+        assert len(count) == 1
+    finally:
+        tab.input_service.shutdown()

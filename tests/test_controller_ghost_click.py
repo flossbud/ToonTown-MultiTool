@@ -52,6 +52,7 @@ def _wire(controller, provider):
     ]
     controller._card_provider = provider
     controller._active = True
+    controller._visible_cells = {0, 1}
     controller._scale = 1.0
 
 
@@ -111,6 +112,7 @@ def test_uses_surface_id_not_list_index(qapp):
         _StubSurface(c._states[0], QRect(100, 100, 200, 200)),  # index 0, id 2
         _StubSurface(c._states[1], QRect(400, 100, 200, 200)),  # index 1, id 0
     ]
+    c._visible_cells = {2, 0}  # both surfaces are mapped for this permutation test
     c.on_ghost_event(("press", [(0, 115, 115)]))   # in the index-0 surface (id 2)
     c.on_ghost_event(("press", [(0, 415, 115)]))   # in the index-1 surface (id 0)
     assert provider.delivered == [(2, 15, 15), (0, 15, 15)]
@@ -136,3 +138,14 @@ def test_gate_off_when_no_settings(qapp):
     _wire(c, provider)
     c.on_ghost_event(("press", [(0, 115, 115)]))
     assert provider.delivered == []
+
+
+def test_ghost_click_skips_hidden_card(qapp):
+    c, provider = _make((True, True))
+    c._visible_cells = {0}                  # card 1 hidden (no window there)
+    # (420,120) is on card 1's control (card-local (20,20)), but card 1 is hidden:
+    c._ghost_click_pass([(0, 420, 120)])
+    assert provider.delivered == []
+    # (120,120) is on visible card 0's control -> delivers to surface_id 0:
+    c._ghost_click_pass([(0, 120, 120)])
+    assert provider.delivered and provider.delivered[-1][0] == 0
