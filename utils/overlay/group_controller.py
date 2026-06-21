@@ -553,11 +553,20 @@ class OverlayGroupController:
         self._peek_store.clear()
 
     def _ghost_payload_to_logical(self, payload):
-        """Convert a ghost payload's native points to logical coords. Malformed
-        payloads pass through unchanged (GhostPointStore.ingest ignores them)."""
+        """Convert a ghost payload's native points to logical coords, fetching the
+        screen list once for the whole batch (motion fires at refresh rate).
+
+        A malformed payload - bad top-level shape, or a point that will not unpack
+        - is returned UNCHANGED as a best-effort degrade, not a correctness path;
+        the well-formed service payloads always convert. (A returned-unconverted
+        payload is not itself re-sanitised downstream, so this only stays safe
+        because the service never emits one.)"""
+        from PySide6.QtGui import QGuiApplication
         try:
             kind, items = payload
-            conv = [(slot, *emitted_to_logical(x, y)) for slot, x, y in items]
+            screens = QGuiApplication.screens()
+            conv = [(slot, *emitted_to_logical(x, y, screens))
+                    for slot, x, y in items]
         except (TypeError, ValueError):
             return payload
         return (kind, conv)
@@ -572,18 +581,25 @@ class OverlayGroupController:
 
     def _ghost_click_pass(self, items) -> None:
         """Map each (already-logical) ghost point to a card control and deliver a
-        synthetic click there. Indexed by surface_id, matching control_rects."""
-        cards = []
-        for st, su in self._card_surfaces():
-            g = su.geometry()
-            rects = self._card_provider.control_rects(st.surface_id)
-            rect_tuples = [(r.x(), r.y(), r.width(), r.height()) for r in rects]
-            cards.append((st.surface_id,
-                          (g.x(), g.y(), g.width(), g.height()),
-                          rect_tuples))
-        points = [(x, y) for _slot, x, y in items]
-        for surface_id, x, y in control_hits(points, cards, self._scale):
-            self._card_provider.deliver_ghost_click(surface_id, x, y)
+        synthetic click there. Indexed by surface_id, matching control_rects.
+
+        Wrapped defensively: on_ghost_event is a directly-connected Qt slot, so a
+        misbehaving provider must not raise into Qt's signal dispatch - matching
+        _apply_input_region's never-crash-on-shape convention."""
+        try:
+            cards = []
+            for st, su in self._card_surfaces():
+                g = su.geometry()
+                rects = self._card_provider.control_rects(st.surface_id)
+                rect_tuples = [(r.x(), r.y(), r.width(), r.height()) for r in rects]
+                cards.append((st.surface_id,
+                              (g.x(), g.y(), g.width(), g.height()),
+                              rect_tuples))
+            points = [(x, y) for _slot, x, y in items]
+            for surface_id, x, y in control_hits(points, cards, self._scale):
+                self._card_provider.deliver_ghost_click(surface_id, x, y)
+        except Exception:
+            pass
 
     def _card_surfaces(self):
         """[(state, surface), ...] for the four card surfaces (emblem excluded)."""

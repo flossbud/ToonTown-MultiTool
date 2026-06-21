@@ -101,8 +101,38 @@ def test_gate_off_when_ghosts_off(qapp):
     assert provider.delivered == []
 
 
-def test_uses_surface_id_for_second_card(qapp):
+def test_uses_surface_id_not_list_index(qapp):
+    # Permuted cluster: list index != surface_id, so a regression using the
+    # enumerate index instead of st.surface_id would deliver the WRONG id. This
+    # guards the documented 2-toon permuted-cluster bug class.
     c, provider = _make((True, True))
-    # global (415,115) in surface 1 -> local (15,15), inside the control.
-    c.on_ghost_event(("press", [(1, 415, 115)]))
-    assert provider.delivered == [(1, 15, 15)]
+    c._states = [SurfaceState(surface_id=2), SurfaceState(surface_id=0)]
+    c._surfaces = [
+        _StubSurface(c._states[0], QRect(100, 100, 200, 200)),  # index 0, id 2
+        _StubSurface(c._states[1], QRect(400, 100, 200, 200)),  # index 1, id 0
+    ]
+    c.on_ghost_event(("press", [(0, 115, 115)]))   # in the index-0 surface (id 2)
+    c.on_ghost_event(("press", [(0, 415, 115)]))   # in the index-1 surface (id 0)
+    assert provider.delivered == [(2, 15, 15), (0, 15, 15)]
+
+
+def test_gate_off_when_inactive(qapp):
+    c, provider = _make((True, True))
+    c._active = False
+    c.on_ghost_event(("press", [(0, 115, 115)]))
+    assert provider.delivered == []
+
+
+def test_gate_off_when_no_provider(qapp):
+    c, provider = _make((True, True))
+    c._card_provider = None
+    c.on_ghost_event(("press", [(0, 115, 115)]))
+    assert provider.delivered == []
+
+
+def test_gate_off_when_no_settings(qapp):
+    provider = _RecordingProvider()
+    c = OverlayGroupController(window=None, settings=None, card_provider=provider)
+    _wire(c, provider)
+    c.on_ghost_event(("press", [(0, 115, 115)]))
+    assert provider.delivered == []
