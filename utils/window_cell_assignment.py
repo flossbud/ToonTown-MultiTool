@@ -72,3 +72,19 @@ def assign_window_cells(centers):
     for placed_index, cell in zip(placed, best_perm):
         cells[placed_index] = cell
     return cells
+
+
+def occupied_cells(slot_to_cell, window_count) -> frozenset[int]:
+    """Cells (0-3) that currently hold a detected game window.
+
+    ``slot_to_cell[i]`` is the 2x2 cell that slot i's content is routed to; the
+    dense window list fills slots 0..window_count-1, so those slots' cells are the
+    occupied ones. Combining the COUNT with the routing (rather than reading the
+    routing alone) is load-bearing: detection can be disabled while a stale
+    permutation lingers, so only the count tells us a cell is truly empty. Pure;
+    total for a numeric ``window_count`` (clamps it into [0, len(slot_to_cell)]).
+    Returns the SET of occupied cells, so two slots sharing a cell count once
+    (the real routing is always a bijection, so that never happens in practice).
+    """
+    n = max(0, min(int(window_count), len(slot_to_cell)))
+    return frozenset(slot_to_cell[i] for i in range(n))

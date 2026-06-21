@@ -6,7 +6,7 @@ Run (NEVER the whole tests/ dir):
 """
 from __future__ import annotations
 
-from utils.window_cell_assignment import assign_window_cells
+from utils.window_cell_assignment import assign_window_cells, occupied_cells
 
 
 # Cells: 0=TL, 1=TR, 2=BL, 3=BR.
@@ -68,3 +68,31 @@ def test_result_is_deterministic_on_exact_ties():
     # tie-break must still produce a stable, distinct-cell assignment.
     centers = [(50, 50)] * 4
     assert assign_window_cells(centers) == [0, 1, 2, 3]
+
+
+def test_occupied_cells_identity_partial():
+    # 2 windows, identity routing -> top row cells {0,1}
+    assert occupied_cells([0, 1, 2, 3], 2) == frozenset({0, 1})
+
+
+def test_occupied_cells_permuted_vertical_stack():
+    # 2 windows, slot 1 routed to cell 2 (vertical stack) -> {0,2}
+    assert occupied_cells([0, 2, 1, 3], 2) == frozenset({0, 2})
+
+
+def test_occupied_cells_empty_and_full():
+    assert occupied_cells([0, 1, 2, 3], 0) == frozenset()
+    assert occupied_cells([0, 1, 2, 3], 4) == frozenset({0, 1, 2, 3})
+    # defensive: an empty routing with a positive count yields no cells
+    assert occupied_cells([], 3) == frozenset()
+
+
+def test_occupied_cells_clamps_and_floors_count():
+    # count larger than 4 clamps to the routing length; negative floors to 0
+    assert occupied_cells([0, 1, 2, 3], 9) == frozenset({0, 1, 2, 3})
+    assert occupied_cells([0, 1, 2, 3], -1) == frozenset()
+
+
+def test_occupied_cells_short_routing():
+    # defensive: a short routing list never indexes past its length
+    assert occupied_cells([2, 0], 5) == frozenset({2, 0})
