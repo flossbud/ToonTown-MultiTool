@@ -1,10 +1,11 @@
-"""Resolve the main window's compositing mode and (later) run the GNOME/Mutter
+"""Resolve the main window's compositing mode and run the GNOME/Mutter
 frame-then-strip bootstrap. See
 docs/superpowers/specs/2026-06-21-gnome-frameless-window-bootstrap-design.md.
 
-This module currently holds the pure decision + encoder functions, WM detection,
-and settings-cache helpers. The live X sequence (run_frame_then_strip /
-show_with_bootstrap) is added in a later task."""
+Holds the pure decision + encoder functions, WM detection, settings-cache
+helpers, and the live X sequence (run_frame_then_strip / show_with_bootstrap).
+Qt/Xlib are imported lazily inside the runner so the module stays import-pure
+on platforms without an X server."""
 from __future__ import annotations
 
 # Resolved-mode constants
@@ -120,45 +121,65 @@ def show_with_bootstrap(window, *, settings, env, _run_frame_then_strip=None):
         return
 
     runner = _run_frame_then_strip or run_frame_then_strip
-    runner(window, settings=settings, signature=sig,
-           border_only=(mode == BORDER_ONLY))
+    runner(window, settings=settings, border_only=(mode == BORDER_ONLY))
 
 
-def run_frame_then_strip(window, *, settings, signature, border_only=False):
+def run_frame_then_strip(window, *, settings, border_only=False):
     """Live frame-then-strip on the realized window. Stages near-invisible,
     forces a server frame, strips it once Mutter creates the frame (keeps the
     border when border_only=True), reasserts geometry, then reveals. On a
     frame-extents timeout, persists the native title bar for the next launch.
-    Imports Qt/Xlib lazily so the module stays import-pure off X."""
+    Imports Qt/Xlib lazily so the module stays import-pure off X; any X setup or
+    staging error falls back to a plain show() so the app is never left hidden."""
     from PySide6.QtCore import QTimer
-    from Xlib import display as _xd, Xatom
 
-    geom = (window.x(), window.y(), window.width(), window.height())
-    d = _xd.Display()
-    mwh = d.intern_atom("_MOTIF_WM_HINTS")
-    opacity = d.intern_atom("_NET_WM_WINDOW_OPACITY")
-    fe = d.intern_atom("_NET_FRAME_EXTENTS")
-    xid = int(window.winId())
+    try:
+        from Xlib import display as _xd, Xatom
+        geom = (window.x(), window.y(), window.width(), window.height())
+        d = _xd.Display()
+        mwh = d.intern_atom("_MOTIF_WM_HINTS")
+        opacity = d.intern_atom("_NET_WM_WINDOW_OPACITY")
+        fe = d.intern_atom("_NET_FRAME_EXTENTS")
+        xid = int(window.winId())
+    except Exception:
+        window.show()
+        return
 
     def _set_motif(dec):
         w = d.create_resource_object("window", xid)
-        w.change_property(mwh, mwh, 32, motif_hints_value(dec)); d.sync()
+        w.change_property(mwh, mwh, 32, motif_hints_value(dec))
+        d.sync()
 
     def _set_opacity(val):
         w = d.create_resource_object("window", xid)
-        w.change_property(opacity, Xatom.CARDINAL, 32, [val]); d.sync()
+        w.change_property(opacity, Xatom.CARDINAL, 32, [val])
+        d.sync()
 
-    def _del_opacity():
+    def _reveal():
+        # Prefer deleting the opacity property (fully opaque); if that fails,
+        # set 0xFFFFFFFF so the window can never be left staged-invisible.
         w = d.create_resource_object("window", xid)
-        w.delete_property(opacity); d.sync()
+        try:
+            w.delete_property(opacity)
+        except Exception:
+            w.change_property(opacity, Xatom.CARDINAL, 32, [0xFFFFFFFF])
+        d.sync()
 
     def _frame_extents():
         w = d.create_resource_object("window", xid)
         p = w.get_full_property(fe, 0)
         return list(p.value) if p else None
 
-    _set_opacity(_STAGE_OPACITY)
-    _set_motif(DECOR_BORDER if border_only else DECOR_ALL)
+    try:
+        _set_opacity(_STAGE_OPACITY)
+        _set_motif(DECOR_BORDER if border_only else DECOR_ALL)
+    except Exception:
+        try:
+            _reveal()
+        except Exception:
+            pass
+        window.show()
+        return
     window.show()
 
     done = {"v": False}
@@ -170,7 +191,7 @@ def run_frame_then_strip(window, *, settings, signature, border_only=False):
         if not border_only:
             _set_motif(DECOR_NONE)
         window.setGeometry(*geom)
-        _del_opacity()
+        _reveal()
 
     elapsed = {"t": 0}
 
@@ -188,13 +209,14 @@ def run_frame_then_strip(window, *, settings, signature, border_only=False):
             # the NEXT launch (via the existing setting) and reveal as-is now.
             done["v"] = True
             settings.set("use_system_title_bar", True)
-            _del_opacity()
+            _reveal()
             return
         QTimer.singleShot(10, _poll)
 
     def _watchdog():
-        if not done["v"]:
-            done["v"] = True
-            _del_opacity()
+        if done["v"]:
+            return
+        done["v"] = True
+        _reveal()
     QTimer.singleShot(WATCHDOG_MS, _watchdog)
     QTimer.singleShot(10, _poll)
