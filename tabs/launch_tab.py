@@ -495,6 +495,11 @@ class LaunchTab(QWidget):
         return bool(slot and getattr(slot, "launcher", None)
                     and slot.launcher.is_running())
 
+    def launch_account(self, game: str, account_id: str) -> None:
+        """Public entry for coordinator-triggered launches (e.g. the emblem
+        right-click menu). Forwards to the internal launch handler."""
+        self._on_launch(game, account_id)
+
     def set_overlay_active_provider(self, fn) -> None:
         """Install a ``() -> bool`` predicate reporting whether the transparent
         overlay is active (so failure dialogs raise above it)."""

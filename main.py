@@ -500,6 +500,9 @@ class MultiToonTool(QMainWindow):
             # is minimized.
             on_active_changed=self.multitoon_tab.set_overlay_active,
         )
+        # Failure dialogs from menu-triggered launches must sit above the overlay.
+        # is_active is a @property, so wrap it in a lambda to read it at call time.
+        self.launch_tab.set_overlay_active_provider(lambda: self._mode_controller.is_active)
         # Hover-peek: feed click-sync ghost cursor positions into the overlay so a
         # ghost over a card dims it too (mirrors the real pointer). Guarded - the
         # click-sync service is None on platforms without click-sync.
@@ -511,6 +514,7 @@ class MultiToonTool(QMainWindow):
         if self._overlay_backend.is_available():
             emblem.set_interactive(True)
             self._mode_controller.connect_emblem(emblem)
+            emblem.context_menu_requested.connect(self._show_emblem_launch_menu)
         else:
             emblem.setToolTip("Transparent mode requires the X11 Shape extension")
 
@@ -1207,6 +1211,47 @@ class MultiToonTool(QMainWindow):
                 lambda: setattr(self, "_credits_transitioning", False)
             )
         return group
+
+    def _show_emblem_launch_menu(self, global_pos):
+        """Right-click on the emblem: in transparent mode, show the recent-launch
+        menu; when framed, preserve the prior behavior (enter transparent mode)."""
+        from PySide6.QtWidgets import QMenu
+
+        if not self._mode_controller.is_active:   # is_active is a @property
+            self._mode_controller.toggle()   # framed: right-click enters transparent
+            return
+
+        model = self.launch_tab.recent_launch_menu_model()
+        menu = QMenu(self)                   # parented to the main window, NOT the emblem
+        if model.status == "ok":
+            for item in model.items:
+                text = item.display_label
+                if model.mixed_games:
+                    text = f"{'TTR' if item.game == 'ttr' else 'CC'}  -  {text}"
+                act = menu.addAction(text)
+                act.setData((item.game, item.account_id))
+        elif model.status == "keyring_locked":
+            menu.addAction("Unlock accounts in Launch tab").setData(("__nav__", None))
+        else:  # empty
+            menu.addAction("Add Account").setData(("__nav__", None))
+
+        chosen = menu.exec(global_pos)       # blocks; returns the chosen QAction or None
+        if chosen is not None:
+            self._dispatch_emblem_menu_action(chosen.data())
+
+    def _dispatch_emblem_menu_action(self, data):
+        """Route a chosen emblem-menu action. Runs AFTER the menu closes (no grab
+        held). ``data`` is ``(game, account_id)`` or ``(\"__nav__\", None)``."""
+        game, account_id = data
+        if game == "__nav__":
+            self._mode_controller.leave()    # restore the main window
+            self.nav_select(1)               # open the Launch tab
+            return
+        # Re-check at dispatch time so the menu never stops a game that started
+        # running between model-build and click.
+        if self.launch_tab.is_account_running(game, account_id):
+            return
+        self.launch_tab.launch_account(game, account_id)
 
     def nav_select(self, index: int):
         if self.stack.currentIndex() == index and getattr(self, "_initialized_nav", False):
