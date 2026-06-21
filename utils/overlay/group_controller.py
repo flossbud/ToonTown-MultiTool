@@ -583,23 +583,28 @@ class OverlayGroupController:
         """Map each (already-logical) ghost point to a card control and deliver a
         synthetic click there. Indexed by surface_id, matching control_rects.
 
-        Wrapped defensively: on_ghost_event is a directly-connected Qt slot, so a
-        misbehaving provider must not raise into Qt's signal dispatch - matching
-        _apply_input_region's never-crash-on-shape convention."""
-        try:
-            cards = []
-            for st, su in self._card_surfaces():
+        Defensive per card: on_ghost_event is a QUEUED Qt slot (the service emits
+        ghost events from its capture thread, marshalled to the GUI thread), so a
+        misbehaving provider must not raise into Qt's dispatch. Isolating each card
+        means one bad surface drops only its own click, never the whole press -
+        matching the overlay's never-crash-on-shape convention."""
+        cards = []
+        for st, su in self._card_surfaces():
+            try:
                 g = su.geometry()
                 rects = self._card_provider.control_rects(st.surface_id)
                 rect_tuples = [(r.x(), r.y(), r.width(), r.height()) for r in rects]
                 cards.append((st.surface_id,
                               (g.x(), g.y(), g.width(), g.height()),
                               rect_tuples))
-            points = [(x, y) for _slot, x, y in items]
-            for surface_id, x, y in control_hits(points, cards, self._scale):
+            except Exception:
+                continue
+        points = [(x, y) for _slot, x, y in items]
+        for surface_id, x, y in control_hits(points, cards, self._scale):
+            try:
                 self._card_provider.deliver_ghost_click(surface_id, x, y)
-        except Exception:
-            pass
+            except Exception:
+                continue
 
     def _card_surfaces(self):
         """[(state, surface), ...] for the four card surfaces (emblem excluded)."""
