@@ -1223,21 +1223,31 @@ class MultiToonTool(QMainWindow):
 
         model = self.launch_tab.recent_launch_menu_model()
         menu = QMenu(self)                   # parented to the main window, NOT the emblem
-        if model.status == "ok":
-            for item in model.items:
-                text = item.display_label
-                if model.mixed_games:
-                    text = f"{'TTR' if item.game == 'ttr' else 'CC'}  -  {text}"
-                act = menu.addAction(text)
-                act.setData((item.game, item.account_id))
-        elif model.status == "keyring_locked":
-            menu.addAction("Unlock accounts in Launch tab").setData(("__nav__", None))
-        else:  # empty
-            menu.addAction("Add Account").setData(("__nav__", None))
+        for text, data in self._emblem_menu_entries(model):
+            menu.addAction(text).setData(data)
 
         chosen = menu.exec(global_pos)       # blocks; returns the chosen QAction or None
         if chosen is not None:
             self._dispatch_emblem_menu_action(chosen.data())
+
+    @staticmethod
+    def _emblem_menu_entries(model):
+        """Map a RecentMenuModel to the ordered ``(text, data)`` menu entries.
+        Pure (no Qt), so the label/prefix/data mapping is unit-testable; the QMenu
+        build/exec around it is WM-dependent and live-validated. ``data`` is
+        ``(game, account_id)`` for a launch item or ``("__nav__", None)`` for the
+        empty/locked navigation item."""
+        if model.status == "ok":
+            entries = []
+            for item in model.items:
+                text = item.display_label
+                if model.mixed_games:
+                    text = f"{'TTR' if item.game == 'ttr' else 'CC'}  -  {text}"
+                entries.append((text, (item.game, item.account_id)))
+            return entries
+        if model.status == "keyring_locked":
+            return [("Unlock accounts in Launch tab", ("__nav__", None))]
+        return [("Add Account", ("__nav__", None))]   # empty
 
     def _dispatch_emblem_menu_action(self, data):
         """Route a chosen emblem-menu action. Runs AFTER the menu closes (no grab

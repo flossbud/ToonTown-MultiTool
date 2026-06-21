@@ -510,19 +510,32 @@ class LaunchTab(QWidget):
         from utils.recent_launches import (
             build_recent_menu_model, resolve_account_view,
         )
+        cred = self.cred_manager
+        # Resolve all account metadata in ONE pass, keyed by id -> (index, meta),
+        # so each CC launcher token is read from keyring at most once. (The previous
+        # per-id _global_index_of() rescanned the whole list - re-reading every CC
+        # token on each MRU id at menu-open, on the GUI thread.) Skip the pass
+        # entirely when build_recent_menu_model's keyring-locked short-circuit will
+        # fire, so a locked keyring never triggers the (timeout-prone) reads.
+        if not cred.keyring_available and cred.count() > 0:
+            meta_by_id = {}
+        else:
+            meta_by_id = {meta.id: (i, meta)
+                          for i, meta in enumerate(cred.get_accounts_metadata())}
 
         def account_for(aid):
-            idx = self._global_index_of(aid)
-            if idx is None:
+            entry = meta_by_id.get(aid)
+            if entry is None:
                 return None
-            return resolve_account_view(self.cred_manager, idx)
+            idx, meta = entry
+            return resolve_account_view(cred, idx, meta)
 
         return build_recent_menu_model(
             self._recent_launches.ordered_ids(),
             account_for,
             self.is_account_running,
-            self.cred_manager.keyring_available,
-            self.cred_manager.count(),
+            cred.keyring_available,
+            cred.count(),
         )
 
     def _position_of(self, game: str, account_id: str) -> int:

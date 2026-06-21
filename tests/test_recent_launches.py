@@ -104,47 +104,50 @@ class _Cred:
         return self._a[idx]
 
 
+def _resolve(cred, i):
+    # The caller fetches metadata once and passes it in; mirror that here.
+    return resolve_account_view(cred, i, cred.get_account_metadata(i))
+
+
 def test_resolve_ttr_launchable_with_password():
     cred = _Cred([_acct("a", "ttr", password="pw")])
-    assert resolve_account_view(cred, 0) == ("ttr", "u", True)
+    assert _resolve(cred, 0) == ("ttr", "u", True)
 
 
 def test_resolve_ttr_unlaunchable_without_password():
     cred = _Cred([_acct("a", "ttr", password="")])
-    assert resolve_account_view(cred, 0) == ("ttr", "u", False)
+    assert _resolve(cred, 0) == ("ttr", "u", False)
 
 
 def test_resolve_cc_token_is_launchable_without_password_read():
     cred = _Cred([_acct("c", "cc", password="", token="tok")])
-    assert resolve_account_view(cred, 0) == ("cc", "u", True)
+    assert _resolve(cred, 0) == ("cc", "u", True)
     assert cred.password_reads == 0          # token short-circuits the read
 
 
 def test_resolve_cc_falls_back_to_password_when_no_token():
     cred = _Cred([_acct("c", "cc", password="pw", token="")])
-    assert resolve_account_view(cred, 0) == ("cc", "u", True)
+    assert _resolve(cred, 0) == ("cc", "u", True)
     assert cred.password_reads == 1
 
 
 def test_resolve_prefers_label_over_username():
     cred = _Cred([_acct("a", "ttr", label="Flossbud", username="floss123")])
-    assert resolve_account_view(cred, 0)[1] == "Flossbud"
+    assert _resolve(cred, 0)[1] == "Flossbud"
 
 
 def test_resolve_none_when_no_username():
     cred = _Cred([_acct("a", "ttr", username="")])
-    assert resolve_account_view(cred, 0) is None
+    assert _resolve(cred, 0) is None
 
 
-def test_resolve_none_when_metadata_returns_none():
-    # Real CredentialsManager.get_account_metadata returns None for a stale/
-    # deleted index; resolve must skip it without reading the password.
-    class _EmptyCred:
-        def get_account_metadata(self, idx):
-            return None
+def test_resolve_none_when_meta_is_none():
+    # A stale/deleted id resolves to no metadata; resolve must skip it without
+    # touching the password.
+    class _NoPw:
         def get_account(self, idx):
             raise AssertionError("should not be called")
-    assert resolve_account_view(_EmptyCred(), 0) is None
+    assert resolve_account_view(_NoPw(), 0, None) is None
 
 
 def _model(ordered, views, running=(), keyring=True, count=None):

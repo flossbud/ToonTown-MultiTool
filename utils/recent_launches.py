@@ -30,7 +30,16 @@ class RecentLaunchesStore:
         raw = self._sm.get(self._KEY, [])
         if not isinstance(raw, list):
             return []
-        return [x for x in raw if isinstance(x, str)]
+        # Defensive read: drop non-strings, de-dupe (keep first), and enforce the
+        # cap - a corrupted/hand-edited settings list must not bypass the bound
+        # (which would amplify the synchronous menu-build work).
+        seen: set[str] = set()
+        out: list[str] = []
+        for x in raw:
+            if isinstance(x, str) and x not in seen:
+                seen.add(x)
+                out.append(x)
+        return out[:self._CAP]
 
     def record(self, account_id: str) -> None:
         # Type-check first so a non-string never reaches the truthiness test.
@@ -59,16 +68,18 @@ class RecentMenuModel:
     status: Literal["ok", "empty", "keyring_locked"]
 
 
-def resolve_account_view(cred, idx) -> tuple[str, str, bool] | None:
-    """Resolve account at global index ``idx`` to ``(game, display_label,
-    launchable)`` or ``None`` (deleted / missing username).
+def resolve_account_view(cred, idx, meta) -> tuple[str, str, bool] | None:
+    """Resolve already-fetched account metadata ``meta`` (at global index ``idx``)
+    to ``(game, display_label, launchable)`` or ``None`` (deleted / missing username).
 
-    ``cred`` is a CredentialsManager-like object with ``get_account_metadata(idx)``
-    (game, username, label, and CC ``launcher_token``) and ``get_account(idx)``
-    (password). Launchable mirrors the launch rule: TTR needs a password; CC needs a
-    cached token OR a password. The CC token short-circuits the password read.
+    The caller passes ``meta`` (obtained from a single ``get_accounts_metadata()``
+    pass) so this function does NOT re-read it - important because metadata access
+    reads the CC launcher token from keyring, and re-reading it per candidate would
+    multiply keyring round-trips on the menu-open GUI path. ``cred.get_account(idx)``
+    is called only to read a password (TTR always; CC only when there's no cached
+    token). Launchable mirrors the launch rule: TTR needs a password; CC needs a
+    cached token OR a password (the token short-circuits the password read).
     """
-    meta = cred.get_account_metadata(idx)
     if meta is None or not meta.username:
         return None
     label = meta.label or meta.username

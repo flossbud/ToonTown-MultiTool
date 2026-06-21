@@ -15,6 +15,7 @@ os.environ.setdefault("PYTHON_KEYRING_BACKEND", "keyring.backends.null.Keyring")
 
 from types import SimpleNamespace
 from main import MultiToonTool
+from utils.recent_launches import MenuItem, RecentMenuModel
 
 
 def _fake_self():
@@ -50,3 +51,35 @@ def test_dispatch_nav_leaves_and_navigates():
     MultiToonTool._dispatch_emblem_menu_action(fake, ("__nav__", None))
     assert calls["leave"] == [1] and calls["nav"] == [1]
     assert calls["launch"] == []
+
+
+# --- menu-entries mapping (pure label/prefix/data) ---
+
+def test_entries_mixed_games_get_prefix():
+    model = RecentMenuModel(
+        items=(MenuItem("a", "cc", "MyToon"), MenuItem("b", "ttr", "Floss")),
+        mixed_games=True, status="ok")
+    assert MultiToonTool._emblem_menu_entries(model) == [
+        ("CC  -  MyToon", ("cc", "a")),
+        ("TTR  -  Floss", ("ttr", "b")),
+    ]
+
+
+def test_entries_single_game_no_prefix():
+    model = RecentMenuModel(
+        items=(MenuItem("a", "ttr", "Floss"), MenuItem("b", "ttr", "Alt")),
+        mixed_games=False, status="ok")
+    assert MultiToonTool._emblem_menu_entries(model) == [
+        ("Floss", ("ttr", "a")), ("Alt", ("ttr", "b"))]
+
+
+def test_entries_empty_is_add_account():
+    model = RecentMenuModel(items=(), mixed_games=False, status="empty")
+    assert MultiToonTool._emblem_menu_entries(model) == [
+        ("Add Account", ("__nav__", None))]
+
+
+def test_entries_keyring_locked_is_unlock():
+    model = RecentMenuModel(items=(), mixed_games=False, status="keyring_locked")
+    assert MultiToonTool._emblem_menu_entries(model) == [
+        ("Unlock accounts in Launch tab", ("__nav__", None))]
