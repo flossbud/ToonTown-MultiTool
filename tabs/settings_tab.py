@@ -29,7 +29,7 @@ from services.cc_login_service import (
 from services.wine_runtimes import install_signature
 from utils.settings_keys import (
     CC_ENGINE_INSTALL_SIGNATURE, SETTINGS_ACTIVE_CATEGORY, STRICT_TTR_SEPARATION,
-    CLICK_SYNC_ENABLED, GHOST_CURSORS_ENABLED,
+    CLICK_SYNC_ENABLED, GHOST_CURSORS_ENABLED, GHOST_CURSORS_CONTROL_CARDS,
 )
 
 
@@ -1498,6 +1498,32 @@ class SettingsTab(QWidget):
         )
         ghost_field.set_control(ghost_switch)
         panel.add_field(ghost_field)
+
+        control_field = SettingsField(
+            "Ghost cursors can use card controls",
+            helper=(
+                "When click sync moves a toon's ghost cursor over its card, let "
+                "it press the card's buttons, just like your own cursor can."
+            ),
+        )
+        control_switch = Switch(
+            self.settings_manager.get(GHOST_CURSORS_CONTROL_CARDS, True))
+        control_switch.toggled.connect(
+            lambda v: self.settings_manager.set(GHOST_CURSORS_CONTROL_CARDS, v)
+        )
+        control_field.set_control(control_switch)
+        panel.add_field(control_field)
+        self._ghost_control_field = control_field
+        self._ghost_switch = ghost_switch
+
+        # Grey out the control-cards row whenever ghost cursors are off: the
+        # feature is meaningless without ghosts, and the runtime gate ANDs the two.
+        def _sync_ghost_control_enabled(on):
+            control_field.setEnabled(bool(on))
+        self._sync_ghost_control_enabled = _sync_ghost_control_enabled
+        ghost_switch.toggled.connect(_sync_ghost_control_enabled)
+        _sync_ghost_control_enabled(
+            self.settings_manager.get(GHOST_CURSORS_ENABLED, True))
 
         lay.insertWidget(insert_at, panel)
 

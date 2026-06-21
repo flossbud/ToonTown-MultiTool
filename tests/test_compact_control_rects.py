@@ -177,3 +177,91 @@ def test_set_shell_extra_opacity_toon_image_follows_content_slot(qt_app, monkeyp
         assert tab.slot_badges[0]._peek_opacity == 1.0   # slot 0 now lives in shell 1
     finally:
         tab.input_service.shutdown()
+
+
+def test_deliver_ghost_click_sends_press_release_to_widget(qt_app, monkeypatch, tmp_path):
+    # Prove the synthetic left press+release reach the widget under the point.
+    # The button is enabled here (the real scenario: controls are enabled when a
+    # toon is active) - Qt never dispatches mouse events to a DISABLED widget, so
+    # a ghost click over a disabled control is correctly inert, like a real click.
+    from PySide6.QtCore import QPoint, Qt
+    tab = _make_tab(monkeypatch, tmp_path)
+    try:
+        qt_app.processEvents()
+        compact = _show_compact(tab, qt_app)
+        cell = compact._cells[0]
+        root = cell["cell"]
+        s = cell.get("content_slot", 0)
+        btn = tab.toon_buttons[s]
+        btn.setEnabled(True)
+        seen = []
+        monkeypatch.setattr(btn, "mousePressEvent",
+                            lambda e: seen.append(("press", e.button())), raising=False)
+        monkeypatch.setattr(btn, "mouseReleaseEvent",
+                            lambda e: seen.append(("release", e.button())), raising=False)
+        center = btn.mapTo(root, QPoint(btn.width() // 2, btn.height() // 2))
+        compact.deliver_ghost_click(0, center.x(), center.y())
+        assert seen == [("press", Qt.LeftButton), ("release", Qt.LeftButton)]
+    finally:
+        tab.input_service.shutdown()
+
+
+def test_deliver_ghost_click_steps_keyset_by_x(qt_app, monkeypatch, tmp_path):
+    from PySide6.QtCore import QPoint
+    tab = _make_tab(monkeypatch, tmp_path)
+    try:
+        qt_app.processEvents()
+        compact = _show_compact(tab, qt_app)
+        cell = compact._cells[0]
+        root = cell["cell"]
+        s = cell.get("content_slot", 0)
+        sel = tab.set_selectors[s]
+        # Force the stepper interactive regardless of configured set count.
+        monkeypatch.setattr(sel, "_enabled", True, raising=False)
+        monkeypatch.setattr(sel, "_count", lambda: 3, raising=False)
+        calls = []
+        monkeypatch.setattr(sel, "_prev", lambda: calls.append("prev"), raising=False)
+        monkeypatch.setattr(sel, "_next", lambda: calls.append("next"), raising=False)
+        left = sel.mapTo(root, QPoint(3, sel.height() // 2))   # left arrow zone
+        right = sel.mapTo(root, QPoint(sel.width() - 3, sel.height() // 2))
+        compact.deliver_ghost_click(0, left.x(), left.y())
+        compact.deliver_ghost_click(0, right.x(), right.y())
+        qt_app.processEvents()
+        assert calls == ["prev", "next"]
+    finally:
+        tab.input_service.shutdown()
+
+
+def test_deliver_ghost_click_out_of_range_is_noop(qt_app, monkeypatch, tmp_path):
+    tab = _make_tab(monkeypatch, tmp_path)
+    try:
+        qt_app.processEvents()
+        compact = _show_compact(tab, qt_app)
+        # cell_index past the end + a point with no child: must not raise.
+        compact.deliver_ghost_click(99, 5, 5)
+        compact.deliver_ghost_click(0, -10000, -10000)
+    finally:
+        tab.input_service.shutdown()
+
+
+def test_deliver_ghost_click_disabled_control_is_inert(qt_app, monkeypatch, tmp_path):
+    # Safety property: a ghost click over a DISABLED control does nothing, exactly
+    # like a real click (Qt never dispatches mouse events to a disabled widget).
+    from PySide6.QtCore import QPoint
+    tab = _make_tab(monkeypatch, tmp_path)
+    try:
+        qt_app.processEvents()
+        compact = _show_compact(tab, qt_app)
+        cell = compact._cells[0]
+        root = cell["cell"]
+        s = cell.get("content_slot", 0)
+        btn = tab.toon_buttons[s]
+        btn.setEnabled(False)
+        seen = []
+        monkeypatch.setattr(btn, "mousePressEvent",
+                            lambda e: seen.append("press"), raising=False)
+        center = btn.mapTo(root, QPoint(btn.width() // 2, btn.height() // 2))
+        compact.deliver_ghost_click(0, center.x(), center.y())
+        assert seen == []
+    finally:
+        tab.input_service.shutdown()

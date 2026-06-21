@@ -49,46 +49,21 @@ def _cursor_path(slot: int) -> str:
     return os.path.join(base, "assets", "cursors", f"toon{slot + 1}.png")
 
 
-def _native_to_logical(x, y, screens=None):
-    """Map a native (physical) screen point into Qt's logical coordinate
-    space. The service emits NATIVE pixels (capture, geometry, and
-    injection all run in OS coordinates); QWidget.move() takes LOGICAL
-    coordinates. Qt scales each screen around a fixed origin — the
-    screen's top-left is numerically identical in both spaces and sizes
-    divide by devicePixelRatio — so the containing screen is the one
-    whose half-open native rect (origin, logical size * dpr) holds the
-    point, and logical = origin + (native - origin) / dpr. At DPR 1 this
-    is the identity, which is why the unit mismatch only ever showed on
-    scaled-display Windows. A point inside no screen (transient geometry
-    race) maps via the first screen rather than dropping the event."""
-    if screens is None:
-        screens = QGuiApplication.screens()
-    target = None
-    for s in screens:
-        g = s.geometry()
-        dpr = s.devicePixelRatio()
-        if (g.x() <= x < g.x() + g.width() * dpr
-                and g.y() <= y < g.y() + g.height() * dpr):
-            target = s
-            break
-    if target is None:
-        if not screens:
-            return int(x), int(y)
-        target = screens[0]
-    g = target.geometry()
-    dpr = target.devicePixelRatio()
-    return (round(g.x() + (x - g.x()) / dpr),
-            round(g.y() + (y - g.y()) / dpr))
+# The native->logical conversion lives in utils.screen_coords (shared with the
+# overlay controller). Imported as the module-global name `_native_to_logical`
+# so existing tests that import or monkeypatch it here keep working, and so the
+# local `_emitted_to_logical` wrapper below honors that monkeypatch.
+from utils.screen_coords import native_to_logical as _native_to_logical
 
 
 def _emitted_to_logical(x, y, screens=None):
-    """Map the service's emitted point into Qt's logical coordinate space.
+    """Map the service's emitted point into Qt's logical space. On darwin the
+    service emits logical points (identity); elsewhere delegate to the module
+    global `_native_to_logical` (so tests can monkeypatch it).
 
-    On macOS the service emits LOGICAL POINTS (all macOS geometry/capture/
-    injection runs in points), and Qt's QWidget geometry is also points, so the
-    mapping is the identity (negative multi-display coords preserved). Everywhere
-    else the service emits physical pixels, so delegate to _native_to_logical
-    (which divides by devicePixelRatio)."""
+    This is a thin local wrapper (not `screen_coords.emitted_to_logical`) only so
+    it keeps calling the module-global `_native_to_logical` that tests patch; keep
+    its darwin branch in sync with `utils.screen_coords.emitted_to_logical`."""
     if sys.platform == "darwin":
         return (int(x), int(y))
     return _native_to_logical(x, y, screens)

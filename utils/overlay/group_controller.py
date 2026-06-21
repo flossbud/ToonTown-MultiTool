@@ -34,7 +34,11 @@ from typing import Union
 from PySide6.QtCore import QRect
 
 from utils.overlay.backend import get_overlay_backend
-from utils.overlay.peek import GhostPointStore, peeking_indices
+from utils.overlay.peek import GhostPointStore, peeking_indices, control_hits
+from utils.screen_coords import emitted_to_logical
+from utils.settings_keys import (
+    GHOST_CURSORS_ENABLED, GHOST_CURSORS_CONTROL_CARDS,
+)
 from utils.overlay.scale import step_scale
 from utils.overlay.surface import CardSurface, EmblemSurface, ShapeMode
 
@@ -527,12 +531,80 @@ class OverlayGroupController:
     # Hover-peek detection (transparent mode)
     # ------------------------------------------------------------------
     def on_ghost_event(self, payload) -> None:
-        """Receive a click-sync ghost_pointer_event payload (motion/release)."""
+        """Receive a click-sync ghost_pointer_event payload (motion/press/release).
+
+        Converts the points to logical coords once (so the dim and the click pass
+        agree, and the dim is correct on HiDPI), feeds the hover-peek store, and
+        on a "press" - when ghost-control-clicks are enabled and the overlay is
+        active - fires the matching card controls."""
+        payload = self._ghost_payload_to_logical(payload)
         self._peek_store.ingest(payload)
+        if not self._ghost_click_enabled():
+            return
+        try:
+            kind, items = payload
+        except (TypeError, ValueError):
+            return
+        if kind == "press":
+            self._ghost_click_pass(items)
 
     def on_ghost_clear(self) -> None:
         """Receive click-sync ghost_clear: drop all ghost points."""
         self._peek_store.clear()
+
+    def _ghost_payload_to_logical(self, payload):
+        """Convert a ghost payload's native points to logical coords, fetching the
+        screen list once for the whole batch (motion fires at refresh rate).
+
+        A malformed payload - bad top-level shape, or a point that will not unpack
+        - is returned UNCHANGED as a best-effort degrade, not a correctness path;
+        the well-formed service payloads always convert. (A returned-unconverted
+        payload is not itself re-sanitised downstream, so this only stays safe
+        because the service never emits one.)"""
+        from PySide6.QtGui import QGuiApplication
+        try:
+            kind, items = payload
+            screens = QGuiApplication.screens()
+            conv = [(slot, *emitted_to_logical(x, y, screens))
+                    for slot, x, y in items]
+        except (TypeError, ValueError):
+            return payload
+        return (kind, conv)
+
+    def _ghost_click_enabled(self) -> bool:
+        """True when ghost cursors may press card controls: a settings object,
+        an active overlay, a card provider, and both settings on."""
+        if self._settings is None or not self._active or self._card_provider is None:
+            return False
+        return bool(self._settings.get(GHOST_CURSORS_ENABLED, True)
+                    and self._settings.get(GHOST_CURSORS_CONTROL_CARDS, True))
+
+    def _ghost_click_pass(self, items) -> None:
+        """Map each (already-logical) ghost point to a card control and deliver a
+        synthetic click there. Indexed by surface_id, matching control_rects.
+
+        Defensive per card: on_ghost_event is a QUEUED Qt slot (the service emits
+        ghost events from its capture thread, marshalled to the GUI thread), so a
+        misbehaving provider must not raise into Qt's dispatch. Isolating each card
+        means one bad surface drops only its own click, never the whole press -
+        matching the overlay's never-crash-on-shape convention."""
+        cards = []
+        for st, su in self._card_surfaces():
+            try:
+                g = su.geometry()
+                rects = self._card_provider.control_rects(st.surface_id)
+                rect_tuples = [(r.x(), r.y(), r.width(), r.height()) for r in rects]
+                cards.append((st.surface_id,
+                              (g.x(), g.y(), g.width(), g.height()),
+                              rect_tuples))
+            except Exception:
+                continue
+        points = [(x, y) for _slot, x, y in items]
+        for surface_id, x, y in control_hits(points, cards, self._scale):
+            try:
+                self._card_provider.deliver_ghost_click(surface_id, x, y)
+            except Exception:
+                continue
 
     def _card_surfaces(self):
         """[(state, surface), ...] for the four card surfaces (emblem excluded)."""

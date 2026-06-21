@@ -66,3 +66,61 @@ def test_ghost_store_ignores_malformed_payload():
     s.ingest(None)
     s.ingest(("motion",))            # 1-tuple: kind/items unpack fails
     assert s.points() == []
+
+
+def test_control_hits_point_on_control_returns_local_coords():
+    from utils.overlay.peek import control_hits
+    # card 0 surface at (100,100) size 200x200; one control rect at card-local
+    # (10,10,20,20). Scale 1.0. A global point at (115,115) -> local (15,15),
+    # inside the control.
+    cards = [(0, (100, 100, 200, 200), [(10, 10, 20, 20)])]
+    assert control_hits([(115, 115)], cards, 1.0) == [(0, 15, 15)]
+
+
+def test_control_hits_body_point_is_no_hit():
+    from utils.overlay.peek import control_hits
+    cards = [(0, (100, 100, 200, 200), [(10, 10, 20, 20)])]
+    # local (50,50) is in the card but not on the control.
+    assert control_hits([(150, 150)], cards, 1.0) == []
+
+
+def test_control_hits_divides_by_scale():
+    from utils.overlay.peek import control_hits
+    # Surface twice as big on screen (scale 2.0); a global point at (140,140)
+    # -> local ((140-100)/2,(140-100)/2) == (20,20), inside (10,10,20,20).
+    cards = [(0, (100, 100, 400, 400), [(10, 10, 20, 20)])]
+    assert control_hits([(140, 140)], cards, 2.0) == [(0, 20, 20)]
+
+
+def test_control_hits_picks_containing_card_only():
+    from utils.overlay.peek import control_hits
+    cards = [
+        (0, (0, 0, 100, 100), [(0, 0, 100, 100)]),
+        (1, (200, 0, 100, 100), [(0, 0, 100, 100)]),
+    ]
+    # Point only in card 1.
+    assert control_hits([(250, 50)], cards, 1.0) == [(1, 50, 50)]
+
+
+def test_control_hits_zero_scale_falls_back_to_one():
+    from utils.overlay.peek import control_hits
+    cards = [(0, (0, 0, 100, 100), [(0, 0, 100, 100)])]
+    assert control_hits([(20, 20)], cards, 0.0) == [(0, 20, 20)]
+
+
+def test_control_hits_multiple_points_accumulate():
+    from utils.overlay.peek import control_hits
+    cards = [
+        (0, (0, 0, 100, 100), [(0, 0, 50, 50)]),
+        (1, (200, 0, 100, 100), [(0, 0, 50, 50)]),
+    ]
+    # First point hits card 0's control, second is in card 1's body (no hit),
+    # third hits card 1's control. The batch returns only the two real hits.
+    pts = [(10, 10), (290, 90), (210, 10)]
+    assert control_hits(pts, cards, 1.0) == [(0, 10, 10), (1, 10, 10)]
+
+
+def test_control_hits_negative_scale_falls_back_to_one():
+    from utils.overlay.peek import control_hits
+    cards = [(0, (0, 0, 100, 100), [(0, 0, 100, 100)])]
+    assert control_hits([(20, 20)], cards, -2.0) == [(0, 20, 20)]
