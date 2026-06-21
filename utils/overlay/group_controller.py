@@ -1165,6 +1165,10 @@ class OverlayGroupController:
                 from utils.overlay.card_metrics import CardMetrics
                 provider.apply_metrics(CardMetrics(1.0))
                 provider.scale_emblem(self._scale)
+            # Decide which quadrants are occupied (have a detected window) BEFORE
+            # building the glow + surfaces, so empty card surfaces are never shown
+            # (no map/unmap flash) and the glow spans only visible cards.
+            self._visible_cells = set(self._target_visible_cells())
             rects = self._compute_rects()
             # Build the glow surface FIRST so it shows below the cards (it paints
             # the soft halo that fills the central hole). Best-effort: it never
@@ -1207,8 +1211,12 @@ class OverlayGroupController:
                 # Phase 0 spike (Group.apply: show then reshape). The shape affects
                 # INPUT only and the window is translucent, so there is no visual
                 # flash; do NOT reorder to shape-before-show (it would never apply).
-                surface.show()
-                self._apply_input_region(state, surface, rect)
+                # Emblem always maps; a card maps only if its quadrant is occupied.
+                # Empty cards stay hosted-but-unmapped (truly invisible). Shaping a
+                # not-yet-shown surface is a silent no-op, so it is gated with show.
+                if state.is_emblem or state.surface_id in self._visible_cells:
+                    surface.show()
+                    self._apply_input_region(state, surface, rect)
                 # Snapshot the live anchor/scale into the state (v2 detach reads it).
                 state.anchor = self._anchor
                 state.scale = self._scale
@@ -1232,6 +1240,7 @@ class OverlayGroupController:
                 self._safe_call(self._window, "showNormal")
             self._surfaces = []
             self._captured = []
+            self._visible_cells = set()   # framed invariant (mirror leave())
             self._active = False
             return False
         self._surfaces = created
