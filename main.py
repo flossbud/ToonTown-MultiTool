@@ -1707,6 +1707,25 @@ def _quit_app_after_main_window_close() -> None:
         print("[quit_after_close] app.quit() called")
 
 
+def _detect_wm_name_safe():
+    """Best-effort running-WM name for window-mode gating; None on non-Linux
+    platforms or if the Xlib connection fails."""
+    if sys.platform != "linux":
+        return None
+    if not os.environ.get("DISPLAY"):
+        return None  # no X server (headless / pure Wayland): skip the noisy probe
+    try:
+        from Xlib import display as _xd
+        from utils.x11_frameless_bootstrap import detect_wm_name
+        d = _xd.Display()
+        try:
+            return detect_wm_name(d)
+        finally:
+            d.close()
+    except Exception:
+        return None
+
+
 def _wire_app_lifecycle(app: QApplication, window: MultiToonTool) -> None:
     app.aboutToQuit.connect(window.shutdown)
 
@@ -2006,7 +2025,16 @@ if __name__ == "__main__":
     apply_theme(app, resolve_theme(settings))
     window = MultiToonTool()
     _wire_app_lifecycle(app, window)
-    window.show()
+    from PySide6.QtCore import QLibraryInfo as _QLI
+    from utils.x11_frameless_bootstrap import show_with_bootstrap
+    show_with_bootstrap(window, settings=window.settings_manager, env={
+        "platform": sys.platform,
+        "session_type": os.getenv("XDG_SESSION_TYPE", "").lower(),
+        "qpa_platform": app.platformName(),
+        "wm_name": _detect_wm_name_safe(),
+        "use_system_title_bar": bool(window.settings_manager.get("use_system_title_bar", False)),
+        "qt_version": _QLI.version().toString() if hasattr(_QLI, "version") else "",
+    })
     _lock_cc_prefs_silently()
     # macOS first-run permission onboarding. Fired POST-show (so --self-check,
     # which exits before this block and never shows the window, never triggers
