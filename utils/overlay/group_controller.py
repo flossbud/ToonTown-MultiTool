@@ -721,9 +721,17 @@ class OverlayGroupController:
                     pass
 
     def _refresh_glow(self, rects) -> None:
-        """Reconcile the accent glow to the visible card set. No-op stub here so
-        _reconcile_visibility never calls a missing method; Task 5 replaces the
-        body with build/place/teardown-by-visibility."""
+        """Reconcile the glow to the current visible set: tear it down when no
+        cards are visible, build it when missing but cards are visible, else
+        re-place it. Called by the visibility reconcile."""
+        if self._card_provider is None:
+            return
+        if not self._visible_cells:
+            self._teardown_glow()
+        elif self._glow_surface is None:
+            self._build_glow(rects)
+        else:
+            self._place_glow(rects)
 
     PEEK_CONTENT_OPACITY = 0.80    # whole card (controls, text, portrait ring) on hover
     PEEK_BODY_OPACITY = 0.65       # card BACKGROUND fill on hover (more see-through)
@@ -902,10 +910,10 @@ class OverlayGroupController:
     # ------------------------------------------------------------------
     # Accent glow behind the cluster (parity with the framed _GlowLayer)
     # ------------------------------------------------------------------
-    def _cluster_bbox(self, rects):
-        """Bounding QRect of the four card rects in screen coords."""
+    def _cluster_bbox(self, rects, cells):
+        """Bounding QRect of the given card cells' rects in screen coords."""
         from PySide6.QtCore import QRect
-        cards = [rects[i] for i in (0, 1, 2, 3)]
+        cards = [rects[i] for i in sorted(cells)]
         left = min(r.x() for r in cards)
         top = min(r.y() for r in cards)
         right = max(r.x() + r.width() for r in cards)
@@ -921,6 +929,8 @@ class OverlayGroupController:
         the cluster proceeds without the (decorative) glow."""
         if self._card_provider is None:
             return  # stub/orchestration path has no real cards to glow
+        if not self._visible_cells:
+            return  # nothing to glow yet (emblem-only)
         try:
             from tabs.multitoon._compact_layout import _GlowLayer
             from utils.overlay.surface import OverlaySurface
@@ -940,21 +950,29 @@ class OverlayGroupController:
             self._teardown_glow()
 
     def _place_glow(self, rects) -> None:
-        """Position the glow surface to the cluster bbox and feed the _GlowLayer
-        each card's body spec at bbox-relative coords. No-op without a glow."""
+        """Position the glow surface to the VISIBLE cluster bbox and feed the
+        _GlowLayer each visible card's body spec at bbox-relative coords. Pure
+        geometry + specs: it does NOT show/raise/lower the surface, so it is cheap
+        to call on every drag/zoom tick (via _place_all). Mapping + z-order are
+        owned by _build_glow (initial) and _reassert_glow (ongoing); teardown when
+        nothing is visible is owned by _refresh_glow. No-op without a glow surface
+        or with no visible cards."""
         if self._glow_surface is None or self._glow_widget is None:
             return
+        visible = sorted(self._visible_cells)
+        if not visible:
+            return  # _refresh_glow tears the glow down when nothing is visible
         from PySide6.QtGui import QColor
         from utils.overlay.card_metrics import CardMetrics
         m = CardMetrics(self._scale)
-        bbox = self._cluster_bbox(rects)
+        bbox = self._cluster_bbox(rects, visible)
         try:
             accents = self._card_provider.card_accents()
         except Exception:
             accents = []
         default = QColor("#555555")
         specs = []
-        for slot in (0, 1, 2, 3):
+        for slot in visible:
             r = rects[slot]
             specs.append({
                 "x": r.x() - bbox.x(), "y": r.y() - bbox.y(),

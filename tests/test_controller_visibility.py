@@ -237,3 +237,76 @@ def test_enter_all_empty_shows_only_emblem(qapp):
     assert "show" in by_key["emblem"].methods()
     assert c._visible_cells == set()
     c.leave()
+
+
+# ---------------------------------------------------------------------------
+# Task 5 tests: glow spans + paints only visible cards
+# ---------------------------------------------------------------------------
+
+class _GlowSurfStub:
+    def __init__(self): self.geom = None; self.shown = True
+    def set_overlay_geometry(self, r): self.geom = r
+    def show(self): self.shown = True
+    def hide(self): self.shown = False
+    def lower(self): pass
+    def deleteLater(self): pass
+
+
+class _GlowWidgetStub:
+    def __init__(self): self.specs = None; self.blur = None
+    def set_cards(self, s): self.specs = s
+    def set_blur(self, b): self.blur = b
+
+
+def _glow_controller(visible):
+    provider = _VisProvider(visible)
+    c = OverlayGroupController(
+        window=None, backend=NoOpOverlayBackend(), card_provider=provider)
+    c._active = True
+    c._scale = 1.0
+    c._visible_cells = set(visible)
+    c._glow_surface = _GlowSurfStub()
+    c._glow_widget = _GlowWidgetStub()
+    return c
+
+
+def test_cluster_bbox_only_visible(qapp):
+    from PySide6.QtCore import QRect
+    c = _glow_controller({0, 2})
+    rects = {0: QRect(0, 0, 100, 100), 1: QRect(200, 0, 100, 100),
+             2: QRect(0, 200, 100, 100), 3: QRect(200, 200, 100, 100)}
+    bbox = c._cluster_bbox(rects, {0, 2})
+    assert bbox == QRect(0, 0, 100, 300)  # left column only
+
+
+def test_place_glow_specs_only_visible(qapp):
+    from PySide6.QtCore import QRect
+    c = _glow_controller({0, 2})
+    rects = {0: QRect(0, 0, 100, 100), 1: QRect(200, 0, 100, 100),
+             2: QRect(0, 200, 100, 100), 3: QRect(200, 200, 100, 100),
+             "emblem": QRect(80, 130, 40, 40)}
+    c._place_glow(rects)
+    assert c._glow_widget.specs is not None
+    assert len(c._glow_widget.specs) == 2  # only cells 0 and 2
+
+
+def test_refresh_glow_tears_down_when_zero_visible(qapp):
+    from PySide6.QtCore import QRect
+    c = _glow_controller(set())
+    c._visible_cells = set()
+    rects = {i: QRect(0, 0, 10, 10) for i in range(4)}
+    rects["emblem"] = QRect(0, 0, 10, 10)
+    c._refresh_glow(rects)
+    assert c._glow_surface is None  # no glow with no cards
+
+
+def test_refresh_glow_builds_when_missing_and_cards_visible(qapp):
+    from PySide6.QtCore import QRect
+    # zero->nonzero: glow absent but a card just appeared -> _build_glow fires.
+    c = _glow_controller({0, 1})
+    c._glow_surface = None
+    c._glow_widget = None
+    built = []
+    c._build_glow = lambda rects: built.append(rects)
+    c._refresh_glow({0: QRect(0, 0, 10, 10)})
+    assert built  # _build_glow was triggered
