@@ -252,6 +252,15 @@ class OverlayGroupController:
         # -> record / restore_slot(record) / apply_metrics(CardMetrics) /
         # control_rects(int) -> list[QRect].
         self._card_provider = card_provider
+        # Transparent-mode card visibility: the surface_ids (0-3) currently
+        # mapped. Empty quadrants are hosted-but-unmapped (no flash, fully
+        # click-through). Reconciled live from the provider's occupancy.
+        self._visible_cells: set = set()
+        self._occupancy_pending: bool = False
+        if card_provider is not None:
+            sig = getattr(card_provider, "occupied_cells_changed", None)
+            if sig is not None:
+                sig.connect(self._on_occupancy_changed)
 
         # Per-surface state: cards 0-3 then the emblem LAST.  Order is load
         # bearing: the emblem is built + shown last and raised above the cards
@@ -610,6 +619,111 @@ class OverlayGroupController:
         """[(state, surface), ...] for the four card surfaces (emblem excluded)."""
         return [(st, su) for st, su in zip(self._states, self._surfaces)
                 if not st.is_emblem]
+
+    def _target_visible_cells(self) -> set:
+        """The card surface_ids that should be mapped right now: the provider's
+        occupied cells, or all four when there is no occupancy-aware provider
+        (the Task 3.2 stub-orchestration flow keeps showing all cards)."""
+        provider = self._card_provider
+        fn = getattr(provider, "occupied_cells", None) if provider is not None else None
+        if fn is None:
+            return {0, 1, 2, 3}
+        try:
+            return set(fn())
+        except Exception:
+            return {0, 1, 2, 3}
+
+    def _visible_card_surfaces(self):
+        """[(state, surface), ...] for the MAPPED card surfaces only. Consumed by
+        the hover-peek + ghost-click passes (Task 6) so hidden cards are skipped."""
+        return [(st, su) for st, su in self._card_surfaces()
+                if st.surface_id in self._visible_cells]
+
+    def _on_occupancy_changed(self) -> None:
+        """Provider occupancy nudge: schedule ONE deferred reconcile. Deferring to
+        the next event-loop tick is load-bearing - it lets both window-manager
+        routing handlers (ids then cell-assignment) settle first, so the reconcile
+        reads the final occupancy (no one-frame wrong picture)."""
+        if not self._active or self._occupancy_pending:
+            return
+        self._occupancy_pending = True
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(0, self._run_occupancy_reconcile)
+
+    def _run_occupancy_reconcile(self) -> None:
+        if not self._occupancy_pending:
+            return
+        self._occupancy_pending = False
+        if not self._active:
+            return
+        self._reconcile_visibility()
+
+    def _reconcile_visibility(self) -> None:
+        """Map the occupied card surfaces, unmap the rest; refresh the glow. The
+        emblem is never touched. Re-reads occupancy fresh, so it is correct
+        whenever it runs. No-op when framed."""
+        if not self._active:
+            return
+        target = self._target_visible_cells()
+        rects = self._compute_rects()
+        for st, su in self._card_surfaces():
+            want = st.surface_id in target
+            have = st.surface_id in self._visible_cells
+            # Per-card isolation: this runs from a queued Qt slot with no
+            # fail-closed wrapper (unlike enter()), so one bad surface must not
+            # abort the reconcile for the others (matches _ghost_click_pass).
+            try:
+                if want and not have:
+                    self._show_card_surface(st, su, rects[self._key(st)])
+                elif have and not want:
+                    self._hide_card_surface(st, su)
+            except Exception:
+                pass
+        self._refresh_glow(rects)
+        self._raise_emblem()
+
+    def _show_card_surface(self, state, surface, rect) -> None:
+        """Map a previously-hidden card: geometry -> initial state -> show ->
+        input region -> reassert topmost (shape only takes effect after show)."""
+        surface.set_overlay_geometry(rect)
+        self._safe_call(surface, "prepare_initial_state")
+        surface.show()
+        # Track as visible the instant it is mapped, BEFORE the (best-effort)
+        # input region: if _apply_input_region raises, the surface is still shown,
+        # so _visible_cells must agree (else the next reconcile re-shows it).
+        self._visible_cells.add(state.surface_id)
+        self._apply_input_region(state, surface, rect)
+        try:
+            self._backend.set_above(surface)
+        except Exception:
+            pass
+        try:
+            self._backend.set_non_activating(surface)
+        except Exception:
+            pass
+
+    def _hide_card_surface(self, state, surface) -> None:
+        """Unmap an emptied card and clear any lingering hover-peek dim so it
+        returns clean if it is shown again."""
+        self._safe_call(surface, "hide")
+        self._visible_cells.discard(state.surface_id)
+        sid = state.surface_id
+        if 0 <= sid < len(self._peek_progress) and self._peek_progress[sid] != 0.0:
+            self._peek_progress[sid] = 0.0
+            try:
+                surface.set_content_opacity(1.0)
+            except Exception:
+                pass
+            if self._card_provider is not None:
+                try:
+                    self._card_provider.set_shell_extra_opacity(sid, 1.0, 1.0)
+                except Exception:
+                    pass
+
+    def _refresh_glow(self, rects) -> None:
+        """Reconcile the accent glow to the visible card set. No-op stub here so
+        _reconcile_visibility never calls a missing method; Task 5 replaces the
+        body with build/place/teardown-by-visibility."""
 
     PEEK_CONTENT_OPACITY = 0.80    # whole card (controls, text, portrait ring) on hover
     PEEK_BODY_OPACITY = 0.65       # card BACKGROUND fill on hover (more see-through)
@@ -1177,6 +1291,8 @@ class OverlayGroupController:
         self._reset_provider_scale()
         self._surfaces = []
         self._captured = []
+        self._visible_cells = set()
+        self._occupancy_pending = False
         self._safe_call(self._window, "showNormal")
         self._active = False
         self._emit_active_changed()   # self._active is False here
