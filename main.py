@@ -1674,9 +1674,12 @@ def _quit_app_after_main_window_close() -> None:
 
 
 def _detect_wm_name_safe():
-    """Best-effort running-WM name for window-mode gating; None off X11/Linux."""
+    """Best-effort running-WM name for window-mode gating; None on non-Linux
+    platforms or if the Xlib connection fails."""
     if sys.platform != "linux":
         return None
+    if not os.environ.get("DISPLAY"):
+        return None  # no X server (headless / pure Wayland): skip the noisy probe
     try:
         from Xlib import display as _xd
         from utils.x11_frameless_bootstrap import detect_wm_name
