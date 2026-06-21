@@ -40,6 +40,7 @@ def _wire(c, geoms):
         else:
             c._surfaces.append(_PeekStubSurface(st, geoms[st.surface_id]))
     c._active = True
+    c._visible_cells = {st.surface_id for st in c._states if not st.is_emblem}
 
 
 def _controller():
@@ -169,3 +170,32 @@ def test_stop_peek_timer_restores_opacity(qapp):
     assert c._peek_progress == [0.0, 0.0, 0.0, 0.0]
     assert su0.content[-1] == pytest.approx(1.0)
     assert c._card_provider.calls[-1] == (0, 1.0, 1.0)
+
+
+def test_peek_skips_hidden_card(qapp):
+    c = _controller()
+    geoms = {0: QRect(0, 0, 100, 100), 1: QRect(200, 0, 100, 100),
+             2: QRect(0, 200, 100, 100), 3: QRect(200, 200, 100, 100)}
+    _wire(c, geoms)
+    c._visible_cells = {0}                # card 1 hidden (no window there)
+    c._peek_tick((250, 50))              # cursor over card 1's screen area
+    cards = [s for s, st in zip(c._surfaces, c._states) if not st.is_emblem]
+    assert cards[1].peeks == []           # hidden card is never evaluated/peeked
+    c._peek_tick((50, 50))               # cursor over visible card 0
+    assert cards[0].peeks[-1] is True     # visible card still peeks
+
+
+def test_peek_non_contiguous_visible_subset(qapp):
+    # visible {0,2} (a NON-contiguous subset of the 4-card list): a cursor over
+    # card 2's area must peek card 2 (proves the peeking_indices alignment holds
+    # when the visible list skips a position), not the list-position-1 card.
+    c = _controller()
+    geoms = {0: QRect(0, 0, 100, 100), 1: QRect(200, 0, 100, 100),
+             2: QRect(0, 200, 100, 100), 3: QRect(200, 200, 100, 100)}
+    _wire(c, geoms)
+    c._visible_cells = {0, 2}
+    c._peek_tick((50, 250))              # cursor over card 2 (bottom-left)
+    cards = [s for s, st in zip(c._surfaces, c._states) if not st.is_emblem]
+    assert cards[2].peeks[-1] is True     # card 2 peeks
+    assert cards[0].peeks[-1] is False    # the other visible card does not
+    assert cards[1].peeks == [] and cards[3].peeks == []  # hidden, never evaluated

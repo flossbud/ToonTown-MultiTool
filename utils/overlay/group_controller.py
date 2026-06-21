@@ -598,7 +598,7 @@ class OverlayGroupController:
         means one bad surface drops only its own click, never the whole press -
         matching the overlay's never-crash-on-shape convention."""
         cards = []
-        for st, su in self._card_surfaces():
+        for st, su in self._visible_card_surfaces():
             try:
                 g = su.geometry()
                 rects = self._card_provider.control_rects(st.surface_id)
@@ -684,7 +684,13 @@ class OverlayGroupController:
 
     def _show_card_surface(self, state, surface, rect) -> None:
         """Map a previously-hidden card: geometry -> initial state -> show ->
-        input region -> reassert topmost (shape only takes effect after show)."""
+        input region -> reassert topmost (shape only takes effect after show).
+
+        Note: no set_card_scale() here on purpose - hidden cards are kept at the
+        live scale by enter() (all cards) and _recompute_now (iterates ALL
+        surfaces), so a card shown after a zoom-while-hidden is already correct.
+        If either of those is ever narrowed to visible-only, add set_card_scale
+        here too."""
         surface.set_overlay_geometry(rect)
         self._safe_call(surface, "prepare_initial_state")
         surface.show()
@@ -745,7 +751,7 @@ class OverlayGroupController:
         """
         if not self._active:
             return
-        cards = self._card_surfaces()
+        cards = self._visible_card_surfaces()
         rects = []
         for _st, su in cards:
             g = su.geometry()
