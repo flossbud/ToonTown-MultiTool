@@ -99,3 +99,19 @@ def test_frameless_chrome_gets_initial_theme_push(qapp):
     inst.setCentralWidget(inst.container)
     inst._apply_window_chrome()
     assert inst._chrome.btn_min._inactive_dot == QColor("#b8bcc2")  # light inactive grey
+
+
+def test_show_with_bootstrap_dispatch_is_importable():
+    # Guards the contract main.py depends on: x11 session => pure path => plain show.
+    from utils.x11_frameless_bootstrap import show_with_bootstrap
+    calls = {"n": 0}
+    class W:
+        def show(self): calls["n"] += 1
+    class _S:
+        def get(self, k, d=None): return {} if k == "window_compositing_cache" else d
+        def set(self, k, v): pass
+    show_with_bootstrap(W(), settings=_S(), env={
+        "platform": "linux", "session_type": "x11", "qpa_platform": "xcb",
+        "wm_name": "KWin", "use_system_title_bar": False, "qt_version": "6.10.2",
+    })
+    assert calls["n"] == 1
