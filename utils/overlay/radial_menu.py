@@ -19,7 +19,8 @@ from PySide6.QtWidgets import QWidget
 
 from utils.radial_menu_layout import MAIN_RING_ANGLES, account_ring_angles, polar_point
 
-_MAIN_KEYS = ("accounts", "home", "settings", "close")
+_MAIN_KEYS = ("accounts", "home", "settings", "close", "exit")
+_MAIN_BOTTOM_KEYS = ("close", "exit")   # labels render below these
 
 
 # --- glyph + disc painters (azure theme matching the emblem) ------------------
@@ -89,6 +90,20 @@ def _close_x(p: QPainter, cx: float, cy: float, r: float) -> None:
     p.drawLine(QPointF(cx - s, cy + s), QPointF(cx + s, cy - s))
 
 
+def _power(p: QPainter, cx: float, cy: float, r: float) -> None:
+    """Power/quit symbol: an open ring with a gap at the top + a vertical bar
+    through the gap. Distinguishes the Exit (quit app) button from Close (X)."""
+    from PySide6.QtCore import QRectF
+    pen = QPen(QColor(255, 255, 255)); pen.setWidthF(max(2.0, r * 0.20))
+    pen.setCapStyle(Qt.RoundCap)
+    p.setPen(pen); p.setBrush(Qt.NoBrush)
+    rad = r * 0.62
+    # Qt arc angles are 1/16 deg, 0 at 3 o'clock, CCW positive: draw 300 deg
+    # starting at 120 deg, leaving a 60 deg gap centred on the top (90 deg).
+    p.drawArc(QRectF(cx - rad, cy - rad, rad * 2, rad * 2), 120 * 16, 300 * 16)
+    p.drawLine(QPointF(cx, cy - rad * 1.15), QPointF(cx, cy))
+
+
 def _back_arrow(p: QPainter, cx: float, cy: float, r: float) -> None:
     p.setPen(Qt.NoPen); p.setBrush(QColor(255, 255, 255))
     s = r * 0.62
@@ -152,6 +167,7 @@ class RadialMenuWidget(QWidget):
     home_requested = Signal()
     settings_requested = Signal()
     close_requested = Signal()
+    exit_requested = Signal()
     back_requested = Signal()
     account_clicked = Signal(str)
 
@@ -283,6 +299,8 @@ class RadialMenuWidget(QWidget):
                 self.settings_requested.emit()
             elif key == "close":
                 self.close_requested.emit()
+            elif key == "exit":
+                self.exit_requested.emit()
         elif state == "accounts":
             if key == "back":
                 self._state = "main"
@@ -341,12 +359,15 @@ class RadialMenuWidget(QWidget):
                 _gear(p, cx, cy, r * 1.15)
             elif key == "close":
                 _close_x(p, cx, cy, r * 0.55)
+            elif key == "exit":
+                _power(p, cx, cy, r * 0.55)
             elif key == "home":
                 _home(p, cx, cy, r * 0.52)
             else:  # accounts
                 _person(p, cx, cy, r * 0.52)
             if hot:
-                _label_pill(p, cx, cy, r, key.capitalize(), above=(key != "close"))
+                _label_pill(p, cx, cy, r, key.capitalize(),
+                            above=(key not in _MAIN_BOTTOM_KEYS))
 
     def set_accounts(self, accounts, customizations=None) -> None:
         """Switch to the accounts sub-ring and pre-render each toon portrait.

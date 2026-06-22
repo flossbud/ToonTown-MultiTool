@@ -1244,7 +1244,16 @@ class MultiToonTool(QMainWindow):
         menu.home_requested.connect(self._radial_go_home)
         menu.settings_requested.connect(self._open_portable_settings)
         menu.close_requested.connect(self._mode_controller.close_radial_menu)
+        menu.exit_requested.connect(self._radial_exit_app)
         menu.account_clicked.connect(self._radial_launch_account)
+
+    def _radial_exit_app(self):
+        """Exit spoke: the sanctioned in-overlay way to quit the whole app
+        (now that the emblem/overlay surfaces refuse stray close requests).
+        Closes the radial, then runs the main window's normal close -> shutdown
+        -> app.quit() path."""
+        self._mode_controller.close_radial_menu()
+        self.close()
 
     def _populate_radial_accounts(self, menu):
         """Feed the radial's Accounts sub-ring. Reuses launch_tab's keyring-aware

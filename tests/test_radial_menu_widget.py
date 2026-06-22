@@ -21,10 +21,11 @@ def test_main_ring_emits_intents_on_hit():
     w.home_requested.connect(lambda: fired.append("home"))
     w.settings_requested.connect(lambda: fired.append("settings"))
     w.close_requested.connect(lambda: fired.append("close"))
-    for key in ("accounts", "home", "settings", "close"):
+    w.exit_requested.connect(lambda: fired.append("exit"))
+    for key in ("accounts", "home", "settings", "close", "exit"):
         cx, cy, r = w.circle_geometry("main", key)
         w.activate_at(cx, cy)
-    assert fired == ["accounts", "home", "settings", "close"]
+    assert fired == ["accounts", "home", "settings", "close", "exit"]
 
 
 def test_click_outside_any_circle_does_not_emit():

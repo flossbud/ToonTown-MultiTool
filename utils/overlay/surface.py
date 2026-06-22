@@ -122,6 +122,25 @@ class OverlaySurface(QWidget):
         return w
 
     # ------------------------------------------------------------------
+    # Close protection
+    # ------------------------------------------------------------------
+
+    def closeEvent(self, ev) -> None:
+        """Refuse user/WM-originated (spontaneous) closes.
+
+        The controller owns these surfaces' lifecycle and tears them down with
+        hide()/deleteLater(), never close(). A stray "close window" keybind
+        (e.g. Ctrl+C bound at the desktop level) or a WM close action must NOT be
+        able to destroy the emblem or a card surface, which would leave the
+        cluster on screen but unrecoverable. Programmatic closes (app shutdown,
+        QApplication.closeAllWindows) are spontaneous=False and proceed normally.
+        """
+        if ev.spontaneous():
+            ev.ignore()
+            return
+        ev.accept()
+
+    # ------------------------------------------------------------------
     # Geometry
     # ------------------------------------------------------------------
 
@@ -321,12 +340,14 @@ class CardSurface(OverlaySurface):
             self._scaled_view.set_scale(scale)
 
     def closeEvent(self, ev):
-        # Belt for the close() path: release the borrowed card before Qt's
-        # destruction cascade so the ScaledCardView's scene never deletes it. The
-        # deleteLater/GC path still relies on the documented contract that the
-        # caller (the controller's _teardown) release()s first.
-        self.release()
+        # Honour the base's spontaneous-close refusal first. Only release the
+        # borrowed card when the close is actually going through (a programmatic
+        # close); a refused (spontaneous) close must leave the card hosted.
         super().closeEvent(ev)
+        if ev.isAccepted():
+            # Belt for the close() path: release the borrowed card before Qt's
+            # destruction cascade so the ScaledCardView's scene never deletes it.
+            self.release()
 
 
 class EmblemSurface(OverlaySurface):
