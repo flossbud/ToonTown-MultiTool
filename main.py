@@ -1298,39 +1298,6 @@ class MultiToonTool(QMainWindow):
             cont.release_content()
         self.stack.insertWidget(3, self.settings_tab)   # restore at its original index
 
-    @staticmethod
-    def _emblem_menu_entries(model):
-        """Map a RecentMenuModel to the ordered ``(text, data)`` menu entries.
-        Pure (no Qt), so the label/prefix/data mapping is unit-testable; the QMenu
-        build/exec around it is WM-dependent and live-validated. ``data`` is
-        ``(game, account_id)`` for a launch item or ``("__nav__", None)`` for the
-        empty/locked navigation item."""
-        if model.status == "ok":
-            entries = []
-            for item in model.items:
-                text = item.display_label
-                if model.mixed_games:
-                    text = f"{'TTR' if item.game == 'ttr' else 'CC'}  -  {text}"
-                entries.append((text, (item.game, item.account_id)))
-            return entries
-        if model.status == "keyring_locked":
-            return [("Unlock accounts in Launch tab", ("__nav__", None))]
-        return [("Add Account", ("__nav__", None))]   # empty
-
-    def _dispatch_emblem_menu_action(self, data):
-        """Route a chosen emblem-menu action. Runs AFTER the menu closes (no grab
-        held). ``data`` is ``(game, account_id)`` or ``(\"__nav__\", None)``."""
-        game, account_id = data
-        if game == "__nav__":
-            self._mode_controller.leave()    # restore the main window
-            self.nav_select(1)               # open the Launch tab
-            return
-        # Re-check at dispatch time so the menu never stops a game that started
-        # running between model-build and click.
-        if self.launch_tab.is_account_running(game, account_id):
-            return
-        self.launch_tab.launch_account(game, account_id)
-
     def nav_select(self, index: int):
         if self.stack.currentIndex() == index and getattr(self, "_initialized_nav", False):
             return

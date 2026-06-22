@@ -76,43 +76,6 @@ def _tab(qapp, accounts, ordered, keyring=True):
     return tab
 
 
-def test_menu_model_orders_and_labels(qapp):
-    tab = _tab(qapp,
-               [_acct("a", "ttr", label="Floss"), _acct("b", "cc", token="tok")],
-               ordered=["b", "a"])
-    m = tab.recent_launch_menu_model()
-    assert m.status == "ok"
-    assert [(it.account_id, it.display_label) for it in m.items] == \
-           [("b", "u"), ("a", "Floss")]
-    assert m.mixed_games is True
-
-
-def test_menu_model_skips_running(qapp):
-    tab = _tab(qapp, [_acct("a", "ttr"), _acct("b", "ttr")], ordered=["a", "b"])
-    tab._slots["ttr"]["a"] = SimpleNamespace(
-        launcher=SimpleNamespace(is_running=lambda: True))
-    m = tab.recent_launch_menu_model()
-    assert [it.account_id for it in m.items] == ["b"]
-
-
-def test_menu_model_keyring_locked(qapp):
-    tab = _tab(qapp, [_acct("a", "ttr")], ordered=["a"], keyring=False)
-    assert tab.recent_launch_menu_model().status == "keyring_locked"
-
-
-def test_menu_model_keyring_locked_does_no_credential_reads(qapp):
-    tab = _tab(qapp, [_acct("a", "ttr"), _acct("b", "cc")], ordered=["a", "b"],
-               keyring=False)
-    tab.cred_manager.reads = 0
-    tab.recent_launch_menu_model()
-    assert tab.cred_manager.reads == 0          # short-circuit, no per-account reads
-
-
-def test_menu_model_empty_when_no_recent(qapp):
-    tab = _tab(qapp, [_acct("a", "ttr")], ordered=[])
-    assert tab.recent_launch_menu_model().status == "empty"
-
-
 def test_is_account_running(qapp):
     tab = _tab(qapp, [_acct("a", "ttr")], ordered=["a"])
     assert tab.is_account_running("ttr", "a") is False

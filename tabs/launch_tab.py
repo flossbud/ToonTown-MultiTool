@@ -514,53 +514,18 @@ class LaunchTab(QWidget):
         overlay is active (so failure dialogs raise above it)."""
         self._overlay_active = fn
 
-    def recent_launch_menu_model(self):
-        """Build the emblem right-click menu model from the recent-launch MRU."""
-        from utils.recent_launches import (
-            build_recent_menu_model, resolve_account_view,
-        )
-        cred = self.cred_manager
-        # Resolve all account metadata in ONE pass, keyed by id -> (index, meta),
-        # so each CC launcher token is read from keyring at most once. (The previous
-        # per-id _global_index_of() rescanned the whole list - re-reading every CC
-        # token on each MRU id at menu-open, on the GUI thread.) Skip the pass
-        # entirely when build_recent_menu_model's keyring-locked short-circuit will
-        # fire, so a locked keyring never triggers the (timeout-prone) reads.
-        if not cred.keyring_available and cred.count() > 0:
-            meta_by_id = {}
-        else:
-            meta_by_id = {meta.id: (i, meta)
-                          for i, meta in enumerate(cred.get_accounts_metadata())}
-
-        def account_for(aid):
-            entry = meta_by_id.get(aid)
-            if entry is None:
-                return None
-            idx, meta = entry
-            return resolve_account_view(cred, idx, meta)
-
-        return build_recent_menu_model(
-            self._recent_launches.ordered_ids(),
-            account_for,
-            self.is_account_running,
-            cred.keyring_available,
-            cred.count(),
-        )
-
     def recent_account_ring_model(self, limit: int = 8):
         """Build the emblem radial menu's Accounts sub-ring from the recent-launch
-        MRU. Unlike ``recent_launch_menu_model`` (the flat menu), the ring INCLUDES
-        running accounts (carrying a ``running`` flag) and attaches each account's
-        last in-world toon (name + DNA) for its portrait. Reuses the SAME
-        keyring-aware single-pass metadata resolution so no extra keyring
-        round-trips are added at menu-open; a locked keyring yields an empty ring
-        (no per-account reads)."""
+        MRU. Unlike the old flat menu, the ring INCLUDES running accounts (carrying
+        a ``running`` flag) and attaches each account's last in-world toon (name +
+        DNA) for its portrait. Uses a keyring-aware single-pass metadata resolution
+        so no extra keyring round-trips are added at menu-open; a locked keyring
+        yields an empty ring (no per-account reads)."""
         from utils.recent_launches import resolve_account_view
         from utils.radial_menu_model import build_account_ring
         cred = self.cred_manager
-        # Mirror recent_launch_menu_model's single-pass resolution: skip the
-        # metadata pass entirely when the keyring is locked (else each CC token
-        # read can hit a lock-timeout storm).
+        # Single-pass resolution: skip the metadata pass entirely when the keyring
+        # is locked (else each CC token read can hit a lock-timeout storm).
         if not cred.keyring_available and cred.count() > 0:
             meta_by_id = {}
         else:
