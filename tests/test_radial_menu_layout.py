@@ -25,3 +25,10 @@ def test_main_ring_angles_match_locked_layout():
         "accounts": -142.0, "home": -90.0, "settings": -38.0,
         "close": 138.0, "exit": 42.0,
     }
+
+
+def test_windowed_ring_angles_match_locked_layout():
+    from utils.radial_menu_layout import WINDOWED_RING_ANGLES
+    assert WINDOWED_RING_ANGLES == {
+        "accounts": -142.0, "transparent": -90.0, "close": 90.0,
+    }

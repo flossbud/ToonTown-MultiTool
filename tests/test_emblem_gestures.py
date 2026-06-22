@@ -1,10 +1,11 @@
-"""_Emblem routes right-click -> context_menu_requested(QPoint) and left-click ->
-toggle_requested, while a drag suppresses both.
+"""_Emblem routes left-click -> menu_requested (open the wheel) and right-click
+-> toggle_requested (quick mode-toggle), while a drag suppresses both. Also
+exposes disc_diameter().
 
 Run (NEVER the whole tests/ dir):
-    TTMT_NO_VENV_REEXEC=1 QT_QPA_PLATFORM=offscreen \\
-      PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring \\
-      ./venv/bin/python -m pytest tests/test_emblem_context_menu.py -q
+    env TTMT_NO_VENV_REEXEC=1 QT_QPA_PLATFORM=offscreen \
+      PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring \
+      python3 -m pytest tests/test_emblem_gestures.py -q
 """
 import os
 
@@ -40,28 +41,27 @@ def _release(emblem, button):
 
 
 def _wire(emblem):
-    seen = {"ctx": [], "toggle": []}
-    emblem.context_menu_requested.connect(lambda p: seen["ctx"].append(p))
+    seen = {"menu": [], "toggle": []}
+    emblem.menu_requested.connect(lambda: seen["menu"].append(1))
     emblem.toggle_requested.connect(lambda: seen["toggle"].append(1))
     return seen
 
 
-def test_right_click_emits_context_menu_with_point(qapp):
+def test_left_click_opens_the_wheel(qapp):
     e = _emblem(qapp)
     seen = _wire(e)
-    _release(e, Qt.RightButton)
-    assert len(seen["ctx"]) == 1
-    assert isinstance(seen["ctx"][0], QPoint)
+    _release(e, Qt.LeftButton)
+    assert seen["menu"] == [1]
     assert seen["toggle"] == []
     e.deleteLater()
 
 
-def test_left_click_emits_toggle_only(qapp):
+def test_right_click_quick_toggles(qapp):
     e = _emblem(qapp)
     seen = _wire(e)
-    _release(e, Qt.LeftButton)
-    assert len(seen["toggle"]) == 1
-    assert seen["ctx"] == []
+    _release(e, Qt.RightButton)
+    assert seen["toggle"] == [1]
+    assert seen["menu"] == []
     e.deleteLater()
 
 
@@ -72,13 +72,25 @@ def test_drag_suppresses_both(qapp):
     _release(e, Qt.LeftButton)
     e._dragging = True               # re-arm: a single drag covers both buttons
     _release(e, Qt.RightButton)
-    assert seen["toggle"] == [] and seen["ctx"] == []
+    assert seen["toggle"] == [] and seen["menu"] == []
     e.deleteLater()
 
 
 def test_other_button_is_noop(qapp):
     e = _emblem(qapp)
     seen = _wire(e)
-    _release(e, Qt.MiddleButton)     # locked decision: non-left/right = no-op
-    assert seen["toggle"] == [] and seen["ctx"] == []
+    _release(e, Qt.MiddleButton)     # non-left/right = no-op
+    assert seen["toggle"] == [] and seen["menu"] == []
+    e.deleteLater()
+
+
+def test_context_menu_signal_is_gone(qapp):
+    e = _emblem(qapp)
+    assert not hasattr(e, "context_menu_requested")
+    e.deleteLater()
+
+
+def test_disc_diameter_returns_disc(qapp):
+    e = _emblem(qapp)
+    assert e.disc_diameter() == float(e._d)
     e.deleteLater()

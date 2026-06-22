@@ -1,10 +1,11 @@
 """Interactive radial menu widget for the emblem overlay.
 
-Paints a dim scrim plus a ring of azure circles around the emblem center and
-routes clicks to intent signals. Two states: the main ring (Accounts, Home,
-Settings, Close) and the accounts sub-ring (Back plus up to 8 recent accounts
-rendered as their toon's customized portrait, with a green dot for a running
-account). Supports a staggered left-to-right pop-in reveal, hover labels,
+Paints a soft radial vignette plus a ring of azure circles around the emblem
+center and routes clicks to intent signals. The main ring has two variants
+(selected by the ``variant`` ctor arg): transparent mode (Accounts, Home,
+Settings, Back, Exit) and windowed mode (Accounts, Float, Back). Clicking
+Accounts opens the accounts sub-ring (Back plus up to 8 recent accounts rendered
+as their toon's customized portrait, with a green dot for a running account). Supports a staggered left-to-right pop-in reveal, hover labels,
 Esc-to-close, and a 15s idle auto-hide. Geometry comes from
 utils/radial_menu_layout.py; account portraits from utils/overlay/radial_portrait.py.
 """
@@ -17,14 +18,18 @@ from PySide6.QtGui import (QPainter, QColor, QBrush, QPen, QLinearGradient,
                            QRadialGradient, QPainterPath, QFont, QPolygonF)
 from PySide6.QtWidgets import QWidget
 
-from utils.radial_menu_layout import MAIN_RING_ANGLES, account_ring_angles, polar_point
+from utils.radial_menu_layout import (MAIN_RING_ANGLES, WINDOWED_RING_ANGLES,
+                                       account_ring_angles, polar_point)
 
-_MAIN_KEYS = ("accounts", "home", "settings", "close", "exit")
+_MAIN_KEYS_BY_VARIANT = {
+    "transparent": ("accounts", "home", "settings", "close", "exit"),
+    "windowed":    ("accounts", "transparent", "close"),
+}
 _MAIN_BOTTOM_KEYS = ("close", "exit")   # labels render below these
 # Hover labels. "close" dismisses the ring (one level up), so it reads as "Back"
 # (the X glyph next to "Exit" was confusingly two ways to leave).
 _MAIN_LABELS = {"accounts": "Accounts", "home": "Home", "settings": "Settings",
-                "close": "Back", "exit": "Exit"}
+                "transparent": "Float", "close": "Back", "exit": "Exit"}
 
 
 # --- glyph + disc painters (azure theme matching the emblem) ------------------
@@ -112,6 +117,24 @@ def _back_arrow(p: QPainter, cx: float, cy: float, r: float) -> None:
     p.drawRect(QRectF(cx - s * 0.05, cy - s * 0.20, s * 1.05, s * 0.40))
 
 
+def _overlay_cards(p: QPainter, cx: float, cy: float, r: float) -> None:
+    """Go-Transparent glyph: two overlapping tall 'floating cards' (front offset
+    up-and-right with a dark seam), white on the azure disc - the literal picture
+    of TTMT's overlay cards floating on top, and the inverse of the home glyph."""
+    p.setPen(Qt.NoPen)
+    cw, ch, rad = r * 0.82, r * 1.04, r * 0.16
+    bxc, byc = cx - r * 0.28, cy + r * 0.26          # back card, down-left
+    p.setBrush(QColor(255, 255, 255))
+    p.drawRoundedRect(QRectF(bxc - cw / 2, byc - ch / 2, cw, ch), rad, rad)
+    fxc, fyc = cx + r * 0.26, cy - r * 0.24          # front card, up-right
+    gap = r * 0.12
+    p.setBrush(QColor(10, 12, 16))                   # dark seam separates the cards
+    p.drawRoundedRect(QRectF(fxc - cw / 2 - gap, fyc - ch / 2 - gap,
+                             cw + 2 * gap, ch + 2 * gap), rad + gap, rad + gap)
+    p.setBrush(QColor(255, 255, 255))
+    p.drawRoundedRect(QRectF(fxc - cw / 2, fyc - ch / 2, cw, ch), rad, rad)
+
+
 def _status_dot(p: QPainter, cx: float, cy: float, r: float) -> None:
     """Green 'running' indicator at the lower-right of an account portrait."""
     dr = r * 0.30
@@ -165,6 +188,7 @@ class RadialMenuWidget(QWidget):
     accounts_requested = Signal()
     home_requested = Signal()
     settings_requested = Signal()
+    transparent_requested = Signal()
     close_requested = Signal()
     exit_requested = Signal()
     back_requested = Signal()
@@ -173,9 +197,14 @@ class RadialMenuWidget(QWidget):
     _REVEAL_STEP_MS = 35
     _IDLE_MS = 15000
 
-    def __init__(self, emblem_diameter: float, customizations=None, parent=None):
+    def __init__(self, emblem_diameter: float, customizations=None,
+                 variant="transparent", parent=None):
         super().__init__(parent)
         self._emblem_dia = float(emblem_diameter)
+        self._variant = variant
+        self._main_keys = _MAIN_KEYS_BY_VARIANT[variant]
+        self._main_angles = (MAIN_RING_ANGLES if variant == "transparent"
+                             else WINDOWED_RING_ANGLES)
         self._sat_r = self._emblem_dia * 0.40 / 2.0   # satellite = 40% of emblem diameter
         self._ring = self._emblem_dia / 2.0 + 16.0 + self._sat_r   # 16px gap outside the emblem
         self._customizations = customizations
@@ -209,7 +238,7 @@ class RadialMenuWidget(QWidget):
     def reveal_order(self, state: str) -> list:
         """Keys for ``state`` ordered left-to-right by circle center-x."""
         if state == "main":
-            keys = list(_MAIN_KEYS)
+            keys = list(self._main_keys)
         else:
             keys = ["back"] + list(range(len(self._accounts)))
         return sorted(keys, key=lambda k: self.circle_geometry(state, k)[0])
@@ -253,7 +282,7 @@ class RadialMenuWidget(QWidget):
     def circle_geometry(self, state: str, key) -> tuple[float, float, float]:
         cx, cy = self._center()
         if state == "main":
-            x, y = polar_point(cx, cy, self._ring, MAIN_RING_ANGLES[key])
+            x, y = polar_point(cx, cy, self._ring, self._main_angles[key])
             return (x, y, self._sat_r)
         # accounts sub-ring
         sring = self._ring * 1.06   # sub-ring sits 6% further out
@@ -267,7 +296,7 @@ class RadialMenuWidget(QWidget):
     def _visible_circles(self):
         out = []
         if self._state == "main":
-            for key in _MAIN_KEYS:
+            for key in self._main_keys:
                 cx, cy, r = self.circle_geometry("main", key)
                 out.append(("main", key, cx, cy, r))
         else:  # accounts sub-ring geometry
@@ -297,6 +326,8 @@ class RadialMenuWidget(QWidget):
                 self.home_requested.emit()
             elif key == "settings":
                 self.settings_requested.emit()
+            elif key == "transparent":
+                self.transparent_requested.emit()
             elif key == "close":
                 self.close_requested.emit()
             elif key == "exit":
@@ -326,6 +357,12 @@ class RadialMenuWidget(QWidget):
             return False
         return all(a.running or i in self._launched
                    for i, a in enumerate(self._accounts))
+
+    def mousePressEvent(self, e):
+        # Activation happens on RELEASE (see mouseReleaseEvent). Accept the press
+        # so it does not bubble to a parent host (the windowed wheel dismisses on
+        # its own presses) and so the implicit grab returns the release here.
+        e.accept()
 
     def mouseReleaseEvent(self, e):
         pos = e.position()
@@ -366,7 +403,7 @@ class RadialMenuWidget(QWidget):
         p.end()
 
     def _paint_main(self, p: QPainter) -> None:
-        for key in _MAIN_KEYS:
+        for key in self._main_keys:
             if not self._shown(key):
                 continue
             cx, cy, r = self.circle_geometry("main", key)
@@ -380,6 +417,8 @@ class RadialMenuWidget(QWidget):
                 _x_glyph(p, cx, cy, r * 0.5)
             elif key == "home":
                 _home(p, cx, cy, r * 0.52)
+            elif key == "transparent":
+                _overlay_cards(p, cx, cy, r * 0.72)
             else:  # accounts
                 _person(p, cx, cy, r * 0.52)
             if hot:

@@ -1410,7 +1410,7 @@ class OverlayGroupController:
         if not self.is_active:
             return None
         if self._radial_surface is not None:
-            return self._radial_menu  # already open
+            return None  # already open (and already wired by the first call)
         from utils.overlay.surface import OverlaySurface
         from utils.overlay.radial_menu import RadialMenuWidget
         from utils.overlay.card_metrics import CardMetrics
