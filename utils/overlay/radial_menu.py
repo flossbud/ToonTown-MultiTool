@@ -357,6 +357,12 @@ class RadialMenuWidget(QWidget):
         return all(a.running or i in self._launched
                    for i, a in enumerate(self._accounts))
 
+    def mousePressEvent(self, e):
+        # Activation happens on RELEASE (see mouseReleaseEvent). Accept the press
+        # so it does not bubble to a parent host (the windowed wheel dismisses on
+        # its own presses) and so the implicit grab returns the release here.
+        e.accept()
+
     def mouseReleaseEvent(self, e):
         pos = e.position()
         self.activate_at(pos.x(), pos.y())
