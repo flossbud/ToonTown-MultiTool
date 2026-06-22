@@ -7,6 +7,14 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+@pytest.fixture(autouse=True)
+def _force_radial_anim_enabled(monkeypatch):
+    # These tests assert animated / deferred behavior, so isolate them from an
+    # ambient TTMT_NO_RADIAL_ANIM in the dev shell. The kill-switch test sets it
+    # back via its own monkeypatch.setenv after this autouse fixture runs.
+    monkeypatch.delenv("TTMT_NO_RADIAL_ANIM", raising=False)
+
+
 def _app():
     from PySide6.QtWidgets import QApplication
     return QApplication.instance() or QApplication([])
