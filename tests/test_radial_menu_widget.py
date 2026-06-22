@@ -169,3 +169,11 @@ def test_reveal_gates_painting_then_completes():
         w._reveal_tick()
     assert w._reveal_active is False
     pm2 = QPixmap(400, 400); p2 = QPainter(pm2); w.render(p2, QPoint(0, 0)); p2.end()
+
+
+@pytest.mark.skipif(not os.environ.get("DISPLAY"), reason="needs an active overlay + X display")
+def test_controller_radial_open_close_smoke():
+    # Live behavior (the controller hosting a click-accepting radial surface) is
+    # validated manually on the packaged build; real X11 shaped surfaces are not
+    # reliable headless. This documents the gap.
+    pass

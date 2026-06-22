@@ -323,6 +323,12 @@ class OverlayGroupController:
         # the emblem nests). Owned (created/destroyed here), NOT a borrowed widget.
         self._glow_surface = None
         self._glow_widget = None
+        # Radial menu (Task 10): a CLICK-ACCEPTING owned surface hosting the
+        # RadialMenuWidget, centered on the emblem. Unlike the glow/card surfaces
+        # it carries a NON-EMPTY input region so its circles receive clicks. It
+        # only exists between open_radial_menu() and close_radial_menu().
+        self._radial_surface = None
+        self._radial_menu = None
 
     # ------------------------------------------------------------------
     # State queries
@@ -1324,6 +1330,7 @@ class OverlayGroupController:
         # _run_pending_recompute will find the flag cleared + _active False and
         # no-op - never recompute after teardown).
         self._recompute_pending = False
+        self.close_radial_menu()  # the radial must never outlive the overlay
         self._restore_widgets(self._captured)
         self._teardown(self._surfaces)
         self._teardown_glow()  # destroy the owned glow surface (+ its _GlowLayer)
@@ -1343,6 +1350,65 @@ class OverlayGroupController:
         else:
             self.enter()
         return self._active
+
+    # ------------------------------------------------------------------
+    # Radial menu (Task 10)
+    # ------------------------------------------------------------------
+    def open_radial_menu(self):
+        """Show the click-accepting radial menu centered on the emblem.
+
+        Builds an OWNED OverlaySurface (mirroring _build_glow's
+        host -> geometry -> prepare_initial_state -> show sequence) but applies a
+        NON-EMPTY input shape so the menu's circles actually receive clicks (the
+        glow/card surfaces stay click-through; this surface is additive and only
+        exists until close_radial_menu()).
+
+        Returns the RadialMenuWidget so the caller (main window) can wire its
+        intent signals, or None when not in transparent mode / already open.
+        """
+        if not self.is_active:
+            return None
+        if self._radial_surface is not None:
+            return self._radial_menu  # already open
+        from utils.overlay.surface import OverlaySurface
+        from utils.overlay.radial_menu import RadialMenuWidget
+        from utils.overlay.card_metrics import CardMetrics
+        from PySide6.QtCore import QRect
+        from PySide6.QtGui import QPainterPath
+        # Emblem pixel diameter at the current group scale (same source the
+        # cluster uses for the emblem surface).
+        emblem_dia = float(CardMetrics(self._scale).emblem)
+        # No ToonCustomizationsManager is reachable from the controller; the
+        # caller (Task 11) supplies one when it populates accounts.
+        menu = RadialMenuWidget(emblem_diameter=emblem_dia)
+        size = int(emblem_dia * 4)  # canvas for the outer ring + labels
+        surface = OverlaySurface(backend=self._backend)
+        surface.host(menu)
+        cx, cy = self._anchor
+        surface.set_overlay_geometry(
+            QRect(int(cx - size / 2), int(cy - size / 2), size, size)
+        )
+        surface.prepare_initial_state()
+        surface.show()
+        surface.raise_()  # above the cluster so its click region is hittable
+        # NON-EMPTY path => the whole canvas is click-accepting (vs the glow's
+        # empty path, which is fully click-through).
+        path = QPainterPath()
+        path.addRect(0, 0, size, size)
+        surface.apply_shape(path, surface.devicePixelRatio())
+        self._radial_surface = surface
+        self._radial_menu = menu
+        menu.start_reveal()
+        return menu
+
+    def close_radial_menu(self) -> None:
+        """Destroy the owned radial-menu surface (+ its hosted widget). Idempotent."""
+        surface = self._radial_surface
+        self._radial_surface = None
+        self._radial_menu = None
+        if surface is not None:
+            self._safe_call(surface, "hide")
+            self._safe_call(surface, "deleteLater")
 
     # ------------------------------------------------------------------
     # Emblem gesture wiring (Task 5.1)
