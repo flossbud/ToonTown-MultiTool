@@ -87,6 +87,39 @@ def _close_x(p: QPainter, cx: float, cy: float, r: float) -> None:
     p.drawLine(QPointF(cx - s, cy + s), QPointF(cx + s, cy - s))
 
 
+def _back_arrow(p: QPainter, cx: float, cy: float, r: float) -> None:
+    p.setPen(Qt.NoPen); p.setBrush(QColor(255, 255, 255))
+    s = r * 0.62
+    p.drawPolygon(QPolygonF([QPointF(cx - s, cy),
+                             QPointF(cx - s * 0.05, cy - s * 0.62),
+                             QPointF(cx - s * 0.05, cy + s * 0.62)]))
+    p.drawRect(QRectF(cx - s * 0.05, cy - s * 0.20, s * 1.05, s * 0.40))
+
+
+def _account_frame(p: QPainter, cx: float, cy: float, r: float, hot: bool) -> None:
+    gmul = 2.0 if hot else 1.7
+    glow = QRadialGradient(QPointF(cx, cy), r * gmul)
+    a0 = 210 if hot else 150
+    glow.setColorAt(0.0, QColor(0, 185, 249, a0))
+    glow.setColorAt(0.55, QColor(0, 150, 245, 90 if hot else 70))
+    glow.setColorAt(1.0, QColor(0, 120, 239, 0))
+    p.setPen(Qt.NoPen); p.setBrush(QBrush(glow))
+    p.drawEllipse(QPointF(cx, cy), r * gmul, r * gmul)
+    p.setBrush(QColor(10, 12, 16))
+    p.drawEllipse(QPointF(cx, cy), r + 2, r + 2)
+
+
+def _label_at(p: QPainter, cx: float, cy: float, text: str) -> None:
+    f = QFont("DejaVu Sans"); f.setPixelSize(18); f.setBold(True); p.setFont(f)
+    fm = p.fontMetrics(); tw = fm.horizontalAdvance(text)
+    pad = 10; pw = tw + pad * 2; ph = fm.height() + 8
+    px = cx - pw / 2; py = cy - ph / 2
+    p.setPen(Qt.NoPen); p.setBrush(QColor(12, 16, 24, 238))
+    p.drawRoundedRect(QRectF(px, py, pw, ph), ph / 2, ph / 2)
+    p.setPen(QColor(235, 242, 250))
+    p.drawText(QRectF(px, py, pw, ph), Qt.AlignCenter, text)
+
+
 def _label_pill(p: QPainter, cx: float, cy: float, r: float, text: str, above: bool) -> None:
     f = QFont("DejaVu Sans"); f.setPixelSize(18); f.setBold(True)
     p.setFont(f)
@@ -117,6 +150,7 @@ class RadialMenuWidget(QWidget):
         self._state = "main"
         self._hover = None          # (state, key) or None
         self._accounts = []         # list[RingAccount], populated in Task 8
+        self._portraits = {}        # account_id -> circular QPixmap (set in set_accounts)
         self.setMouseTracking(True)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setFocusPolicy(Qt.StrongFocus)
@@ -176,7 +210,14 @@ class RadialMenuWidget(QWidget):
                 self.settings_requested.emit()
             elif key == "close":
                 self.close_requested.emit()
-        # accounts-state activation is implemented in Task 8.
+        elif state == "accounts":
+            if key == "back":
+                self._state = "main"
+                self._hover = None
+                self.back_requested.emit()
+                self.update()
+            else:
+                self.account_clicked.emit(self._accounts[int(key)].account_id)
 
     def mouseReleaseEvent(self, e):
         pos = e.position()
@@ -195,6 +236,8 @@ class RadialMenuWidget(QWidget):
         p.fillRect(self.rect(), QColor(8, 10, 16, 120))   # dim scrim
         if self._state == "main":
             self._paint_main(p)
+        elif self._state == "accounts":
+            self._paint_accounts(p)
         p.end()
 
     def _paint_main(self, p: QPainter) -> None:
@@ -212,3 +255,38 @@ class RadialMenuWidget(QWidget):
                 _person(p, cx, cy, r * 0.52)
             if hot:
                 _label_pill(p, cx, cy, r, key.capitalize(), above=(key != "close"))
+
+    def set_accounts(self, accounts) -> None:
+        """Switch to the accounts sub-ring and pre-render each toon portrait."""
+        from utils.overlay.radial_portrait import render_account_portrait
+        self._accounts = list(accounts)
+        self._portraits = {}
+        d = max(1, int(round(self._sat_r * 2)))
+        for a in self._accounts:
+            self._portraits[a.account_id] = render_account_portrait(
+                a.game, a.toon_name, a.dna, self._customizations, d)
+        self._state = "accounts"
+        self._hover = None
+        self.update()
+
+    def _paint_accounts(self, p: QPainter) -> None:
+        cx, cy = self._center()
+        sring = self._ring * 1.06
+        bx, by, br = self.circle_geometry("accounts", "back")
+        hot_back = self._hover == ("accounts", "back")
+        _disc(p, bx, by, br, hot_back)
+        _back_arrow(p, bx, by, br * 0.55)
+        if hot_back:
+            _label_pill(p, bx, by, br, "Back", above=True)
+        angles = account_ring_angles(len(self._accounts))
+        for i, acct in enumerate(self._accounts):
+            cxi, cyi, r = self.circle_geometry("accounts", i)
+            hot = self._hover == ("accounts", i)
+            _account_frame(p, cxi, cyi, r, hot)
+            pm = self._portraits.get(acct.account_id)
+            if pm is not None and not pm.isNull():
+                p.drawPixmap(QPointF(cxi - pm.width() / 2.0, cyi - pm.height() / 2.0), pm)
+            if hot:
+                name = acct.toon_name or acct.label
+                lx, ly = polar_point(cx, cy, sring + r + 22, angles[i])
+                _label_at(p, lx, ly, name)
