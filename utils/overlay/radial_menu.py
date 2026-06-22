@@ -184,6 +184,7 @@ class RadialMenuWidget(QWidget):
         self._hover = None          # (state, key) or None
         self._accounts = []         # RingAccount entries for the accounts sub-ring
         self._portraits = {}        # account_id -> circular QPixmap (set in set_accounts)
+        self._launched = set()      # indices clicked-to-launch in the current sub-ring
         self.setMouseTracking(True)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setFocusPolicy(Qt.StrongFocus)
@@ -308,7 +309,24 @@ class RadialMenuWidget(QWidget):
                 self.back_requested.emit()
                 self.start_reveal()
             else:
-                self.account_clicked.emit(self._accounts[int(key)].account_id)
+                i = int(key)
+                self.account_clicked.emit(self._accounts[i].account_id)
+                self._launched.add(i)
+                # Once every shown account is launched (just-clicked) or already
+                # running, there's nothing left to do here -> dismiss the whole
+                # radial so the user can jump straight into the games.
+                if self._all_accounts_launched():
+                    self.close_requested.emit()
+
+    def _all_accounts_launched(self) -> bool:
+        """True when no launchable account remains in the sub-ring: every entry
+        is either already running or has been clicked this session. Only ever
+        consulted right after a click, so opening a ring of all-running accounts
+        does NOT auto-close it."""
+        if not self._accounts:
+            return False
+        return all(a.running or i in self._launched
+                   for i, a in enumerate(self._accounts))
 
     def mouseReleaseEvent(self, e):
         pos = e.position()
@@ -380,6 +398,7 @@ class RadialMenuWidget(QWidget):
             self._customizations = customizations
         self._accounts = list(accounts)
         self._portraits = {}
+        self._launched = set()
         d = max(1, int(round(self._sat_r * 2)))
         for a in self._accounts:
             self._portraits[a.account_id] = render_account_portrait(

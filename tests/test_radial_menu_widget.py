@@ -79,6 +79,53 @@ def test_back_returns_to_main_state():
     assert back == [1] and w.state == "main"
 
 
+def _click_account(w, i):
+    cx, cy, r = w.circle_geometry("accounts", i)
+    w.activate_at(cx, cy)
+
+
+def test_auto_close_only_after_last_account_launched():
+    _app()
+    from utils.overlay.radial_menu import RadialMenuWidget
+    from utils.radial_menu_model import RingAccount
+    w = RadialMenuWidget(emblem_diameter=160); w.resize(500, 500)
+    w.set_accounts([RingAccount("a", "ttr", "L", "T", "", True, False),
+                    RingAccount("b", "ttr", "L", "T", "", True, False)])
+    closed = []
+    w.close_requested.connect(lambda: closed.append(1))
+    _click_account(w, 0)
+    assert closed == []          # one still un-launched -> stay open
+    _click_account(w, 1)
+    assert closed == [1]         # all launched -> auto-close the whole radial
+
+
+def test_already_running_accounts_count_toward_all_launched():
+    _app()
+    from utils.overlay.radial_menu import RadialMenuWidget
+    from utils.radial_menu_model import RingAccount
+    w = RadialMenuWidget(emblem_diameter=160); w.resize(500, 500)
+    # index 1 is already running; launching index 0 completes the set.
+    w.set_accounts([RingAccount("a", "ttr", "L", "T", "", True, False),
+                    RingAccount("b", "ttr", "L", "T", "", True, True)])
+    closed = []
+    w.close_requested.connect(lambda: closed.append(1))
+    _click_account(w, 0)
+    assert closed == [1]
+
+
+def test_opening_all_running_ring_does_not_auto_close():
+    _app()
+    from utils.overlay.radial_menu import RadialMenuWidget
+    from utils.radial_menu_model import RingAccount
+    w = RadialMenuWidget(emblem_diameter=160); w.resize(500, 500)
+    closed = []
+    w.close_requested.connect(lambda: closed.append(1))
+    # All already running: opening must NOT auto-close (no click happened).
+    w.set_accounts([RingAccount("a", "ttr", "L", "T", "", True, True),
+                    RingAccount("b", "ttr", "L", "T", "", True, True)])
+    assert closed == []
+
+
 def test_accounts_paint_does_not_crash():
     _app()
     from PySide6.QtCore import QPoint
