@@ -29,23 +29,30 @@ _MAIN_LABELS = {"accounts": "Accounts", "home": "Home", "settings": "Settings",
 
 # --- glyph + disc painters (azure theme matching the emblem) ------------------
 
-def _disc(p: QPainter, cx: float, cy: float, r: float, hot: bool = False) -> None:
+def _disc(p: QPainter, cx: float, cy: float, r: float, hot: bool = False,
+          danger: bool = False) -> None:
     gmul = 2.0 if hot else 1.7
-    glow = QRadialGradient(QPointF(cx, cy), r * gmul)
     a0 = 210 if hot else 150
-    glow.setColorAt(0.0, QColor(0, 185, 249, a0))
-    glow.setColorAt(0.55, QColor(0, 150, 245, 90 if hot else 70))
-    glow.setColorAt(1.0, QColor(0, 120, 239, 0))
+    if danger:
+        # Red palette for the Exit (quit-the-app) spoke.
+        gi, gm, go = (255, 70, 60), (225, 45, 40), (190, 25, 25)
+        face = ((QColor(255, 110, 96), QColor(225, 55, 50)) if hot
+                else (QColor(255, 92, 80), QColor(208, 40, 40)))
+    else:
+        gi, gm, go = (0, 185, 249), (0, 150, 245), (0, 120, 239)
+        face = ((QColor(70, 205, 255), QColor(0, 140, 255)) if hot
+                else (QColor(0, 185, 249), QColor(0, 119, 239)))
+    glow = QRadialGradient(QPointF(cx, cy), r * gmul)
+    glow.setColorAt(0.0, QColor(gi[0], gi[1], gi[2], a0))
+    glow.setColorAt(0.55, QColor(gm[0], gm[1], gm[2], 90 if hot else 70))
+    glow.setColorAt(1.0, QColor(go[0], go[1], go[2], 0))
     p.setPen(Qt.NoPen)
     p.setBrush(QBrush(glow))
     p.drawEllipse(QPointF(cx, cy), r * gmul, r * gmul)
     p.setBrush(QColor(10, 12, 16))
     p.drawEllipse(QPointF(cx, cy), r + 3, r + 3)
     g = QLinearGradient(cx, cy - r, cx, cy + r)
-    if hot:
-        g.setColorAt(0.0, QColor(70, 205, 255)); g.setColorAt(1.0, QColor(0, 140, 255))
-    else:
-        g.setColorAt(0.0, QColor(0, 185, 249)); g.setColorAt(1.0, QColor(0, 119, 239))
+    g.setColorAt(0.0, face[0]); g.setColorAt(1.0, face[1])
     p.setBrush(QBrush(g))
     p.drawEllipse(QPointF(cx, cy), r, r)
 
@@ -86,18 +93,14 @@ def _home(p: QPainter, cx: float, cy: float, r: float) -> None:
     p.drawRect(QRectF(cx - dw / 2, cy + bh - dh - r * 0.05, dw, dh))
 
 
-def _power(p: QPainter, cx: float, cy: float, r: float) -> None:
-    """Power/quit symbol: an open ring with a gap at the top + a vertical bar
-    through the gap. Distinguishes the Exit (quit app) button from Close (X)."""
-    from PySide6.QtCore import QRectF
-    pen = QPen(QColor(255, 255, 255)); pen.setWidthF(max(2.0, r * 0.20))
+def _x_glyph(p: QPainter, cx: float, cy: float, r: float) -> None:
+    """White X. Used on the red Exit (quit-the-app) spoke."""
+    s = r * 0.46
+    pen = QPen(QColor(255, 255, 255)); pen.setWidthF(max(2.0, r * 0.22))
     pen.setCapStyle(Qt.RoundCap)
-    p.setPen(pen); p.setBrush(Qt.NoBrush)
-    rad = r * 0.62
-    # Qt arc angles are 1/16 deg, 0 at 3 o'clock, CCW positive: draw 300 deg
-    # starting at 120 deg, leaving a 60 deg gap centred on the top (90 deg).
-    p.drawArc(QRectF(cx - rad, cy - rad, rad * 2, rad * 2), 120 * 16, 300 * 16)
-    p.drawLine(QPointF(cx, cy - rad * 1.15), QPointF(cx, cy))
+    p.setPen(pen)
+    p.drawLine(QPointF(cx - s, cy - s), QPointF(cx + s, cy + s))
+    p.drawLine(QPointF(cx - s, cy + s), QPointF(cx + s, cy - s))
 
 
 def _back_arrow(p: QPainter, cx: float, cy: float, r: float) -> None:
@@ -368,13 +371,13 @@ class RadialMenuWidget(QWidget):
                 continue
             cx, cy, r = self.circle_geometry("main", key)
             hot = self._hover == ("main", key)
-            _disc(p, cx, cy, r, hot)
+            _disc(p, cx, cy, r, hot, danger=(key == "exit"))   # Exit = red disc
             if key == "settings":
                 _gear(p, cx, cy, r * 1.15)
             elif key == "close":   # labelled "Back": dismiss the ring (one level up)
                 _back_arrow(p, cx, cy, r * 0.55)
             elif key == "exit":
-                _power(p, cx, cy, r * 0.55)
+                _x_glyph(p, cx, cy, r * 0.5)
             elif key == "home":
                 _home(p, cx, cy, r * 0.52)
             else:  # accounts
