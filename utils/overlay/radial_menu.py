@@ -371,6 +371,11 @@ class RadialMenuWidget(QWidget):
             return
         self._idle_timer.stop()
         if not self._anim_enabled:
+            # Synchronous close, but still latch the close flags so the guards
+            # above and in activate_at hold (keeps _begin_close idempotent in
+            # kill-switch mode, matching animated mode).
+            self._closing = True
+            self._close_emitted = True
             self.close_requested.emit()
             return
         self._appear_active = False
@@ -673,10 +678,15 @@ class RadialMenuWidget(QWidget):
             _account_frame(p, icx, icy, ir, hot)
             pm = self._portraits.get(acct.account_id)
             if pm is not None and not pm.isNull():
-                scaled = pm.scaled(max(1, int(ir * 2)), max(1, int(ir * 2)),
-                                   Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                p.drawPixmap(QPointF(icx - scaled.width() / 2.0,
-                                     icy - scaled.height() / 2.0), scaled)
+                # Portraits are pre-rendered at the resting diameter (sat_r*2);
+                # only pay for a smooth rescale when the disc is actually a
+                # different size (entrance/exit/hover-lift), else blit directly.
+                d = max(1, int(ir * 2))
+                draw = (pm if abs(d - pm.width()) <= 1
+                        else pm.scaled(d, d, Qt.KeepAspectRatio,
+                                       Qt.SmoothTransformation))
+                p.drawPixmap(QPointF(icx - draw.width() / 2.0,
+                                     icy - draw.height() / 2.0), draw)
             if acct.running:
                 _status_dot(p, icx, icy, ir)
             p.setOpacity(1.0)
