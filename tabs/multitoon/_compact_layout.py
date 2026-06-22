@@ -1695,8 +1695,19 @@ class _CompactLayout(QWidget):
         controller state the caller manages separately."""
         parent = widget.parentWidget()
         # QSizePolicy is a value type; copy it so a later mutation of the live
-        # widget's policy can't corrupt the captured snapshot.
-        size_policy = QSizePolicy(widget.sizePolicy())
+        # widget's policy can't corrupt the captured snapshot. Build the copy from
+        # components, NOT the QSizePolicy(QSizePolicy) copy-constructor: that
+        # copy-constructor is rejected by the older PySide6 bundled in the packaged
+        # (frozen, Python 3.9) build, where it raised TypeError inside enter() and
+        # silently disabled transparent mode. The (horizontal, vertical, type)
+        # constructor is portable across PySide6 versions.
+        _sp = widget.sizePolicy()
+        size_policy = QSizePolicy(_sp.horizontalPolicy(), _sp.verticalPolicy(),
+                                  _sp.controlType())
+        size_policy.setHorizontalStretch(_sp.horizontalStretch())
+        size_policy.setVerticalStretch(_sp.verticalStretch())
+        size_policy.setHeightForWidth(_sp.hasHeightForWidth())
+        size_policy.setRetainSizeWhenHidden(_sp.retainSizeWhenHidden())
         # Capture the INTRINSIC hidden flag, not isVisible(): isVisible() is
         # ancestor-dependent (False whenever any ancestor is hidden - e.g. the
         # Multitoon tab page isn't current, or the main window is minimized, which
