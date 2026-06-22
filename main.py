@@ -520,12 +520,13 @@ class MultiToonTool(QMainWindow):
             _click_sync.ghost_pointer_event.connect(self._mode_controller.on_ghost_event)
             _click_sync.ghost_clear.connect(self._mode_controller.on_ghost_clear)
         emblem = self.multitoon_tab._compact._emblem
+        self._windowed_wheel = None
         from utils.overlay.backend import overlay_trace as _overlay_trace
         if self._overlay_backend.is_available():
             _overlay_trace("main: overlay backend AVAILABLE -> emblem interactive + connected")
             emblem.set_interactive(True)
             self._mode_controller.connect_emblem(emblem)
-            emblem.context_menu_requested.connect(self._show_emblem_launch_menu)
+            emblem.menu_requested.connect(self._open_emblem_wheel)
         else:
             _overlay_trace("main: overlay backend UNAVAILABLE -> emblem inert (transparent mode off)")
             emblem.setToolTip("Transparent mode requires the X11 Shape extension")
@@ -1224,17 +1225,40 @@ class MultiToonTool(QMainWindow):
             )
         return group
 
-    def _show_emblem_launch_menu(self, global_pos):
-        """Right-click on the emblem: in transparent mode, open the radial menu;
-        when framed, preserve the prior behavior (enter transparent mode)."""
-        if not self._mode_controller.is_active:   # is_active is a @property
-            self._mode_controller.toggle()   # framed: right-click enters transparent
+    def _open_emblem_wheel(self):
+        """Left-click on the emblem: open the radial wheel for the current mode.
+        Transparent mode uses the X11 overlay path; windowed mode hosts the same
+        widget as an in-window child (WindowedWheelHost)."""
+        if self._mode_controller.is_active:          # is_active is a @property
+            menu = self._mode_controller.open_radial_menu()
+            if menu is None:
+                return
+            self._wire_radial_menu(menu)
             return
+        if self._windowed_wheel is not None:         # already open
+            return
+        from utils.overlay.windowed_wheel import WindowedWheelHost
+        emblem = self.multitoon_tab._compact._emblem
+        host = WindowedWheelHost(
+            parent=self.centralWidget(),
+            emblem=emblem,
+            emblem_diameter=emblem.disc_diameter(),
+            customizations=self.multitoon_tab.customizations)
+        self._windowed_wheel = host
+        host.menu.accounts_requested.connect(
+            lambda: self._populate_radial_accounts(host.menu))
+        host.menu.transparent_requested.connect(self._windowed_go_transparent)
+        host.menu.account_clicked.connect(self._radial_launch_account)
+        host.closed.connect(lambda: setattr(self, "_windowed_wheel", None))
+        host.show_centered()
 
-        menu = self._mode_controller.open_radial_menu()
-        if menu is None:
-            return
-        self._wire_radial_menu(menu)
+    def _windowed_go_transparent(self):
+        """Go-Transparent spoke: dismiss the windowed wheel, then enter
+        transparent mode (the floating emblem then opens the transparent ring)."""
+        if self._windowed_wheel is not None:
+            self._windowed_wheel.dismiss()
+        if not self._mode_controller.is_active:
+            self._mode_controller.toggle()           # framed -> transparent
 
     def _wire_radial_menu(self, menu):
         """Connect a freshly opened RadialMenuWidget's intent signals to the
