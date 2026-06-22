@@ -51,10 +51,13 @@ class RecentToonsStore:
         if game not in ("ttr", "cc"):
             return
         data = self._read()
-        data[account_id] = {
+        new_entry = {
             "toon_name": toon_name,
             "game": game,
             "dna": dna if isinstance(dna, str) else "",
         }
+        if data.get(account_id) == new_entry:
+            return  # unchanged -> skip the settings write + on_change callback fanout
+        data[account_id] = new_entry
         if self._sm is not None:
             self._sm.set(self._KEY, data)

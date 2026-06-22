@@ -314,9 +314,10 @@ class LaunchTab(QWidget):
         from utils.recent_launches import RecentLaunchesStore
         self._recent_launches = RecentLaunchesStore(self.settings_manager)
         # account_id <-> running game bridge for the radial menu's last-toon capture.
-        self._pid_to_account: dict[int, tuple[str, str]] = {}
         from utils.recent_toons import RecentToonsStore
+        from utils.toon_capture_bridge import ToonCaptureBridge
         self._recent_toons = RecentToonsStore(self.settings_manager)
+        self._toon_bridge = ToonCaptureBridge(self._recent_toons)
         # Predicate set by the app shell so failure dialogs can sit above the
         # transparent-mode overlay. Defaults to "not in overlay mode".
         self._overlay_active = lambda: False
@@ -506,11 +507,7 @@ class LaunchTab(QWidget):
 
     def capture_toon(self, pid: int, toon_name: str, dna: str = "") -> None:
         """Record the in-world toon for whatever account owns ``pid`` (no-op if unknown)."""
-        ga = self._pid_to_account.get(pid)
-        if not ga:
-            return
-        game, account_id = ga
-        self._recent_toons.record(account_id, toon_name, game, dna)
+        self._toon_bridge.capture(pid, toon_name, dna)
 
     def set_overlay_active_provider(self, fn) -> None:
         """Install a ``() -> bool`` predicate reporting whether the transparent
@@ -1561,7 +1558,8 @@ class LaunchTab(QWidget):
         # Record the successful launch for the emblem right-click MRU. Single
         # hook -> covers both Launch-tab and emblem-menu launches.
         self._recent_launches.record(account_id)
-        self._pid_to_account[pid] = (game, account_id)
+        # Map this pid to its account so the radial menu can capture the last toon.
+        self._toon_bridge.record_launch(pid, game, account_id)
         game_label = "TTR" if game == "ttr" else "CC"
         pos = self._position_of(game, account_id)
         if self.window_manager is None:
@@ -1637,10 +1635,7 @@ class LaunchTab(QWidget):
             return
         # Drop this account's pid<->account bridge entry (radial-menu capture).
         # game_exited carries no pid, so clear by the (game, account_id) value.
-        self._pid_to_account = {
-            p: ga for p, ga in self._pid_to_account.items()
-            if ga != (game, account_id)
-        }
+        self._toon_bridge.clear_account(game, account_id)
         # If the process exits while still loading, drop its pending timer so it
         # cannot later flip a re-used slot to running. Do NOT touch the window
         # credit -- no window was consumed.

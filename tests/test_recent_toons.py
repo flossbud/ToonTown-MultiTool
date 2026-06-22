@@ -2,9 +2,9 @@ from utils.recent_toons import RecentToonsStore, ToonRecord
 
 
 class _FakeSettings:
-    def __init__(self): self.d = {}
+    def __init__(self): self.d = {}; self.set_calls = 0
     def get(self, k, default=None): return self.d.get(k, default)
-    def set(self, k, v): self.d[k] = v
+    def set(self, k, v): self.set_calls += 1; self.d[k] = v
 
 
 def test_record_and_get_roundtrip():
@@ -45,3 +45,16 @@ def test_get_tolerates_corrupt_entry():
     store = RecentToonsStore(sm)
     assert store.get("a") is None
     assert store.get("b") is None
+
+
+def test_record_skips_write_when_unchanged():
+    sm = _FakeSettings()
+    store = RecentToonsStore(sm)
+    store.record("a", "Toon", "ttr", "d")
+    assert sm.set_calls == 1
+    # Identical data -> dirty-check short-circuits before the settings write.
+    store.record("a", "Toon", "ttr", "d")
+    assert sm.set_calls == 1
+    # Changed data -> writes again.
+    store.record("a", "Toon", "ttr", "d2")
+    assert sm.set_calls == 2

@@ -1305,6 +1305,9 @@ class MultitoonTab(QWidget):
         self._cc_toon_info_ready.connect(self._apply_cc_toon_info)
 
         self._toon_capture_sink = None   # set by the coordinator: callable(pid, toon_name, dna)
+        # Per-window dedup of the last captured (toon_name, dna) so an unchanged
+        # toon skips the synchronous pid_for_window X round-trip + sink call.
+        self._last_captured_toon: dict[str, tuple[str, str]] = {}
 
         self.refresh_timer = QTimer(self)
         self.refresh_timer.setInterval(5000)
@@ -3211,13 +3214,19 @@ class MultitoonTab(QWidget):
         """Wire LaunchTab.capture_toon so resolved toon names update recent_toons."""
         self._toon_capture_sink = sink
 
-    def _capture_account_toon(self, wid, toon_name, dna) -> None:
+    def _capture_account_toon(self, wid, toon_name: str, dna: str) -> None:
         if not self._toon_capture_sink or not toon_name:
             return
+        from utils.toon_capture_bridge import toon_changed
         from utils.game_registry import GameRegistry
-        pid = GameRegistry.pid_for_window(str(wid))   # HOST pid (Flatpak-safe), matches launch
+        key = str(wid)
+        dna = dna or ""
+        if not toon_changed(self._last_captured_toon, key, toon_name, dna):
+            return  # unchanged since last refresh -> skip X round-trip + sink
+        pid = GameRegistry.pid_for_window(key)   # HOST pid (Flatpak-safe), matches launch
         if pid is not None:
-            self._toon_capture_sink(pid, toon_name, dna or "")
+            self._toon_capture_sink(pid, toon_name, dna)
+            self._last_captured_toon[key] = (toon_name, dna)
 
     @Slot(list, list, list, list, list, list, list)
     def _apply_merged_toon_data(self, target_wids, names, styles, colors, laffs, max_laffs, beans):
