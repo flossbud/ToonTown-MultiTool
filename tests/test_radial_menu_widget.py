@@ -435,3 +435,20 @@ def test_kill_switch_makes_appear_and_close_synchronous(monkeypatch):
     w.close_requested.connect(lambda: fired.append(1))
     w._begin_close()
     assert fired == [1]                           # synchronous close
+
+
+def test_hover_progress_eases_toward_hovered_spoke():
+    _app()
+    from utils.overlay.radial_menu import RadialMenuWidget
+    w = RadialMenuWidget(emblem_diameter=160); w.resize(400, 400)
+    w.start_reveal(); w._advance(10_000)          # settle entrance
+    w._hover = ("main", "settings")
+    for _ in range(40):                            # converge
+        w._advance(20_000)
+    assert w._hover_progress["settings"] == 1.0
+    assert all(w._hover_progress[k] == 0.0
+               for k in w.reveal_order("main") if k != "settings")
+    w._hover = None
+    for _ in range(40):
+        w._advance(20_000)
+    assert all(v == 0.0 for v in w._hover_progress.values())

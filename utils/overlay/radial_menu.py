@@ -417,9 +417,28 @@ class RadialMenuWidget(QWidget):
                     self.close_requested.emit()
             else:
                 busy = True
+        if self._advance_hover():
+            busy = True
         self.update()
         if not busy:
             self._clock.stop()
+
+    def _advance_hover(self) -> bool:
+        """Ease each key's hover amount toward 1 (hovered) or 0 (not). Returns
+        True while any value is still in motion (keeps the clock alive)."""
+        hovered = (self._hover[1]
+                   if (self._hover and self._hover[0] == self._state) else None)
+        busy = False
+        for k in self.reveal_order(self._state):
+            cur = self._hover_progress.get(k, 0.0)
+            tgt = 1.0 if k == hovered else 0.0
+            nxt = cur + (tgt - cur) * 0.30
+            if abs(nxt - tgt) < 0.01:
+                nxt = tgt
+            elif abs(nxt - cur) > 1e-4:
+                busy = True
+            self._hover_progress[k] = nxt
+        return busy
 
     def _circle_vis(self, key) -> float:
         """Visibility in [0,1] for `key`: 0 = collapsed at the emblem center,
@@ -535,6 +554,7 @@ class RadialMenuWidget(QWidget):
         pos = e.position()
         self._hover = self._hit(pos.x(), pos.y())
         self._arm_idle()
+        self._kick()
         self.update()
         super().mouseMoveEvent(e)
 
