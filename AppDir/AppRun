@@ -1,13 +1,13 @@
 #!/bin/bash
 HERE="$(dirname "$(readlink -f "${0}")")"
-# Auto-detect session type. Forcing xcb on Wayland causes SIGSEGV crashes
-# and keyring-probe instability (especially when another Qt AppImage is
-# already running). Users can still override with QT_QPA_PLATFORM=...
+# Force xcb (XWayland on Wayland sessions). This app is X11-only: the
+# transparent-mode overlay uses X11 override-redirect windows + Xlib SHAPE, and
+# input uses xdotool/pynput, so running under native Wayland silently breaks
+# transparent mode and input. A 2026-04-24 revision forced wayland here to dodge
+# a SIGSEGV + keyring-probe instability that occurred when forcing xcb; that has
+# since been fixed (xcb now launches cleanly), so xcb is forced again to match
+# the app's own platform requirement. Users can still override QT_QPA_PLATFORM.
 if [ -z "$QT_QPA_PLATFORM" ]; then
-    if [ "$XDG_SESSION_TYPE" = "wayland" ]; then
-        export QT_QPA_PLATFORM=wayland
-    else
-        export QT_QPA_PLATFORM=xcb
-    fi
+    export QT_QPA_PLATFORM=xcb
 fi
 exec "$HERE/usr/bin/ToonTownMultiTool" "$@"
