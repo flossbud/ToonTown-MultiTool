@@ -68,30 +68,66 @@ def _ease_spring(t: float) -> float:
 
 def _disc(p: QPainter, cx: float, cy: float, r: float, hot: bool = False,
           danger: bool = False) -> None:
-    gmul = 2.0 if hot else 1.7
-    a0 = 210 if hot else 150
+    """Refined glossy disc face (azure, or red for danger): dark backing ring, a
+    3-stop vertical gradient, a clipped top sheen, and a bright rim. The focus
+    glow halo is NO LONGER drawn here - it is hover-only via _focus_glow()."""
     if danger:
-        # Red palette for the Exit (quit-the-app) spoke.
-        gi, gm, go = (255, 70, 60), (225, 45, 40), (190, 25, 25)
-        face = ((QColor(255, 110, 96), QColor(225, 55, 50)) if hot
-                else (QColor(255, 92, 80), QColor(208, 40, 40)))
+        top, mid, bot = QColor(255, 120, 108), QColor(232, 64, 58), QColor(196, 28, 28)
+        rim = QColor(255, 180, 170, 210)
     else:
-        gi, gm, go = (0, 185, 249), (0, 150, 245), (0, 120, 239)
-        face = ((QColor(70, 205, 255), QColor(0, 140, 255)) if hot
-                else (QColor(0, 185, 249), QColor(0, 119, 239)))
-    glow = QRadialGradient(QPointF(cx, cy), r * gmul)
-    glow.setColorAt(0.0, QColor(gi[0], gi[1], gi[2], a0))
-    glow.setColorAt(0.55, QColor(gm[0], gm[1], gm[2], 90 if hot else 70))
-    glow.setColorAt(1.0, QColor(go[0], go[1], go[2], 0))
+        top, mid, bot = QColor(95, 212, 255), QColor(0, 168, 250), QColor(0, 108, 224)
+        rim = QColor(160, 228, 255, 210)
     p.setPen(Qt.NoPen)
-    p.setBrush(QBrush(glow))
-    p.drawEllipse(QPointF(cx, cy), r * gmul, r * gmul)
-    p.setBrush(QColor(10, 12, 16))
-    p.drawEllipse(QPointF(cx, cy), r + 3, r + 3)
+    p.setBrush(QColor(8, 10, 14))
+    p.drawEllipse(QPointF(cx, cy), r + 3, r + 3)        # dark backing
     g = QLinearGradient(cx, cy - r, cx, cy + r)
-    g.setColorAt(0.0, face[0]); g.setColorAt(1.0, face[1])
+    g.setColorAt(0.0, top); g.setColorAt(0.5, mid); g.setColorAt(1.0, bot)
     p.setBrush(QBrush(g))
     p.drawEllipse(QPointF(cx, cy), r, r)
+    p.save()
+    clip = QPainterPath(); clip.addEllipse(QPointF(cx, cy), r, r)
+    p.setClipPath(clip)
+    sheen = QLinearGradient(cx, cy - r, cx, cy + r * 0.15)
+    sheen.setColorAt(0.0, QColor(255, 255, 255, 130 if hot else 108))
+    sheen.setColorAt(1.0, QColor(255, 255, 255, 0))
+    p.setBrush(QBrush(sheen)); p.setPen(Qt.NoPen)
+    p.drawEllipse(QPointF(cx, cy - r * 0.42), r * 0.80, r * 0.52)
+    p.restore()
+    pen = QPen(rim); pen.setWidthF(max(1.0, r * 0.035))
+    p.setPen(pen); p.setBrush(Qt.NoBrush)
+    p.drawEllipse(QPointF(cx, cy), r - 0.8, r - 0.8)
+
+
+def _drop_shadow(p: QPainter, cx: float, cy: float, r: float, depth: float = 1.0) -> None:
+    """Soft 'floating' cast shadow under a disc. `depth` (>=1.0) deepens the
+    offset + spread + opacity so hover can sink the shadow further."""
+    dy = r * 0.18 * depth
+    blur = r * 0.50 * (0.85 + 0.30 * depth)
+    alpha = int(130 * min(1.0, depth))
+    sg = QRadialGradient(QPointF(cx, cy + dy), r + blur)
+    sg.setColorAt(0.0, QColor(0, 0, 0, alpha))
+    sg.setColorAt(0.6, QColor(0, 0, 0, int(alpha * 0.55)))
+    sg.setColorAt(1.0, QColor(0, 0, 0, 0))
+    p.setPen(Qt.NoPen); p.setBrush(QBrush(sg))
+    p.drawEllipse(QPointF(cx, cy + dy), r + blur, r + blur)
+
+
+def _focus_glow(p: QPainter, cx: float, cy: float, r: float, strength: float,
+                danger: bool = False) -> None:
+    """Azure (or red) halo behind a disc, drawn ONLY on hover. strength in [0,1]."""
+    if strength <= 0.0:
+        return
+    a = int(180 * _clamp01(strength))
+    if danger:
+        c0, c1, c2 = (255, 70, 60), (225, 45, 40), (190, 25, 25)
+    else:
+        c0, c1, c2 = (0, 185, 249), (0, 150, 245), (0, 120, 239)
+    glow = QRadialGradient(QPointF(cx, cy), r * 1.9)
+    glow.setColorAt(0.0, QColor(c0[0], c0[1], c0[2], a))
+    glow.setColorAt(0.5, QColor(c1[0], c1[1], c1[2], int(a * 0.45)))
+    glow.setColorAt(1.0, QColor(c2[0], c2[1], c2[2], 0))
+    p.setPen(Qt.NoPen); p.setBrush(QBrush(glow))
+    p.drawEllipse(QPointF(cx, cy), r * 1.9, r * 1.9)
 
 
 def _gear(p: QPainter, cx: float, cy: float, s: float) -> None:
@@ -181,14 +217,9 @@ def _status_dot(p: QPainter, cx: float, cy: float, r: float) -> None:
 
 
 def _account_frame(p: QPainter, cx: float, cy: float, r: float, hot: bool) -> None:
-    gmul = 2.0 if hot else 1.7
-    glow = QRadialGradient(QPointF(cx, cy), r * gmul)
-    a0 = 210 if hot else 150
-    glow.setColorAt(0.0, QColor(0, 185, 249, a0))
-    glow.setColorAt(0.55, QColor(0, 150, 245, 90 if hot else 70))
-    glow.setColorAt(1.0, QColor(0, 120, 239, 0))
-    p.setPen(Qt.NoPen); p.setBrush(QBrush(glow))
-    p.drawEllipse(QPointF(cx, cy), r * gmul, r * gmul)
+    """Dark rim ring behind an account portrait. The Floating shadow and the
+    hover focus glow are drawn by _paint_accounts (so this matches the spokes)."""
+    p.setPen(Qt.NoPen)
     p.setBrush(QColor(10, 12, 16))
     p.drawEllipse(QPointF(cx, cy), r + 2, r + 2)
 
@@ -198,10 +229,13 @@ def _label_at(p: QPainter, cx: float, cy: float, text: str) -> None:
     fm = p.fontMetrics(); tw = fm.horizontalAdvance(text)
     pad = 10; pw = tw + pad * 2; ph = fm.height() + 8
     px = cx - pw / 2; py = cy - ph / 2
-    p.setPen(Qt.NoPen); p.setBrush(QColor(12, 16, 24, 238))
-    p.drawRoundedRect(QRectF(px, py, pw, ph), ph / 2, ph / 2)
+    rect = QRectF(px, py, pw, ph)
+    p.setBrush(QColor(12, 16, 24, 238))
+    border = QPen(QColor(120, 190, 255, 70)); border.setWidthF(1.0)
+    p.setPen(border)
+    p.drawRoundedRect(rect, ph / 2, ph / 2)
     p.setPen(QColor(235, 242, 250))
-    p.drawText(QRectF(px, py, pw, ph), Qt.AlignCenter, text)
+    p.drawText(rect, Qt.AlignCenter, text)
 
 
 def _label_pill(p: QPainter, cx: float, cy: float, r: float, text: str, above: bool) -> None:
@@ -211,10 +245,13 @@ def _label_pill(p: QPainter, cx: float, cy: float, r: float, text: str, above: b
     pad = 10; pw = tw + pad * 2; ph = fm.height() + 8
     px = cx - pw / 2
     py = (cy - r - 8 - ph) if above else (cy + r + 8)
-    p.setPen(Qt.NoPen); p.setBrush(QColor(12, 16, 24, 235))
-    p.drawRoundedRect(QRectF(px, py, pw, ph), ph / 2, ph / 2)
+    rect = QRectF(px, py, pw, ph)
+    p.setBrush(QColor(12, 16, 24, 235))
+    border = QPen(QColor(120, 190, 255, 70)); border.setWidthF(1.0)
+    p.setPen(border)
+    p.drawRoundedRect(rect, ph / 2, ph / 2)
     p.setPen(QColor(235, 242, 250))
-    p.drawText(QRectF(px, py, pw, ph), Qt.AlignCenter, text)
+    p.drawText(rect, Qt.AlignCenter, text)
 
 
 class RadialMenuWidget(QWidget):

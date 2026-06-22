@@ -323,3 +323,29 @@ def test_easing_and_interpolation_helpers():
     assert _clamp01(-3.0) == 0.0 and _clamp01(2.0) == 1.0 and _clamp01(0.4) == 0.4
     assert _lerp(10.0, 20.0, 0.5) == 15.0
     assert _lerp(10.0, 20.0, 0.0) == 10.0 and _lerp(10.0, 20.0, 1.0) == 20.0
+
+
+def test_drop_shadow_darkens_below_disc():
+    _app()
+    from PySide6.QtGui import QImage, QPainter, QColor
+    from utils.overlay.radial_menu import _drop_shadow
+    img = QImage(220, 240, QImage.Format_ARGB32)
+    img.fill(QColor(60, 60, 60))                 # opaque mid-grey backdrop
+    p = QPainter(img)
+    _drop_shadow(p, 110, 100, 55, 1.0)
+    p.end()
+    below = img.pixelColor(110, 165)             # under the disc center
+    assert below.red() < 55                      # darkened by the shadow
+
+
+def test_refined_painters_paint_without_crash():
+    _app()
+    from PySide6.QtGui import QImage, QPainter
+    from utils.overlay.radial_menu import _disc, _focus_glow
+    img = QImage(220, 220, QImage.Format_ARGB32); img.fill(0)
+    p = QPainter(img)
+    _focus_glow(p, 110, 110, 50, 0.8)            # azure hover halo
+    _focus_glow(p, 110, 110, 50, 0.8, danger=True)  # red variant
+    _disc(p, 110, 110, 50, hot=True, danger=False)
+    _disc(p, 110, 110, 50, hot=False, danger=True)
+    p.end()
