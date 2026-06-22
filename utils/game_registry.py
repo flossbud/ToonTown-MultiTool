@@ -175,6 +175,16 @@ class GameRegistry:
             return None
 
     @staticmethod
+    def pid_for_window(wid: str) -> int | None:
+        """Public: resolve a window id to its HOST PID (XRes-preferred on Linux).
+
+        Thin alias over the internal resolver so callers (the radial menu's
+        toon-capture bridge) match the host PID registered at launch instead of
+        a Flatpak namespace PID. Never raises; returns None when unresolvable.
+        """
+        return GameRegistry._get_pid_for_window(wid)
+
+    @staticmethod
     def _get_host_pid_for_window_xres(wid: str) -> int | None:
         """Resolve a Linux window ID to host PID via XRes when available.
 
