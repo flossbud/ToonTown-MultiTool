@@ -307,7 +307,23 @@ class RadialMenuWidget(QWidget):
     def paintEvent(self, e):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing, True)
-        p.fillRect(self.rect(), QColor(8, 10, 16, 120))   # dim scrim
+        # Soft radial dim behind the circles (NOT a sharp rectangle): it darkens
+        # the emblem + satellites and fades to fully transparent before the
+        # surface edge, so nothing hard-edged is painted. (True blur of the live
+        # windows behind an override-redirect overlay is not feasible; this
+        # radial vignette is the practical substitute.)
+        cx = self.width() / 2.0
+        cy = self.height() / 2.0
+        radius = min(self.width(), self.height()) / 2.0
+        if radius > 0:
+            dim = QRadialGradient(QPointF(cx, cy), radius)
+            dim.setColorAt(0.0, QColor(8, 10, 16, 150))
+            dim.setColorAt(0.55, QColor(8, 10, 16, 150))
+            dim.setColorAt(0.88, QColor(8, 10, 16, 0))
+            dim.setColorAt(1.0, QColor(8, 10, 16, 0))
+            p.setPen(Qt.NoPen)
+            p.setBrush(QBrush(dim))
+            p.drawEllipse(QPointF(cx, cy), radius, radius)
         if self._state == "main":
             self._paint_main(p)
         elif self._state == "accounts":

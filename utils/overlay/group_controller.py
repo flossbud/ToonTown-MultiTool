@@ -329,12 +329,14 @@ class OverlayGroupController:
         # only exists between open_radial_menu() and close_radial_menu().
         self._radial_surface = None
         self._radial_menu = None
+        self._radial_size = 0   # px square edge, so it can be re-centered on drag
         # Portable Settings panel (Task 12): a CLICK-ACCEPTING owned surface
         # hosting an arbitrary widget (the floating SettingsTab container),
         # centered on the emblem. _panel_on_close runs in close_panel_surface
         # BEFORE teardown so the caller can reparent its content out first.
         self._panel_surface = None
         self._panel_on_close = None
+        self._panel_size = 0    # px square edge, re-centered alongside the radial
 
     # ------------------------------------------------------------------
     # State queries
@@ -924,6 +926,21 @@ class OverlayGroupController:
             if reshape:
                 self._apply_input_region(state, surface, rect)
         self._raise_emblem()
+        self._reposition_radial()  # keep the radial/settings surface on the emblem
+
+    def _reposition_radial(self) -> None:
+        """Re-center the radial menu (and the settings panel) surface on the
+        current cluster anchor, so the circles follow the emblem as it is dragged
+        or the cluster is re-placed. Size is preserved (no widget rescale here)."""
+        from PySide6.QtCore import QRect
+        cx, cy = self._anchor
+        for surface, size in ((self._radial_surface, self._radial_size),
+                              (self._panel_surface, self._panel_size)):
+            if surface is None or size <= 0:
+                continue
+            surface.set_overlay_geometry(
+                QRect(int(cx - size / 2), int(cy - size / 2), size, size))
+            surface.raise_()
 
     # ------------------------------------------------------------------
     # Accent glow behind the cluster (parity with the framed _GlowLayer)
@@ -1389,6 +1406,7 @@ class OverlayGroupController:
         # caller (Task 11) supplies one when it populates accounts.
         menu = RadialMenuWidget(emblem_diameter=emblem_dia)
         size = int(emblem_dia * 4)  # canvas for the outer ring + labels
+        self._radial_size = size
         surface = OverlaySurface(backend=self._backend)
         surface.host(menu)
         cx, cy = self._anchor
@@ -1435,6 +1453,7 @@ class OverlayGroupController:
         from utils.overlay.card_metrics import CardMetrics
         emblem_dia = float(CardMetrics(self._scale).emblem)
         size = int(emblem_dia * 6)           # generous canvas for the panel + dim margin
+        self._panel_size = size
         surface = OverlaySurface(backend=self._backend)
         surface.host(widget)
         cx, cy = self._anchor
