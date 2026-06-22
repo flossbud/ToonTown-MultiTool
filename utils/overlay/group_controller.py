@@ -548,9 +548,18 @@ class OverlayGroupController:
         raising the final surface puts it on top of the cluster.
         """
         if self._surfaces:
+            emblem = self._surfaces[-1]
             from utils.overlay.backend import overlay_trace
-            overlay_trace("raise_emblem -> emblem to top of cluster")
-            self._surfaces[-1].raise_()
+            try:
+                g = emblem.geometry()
+                overlay_trace(
+                    "raise_emblem: visible=%s mapped=%s geo=(%d,%d %dx%d) radial_open=%s panel_open=%s"
+                    % (emblem.isVisible(), not emblem.isHidden(),
+                       g.x(), g.y(), g.width(), g.height(),
+                       self._radial_surface is not None, self._panel_surface is not None))
+            except Exception:
+                pass
+            emblem.raise_()
 
     # ------------------------------------------------------------------
     # Hover-peek detection (transparent mode)
