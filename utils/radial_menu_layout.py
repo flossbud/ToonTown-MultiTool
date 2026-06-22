@@ -17,6 +17,12 @@ MAIN_RING_ANGLES: dict[str, float] = {
     "exit": 42.0,         # bottom-right (quit the app)
 }
 
+WINDOWED_RING_ANGLES: dict[str, float] = {
+    "accounts": -142.0,    # top-left (matches the transparent ring)
+    "transparent": -90.0,  # top-center (the headline action)
+    "close": 90.0,         # bottom-center (single dismiss, balanced)
+}
+
 
 def account_ring_angles(n: int) -> list[float]:
     """Angles (deg) for ``n`` account circles, top slot reserved for Back."""
