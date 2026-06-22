@@ -1287,8 +1287,7 @@ class MultiToonTool(QMainWindow):
         menu.set_accounts(ring, customizations=self.multitoon_tab.customizations)
 
     def _radial_go_home(self):
-        """Home spoke: close the radial and return to the windowed view (same as
-        a left-click on the emblem in transparent mode)."""
+        """Window spoke: close the radial and return to the windowed app view."""
         self._mode_controller.close_radial_menu()
         self._mode_controller.toggle()          # active -> leave() -> windowed
 

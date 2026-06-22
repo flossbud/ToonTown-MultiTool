@@ -2,7 +2,7 @@
 
 Paints a soft radial vignette plus a ring of azure circles around the emblem
 center and routes clicks to intent signals. The main ring has two variants
-(selected by the ``variant`` ctor arg): transparent mode (Accounts, Home,
+(selected by the ``variant`` ctor arg): transparent mode (Accounts, Window,
 Settings, Back, Exit) and windowed mode (Accounts, Float, Back). Clicking
 Accounts opens the accounts sub-ring (Back plus up to 8 recent accounts rendered
 as their toon's customized portrait, with a green dot for a running account). Supports a staggered left-to-right pop-in reveal, hover labels,
@@ -28,8 +28,10 @@ _MAIN_KEYS_BY_VARIANT = {
 _MAIN_BOTTOM_KEYS = ("close", "exit")   # labels render below these
 # Hover labels. "close" dismisses the ring (one level up), so it reads as "Back"
 # (the X glyph next to "Exit" was confusingly two ways to leave).
-_MAIN_LABELS = {"accounts": "Accounts", "home": "Home", "settings": "Settings",
+_MAIN_LABELS = {"accounts": "Accounts", "home": "Window", "settings": "Settings",
                 "transparent": "Float", "close": "Back", "exit": "Exit"}
+# NOTE: the "home" key (Window spoke) returns to the windowed app; the internal
+# key/signal names stay "home" while the user-facing label is "Window".
 
 
 # --- glyph + disc painters (azure theme matching the emblem) ------------------
@@ -86,16 +88,17 @@ def _person(p: QPainter, cx: float, cy: float, r: float) -> None:
     p.drawPath(body)
 
 
-def _home(p: QPainter, cx: float, cy: float, r: float) -> None:
-    p.setPen(Qt.NoPen); p.setBrush(QColor(255, 255, 255))
-    roof = QPainterPath()
-    roof.moveTo(cx, cy - r * 0.85); roof.lineTo(cx + r * 0.95, cy - r * 0.02); roof.lineTo(cx - r * 0.95, cy - r * 0.02)
-    roof.closeSubpath(); p.drawPath(roof)
-    bw = r * 1.15; bh = r * 0.85
-    p.drawRect(QRectF(cx - bw / 2, cy - r * 0.05, bw, bh))
-    p.setBrush(QColor(0, 140, 243))
-    dw = bw * 0.30; dh = bh * 0.62
-    p.drawRect(QRectF(cx - dw / 2, cy + bh - dh - r * 0.05, dw, dh))
+def _window_frame(p: QPainter, cx: float, cy: float, r: float) -> None:
+    """White app window with a dark title-bar seam. Used for the "Window" spoke
+    that returns to the app; pairs stylistically with the Float cards glyph."""
+    p.setPen(Qt.NoPen)
+    w, h, rad = r * 1.52, r * 1.20, r * 0.16
+    x0, y0 = cx - w / 2, cy - h / 2
+    p.setBrush(QColor(255, 255, 255))
+    p.drawRoundedRect(QRectF(x0, y0, w, h), rad, rad)
+    tb = h * 0.34
+    p.setBrush(QColor(10, 12, 16))           # title-bar seam -> reads as a window
+    p.drawRect(QRectF(x0, y0 + tb, w, max(1.6, r * 0.12)))
 
 
 def _x_glyph(p: QPainter, cx: float, cy: float, r: float) -> None:
@@ -416,7 +419,7 @@ class RadialMenuWidget(QWidget):
             elif key == "exit":
                 _x_glyph(p, cx, cy, r * 0.5)
             elif key == "home":
-                _home(p, cx, cy, r * 0.52)
+                _window_frame(p, cx, cy, r * 0.52)
             elif key == "transparent":
                 _overlay_cards(p, cx, cy, r * 0.72)
             else:  # accounts
