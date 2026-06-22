@@ -21,6 +21,10 @@ from utils.radial_menu_layout import MAIN_RING_ANGLES, account_ring_angles, pola
 
 _MAIN_KEYS = ("accounts", "home", "settings", "close", "exit")
 _MAIN_BOTTOM_KEYS = ("close", "exit")   # labels render below these
+# Hover labels. "close" dismisses the ring (one level up), so it reads as "Back"
+# (the X glyph next to "Exit" was confusingly two ways to leave).
+_MAIN_LABELS = {"accounts": "Accounts", "home": "Home", "settings": "Settings",
+                "close": "Back", "exit": "Exit"}
 
 
 # --- glyph + disc painters (azure theme matching the emblem) ------------------
@@ -80,14 +84,6 @@ def _home(p: QPainter, cx: float, cy: float, r: float) -> None:
     p.setBrush(QColor(0, 140, 243))
     dw = bw * 0.30; dh = bh * 0.62
     p.drawRect(QRectF(cx - dw / 2, cy + bh - dh - r * 0.05, dw, dh))
-
-
-def _close_x(p: QPainter, cx: float, cy: float, r: float) -> None:
-    s = r * 0.46
-    pen = QPen(QColor(255, 255, 255)); pen.setWidthF(r * 0.22); pen.setCapStyle(Qt.RoundCap)
-    p.setPen(pen)
-    p.drawLine(QPointF(cx - s, cy - s), QPointF(cx + s, cy + s))
-    p.drawLine(QPointF(cx - s, cy + s), QPointF(cx + s, cy - s))
 
 
 def _power(p: QPainter, cx: float, cy: float, r: float) -> None:
@@ -375,8 +371,8 @@ class RadialMenuWidget(QWidget):
             _disc(p, cx, cy, r, hot)
             if key == "settings":
                 _gear(p, cx, cy, r * 1.15)
-            elif key == "close":
-                _close_x(p, cx, cy, r * 0.55)
+            elif key == "close":   # labelled "Back": dismiss the ring (one level up)
+                _back_arrow(p, cx, cy, r * 0.55)
             elif key == "exit":
                 _power(p, cx, cy, r * 0.55)
             elif key == "home":
@@ -384,7 +380,7 @@ class RadialMenuWidget(QWidget):
             else:  # accounts
                 _person(p, cx, cy, r * 0.52)
             if hot:
-                _label_pill(p, cx, cy, r, key.capitalize(),
+                _label_pill(p, cx, cy, r, _MAIN_LABELS.get(key, key.capitalize()),
                             above=(key not in _MAIN_BOTTOM_KEYS))
 
     def set_accounts(self, accounts, customizations=None) -> None:
