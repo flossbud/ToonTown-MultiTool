@@ -487,3 +487,34 @@ def test_hover_progress_eases_toward_hovered_spoke():
     for _ in range(40):
         w._advance(20_000)
     assert all(v == 0.0 for v in w._hover_progress.values())
+
+
+def test_close_mid_entrance_flies_back_from_current_position():
+    _app()
+    from utils.overlay.radial_menu import RadialMenuWidget
+    w = RadialMenuWidget(emblem_diameter=160); w.resize(400, 400)
+    w.start_reveal()
+    w._advance(100)                                  # partway through the 360ms entrance
+    mid = {k: w._circle_vis(k) for k in w.reveal_order("main")}
+    assert any(0.0 < v < 1.0 for v in mid.values())  # genuinely mid-flight
+    w._begin_close()
+    w._advance(0)                                    # first close frame
+    # must NOT snap to the full slot first: each circle starts the fly-back from
+    # where it currently was (<= its mid-entrance vis), never jumping outward.
+    for k, v in mid.items():
+        assert w._circle_vis(k) <= v + 1e-6
+    w._advance(10_000)
+    assert all(w._circle_vis(k) == 0.0 for k in mid)  # fully flown back
+
+
+def test_kill_switch_begin_close_is_idempotent(monkeypatch):
+    _app()
+    monkeypatch.setenv("TTMT_NO_RADIAL_ANIM", "1")
+    from utils.overlay.radial_menu import RadialMenuWidget
+    w = RadialMenuWidget(emblem_diameter=160); w.resize(400, 400)
+    w.start_reveal()
+    fired = []
+    w.close_requested.connect(lambda: fired.append(1))
+    w._begin_close()
+    w._begin_close()                                 # second call must NOT re-emit
+    assert fired == [1]

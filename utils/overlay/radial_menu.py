@@ -299,6 +299,7 @@ class RadialMenuWidget(QWidget):
         self._closing = False
         self._close_emitted = False
         self._close_progress = {}      # key -> eased close progress in [0,1]
+        self._close_from = {}          # key -> vis at close-start (fly-back origin)
         self._hover_progress = {}      # key -> eased hover amount in [0,1]  (Task 5)
         self._press_hit = None         # (state, key) currently pressed       (Task 6)
         self._press_releasing = False
@@ -378,10 +379,14 @@ class RadialMenuWidget(QWidget):
             self._close_emitted = True
             self.close_requested.emit()
             return
+        keys = self.reveal_order(self._state)
+        # Capture where each circle sits RIGHT NOW (mid-entrance or settled) so
+        # the fly-back starts from the current position instead of snapping to
+        # the full slot first. Read before flipping the state flags below.
+        self._close_from = {k: self._circle_vis(k) for k in keys}
         self._appear_active = False
         self._closing = True
         self._close_emitted = False
-        keys = self.reveal_order(self._state)
         order = {k: i for i, k in enumerate(reversed(keys))}   # rightmost leaves first
         self._stagger = {k: order[k] * self._CLOSE_STAGGER_MS for k in keys}
         self._close_progress = {k: 0.0 for k in keys}
@@ -467,7 +472,8 @@ class RadialMenuWidget(QWidget):
         """Visibility in [0,1] for `key`: 0 = collapsed at the emblem center,
         1 = settled at its slot. Drives center/scale/opacity interpolation."""
         if self._closing:
-            return 1.0 - self._close_progress.get(key, 0.0)
+            start = self._close_from.get(key, 1.0)
+            return start * (1.0 - self._close_progress.get(key, 0.0))
         if self._appear_active:
             return self._appear_progress.get(key, 0.0)
         return 1.0
