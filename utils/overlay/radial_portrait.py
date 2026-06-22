@@ -82,6 +82,20 @@ def render_account_portrait(game, toon_name, dna, customizations, diameter):
         w.set_customizations_manager(customizations)
     if dna:
         w.set_dna(dna)
+        # set_dna kicks off an ASYNC pose fetch, so grabbing right away would
+        # capture only the background (no toon image). Pull the pose straight
+        # from the disk cache synchronously and apply it before the grab. Recent
+        # toons were just shown in the cards, so the pose is almost always
+        # cached; if not, we fall back to background-only (and the async fetch
+        # warms the cache for next time).
+        try:
+            from utils.rendition_poses import RenditionPoseFetcher
+            cached = RenditionPoseFetcher.instance().cached_pixmap(dna, w._pose)
+            if cached is not None and not cached.isNull():
+                w._pixmap = cached
+                w._loading = False
+        except Exception:
+            pass
 
     # Grab at the widget's maximum supported size; _circular scales to diameter.
     grab_size = min(diameter, _WIDGET_MAX)
