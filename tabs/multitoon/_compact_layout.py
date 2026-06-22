@@ -413,10 +413,10 @@ class _Emblem(QWidget):
     when broadcasting. Passive by default; call set_interactive(True) to enable
     toggle/drag/resize gestures."""
 
-    toggle_requested = Signal()
+    toggle_requested = Signal()               # right-click (no drag): quick mode-toggle
     move_requested = Signal()
     resize_scrolled = Signal(int)
-    context_menu_requested = Signal(QPoint)   # global position; right-click (no drag)
+    menu_requested = Signal()                 # left-click (no drag): open the radial wheel
 
     _RING_MARGIN = 14  # room for the -4px ring + soft glow outside the disc
     _BASE_ICON_INSET = 8  # app-icon inset inside the disc at scale 1.0
@@ -532,6 +532,11 @@ class _Emblem(QWidget):
         self.setAttribute(Qt.WA_TransparentForMouseEvents, not on)
         self._armed = False
 
+    def disc_diameter(self) -> float:
+        """Current on-screen emblem disc diameter (excludes the ring margin).
+        The windowed wheel host scales its ring to this so it tracks the tab."""
+        return float(self._d)
+
     def _on_dwell_timeout(self) -> None:
         self._armed = True
         self.update()
@@ -561,9 +566,9 @@ class _Emblem(QWidget):
     def mouseReleaseEvent(self, event):
         if not self._dragging:
             if event.button() == Qt.RightButton:
-                self.context_menu_requested.emit(event.globalPosition().toPoint())
+                self.toggle_requested.emit()      # right-click = quick mode-toggle
             elif event.button() == Qt.LeftButton:
-                self.toggle_requested.emit()
+                self.menu_requested.emit()         # left-click = open the wheel
             # other buttons: no-op
         self._dragging = False
         super().mouseReleaseEvent(event)
