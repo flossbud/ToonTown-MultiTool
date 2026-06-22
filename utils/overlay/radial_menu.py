@@ -332,9 +332,15 @@ class RadialMenuWidget(QWidget):
             if hot:
                 _label_pill(p, cx, cy, r, key.capitalize(), above=(key != "close"))
 
-    def set_accounts(self, accounts) -> None:
-        """Switch to the accounts sub-ring and pre-render each toon portrait."""
+    def set_accounts(self, accounts, customizations=None) -> None:
+        """Switch to the accounts sub-ring and pre-render each toon portrait.
+
+        ``customizations`` (a ToonCustomizationsManager) is optional so callers
+        can supply real portrait styling after construction; backward compatible
+        with ``set_accounts(accts)`` (customizations stays whatever it was)."""
         from utils.overlay.radial_portrait import render_account_portrait
+        if customizations is not None:
+            self._customizations = customizations
         self._accounts = list(accounts)
         self._portraits = {}
         d = max(1, int(round(self._sat_r * 2)))

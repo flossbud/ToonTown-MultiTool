@@ -129,6 +129,59 @@ def test_overlay_active_provider_defaults_false(qapp):
     assert tab._overlay_active() is True
 
 
+class _ToonStore:
+    """Minimal RecentToonsStore double: maps account_id -> ToonRecord-like."""
+    def __init__(self, by_id):
+        self._by_id = dict(by_id)
+    def get(self, aid):
+        return self._by_id.get(aid)
+
+
+def test_account_ring_includes_running(qapp):
+    # Unlike the flat menu (which skips running accounts), the ring keeps them.
+    tab = _tab(qapp, [_acct("a", "ttr"), _acct("b", "ttr")], ordered=["a", "b"])
+    tab._slots["ttr"]["a"] = SimpleNamespace(
+        launcher=SimpleNamespace(is_running=lambda: True))
+    ring = tab.recent_account_ring_model()
+    by_id = {r.account_id: r for r in ring}
+    assert set(by_id) == {"a", "b"}            # running "a" is NOT dropped
+    assert by_id["a"].running is True
+    assert by_id["b"].running is False
+
+
+def test_account_ring_attaches_toon_and_placeholder(qapp):
+    tab = _tab(qapp, [_acct("a", "ttr"), _acct("b", "ttr")], ordered=["a", "b"])
+    tab._recent_toons = _ToonStore({
+        "a": SimpleNamespace(toon_name="Floss", dna="dnaA"),
+    })
+    by_id = {r.account_id: r for r in tab.recent_account_ring_model()}
+    assert by_id["a"].toon_name == "Floss" and by_id["a"].dna == "dnaA"
+    assert by_id["a"].is_placeholder is False
+    assert by_id["b"].toon_name is None and by_id["b"].is_placeholder is True
+
+
+def test_account_ring_keyring_locked_is_empty_no_reads(qapp):
+    tab = _tab(qapp, [_acct("a", "ttr"), _acct("b", "cc")], ordered=["a", "b"],
+               keyring=False)
+    tab.cred_manager.reads = 0
+    assert tab.recent_account_ring_model() == []   # locked -> empty ring
+    assert tab.cred_manager.reads == 0             # no per-account credential reads
+
+
+def test_account_ring_respects_limit(qapp):
+    accts = [_acct(c, "ttr") for c in "abcde"]
+    tab = _tab(qapp, accts, ordered=list("abcde"))
+    assert len(tab.recent_account_ring_model(limit=2)) == 2
+
+
+def test_game_of_account(qapp):
+    tab = _tab(qapp, [_acct("a", "ttr"), _acct("b", "cc", token="tok")],
+               ordered=["a", "b"])
+    assert tab.game_of_account("a") == "ttr"
+    assert tab.game_of_account("b") == "cc"
+    assert tab.game_of_account("missing") is None
+
+
 def test_records_launch_in_on_game_launched(qapp, monkeypatch):
     # The record call must run after the stale guard and before any early return.
     tab = _tab(qapp, [_acct("a", "ttr")], ordered=[])

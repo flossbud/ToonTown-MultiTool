@@ -1219,22 +1219,55 @@ class MultiToonTool(QMainWindow):
         return group
 
     def _show_emblem_launch_menu(self, global_pos):
-        """Right-click on the emblem: in transparent mode, show the recent-launch
-        menu; when framed, preserve the prior behavior (enter transparent mode)."""
-        from PySide6.QtWidgets import QMenu
-
+        """Right-click on the emblem: in transparent mode, open the radial menu;
+        when framed, preserve the prior behavior (enter transparent mode)."""
         if not self._mode_controller.is_active:   # is_active is a @property
             self._mode_controller.toggle()   # framed: right-click enters transparent
             return
 
-        model = self.launch_tab.recent_launch_menu_model()
-        menu = QMenu(self)                   # parented to the main window, NOT the emblem
-        for text, data in self._emblem_menu_entries(model):
-            menu.addAction(text).setData(data)
+        menu = self._mode_controller.open_radial_menu()
+        if menu is None:
+            return
+        self._wire_radial_menu(menu)
 
-        chosen = menu.exec(global_pos)       # blocks; returns the chosen QAction or None
-        if chosen is not None:
-            self._dispatch_emblem_menu_action(chosen.data())
+    def _wire_radial_menu(self, menu):
+        """Connect a freshly opened RadialMenuWidget's intent signals to the
+        coordinator. The widget is owned by the mode controller and torn down on
+        close_radial_menu()/leave(), so its connections die with it."""
+        menu.accounts_requested.connect(lambda: self._populate_radial_accounts(menu))
+        menu.home_requested.connect(self._radial_go_home)
+        menu.settings_requested.connect(self._open_portable_settings)
+        menu.close_requested.connect(self._mode_controller.close_radial_menu)
+        menu.account_clicked.connect(self._radial_launch_account)
+
+    def _populate_radial_accounts(self, menu):
+        """Feed the radial's Accounts sub-ring. Reuses launch_tab's keyring-aware
+        ring builder (which INCLUDES running accounts, unlike the flat menu) and
+        supplies the real ToonCustomizationsManager so portraits render styled."""
+        ring = self.launch_tab.recent_account_ring_model(limit=8)
+        menu.set_accounts(ring, customizations=self.multitoon_tab.customizations)
+
+    def _radial_go_home(self):
+        """Home spoke: close the radial and return to the windowed view (same as
+        a left-click on the emblem in transparent mode)."""
+        self._mode_controller.close_radial_menu()
+        self._mode_controller.toggle()          # active -> leave() -> windowed
+
+    def _radial_launch_account(self, account_id):
+        """Account spoke clicked: launch it (the sub-ring stays open so the user
+        can fire several). launch_account no-ops a re-launch of a running game."""
+        game = self.launch_tab.game_of_account(account_id)
+        if game is None:
+            return
+        self.launch_tab.launch_account(game, account_id)
+
+    def _open_portable_settings(self):
+        # Portable Settings panel is implemented in a later step (Task 12). Until
+        # then, fall back to leaving transparent mode and opening the windowed
+        # Settings tab the way the emblem nav menu already does (leave + nav_select).
+        self._mode_controller.close_radial_menu()
+        self._mode_controller.leave()           # restore the main window
+        self.nav_select(3)                      # Settings tab (stack index 3)
 
     @staticmethod
     def _emblem_menu_entries(model):

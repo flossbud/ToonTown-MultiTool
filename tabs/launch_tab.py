@@ -547,6 +547,54 @@ class LaunchTab(QWidget):
             cred.count(),
         )
 
+    def recent_account_ring_model(self, limit: int = 8):
+        """Build the emblem radial menu's Accounts sub-ring from the recent-launch
+        MRU. Unlike ``recent_launch_menu_model`` (the flat menu), the ring INCLUDES
+        running accounts (carrying a ``running`` flag) and attaches each account's
+        last in-world toon (name + DNA) for its portrait. Reuses the SAME
+        keyring-aware single-pass metadata resolution so no extra keyring
+        round-trips are added at menu-open; a locked keyring yields an empty ring
+        (no per-account reads)."""
+        from utils.recent_launches import resolve_account_view
+        from utils.radial_menu_model import build_account_ring
+        cred = self.cred_manager
+        # Mirror recent_launch_menu_model's single-pass resolution: skip the
+        # metadata pass entirely when the keyring is locked (else each CC token
+        # read can hit a lock-timeout storm).
+        if not cred.keyring_available and cred.count() > 0:
+            meta_by_id = {}
+        else:
+            meta_by_id = {meta.id: (i, meta)
+                          for i, meta in enumerate(cred.get_accounts_metadata())}
+
+        def account_for(aid):
+            entry = meta_by_id.get(aid)
+            if entry is None:
+                return None
+            idx, meta = entry
+            return resolve_account_view(cred, idx, meta)
+
+        def toon_for(aid):
+            rec = self._recent_toons.get(aid)
+            return (rec.toon_name, rec.dna) if rec else None
+
+        return build_account_ring(
+            self._recent_launches.ordered_ids(),
+            account_for,
+            toon_for,
+            self.is_account_running,
+            limit=limit,
+        )
+
+    def game_of_account(self, account_id: str) -> str | None:
+        """Resolve an account's game ("ttr"/"cc") from metadata, or None if the
+        account is unknown. Used by the radial launch path, which only carries an
+        account_id, to recover the game needed by ``launch_account``."""
+        for a in self.cred_manager.get_accounts_metadata():
+            if a.id == account_id:
+                return a.game
+        return None
+
     def _position_of(self, game: str, account_id: str) -> int:
         """1-based position within the game (for 'Account N' user-facing text)."""
         for i, a in enumerate(self._ordered_accounts(game)):
