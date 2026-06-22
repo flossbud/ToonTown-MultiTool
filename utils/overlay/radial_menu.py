@@ -278,6 +278,7 @@ class RadialMenuWidget(QWidget):
         self._sat_r = self._emblem_dia * 0.40 / 2.0   # satellite = 40% of emblem diameter
         self._ring = self._emblem_dia / 2.0 + 16.0 + self._sat_r   # 16px gap outside the emblem
         self._customizations = customizations
+        self._vignette = None   # cached full-surface dim, keyed by widget size
         self._state = "main"
         self._hover = None          # (state, key) or None
         self._accounts = []         # RingAccount entries for the accounts sub-ring
@@ -446,26 +447,39 @@ class RadialMenuWidget(QWidget):
         self.update()
         super().mouseMoveEvent(e)
 
-    def paintEvent(self, e):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing, True)
-        # Soft radial dim behind the circles (NOT a sharp rectangle): it darkens
-        # the emblem + satellites and fades to fully transparent before the
-        # surface edge, so nothing hard-edged is painted. (True blur of the live
-        # windows behind an override-redirect overlay is not feasible; this
-        # radial vignette is the practical substitute.)
+    def _ensure_vignette(self) -> None:
+        """(Re)build the cached vignette pixmap when missing or size-stale."""
+        from PySide6.QtGui import QPixmap
+        if self._vignette is not None and self._vignette.size() == self.size():
+            return
+        pm = QPixmap(self.size())
+        pm.fill(Qt.transparent)
         cx = self.width() / 2.0
         cy = self.height() / 2.0
         radius = min(self.width(), self.height()) / 2.0
         if radius > 0:
+            qp = QPainter(pm)
+            qp.setRenderHint(QPainter.Antialiasing, True)
             dim = QRadialGradient(QPointF(cx, cy), radius)
             dim.setColorAt(0.0, QColor(8, 10, 16, 150))
             dim.setColorAt(0.55, QColor(8, 10, 16, 150))
             dim.setColorAt(0.88, QColor(8, 10, 16, 0))
             dim.setColorAt(1.0, QColor(8, 10, 16, 0))
-            p.setPen(Qt.NoPen)
-            p.setBrush(QBrush(dim))
-            p.drawEllipse(QPointF(cx, cy), radius, radius)
+            qp.setPen(Qt.NoPen)
+            qp.setBrush(QBrush(dim))
+            qp.drawEllipse(QPointF(cx, cy), radius, radius)
+            qp.end()
+        self._vignette = pm
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        # Cached soft radial dim (built once per size). True blur of the live
+        # windows behind an override-redirect overlay is not feasible; this
+        # vignette is the practical substitute.
+        self._ensure_vignette()
+        if self._vignette is not None and not self._vignette.isNull():
+            p.drawPixmap(0, 0, self._vignette)
         if self._state == "main":
             self._paint_main(p)
         elif self._state == "accounts":

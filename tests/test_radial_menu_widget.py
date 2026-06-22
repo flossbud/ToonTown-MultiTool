@@ -349,3 +349,17 @@ def test_refined_painters_paint_without_crash():
     _disc(p, 110, 110, 50, hot=True, danger=False)
     _disc(p, 110, 110, 50, hot=False, danger=True)
     p.end()
+
+
+def test_vignette_is_cached_and_rebuilt_on_size_change():
+    _app()
+    from utils.overlay.radial_menu import RadialMenuWidget
+    w = RadialMenuWidget(emblem_diameter=160); w.resize(400, 400)
+    w._ensure_vignette()
+    first = w._vignette
+    assert first is not None and first.size().width() == 400
+    w._ensure_vignette()
+    assert w._vignette is first              # same size -> cached, not rebuilt
+    w.resize(500, 500)
+    w._ensure_vignette()
+    assert w._vignette is not first and w._vignette.size().width() == 500
