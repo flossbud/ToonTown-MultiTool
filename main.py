@@ -508,10 +508,13 @@ class MultiToonTool(QMainWindow):
             _click_sync.ghost_pointer_event.connect(self._mode_controller.on_ghost_event)
             _click_sync.ghost_clear.connect(self._mode_controller.on_ghost_clear)
         emblem = self.multitoon_tab._compact._emblem
+        from utils.overlay.backend import overlay_trace as _overlay_trace
         if self._overlay_backend.is_available():
+            _overlay_trace("main: overlay backend AVAILABLE -> emblem interactive + connected")
             emblem.set_interactive(True)
             self._mode_controller.connect_emblem(emblem)
         else:
+            _overlay_trace("main: overlay backend UNAVAILABLE -> emblem inert (transparent mode off)")
             emblem.setToolTip("Transparent mode requires the X11 Shape extension")
 
         # Install event filter to globally block tooltips when hints disabled

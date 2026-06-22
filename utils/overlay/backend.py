@@ -1,6 +1,16 @@
 """Platform seam for the transparent-mode overlay (input-shape + window hints)."""
 from __future__ import annotations
+import os
 import sys
+
+
+def overlay_trace(msg: str) -> None:
+    """Diagnostic (no-op unless TTMT_OVERLAY_TRACE is set). The overlay layer is
+    otherwise silent by convention, which hides why transparent mode fails to
+    engage. Writes to stderr so a packaged build can surface the cause."""
+    if os.environ.get("TTMT_OVERLAY_TRACE"):
+        sys.stderr.write(f"[overlay_trace] {msg}\n")
+        sys.stderr.flush()
 
 
 class OverlayBackend:
@@ -25,7 +35,13 @@ def get_overlay_backend() -> OverlayBackend:
             from utils.overlay.x11_backend import X11OverlayBackend
             backend = X11OverlayBackend()
             if backend.is_available():
+                overlay_trace("get_overlay_backend: X11OverlayBackend AVAILABLE")
                 return backend
-        except Exception:
-            pass
+            overlay_trace("get_overlay_backend: X11OverlayBackend NOT available -> NoOp")
+        except Exception as e:
+            import traceback
+            overlay_trace(f"get_overlay_backend: X11 backend raised {e!r} -> NoOp\n"
+                          + traceback.format_exc())
+    else:
+        overlay_trace(f"get_overlay_backend: non-linux ({sys.platform}) -> NoOp")
     return NoOpOverlayBackend()

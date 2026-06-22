@@ -17,14 +17,17 @@ class X11OverlayBackend(OverlayBackend):
     def __init__(self):
         self._display = None
         self._shape = None
+        from utils.overlay.backend import overlay_trace
         try:
             from Xlib import display as xdisplay
             from Xlib.ext import shape
             self._display = xdisplay.Display()
             if self._display.query_extension("SHAPE") is None:
                 self._display = None
+                overlay_trace("X11OverlayBackend: SHAPE extension NOT advertised by server")
             else:
                 self._shape = shape
+                overlay_trace("X11OverlayBackend: Display OK, SHAPE available")
                 # Swallow asynchronous protocol errors on THIS connection. The
                 # EWMH/SHAPE requests are best-effort and fire-and-flush, so their
                 # errors (e.g. BadWindow if a surface's native handle was torn down
@@ -34,8 +37,10 @@ class X11OverlayBackend(OverlayBackend):
                 # is connection-local; Qt uses a separate display, so this never
                 # masks errors outside the overlay backend.
                 self._display.set_error_handler(self._on_x_error)
-        except Exception:
+        except Exception as e:
             self._display = None
+            import traceback
+            overlay_trace(f"X11OverlayBackend init FAILED: {e!r}\n" + traceback.format_exc())
 
     @staticmethod
     def _on_x_error(*_args) -> None:

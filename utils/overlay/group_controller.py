@@ -1159,6 +1159,8 @@ class OverlayGroupController:
         """
         if self._active:
             return True
+        from utils.overlay.backend import overlay_trace
+        overlay_trace("group_controller.enter() called (building transparent cluster)")
         # Defensive: no debounced recompute can be outstanding while framed, but
         # clear the gate so a stray queued tick from a prior session is inert.
         self._recompute_pending = False
@@ -1252,6 +1254,10 @@ class OverlayGroupController:
             minimized = True
             self._window.showMinimized()
         except Exception:
+            from utils.overlay.backend import overlay_trace
+            import traceback
+            overlay_trace("group_controller.enter() transaction FAILED:\n"
+                          + traceback.format_exc())
             # Fail-closed: return every borrowed widget to its EXACT tab slot
             # FIRST (release from the surface, then restore_slot) so a live card
             # is never deleted or stranded; THEN destroy the now-empty surfaces;
