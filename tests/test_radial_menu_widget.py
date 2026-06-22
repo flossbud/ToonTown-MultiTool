@@ -7,25 +7,37 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+@pytest.fixture(autouse=True)
+def _force_radial_anim_enabled(monkeypatch):
+    # These tests assert animated / deferred behavior, so isolate them from an
+    # ambient TTMT_NO_RADIAL_ANIM in the dev shell. The kill-switch test sets it
+    # back via its own monkeypatch.setenv after this autouse fixture runs.
+    monkeypatch.delenv("TTMT_NO_RADIAL_ANIM", raising=False)
+
+
 def _app():
     from PySide6.QtWidgets import QApplication
     return QApplication.instance() or QApplication([])
 
 
-def test_main_ring_emits_intents_on_hit():
+def test_main_ring_emits_action_intents_on_hit():
     _app()
     from utils.overlay.radial_menu import RadialMenuWidget
     w = RadialMenuWidget(emblem_diameter=160); w.resize(400, 400)
+    w.start_reveal(); w._advance(10_000)
     fired = []
     w.accounts_requested.connect(lambda: fired.append("accounts"))
     w.home_requested.connect(lambda: fired.append("home"))
     w.settings_requested.connect(lambda: fired.append("settings"))
-    w.close_requested.connect(lambda: fired.append("close"))
     w.exit_requested.connect(lambda: fired.append("exit"))
-    for key in ("accounts", "home", "settings", "close", "exit"):
+    closed = []
+    w.close_requested.connect(lambda: closed.append(1))
+    # action spokes fire immediately; "close" is deferred (covered separately)
+    for key in ("accounts", "home", "settings", "exit"):
         cx, cy, r = w.circle_geometry("main", key)
         w.activate_at(cx, cy)
-    assert fired == ["accounts", "home", "settings", "close", "exit"]
+    assert fired == ["accounts", "home", "settings", "exit"]
+    assert closed == []          # no close spoke was hit
 
 
 def test_click_outside_any_circle_does_not_emit():
@@ -91,12 +103,15 @@ def test_auto_close_only_after_last_account_launched():
     w = RadialMenuWidget(emblem_diameter=160); w.resize(500, 500)
     w.set_accounts([RingAccount("a", "ttr", "L", "T", "", True, False),
                     RingAccount("b", "ttr", "L", "T", "", True, False)])
+    w._advance(10_000)
     closed = []
     w.close_requested.connect(lambda: closed.append(1))
     _click_account(w, 0)
     assert closed == []          # one still un-launched -> stay open
     _click_account(w, 1)
-    assert closed == [1]         # all launched -> auto-close the whole radial
+    assert closed == []          # all launched -> close BEGINS (deferred)
+    w._advance(10_000)
+    assert closed == [1]
 
 
 def test_already_running_accounts_count_toward_all_launched():
@@ -104,12 +119,14 @@ def test_already_running_accounts_count_toward_all_launched():
     from utils.overlay.radial_menu import RadialMenuWidget
     from utils.radial_menu_model import RingAccount
     w = RadialMenuWidget(emblem_diameter=160); w.resize(500, 500)
-    # index 1 is already running; launching index 0 completes the set.
     w.set_accounts([RingAccount("a", "ttr", "L", "T", "", True, False),
                     RingAccount("b", "ttr", "L", "T", "", True, True)])
+    w._advance(10_000)
     closed = []
     w.close_requested.connect(lambda: closed.append(1))
     _click_account(w, 0)
+    assert closed == []
+    w._advance(10_000)
     assert closed == [1]
 
 
@@ -148,15 +165,18 @@ def test_reveal_order_is_left_to_right():
     assert xs == sorted(xs)
 
 
-def test_esc_emits_close():
+def test_esc_begins_deferred_close():
     _app()
     from PySide6.QtCore import Qt, QEvent
     from PySide6.QtGui import QKeyEvent
     from utils.overlay.radial_menu import RadialMenuWidget
     w = RadialMenuWidget(emblem_diameter=160); w.resize(400, 400)
+    w.start_reveal(); w._advance(10_000)
     fired = []
     w.close_requested.connect(lambda: fired.append(1))
     w.keyPressEvent(QKeyEvent(QEvent.KeyPress, Qt.Key_Escape, Qt.NoModifier))
+    assert fired == []
+    w._advance(10_000)
     assert fired == [1]
 
 
@@ -167,15 +187,18 @@ def test_idle_timeout_is_15s():
     assert w.idle_timeout_ms() == 15000
 
 
-def test_idle_timer_wired_to_close():
+def test_idle_timer_begins_deferred_close():
     _app()
     from utils.overlay.radial_menu import RadialMenuWidget
-    w = RadialMenuWidget(emblem_diameter=160)
+    w = RadialMenuWidget(emblem_diameter=160); w.resize(400, 400)
+    w.start_reveal(); w._advance(10_000)
     assert w._idle_timer.isSingleShot()
     assert w._idle_timer.interval() == 15000
     fired = []
     w.close_requested.connect(lambda: fired.append(1))
     w._idle_timer.timeout.emit()
+    assert fired == []
+    w._advance(10_000)
     assert fired == [1]
 
 
@@ -187,9 +210,8 @@ def test_running_account_paints_status_dot():
     from utils.radial_menu_model import RingAccount
     w = RadialMenuWidget(emblem_diameter=160); w.resize(500, 500)
     w.set_accounts([RingAccount("a", "ttr", "L", "Toon", "", True, True)])
-    # complete the reveal so the account paints
-    for _ in range(len(w.reveal_order("accounts")) + 1):
-        w._reveal_tick()
+    # settle the entrance so the account paints at full size
+    w._advance(10_000)
     img = QImage(500, 500, QImage.Format_ARGB32); img.fill(0)
     p = QPainter(img); w.render(p, QPoint(0, 0)); p.end()
     # scan for a strongly-green pixel (the status dot)
@@ -203,19 +225,17 @@ def test_running_account_paints_status_dot():
     assert found, "running status dot (green) not painted"
 
 
-def test_reveal_gates_painting_then_completes():
+def test_reveal_animates_then_completes():
     _app()
     from PySide6.QtCore import QPoint
     from PySide6.QtGui import QPixmap, QPainter
     from utils.overlay.radial_menu import RadialMenuWidget
     w = RadialMenuWidget(emblem_diameter=160); w.resize(400, 400)
     w.start_reveal()
-    # mid-reveal: nothing revealed yet -> paint must not crash
+    w._advance(0)                                # mid-reveal: must not crash
     pm = QPixmap(400, 400); p = QPainter(pm); w.render(p, QPoint(0, 0)); p.end()
-    # drive the reveal to completion deterministically (no event loop)
-    for _ in range(len(w.reveal_order("main")) + 1):
-        w._reveal_tick()
-    assert w._reveal_active is False
+    w._advance(10_000)                           # settle
+    assert w._appear_active is False
     pm2 = QPixmap(400, 400); p2 = QPainter(pm2); w.render(p2, QPoint(0, 0)); p2.end()
 
 
@@ -238,14 +258,18 @@ def test_windowed_variant_emits_per_spoke():
     _app()
     from utils.overlay.radial_menu import RadialMenuWidget
     w = RadialMenuWidget(emblem_diameter=160, variant="windowed"); w.resize(500, 500)
+    w.start_reveal(); w._advance(10_000)
     fired = []
     w.accounts_requested.connect(lambda: fired.append("accounts"))
     w.transparent_requested.connect(lambda: fired.append("transparent"))
-    w.close_requested.connect(lambda: fired.append("close"))
-    for key in ("accounts", "transparent", "close"):
+    closed = []
+    w.close_requested.connect(lambda: closed.append(1))
+    # action spokes fire immediately; "close" is deferred (covered separately)
+    for key in ("accounts", "transparent"):
         cx, cy, r = w.circle_geometry("main", key)
         w.activate_at(cx, cy)
-    assert fired == ["accounts", "transparent", "close"]
+    assert fired == ["accounts", "transparent"]
+    assert closed == []          # no close spoke was hit
 
 
 def test_windowed_transparent_spoke_is_top_center():
@@ -278,17 +302,44 @@ def test_windowed_paint_does_not_crash_and_label_present():
     pm = QPixmap(500, 500); p = QPainter(pm); w.render(p, QPoint(0, 0)); p.end()
 
 
-def test_press_is_accepted_not_propagated():
+def test_press_depresses_then_springs_back_and_activates():
     _app()
     from PySide6.QtCore import Qt, QEvent, QPointF
     from PySide6.QtGui import QMouseEvent
     from utils.overlay.radial_menu import RadialMenuWidget
     w = RadialMenuWidget(emblem_diameter=160); w.resize(400, 400)
-    ev = QMouseEvent(QEvent.MouseButtonPress, QPointF(10, 10),
+    w.start_reveal(); w._advance(10_000)
+    cx, cy, r = w.circle_geometry("main", "settings")
+    press = QMouseEvent(QEvent.MouseButtonPress, QPointF(cx, cy),
+                        Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
+    w.mousePressEvent(press)
+    assert w._press_hit == ("main", "settings")
+    for _ in range(6):                       # depress while held
+        w._advance(0)
+    assert w._press_scale_val < 1.0
+    fired = []
+    w.settings_requested.connect(lambda: fired.append(1))
+    rel = QMouseEvent(QEvent.MouseButtonRelease, QPointF(cx, cy),
+                      Qt.LeftButton, Qt.NoButton, Qt.NoModifier)
+    w.mouseReleaseEvent(rel)
+    assert fired == [1]                      # activation still on release
+    for _ in range(60):                      # spring-back completes
+        w._advance(0)
+    assert w._press_hit is None
+    assert w._press_scale_val == 1.0
+
+
+def test_press_is_still_accepted_not_propagated():
+    _app()
+    from PySide6.QtCore import Qt, QEvent, QPointF
+    from PySide6.QtGui import QMouseEvent
+    from utils.overlay.radial_menu import RadialMenuWidget
+    w = RadialMenuWidget(emblem_diameter=160); w.resize(400, 400)
+    ev = QMouseEvent(QEvent.MouseButtonPress, QPointF(2, 2),
                      Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
     ev.setAccepted(False)
     w.mousePressEvent(ev)
-    assert ev.isAccepted()      # consumed -> will not bubble to a parent host
+    assert ev.isAccepted()                   # consumed even when no spoke is hit
 
 
 def test_windowed_variant_accounts_subring_and_back():
@@ -305,3 +356,165 @@ def test_windowed_variant_accounts_subring_and_back():
     assert back == [1] and w.state == "main"
     # Back returns to the WINDOWED 3-spoke ring, not the transparent 5-spoke one.
     assert sorted(w.reveal_order("main")) == sorted(["accounts", "transparent", "close"])
+
+
+def test_easing_and_interpolation_helpers():
+    from utils.overlay.radial_menu import (
+        _clamp01, _lerp, _ease_out, _ease_in, _ease_spring)
+    # endpoints
+    assert _ease_out(0.0) == 0.0 and abs(_ease_out(1.0) - 1.0) < 1e-9
+    assert _ease_in(0.0) == 0.0 and abs(_ease_in(1.0) - 1.0) < 1e-9
+    assert abs(_ease_spring(0.0)) < 1e-9 and abs(_ease_spring(1.0) - 1.0) < 1e-9
+    # ease_out decelerates (ahead of linear), ease_in accelerates (behind)
+    assert _ease_out(0.5) > 0.5
+    assert _ease_in(0.5) < 0.5
+    # spring overshoots above 1.0 somewhere in (0,1)
+    assert max(_ease_spring(i / 100.0) for i in range(101)) > 1.0
+    # clamp + lerp
+    assert _clamp01(-3.0) == 0.0 and _clamp01(2.0) == 1.0 and _clamp01(0.4) == 0.4
+    assert _lerp(10.0, 20.0, 0.5) == 15.0
+    assert _lerp(10.0, 20.0, 0.0) == 10.0 and _lerp(10.0, 20.0, 1.0) == 20.0
+
+
+def test_drop_shadow_darkens_below_disc():
+    _app()
+    from PySide6.QtGui import QImage, QPainter, QColor
+    from utils.overlay.radial_menu import _drop_shadow
+    img = QImage(220, 240, QImage.Format_ARGB32)
+    img.fill(QColor(60, 60, 60))                 # opaque mid-grey backdrop
+    p = QPainter(img)
+    _drop_shadow(p, 110, 100, 55, 1.0)
+    p.end()
+    below = img.pixelColor(110, 165)             # under the disc center
+    assert below.red() < 55                      # darkened by the shadow
+
+
+def test_refined_painters_paint_without_crash():
+    _app()
+    from PySide6.QtGui import QImage, QPainter
+    from utils.overlay.radial_menu import _disc, _focus_glow
+    img = QImage(220, 220, QImage.Format_ARGB32); img.fill(0)
+    p = QPainter(img)
+    _focus_glow(p, 110, 110, 50, 0.8)            # azure hover halo
+    _focus_glow(p, 110, 110, 50, 0.8, danger=True)  # red variant
+    _disc(p, 110, 110, 50, hot=True, danger=False)
+    _disc(p, 110, 110, 50, hot=False, danger=True)
+    p.end()
+
+
+def test_vignette_is_cached_and_rebuilt_on_size_change():
+    _app()
+    from utils.overlay.radial_menu import RadialMenuWidget
+    w = RadialMenuWidget(emblem_diameter=160); w.resize(400, 400)
+    w._ensure_vignette()
+    first = w._vignette
+    assert first is not None and first.size().width() == 400
+    w._ensure_vignette()
+    assert w._vignette is first              # same size -> cached, not rebuilt
+    w.resize(500, 500)
+    w._ensure_vignette()
+    assert w._vignette is not first and w._vignette.size().width() == 500
+
+
+def test_entrance_starts_at_center_and_settles_at_slot():
+    _app()
+    from utils.overlay.radial_menu import RadialMenuWidget
+    w = RadialMenuWidget(emblem_diameter=160); w.resize(400, 400)
+    w.start_reveal()
+    w._advance(0)
+    assert w._circle_vis("home") < 0.05          # t=0: collapsed at the emblem
+    w._advance(10_000)
+    assert w._circle_vis("home") == 1.0          # settled at its slot
+    assert w._appear_active is False
+
+
+def test_close_is_deferred_until_flyback_completes():
+    _app()
+    from utils.overlay.radial_menu import RadialMenuWidget
+    w = RadialMenuWidget(emblem_diameter=160); w.resize(400, 400)
+    w.start_reveal(); w._advance(10_000)
+    fired = []
+    w.close_requested.connect(lambda: fired.append(1))
+    cx, cy, r = w.circle_geometry("main", "close")
+    w.activate_at(cx, cy)
+    assert fired == []                           # animating, not yet closed
+    assert w._closing is True
+    w._advance(10_000)
+    assert fired == [1]                          # fires once on completion
+    w._advance(10_000)
+    assert fired == [1]                          # idempotent - no second emit
+
+
+def test_activation_ignored_while_closing():
+    _app()
+    from utils.overlay.radial_menu import RadialMenuWidget
+    w = RadialMenuWidget(emblem_diameter=160); w.resize(400, 400)
+    w.start_reveal(); w._advance(10_000)
+    w._begin_close()
+    fired = []
+    w.accounts_requested.connect(lambda: fired.append(1))
+    cx, cy, r = w.circle_geometry("main", "accounts")
+    w.activate_at(cx, cy)
+    assert fired == []
+
+
+def test_kill_switch_makes_appear_and_close_synchronous(monkeypatch):
+    _app()
+    monkeypatch.setenv("TTMT_NO_RADIAL_ANIM", "1")
+    from utils.overlay.radial_menu import RadialMenuWidget
+    w = RadialMenuWidget(emblem_diameter=160); w.resize(400, 400)
+    w.start_reveal()
+    assert w._appear_active is False
+    assert w._circle_vis("home") == 1.0          # instant, fully visible
+    fired = []
+    w.close_requested.connect(lambda: fired.append(1))
+    w._begin_close()
+    assert fired == [1]                           # synchronous close
+
+
+def test_hover_progress_eases_toward_hovered_spoke():
+    _app()
+    from utils.overlay.radial_menu import RadialMenuWidget
+    w = RadialMenuWidget(emblem_diameter=160); w.resize(400, 400)
+    w.start_reveal(); w._advance(10_000)          # settle entrance
+    w._hover = ("main", "settings")
+    for _ in range(40):                            # converge
+        w._advance(20_000)
+    assert w._hover_progress["settings"] == 1.0
+    assert all(w._hover_progress[k] == 0.0
+               for k in w.reveal_order("main") if k != "settings")
+    w._hover = None
+    for _ in range(40):
+        w._advance(20_000)
+    assert all(v == 0.0 for v in w._hover_progress.values())
+
+
+def test_close_mid_entrance_flies_back_from_current_position():
+    _app()
+    from utils.overlay.radial_menu import RadialMenuWidget
+    w = RadialMenuWidget(emblem_diameter=160); w.resize(400, 400)
+    w.start_reveal()
+    w._advance(100)                                  # partway through the 360ms entrance
+    mid = {k: w._circle_vis(k) for k in w.reveal_order("main")}
+    assert any(0.0 < v < 1.0 for v in mid.values())  # genuinely mid-flight
+    w._begin_close()
+    w._advance(0)                                    # first close frame
+    # must NOT snap to the full slot first: each circle starts the fly-back from
+    # where it currently was (<= its mid-entrance vis), never jumping outward.
+    for k, v in mid.items():
+        assert w._circle_vis(k) <= v + 1e-6
+    w._advance(10_000)
+    assert all(w._circle_vis(k) == 0.0 for k in mid)  # fully flown back
+
+
+def test_kill_switch_begin_close_is_idempotent(monkeypatch):
+    _app()
+    monkeypatch.setenv("TTMT_NO_RADIAL_ANIM", "1")
+    from utils.overlay.radial_menu import RadialMenuWidget
+    w = RadialMenuWidget(emblem_diameter=160); w.resize(400, 400)
+    w.start_reveal()
+    fired = []
+    w.close_requested.connect(lambda: fired.append(1))
+    w._begin_close()
+    w._begin_close()                                 # second call must NOT re-emit
+    assert fired == [1]

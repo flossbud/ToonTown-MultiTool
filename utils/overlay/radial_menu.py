@@ -12,8 +12,9 @@ utils/radial_menu_layout.py; account portraits from utils/overlay/radial_portrai
 from __future__ import annotations
 
 import math
+import os
 
-from PySide6.QtCore import Qt, QRectF, QPointF, Signal, QTimer
+from PySide6.QtCore import Qt, QRectF, QPointF, Signal, QTimer, QElapsedTimer
 from PySide6.QtGui import (QPainter, QColor, QBrush, QPen, QLinearGradient,
                            QRadialGradient, QPainterPath, QFont, QPolygonF)
 from PySide6.QtWidgets import QWidget
@@ -34,34 +35,100 @@ _MAIN_LABELS = {"accounts": "Accounts", "home": "Window", "settings": "Settings"
 # key/signal names stay "home" while the user-facing label is "Window".
 
 
+# --- easing + interpolation (pure, unit-testable) -----------------------------
+
+def _clamp01(t: float) -> float:
+    return 0.0 if t < 0.0 else (1.0 if t > 1.0 else t)
+
+
+def _lerp(a: float, b: float, t: float) -> float:
+    return a + (b - a) * t
+
+
+def _ease_out(t: float) -> float:
+    """Decelerating cubic: fast start, soft landing (entrance fly-out)."""
+    t = _clamp01(t)
+    return 1.0 - (1.0 - t) ** 3
+
+
+def _ease_in(t: float) -> float:
+    """Accelerating cubic: soft start, fast finish (exit fly-back)."""
+    t = _clamp01(t)
+    return t ** 3
+
+
+def _ease_spring(t: float) -> float:
+    """Overshoot-and-settle (easeOutBack) for the press spring-back."""
+    t = _clamp01(t)
+    c1 = 1.70158
+    c3 = c1 + 1.0
+    return 1.0 + c3 * (t - 1.0) ** 3 + c1 * (t - 1.0) ** 2
+
+
 # --- glyph + disc painters (azure theme matching the emblem) ------------------
 
 def _disc(p: QPainter, cx: float, cy: float, r: float, hot: bool = False,
           danger: bool = False) -> None:
-    gmul = 2.0 if hot else 1.7
-    a0 = 210 if hot else 150
+    """Refined glossy disc face (azure, or red for danger): dark backing ring, a
+    3-stop vertical gradient, a clipped top sheen, and a bright rim. The focus
+    glow halo is NO LONGER drawn here - it is hover-only via _focus_glow()."""
     if danger:
-        # Red palette for the Exit (quit-the-app) spoke.
-        gi, gm, go = (255, 70, 60), (225, 45, 40), (190, 25, 25)
-        face = ((QColor(255, 110, 96), QColor(225, 55, 50)) if hot
-                else (QColor(255, 92, 80), QColor(208, 40, 40)))
+        top, mid, bot = QColor(255, 120, 108), QColor(232, 64, 58), QColor(196, 28, 28)
+        rim = QColor(255, 180, 170, 210)
     else:
-        gi, gm, go = (0, 185, 249), (0, 150, 245), (0, 120, 239)
-        face = ((QColor(70, 205, 255), QColor(0, 140, 255)) if hot
-                else (QColor(0, 185, 249), QColor(0, 119, 239)))
-    glow = QRadialGradient(QPointF(cx, cy), r * gmul)
-    glow.setColorAt(0.0, QColor(gi[0], gi[1], gi[2], a0))
-    glow.setColorAt(0.55, QColor(gm[0], gm[1], gm[2], 90 if hot else 70))
-    glow.setColorAt(1.0, QColor(go[0], go[1], go[2], 0))
+        top, mid, bot = QColor(95, 212, 255), QColor(0, 168, 250), QColor(0, 108, 224)
+        rim = QColor(160, 228, 255, 210)
     p.setPen(Qt.NoPen)
-    p.setBrush(QBrush(glow))
-    p.drawEllipse(QPointF(cx, cy), r * gmul, r * gmul)
-    p.setBrush(QColor(10, 12, 16))
-    p.drawEllipse(QPointF(cx, cy), r + 3, r + 3)
+    p.setBrush(QColor(8, 10, 14))
+    p.drawEllipse(QPointF(cx, cy), r + 3, r + 3)        # dark backing
     g = QLinearGradient(cx, cy - r, cx, cy + r)
-    g.setColorAt(0.0, face[0]); g.setColorAt(1.0, face[1])
+    g.setColorAt(0.0, top); g.setColorAt(0.5, mid); g.setColorAt(1.0, bot)
     p.setBrush(QBrush(g))
     p.drawEllipse(QPointF(cx, cy), r, r)
+    p.save()
+    clip = QPainterPath(); clip.addEllipse(QPointF(cx, cy), r, r)
+    p.setClipPath(clip)
+    sheen = QLinearGradient(cx, cy - r, cx, cy + r * 0.15)
+    sheen.setColorAt(0.0, QColor(255, 255, 255, 130 if hot else 108))
+    sheen.setColorAt(1.0, QColor(255, 255, 255, 0))
+    p.setBrush(QBrush(sheen)); p.setPen(Qt.NoPen)
+    p.drawEllipse(QPointF(cx, cy - r * 0.42), r * 0.80, r * 0.52)
+    p.restore()
+    pen = QPen(rim); pen.setWidthF(max(1.0, r * 0.035))
+    p.setPen(pen); p.setBrush(Qt.NoBrush)
+    p.drawEllipse(QPointF(cx, cy), r - 0.8, r - 0.8)
+
+
+def _drop_shadow(p: QPainter, cx: float, cy: float, r: float, depth: float = 1.0) -> None:
+    """Soft 'floating' cast shadow under a disc. `depth` (>=1.0) deepens the
+    offset + spread + opacity so hover can sink the shadow further."""
+    dy = r * 0.18 * depth
+    blur = r * 0.50 * (0.85 + 0.30 * depth)
+    alpha = int(130 * min(1.0, depth))
+    sg = QRadialGradient(QPointF(cx, cy + dy), r + blur)
+    sg.setColorAt(0.0, QColor(0, 0, 0, alpha))
+    sg.setColorAt(0.6, QColor(0, 0, 0, int(alpha * 0.55)))
+    sg.setColorAt(1.0, QColor(0, 0, 0, 0))
+    p.setPen(Qt.NoPen); p.setBrush(QBrush(sg))
+    p.drawEllipse(QPointF(cx, cy + dy), r + blur, r + blur)
+
+
+def _focus_glow(p: QPainter, cx: float, cy: float, r: float, strength: float,
+                danger: bool = False) -> None:
+    """Azure (or red) halo behind a disc, drawn ONLY on hover. strength in [0,1]."""
+    if strength <= 0.0:
+        return
+    a = int(180 * _clamp01(strength))
+    if danger:
+        c0, c1, c2 = (255, 70, 60), (225, 45, 40), (190, 25, 25)
+    else:
+        c0, c1, c2 = (0, 185, 249), (0, 150, 245), (0, 120, 239)
+    glow = QRadialGradient(QPointF(cx, cy), r * 1.9)
+    glow.setColorAt(0.0, QColor(c0[0], c0[1], c0[2], a))
+    glow.setColorAt(0.5, QColor(c1[0], c1[1], c1[2], int(a * 0.45)))
+    glow.setColorAt(1.0, QColor(c2[0], c2[1], c2[2], 0))
+    p.setPen(Qt.NoPen); p.setBrush(QBrush(glow))
+    p.drawEllipse(QPointF(cx, cy), r * 1.9, r * 1.9)
 
 
 def _gear(p: QPainter, cx: float, cy: float, s: float) -> None:
@@ -151,14 +218,9 @@ def _status_dot(p: QPainter, cx: float, cy: float, r: float) -> None:
 
 
 def _account_frame(p: QPainter, cx: float, cy: float, r: float, hot: bool) -> None:
-    gmul = 2.0 if hot else 1.7
-    glow = QRadialGradient(QPointF(cx, cy), r * gmul)
-    a0 = 210 if hot else 150
-    glow.setColorAt(0.0, QColor(0, 185, 249, a0))
-    glow.setColorAt(0.55, QColor(0, 150, 245, 90 if hot else 70))
-    glow.setColorAt(1.0, QColor(0, 120, 239, 0))
-    p.setPen(Qt.NoPen); p.setBrush(QBrush(glow))
-    p.drawEllipse(QPointF(cx, cy), r * gmul, r * gmul)
+    """Dark rim ring behind an account portrait. The Floating shadow and the
+    hover focus glow are drawn by _paint_accounts (so this matches the spokes)."""
+    p.setPen(Qt.NoPen)
     p.setBrush(QColor(10, 12, 16))
     p.drawEllipse(QPointF(cx, cy), r + 2, r + 2)
 
@@ -168,10 +230,13 @@ def _label_at(p: QPainter, cx: float, cy: float, text: str) -> None:
     fm = p.fontMetrics(); tw = fm.horizontalAdvance(text)
     pad = 10; pw = tw + pad * 2; ph = fm.height() + 8
     px = cx - pw / 2; py = cy - ph / 2
-    p.setPen(Qt.NoPen); p.setBrush(QColor(12, 16, 24, 238))
-    p.drawRoundedRect(QRectF(px, py, pw, ph), ph / 2, ph / 2)
+    rect = QRectF(px, py, pw, ph)
+    p.setBrush(QColor(12, 16, 24, 238))
+    border = QPen(QColor(120, 190, 255, 70)); border.setWidthF(1.0)
+    p.setPen(border)
+    p.drawRoundedRect(rect, ph / 2, ph / 2)
     p.setPen(QColor(235, 242, 250))
-    p.drawText(QRectF(px, py, pw, ph), Qt.AlignCenter, text)
+    p.drawText(rect, Qt.AlignCenter, text)
 
 
 def _label_pill(p: QPainter, cx: float, cy: float, r: float, text: str, above: bool) -> None:
@@ -181,10 +246,13 @@ def _label_pill(p: QPainter, cx: float, cy: float, r: float, text: str, above: b
     pad = 10; pw = tw + pad * 2; ph = fm.height() + 8
     px = cx - pw / 2
     py = (cy - r - 8 - ph) if above else (cy + r + 8)
-    p.setPen(Qt.NoPen); p.setBrush(QColor(12, 16, 24, 235))
-    p.drawRoundedRect(QRectF(px, py, pw, ph), ph / 2, ph / 2)
+    rect = QRectF(px, py, pw, ph)
+    p.setBrush(QColor(12, 16, 24, 235))
+    border = QPen(QColor(120, 190, 255, 70)); border.setWidthF(1.0)
+    p.setPen(border)
+    p.drawRoundedRect(rect, ph / 2, ph / 2)
     p.setPen(QColor(235, 242, 250))
-    p.drawText(QRectF(px, py, pw, ph), Qt.AlignCenter, text)
+    p.drawText(rect, Qt.AlignCenter, text)
 
 
 class RadialMenuWidget(QWidget):
@@ -197,8 +265,11 @@ class RadialMenuWidget(QWidget):
     back_requested = Signal()
     account_clicked = Signal(str)
 
-    _REVEAL_STEP_MS = 35
     _IDLE_MS = 15000
+    _APPEAR_MS = 360
+    _APPEAR_STAGGER_MS = 70
+    _CLOSE_MS = 240
+    _CLOSE_STAGGER_MS = 45
 
     def __init__(self, emblem_diameter: float, customizations=None,
                  variant="transparent", parent=None):
@@ -211,6 +282,7 @@ class RadialMenuWidget(QWidget):
         self._sat_r = self._emblem_dia * 0.40 / 2.0   # satellite = 40% of emblem diameter
         self._ring = self._emblem_dia / 2.0 + 16.0 + self._sat_r   # 16px gap outside the emblem
         self._customizations = customizations
+        self._vignette = None   # cached full-surface dim, keyed by widget size
         self._state = "main"
         self._hover = None          # (state, key) or None
         self._accounts = []         # RingAccount entries for the accounts sub-ring
@@ -219,17 +291,29 @@ class RadialMenuWidget(QWidget):
         self.setMouseTracking(True)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setFocusPolicy(Qt.StrongFocus)
-        self._reveal_active = False
-        self._revealed = set()
-        self._reveal_order_keys = []
-        self._reveal_idx = 0
-        self._reveal_timer = QTimer(self)
-        self._reveal_timer.setInterval(self._REVEAL_STEP_MS)
-        self._reveal_timer.timeout.connect(self._reveal_tick)
+        self._anim_enabled = os.environ.get("TTMT_NO_RADIAL_ANIM") not in (
+            "1", "true", "yes", "on")
+        self._appear_active = False
+        self._appear_progress = {}     # key -> eased visibility in [0,1]
+        self._stagger = {}             # key -> ms delay (entrance or exit)
+        self._closing = False
+        self._close_emitted = False
+        self._close_progress = {}      # key -> eased close progress in [0,1]
+        self._close_from = {}          # key -> vis at close-start (fly-back origin)
+        self._hover_progress = {}      # key -> eased hover amount in [0,1]  (Task 5)
+        self._press_hit = None         # (state, key) currently pressed       (Task 6)
+        self._press_releasing = False
+        self._press_t = 0.0            # depress amount while held
+        self._press_rt = 0.0           # spring-back progress on release
+        self._press_scale_val = 1.0
+        self._elapsed = QElapsedTimer()
+        self._clock = QTimer(self)
+        self._clock.setInterval(16)    # ~60fps
+        self._clock.timeout.connect(self._on_clock)
         self._idle_timer = QTimer(self)
         self._idle_timer.setSingleShot(True)
         self._idle_timer.setInterval(self._IDLE_MS)
-        self._idle_timer.timeout.connect(self.close_requested.emit)
+        self._idle_timer.timeout.connect(self._begin_close)
 
     @property
     def state(self) -> str:
@@ -247,35 +331,159 @@ class RadialMenuWidget(QWidget):
         return sorted(keys, key=lambda k: self.circle_geometry(state, k)[0])
 
     def start_reveal(self) -> None:
-        """Begin the staggered left-to-right pop-in for the current state."""
-        self._reveal_order_keys = self.reveal_order(self._state)
-        self._revealed = set()
-        self._reveal_idx = 0
-        self._reveal_active = True
-        self._reveal_timer.start()
+        """Begin the staggered Fly-Out entrance for the current state."""
+        keys = self.reveal_order(self._state)
+        order = {k: i for i, k in enumerate(keys)}      # left-to-right
+        self._stagger = {k: order[k] * self._APPEAR_STAGGER_MS for k in keys}
+        self._closing = False
+        self._close_emitted = False
+        self._close_progress = {}
+        self._press_hit = None
+        self._press_releasing = False
+        self._press_t = 0.0
+        self._press_rt = 0.0
+        self._press_scale_val = 1.0
+        self._hover_progress = {k: 0.0 for k in keys}
         self._arm_idle()
-        self.update()
-
-    def _reveal_tick(self) -> None:
-        if self._reveal_idx >= len(self._reveal_order_keys):
-            self._reveal_timer.stop()
-            self._reveal_active = False
+        if not self._anim_enabled:
+            self._appear_active = False
+            self._appear_progress = {k: 1.0 for k in keys}
             self.update()
             return
-        self._revealed.add(self._reveal_order_keys[self._reveal_idx])
-        self._reveal_idx += 1
+        self._appear_active = True
+        self._appear_progress = {k: 0.0 for k in keys}
+        self._elapsed.restart()
+        self._kick()
         self.update()
 
-    def _shown(self, key) -> bool:
-        """True if ``key`` should paint now (always, unless a reveal is gating it)."""
-        return (not self._reveal_active) or (key in self._revealed)
+    def _kick(self) -> None:
+        """Ensure the animation clock is running (no-op if disabled/already on)."""
+        if self._anim_enabled and not self._clock.isActive():
+            self._clock.start()
+
+    def _on_clock(self) -> None:
+        self._advance(self._elapsed.elapsed())
+
+    def _begin_close(self) -> None:
+        """Play the reverse Fly-Back, then emit close_requested on completion.
+        All dismiss paths (Esc, idle, the close spoke, all-accounts-launched)
+        route through here so both hosts animate identically. Idempotent."""
+        if self._closing:
+            return
+        self._idle_timer.stop()
+        if not self._anim_enabled:
+            # Synchronous close, but still latch the close flags so the guards
+            # above and in activate_at hold (keeps _begin_close idempotent in
+            # kill-switch mode, matching animated mode).
+            self._closing = True
+            self._close_emitted = True
+            self.close_requested.emit()
+            return
+        keys = self.reveal_order(self._state)
+        # Capture where each circle sits RIGHT NOW (mid-entrance or settled) so
+        # the fly-back starts from the current position instead of snapping to
+        # the full slot first. Read before flipping the state flags below.
+        self._close_from = {k: self._circle_vis(k) for k in keys}
+        self._appear_active = False
+        self._closing = True
+        self._close_emitted = False
+        order = {k: i for i, k in enumerate(reversed(keys))}   # rightmost leaves first
+        self._stagger = {k: order[k] * self._CLOSE_STAGGER_MS for k in keys}
+        self._close_progress = {k: 0.0 for k in keys}
+        self._elapsed.restart()
+        self._kick()
+        self.update()
+
+    def _advance(self, now_ms: int) -> None:
+        """Advance all active animations to the given elapsed time and repaint.
+        The unit-test seam: tests call this directly with synthetic timestamps."""
+        busy = False
+        if self._appear_active:
+            done = True
+            for k, delay in self._stagger.items():
+                raw = (now_ms - delay) / float(self._APPEAR_MS)
+                self._appear_progress[k] = _ease_out(raw)
+                if raw < 1.0:
+                    done = False
+            if done:
+                self._appear_active = False
+            else:
+                busy = True
+        if self._closing:
+            done = True
+            for k, delay in self._stagger.items():
+                raw = (now_ms - delay) / float(self._CLOSE_MS)
+                self._close_progress[k] = _ease_in(raw)
+                if raw < 1.0:
+                    done = False
+            if done:
+                if not self._close_emitted:
+                    self._close_emitted = True
+                    self.close_requested.emit()
+            else:
+                busy = True
+        if self._advance_hover():
+            busy = True
+        if self._advance_press():
+            busy = True
+        self.update()
+        if not busy:
+            self._clock.stop()
+
+    def _advance_hover(self) -> bool:
+        """Ease each key's hover amount toward 1 (hovered) or 0 (not). Returns
+        True while any value is still in motion (keeps the clock alive)."""
+        hovered = (self._hover[1]
+                   if (self._hover and self._hover[0] == self._state) else None)
+        busy = False
+        for k in self.reveal_order(self._state):
+            cur = self._hover_progress.get(k, 0.0)
+            tgt = 1.0 if k == hovered else 0.0
+            nxt = cur + (tgt - cur) * 0.30
+            if abs(nxt - tgt) < 0.01:
+                nxt = tgt
+            elif abs(nxt - cur) > 1e-4:
+                busy = True
+            self._hover_progress[k] = nxt
+        return busy
+
+    def _advance_press(self) -> bool:
+        """Depress the held spoke toward 0.88, then spring it back to 1.0 with
+        overshoot on release. Increment-based (no timestamp). Returns True while
+        in motion / still held."""
+        if self._press_hit is None:
+            return False
+        if not self._press_releasing:
+            self._press_t = min(1.0, self._press_t + 0.35)
+            self._press_scale_val = 1.0 - 0.12 * self._press_t
+            return True                       # keep ticking while held
+        self._press_rt = min(1.0, self._press_rt + 0.08)
+        self._press_scale_val = _lerp(0.88, 1.0, _ease_spring(self._press_rt))
+        if self._press_rt >= 1.0:
+            self._press_hit = None
+            self._press_releasing = False
+            self._press_t = 0.0
+            self._press_rt = 0.0
+            self._press_scale_val = 1.0
+            return False
+        return True
+
+    def _circle_vis(self, key) -> float:
+        """Visibility in [0,1] for `key`: 0 = collapsed at the emblem center,
+        1 = settled at its slot. Drives center/scale/opacity interpolation."""
+        if self._closing:
+            start = self._close_from.get(key, 1.0)
+            return start * (1.0 - self._close_progress.get(key, 0.0))
+        if self._appear_active:
+            return self._appear_progress.get(key, 0.0)
+        return 1.0
 
     def _arm_idle(self) -> None:
         self._idle_timer.start()   # single-shot; restarts the 15s idle countdown
 
     def keyPressEvent(self, e):
         if e.key() == Qt.Key_Escape:
-            self.close_requested.emit()
+            self._begin_close()
             return
         super().keyPressEvent(e)
 
@@ -317,6 +525,8 @@ class RadialMenuWidget(QWidget):
         return None
 
     def activate_at(self, x: float, y: float) -> None:
+        if self._closing:
+            return
         self._arm_idle()
         hit = self._hit(x, y)
         if hit is None:
@@ -332,7 +542,7 @@ class RadialMenuWidget(QWidget):
             elif key == "transparent":
                 self.transparent_requested.emit()
             elif key == "close":
-                self.close_requested.emit()
+                self._begin_close()
             elif key == "exit":
                 self.exit_requested.emit()
         elif state == "accounts":
@@ -345,11 +555,8 @@ class RadialMenuWidget(QWidget):
                 i = int(key)
                 self.account_clicked.emit(self._accounts[i].account_id)
                 self._launched.add(i)
-                # Once every shown account is launched (just-clicked) or already
-                # running, there's nothing left to do here -> dismiss the whole
-                # radial so the user can jump straight into the games.
                 if self._all_accounts_launched():
-                    self.close_requested.emit()
+                    self._begin_close()
 
     def _all_accounts_launched(self) -> bool:
         """True when no launchable account remains in the sub-ring: every entry
@@ -362,12 +569,25 @@ class RadialMenuWidget(QWidget):
                    for i, a in enumerate(self._accounts))
 
     def mousePressEvent(self, e):
-        # Activation happens on RELEASE (see mouseReleaseEvent). Accept the press
-        # so it does not bubble to a parent host (the windowed wheel dismisses on
-        # its own presses) and so the implicit grab returns the release here.
+        # Activation happens on RELEASE (see mouseReleaseEvent). Track the pressed
+        # spoke so it can depress while held. Accept the press so it does not
+        # bubble to a parent host and so the implicit grab returns the release.
+        if not self._closing and self._anim_enabled:
+            hit = self._hit(e.position().x(), e.position().y())
+            if hit is not None:
+                self._press_hit = hit
+                self._press_releasing = False
+                self._press_t = 0.0
+                self._press_rt = 0.0
+                self._press_scale_val = 1.0
+                self._kick()
         e.accept()
 
     def mouseReleaseEvent(self, e):
+        if self._press_hit is not None:
+            self._press_releasing = True     # begin spring-back
+            self._press_rt = 0.0
+            self._kick()
         pos = e.position()
         self.activate_at(pos.x(), pos.y())
         super().mouseReleaseEvent(e)
@@ -376,56 +596,88 @@ class RadialMenuWidget(QWidget):
         pos = e.position()
         self._hover = self._hit(pos.x(), pos.y())
         self._arm_idle()
+        self._kick()
         self.update()
         super().mouseMoveEvent(e)
 
-    def paintEvent(self, e):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing, True)
-        # Soft radial dim behind the circles (NOT a sharp rectangle): it darkens
-        # the emblem + satellites and fades to fully transparent before the
-        # surface edge, so nothing hard-edged is painted. (True blur of the live
-        # windows behind an override-redirect overlay is not feasible; this
-        # radial vignette is the practical substitute.)
+    def _ensure_vignette(self) -> None:
+        """(Re)build the cached vignette pixmap when missing or size-stale."""
+        from PySide6.QtGui import QPixmap
+        if self._vignette is not None and self._vignette.size() == self.size():
+            return
+        pm = QPixmap(self.size())
+        pm.fill(Qt.transparent)
         cx = self.width() / 2.0
         cy = self.height() / 2.0
         radius = min(self.width(), self.height()) / 2.0
         if radius > 0:
+            qp = QPainter(pm)
+            qp.setRenderHint(QPainter.Antialiasing, True)
             dim = QRadialGradient(QPointF(cx, cy), radius)
             dim.setColorAt(0.0, QColor(8, 10, 16, 150))
             dim.setColorAt(0.55, QColor(8, 10, 16, 150))
             dim.setColorAt(0.88, QColor(8, 10, 16, 0))
             dim.setColorAt(1.0, QColor(8, 10, 16, 0))
-            p.setPen(Qt.NoPen)
-            p.setBrush(QBrush(dim))
-            p.drawEllipse(QPointF(cx, cy), radius, radius)
+            qp.setPen(Qt.NoPen)
+            qp.setBrush(QBrush(dim))
+            qp.drawEllipse(QPointF(cx, cy), radius, radius)
+            qp.end()
+        self._vignette = pm
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        # Cached soft radial dim (built once per size). True blur of the live
+        # windows behind an override-redirect overlay is not feasible; this
+        # vignette is the practical substitute.
+        self._ensure_vignette()
+        if self._vignette is not None and not self._vignette.isNull():
+            p.drawPixmap(0, 0, self._vignette)
         if self._state == "main":
             self._paint_main(p)
         elif self._state == "accounts":
             self._paint_accounts(p)
         p.end()
 
+    def _paint_glyph(self, p: QPainter, key, cx: float, cy: float, r: float) -> None:
+        if key == "settings":
+            _gear(p, cx, cy, r * 1.15)
+        elif key == "close":
+            _back_arrow(p, cx, cy, r * 0.55)
+        elif key == "exit":
+            _x_glyph(p, cx, cy, r * 0.5)
+        elif key == "home":
+            _window_frame(p, cx, cy, r * 0.52)
+        elif key == "transparent":
+            _overlay_cards(p, cx, cy, r * 0.72)
+        else:   # accounts
+            _person(p, cx, cy, r * 0.52)
+
     def _paint_main(self, p: QPainter) -> None:
+        cx0, cy0 = self._center()
+        settled = not self._appear_active and not self._closing
         for key in self._main_keys:
-            if not self._shown(key):
+            vis = self._circle_vis(key)
+            if vis <= 0.001:
                 continue
-            cx, cy, r = self.circle_geometry("main", key)
+            sx, sy, r = self.circle_geometry("main", key)
+            icx = _lerp(cx0, sx, vis)
+            icy = _lerp(cy0, sy, vis)
+            hp = self._hover_progress.get(key, 0.0)
+            ps = self._press_scale_val if self._press_hit == ("main", key) else 1.0
+            ir = r * _lerp(0.4, 1.0, vis) * (1.0 + 0.07 * hp) * ps
             hot = self._hover == ("main", key)
-            _disc(p, cx, cy, r, hot, danger=(key == "exit"))   # Exit = red disc
-            if key == "settings":
-                _gear(p, cx, cy, r * 1.15)
-            elif key == "close":   # labelled "Back": dismiss the ring (one level up)
-                _back_arrow(p, cx, cy, r * 0.55)
-            elif key == "exit":
-                _x_glyph(p, cx, cy, r * 0.5)
-            elif key == "home":
-                _window_frame(p, cx, cy, r * 0.52)
-            elif key == "transparent":
-                _overlay_cards(p, cx, cy, r * 0.72)
-            else:  # accounts
-                _person(p, cx, cy, r * 0.52)
-            if hot:
-                _label_pill(p, cx, cy, r, _MAIN_LABELS.get(key, key.capitalize()),
+            danger = (key == "exit")
+            p.setOpacity(_clamp01(vis))
+            if hp > 0.0:
+                _focus_glow(p, icx, icy, ir, hp, danger=danger)
+            _drop_shadow(p, icx, icy, ir, 1.0 + 0.6 * hp)
+            _disc(p, icx, icy, ir, hot, danger=danger)
+            self._paint_glyph(p, key, icx, icy, ir)
+            p.setOpacity(1.0)
+            if hot and settled:
+                _label_pill(p, icx, icy, ir,
+                            _MAIN_LABELS.get(key, key.capitalize()),
                             above=(key not in _MAIN_BOTTOM_KEYS))
 
     def set_accounts(self, accounts, customizations=None) -> None:
@@ -449,28 +701,58 @@ class RadialMenuWidget(QWidget):
         self.start_reveal()
 
     def _paint_accounts(self, p: QPainter) -> None:
-        cx, cy = self._center()
-        sring = self._ring * 1.06   # sub-ring sits 6% further out
-        if self._shown("back"):
-            bx, by, br = self.circle_geometry("accounts", "back")
+        cx0, cy0 = self._center()
+        sring = self._ring * 1.06
+        settled = not self._appear_active and not self._closing
+        # Back button
+        bvis = self._circle_vis("back")
+        if bvis > 0.001:
+            bx0, by0, br = self.circle_geometry("accounts", "back")
+            bx = _lerp(cx0, bx0, bvis); by = _lerp(cy0, by0, bvis)
+            hp = self._hover_progress.get("back", 0.0)
+            ps = self._press_scale_val if self._press_hit == ("accounts", "back") else 1.0
+            r_eff = br * _lerp(0.4, 1.0, bvis) * (1.0 + 0.07 * hp) * ps
             hot_back = self._hover == ("accounts", "back")
-            _disc(p, bx, by, br, hot_back)
-            _back_arrow(p, bx, by, br * 0.55)
-            if hot_back:
-                _label_pill(p, bx, by, br, "Back", above=True)
+            p.setOpacity(_clamp01(bvis))
+            if hp > 0.0:
+                _focus_glow(p, bx, by, r_eff, hp)
+            _drop_shadow(p, bx, by, r_eff, 1.0 + 0.6 * hp)
+            _disc(p, bx, by, r_eff, hot_back)
+            _back_arrow(p, bx, by, r_eff * 0.55)
+            p.setOpacity(1.0)
+            if hot_back and settled:
+                _label_pill(p, bx, by, r_eff, "Back", above=True)
         angles = account_ring_angles(len(self._accounts))
         for i, acct in enumerate(self._accounts):
-            if not self._shown(i):
+            vis = self._circle_vis(i)
+            if vis <= 0.001:
                 continue
-            cxi, cyi, r = self.circle_geometry("accounts", i)
+            sx, sy, r = self.circle_geometry("accounts", i)
+            icx = _lerp(cx0, sx, vis); icy = _lerp(cy0, sy, vis)
+            hp = self._hover_progress.get(i, 0.0)
+            ps = self._press_scale_val if self._press_hit == ("accounts", i) else 1.0
+            ir = r * _lerp(0.4, 1.0, vis) * (1.0 + 0.07 * hp) * ps
             hot = self._hover == ("accounts", i)
-            _account_frame(p, cxi, cyi, r, hot)
+            p.setOpacity(_clamp01(vis))
+            if hp > 0.0:
+                _focus_glow(p, icx, icy, ir, hp)
+            _drop_shadow(p, icx, icy, ir, 1.0 + 0.6 * hp)
+            _account_frame(p, icx, icy, ir, hot)
             pm = self._portraits.get(acct.account_id)
             if pm is not None and not pm.isNull():
-                p.drawPixmap(QPointF(cxi - pm.width() / 2.0, cyi - pm.height() / 2.0), pm)
+                # Portraits are pre-rendered at the resting diameter (sat_r*2);
+                # only pay for a smooth rescale when the disc is actually a
+                # different size (entrance/exit/hover-lift), else blit directly.
+                d = max(1, int(ir * 2))
+                draw = (pm if abs(d - pm.width()) <= 1
+                        else pm.scaled(d, d, Qt.KeepAspectRatio,
+                                       Qt.SmoothTransformation))
+                p.drawPixmap(QPointF(icx - draw.width() / 2.0,
+                                     icy - draw.height() / 2.0), draw)
             if acct.running:
-                _status_dot(p, cxi, cyi, r)
-            if hot:
+                _status_dot(p, icx, icy, ir)
+            p.setOpacity(1.0)
+            if hot and settled:
                 name = acct.toon_name or acct.label
-                lx, ly = polar_point(cx, cy, sring + r + 22, angles[i])
+                lx, ly = polar_point(cx0, cy0, sring + ir + 22, angles[i])
                 _label_at(p, lx, ly, name)

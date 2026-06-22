@@ -469,6 +469,19 @@ class _Emblem(QWidget):
         self._anim.setKeyValueAt(1.0, 1.0)
         self._anim.setLoopCount(-1)
 
+        # Press depress (scales the painted content) + click ripple.
+        self._press_scale = 1.0
+        self._ripple = 0.0
+        self._ripple_active = False
+        self._ripple_anim = QPropertyAnimation(self, b"ripple")
+        self._ripple_anim.setDuration(420)
+        self._ripple_anim.setStartValue(0.0)
+        self._ripple_anim.setEndValue(1.0)
+        self._ripple_anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._ripple_anim.finished.connect(self._on_ripple_done)
+        self._press_anim = QPropertyAnimation(self, b"press_scale")
+        self._press_anim.setDuration(90)
+
     @staticmethod
     def _build_grey(pm: QPixmap) -> QPixmap:
         """Desaturated + dimmed copy of the icon for the idle state."""
@@ -497,6 +510,35 @@ class _Emblem(QWidget):
 
     pulse = Property(float, get_pulse, set_pulse)
 
+    def get_press_scale(self) -> float:
+        return self._press_scale
+
+    def set_press_scale(self, v: float) -> None:
+        self._press_scale = float(v)
+        self.update()
+
+    press_scale = Property(float, get_press_scale, set_press_scale)
+
+    def get_ripple(self) -> float:
+        return self._ripple
+
+    def set_ripple(self, v: float) -> None:
+        self._ripple = float(v)
+        self.update()
+
+    ripple = Property(float, get_ripple, set_ripple)
+
+    def _on_ripple_done(self) -> None:
+        self._ripple_active = False
+        self._ripple = 0.0
+        self.update()
+
+    def _animate_press(self, target: float) -> None:
+        self._press_anim.stop()
+        self._press_anim.setStartValue(self._press_scale)
+        self._press_anim.setEndValue(target)
+        self._press_anim.start()
+
     def configure(self, broadcasting: bool, bg_app: str, ring: str) -> None:
         self._bg_app = QColor(bg_app)
         self._ring = QColor(ring)
@@ -523,6 +565,8 @@ class _Emblem(QWidget):
 
     def stop(self) -> None:
         self._anim.stop()
+        self._ripple_anim.stop()
+        self._press_anim.stop()
 
     # --- Interactivity ---
 
@@ -554,6 +598,10 @@ class _Emblem(QWidget):
     def mousePressEvent(self, event):
         self._press = event.position().toPoint()
         self._dragging = False
+        # Instant depress; spring-back is animated in mouseReleaseEvent.
+        self._press_anim.stop()
+        self._press_scale = 0.92
+        self.update()
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
@@ -564,10 +612,14 @@ class _Emblem(QWidget):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
+        self._animate_press(1.0)
         if not self._dragging:
             if event.button() == Qt.RightButton:
                 self.toggle_requested.emit()      # right-click = quick mode-toggle
             elif event.button() == Qt.LeftButton:
+                self._ripple_active = True
+                self._ripple_anim.stop()
+                self._ripple_anim.start()
                 self.menu_requested.emit()         # left-click = open the wheel
             # other buttons: no-op
         self._dragging = False
@@ -601,6 +653,13 @@ class _Emblem(QWidget):
             p.setPen(QPen(ring, 2 * self._scale))
             p.drawEllipse(QPointF(cx, cy), r + ring_off, r + ring_off)
 
+        # Depress: scale the disc + icon about the center while pressed.
+        p.save()
+        if self._press_scale != 1.0:
+            p.translate(cx, cy)
+            p.scale(self._press_scale, self._press_scale)
+            p.translate(-cx, -cy)
+
         # Opaque bg-app disc so the carved card cutouts read as a clean ring.
         p.setPen(Qt.NoPen)
         p.setBrush(self._bg_app)
@@ -618,6 +677,8 @@ class _Emblem(QWidget):
             scaled = pm.scaled(int(d), int(d), Qt.KeepAspectRatioByExpanding,
                                Qt.SmoothTransformation)
             p.drawPixmap(target, scaled, QRectF(scaled.rect()))
+            p.setClipping(False)
+        p.restore()
 
         # Armed ring: thin static outer ring shown when dwell-armed for resize.
         if self._armed:
@@ -628,6 +689,17 @@ class _Emblem(QWidget):
             p.setPen(QPen(armed_color, 2 * self._scale))
             p.setBrush(Qt.NoBrush)
             p.drawEllipse(QPointF(cx, cy), r + armed_off, r + armed_off)
+
+        # Click ripple: an azure ring expanding from the emblem, fading out.
+        if self._ripple_active and self._ripple > 0.0:
+            rr = r * (0.5 + 1.5 * self._ripple)          # 0.5r -> 2.0r
+            ring = QColor(self._ring)
+            ring.setAlphaF(max(0.0, 0.6 * (1.0 - self._ripple)))
+            pen = QPen(ring, max(1.5, 3.0 * self._scale * (1.0 - self._ripple)))
+            p.setPen(pen)
+            p.setBrush(Qt.NoBrush)
+            p.setClipping(False)
+            p.drawEllipse(QPointF(cx, cy), rr, rr)
 
         p.end()
 
