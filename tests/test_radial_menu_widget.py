@@ -219,6 +219,45 @@ def test_reveal_gates_painting_then_completes():
     pm2 = QPixmap(400, 400); p2 = QPainter(pm2); w.render(p2, QPoint(0, 0)); p2.end()
 
 
+def test_default_variant_is_transparent_five_spokes():
+    _app()
+    from utils.overlay.radial_menu import RadialMenuWidget
+    w = RadialMenuWidget(emblem_diameter=160); w.resize(400, 400)
+    assert sorted(w.reveal_order("main")) == sorted(
+        ["accounts", "home", "settings", "close", "exit"])
+
+
+def test_windowed_variant_has_three_spokes():
+    _app()
+    from utils.overlay.radial_menu import RadialMenuWidget
+    w = RadialMenuWidget(emblem_diameter=160, variant="windowed"); w.resize(500, 500)
+    assert sorted(w.reveal_order("main")) == sorted(["accounts", "transparent", "close"])
+
+
+def test_windowed_variant_emits_per_spoke():
+    _app()
+    from utils.overlay.radial_menu import RadialMenuWidget
+    w = RadialMenuWidget(emblem_diameter=160, variant="windowed"); w.resize(500, 500)
+    fired = []
+    w.accounts_requested.connect(lambda: fired.append("accounts"))
+    w.transparent_requested.connect(lambda: fired.append("transparent"))
+    w.close_requested.connect(lambda: fired.append("close"))
+    for key in ("accounts", "transparent", "close"):
+        cx, cy, r = w.circle_geometry("main", key)
+        w.activate_at(cx, cy)
+    assert fired == ["accounts", "transparent", "close"]
+
+
+def test_windowed_transparent_spoke_is_top_center():
+    _app()
+    from utils.overlay.radial_menu import RadialMenuWidget
+    w = RadialMenuWidget(emblem_diameter=160, variant="windowed"); w.resize(500, 500)
+    cx, cy, r = w.circle_geometry("main", "transparent")
+    # top-center: x == widget center x, y above center
+    assert round(cx, 3) == round(w.width() / 2.0, 3)
+    assert cy < w.height() / 2.0
+
+
 @pytest.mark.skipif(not os.environ.get("DISPLAY"), reason="needs an active overlay + X display")
 def test_controller_radial_open_close_smoke():
     # Live behavior (the controller hosting a click-accepting radial surface) is

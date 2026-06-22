@@ -17,14 +17,18 @@ from PySide6.QtGui import (QPainter, QColor, QBrush, QPen, QLinearGradient,
                            QRadialGradient, QPainterPath, QFont, QPolygonF)
 from PySide6.QtWidgets import QWidget
 
-from utils.radial_menu_layout import MAIN_RING_ANGLES, account_ring_angles, polar_point
+from utils.radial_menu_layout import (MAIN_RING_ANGLES, WINDOWED_RING_ANGLES,
+                                       account_ring_angles, polar_point)
 
-_MAIN_KEYS = ("accounts", "home", "settings", "close", "exit")
+_MAIN_KEYS_BY_VARIANT = {
+    "transparent": ("accounts", "home", "settings", "close", "exit"),
+    "windowed":    ("accounts", "transparent", "close"),
+}
 _MAIN_BOTTOM_KEYS = ("close", "exit")   # labels render below these
 # Hover labels. "close" dismisses the ring (one level up), so it reads as "Back"
 # (the X glyph next to "Exit" was confusingly two ways to leave).
 _MAIN_LABELS = {"accounts": "Accounts", "home": "Home", "settings": "Settings",
-                "close": "Back", "exit": "Exit"}
+                "transparent": "Transparent", "close": "Back", "exit": "Exit"}
 
 
 # --- glyph + disc painters (azure theme matching the emblem) ------------------
@@ -165,6 +169,7 @@ class RadialMenuWidget(QWidget):
     accounts_requested = Signal()
     home_requested = Signal()
     settings_requested = Signal()
+    transparent_requested = Signal()
     close_requested = Signal()
     exit_requested = Signal()
     back_requested = Signal()
@@ -173,9 +178,14 @@ class RadialMenuWidget(QWidget):
     _REVEAL_STEP_MS = 35
     _IDLE_MS = 15000
 
-    def __init__(self, emblem_diameter: float, customizations=None, parent=None):
+    def __init__(self, emblem_diameter: float, customizations=None,
+                 variant="transparent", parent=None):
         super().__init__(parent)
         self._emblem_dia = float(emblem_diameter)
+        self._variant = variant
+        self._main_keys = _MAIN_KEYS_BY_VARIANT[variant]
+        self._main_angles = (MAIN_RING_ANGLES if variant == "transparent"
+                             else WINDOWED_RING_ANGLES)
         self._sat_r = self._emblem_dia * 0.40 / 2.0   # satellite = 40% of emblem diameter
         self._ring = self._emblem_dia / 2.0 + 16.0 + self._sat_r   # 16px gap outside the emblem
         self._customizations = customizations
@@ -209,7 +219,7 @@ class RadialMenuWidget(QWidget):
     def reveal_order(self, state: str) -> list:
         """Keys for ``state`` ordered left-to-right by circle center-x."""
         if state == "main":
-            keys = list(_MAIN_KEYS)
+            keys = list(self._main_keys)
         else:
             keys = ["back"] + list(range(len(self._accounts)))
         return sorted(keys, key=lambda k: self.circle_geometry(state, k)[0])
@@ -253,7 +263,7 @@ class RadialMenuWidget(QWidget):
     def circle_geometry(self, state: str, key) -> tuple[float, float, float]:
         cx, cy = self._center()
         if state == "main":
-            x, y = polar_point(cx, cy, self._ring, MAIN_RING_ANGLES[key])
+            x, y = polar_point(cx, cy, self._ring, self._main_angles[key])
             return (x, y, self._sat_r)
         # accounts sub-ring
         sring = self._ring * 1.06   # sub-ring sits 6% further out
@@ -267,7 +277,7 @@ class RadialMenuWidget(QWidget):
     def _visible_circles(self):
         out = []
         if self._state == "main":
-            for key in _MAIN_KEYS:
+            for key in self._main_keys:
                 cx, cy, r = self.circle_geometry("main", key)
                 out.append(("main", key, cx, cy, r))
         else:  # accounts sub-ring geometry
@@ -297,6 +307,8 @@ class RadialMenuWidget(QWidget):
                 self.home_requested.emit()
             elif key == "settings":
                 self.settings_requested.emit()
+            elif key == "transparent":
+                self.transparent_requested.emit()
             elif key == "close":
                 self.close_requested.emit()
             elif key == "exit":
@@ -366,7 +378,7 @@ class RadialMenuWidget(QWidget):
         p.end()
 
     def _paint_main(self, p: QPainter) -> None:
-        for key in _MAIN_KEYS:
+        for key in self._main_keys:
             if not self._shown(key):
                 continue
             cx, cy, r = self.circle_geometry("main", key)
