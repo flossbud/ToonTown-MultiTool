@@ -329,6 +329,12 @@ class OverlayGroupController:
         # only exists between open_radial_menu() and close_radial_menu().
         self._radial_surface = None
         self._radial_menu = None
+        # Portable Settings panel (Task 12): a CLICK-ACCEPTING owned surface
+        # hosting an arbitrary widget (the floating SettingsTab container),
+        # centered on the emblem. _panel_on_close runs in close_panel_surface
+        # BEFORE teardown so the caller can reparent its content out first.
+        self._panel_surface = None
+        self._panel_on_close = None
 
     # ------------------------------------------------------------------
     # State queries
@@ -1331,6 +1337,7 @@ class OverlayGroupController:
         # no-op - never recompute after teardown).
         self._recompute_pending = False
         self.close_radial_menu()  # the radial must never outlive the overlay
+        self.close_panel_surface()  # restore any floating SettingsTab + tear down
         self._restore_widgets(self._captured)
         self._teardown(self._surfaces)
         self._teardown_glow()  # destroy the owned glow surface (+ its _GlowLayer)
@@ -1406,6 +1413,54 @@ class OverlayGroupController:
         surface = self._radial_surface
         self._radial_surface = None
         self._radial_menu = None
+        if surface is not None:
+            self._safe_call(surface, "hide")
+            self._safe_call(surface, "deleteLater")
+
+    # ------------------------------------------------------------------
+    # Portable panel surface (Task 12)
+    # ------------------------------------------------------------------
+    def open_panel_surface(self, widget, on_close=None):
+        """Host an arbitrary widget on a centered, click-accepting overlay surface
+        (used for the portable Settings panel). ``on_close`` runs in
+        close_panel_surface BEFORE teardown so the caller can reparent its content
+        out first. Returns the surface, or None when inactive/already open."""
+        if not self.is_active:
+            return None
+        if self._panel_surface is not None:
+            return self._panel_surface
+        from utils.overlay.surface import OverlaySurface
+        from PySide6.QtCore import QRect
+        from PySide6.QtGui import QPainterPath
+        from utils.overlay.card_metrics import CardMetrics
+        emblem_dia = float(CardMetrics(self._scale).emblem)
+        size = int(emblem_dia * 6)           # generous canvas for the panel + dim margin
+        surface = OverlaySurface(backend=self._backend)
+        surface.host(widget)
+        cx, cy = self._anchor
+        surface.set_overlay_geometry(QRect(int(cx - size / 2), int(cy - size / 2), size, size))
+        surface.prepare_initial_state()
+        surface.show()
+        surface.raise_()
+        path = QPainterPath(); path.addRect(0, 0, size, size)
+        surface.apply_shape(path, surface.devicePixelRatio())
+        self._panel_surface = surface
+        self._panel_on_close = on_close
+        return surface
+
+    def close_panel_surface(self):
+        """Destroy the owned panel surface. Runs ``on_close`` FIRST so the caller
+        can reparent its hosted content out before this surface is torn down (and
+        with it the hosted container). Idempotent."""
+        cb = self._panel_on_close
+        self._panel_on_close = None
+        if cb is not None:
+            try:
+                cb()                          # restore reparented content FIRST
+            except Exception:
+                pass
+        surface = self._panel_surface
+        self._panel_surface = None
         if surface is not None:
             self._safe_call(surface, "hide")
             self._safe_call(surface, "deleteLater")

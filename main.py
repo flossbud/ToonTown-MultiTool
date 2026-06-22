@@ -468,6 +468,12 @@ class MultiToonTool(QMainWindow):
         self.stack.addWidget(self.settings_tab)     # 3
         self.stack.addWidget(self.debug_tab)        # 4
         self.stack.addWidget(self.credits_tab)      # 5
+        # Portable Settings panel (Task 12): when the Settings spoke floats the
+        # real SettingsTab over the overlay it is reparented OUT of this stack;
+        # _restore_settings_to_stack re-inserts it at index 3. These track that
+        # transient state so restoration is idempotent across every teardown path.
+        self._settings_floating = False
+        self._settings_container = None
         self._wire_header_icon_active_state()
         root.addWidget(self.stack, 1)
 
@@ -1262,12 +1268,35 @@ class MultiToonTool(QMainWindow):
         self.launch_tab.launch_account(game, account_id)
 
     def _open_portable_settings(self):
-        # Portable Settings panel is implemented in a later step (Task 12). Until
-        # then, fall back to leaving transparent mode and opening the windowed
-        # Settings tab the way the emblem nav menu already does (leave + nav_select).
+        """Settings spoke: float the real SettingsTab over the overlay (reparented,
+        so its existing signal wiring keeps working)."""
         self._mode_controller.close_radial_menu()
-        self._mode_controller.leave()           # restore the main window
-        self.nav_select(3)                      # Settings tab (stack index 3)
+        if getattr(self, "_settings_floating", False):
+            return
+        from utils.overlay.portable_settings import PortableSettingsContainer
+        self._settings_container = PortableSettingsContainer(self.settings_tab)
+        self._settings_floating = True
+        self._settings_container.closed.connect(self._mode_controller.close_panel_surface)
+        # on_close runs inside close_panel_surface BEFORE the surface is destroyed.
+        surface = self._mode_controller.open_panel_surface(
+            self._settings_container, on_close=self._restore_settings_to_stack)
+        # Bulletproof: if the surface could not be created (controller inactive),
+        # the SettingsTab is already reparented out of the stack but no teardown
+        # path (X/Esc/leave) is wired, so restore it immediately rather than
+        # stranding it.
+        if surface is None:
+            self._restore_settings_to_stack()
+
+    def _restore_settings_to_stack(self):
+        """Idempotent: put the reparented SettingsTab back in the tab stack."""
+        if not getattr(self, "_settings_floating", False):
+            return
+        self._settings_floating = False
+        cont = self._settings_container
+        self._settings_container = None
+        if cont is not None:
+            cont.release_content()
+        self.stack.insertWidget(3, self.settings_tab)   # restore at its original index
 
     @staticmethod
     def _emblem_menu_entries(model):
