@@ -376,6 +376,9 @@ class MultiToonTool(QMainWindow):
         )
         self.customization_overlay: ToonCustomizationOverlay | None = None
         self.launch_tab = LaunchTab(settings_manager=self.settings_manager, logger=self.logger, window_manager=self.window_manager)
+        # Bridge resolved in-world toon names to the launching account's
+        # recent_toons record (radial-menu last-toon capture).
+        self.multitoon_tab.set_toon_capture_sink(self.launch_tab.capture_toon)
         self.keymap_tab = KeymapTab(
             self.keymap_manager,
             self.settings_manager,

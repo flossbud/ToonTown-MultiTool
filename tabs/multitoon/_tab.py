@@ -1304,6 +1304,8 @@ class MultitoonTab(QWidget):
         self._toon_data_merge_ready.connect(self._apply_merged_toon_data)
         self._cc_toon_info_ready.connect(self._apply_cc_toon_info)
 
+        self._toon_capture_sink = None   # set by the coordinator: callable(pid, toon_name, dna)
+
         self.refresh_timer = QTimer(self)
         self.refresh_timer.setInterval(5000)
         self.refresh_timer.timeout.connect(self._auto_refresh)
@@ -3205,6 +3207,18 @@ class MultitoonTab(QWidget):
 
     # ── Name handling ──────────────────────────────────────────────────────
 
+    def set_toon_capture_sink(self, sink) -> None:
+        """Wire LaunchTab.capture_toon so resolved toon names update recent_toons."""
+        self._toon_capture_sink = sink
+
+    def _capture_account_toon(self, wid, toon_name, dna) -> None:
+        if not self._toon_capture_sink or not toon_name:
+            return
+        from utils.game_registry import GameRegistry
+        pid = GameRegistry.pid_for_window(str(wid))   # HOST pid (Flatpak-safe), matches launch
+        if pid is not None:
+            self._toon_capture_sink(pid, toon_name, dna or "")
+
     @Slot(list, list, list, list, list, list, list)
     def _apply_merged_toon_data(self, target_wids, names, styles, colors, laffs, max_laffs, beans):
         wids = list(self.window_manager.ttr_window_ids) if hasattr(self, 'window_manager') and self.window_manager else []
@@ -3214,6 +3228,10 @@ class MultitoonTab(QWidget):
                 if global_idx < 4:
                     if source_idx < len(names):
                         self.toon_names[global_idx] = names[source_idx]
+                        self._capture_account_toon(
+                            wid, names[source_idx],
+                            styles[source_idx] if source_idx < len(styles) else "",
+                        )
                         self.toon_styles[global_idx] = styles[source_idx]
                         self.toon_colors[global_idx] = colors[source_idx]
                         self.toon_laffs[global_idx] = laffs[source_idx]
@@ -3270,6 +3288,8 @@ class MultitoonTab(QWidget):
 
             # Apply name
             self.toon_names[global_idx] = info.name
+            # CC has no TTR-style DNA string; record the name with an empty dna.
+            self._capture_account_toon(wid, info.name, "")
 
             # Hide TTR-only widgets for CC slots: CC log data doesn't expose
             # laff/bean stats, and the chat button is not yet integrated for CC.
