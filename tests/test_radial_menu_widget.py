@@ -264,3 +264,15 @@ def test_controller_radial_open_close_smoke():
     # validated manually on the packaged build; real X11 shaped surfaces are not
     # reliable headless. This documents the gap.
     pass
+
+
+def test_windowed_paint_does_not_crash_and_label_present():
+    _app()
+    from PySide6.QtCore import QPoint
+    from PySide6.QtGui import QPixmap, QPainter
+    from utils.overlay.radial_menu import RadialMenuWidget, _MAIN_LABELS, _overlay_cards
+    assert _MAIN_LABELS["transparent"] == "Transparent"
+    assert callable(_overlay_cards)
+    w = RadialMenuWidget(emblem_diameter=160, variant="windowed"); w.resize(500, 500)
+    w._hover = ("main", "transparent")          # exercise hover label + glyph
+    pm = QPixmap(500, 500); p = QPainter(pm); w.render(p, QPoint(0, 0)); p.end()

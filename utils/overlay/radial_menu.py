@@ -116,6 +116,24 @@ def _back_arrow(p: QPainter, cx: float, cy: float, r: float) -> None:
     p.drawRect(QRectF(cx - s * 0.05, cy - s * 0.20, s * 1.05, s * 0.40))
 
 
+def _overlay_cards(p: QPainter, cx: float, cy: float, r: float) -> None:
+    """Go-Transparent glyph: two overlapping tall 'floating cards' (front offset
+    up-and-right with a dark seam), white on the azure disc - the literal picture
+    of TTMT's overlay cards floating on top, and the inverse of the home glyph."""
+    p.setPen(Qt.NoPen)
+    cw, ch, rad = r * 0.82, r * 1.04, r * 0.16
+    bxc, byc = cx - r * 0.28, cy + r * 0.26          # back card, down-left
+    p.setBrush(QColor(255, 255, 255))
+    p.drawRoundedRect(QRectF(bxc - cw / 2, byc - ch / 2, cw, ch), rad, rad)
+    fxc, fyc = cx + r * 0.26, cy - r * 0.24          # front card, up-right
+    gap = r * 0.12
+    p.setBrush(QColor(10, 12, 16))                   # dark seam separates the cards
+    p.drawRoundedRect(QRectF(fxc - cw / 2 - gap, fyc - ch / 2 - gap,
+                             cw + 2 * gap, ch + 2 * gap), rad + gap, rad + gap)
+    p.setBrush(QColor(255, 255, 255))
+    p.drawRoundedRect(QRectF(fxc - cw / 2, fyc - ch / 2, cw, ch), rad, rad)
+
+
 def _status_dot(p: QPainter, cx: float, cy: float, r: float) -> None:
     """Green 'running' indicator at the lower-right of an account portrait."""
     dr = r * 0.30
@@ -392,6 +410,8 @@ class RadialMenuWidget(QWidget):
                 _x_glyph(p, cx, cy, r * 0.5)
             elif key == "home":
                 _home(p, cx, cy, r * 0.52)
+            elif key == "transparent":
+                _overlay_cards(p, cx, cy, r * 0.72)
             else:  # accounts
                 _person(p, cx, cy, r * 0.52)
             if hot:
