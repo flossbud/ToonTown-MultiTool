@@ -416,6 +416,7 @@ class _Emblem(QWidget):
     toggle_requested = Signal()
     move_requested = Signal()
     resize_scrolled = Signal(int)
+    context_menu_requested = Signal(QPoint)   # global position; right-click (no drag)
 
     _RING_MARGIN = 14  # room for the -4px ring + soft glow outside the disc
     _BASE_ICON_INSET = 8  # app-icon inset inside the disc at scale 1.0
@@ -559,7 +560,11 @@ class _Emblem(QWidget):
 
     def mouseReleaseEvent(self, event):
         if not self._dragging:
-            self.toggle_requested.emit()
+            if event.button() == Qt.RightButton:
+                self.context_menu_requested.emit(event.globalPosition().toPoint())
+            elif event.button() == Qt.LeftButton:
+                self.toggle_requested.emit()
+            # other buttons: no-op
         self._dragging = False
         super().mouseReleaseEvent(event)
 

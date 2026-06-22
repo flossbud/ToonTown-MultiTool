@@ -310,6 +310,12 @@ class LaunchTab(QWidget):
         self.cred_manager = (
             credentials_manager or cred_manager or CredentialsManager()
         )
+        # Recent-launch MRU for the emblem right-click launch menu.
+        from utils.recent_launches import RecentLaunchesStore
+        self._recent_launches = RecentLaunchesStore(self.settings_manager)
+        # Predicate set by the app shell so failure dialogs can sit above the
+        # transparent-mode overlay. Defaults to "not in overlay mode".
+        self._overlay_active = lambda: False
 
         from services.wine_console_hider import WineConsoleHider
         self._wine_console_hider = WineConsoleHider(
@@ -482,6 +488,55 @@ class LaunchTab(QWidget):
             if a.id == account_id:
                 return i
         return None
+
+    def is_account_running(self, game: str, account_id: str) -> bool:
+        """True if a launcher for this account is currently running."""
+        slot = self._slots.get(game, {}).get(account_id)
+        return bool(slot and getattr(slot, "launcher", None)
+                    and slot.launcher.is_running())
+
+    def launch_account(self, game: str, account_id: str) -> None:
+        """Public entry for coordinator-triggered launches (e.g. the emblem
+        right-click menu). Forwards to the internal launch handler."""
+        self._on_launch(game, account_id)
+
+    def set_overlay_active_provider(self, fn) -> None:
+        """Install a ``() -> bool`` predicate reporting whether the transparent
+        overlay is active (so failure dialogs raise above it)."""
+        self._overlay_active = fn
+
+    def recent_launch_menu_model(self):
+        """Build the emblem right-click menu model from the recent-launch MRU."""
+        from utils.recent_launches import (
+            build_recent_menu_model, resolve_account_view,
+        )
+        cred = self.cred_manager
+        # Resolve all account metadata in ONE pass, keyed by id -> (index, meta),
+        # so each CC launcher token is read from keyring at most once. (The previous
+        # per-id _global_index_of() rescanned the whole list - re-reading every CC
+        # token on each MRU id at menu-open, on the GUI thread.) Skip the pass
+        # entirely when build_recent_menu_model's keyring-locked short-circuit will
+        # fire, so a locked keyring never triggers the (timeout-prone) reads.
+        if not cred.keyring_available and cred.count() > 0:
+            meta_by_id = {}
+        else:
+            meta_by_id = {meta.id: (i, meta)
+                          for i, meta in enumerate(cred.get_accounts_metadata())}
+
+        def account_for(aid):
+            entry = meta_by_id.get(aid)
+            if entry is None:
+                return None
+            idx, meta = entry
+            return resolve_account_view(cred, idx, meta)
+
+        return build_recent_menu_model(
+            self._recent_launches.ordered_ids(),
+            account_for,
+            self.is_account_running,
+            cred.keyring_available,
+            cred.count(),
+        )
 
     def _position_of(self, game: str, account_id: str) -> int:
         """1-based position within the game (for 'Account N' user-facing text)."""
@@ -1478,12 +1533,22 @@ class LaunchTab(QWidget):
         box.setText(f"Account {self._position_of(game, account_id)} couldn't sign in.")
         box.setInformativeText(msg)
         box.setStandardButtons(QMessageBox.Ok)
+        # In transparent mode the always-on-top overlay would cover a normal
+        # dialog; the stay-on-top flag keeps the popup above it, and the modal
+        # exec() below activates+focuses it. (raise_/activateWindow before exec()
+        # are no-ops since the native window isn't shown yet.)
+        if self._overlay_active():
+            from PySide6.QtCore import Qt
+            box.setWindowFlag(Qt.WindowStaysOnTopHint, True)
         box.exec()
 
     def _on_game_launched(self, game, account_id, launcher, pid):
         slot = self._slots[game].get(account_id)
         if slot is None or slot.launcher is not launcher:
             return  # stale signal from a superseded/cancelled attempt
+        # Record the successful launch for the emblem right-click MRU. Single
+        # hook -> covers both Launch-tab and emblem-menu launches.
+        self._recent_launches.record(account_id)
         game_label = "TTR" if game == "ttr" else "CC"
         pos = self._position_of(game, account_id)
         if self.window_manager is None:
