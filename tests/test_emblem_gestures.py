@@ -94,3 +94,60 @@ def test_disc_diameter_returns_disc(qapp):
     e = _emblem(qapp)
     assert e.disc_diameter() == float(e._d)
     e.deleteLater()
+
+
+def test_emblem_press_depresses_and_click_triggers_ripple():
+    from PySide6.QtWidgets import QApplication
+    from PySide6.QtCore import Qt, QEvent, QPointF
+    from PySide6.QtGui import QMouseEvent
+    from tabs.multitoon._compact_layout import _Emblem
+    QApplication.instance() or QApplication([])
+    e = _Emblem()
+    e.set_interactive(True)
+    c = e.width() / 2.0
+    e.mousePressEvent(QMouseEvent(QEvent.MouseButtonPress, QPointF(c, c),
+                                  Qt.LeftButton, Qt.LeftButton, Qt.NoModifier))
+    assert e.get_press_scale() < 1.0
+    assert e._ripple_active is False
+    fired = []
+    e.menu_requested.connect(lambda: fired.append(1))
+    e.mouseReleaseEvent(QMouseEvent(QEvent.MouseButtonRelease, QPointF(c, c),
+                                    Qt.LeftButton, Qt.NoButton, Qt.NoModifier))
+    assert fired == [1]
+    assert e._ripple_active is True
+
+
+def test_emblem_drag_does_not_ripple():
+    from PySide6.QtWidgets import QApplication
+    from PySide6.QtCore import Qt, QEvent, QPointF
+    from PySide6.QtGui import QMouseEvent
+    from tabs.multitoon._compact_layout import _Emblem
+    QApplication.instance() or QApplication([])
+    e = _Emblem()
+    e.set_interactive(True)
+    c = e.width() / 2.0
+    e.mousePressEvent(QMouseEvent(QEvent.MouseButtonPress, QPointF(c, c),
+                                  Qt.LeftButton, Qt.LeftButton, Qt.NoModifier))
+    moved = []
+    e.move_requested.connect(lambda: moved.append(1))
+    far = QPointF(c + 60, c + 60)
+    e.mouseMoveEvent(QMouseEvent(QEvent.MouseMove, far,
+                                 Qt.NoButton, Qt.LeftButton, Qt.NoModifier))
+    e.mouseReleaseEvent(QMouseEvent(QEvent.MouseButtonRelease, far,
+                                    Qt.LeftButton, Qt.NoButton, Qt.NoModifier))
+    assert moved == [1]
+    assert e._ripple_active is False
+
+
+def test_emblem_paint_with_press_and_ripple_does_not_crash():
+    from PySide6.QtWidgets import QApplication
+    from PySide6.QtCore import QPoint
+    from PySide6.QtGui import QPixmap, QPainter
+    from tabs.multitoon._compact_layout import _Emblem
+    QApplication.instance() or QApplication([])
+    e = _Emblem()
+    e.set_press_scale(0.92)
+    e._ripple_active = True
+    e._ripple = 0.5
+    pm = QPixmap(e.width(), e.height())
+    p = QPainter(pm); e.render(p, QPoint(0, 0)); p.end()
