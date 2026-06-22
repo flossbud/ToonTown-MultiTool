@@ -1,10 +1,12 @@
-"""Interactive radial menu widget for the emblem overlay (main ring).
+"""Interactive radial menu widget for the emblem overlay.
 
 Paints a dim scrim plus a ring of azure circles around the emblem center and
-routes clicks to intent signals. The accounts sub-ring (set_accounts / accounts
-state) and the open animation / Esc / auto-hide are added by later tasks; this
-module defines the geometry, hit-testing, painting, and signals for the MAIN
-ring (Accounts, Home, Settings, Close).
+routes clicks to intent signals. Two states: the main ring (Accounts, Home,
+Settings, Close) and the accounts sub-ring (Back plus up to 8 recent accounts
+rendered as their toon's customized portrait, with a green dot for a running
+account). Supports a staggered left-to-right pop-in reveal, hover labels,
+Esc-to-close, and a 15s idle auto-hide. Geometry comes from
+utils/radial_menu_layout.py; account portraits from utils/overlay/radial_portrait.py.
 """
 from __future__ import annotations
 
@@ -96,6 +98,18 @@ def _back_arrow(p: QPainter, cx: float, cy: float, r: float) -> None:
     p.drawRect(QRectF(cx - s * 0.05, cy - s * 0.20, s * 1.05, s * 0.40))
 
 
+def _status_dot(p: QPainter, cx: float, cy: float, r: float) -> None:
+    """Green 'running' indicator at the lower-right of an account portrait."""
+    dr = r * 0.30
+    dx = cx + r * 0.64
+    dy = cy + r * 0.64
+    p.setPen(Qt.NoPen)
+    p.setBrush(QColor(10, 12, 16))
+    p.drawEllipse(QPointF(dx, dy), dr + 2.5, dr + 2.5)   # dark rim for contrast
+    p.setBrush(QColor(64, 220, 96))
+    p.drawEllipse(QPointF(dx, dy), dr, dr)
+
+
 def _account_frame(p: QPainter, cx: float, cy: float, r: float, hot: bool) -> None:
     gmul = 2.0 if hot else 1.7
     glow = QRadialGradient(QPointF(cx, cy), r * gmul)
@@ -147,12 +161,12 @@ class RadialMenuWidget(QWidget):
     def __init__(self, emblem_diameter: float, customizations=None, parent=None):
         super().__init__(parent)
         self._emblem_dia = float(emblem_diameter)
-        self._sat_r = self._emblem_dia * 0.40 / 2.0
-        self._ring = self._emblem_dia / 2.0 + 16.0 + self._sat_r
+        self._sat_r = self._emblem_dia * 0.40 / 2.0   # satellite = 40% of emblem diameter
+        self._ring = self._emblem_dia / 2.0 + 16.0 + self._sat_r   # 16px gap outside the emblem
         self._customizations = customizations
         self._state = "main"
         self._hover = None          # (state, key) or None
-        self._accounts = []         # list[RingAccount], populated in Task 8
+        self._accounts = []         # RingAccount entries for the accounts sub-ring
         self._portraits = {}        # account_id -> circular QPixmap (set in set_accounts)
         self.setMouseTracking(True)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
@@ -225,8 +239,8 @@ class RadialMenuWidget(QWidget):
         if state == "main":
             x, y = polar_point(cx, cy, self._ring, MAIN_RING_ANGLES[key])
             return (x, y, self._sat_r)
-        # accounts sub-ring (geometry usable once _accounts is set in Task 8)
-        sring = self._ring * 1.06
+        # accounts sub-ring
+        sring = self._ring * 1.06   # sub-ring sits 6% further out
         if key == "back":
             x, y = polar_point(cx, cy, sring, -90.0)
             return (x, y, self._sat_r)
@@ -240,7 +254,7 @@ class RadialMenuWidget(QWidget):
             for key in _MAIN_KEYS:
                 cx, cy, r = self.circle_geometry("main", key)
                 out.append(("main", key, cx, cy, r))
-        else:  # accounts (Task 8 paints these; geometry available now)
+        else:  # accounts sub-ring geometry
             bx, by, br = self.circle_geometry("accounts", "back")
             out.append(("accounts", "back", bx, by, br))
             for i in range(len(self._accounts)):
@@ -333,7 +347,7 @@ class RadialMenuWidget(QWidget):
 
     def _paint_accounts(self, p: QPainter) -> None:
         cx, cy = self._center()
-        sring = self._ring * 1.06
+        sring = self._ring * 1.06   # sub-ring sits 6% further out
         if self._shown("back"):
             bx, by, br = self.circle_geometry("accounts", "back")
             hot_back = self._hover == ("accounts", "back")
@@ -351,6 +365,8 @@ class RadialMenuWidget(QWidget):
             pm = self._portraits.get(acct.account_id)
             if pm is not None and not pm.isNull():
                 p.drawPixmap(QPointF(cxi - pm.width() / 2.0, cyi - pm.height() / 2.0), pm)
+            if acct.running:
+                _status_dot(p, cxi, cyi, r)
             if hot:
                 name = acct.toon_name or acct.label
                 lx, ly = polar_point(cx, cy, sring + r + 22, angles[i])
