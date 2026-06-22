@@ -1,0 +1,214 @@
+"""Interactive radial menu widget for the emblem overlay (main ring).
+
+Paints a dim scrim plus a ring of azure circles around the emblem center and
+routes clicks to intent signals. The accounts sub-ring (set_accounts / accounts
+state) and the open animation / Esc / auto-hide are added by later tasks; this
+module defines the geometry, hit-testing, painting, and signals for the MAIN
+ring (Accounts, Home, Settings, Close).
+"""
+from __future__ import annotations
+
+import math
+
+from PySide6.QtCore import Qt, QRectF, QPointF, Signal
+from PySide6.QtGui import (QPainter, QColor, QBrush, QPen, QLinearGradient,
+                           QRadialGradient, QPainterPath, QFont, QPolygonF)
+from PySide6.QtWidgets import QWidget
+
+from utils.radial_menu_layout import MAIN_RING_ANGLES, account_ring_angles, polar_point
+
+_MAIN_KEYS = ("accounts", "home", "settings", "close")
+
+
+# --- glyph + disc painters (azure theme matching the emblem) ------------------
+
+def _disc(p: QPainter, cx: float, cy: float, r: float, hot: bool = False) -> None:
+    gmul = 2.0 if hot else 1.7
+    glow = QRadialGradient(QPointF(cx, cy), r * gmul)
+    a0 = 210 if hot else 150
+    glow.setColorAt(0.0, QColor(0, 185, 249, a0))
+    glow.setColorAt(0.55, QColor(0, 150, 245, 90 if hot else 70))
+    glow.setColorAt(1.0, QColor(0, 120, 239, 0))
+    p.setPen(Qt.NoPen)
+    p.setBrush(QBrush(glow))
+    p.drawEllipse(QPointF(cx, cy), r * gmul, r * gmul)
+    p.setBrush(QColor(10, 12, 16))
+    p.drawEllipse(QPointF(cx, cy), r + 3, r + 3)
+    g = QLinearGradient(cx, cy - r, cx, cy + r)
+    if hot:
+        g.setColorAt(0.0, QColor(70, 205, 255)); g.setColorAt(1.0, QColor(0, 140, 255))
+    else:
+        g.setColorAt(0.0, QColor(0, 185, 249)); g.setColorAt(1.0, QColor(0, 119, 239))
+    p.setBrush(QBrush(g))
+    p.drawEllipse(QPointF(cx, cy), r, r)
+
+
+def _gear(p: QPainter, cx: float, cy: float, s: float) -> None:
+    # Matches utils/icon_factory.py:make_nav_gear (8 trapezoid teeth + center hole).
+    n = 8; r_o = s * 0.44; r_i = s * 0.30; r_h = s * 0.13; ht = math.pi / n * 0.6
+    gear = QPainterPath()
+    for i in range(n):
+        b = math.radians(i * 360 / n)
+        pt = lambda r, a: (cx + r * math.cos(a), cy + r * math.sin(a))
+        (gear.moveTo if i == 0 else gear.lineTo)(*pt(r_i, b - ht))
+        gear.lineTo(*pt(r_o, b - ht * 0.4)); gear.lineTo(*pt(r_o, b + ht * 0.4)); gear.lineTo(*pt(r_i, b + ht))
+    gear.closeSubpath()
+    hole = QPainterPath(); hole.addEllipse(QRectF(cx - r_h, cy - r_h, r_h * 2, r_h * 2))
+    p.setPen(Qt.NoPen); p.setBrush(QColor(255, 255, 255))
+    p.drawPath(gear.subtracted(hole))
+
+
+def _person(p: QPainter, cx: float, cy: float, r: float) -> None:
+    p.setPen(Qt.NoPen); p.setBrush(QColor(255, 255, 255))
+    hr = r * 0.42
+    p.drawEllipse(QPointF(cx, cy - r * 0.38), hr, hr)
+    body = QPainterPath(); bw = r * 1.25; bh = r * 1.05
+    body.addRoundedRect(QRectF(cx - bw / 2, cy + r * 0.02, bw, bh), bw * 0.5, bw * 0.5)
+    p.drawPath(body)
+
+
+def _home(p: QPainter, cx: float, cy: float, r: float) -> None:
+    p.setPen(Qt.NoPen); p.setBrush(QColor(255, 255, 255))
+    roof = QPainterPath()
+    roof.moveTo(cx, cy - r * 0.85); roof.lineTo(cx + r * 0.95, cy - r * 0.02); roof.lineTo(cx - r * 0.95, cy - r * 0.02)
+    roof.closeSubpath(); p.drawPath(roof)
+    bw = r * 1.15; bh = r * 0.85
+    p.drawRect(QRectF(cx - bw / 2, cy - r * 0.05, bw, bh))
+    p.setBrush(QColor(0, 140, 243))
+    dw = bw * 0.30; dh = bh * 0.62
+    p.drawRect(QRectF(cx - dw / 2, cy + bh - dh - r * 0.05, dw, dh))
+
+
+def _close_x(p: QPainter, cx: float, cy: float, r: float) -> None:
+    s = r * 0.46
+    pen = QPen(QColor(255, 255, 255)); pen.setWidthF(r * 0.22); pen.setCapStyle(Qt.RoundCap)
+    p.setPen(pen)
+    p.drawLine(QPointF(cx - s, cy - s), QPointF(cx + s, cy + s))
+    p.drawLine(QPointF(cx - s, cy + s), QPointF(cx + s, cy - s))
+
+
+def _label_pill(p: QPainter, cx: float, cy: float, r: float, text: str, above: bool) -> None:
+    f = QFont("DejaVu Sans"); f.setPixelSize(18); f.setBold(True)
+    p.setFont(f)
+    fm = p.fontMetrics(); tw = fm.horizontalAdvance(text)
+    pad = 10; pw = tw + pad * 2; ph = fm.height() + 8
+    px = cx - pw / 2
+    py = (cy - r - 8 - ph) if above else (cy + r + 8)
+    p.setPen(Qt.NoPen); p.setBrush(QColor(12, 16, 24, 235))
+    p.drawRoundedRect(QRectF(px, py, pw, ph), ph / 2, ph / 2)
+    p.setPen(QColor(235, 242, 250))
+    p.drawText(QRectF(px, py, pw, ph), Qt.AlignCenter, text)
+
+
+class RadialMenuWidget(QWidget):
+    accounts_requested = Signal()
+    home_requested = Signal()
+    settings_requested = Signal()
+    close_requested = Signal()
+    back_requested = Signal()
+    account_clicked = Signal(str)
+
+    def __init__(self, emblem_diameter: float, customizations=None, parent=None):
+        super().__init__(parent)
+        self._emblem_dia = float(emblem_diameter)
+        self._sat_r = self._emblem_dia * 0.40 / 2.0
+        self._ring = self._emblem_dia / 2.0 + 16.0 + self._sat_r
+        self._customizations = customizations
+        self._state = "main"
+        self._hover = None          # (state, key) or None
+        self._accounts = []         # list[RingAccount], populated in Task 8
+        self.setMouseTracking(True)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setFocusPolicy(Qt.StrongFocus)
+
+    @property
+    def state(self) -> str:
+        return self._state
+
+    def _center(self) -> tuple[float, float]:
+        return (self.width() / 2.0, self.height() / 2.0)
+
+    def circle_geometry(self, state: str, key) -> tuple[float, float, float]:
+        cx, cy = self._center()
+        if state == "main":
+            x, y = polar_point(cx, cy, self._ring, MAIN_RING_ANGLES[key])
+            return (x, y, self._sat_r)
+        # accounts sub-ring (geometry usable once _accounts is set in Task 8)
+        sring = self._ring * 1.06
+        if key == "back":
+            x, y = polar_point(cx, cy, sring, -90.0)
+            return (x, y, self._sat_r)
+        angles = account_ring_angles(len(self._accounts))
+        x, y = polar_point(cx, cy, sring, angles[int(key)])
+        return (x, y, self._sat_r)
+
+    def _visible_circles(self):
+        out = []
+        if self._state == "main":
+            for key in _MAIN_KEYS:
+                cx, cy, r = self.circle_geometry("main", key)
+                out.append(("main", key, cx, cy, r))
+        else:  # accounts (Task 8 paints these; geometry available now)
+            bx, by, br = self.circle_geometry("accounts", "back")
+            out.append(("accounts", "back", bx, by, br))
+            for i in range(len(self._accounts)):
+                cx, cy, r = self.circle_geometry("accounts", i)
+                out.append(("accounts", i, cx, cy, r))
+        return out
+
+    def _hit(self, x: float, y: float):
+        for (state, key, cx, cy, r) in self._visible_circles():
+            if (x - cx) ** 2 + (y - cy) ** 2 <= r * r:
+                return (state, key)
+        return None
+
+    def activate_at(self, x: float, y: float) -> None:
+        hit = self._hit(x, y)
+        if hit is None:
+            return
+        state, key = hit
+        if state == "main":
+            if key == "accounts":
+                self.accounts_requested.emit()
+            elif key == "home":
+                self.home_requested.emit()
+            elif key == "settings":
+                self.settings_requested.emit()
+            elif key == "close":
+                self.close_requested.emit()
+        # accounts-state activation is implemented in Task 8.
+
+    def mouseReleaseEvent(self, e):
+        pos = e.position()
+        self.activate_at(pos.x(), pos.y())
+        super().mouseReleaseEvent(e)
+
+    def mouseMoveEvent(self, e):
+        pos = e.position()
+        self._hover = self._hit(pos.x(), pos.y())
+        self.update()
+        super().mouseMoveEvent(e)
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        p.fillRect(self.rect(), QColor(8, 10, 16, 120))   # dim scrim
+        if self._state == "main":
+            self._paint_main(p)
+        p.end()
+
+    def _paint_main(self, p: QPainter) -> None:
+        for key in _MAIN_KEYS:
+            cx, cy, r = self.circle_geometry("main", key)
+            hot = self._hover == ("main", key)
+            _disc(p, cx, cy, r, hot)
+            if key == "settings":
+                _gear(p, cx, cy, r * 1.15)
+            elif key == "close":
+                _close_x(p, cx, cy, r * 0.55)
+            elif key == "home":
+                _home(p, cx, cy, r * 0.52)
+            else:  # accounts
+                _person(p, cx, cy, r * 0.52)
+            if hot:
+                _label_pill(p, cx, cy, r, key.capitalize(), above=(key != "close"))
