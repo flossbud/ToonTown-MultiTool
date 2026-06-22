@@ -89,3 +89,47 @@ def test_accounts_paint_does_not_crash():
                     RingAccount("b", "cc", "L2", "Toon", "", True, True)])
     w._hover = ("accounts", 0)   # exercise hover-label path
     pm = QPixmap(500, 500); p = QPainter(pm); w.render(p, QPoint(0, 0)); p.end()
+
+
+def test_reveal_order_is_left_to_right():
+    _app()
+    from utils.overlay.radial_menu import RadialMenuWidget
+    w = RadialMenuWidget(emblem_diameter=160); w.resize(400, 400)
+    order = w.reveal_order("main")
+    xs = [w.circle_geometry("main", k)[0] for k in order]
+    assert xs == sorted(xs)
+
+
+def test_esc_emits_close():
+    _app()
+    from PySide6.QtCore import Qt, QEvent
+    from PySide6.QtGui import QKeyEvent
+    from utils.overlay.radial_menu import RadialMenuWidget
+    w = RadialMenuWidget(emblem_diameter=160); w.resize(400, 400)
+    fired = []
+    w.close_requested.connect(lambda: fired.append(1))
+    w.keyPressEvent(QKeyEvent(QEvent.KeyPress, Qt.Key_Escape, Qt.NoModifier))
+    assert fired == [1]
+
+
+def test_idle_timeout_is_15s():
+    _app()
+    from utils.overlay.radial_menu import RadialMenuWidget
+    w = RadialMenuWidget(emblem_diameter=160)
+    assert w.idle_timeout_ms() == 15000
+
+
+def test_reveal_gates_painting_then_completes():
+    _app()
+    from PySide6.QtCore import QPoint
+    from PySide6.QtGui import QPixmap, QPainter
+    from utils.overlay.radial_menu import RadialMenuWidget
+    w = RadialMenuWidget(emblem_diameter=160); w.resize(400, 400)
+    w.start_reveal()
+    # mid-reveal: nothing revealed yet -> paint must not crash
+    pm = QPixmap(400, 400); p = QPainter(pm); w.render(p, QPoint(0, 0)); p.end()
+    # drive the reveal to completion deterministically (no event loop)
+    for _ in range(len(w.reveal_order("main")) + 1):
+        w._reveal_tick()
+    assert w._reveal_active is False
+    pm2 = QPixmap(400, 400); p2 = QPainter(pm2); w.render(p2, QPoint(0, 0)); p2.end()

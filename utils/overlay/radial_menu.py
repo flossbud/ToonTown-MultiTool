@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import math
 
-from PySide6.QtCore import Qt, QRectF, QPointF, Signal
+from PySide6.QtCore import Qt, QRectF, QPointF, Signal, QTimer
 from PySide6.QtGui import (QPainter, QColor, QBrush, QPen, QLinearGradient,
                            QRadialGradient, QPainterPath, QFont, QPolygonF)
 from PySide6.QtWidgets import QWidget
@@ -141,6 +141,9 @@ class RadialMenuWidget(QWidget):
     back_requested = Signal()
     account_clicked = Signal(str)
 
+    _REVEAL_STEP_MS = 35
+    _IDLE_MS = 15000
+
     def __init__(self, emblem_diameter: float, customizations=None, parent=None):
         super().__init__(parent)
         self._emblem_dia = float(emblem_diameter)
@@ -154,10 +157,65 @@ class RadialMenuWidget(QWidget):
         self.setMouseTracking(True)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setFocusPolicy(Qt.StrongFocus)
+        self._reveal_active = False
+        self._revealed = set()
+        self._reveal_order_keys = []
+        self._reveal_idx = 0
+        self._reveal_timer = QTimer(self)
+        self._reveal_timer.setInterval(self._REVEAL_STEP_MS)
+        self._reveal_timer.timeout.connect(self._reveal_tick)
+        self._idle_timer = QTimer(self)
+        self._idle_timer.setSingleShot(True)
+        self._idle_timer.setInterval(self._IDLE_MS)
+        self._idle_timer.timeout.connect(self.close_requested.emit)
 
     @property
     def state(self) -> str:
         return self._state
+
+    def idle_timeout_ms(self) -> int:
+        return self._IDLE_MS
+
+    def reveal_order(self, state: str) -> list:
+        """Keys for ``state`` ordered left-to-right by circle center-x."""
+        if state == "main":
+            keys = list(_MAIN_KEYS)
+        else:
+            keys = ["back"] + list(range(len(self._accounts)))
+        return sorted(keys, key=lambda k: self.circle_geometry(state, k)[0])
+
+    def start_reveal(self) -> None:
+        """Begin the staggered left-to-right pop-in for the current state."""
+        self._reveal_order_keys = self.reveal_order(self._state)
+        self._revealed = set()
+        self._reveal_idx = 0
+        self._reveal_active = True
+        self._reveal_timer.start()
+        self._arm_idle()
+        self.update()
+
+    def _reveal_tick(self) -> None:
+        if self._reveal_idx >= len(self._reveal_order_keys):
+            self._reveal_timer.stop()
+            self._reveal_active = False
+            self.update()
+            return
+        self._revealed.add(self._reveal_order_keys[self._reveal_idx])
+        self._reveal_idx += 1
+        self.update()
+
+    def _shown(self, key) -> bool:
+        """True if ``key`` should paint now (always, unless a reveal is gating it)."""
+        return (not self._reveal_active) or (key in self._revealed)
+
+    def _arm_idle(self) -> None:
+        self._idle_timer.start()   # single-shot; restarts the 15s idle countdown
+
+    def keyPressEvent(self, e):
+        if e.key() == Qt.Key_Escape:
+            self.close_requested.emit()
+            return
+        super().keyPressEvent(e)
 
     def _center(self) -> tuple[float, float]:
         return (self.width() / 2.0, self.height() / 2.0)
@@ -197,6 +255,7 @@ class RadialMenuWidget(QWidget):
         return None
 
     def activate_at(self, x: float, y: float) -> None:
+        self._arm_idle()
         hit = self._hit(x, y)
         if hit is None:
             return
@@ -215,7 +274,7 @@ class RadialMenuWidget(QWidget):
                 self._state = "main"
                 self._hover = None
                 self.back_requested.emit()
-                self.update()
+                self.start_reveal()
             else:
                 self.account_clicked.emit(self._accounts[int(key)].account_id)
 
@@ -227,6 +286,7 @@ class RadialMenuWidget(QWidget):
     def mouseMoveEvent(self, e):
         pos = e.position()
         self._hover = self._hit(pos.x(), pos.y())
+        self._arm_idle()
         self.update()
         super().mouseMoveEvent(e)
 
@@ -242,6 +302,8 @@ class RadialMenuWidget(QWidget):
 
     def _paint_main(self, p: QPainter) -> None:
         for key in _MAIN_KEYS:
+            if not self._shown(key):
+                continue
             cx, cy, r = self.circle_geometry("main", key)
             hot = self._hover == ("main", key)
             _disc(p, cx, cy, r, hot)
@@ -267,19 +329,22 @@ class RadialMenuWidget(QWidget):
                 a.game, a.toon_name, a.dna, self._customizations, d)
         self._state = "accounts"
         self._hover = None
-        self.update()
+        self.start_reveal()
 
     def _paint_accounts(self, p: QPainter) -> None:
         cx, cy = self._center()
         sring = self._ring * 1.06
-        bx, by, br = self.circle_geometry("accounts", "back")
-        hot_back = self._hover == ("accounts", "back")
-        _disc(p, bx, by, br, hot_back)
-        _back_arrow(p, bx, by, br * 0.55)
-        if hot_back:
-            _label_pill(p, bx, by, br, "Back", above=True)
+        if self._shown("back"):
+            bx, by, br = self.circle_geometry("accounts", "back")
+            hot_back = self._hover == ("accounts", "back")
+            _disc(p, bx, by, br, hot_back)
+            _back_arrow(p, bx, by, br * 0.55)
+            if hot_back:
+                _label_pill(p, bx, by, br, "Back", above=True)
         angles = account_ring_angles(len(self._accounts))
         for i, acct in enumerate(self._accounts):
+            if not self._shown(i):
+                continue
             cxi, cyi, r = self.circle_geometry("accounts", i)
             hot = self._hover == ("accounts", i)
             _account_frame(p, cxi, cyi, r, hot)
