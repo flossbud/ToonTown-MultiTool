@@ -294,17 +294,44 @@ def test_windowed_paint_does_not_crash_and_label_present():
     pm = QPixmap(500, 500); p = QPainter(pm); w.render(p, QPoint(0, 0)); p.end()
 
 
-def test_press_is_accepted_not_propagated():
+def test_press_depresses_then_springs_back_and_activates():
     _app()
     from PySide6.QtCore import Qt, QEvent, QPointF
     from PySide6.QtGui import QMouseEvent
     from utils.overlay.radial_menu import RadialMenuWidget
     w = RadialMenuWidget(emblem_diameter=160); w.resize(400, 400)
-    ev = QMouseEvent(QEvent.MouseButtonPress, QPointF(10, 10),
+    w.start_reveal(); w._advance(10_000)
+    cx, cy, r = w.circle_geometry("main", "settings")
+    press = QMouseEvent(QEvent.MouseButtonPress, QPointF(cx, cy),
+                        Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
+    w.mousePressEvent(press)
+    assert w._press_hit == ("main", "settings")
+    for _ in range(6):                       # depress while held
+        w._advance(0)
+    assert w._press_scale_val < 1.0
+    fired = []
+    w.settings_requested.connect(lambda: fired.append(1))
+    rel = QMouseEvent(QEvent.MouseButtonRelease, QPointF(cx, cy),
+                      Qt.LeftButton, Qt.NoButton, Qt.NoModifier)
+    w.mouseReleaseEvent(rel)
+    assert fired == [1]                      # activation still on release
+    for _ in range(60):                      # spring-back completes
+        w._advance(0)
+    assert w._press_hit is None
+    assert w._press_scale_val == 1.0
+
+
+def test_press_is_still_accepted_not_propagated():
+    _app()
+    from PySide6.QtCore import Qt, QEvent, QPointF
+    from PySide6.QtGui import QMouseEvent
+    from utils.overlay.radial_menu import RadialMenuWidget
+    w = RadialMenuWidget(emblem_diameter=160); w.resize(400, 400)
+    ev = QMouseEvent(QEvent.MouseButtonPress, QPointF(2, 2),
                      Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
     ev.setAccepted(False)
     w.mousePressEvent(ev)
-    assert ev.isAccepted()      # consumed -> will not bubble to a parent host
+    assert ev.isAccepted()                   # consumed even when no spoke is hit
 
 
 def test_windowed_variant_accounts_subring_and_back():

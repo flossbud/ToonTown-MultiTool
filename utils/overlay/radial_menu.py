@@ -419,6 +419,8 @@ class RadialMenuWidget(QWidget):
                 busy = True
         if self._advance_hover():
             busy = True
+        if self._advance_press():
+            busy = True
         self.update()
         if not busy:
             self._clock.stop()
@@ -439,6 +441,27 @@ class RadialMenuWidget(QWidget):
                 busy = True
             self._hover_progress[k] = nxt
         return busy
+
+    def _advance_press(self) -> bool:
+        """Depress the held spoke toward 0.88, then spring it back to 1.0 with
+        overshoot on release. Increment-based (no timestamp). Returns True while
+        in motion / still held."""
+        if self._press_hit is None:
+            return False
+        if not self._press_releasing:
+            self._press_t = min(1.0, self._press_t + 0.35)
+            self._press_scale_val = 1.0 - 0.12 * self._press_t
+            return True                       # keep ticking while held
+        self._press_rt = min(1.0, self._press_rt + 0.08)
+        self._press_scale_val = _lerp(0.88, 1.0, _ease_spring(self._press_rt))
+        if self._press_rt >= 1.0:
+            self._press_hit = None
+            self._press_releasing = False
+            self._press_t = 0.0
+            self._press_rt = 0.0
+            self._press_scale_val = 1.0
+            return False
+        return True
 
     def _circle_vis(self, key) -> float:
         """Visibility in [0,1] for `key`: 0 = collapsed at the emblem center,
@@ -540,12 +563,25 @@ class RadialMenuWidget(QWidget):
                    for i, a in enumerate(self._accounts))
 
     def mousePressEvent(self, e):
-        # Activation happens on RELEASE (see mouseReleaseEvent). Accept the press
-        # so it does not bubble to a parent host (the windowed wheel dismisses on
-        # its own presses) and so the implicit grab returns the release here.
+        # Activation happens on RELEASE (see mouseReleaseEvent). Track the pressed
+        # spoke so it can depress while held. Accept the press so it does not
+        # bubble to a parent host and so the implicit grab returns the release.
+        if not self._closing and self._anim_enabled:
+            hit = self._hit(e.position().x(), e.position().y())
+            if hit is not None:
+                self._press_hit = hit
+                self._press_releasing = False
+                self._press_t = 0.0
+                self._press_rt = 0.0
+                self._press_scale_val = 1.0
+                self._kick()
         e.accept()
 
     def mouseReleaseEvent(self, e):
+        if self._press_hit is not None:
+            self._press_releasing = True     # begin spring-back
+            self._press_rt = 0.0
+            self._kick()
         pos = e.position()
         self.activate_at(pos.x(), pos.y())
         super().mouseReleaseEvent(e)
