@@ -1,10 +1,11 @@
 """Interactive radial menu widget for the emblem overlay.
 
-Paints a dim scrim plus a ring of azure circles around the emblem center and
-routes clicks to intent signals. Two states: the main ring (Accounts, Home,
-Settings, Close) and the accounts sub-ring (Back plus up to 8 recent accounts
-rendered as their toon's customized portrait, with a green dot for a running
-account). Supports a staggered left-to-right pop-in reveal, hover labels,
+Paints a soft radial vignette plus a ring of azure circles around the emblem
+center and routes clicks to intent signals. The main ring has two variants
+(selected by the ``variant`` ctor arg): transparent mode (Accounts, Home,
+Settings, Back, Exit) and windowed mode (Accounts, Float, Back). Clicking
+Accounts opens the accounts sub-ring (Back plus up to 8 recent accounts rendered
+as their toon's customized portrait, with a green dot for a running account). Supports a staggered left-to-right pop-in reveal, hover labels,
 Esc-to-close, and a 15s idle auto-hide. Geometry comes from
 utils/radial_menu_layout.py; account portraits from utils/overlay/radial_portrait.py.
 """
@@ -28,7 +29,7 @@ _MAIN_BOTTOM_KEYS = ("close", "exit")   # labels render below these
 # Hover labels. "close" dismisses the ring (one level up), so it reads as "Back"
 # (the X glyph next to "Exit" was confusingly two ways to leave).
 _MAIN_LABELS = {"accounts": "Accounts", "home": "Home", "settings": "Settings",
-                "transparent": "Transparent", "close": "Back", "exit": "Exit"}
+                "transparent": "Float", "close": "Back", "exit": "Exit"}
 
 
 # --- glyph + disc painters (azure theme matching the emblem) ------------------

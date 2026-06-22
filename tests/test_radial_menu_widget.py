@@ -271,7 +271,7 @@ def test_windowed_paint_does_not_crash_and_label_present():
     from PySide6.QtCore import QPoint
     from PySide6.QtGui import QPixmap, QPainter
     from utils.overlay.radial_menu import RadialMenuWidget, _MAIN_LABELS, _overlay_cards
-    assert _MAIN_LABELS["transparent"] == "Transparent"
+    assert _MAIN_LABELS["transparent"] == "Float"
     assert callable(_overlay_cards)
     w = RadialMenuWidget(emblem_diameter=160, variant="windowed"); w.resize(500, 500)
     w._hover = ("main", "transparent")          # exercise hover label + glyph
@@ -289,3 +289,19 @@ def test_press_is_accepted_not_propagated():
     ev.setAccepted(False)
     w.mousePressEvent(ev)
     assert ev.isAccepted()      # consumed -> will not bubble to a parent host
+
+
+def test_windowed_variant_accounts_subring_and_back():
+    _app()
+    from utils.overlay.radial_menu import RadialMenuWidget
+    from utils.radial_menu_model import RingAccount
+    w = RadialMenuWidget(emblem_diameter=160, variant="windowed"); w.resize(500, 500)
+    w.set_accounts([RingAccount("a", "ttr", "L", "T", "", True, False)])
+    assert w.state == "accounts"
+    back = []
+    w.back_requested.connect(lambda: back.append(1))
+    cx, cy, r = w.circle_geometry("accounts", "back")
+    w.activate_at(cx, cy)
+    assert back == [1] and w.state == "main"
+    # Back returns to the WINDOWED 3-spoke ring, not the transparent 5-spoke one.
+    assert sorted(w.reveal_order("main")) == sorted(["accounts", "transparent", "close"])
