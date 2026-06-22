@@ -548,6 +548,8 @@ class OverlayGroupController:
         raising the final surface puts it on top of the cluster.
         """
         if self._surfaces:
+            from utils.overlay.backend import overlay_trace
+            overlay_trace("raise_emblem -> emblem to top of cluster")
             self._surfaces[-1].raise_()
 
     # ------------------------------------------------------------------
@@ -695,6 +697,10 @@ class OverlayGroupController:
                 pass
         self._refresh_glow(rects)
         self._raise_emblem()
+        # Keep an open radial/panel above the just-re-raised emblem, so the
+        # occupancy path and the drag/scale path (_place_all) agree on z-order.
+        # No-op when neither is open.
+        self._reposition_radial()
 
     def _show_card_surface(self, state, surface, rect) -> None:
         """Map a previously-hidden card: geometry -> initial state -> show ->
@@ -933,11 +939,13 @@ class OverlayGroupController:
         current cluster anchor, so the circles follow the emblem as it is dragged
         or the cluster is re-placed. Size is preserved (no widget rescale here)."""
         from PySide6.QtCore import QRect
+        from utils.overlay.backend import overlay_trace
         cx, cy = self._anchor
-        for surface, size in ((self._radial_surface, self._radial_size),
-                              (self._panel_surface, self._panel_size)):
+        for name, surface, size in (("radial", self._radial_surface, self._radial_size),
+                                    ("panel", self._panel_surface, self._panel_size)):
             if surface is None or size <= 0:
                 continue
+            overlay_trace(f"reposition+raise {name} surface over emblem (size={size})")
             surface.set_overlay_geometry(
                 QRect(int(cx - size / 2), int(cy - size / 2), size, size))
             surface.raise_()
@@ -1431,6 +1439,7 @@ class OverlayGroupController:
         surface = self._radial_surface
         self._radial_surface = None
         self._radial_menu = None
+        self._radial_size = 0
         if surface is not None:
             self._safe_call(surface, "hide")
             self._safe_call(surface, "deleteLater")
@@ -1480,6 +1489,7 @@ class OverlayGroupController:
                 pass
         surface = self._panel_surface
         self._panel_surface = None
+        self._panel_size = 0
         if surface is not None:
             self._safe_call(surface, "hide")
             self._safe_call(surface, "deleteLater")
