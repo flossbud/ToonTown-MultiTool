@@ -34,6 +34,36 @@ _MAIN_LABELS = {"accounts": "Accounts", "home": "Window", "settings": "Settings"
 # key/signal names stay "home" while the user-facing label is "Window".
 
 
+# --- easing + interpolation (pure, unit-testable) -----------------------------
+
+def _clamp01(t: float) -> float:
+    return 0.0 if t < 0.0 else (1.0 if t > 1.0 else t)
+
+
+def _lerp(a: float, b: float, t: float) -> float:
+    return a + (b - a) * t
+
+
+def _ease_out(t: float) -> float:
+    """Decelerating cubic: fast start, soft landing (entrance fly-out)."""
+    t = _clamp01(t)
+    return 1.0 - (1.0 - t) ** 3
+
+
+def _ease_in(t: float) -> float:
+    """Accelerating cubic: soft start, fast finish (exit fly-back)."""
+    t = _clamp01(t)
+    return t ** 3
+
+
+def _ease_spring(t: float) -> float:
+    """Overshoot-and-settle (easeOutBack) for the press spring-back."""
+    t = _clamp01(t)
+    c1 = 1.70158
+    c3 = c1 + 1.0
+    return 1.0 + c3 * (t - 1.0) ** 3 + c1 * (t - 1.0) ** 2
+
+
 # --- glyph + disc painters (azure theme matching the emblem) ------------------
 
 def _disc(p: QPainter, cx: float, cy: float, r: float, hot: bool = False,

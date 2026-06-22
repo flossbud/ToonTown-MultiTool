@@ -305,3 +305,21 @@ def test_windowed_variant_accounts_subring_and_back():
     assert back == [1] and w.state == "main"
     # Back returns to the WINDOWED 3-spoke ring, not the transparent 5-spoke one.
     assert sorted(w.reveal_order("main")) == sorted(["accounts", "transparent", "close"])
+
+
+def test_easing_and_interpolation_helpers():
+    from utils.overlay.radial_menu import (
+        _clamp01, _lerp, _ease_out, _ease_in, _ease_spring)
+    # endpoints
+    assert _ease_out(0.0) == 0.0 and abs(_ease_out(1.0) - 1.0) < 1e-9
+    assert _ease_in(0.0) == 0.0 and abs(_ease_in(1.0) - 1.0) < 1e-9
+    assert abs(_ease_spring(0.0)) < 1e-9 and abs(_ease_spring(1.0) - 1.0) < 1e-9
+    # ease_out decelerates (ahead of linear), ease_in accelerates (behind)
+    assert _ease_out(0.5) > 0.5
+    assert _ease_in(0.5) < 0.5
+    # spring overshoots above 1.0 somewhere in (0,1)
+    assert max(_ease_spring(i / 100.0) for i in range(101)) > 1.0
+    # clamp + lerp
+    assert _clamp01(-3.0) == 0.0 and _clamp01(2.0) == 1.0 and _clamp01(0.4) == 0.4
+    assert _lerp(10.0, 20.0, 0.5) == 15.0
+    assert _lerp(10.0, 20.0, 0.0) == 10.0 and _lerp(10.0, 20.0, 1.0) == 20.0
