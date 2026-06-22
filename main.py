@@ -376,6 +376,9 @@ class MultiToonTool(QMainWindow):
         )
         self.customization_overlay: ToonCustomizationOverlay | None = None
         self.launch_tab = LaunchTab(settings_manager=self.settings_manager, logger=self.logger, window_manager=self.window_manager)
+        # Bridge resolved in-world toon names to the launching account's
+        # recent_toons record (radial-menu last-toon capture).
+        self.multitoon_tab.set_toon_capture_sink(self.launch_tab.capture_toon)
         self.keymap_tab = KeymapTab(
             self.keymap_manager,
             self.settings_manager,
@@ -465,6 +468,12 @@ class MultiToonTool(QMainWindow):
         self.stack.addWidget(self.settings_tab)     # 3
         self.stack.addWidget(self.debug_tab)        # 4
         self.stack.addWidget(self.credits_tab)      # 5
+        # Portable Settings panel (Task 12): when the Settings spoke floats the
+        # real SettingsTab over the overlay it is reparented OUT of this stack;
+        # _restore_settings_to_stack re-inserts it at index 3. These track that
+        # transient state so restoration is idempotent across every teardown path.
+        self._settings_floating = False
+        self._settings_container = None
         self._wire_header_icon_active_state()
         root.addWidget(self.stack, 1)
 
@@ -1216,55 +1225,78 @@ class MultiToonTool(QMainWindow):
         return group
 
     def _show_emblem_launch_menu(self, global_pos):
-        """Right-click on the emblem: in transparent mode, show the recent-launch
-        menu; when framed, preserve the prior behavior (enter transparent mode)."""
-        from PySide6.QtWidgets import QMenu
-
+        """Right-click on the emblem: in transparent mode, open the radial menu;
+        when framed, preserve the prior behavior (enter transparent mode)."""
         if not self._mode_controller.is_active:   # is_active is a @property
             self._mode_controller.toggle()   # framed: right-click enters transparent
             return
 
-        model = self.launch_tab.recent_launch_menu_model()
-        menu = QMenu(self)                   # parented to the main window, NOT the emblem
-        for text, data in self._emblem_menu_entries(model):
-            menu.addAction(text).setData(data)
-
-        chosen = menu.exec(global_pos)       # blocks; returns the chosen QAction or None
-        if chosen is not None:
-            self._dispatch_emblem_menu_action(chosen.data())
-
-    @staticmethod
-    def _emblem_menu_entries(model):
-        """Map a RecentMenuModel to the ordered ``(text, data)`` menu entries.
-        Pure (no Qt), so the label/prefix/data mapping is unit-testable; the QMenu
-        build/exec around it is WM-dependent and live-validated. ``data`` is
-        ``(game, account_id)`` for a launch item or ``("__nav__", None)`` for the
-        empty/locked navigation item."""
-        if model.status == "ok":
-            entries = []
-            for item in model.items:
-                text = item.display_label
-                if model.mixed_games:
-                    text = f"{'TTR' if item.game == 'ttr' else 'CC'}  -  {text}"
-                entries.append((text, (item.game, item.account_id)))
-            return entries
-        if model.status == "keyring_locked":
-            return [("Unlock accounts in Launch tab", ("__nav__", None))]
-        return [("Add Account", ("__nav__", None))]   # empty
-
-    def _dispatch_emblem_menu_action(self, data):
-        """Route a chosen emblem-menu action. Runs AFTER the menu closes (no grab
-        held). ``data`` is ``(game, account_id)`` or ``(\"__nav__\", None)``."""
-        game, account_id = data
-        if game == "__nav__":
-            self._mode_controller.leave()    # restore the main window
-            self.nav_select(1)               # open the Launch tab
+        menu = self._mode_controller.open_radial_menu()
+        if menu is None:
             return
-        # Re-check at dispatch time so the menu never stops a game that started
-        # running between model-build and click.
-        if self.launch_tab.is_account_running(game, account_id):
+        self._wire_radial_menu(menu)
+
+    def _wire_radial_menu(self, menu):
+        """Connect a freshly opened RadialMenuWidget's intent signals to the
+        coordinator. The widget is owned by the mode controller and torn down on
+        close_radial_menu()/leave(), so its connections die with it."""
+        menu.accounts_requested.connect(lambda: self._populate_radial_accounts(menu))
+        menu.home_requested.connect(self._radial_go_home)
+        menu.settings_requested.connect(self._open_portable_settings)
+        menu.close_requested.connect(self._mode_controller.close_radial_menu)
+        menu.account_clicked.connect(self._radial_launch_account)
+
+    def _populate_radial_accounts(self, menu):
+        """Feed the radial's Accounts sub-ring. Reuses launch_tab's keyring-aware
+        ring builder (which INCLUDES running accounts, unlike the flat menu) and
+        supplies the real ToonCustomizationsManager so portraits render styled."""
+        ring = self.launch_tab.recent_account_ring_model(limit=8)
+        menu.set_accounts(ring, customizations=self.multitoon_tab.customizations)
+
+    def _radial_go_home(self):
+        """Home spoke: close the radial and return to the windowed view (same as
+        a left-click on the emblem in transparent mode)."""
+        self._mode_controller.close_radial_menu()
+        self._mode_controller.toggle()          # active -> leave() -> windowed
+
+    def _radial_launch_account(self, account_id):
+        """Account spoke clicked: launch it (the sub-ring stays open so the user
+        can fire several). launch_account no-ops a re-launch of a running game."""
+        game = self.launch_tab.game_of_account(account_id)
+        if game is None:
             return
         self.launch_tab.launch_account(game, account_id)
+
+    def _open_portable_settings(self):
+        """Settings spoke: float the real SettingsTab over the overlay (reparented,
+        so its existing signal wiring keeps working)."""
+        self._mode_controller.close_radial_menu()
+        if getattr(self, "_settings_floating", False):
+            return
+        from utils.overlay.portable_settings import PortableSettingsContainer
+        self._settings_container = PortableSettingsContainer(self.settings_tab)
+        self._settings_floating = True
+        self._settings_container.closed.connect(self._mode_controller.close_panel_surface)
+        # on_close runs inside close_panel_surface BEFORE the surface is destroyed.
+        surface = self._mode_controller.open_panel_surface(
+            self._settings_container, on_close=self._restore_settings_to_stack)
+        # Bulletproof: if the surface could not be created (controller inactive),
+        # the SettingsTab is already reparented out of the stack but no teardown
+        # path (X/Esc/leave) is wired, so restore it immediately rather than
+        # stranding it.
+        if surface is None:
+            self._restore_settings_to_stack()
+
+    def _restore_settings_to_stack(self):
+        """Idempotent: put the reparented SettingsTab back in the tab stack."""
+        if not getattr(self, "_settings_floating", False):
+            return
+        self._settings_floating = False
+        cont = self._settings_container
+        self._settings_container = None
+        if cont is not None:
+            cont.release_content()
+        self.stack.insertWidget(3, self.settings_tab)   # restore at its original index
 
     def nav_select(self, index: int):
         if self.stack.currentIndex() == index and getattr(self, "_initialized_nav", False):

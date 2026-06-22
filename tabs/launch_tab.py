@@ -313,6 +313,11 @@ class LaunchTab(QWidget):
         # Recent-launch MRU for the emblem right-click launch menu.
         from utils.recent_launches import RecentLaunchesStore
         self._recent_launches = RecentLaunchesStore(self.settings_manager)
+        # account_id <-> running game bridge for the radial menu's last-toon capture.
+        from utils.recent_toons import RecentToonsStore
+        from utils.toon_capture_bridge import ToonCaptureBridge
+        self._recent_toons = RecentToonsStore(self.settings_manager)
+        self._toon_bridge = ToonCaptureBridge(self._recent_toons)
         # Predicate set by the app shell so failure dialogs can sit above the
         # transparent-mode overlay. Defaults to "not in overlay mode".
         self._overlay_active = lambda: False
@@ -500,23 +505,27 @@ class LaunchTab(QWidget):
         right-click menu). Forwards to the internal launch handler."""
         self._on_launch(game, account_id)
 
+    def capture_toon(self, pid: int, toon_name: str, dna: str = "") -> None:
+        """Record the in-world toon for whatever account owns ``pid`` (no-op if unknown)."""
+        self._toon_bridge.capture(pid, toon_name, dna)
+
     def set_overlay_active_provider(self, fn) -> None:
         """Install a ``() -> bool`` predicate reporting whether the transparent
         overlay is active (so failure dialogs raise above it)."""
         self._overlay_active = fn
 
-    def recent_launch_menu_model(self):
-        """Build the emblem right-click menu model from the recent-launch MRU."""
-        from utils.recent_launches import (
-            build_recent_menu_model, resolve_account_view,
-        )
+    def recent_account_ring_model(self, limit: int = 8):
+        """Build the emblem radial menu's Accounts sub-ring from the recent-launch
+        MRU. Unlike the old flat menu, the ring INCLUDES running accounts (carrying
+        a ``running`` flag) and attaches each account's last in-world toon (name +
+        DNA) for its portrait. Uses a keyring-aware single-pass metadata resolution
+        so no extra keyring round-trips are added at menu-open; a locked keyring
+        yields an empty ring (no per-account reads)."""
+        from utils.recent_launches import resolve_account_view
+        from utils.radial_menu_model import build_account_ring
         cred = self.cred_manager
-        # Resolve all account metadata in ONE pass, keyed by id -> (index, meta),
-        # so each CC launcher token is read from keyring at most once. (The previous
-        # per-id _global_index_of() rescanned the whole list - re-reading every CC
-        # token on each MRU id at menu-open, on the GUI thread.) Skip the pass
-        # entirely when build_recent_menu_model's keyring-locked short-circuit will
-        # fire, so a locked keyring never triggers the (timeout-prone) reads.
+        # Single-pass resolution: skip the metadata pass entirely when the keyring
+        # is locked (else each CC token read can hit a lock-timeout storm).
         if not cred.keyring_available and cred.count() > 0:
             meta_by_id = {}
         else:
@@ -530,13 +539,26 @@ class LaunchTab(QWidget):
             idx, meta = entry
             return resolve_account_view(cred, idx, meta)
 
-        return build_recent_menu_model(
+        def toon_for(aid):
+            rec = self._recent_toons.get(aid)
+            return (rec.toon_name, rec.dna) if rec else None
+
+        return build_account_ring(
             self._recent_launches.ordered_ids(),
             account_for,
+            toon_for,
             self.is_account_running,
-            cred.keyring_available,
-            cred.count(),
+            limit=limit,
         )
+
+    def game_of_account(self, account_id: str) -> str | None:
+        """Resolve an account's game ("ttr"/"cc") from metadata, or None if the
+        account is unknown. Used by the radial launch path, which only carries an
+        account_id, to recover the game needed by ``launch_account``."""
+        for a in self.cred_manager.get_accounts_metadata():
+            if a.id == account_id:
+                return a.game
+        return None
 
     def _position_of(self, game: str, account_id: str) -> int:
         """1-based position within the game (for 'Account N' user-facing text)."""
@@ -1549,6 +1571,8 @@ class LaunchTab(QWidget):
         # Record the successful launch for the emblem right-click MRU. Single
         # hook -> covers both Launch-tab and emblem-menu launches.
         self._recent_launches.record(account_id)
+        # Map this pid to its account so the radial menu can capture the last toon.
+        self._toon_bridge.record_launch(pid, game, account_id)
         game_label = "TTR" if game == "ttr" else "CC"
         pos = self._position_of(game, account_id)
         if self.window_manager is None:
@@ -1622,6 +1646,9 @@ class LaunchTab(QWidget):
         slot = self._slots[game].get(account_id)
         if slot is None or slot.launcher is not launcher:
             return
+        # Drop this account's pid<->account bridge entry (radial-menu capture).
+        # game_exited carries no pid, so clear by the (game, account_id) value.
+        self._toon_bridge.clear_account(game, account_id)
         # If the process exits while still loading, drop its pending timer so it
         # cannot later flip a re-used slot to running. Do NOT touch the window
         # credit -- no window was consumed.

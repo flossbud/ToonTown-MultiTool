@@ -76,43 +76,6 @@ def _tab(qapp, accounts, ordered, keyring=True):
     return tab
 
 
-def test_menu_model_orders_and_labels(qapp):
-    tab = _tab(qapp,
-               [_acct("a", "ttr", label="Floss"), _acct("b", "cc", token="tok")],
-               ordered=["b", "a"])
-    m = tab.recent_launch_menu_model()
-    assert m.status == "ok"
-    assert [(it.account_id, it.display_label) for it in m.items] == \
-           [("b", "u"), ("a", "Floss")]
-    assert m.mixed_games is True
-
-
-def test_menu_model_skips_running(qapp):
-    tab = _tab(qapp, [_acct("a", "ttr"), _acct("b", "ttr")], ordered=["a", "b"])
-    tab._slots["ttr"]["a"] = SimpleNamespace(
-        launcher=SimpleNamespace(is_running=lambda: True))
-    m = tab.recent_launch_menu_model()
-    assert [it.account_id for it in m.items] == ["b"]
-
-
-def test_menu_model_keyring_locked(qapp):
-    tab = _tab(qapp, [_acct("a", "ttr")], ordered=["a"], keyring=False)
-    assert tab.recent_launch_menu_model().status == "keyring_locked"
-
-
-def test_menu_model_keyring_locked_does_no_credential_reads(qapp):
-    tab = _tab(qapp, [_acct("a", "ttr"), _acct("b", "cc")], ordered=["a", "b"],
-               keyring=False)
-    tab.cred_manager.reads = 0
-    tab.recent_launch_menu_model()
-    assert tab.cred_manager.reads == 0          # short-circuit, no per-account reads
-
-
-def test_menu_model_empty_when_no_recent(qapp):
-    tab = _tab(qapp, [_acct("a", "ttr")], ordered=[])
-    assert tab.recent_launch_menu_model().status == "empty"
-
-
 def test_is_account_running(qapp):
     tab = _tab(qapp, [_acct("a", "ttr")], ordered=["a"])
     assert tab.is_account_running("ttr", "a") is False
@@ -127,6 +90,59 @@ def test_overlay_active_provider_defaults_false(qapp):
     assert tab._overlay_active() is False
     tab.set_overlay_active_provider(lambda: True)
     assert tab._overlay_active() is True
+
+
+class _ToonStore:
+    """Minimal RecentToonsStore double: maps account_id -> ToonRecord-like."""
+    def __init__(self, by_id):
+        self._by_id = dict(by_id)
+    def get(self, aid):
+        return self._by_id.get(aid)
+
+
+def test_account_ring_includes_running(qapp):
+    # Unlike the flat menu (which skips running accounts), the ring keeps them.
+    tab = _tab(qapp, [_acct("a", "ttr"), _acct("b", "ttr")], ordered=["a", "b"])
+    tab._slots["ttr"]["a"] = SimpleNamespace(
+        launcher=SimpleNamespace(is_running=lambda: True))
+    ring = tab.recent_account_ring_model()
+    by_id = {r.account_id: r for r in ring}
+    assert set(by_id) == {"a", "b"}            # running "a" is NOT dropped
+    assert by_id["a"].running is True
+    assert by_id["b"].running is False
+
+
+def test_account_ring_attaches_toon_and_placeholder(qapp):
+    tab = _tab(qapp, [_acct("a", "ttr"), _acct("b", "ttr")], ordered=["a", "b"])
+    tab._recent_toons = _ToonStore({
+        "a": SimpleNamespace(toon_name="Floss", dna="dnaA"),
+    })
+    by_id = {r.account_id: r for r in tab.recent_account_ring_model()}
+    assert by_id["a"].toon_name == "Floss" and by_id["a"].dna == "dnaA"
+    assert by_id["a"].is_placeholder is False
+    assert by_id["b"].toon_name is None and by_id["b"].is_placeholder is True
+
+
+def test_account_ring_keyring_locked_is_empty_no_reads(qapp):
+    tab = _tab(qapp, [_acct("a", "ttr"), _acct("b", "cc")], ordered=["a", "b"],
+               keyring=False)
+    tab.cred_manager.reads = 0
+    assert tab.recent_account_ring_model() == []   # locked -> empty ring
+    assert tab.cred_manager.reads == 0             # no per-account credential reads
+
+
+def test_account_ring_respects_limit(qapp):
+    accts = [_acct(c, "ttr") for c in "abcde"]
+    tab = _tab(qapp, accts, ordered=list("abcde"))
+    assert len(tab.recent_account_ring_model(limit=2)) == 2
+
+
+def test_game_of_account(qapp):
+    tab = _tab(qapp, [_acct("a", "ttr"), _acct("b", "cc", token="tok")],
+               ordered=["a", "b"])
+    assert tab.game_of_account("a") == "ttr"
+    assert tab.game_of_account("b") == "cc"
+    assert tab.game_of_account("missing") is None
 
 
 def test_records_launch_in_on_game_launched(qapp, monkeypatch):
