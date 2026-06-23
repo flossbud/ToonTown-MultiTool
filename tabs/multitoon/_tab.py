@@ -99,6 +99,7 @@ class ToonPortraitWidget(QWidget):
         self._pixmap  = None
         self._silhouette_cache: dict[tuple, tuple] = {}
         self._loading = False
+        self._suppress_fallback_glyph = False
         self._dna     = None
         self._pose: str = "portrait"
         self._cc_mode = False
@@ -161,6 +162,13 @@ class ToonPortraitWidget(QWidget):
         else:
             self._border_color = None
         self._dim_cache = None
+        self.update()
+
+    def set_suppress_fallback_glyph(self, on: bool):
+        """When True, the no-pixmap paint branch draws neither the loading
+        ellipsis nor the slot number. The radial accounts-ring uses this to
+        grab a clean background-only portrait and draw its own spinner."""
+        self._suppress_fallback_glyph = bool(on)
         self.update()
 
     def set_dna(self, dna):
@@ -613,7 +621,7 @@ class ToonPortraitWidget(QWidget):
                     scaled,
                 )
                 p.restore()
-            else:
+            elif not self._suppress_fallback_glyph:
                 font = QFont()
                 font.setPixelSize(14)
                 font.setBold(True)
