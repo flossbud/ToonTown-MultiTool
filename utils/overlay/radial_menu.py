@@ -764,20 +764,32 @@ class RadialMenuWidget(QWidget):
     def _on_pose_ready(self, dna, pose, pixmap):
         """A Rendition pose arrived. Re-render any still-pending account whose
         DNA matches (the disk cache is now warm) and repaint. No-op unless the
-        accounts sub-ring is showing."""
+        accounts sub-ring is showing.
+
+        ``pixmap is None`` is the fetcher's failure signal. Treat it as a
+        definitive miss: stop the spinner (drop the id from ``_loading``) and do
+        NOT re-render. Re-rendering would call ``set_dna`` again, which re-fires
+        the fetch as a side effect -- so refreshing on failure would loop into a
+        retry storm against the Rendition server and a never-resolving spinner.
+        A later ring-open re-attempts the fetch via set_accounts / pre-warm."""
         if self._state != "accounts" or not dna:
             return
         from utils.overlay.radial_portrait import render_account_portrait
         d = max(1, int(round(self._sat_r * 2)))
         changed = False
         for a in self._accounts:
-            if a.dna == dna and a.account_id in self._loading:
-                render = render_account_portrait(
-                    a.game, a.toon_name, a.dna, self._customizations, d)
-                self._portraits[a.account_id] = render.pixmap
-                if render.status != "pending":
-                    self._loading.discard(a.account_id)
+            if a.dna != dna or a.account_id not in self._loading:
+                continue
+            if pixmap is None:
+                self._loading.discard(a.account_id)
                 changed = True
+                continue
+            render = render_account_portrait(
+                a.game, a.toon_name, a.dna, self._customizations, d)
+            self._portraits[a.account_id] = render.pixmap
+            if render.status != "pending":
+                self._loading.discard(a.account_id)
+            changed = True
         if changed:
             self.update()
 

@@ -95,6 +95,31 @@ def test_pose_ready_signal_fans_out_to_shared_dna(qapp, monkeypatch):
     qapp.processEvents()
 
 
+def test_pose_ready_failure_clears_loading_without_refetch(qapp, monkeypatch):
+    # A failed fetch (pixmap=None) must stop the spinner (clear _loading) and
+    # must NOT re-render -- re-rendering calls set_dna, which re-fires the fetch
+    # as a side effect, looping into a retry storm. A later ring-open retries.
+    from utils.overlay.radial_menu import RadialMenuWidget
+    from utils.overlay import radial_portrait
+    from utils.overlay.radial_portrait import PortraitRender
+
+    calls = []
+
+    def fake(game, toon_name, dna, customizations, diameter):
+        calls.append(dna)
+        pm = QPixmap(diameter, diameter); pm.fill()
+        return PortraitRender(pm, "pending" if dna else "no_pose")
+
+    monkeypatch.setattr(radial_portrait, "render_account_portrait", fake, raising=True)
+    menu = RadialMenuWidget(emblem_diameter=120)
+    menu.set_accounts([_acct("a1", "dna-a")])
+    assert menu._loading == {"a1"}
+    n = len(calls)                                   # renders so far (set_accounts)
+    menu._on_pose_ready("dna-a", "portrait", None)   # fetch-failure signal
+    assert menu._loading == set()                    # spinner stopped
+    assert len(calls) == n                           # NO re-render -> no refetch loop
+
+
 def test_kill_switch_still_refreshes(qapp, monkeypatch):
     # Animation disabled -> no clock, but pose_ready must still swap the pixmap
     # and clear the loading flag (live-refresh calls update() directly).

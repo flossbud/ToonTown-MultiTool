@@ -78,6 +78,10 @@ def test_status_pending_on_cache_miss(monkeypatch):
     from utils.overlay.radial_portrait import render_account_portrait
     monkeypatch.setattr(RenditionPoseFetcher, "cached_pixmap",
                         lambda self, dna, pose: None, raising=True)
+    # Stub the async fetch so set_dna's request side-effect does not hit the
+    # real Rendition server (offline-flaky + leaks a pool task otherwise).
+    monkeypatch.setattr(RenditionPoseFetcher, "request",
+                        lambda self, dna, pose: None, raising=True)
     r = render_account_portrait(game="ttr", toon_name="Sir Hopper",
                                 dna="dna-xyz", customizations=None, diameter=80)
     assert r.status == "pending"
