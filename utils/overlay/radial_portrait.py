@@ -13,8 +13,16 @@ the requested diameter inside _circular().
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from PySide6.QtCore import Qt, QRectF, QPointF
 from PySide6.QtGui import QPixmap, QPainter, QPainterPath, QColor, QBrush, QLinearGradient
+
+
+@dataclass(frozen=True)
+class PortraitRender:
+    pixmap: "QPixmap"   # always non-null, diameter x diameter
+    status: str         # "complete" | "pending" | "no_pose"
 
 
 def _circular(src: QPixmap, diameter: int) -> QPixmap:
@@ -62,48 +70,71 @@ _WIDGET_MAX = 64
 
 
 def render_account_portrait(game, toon_name, dna, customizations, diameter):
-    """Return a circular QPixmap of size ``diameter`` for ``(game, toon_name)``.
+    """Return a ``PortraitRender`` for ``(game, toon_name)``.
 
-    ``customizations`` is a ToonCustomizationsManager (or None). When
-    ``toon_name`` is falsy, returns the themed placeholder disc instead.
-
-    The pixmap is always ``diameter`` x ``diameter`` and non-null.
+    ``status`` is "complete" when the toon body is present, "pending" when a
+    pose fetch is in flight (background-only, fill in via pose_ready), or
+    "no_pose" when there is no pose to fetch (no toon name, or empty DNA).
+    The pixmap is always ``diameter`` x ``diameter`` and non-null. The grabbed
+    widget suppresses its own fallback glyph so the ring owns the loading cue.
     """
     if not toon_name:
-        return _placeholder(diameter)
+        return PortraitRender(_placeholder(diameter), "no_pose")
 
     from tabs.multitoon._tab import ToonPortraitWidget
 
     # Slot 0 is a dummy value; only the setters below drive visible content.
     w = ToonPortraitWidget(slot=0)
+    w.set_suppress_fallback_glyph(True)
     w.set_game(game)
     w.set_toon_name(toon_name)
     if customizations is not None:
         w.set_customizations_manager(customizations)
+
+    status = "no_pose"
     if dna:
+        status = "pending"
         w.set_dna(dna)
         # set_dna kicks off an ASYNC pose fetch, so grabbing right away would
-        # capture only the background (no toon image). Pull the pose straight
-        # from the disk cache synchronously and apply it before the grab. Recent
-        # toons were just shown in the cards, so the pose is almost always
-        # cached; if not, we fall back to background-only (and the async fetch
-        # warms the cache for next time).
+        # capture only the background. Pull the pose from the disk cache
+        # synchronously; on a hit the toon is complete, on a miss it stays
+        # pending and pose_ready will fill it in later.
         try:
             from utils.rendition_poses import RenditionPoseFetcher
             cached = RenditionPoseFetcher.instance().cached_pixmap(dna, w._pose)
             if cached is not None and not cached.isNull():
                 w._pixmap = cached
                 w._loading = False
+                status = "complete"
         except Exception:
             pass
 
     # Grab at the widget's maximum supported size; _circular scales to diameter.
     grab_size = min(diameter, _WIDGET_MAX)
-    # Override the widget's own min/max constraints so resize takes effect.
     w.setMinimumSize(grab_size, grab_size)
     w.setMaximumSize(grab_size, grab_size)
     w.resize(grab_size, grab_size)
 
     pm = w.grab()
     w.deleteLater()
-    return _circular(pm, diameter)
+    return PortraitRender(_circular(pm, diameter), status)
+
+
+def prewarm_account_poses(accounts, customizations) -> None:
+    """Fire an async pose fetch for each ring account that has DNA, so the
+    disk cache is warm before the accounts ring is shown. Accounts with no
+    DNA (placeholders / Corporate Clash without a captured DNA) are skipped.
+    The pose is resolved exactly as the render path resolves it."""
+    from utils.rendition_poses import RenditionPoseFetcher
+    from utils.toon_customization_resolve import resolve_pose
+
+    fetcher = RenditionPoseFetcher.instance()
+    for a in accounts:
+        if not a.dna:
+            continue
+        entry = {}
+        if customizations is not None and a.toon_name:
+            entry = customizations.get(a.game, a.toon_name)
+        if not isinstance(entry, dict):
+            entry = {}
+        fetcher.request(a.dna, resolve_pose(entry, "portrait"))

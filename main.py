@@ -1229,6 +1229,7 @@ class MultiToonTool(QMainWindow):
         """Left-click on the emblem: open the radial wheel for the current mode.
         Transparent mode uses the X11 overlay path; windowed mode hosts the same
         widget as an in-window child (WindowedWheelHost)."""
+        self._prewarm_radial_accounts()
         if self._mode_controller.is_active:          # is_active is a @property
             menu = self._mode_controller.open_radial_menu()
             if menu is None:
@@ -1278,6 +1279,17 @@ class MultiToonTool(QMainWindow):
         -> app.quit() path."""
         self._mode_controller.close_radial_menu()
         self.close()
+
+    def _prewarm_radial_accounts(self):
+        """Fetch recent-account poses the moment the emblem wheel opens, so the
+        Accounts sub-ring is usually warm by the time the user navigates to it.
+        Best-effort: never let a pre-warm failure block opening the wheel."""
+        try:
+            ring = self.launch_tab.recent_account_ring_model(limit=8)
+            from utils.overlay.radial_portrait import prewarm_account_poses
+            prewarm_account_poses(ring, self.multitoon_tab.customizations)
+        except Exception:
+            pass
 
     def _populate_radial_accounts(self, menu):
         """Feed the radial's Accounts sub-ring. Reuses launch_tab's keyring-aware

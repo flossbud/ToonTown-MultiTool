@@ -227,6 +227,26 @@ def _account_frame(p: QPainter, cx: float, cy: float, r: float, hot: bool) -> No
     p.drawEllipse(QPointF(cx, cy), r + 2, r + 2)
 
 
+_SPIN_PERIOD_MS = 900   # one full spinner rotation
+
+
+def _loading_spinner(p: QPainter, cx: float, cy: float, r: float, phase: float) -> None:
+    """A subtle rotating arc drawn over a pending (background-only) portrait.
+    `phase` is in [0,1) and advances continuously while the pose is pending."""
+    p.save()
+    sr = r * 0.5
+    pen = QPen(QColor(255, 255, 255, 150))
+    pen.setWidthF(max(1.5, r * 0.12))
+    pen.setCapStyle(Qt.RoundCap)
+    p.setPen(pen)
+    p.setBrush(Qt.NoBrush)
+    rect = QRectF(cx - sr, cy - sr, sr * 2.0, sr * 2.0)
+    # Qt arc angles are in 1/16 degree; negative span direction rotates CW.
+    start = int((-phase * 360.0) * 16)
+    p.drawArc(rect, start, 280 * 16)
+    p.restore()
+
+
 def _label_at(p: QPainter, cx: float, cy: float, text: str) -> None:
     f = QFont("DejaVu Sans"); f.setPixelSize(18); f.setBold(True); p.setFont(f)
     fm = p.fontMetrics(); tw = fm.horizontalAdvance(text)
@@ -337,6 +357,8 @@ class RadialMenuWidget(QWidget):
         self._accounts = []         # RingAccount entries for the accounts sub-ring
         self._portraits = {}        # account_id -> circular QPixmap (set in set_accounts)
         self._launched = set()      # indices clicked-to-launch in the current sub-ring
+        self._loading = set()       # account_ids whose pose is pending (spinner)
+        self._spinner_phase = 0.0   # [0,1) rotation of the loading spinner
         self.setMouseTracking(True)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setFocusPolicy(Qt.StrongFocus)
@@ -363,6 +385,10 @@ class RadialMenuWidget(QWidget):
         self._idle_timer.setSingleShot(True)
         self._idle_timer.setInterval(self._IDLE_MS)
         self._idle_timer.timeout.connect(self._begin_close)
+        from utils.rendition_poses import RenditionPoseFetcher
+        # Live-refresh: fill in a pending portrait when its pose lands. Qt
+        # auto-disconnects this bound-method slot when the widget is destroyed.
+        RenditionPoseFetcher.instance().pose_ready.connect(self._on_pose_ready)
 
     @property
     def state(self) -> str:
@@ -474,6 +500,13 @@ class RadialMenuWidget(QWidget):
         if self._advance_hover():
             busy = True
         if self._advance_press():
+            busy = True
+        # Scope to the accounts ring: _loading is only cleared by _on_pose_ready
+        # while that sub-ring is showing, so gating here too keeps a leftover
+        # pending id (e.g. user clicked Back before a pose arrived) from pinning
+        # the clock at 60fps off-ring. Re-entering Accounts repopulates _loading.
+        if self._state == "accounts" and self._loading:
+            self._spinner_phase = (now_ms % _SPIN_PERIOD_MS) / float(_SPIN_PERIOD_MS)
             busy = True
         self.update()
         if not busy:
@@ -716,13 +749,49 @@ class RadialMenuWidget(QWidget):
         self._accounts = list(accounts)
         self._portraits = {}
         self._launched = set()
+        self._loading = set()
         d = max(1, int(round(self._sat_r * 2)))
         for a in self._accounts:
-            self._portraits[a.account_id] = render_account_portrait(
+            render = render_account_portrait(
                 a.game, a.toon_name, a.dna, self._customizations, d)
+            self._portraits[a.account_id] = render.pixmap
+            if render.status == "pending":
+                self._loading.add(a.account_id)
         self._state = "accounts"
         self._hover = None
         self.start_reveal()
+
+    def _on_pose_ready(self, dna, pose, pixmap):
+        """A Rendition pose arrived. Re-render any still-pending account whose
+        DNA matches (the disk cache is now warm) and repaint. No-op unless the
+        accounts sub-ring is showing.
+
+        ``pixmap is None`` is the fetcher's failure signal. Treat it as a
+        definitive miss: stop the spinner (drop the id from ``_loading``) and do
+        NOT re-render. Re-rendering would call ``set_dna`` again, which re-fires
+        the fetch as a side effect -- so refreshing on failure would loop into a
+        retry storm against the Rendition server and a never-resolving spinner.
+        A later ring-open re-attempts the fetch via set_accounts / pre-warm."""
+        if self._state != "accounts" or not dna:
+            return
+        from utils.overlay.radial_portrait import render_account_portrait
+        d = max(1, int(round(self._sat_r * 2)))
+        changed = False
+        for a in self._accounts:
+            if a.dna != dna or a.account_id not in self._loading:
+                continue
+            if pixmap is None:
+                self._loading.discard(a.account_id)
+                changed = True
+                continue
+            render = render_account_portrait(
+                a.game, a.toon_name, a.dna, self._customizations, d)
+            self._portraits[a.account_id] = render.pixmap
+            if render.status != "pending":
+                self._loading.discard(a.account_id)
+            changed = True
+        if changed:
+            self.update()
 
     def _paint_accounts(self, p: QPainter) -> None:
         cx0, cy0 = self._center()
@@ -773,6 +842,8 @@ class RadialMenuWidget(QWidget):
                                        Qt.SmoothTransformation))
                 p.drawPixmap(QPointF(icx - draw.width() / 2.0,
                                      icy - draw.height() / 2.0), draw)
+            if acct.account_id in self._loading:
+                _loading_spinner(p, icx, icy, ir, self._spinner_phase)
             if acct.running:
                 _status_dot(p, icx, icy, ir)
             p.setOpacity(1.0)
