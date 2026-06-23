@@ -1246,14 +1246,13 @@ def _pin_ka_on_qss(fill: str, border: str) -> str:
     )
 
 
-def _ka_fill_border(is_rf: bool, dimmed: bool) -> tuple[str, str]:
-    """The keep-alive ON-state (fill, border) hex names, dimmed at source when
-    the toon's card is inactive (e.g. this toon disabled while others broadcast)."""
-    fill = "#E05252" if is_rf else KA_ORANGE
-    border = "#ef8d8d" if is_rf else KA_ORANGE_BORDER
-    if dimmed:
-        fill = dim_color(QColor(fill)).name()
-        border = dim_color(QColor(border)).name()
+def _ka_fill_border(is_rf: bool, progress: float) -> tuple[str, str]:
+    """Keep-alive ON-state (fill, border) hex names, cross-faded lit->dim by
+    `progress` in [0,1]. 0 = lit, 1 = full dim_color."""
+    lit_fill = QColor("#E05252") if is_rf else QColor(KA_ORANGE)
+    lit_border = QColor("#ef8d8d") if is_rf else QColor(KA_ORANGE_BORDER)
+    fill = lerp_color(lit_fill, dim_color(lit_fill), progress).name()
+    border = lerp_color(lit_border, dim_color(lit_border), progress).name()
     return fill, border
 
 
@@ -2223,24 +2222,15 @@ class MultitoonTab(QWidget):
             return
         ka_btn.setEnabled(usable)
         ka_btn.setToolTip("Toggle keep-alive for this toon")
-        is_rf = getattr(self, 'rapid_fire_enabled', [False]*4)[index]
         if self.keep_alive_enabled[index] and usable:
             from utils.effects_flags import effects_disabled
-            # window_available and service_running are already guaranteed True by
-            # `usable`; enabled_toons is the only per-toon variable here, so dimmed
-            # means "KA on + service running, but THIS toon disabled".
             card_active = (
                 window_available and self.enabled_toons[index] and self.service_running
             )
-            dimmed = (not card_active) and not effects_disabled()
-            fill, border = _ka_fill_border(is_rf, dimmed)
-            # White icon dims via alpha (dim_color on opaque white would just grey
-            # it); ~170 approximates the visual weight of dim_color on the fill.
-            ink = QColor("#ffffff") if not dimmed else QColor(255, 255, 255, 170)
-            ka_btn.setIcon(make_lightning_icon(13, ink))
-            ka_btn.setStyleSheet(_pin_ka_on_qss(fill, border))
-            if bar:
-                bar.set_fill_color(fill)
+            # Settled dim level for this card; Task 6 makes this follow the live
+            # fade progress so the KA button never snaps ahead of the rest.
+            progress = 0.0 if (card_active or effects_disabled()) else 1.0
+            self._apply_keep_alive_dim_progress(index, progress)
         else:
             ka_btn.setIcon(make_lightning_icon(13, QColor(255, 255, 255, 128)))
             ka_btn.setStyleSheet(_pin_ka_off_qss())
@@ -2248,6 +2238,24 @@ class MultitoonTab(QWidget):
             if bar:
                 bar.set_fill_color(KA_ORANGE)
                 bar.set_progress(0.0)
+
+    def _apply_keep_alive_dim_progress(self, index, progress: float) -> None:
+        """Re-render the keep-alive ON-state at dim `progress`. No-op when the
+        button is in its neutral off-state (off-state carries no colour to fade)."""
+        wids = self.window_manager.ttr_window_ids if hasattr(self, 'input_service') else []
+        window_available = index < len(wids)
+        usable = window_available and self.service_running
+        if not (self._keep_alive_globally_enabled() and self.keep_alive_enabled[index] and usable):
+            return
+        ka_btn = self.keep_alive_buttons[index]
+        bar = self.ka_progress_bars[index] if index < len(self.ka_progress_bars) else None
+        is_rf = getattr(self, 'rapid_fire_enabled', [False]*4)[index]
+        fill, border = _ka_fill_border(is_rf, progress)
+        ink_a = round(255 + (170 - 255) * max(0.0, min(1.0, progress)))   # 255 -> 170
+        ka_btn.setIcon(make_lightning_icon(13, QColor(255, 255, 255, ink_a)))
+        ka_btn.setStyleSheet(_pin_ka_on_qss(fill, border))
+        if bar:
+            bar.set_fill_color(fill)
 
     # ── Glow animations ────────────────────────────────────────────────────
 
