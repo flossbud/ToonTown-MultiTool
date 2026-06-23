@@ -118,3 +118,23 @@ def render_account_portrait(game, toon_name, dna, customizations, diameter):
     pm = w.grab()
     w.deleteLater()
     return PortraitRender(_circular(pm, diameter), status)
+
+
+def prewarm_account_poses(accounts, customizations) -> None:
+    """Fire an async pose fetch for each ring account that has DNA, so the
+    disk cache is warm before the accounts ring is shown. Accounts with no
+    DNA (placeholders / Corporate Clash without a captured DNA) are skipped.
+    The pose is resolved exactly as the render path resolves it."""
+    from utils.rendition_poses import RenditionPoseFetcher
+    from utils.toon_customization_resolve import resolve_pose
+
+    fetcher = RenditionPoseFetcher.instance()
+    for a in accounts:
+        if not a.dna:
+            continue
+        entry = {}
+        if customizations is not None and a.toon_name:
+            entry = customizations.get(a.game, a.toon_name)
+        if not isinstance(entry, dict):
+            entry = {}
+        fetcher.request(a.dna, resolve_pose(entry, "portrait"))
