@@ -107,3 +107,33 @@ def test_not_dimmed_keeps_cache_none(qapp):
     pw.set_dimmed(False)
     pw.grab()
     assert pw._dim_cache is None
+
+
+def test_set_dim_progress_clamps_and_stores(qapp):
+    pw = ToonPortraitWidget(1)
+    pw.resize(64, 64)
+    pw.set_dim_progress(-1.0)
+    assert pw._dim_progress == 0.0
+    pw.set_dim_progress(2.0)
+    assert pw._dim_progress == 1.0
+    pw.set_dim_progress(0.5)
+    assert pw._dim_progress == 0.5
+
+
+def test_mid_progress_builds_cache_and_paints(qapp):
+    pw = ToonPortraitWidget(1)
+    pw.resize(64, 64)
+    pm = QPixmap(64, 64)
+    pm.fill(QColor(255, 0, 0))
+    pw._pixmap = pm
+    pw.set_dim_progress(0.5)
+    pw.grab()                         # cross-fade path must not crash
+    assert pw._dim_cache is not None  # dim pixmap needed for the blend
+
+
+def test_set_dimmed_wrapper_sets_progress(qapp):
+    pw = ToonPortraitWidget(1)
+    pw.set_dimmed(True)
+    assert pw._dim_progress == 1.0
+    pw.set_dimmed(False)
+    assert pw._dim_progress == 0.0

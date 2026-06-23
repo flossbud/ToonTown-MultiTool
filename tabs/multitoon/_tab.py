@@ -90,7 +90,7 @@ class ToonPortraitWidget(QWidget):
         super().__init__(parent)
         self._slot    = slot
         self._peek_opacity = 1.0   # extra hover-peek dim factor for the toon image
-        self._dimmed = False
+        self._dim_progress = 0.0
         self._dim_cache = None        # QPixmap; built lazily while dimmed
         self._dim_cache_size = None   # QSize the cache was built for
         self._bg      = QColor("#4a4a4a")
@@ -428,13 +428,14 @@ class ToonPortraitWidget(QWidget):
             self._peek_opacity = opacity
             self.update()
 
+    def set_dim_progress(self, t: float) -> None:
+        t = 0.0 if t < 0.0 else (1.0 if t > 1.0 else float(t))
+        if t != self._dim_progress:
+            self._dim_progress = t
+            self.update()
+
     def set_dimmed(self, on: bool) -> None:
-        on = bool(on)
-        if on == self._dimmed:
-            return
-        self._dimmed = on
-        self._dim_cache = None
-        self.update()
+        self.set_dim_progress(1.0 if on else 0.0)
 
     def resizeEvent(self, event):
         self._dim_cache = None
@@ -444,10 +445,20 @@ class ToonPortraitWidget(QWidget):
         p = QPainter(self)
         if self._peek_opacity < 1.0:
             p.setOpacity(self._peek_opacity)
-        if self._dimmed:
+        prog = self._dim_progress
+        if prog <= 0.0:
+            self._render_content(p)
+        elif prog >= 1.0:
             p.drawPixmap(0, 0, self._dimmed_pixmap())
         else:
+            # Cross-fade: lit underneath, dim pixmap on top at opacity = progress.
+            # Both are the same content (one filtered), so this is a per-pixel
+            # lit->dim blend. peek_opacity already applied to `p` above.
             self._render_content(p)
+            base_op = p.opacity()
+            p.setOpacity(base_op * prog)
+            p.drawPixmap(0, 0, self._dimmed_pixmap())
+            p.setOpacity(base_op)
         # Pencil overlay is hover-dependent and must stay LIVE (never cached):
         # drawn on top in both dim and active paths.
         rect = self.rect()
