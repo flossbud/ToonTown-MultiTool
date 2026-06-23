@@ -32,7 +32,7 @@ from utils.settings_keys import CLICK_SYNC_ENABLED
 from utils.color_math import lighten_rgb
 from utils.widgets.scale_press import ScalePushButton
 from tabs.multitoon._keep_alive_help_button import KeepAliveHelpButton
-from utils.card_dim import dim_pixmap
+from utils.card_dim import dim_color, dim_pixmap
 
 
 # ── Custom Widgets ─────────────────────────────────────────────────────────
@@ -820,6 +820,7 @@ class SetSelectorWidget(QWidget):
         self._bg = "#4A8FE7"
         self._text_color = "#ffffff"
         self._border_color = "#6AAFFF"
+        self._dimmed = False
         self._display_text = "Default"
         self._hover_zone = None  # "left", "right", or None
         self._paint_scale = 1.0
@@ -838,6 +839,22 @@ class SetSelectorWidget(QWidget):
     def set_paint_scale(self, scale: float):
         self._paint_scale = max(0.5, float(scale))
         self.update()
+
+    def set_dimmed(self, on: bool) -> None:
+        on = bool(on)
+        if on == self._dimmed:
+            return
+        self._dimmed = on
+        self.update()
+
+    def _resolved_colors(self):
+        """Effective (bg, text, border) QColors; dim_color applied when dimmed."""
+        bg = QColor(self._bg)
+        text = QColor(self._text_color)
+        border = QColor(self._border_color)
+        if self._dimmed:
+            return dim_color(bg), dim_color(text), dim_color(border)
+        return bg, text, border
 
     def set_has_conflict(self, has: bool, conflict_pairs: list[tuple[str, str]] | None = None):
         if has == self._has_conflict:
@@ -868,6 +885,7 @@ class SetSelectorWidget(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         from PySide6.QtGui import QFont
+        bg_c, text_c, border_c = self._resolved_colors()
 
         rect = QRectF(1, 1, self.width() - 2, self.height() - 2)
         show_arrows = self._enabled and self._count() > 1
@@ -877,7 +895,7 @@ class SetSelectorWidget(QWidget):
 
         # Fill
         p.setPen(Qt.NoPen)
-        p.setBrush(QColor(self._bg))
+        p.setBrush(bg_c)
         p.drawRoundedRect(rect, radius, radius)
 
         # Arrow zone hover highlights
@@ -899,7 +917,7 @@ class SetSelectorWidget(QWidget):
                 p.setClipping(False)
 
         # Border
-        pen = QPen(QColor(self._border_color), max(1, int(2 * s)))
+        pen = QPen(border_c, max(1, int(2 * s)))
         p.setPen(pen)
         p.setBrush(Qt.NoBrush)
         p.drawRoundedRect(rect, radius, radius)
@@ -909,7 +927,7 @@ class SetSelectorWidget(QWidget):
         font.setPixelSize(max(10, int(12 * s)))
         font.setBold(True)
         p.setFont(font)
-        p.setPen(QColor(self._text_color))
+        p.setPen(text_c)
         text_rect = QRectF(az, 0, self.width() - az * 2, self.height())
         p.drawText(text_rect, Qt.AlignCenter, self._display_text)
 
