@@ -1354,14 +1354,22 @@ class _CompactLayout(QWidget):
         from utils.toon_customization_resolve import resolve_body
         body_override = resolve_body(entry)
 
+        from utils.effects_flags import effects_disabled
         active = bool(enabled) and window_available and is_toon
+        # `dimmed` gates the source-level dim uniformly (no dim when effects are
+        # off). cell["dimmed"] keeps its existing not-active meaning for callers.
+        dimmed = (not active) and not effects_disabled()
         cell["dimmed"] = not active
         cell["accent"] = QColor(accent)
         cell["active"] = active
 
-        cell["bg"].configure(accent, dimmed=not active, body=body_override)
-        cell["portrait_frame"].configure(accent, dimmed=not active)
+        cell["bg"].configure(accent, dimmed=dimmed, body=body_override)
+        cell["portrait_frame"].configure(accent, dimmed=dimmed)
         self._apply_cell_effects(cell, accent, active)
+        if i < len(tab.slot_badges):
+            tab.slot_badges[i].set_dimmed(dimmed)
+        if i < len(tab.set_selectors):
+            tab.set_selectors[i].set_dimmed(dimmed)
         self._refresh_glow()
 
         # Layout-owned control chrome: the KA pill container + the keyset
@@ -1382,14 +1390,17 @@ class _CompactLayout(QWidget):
         else:
             status_dot.hide()
 
-        # Name + stats colour.
+        # Name + stats colour. Dimmed cards mute the text (the grey wash used to
+        # do this; with it gone, dim the text at the source).
+        name_rgba = "#ffffff" if not dimmed else "rgba(255,255,255,0.62)"
         name_label = tab.toon_labels[i][0]
         name_label.setStyleSheet(
-            "background: transparent; border: none; color: #ffffff;"
+            f"background: transparent; border: none; color: {name_rgba};"
         )
+        stat_alpha = "0.9" if not dimmed else "0.5"
         stat_style = (
             "background: transparent; border: none; text-align: left; "
-            "padding: 0; color: rgba(255,255,255,0.9); font-weight: 600;"
+            f"padding: 0; color: rgba(255,255,255,{stat_alpha}); font-weight: 600;"
         )
         tab.laff_labels[i].setStyleSheet(stat_style)
         tab.bean_labels[i].setStyleSheet(stat_style)
