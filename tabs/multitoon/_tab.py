@@ -429,6 +429,9 @@ class ToonPortraitWidget(QWidget):
             self.update()
 
     def set_dim_progress(self, t: float) -> None:
+        # Deliberately does NOT clear _dim_cache: progress changes the BLEND, not
+        # the dim pixmap's content. The cache is invalidated by the content
+        # setters and resizeEvent (not here), so it survives the whole fade.
         t = 0.0 if t < 0.0 else (1.0 if t > 1.0 else float(t))
         if t != self._dim_progress:
             self._dim_progress = t

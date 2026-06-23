@@ -62,6 +62,28 @@ def test_inactive_slot_snaps_dim_on_first_paint(qapp, tmp_path, monkeypatch):
             tab.input_service.shutdown()
 
 
+def test_lit_to_dim_transition_starts_animation(qapp, tmp_path, monkeypatch):
+    # The animate branch (construct + connect + start the QVariantAnimation) only
+    # fires on a lit->dim transition on a VISIBLE card. The offscreen tab is never
+    # shown, so force the visibility gate to exercise the real wiring.
+    from PySide6.QtCore import QAbstractAnimation
+    tab = _build_tab(qapp, tmp_path, monkeypatch)
+    try:
+        tab.apply_visual_state(0)                  # first paint -> snap (dim_target=1.0)
+        cell = tab._compact._cells[0]
+        cell["cell"].isVisible = lambda: True      # force the visible gate
+        cell["dim_target"] = 0.0                   # pretend it was lit -> next call transitions
+        cell.pop("dim_anim", None)
+        tab._compact.set_card_brand(0, None, enabled=False)   # lit(0)->dim(1) -> animate
+        anim = cell.get("dim_anim")
+        assert anim is not None
+        assert anim.state() == QAbstractAnimation.Running
+        assert cell["dim_target"] == 1.0
+    finally:
+        if hasattr(tab, "input_service") and hasattr(tab.input_service, "shutdown"):
+            tab.input_service.shutdown()
+
+
 def test_mid_fade_guard_does_not_restart_running_anim(qapp, tmp_path, monkeypatch):
     # A reconfigure while a lit->dim fade is in flight must NOT snap/restart it
     # (the `running and target == 1.0` guard).
