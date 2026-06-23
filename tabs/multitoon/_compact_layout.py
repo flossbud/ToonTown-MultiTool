@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
 )
 
 from tabs.multitoon._layout_utils import clear_layout
+from utils.card_dim import dim_color
 from utils.color_math import darken_rgb
 from utils.overlay.card_metrics import CardMetrics
 from utils.overlay.gestures import is_drag
@@ -310,6 +311,20 @@ class _QuadCardBackground(QWidget):
             self._peek_opacity = opacity
             self.update()
 
+    def _resolved_colors(self):
+        """Effective (top, bot, border) for the current dim state. Dim applies the
+        full saturate*brightness filter ONCE via dim_color; the 0.28/0.14 gradient
+        darkening is uniform per-channel and commutes with the luma mix."""
+        base = self._body if self._body is not None else self._accent
+        if self._dimmed:
+            base = dim_color(base)
+            border = dim_color(self._accent)
+        else:
+            border = QColor(self._accent)
+        top = darken_rgb(base, 0.28)
+        bot = darken_rgb(base, 0.14)
+        return top, bot, border
+
     def paintEvent(self, event):
         if self.width() <= 0 or self.height() <= 0:
             return
@@ -319,24 +334,16 @@ class _QuadCardBackground(QWidget):
         p.setRenderHint(QPainter.Antialiasing, True)
         path = self._body_path()
 
-        # Body gradient: deep, rich version of the body-fill base. darken()
-        # multiplies each channel; the dim treatment scales brightness down
-        # further (the saturation half of saturate(0.45) is handled by the
-        # colorize effect). When no separate body override is set, the accent
-        # drives the fill (original behavior).
-        body_base = self._body if self._body is not None else self._accent
-        bright = 0.75 if self._dimmed else 1.0
-        top = darken_rgb(darken_rgb(body_base, 0.28), bright)
-        bot = darken_rgb(darken_rgb(body_base, 0.14), bright)
+        # Body gradient + 5px inner border, dimmed at source via dim_color
+        # (saturate(0.45)*brightness(0.75)) - see utils/card_dim.py.
+        top, bot, border = self._resolved_colors()
         grad = QLinearGradient(0, 0, self.width() * 0.38, self.height())
         grad.setColorAt(0.0, top)
         grad.setColorAt(1.0, bot)
         p.fillPath(path, grad)
 
-        # 5px inner border: accent-colored, stroke the body path at double
-        # width and clip to the path so only the inner half survives - a
-        # clean border that follows the concave curve.
-        border = darken_rgb(self._accent, 0.62) if self._dimmed else self._accent
+        # 5px inner border: stroke the body path at double width, clipped to the
+        # path so only the inner half survives.
         p.save()
         p.setClipPath(path)
         p.setBrush(Qt.NoBrush)
@@ -387,6 +394,10 @@ class _PortraitFrame(QWidget):
         inset = self._ring_w
         return (inset, inset, self._size - 2 * inset, self._size - 2 * inset)
 
+    def _resolved_ring(self):
+        """Effective ring colour for the current dim state."""
+        return dim_color(self._ring) if self._dimmed else QColor(self._ring)
+
     def paintEvent(self, event):
         p = QPainter(self)
         if self._peek_opacity < 1.0:
@@ -398,7 +409,7 @@ class _PortraitFrame(QWidget):
         p.setBrush(QColor(0, 0, 0, 56))
         p.drawEllipse(QPointF(cx, cy), cx - 0.5, cy - 0.5)
         # accent ring on the outer edge.
-        ring = darken_rgb(self._ring, 0.62) if self._dimmed else self._ring
+        ring = self._resolved_ring()
         pen = QPen(ring, self._ring_w)
         p.setPen(pen)
         p.setBrush(Qt.NoBrush)
@@ -843,9 +854,9 @@ class _CompactLayout(QWidget):
     def _build_cell(self, i: int) -> dict:
         cfg = _CFG[i]
 
-        # cell: the card QFrame; a CardDimOverlay sibling is lazy-created on the
-        # first _apply_cell_effects call (stored in cell["dim"]) and painted on
-        # top when the card is inactive (proxy-safe, replaces the old colorize).
+        # cell: the card QFrame. Inactive cards are dimmed at the source by each
+        # element (body, portrait ring, portrait badge, keyset stepper, keep-alive,
+        # text) via utils/card_dim.py - there is no overlay wash.
         cell = QFrame()
         cell.setObjectName(f"pin_cell_{i}")
         cell.setStyleSheet(f"#pin_cell_{i} {{ background: transparent; border: none; }}")
@@ -1343,14 +1354,22 @@ class _CompactLayout(QWidget):
         from utils.toon_customization_resolve import resolve_body
         body_override = resolve_body(entry)
 
+        from utils.effects_flags import effects_disabled
         active = bool(enabled) and window_available and is_toon
+        # `dimmed` gates the source-level dim uniformly (no dim when effects are
+        # off). cell["dimmed"] keeps its existing not-active meaning for callers.
+        dimmed = (not active) and not effects_disabled()
         cell["dimmed"] = not active
         cell["accent"] = QColor(accent)
         cell["active"] = active
 
-        cell["bg"].configure(accent, dimmed=not active, body=body_override)
-        cell["portrait_frame"].configure(accent, dimmed=not active)
-        self._apply_cell_effects(cell, accent, active)
+        cell["bg"].configure(accent, dimmed=dimmed, body=body_override)
+        cell["portrait_frame"].configure(accent, dimmed=dimmed)
+        self._purge_legacy_cell_effect(cell)
+        if i < len(tab.slot_badges):
+            tab.slot_badges[i].set_dimmed(dimmed)
+        if i < len(tab.set_selectors):
+            tab.set_selectors[i].set_dimmed(dimmed)
         self._refresh_glow()
 
         # Layout-owned control chrome: the KA pill container + the keyset
@@ -1371,14 +1390,21 @@ class _CompactLayout(QWidget):
         else:
             status_dot.hide()
 
-        # Name + stats colour.
+        # Name + stats colour. Dimmed cards mute the text (the grey wash used to
+        # do this; with it gone, dim the text at the source). dim_color is NOT
+        # used here: it would pull white toward its own luma (mid-grey), which
+        # reads as wrong-coloured text. White text mutes correctly via alpha over
+        # the dark card instead; these alphas are visual-parity values for the
+        # saturate(0.45)*brightness(0.75) look, not derived from dim_color.
+        name_rgba = "#ffffff" if not dimmed else "rgba(255,255,255,0.62)"
         name_label = tab.toon_labels[i][0]
         name_label.setStyleSheet(
-            "background: transparent; border: none; color: #ffffff;"
+            f"background: transparent; border: none; color: {name_rgba};"
         )
+        stat_alpha = "0.9" if not dimmed else "0.5"
         stat_style = (
             "background: transparent; border: none; text-align: left; "
-            "padding: 0; color: rgba(255,255,255,0.9); font-weight: 600;"
+            f"padding: 0; color: rgba(255,255,255,{stat_alpha}); font-weight: 600;"
         )
         tab.laff_labels[i].setStyleSheet(stat_style)
         tab.bean_labels[i].setStyleSheet(stat_style)
@@ -1386,19 +1412,14 @@ class _CompactLayout(QWidget):
         self._position_status_dot(cell)
         self._refresh_emblem()
 
-    def _apply_cell_effects(self, cell: dict, accent: QColor, active: bool) -> None:
-        """Dimmed cards get a painted grey wash (proxy-safe), not a live
-        QGraphicsColorizeEffect, which renders corrupt inside a QGraphicsProxyWidget."""
+    def _purge_legacy_cell_effect(self, cell: dict) -> None:
+        """Inactive cards are dimmed at the source by each element (body, portrait
+        ring, portrait image, keyset stepper, keep-alive, text) via
+        utils/card_dim.py - there is no overlay wash. Defensive: clear any stale
+        graphics effect left on the cell so it can't corrupt the source dim."""
         cell_w = cell["cell"]
         if cell_w.graphicsEffect() is not None:
-            cell_w.setGraphicsEffect(None)  # purge any legacy effect
-        dim = cell.get("dim")
-        if dim is None:
-            from tabs.multitoon._card_dim_overlay import CardDimOverlay
-            dim = CardDimOverlay(cell_w)
-            cell["dim"] = dim
-        from utils.effects_flags import effects_disabled
-        dim.set_dimmed(bool(not active and not effects_disabled()))
+            cell_w.setGraphicsEffect(None)
 
     # ── Control chrome owned by the layout ───────────────────────────────────
     def _style_ka_pill(self, cell_idx: int) -> None:
