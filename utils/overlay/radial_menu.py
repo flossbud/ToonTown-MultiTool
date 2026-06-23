@@ -227,6 +227,26 @@ def _account_frame(p: QPainter, cx: float, cy: float, r: float, hot: bool) -> No
     p.drawEllipse(QPointF(cx, cy), r + 2, r + 2)
 
 
+_SPIN_PERIOD_MS = 900   # one full spinner rotation
+
+
+def _loading_spinner(p: QPainter, cx: float, cy: float, r: float, phase: float) -> None:
+    """A subtle rotating arc drawn over a pending (background-only) portrait.
+    `phase` is in [0,1) and advances continuously while the pose is pending."""
+    p.save()
+    sr = r * 0.5
+    pen = QPen(QColor(255, 255, 255, 150))
+    pen.setWidthF(max(1.5, r * 0.12))
+    pen.setCapStyle(Qt.RoundCap)
+    p.setPen(pen)
+    p.setBrush(Qt.NoBrush)
+    rect = QRectF(cx - sr, cy - sr, sr * 2.0, sr * 2.0)
+    # Qt arc angles are in 1/16 degree; negative span direction rotates CW.
+    start = int((-phase * 360.0) * 16)
+    p.drawArc(rect, start, 280 * 16)
+    p.restore()
+
+
 def _label_at(p: QPainter, cx: float, cy: float, text: str) -> None:
     f = QFont("DejaVu Sans"); f.setPixelSize(18); f.setBold(True); p.setFont(f)
     fm = p.fontMetrics(); tw = fm.horizontalAdvance(text)
@@ -480,6 +500,9 @@ class RadialMenuWidget(QWidget):
         if self._advance_hover():
             busy = True
         if self._advance_press():
+            busy = True
+        if self._loading:
+            self._spinner_phase = (now_ms % _SPIN_PERIOD_MS) / float(_SPIN_PERIOD_MS)
             busy = True
         self.update()
         if not busy:
@@ -803,6 +826,8 @@ class RadialMenuWidget(QWidget):
                                        Qt.SmoothTransformation))
                 p.drawPixmap(QPointF(icx - draw.width() / 2.0,
                                      icy - draw.height() / 2.0), draw)
+            if acct.account_id in self._loading:
+                _loading_spinner(p, icx, icy, ir, self._spinner_phase)
             if acct.running:
                 _status_dot(p, icx, icy, ir)
             p.setOpacity(1.0)
