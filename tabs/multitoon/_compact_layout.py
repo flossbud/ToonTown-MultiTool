@@ -36,7 +36,7 @@ from PySide6.QtWidgets import (
 )
 
 from tabs.multitoon._layout_utils import clear_layout
-from utils.card_dim import dim_color
+from utils.card_dim import dim_color, lerp_color
 from utils.color_math import darken_rgb
 from utils.overlay.card_metrics import CardMetrics
 from utils.overlay.gestures import is_drag
@@ -274,7 +274,7 @@ class _QuadCardBackground(QWidget):
         self._cutout = cutout
         self._accent = QColor("#555555")
         self._body: QColor | None = None
-        self._dimmed = True
+        self._dim_progress = 1.0
         self._peek_opacity = 1.0  # transparent-mode hover-peek body translucency
         # Painted-body radii + border width, sourced from a CardMetrics so the
         # shape scales with the card (defaults = canonical 1.0 values).
@@ -282,17 +282,26 @@ class _QuadCardBackground(QWidget):
         self._cutout_r = CUTOUT_R
         self._border = CARD_BORDER
 
-    def configure(
-        self, accent: QColor, dimmed: bool, body: "QColor | None" = None
-    ) -> None:
+    def configure(self, accent: QColor, body: "QColor | None" = None) -> None:
+        """Set the card's accent + optional body-fill colour. The dim LEVEL is
+        independent - see set_dim_progress()."""
         self._accent = QColor(accent)
         self._body = QColor(body) if body is not None else None
-        self._dimmed = bool(dimmed)
         self.update()
+
+    def set_dim_progress(self, t: float) -> None:
+        t = 0.0 if t < 0.0 else (1.0 if t > 1.0 else float(t))
+        if t != self._dim_progress:
+            self._dim_progress = t
+            self.update()
+
+    def set_dimmed(self, on: bool) -> None:
+        self.set_dim_progress(1.0 if on else 0.0)
 
     def apply_metrics(self, metrics) -> None:
         """Re-source the painted-body radii + border from `metrics` and repaint.
-        Idempotent; the colour/dim state set by configure() is preserved."""
+        Idempotent; the colour state set by configure() and the dim level set by
+        set_dim_progress() are preserved."""
         self._radius = metrics.card_radius
         self._cutout_r = metrics.cutout_r
         self._border = metrics.card_border
@@ -312,15 +321,14 @@ class _QuadCardBackground(QWidget):
             self.update()
 
     def _resolved_colors(self):
-        """Effective (top, bot, border) for the current dim state. Dim applies the
-        full saturate*brightness filter ONCE via dim_color; the 0.28/0.14 gradient
-        darkening is uniform per-channel and commutes with the luma mix."""
-        base = self._body if self._body is not None else self._accent
-        if self._dimmed:
-            base = dim_color(base)
-            border = dim_color(self._accent)
-        else:
-            border = QColor(self._accent)
+        """Effective (top, bot, border) at the current _dim_progress. progress 0 ==
+        lit (unchanged), 1 == full dim_color; in between is a per-channel lerp. The
+        0.28/0.14 gradient darken is uniform and commutes with the lerp (to within
+        1-unit integer rounding at intermediate values)."""
+        t = self._dim_progress
+        base_lit = self._body if self._body is not None else self._accent
+        base = lerp_color(base_lit, dim_color(base_lit), t)
+        border = lerp_color(QColor(self._accent), dim_color(self._accent), t)
         top = darken_rgb(base, 0.28)
         bot = darken_rgb(base, 0.14)
         return top, bot, border
@@ -334,8 +342,8 @@ class _QuadCardBackground(QWidget):
         p.setRenderHint(QPainter.Antialiasing, True)
         path = self._body_path()
 
-        # Body gradient + 5px inner border, dimmed at source via dim_color
-        # (saturate(0.45)*brightness(0.75)) - see utils/card_dim.py.
+        # Body gradient + 5px inner border; colour fades lit->dim by _dim_progress
+        # via lerp_color (see _resolved_colors) - utils/card_dim.py for the filter.
         top, bot, border = self._resolved_colors()
         grad = QLinearGradient(0, 0, self.width() * 0.38, self.height())
         grad.setColorAt(0.0, top)
@@ -367,7 +375,7 @@ class _PortraitFrame(QWidget):
         self.setFixedSize(self._size, self._size)
         self.setStyleSheet("background: transparent;")
         self._ring = QColor("#555555")
-        self._dimmed = True
+        self._dim_progress = 1.0
         self._peek_opacity = 1.0   # extra hover-peek dim for the circular frame
 
     def set_peek_opacity(self, opacity: float) -> None:
@@ -376,10 +384,18 @@ class _PortraitFrame(QWidget):
             self._peek_opacity = opacity
             self.update()
 
-    def configure(self, ring: QColor, dimmed: bool) -> None:
+    def configure(self, ring: QColor) -> None:
         self._ring = QColor(ring)
-        self._dimmed = bool(dimmed)
         self.update()
+
+    def set_dim_progress(self, t: float) -> None:
+        t = 0.0 if t < 0.0 else (1.0 if t > 1.0 else float(t))
+        if t != self._dim_progress:
+            self._dim_progress = t
+            self.update()
+
+    def set_dimmed(self, on: bool) -> None:
+        self.set_dim_progress(1.0 if on else 0.0)
 
     def apply_metrics(self, metrics) -> None:
         """Re-size the frame + ring width from `metrics` and repaint. The host
@@ -395,8 +411,8 @@ class _PortraitFrame(QWidget):
         return (inset, inset, self._size - 2 * inset, self._size - 2 * inset)
 
     def _resolved_ring(self):
-        """Effective ring colour for the current dim state."""
-        return dim_color(self._ring) if self._dimmed else QColor(self._ring)
+        """Effective ring colour at the current _dim_progress."""
+        return lerp_color(QColor(self._ring), dim_color(self._ring), self._dim_progress)
 
     def paintEvent(self, event):
         p = QPainter(self)
