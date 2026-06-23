@@ -73,3 +73,23 @@ def test_pose_ready_noop_when_not_accounts_state(qapp, monkeypatch):
     menu._state = "main"
     menu._on_pose_ready("dna-a", "portrait", None)   # must not crash / not refresh
     assert menu._loading == {"a1"}
+
+
+def test_pose_ready_signal_fans_out_to_shared_dna(qapp, monkeypatch):
+    # Exercises the REAL pose_ready connection wired in __init__ (the prior
+    # tests call _on_pose_ready directly, so a dropped/mis-typed connection
+    # would slip through) AND the intended shared-DNA fan-out: two accounts
+    # wearing the same costume both refresh from a single pose arrival.
+    from utils.overlay.radial_menu import RadialMenuWidget
+    from utils.rendition_poses import RenditionPoseFetcher
+    warmed = set()
+    _patch_render(monkeypatch, warmed)
+    menu = RadialMenuWidget(emblem_diameter=120)
+    menu.set_accounts([_acct("a1", "dna-shared"), _acct("a2", "dna-shared")])
+    assert menu._loading == {"a1", "a2"}
+    warmed.add("dna-shared")
+    # Same-thread emit -> the __init__ connection runs _on_pose_ready synchronously.
+    RenditionPoseFetcher.instance().pose_ready.emit("dna-shared", "portrait", QPixmap(8, 8))
+    assert menu._loading == set()
+    menu.deleteLater()
+    qapp.processEvents()
