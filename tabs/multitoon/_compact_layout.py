@@ -1587,6 +1587,17 @@ class _CompactLayout(QWidget):
     def _position_emblem(self) -> None:
         if self._emblem is None or self._grid_host is None:
             return
+        # This centers the emblem in grid-host coordinates, so it is only valid
+        # while the emblem actually lives in the grid host. In transparent mode the
+        # emblem is reparented OUT into an emblem-sized overlay surface (which
+        # positions it via its own layout); moving it here would shove it outside
+        # that surface and the emblem would vanish (it did, on a toon add/remove
+        # that re-ran this via apply_cell_permutation -> _relayout_all). Guard on
+        # the real precondition - the actual parent - so this no-ops whenever the
+        # emblem is hosted elsewhere, and resumes once restore_slot reparents it
+        # back into the grid host.
+        if self._emblem.parentWidget() is not self._grid_host:
+            return
         gx = self._grid_host.width() / 2.0
         gy = self._grid_host.height() / 2.0
         s = self._emblem.width()
