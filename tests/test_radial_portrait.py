@@ -15,19 +15,19 @@ def _app():
 def test_placeholder_pixmap_when_no_toon():
     _app()
     from utils.overlay.radial_portrait import render_account_portrait
-    pm = render_account_portrait(game="ttr", toon_name=None, dna="",
-                                 customizations=None, diameter=80)
-    assert not pm.isNull()
-    assert pm.width() == 80 and pm.height() == 80
+    r = render_account_portrait(game="ttr", toon_name=None, dna="",
+                                customizations=None, diameter=80)
+    assert not r.pixmap.isNull()
+    assert r.pixmap.width() == 80 and r.pixmap.height() == 80
 
 
 def test_portrait_pixmap_is_requested_size():
     _app()
     from utils.overlay.radial_portrait import render_account_portrait
-    pm = render_account_portrait(game="ttr", toon_name="Sir Hopper", dna="",
-                                 customizations=None, diameter=96)
-    assert not pm.isNull()
-    assert pm.width() == 96 and pm.height() == 96
+    r = render_account_portrait(game="ttr", toon_name="Sir Hopper", dna="",
+                                customizations=None, diameter=96)
+    assert not r.pixmap.isNull()
+    assert r.pixmap.width() == 96 and r.pixmap.height() == 96
 
 
 def test_pose_pulled_synchronously_from_disk_cache(monkeypatch):
@@ -48,8 +48,49 @@ def test_pose_pulled_synchronously_from_disk_cache(monkeypatch):
         return swatch
 
     monkeypatch.setattr(RenditionPoseFetcher, "cached_pixmap", fake_cached, raising=True)
-    pm = radial_portrait.render_account_portrait(
+    r = radial_portrait.render_account_portrait(
         game="ttr", toon_name="Sir Hopper", dna="dna-xyz",
         customizations=None, diameter=80)
-    assert not pm.isNull() and pm.width() == 80
+    assert not r.pixmap.isNull() and r.pixmap.width() == 80
     assert calls and calls[0][0] == "dna-xyz"   # cache consulted with the toon's DNA
+
+
+def test_status_no_pose_when_no_toon():
+    _app()
+    from utils.overlay.radial_portrait import render_account_portrait
+    r = render_account_portrait(game="ttr", toon_name=None, dna="",
+                                customizations=None, diameter=80)
+    assert r.status == "no_pose"
+    assert not r.pixmap.isNull() and r.pixmap.width() == 80
+
+
+def test_status_no_pose_when_empty_dna():
+    _app()
+    from utils.overlay.radial_portrait import render_account_portrait
+    r = render_account_portrait(game="ttr", toon_name="Sir Hopper", dna="",
+                                customizations=None, diameter=80)
+    assert r.status == "no_pose"
+
+
+def test_status_pending_on_cache_miss(monkeypatch):
+    _app()
+    from utils.rendition_poses import RenditionPoseFetcher
+    from utils.overlay.radial_portrait import render_account_portrait
+    monkeypatch.setattr(RenditionPoseFetcher, "cached_pixmap",
+                        lambda self, dna, pose: None, raising=True)
+    r = render_account_portrait(game="ttr", toon_name="Sir Hopper",
+                                dna="dna-xyz", customizations=None, diameter=80)
+    assert r.status == "pending"
+
+
+def test_status_complete_on_cache_hit(monkeypatch):
+    _app()
+    from PySide6.QtGui import QPixmap
+    from utils.rendition_poses import RenditionPoseFetcher
+    from utils.overlay.radial_portrait import render_account_portrait
+    swatch = QPixmap(64, 64); swatch.fill()
+    monkeypatch.setattr(RenditionPoseFetcher, "cached_pixmap",
+                        lambda self, dna, pose: swatch, raising=True)
+    r = render_account_portrait(game="ttr", toon_name="Sir Hopper",
+                                dna="dna-xyz", customizations=None, diameter=80)
+    assert r.status == "complete"
