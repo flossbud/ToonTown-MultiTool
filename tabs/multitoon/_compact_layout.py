@@ -854,9 +854,9 @@ class _CompactLayout(QWidget):
     def _build_cell(self, i: int) -> dict:
         cfg = _CFG[i]
 
-        # cell: the card QFrame; a CardDimOverlay sibling is lazy-created on the
-        # first _apply_cell_effects call (stored in cell["dim"]) and painted on
-        # top when the card is inactive (proxy-safe, replaces the old colorize).
+        # cell: the card QFrame. Inactive cards are dimmed at the source by each
+        # element (body, portrait ring, portrait badge, keyset stepper, keep-alive,
+        # text) via utils/card_dim.py - there is no overlay wash.
         cell = QFrame()
         cell.setObjectName(f"pin_cell_{i}")
         cell.setStyleSheet(f"#pin_cell_{i} {{ background: transparent; border: none; }}")
@@ -1365,7 +1365,7 @@ class _CompactLayout(QWidget):
 
         cell["bg"].configure(accent, dimmed=dimmed, body=body_override)
         cell["portrait_frame"].configure(accent, dimmed=dimmed)
-        self._apply_cell_effects(cell, accent, active)
+        self._purge_legacy_cell_effect(cell)
         if i < len(tab.slot_badges):
             tab.slot_badges[i].set_dimmed(dimmed)
         if i < len(tab.set_selectors):
@@ -1408,19 +1408,14 @@ class _CompactLayout(QWidget):
         self._position_status_dot(cell)
         self._refresh_emblem()
 
-    def _apply_cell_effects(self, cell: dict, accent: QColor, active: bool) -> None:
-        """Dimmed cards get a painted grey wash (proxy-safe), not a live
-        QGraphicsColorizeEffect, which renders corrupt inside a QGraphicsProxyWidget."""
+    def _purge_legacy_cell_effect(self, cell: dict) -> None:
+        """Inactive cards are dimmed at the source by each element (body, portrait
+        ring, portrait image, keyset stepper, keep-alive, text) via
+        utils/card_dim.py - there is no overlay wash. Defensive: clear any stale
+        graphics effect left on the cell so it can't corrupt the source dim."""
         cell_w = cell["cell"]
         if cell_w.graphicsEffect() is not None:
-            cell_w.setGraphicsEffect(None)  # purge any legacy effect
-        dim = cell.get("dim")
-        if dim is None:
-            from tabs.multitoon._card_dim_overlay import CardDimOverlay
-            dim = CardDimOverlay(cell_w)
-            cell["dim"] = dim
-        from utils.effects_flags import effects_disabled
-        dim.set_dimmed(bool(not active and not effects_disabled()))
+            cell_w.setGraphicsEffect(None)
 
     # ── Control chrome owned by the layout ───────────────────────────────────
     def _style_ka_pill(self, cell_idx: int) -> None:
