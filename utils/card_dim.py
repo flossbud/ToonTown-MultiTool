@@ -13,6 +13,7 @@ from PySide6.QtGui import QColor, QImage, QPixmap
 
 SAT = 0.45      # saturate(0.45): fraction of original chroma kept
 BRIGHT = 0.75   # brightness(0.75): uniform darken
+DIM_FADE_MS = 200   # lit -> dim fade duration; paired with QEasingCurve.OutCubic
 
 
 def dim_color(c: QColor) -> QColor:
@@ -25,6 +26,18 @@ def dim_color(c: QColor) -> QColor:
         return max(0, min(255, round((v * SAT + lum * (1.0 - SAT)) * BRIGHT)))
 
     return QColor(ch(c.red()), ch(c.green()), ch(c.blue()), c.alpha())
+
+
+def lerp_color(a: QColor, b: QColor, t: float) -> QColor:
+    """Linear per-channel + alpha interpolation, t clamped to [0,1].
+    t=0 -> a, t=1 -> b. Used to cross-fade lit <-> dim during the dim animation."""
+    t = 0.0 if t < 0.0 else (1.0 if t > 1.0 else t)
+
+    def m(x: int, y: int) -> int:
+        return round(x + (y - x) * t)
+
+    return QColor(m(a.red(), b.red()), m(a.green(), b.green()),
+                  m(a.blue(), b.blue()), m(a.alpha(), b.alpha()))
 
 
 def dim_pixmap(pm: QPixmap) -> QPixmap:

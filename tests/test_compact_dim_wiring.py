@@ -47,26 +47,73 @@ def _build_tab(qapp, tmp_path, monkeypatch):
     return tab
 
 
-def test_inactive_slot_dims_badge_and_selector(qapp, tmp_path, monkeypatch):
+def test_inactive_slot_snaps_dim_on_first_paint(qapp, tmp_path, monkeypatch):
     tab = _build_tab(qapp, tmp_path, monkeypatch)
     try:
-        tab.apply_visual_state(0)   # no windows -> slot 0 inactive -> dimmed
-        assert tab.slot_badges[0]._dimmed is True
-        assert tab.set_selectors[0]._dimmed is True
+        tab.apply_visual_state(0)   # no windows -> inactive; FIRST paint -> snap to 1
+        assert tab.slot_badges[0]._dim_progress == 1.0
+        assert tab.set_selectors[0]._dim_progress == 1.0
+        cell = tab._compact._cells[0]
+        anim = cell.get("dim_anim")
+        from PySide6.QtCore import QAbstractAnimation
+        assert anim is None or anim.state() != QAbstractAnimation.Running
+    finally:
+        if hasattr(tab, "input_service") and hasattr(tab.input_service, "shutdown"):
+            tab.input_service.shutdown()
+
+
+def test_lit_to_dim_transition_starts_animation(qapp, tmp_path, monkeypatch):
+    # The animate branch (construct + connect + start the QVariantAnimation) only
+    # fires on a lit->dim transition on a VISIBLE card. The offscreen tab is never
+    # shown, so force the visibility gate to exercise the real wiring.
+    from PySide6.QtCore import QAbstractAnimation
+    tab = _build_tab(qapp, tmp_path, monkeypatch)
+    try:
+        tab.apply_visual_state(0)                  # first paint -> snap (dim_target=1.0)
+        cell = tab._compact._cells[0]
+        cell["cell"].isVisible = lambda: True      # force the visible gate
+        cell["dim_target"] = 0.0                   # pretend it was lit -> next call transitions
+        cell.pop("dim_anim", None)
+        tab._compact.set_card_brand(0, None, enabled=False)   # lit(0)->dim(1) -> animate
+        anim = cell.get("dim_anim")
+        assert anim is not None
+        assert anim.state() == QAbstractAnimation.Running
+        assert cell["dim_target"] == 1.0
+    finally:
+        if hasattr(tab, "input_service") and hasattr(tab.input_service, "shutdown"):
+            tab.input_service.shutdown()
+
+
+def test_mid_fade_guard_does_not_restart_running_anim(qapp, tmp_path, monkeypatch):
+    # A reconfigure while a lit->dim fade is in flight must NOT snap/restart it
+    # (the `running and target == 1.0` guard).
+    from PySide6.QtCore import QVariantAnimation, QAbstractAnimation
+    tab = _build_tab(qapp, tmp_path, monkeypatch)
+    try:
+        tab.apply_visual_state(0)            # first paint -> snaps to dim
+        cell = tab._compact._cells[0]
+        anim = QVariantAnimation(cell["cell"])
+        anim.setStartValue(0.0)
+        anim.setEndValue(1.0)
+        anim.setDuration(5000)
+        anim.start()
+        cell["dim_anim"] = anim
+        cell["dim_target"] = 1.0             # simulate mid-fade-toward-dim state
+        # Re-style the still-inactive slot: the guard must leave the anim running.
+        tab._compact.set_card_brand(0, None, enabled=False)
+        assert anim.state() == QAbstractAnimation.Running
     finally:
         if hasattr(tab, "input_service") and hasattr(tab.input_service, "shutdown"):
             tab.input_service.shutdown()
 
 
 def test_effects_disabled_gate_suppresses_dim(qapp, tmp_path, monkeypatch):
-    # effects_disabled() reads TTMT_NO_EFFECTS live; with it set, an inactive
-    # slot must NOT dim (the perf flag suppresses the whole dim treatment).
     tab = _build_tab(qapp, tmp_path, monkeypatch)
     try:
         monkeypatch.setenv("TTMT_NO_EFFECTS", "1")
-        tab.apply_visual_state(0)   # inactive, but effects off -> not dimmed
-        assert tab.slot_badges[0]._dimmed is False
-        assert tab.set_selectors[0]._dimmed is False
+        tab.apply_visual_state(0)
+        assert tab.slot_badges[0]._dim_progress == 0.0
+        assert tab.set_selectors[0]._dim_progress == 0.0
     finally:
         if hasattr(tab, "input_service") and hasattr(tab.input_service, "shutdown"):
             tab.input_service.shutdown()

@@ -32,7 +32,7 @@ from utils.settings_keys import CLICK_SYNC_ENABLED
 from utils.color_math import lighten_rgb
 from utils.widgets.scale_press import ScalePushButton
 from tabs.multitoon._keep_alive_help_button import KeepAliveHelpButton
-from utils.card_dim import dim_color, dim_pixmap
+from utils.card_dim import dim_color, dim_pixmap, lerp_color
 
 
 # ── Custom Widgets ─────────────────────────────────────────────────────────
@@ -90,7 +90,7 @@ class ToonPortraitWidget(QWidget):
         super().__init__(parent)
         self._slot    = slot
         self._peek_opacity = 1.0   # extra hover-peek dim factor for the toon image
-        self._dimmed = False
+        self._dim_progress = 0.0
         self._dim_cache = None        # QPixmap; built lazily while dimmed
         self._dim_cache_size = None   # QSize the cache was built for
         self._bg      = QColor("#4a4a4a")
@@ -428,13 +428,17 @@ class ToonPortraitWidget(QWidget):
             self._peek_opacity = opacity
             self.update()
 
+    def set_dim_progress(self, t: float) -> None:
+        # Deliberately does NOT clear _dim_cache: progress changes the BLEND, not
+        # the dim pixmap's content. The cache is invalidated by the content
+        # setters and resizeEvent (not here), so it survives the whole fade.
+        t = 0.0 if t < 0.0 else (1.0 if t > 1.0 else float(t))
+        if t != self._dim_progress:
+            self._dim_progress = t
+            self.update()
+
     def set_dimmed(self, on: bool) -> None:
-        on = bool(on)
-        if on == self._dimmed:
-            return
-        self._dimmed = on
-        self._dim_cache = None
-        self.update()
+        self.set_dim_progress(1.0 if on else 0.0)
 
     def resizeEvent(self, event):
         self._dim_cache = None
@@ -444,10 +448,20 @@ class ToonPortraitWidget(QWidget):
         p = QPainter(self)
         if self._peek_opacity < 1.0:
             p.setOpacity(self._peek_opacity)
-        if self._dimmed:
+        prog = self._dim_progress
+        if prog <= 0.0:
+            self._render_content(p)
+        elif prog >= 1.0:
             p.drawPixmap(0, 0, self._dimmed_pixmap())
         else:
+            # Cross-fade: lit underneath, dim pixmap on top at opacity = progress.
+            # Both are the same content (one filtered), so this is a per-pixel
+            # lit->dim blend. peek_opacity already applied to `p` above.
             self._render_content(p)
+            base_op = p.opacity()
+            p.setOpacity(base_op * prog)
+            p.drawPixmap(0, 0, self._dimmed_pixmap())
+            p.setOpacity(base_op)
         # Pencil overlay is hover-dependent and must stay LIVE (never cached):
         # drawn on top in both dim and active paths.
         rect = self.rect()
@@ -820,7 +834,7 @@ class SetSelectorWidget(QWidget):
         self._bg = "#4A8FE7"
         self._text_color = "#ffffff"
         self._border_color = "#6AAFFF"
-        self._dimmed = False
+        self._dim_progress = 0.0
         self._display_text = "Default"
         self._hover_zone = None  # "left", "right", or None
         self._paint_scale = 1.0
@@ -840,20 +854,21 @@ class SetSelectorWidget(QWidget):
         self._paint_scale = max(0.5, float(scale))
         self.update()
 
+    def set_dim_progress(self, t: float) -> None:
+        t = 0.0 if t < 0.0 else (1.0 if t > 1.0 else float(t))
+        if t != self._dim_progress:
+            self._dim_progress = t
+            self.update()
+
     def set_dimmed(self, on: bool) -> None:
-        on = bool(on)
-        if on == self._dimmed:
-            return
-        self._dimmed = on
-        self.update()
+        self.set_dim_progress(1.0 if on else 0.0)
 
     def _resolved_colors(self):
-        """Effective (bg, text, border) QColors; dim_color applied when dimmed."""
-        bg = QColor(self._bg)
-        text = QColor(self._text_color)
-        border = QColor(self._border_color)
-        if self._dimmed:
-            return dim_color(bg), dim_color(text), dim_color(border)
+        """Effective (bg, text, border) QColors at the current _dim_progress."""
+        t = self._dim_progress
+        bg = lerp_color(QColor(self._bg), dim_color(QColor(self._bg)), t)
+        text = lerp_color(QColor(self._text_color), dim_color(QColor(self._text_color)), t)
+        border = lerp_color(QColor(self._border_color), dim_color(QColor(self._border_color)), t)
         return bg, text, border
 
     def set_has_conflict(self, has: bool, conflict_pairs: list[tuple[str, str]] | None = None):
@@ -1234,14 +1249,13 @@ def _pin_ka_on_qss(fill: str, border: str) -> str:
     )
 
 
-def _ka_fill_border(is_rf: bool, dimmed: bool) -> tuple[str, str]:
-    """The keep-alive ON-state (fill, border) hex names, dimmed at source when
-    the toon's card is inactive (e.g. this toon disabled while others broadcast)."""
-    fill = "#E05252" if is_rf else KA_ORANGE
-    border = "#ef8d8d" if is_rf else KA_ORANGE_BORDER
-    if dimmed:
-        fill = dim_color(QColor(fill)).name()
-        border = dim_color(QColor(border)).name()
+def _ka_fill_border(is_rf: bool, progress: float) -> tuple[str, str]:
+    """Keep-alive ON-state (fill, border) hex names, cross-faded lit->dim by
+    `progress` in [0,1]. 0 = lit, 1 = full dim_color."""
+    lit_fill = QColor("#E05252") if is_rf else QColor(KA_ORANGE)
+    lit_border = QColor("#ef8d8d") if is_rf else QColor(KA_ORANGE_BORDER)
+    fill = lerp_color(lit_fill, dim_color(lit_fill), progress).name()
+    border = lerp_color(lit_border, dim_color(lit_border), progress).name()
     return fill, border
 
 
@@ -2211,24 +2225,15 @@ class MultitoonTab(QWidget):
             return
         ka_btn.setEnabled(usable)
         ka_btn.setToolTip("Toggle keep-alive for this toon")
-        is_rf = getattr(self, 'rapid_fire_enabled', [False]*4)[index]
         if self.keep_alive_enabled[index] and usable:
             from utils.effects_flags import effects_disabled
-            # window_available and service_running are already guaranteed True by
-            # `usable`; enabled_toons is the only per-toon variable here, so dimmed
-            # means "KA on + service running, but THIS toon disabled".
             card_active = (
                 window_available and self.enabled_toons[index] and self.service_running
             )
-            dimmed = (not card_active) and not effects_disabled()
-            fill, border = _ka_fill_border(is_rf, dimmed)
-            # White icon dims via alpha (dim_color on opaque white would just grey
-            # it); ~170 approximates the visual weight of dim_color on the fill.
-            ink = QColor("#ffffff") if not dimmed else QColor(255, 255, 255, 170)
-            ka_btn.setIcon(make_lightning_icon(13, ink))
-            ka_btn.setStyleSheet(_pin_ka_on_qss(fill, border))
-            if bar:
-                bar.set_fill_color(fill)
+            settled = 0.0 if (card_active or effects_disabled()) else 1.0
+            compact = getattr(self, "_compact", None)
+            progress = compact.cell_dim_progress(index) if compact is not None else settled
+            self._apply_keep_alive_dim_progress(index, progress)
         else:
             ka_btn.setIcon(make_lightning_icon(13, QColor(255, 255, 255, 128)))
             ka_btn.setStyleSheet(_pin_ka_off_qss())
@@ -2236,6 +2241,24 @@ class MultitoonTab(QWidget):
             if bar:
                 bar.set_fill_color(KA_ORANGE)
                 bar.set_progress(0.0)
+
+    def _apply_keep_alive_dim_progress(self, index, progress: float) -> None:
+        """Re-render the keep-alive ON-state at dim `progress`. No-op when the
+        button is in its neutral off-state (off-state carries no colour to fade)."""
+        wids = self.window_manager.ttr_window_ids if hasattr(self, 'input_service') else []
+        window_available = index < len(wids)
+        usable = window_available and self.service_running
+        if not (self._keep_alive_globally_enabled() and self.keep_alive_enabled[index] and usable):
+            return
+        ka_btn = self.keep_alive_buttons[index]
+        bar = self.ka_progress_bars[index] if index < len(self.ka_progress_bars) else None
+        is_rf = getattr(self, 'rapid_fire_enabled', [False]*4)[index]
+        fill, border = _ka_fill_border(is_rf, progress)
+        ink_a = round(255 + (170 - 255) * max(0.0, min(1.0, progress)))   # 255 -> 170
+        ka_btn.setIcon(make_lightning_icon(13, QColor(255, 255, 255, ink_a)))
+        ka_btn.setStyleSheet(_pin_ka_on_qss(fill, border))
+        if bar:
+            bar.set_fill_color(fill)
 
     # ── Glow animations ────────────────────────────────────────────────────
 

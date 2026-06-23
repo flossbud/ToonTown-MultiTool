@@ -26,7 +26,7 @@ from dataclasses import dataclass
 
 from PySide6.QtCore import (
     Qt, QSize, QRect, QRectF, QPoint, QPointF, Property, QPropertyAnimation,
-    QEasingCurve, Signal, QTimer, QEvent,
+    QEasingCurve, Signal, QTimer, QEvent, QVariantAnimation, QAbstractAnimation,
 )
 from PySide6.QtGui import (
     QColor, QFont, QPainter, QPainterPath, QPen, QPixmap, QLinearGradient,
@@ -36,10 +36,18 @@ from PySide6.QtWidgets import (
 )
 
 from tabs.multitoon._layout_utils import clear_layout
-from utils.card_dim import dim_color
+from utils.card_dim import dim_color, lerp_color, DIM_FADE_MS
 from utils.color_math import darken_rgb
 from utils.overlay.card_metrics import CardMetrics
 from utils.overlay.gestures import is_drag
+
+
+def _should_animate_dim(prev_target, new_target, *, visible: bool,
+                        effects_off: bool) -> bool:
+    """Animate ONLY a lit->dim transition on a visible card with effects on.
+    prev_target is None on first paint (-> snap). Everything else snaps."""
+    return (new_target == 1.0 and prev_target == 0.0
+            and visible and not effects_off)
 
 
 def _resolve_body_base(entry: dict, accent: QColor) -> QColor:
@@ -274,7 +282,7 @@ class _QuadCardBackground(QWidget):
         self._cutout = cutout
         self._accent = QColor("#555555")
         self._body: QColor | None = None
-        self._dimmed = True
+        self._dim_progress = 1.0
         self._peek_opacity = 1.0  # transparent-mode hover-peek body translucency
         # Painted-body radii + border width, sourced from a CardMetrics so the
         # shape scales with the card (defaults = canonical 1.0 values).
@@ -282,17 +290,26 @@ class _QuadCardBackground(QWidget):
         self._cutout_r = CUTOUT_R
         self._border = CARD_BORDER
 
-    def configure(
-        self, accent: QColor, dimmed: bool, body: "QColor | None" = None
-    ) -> None:
+    def configure(self, accent: QColor, body: "QColor | None" = None) -> None:
+        """Set the card's accent + optional body-fill colour. The dim LEVEL is
+        independent - see set_dim_progress()."""
         self._accent = QColor(accent)
         self._body = QColor(body) if body is not None else None
-        self._dimmed = bool(dimmed)
         self.update()
+
+    def set_dim_progress(self, t: float) -> None:
+        t = 0.0 if t < 0.0 else (1.0 if t > 1.0 else float(t))
+        if t != self._dim_progress:
+            self._dim_progress = t
+            self.update()
+
+    def set_dimmed(self, on: bool) -> None:
+        self.set_dim_progress(1.0 if on else 0.0)
 
     def apply_metrics(self, metrics) -> None:
         """Re-source the painted-body radii + border from `metrics` and repaint.
-        Idempotent; the colour/dim state set by configure() is preserved."""
+        Idempotent; the colour state set by configure() and the dim level set by
+        set_dim_progress() are preserved."""
         self._radius = metrics.card_radius
         self._cutout_r = metrics.cutout_r
         self._border = metrics.card_border
@@ -312,15 +329,14 @@ class _QuadCardBackground(QWidget):
             self.update()
 
     def _resolved_colors(self):
-        """Effective (top, bot, border) for the current dim state. Dim applies the
-        full saturate*brightness filter ONCE via dim_color; the 0.28/0.14 gradient
-        darkening is uniform per-channel and commutes with the luma mix."""
-        base = self._body if self._body is not None else self._accent
-        if self._dimmed:
-            base = dim_color(base)
-            border = dim_color(self._accent)
-        else:
-            border = QColor(self._accent)
+        """Effective (top, bot, border) at the current _dim_progress. progress 0 ==
+        lit (unchanged), 1 == full dim_color; in between is a per-channel lerp. The
+        0.28/0.14 gradient darken is uniform and commutes with the lerp (to within
+        1-unit integer rounding at intermediate values)."""
+        t = self._dim_progress
+        base_lit = self._body if self._body is not None else self._accent
+        base = lerp_color(base_lit, dim_color(base_lit), t)
+        border = lerp_color(QColor(self._accent), dim_color(self._accent), t)
         top = darken_rgb(base, 0.28)
         bot = darken_rgb(base, 0.14)
         return top, bot, border
@@ -334,8 +350,8 @@ class _QuadCardBackground(QWidget):
         p.setRenderHint(QPainter.Antialiasing, True)
         path = self._body_path()
 
-        # Body gradient + 5px inner border, dimmed at source via dim_color
-        # (saturate(0.45)*brightness(0.75)) - see utils/card_dim.py.
+        # Body gradient + 5px inner border; colour fades lit->dim by _dim_progress
+        # via lerp_color (see _resolved_colors) - utils/card_dim.py for the filter.
         top, bot, border = self._resolved_colors()
         grad = QLinearGradient(0, 0, self.width() * 0.38, self.height())
         grad.setColorAt(0.0, top)
@@ -367,7 +383,7 @@ class _PortraitFrame(QWidget):
         self.setFixedSize(self._size, self._size)
         self.setStyleSheet("background: transparent;")
         self._ring = QColor("#555555")
-        self._dimmed = True
+        self._dim_progress = 1.0
         self._peek_opacity = 1.0   # extra hover-peek dim for the circular frame
 
     def set_peek_opacity(self, opacity: float) -> None:
@@ -376,10 +392,18 @@ class _PortraitFrame(QWidget):
             self._peek_opacity = opacity
             self.update()
 
-    def configure(self, ring: QColor, dimmed: bool) -> None:
+    def configure(self, ring: QColor) -> None:
         self._ring = QColor(ring)
-        self._dimmed = bool(dimmed)
         self.update()
+
+    def set_dim_progress(self, t: float) -> None:
+        t = 0.0 if t < 0.0 else (1.0 if t > 1.0 else float(t))
+        if t != self._dim_progress:
+            self._dim_progress = t
+            self.update()
+
+    def set_dimmed(self, on: bool) -> None:
+        self.set_dim_progress(1.0 if on else 0.0)
 
     def apply_metrics(self, metrics) -> None:
         """Re-size the frame + ring width from `metrics` and repaint. The host
@@ -395,8 +419,8 @@ class _PortraitFrame(QWidget):
         return (inset, inset, self._size - 2 * inset, self._size - 2 * inset)
 
     def _resolved_ring(self):
-        """Effective ring colour for the current dim state."""
-        return dim_color(self._ring) if self._dimmed else QColor(self._ring)
+        """Effective ring colour at the current _dim_progress."""
+        return lerp_color(QColor(self._ring), dim_color(self._ring), self._dim_progress)
 
     def paintEvent(self, event):
         p = QPainter(self)
@@ -1356,20 +1380,42 @@ class _CompactLayout(QWidget):
 
         from utils.effects_flags import effects_disabled
         active = bool(enabled) and window_available and is_toon
-        # `dimmed` gates the source-level dim uniformly (no dim when effects are
-        # off). cell["dimmed"] keeps its existing not-active meaning for callers.
-        dimmed = (not active) and not effects_disabled()
+        effects_off = effects_disabled()
+        target = 0.0 if (active or effects_off) else 1.0
         cell["dimmed"] = not active
         cell["accent"] = QColor(accent)
         cell["active"] = active
 
-        cell["bg"].configure(accent, dimmed=dimmed, body=body_override)
-        cell["portrait_frame"].configure(accent, dimmed=dimmed)
+        # Colours are set unconditionally; the dim LEVEL is driven separately so
+        # it can animate. (configure no longer takes a dimmed flag - see Task 2.)
+        cell["bg"].configure(accent, body=body_override)
+        cell["portrait_frame"].configure(accent)
         self._purge_legacy_cell_effect(cell)
-        if i < len(tab.slot_badges):
-            tab.slot_badges[i].set_dimmed(dimmed)
-        if i < len(tab.set_selectors):
-            tab.set_selectors[i].set_dimmed(dimmed)
+
+        prev = cell.get("dim_target")
+        anim = cell.get("dim_anim")
+        running = anim is not None and anim.state() == QAbstractAnimation.Running
+        if running and target == 1.0:
+            pass                                   # fade in flight toward dim - leave it
+        elif _should_animate_dim(prev, target, visible=cell["cell"].isVisible(),
+                                 effects_off=effects_off):
+            start = self.cell_dim_progress(i)      # current (~0 on a lit->dim flip)
+            if anim is None:
+                anim = QVariantAnimation(cell["cell"])
+                cell["dim_anim"] = anim
+                anim.valueChanged.connect(
+                    lambda v, c=cell, idx=i: self._apply_dim_progress(c, idx, float(v)))
+            anim.stop()
+            anim.setStartValue(start)
+            anim.setEndValue(1.0)
+            anim.setDuration(DIM_FADE_MS)
+            anim.setEasingCurve(QEasingCurve.OutCubic)
+            anim.start()
+        else:
+            if anim is not None:
+                anim.stop()
+            self._apply_dim_progress(cell, i, target)   # snap
+        cell["dim_target"] = target
         self._refresh_glow()
 
         # Layout-owned control chrome: the KA pill container + the keyset
@@ -1390,25 +1436,6 @@ class _CompactLayout(QWidget):
         else:
             status_dot.hide()
 
-        # Name + stats colour. Dimmed cards mute the text (the grey wash used to
-        # do this; with it gone, dim the text at the source). dim_color is NOT
-        # used here: it would pull white toward its own luma (mid-grey), which
-        # reads as wrong-coloured text. White text mutes correctly via alpha over
-        # the dark card instead; these alphas are visual-parity values for the
-        # saturate(0.45)*brightness(0.75) look, not derived from dim_color.
-        name_rgba = "#ffffff" if not dimmed else "rgba(255,255,255,0.62)"
-        name_label = tab.toon_labels[i][0]
-        name_label.setStyleSheet(
-            f"background: transparent; border: none; color: {name_rgba};"
-        )
-        stat_alpha = "0.9" if not dimmed else "0.5"
-        stat_style = (
-            "background: transparent; border: none; text-align: left; "
-            f"padding: 0; color: rgba(255,255,255,{stat_alpha}); font-weight: 600;"
-        )
-        tab.laff_labels[i].setStyleSheet(stat_style)
-        tab.bean_labels[i].setStyleSheet(stat_style)
-
         self._position_status_dot(cell)
         self._refresh_emblem()
 
@@ -1420,6 +1447,36 @@ class _CompactLayout(QWidget):
         cell_w = cell["cell"]
         if cell_w.graphicsEffect() is not None:
             cell_w.setGraphicsEffect(None)
+
+    def cell_dim_progress(self, i: int) -> float:
+        """Current dim progress [0,1] of cell i (0.0 if unknown)."""
+        if 0 <= i < len(self._cells):
+            return float(self._cells[i].get("dim_progress", 0.0))
+        return 0.0
+
+    def _apply_dim_progress(self, cell: dict, i: int, progress: float) -> None:
+        """Push `progress` to every dimmed element of cell i, in lockstep."""
+        cell["dim_progress"] = progress
+        tab = self._tab
+        cell["bg"].set_dim_progress(progress)
+        cell["portrait_frame"].set_dim_progress(progress)
+        if i < len(tab.slot_badges):
+            tab.slot_badges[i].set_dim_progress(progress)
+        if i < len(tab.set_selectors):
+            tab.set_selectors[i].set_dim_progress(progress)
+        # Name/stat text: white mutes via alpha (dim_color would mis-tint white).
+        name_a = 1.0 + (0.62 - 1.0) * progress
+        stat_a = 0.9 + (0.5 - 0.9) * progress
+        tab.toon_labels[i][0].setStyleSheet(
+            f"background: transparent; border: none; color: rgba(255,255,255,{name_a:.3f});"
+        )
+        stat_style = (
+            "background: transparent; border: none; text-align: left; "
+            f"padding: 0; color: rgba(255,255,255,{stat_a:.3f}); font-weight: 600;"
+        )
+        tab.laff_labels[i].setStyleSheet(stat_style)
+        tab.bean_labels[i].setStyleSheet(stat_style)
+        tab._apply_keep_alive_dim_progress(i, progress)
 
     # ── Control chrome owned by the layout ───────────────────────────────────
     def _style_ka_pill(self, cell_idx: int) -> None:
