@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
 )
 
 from tabs.multitoon._layout_utils import clear_layout
+from utils.card_dim import dim_color
 from utils.color_math import darken_rgb
 from utils.overlay.card_metrics import CardMetrics
 from utils.overlay.gestures import is_drag
@@ -310,6 +311,20 @@ class _QuadCardBackground(QWidget):
             self._peek_opacity = opacity
             self.update()
 
+    def _resolved_colors(self):
+        """Effective (top, bot, border) for the current dim state. Dim applies the
+        full saturate*brightness filter ONCE via dim_color; the 0.28/0.14 gradient
+        darkening is uniform per-channel and commutes with the luma mix."""
+        base = self._body if self._body is not None else self._accent
+        if self._dimmed:
+            base = dim_color(base)
+            border = dim_color(self._accent)
+        else:
+            border = QColor(self._accent)
+        top = darken_rgb(base, 0.28)
+        bot = darken_rgb(base, 0.14)
+        return top, bot, border
+
     def paintEvent(self, event):
         if self.width() <= 0 or self.height() <= 0:
             return
@@ -319,24 +334,16 @@ class _QuadCardBackground(QWidget):
         p.setRenderHint(QPainter.Antialiasing, True)
         path = self._body_path()
 
-        # Body gradient: deep, rich version of the body-fill base. darken()
-        # multiplies each channel; the dim treatment scales brightness down
-        # further (the saturation half of saturate(0.45) is handled by the
-        # colorize effect). When no separate body override is set, the accent
-        # drives the fill (original behavior).
-        body_base = self._body if self._body is not None else self._accent
-        bright = 0.75 if self._dimmed else 1.0
-        top = darken_rgb(darken_rgb(body_base, 0.28), bright)
-        bot = darken_rgb(darken_rgb(body_base, 0.14), bright)
+        # Body gradient + 5px inner border, dimmed at source via dim_color
+        # (saturate(0.45)*brightness(0.75)) - see utils/card_dim.py.
+        top, bot, border = self._resolved_colors()
         grad = QLinearGradient(0, 0, self.width() * 0.38, self.height())
         grad.setColorAt(0.0, top)
         grad.setColorAt(1.0, bot)
         p.fillPath(path, grad)
 
-        # 5px inner border: accent-colored, stroke the body path at double
-        # width and clip to the path so only the inner half survives - a
-        # clean border that follows the concave curve.
-        border = darken_rgb(self._accent, 0.62) if self._dimmed else self._accent
+        # 5px inner border: stroke the body path at double width, clipped to the
+        # path so only the inner half survives.
         p.save()
         p.setClipPath(path)
         p.setBrush(Qt.NoBrush)
@@ -387,6 +394,10 @@ class _PortraitFrame(QWidget):
         inset = self._ring_w
         return (inset, inset, self._size - 2 * inset, self._size - 2 * inset)
 
+    def _resolved_ring(self):
+        """Effective ring colour for the current dim state."""
+        return dim_color(self._ring) if self._dimmed else QColor(self._ring)
+
     def paintEvent(self, event):
         p = QPainter(self)
         if self._peek_opacity < 1.0:
@@ -398,7 +409,7 @@ class _PortraitFrame(QWidget):
         p.setBrush(QColor(0, 0, 0, 56))
         p.drawEllipse(QPointF(cx, cy), cx - 0.5, cy - 0.5)
         # accent ring on the outer edge.
-        ring = darken_rgb(self._ring, 0.62) if self._dimmed else self._ring
+        ring = self._resolved_ring()
         pen = QPen(ring, self._ring_w)
         p.setPen(pen)
         p.setBrush(Qt.NoBrush)
