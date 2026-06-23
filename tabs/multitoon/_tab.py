@@ -2227,9 +2227,9 @@ class MultitoonTab(QWidget):
             card_active = (
                 window_available and self.enabled_toons[index] and self.service_running
             )
-            # Settled dim level for this card; Task 6 makes this follow the live
-            # fade progress so the KA button never snaps ahead of the rest.
-            progress = 0.0 if (card_active or effects_disabled()) else 1.0
+            settled = 0.0 if (card_active or effects_disabled()) else 1.0
+            compact = getattr(self, "_compact", None)
+            progress = compact.cell_dim_progress(index) if compact is not None else settled
             self._apply_keep_alive_dim_progress(index, progress)
         else:
             ka_btn.setIcon(make_lightning_icon(13, QColor(255, 255, 255, 128)))

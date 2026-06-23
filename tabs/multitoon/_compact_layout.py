@@ -26,7 +26,7 @@ from dataclasses import dataclass
 
 from PySide6.QtCore import (
     Qt, QSize, QRect, QRectF, QPoint, QPointF, Property, QPropertyAnimation,
-    QEasingCurve, Signal, QTimer, QEvent,
+    QEasingCurve, Signal, QTimer, QEvent, QVariantAnimation, QAbstractAnimation,
 )
 from PySide6.QtGui import (
     QColor, QFont, QPainter, QPainterPath, QPen, QPixmap, QLinearGradient,
@@ -36,10 +36,18 @@ from PySide6.QtWidgets import (
 )
 
 from tabs.multitoon._layout_utils import clear_layout
-from utils.card_dim import dim_color, lerp_color
+from utils.card_dim import dim_color, lerp_color, DIM_FADE_MS
 from utils.color_math import darken_rgb
 from utils.overlay.card_metrics import CardMetrics
 from utils.overlay.gestures import is_drag
+
+
+def _should_animate_dim(prev_target, new_target, *, visible: bool,
+                        effects_off: bool) -> bool:
+    """Animate ONLY a lit->dim transition on a visible card with effects on.
+    prev_target is None on first paint (-> snap). Everything else snaps."""
+    return (new_target == 1.0 and prev_target == 0.0
+            and visible and not effects_off)
 
 
 def _resolve_body_base(entry: dict, accent: QColor) -> QColor:
@@ -1372,20 +1380,42 @@ class _CompactLayout(QWidget):
 
         from utils.effects_flags import effects_disabled
         active = bool(enabled) and window_available and is_toon
-        # `dimmed` gates the source-level dim uniformly (no dim when effects are
-        # off). cell["dimmed"] keeps its existing not-active meaning for callers.
-        dimmed = (not active) and not effects_disabled()
+        effects_off = effects_disabled()
+        target = 0.0 if (active or effects_off) else 1.0
         cell["dimmed"] = not active
         cell["accent"] = QColor(accent)
         cell["active"] = active
 
-        cell["bg"].configure(accent, dimmed=dimmed, body=body_override)
-        cell["portrait_frame"].configure(accent, dimmed=dimmed)
+        # Colours are set unconditionally; the dim LEVEL is driven separately so
+        # it can animate. (configure no longer takes a dimmed flag - see Task 2.)
+        cell["bg"].configure(accent, body=body_override)
+        cell["portrait_frame"].configure(accent)
         self._purge_legacy_cell_effect(cell)
-        if i < len(tab.slot_badges):
-            tab.slot_badges[i].set_dimmed(dimmed)
-        if i < len(tab.set_selectors):
-            tab.set_selectors[i].set_dimmed(dimmed)
+
+        prev = cell.get("dim_target")
+        anim = cell.get("dim_anim")
+        running = anim is not None and anim.state() == QAbstractAnimation.Running
+        if running and target == 1.0:
+            pass                                   # fade in flight toward dim - leave it
+        elif _should_animate_dim(prev, target, visible=cell["cell"].isVisible(),
+                                 effects_off=effects_off):
+            start = self.cell_dim_progress(i)      # current (~0 on a lit->dim flip)
+            if anim is None:
+                anim = QVariantAnimation(cell["cell"])
+                cell["dim_anim"] = anim
+                anim.valueChanged.connect(
+                    lambda v, c=cell, idx=i: self._apply_dim_progress(c, idx, float(v)))
+            anim.stop()
+            anim.setStartValue(start)
+            anim.setEndValue(1.0)
+            anim.setDuration(DIM_FADE_MS)
+            anim.setEasingCurve(QEasingCurve.OutCubic)
+            anim.start()
+        else:
+            if anim is not None:
+                anim.stop()
+            self._apply_dim_progress(cell, i, target)   # snap
+        cell["dim_target"] = target
         self._refresh_glow()
 
         # Layout-owned control chrome: the KA pill container + the keyset
@@ -1406,25 +1436,6 @@ class _CompactLayout(QWidget):
         else:
             status_dot.hide()
 
-        # Name + stats colour. Dimmed cards mute the text (the grey wash used to
-        # do this; with it gone, dim the text at the source). dim_color is NOT
-        # used here: it would pull white toward its own luma (mid-grey), which
-        # reads as wrong-coloured text. White text mutes correctly via alpha over
-        # the dark card instead; these alphas are visual-parity values for the
-        # saturate(0.45)*brightness(0.75) look, not derived from dim_color.
-        name_rgba = "#ffffff" if not dimmed else "rgba(255,255,255,0.62)"
-        name_label = tab.toon_labels[i][0]
-        name_label.setStyleSheet(
-            f"background: transparent; border: none; color: {name_rgba};"
-        )
-        stat_alpha = "0.9" if not dimmed else "0.5"
-        stat_style = (
-            "background: transparent; border: none; text-align: left; "
-            f"padding: 0; color: rgba(255,255,255,{stat_alpha}); font-weight: 600;"
-        )
-        tab.laff_labels[i].setStyleSheet(stat_style)
-        tab.bean_labels[i].setStyleSheet(stat_style)
-
         self._position_status_dot(cell)
         self._refresh_emblem()
 
@@ -1436,6 +1447,36 @@ class _CompactLayout(QWidget):
         cell_w = cell["cell"]
         if cell_w.graphicsEffect() is not None:
             cell_w.setGraphicsEffect(None)
+
+    def cell_dim_progress(self, i: int) -> float:
+        """Current dim progress [0,1] of cell i (0.0 if unknown)."""
+        if 0 <= i < len(self._cells):
+            return float(self._cells[i].get("dim_progress", 0.0))
+        return 0.0
+
+    def _apply_dim_progress(self, cell: dict, i: int, progress: float) -> None:
+        """Push `progress` to every dimmed element of cell i, in lockstep."""
+        cell["dim_progress"] = progress
+        tab = self._tab
+        cell["bg"].set_dim_progress(progress)
+        cell["portrait_frame"].set_dim_progress(progress)
+        if i < len(tab.slot_badges):
+            tab.slot_badges[i].set_dim_progress(progress)
+        if i < len(tab.set_selectors):
+            tab.set_selectors[i].set_dim_progress(progress)
+        # Name/stat text: white mutes via alpha (dim_color would mis-tint white).
+        name_a = 1.0 + (0.62 - 1.0) * progress
+        stat_a = 0.9 + (0.5 - 0.9) * progress
+        tab.toon_labels[i][0].setStyleSheet(
+            f"background: transparent; border: none; color: rgba(255,255,255,{name_a:.3f});"
+        )
+        stat_style = (
+            "background: transparent; border: none; text-align: left; "
+            f"padding: 0; color: rgba(255,255,255,{stat_a:.3f}); font-weight: 600;"
+        )
+        tab.laff_labels[i].setStyleSheet(stat_style)
+        tab.bean_labels[i].setStyleSheet(stat_style)
+        tab._apply_keep_alive_dim_progress(i, progress)
 
     # ── Control chrome owned by the layout ───────────────────────────────────
     def _style_ka_pill(self, cell_idx: int) -> None:
