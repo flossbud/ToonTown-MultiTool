@@ -48,3 +48,26 @@ def test_dim_pixmap_skips_transparent_and_dims_opaque(qapp):
 def test_dim_pixmap_null_passthrough(qapp):
     pm = QPixmap()
     assert dim_pixmap(pm).isNull()
+
+
+def test_lerp_color_endpoints_and_mid():
+    from utils.card_dim import lerp_color
+    a = QColor(0, 0, 0, 0)
+    b = QColor(100, 200, 40, 255)
+    assert lerp_color(a, b, 0.0) == a
+    assert lerp_color(a, b, 1.0) == b
+    mid = lerp_color(a, b, 0.5)
+    assert (mid.red(), mid.green(), mid.blue(), mid.alpha()) == (50, 100, 20, 128)
+
+
+def test_lerp_color_clamps_t():
+    from utils.card_dim import lerp_color
+    a = QColor(10, 10, 10, 255)
+    b = QColor(20, 20, 20, 255)
+    assert lerp_color(a, b, -1.0) == a
+    assert lerp_color(a, b, 2.0) == b
+
+
+def test_fade_constant():
+    from utils.card_dim import DIM_FADE_MS
+    assert DIM_FADE_MS == 200
