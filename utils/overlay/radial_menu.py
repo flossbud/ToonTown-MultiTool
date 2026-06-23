@@ -337,6 +337,8 @@ class RadialMenuWidget(QWidget):
         self._accounts = []         # RingAccount entries for the accounts sub-ring
         self._portraits = {}        # account_id -> circular QPixmap (set in set_accounts)
         self._launched = set()      # indices clicked-to-launch in the current sub-ring
+        self._loading = set()       # account_ids whose pose is pending (spinner)
+        self._spinner_phase = 0.0   # [0,1) rotation of the loading spinner
         self.setMouseTracking(True)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setFocusPolicy(Qt.StrongFocus)
@@ -363,6 +365,10 @@ class RadialMenuWidget(QWidget):
         self._idle_timer.setSingleShot(True)
         self._idle_timer.setInterval(self._IDLE_MS)
         self._idle_timer.timeout.connect(self._begin_close)
+        from utils.rendition_poses import RenditionPoseFetcher
+        # Live-refresh: fill in a pending portrait when its pose lands. Qt
+        # auto-disconnects this bound-method slot when the widget is destroyed.
+        RenditionPoseFetcher.instance().pose_ready.connect(self._on_pose_ready)
 
     @property
     def state(self) -> str:
@@ -716,13 +722,37 @@ class RadialMenuWidget(QWidget):
         self._accounts = list(accounts)
         self._portraits = {}
         self._launched = set()
+        self._loading = set()
         d = max(1, int(round(self._sat_r * 2)))
         for a in self._accounts:
-            self._portraits[a.account_id] = render_account_portrait(
+            render = render_account_portrait(
                 a.game, a.toon_name, a.dna, self._customizations, d)
+            self._portraits[a.account_id] = render.pixmap
+            if render.status == "pending":
+                self._loading.add(a.account_id)
         self._state = "accounts"
         self._hover = None
         self.start_reveal()
+
+    def _on_pose_ready(self, dna, pose, pixmap):
+        """A Rendition pose arrived. Re-render any still-pending account whose
+        DNA matches (the disk cache is now warm) and repaint. No-op unless the
+        accounts sub-ring is showing."""
+        if self._state != "accounts" or not dna:
+            return
+        from utils.overlay.radial_portrait import render_account_portrait
+        d = max(1, int(round(self._sat_r * 2)))
+        changed = False
+        for a in self._accounts:
+            if a.dna == dna and a.account_id in self._loading:
+                render = render_account_portrait(
+                    a.game, a.toon_name, a.dna, self._customizations, d)
+                self._portraits[a.account_id] = render.pixmap
+                if render.status != "pending":
+                    self._loading.discard(a.account_id)
+                changed = True
+        if changed:
+            self.update()
 
     def _paint_accounts(self, p: QPainter) -> None:
         cx0, cy0 = self._center()
