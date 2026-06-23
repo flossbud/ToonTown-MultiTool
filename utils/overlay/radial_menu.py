@@ -501,7 +501,11 @@ class RadialMenuWidget(QWidget):
             busy = True
         if self._advance_press():
             busy = True
-        if self._loading:
+        # Scope to the accounts ring: _loading is only cleared by _on_pose_ready
+        # while that sub-ring is showing, so gating here too keeps a leftover
+        # pending id (e.g. user clicked Back before a pose arrived) from pinning
+        # the clock at 60fps off-ring. Re-entering Accounts repopulates _loading.
+        if self._state == "accounts" and self._loading:
             self._spinner_phase = (now_ms % _SPIN_PERIOD_MS) / float(_SPIN_PERIOD_MS)
             busy = True
         self.update()
