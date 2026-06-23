@@ -56,3 +56,17 @@ def test_inactive_slot_dims_badge_and_selector(qapp, tmp_path, monkeypatch):
     finally:
         if hasattr(tab, "input_service") and hasattr(tab.input_service, "shutdown"):
             tab.input_service.shutdown()
+
+
+def test_effects_disabled_gate_suppresses_dim(qapp, tmp_path, monkeypatch):
+    # effects_disabled() reads TTMT_NO_EFFECTS live; with it set, an inactive
+    # slot must NOT dim (the perf flag suppresses the whole dim treatment).
+    tab = _build_tab(qapp, tmp_path, monkeypatch)
+    try:
+        monkeypatch.setenv("TTMT_NO_EFFECTS", "1")
+        tab.apply_visual_state(0)   # inactive, but effects off -> not dimmed
+        assert tab.slot_badges[0]._dimmed is False
+        assert tab.set_selectors[0]._dimmed is False
+    finally:
+        if hasattr(tab, "input_service") and hasattr(tab.input_service, "shutdown"):
+            tab.input_service.shutdown()

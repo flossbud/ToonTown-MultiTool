@@ -1391,7 +1391,11 @@ class _CompactLayout(QWidget):
             status_dot.hide()
 
         # Name + stats colour. Dimmed cards mute the text (the grey wash used to
-        # do this; with it gone, dim the text at the source).
+        # do this; with it gone, dim the text at the source). dim_color is NOT
+        # used here: it would pull white toward its own luma (mid-grey), which
+        # reads as wrong-coloured text. White text mutes correctly via alpha over
+        # the dark card instead; these alphas are visual-parity values for the
+        # saturate(0.45)*brightness(0.75) look, not derived from dim_color.
         name_rgba = "#ffffff" if not dimmed else "rgba(255,255,255,0.62)"
         name_label = tab.toon_labels[i][0]
         name_label.setStyleSheet(
