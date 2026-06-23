@@ -32,7 +32,7 @@ from utils.settings_keys import CLICK_SYNC_ENABLED
 from utils.color_math import lighten_rgb
 from utils.widgets.scale_press import ScalePushButton
 from tabs.multitoon._keep_alive_help_button import KeepAliveHelpButton
-from utils.card_dim import dim_color, dim_pixmap
+from utils.card_dim import dim_color, dim_pixmap, lerp_color
 
 
 # ── Custom Widgets ─────────────────────────────────────────────────────────
@@ -831,7 +831,7 @@ class SetSelectorWidget(QWidget):
         self._bg = "#4A8FE7"
         self._text_color = "#ffffff"
         self._border_color = "#6AAFFF"
-        self._dimmed = False
+        self._dim_progress = 0.0
         self._display_text = "Default"
         self._hover_zone = None  # "left", "right", or None
         self._paint_scale = 1.0
@@ -851,20 +851,21 @@ class SetSelectorWidget(QWidget):
         self._paint_scale = max(0.5, float(scale))
         self.update()
 
+    def set_dim_progress(self, t: float) -> None:
+        t = 0.0 if t < 0.0 else (1.0 if t > 1.0 else float(t))
+        if t != self._dim_progress:
+            self._dim_progress = t
+            self.update()
+
     def set_dimmed(self, on: bool) -> None:
-        on = bool(on)
-        if on == self._dimmed:
-            return
-        self._dimmed = on
-        self.update()
+        self.set_dim_progress(1.0 if on else 0.0)
 
     def _resolved_colors(self):
-        """Effective (bg, text, border) QColors; dim_color applied when dimmed."""
-        bg = QColor(self._bg)
-        text = QColor(self._text_color)
-        border = QColor(self._border_color)
-        if self._dimmed:
-            return dim_color(bg), dim_color(text), dim_color(border)
+        """Effective (bg, text, border) QColors at the current _dim_progress."""
+        t = self._dim_progress
+        bg = lerp_color(QColor(self._bg), dim_color(QColor(self._bg)), t)
+        text = lerp_color(QColor(self._text_color), dim_color(QColor(self._text_color)), t)
+        border = lerp_color(QColor(self._border_color), dim_color(QColor(self._border_color)), t)
         return bg, text, border
 
     def set_has_conflict(self, has: bool, conflict_pairs: list[tuple[str, str]] | None = None):
