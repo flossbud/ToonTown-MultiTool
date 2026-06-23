@@ -52,23 +52,3 @@ def lighten_rgb(color: QColor, factor: float) -> QColor:
     g = round(color.green() + (255 - color.green()) * f)
     b = round(color.blue() + (255 - color.blue()) * f)
     return QColor(r, g, b, color.alpha())
-
-
-def desaturate(color: QColor, sat_factor: float, bright_factor: float) -> QColor:
-    """Return `color` with HSL saturation and lightness scaled.
-
-    Reproduces the Multitoon pinwheel's CSS `filter: saturate(x) brightness(y)`
-    idle/dim treatment for a single colour: saturation *= `sat_factor`,
-    lightness *= `bright_factor`. Both channels clamp to [0, 255]; hue and
-    alpha are preserved. Used to paint dimmed card chrome directly.
-    """
-    hsl = color.toHsl()
-    h = hsl.hslHue()
-    s = hsl.hslSaturation()
-    l = hsl.lightness()
-    a = hsl.alpha()
-    new_s = max(0, min(255, round(s * sat_factor)))
-    new_l = max(0, min(255, round(l * bright_factor)))
-    if h < 0:
-        h = 0
-    return QColor.fromHsl(h, new_s, new_l, a)
