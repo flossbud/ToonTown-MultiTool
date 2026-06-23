@@ -93,3 +93,18 @@ def test_pose_ready_signal_fans_out_to_shared_dna(qapp, monkeypatch):
     assert menu._loading == set()
     menu.deleteLater()
     qapp.processEvents()
+
+
+def test_kill_switch_still_refreshes(qapp, monkeypatch):
+    # Animation disabled -> no clock, but pose_ready must still swap the pixmap
+    # and clear the loading flag (live-refresh calls update() directly).
+    from utils.overlay.radial_menu import RadialMenuWidget
+    warmed = set()
+    _patch_render(monkeypatch, warmed)
+    menu = RadialMenuWidget(emblem_diameter=120)
+    menu._anim_enabled = False
+    menu.set_accounts([_acct("a1", "dna-a")])
+    assert menu._loading == {"a1"}
+    warmed.add("dna-a")
+    menu._on_pose_ready("dna-a", "portrait", QPixmap(8, 8))
+    assert "a1" not in menu._loading
