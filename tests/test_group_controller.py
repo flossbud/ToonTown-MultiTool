@@ -450,3 +450,39 @@ class TestActiveChangedCallback:
         assert ctl.enter() is True
         ctl.leave()
         assert ctl.is_active is False
+
+
+# ---------------------------------------------------------------------------
+# Radial dim backdrop (its own layer, BELOW the emblem)
+# ---------------------------------------------------------------------------
+class TestRadialDim:
+    def test_restack_orders_dim_below_radial(self, qapp):
+        """_restack_radial_layers raises dim first (lowest of the trio) then the
+        radial last (top), so the emblem (raised between them) ends up in front of
+        the dim but behind the radial."""
+        ctl, factory, win = _make()
+        events: list = []
+        ctl._dim_surface = _StubSurface("dim", events)
+        ctl._radial_surface = _StubSurface("radial", events)
+        ctl._restack_radial_layers()
+        raised = [key for (key, method) in events if method == "raise_"]
+        assert raised == ["dim", "radial"]   # dim lower, radial on top
+
+    def test_close_radial_menu_tears_down_the_dim(self, qapp):
+        ctl, factory, win = _make()
+        events: list = []
+        radial = _StubSurface("radial", events); dim = _StubSurface("dim", events)
+        ctl._radial_surface = radial; ctl._radial_menu = object(); ctl._radial_size = 100
+        ctl._dim_surface = dim; ctl._dim_size = 100
+        ctl.close_radial_menu()
+        assert ctl._radial_surface is None and ctl._dim_surface is None
+        assert "hide" in dim.methods() and "deleteLater" in dim.methods()
+
+    def test_teardown_dim_is_idempotent(self, qapp):
+        ctl, factory, win = _make()
+        ctl._teardown_dim()                  # nothing open -> no error
+        events: list = []
+        ctl._dim_surface = _StubSurface("dim", events); ctl._dim_size = 100
+        ctl._teardown_dim()
+        assert ctl._dim_surface is None and ctl._dim_size == 0
+        ctl._teardown_dim()                  # again -> still safe

@@ -404,8 +404,8 @@ def test_refined_painters_paint_without_crash():
 
 def test_vignette_is_cached_and_rebuilt_on_size_change():
     _app()
-    from utils.overlay.radial_menu import RadialMenuWidget
-    w = RadialMenuWidget(emblem_diameter=160); w.resize(400, 400)
+    from utils.overlay.radial_menu import RadialDimWidget
+    w = RadialDimWidget(); w.resize(400, 400)
     w._ensure_vignette()
     first = w._vignette
     assert first is not None and first.size().width() == 400
@@ -414,6 +414,25 @@ def test_vignette_is_cached_and_rebuilt_on_size_change():
     w.resize(500, 500)
     w._ensure_vignette()
     assert w._vignette is not first and w._vignette.size().width() == 500
+
+
+def test_radial_menu_widget_no_longer_owns_the_dim():
+    """The dim moved to its own layer (RadialDimWidget); the menu paints only the
+    spoke buttons so the dim can sit behind the emblem."""
+    _app()
+    from utils.overlay.radial_menu import RadialMenuWidget
+    w = RadialMenuWidget(emblem_diameter=160)
+    assert not hasattr(w, "_ensure_vignette")
+    assert not hasattr(w, "_vignette")
+
+
+def test_radial_dim_widget_is_click_through():
+    """The dim is purely decorative and must never grab input."""
+    from PySide6.QtCore import Qt
+    _app()
+    from utils.overlay.radial_menu import RadialDimWidget
+    w = RadialDimWidget()
+    assert w.testAttribute(Qt.WA_TransparentForMouseEvents)
 
 
 def test_entrance_starts_at_center_and_settles_at_slot():

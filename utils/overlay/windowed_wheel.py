@@ -17,13 +17,18 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QWidget
 
-from utils.overlay.radial_menu import RadialMenuWidget
+from utils.overlay.radial_menu import RadialMenuWidget, RadialDimWidget
 
 
 class WindowedWheelHost(QWidget):
     """Transparent child overlay that hosts a windowed-variant RadialMenuWidget
     centered on the emblem and dismisses on click-away / the wheel's own close
-    (Back spoke / Esc / 15s idle / all-accounts-launched)."""
+    (Back spoke / Esc / 15s idle / all-accounts-launched).
+
+    The dim backdrop is a SEPARATE click-through layer (RadialDimWidget) parented
+    next to the emblem and stacked just below it, so the emblem stays in front of
+    the dim while the spoke buttons (this host, raised above the whole tab) stay
+    in front of everything (z-order: cards -> dim -> emblem -> buttons)."""
 
     closed = Signal()
 
@@ -35,11 +40,13 @@ class WindowedWheelHost(QWidget):
         self.setAttribute(Qt.WA_NoSystemBackground, True)
         self.setAutoFillBackground(False)
         self._emblem = emblem
+        self._side = int(emblem_diameter * 4)
+        self._dim = None
         self._alive = True
         self.menu = RadialMenuWidget(
             emblem_diameter, customizations=customizations, variant="windowed",
             parent=self)
-        side = int(emblem_diameter * 4)
+        side = self._side
         self.menu.resize(side, side)
         # The wheel's own close paths (Back spoke, Esc, idle, all-launched)
         # dismiss the whole host:
@@ -47,6 +54,7 @@ class WindowedWheelHost(QWidget):
 
     def show_centered(self):
         """Fill the parent, center the menu on the emblem, reveal, focus."""
+        self._show_dim()                     # dim backdrop BEHIND the emblem
         self.setGeometry(self.parent().rect())
         self.show()
         self.raise_()
@@ -55,6 +63,22 @@ class WindowedWheelHost(QWidget):
         self.menu.raise_()
         self.menu.setFocus()                 # Esc handled by the menu
         self.menu.start_reveal()
+
+    def _show_dim(self):
+        """Place the dim backdrop as a sibling of the emblem, centered on it and
+        stacked just below it (above the cards, behind the emblem). The buttons
+        live in this host, which is raised above the whole tab, so they stay in
+        front of the dim and the emblem alike."""
+        parent = self._emblem.parentWidget()
+        if parent is None:
+            return
+        self._dim = RadialDimWidget(parent)
+        center = self._emblem.geometry().center()   # in the emblem's parent coords
+        side = self._side
+        self._dim.setGeometry(center.x() - side // 2, center.y() - side // 2,
+                              side, side)
+        self._dim.show()
+        self._dim.stackUnder(self._emblem)   # cards -> dim -> emblem
 
     def _center_menu_on_emblem(self):
         ec = self._emblem.mapToGlobal(self._emblem.rect().center())
@@ -71,6 +95,10 @@ class WindowedWheelHost(QWidget):
         if not self._alive:                  # idempotent across every path
             return
         self._alive = False
+        if self._dim is not None:
+            self._dim.hide()
+            self._dim.deleteLater()
+            self._dim = None
         self.hide()
         self.closed.emit()
         self.deleteLater()

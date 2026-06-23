@@ -330,6 +330,14 @@ class OverlayGroupController:
         self._radial_surface = None
         self._radial_menu = None
         self._radial_size = 0   # px square edge, so it can be re-centered on drag
+        # Radial dim backdrop: a CLICK-THROUGH owned surface hosting a
+        # RadialDimWidget, the same size as the radial surface but stacked BELOW
+        # the emblem (above the cards), so the emblem stays in front of the dim
+        # while the radial's buttons stay in front of the emblem
+        # (z-order: cards -> dim -> emblem -> radial). Created/destroyed in
+        # lockstep with the radial surface.
+        self._dim_surface = None
+        self._dim_size = 0
         # Portable Settings panel (Task 12): a CLICK-ACCEPTING owned surface
         # hosting an arbitrary widget (the floating SettingsTab container),
         # centered on the emblem. _panel_on_close runs in close_panel_surface
@@ -944,20 +952,24 @@ class OverlayGroupController:
         self._reposition_radial()  # keep the radial/settings surface on the emblem
 
     def _reposition_radial(self) -> None:
-        """Re-center the radial menu (and the settings panel) surface on the
-        current cluster anchor, so the circles follow the emblem as it is dragged
-        or the cluster is re-placed. Size is preserved (no widget rescale here)."""
+        """Re-center the radial menu, its dim backdrop, and the settings panel
+        surface on the current cluster anchor, so they follow the emblem as it is
+        dragged or the cluster is re-placed, then re-assert the dim->emblem->radial
+        z-order. Size is preserved (no widget rescale here)."""
         from PySide6.QtCore import QRect
         from utils.overlay.backend import overlay_trace
         cx, cy = self._anchor
-        for name, surface, size in (("radial", self._radial_surface, self._radial_size),
+        for name, surface, size in (("dim", self._dim_surface, self._dim_size),
+                                    ("radial", self._radial_surface, self._radial_size),
                                     ("panel", self._panel_surface, self._panel_size)):
             if surface is None or size <= 0:
                 continue
-            overlay_trace(f"reposition+raise {name} surface over emblem (size={size})")
+            overlay_trace(f"reposition {name} surface over emblem (size={size})")
             surface.set_overlay_geometry(
                 QRect(int(cx - size / 2), int(cy - size / 2), size, size))
-            surface.raise_()
+        # Re-assert the full layer order (dim below the emblem, radial above it).
+        if self._dim_surface or self._radial_surface or self._panel_surface:
+            self._restack_radial_layers()
 
     # ------------------------------------------------------------------
     # Accent glow behind the cluster (parity with the framed _GlowLayer)
@@ -1424,15 +1436,16 @@ class OverlayGroupController:
         menu = RadialMenuWidget(emblem_diameter=emblem_dia)
         size = int(emblem_dia * 4)  # canvas for the outer ring + labels
         self._radial_size = size
+        cx, cy = self._anchor
+        geom = QRect(int(cx - size / 2), int(cy - size / 2), size, size)
+        # Dim backdrop FIRST (below the emblem), so the cards are dimmed but the
+        # emblem and the buttons stay in front of it.
+        self._build_dim(geom)
         surface = OverlaySurface(backend=self._backend)
         surface.host(menu)
-        cx, cy = self._anchor
-        surface.set_overlay_geometry(
-            QRect(int(cx - size / 2), int(cy - size / 2), size, size)
-        )
+        surface.set_overlay_geometry(geom)
         surface.prepare_initial_state()
         surface.show()
-        surface.raise_()  # above the cluster so its click region is hittable
         # NON-EMPTY path => the whole canvas is click-accepting (vs the glow's
         # empty path, which is fully click-through).
         path = QPainterPath()
@@ -1440,11 +1453,58 @@ class OverlayGroupController:
         surface.apply_shape(path, surface.devicePixelRatio())
         self._radial_surface = surface
         self._radial_menu = menu
+        # Lock the z-order: cards -> dim -> emblem -> radial. The radial ends up
+        # on top (its click region must be hittable); the dim under the emblem.
+        self._restack_radial_layers()
         menu.start_reveal()
         return menu
 
+    def _build_dim(self, geom) -> None:
+        """Create + show the click-through radial dim surface at ``geom`` (a
+        QRect). Best-effort: a dim failure must never break opening the radial,
+        so it self-tears-down on error and the menu proceeds without the
+        (decorative) dim."""
+        from PySide6.QtGui import QPainterPath
+        try:
+            from utils.overlay.surface import OverlaySurface
+            from utils.overlay.radial_menu import RadialDimWidget
+            surface = OverlaySurface(backend=self._backend)
+            self._dim_surface = surface
+            self._dim_size = geom.width()
+            surface.host(RadialDimWidget())
+            surface.set_overlay_geometry(geom)
+            surface.prepare_initial_state()
+            surface.show()
+            # EMPTY input region => fully click-through (the dim only paints; the
+            # radial above it grabs the clicks).
+            surface.apply_shape(QPainterPath(), surface.devicePixelRatio())
+        except Exception:
+            self._teardown_dim()
+
+    def _teardown_dim(self) -> None:
+        """Destroy the owned dim surface (+ its hosted widget). Idempotent."""
+        surface = self._dim_surface
+        self._dim_surface = None
+        self._dim_size = 0
+        if surface is not None:
+            self._safe_call(surface, "hide")
+            self._safe_call(surface, "deleteLater")
+
+    def _restack_radial_layers(self) -> None:
+        """Enforce cards -> dim -> emblem -> radial -> panel z-order. Each step is
+        a no-op when that layer is not open, so this is safe to call from every
+        path that re-asserts cluster z-order."""
+        if self._dim_surface is not None:
+            self._safe_call(self._dim_surface, "raise_")
+        self._raise_emblem()
+        if self._radial_surface is not None:
+            self._safe_call(self._radial_surface, "raise_")
+        if self._panel_surface is not None:
+            self._safe_call(self._panel_surface, "raise_")
+
     def close_radial_menu(self) -> None:
-        """Destroy the owned radial-menu surface (+ its hosted widget). Idempotent."""
+        """Destroy the owned radial-menu surface (+ its hosted widget) and its dim
+        backdrop. Idempotent."""
         surface = self._radial_surface
         self._radial_surface = None
         self._radial_menu = None
@@ -1452,6 +1512,7 @@ class OverlayGroupController:
         if surface is not None:
             self._safe_call(surface, "hide")
             self._safe_call(surface, "deleteLater")
+        self._teardown_dim()  # dim lives and dies with the radial
 
     # ------------------------------------------------------------------
     # Portable panel surface (Task 12)

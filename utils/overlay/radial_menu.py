@@ -1,7 +1,9 @@
 """Interactive radial menu widget for the emblem overlay.
 
-Paints a soft radial vignette plus a ring of azure circles around the emblem
-center and routes clicks to intent signals. The main ring has two variants
+Paints a ring of azure circles around the emblem center and routes clicks to
+intent signals. The soft radial dim behind the ring is a separate click-through
+layer (RadialDimWidget) so it can sit behind the emblem while the buttons stay
+in front of it. The main ring has two variants
 (selected by the ``variant`` ctor arg): transparent mode (Accounts, Window,
 Settings, Back, Exit) and windowed mode (Accounts, Float, Back). Clicking
 Accounts opens the accounts sub-ring (Back plus up to 8 recent accounts rendered
@@ -255,6 +257,54 @@ def _label_pill(p: QPainter, cx: float, cy: float, r: float, text: str, above: b
     p.drawText(rect, Qt.AlignCenter, text)
 
 
+class RadialDimWidget(QWidget):
+    """The radial menu's soft dim backdrop, as its OWN click-through layer.
+
+    Split out from RadialMenuWidget so the dim can sit BEHIND the emblem while
+    the spoke buttons stay in front of it (z-order: cards -> dim -> emblem ->
+    buttons). A true blur of the live windows behind an override-redirect overlay
+    is not feasible; this cached radial vignette is the practical substitute.
+    Purely decorative: it never grabs input."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WA_NoSystemBackground, True)
+        self._vignette = None   # cached full-surface dim, keyed by widget size
+
+    def _ensure_vignette(self) -> None:
+        """(Re)build the cached vignette pixmap when missing or size-stale."""
+        from PySide6.QtGui import QPixmap
+        if self._vignette is not None and self._vignette.size() == self.size():
+            return
+        pm = QPixmap(self.size())
+        pm.fill(Qt.transparent)
+        cx = self.width() / 2.0
+        cy = self.height() / 2.0
+        radius = min(self.width(), self.height()) / 2.0
+        if radius > 0:
+            qp = QPainter(pm)
+            qp.setRenderHint(QPainter.Antialiasing, True)
+            dim = QRadialGradient(QPointF(cx, cy), radius)
+            dim.setColorAt(0.0, QColor(8, 10, 16, 150))
+            dim.setColorAt(0.55, QColor(8, 10, 16, 150))
+            dim.setColorAt(0.88, QColor(8, 10, 16, 0))
+            dim.setColorAt(1.0, QColor(8, 10, 16, 0))
+            qp.setPen(Qt.NoPen)
+            qp.setBrush(QBrush(dim))
+            qp.drawEllipse(QPointF(cx, cy), radius, radius)
+            qp.end()
+        self._vignette = pm
+
+    def paintEvent(self, e):
+        self._ensure_vignette()
+        if self._vignette is not None and not self._vignette.isNull():
+            p = QPainter(self)
+            p.drawPixmap(0, 0, self._vignette)
+            p.end()
+
+
 class RadialMenuWidget(QWidget):
     accounts_requested = Signal()
     home_requested = Signal()
@@ -282,7 +332,6 @@ class RadialMenuWidget(QWidget):
         self._sat_r = self._emblem_dia * 0.40 / 2.0   # satellite = 40% of emblem diameter
         self._ring = self._emblem_dia / 2.0 + 16.0 + self._sat_r   # 16px gap outside the emblem
         self._customizations = customizations
-        self._vignette = None   # cached full-surface dim, keyed by widget size
         self._state = "main"
         self._hover = None          # (state, key) or None
         self._accounts = []         # RingAccount entries for the accounts sub-ring
@@ -600,39 +649,14 @@ class RadialMenuWidget(QWidget):
         self.update()
         super().mouseMoveEvent(e)
 
-    def _ensure_vignette(self) -> None:
-        """(Re)build the cached vignette pixmap when missing or size-stale."""
-        from PySide6.QtGui import QPixmap
-        if self._vignette is not None and self._vignette.size() == self.size():
-            return
-        pm = QPixmap(self.size())
-        pm.fill(Qt.transparent)
-        cx = self.width() / 2.0
-        cy = self.height() / 2.0
-        radius = min(self.width(), self.height()) / 2.0
-        if radius > 0:
-            qp = QPainter(pm)
-            qp.setRenderHint(QPainter.Antialiasing, True)
-            dim = QRadialGradient(QPointF(cx, cy), radius)
-            dim.setColorAt(0.0, QColor(8, 10, 16, 150))
-            dim.setColorAt(0.55, QColor(8, 10, 16, 150))
-            dim.setColorAt(0.88, QColor(8, 10, 16, 0))
-            dim.setColorAt(1.0, QColor(8, 10, 16, 0))
-            qp.setPen(Qt.NoPen)
-            qp.setBrush(QBrush(dim))
-            qp.drawEllipse(QPointF(cx, cy), radius, radius)
-            qp.end()
-        self._vignette = pm
-
     def paintEvent(self, e):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing, True)
-        # Cached soft radial dim (built once per size). True blur of the live
-        # windows behind an override-redirect overlay is not feasible; this
-        # vignette is the practical substitute.
-        self._ensure_vignette()
-        if self._vignette is not None and not self._vignette.isNull():
-            p.drawPixmap(0, 0, self._vignette)
+        # The dim/vignette backdrop is a SEPARATE layer (RadialDimWidget) that
+        # sits behind the emblem; this widget paints only the spoke buttons, in
+        # front of both the dim and the emblem (z-order: cards -> dim -> emblem
+        # -> buttons). See RadialDimWidget and the two hosts (group_controller /
+        # windowed_wheel) for the layering.
         if self._state == "main":
             self._paint_main(p)
         elif self._state == "accounts":
