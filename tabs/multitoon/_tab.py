@@ -32,6 +32,7 @@ from utils.settings_keys import CLICK_SYNC_ENABLED
 from utils.color_math import lighten_rgb
 from utils.widgets.scale_press import ScalePushButton
 from tabs.multitoon._keep_alive_help_button import KeepAliveHelpButton
+from utils.card_dim import dim_pixmap
 
 
 # ── Custom Widgets ─────────────────────────────────────────────────────────
@@ -89,6 +90,9 @@ class ToonPortraitWidget(QWidget):
         super().__init__(parent)
         self._slot    = slot
         self._peek_opacity = 1.0   # extra hover-peek dim factor for the toon image
+        self._dimmed = False
+        self._dim_cache = None        # QPixmap; built lazily while dimmed
+        self._dim_cache_size = None   # QSize the cache was built for
         self._bg      = QColor("#4a4a4a")
         self._text    = QColor("#ffffff")
         self._border_color = None
@@ -148,6 +152,7 @@ class ToonPortraitWidget(QWidget):
     def set_colors(self, bg: str, text: str):
         self._bg   = QColor(bg)
         self._text = QColor(text)
+        self._dim_cache = None
         self.update()
 
     def set_border_color(self, color: str):
@@ -155,6 +160,7 @@ class ToonPortraitWidget(QWidget):
             self._border_color = QColor(color)
         else:
             self._border_color = None
+        self._dim_cache = None
         self.update()
 
     def set_dna(self, dna):
@@ -167,6 +173,7 @@ class ToonPortraitWidget(QWidget):
             self._dna = None
             self._pixmap = None
             self._loading = False
+            self._dim_cache = None
             self.update()
             return
         if dna == self._dna:
@@ -175,6 +182,7 @@ class ToonPortraitWidget(QWidget):
         # Pick pose from the customizations manager if available.
         self._pose = self._resolve_pose_from_manager()
         self._loading = True
+        self._dim_cache = None
         self.update()
         self._fetcher.request(dna, self._pose)
 
@@ -194,6 +202,7 @@ class ToonPortraitWidget(QWidget):
         if self._dna:
             self._pixmap = None
             self._loading = True
+            self._dim_cache = None
             self.update()
             self._fetcher.request(self._dna, pose)
 
@@ -208,6 +217,7 @@ class ToonPortraitWidget(QWidget):
             self._pixmap = pixmap
         else:
             self._pixmap = None
+        self._dim_cache = None   # fetched pixmap changes content -> rebuild dim
         self.update()
 
     def set_cc_mode(self, skin_rgb, accent_rgb, gloves_rgb, emoji):
@@ -228,6 +238,7 @@ class ToonPortraitWidget(QWidget):
             self._cc_accent = None
             self._cc_gloves = None
             self._cc_emoji = ""
+            self._dim_cache = None
             self.update()
             return
         self._cc_mode = True
@@ -235,11 +246,16 @@ class ToonPortraitWidget(QWidget):
         self._cc_accent = QColor.fromRgbF(*(accent_rgb or skin_rgb))
         self._cc_gloves = QColor.fromRgbF(*(gloves_rgb or (1.0, 1.0, 1.0)))
         self._cc_emoji = emoji
+        self._dim_cache = None
         self.update()
 
     def set_customizations_manager(self, manager) -> None:
-        """Inject the ToonCustomizationsManager. Call once after construction."""
+        """Inject the ToonCustomizationsManager (drives portrait lookups)."""
+        if self._customizations is manager:
+            return
         self._customizations = manager
+        self._dim_cache = None
+        self.update()
 
     def set_game(self, game: str | None) -> None:
         """Set the game tag ('cc', 'ttr', or None). Triggers a repaint
@@ -248,6 +264,7 @@ class ToonPortraitWidget(QWidget):
         if self._game == game:
             return
         self._game = game
+        self._dim_cache = None
         self.update()
         if self._dna and self._toon_name and game in ("cc", "ttr"):
             new_pose = self._resolve_pose_from_manager()
@@ -288,6 +305,7 @@ class ToonPortraitWidget(QWidget):
         if self._toon_name == name:
             return
         self._toon_name = name
+        self._dim_cache = None
         self.update()
         if self._dna and name:
             new_pose = self._resolve_pose_from_manager()
@@ -298,6 +316,7 @@ class ToonPortraitWidget(QWidget):
         """Set the auto-detected CC species name (e.g. 'DOG'). Triggers a repaint."""
         if self._cc_auto_species != species_name:
             self._cc_auto_species = species_name
+            self._dim_cache = None
             self.update()
 
     @property
@@ -409,10 +428,48 @@ class ToonPortraitWidget(QWidget):
             self._peek_opacity = opacity
             self.update()
 
+    def set_dimmed(self, on: bool) -> None:
+        on = bool(on)
+        if on == self._dimmed:
+            return
+        self._dimmed = on
+        self._dim_cache = None
+        self.update()
+
+    def resizeEvent(self, event):
+        self._dim_cache = None
+        super().resizeEvent(event)
+
     def paintEvent(self, event):
         p = QPainter(self)
         if self._peek_opacity < 1.0:
             p.setOpacity(self._peek_opacity)
+        if self._dimmed:
+            p.drawPixmap(0, 0, self._dimmed_pixmap())
+        else:
+            self._render_content(p)
+        # Pencil overlay is hover-dependent and must stay LIVE (never cached):
+        # drawn on top in both dim and active paths.
+        rect = self.rect()
+        if self._hovered and self._can_show_pencil():
+            from utils.cc_badge_paint import pencil_rect_for
+            self._paint_pencil_overlay(p, pencil_rect_for(rect))
+        p.end()
+
+    def _dimmed_pixmap(self):
+        size = self.size()
+        if self._dim_cache is not None and self._dim_cache_size == size:
+            return self._dim_cache
+        buf = QPixmap(size)
+        buf.fill(Qt.transparent)
+        bp = QPainter(buf)
+        self._render_content(bp)
+        bp.end()
+        self._dim_cache = dim_pixmap(buf)
+        self._dim_cache_size = size
+        return self._dim_cache
+
+    def _render_content(self, p):
         p.setRenderHint(QPainter.Antialiasing)
         p.setRenderHint(QPainter.SmoothPixmapTransform)
         p.setPen(Qt.NoPen)
@@ -555,14 +612,6 @@ class ToonPortraitWidget(QWidget):
                     p.setFont(font)
                     p.setPen(self._text)
                     p.drawText(self.rect(), Qt.AlignCenter, str(self._slot))
-
-        # Unified pencil overlay: paints in any mode where _can_show_pencil
-        # is True (TTR + CC + future games).
-        if self._hovered and self._can_show_pencil():
-            from utils.cc_badge_paint import pencil_rect_for
-            self._paint_pencil_overlay(p, pencil_rect_for(rect))
-
-        p.end()
 
 class StatusDots(QWidget):
     """Compact 4-dot row: 0=off, 1=found, 2=active."""
