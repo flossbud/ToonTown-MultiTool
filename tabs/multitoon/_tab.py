@@ -1234,6 +1234,17 @@ def _pin_ka_on_qss(fill: str, border: str) -> str:
     )
 
 
+def _ka_fill_border(is_rf: bool, dimmed: bool) -> tuple[str, str]:
+    """The keep-alive ON-state (fill, border) hex names, dimmed at source when
+    the toon's card is inactive (e.g. this toon disabled while others broadcast)."""
+    fill = "#E05252" if is_rf else KA_ORANGE
+    border = "#ef8d8d" if is_rf else KA_ORANGE_BORDER
+    if dimmed:
+        fill = dim_color(QColor(fill)).name()
+        border = dim_color(QColor(border)).name()
+    return fill, border
+
+
 def _pin_cs_chip_qss(border: str) -> str:
     """QSS for the mouse-sync button's dark-chip states (armed/error): a recessed
     chip with a coloured ring, brightening on hover like the off chip."""
@@ -2202,9 +2213,19 @@ class MultitoonTab(QWidget):
         ka_btn.setToolTip("Toggle keep-alive for this toon")
         is_rf = getattr(self, 'rapid_fire_enabled', [False]*4)[index]
         if self.keep_alive_enabled[index] and usable:
-            fill = "#E05252" if is_rf else KA_ORANGE
-            border = "#ef8d8d" if is_rf else KA_ORANGE_BORDER
-            ka_btn.setIcon(make_lightning_icon(13, QColor("#ffffff")))
+            from utils.effects_flags import effects_disabled
+            # window_available and service_running are already guaranteed True by
+            # `usable`; enabled_toons is the only per-toon variable here, so dimmed
+            # means "KA on + service running, but THIS toon disabled".
+            card_active = (
+                window_available and self.enabled_toons[index] and self.service_running
+            )
+            dimmed = (not card_active) and not effects_disabled()
+            fill, border = _ka_fill_border(is_rf, dimmed)
+            # White icon dims via alpha (dim_color on opaque white would just grey
+            # it); ~170 approximates the visual weight of dim_color on the fill.
+            ink = QColor("#ffffff") if not dimmed else QColor(255, 255, 255, 170)
+            ka_btn.setIcon(make_lightning_icon(13, ink))
             ka_btn.setStyleSheet(_pin_ka_on_qss(fill, border))
             if bar:
                 bar.set_fill_color(fill)
