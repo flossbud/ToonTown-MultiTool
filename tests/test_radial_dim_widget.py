@@ -31,3 +31,25 @@ def test_dim_frame_monotonic_opacity():
     from utils.overlay.radial_menu import _dim_frame
     vals = [_dim_frame(t)[0] for t in (0.0, 0.25, 0.5, 0.75, 1.0)]
     assert all(b >= a for a, b in zip(vals, vals[1:]))
+
+
+def test_radial_anim_enabled_off_when_kill_switch(monkeypatch):
+    monkeypatch.setenv("TTMT_NO_RADIAL_ANIM", "1")
+    from utils.overlay.radial_menu import radial_anim_enabled
+    assert radial_anim_enabled() is False
+
+
+def test_radial_anim_enabled_off_when_reduced_motion(monkeypatch):
+    monkeypatch.delenv("TTMT_NO_RADIAL_ANIM", raising=False)
+    import utils.motion as motion
+    monkeypatch.setattr(motion, "is_reduced", lambda: True)
+    from utils.overlay.radial_menu import radial_anim_enabled
+    assert radial_anim_enabled() is False
+
+
+def test_radial_anim_enabled_on_by_default(monkeypatch):
+    monkeypatch.delenv("TTMT_NO_RADIAL_ANIM", raising=False)
+    import utils.motion as motion
+    monkeypatch.setattr(motion, "is_reduced", lambda: False)
+    from utils.overlay.radial_menu import radial_anim_enabled
+    assert radial_anim_enabled() is True

@@ -75,6 +75,19 @@ def _dim_frame(progress: float) -> tuple:
     return eased, _lerp(0.12, 1.0, eased)
 
 
+def radial_anim_enabled() -> bool:
+    """True when ring animations should run: the TTMT_NO_RADIAL_ANIM kill switch
+    is off AND reduce-motion is off. Mirrors RadialMenuWidget's env gate and
+    additionally honors the project's reduce-motion preference for the backdrop."""
+    if os.environ.get("TTMT_NO_RADIAL_ANIM") in ("1", "true", "yes", "on"):
+        return False
+    try:
+        from utils.motion import is_reduced
+        return not is_reduced()
+    except Exception:
+        return True
+
+
 # --- glyph + disc painters (azure theme matching the emblem) ------------------
 
 def _disc(p: QPainter, cx: float, cy: float, r: float, hot: bool = False,
