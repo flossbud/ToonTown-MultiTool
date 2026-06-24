@@ -462,11 +462,20 @@ class ToonPortraitWidget(QWidget):
         elif prog >= 1.0:
             p.drawPixmap(0, 0, self._dimmed_pixmap())
         else:
-            # Cross-fade: lit underneath, dim pixmap on top at opacity = progress.
-            # Both are the same content (one filtered), so this is a per-pixel
-            # lit->dim blend. peek_opacity already applied to `p` above.
-            self._render_content(p)
+            # TRUE cross-fade: fade the lit toon OUT as the dim toon fades IN.
+            # The previous version drew the lit toon at FULL (base) opacity and
+            # only the dim pixmap at base*prog; that is linear only at base==1.0.
+            # Under transparent/float hover-peek (base < 1.0) the dim overlay's
+            # opacity maxes at base*prog and can never fully cover the lit toon,
+            # so the lit showed through the whole fade and the portrait only
+            # reached full dim in a jump at prog==1 -- making it lag the body
+            # (which color-lerps linearly at any opacity). Fading the lit out by
+            # (1-prog) makes the portrait dim linearly at ANY opacity, in unison
+            # with the rest of the card. base==1.0 (windowed) is unchanged in
+            # appearance. peek_opacity already applied to `p` above (base_op).
             base_op = p.opacity()
+            p.setOpacity(base_op * (1.0 - prog))
+            self._render_content(p)
             p.setOpacity(base_op * prog)
             p.drawPixmap(0, 0, self._dimmed_pixmap())
             p.setOpacity(base_op)
