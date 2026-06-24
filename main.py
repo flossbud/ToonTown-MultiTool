@@ -2191,6 +2191,10 @@ if __name__ == "__main__":
         "use_system_title_bar": bool(window.settings_manager.get("use_system_title_bar", False)),
         "qt_version": _QLI.version().toString() if hasattr(_QLI, "version") else "",
     })
+    # Honor "Start in Float UI mode": enter the overlay now, before the event
+    # loop's first paint, so the windowed UI does not flash before minimizing.
+    # No-op (and never raises) when the setting is off or Float UI is unsupported.
+    window._maybe_enter_float_mode_at_startup()
     _lock_cc_prefs_silently()
     # macOS first-run permission onboarding. Fired POST-show (so --self-check,
     # which exits before this block and never shows the window, never triggers
