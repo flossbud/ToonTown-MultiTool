@@ -120,3 +120,18 @@ def test_begin_close_emits_closing(monkeypatch):
     w.start_reveal()
     w._begin_close()
     assert seen == [1]
+
+
+def test_windowed_show_centered_frosts_and_collapses(monkeypatch):
+    monkeypatch.setenv("TTMT_NO_RADIAL_ANIM", "1")   # snap reveal/close
+    _app()
+    from utils.overlay.windowed_wheel import WindowedWheelHost
+    parent, emblem = _fixture()
+    emblem.raise_()
+    host = WindowedWheelHost(parent, emblem, emblem_diameter=120)
+    host.show_centered()
+    assert host._dim is not None
+    assert host._dim._frost is not None        # a frost composite was baked
+    assert host._dim.progress == 1.0           # reveal snapped to shown
+    host.menu.closing.emit()                   # fly-back begins
+    assert host._dim.progress == 0.0           # dim collapses in step
