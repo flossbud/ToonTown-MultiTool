@@ -829,6 +829,34 @@ class SettingsTab(QWidget):
         tb_field.set_control(tb_switch)
         appearance.add_field(tb_field)
 
+        # Start in Float UI mode: open straight into the transparent overlay at
+        # launch. Disabled (with the standard explanation) where Float UI is
+        # unsupported, so it never looks broken on non-X11 / no-Shape systems.
+        from utils.settings_keys import START_IN_FLOAT_UI_MODE
+        from utils.overlay.backend import get_overlay_backend
+        try:
+            float_available = bool(get_overlay_backend().is_available())
+        except Exception:
+            float_available = False
+        float_enabled = bool(self.settings_manager.get(START_IN_FLOAT_UI_MODE, False))
+        float_field = SettingsField(
+            "Start in Float UI mode",
+            helper="Open straight into the floating overlay instead of the "
+                   "windowed UI when the app launches.",
+        )
+        float_switch = Switch(float_enabled)
+        float_switch.setObjectName("start_in_float_ui_switch")
+        if float_available:
+            float_switch.toggled.connect(
+                lambda v: self.settings_manager.set(START_IN_FLOAT_UI_MODE, v)
+            )
+        else:
+            float_switch.setEnabled(False)
+            float_switch.setToolTip("Float UI requires the X11 Shape extension")
+            float_field.setToolTip("Float UI requires the X11 Shape extension")
+        float_field.set_control(float_switch)
+        appearance.add_field(float_field)
+
         lay.insertWidget(insert_at, appearance)
         insert_at += 1
 

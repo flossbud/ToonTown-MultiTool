@@ -96,3 +96,48 @@ def test_hook_noop_when_already_active():
     stub = _make_stub(enabled=True, available=True, active=True)
     assert MultiToonTool._maybe_enter_float_mode_at_startup(stub) is False
     assert stub._mode_controller.enter_calls == 0
+
+
+def _patch_backend(monkeypatch, available):
+    import utils.overlay.backend as backend_mod
+    class _StubBackend:
+        def is_available(self): return available
+    monkeypatch.setattr(backend_mod, "get_overlay_backend", lambda: _StubBackend())
+
+
+def _build_settings_tab(isolated_config):
+    from PySide6.QtWidgets import QWidget
+    from tabs.settings_tab import SettingsTab
+    from utils.settings_manager import SettingsManager
+    tab = SettingsTab(SettingsManager())
+    sw = tab.findChild(QWidget, "start_in_float_ui_switch")
+    return tab, sw
+
+
+def test_settings_switch_present_and_reflects_stored_value(isolated_config, monkeypatch):
+    _app()
+    _patch_backend(monkeypatch, available=True)
+    from utils.settings_keys import START_IN_FLOAT_UI_MODE
+    from utils.settings_manager import SettingsManager
+    SettingsManager().set(START_IN_FLOAT_UI_MODE, True)   # pre-store ON
+    tab, sw = _build_settings_tab(isolated_config)
+    assert sw is not None, "Start in Float UI switch missing from General page"
+    assert sw.isEnabled() is True
+    assert sw.isChecked() is True
+
+
+def test_settings_switch_defaults_unchecked_when_unset(isolated_config, monkeypatch):
+    _app()
+    _patch_backend(monkeypatch, available=True)
+    tab, sw = _build_settings_tab(isolated_config)
+    assert sw is not None
+    assert sw.isChecked() is False
+
+
+def test_settings_switch_disabled_when_backend_unavailable(isolated_config, monkeypatch):
+    _app()
+    _patch_backend(monkeypatch, available=False)
+    tab, sw = _build_settings_tab(isolated_config)
+    assert sw is not None
+    assert sw.isEnabled() is False
+    assert "Shape extension" in sw.toolTip()
