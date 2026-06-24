@@ -524,3 +524,28 @@ class TestRadialDim:
         monkeypatch.setattr(QGuiApplication, "primaryScreen",
                             staticmethod(lambda *a, **k: None))
         assert ctl._grab_backdrop(QRect(0, 0, 100, 100)) is None
+
+    def test_grab_backdrop_none_when_pixmap_null(self, qapp, monkeypatch):
+        ctl, factory, win = _make()
+        from PySide6.QtGui import QGuiApplication, QPixmap
+        from PySide6.QtCore import QRect
+        class _FakeScreen:
+            def grabWindow(self, *a, **k):
+                return QPixmap()             # null pixmap
+        monkeypatch.setattr(QGuiApplication, "screenAt",
+                            staticmethod(lambda *a, **k: _FakeScreen()))
+        assert ctl._grab_backdrop(QRect(0, 0, 100, 100)) is None
+
+    def test_collapse_dim_noop_when_no_widget(self, qapp):
+        ctl, factory, win = _make()
+        ctl._collapse_dim()                  # _dim_widget is None -> must not raise
+
+    def test_collapse_dim_calls_start_close_on_widget(self, qapp):
+        ctl, factory, win = _make()
+        calls = []
+        class _StubDimWidget:
+            def start_close(self, animate=True):
+                calls.append(animate)
+        ctl._dim_widget = _StubDimWidget()
+        ctl._collapse_dim()
+        assert calls, "start_close was not called"
