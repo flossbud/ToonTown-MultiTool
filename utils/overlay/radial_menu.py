@@ -329,6 +329,7 @@ class RadialDimWidget(QWidget):
         self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WA_NoSystemBackground, True)
+        self._raw = None            # source region pixmap (kept for lazy rebuild)
         self._frost = None          # cached composite (blurred backdrop + veil + mask)
         self._progress = 0.0
         self._anim = None           # QVariantAnimation while reveal/close runs
@@ -336,7 +337,11 @@ class RadialDimWidget(QWidget):
     # --- backdrop -----------------------------------------------------------
     def set_backdrop(self, raw) -> None:
         """Bake the cached frost composite from a raw region pixmap, or a
-        veil-only composite when ``raw`` is None/empty (graceful fallback)."""
+        veil-only composite when ``raw`` is None/empty (graceful fallback). The
+        source is retained so paintEvent can rebuild lazily if the widget is still
+        0-size / pre-layout now (the overlay surface may not have propagated
+        geometry yet); the build is skipped here and retried on first paint."""
+        self._raw = raw
         self._frost = self._build_frost(raw)
         self.update()
 
@@ -395,6 +400,12 @@ class RadialDimWidget(QWidget):
     progress = Property(float, _get_progress, _set_progress)
 
     def paintEvent(self, e):
+        # Lazy (re)build: set_backdrop may have run while the widget was still
+        # 0-size / pre-layout (the overlay surface doesn't propagate geometry
+        # synchronously), leaving _frost None. By first paint the widget has its
+        # real size, so rebuild then; also rebuild if the size changed under us.
+        if self._frost is None or self._frost.size() != self.size():
+            self._frost = self._build_frost(self._raw)
         if self._frost is None or self._frost.isNull():
             return
         opacity, scale = _dim_frame(self._progress)

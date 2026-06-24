@@ -88,6 +88,21 @@ def test_set_backdrop_pixmap_builds_frost():
     assert w._frost is not None and not w._frost.isNull()
 
 
+def test_frost_rebuilds_when_size_unset_at_set_backdrop():
+    _app()
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QPixmap
+    from utils.overlay.radial_menu import RadialDimWidget
+    w = RadialDimWidget(); w.resize(0, 0)        # 0x0 / pre-layout at set_backdrop time
+    raw = QPixmap(50, 50); raw.fill(Qt.red)
+    w.set_backdrop(raw)
+    assert w._frost is None                      # nothing built at 0x0
+    w.resize(200, 200)
+    w.progress = 1.0
+    pm = QPixmap(w.size()); pm.fill(Qt.transparent); w.render(pm)   # lazy rebuild on paint
+    assert w._frost is not None and w._frost.size().width() == 200
+
+
 def test_reveal_and_close_snap_when_not_animated():
     _app()
     from utils.overlay.radial_menu import RadialDimWidget
