@@ -99,3 +99,14 @@ GHOST_CURSORS_ENABLED = "click_sync_ghost_cursors"
 # cursor. Driven by a live user click on the app's own UI, so default ON; gated
 # at runtime on GHOST_CURSORS_ENABLED too.
 GHOST_CURSORS_CONTROL_CARDS = "click_sync_ghost_control_cards"
+
+# Start in Float UI mode (added 2026-06-24): open directly into the transparent
+# overlay at launch instead of the windowed UI. Default OFF (explicit opt-in).
+# Read at startup by main.py; written by the General -> Appearance toggle.
+START_IN_FLOAT_UI_MODE = "start_in_float_ui_mode"
+
+# Float UI startup crash-loop breaker (added 2026-06-24): set just before the
+# startup auto-enter and cleared right after it returns. If a launch finds it
+# already set, the previous auto-enter crashed/hung mid-enter, so Float UI is
+# skipped that launch (fall back to the windowed UI + a one-time notice).
+FLOAT_UI_STARTUP_PENDING = "float_ui_startup_pending"

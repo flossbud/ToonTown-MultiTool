@@ -569,6 +569,74 @@ class MultiToonTool(QMainWindow):
         # no separate full layout to warm.
         self._maybe_show_admin_notice()
 
+    def _maybe_enter_float_mode_at_startup(self) -> bool:
+        """Enter Float UI once at startup if the user opted in and it is supported.
+
+        Returns True only if it actually entered. No-op (returns False) when the
+        setting is off, the overlay backend is unavailable (non-X11 / no Shape
+        extension), or the controller is already active. Fully guarded: a startup
+        convenience must never block app launch, so any error falls through to
+        False.
+
+        Crash-loop breaker: a sentinel is persisted to disk just before the enter
+        and cleared right after it returns. A launch that finds the sentinel still
+        set means the previous startup enter never returned (hard crash/hang), so
+        Float UI is skipped that launch and a one-time notice is armed."""
+        from utils.settings_keys import (
+            START_IN_FLOAT_UI_MODE, FLOAT_UI_STARTUP_PENDING,
+        )
+        try:
+            if not self.settings_manager.get(START_IN_FLOAT_UI_MODE, False):
+                return False
+            controller = getattr(self, "_mode_controller", None)
+            backend = getattr(self, "_overlay_backend", None)
+            if controller is None or backend is None or not backend.is_available():
+                return False
+            if controller.is_active:
+                return False
+            if self.settings_manager.get(FLOAT_UI_STARTUP_PENDING, False):
+                # Previous auto-enter never cleared this: it crashed/hung. Skip
+                # Float UI this launch, clear the flag, and arm the notice.
+                self.settings_manager.set(FLOAT_UI_STARTUP_PENDING, False)
+                self._float_startup_recovered = True
+                return False
+            # Persisted to disk now, so a crash inside enter() leaves it set.
+            self.settings_manager.set(FLOAT_UI_STARTUP_PENDING, True)
+            try:
+                return bool(controller.enter())
+            finally:
+                # Runs on success AND on a (caught) Python exception, but NOT on a
+                # hard crash - which is exactly the case the breaker must catch.
+                self.settings_manager.set(FLOAT_UI_STARTUP_PENDING, False)
+        except Exception:
+            try:
+                self.settings_manager.set(FLOAT_UI_STARTUP_PENDING, False)
+            except Exception:
+                pass
+            return False
+
+    def _maybe_notify_float_startup_recovered(self) -> None:
+        """Show a one-time, non-blocking notice when the crash-loop breaker tripped
+        this launch (Float UI was skipped after a prior unclean auto-enter)."""
+        if not getattr(self, "_float_startup_recovered", False):
+            return
+        self._float_startup_recovered = False
+        try:
+            from PySide6.QtWidgets import QMessageBox
+            box = QMessageBox(self)
+            box.setIcon(QMessageBox.Information)
+            box.setWindowTitle("Float UI")
+            box.setText(
+                "Float UI didn't start cleanly last time, so the app opened in "
+                "the normal window. You can turn 'Start in Float UI mode' back on "
+                "in Settings."
+            )
+            box.setStandardButtons(QMessageBox.Ok)
+            box.setWindowModality(Qt.NonModal)
+            box.show()
+        except Exception:
+            pass
+
     def _capture_multitool_window_id(self):
         # xdotool is X11-only; the gate is on the Qt platform, not the
         # session type. With the default QT_QPA_PLATFORM=xcb on Linux,
@@ -2169,6 +2237,11 @@ if __name__ == "__main__":
         "use_system_title_bar": bool(window.settings_manager.get("use_system_title_bar", False)),
         "qt_version": _QLI.version().toString() if hasattr(_QLI, "version") else "",
     })
+    # Honor "Start in Float UI mode": enter the overlay now, before the event
+    # loop's first paint, so the windowed UI does not flash before minimizing.
+    # No-op (and never raises) when the setting is off or Float UI is unsupported.
+    window._maybe_enter_float_mode_at_startup()
+    QTimer.singleShot(0, window._maybe_notify_float_startup_recovered)
     _lock_cc_prefs_silently()
     # macOS first-run permission onboarding. Fired POST-show (so --self-check,
     # which exits before this block and never shows the window, never triggers
