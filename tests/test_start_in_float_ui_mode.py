@@ -40,9 +40,13 @@ def test_key_round_trips_across_instances(isolated_config):
 
 
 class _FakeSettings:
-    def __init__(self, store): self._store = dict(store)
+    def __init__(self, store):
+        self._store = dict(store)
+        self.history = []
     def get(self, key, default=None): return self._store.get(key, default)
-    def set(self, key, value): self._store[key] = value
+    def set(self, key, value):
+        self._store[key] = value
+        self.history.append((key, value))
 
 
 class _FakeBackend:
@@ -51,22 +55,32 @@ class _FakeBackend:
 
 
 class _FakeController:
-    def __init__(self, active=False, enter_returns=True):
+    def __init__(self, active=False, enter_returns=True, settings=None):
         self._active = active
         self._enter_returns = enter_returns
+        self._settings = settings
         self.enter_calls = 0
+        self.pending_seen_during_enter = None
     @property
     def is_active(self): return self._active
     def enter(self):
         self.enter_calls += 1
+        if self._settings is not None:
+            self.pending_seen_during_enter = self._settings.get(
+                "float_ui_startup_pending", False)
         return self._enter_returns
 
 
-def _make_stub(enabled, available, active):
+def _make_stub(enabled, available, active, enter_returns=True, pending=False):
+    settings = _FakeSettings({
+        "start_in_float_ui_mode": enabled,
+        "float_ui_startup_pending": pending,
+    })
     return types.SimpleNamespace(
-        settings_manager=_FakeSettings({"start_in_float_ui_mode": enabled}),
+        settings_manager=settings,
         _overlay_backend=_FakeBackend(available),
-        _mode_controller=_FakeController(active=active),
+        _mode_controller=_FakeController(
+            active=active, enter_returns=enter_returns, settings=settings),
     )
 
 
@@ -96,6 +110,38 @@ def test_hook_noop_when_already_active():
     stub = _make_stub(enabled=True, available=True, active=True)
     assert MultiToonTool._maybe_enter_float_mode_at_startup(stub) is False
     assert stub._mode_controller.enter_calls == 0
+
+
+def test_breaker_sets_pending_during_enter_and_clears_after():
+    from main import MultiToonTool
+    stub = _make_stub(enabled=True, available=True, active=False)
+    assert MultiToonTool._maybe_enter_float_mode_at_startup(stub) is True
+    # The flag was set on disk WHILE enter() ran (so it survives a crash mid-enter)
+    assert stub._mode_controller.pending_seen_during_enter is True
+    # ...and cleared once enter() returned cleanly.
+    assert stub.settings_manager.get("float_ui_startup_pending", False) is False
+    assert getattr(stub, "_float_startup_recovered", False) is False
+
+
+def test_breaker_trips_when_pending_already_set():
+    from main import MultiToonTool
+    stub = _make_stub(enabled=True, available=True, active=False, pending=True)
+    assert MultiToonTool._maybe_enter_float_mode_at_startup(stub) is False
+    assert stub._mode_controller.enter_calls == 0          # did NOT re-enter
+    assert stub._float_startup_recovered is True            # one-time notice armed
+    # Flag cleared so a later launch can retry.
+    assert stub.settings_manager.get("float_ui_startup_pending", False) is False
+
+
+def test_breaker_clears_pending_on_clean_enter_failure():
+    from main import MultiToonTool
+    stub = _make_stub(enabled=True, available=True, active=False, enter_returns=False)
+    assert MultiToonTool._maybe_enter_float_mode_at_startup(stub) is False
+    assert stub._mode_controller.enter_calls == 1
+    # A clean enter() failure is not a crash: clear the flag so the next launch
+    # retries instead of tripping the breaker.
+    assert stub.settings_manager.get("float_ui_startup_pending", False) is False
+    assert getattr(stub, "_float_startup_recovered", False) is False
 
 
 def _patch_backend(monkeypatch, available):
