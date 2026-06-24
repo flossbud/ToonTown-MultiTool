@@ -53,3 +53,35 @@ def test_radial_anim_enabled_on_by_default(monkeypatch):
     monkeypatch.setattr(motion, "is_reduced", lambda: False)
     from utils.overlay.radial_menu import radial_anim_enabled
     assert radial_anim_enabled() is True
+
+
+def test_set_backdrop_none_builds_veil_only_and_paints():
+    _app()
+    from PySide6.QtGui import QPixmap
+    from utils.overlay.radial_menu import RadialDimWidget
+    w = RadialDimWidget(); w.resize(200, 200)
+    w.set_backdrop(None)
+    w.progress = 1.0
+    pm = QPixmap(w.size()); w.render(pm)   # paintEvent must not raise
+    assert w._frost is not None and not w._frost.isNull()
+
+
+def test_set_backdrop_pixmap_builds_frost():
+    _app()
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QPixmap
+    from utils.overlay.radial_menu import RadialDimWidget
+    w = RadialDimWidget(); w.resize(200, 200)
+    raw = QPixmap(200, 200); raw.fill(Qt.red)
+    w.set_backdrop(raw)
+    assert w._frost is not None and not w._frost.isNull()
+
+
+def test_reveal_and_close_snap_when_not_animated():
+    _app()
+    from utils.overlay.radial_menu import RadialDimWidget
+    w = RadialDimWidget(); w.resize(200, 200); w.set_backdrop(None)
+    w.start_reveal(animate=False)
+    assert w.progress == 1.0
+    w.start_close(animate=False)
+    assert w.progress == 0.0

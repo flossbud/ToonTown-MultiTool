@@ -402,18 +402,15 @@ def test_refined_painters_paint_without_crash():
     p.end()
 
 
-def test_vignette_is_cached_and_rebuilt_on_size_change():
+def test_frost_is_built_by_set_backdrop_and_matches_widget_size():
     _app()
     from utils.overlay.radial_menu import RadialDimWidget
     w = RadialDimWidget(); w.resize(400, 400)
-    w._ensure_vignette()
-    first = w._vignette
-    assert first is not None and first.size().width() == 400
-    w._ensure_vignette()
-    assert w._vignette is first              # same size -> cached, not rebuilt
+    w.set_backdrop(None)
+    assert w._frost is not None and w._frost.size().width() == 400
     w.resize(500, 500)
-    w._ensure_vignette()
-    assert w._vignette is not first and w._vignette.size().width() == 500
+    w.set_backdrop(None)
+    assert w._frost is not None and w._frost.size().width() == 500
 
 
 def test_radial_menu_widget_no_longer_owns_the_dim():
