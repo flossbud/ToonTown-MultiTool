@@ -37,3 +37,62 @@ def test_key_round_trips_across_instances(isolated_config):
     m1.set(START_IN_FLOAT_UI_MODE, True)
     m2 = SettingsManager()
     assert m2.get(START_IN_FLOAT_UI_MODE, False) is True
+
+
+class _FakeSettings:
+    def __init__(self, store): self._store = dict(store)
+    def get(self, key, default=None): return self._store.get(key, default)
+    def set(self, key, value): self._store[key] = value
+
+
+class _FakeBackend:
+    def __init__(self, available): self._available = available
+    def is_available(self): return self._available
+
+
+class _FakeController:
+    def __init__(self, active=False, enter_returns=True):
+        self._active = active
+        self._enter_returns = enter_returns
+        self.enter_calls = 0
+    @property
+    def is_active(self): return self._active
+    def enter(self):
+        self.enter_calls += 1
+        return self._enter_returns
+
+
+def _make_stub(enabled, available, active):
+    return types.SimpleNamespace(
+        settings_manager=_FakeSettings({"start_in_float_ui_mode": enabled}),
+        _overlay_backend=_FakeBackend(available),
+        _mode_controller=_FakeController(active=active),
+    )
+
+
+def test_hook_enters_when_enabled_available_and_inactive():
+    from main import MultiToonTool
+    stub = _make_stub(enabled=True, available=True, active=False)
+    assert MultiToonTool._maybe_enter_float_mode_at_startup(stub) is True
+    assert stub._mode_controller.enter_calls == 1
+
+
+def test_hook_noop_when_disabled():
+    from main import MultiToonTool
+    stub = _make_stub(enabled=False, available=True, active=False)
+    assert MultiToonTool._maybe_enter_float_mode_at_startup(stub) is False
+    assert stub._mode_controller.enter_calls == 0
+
+
+def test_hook_noop_when_backend_unavailable():
+    from main import MultiToonTool
+    stub = _make_stub(enabled=True, available=False, active=False)
+    assert MultiToonTool._maybe_enter_float_mode_at_startup(stub) is False
+    assert stub._mode_controller.enter_calls == 0
+
+
+def test_hook_noop_when_already_active():
+    from main import MultiToonTool
+    stub = _make_stub(enabled=True, available=True, active=True)
+    assert MultiToonTool._maybe_enter_float_mode_at_startup(stub) is False
+    assert stub._mode_controller.enter_calls == 0

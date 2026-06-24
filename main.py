@@ -569,6 +569,28 @@ class MultiToonTool(QMainWindow):
         # no separate full layout to warm.
         self._maybe_show_admin_notice()
 
+    def _maybe_enter_float_mode_at_startup(self) -> bool:
+        """Enter Float UI once at startup if the user opted in and it is supported.
+
+        Returns True only if it actually entered. No-op (returns False) when the
+        setting is off, the overlay backend is unavailable (non-X11 / no Shape
+        extension), or the controller is already active. Fully guarded: a startup
+        convenience must never block app launch, so any error falls through to
+        False."""
+        from utils.settings_keys import START_IN_FLOAT_UI_MODE
+        try:
+            if not self.settings_manager.get(START_IN_FLOAT_UI_MODE, False):
+                return False
+            controller = getattr(self, "_mode_controller", None)
+            backend = getattr(self, "_overlay_backend", None)
+            if controller is None or backend is None or not backend.is_available():
+                return False
+            if controller.is_active:
+                return False
+            return bool(controller.enter())
+        except Exception:
+            return False
+
     def _capture_multitool_window_id(self):
         # xdotool is X11-only; the gate is on the Qt platform, not the
         # session type. With the default QT_QPA_PLATFORM=xcb on Linux,
