@@ -67,6 +67,14 @@ def _ease_spring(t: float) -> float:
     return 1.0 + c3 * (t - 1.0) ** 3 + c1 * (t - 1.0) ** 2
 
 
+def _dim_frame(progress: float) -> tuple:
+    """(opacity, scale) for the frosted dim backdrop at animation progress in
+    [0,1]. Opacity drives the fade + focus-pull (a blurred copy fades in over the
+    live sharp content); scale drives the iris-expand from the emblem center."""
+    eased = _ease_out(_clamp01(progress))
+    return eased, _lerp(0.12, 1.0, eased)
+
+
 # --- glyph + disc painters (azure theme matching the emblem) ------------------
 
 def _disc(p: QPainter, cx: float, cy: float, r: float, hot: bool = False,
