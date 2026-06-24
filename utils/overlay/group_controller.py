@@ -568,6 +568,12 @@ class OverlayGroupController:
             except Exception:
                 pass
             emblem.raise_()
+        # The portable Settings panel floats ABOVE the emblem so the emblem never
+        # pops over an open panel. Re-raise the panel after every emblem raise
+        # (the timer, card-show paths, _place_all) so it stays on top; the user
+        # can drag the panel aside to reach the emblem underneath.
+        if self._panel_surface is not None:
+            self._safe_call(self._panel_surface, "raise_")
 
     # ------------------------------------------------------------------
     # Hover-peek detection (transparent mode)
