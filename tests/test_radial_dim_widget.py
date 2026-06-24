@@ -33,6 +33,12 @@ def test_dim_frame_monotonic_opacity():
     assert all(b >= a for a, b in zip(vals, vals[1:]))
 
 
+def test_dim_frame_monotonic_scale():
+    from utils.overlay.radial_menu import _dim_frame
+    vals = [_dim_frame(t)[1] for t in (0.0, 0.25, 0.5, 0.75, 1.0)]
+    assert all(b >= a for a, b in zip(vals, vals[1:]))
+
+
 def test_radial_anim_enabled_off_when_kill_switch(monkeypatch):
     monkeypatch.setenv("TTMT_NO_RADIAL_ANIM", "1")
     from utils.overlay.radial_menu import radial_anim_enabled
@@ -57,13 +63,18 @@ def test_radial_anim_enabled_on_by_default(monkeypatch):
 
 def test_set_backdrop_none_builds_veil_only_and_paints():
     _app()
-    from PySide6.QtGui import QPixmap
+    from PySide6.QtGui import QImage
+    from PySide6.QtCore import QPoint
+    from PySide6.QtGui import QColor
     from utils.overlay.radial_menu import RadialDimWidget
     w = RadialDimWidget(); w.resize(200, 200)
     w.set_backdrop(None)
     w.progress = 1.0
-    pm = QPixmap(w.size()); w.render(pm)   # paintEvent must not raise
     assert w._frost is not None and not w._frost.isNull()
+    img = QImage(w.size(), QImage.Format_ARGB32)
+    img.fill(QColor(0, 0, 0, 0))
+    w.render(img, QPoint(0, 0))   # paintEvent must not raise
+    assert img.pixelColor(100, 100).alpha() > 0   # the veil actually painted
 
 
 def test_set_backdrop_pixmap_builds_frost():
@@ -85,6 +96,18 @@ def test_reveal_and_close_snap_when_not_animated():
     assert w.progress == 1.0
     w.start_close(animate=False)
     assert w.progress == 0.0
+
+
+def test_reveal_animate_true_starts_animation():
+    _app()
+    from PySide6.QtCore import QAbstractAnimation
+    from utils.overlay.radial_menu import RadialDimWidget
+    w = RadialDimWidget(); w.resize(200, 200); w.set_backdrop(None)
+    w.start_reveal(animate=True)
+    assert w._anim is not None
+    assert w._anim.state() == QAbstractAnimation.Running
+    w._stop_anim()   # clean up
+    assert w._anim is None
 
 
 def test_begin_close_emits_closing(monkeypatch):

@@ -17,7 +17,7 @@ import math
 import os
 
 from PySide6.QtCore import (Qt, QRectF, QPointF, Signal, QTimer, QElapsedTimer,
-                            Property)
+                            Property, QEasingCurve, QVariantAnimation)
 from PySide6.QtGui import (QPainter, QColor, QBrush, QPen, QLinearGradient,
                            QRadialGradient, QPainterPath, QFont, QPolygonF)
 from PySide6.QtWidgets import QWidget
@@ -25,6 +25,9 @@ from PySide6.QtWidgets import QWidget
 from utils.radial_menu_layout import (MAIN_RING_ANGLES, WINDOWED_RING_ANGLES,
                                        account_ring_angles, polar_point)
 from utils.image_blur import gaussian_blur_pixmap
+
+_OUT_CUBIC = QEasingCurve.OutCubic
+_IN_CUBIC = QEasingCurve.InCubic
 
 _MAIN_KEYS_BY_VARIANT = {
     "transparent": ("accounts", "home", "settings", "close", "exit"),
@@ -88,11 +91,6 @@ def radial_anim_enabled() -> bool:
         return not is_reduced()
     except Exception:
         return True
-
-
-from PySide6.QtCore import QEasingCurve as _QEasingCurve
-_OUT_CUBIC = _QEasingCurve.OutCubic
-_IN_CUBIC = _QEasingCurve.InCubic
 
 
 # --- glyph + disc painters (azure theme matching the emblem) ------------------
@@ -432,7 +430,6 @@ class RadialDimWidget(QWidget):
         self._run_anim(self._progress, 0.0, self._CLOSE_MS, _IN_CUBIC)
 
     def _run_anim(self, start, end, ms, curve) -> None:
-        from PySide6.QtCore import QVariantAnimation
         anim = QVariantAnimation(self)
         anim.setStartValue(float(start))
         anim.setEndValue(float(end))
@@ -449,6 +446,7 @@ class RadialDimWidget(QWidget):
         if a is not None:
             try:
                 a.stop()
+                a.deleteLater()   # don't accumulate self-owned anims across opens
             except Exception:
                 pass
 
