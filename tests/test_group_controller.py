@@ -195,6 +195,27 @@ class TestEnter:
         )
         assert raise_idx > last_card_show
 
+    def test_open_panel_keeps_panel_above_emblem(self, qapp):
+        """With the portable Settings panel open, every emblem raise is followed
+        by a panel raise so the emblem never pops over the open panel."""
+        ctl, factory, win = _make()
+        ctl.enter()
+        panel = _StubSurface("panel", factory.events)
+        ctl._panel_surface = panel
+        factory.events.clear()
+        ctl._raise_emblem()
+        raises = [k for (k, m) in factory.events if m == "raise_"]
+        assert raises == ["emblem", "panel"], raises
+
+    def test_no_panel_leaves_emblem_on_top(self, qapp):
+        """Without a panel open the emblem stays the topmost surface (no regression)."""
+        ctl, factory, win = _make()
+        ctl.enter()
+        factory.events.clear()
+        ctl._raise_emblem()
+        raises = [k for (k, m) in factory.events if m == "raise_"]
+        assert raises == ["emblem"], raises
+
 
 # ---------------------------------------------------------------------------
 # set_scale_by_notches()
