@@ -462,6 +462,7 @@ class RadialMenuWidget(QWidget):
     exit_requested = Signal()
     back_requested = Signal()
     account_clicked = Signal(str)
+    closing = Signal()           # fly-back begun (all dismiss paths) -> dim collapse
 
     _IDLE_MS = 15000
     _APPEAR_MS = 360
@@ -574,6 +575,7 @@ class RadialMenuWidget(QWidget):
         if self._closing:
             return
         self._idle_timer.stop()
+        self.closing.emit()
         if not self._anim_enabled:
             # Synchronous close, but still latch the close flags so the guards
             # above and in activate_at hold (keeps _begin_close idempotent in

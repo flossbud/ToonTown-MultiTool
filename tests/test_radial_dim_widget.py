@@ -85,3 +85,15 @@ def test_reveal_and_close_snap_when_not_animated():
     assert w.progress == 1.0
     w.start_close(animate=False)
     assert w.progress == 0.0
+
+
+def test_begin_close_emits_closing(monkeypatch):
+    monkeypatch.setenv("TTMT_NO_RADIAL_ANIM", "1")   # synchronous close path
+    _app()
+    from utils.overlay.radial_menu import RadialMenuWidget
+    w = RadialMenuWidget(emblem_diameter=160); w.resize(400, 400)
+    seen = []
+    w.closing.connect(lambda: seen.append(1))
+    w.start_reveal()
+    w._begin_close()
+    assert seen == [1]
