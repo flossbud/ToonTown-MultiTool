@@ -507,3 +507,20 @@ class TestRadialDim:
         ctl._teardown_dim()
         assert ctl._dim_surface is None and ctl._dim_size == 0
         ctl._teardown_dim()                  # again -> still safe
+
+    def test_teardown_dim_clears_widget_ref(self, qapp):
+        ctl, factory, win = _make()
+        ctl._dim_surface = _StubSurface("dim", []); ctl._dim_size = 50
+        ctl._dim_widget = object()
+        ctl._teardown_dim()
+        assert ctl._dim_widget is None
+
+    def test_grab_backdrop_none_when_no_screen(self, qapp, monkeypatch):
+        ctl, factory, win = _make()
+        from PySide6.QtGui import QGuiApplication
+        from PySide6.QtCore import QRect
+        monkeypatch.setattr(QGuiApplication, "screenAt",
+                            staticmethod(lambda *a, **k: None))
+        monkeypatch.setattr(QGuiApplication, "primaryScreen",
+                            staticmethod(lambda *a, **k: None))
+        assert ctl._grab_backdrop(QRect(0, 0, 100, 100)) is None
