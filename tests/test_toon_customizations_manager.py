@@ -65,6 +65,44 @@ def test_get_returns_a_copy(isolated_config):
     assert m.get("ttr", "Flossbud") == {"accent": "#fff000"}
 
 
+def test_get_returns_a_deep_copy(isolated_config):
+    """Mutating a NESTED dict from get() must not leak into the store.
+
+    Regression: get() did dict(entry) (shallow), so the nested 'portrait'
+    sub-dict was shared by reference with the manager's live in-memory entry.
+    Callers mutating entry['portrait'] in place (the customization overlay's
+    live preview) polluted the store without ever calling set()."""
+    from utils.toon_customizations_manager import ToonCustomizationsManager
+    m = ToonCustomizationsManager()
+    m.set("ttr", "Flossbud", {"portrait": {"color": "#fff000"}})
+    got = m.get("ttr", "Flossbud")
+    got["portrait"]["color"] = "#000000"
+    got["portrait"]["pattern"] = {"name": "polka", "color": "#123456"}
+    assert m.get("ttr", "Flossbud") == {"portrait": {"color": "#fff000"}}
+
+
+def test_set_stores_a_deep_copy(isolated_config):
+    """Mutating the dict passed to set() after the call must not leak in."""
+    from utils.toon_customizations_manager import ToonCustomizationsManager
+    m = ToonCustomizationsManager()
+    payload = {"portrait": {"transform": {"zoom": 1.5, "rotate": 10.0}}}
+    m.set("ttr", "Flossbud", payload)
+    payload["portrait"]["transform"]["zoom"] = 99.0
+    assert m.get("ttr", "Flossbud") == {
+        "portrait": {"transform": {"zoom": 1.5, "rotate": 10.0}}
+    }
+
+
+def test_all_returns_deep_copies(isolated_config):
+    """all() must not expose the live nested store either."""
+    from utils.toon_customizations_manager import ToonCustomizationsManager
+    m = ToonCustomizationsManager()
+    m.set("ttr", "Flossbud", {"portrait": {"color": "#fff000"}})
+    snapshot = m.all()
+    snapshot["ttr::Flossbud"]["portrait"]["color"] = "#000000"
+    assert m.get("ttr", "Flossbud") == {"portrait": {"color": "#fff000"}}
+
+
 def test_namespace_isolation(isolated_config):
     from utils.toon_customizations_manager import ToonCustomizationsManager
     m = ToonCustomizationsManager()

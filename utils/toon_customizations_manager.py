@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import re
+from copy import deepcopy
 from typing import Final
 
 
@@ -119,15 +120,23 @@ class ToonCustomizationsManager:
     # -- Public API ------------------------------------------------------------
 
     def get(self, game: str, toon_name: str) -> dict:
+        # deepcopy, not dict(): customization entries hold nested dicts
+        # (portrait color/pattern, portrait.transform, silhouette). A shallow
+        # copy would share those nested objects with the live store, so a
+        # caller mutating entry["portrait"] in place (the customization
+        # overlay's live preview) would silently pollute the store without
+        # ever calling set().
         entry = self._entries.get(_key(game, toon_name))
-        return dict(entry) if entry else {}
+        return deepcopy(entry) if entry else {}
 
     def set(self, game: str, toon_name: str, customization: dict) -> None:
         k = _key(game, toon_name)
         if not customization:
             self._entries.pop(k, None)
         else:
-            self._entries[k] = dict(customization)
+            # deepcopy so the stored entry never aliases the caller's dict
+            # (and its nested sub-dicts) after the call returns.
+            self._entries[k] = deepcopy(customization)
         self._save()
 
     def clear(self, game: str, toon_name: str) -> None:
@@ -135,4 +144,4 @@ class ToonCustomizationsManager:
             self._save()
 
     def all(self) -> dict[str, dict]:
-        return {k: dict(v) for k, v in self._entries.items()}
+        return {k: deepcopy(v) for k, v in self._entries.items()}

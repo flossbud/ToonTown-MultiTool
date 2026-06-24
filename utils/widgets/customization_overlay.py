@@ -298,7 +298,13 @@ class _Panel(QFrame):
         self._dna = dna
         self._skin = skin_color
         self._auto_stem = auto_stem
-        self._draft: dict = dict(manager.get(game, toon_name))
+        # deepcopy, not dict(): the draft holds nested dicts (portrait
+        # color/pattern, portrait.transform, silhouette) that the live-preview
+        # handlers mutate in place. A shallow copy would alias the manager's
+        # in-memory entry, so edits would leak into the store even on Discard
+        # (the manager already returns a deep copy; this is defense-in-depth
+        # and mirrors the deepcopy used for self._original).
+        self._draft: dict = deepcopy(manager.get(game, toon_name))
         self._sections: dict[str, QWidget] = {}
 
         self.title_label.setText(f"Customize {toon_name}")
