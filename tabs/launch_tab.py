@@ -516,28 +516,17 @@ class LaunchTab(QWidget):
 
     def recent_account_ring_model(self, limit: int = 8):
         """Build the emblem radial menu's Accounts sub-ring from the recent-launch
-        MRU. Unlike the old flat menu, the ring INCLUDES running accounts (carrying
-        a ``running`` flag) and attaches each account's last in-world toon (name +
-        DNA) for its portrait. Uses a keyring-aware single-pass metadata resolution
-        so no extra keyring round-trips are added at menu-open; a locked keyring
-        yields an empty ring (no per-account reads)."""
-        from utils.recent_launches import resolve_account_view
+        MRU. Uses only in-memory, keyring-free metadata, so opening the emblem
+        wheel performs NO credential reads (the password is read only at launch).
+        Includes running accounts (carrying a ``running`` flag) and attaches each
+        account's last in-world toon (name + DNA) for its portrait. Works even
+        when the keyring is locked."""
         from utils.radial_menu_model import build_account_ring
-        cred = self.cred_manager
-        # Single-pass resolution: skip the metadata pass entirely when the keyring
-        # is locked (else each CC token read can hit a lock-timeout storm).
-        if not cred.keyring_available and cred.count() > 0:
-            meta_by_id = {}
-        else:
-            meta_by_id = {meta.id: (i, meta)
-                          for i, meta in enumerate(cred.get_accounts_metadata())}
+        basic_by_id = {aid: (game, label)
+                       for (aid, game, label) in self.cred_manager.get_accounts_basic()}
 
         def account_for(aid):
-            entry = meta_by_id.get(aid)
-            if entry is None:
-                return None
-            idx, meta = entry
-            return resolve_account_view(cred, idx, meta)
+            return basic_by_id.get(aid)      # (game, label) or None (deleted)
 
         def toon_for(aid):
             rec = self._recent_toons.get(aid)

@@ -18,7 +18,6 @@ class RingAccount:
     label: str
     toon_name: str | None
     dna: str
-    launchable: bool
     running: bool
 
     @property
@@ -30,7 +29,7 @@ def build_account_ring(ordered_ids, account_for, toon_for, is_running, limit=8):
     """Build the ordered list of ring accounts (most-recent first, capped).
 
     - ``ordered_ids``: account IDs, most-recent-first (RecentLaunchesStore).
-    - ``account_for(aid)``: ``(game, label, launchable) | None`` (None => deleted).
+    - ``account_for(aid)``: ``(game, label) | None`` (None => deleted).
     - ``toon_for(aid)``: ``(toon_name, dna) | None`` (None => placeholder).
     - ``is_running(game, aid)``: True if a launcher for the account is running.
     """
@@ -41,12 +40,12 @@ def build_account_ring(ordered_ids, account_for, toon_for, is_running, limit=8):
         view = account_for(aid)
         if view is None:
             continue
-        game, label, launchable = view
+        game, label = view
         toon = toon_for(aid)
         toon_name, dna = (toon if toon else (None, ""))
         out.append(RingAccount(
             account_id=aid, game=game, label=label,
             toon_name=toon_name, dna=dna or "",
-            launchable=launchable, running=is_running(game, aid),
+            running=is_running(game, aid),
         ))
     return out
