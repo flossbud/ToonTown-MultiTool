@@ -595,10 +595,29 @@ class TestRepositionRadialResize:
         assert ctl._radial_size == expected
         assert ctl._dim_size == expected
         assert menu.diameters == [emblem_dia]           # re-geometried once
-        assert len(ctl._radial_surface.shapes) == 1     # click-region re-applied
+        # The click-region re-apply is DEFERRED to a settle timer (re-applying
+        # the X11 input shape on every scroll tick stalls the wheel stream), so
+        # nothing is applied inline; a reshape is scheduled instead.
+        assert ctl._radial_surface.shapes == []
+        assert ctl._radial_reshape_timer is not None
+        assert ctl._radial_reshape_timer.isActive()
         # re-centered at the new canvas size
         g = ctl._radial_surface.geometry
         assert g.width() == expected and g.height() == expected
+
+    def test_deferred_reshape_applies_click_region_at_current_size(self, qapp):
+        ctl, factory, win = _make()
+        ctl._radial_surface = _StubSurface("radial", [])
+        ctl._radial_size = 800
+        ctl._reapply_radial_shape()                     # what the settle timer fires
+        assert len(ctl._radial_surface.shapes) == 1     # applied once, on settle
+        path, _dpr = ctl._radial_surface.shapes[0]
+        assert path.boundingRect().width() == 800       # full canvas at current size
+
+    def test_deferred_reshape_is_noop_after_close(self, qapp):
+        ctl, factory, win = _make()
+        ctl._radial_surface = None                      # menu already closed
+        ctl._reapply_radial_shape()                     # must not raise
 
     def test_same_scale_does_not_resize_or_reshape(self, qapp):
         ctl, factory, win = _make()

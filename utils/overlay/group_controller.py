@@ -330,6 +330,11 @@ class OverlayGroupController:
         self._radial_surface = None
         self._radial_menu = None
         self._radial_size = 0   # px square edge, so it can be re-centered on drag
+        # Settle-debounce for the radial click-region re-apply. Re-applying the
+        # X11 input shape on every scroll tick (the window under the pointer)
+        # stalls the wheel event stream, so a scale change schedules ONE reshape
+        # that fires shortly after scrolling pauses (clicks can't land mid-scroll).
+        self._radial_reshape_timer = None
         # Radial dim backdrop: a CLICK-THROUGH owned surface hosting a
         # RadialDimWidget, the same size as the radial surface but stacked BELOW
         # the emblem (above the cards), so the emblem stays in front of the dim
@@ -980,7 +985,6 @@ class OverlayGroupController:
         settings panel is not emblem-derived, so it is never rescaled here).
         Then re-assert the dim->emblem->radial z-order."""
         from PySide6.QtCore import QRect
-        from PySide6.QtGui import QPainterPath
         from utils.overlay.backend import overlay_trace
         # Re-size the emblem-derived surfaces (radial + dim) when the scale
         # changed; the != check makes a drag (no scale change) skip this and
@@ -990,13 +994,11 @@ class OverlayGroupController:
             self._radial_size = canvas
             if self._radial_menu is not None:
                 self._radial_menu.set_emblem_diameter(emblem_dia)
-            # The click-accept region is the full canvas; re-apply it at the new
-            # size so outer spokes stay hittable after a grow (and the region
-            # shrinks back on a shrink).
-            path = QPainterPath()
-            path.addRect(0, 0, canvas, canvas)
-            self._radial_surface.apply_shape(
-                path, self._radial_surface.devicePixelRatio())
+            # The click-accept region must grow/shrink to the new canvas so outer
+            # spokes stay hittable, but re-applying the X11 input shape on the
+            # surface under the pointer mid-scroll stalls the wheel stream, so it
+            # is DEFERRED to a settle timer (see _schedule_radial_reshape).
+            self._schedule_radial_reshape()
         if self._dim_surface is not None and canvas != self._dim_size:
             # The RadialDimWidget rebuilds its drop-shadow on resize
             # automatically; only the stored size needs updating so the
@@ -1014,6 +1016,33 @@ class OverlayGroupController:
         # Re-assert the full layer order (dim below the emblem, radial above it).
         if self._dim_surface or self._radial_surface or self._panel_surface:
             self._restack_radial_layers()
+
+    def _schedule_radial_reshape(self) -> None:
+        """(Re)start the settle timer that re-applies the radial click region.
+
+        Re-armed on every scale step, so the actual X11 ShapeInput re-apply runs
+        ONCE after scrolling pauses instead of on every tick - keeping the wheel
+        event stream from stalling while the ring still tracks the emblem live.
+        """
+        from PySide6.QtCore import QTimer
+        if self._radial_reshape_timer is None:
+            self._radial_reshape_timer = QTimer()
+            self._radial_reshape_timer.setSingleShot(True)
+            self._radial_reshape_timer.setInterval(100)  # ~one settle after a scroll burst
+            self._radial_reshape_timer.timeout.connect(self._reapply_radial_shape)
+        self._radial_reshape_timer.start()
+
+    def _reapply_radial_shape(self) -> None:
+        """Apply the full-canvas click region at the current radial size. Fired by
+        the settle timer (see _schedule_radial_reshape); a no-op once the menu is
+        closed."""
+        if self._radial_surface is None or self._radial_size <= 0:
+            return
+        from PySide6.QtGui import QPainterPath
+        path = QPainterPath()
+        path.addRect(0, 0, self._radial_size, self._radial_size)
+        self._radial_surface.apply_shape(
+            path, self._radial_surface.devicePixelRatio())
 
     # ------------------------------------------------------------------
     # Accent glow behind the cluster (parity with the framed _GlowLayer)
@@ -1569,6 +1598,8 @@ class OverlayGroupController:
         self._radial_surface = None
         self._radial_menu = None
         self._radial_size = 0
+        if self._radial_reshape_timer is not None:
+            self._radial_reshape_timer.stop()  # drop any pending settle reshape
         if surface is not None:
             self._safe_call(surface, "hide")
             self._safe_call(surface, "deleteLater")
