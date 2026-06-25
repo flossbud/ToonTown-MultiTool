@@ -515,26 +515,70 @@ class TestRadialDim:
         ctl._teardown_dim()
         assert ctl._dim_widget is None
 
-    def test_grab_backdrop_none_when_no_screen(self, qapp, monkeypatch):
+    def test_dim_dpr_returns_positive_float(self, qapp):
         ctl, factory, win = _make()
-        from PySide6.QtGui import QGuiApplication
         from PySide6.QtCore import QRect
-        monkeypatch.setattr(QGuiApplication, "screenAt",
-                            staticmethod(lambda *a, **k: None))
-        monkeypatch.setattr(QGuiApplication, "primaryScreen",
-                            staticmethod(lambda *a, **k: None))
-        assert ctl._grab_backdrop(QRect(0, 0, 100, 100)) is None
+        ctl._dim_surface = None
+        dpr = ctl._dim_dpr(QRect(0, 0, 100, 100))
+        assert isinstance(dpr, float) and dpr > 0
 
-    def test_grab_backdrop_none_when_pixmap_null(self, qapp, monkeypatch):
+    def test_grab_backdrop_composites_visible_cards(self, qapp, monkeypatch):
         ctl, factory, win = _make()
-        from PySide6.QtGui import QGuiApplication, QPixmap
         from PySide6.QtCore import QRect
-        class _FakeScreen:
-            def grabWindow(self, *a, **k):
-                return QPixmap()             # null pixmap
-        monkeypatch.setattr(QGuiApplication, "screenAt",
-                            staticmethod(lambda *a, **k: _FakeScreen()))
-        assert ctl._grab_backdrop(QRect(0, 0, 100, 100)) is None
+        from PySide6.QtGui import QPixmap, QColor
+
+        class _St:
+            surface_id = 0
+
+        class _CardSurf:
+            def geometry(self):
+                return QRect(110, 120, 40, 40)      # screen rect; offset (10,20) in disc
+            def grab(self):
+                pm = QPixmap(40, 40); pm.fill(QColor(255, 0, 0)); return pm
+
+        monkeypatch.setattr(ctl, "_visible_card_surfaces",
+                            lambda: [(_St(), _CardSurf())])
+        monkeypatch.setattr(ctl, "_dim_dpr", lambda geom: 1.0)
+        src = ctl._grab_backdrop(QRect(100, 100, 200, 200))
+        assert src is not None and not src.isNull()
+        img = src.toImage()
+        assert img.pixelColor(20, 30).red() > 200    # card at logical (10,20)+inside
+        assert img.pixelColor(190, 190).alpha() == 0 # far gap stays transparent
+
+    def test_grab_backdrop_none_when_no_visible_cards(self, qapp, monkeypatch):
+        ctl, factory, win = _make()
+        from PySide6.QtCore import QRect
+        monkeypatch.setattr(ctl, "_visible_card_surfaces", lambda: [])
+        monkeypatch.setattr(ctl, "_dim_dpr", lambda geom: 1.0)
+        assert ctl._grab_backdrop(QRect(0, 0, 200, 200)) is None
+
+    def test_build_dim_feeds_card_source_to_backdrop(self, qapp, monkeypatch):
+        ctl, factory, win = _make()
+        from PySide6.QtCore import QRect
+        from PySide6.QtGui import QPixmap, QColor
+        captured = {}
+
+        class _DimSurf:
+            def __init__(self, *a, **k): pass
+            def host(self, w): self.w = w
+            def set_overlay_geometry(self, g): pass
+            def prepare_initial_state(self): pass
+            def show(self): pass
+            def apply_shape(self, *a, **k): pass
+            def devicePixelRatio(self): return 1.0
+            def windowHandle(self): return None
+
+        class _DimWidget:
+            def __init__(self, *a, **k): pass
+            def set_backdrop(self, raw): captured["raw"] = raw
+            def start_reveal(self, animate=True): captured["revealed"] = True
+
+        monkeypatch.setattr("utils.overlay.surface.OverlaySurface", _DimSurf)
+        monkeypatch.setattr("utils.overlay.radial_menu.RadialDimWidget", _DimWidget)
+        src = QPixmap(10, 10); src.fill(QColor(0, 0, 255))
+        monkeypatch.setattr(ctl, "_grab_backdrop", lambda geom: src)
+        ctl._build_dim(QRect(0, 0, 100, 100))
+        assert captured.get("raw") is src and captured.get("revealed") is True
 
     def test_collapse_dim_noop_when_no_widget(self, qapp):
         ctl, factory, win = _make()
