@@ -61,11 +61,10 @@ def test_radial_anim_enabled_on_by_default(monkeypatch):
     assert radial_anim_enabled() is True
 
 
-def test_set_backdrop_none_builds_veil_only_and_paints():
+def test_set_backdrop_none_is_glassy_not_dark():
     _app()
-    from PySide6.QtGui import QImage
+    from PySide6.QtGui import QImage, QColor
     from PySide6.QtCore import QPoint
-    from PySide6.QtGui import QColor
     from utils.overlay.radial_menu import RadialDimWidget
     w = RadialDimWidget(); w.resize(200, 200)
     w.set_backdrop(None)
@@ -73,8 +72,72 @@ def test_set_backdrop_none_builds_veil_only_and_paints():
     assert w._frost is not None and not w._frost.isNull()
     img = QImage(w.size(), QImage.Format_ARGB32)
     img.fill(QColor(0, 0, 0, 0))
-    w.render(img, QPoint(0, 0))   # paintEvent must not raise
-    assert img.pixelColor(100, 100).alpha() > 0   # the veil actually painted
+    w.render(img, QPoint(0, 0))                 # paintEvent must not raise
+    c = img.pixelColor(100, 100)
+    assert 0 < c.alpha() < 255                  # translucent disc, not opaque
+    assert c.red() > 60 and c.green() > 60 and c.blue() > 60   # milky, not flat dark
+
+
+def test_frost_build_is_deterministic():
+    _app()
+    from utils.overlay.radial_menu import RadialDimWidget
+    w = RadialDimWidget(); w.resize(200, 200)
+    a = w._build_frost(None)
+    b = w._build_frost(None)
+    assert a is not None and b is not None
+    assert a.toImage() == b.toImage()          # seeded grain => identical builds
+
+
+def test_paint_cache_uses_logical_size_not_physical():
+    _app()
+    from PySide6.QtGui import QPixmap, QColor
+    from PySide6.QtCore import QSize, QPoint
+    from utils.overlay.radial_menu import RadialDimWidget
+    w = RadialDimWidget(); w.resize(200, 200)
+    w.set_backdrop(None)
+    # Simulate a dpr=2 frost: physical 400 but logical (cache key) 200.
+    fake = QPixmap(400, 400); fake.setDevicePixelRatio(2.0); fake.fill(QColor(1, 2, 3, 200))
+    w._frost = fake
+    w._frost_size = QSize(200, 200)
+    img = QPixmap(w.size()); img.fill(QColor(0, 0, 0, 0))
+    w.progress = 1.0
+    w.render(img, QPoint(0, 0))
+    # Must NOT rebuild: logical key (200) == widget size (200), despite physical 400.
+    assert w._frost is fake
+
+
+def test_paint_rebuilds_when_dpr_changes():
+    _app()
+    from PySide6.QtGui import QPixmap, QColor
+    from PySide6.QtCore import QSize, QPoint
+    from utils.overlay.radial_menu import RadialDimWidget
+    w = RadialDimWidget(); w.resize(200, 200)
+    w.set_backdrop(None)
+    fake = QPixmap(200, 200); fake.fill(QColor(1, 2, 3, 200))
+    w._frost = fake
+    w._frost_size = QSize(200, 200)
+    w._frost_dpr = 2.0                     # stale dpr (widget's real dpr is 1.0 offscreen)
+    img = QPixmap(w.size()); img.fill(QColor(0, 0, 0, 0))
+    w.progress = 1.0
+    w.render(img, QPoint(0, 0))
+    assert w._frost is not fake            # rebuilt because cached dpr (2.0) != current (1.0)
+
+
+def test_frost_with_source_is_translucent_disc():
+    _app()
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QPixmap, QImage, QColor
+    from PySide6.QtCore import QPoint
+    from utils.overlay.radial_menu import RadialDimWidget
+    w = RadialDimWidget(); w.resize(200, 200)
+    raw = QPixmap(200, 200); raw.fill(Qt.red)
+    w.set_backdrop(raw)
+    w.progress = 1.0
+    assert w._frost is not None and not w._frost.isNull()
+    img = QImage(w.size(), QImage.Format_ARGB32); img.fill(QColor(0, 0, 0, 0))
+    w.render(img, QPoint(0, 0))
+    assert 0 < img.pixelColor(100, 100).alpha() < 255
+    assert img.pixelColor(2, 2).alpha() == 0   # corner outside the disc -> clear
 
 
 def test_set_backdrop_pixmap_builds_frost():

@@ -303,6 +303,30 @@ def _label_pill(p: QPainter, cx: float, cy: float, r: float, text: str, above: b
     p.drawText(rect, Qt.AlignCenter, text)
 
 
+_GRAIN_ALPHA_MAX = 12      # keep in sync with RadialDimWidget._GRAIN_ALPHA
+_GRAIN_TILE = None         # deterministic cached noise tile (QImage)
+
+
+def _grain_tile():
+    """A deterministic, cached fine-noise tile, tiled over the frost for a glass
+    texture. Built once with a fixed seed so every frost build is byte-identical
+    (no per-open shimmer, no flaky tests)."""
+    global _GRAIN_TILE
+    if _GRAIN_TILE is None:
+        import random
+        from PySide6.QtGui import QImage
+        rnd = random.Random(0xC0FFEE)
+        n = 96
+        img = QImage(n, n, QImage.Format_ARGB32)
+        img.fill(QColor(0, 0, 0, 0))
+        for y in range(n):
+            for x in range(n):
+                a = rnd.randint(0, _GRAIN_ALPHA_MAX)
+                img.setPixelColor(x, y, QColor(255, 255, 255, a))
+        _GRAIN_TILE = img
+    return _GRAIN_TILE
+
+
 class RadialDimWidget(QWidget):
     """The radial menu's frosted-blur backdrop, as its OWN click-through layer.
 
@@ -322,7 +346,16 @@ class RadialDimWidget(QWidget):
     _OPEN_MS = 240
     _CLOSE_MS = 200
     _BLUR_RADIUS = 10
-    _VEIL = QColor(8, 10, 16, 105)   # ~0.41 center veil (lighter than the old 150)
+    # Frosted-glass composite tuning (see 2026-06-24 frosted-glass spec). All
+    # compositing is done at PHYSICAL pixels; dpr is applied once at the end of
+    # _build_frost. Live-tunable.
+    _FILM = QColor(228, 232, 240)        # opaque milky base center (so the blur
+    #                                      never smears transparent-black edges)
+    _FILM_EDGE = QColor(198, 205, 218)   # milky base toward the rim (subtle depth)
+    _GRAIN_ALPHA = 12                    # max per-pixel grain alpha (subtle glass)
+    _DISC_ALPHA = 210                    # final disc center alpha (<255 => glass
+    #                                      is translucent; cards faintly read through)
+    _VEIL = QColor(8, 10, 16, 90)        # soft dark veil for ring legibility
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -331,6 +364,8 @@ class RadialDimWidget(QWidget):
         self.setAttribute(Qt.WA_NoSystemBackground, True)
         self._raw = None            # source region pixmap (kept for lazy rebuild)
         self._frost = None          # cached composite (blurred backdrop + veil + mask)
+        self._frost_size = None     # logical-size cache key (paintEvent compares this)
+        self._frost_dpr = None      # dpr cache key (rebuild on monitor-scale change)
         self._progress = 0.0
         self._anim = None           # QVariantAnimation while reveal/close runs
 
@@ -350,23 +385,48 @@ class RadialDimWidget(QWidget):
         size = self.size()
         if size.width() <= 0 or size.height() <= 0:
             return None
-        pm = QPixmap(size)
+        dpr = float(self.devicePixelRatioF() or 1.0)
+        phys_w = max(1, int(round(size.width() * dpr)))
+        phys_h = max(1, int(round(size.height() * dpr)))
+        cx = phys_w / 2.0
+        cy = phys_h / 2.0
+        radius = min(phys_w, phys_h) / 2.0
+        pm = QPixmap(phys_w, phys_h)        # PHYSICAL buffer; dpr set at the end
         pm.fill(Qt.transparent)
-        cx = size.width() / 2.0
-        cy = size.height() / 2.0
-        radius = min(size.width(), size.height()) / 2.0
         if radius <= 0:
+            pm.setDevicePixelRatio(dpr)
+            self._frost_size = size
+            self._frost_dpr = dpr
             return pm
+        # 1) opaque milky base: gives the blur a non-transparent backdrop so the
+        #    cards' bitten/transparent edges blur into frost, never black.
         p = QPainter(pm)
         p.setRenderHint(QPainter.Antialiasing, True)
         p.setRenderHint(QPainter.SmoothPixmapTransform, True)
-        # 1) blurred backdrop snapshot (skipped on the veil-only fallback)
+        base = QRadialGradient(QPointF(cx, cy), radius)
+        base.setColorAt(0.0, self._FILM)
+        base.setColorAt(1.0, self._FILM_EDGE)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QBrush(base))
+        p.drawRect(0, 0, phys_w, phys_h)
+        # 2) our OWN content (card composite / windowed grab), 1:1 in physical px.
         if raw is not None and not raw.isNull():
-            blurred = gaussian_blur_pixmap(raw, self._BLUR_RADIUS)
-            scaled = blurred.scaled(size, Qt.IgnoreAspectRatio,
-                                    Qt.SmoothTransformation)
-            p.drawPixmap(0, 0, scaled)
-        # 2) soft dark veil
+            p.drawPixmap(QRectF(0, 0, phys_w, phys_h), raw, QRectF(raw.rect()))
+        p.end()
+        # 3) blur the whole opaque composite (clean: no transparent edges).
+        blurred = gaussian_blur_pixmap(pm, self._BLUR_RADIUS)
+        if blurred.size() != pm.size():
+            blurred = blurred.scaled(phys_w, phys_h, Qt.IgnoreAspectRatio,
+                                     Qt.SmoothTransformation)
+        pm = blurred
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        # 4) deterministic fine grain (glass texture).
+        grain = QPixmap.fromImage(_grain_tile())
+        p.setPen(Qt.NoPen)
+        p.setBrush(QBrush(grain))
+        p.drawRect(0, 0, phys_w, phys_h)
+        # 5) soft dark veil for ring legibility.
         c = self._VEIL
         clear = QColor(c.red(), c.green(), c.blue(), 0)
         veil = QRadialGradient(QPointF(cx, cy), radius)
@@ -374,19 +434,23 @@ class RadialDimWidget(QWidget):
         veil.setColorAt(0.52, c)
         veil.setColorAt(0.86, clear)
         veil.setColorAt(1.0, clear)
-        p.setPen(Qt.NoPen)
         p.setBrush(QBrush(veil))
         p.drawEllipse(QPointF(cx, cy), radius, radius)
-        # 3) radial soft-edge mask: carve the whole composite into a soft disc
+        # 6) soft circular mask -> disc + feathered edge + overall translucency
+        #    (center alpha _DISC_ALPHA < 255 so the cards faintly read through).
+        a = self._DISC_ALPHA
         mask = QRadialGradient(QPointF(cx, cy), radius)
-        mask.setColorAt(0.0, QColor(0, 0, 0, 255))
-        mask.setColorAt(0.60, QColor(0, 0, 0, 255))
+        mask.setColorAt(0.0, QColor(0, 0, 0, a))
+        mask.setColorAt(0.60, QColor(0, 0, 0, a))
         mask.setColorAt(0.78, QColor(0, 0, 0, 0))
         mask.setColorAt(1.0, QColor(0, 0, 0, 0))
         p.setCompositionMode(QPainter.CompositionMode_DestinationIn)
         p.setBrush(QBrush(mask))
-        p.drawRect(0, 0, size.width(), size.height())
+        p.drawRect(0, 0, phys_w, phys_h)
         p.end()
+        pm.setDevicePixelRatio(dpr)
+        self._frost_size = size             # logical-size cache key
+        self._frost_dpr = dpr               # dpr cache key
         return pm
 
     # --- progress property + paint -----------------------------------------
@@ -404,7 +468,13 @@ class RadialDimWidget(QWidget):
         # 0-size / pre-layout (the overlay surface doesn't propagate geometry
         # synchronously), leaving _frost None. By first paint the widget has its
         # real size, so rebuild then; also rebuild if the size changed under us.
-        if self._frost is None or self._frost.size() != self.size():
+        # Rebuild on logical-size OR dpr change. _frost is dpr-backed (physical
+        # px), so comparing its raw .size() to the widget's logical size would
+        # rebuild every paint on HiDPI; and a same-size move to a different-scale
+        # monitor changes dpr but not logical size. Compare the cached keys.
+        if (self._frost is None
+                or self._frost_size != self.size()
+                or self._frost_dpr != float(self.devicePixelRatioF() or 1.0)):
             self._frost = self._build_frost(self._raw)
         if self._frost is None or self._frost.isNull():
             return
