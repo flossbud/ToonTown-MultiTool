@@ -14,7 +14,11 @@ from PySide6.QtCore import QRect, QRectF, QPointF, Qt
 from PySide6.QtGui import QPainterPath, QRegion, QTransform, QPixmap, QPainter
 
 
-def compose_dim_source(side: int, dpr: float, placements) -> QPixmap | None:
+def compose_dim_source(
+    side: int,
+    dpr: float,
+    placements: list[tuple[float, float, QPixmap | None]],
+) -> QPixmap | None:
     """Composite grabbed card pixmaps into one ``side`` x ``side`` (LOGICAL)
     source pixmap for the radial dim, in logical coords with device-pixel backing.
 
@@ -24,7 +28,8 @@ def compose_dim_source(side: int, dpr: float, placements) -> QPixmap | None:
     already carries its own devicePixelRatio (from ``QWidget.grab()``); it is
     drawn at its device-INDEPENDENT size so dpr is applied exactly once (no
     double scale). Uncovered area stays transparent so the frost base shows
-    through there. Returns None for non-positive side/dpr or no placements."""
+    through there. Returns None for non-positive side/dpr, no placements, or
+    when every placement is a null/None card (nothing to composite)."""
     placements = list(placements or [])
     if side <= 0 or dpr <= 0 or not placements:
         return None
@@ -34,6 +39,7 @@ def compose_dim_source(side: int, dpr: float, placements) -> QPixmap | None:
     pm.fill(Qt.transparent)
     p = QPainter(pm)
     p.setRenderHint(QPainter.SmoothPixmapTransform, True)
+    drawn = 0
     for dx, dy, card in placements:
         if card is None or card.isNull():
             continue
@@ -41,7 +47,10 @@ def compose_dim_source(side: int, dpr: float, placements) -> QPixmap | None:
         # pixel coords. The dpr-backed canvas maps logical->physical once.
         target = QRectF(QPointF(float(dx), float(dy)), card.deviceIndependentSize())
         p.drawPixmap(target, card, QRectF(card.rect()))
+        drawn += 1
     p.end()
+    if drawn == 0:
+        return None          # every card was null -> no source (frost-base only)
     return pm
 
 

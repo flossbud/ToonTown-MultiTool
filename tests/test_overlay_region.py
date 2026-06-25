@@ -90,3 +90,25 @@ def test_compose_dim_source_offset_placement():
     img = src.toImage()
     assert img.pixelColor(15, 25).blue() > 200     # inside the placed card
     assert img.pixelColor(2, 2).alpha() == 0       # outside the card -> transparent
+
+
+def test_compose_dim_source_none_when_all_cards_null():
+    _app()
+    from PySide6.QtGui import QPixmap
+    from utils.overlay.region import compose_dim_source
+    # placements present, but every card is null/None -> nothing to composite
+    assert compose_dim_source(200, 1.0, [(0, 0, None), (10, 10, QPixmap())]) is None
+
+
+def test_compose_dim_source_composites_multiple_cards():
+    _app()
+    from PySide6.QtGui import QPixmap, QColor
+    from utils.overlay.region import compose_dim_source
+    red = QPixmap(30, 30); red.fill(QColor(255, 0, 0))
+    blue = QPixmap(30, 30); blue.fill(QColor(0, 0, 255))
+    src = compose_dim_source(200, 1.0, [(0, 0, red), (100, 100, blue)])
+    assert src is not None
+    img = src.toImage()
+    assert img.pixelColor(10, 10).red() > 200          # first card
+    assert img.pixelColor(110, 110).blue() > 200       # second card, distinct position
+    assert img.pixelColor(60, 60).alpha() == 0         # gap between them stays transparent
