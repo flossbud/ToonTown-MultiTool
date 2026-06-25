@@ -557,28 +557,38 @@ class TestRadialDim:
         from PySide6.QtCore import QRect
         from PySide6.QtGui import QPixmap, QColor
         captured = {}
+        calls = []          # ordered call log to verify the load-bearing order
 
         class _DimSurf:
             def __init__(self, *a, **k): pass
             def host(self, w): self.w = w
             def set_overlay_geometry(self, g): pass
             def prepare_initial_state(self): pass
-            def show(self): pass
-            def apply_shape(self, *a, **k): pass
+            def show(self): calls.append("show")
+            def apply_shape(self, *a, **k): calls.append("apply_shape")
             def devicePixelRatio(self): return 1.0
             def windowHandle(self): return None
 
         class _DimWidget:
             def __init__(self, *a, **k): pass
-            def set_backdrop(self, raw): captured["raw"] = raw
+            def set_backdrop(self, raw): captured["raw"] = raw; calls.append("set_backdrop")
             def start_reveal(self, animate=True): captured["revealed"] = True
 
         monkeypatch.setattr("utils.overlay.surface.OverlaySurface", _DimSurf)
         monkeypatch.setattr("utils.overlay.radial_menu.RadialDimWidget", _DimWidget)
         src = QPixmap(10, 10); src.fill(QColor(0, 0, 255))
-        monkeypatch.setattr(ctl, "_grab_backdrop", lambda geom: src)
+
+        def _grab(geom):
+            calls.append("grab")
+            return src
+
+        monkeypatch.setattr(ctl, "_grab_backdrop", _grab)
         ctl._build_dim(QRect(0, 0, 100, 100))
         assert captured.get("raw") is src and captured.get("revealed") is True
+        # Load-bearing order: the dim surface must be SHOWN before we grab the
+        # cards (so _dim_dpr can read it and we never self-capture the dim), and
+        # the grabbed source must reach set_backdrop after the grab.
+        assert calls.index("show") < calls.index("grab") < calls.index("set_backdrop")
 
     def test_collapse_dim_noop_when_no_widget(self, qapp):
         ctl, factory, win = _make()
