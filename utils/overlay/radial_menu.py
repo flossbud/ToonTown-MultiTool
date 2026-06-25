@@ -751,6 +751,15 @@ class RadialMenuWidget(QWidget):
         self._arm_idle()
         hit = self._hit(x, y)
         if hit is None:
+            # A click on the emblem - which shows through the ring's transparent
+            # center - toggles the menu shut, the inverse of the click that
+            # opened it. (The emblem sits on its own surface BELOW the radial, so
+            # the click lands here, not on the emblem.) Clicks in the outer gaps
+            # stay a no-op.
+            cx, cy = self._center()
+            er = self._emblem_dia / 2.0
+            if (x - cx) ** 2 + (y - cy) ** 2 <= er * er:
+                self._begin_close()
             return
         state, key = hit
         if state == "main":

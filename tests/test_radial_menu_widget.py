@@ -556,3 +556,30 @@ def test_kill_switch_begin_close_is_idempotent(monkeypatch):
     w._begin_close()
     w._begin_close()                                 # second call must NOT re-emit
     assert fired == [1]
+
+
+def test_emblem_center_click_closes_menu():
+    # Clicking the emblem (which shows through the ring's transparent center)
+    # toggles the open menu shut - the inverse of the click that opened it.
+    _app()
+    from utils.overlay.radial_menu import RadialMenuWidget
+    w = RadialMenuWidget(emblem_diameter=160); w.resize(500, 500)
+    w.start_reveal(); w._advance(10_000)             # settle so spokes sit at slots
+    closed = []
+    w.closing.connect(lambda: closed.append(1))
+    cx, cy = w._center()
+    w.activate_at(cx, cy)                            # dead center == the emblem
+    assert closed == [1]
+
+
+def test_outer_gap_click_does_not_close():
+    # A click that misses every spoke AND the emblem (a canvas corner) is a
+    # no-op, not a close - only the emblem closes.
+    _app()
+    from utils.overlay.radial_menu import RadialMenuWidget
+    w = RadialMenuWidget(emblem_diameter=160); w.resize(500, 500)
+    w.start_reveal(); w._advance(10_000)
+    closed = []
+    w.closing.connect(lambda: closed.append(1))
+    w.activate_at(5, 5)                              # corner: no spoke, not emblem
+    assert closed == []
