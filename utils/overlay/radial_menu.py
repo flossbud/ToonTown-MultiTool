@@ -303,7 +303,7 @@ def _label_pill(p: QPainter, cx: float, cy: float, r: float, text: str, above: b
     p.drawText(rect, Qt.AlignCenter, text)
 
 
-_GRAIN_ALPHA_MAX = 12      # keep in sync with RadialDimWidget._GRAIN_ALPHA
+_GRAIN_ALPHA = 12          # max per-pixel white grain alpha; seeded tile baked once
 _GRAIN_TILE = None         # deterministic cached noise tile (QImage)
 
 
@@ -321,7 +321,7 @@ def _grain_tile():
         img.fill(QColor(0, 0, 0, 0))
         for y in range(n):
             for x in range(n):
-                a = rnd.randint(0, _GRAIN_ALPHA_MAX)
+                a = rnd.randint(0, _GRAIN_ALPHA)
                 img.setPixelColor(x, y, QColor(255, 255, 255, a))
         _GRAIN_TILE = img
     return _GRAIN_TILE
@@ -331,12 +331,15 @@ class RadialDimWidget(QWidget):
     """The radial menu's frosted-blur backdrop, as its OWN click-through layer.
 
     Sits behind the emblem (z-order: cards -> dim -> emblem -> buttons) and is
-    purely decorative (never grabs input). Renders a frozen, blurred snapshot of
-    whatever was behind the ring at open time, plus a soft dark veil, masked to a
-    soft circular falloff. Animates in/out with a combined iris-expand +
+    purely decorative (never grabs input). Renders a frosted-glass disc: an
+    opaque milky base composited with a frozen snapshot of our OWN content behind
+    the ring (the cards, or nothing -> base only), Gaussian-blurred, then finished
+    with fine grain, a soft dark veil, and a soft circular mask that carves a
+    feathered disc and leaves it translucent (center alpha _DISC_ALPHA < 255, so
+    the cards faintly read through). Animates in/out with a combined iris-expand +
     focus-pull driven by the ``progress`` property: the widget is transparent, so
     at progress 0 the live sharp content shows straight through, and we fade the
-    blurred copy in on top (the focus-pull falls out of the layering for free).
+    frosted copy in on top (the focus-pull falls out of the layering for free).
 
     No QGraphicsEffect: all compositing stays inside one QPainter (see
     utils/widgets/backdrop_blur.py for the rationale - QGraphicsEffect renders
@@ -352,7 +355,6 @@ class RadialDimWidget(QWidget):
     _FILM = QColor(228, 232, 240)        # opaque milky base center (so the blur
     #                                      never smears transparent-black edges)
     _FILM_EDGE = QColor(198, 205, 218)   # milky base toward the rim (subtle depth)
-    _GRAIN_ALPHA = 12                    # max per-pixel grain alpha (subtle glass)
     _DISC_ALPHA = 210                    # final disc center alpha (<255 => glass
     #                                      is translucent; cards faintly read through)
     _VEIL = QColor(8, 10, 16, 90)        # soft dark veil for ring legibility
@@ -415,6 +417,9 @@ class RadialDimWidget(QWidget):
         p.end()
         # 3) blur the whole opaque composite (clean: no transparent edges).
         blurred = gaussian_blur_pixmap(pm, self._BLUR_RADIUS)
+        # gaussian_blur_pixmap currently restores the source size on every pass,
+        # so this guard is belt-and-suspenders: it keeps the composite at phys
+        # size if that helper is ever refactored to return a different size.
         if blurred.size() != pm.size():
             blurred = blurred.scaled(phys_w, phys_h, Qt.IgnoreAspectRatio,
                                      Qt.SmoothTransformation)
