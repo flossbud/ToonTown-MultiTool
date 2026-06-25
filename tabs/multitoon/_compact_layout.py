@@ -624,7 +624,30 @@ class _Emblem(QWidget):
         self._dwell_timer.start()
         super().enterEvent(event)
 
+    def _point_on_emblem(self, pt) -> bool:
+        """True if a widget-local point lies within the emblem's inscribed disc.
+        Disc-based (not the bounding rect) so the square corners read as off."""
+        cx = self.width() / 2.0
+        cy = self.height() / 2.0
+        r = min(self.width(), self.height()) / 2.0
+        dx = pt.x() - cx
+        dy = pt.y() - cy
+        return (dx * dx + dy * dy) <= r * r
+
+    def _cursor_on_emblem(self) -> bool:
+        """Whether the REAL pointer is physically on the emblem disc right now."""
+        from PySide6.QtGui import QCursor
+        return self._point_on_emblem(self.mapFromGlobal(QCursor.pos()))
+
     def leaveEvent(self, event):
+        # _armed is a PHYSICAL-hover state. When the radial menu is open, each
+        # scroll-scale tick resizes/restacks overlay surfaces over the emblem, so
+        # Qt synthesizes a Leave even though the cursor never left - which would
+        # disarm us and break continuous scroll-scaling (the 300ms dwell cannot
+        # re-arm between ticks). Only a REAL departure (cursor off the disc) may
+        # disarm; a synthetic crossing (cursor still on the disc) is ignored.
+        if self._cursor_on_emblem():
+            return
         self._dwell_timer.stop()
         self._armed = False
         self.update()
