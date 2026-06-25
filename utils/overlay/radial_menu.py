@@ -711,6 +711,24 @@ class RadialMenuWidget(QWidget):
     def _center(self) -> tuple[float, float]:
         return (self.width() / 2.0, self.height() / 2.0)
 
+    def set_emblem_diameter(self, emblem_diameter: float) -> None:
+        """Re-derive the ring geometry for a new emblem size and repaint.
+
+        Used when the user scroll-scales the emblem while the menu is open: the
+        spokes snap in lockstep with the emblem (which also resizes instantly
+        per scroll notch), so this does NOT animate and does NOT replay the
+        fly-out entrance. The hosting surface resizes the widget itself, so
+        ``_center()`` follows; here we only recompute the ring/satellite radii.
+        Idempotent for an unchanged value.
+        """
+        d = float(emblem_diameter)
+        if d == self._emblem_dia:
+            return
+        self._emblem_dia = d
+        self._sat_r = d * 0.40 / 2.0
+        self._ring = d / 2.0 + 16.0 + self._sat_r
+        self.update()
+
     def circle_geometry(self, state: str, key) -> tuple[float, float, float]:
         cx, cy = self._center()
         if state == "main":
