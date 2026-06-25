@@ -14,7 +14,7 @@ necessarily outside the wheel -> dismiss.
 """
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QRect, Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QWidget
 
 from utils.overlay.radial_menu import (RadialMenuWidget, RadialDimWidget,
@@ -73,11 +73,11 @@ class WindowedWheelHost(QWidget):
         self.menu.start_reveal()
 
     def _show_dim(self):
-        """Place the dim backdrop as a sibling of the emblem, centered on it and
-        stacked just below it (above the cards, behind the emblem). Captures a
-        frozen snapshot of the content behind the dim, frosts it, and animates it
-        in. The buttons live in this host, raised above the whole tab, so they
-        stay in front of the dim and the emblem alike."""
+        """Place the drop-shadow backdrop as a sibling of the emblem, centered on
+        it and stacked just below it (above the cards, behind the emblem). The
+        shadow does not depend on the content behind it, so there is no grab. The
+        buttons live in this host, raised above the whole tab, so they stay in
+        front of the dim and the emblem alike."""
         parent = self._emblem.parentWidget()
         if parent is None:
             return
@@ -85,14 +85,8 @@ class WindowedWheelHost(QWidget):
         center = self._emblem.geometry().center()   # in the emblem's parent coords
         x = center.x() - side // 2
         y = center.y() - side // 2
-        grab = None
-        try:
-            grab = parent.grab(QRect(x, y, side, side))
-        except Exception:
-            grab = None
         self._dim = RadialDimWidget(parent)
         self._dim.setGeometry(x, y, side, side)
-        self._dim.set_backdrop(grab)
         self._dim.show()
         self._dim.stackUnder(self._emblem)   # cards -> dim -> emblem
         self._dim.start_reveal(animate=radial_anim_enabled())

@@ -24,7 +24,6 @@ from PySide6.QtWidgets import QWidget
 
 from utils.radial_menu_layout import (MAIN_RING_ANGLES, WINDOWED_RING_ANGLES,
                                        account_ring_angles, polar_point)
-from utils.image_blur import gaussian_blur_pixmap
 
 _OUT_CUBIC = QEasingCurve.OutCubic
 _IN_CUBIC = QEasingCurve.InCubic
@@ -303,90 +302,51 @@ def _label_pill(p: QPainter, cx: float, cy: float, r: float, text: str, above: b
     p.drawText(rect, Qt.AlignCenter, text)
 
 
-_GRAIN_ALPHA = 12          # max per-pixel white grain alpha; seeded tile baked once
-_GRAIN_TILE = None         # deterministic cached noise tile (QImage)
-
-
-def _grain_tile():
-    """A deterministic, cached fine-noise tile, tiled over the frost for a glass
-    texture. Built once with a fixed seed so every frost build is byte-identical
-    (no per-open shimmer, no flaky tests)."""
-    global _GRAIN_TILE
-    if _GRAIN_TILE is None:
-        import random
-        from PySide6.QtGui import QImage
-        rnd = random.Random(0xC0FFEE)
-        n = 96
-        img = QImage(n, n, QImage.Format_ARGB32)
-        img.fill(QColor(0, 0, 0, 0))
-        for y in range(n):
-            for x in range(n):
-                a = rnd.randint(0, _GRAIN_ALPHA)
-                img.setPixelColor(x, y, QColor(255, 255, 255, a))
-        _GRAIN_TILE = img
-    return _GRAIN_TILE
-
-
 class RadialDimWidget(QWidget):
-    """The radial menu's frosted-blur backdrop, as its OWN click-through layer.
+    """The radial menu's drop-shadow backdrop, as its OWN click-through layer.
 
     Sits behind the emblem (z-order: cards -> dim -> emblem -> buttons) and is
-    purely decorative (never grabs input). Renders a frosted-glass disc: an
-    opaque milky base composited with a frozen snapshot of our OWN content behind
-    the ring (the cards, or nothing -> base only), Gaussian-blurred, then finished
-    with fine grain, a soft dark veil, and a soft circular mask that carves a
-    feathered disc and leaves it translucent (center alpha _DISC_ALPHA < 255, so
-    the cards faintly read through). Animates in/out with a combined iris-expand +
-    focus-pull driven by the ``progress`` property: the widget is transparent, so
-    at progress 0 the live sharp content shows straight through, and we fade the
-    frosted copy in on top (the focus-pull falls out of the layering for free).
+    purely decorative (never grabs input). Paints a single soft radial drop
+    shadow - a dark, faintly cool gradient that fades to transparent - so the
+    menu reads as lifted off the content behind it while that content stays
+    sharp. Animates in/out via the ``progress`` property (a fade plus a subtle
+    focus-pull scale, see ``_dim_frame``); at progress 0 it is fully transparent.
 
-    No QGraphicsEffect: all compositing stays inside one QPainter (see
+    No QGraphicsEffect: all painting stays inside one QPainter (see
     utils/widgets/backdrop_blur.py for the rationale - QGraphicsEffect renders
     invisibly on proxied widgets and risks the Py3.14/PySide6 paint-time GC SEGV).
+    The shadow pixmap is cached at PHYSICAL pixels (dpr applied once) and rebuilt
+    only when the logical size or dpr changes, so HiDPI does not rebuild every
+    paint. It is composited on a QImage(ARGB32_Premultiplied) so the alpha is
+    reliable at every dpr (a fully-opaque QPixmap can silently read back solid).
     """
 
     _OPEN_MS = 240
     _CLOSE_MS = 200
-    _BLUR_RADIUS = 10
-    # Frosted-glass composite tuning (see 2026-06-24 frosted-glass spec). All
-    # compositing is done at PHYSICAL pixels; dpr is applied once at the end of
-    # _build_frost. Live-tunable.
-    _FILM = QColor(110, 216, 255)        # bright blue frost center (cool, luminous;
-    #                                      opaque so the blur has no transparent-
-    #                                      black edges to smear)
-    _FILM_EDGE = QColor(90, 192, 250)    # bright blue frost toward the rim (depth)
-    _DISC_ALPHA = 145                    # final disc center alpha (<255 => glass
-    #                                      is translucent; cards faintly read through)
-    _DISC_SCALE = 0.85                   # disc radius as a fraction of the surface
-    #                                      half-size (shrinks the circle, centered)
-    _VEIL = QColor(8, 10, 16, 34)        # light dark veil for ring legibility
-    #                                      (lower alpha => brighter, bluer glass)
+    # Drop-shadow tuning (live-tunable). All compositing is at PHYSICAL pixels;
+    # dpr is applied once at the end of _build_shadow.
+    _SHADOW_COLOR = QColor(0, 5, 14)     # dark, faintly cool
+    _SHADOW_ALPHA = 135                  # peak alpha at the shadow center
+    _SHADOW_SCALE = 0.58                 # shadow radius as a fraction of the
+    #                                      surface half-size (a halo a bit larger
+    #                                      than the spoke ring)
+    _SHADOW_SOLID = 0.45                 # gradient stop kept at full alpha
+    _SHADOW_FADE = 0.92                  # gradient stop where alpha reaches 0
+    _SHADOW_DROP = 0.05                  # downward offset as a fraction of radius
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WA_NoSystemBackground, True)
-        self._raw = None            # source region pixmap (kept for lazy rebuild)
-        self._frost = None          # cached composite (blurred backdrop + veil + mask)
-        self._frost_size = None     # logical-size cache key (paintEvent compares this)
-        self._frost_dpr = None      # dpr cache key (rebuild on monitor-scale change)
+        self._shadow = None         # cached shadow pixmap
+        self._shadow_size = None    # logical-size cache key (paintEvent compares)
+        self._shadow_dpr = None     # dpr cache key (rebuild on monitor-scale change)
         self._progress = 0.0
         self._anim = None           # QVariantAnimation while reveal/close runs
 
-    # --- backdrop -----------------------------------------------------------
-    def set_backdrop(self, raw) -> None:
-        """Bake the cached frost composite from a raw region pixmap, or a
-        veil-only composite when ``raw`` is None/empty (graceful fallback). The
-        source is retained so paintEvent can rebuild lazily if the widget is still
-        0-size / pre-layout now (the overlay surface may not have propagated
-        geometry yet); the build is skipped here and retried on first paint."""
-        self._raw = raw
-        self._frost = self._build_frost(raw)
-        self.update()
-
-    def _build_frost(self, raw):
+    # --- shadow build -------------------------------------------------------
+    def _build_shadow(self):
         from PySide6.QtGui import QPixmap, QImage
         size = self.size()
         if size.width() <= 0 or size.height() <= 0:
@@ -396,77 +356,30 @@ class RadialDimWidget(QWidget):
         phys_h = max(1, int(round(size.height() * dpr)))
         cx = phys_w / 2.0
         cy = phys_h / 2.0
-        radius = min(phys_w, phys_h) / 2.0
-        disc_r = radius * self._DISC_SCALE  # visible disc radius (shrinks the circle)
-        pm = QPixmap(phys_w, phys_h)        # PHYSICAL buffer; dpr set at the end
-        pm.fill(Qt.transparent)
-        if radius <= 0:
-            pm.setDevicePixelRatio(dpr)
-            self._frost_size = size
-            self._frost_dpr = dpr
-            return pm
-        # 1) opaque milky base: gives the blur a non-transparent backdrop so the
-        #    cards' bitten/transparent edges blur into frost, never black.
-        p = QPainter(pm)
-        p.setRenderHint(QPainter.Antialiasing, True)
-        p.setRenderHint(QPainter.SmoothPixmapTransform, True)
-        base = QRadialGradient(QPointF(cx, cy), disc_r)
-        base.setColorAt(0.0, self._FILM)
-        base.setColorAt(1.0, self._FILM_EDGE)
-        p.setPen(Qt.NoPen)
-        p.setBrush(QBrush(base))
-        p.drawRect(0, 0, phys_w, phys_h)
-        # 2) our OWN content (card composite / windowed grab), 1:1 in physical px.
-        if raw is not None and not raw.isNull():
-            p.drawPixmap(QRectF(0, 0, phys_w, phys_h), raw, QRectF(raw.rect()))
-        p.end()
-        # 3) blur the whole opaque composite (clean: no transparent edges).
-        blurred = gaussian_blur_pixmap(pm, self._BLUR_RADIUS)
-        # gaussian_blur_pixmap currently restores the source size on every pass,
-        # so this guard is belt-and-suspenders: it keeps the composite at phys
-        # size if that helper is ever refactored to return a different size.
-        if blurred.size() != pm.size():
-            blurred = blurred.scaled(phys_w, phys_h, Qt.IgnoreAspectRatio,
-                                     Qt.SmoothTransformation)
-        # Composite the alpha stages (grain/veil/mask) on an ARGB32_Premultiplied
-        # QImage, NOT the blurred QPixmap. A fully-opaque QPixmap can drop its
-        # alpha channel, which silently turns the CompositionMode_DestinationIn
-        # mask into a no-op (the disc renders as an opaque square). A QImage with
-        # an explicit alpha format makes the carve reliable at every dpr.
-        canvas = blurred.toImage().convertToFormat(QImage.Format_ARGB32_Premultiplied)
-        p = QPainter(canvas)
-        p.setRenderHint(QPainter.Antialiasing, True)
-        # 4) deterministic fine grain (glass texture).
-        grain = QPixmap.fromImage(_grain_tile())
-        p.setPen(Qt.NoPen)
-        p.setBrush(QBrush(grain))
-        p.drawRect(0, 0, phys_w, phys_h)
-        # 5) soft dark veil for ring legibility.
-        c = self._VEIL
-        clear = QColor(c.red(), c.green(), c.blue(), 0)
-        veil = QRadialGradient(QPointF(cx, cy), disc_r)
-        veil.setColorAt(0.0, c)
-        veil.setColorAt(0.52, c)
-        veil.setColorAt(0.86, clear)
-        veil.setColorAt(1.0, clear)
-        p.setBrush(QBrush(veil))
-        p.drawEllipse(QPointF(cx, cy), disc_r, disc_r)
-        # 6) soft circular mask -> disc + feathered edge + overall translucency
-        #    (center alpha _DISC_ALPHA < 255 so the cards faintly read through).
-        a = self._DISC_ALPHA
-        mask = QRadialGradient(QPointF(cx, cy), disc_r)
-        mask.setColorAt(0.0, QColor(0, 0, 0, a))
-        mask.setColorAt(0.60, QColor(0, 0, 0, a))
-        mask.setColorAt(0.78, QColor(0, 0, 0, 0))
-        mask.setColorAt(1.0, QColor(0, 0, 0, 0))
-        p.setCompositionMode(QPainter.CompositionMode_DestinationIn)
-        p.setBrush(QBrush(mask))
-        p.drawRect(0, 0, phys_w, phys_h)
-        p.end()
+        radius = min(phys_w, phys_h) / 2.0 * self._SHADOW_SCALE
+        # Composite on ARGB32_Premultiplied so alpha is reliable at every dpr.
+        canvas = QImage(phys_w, phys_h, QImage.Format_ARGB32_Premultiplied)
+        canvas.fill(Qt.transparent)
+        if radius > 0:
+            dy = radius * self._SHADOW_DROP
+            c = self._SHADOW_COLOR
+            core = QColor(c.red(), c.green(), c.blue(), self._SHADOW_ALPHA)
+            clear = QColor(c.red(), c.green(), c.blue(), 0)
+            g = QRadialGradient(QPointF(cx, cy + dy), radius)
+            g.setColorAt(0.0, core)
+            g.setColorAt(self._SHADOW_SOLID, core)
+            g.setColorAt(self._SHADOW_FADE, clear)
+            g.setColorAt(1.0, clear)
+            p = QPainter(canvas)
+            p.setRenderHint(QPainter.Antialiasing, True)
+            p.setPen(Qt.NoPen)
+            p.setBrush(QBrush(g))
+            p.drawEllipse(QPointF(cx, cy + dy), radius, radius)
+            p.end()
         pm = QPixmap.fromImage(canvas)
         pm.setDevicePixelRatio(dpr)
-        self._frost_size = size             # logical-size cache key
-        self._frost_dpr = dpr               # dpr cache key
+        self._shadow_size = size            # logical-size cache key
+        self._shadow_dpr = dpr              # dpr cache key
         return pm
 
     # --- progress property + paint -----------------------------------------
@@ -480,19 +393,16 @@ class RadialDimWidget(QWidget):
     progress = Property(float, _get_progress, _set_progress)
 
     def paintEvent(self, e):
-        # Lazy (re)build: set_backdrop may have run while the widget was still
-        # 0-size / pre-layout (the overlay surface doesn't propagate geometry
-        # synchronously), leaving _frost None. By first paint the widget has its
-        # real size, so rebuild then; also rebuild if the size changed under us.
-        # Rebuild on logical-size OR dpr change. _frost is dpr-backed (physical
-        # px), so comparing its raw .size() to the widget's logical size would
-        # rebuild every paint on HiDPI; and a same-size move to a different-scale
-        # monitor changes dpr but not logical size. Compare the cached keys.
-        if (self._frost is None
-                or self._frost_size != self.size()
-                or self._frost_dpr != float(self.devicePixelRatioF() or 1.0)):
-            self._frost = self._build_frost(self._raw)
-        if self._frost is None or self._frost.isNull():
+        # Lazy (re)build: the widget may be 0-size / pre-layout when first shown
+        # (the overlay surface doesn't propagate geometry synchronously). Rebuild
+        # on logical-size OR dpr change. _shadow is dpr-backed (physical px), so
+        # comparing its raw .size() to the logical size would rebuild every paint
+        # on HiDPI; compare the cached keys instead.
+        if (self._shadow is None
+                or self._shadow_size != self.size()
+                or self._shadow_dpr != float(self.devicePixelRatioF() or 1.0)):
+            self._shadow = self._build_shadow()
+        if self._shadow is None or self._shadow.isNull():
             return
         opacity, scale = _dim_frame(self._progress)
         if opacity <= 0.0:
@@ -505,7 +415,7 @@ class RadialDimWidget(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.SmoothPixmapTransform, True)
         p.setOpacity(opacity)
-        p.drawPixmap(target, self._frost, QRectF(self._frost.rect()))
+        p.drawPixmap(target, self._shadow, QRectF(self._shadow.rect()))
         p.end()
 
     # --- animation ----------------------------------------------------------

@@ -405,15 +405,21 @@ def test_refined_painters_paint_without_crash():
     p.end()
 
 
-def test_frost_is_built_by_set_backdrop_and_matches_widget_size():
+def test_shadow_is_built_and_matches_widget_size():
     _app()
+    from PySide6.QtGui import QPixmap, QColor
+    from PySide6.QtCore import QPoint
     from utils.overlay.radial_menu import RadialDimWidget
     w = RadialDimWidget(); w.resize(400, 400)
-    w.set_backdrop(None)
-    assert w._frost is not None and w._frost.size().width() == 400
+    w.progress = 1.0
+    pm = QPixmap(w.size()); pm.fill(QColor(0, 0, 0, 0))
+    w.render(pm, QPoint(0, 0))
+    assert w._shadow is not None
+    assert abs(w._shadow.deviceIndependentSize().width() - 400.0) < 0.5
     w.resize(500, 500)
-    w.set_backdrop(None)
-    assert w._frost is not None and w._frost.size().width() == 500
+    pm = QPixmap(w.size()); pm.fill(QColor(0, 0, 0, 0))
+    w.render(pm, QPoint(0, 0))
+    assert abs(w._shadow.deviceIndependentSize().width() - 500.0) < 0.5
 
 
 def test_radial_menu_widget_no_longer_owns_the_dim():
