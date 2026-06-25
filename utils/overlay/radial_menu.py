@@ -500,8 +500,9 @@ class RadialMenuWidget(QWidget):
         self.setMouseTracking(True)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setFocusPolicy(Qt.StrongFocus)
-        self._anim_enabled = os.environ.get("TTMT_NO_RADIAL_ANIM") not in (
-            "1", "true", "yes", "on")
+        # Calm the whole ring under Reduce Motion (and the kill switch): the
+        # spoke fly-out honors both, matching the frosted dim backdrop.
+        self._anim_enabled = radial_anim_enabled()
         self._appear_active = False
         self._appear_progress = {}     # key -> eased visibility in [0,1]
         self._stagger = {}             # key -> ms delay (entrance or exit)
