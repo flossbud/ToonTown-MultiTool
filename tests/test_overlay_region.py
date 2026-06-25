@@ -112,3 +112,19 @@ def test_compose_dim_source_composites_multiple_cards():
     assert img.pixelColor(10, 10).red() > 200          # first card
     assert img.pixelColor(110, 110).blue() > 200       # second card, distinct position
     assert img.pixelColor(60, 60).alpha() == 0         # gap between them stays transparent
+
+
+def test_no_root_capture_or_kwin_blur_symbols():
+    """Guard: the rejected root-grab / KWin-atom / rectangle-band approaches must
+    never reappear anywhere in the overlay package."""
+    import pathlib
+    root = pathlib.Path(__file__).resolve().parents[1] / "utils" / "overlay"
+    banned = ("grabWindow", "set_blur_behind", "_KDE_NET_WM_BLUR_BEHIND_REGION",
+              "circle_blur_rects")
+    hits = []
+    for path in root.rglob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        for token in banned:
+            if token in text:
+                hits.append(f"{path.name}: {token}")
+    assert hits == [], f"banned overlay symbols present: {hits}"
