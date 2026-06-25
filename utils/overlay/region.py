@@ -10,48 +10,8 @@ a card's individual control-widget rects (disjoint device-pixel rects, not a sin
 continuous path), so only the buttons block clicks and the body stays click-through."""
 from __future__ import annotations
 
-from PySide6.QtCore import QRect, QRectF, QPointF, Qt
-from PySide6.QtGui import QPainterPath, QRegion, QTransform, QPixmap, QPainter
-
-
-def compose_dim_source(
-    side: int,
-    dpr: float,
-    placements: list[tuple[float, float, QPixmap | None]],
-) -> QPixmap | None:
-    """Composite grabbed card pixmaps into one ``side`` x ``side`` (LOGICAL)
-    source pixmap for the radial dim, in logical coords with device-pixel backing.
-
-    side: logical edge of the dim square. dpr: device-pixel ratio. placements:
-    iterable of ``(logical_dx, logical_dy, card_pixmap)`` where (dx, dy) is the
-    card's top-left RELATIVE to the dim square's top-left. Each card_pixmap
-    already carries its own devicePixelRatio (from ``QWidget.grab()``); it is
-    drawn at its device-INDEPENDENT size so dpr is applied exactly once (no
-    double scale). Uncovered area stays transparent so the frost base shows
-    through there. Returns None for non-positive side/dpr, no placements, or
-    when every placement is a null/None card (nothing to composite)."""
-    placements = list(placements or [])
-    if side <= 0 or dpr <= 0 or not placements:
-        return None
-    phys = int(round(side * dpr))
-    pm = QPixmap(phys, phys)
-    pm.setDevicePixelRatio(dpr)
-    pm.fill(Qt.transparent)
-    p = QPainter(pm)
-    p.setRenderHint(QPainter.SmoothPixmapTransform, True)
-    drawn = 0
-    for dx, dy, card in placements:
-        if card is None or card.isNull():
-            continue
-        # target rect = LOGICAL; source rect = the FULL grabbed pixmap in its own
-        # pixel coords. The dpr-backed canvas maps logical->physical once.
-        target = QRectF(QPointF(float(dx), float(dy)), card.deviceIndependentSize())
-        p.drawPixmap(target, card, QRectF(card.rect()))
-        drawn += 1
-    p.end()
-    if drawn == 0:
-        return None          # every card was null -> no source (frost-base only)
-    return pm
+from PySide6.QtCore import QRect
+from PySide6.QtGui import QPainterPath, QRegion, QTransform
 
 
 def _path_to_region(path: QPainterPath, transform: QTransform) -> QRegion:

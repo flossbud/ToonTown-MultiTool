@@ -19,6 +19,8 @@ def _fixture():
     return parent, emblem
 
 
+# --- _dim_frame + radial_anim_enabled (unchanged helpers) --------------------
+
 def test_dim_frame_endpoints():
     from utils.overlay.radial_menu import _dim_frame
     o0, s0 = _dim_frame(0.0)
@@ -61,31 +63,58 @@ def test_radial_anim_enabled_on_by_default(monkeypatch):
     assert radial_anim_enabled() is True
 
 
-def test_set_backdrop_none_is_glassy_not_dark():
+# --- drop-shadow backdrop ----------------------------------------------------
+
+def test_shadow_built_lazily_on_first_paint():
+    _app()
+    from PySide6.QtGui import QPixmap, QColor
+    from PySide6.QtCore import QPoint
+    from utils.overlay.radial_menu import RadialDimWidget
+    w = RadialDimWidget(); w.resize(200, 200)
+    assert w._shadow is None                 # nothing built until painted
+    w.progress = 1.0
+    pm = QPixmap(w.size()); pm.fill(QColor(0, 0, 0, 0))
+    w.render(pm, QPoint(0, 0))               # paintEvent must not raise
+    assert w._shadow is not None and not w._shadow.isNull()
+
+
+def test_shadow_is_translucent_dark_disc():
     _app()
     from PySide6.QtGui import QImage, QColor
     from PySide6.QtCore import QPoint
     from utils.overlay.radial_menu import RadialDimWidget
     w = RadialDimWidget(); w.resize(200, 200)
-    w.set_backdrop(None)
     w.progress = 1.0
-    assert w._frost is not None and not w._frost.isNull()
-    img = QImage(w.size(), QImage.Format_ARGB32)
-    img.fill(QColor(0, 0, 0, 0))
-    w.render(img, QPoint(0, 0))                 # paintEvent must not raise
-    c = img.pixelColor(100, 100)
-    assert 0 < c.alpha() < 255                  # translucent disc, not opaque
-    assert c.red() > 60 and c.green() > 60 and c.blue() > 60   # milky, not flat dark
+    img = QImage(w.size(), QImage.Format_ARGB32); img.fill(QColor(0, 0, 0, 0))
+    w.render(img, QPoint(0, 0))
+    center = img.pixelColor(100, 100)
+    assert 0 < center.alpha() < 255          # soft, not opaque
+    assert center.red() < 60 and center.green() < 60 and center.blue() < 60  # dark
+    assert img.pixelColor(2, 2).alpha() == 0 # fades to nothing before the edge
 
 
-def test_frost_build_is_deterministic():
+def test_shadow_pixmap_keeps_alpha():
+    # Guards the QImage-composite discipline: build on ARGB32_Premultiplied so the
+    # shadow keeps a real alpha channel (an opaque QPixmap reads back solid).
     _app()
     from utils.overlay.radial_menu import RadialDimWidget
     w = RadialDimWidget(); w.resize(200, 200)
-    a = w._build_frost(None)
-    b = w._build_frost(None)
+    s = w._build_shadow()
+    assert s is not None and not s.isNull()
+    assert s.hasAlphaChannel()
+    img = s.toImage()
+    cx, cy = s.width() // 2, s.height() // 2
+    assert 0 < img.pixelColor(cx, cy).alpha() < 255
+    assert img.pixelColor(2, 2).alpha() == 0
+
+
+def test_shadow_build_is_deterministic():
+    _app()
+    from utils.overlay.radial_menu import RadialDimWidget
+    w = RadialDimWidget(); w.resize(200, 200)
+    a = w._build_shadow(); b = w._build_shadow()
     assert a is not None and b is not None
-    assert a.toImage() == b.toImage()          # seeded grain => identical builds
+    assert a.toImage() == b.toImage()
 
 
 def test_paint_cache_uses_logical_size_not_physical():
@@ -94,16 +123,15 @@ def test_paint_cache_uses_logical_size_not_physical():
     from PySide6.QtCore import QSize, QPoint
     from utils.overlay.radial_menu import RadialDimWidget
     w = RadialDimWidget(); w.resize(200, 200)
-    w.set_backdrop(None)
-    # Simulate a dpr=2 frost: physical 400 but logical (cache key) 200.
+    # Simulate a dpr=2 shadow: physical 400 but logical (cache key) 200.
     fake = QPixmap(400, 400); fake.setDevicePixelRatio(2.0); fake.fill(QColor(1, 2, 3, 200))
-    w._frost = fake
-    w._frost_size = QSize(200, 200)
-    img = QPixmap(w.size()); img.fill(QColor(0, 0, 0, 0))
+    w._shadow = fake
+    w._shadow_size = QSize(200, 200)
+    w._shadow_dpr = float(w.devicePixelRatioF() or 1.0)
+    pm = QPixmap(w.size()); pm.fill(QColor(0, 0, 0, 0))
     w.progress = 1.0
-    w.render(img, QPoint(0, 0))
-    # Must NOT rebuild: logical key (200) == widget size (200), despite physical 400.
-    assert w._frost is fake
+    w.render(pm, QPoint(0, 0))
+    assert w._shadow is fake                 # logical key matches -> no rebuild
 
 
 def test_paint_rebuilds_when_dpr_changes():
@@ -112,58 +140,37 @@ def test_paint_rebuilds_when_dpr_changes():
     from PySide6.QtCore import QSize, QPoint
     from utils.overlay.radial_menu import RadialDimWidget
     w = RadialDimWidget(); w.resize(200, 200)
-    w.set_backdrop(None)
     fake = QPixmap(200, 200); fake.fill(QColor(1, 2, 3, 200))
-    w._frost = fake
-    w._frost_size = QSize(200, 200)
-    # Stale dpr derived from the REAL dpr (+1) so this holds regardless of the
-    # environment's scale factor (do not hard-code an assumed offscreen dpr).
-    w._frost_dpr = float(w.devicePixelRatioF() or 1.0) + 1.0
-    img = QPixmap(w.size()); img.fill(QColor(0, 0, 0, 0))
+    w._shadow = fake
+    w._shadow_size = QSize(200, 200)
+    w._shadow_dpr = float(w.devicePixelRatioF() or 1.0) + 1.0   # stale dpr
+    pm = QPixmap(w.size()); pm.fill(QColor(0, 0, 0, 0))
     w.progress = 1.0
-    w.render(img, QPoint(0, 0))
-    assert w._frost is not fake            # rebuilt because cached dpr != current dpr
+    w.render(pm, QPoint(0, 0))
+    assert w._shadow is not fake             # rebuilt: cached dpr != current dpr
 
 
-def test_frost_with_source_is_translucent_disc():
+def test_shadow_rebuilds_after_resize():
     _app()
-    from PySide6.QtCore import Qt
-    from PySide6.QtGui import QPixmap, QImage, QColor
+    from PySide6.QtGui import QPixmap, QColor
     from PySide6.QtCore import QPoint
     from utils.overlay.radial_menu import RadialDimWidget
-    w = RadialDimWidget(); w.resize(200, 200)
-    raw = QPixmap(200, 200); raw.fill(Qt.red)
-    w.set_backdrop(raw)
+    w = RadialDimWidget(); w.resize(0, 0)    # 0x0 / pre-layout
     w.progress = 1.0
-    assert w._frost is not None and not w._frost.isNull()
-    img = QImage(w.size(), QImage.Format_ARGB32); img.fill(QColor(0, 0, 0, 0))
-    w.render(img, QPoint(0, 0))
-    assert 0 < img.pixelColor(100, 100).alpha() < 255
-    assert img.pixelColor(2, 2).alpha() == 0   # corner outside the disc -> clear
+    pm0 = QPixmap(10, 10); pm0.fill(QColor(0, 0, 0, 0))
+    w.render(pm0, QPoint(0, 0))
+    assert w._shadow is None                 # nothing built at 0x0
+    w.resize(200, 200)
+    pm = QPixmap(w.size()); pm.fill(QColor(0, 0, 0, 0))
+    w.render(pm, QPoint(0, 0))               # lazy rebuild on paint
+    assert w._shadow is not None
+    assert abs(w._shadow.deviceIndependentSize().width() - 200.0) < 0.5
 
 
-def test_frost_pixmap_keeps_alpha_and_carves_disc():
-    # Direct check on the frost pixmap (not via render): the mask must actually
-    # carve a translucent disc. Guards the QImage-composite fix - a QPixmap
-    # surface drops its alpha when opaque and silently no-ops DestinationIn.
-    _app()
-    from utils.overlay.radial_menu import RadialDimWidget
-    w = RadialDimWidget(); w.resize(200, 200)
-    w.set_backdrop(None)
-    f = w._frost
-    assert f is not None and not f.isNull()
-    assert f.hasAlphaChannel()                      # alpha preserved through compositing
-    img = f.toImage()
-    cx, cy = f.width() // 2, f.height() // 2
-    assert 0 < img.pixelColor(cx, cy).alpha() < 255  # translucent center, not opaque
-    assert img.pixelColor(2, 2).alpha() == 0         # corner carved away (real disc)
-
-
-def test_frost_translucent_under_hidpi_scale_factor():
-    # Regression for the HiDPI opaque-disc bug: at QT_SCALE_FACTOR=2 a QPixmap
-    # composite produced a fully opaque square. Run a fresh interpreter with the
-    # scale factor set (it must be set before the QApplication is created, which
-    # this process already did at dpr=1) and assert the frost is a real disc.
+def test_shadow_translucent_under_hidpi_scale_factor():
+    # Regression for the HiDPI opaque bug: at QT_SCALE_FACTOR=2 a QPixmap composite
+    # could read back fully opaque. Build the shadow in a fresh interpreter with the
+    # scale factor set before QApplication, and assert it is a real translucent disc.
     import os
     import sys
     import subprocess
@@ -176,11 +183,11 @@ def test_frost_translucent_under_hidpi_scale_factor():
         "from PySide6.QtWidgets import QApplication\n"
         "app=QApplication([])\n"
         "from utils.overlay.radial_menu import RadialDimWidget\n"
-        "w=RadialDimWidget(); w.resize(200,200); w.set_backdrop(None)\n"
-        "f=w._frost; im=f.toImage()\n"
+        "w=RadialDimWidget(); w.resize(200,200)\n"
+        "s=w._build_shadow(); im=s.toImage()\n"
         "assert abs(w.devicePixelRatioF()-2.0)<1e-6, 'scale factor not applied'\n"
-        "assert f.hasAlphaChannel(), 'frost lost alpha at hidpi'\n"
-        "c=im.pixelColor(f.width()//2, f.height()//2).alpha()\n"
+        "assert s.hasAlphaChannel(), 'shadow lost alpha at hidpi'\n"
+        "c=im.pixelColor(s.width()//2, s.height()//2).alpha()\n"
         "corner=im.pixelColor(2,2).alpha()\n"
         "assert 0 < c < 255, f'center not translucent: {c}'\n"
         "assert corner == 0, f'corner not transparent: {corner}'\n"
@@ -196,39 +203,10 @@ def test_frost_translucent_under_hidpi_scale_factor():
     assert "HIDPI_OK" in r.stdout, f"stdout={r.stdout!r} stderr={r.stderr!r}"
 
 
-def test_set_backdrop_pixmap_builds_frost():
-    _app()
-    from PySide6.QtCore import Qt
-    from PySide6.QtGui import QPixmap
-    from utils.overlay.radial_menu import RadialDimWidget
-    w = RadialDimWidget(); w.resize(200, 200)
-    raw = QPixmap(200, 200); raw.fill(Qt.red)
-    w.set_backdrop(raw)
-    assert w._frost is not None and not w._frost.isNull()
-
-
-def test_frost_rebuilds_when_size_unset_at_set_backdrop():
-    _app()
-    from PySide6.QtCore import Qt
-    from PySide6.QtGui import QPixmap
-    from utils.overlay.radial_menu import RadialDimWidget
-    w = RadialDimWidget(); w.resize(0, 0)        # 0x0 / pre-layout at set_backdrop time
-    raw = QPixmap(50, 50); raw.fill(Qt.red)
-    w.set_backdrop(raw)
-    assert w._frost is None                      # nothing built at 0x0
-    w.resize(200, 200)
-    w.progress = 1.0
-    pm = QPixmap(w.size()); pm.fill(Qt.transparent); w.render(pm)   # lazy rebuild on paint
-    # Compare LOGICAL size: _frost is dpr-backed (physical px), so .size() is 200
-    # at dpr 1 but 400 at dpr 2 - deviceIndependentSize() is 200 at any dpr.
-    assert w._frost is not None
-    assert abs(w._frost.deviceIndependentSize().width() - 200.0) < 0.5
-
-
 def test_reveal_and_close_snap_when_not_animated():
     _app()
     from utils.overlay.radial_menu import RadialDimWidget
-    w = RadialDimWidget(); w.resize(200, 200); w.set_backdrop(None)
+    w = RadialDimWidget(); w.resize(200, 200)
     w.start_reveal(animate=False)
     assert w.progress == 1.0
     w.start_close(animate=False)
@@ -239,7 +217,7 @@ def test_reveal_animate_true_starts_animation():
     _app()
     from PySide6.QtCore import QAbstractAnimation
     from utils.overlay.radial_menu import RadialDimWidget
-    w = RadialDimWidget(); w.resize(200, 200); w.set_backdrop(None)
+    w = RadialDimWidget(); w.resize(200, 200)
     w.start_reveal(animate=True)
     assert w._anim is not None
     assert w._anim.state() == QAbstractAnimation.Running
@@ -259,7 +237,7 @@ def test_begin_close_emits_closing(monkeypatch):
     assert seen == [1]
 
 
-def test_windowed_show_centered_frosts_and_collapses(monkeypatch):
+def test_windowed_show_centered_reveals_and_collapses(monkeypatch):
     monkeypatch.setenv("TTMT_NO_RADIAL_ANIM", "1")   # snap reveal/close
     _app()
     from utils.overlay.windowed_wheel import WindowedWheelHost
@@ -268,7 +246,6 @@ def test_windowed_show_centered_frosts_and_collapses(monkeypatch):
     host = WindowedWheelHost(parent, emblem, emblem_diameter=120)
     host.show_centered()
     assert host._dim is not None
-    assert host._dim._frost is not None        # a frost composite was baked
     assert host._dim.progress == 1.0           # reveal snapped to shown
     host.menu.closing.emit()                   # fly-back begins
     assert host._dim.progress == 0.0           # dim collapses in step

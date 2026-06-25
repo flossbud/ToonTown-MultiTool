@@ -1467,77 +1467,11 @@ class OverlayGroupController:
         menu.start_reveal()
         return menu
 
-    def _dim_dpr(self, geom) -> float:
-        """Device-pixel ratio for the dim source, via a fallback chain (the dim
-        surface may not have a native window handle yet). Each step is guarded
-        independently so a failure in one falls through to the next rather than
-        collapsing straight to 1.0."""
-        surf = self._dim_surface
-        if surf is not None:
-            try:
-                h = surf.windowHandle()
-                if h is not None:
-                    d = float(h.devicePixelRatio())
-                    if d > 0:
-                        return d
-            except Exception:
-                pass
-        try:
-            from PySide6.QtGui import QGuiApplication
-            scr = QGuiApplication.screenAt(geom.center())
-            if scr is not None:
-                d = float(scr.devicePixelRatio())
-                if d > 0:
-                    return d
-        except Exception:
-            pass
-        if surf is not None:
-            try:
-                d = float(surf.devicePixelRatio())
-                if d > 0:
-                    return d
-            except Exception:
-                pass
-        return 1.0
-
-    def _grab_backdrop(self, geom):
-        """Build the dim's backdrop source from our OWN visible card surfaces.
-        ``QWidget.grab()`` is an offscreen Qt RENDER of our card widget tree, NOT
-        an OS/root screen capture, so it is cross-platform and can never return
-        XWayland-black. Cards are placed relative to ``geom``'s top-left;
-        uncovered area stays transparent for the frost base. Returns a QPixmap or
-        None (the dim then renders procedural-frost-only)."""
-        try:
-            from utils.overlay.region import compose_dim_source
-            dpr = self._dim_dpr(geom)
-            placements = []
-            for _st, su in self._visible_card_surfaces():
-                try:
-                    g = su.geometry()
-                    pm = su.grab()
-                except Exception:
-                    continue
-                if pm is None or pm.isNull():
-                    continue
-                placements.append((g.x() - geom.x(), g.y() - geom.y(), pm))
-            # the dim geom is a square (built in open_radial_menu), so width() is
-            # the disc side; compose_dim_source produces a width x width source.
-            return compose_dim_source(geom.width(), dpr, placements)
-        except Exception:
-            return None
-
     def _build_dim(self, geom) -> None:
-        """Create + show the click-through radial dim surface at ``geom``, frost
-        it with a composite of our OWN visible cards (QWidget.grab(), a Qt render
-        - never an OS/root capture, so never XWayland-black), and animate it in.
-
-        Order is load-bearing: the dim surface is created and shown FIRST so
-        _grab_backdrop can read its dpr; the cards (separate surfaces) are grabbed
-        AFTER, so we never self-capture the dim. Showing the dim before
-        set_backdrop is safe - progress is still 0 and the widget is transparent,
-        so there is no un-frosted flash. Do NOT move the grab before show() (a
-        pre-show root grab is exactly the bug this removes). Best-effort: a dim
-        failure must never break opening the radial, so it self-tears-down."""
+        """Create + show the click-through radial drop-shadow surface at ``geom``
+        and animate it in. The shadow does not depend on the content behind it,
+        so there is no screen grab. Best-effort: a dim failure must never break
+        opening the radial, so it self-tears-down."""
         from PySide6.QtGui import QPainterPath
         try:
             from utils.overlay.surface import OverlaySurface
@@ -1552,11 +1486,9 @@ class OverlayGroupController:
             surface.set_overlay_geometry(geom)
             surface.prepare_initial_state()
             surface.show()
-            # EMPTY input region => fully click-through (the dim only paints; the
-            # radial above it grabs the clicks).
+            # EMPTY input region => fully click-through (the radial above it grabs
+            # the clicks).
             surface.apply_shape(QPainterPath(), surface.devicePixelRatio())
-            grab = self._grab_backdrop(geom)   # cards only, AFTER the surface exists
-            widget.set_backdrop(grab)
             widget.start_reveal(animate=radial_anim_enabled())
         except Exception:
             self._teardown_dim()
