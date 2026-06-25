@@ -54,6 +54,9 @@ class _Cred:
     def get_account(self, idx):
         self.reads += 1
         return self._a[idx]
+    def get_accounts_basic(self, game=None):
+        return [(a.id, a.game, a.label or a.username or "")
+                for a in self._a if game is None or a.game == game]
     def count(self):
         return len(self._a)
 
@@ -123,12 +126,22 @@ def test_account_ring_attaches_toon_and_placeholder(qapp):
     assert by_id["b"].toon_name is None and by_id["b"].is_placeholder is True
 
 
-def test_account_ring_keyring_locked_is_empty_no_reads(qapp):
+def test_account_ring_keyring_locked_still_lists_no_reads(qapp):
+    # Keyring-free ring: a locked keyring no longer empties the ring; recent
+    # accounts still list, and NO per-account credential reads happen.
     tab = _tab(qapp, [_acct("a", "ttr"), _acct("b", "cc")], ordered=["a", "b"],
                keyring=False)
     tab.cred_manager.reads = 0
-    assert tab.recent_account_ring_model() == []   # locked -> empty ring
-    assert tab.cred_manager.reads == 0             # no per-account credential reads
+    ring = tab.recent_account_ring_model()
+    assert {r.account_id for r in ring} == {"a", "b"}   # locked -> still listed
+    assert tab.cred_manager.reads == 0                  # zero credential reads
+
+
+def test_account_ring_makes_zero_credential_reads(qapp):
+    tab = _tab(qapp, [_acct("a", "ttr"), _acct("b", "cc")], ordered=["a", "b"])
+    tab.cred_manager.reads = 0
+    tab.recent_account_ring_model()
+    assert tab.cred_manager.reads == 0   # built from get_accounts_basic only
 
 
 def test_account_ring_respects_limit(qapp):
