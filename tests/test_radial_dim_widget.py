@@ -190,7 +190,9 @@ def test_frost_translucent_under_hidpi_scale_factor():
     env["TTMT_NO_VENV_REEXEC"] = "1"
     env.pop("QT_SCALE_FACTOR", None)   # let the child set it before QApplication
     r = subprocess.run([sys.executable, "-c", script], cwd=str(repo),
-                       env=env, capture_output=True, text=True, timeout=120)
+                       env=env, capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, (
+        f"child exited {r.returncode}: stdout={r.stdout!r} stderr={r.stderr!r}")
     assert "HIDPI_OK" in r.stdout, f"stdout={r.stdout!r} stderr={r.stderr!r}"
 
 
