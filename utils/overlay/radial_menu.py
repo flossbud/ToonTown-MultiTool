@@ -72,11 +72,14 @@ def _ease_spring(t: float) -> float:
 
 
 def _dim_frame(progress: float) -> tuple:
-    """(opacity, scale) for the frosted dim backdrop at animation progress in
-    [0,1]. Opacity drives the fade + focus-pull (a blurred copy fades in over the
-    live sharp content); scale drives the iris-expand from the emblem center."""
-    eased = _ease_out(_clamp01(progress))
-    return eased, _lerp(0.12, 1.0, eased)
+    """(opacity, scale) for the drop-shadow backdrop at animation progress in
+    [0,1]. A LINEAR map: opacity == progress and scale grows from 0.12 to 1.0
+    (an expand-from-center that mirrors the spokes' fly-out). Easing is applied
+    ONCE by the reveal/close animation curve (see RadialDimWidget._run_anim), so
+    this stays linear - applying a curve here too would double-ease and collapse
+    the visible motion into the first few milliseconds."""
+    p = _clamp01(progress)
+    return p, _lerp(0.12, 1.0, p)
 
 
 def radial_anim_enabled() -> bool:
@@ -321,13 +324,13 @@ class RadialDimWidget(QWidget):
     reliable at every dpr (a fully-opaque QPixmap can silently read back solid).
     """
 
-    _OPEN_MS = 240
-    _CLOSE_MS = 200
+    _OPEN_MS = 360       # match the spokes' fly-out (RadialMenuWidget._APPEAR_MS)
+    _CLOSE_MS = 240      # match the spokes' fly-back (RadialMenuWidget._CLOSE_MS)
     # Drop-shadow tuning (live-tunable). All compositing is at PHYSICAL pixels;
     # dpr is applied once at the end of _build_shadow.
     _SHADOW_COLOR = QColor(0, 5, 14)     # dark, faintly cool
-    _SHADOW_ALPHA = 135                  # peak alpha at the shadow center
-    _SHADOW_SCALE = 0.58                 # shadow radius as a fraction of the
+    _SHADOW_ALPHA = 180                  # peak alpha at the shadow center
+    _SHADOW_SCALE = 0.62                 # shadow radius as a fraction of the
     #                                      surface half-size (a halo a bit larger
     #                                      than the spoke ring)
     _SHADOW_SOLID = 0.45                 # gradient stop kept at full alpha

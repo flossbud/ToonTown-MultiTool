@@ -29,6 +29,15 @@ def test_dim_frame_endpoints():
     assert abs(o1 - 1.0) < 1e-9 and abs(s1 - 1.0) < 1e-9
 
 
+def test_dim_frame_is_linear_single_easing():
+    # Easing lives in the reveal/close animation curve (RadialDimWidget._run_anim);
+    # _dim_frame MUST be a linear map or the motion double-eases and looks instant.
+    from utils.overlay.radial_menu import _dim_frame
+    o, s = _dim_frame(0.5)
+    assert abs(o - 0.5) < 1e-9
+    assert abs(s - 0.56) < 1e-9        # lerp(0.12, 1.0, 0.5), NOT eased to ~0.88
+
+
 def test_dim_frame_monotonic_opacity():
     from utils.overlay.radial_menu import _dim_frame
     vals = [_dim_frame(t)[0] for t in (0.0, 0.25, 0.5, 0.75, 1.0)]
