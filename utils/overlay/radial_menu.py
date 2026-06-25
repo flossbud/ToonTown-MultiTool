@@ -383,7 +383,7 @@ class RadialDimWidget(QWidget):
         self.update()
 
     def _build_frost(self, raw):
-        from PySide6.QtGui import QPixmap
+        from PySide6.QtGui import QPixmap, QImage
         size = self.size()
         if size.width() <= 0 or size.height() <= 0:
             return None
@@ -423,8 +423,13 @@ class RadialDimWidget(QWidget):
         if blurred.size() != pm.size():
             blurred = blurred.scaled(phys_w, phys_h, Qt.IgnoreAspectRatio,
                                      Qt.SmoothTransformation)
-        pm = blurred
-        p = QPainter(pm)
+        # Composite the alpha stages (grain/veil/mask) on an ARGB32_Premultiplied
+        # QImage, NOT the blurred QPixmap. A fully-opaque QPixmap can drop its
+        # alpha channel, which silently turns the CompositionMode_DestinationIn
+        # mask into a no-op (the disc renders as an opaque square). A QImage with
+        # an explicit alpha format makes the carve reliable at every dpr.
+        canvas = blurred.toImage().convertToFormat(QImage.Format_ARGB32_Premultiplied)
+        p = QPainter(canvas)
         p.setRenderHint(QPainter.Antialiasing, True)
         # 4) deterministic fine grain (glass texture).
         grain = QPixmap.fromImage(_grain_tile())
@@ -453,6 +458,7 @@ class RadialDimWidget(QWidget):
         p.setBrush(QBrush(mask))
         p.drawRect(0, 0, phys_w, phys_h)
         p.end()
+        pm = QPixmap.fromImage(canvas)
         pm.setDevicePixelRatio(dpr)
         self._frost_size = size             # logical-size cache key
         self._frost_dpr = dpr               # dpr cache key

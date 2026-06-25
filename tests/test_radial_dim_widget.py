@@ -116,11 +116,13 @@ def test_paint_rebuilds_when_dpr_changes():
     fake = QPixmap(200, 200); fake.fill(QColor(1, 2, 3, 200))
     w._frost = fake
     w._frost_size = QSize(200, 200)
-    w._frost_dpr = 2.0                     # stale dpr (widget's real dpr is 1.0 offscreen)
+    # Stale dpr derived from the REAL dpr (+1) so this holds regardless of the
+    # environment's scale factor (do not hard-code an assumed offscreen dpr).
+    w._frost_dpr = float(w.devicePixelRatioF() or 1.0) + 1.0
     img = QPixmap(w.size()); img.fill(QColor(0, 0, 0, 0))
     w.progress = 1.0
     w.render(img, QPoint(0, 0))
-    assert w._frost is not fake            # rebuilt because cached dpr (2.0) != current (1.0)
+    assert w._frost is not fake            # rebuilt because cached dpr != current dpr
 
 
 def test_frost_with_source_is_translucent_disc():
@@ -138,6 +140,58 @@ def test_frost_with_source_is_translucent_disc():
     w.render(img, QPoint(0, 0))
     assert 0 < img.pixelColor(100, 100).alpha() < 255
     assert img.pixelColor(2, 2).alpha() == 0   # corner outside the disc -> clear
+
+
+def test_frost_pixmap_keeps_alpha_and_carves_disc():
+    # Direct check on the frost pixmap (not via render): the mask must actually
+    # carve a translucent disc. Guards the QImage-composite fix - a QPixmap
+    # surface drops its alpha when opaque and silently no-ops DestinationIn.
+    _app()
+    from utils.overlay.radial_menu import RadialDimWidget
+    w = RadialDimWidget(); w.resize(200, 200)
+    w.set_backdrop(None)
+    f = w._frost
+    assert f is not None and not f.isNull()
+    assert f.hasAlphaChannel()                      # alpha preserved through compositing
+    img = f.toImage()
+    cx, cy = f.width() // 2, f.height() // 2
+    assert 0 < img.pixelColor(cx, cy).alpha() < 255  # translucent center, not opaque
+    assert img.pixelColor(2, 2).alpha() == 0         # corner carved away (real disc)
+
+
+def test_frost_translucent_under_hidpi_scale_factor():
+    # Regression for the HiDPI opaque-disc bug: at QT_SCALE_FACTOR=2 a QPixmap
+    # composite produced a fully opaque square. Run a fresh interpreter with the
+    # scale factor set (it must be set before the QApplication is created, which
+    # this process already did at dpr=1) and assert the frost is a real disc.
+    import os
+    import sys
+    import subprocess
+    import pathlib
+    repo = pathlib.Path(__file__).resolve().parents[1]
+    script = (
+        "import os\n"
+        "os.environ['QT_QPA_PLATFORM']='offscreen'\n"
+        "os.environ['QT_SCALE_FACTOR']='2'\n"
+        "from PySide6.QtWidgets import QApplication\n"
+        "app=QApplication([])\n"
+        "from utils.overlay.radial_menu import RadialDimWidget\n"
+        "w=RadialDimWidget(); w.resize(200,200); w.set_backdrop(None)\n"
+        "f=w._frost; im=f.toImage()\n"
+        "assert abs(w.devicePixelRatioF()-2.0)<1e-6, 'scale factor not applied'\n"
+        "assert f.hasAlphaChannel(), 'frost lost alpha at hidpi'\n"
+        "c=im.pixelColor(f.width()//2, f.height()//2).alpha()\n"
+        "corner=im.pixelColor(2,2).alpha()\n"
+        "assert 0 < c < 255, f'center not translucent: {c}'\n"
+        "assert corner == 0, f'corner not transparent: {corner}'\n"
+        "print('HIDPI_OK')\n"
+    )
+    env = dict(os.environ)
+    env["TTMT_NO_VENV_REEXEC"] = "1"
+    env.pop("QT_SCALE_FACTOR", None)   # let the child set it before QApplication
+    r = subprocess.run([sys.executable, "-c", script], cwd=str(repo),
+                       env=env, capture_output=True, text=True, timeout=120)
+    assert "HIDPI_OK" in r.stdout, f"stdout={r.stdout!r} stderr={r.stderr!r}"
 
 
 def test_set_backdrop_pixmap_builds_frost():
@@ -163,7 +217,10 @@ def test_frost_rebuilds_when_size_unset_at_set_backdrop():
     w.resize(200, 200)
     w.progress = 1.0
     pm = QPixmap(w.size()); pm.fill(Qt.transparent); w.render(pm)   # lazy rebuild on paint
-    assert w._frost is not None and w._frost.size().width() == 200
+    # Compare LOGICAL size: _frost is dpr-backed (physical px), so .size() is 200
+    # at dpr 1 but 400 at dpr 2 - deviceIndependentSize() is 200 at any dpr.
+    assert w._frost is not None
+    assert abs(w._frost.deviceIndependentSize().width() - 200.0) < 0.5
 
 
 def test_reveal_and_close_snap_when_not_animated():
