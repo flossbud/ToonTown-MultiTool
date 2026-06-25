@@ -583,3 +583,40 @@ def test_outer_gap_click_does_not_close():
     w.closing.connect(lambda: closed.append(1))
     w.activate_at(5, 5)                              # corner: no spoke, not emblem
     assert closed == []
+
+
+# --- set_emblem_diameter (live re-size to track the emblem) -------------------
+
+def test_set_emblem_diameter_updates_ring_geometry():
+    _app()
+    from utils.overlay.radial_menu import RadialMenuWidget
+    w = RadialMenuWidget(emblem_diameter=160); w.resize(400, 400)
+    old_ring, old_sat = w._ring, w._sat_r
+    w.set_emblem_diameter(320)
+    assert w._emblem_dia == 320.0
+    assert w._sat_r == 320 * 0.40 / 2.0
+    assert w._ring == 320 / 2.0 + 16.0 + w._sat_r
+    assert w._ring > old_ring and w._sat_r > old_sat
+
+
+def test_set_emblem_diameter_moves_spokes_outward():
+    _app()
+    from utils.overlay.radial_menu import RadialMenuWidget
+    w = RadialMenuWidget(emblem_diameter=160); w.resize(400, 400)
+    center = w._center()
+    cx0, cy0, r0 = w.circle_geometry("main", "home")
+    d0 = ((cx0 - center[0]) ** 2 + (cy0 - center[1]) ** 2) ** 0.5
+    w.set_emblem_diameter(320)
+    cx1, cy1, r1 = w.circle_geometry("main", "home")
+    d1 = ((cx1 - center[0]) ** 2 + (cy1 - center[1]) ** 2) ** 0.5
+    assert d1 > d0          # spoke pushed further from the center
+    assert r1 > r0          # satellite grew
+
+
+def test_set_emblem_diameter_noop_for_same_value():
+    _app()
+    from utils.overlay.radial_menu import RadialMenuWidget
+    w = RadialMenuWidget(emblem_diameter=160); w.resize(400, 400)
+    before = (w._emblem_dia, w._ring, w._sat_r)
+    w.set_emblem_diameter(160)      # unchanged
+    assert (w._emblem_dia, w._ring, w._sat_r) == before

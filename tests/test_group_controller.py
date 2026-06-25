@@ -564,3 +564,54 @@ class TestRadialDim:
         ctl._dim_widget = _StubDimWidget()
         ctl._collapse_dim()
         assert calls, "start_close was not called"
+
+
+# ---------------------------------------------------------------------------
+# _reposition_radial() — size-aware live re-size on scale change
+# ---------------------------------------------------------------------------
+class _FakeRadialMenu:
+    """Records set_emblem_diameter calls; stands in for RadialMenuWidget."""
+    def __init__(self):
+        self.diameters = []
+
+    def set_emblem_diameter(self, d):
+        self.diameters.append(d)
+
+
+class TestRepositionRadialResize:
+    def test_resizes_radial_and_dim_to_scale_when_open(self, qapp):
+        ctl, factory, win = _make()
+        ctl._anchor = (600, 600)
+        ctl._scale = step_scale(1.0, 3)                 # scaled up from default
+        emblem_dia = float(CardMetrics(ctl._scale).emblem)
+        expected = int(emblem_dia * 4)
+        menu = _FakeRadialMenu()
+        ctl._radial_surface = _StubSurface("radial", [])
+        ctl._radial_menu = menu
+        ctl._radial_size = 1                            # stale -> forces a resize
+        ctl._dim_surface = _StubSurface("dim", [])
+        ctl._dim_size = 1
+        ctl._reposition_radial()
+        assert ctl._radial_size == expected
+        assert ctl._dim_size == expected
+        assert menu.diameters == [emblem_dia]           # re-geometried once
+        assert len(ctl._radial_surface.shapes) == 1     # click-region re-applied
+        # re-centered at the new canvas size
+        g = ctl._radial_surface.geometry
+        assert g.width() == expected and g.height() == expected
+
+    def test_same_scale_does_not_resize_or_reshape(self, qapp):
+        ctl, factory, win = _make()
+        ctl._anchor = (600, 600)
+        ctl._scale = 1.0
+        size = int(float(CardMetrics(1.0).emblem) * 4)
+        menu = _FakeRadialMenu()
+        ctl._radial_surface = _StubSurface("radial", [])
+        ctl._radial_menu = menu
+        ctl._radial_size = size                         # already current
+        ctl._dim_surface = _StubSurface("dim", [])
+        ctl._dim_size = size
+        ctl._reposition_radial()
+        assert menu.diameters == []                     # no re-geometry
+        assert ctl._radial_surface.shapes == []         # no shape re-apply
+        assert ctl._radial_size == size and ctl._dim_size == size

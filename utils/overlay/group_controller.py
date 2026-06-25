@@ -964,13 +964,44 @@ class OverlayGroupController:
         self._raise_emblem()
         self._reposition_radial()  # keep the radial/settings surface on the emblem
 
+    def _radial_canvas(self) -> tuple[float, int]:
+        """(emblem disc diameter, square canvas px) for the radial + dim
+        surfaces at the current cluster scale. One formula shared by
+        open_radial_menu and _reposition_radial so the two never drift."""
+        from utils.overlay.card_metrics import CardMetrics
+        emblem_dia = float(CardMetrics(self._scale).emblem)
+        return emblem_dia, int(emblem_dia * 4)
+
     def _reposition_radial(self) -> None:
         """Re-center the radial menu, its dim backdrop, and the settings panel
-        surface on the current cluster anchor, so they follow the emblem as it is
-        dragged or the cluster is re-placed, then re-assert the dim->emblem->radial
-        z-order. Size is preserved (no widget rescale here)."""
+        surface on the current cluster anchor, so they follow the emblem as it
+        is dragged or the cluster is re-placed. On a scale change, ALSO re-size
+        the radial + dim to the emblem's new size before re-centering (the
+        settings panel is not emblem-derived, so it is never rescaled here).
+        Then re-assert the dim->emblem->radial z-order."""
         from PySide6.QtCore import QRect
+        from PySide6.QtGui import QPainterPath
         from utils.overlay.backend import overlay_trace
+        # Re-size the emblem-derived surfaces (radial + dim) when the scale
+        # changed; the != check makes a drag (no scale change) skip this and
+        # only re-center, exactly as before.
+        emblem_dia, canvas = self._radial_canvas()
+        if self._radial_surface is not None and canvas != self._radial_size:
+            self._radial_size = canvas
+            if self._radial_menu is not None:
+                self._radial_menu.set_emblem_diameter(emblem_dia)
+            # The click-accept region is the full canvas; re-apply it at the new
+            # size so outer spokes stay hittable after a grow (and the region
+            # shrinks back on a shrink).
+            path = QPainterPath()
+            path.addRect(0, 0, canvas, canvas)
+            self._radial_surface.apply_shape(
+                path, self._radial_surface.devicePixelRatio())
+        if self._dim_surface is not None and canvas != self._dim_size:
+            # The RadialDimWidget rebuilds its drop-shadow on resize
+            # automatically; only the stored size needs updating so the
+            # centering loop below uses the new value.
+            self._dim_size = canvas
         cx, cy = self._anchor
         for name, surface, size in (("dim", self._dim_surface, self._dim_size),
                                     ("radial", self._radial_surface, self._radial_size),
@@ -1438,17 +1469,15 @@ class OverlayGroupController:
             return None  # already open (and already wired by the first call)
         from utils.overlay.surface import OverlaySurface
         from utils.overlay.radial_menu import RadialMenuWidget
-        from utils.overlay.card_metrics import CardMetrics
         from PySide6.QtCore import QRect
         from PySide6.QtGui import QPainterPath
-        # Emblem pixel diameter at the current group scale (same source the
-        # cluster uses for the emblem surface).
-        emblem_dia = float(CardMetrics(self._scale).emblem)
+        # Emblem pixel diameter + canvas at the current group scale (shared with
+        # _reposition_radial so a later scroll-scale tracks the same formula).
+        emblem_dia, size = self._radial_canvas()
         # No ToonCustomizationsManager is reachable from the controller; the
         # caller (Task 11) supplies one when it populates accounts.
         menu = RadialMenuWidget(emblem_diameter=emblem_dia)
-        size = int(emblem_dia * 4)  # canvas for the outer ring + labels
-        self._radial_size = size
+        self._radial_size = size  # canvas for the outer ring + labels
         cx, cy = self._anchor
         geom = QRect(int(cx - size / 2), int(cy - size / 2), size, size)
         # Dim backdrop FIRST (below the emblem), so the cards are dimmed but the
