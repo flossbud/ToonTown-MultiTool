@@ -522,6 +522,23 @@ class TestRadialDim:
         dpr = ctl._dim_dpr(QRect(0, 0, 100, 100))
         assert isinstance(dpr, float) and dpr > 0
 
+    def test_dim_dpr_skips_nonpositive_values(self, qapp):
+        # A surface/handle reporting a bogus 0.0 dpr must be skipped, not returned
+        # (a 0 dpr would make compose_dim_source bail -> no card composite).
+        ctl, factory, win = _make()
+        from PySide6.QtCore import QRect
+
+        class _BadWin:
+            def devicePixelRatio(self): return 0.0
+
+        class _BadSurf:
+            def windowHandle(self): return _BadWin()
+            def devicePixelRatio(self): return 0.0
+
+        ctl._dim_surface = _BadSurf()
+        dpr = ctl._dim_dpr(QRect(0, 0, 100, 100))
+        assert isinstance(dpr, float) and dpr > 0    # fell through to a real/1.0 dpr
+
     def test_grab_backdrop_composites_visible_cards(self, qapp, monkeypatch):
         ctl, factory, win = _make()
         from PySide6.QtCore import QRect

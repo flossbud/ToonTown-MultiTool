@@ -1477,19 +1477,25 @@ class OverlayGroupController:
             try:
                 h = surf.windowHandle()
                 if h is not None:
-                    return float(h.devicePixelRatio())
+                    d = float(h.devicePixelRatio())
+                    if d > 0:
+                        return d
             except Exception:
                 pass
         try:
             from PySide6.QtGui import QGuiApplication
             scr = QGuiApplication.screenAt(geom.center())
             if scr is not None:
-                return float(scr.devicePixelRatio())
+                d = float(scr.devicePixelRatio())
+                if d > 0:
+                    return d
         except Exception:
             pass
         if surf is not None:
             try:
-                return float(surf.devicePixelRatio())
+                d = float(surf.devicePixelRatio())
+                if d > 0:
+                    return d
             except Exception:
                 pass
         return 1.0
