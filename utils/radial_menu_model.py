@@ -1,10 +1,8 @@
 """Account-ring view model for the emblem radial menu's Accounts sub-ring.
 
-Qt-free. Unlike utils/recent_launches.build_recent_menu_model (which skips
-running accounts because you can't relaunch them in the flat menu), the ring
-INCLUDES running accounts with a ``running`` flag (the portrait shows a status
-dot and a click is a no-op/focus), and attaches the account's last in-world
-toon (name + dna) or marks it a placeholder when none was ever captured.
+Qt-free. The ring INCLUDES running accounts with a ``running`` flag (the portrait
+shows a status dot and a click is a no-op/focus), and attaches the account's last
+in-world toon (name + dna) or marks it a placeholder when none was ever captured.
 """
 from __future__ import annotations
 
