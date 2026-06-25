@@ -499,6 +499,15 @@ class TestRadialDim:
         assert ctl._radial_surface is None and ctl._dim_surface is None
         assert "hide" in dim.methods() and "deleteLater" in dim.methods()
 
+    def test_is_radial_open_reflects_surface(self, qapp):
+        # The emblem-click toggle relies on this to decide open vs close.
+        ctl, factory, win = _make()
+        assert ctl.is_radial_open is False
+        ctl._radial_surface = _StubSurface("radial", [])
+        assert ctl.is_radial_open is True
+        ctl._radial_surface = None
+        assert ctl.is_radial_open is False
+
     def test_teardown_dim_is_idempotent(self, qapp):
         ctl, factory, win = _make()
         ctl._teardown_dim()                  # nothing open -> no error

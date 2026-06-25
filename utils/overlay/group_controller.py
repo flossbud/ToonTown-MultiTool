@@ -359,6 +359,12 @@ class OverlayGroupController:
         # Alias of is_active (one source of truth) - "transparent mode" == active.
         return self.is_active
 
+    @property
+    def is_radial_open(self) -> bool:
+        """True while the radial menu surface is up (between open_radial_menu and
+        close_radial_menu). Lets the emblem click toggle it shut."""
+        return self._radial_surface is not None
+
     # ------------------------------------------------------------------
     # Defaults (factory + anchor)
     # ------------------------------------------------------------------

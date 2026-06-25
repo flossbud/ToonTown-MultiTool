@@ -1294,9 +1294,19 @@ class MultiToonTool(QMainWindow):
         return group
 
     def _open_emblem_wheel(self):
-        """Left-click on the emblem: open the radial wheel for the current mode.
-        Transparent mode uses the X11 overlay path; windowed mode hosts the same
-        widget as an in-window child (WindowedWheelHost)."""
+        """Left-click on the emblem: TOGGLE the radial wheel for the current mode
+        (open if closed, close if already open - the emblem stays on top in the
+        ring's center, so its click is the natural close affordance). Transparent
+        mode uses the X11 overlay path; windowed mode hosts the same widget as an
+        in-window child (WindowedWheelHost)."""
+        # Second emblem click closes an open wheel (toggle).
+        if self._mode_controller.is_active:
+            if self._mode_controller.is_radial_open:
+                self._mode_controller.close_radial_menu()
+                return
+        elif self._windowed_wheel is not None:       # windowed wheel already open
+            self._windowed_wheel.dismiss()
+            return
         self._prewarm_radial_accounts()
         if self._mode_controller.is_active:          # is_active is a @property
             menu = self._mode_controller.open_radial_menu()
@@ -1304,7 +1314,7 @@ class MultiToonTool(QMainWindow):
                 return
             self._wire_radial_menu(menu)
             return
-        if self._windowed_wheel is not None:         # already open
+        if self._windowed_wheel is not None:         # already open (race guard)
             return
         from utils.overlay.windowed_wheel import WindowedWheelHost
         emblem = self.multitoon_tab._compact._emblem
