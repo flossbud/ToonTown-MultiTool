@@ -792,6 +792,22 @@ class CredentialsManager:
             result.append(acct)
         return result
 
+    def get_accounts_basic(self, game: str | None = None) -> list[tuple[str, str, str]]:
+        """Return ``[(id, game, label)]`` for all accounts (optionally filtered by
+        ``game``), sourced purely from in-memory account metadata. Performs NO
+        keyring access - safe on hot GUI paths (emblem wheel open) and when the
+        keyring is locked. ``label`` falls back to ``username`` then ``""``."""
+        out: list[tuple[str, str, str]] = []
+        for a in self._accounts:
+            g = a.get("game", "ttr")
+            if game is not None and g != game:
+                continue
+            aid = a.get("id")
+            if not aid:
+                continue
+            out.append((aid, g, a.get("label") or a.get("username") or ""))
+        return out
+
     def get_account(self, index: int) -> AccountCredential | None:
         if 0 <= index < len(self._accounts):
             a = self._accounts[index]
