@@ -352,12 +352,16 @@ class RadialDimWidget(QWidget):
     # Frosted-glass composite tuning (see 2026-06-24 frosted-glass spec). All
     # compositing is done at PHYSICAL pixels; dpr is applied once at the end of
     # _build_frost. Live-tunable.
-    _FILM = QColor(228, 232, 240)        # opaque milky base center (so the blur
-    #                                      never smears transparent-black edges)
-    _FILM_EDGE = QColor(198, 205, 218)   # milky base toward the rim (subtle depth)
-    _DISC_ALPHA = 210                    # final disc center alpha (<255 => glass
+    _FILM = QColor(110, 216, 255)        # bright blue frost center (cool, luminous;
+    #                                      opaque so the blur has no transparent-
+    #                                      black edges to smear)
+    _FILM_EDGE = QColor(90, 192, 250)    # bright blue frost toward the rim (depth)
+    _DISC_ALPHA = 145                    # final disc center alpha (<255 => glass
     #                                      is translucent; cards faintly read through)
-    _VEIL = QColor(8, 10, 16, 90)        # soft dark veil for ring legibility
+    _DISC_SCALE = 0.85                   # disc radius as a fraction of the surface
+    #                                      half-size (shrinks the circle, centered)
+    _VEIL = QColor(8, 10, 16, 34)        # light dark veil for ring legibility
+    #                                      (lower alpha => brighter, bluer glass)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -393,6 +397,7 @@ class RadialDimWidget(QWidget):
         cx = phys_w / 2.0
         cy = phys_h / 2.0
         radius = min(phys_w, phys_h) / 2.0
+        disc_r = radius * self._DISC_SCALE  # visible disc radius (shrinks the circle)
         pm = QPixmap(phys_w, phys_h)        # PHYSICAL buffer; dpr set at the end
         pm.fill(Qt.transparent)
         if radius <= 0:
@@ -405,7 +410,7 @@ class RadialDimWidget(QWidget):
         p = QPainter(pm)
         p.setRenderHint(QPainter.Antialiasing, True)
         p.setRenderHint(QPainter.SmoothPixmapTransform, True)
-        base = QRadialGradient(QPointF(cx, cy), radius)
+        base = QRadialGradient(QPointF(cx, cy), disc_r)
         base.setColorAt(0.0, self._FILM)
         base.setColorAt(1.0, self._FILM_EDGE)
         p.setPen(Qt.NoPen)
@@ -439,17 +444,17 @@ class RadialDimWidget(QWidget):
         # 5) soft dark veil for ring legibility.
         c = self._VEIL
         clear = QColor(c.red(), c.green(), c.blue(), 0)
-        veil = QRadialGradient(QPointF(cx, cy), radius)
+        veil = QRadialGradient(QPointF(cx, cy), disc_r)
         veil.setColorAt(0.0, c)
         veil.setColorAt(0.52, c)
         veil.setColorAt(0.86, clear)
         veil.setColorAt(1.0, clear)
         p.setBrush(QBrush(veil))
-        p.drawEllipse(QPointF(cx, cy), radius, radius)
+        p.drawEllipse(QPointF(cx, cy), disc_r, disc_r)
         # 6) soft circular mask -> disc + feathered edge + overall translucency
         #    (center alpha _DISC_ALPHA < 255 so the cards faintly read through).
         a = self._DISC_ALPHA
-        mask = QRadialGradient(QPointF(cx, cy), radius)
+        mask = QRadialGradient(QPointF(cx, cy), disc_r)
         mask.setColorAt(0.0, QColor(0, 0, 0, a))
         mask.setColorAt(0.60, QColor(0, 0, 0, a))
         mask.setColorAt(0.78, QColor(0, 0, 0, 0))
