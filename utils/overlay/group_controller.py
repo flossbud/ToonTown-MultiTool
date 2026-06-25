@@ -338,6 +338,7 @@ class OverlayGroupController:
         # lockstep with the radial surface.
         self._dim_surface = None
         self._dim_size = 0
+        self._dim_widget = None
         # Portable Settings panel (Task 12): a CLICK-ACCEPTING owned surface
         # hosting an arbitrary widget (the floating SettingsTab container),
         # centered on the emblem. _panel_on_close runs in close_panel_surface
@@ -1462,28 +1463,54 @@ class OverlayGroupController:
         # Lock the z-order: cards -> dim -> emblem -> radial. The radial ends up
         # on top (its click region must be hittable); the dim under the emblem.
         self._restack_radial_layers()
+        menu.closing.connect(self._collapse_dim)
         menu.start_reveal()
         return menu
 
+    def _grab_backdrop(self, geom):
+        """Best-effort frozen snapshot of the screen region behind the ring, for
+        the frosted dim. Returns a QPixmap or None (the dim falls back to a
+        veil-only render when None)."""
+        try:
+            from PySide6.QtGui import QGuiApplication
+            screen = (QGuiApplication.screenAt(geom.center())
+                      or QGuiApplication.primaryScreen())
+            if screen is None:
+                return None
+            pm = screen.grabWindow(0, geom.x(), geom.y(),
+                                   geom.width(), geom.height())
+            if pm is None or pm.isNull():
+                return None
+            return pm
+        except Exception:
+            return None
+
     def _build_dim(self, geom) -> None:
         """Create + show the click-through radial dim surface at ``geom`` (a
-        QRect). Best-effort: a dim failure must never break opening the radial,
-        so it self-tears-down on error and the menu proceeds without the
-        (decorative) dim."""
+        QRect), frost it with a frozen snapshot of what is behind it, and animate
+        it in. Best-effort: a dim failure must never break opening the radial, so
+        it self-tears-down on error and the menu proceeds without the (decorative)
+        dim."""
         from PySide6.QtGui import QPainterPath
         try:
             from utils.overlay.surface import OverlaySurface
-            from utils.overlay.radial_menu import RadialDimWidget
+            from utils.overlay.radial_menu import (RadialDimWidget,
+                                                    radial_anim_enabled)
+            grab = self._grab_backdrop(geom)   # capture BEFORE the dim is shown
             surface = OverlaySurface(backend=self._backend)
             self._dim_surface = surface
             self._dim_size = geom.width()
-            surface.host(RadialDimWidget())
+            widget = RadialDimWidget()
+            self._dim_widget = widget
+            surface.host(widget)
             surface.set_overlay_geometry(geom)
             surface.prepare_initial_state()
             surface.show()
             # EMPTY input region => fully click-through (the dim only paints; the
             # radial above it grabs the clicks).
             surface.apply_shape(QPainterPath(), surface.devicePixelRatio())
+            widget.set_backdrop(grab)          # widget now has its final size
+            widget.start_reveal(animate=radial_anim_enabled())
         except Exception:
             self._teardown_dim()
 
@@ -1492,9 +1519,22 @@ class OverlayGroupController:
         surface = self._dim_surface
         self._dim_surface = None
         self._dim_size = 0
+        self._dim_widget = None
         if surface is not None:
             self._safe_call(surface, "hide")
             self._safe_call(surface, "deleteLater")
+
+    def _collapse_dim(self) -> None:
+        """Collapse the frosted dim in step with the ring's fly-back. The surface
+        itself is torn down later by close_radial_menu()/_teardown_dim()."""
+        widget = self._dim_widget
+        if widget is None:
+            return
+        try:
+            from utils.overlay.radial_menu import radial_anim_enabled
+            widget.start_close(animate=radial_anim_enabled())
+        except Exception:
+            pass
 
     def _restack_radial_layers(self) -> None:
         """Enforce cards -> dim -> emblem -> radial -> panel z-order. Each step is

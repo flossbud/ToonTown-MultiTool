@@ -16,13 +16,18 @@ from __future__ import annotations
 import math
 import os
 
-from PySide6.QtCore import Qt, QRectF, QPointF, Signal, QTimer, QElapsedTimer
+from PySide6.QtCore import (Qt, QRectF, QPointF, Signal, QTimer, QElapsedTimer,
+                            Property, QEasingCurve, QVariantAnimation)
 from PySide6.QtGui import (QPainter, QColor, QBrush, QPen, QLinearGradient,
                            QRadialGradient, QPainterPath, QFont, QPolygonF)
 from PySide6.QtWidgets import QWidget
 
 from utils.radial_menu_layout import (MAIN_RING_ANGLES, WINDOWED_RING_ANGLES,
                                        account_ring_angles, polar_point)
+from utils.image_blur import gaussian_blur_pixmap
+
+_OUT_CUBIC = QEasingCurve.OutCubic
+_IN_CUBIC = QEasingCurve.InCubic
 
 _MAIN_KEYS_BY_VARIANT = {
     "transparent": ("accounts", "home", "settings", "close", "exit"),
@@ -65,6 +70,27 @@ def _ease_spring(t: float) -> float:
     c1 = 1.70158
     c3 = c1 + 1.0
     return 1.0 + c3 * (t - 1.0) ** 3 + c1 * (t - 1.0) ** 2
+
+
+def _dim_frame(progress: float) -> tuple:
+    """(opacity, scale) for the frosted dim backdrop at animation progress in
+    [0,1]. Opacity drives the fade + focus-pull (a blurred copy fades in over the
+    live sharp content); scale drives the iris-expand from the emblem center."""
+    eased = _ease_out(_clamp01(progress))
+    return eased, _lerp(0.12, 1.0, eased)
+
+
+def radial_anim_enabled() -> bool:
+    """True when ring animations should run: the TTMT_NO_RADIAL_ANIM kill switch
+    is off AND reduce-motion is off. Mirrors RadialMenuWidget's env gate and
+    additionally honors the project's reduce-motion preference for the backdrop."""
+    if os.environ.get("TTMT_NO_RADIAL_ANIM") in ("1", "true", "yes", "on"):
+        return False
+    try:
+        from utils.motion import is_reduced
+        return not is_reduced()
+    except Exception:
+        return True
 
 
 # --- glyph + disc painters (azure theme matching the emblem) ------------------
@@ -278,51 +304,162 @@ def _label_pill(p: QPainter, cx: float, cy: float, r: float, text: str, above: b
 
 
 class RadialDimWidget(QWidget):
-    """The radial menu's soft dim backdrop, as its OWN click-through layer.
+    """The radial menu's frosted-blur backdrop, as its OWN click-through layer.
 
-    Split out from RadialMenuWidget so the dim can sit BEHIND the emblem while
-    the spoke buttons stay in front of it (z-order: cards -> dim -> emblem ->
-    buttons). A true blur of the live windows behind an override-redirect overlay
-    is not feasible; this cached radial vignette is the practical substitute.
-    Purely decorative: it never grabs input."""
+    Sits behind the emblem (z-order: cards -> dim -> emblem -> buttons) and is
+    purely decorative (never grabs input). Renders a frozen, blurred snapshot of
+    whatever was behind the ring at open time, plus a soft dark veil, masked to a
+    soft circular falloff. Animates in/out with a combined iris-expand +
+    focus-pull driven by the ``progress`` property: the widget is transparent, so
+    at progress 0 the live sharp content shows straight through, and we fade the
+    blurred copy in on top (the focus-pull falls out of the layering for free).
+
+    No QGraphicsEffect: all compositing stays inside one QPainter (see
+    utils/widgets/backdrop_blur.py for the rationale - QGraphicsEffect renders
+    invisibly on proxied widgets and risks the Py3.14/PySide6 paint-time GC SEGV).
+    """
+
+    _OPEN_MS = 240
+    _CLOSE_MS = 200
+    _BLUR_RADIUS = 10
+    _VEIL = QColor(8, 10, 16, 105)   # ~0.41 center veil (lighter than the old 150)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WA_NoSystemBackground, True)
-        self._vignette = None   # cached full-surface dim, keyed by widget size
+        self._raw = None            # source region pixmap (kept for lazy rebuild)
+        self._frost = None          # cached composite (blurred backdrop + veil + mask)
+        self._progress = 0.0
+        self._anim = None           # QVariantAnimation while reveal/close runs
 
-    def _ensure_vignette(self) -> None:
-        """(Re)build the cached vignette pixmap when missing or size-stale."""
+    # --- backdrop -----------------------------------------------------------
+    def set_backdrop(self, raw) -> None:
+        """Bake the cached frost composite from a raw region pixmap, or a
+        veil-only composite when ``raw`` is None/empty (graceful fallback). The
+        source is retained so paintEvent can rebuild lazily if the widget is still
+        0-size / pre-layout now (the overlay surface may not have propagated
+        geometry yet); the build is skipped here and retried on first paint."""
+        self._raw = raw
+        self._frost = self._build_frost(raw)
+        self.update()
+
+    def _build_frost(self, raw):
         from PySide6.QtGui import QPixmap
-        if self._vignette is not None and self._vignette.size() == self.size():
-            return
-        pm = QPixmap(self.size())
+        size = self.size()
+        if size.width() <= 0 or size.height() <= 0:
+            return None
+        pm = QPixmap(size)
         pm.fill(Qt.transparent)
-        cx = self.width() / 2.0
-        cy = self.height() / 2.0
-        radius = min(self.width(), self.height()) / 2.0
-        if radius > 0:
-            qp = QPainter(pm)
-            qp.setRenderHint(QPainter.Antialiasing, True)
-            dim = QRadialGradient(QPointF(cx, cy), radius)
-            dim.setColorAt(0.0, QColor(8, 10, 16, 150))
-            dim.setColorAt(0.55, QColor(8, 10, 16, 150))
-            dim.setColorAt(0.88, QColor(8, 10, 16, 0))
-            dim.setColorAt(1.0, QColor(8, 10, 16, 0))
-            qp.setPen(Qt.NoPen)
-            qp.setBrush(QBrush(dim))
-            qp.drawEllipse(QPointF(cx, cy), radius, radius)
-            qp.end()
-        self._vignette = pm
+        cx = size.width() / 2.0
+        cy = size.height() / 2.0
+        radius = min(size.width(), size.height()) / 2.0
+        if radius <= 0:
+            return pm
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        p.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        # 1) blurred backdrop snapshot (skipped on the veil-only fallback)
+        if raw is not None and not raw.isNull():
+            blurred = gaussian_blur_pixmap(raw, self._BLUR_RADIUS)
+            scaled = blurred.scaled(size, Qt.IgnoreAspectRatio,
+                                    Qt.SmoothTransformation)
+            p.drawPixmap(0, 0, scaled)
+        # 2) soft dark veil
+        c = self._VEIL
+        clear = QColor(c.red(), c.green(), c.blue(), 0)
+        veil = QRadialGradient(QPointF(cx, cy), radius)
+        veil.setColorAt(0.0, c)
+        veil.setColorAt(0.52, c)
+        veil.setColorAt(0.86, clear)
+        veil.setColorAt(1.0, clear)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QBrush(veil))
+        p.drawEllipse(QPointF(cx, cy), radius, radius)
+        # 3) radial soft-edge mask: carve the whole composite into a soft disc
+        mask = QRadialGradient(QPointF(cx, cy), radius)
+        mask.setColorAt(0.0, QColor(0, 0, 0, 255))
+        mask.setColorAt(0.60, QColor(0, 0, 0, 255))
+        mask.setColorAt(0.78, QColor(0, 0, 0, 0))
+        mask.setColorAt(1.0, QColor(0, 0, 0, 0))
+        p.setCompositionMode(QPainter.CompositionMode_DestinationIn)
+        p.setBrush(QBrush(mask))
+        p.drawRect(0, 0, size.width(), size.height())
+        p.end()
+        return pm
+
+    # --- progress property + paint -----------------------------------------
+    def _get_progress(self) -> float:
+        return self._progress
+
+    def _set_progress(self, value) -> None:
+        self._progress = float(value)
+        self.update()
+
+    progress = Property(float, _get_progress, _set_progress)
 
     def paintEvent(self, e):
-        self._ensure_vignette()
-        if self._vignette is not None and not self._vignette.isNull():
-            p = QPainter(self)
-            p.drawPixmap(0, 0, self._vignette)
-            p.end()
+        # Lazy (re)build: set_backdrop may have run while the widget was still
+        # 0-size / pre-layout (the overlay surface doesn't propagate geometry
+        # synchronously), leaving _frost None. By first paint the widget has its
+        # real size, so rebuild then; also rebuild if the size changed under us.
+        if self._frost is None or self._frost.size() != self.size():
+            self._frost = self._build_frost(self._raw)
+        if self._frost is None or self._frost.isNull():
+            return
+        opacity, scale = _dim_frame(self._progress)
+        if opacity <= 0.0:
+            return
+        w = float(self.width())
+        h = float(self.height())
+        sw = w * scale
+        sh = h * scale
+        target = QRectF((w - sw) / 2.0, (h - sh) / 2.0, sw, sh)
+        p = QPainter(self)
+        p.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        p.setOpacity(opacity)
+        p.drawPixmap(target, self._frost, QRectF(self._frost.rect()))
+        p.end()
+
+    # --- animation ----------------------------------------------------------
+    def start_reveal(self, animate: bool = True) -> None:
+        """Animate the frost in (iris + focus-pull). ``animate=False`` snaps."""
+        self._stop_anim()
+        if not animate:
+            self._set_progress(1.0)
+            return
+        self._run_anim(self._progress, 1.0, self._OPEN_MS, _OUT_CUBIC)
+
+    def start_close(self, animate: bool = True) -> None:
+        """Animate the frost out (collapse). ``animate=False`` snaps to hidden.
+        Does not destroy the surface; the host's close path tears it down."""
+        self._stop_anim()
+        if not animate:
+            self._set_progress(0.0)
+            return
+        self._run_anim(self._progress, 0.0, self._CLOSE_MS, _IN_CUBIC)
+
+    def _run_anim(self, start, end, ms, curve) -> None:
+        anim = QVariantAnimation(self)
+        anim.setStartValue(float(start))
+        anim.setEndValue(float(end))
+        anim.setDuration(ms)
+        anim.setEasingCurve(curve)
+        anim.valueChanged.connect(lambda v: self._set_progress(float(v)))
+        anim.finished.connect(self._stop_anim)
+        self._anim = anim
+        anim.start()
+
+    def _stop_anim(self) -> None:
+        a = self._anim
+        self._anim = None
+        if a is not None:
+            try:
+                a.stop()
+                a.deleteLater()   # don't accumulate self-owned anims across opens
+            except Exception:
+                pass
 
 
 class RadialMenuWidget(QWidget):
@@ -334,6 +471,7 @@ class RadialMenuWidget(QWidget):
     exit_requested = Signal()
     back_requested = Signal()
     account_clicked = Signal(str)
+    closing = Signal()           # fly-back begun (all dismiss paths) -> dim collapse
 
     _IDLE_MS = 15000
     _APPEAR_MS = 360
@@ -362,8 +500,9 @@ class RadialMenuWidget(QWidget):
         self.setMouseTracking(True)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setFocusPolicy(Qt.StrongFocus)
-        self._anim_enabled = os.environ.get("TTMT_NO_RADIAL_ANIM") not in (
-            "1", "true", "yes", "on")
+        # Calm the whole ring under Reduce Motion (and the kill switch): the
+        # spoke fly-out honors both, matching the frosted dim backdrop.
+        self._anim_enabled = radial_anim_enabled()
         self._appear_active = False
         self._appear_progress = {}     # key -> eased visibility in [0,1]
         self._stagger = {}             # key -> ms delay (entrance or exit)
@@ -446,6 +585,7 @@ class RadialMenuWidget(QWidget):
         if self._closing:
             return
         self._idle_timer.stop()
+        self.closing.emit()
         if not self._anim_enabled:
             # Synchronous close, but still latch the close flags so the guards
             # above and in activate_at hold (keeps _begin_close idempotent in

@@ -12,7 +12,10 @@ def _force_radial_anim_enabled(monkeypatch):
     # These tests assert animated / deferred behavior, so isolate them from an
     # ambient TTMT_NO_RADIAL_ANIM in the dev shell. The kill-switch test sets it
     # back via its own monkeypatch.setenv after this autouse fixture runs.
+    # Also pin reduce-motion OFF: _anim_enabled now consults is_reduced(), which
+    # would otherwise fall back to OS detection (animations-off CI -> snap fails).
     monkeypatch.delenv("TTMT_NO_RADIAL_ANIM", raising=False)
+    monkeypatch.setattr("utils.motion.is_reduced", lambda: False)
 
 
 def _app():
@@ -402,18 +405,15 @@ def test_refined_painters_paint_without_crash():
     p.end()
 
 
-def test_vignette_is_cached_and_rebuilt_on_size_change():
+def test_frost_is_built_by_set_backdrop_and_matches_widget_size():
     _app()
     from utils.overlay.radial_menu import RadialDimWidget
     w = RadialDimWidget(); w.resize(400, 400)
-    w._ensure_vignette()
-    first = w._vignette
-    assert first is not None and first.size().width() == 400
-    w._ensure_vignette()
-    assert w._vignette is first              # same size -> cached, not rebuilt
+    w.set_backdrop(None)
+    assert w._frost is not None and w._frost.size().width() == 400
     w.resize(500, 500)
-    w._ensure_vignette()
-    assert w._vignette is not first and w._vignette.size().width() == 500
+    w.set_backdrop(None)
+    assert w._frost is not None and w._frost.size().width() == 500
 
 
 def test_radial_menu_widget_no_longer_owns_the_dim():
@@ -489,6 +489,19 @@ def test_kill_switch_makes_appear_and_close_synchronous(monkeypatch):
     w.close_requested.connect(lambda: fired.append(1))
     w._begin_close()
     assert fired == [1]                           # synchronous close
+
+
+def test_reduce_motion_snaps_the_ring(monkeypatch):
+    monkeypatch.delenv("TTMT_NO_RADIAL_ANIM", raising=False)
+    monkeypatch.setattr("utils.motion.is_reduced", lambda: True)
+    _app()
+    from utils.overlay.radial_menu import RadialMenuWidget
+    w = RadialMenuWidget(emblem_diameter=160); w.resize(400, 400)
+    assert w._anim_enabled is False
+    w.start_reveal()
+    # snap path: no active appear animation, everything fully shown
+    assert w._appear_active is False
+    assert all(v == 1.0 for v in w._appear_progress.values())
 
 
 def test_hover_progress_eases_toward_hovered_spoke():
