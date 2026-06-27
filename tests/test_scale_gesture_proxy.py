@@ -26,37 +26,53 @@ def _make(base_scale=1.0):
     return ScaleProxyWindow(snapshot, bbox, anchor, base_scale)
 
 
-def test_set_scale_updates_live_scale(qapp):
+def _wheel(dy):
+    return QWheelEvent(
+        QPointF(10, 10), QPointF(10, 10), QPoint(0, 0), QPoint(0, dy),
+        Qt.NoButton, Qt.NoModifier, Qt.ScrollUpdate, False,
+    )
+
+
+def test_stores_snapshot_and_base_scale(qapp):
+    snap = _img(40, 30)
+    pw = ScaleProxyWindow(snap, QRect(100, 50, 40, 30), QPoint(120, 65), 0.8)
+    assert pw._snapshot is snap
+    assert pw._base_scale == 0.8
+    assert pw._scale == 0.8
+
+
+def test_set_scale_updates_live_scale_and_requests_repaint(qapp, monkeypatch):
     pw = _make(base_scale=1.0)
     assert pw._scale == 1.0
+    updated = []
+    monkeypatch.setattr(pw, "update", lambda *a, **k: updated.append(1))
     pw.set_scale(1.4)
     assert pw._scale == 1.4
+    assert updated == [1]            # set_scale must request a repaint
 
 
-def test_wheel_event_emits_notch_count(qapp):
+def test_wheel_event_emits_one_notch_per_event(qapp):
+    # Sign-based, matching the emblem (_compact_layout _Emblem.wheelEvent): one
+    # notch per wheel event regardless of magnitude, so trackpad/high-res deltas
+    # are not floor-divided away and the sign is consistent both directions.
     pw = _make()
     got = []
     pw.wheel_notch.connect(got.append)
-
-    ev = QWheelEvent(
-        QPointF(10, 10), QPointF(10, 10), QPoint(0, 0), QPoint(0, 120),
-        Qt.NoButton, Qt.NoModifier, Qt.ScrollUpdate, False,
-    )
-    pw.wheelEvent(ev)
-    assert got == [1]
+    pw.wheelEvent(_wheel(120))
+    pw.wheelEvent(_wheel(-240))      # magnitude ignored -> still one notch
+    pw.wheelEvent(_wheel(40))        # small (trackpad) positive -> +1, not 0
+    pw.wheelEvent(_wheel(0))         # no movement -> no emit
+    assert got == [1, -1, 1]
 
 
-def test_wheel_event_negative_multi_notch(qapp):
+def test_non_wheel_pointer_events_are_swallowed(qapp):
+    from PySide6.QtGui import QMouseEvent
+    from PySide6.QtCore import QEvent
     pw = _make()
-    got = []
-    pw.wheel_notch.connect(got.append)
-
-    ev = QWheelEvent(
-        QPointF(10, 10), QPointF(10, 10), QPoint(0, 0), QPoint(0, -240),
-        Qt.NoButton, Qt.NoModifier, Qt.ScrollUpdate, False,
-    )
-    pw.wheelEvent(ev)
-    assert got == [-2]
+    ev = QMouseEvent(QEvent.MouseButtonPress, QPointF(5, 5), Qt.LeftButton,
+                     Qt.LeftButton, Qt.NoModifier)
+    pw.mousePressEvent(ev)
+    assert ev.isAccepted()           # consumed, not passed through
 
 
 def test_window_flags_and_attributes(qapp):
@@ -64,5 +80,8 @@ def test_window_flags_and_attributes(qapp):
     flags = pw.windowFlags()
     assert flags & Qt.FramelessWindowHint
     assert flags & Qt.WindowStaysOnTopHint
+    assert flags & Qt.WindowDoesNotAcceptFocus
     assert flags & Qt.X11BypassWindowManagerHint
     assert pw.testAttribute(Qt.WA_TranslucentBackground)
+    assert pw.testAttribute(Qt.WA_ShowWithoutActivating)
+    assert pw.testAttribute(Qt.WA_DeleteOnClose) is False

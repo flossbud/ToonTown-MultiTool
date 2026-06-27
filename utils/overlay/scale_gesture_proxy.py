@@ -15,7 +15,7 @@ requests a repaint, and that ``wheelEvent`` emits the notch count. The visual
 correctness of the scaled paint is validated live, not offscreen.
 """
 
-from PySide6.QtCore import Qt, QRect, QPoint, QPointF, Signal
+from PySide6.QtCore import Qt, QRect, QPoint, Signal
 from PySide6.QtGui import QImage, QPainter
 from PySide6.QtWidgets import QWidget
 
@@ -62,7 +62,7 @@ class ScaleProxyWindow(QWidget):
         self.update()
 
     def paintEvent(self, ev):
-        f = self._scale / self._base_scale
+        f = self._scale / self._base_scale if self._base_scale else 1.0
         pos = self.pos()
         ax = self._anchor.x() - pos.x()
         ay = self._anchor.y() - pos.y()
@@ -80,9 +80,12 @@ class ScaleProxyWindow(QWidget):
             p.end()
 
     def wheelEvent(self, ev):
-        notches = ev.angleDelta().y() // 120
-        if notches:
-            self.wheel_notch.emit(int(notches))
+        # Match the emblem's sign-based convention (one notch per event) so the
+        # gesture behaves identically whether the emblem or the proxy receives the
+        # wheel, and so high-res/trackpad deltas are not floor-divided to nothing.
+        dy = ev.angleDelta().y()
+        if dy:
+            self.wheel_notch.emit(1 if dy > 0 else -1)
         ev.accept()
 
     # During the freeze the proxy swallows all non-wheel pointer events so the
