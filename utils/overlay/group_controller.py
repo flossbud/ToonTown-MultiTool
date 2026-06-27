@@ -605,6 +605,8 @@ class OverlayGroupController:
         agree, and the dim is correct on HiDPI), feeds the hover-peek store, and
         on a "press" - when ghost-control-clicks are enabled and the overlay is
         active - fires the matching card controls."""
+        if self._scale_gesture_active():
+            return  # frozen snapshot: ignore ghost clicks mid-gesture
         payload = self._ghost_payload_to_logical(payload)
         self._peek_store.ingest(payload)
         if not self._ghost_click_enabled():
@@ -703,6 +705,9 @@ class OverlayGroupController:
         the next event-loop tick is load-bearing - it lets both window-manager
         routing handlers (ids then cell-assignment) settle first, so the reconcile
         reads the final occupancy (no one-frame wrong picture)."""
+        if self._scale_gesture_active():
+            self._occupancy_deferred = True  # replayed in on_gesture_end()
+            return
         if not self._active or self._occupancy_pending:
             return
         self._occupancy_pending = True
@@ -812,6 +817,8 @@ class OverlayGroupController:
 
         real_point: (x, y) global, or None when the OS pointer is unavailable.
         """
+        if self._scale_gesture_active():
+            return  # frozen snapshot: no peek state changes mid-gesture
         if not self._active:
             return
         cards = self._visible_card_surfaces()
@@ -1450,6 +1457,10 @@ class OverlayGroupController:
         """
         if not self._active:
             return
+        # Cancel any in-progress scale gesture WITHOUT settling: drop the frozen
+        # proxy + stop its timers so it never commits against a teardown overlay.
+        if self._scale_gesture is not None and self._scale_gesture.active:
+            self._scale_gesture.cancel()
         # Cancel any in-progress group drag (the emblem window is going away).
         self._end_drag()
         # Stop the topmost re-assert timer (no surfaces to keep above once framed).
@@ -1785,6 +1796,12 @@ class OverlayGroupController:
             from utils.overlay.scale_gesture_proxy import ScaleGestureProxy
             self._scale_gesture = ScaleGestureProxy(self)
         self._scale_gesture.begin(notches)
+
+    def _scale_gesture_active(self) -> bool:
+        """True while a snapshot-proxy scale gesture is live (real windows hidden,
+        frozen proxy shown). The overlay's interaction handlers consult this to
+        freeze themselves and defer occupancy until the gesture settles."""
+        return self._scale_gesture is not None and self._scale_gesture.active
 
     def _schedule_recompute(self) -> None:
         """Coalesce a burst of scale changes into ONE recompute on the next

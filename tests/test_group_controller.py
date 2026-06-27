@@ -755,6 +755,19 @@ class TestLayerRenderingSeam:
 # ---------------------------------------------------------------------------
 # Scale-gesture proxy wiring (Task 4): routing, snapshot host, hide/show, settle
 # ---------------------------------------------------------------------------
+class _FakeGesture:
+    """Recording stand-in for ScaleGestureProxy: an ``active`` flag the controller
+    consults via _scale_gesture_active(), plus a cancel() that records its call."""
+
+    def __init__(self, active=True):
+        self.active = active
+        self.cancelled = 0
+
+    def cancel(self):
+        self.cancelled += 1
+        self.active = False
+
+
 class TestScaleProxyGesture:
     def test_provider_scale_routes_to_proxy(self, qapp):
         """A provider-backed scale notch routes through the snapshot-proxy gesture
@@ -851,6 +864,65 @@ class TestScaleProxyGesture:
         ctl.on_gesture_end()
         assert calls == []
         assert ctl._occupancy_deferred is False
+
+    def test_occupancy_deferred_during_gesture(self, qapp):
+        """An occupancy nudge during a live gesture must NOT reconcile (the frozen
+        snapshot would be disturbed); it sets the deferred flag for on_gesture_end."""
+        ctl, factory, win = _make()
+        ctl.enter()
+        ctl._card_provider = _StubProvider()
+        ctl._scale_gesture = _FakeGesture(active=True)
+        reconciled = []
+        ctl._reconcile_visibility = lambda: reconciled.append(True)
+        ctl._on_occupancy_changed()
+        assert reconciled == []                   # not reconciled mid-gesture
+        assert ctl._occupancy_deferred is True    # queued for on_gesture_end()
+        assert ctl._occupancy_pending is False    # the normal scheduling path skipped
+
+    def test_occupancy_not_deferred_without_gesture(self, qapp):
+        """With no active gesture the occupancy handler takes its normal path:
+        schedule a reconcile, never set the deferred flag."""
+        ctl, factory, win = _make()
+        ctl.enter()
+        ctl._card_provider = _StubProvider()
+        # No _scale_gesture -> _scale_gesture_active() is False.
+        ctl._on_occupancy_changed()
+        assert ctl._occupancy_deferred is False   # never deferred without a gesture
+        assert ctl._occupancy_pending is True     # the normal path scheduled a reconcile
+        ctl._active = False                        # neutralize the queued singleShot
+
+    def test_peek_suppressed_during_gesture(self, qapp):
+        """The hover-peek tick must do no per-card peek work while a gesture freezes
+        the cluster (no opacity changes against the snapshot)."""
+        ctl, factory, win = _make()
+        ctl.enter()
+        ctl._scale_gesture = _FakeGesture(active=True)
+        applied = []
+        ctl._apply_peek_fade = lambda *a: applied.append(a)
+        ctl._peek_tick((10, 10))
+        assert applied == []                      # guard returned before peek work
+
+    def test_ghost_ignored_during_gesture(self, qapp):
+        """A ghost-pointer event must be ignored outright during a gesture (no
+        peek ingest, no click delivery) - the guard returns before any handling."""
+        ctl, factory, win = _make()
+        ctl.enter()
+        ctl._scale_gesture = _FakeGesture(active=True)
+        seen = []
+        ctl._ghost_payload_to_logical = lambda p: seen.append(p) or p
+        ctl.on_ghost_event(("press", [(0, 100, 100)]))
+        assert seen == []                         # guard returned before delivery
+
+    def test_leave_cancels_active_gesture(self, qapp):
+        """leave() must cancel a live gesture WITHOUT settling so the proxy never
+        commits against a teardown overlay."""
+        ctl, factory, win = _make()
+        ctl.enter()
+        gesture = _FakeGesture(active=True)
+        ctl._scale_gesture = gesture
+        ctl.leave()
+        assert gesture.cancelled == 1
+        assert gesture.active is False
 
 
 def test_scaled_about_envelope_contains_scaled_rect(qapp):
