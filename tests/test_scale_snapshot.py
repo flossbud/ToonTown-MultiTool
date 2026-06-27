@@ -68,27 +68,30 @@ def test_compose_honors_integer_dpr(qapp):
     assert img.height() == 80
 
 
-def test_compose_honors_fractional_dpr_125(qapp):
-    bbox = QRect(0, 0, 100, 80)
+def test_compose_fractional_dpr_rounds_up(qapp):
+    # 99 * 1.25 = 123.75 -> round() = 124 (truncation/int would give 123).
+    # Hardcoded literal (not round(99*1.25)) so the assertion is not tautological.
+    bbox = QRect(0, 0, 99, 99)
     img = compose_snapshot([], bbox, dpr=1.25)
     assert img.devicePixelRatio() == 1.25
-    assert img.width() == round(100 * 1.25)
-    assert img.height() == round(80 * 1.25)
+    assert img.width() == 124
+    assert img.height() == 124
 
 
-def test_compose_honors_fractional_dpr_150(qapp):
-    bbox = QRect(0, 0, 100, 80)
-    img = compose_snapshot([], bbox, dpr=1.5)
-    assert img.devicePixelRatio() == 1.5
-    assert img.width() == round(100 * 1.5)
-    assert img.height() == round(80 * 1.5)
+def test_compose_fractional_dpr_rounds_down(qapp):
+    # 101 * 1.25 = 126.25 -> round() = 126 (ceil would give 127). Pins round()
+    # from both directions together with the rounds_up test above.
+    bbox = QRect(0, 0, 101, 101)
+    img = compose_snapshot([], bbox, dpr=1.25)
+    assert img.width() == 126
+    assert img.height() == 126
 
 
 def test_compose_size_cap_clamps_physical_dims(qapp):
     bbox = QRect(0, 0, 200, 200)
     img = compose_snapshot([], bbox, dpr=1.0, max_px=100)
-    assert 1 <= img.width() <= 100
-    assert 1 <= img.height() <= 100
+    assert img.width() == 100          # exact cap value, not just <= 100
+    assert img.height() == 100
 
 
 def test_wheel_zone_emblem_inflated_bbox_local(qapp):
