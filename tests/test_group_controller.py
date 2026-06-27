@@ -578,6 +578,79 @@ class _FakeRadialMenu:
         self.diameters.append(d)
 
 
+# ---------------------------------------------------------------------------
+# Scale-gesture snapshot seam (Task 4): layer gathering + settle + scale
+# ---------------------------------------------------------------------------
+class _StubProvider:
+    """Minimal card-provider stand-in for the layer-gathering tests.
+
+    The gather tests stub ``_render_layer`` outright, so none of these accessors
+    are exercised; the provider only needs to exist so the controller reports as
+    provider-backed when those tests want it to."""
+    def slot_widget(self, i): return object()
+    def emblem_widget(self): return object()
+    def capture_slot(self, w): return None
+    def restore_slot(self, rec): pass
+    def apply_metrics(self, m): pass
+    def control_rects(self, slot): return []
+
+
+class TestGatherScaleLayers:
+    def test_gather_layers_zorder_visible_cards(self, qapp):
+        ctl, factory, win = _make()
+        ctl.enter()
+        ctl._card_provider = _StubProvider()
+        ctl._visible_cells = {0, 1, 2, 3}
+        # Tag, not a real Layer: isolates the gather Z-ORDER from the live render.
+        ctl._render_layer = lambda kind, idx=None: (kind, idx)
+        layers = ctl._gather_scale_layers()
+        # glow, the four visible cards (0-3, in order), then the emblem LAST.
+        assert layers[0] == ("glow", None)
+        assert layers[1:5] == [("card", 0), ("card", 1), ("card", 2), ("card", 3)]
+        assert layers[-1] == ("emblem", None)
+        # Radial closed -> no dim/radial; the settings panel never scales.
+        kinds = [k for (k, _i) in layers]
+        assert "dim" not in kinds and "radial" not in kinds and "panel" not in kinds
+
+    def test_gather_layers_only_visible_cards(self, qapp):
+        ctl, factory, win = _make()
+        ctl.enter()
+        ctl._card_provider = _StubProvider()
+        ctl._visible_cells = {0, 2}            # partial occupancy
+        ctl._render_layer = lambda kind, idx=None: (kind, idx)
+        layers = ctl._gather_scale_layers()
+        cards = [(k, i) for (k, i) in layers if k == "card"]
+        assert cards == [("card", 0), ("card", 2)]   # only 0 and 2, not 1/3
+
+    def test_gather_layers_includes_dim_and_radial_when_open(self, qapp):
+        ctl, factory, win = _make()
+        ctl.enter()
+        ctl._card_provider = _StubProvider()
+        ctl._radial_surface = object()        # truthy -> radial open
+        ctl._visible_cells = {0}
+        ctl._render_layer = lambda kind, idx=None: (kind, idx)
+        layers = ctl._gather_scale_layers()
+        kinds = [k for (k, _i) in layers]
+        assert "dim" in kinds and "radial" in kinds
+        assert kinds.index("dim") < kinds.index("emblem")    # dim below emblem
+        assert kinds.index("radial") > kinds.index("emblem")  # radial above emblem
+
+
+class TestSettleAndScale:
+    def test_settle_placement_calls_recompute_now(self, qapp):
+        ctl, factory, win = _make()
+        calls = []
+        ctl._recompute_now = lambda: calls.append(True)
+        ctl.settle_placement()
+        assert calls == [True]
+
+    def test_scale_property_sets_and_mirrors(self, qapp):
+        ctl, factory, win = _make()
+        ctl.scale = 1.3
+        assert ctl._scale == 1.3
+        assert all(st.scale == 1.3 for st in ctl._states)
+
+
 class TestRepositionRadialResize:
     def test_resizes_radial_and_dim_to_scale_when_open(self, qapp):
         ctl, factory, win = _make()

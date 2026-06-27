@@ -1854,3 +1854,120 @@ class OverlayGroupController:
             return
         self._place_all(reshape=True)
         self._reassert_topmost()  # screen/DPI change can also drop ABOVE
+
+    # ------------------------------------------------------------------
+    # Scale-gesture snapshot seam (Task 4)
+    # ------------------------------------------------------------------
+    # The scale gesture (scale_gesture_proxy.py) zooms a STATIC composited
+    # snapshot of the cluster while the user scrolls, then settles the real
+    # windows on release. These methods are the host seam it calls: gather the
+    # live layers (in z-order), settle the real placement, and read/write the
+    # group scale. The scale handler itself (set_scale_by_notches) is wired to
+    # the proxy in a later task.
+    @property
+    def scale(self) -> float:
+        """The live cluster scale (1.0 = framed base size)."""
+        return self._scale
+
+    @scale.setter
+    def scale(self, value) -> None:
+        """Set the live scale and mirror it onto every surface state (so a later
+        detach / persistence read sees the same value the cluster is drawn at)."""
+        self._scale = float(value)
+        for st in self._states:
+            st.scale = self._scale
+
+    def settle_placement(self) -> None:
+        """Settle the real windows to the current scale after a scale gesture.
+
+        Delegates to the existing settled-placement path (_recompute_now), which
+        scales the emblem + each card's view transform and re-geometries/reshapes
+        every surface. The proxy calls this on gesture release."""
+        self._recompute_now()
+
+    def _layer_widget(self, kind, idx=None):
+        """Return ``(widget, screen_top_left_QPoint)`` for one snapshot layer, or
+        ``(None, None)`` when that layer is not present.
+
+        ``widget`` is the paint device the snapshot composes; ``top_left`` is its
+        surface's screen origin (so the composer offsets each layer correctly).
+        Card layers render the ScaledCardView's inner-view VIEWPORT (the actual
+        card pixels); the emblem renders its surface full-bleed; glow/dim/radial
+        render their hosted widget.
+        """
+        from PySide6.QtCore import QPoint
+        widget = None
+        surface = None
+        if kind == "glow":
+            widget, surface = self._glow_widget, self._glow_surface
+        elif kind == "card":
+            if idx is not None and 0 <= idx < len(self._surfaces):
+                surface = self._surfaces[idx]
+                view = getattr(surface, "_scaled_view", None)
+                if view is not None:
+                    widget = view._view.viewport()
+        elif kind == "dim":
+            widget, surface = self._dim_widget, self._dim_surface
+        elif kind == "emblem":
+            surface = self._surfaces[-1] if self._surfaces else None
+            widget = surface
+        elif kind == "radial":
+            widget, surface = self._radial_menu, self._radial_surface
+        if widget is None or surface is None:
+            return (None, None)
+        geo = surface.geometry()
+        return (widget, QPoint(geo.x(), geo.y()))
+
+    def _render_layer(self, kind, idx=None):
+        """Render one snapshot layer to a ``Layer``, or None when absent.
+
+        Renders the layer widget into an ARGB32-premultiplied QImage at the
+        widget's device-pixel ratio (physical px = ``round(logical * dpr)``),
+        transparent-filled, so the composite preserves HiDPI fidelity and alpha.
+        LIVE-fidelity code: the unit tests STUB this method, so it stays isolated
+        and simple.
+        """
+        widget, top_left = self._layer_widget(kind, idx)
+        if widget is None:
+            return None
+        from PySide6.QtGui import QImage, QPainter
+        from utils.overlay.scale_snapshot import Layer
+        dpr = widget.devicePixelRatio()
+        phys_w = max(1, round(widget.width() * dpr))
+        phys_h = max(1, round(widget.height() * dpr))
+        img = QImage(phys_w, phys_h, QImage.Format_ARGB32_Premultiplied)
+        img.setDevicePixelRatio(dpr)
+        img.fill(0)
+        painter = QPainter(img)
+        try:
+            widget.render(painter)
+        finally:
+            painter.end()
+        return Layer(img, top_left)
+
+    def _gather_scale_layers(self):
+        """The cluster's snapshot layers in Z-ORDER (back to front).
+
+        Order: the glow, the VISIBLE cards only (``sorted(self._visible_cells)`` -
+        empty quadrants are skipped, NOT always 0-3), then - only while the radial
+        is open - the dim backdrop, the emblem, and the radial menu on top. The
+        settings PANEL is excluded entirely (it does not scale with the cluster).
+        Absent layers (``_render_layer`` returns None) drop out.
+        """
+        layers: list = []
+
+        def add(kind, idx=None):
+            layer = self._render_layer(kind, idx)
+            if layer is not None:
+                layers.append(layer)
+
+        radial_open = self._radial_surface is not None
+        add("glow")
+        for idx in sorted(self._visible_cells):
+            add("card", idx)
+        if radial_open:
+            add("dim")
+        add("emblem")
+        if radial_open:
+            add("radial")
+        return layers
