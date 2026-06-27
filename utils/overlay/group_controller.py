@@ -1898,9 +1898,13 @@ class OverlayGroupController:
     def settle_placement(self) -> None:
         """Settle the real windows to the current scale after a scale gesture.
 
-        Delegates to the existing settled-placement path (_recompute_now), which
-        scales the emblem + each card's view transform and re-geometries/reshapes
-        every surface. The proxy calls this on gesture release."""
+        Clamp the parked anchor to the (scale-dependent) parking envelope FIRST,
+        then run the settled-placement path (_recompute_now) so the real windows
+        are placed at the clamped anchor - matching the synchronous no-provider
+        path (clamp-before-place). Scaling down while parked at a screen edge
+        shrinks the envelope, so without clamping first the cluster would be
+        placed slightly off until the next interaction."""
+        self._clamp_anchor()
         self._recompute_now()
 
     def _layer_widget(self, kind, idx=None):
@@ -2017,9 +2021,13 @@ class OverlayGroupController:
         rects = []
         for l in layers:
             image = l.image
-            denom = max(1, int(image.devicePixelRatio()))
-            logical_w = image.width() // denom
-            logical_h = image.height() // denom
+            # FLOAT division: a layer image is physical px = logical * dpr, so the
+            # logical size is width()/dpr. Integer-truncating the dpr (int(1.5)==1)
+            # would inflate the rect ~1.5x on a fractional-DPR display, blowing up
+            # the bbox + snapshot + proxy envelope (a HiDPI-only misplacement bug).
+            dpr_i = max(1.0, float(image.devicePixelRatio()))
+            logical_w = round(image.width() / dpr_i)
+            logical_h = round(image.height() / dpr_i)
             rects.append(QRect(l.top_left.x(), l.top_left.y(), logical_w, logical_h))
         bbox = cluster_bbox(rects)
         dpr = float(self._surfaces[-1].devicePixelRatio()) if self._surfaces else 1.0
@@ -2099,10 +2107,10 @@ class OverlayGroupController:
         self._reassert_topmost()
 
     def on_gesture_end(self):
-        """Commit-side cleanup the proxy calls once the gesture settles: re-clamp
-        the anchor at the final scale, persist (debounced), and replay any
-        occupancy reconcile deferred while the gesture was live."""
-        self._clamp_anchor()
+        """Commit-side cleanup the proxy calls once the gesture settles: persist
+        (debounced) and replay any occupancy reconcile deferred while the gesture
+        was live. The anchor was already clamped in settle_placement (before the
+        real windows were placed), so it is not re-clamped here."""
         self._schedule_save()
         if self._occupancy_deferred:
             self._occupancy_deferred = False
