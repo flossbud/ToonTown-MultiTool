@@ -133,6 +133,7 @@ class ScaleGestureProxy(QObject):
         self._anim = None
         self._idle = None
         self.active = False
+        self._settling = False
         self.target = float(getattr(host, "scale", 1.0))
 
     # -- public API -------------------------------------------------------- #
@@ -149,11 +150,19 @@ class ScaleGestureProxy(QObject):
         self._proxy = host.make_proxy(snapshot, bbox, anchor, start, wheel)
         self._proxy.wheel_notch.connect(self.notch)
         self.active = True
-        host.hide_scaling_windows()
+        # Queue the hide so the just-shown proxy maps first: the real windows
+        # are only hidden once the proxy is up, reducing the swap flicker. (The
+        # proxy is shown synchronously by make_proxy; make_proxy MUST stay
+        # before this queued hide.) True exposed-confirmation is LIVE-only.
+        QTimer.singleShot(0, host.hide_scaling_windows)
         self._start_anim(start)
         self._restart_idle()
 
     def notch(self, notches):
+        if self._settling:
+            # The gesture is committing: a late notch must not retarget a
+            # stopped animation or revive a dropping proxy.
+            return
         if not self.active:
             self.begin(notches)
             return
@@ -165,10 +174,13 @@ class ScaleGestureProxy(QObject):
 
     def cancel(self):
         # Teardown WITHOUT settling: drop the proxy and the real windows stay
-        # wherever they were (no commit, no persist).
+        # wherever they were (no commit, no persist). Resetting _settling here
+        # leaves clean state even if cancel runs mid-settle; a _finish_settle
+        # already queued becomes a no-op (it guards on the dropped proxy).
         self._stop_timers()
         self._drop_proxy()
         self.active = False
+        self._settling = False
 
     # -- internals --------------------------------------------------------- #
     def _start_anim(self, start):
@@ -197,16 +209,31 @@ class ScaleGestureProxy(QObject):
         self._idle.start()
 
     def _settle(self):
+        # Synchronous front half of the handoff: place + show the real windows
+        # over the still-present proxy, then queue the back half. The proxy is
+        # NOT dropped and the gesture stays "busy" (active True, _settling True)
+        # so occupancy/peek/ghost stay frozen until the proxy is actually gone.
         if not self.active:
             return
         self._stop_timers()
+        self._settling = True
         host = self._host
         host.scale = float(self.target)
-        host.settle_placement()
-        host.show_scaling_windows()
+        host.settle_placement()       # real windows placed while hidden
+        host.show_scaling_windows()   # real shown over the proxy
+        QTimer.singleShot(0, self._finish_settle)
+
+    def _finish_settle(self):
+        # Queued back half: the proxy is gone and the real windows are up BEFORE
+        # deferred occupancy replays. Guard against a cancel() that already tore
+        # the proxy down mid-settle so we never double-drop or fire
+        # on_gesture_end after a cancel.
+        if self._proxy is None and not self.active:
+            return
         self._drop_proxy()
         self.active = False
-        host.on_gesture_end()
+        self._settling = False
+        self._host.on_gesture_end()
 
     def _stop_timers(self):
         if self._anim is not None:

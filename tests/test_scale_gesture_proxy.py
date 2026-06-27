@@ -100,11 +100,15 @@ class _FakeProxy(QObject):
     def __init__(self):
         super().__init__()
         self.scales = []
+        self.shown = False
         self.hidden = False
         self.deleted = False
 
     def set_scale(self, value):
         self.scales.append(float(value))
+
+    def show(self):
+        self.shown = True
 
     def hide(self):
         self.hidden = True
@@ -144,6 +148,9 @@ class _FakeHost:
         self.events.append("make_proxy")
         self.made.append((snapshot, bbox, anchor, base_scale, wheel_rects))
         self.proxy = _FakeProxy()
+        # make_proxy is responsible for SHOWING the proxy synchronously, so the
+        # snapshot is mapped before the queued hide takes the real windows down.
+        self.proxy.show()
         return self.proxy
 
     def hide_scaling_windows(self):
@@ -196,14 +203,31 @@ def test_settle_commits_target_and_restores(qapp):
     host = _FakeHost(scale=1.0)
     coord = ScaleGestureProxy(host)
     coord.begin(2)
+    qapp.processEvents()  # drain the queued begin-hide
     target = coord.target
+    proxy = coord._proxy
     coord._settle()
 
+    # Synchronous front half: scale committed, real windows placed + shown over
+    # the still-present proxy. The proxy is NOT yet dropped and the gesture is
+    # still "busy" (active True, _settling True) so occupancy stays frozen.
     assert host.scale == target
     assert "settle_placement" in host.events
     assert "show_scaling_windows" in host.events
-    assert "on_gesture_end" in host.events
+    assert "on_gesture_end" not in host.events
+    assert coord._proxy is proxy
+    assert proxy.deleted is False
+    assert coord.active is True
+    assert coord._settling is True
+
+    qapp.processEvents()  # drain the queued _finish_settle back half
+
+    # Back half: proxy dropped and the gesture is fully released.
+    assert proxy.deleted is True
+    assert coord._proxy is None
     assert coord.active is False
+    assert coord._settling is False
+    assert "on_gesture_end" in host.events
 
 
 def test_cancel_tears_down_without_settling(qapp):
@@ -214,16 +238,31 @@ def test_cancel_tears_down_without_settling(qapp):
     coord.cancel()
 
     assert coord.active is False
+    assert coord._settling is False
     assert coord._proxy is None
     assert proxy.deleted is True
     assert "settle_placement" not in host.events
     assert "on_gesture_end" not in host.events
 
 
-def test_begin_makes_proxy_before_hiding_real_windows(qapp):
+def test_begin_shows_proxy_then_queues_hide(qapp):
+    # The proxy is built+shown synchronously, but hiding the real windows is
+    # QUEUED so the just-shown proxy maps first (reduces swap flicker). The hide
+    # only runs after the event loop turns, and still after make_proxy.
     host = _FakeHost(scale=1.0)
     coord = ScaleGestureProxy(host)
     coord.begin(1)
+
+    # Synchronous: proxy exists and was shown; the hide has NOT run yet.
+    assert coord._proxy is host.proxy
+    assert host.proxy.shown is True
+    assert "make_proxy" in host.events
+    assert "hide_scaling_windows" not in host.events
+
+    qapp.processEvents()
+
+    # After the queue drains the hide runs, and make_proxy came before it.
+    assert "hide_scaling_windows" in host.events
     assert host.events.index("make_proxy") < host.events.index(
         "hide_scaling_windows"
     )
@@ -234,6 +273,7 @@ def test_settle_orders_placement_show_then_end(qapp):
     coord = ScaleGestureProxy(host)
     coord.begin(1)
     coord._settle()
+    qapp.processEvents()  # on_gesture_end fires from the queued back half
     i_settle = host.events.index("settle_placement")
     i_show = host.events.index("show_scaling_windows")
     i_end = host.events.index("on_gesture_end")
@@ -257,3 +297,52 @@ def test_notch_while_inactive_begins(qapp):
     assert coord.active is True
     assert "snapshot" in host.events
     assert coord.target == step_scale(1.0, 1)
+
+
+def test_notch_ignored_while_settling(qapp):
+    # A late notch arriving after _settle() has started committing must NOT
+    # retarget the stopped animation or revive the dropping proxy.
+    host = _FakeHost(scale=1.0)
+    coord = ScaleGestureProxy(host)
+    coord.begin(1)
+    qapp.processEvents()  # drain the queued begin-hide
+    coord._settle()
+    assert coord._settling is True
+    target_before = coord.target
+    anim_before = coord._anim
+
+    coord.notch(1)  # arrives mid-settle -> ignored
+
+    assert coord.target == target_before   # target unchanged
+    assert coord._anim is anim_before       # no new animation started
+
+    qapp.processEvents()  # back half still completes cleanly
+    assert coord.active is False
+    assert coord._settling is False
+
+
+def test_cancel_during_settling_leaves_clean_state(qapp):
+    # Cancelling mid-settle (proxy shown, _finish_settle queued) must drop the
+    # proxy once, clear active/_settling, and the queued back half must become a
+    # no-op (no double-drop, no on_gesture_end after cancel).
+    host = _FakeHost(scale=1.0)
+    coord = ScaleGestureProxy(host)
+    coord.begin(1)
+    qapp.processEvents()  # drain the queued begin-hide
+    coord._settle()
+    proxy = coord._proxy
+    assert coord._settling is True
+
+    coord.cancel()  # before the queued _finish_settle runs
+
+    assert coord._proxy is None
+    assert proxy.deleted is True
+    assert coord.active is False
+    assert coord._settling is False
+    assert "on_gesture_end" not in host.events
+
+    proxy.deleted = False  # detect a (forbidden) second drop
+    qapp.processEvents()    # the stale _finish_settle must no-op
+
+    assert proxy.deleted is False
+    assert "on_gesture_end" not in host.events
