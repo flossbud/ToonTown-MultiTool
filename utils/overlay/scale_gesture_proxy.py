@@ -135,6 +135,7 @@ class ScaleGestureProxy(QObject):
         self.active = False
         self._settling = False
         self.target = float(getattr(host, "scale", 1.0))
+        self._start_scale = self.target   # scale at gesture start; restored on cancel
 
     # -- public API -------------------------------------------------------- #
     def begin(self, notches):
@@ -145,6 +146,7 @@ class ScaleGestureProxy(QObject):
             self.notch(notches)
             return
         start = float(host.scale)
+        self._start_scale = start
         self.target = step_scale(host.scale, notches)
         snapshot, bbox, anchor, wheel, dpr = host.snapshot()
         self._proxy = host.make_proxy(snapshot, bbox, anchor, start, wheel)
@@ -183,12 +185,16 @@ class ScaleGestureProxy(QObject):
         self._restart_idle()
 
     def cancel(self):
-        # Teardown WITHOUT settling: drop the proxy and the real windows stay
-        # wherever they were (no commit, no persist). Resetting _settling here
-        # leaves clean state even if cancel runs mid-settle; a _finish_settle
-        # already queued becomes a no-op (it guards on the dropped proxy).
+        # Teardown WITHOUT settling: drop the proxy and restore the gesture's
+        # START scale (no commit, no persist). The animation walked host.scale to
+        # a transient mid-value; without restoring it, a later save flush (e.g. on
+        # leave()) could persist that transient scale - violating "cancel = no
+        # commit". Resetting _settling here leaves clean state even if cancel runs
+        # mid-settle; a _finish_settle already queued becomes a no-op (guarded on
+        # the dropped proxy).
         self._stop_timers()
         self._drop_proxy()
+        self._host.scale = self._start_scale
         self.active = False
         self._settling = False
 

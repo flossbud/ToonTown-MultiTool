@@ -358,3 +358,16 @@ def test_cancel_before_queued_hide_neutralizes_it(qapp):
     coord.cancel()            # cancel before the zero-timer drains
     qapp.processEvents()      # drain the queued hide
     assert "hide_scaling_windows" not in host.events
+
+
+def test_cancel_restores_start_scale(qapp):
+    """cancel() must restore the gesture's START scale (the animation walked the
+    live host.scale to a transient mid-value); otherwise a later save flush could
+    persist that transient scale, violating 'cancel = no commit'."""
+    host = _FakeHost(scale=1.0)
+    coord = ScaleGestureProxy(host)
+    coord.begin(1)
+    coord._on_frame(1.32)        # animation frame moved the live scale
+    assert host.scale == 1.32
+    coord.cancel()
+    assert host.scale == 1.0     # restored to the pre-gesture scale

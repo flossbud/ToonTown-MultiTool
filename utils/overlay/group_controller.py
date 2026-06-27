@@ -2132,10 +2132,16 @@ class OverlayGroupController:
 
     def show_scaling_windows(self):
         """Re-show the scaling surfaces hidden by hide_scaling_windows() and
-        re-assert their topmost z-order."""
+        re-assert their topmost z-order. When the radial is open, also re-assert
+        the dim/emblem/radial(/panel) layer order: _reassert_topmost only raises
+        the emblem, so without this the emblem could end up ABOVE the radial menu
+        after a scale-while-radial-open settle (wrong visual + click order)."""
         for surface in self._scaling_surfaces():
             self._safe_call(surface, "show")
         self._reassert_topmost()
+        if self._radial_surface is not None or self._dim_surface is not None \
+                or self._panel_surface is not None:
+            self._restack_radial_layers()
 
     def on_gesture_end(self):
         """Commit-side cleanup the proxy calls once the gesture settles: persist
