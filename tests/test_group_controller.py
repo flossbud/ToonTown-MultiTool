@@ -851,3 +851,24 @@ class TestScaleProxyGesture:
         ctl.on_gesture_end()
         assert calls == []
         assert ctl._occupancy_deferred is False
+
+
+def test_scaled_about_envelope_contains_scaled_rect(qapp):
+    """_scaled_about must round OUTWARD so the proxy envelope always contains the
+    true float-scaled rect (independent rounding could clip the max-zoom bitmap)."""
+    from PySide6.QtCore import QRect, QPoint
+    ctl, factory, win = _make()
+    cases = [
+        (QRect(-50, -50, 3, 3), QPoint(-10, -10), 1.75),   # the -74.75 inward-round case
+        (QRect(100, 100, 80, 60), QPoint(140, 130), 1.75),
+        (QRect(0, 0, 7, 11), QPoint(3, 5), 1.6),
+    ]
+    for rect, anchor, f in cases:
+        env = ctl._scaled_about(rect, anchor, f)
+        ax, ay = anchor.x(), anchor.y()
+        sl = ax + (rect.x() - ax) * f
+        st = ay + (rect.y() - ay) * f
+        sr = ax + ((rect.x() + rect.width()) - ax) * f
+        sb = ay + ((rect.y() + rect.height()) - ay) * f
+        assert env.x() <= sl and env.y() <= st, (env, sl, st)
+        assert env.x() + env.width() >= sr and env.y() + env.height() >= sb, (env, sr, sb)

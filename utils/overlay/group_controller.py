@@ -2068,14 +2068,21 @@ class OverlayGroupController:
         return pw
 
     def _scaled_about(self, rect, anchor, f):
-        """Return ``rect`` scaled by factor ``f`` about ``anchor`` (a QPoint)."""
+        """Return ``rect`` scaled by factor ``f`` about ``anchor`` (a QPoint),
+        rounded OUTWARD so the result always CONTAINS the true scaled rect.
+
+        Floor the near (left/top) edges and ceil the far (right/bottom) edges;
+        rounding each edge independently inward could clip the rendered max-zoom
+        bitmap by up to a pixel (the proxy envelope must never clip the snapshot)."""
+        import math
         from PySide6.QtCore import QRect
         ax, ay = anchor.x(), anchor.y()
-        x = round(ax + (rect.x() - ax) * f)
-        y = round(ay + (rect.y() - ay) * f)
-        w = round(rect.width() * f)
-        h = round(rect.height() * f)
-        return QRect(x, y, w, h)
+        left = ax + (rect.x() - ax) * f
+        top = ay + (rect.y() - ay) * f
+        right = ax + ((rect.x() + rect.width()) - ax) * f
+        bottom = ay + ((rect.y() + rect.height()) - ay) * f
+        ix, iy = math.floor(left), math.floor(top)
+        return QRect(ix, iy, math.ceil(right) - ix, math.ceil(bottom) - iy)
 
     def _scaling_surfaces(self):
         """The live surfaces the scale gesture freezes: the VISIBLE card surfaces,
