@@ -707,3 +707,46 @@ class TestRepositionRadialResize:
         assert menu.diameters == []                     # no re-geometry
         assert ctl._radial_surface.shapes == []         # no shape re-apply
         assert ctl._radial_size == size and ctl._dim_size == size
+
+
+class TestLayerRenderingSeam:
+    """Direct coverage of the riskiest seam bits (_layer_widget / _render_layer)
+    that the gather tests stub out - the real card-viewport selection, screen
+    top-left, absent-card None, and that a Layer is produced."""
+
+    def test_layer_widget_and_render_for_a_card(self, qapp):
+        from PySide6.QtWidgets import QWidget
+        from PySide6.QtCore import QRect, QPoint
+        from utils.overlay.surface import CardSurface
+        from utils.overlay.scale_snapshot import Layer
+        ctl, factory, win = _make()
+        cs = CardSurface(0)
+        card = QWidget(); card.setFixedSize(100, 80)
+        cs.host(card, base_size=(100, 80))
+        cs.set_overlay_geometry(QRect(50, 60, 150, 120))
+        cs.show(); qapp.processEvents()
+        ctl._surfaces = [cs]
+        try:
+            widget, tl = ctl._layer_widget("card", 0)
+            assert widget is cs._scaled_view._view.viewport()  # real card paint device
+            assert tl == QPoint(50, 60)                         # surface screen top-left
+            layer = ctl._render_layer("card", 0)
+            assert isinstance(layer, Layer)
+            assert layer.top_left == QPoint(50, 60)
+            assert layer.image.width() > 0 and layer.image.height() > 0
+        finally:
+            cs.release()
+            cs.hide()
+
+    def test_layer_widget_none_for_absent_card(self, qapp):
+        from PySide6.QtCore import QRect
+        from utils.overlay.surface import CardSurface
+        ctl, factory, win = _make()
+        cs = CardSurface(0)                     # nothing hosted
+        cs.set_overlay_geometry(QRect(0, 0, 50, 50))
+        ctl._surfaces = [cs]
+        try:
+            assert ctl._layer_widget("card", 0) == (None, None)
+            assert ctl._render_layer("card", 0) is None
+        finally:
+            cs.hide()

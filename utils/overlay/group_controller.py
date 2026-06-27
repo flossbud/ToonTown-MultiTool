@@ -1930,6 +1930,7 @@ class OverlayGroupController:
         widget, top_left = self._layer_widget(kind, idx)
         if widget is None:
             return None
+        from PySide6.QtCore import QPoint
         from PySide6.QtGui import QImage, QPainter
         from utils.overlay.scale_snapshot import Layer
         dpr = widget.devicePixelRatio()
@@ -1940,7 +1941,10 @@ class OverlayGroupController:
         img.fill(0)
         painter = QPainter(img)
         try:
-            widget.render(painter)
+            # QWidget.render has no painter-only overload; the QPainter form needs
+            # a target offset. Render onto the transparent-filled image at the
+            # origin (alpha preserved for the translucent layers).
+            widget.render(painter, QPoint(0, 0))
         finally:
             painter.end()
         return Layer(img, top_left)
