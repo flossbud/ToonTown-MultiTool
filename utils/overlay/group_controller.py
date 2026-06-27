@@ -720,6 +720,13 @@ class OverlayGroupController:
         self._occupancy_pending = False
         if not self._active:
             return
+        # A reconcile queued BEFORE a scale gesture began can fire one tick into
+        # the gesture; reconciling here would map/unmap a real card surface over
+        # the frozen proxy. Defer (the pending flag is already consumed, so future
+        # nudges re-schedule) and replay at settle via on_gesture_end().
+        if self._scale_gesture_active():
+            self._occupancy_deferred = True
+            return
         self._reconcile_visibility()
 
     def _reconcile_visibility(self) -> None:

@@ -944,3 +944,21 @@ def test_scaled_about_envelope_contains_scaled_rect(qapp):
         sb = ay + ((rect.y() + rect.height()) - ay) * f
         assert env.x() <= sl and env.y() <= st, (env, sl, st)
         assert env.x() + env.width() >= sr and env.y() + env.height() >= sb, (env, sr, sb)
+
+
+def test_queued_occupancy_reconcile_defers_during_gesture(qapp):
+    """A reconcile queued BEFORE the gesture (pending flag set) that fires one tick
+    into an active gesture must defer (not map/unmap over the frozen proxy) and
+    consume the pending flag so future nudges still schedule."""
+    ctl, factory, win = _make()
+    ctl.enter()
+    ctl._card_provider = _StubProvider()
+    ctl._scale_gesture = type("G", (), {"active": True})()
+    ctl._occupancy_pending = True
+    ctl._occupancy_deferred = False
+    ran = []
+    ctl._reconcile_visibility = lambda: ran.append(1)
+    ctl._run_occupancy_reconcile()
+    assert ran == []                       # did NOT reconcile over the proxy
+    assert ctl._occupancy_deferred is True  # will replay at settle
+    assert ctl._occupancy_pending is False  # pending consumed -> future nudges reschedule
