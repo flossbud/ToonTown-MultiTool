@@ -15,9 +15,23 @@ requests a repaint, and that ``wheelEvent`` emits the notch count. The visual
 correctness of the scaled paint is validated live, not offscreen.
 """
 
-from PySide6.QtCore import Qt, QRect, QPoint, Signal
+from PySide6.QtCore import (
+    Qt,
+    QRect,
+    QPoint,
+    Signal,
+    QObject,
+    QTimer,
+    QVariantAnimation,
+    QEasingCurve,
+)
 from PySide6.QtGui import QImage, QPainter
 from PySide6.QtWidgets import QWidget
+
+from utils.overlay.scale import step_scale
+
+_SETTLE_IDLE_MS = 130
+_ANIM_MS = 140
 
 
 class ScaleProxyWindow(QWidget):
@@ -98,3 +112,110 @@ class ScaleProxyWindow(QWidget):
 
     def mouseMoveEvent(self, ev):
         ev.accept()
+
+
+class ScaleGestureProxy(QObject):
+    """Begin/notch/settle/cancel state machine for the overlay scale gesture.
+
+    The coordinator drives a scale gesture against an injected ``host`` adapter
+    so the begin/notch/settle/cancel logic is unit-testable without real
+    windows. It OWNS the target scale and steps it from ITSELF (via
+    :func:`utils.overlay.scale.step_scale`), never from the live/animated host
+    scale: ``begin(1)`` followed by ``notch(1)`` is two discrete ``step_scale``
+    applications, not one. The host scale is only the smoothly animated value
+    shown to the user; the target is the authoritative accumulator.
+    """
+
+    def __init__(self, host):
+        super().__init__()
+        self._host = host
+        self._proxy = None
+        self._anim = None
+        self._idle = None
+        self.active = False
+        self.target = float(getattr(host, "scale", 1.0))
+
+    # -- public API -------------------------------------------------------- #
+    def begin(self, notches):
+        host = self._host
+        if self.active:
+            # A begin while a gesture is live is just another notch; never
+            # re-snapshot or rebuild the proxy mid-gesture.
+            self.notch(notches)
+            return
+        start = float(host.scale)
+        self.target = step_scale(host.scale, notches)
+        snapshot, bbox, anchor, wheel, dpr = host.snapshot()
+        self._proxy = host.make_proxy(snapshot, bbox, anchor, start, wheel)
+        self._proxy.wheel_notch.connect(self.notch)
+        self.active = True
+        host.hide_scaling_windows()
+        self._start_anim(start)
+        self._restart_idle()
+
+    def notch(self, notches):
+        if not self.active:
+            self.begin(notches)
+            return
+        # Accumulate off the coordinator's OWN target, not the animated host
+        # scale, so rapid notches sum cleanly.
+        self.target = step_scale(self.target, notches)
+        self._start_anim(float(self._host.scale))
+        self._restart_idle()
+
+    def cancel(self):
+        # Teardown WITHOUT settling: drop the proxy and the real windows stay
+        # wherever they were (no commit, no persist).
+        self._stop_timers()
+        self._drop_proxy()
+        self.active = False
+
+    # -- internals --------------------------------------------------------- #
+    def _start_anim(self, start):
+        if self._anim is not None:
+            self._anim.stop()
+        anim = QVariantAnimation()
+        anim.setDuration(_ANIM_MS)
+        anim.setEasingCurve(QEasingCurve.OutCubic)
+        anim.setStartValue(float(start))
+        anim.setEndValue(float(self.target))
+        anim.valueChanged.connect(self._on_frame)
+        self._anim = anim
+        anim.start()
+
+    def _on_frame(self, value):
+        self._host.scale = float(value)
+        if self._proxy is not None:
+            self._proxy.set_scale(float(value))
+
+    def _restart_idle(self):
+        if self._idle is None:
+            self._idle = QTimer()
+            self._idle.setSingleShot(True)
+            self._idle.setInterval(_SETTLE_IDLE_MS)
+            self._idle.timeout.connect(self._settle)
+        self._idle.start()
+
+    def _settle(self):
+        if not self.active:
+            return
+        self._stop_timers()
+        host = self._host
+        host.scale = float(self.target)
+        host.settle_placement()
+        host.show_scaling_windows()
+        self._drop_proxy()
+        self.active = False
+        host.on_gesture_end()
+
+    def _stop_timers(self):
+        if self._anim is not None:
+            self._anim.stop()
+        if self._idle is not None:
+            self._idle.stop()
+
+    def _drop_proxy(self):
+        if self._proxy is not None:
+            self._proxy.hide()
+            self._proxy.deleteLater()
+            self._proxy = None

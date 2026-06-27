@@ -7,10 +7,11 @@ contract: snapshot/scale storage, ``set_scale`` updating the live scale, the
 wheel-notch forwarding, and the window flags/attributes.
 """
 
-from PySide6.QtCore import Qt, QRect, QPoint, QPointF
+from PySide6.QtCore import Qt, QRect, QPoint, QPointF, QObject, Signal
 from PySide6.QtGui import QImage, QWheelEvent
 
-from utils.overlay.scale_gesture_proxy import ScaleProxyWindow
+from utils.overlay.scale_gesture_proxy import ScaleGestureProxy, ScaleProxyWindow
+from utils.overlay.scale import step_scale
 
 
 def _img(w, h):
@@ -85,3 +86,174 @@ def test_window_flags_and_attributes(qapp):
     assert pw.testAttribute(Qt.WA_TranslucentBackground)
     assert pw.testAttribute(Qt.WA_ShowWithoutActivating)
     assert pw.testAttribute(Qt.WA_DeleteOnClose) is False
+
+
+# --------------------------------------------------------------------------- #
+# ScaleGestureProxy coordinator (state machine)                               #
+# --------------------------------------------------------------------------- #
+
+class _FakeProxy(QObject):
+    """Stand-in for ScaleProxyWindow exposing only the coordinator's contract."""
+
+    wheel_notch = Signal(int)
+
+    def __init__(self):
+        super().__init__()
+        self.scales = []
+        self.hidden = False
+        self.deleted = False
+
+    def set_scale(self, value):
+        self.scales.append(float(value))
+
+    def hide(self):
+        self.hidden = True
+
+    def deleteLater(self):
+        self.deleted = True
+
+
+class _FakeHost:
+    """Injected adapter that records the coordinator's calls in order."""
+
+    def __init__(self, scale=1.0):
+        self._scale = float(scale)
+        self.events = []
+        self.proxy = None
+        self.made = []
+
+    @property
+    def scale(self):
+        return self._scale
+
+    @scale.setter
+    def scale(self, value):
+        self._scale = float(value)
+
+    def snapshot(self):
+        self.events.append("snapshot")
+        return (
+            _img(40, 30),
+            QRect(100, 50, 40, 30),
+            QPoint(120, 65),
+            [QRect(0, 0, 5, 5)],
+            1.0,
+        )
+
+    def make_proxy(self, snapshot, bbox, anchor, base_scale, wheel_rects):
+        self.events.append("make_proxy")
+        self.made.append((snapshot, bbox, anchor, base_scale, wheel_rects))
+        self.proxy = _FakeProxy()
+        return self.proxy
+
+    def hide_scaling_windows(self):
+        self.events.append("hide_scaling_windows")
+
+    def show_scaling_windows(self):
+        self.events.append("show_scaling_windows")
+
+    def settle_placement(self):
+        self.events.append("settle_placement")
+
+    def on_gesture_end(self):
+        self.events.append("on_gesture_end")
+
+
+def test_begin_snapshots_makes_proxy_at_start_and_arms(qapp):
+    host = _FakeHost(scale=1.0)
+    coord = ScaleGestureProxy(host)
+    coord.begin(1)
+
+    assert coord.active is True
+    assert "snapshot" in host.events
+    # The proxy is built at the START scale, not the (stepped) target.
+    assert host.made[0][3] == 1.0
+    assert coord._proxy is host.proxy
+    # target accumulates the one notch off the live scale.
+    assert coord.target == step_scale(1.0, 1)
+
+
+def test_target_accumulates_from_target_not_host(qapp):
+    # The key correctness property: begin(1) then notch(1) is TWO discrete
+    # step_scale applications, accumulated off the coordinator's own target,
+    # never off the animated host scale.
+    host = _FakeHost(scale=1.0)
+    coord = ScaleGestureProxy(host)
+    coord.begin(1)
+    coord.notch(1)
+    assert coord.target == step_scale(step_scale(1.0, 1), 1)
+
+
+def test_target_accumulates_on_direction_reversal(qapp):
+    host = _FakeHost(scale=1.0)
+    coord = ScaleGestureProxy(host)
+    coord.begin(1)
+    coord.notch(-3)
+    assert coord.target == step_scale(step_scale(1.0, 1), -3)
+
+
+def test_settle_commits_target_and_restores(qapp):
+    host = _FakeHost(scale=1.0)
+    coord = ScaleGestureProxy(host)
+    coord.begin(2)
+    target = coord.target
+    coord._settle()
+
+    assert host.scale == target
+    assert "settle_placement" in host.events
+    assert "show_scaling_windows" in host.events
+    assert "on_gesture_end" in host.events
+    assert coord.active is False
+
+
+def test_cancel_tears_down_without_settling(qapp):
+    host = _FakeHost(scale=1.0)
+    coord = ScaleGestureProxy(host)
+    coord.begin(1)
+    proxy = coord._proxy
+    coord.cancel()
+
+    assert coord.active is False
+    assert coord._proxy is None
+    assert proxy.deleted is True
+    assert "settle_placement" not in host.events
+    assert "on_gesture_end" not in host.events
+
+
+def test_begin_makes_proxy_before_hiding_real_windows(qapp):
+    host = _FakeHost(scale=1.0)
+    coord = ScaleGestureProxy(host)
+    coord.begin(1)
+    assert host.events.index("make_proxy") < host.events.index(
+        "hide_scaling_windows"
+    )
+
+
+def test_settle_orders_placement_show_then_end(qapp):
+    host = _FakeHost(scale=1.0)
+    coord = ScaleGestureProxy(host)
+    coord.begin(1)
+    coord._settle()
+    i_settle = host.events.index("settle_placement")
+    i_show = host.events.index("show_scaling_windows")
+    i_end = host.events.index("on_gesture_end")
+    assert i_settle < i_show < i_end
+
+
+def test_begin_while_active_delegates_to_notch(qapp):
+    host = _FakeHost(scale=1.0)
+    coord = ScaleGestureProxy(host)
+    coord.begin(1)
+    snapshots_before = host.events.count("snapshot")
+    coord.begin(1)  # second begin while active -> notch, no re-snapshot
+    assert host.events.count("snapshot") == snapshots_before
+    assert coord.target == step_scale(step_scale(1.0, 1), 1)
+
+
+def test_notch_while_inactive_begins(qapp):
+    host = _FakeHost(scale=1.0)
+    coord = ScaleGestureProxy(host)
+    coord.notch(1)  # no active gesture -> begin
+    assert coord.active is True
+    assert "snapshot" in host.events
+    assert coord.target == step_scale(1.0, 1)
