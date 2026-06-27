@@ -346,3 +346,15 @@ def test_cancel_during_settling_leaves_clean_state(qapp):
 
     assert proxy.deleted is False
     assert "on_gesture_end" not in host.events
+
+
+def test_cancel_before_queued_hide_neutralizes_it(qapp):
+    """A cancel() that runs before begin()'s queued hide drains must neutralize
+    it - otherwise the stale hide would hide the real windows with no later show
+    (the cluster would vanish)."""
+    host = _FakeHost(scale=1.0)
+    coord = ScaleGestureProxy(host)
+    coord.begin(1)            # queues _hide_real via singleShot(0)
+    coord.cancel()            # cancel before the zero-timer drains
+    qapp.processEvents()      # drain the queued hide
+    assert "hide_scaling_windows" not in host.events

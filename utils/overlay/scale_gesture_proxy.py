@@ -153,10 +153,20 @@ class ScaleGestureProxy(QObject):
         # Queue the hide so the just-shown proxy maps first: the real windows
         # are only hidden once the proxy is up, reducing the swap flicker. (The
         # proxy is shown synchronously by make_proxy; make_proxy MUST stay
-        # before this queued hide.) True exposed-confirmation is LIVE-only.
-        QTimer.singleShot(0, host.hide_scaling_windows)
+        # before this queued hide.) Route it through _hide_real so a cancel() that
+        # runs before this zero-timer drains neutralizes it - otherwise a stale
+        # hide would hide the real windows with no later show (cluster vanishes).
+        # True exposed-confirmation is LIVE-only.
+        QTimer.singleShot(0, self._hide_real)
         self._start_anim(start)
         self._restart_idle()
+
+    def _hide_real(self):
+        # Guarded queued hide: only hide if the gesture is still live. cancel()
+        # sets active False (and drops the proxy), so a stale queued hide after a
+        # cancel is a no-op.
+        if self.active:
+            self._host.hide_scaling_windows()
 
     def notch(self, notches):
         if self._settling:
