@@ -750,3 +750,104 @@ class TestLayerRenderingSeam:
             assert ctl._render_layer("card", 0) is None
         finally:
             cs.hide()
+
+
+# ---------------------------------------------------------------------------
+# Scale-gesture proxy wiring (Task 4): routing, snapshot host, hide/show, settle
+# ---------------------------------------------------------------------------
+class TestScaleProxyGesture:
+    def test_provider_scale_routes_to_proxy(self, qapp):
+        """A provider-backed scale notch routes through the snapshot-proxy gesture
+        coordinator, NOT the old synchronous _schedule_recompute path."""
+        ctl, factory, win = _make()
+        ctl.enter()
+        ctl._card_provider = _StubProvider()
+        begun = []
+        recomputes = []
+        ctl._begin_or_continue_scale = lambda n: begun.append(n)
+        ctl._schedule_recompute = lambda: recomputes.append(True)
+        ctl.set_scale_by_notches(2)
+        assert begun == [2]              # routed to the gesture coordinator
+        assert recomputes == []          # the coordinator owns the ramp, not this
+
+    def test_no_provider_scale_stays_synchronous(self, qapp):
+        """With no card_provider the placeholder path still steps the scale
+        synchronously (the Task 3.2 stub-orchestration contract)."""
+        ctl, factory, win = _make()
+        ctl.enter()
+        before = ctl._scale
+        ctl.set_scale_by_notches(1)
+        assert ctl._scale == step_scale(before, 1)
+
+    def test_snapshot_returns_5tuple(self, qapp):
+        from PySide6.QtCore import QPoint, QRect
+        from PySide6.QtGui import QImage
+        from utils.overlay.scale_snapshot import Layer
+        ctl, factory, win = _make()
+        ctl.enter()
+        ctl._card_provider = _StubProvider()
+        ctl._visible_cells = {0, 1, 2, 3}
+        # Real surfaces expose geometry() as a method; adapt the stub emblem so
+        # snapshot() can read its screen rect + dpr.
+        emblem = ctl._surfaces[-1]
+        geo = emblem.geometry
+        emblem.geometry = lambda: geo
+
+        def _layers():
+            img1 = QImage(10, 8, QImage.Format_ARGB32_Premultiplied); img1.fill(0)
+            img2 = QImage(12, 6, QImage.Format_ARGB32_Premultiplied); img2.fill(0)
+            return [Layer(img1, QPoint(100, 100)), Layer(img2, QPoint(140, 120))]
+
+        ctl._gather_scale_layers = _layers
+        result = ctl.snapshot()
+        assert len(result) == 5
+        snap, bbox, anchor, wheel, dpr = result
+        assert isinstance(snap, QImage) and not snap.isNull()
+        assert isinstance(bbox, QRect)
+        assert isinstance(anchor, QPoint)
+        assert isinstance(wheel, list)
+        assert isinstance(dpr, float)
+
+    def test_hide_show_skip_panel_and_use_visible_cards(self, qapp):
+        ctl, factory, win = _make()
+        ctl.enter()
+        ctl._card_provider = _StubProvider()
+        ctl._visible_cells = {0, 2}
+        panel = _StubSurface("panel", [])
+        ctl._panel_surface = panel
+        cards = factory.created           # [card0, card1, card2, card3, emblem]
+        for s in cards:
+            s.calls.clear()
+        ctl.hide_scaling_windows()
+        assert "hide" in cards[0].methods()       # card 0 visible -> hidden
+        assert "hide" in cards[2].methods()       # card 2 visible -> hidden
+        assert "hide" not in cards[1].methods()   # card 1 empty -> untouched
+        assert "hide" not in cards[3].methods()   # card 3 empty -> untouched
+        assert "hide" in cards[-1].methods()      # emblem always a scaling surface
+        assert "hide" not in panel.methods()      # the settings panel never scales
+        # And show brings the same set back (panel still untouched).
+        for s in cards:
+            s.calls.clear()
+        ctl.show_scaling_windows()
+        assert "show" in cards[0].methods() and "show" in cards[2].methods()
+        assert "show" not in cards[1].methods() and "show" not in cards[3].methods()
+        assert "show" in cards[-1].methods()
+        assert "show" not in panel.methods()
+
+    def test_on_gesture_end_applies_deferred_occupancy(self, qapp):
+        ctl, factory, win = _make()
+        ctl._occupancy_deferred = True
+        calls = []
+        ctl._reconcile_visibility = lambda: calls.append(True)
+        ctl.on_gesture_end()
+        assert calls == [True]
+        assert ctl._occupancy_deferred is False
+
+    def test_on_gesture_end_skips_reconcile_when_not_deferred(self, qapp):
+        ctl, factory, win = _make()
+        ctl._occupancy_deferred = False
+        calls = []
+        ctl._reconcile_visibility = lambda: calls.append(True)
+        ctl.on_gesture_end()
+        assert calls == []
+        assert ctl._occupancy_deferred is False

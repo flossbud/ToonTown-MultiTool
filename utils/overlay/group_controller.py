@@ -39,7 +39,7 @@ from utils.screen_coords import emitted_to_logical
 from utils.settings_keys import (
     GHOST_CURSORS_ENABLED, GHOST_CURSORS_CONTROL_CARDS,
 )
-from utils.overlay.scale import step_scale
+from utils.overlay.scale import step_scale, SCALE_MAX
 from utils.overlay.surface import CardSurface, EmblemSurface, ShapeMode
 
 
@@ -293,6 +293,14 @@ class OverlayGroupController:
         # event-loop tick; this flag is the single scheduling/cancel gate (see
         # _schedule_recompute / _run_pending_recompute / flush_pending_recompute).
         self._recompute_pending: bool = False
+        # Scale-gesture coordinator (Task 4): the ScaleGestureProxy that drives the
+        # begin/notch/settle ramp against a frozen composited snapshot. Built lazily
+        # on the first provider-backed scale notch, then reused across gestures.
+        self._scale_gesture = None
+        # When an occupancy change arrives WHILE a scale gesture is live, the
+        # reconcile is deferred (set True) and replayed at on_gesture_end() so the
+        # frozen snapshot is never disturbed mid-gesture.
+        self._occupancy_deferred: bool = False
         # Emblem gesture wiring (Task 5.1). The emblem reference + an active
         # manual-drag poll: move_requested fires ONCE at drag-start and carries no
         # delta, so the controller tracks the global cursor itself and moves the
@@ -1735,18 +1743,17 @@ class OverlayGroupController:
     def set_scale_by_notches(self, notches: int) -> None:
         """Step the cluster scale by *notches*. No-op if not active.
 
-        The scale value updates SYNCHRONOUSLY (so any read of self._scale right
-        after this call is current). The recompute differs by mode:
+        Two paths, by whether a card_provider is present:
 
-        * provider present (unit-scaling): scale the emblem disc (scale_emblem) +
-          set each card's view transform (set_card_scale) + re-geometry/reshape the
-          windows to base*scale. The cards do NOT re-layout (the transform zooms the
-          fixed 1.0 card), so this is cheaper than the old apply_metrics path, but it
-          is still DEBOUNCED: a burst of notches in one event-loop tick collapses
-          into ONE recompute at the FINAL scale (scheduled on the next tick via
-          _schedule_recompute; force it now with flush_pending_recompute()).
-        * provider None (Task 3.2 stub flow): no content rescale; re-geometry +
-          reshape SYNCHRONOUSLY at the placeholder sizes, exactly as before.
+        * provider None (Task 3.2 stub flow): step the scale SYNCHRONOUSLY (so any
+          read of self._scale right after this call is current) and re-geometry +
+          reshape the placeholder surfaces inline, exactly as before. No proxy.
+        * provider present (float + real cards): route through the snapshot-proxy
+          gesture coordinator (ScaleGestureProxy). The coordinator OWNS the scale
+          ramp - it freezes the cluster into one composited snapshot, animates the
+          zoom on that snapshot, and commits the real windows at settle (via
+          settle_placement() + on_gesture_end()). Do NOT pre-set self._scale or
+          call _schedule_recompute here; that would double-drive the ramp.
 
         Unlike enter()/leave(), the re-layout mutators (this, move_group,
         update_shapes) are NOT transactional - they are idempotent re-layouts, so
@@ -1755,18 +1762,29 @@ class OverlayGroupController:
         """
         if not self._active:
             return
-        self._scale = step_scale(self._scale, notches)
-        for state in self._states:
-            state.scale = self._scale
-        self._clamp_anchor()  # emblem size changed -> re-clamp the parked anchor
-        self._schedule_save()  # persist the new scale (debounced)
         if self._card_provider is None:
             # Task 3.2 path: no apply_metrics, placeholder geometry, synchronous.
+            self._scale = step_scale(self._scale, notches)
+            for state in self._states:
+                state.scale = self._scale
+            self._clamp_anchor()  # emblem size changed -> re-clamp the parked anchor
+            self._schedule_save()  # persist the new scale (debounced)
             self._place_all(reshape=True)
             self._reassert_topmost()  # re-assert ABOVE after a scale change
             return
-        # Provider path: coalesce the expensive recompute to one per tick.
-        self._schedule_recompute()
+        # Provider path: the coordinator owns the scale ramp + commit.
+        self._begin_or_continue_scale(notches)
+
+    def _begin_or_continue_scale(self, notches: int) -> None:
+        """Begin (or continue) the snapshot-proxy scale gesture by *notches*.
+
+        The ScaleGestureProxy is built lazily on first use and reused thereafter;
+        its ``begin`` continues an already-live gesture as another notch, so this
+        is correct whether or not a gesture is already in flight."""
+        if self._scale_gesture is None:
+            from utils.overlay.scale_gesture_proxy import ScaleGestureProxy
+            self._scale_gesture = ScaleGestureProxy(self)
+        self._scale_gesture.begin(notches)
 
     def _schedule_recompute(self) -> None:
         """Coalesce a burst of scale changes into ONE recompute on the next
@@ -1975,3 +1993,117 @@ class OverlayGroupController:
         if radial_open:
             add("radial")
         return layers
+
+    # ------------------------------------------------------------------
+    # Scale-gesture host seam (Task 4): the methods ScaleGestureProxy calls
+    # ------------------------------------------------------------------
+    def snapshot(self):
+        """Compose the live cluster into one frozen snapshot for the scale proxy.
+
+        Returns ``(image, bbox, anchor, wheel_rects, dpr)``:
+
+        * ``image``   - the composited ARGB32 snapshot of every scaling layer.
+        * ``bbox``    - the cluster bounding rect in screen coords.
+        * ``anchor``  - the emblem center (the fixed zoom pivot) as a QPoint.
+        * ``wheel_rects`` - bbox-local rects where the proxy still takes wheel.
+        * ``dpr``     - the emblem surface device-pixel ratio.
+        """
+        from PySide6.QtCore import QRect, QPoint
+        from utils.overlay.card_metrics import CardMetrics
+        from utils.overlay.scale_snapshot import (
+            cluster_bbox, compose_snapshot, wheel_zone_rects,
+        )
+        layers = self._gather_scale_layers()
+        rects = []
+        for l in layers:
+            image = l.image
+            denom = max(1, int(image.devicePixelRatio()))
+            logical_w = image.width() // denom
+            logical_h = image.height() // denom
+            rects.append(QRect(l.top_left.x(), l.top_left.y(), logical_w, logical_h))
+        bbox = cluster_bbox(rects)
+        dpr = float(self._surfaces[-1].devicePixelRatio()) if self._surfaces else 1.0
+        snap = compose_snapshot(layers, bbox, dpr)
+        anchor = QPoint(int(self._anchor[0]), int(self._anchor[1]))
+        emblem_rect = self._surfaces[-1].geometry() if self._surfaces else QRect()
+        radial_rect = (self._radial_surface.geometry()
+                       if self._radial_surface is not None else None)
+        wheel = wheel_zone_rects(
+            bbox, QRect(emblem_rect), radial_rect,
+            inflate=int(CardMetrics(self._scale).emblem // 2),
+        )
+        return (snap, bbox, anchor, wheel, dpr)
+
+    def make_proxy(self, snapshot, bbox, anchor, base_scale, wheel_rects):
+        """Create + show the override-redirect ScaleProxyWindow for the gesture.
+
+        The window is sized to the MAX-zoom envelope (so the scaled bitmap never
+        clips at SCALE_MAX), painted from ``snapshot``, and given a click-through
+        input shape that is open only over the wheel zones (translated from
+        bbox-local into envelope-local coords)."""
+        from PySide6.QtGui import QPainterPath
+        from PySide6.QtCore import QRectF
+        from utils.overlay.scale_gesture_proxy import ScaleProxyWindow
+        f = (SCALE_MAX / base_scale) if base_scale else 1.0
+        envelope = self._scaled_about(bbox, anchor, f)
+        pw = ScaleProxyWindow(snapshot, bbox, anchor, base_scale)
+        pw.setGeometry(envelope)
+        if hasattr(pw, "prepare_initial_state"):
+            pw.prepare_initial_state()
+        pw.show()
+        pw.raise_()
+        offset = bbox.topLeft() - envelope.topLeft()
+        path = QPainterPath()
+        for r in wheel_rects:
+            path.addRect(QRectF(r.translated(offset)))
+        self._backend.apply_input_shape(pw, path, pw.devicePixelRatio())
+        return pw
+
+    def _scaled_about(self, rect, anchor, f):
+        """Return ``rect`` scaled by factor ``f`` about ``anchor`` (a QPoint)."""
+        from PySide6.QtCore import QRect
+        ax, ay = anchor.x(), anchor.y()
+        x = round(ax + (rect.x() - ax) * f)
+        y = round(ay + (rect.y() - ay) * f)
+        w = round(rect.width() * f)
+        h = round(rect.height() * f)
+        return QRect(x, y, w, h)
+
+    def _scaling_surfaces(self):
+        """The live surfaces the scale gesture freezes: the VISIBLE card surfaces,
+        the emblem, and the owned glow/dim/radial surfaces. The settings PANEL is
+        deliberately excluded (it does not scale with the cluster)."""
+        out = []
+        for sid in sorted(self._visible_cells):
+            if 0 <= sid < len(self._surfaces):
+                out.append(self._surfaces[sid])
+        if self._surfaces:
+            out.append(self._surfaces[-1])  # emblem
+        for surface in (self._glow_surface, self._dim_surface, self._radial_surface):
+            if surface is not None:
+                out.append(surface)
+        return out
+
+    def hide_scaling_windows(self):
+        """Hide every scaling surface (visible cards + emblem + glow/dim/radial),
+        leaving the proxy snapshot to stand in for them. The settings panel is
+        left untouched."""
+        for surface in self._scaling_surfaces():
+            self._safe_call(surface, "hide")
+
+    def show_scaling_windows(self):
+        """Re-show the scaling surfaces hidden by hide_scaling_windows() and
+        re-assert their topmost z-order."""
+        for surface in self._scaling_surfaces():
+            self._safe_call(surface, "show")
+        self._reassert_topmost()
+
+    def on_gesture_end(self):
+        """Commit-side cleanup the proxy calls once the gesture settles: re-clamp
+        the anchor at the final scale, persist (debounced), and replay any
+        occupancy reconcile deferred while the gesture was live."""
+        self._clamp_anchor()
+        self._schedule_save()
+        if self._occupancy_deferred:
+            self._occupancy_deferred = False
+            self._reconcile_visibility()
