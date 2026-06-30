@@ -194,3 +194,31 @@ def test_cluster_host_restore_fail_closed(qapp, tab):
     compact.restore_cluster_host("not a token")
     compact.restore_cluster_host(12345)
     compact.restore_cluster_host(object())
+
+
+# ── 6. Re-entrant capture must not record a degraded token ────────────────────
+def test_cluster_host_capture_idempotent_reentrant(qapp, tab):
+    compact = tab._compact
+    host = compact._grid_host
+    outer = compact._outer
+    idx0 = outer.indexOf(host)
+    stretch0 = outer.stretch(idx0)
+    assert idx0 >= 0
+
+    t1 = compact.capture_cluster_host()
+    # A second capture while the first is still outstanding (host already
+    # detached) must return the SAME valid token, NOT a degraded index=-1/stretch=0
+    # one (which would restore the framed layout to the wrong slot).
+    t2 = compact.capture_cluster_host()
+    assert t2 is t1
+    assert t1.index == idx0 and t1.stretch == stretch0
+
+    compact.restore_cluster_host(t1)                       # back to the ORIGINAL slot
+    assert outer.indexOf(host) == idx0
+    assert outer.stretch(outer.indexOf(host)) == stretch0
+
+    # After a successful restore the marker is cleared, so a fresh capture
+    # derives a NEW valid token (not the stale one).
+    t3 = compact.capture_cluster_host()
+    assert t3 is not t1 and t3.index == idx0 and t3.stretch == stretch0
+    compact.restore_cluster_host(t3)                       # leave framed mode intact

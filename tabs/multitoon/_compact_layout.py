@@ -2007,7 +2007,16 @@ class _CompactLayout(QWidget):
         the SAME object.
 
         Returns None if there is no host/outer layout to borrow (a graceful
-        degrade: restore_cluster_host(None) is a safe no-op)."""
+        degrade: restore_cluster_host(None) is a safe no-op).
+
+        IDEMPOTENT: a second capture while a prior capture is still outstanding
+        (e.g. a re-entrant overlay enter) returns the SAME valid token instead of
+        recording a degraded one (the host is already detached, so re-deriving
+        index/stretch would yield index=-1/stretch=0 and restore the framed layout
+        to the wrong slot). The token is cleared on restore_cluster_host()."""
+        existing = getattr(self, "_cluster_token", None)
+        if existing is not None:
+            return existing
         host = self._grid_host
         outer = self._outer
         if host is None or outer is None:
@@ -2045,6 +2054,7 @@ class _CompactLayout(QWidget):
         # Detach: parentless, leaving the outer layout. Reparenting to None drops
         # the host's outer-layout item automatically.
         host.setParent(None)
+        self._cluster_token = token   # mark outstanding capture (idempotency guard)
         return token
 
     def restore_cluster_host(self, token) -> None:
@@ -2061,6 +2071,10 @@ class _CompactLayout(QWidget):
         outer = token.layout
         if host is None or outer is None:
             return
+        # Clear the outstanding-capture marker so a subsequent capture re-derives a
+        # fresh token (the idempotent-capture guard above keys off this).
+        if getattr(self, "_cluster_token", None) is token:
+            self._cluster_token = None
         try:
             # Idempotent: drop any existing layout item for this host first so a
             # double-restore (or a restore without a prior detach) can't create a
