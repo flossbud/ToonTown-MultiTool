@@ -640,7 +640,7 @@ class TestSettleAndScale:
     def test_settle_placement_calls_recompute_now(self, qapp):
         ctl, factory, win = _make()
         calls = []
-        ctl._recompute_now = lambda: calls.append(True)
+        ctl._recompute_now = lambda reassert=True: calls.append(reassert)
         ctl.settle_placement()
         assert calls == [True]
 
@@ -962,3 +962,49 @@ def test_queued_occupancy_reconcile_defers_during_gesture(qapp):
     assert ran == []                       # did NOT reconcile over the proxy
     assert ctl._occupancy_deferred is True  # will replay at settle
     assert ctl._occupancy_pending is False  # pending consumed -> future nudges reschedule
+
+
+# ---------------------------------------------------------------------------
+# Seamless settle: restack control (Task 2)
+# ---------------------------------------------------------------------------
+class _RecordingBackend(NoOpOverlayBackend):
+    """NoOp backend that counts set_above calls (the observable for whether
+    _reassert_topmost actually ran; _place_all only calls _raise_emblem)."""
+    def __init__(self):
+        self.above = 0
+    def set_above(self, window):
+        self.above += 1
+
+
+class TestScaleHandoffGuard:
+    def test_reassert_topmost_noops_during_handoff(self, qapp):
+        ctl, factory, win = _make()
+        ctl.enter()
+        rec = _RecordingBackend(); ctl._backend = rec
+        ctl._scale_handoff_active = True
+        ctl._reassert_topmost()
+        assert rec.above == 0                     # suppressed during handoff
+
+    def test_reassert_topmost_runs_when_not_in_handoff(self, qapp):
+        ctl, factory, win = _make()
+        ctl.enter()
+        rec = _RecordingBackend(); ctl._backend = rec
+        ctl._scale_handoff_active = False
+        ctl._reassert_topmost()
+        assert rec.above > 0                       # normal reassert re-applies ABOVE
+
+    def test_settle_placement_no_reassert_when_reassert_false(self, qapp):
+        ctl, factory, win = _make()
+        ctl.enter()
+        called = []
+        ctl._reassert_topmost = lambda: called.append(True)
+        ctl.settle_placement(reassert=False)
+        assert called == []                        # no restack during handoff settle
+
+    def test_settle_placement_reasserts_by_default(self, qapp):
+        ctl, factory, win = _make()
+        ctl.enter()
+        called = []
+        ctl._reassert_topmost = lambda: called.append(True)
+        ctl.settle_placement()                     # default reassert=True
+        assert called == [True]

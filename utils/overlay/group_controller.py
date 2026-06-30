@@ -297,6 +297,14 @@ class OverlayGroupController:
         # begin/notch/settle ramp against a frozen composited snapshot. Built lazily
         # on the first provider-backed scale notch, then reused across gestures.
         self._scale_gesture = None
+        # True from a scale gesture's begin() through the proxy drop. While set,
+        # _reassert_topmost() no-ops so no stray restack (the 1.5s _above_timer,
+        # post-minimize, or screen-change reassert) can raise the real windows over
+        # the on-top snapshot proxy mid-handoff. [seamless-settle Fix 3]
+        self._scale_handoff_active: bool = False
+        # id(surface) -> pre-park QRect, recorded by park_scaling_windows() so
+        # unpark_scaling_windows() can restore on-screen geometry. [seamless-settle Fix 6]
+        self._parked_geom: dict = {}
         # When an occupancy change arrives WHILE a scale gesture is live, the
         # reconcile is deferred (set True) and replayed at on_gesture_end() so the
         # frozen snapshot is never disturbed mid-gesture.
@@ -931,6 +939,8 @@ class OverlayGroupController:
         after the main window minimizes (they briefly become the app's only managed
         windows), so both hints are re-asserted on enter, after a scale change, and
         on a low-frequency timer."""
+        if getattr(self, "_scale_handoff_active", False):
+            return  # suppressed during a scale handoff; reassert_after_settle re-runs it
         for surface in self._surfaces:
             try:
                 self._backend.set_above(surface)
@@ -1844,10 +1854,13 @@ class OverlayGroupController:
         if self._active:
             self._recompute_now()
 
-    def _recompute_now(self) -> None:
+    def _recompute_now(self, reassert: bool = True) -> None:
         """Re-place every surface at the current scale: scale ONLY the emblem via
         metrics (single widget, never floats) and scale each card via its view
-        transform (the card stays at framed 1.0, so it never re-layouts/floats)."""
+        transform (the card stays at framed 1.0, so it never re-layouts/floats).
+
+        ``reassert=False`` skips the in-line topmost re-assert so the scale-handoff
+        settle can place the real windows WITHOUT raising them over the proxy."""
         provider = self._card_provider
         if provider is not None:
             provider.scale_emblem(self._scale)
@@ -1856,7 +1869,8 @@ class OverlayGroupController:
             if setter is not None:
                 setter(self._scale)
         self._place_all(reshape=True)
-        self._reassert_topmost()  # re-assert ABOVE after a scale change (interaction)
+        if reassert:
+            self._reassert_topmost()  # re-assert ABOVE after a scale change (interaction)
 
     def _clamp_anchor(self) -> None:
         """Clamp self._anchor to the parking envelope at the current scale and
@@ -1919,7 +1933,7 @@ class OverlayGroupController:
         for st in self._states:
             st.scale = self._scale
 
-    def settle_placement(self) -> None:
+    def settle_placement(self, reassert: bool = True) -> None:
         """Settle the real windows to the current scale after a scale gesture.
 
         Clamp the parked anchor to the (scale-dependent) parking envelope FIRST,
@@ -1927,9 +1941,12 @@ class OverlayGroupController:
         are placed at the clamped anchor - matching the synchronous no-provider
         path (clamp-before-place). Scaling down while parked at a screen edge
         shrinks the envelope, so without clamping first the cluster would be
-        placed slightly off until the next interaction."""
+        placed slightly off until the next interaction.
+
+        ``reassert=False`` places WITHOUT re-raising, used by the seamless handoff
+        so the reals are positioned behind the still-on-top proxy."""
         self._clamp_anchor()
-        self._recompute_now()
+        self._recompute_now(reassert=reassert)
 
     def _layer_widget(self, kind, idx=None):
         """Return ``(widget, screen_top_left_QPoint)`` for one snapshot layer, or
