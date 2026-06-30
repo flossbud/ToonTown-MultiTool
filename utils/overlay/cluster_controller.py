@@ -521,8 +521,11 @@ class ClusterOverlayController:
 
     def _connect_occupancy(self) -> None:
         """Subscribe ``_reconcile_occupancy`` to the provider's
-        ``occupied_cells_changed`` signal, if it exposes one. Idempotent + guarded:
-        a provider without the signal (a stub) is a safe no-op."""
+        ``occupied_cells_changed`` signal, if it exposes one. Idempotent (a second
+        call while already connected is a no-op, so the slot never double-fires) +
+        guarded: a provider without the signal (a stub) is a safe no-op."""
+        if self._occupancy_connected:
+            return
         provider = self._card_provider
         sig = getattr(provider, "occupied_cells_changed", None) if provider is not None else None
         if sig is None:
@@ -558,10 +561,21 @@ class ClusterOverlayController:
         The grid SHELL is left untouched: no cell is hidden/``setVisible(False)``
         (that would collapse the pinwheel) and the window is NOT resized or reshaped
         (the cluster bbox is fixed by the permanent shells). Only the click region
-        changes."""
+        changes.
+
+        Mid scale gesture (BROAD phase: ``_scaling_active`` True, the full-window
+        capture shape is up) the visible set is refreshed but the EXACT shape is NOT
+        swapped in - narrowing the capture region under the pointer would stall the
+        wheel stream (the very thing the broad/exact phase machine exists to
+        prevent, and it would leave ``_input_phase`` stuck "broad" under an exact
+        shape). The settle timer is re-armed every notch, so ``_settle_input()``
+        replays the exact shape with this fresh visible set on quiesce. Mirrors
+        ``OverlayGroupController._on_occupancy_changed``'s gesture deferral."""
         if not self._active:
             return
         self._visible_cells = self._target_visible_cells()
+        if self._scaling_active:
+            return
         self._apply_exact_input_shape()
 
     @staticmethod

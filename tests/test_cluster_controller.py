@@ -747,3 +747,58 @@ def test_provider_without_occupancy_degrades_to_all_visible(qapp):
 
     assert ctrl.enter() is True
     assert ctrl._visible_cells == {0, 1, 2, 3}
+
+
+def test_occupancy_change_during_scale_defers_exact_until_settle(qapp):
+    """An occupancy nudge that arrives DURING an active scale (BROAD phase) updates
+    _visible_cells but must NOT swap in the narrow exact shape mid-gesture (that
+    would shrink the wheel-capture region under the pointer and stall the stream).
+    The re-armed settle timer replays the exact shape with the fresh visible set on
+    quiesce."""
+    backend = _RecordingBackend()
+    provider = _OccupancyStubProvider(occupied={0, 2})
+    ctrl, provider, window, created = _make(provider=provider, backend=backend)
+    ctrl.enter()
+    surface = created[0]
+
+    ctrl.set_scale_by_notches(1)                  # BROAD phase: full-window shape up
+    assert ctrl._scaling_active is True
+    shapes_after_notch = len(backend.shapes)
+    broad_path = backend.shapes[-1][1]
+    # The broad shape is the FULL window rect -> it contains EVERY cell point.
+    assert broad_path.boundingRect().toRect() == QRect(
+        0, 0, surface.geom.width(), surface.geom.height())
+
+    provider.set_occupied({0})                    # cells 1, 2, 3 now empty
+    provider.occupied_cells_changed.emit()
+
+    # (a) The visible set is refreshed immediately ...
+    assert ctrl._visible_cells == {0}
+    # (b) ... but NO new shape was applied mid-gesture: the last applied shape is
+    # STILL the broad full-window one (it still contains an EMPTY cell's point - an
+    # exact shape for {0} would have narrowed it out).
+    assert len(backend.shapes) == shapes_after_notch
+    assert backend.shapes[-1][1].contains(QPointF(*_CONTROL_PROBE))   # cell 1 still in
+
+    # (c) On settle the exact shape replays with the NEW visible set: cell 0 in,
+    # cell 1 (now empty) out.
+    ctrl._settle_input()
+    exact_path = backend.shapes[-1][1]
+    assert exact_path.contains(QPointF(*_VISIBLE_CONTROL_PROBE))      # cell 0 visible
+    assert not exact_path.contains(QPointF(*_CONTROL_PROBE))           # cell 1 empty
+
+
+def test_connect_occupancy_is_idempotent(qapp):
+    """A second _connect_occupancy() while already connected must NOT add a
+    duplicate Qt connection (else the slot fires twice per nudge). One emit -> one
+    reconcile -> exactly one input-shape apply."""
+    backend = _RecordingBackend()
+    provider = _OccupancyStubProvider(occupied={0, 2})
+    ctrl, provider, window, created = _make(provider=provider, backend=backend)
+    ctrl.enter()
+    ctrl._connect_occupancy()                     # second call: must be a no-op
+    backend.shapes.clear()
+
+    provider.occupied_cells_changed.emit()
+
+    assert len(backend.shapes) == 1              # reconcile fired exactly once
