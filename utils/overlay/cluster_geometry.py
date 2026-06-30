@@ -27,7 +27,9 @@ def cluster_bbox(card_rects: list[QRect]) -> QRect:
     """
     bbox = QRect()
     for rect in card_rects:
-        bbox = rect if bbox.isNull() else bbox.united(rect)
+        # QRect(rect) COPIES so the single/first-rect path never aliases (and
+        # later mutates) the caller's input; .united() already returns a new rect.
+        bbox = QRect(rect) if bbox.isNull() else bbox.united(rect)
     return bbox
 
 
@@ -66,8 +68,12 @@ def window_rect_for(
     ax, ay = anchor
     dw, dh = dim_extent
 
-    half_w = dw // 2 if radial_open else 0
-    half_h = dh // 2 if radial_open else 0
+    # CEIL the half-extent ((dw+1)//2) so an ODD dim canvas is fully contained
+    # (left+right >= dw); flooring (dw//2) would under-size the window by 1px and
+    # clip the emblem-centered dim. The emblem-center invariant is unaffected
+    # (the same `left`/`top` are used for both sizing and positioning).
+    half_w = (dw + 1) // 2 if radial_open else 0
+    half_h = (dh + 1) // 2 if radial_open else 0
 
     left = max(ex, half_w)
     right = max(w - ex, half_w)

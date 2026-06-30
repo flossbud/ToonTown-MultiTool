@@ -175,3 +175,51 @@ def test_clamp_to_envelope_pulls_off_left_edge_back():
     assert clamped.width() == 100 and clamped.height() == 100
     assert clamped.intersects(QRect(*screen))
     assert clamped.x() > off.x()
+
+
+def test_window_rect_for_odd_dim_extent_fully_contains_canvas():
+    # ODD dim_extent must NOT under-size the window (ceil half-extent), and the
+    # emblem center must still land on the anchor.
+    r = window_rect_for(cluster_bbox_size=(100, 70), emblem_center_local=(50, 35),
+                        anchor=(500, 400), radial_open=True, dim_extent=(241, 241))
+    assert r.width() >= 241 and r.height() >= 241        # full odd canvas contained
+    # emblem center (left/top extents) still exactly at the anchor
+    left = max(50, (241 + 1) // 2)
+    top = max(35, (241 + 1) // 2)
+    assert (r.x() + left, r.y() + top) == (500, 400)
+
+
+def test_cluster_bbox_does_not_alias_caller_input():
+    # The single-rect path must return an INDEPENDENT QRect (pure helper); mutating
+    # the result must not mutate the caller's input.
+    src = QRect(1, 2, 3, 4)
+    bbox = cluster_bbox([src])
+    assert bbox == QRect(1, 2, 3, 4)
+    bbox.moveTo(99, 99)
+    assert src == QRect(1, 2, 3, 4)                       # input untouched
+
+
+def test_clamp_to_envelope_pulls_off_top_and_bottom_back():
+    screen = (0, 0, 1920, 1080)
+    off_top = clamp_to_envelope(QRect(500, -500, 100, 100), [screen], margin=0)
+    assert off_top.intersects(QRect(*screen)) and off_top.y() > -500
+    off_bottom = clamp_to_envelope(QRect(500, 5000, 100, 100), [screen], margin=0)
+    assert off_bottom.intersects(QRect(*screen)) and off_bottom.y() < 5000
+
+
+def test_clamp_to_envelope_exact_boundary_keeps_one_px_overlap():
+    # Just past the right edge -> clamped so exactly 1px overlaps (Qt right() is
+    # inclusive); locks the off-by-one (+1) bound against regression.
+    screen = (0, 0, 100, 100)            # env right/bottom inclusive = 99
+    clamped = clamp_to_envelope(QRect(200, 10, 30, 30), [screen], margin=0)
+    assert clamped.x() == 99             # first pixel sits on env.right()
+    assert clamped.intersects(QRect(*screen))
+
+
+def test_input_union_visible_slot_absent_from_controls_is_safe():
+    # A slot in `visible` with no card_controls entry must NOT raise; region is
+    # just the emblem.
+    emblem = QRect(40, 40, 20, 20)
+    region = input_union(emblem, {0: [QRect(0, 0, 10, 5)]}, visible={5})
+    assert region.contains(QPoint(45, 45))       # emblem present
+    assert not region.contains(QPoint(2, 2))     # slot 0 not visible -> excluded
