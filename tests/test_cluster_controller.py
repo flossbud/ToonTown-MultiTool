@@ -958,3 +958,71 @@ def test_load_recenters_anchor_when_saved_monitor_gone(qapp):
     screens = ctrl._screens()
     assert any(l <= cx <= r and t <= cy <= b for (_n, l, t, r, b) in screens), \
         "recentered anchor must land within a visible monitor"
+
+
+class _RaisingSettings:
+    """A corrupt/unreadable settings store: every read RAISES. Loading from it
+    must degrade to defaults rather than tank enter()."""
+
+    def get(self, key, default=None):
+        raise RuntimeError("corrupt settings store")
+
+    def set(self, key, value):
+        raise RuntimeError("corrupt settings store")
+
+
+def test_leave_flushes_user_scale_before_framed_reset(qapp):
+    """leave() must flush the USER scale (the scale the user left at) BEFORE it
+    resets the framed metrics to 1.0 - reordering the flush after the reset would
+    persist 1.0 and fail this test."""
+    import pytest
+
+    s = _DictSettings()
+    ctrl, provider, window, created = _make(settings=s)
+    ctrl.enter()
+    ctrl.set_scale_by_notches(-2)              # a real non-1.0 user scale
+    user_scale = ctrl._scale
+    assert user_scale != 1.0
+    # Do NOT run the pending save; leave() must flush it.
+    ctrl.leave()
+
+    assert s.get(KEY_SCALE) == pytest.approx(user_scale)
+    assert s.get(KEY_SCALE) != 1.0             # NOT the framed reset value
+
+
+def test_save_debounce_collapses_burst_to_one_final_write(qapp):
+    """A rapid burst of changes restarts the single-shot timer each time (true
+    trailing-edge debounce): nothing is written DURING the burst, and firing the
+    timer once writes exactly ONE record of the FINAL state."""
+    s = _CountingSettings()
+    ctrl, provider, window, created = _make(settings=s)
+    ctrl.enter()
+
+    ctrl.set_scale_by_notches(1)
+    ctrl.set_scale_by_notches(1)
+    ctrl.set_scale_by_notches(1)
+
+    # Armed exactly once, pending, nothing written yet (debounced, not throttled).
+    assert ctrl._save_pending is True
+    assert s.saves == 0
+    assert ctrl._save_timer is not None and ctrl._save_timer.isActive()
+    final_scale = ctrl._scale
+
+    ctrl._run_pending_save()                   # the single trailing-edge fire
+
+    assert s.saves == 1                        # exactly ONE write for the whole burst
+    assert s.get(KEY_SCALE) == final_scale      # ... of the FINAL state
+    ctrl.leave()
+
+
+def test_enter_degrades_to_defaults_on_corrupt_settings(qapp):
+    """A settings store whose load RAISES must not tank enter(): the controller
+    degrades to defaults (scale 1.0, default anchor) and enter() still succeeds."""
+    s = _RaisingSettings()
+    ctrl, provider, window, created = _make(settings=s)
+
+    assert ctrl.enter() is True                # corrupt settings did NOT tank enter()
+
+    assert ctrl._scale == 1.0
+    assert ctrl._anchor == ClusterOverlayController._default_anchor()
+    ctrl.leave()

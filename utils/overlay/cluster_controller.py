@@ -104,9 +104,10 @@ class ClusterOverlayController:
         self._visible_cells: set = {0, 1, 2, 3}
         self._occupancy_connected: bool = False
 
-        # Persistence (anchor + scale + monitor identity). A burst of drag/scale
-        # changes collapses into ONE debounced settings write ~250ms after the last
-        # change; leave() flushes any pending write synchronously before teardown.
+        # Persistence (anchor + scale + monitor identity). A TRAILING-edge debounce:
+        # a burst of drag/scale changes restarts the single-shot timer so it
+        # collapses into ONE settings write ~250ms after the LAST change; leave()
+        # flushes any pending write synchronously (and stops the timer) before teardown.
         self._save_pending: bool = False
         self._save_timer = None
 
@@ -282,8 +283,12 @@ class ClusterOverlayController:
         # Persist the FINAL anchor + scale before any teardown/reset (the remembered
         # overlay position, restored on the next enter). MUST run before the scale
         # reset below, else the flush would save the framed 1.0 instead of the scale
-        # the user left at.
+        # the user left at. Then stop the save timer unconditionally so no late
+        # timeout survives the leave (the active guard in _run_pending_save is the
+        # backstop).
         self.flush_pending_save()
+        if self._save_timer is not None:
+            self._save_timer.stop()
         # Cancel any pending settle and reset scaling state so a re-enter starts
         # framed (scale 1.0, no in-flight gesture). A late timer firing post-leave
         # is a guarded no-op, but stopping it here avoids the wasted callback.
@@ -339,6 +344,7 @@ class ClusterOverlayController:
         """
         if not self._active:
             return
+        prev_scale = self.scale
         self.scale = step_scale(self.scale, notches)
         provider = self._card_provider
         if provider is not None:
@@ -359,9 +365,11 @@ class ClusterOverlayController:
                 pass
         # Drive the input-shape phase machine: broad now, exact on settle.
         self._enter_broad_phase(rect)
-        # Persist the new scale (debounced: a continuous wheel spin collapses into
-        # one write ~250ms after the last notch).
-        self._schedule_save()
+        # Persist the new scale (debounced) - but only when the scale ACTUALLY
+        # changed: scrolling against SCALE_MIN/MAX is a no-op that must not churn a
+        # save (mirrors move_group, which only saves on a real move).
+        if self.scale != prev_scale:
+            self._schedule_save()
 
     def move_group(self, dx: int, dy: int) -> bool:
         """Shift the cluster anchor by (dx, dy), clamp to the screen envelope, and
@@ -652,12 +660,26 @@ class ClusterOverlayController:
         from utils.overlay.persistence import (
             clamp_anchor_to_screens, load_overlay_state,
         )
-        anchor, scale, monitor = load_overlay_state(self._settings)
-        self._scale = scale
-        if anchor is not None:
-            self._anchor = clamp_anchor_to_screens(anchor, monitor, self._screens())
-            return True
-        return False
+        try:
+            anchor, scale, monitor = load_overlay_state(self._settings)
+            self._scale = scale
+            if anchor is not None:
+                self._anchor = clamp_anchor_to_screens(
+                    anchor, monitor, self._screens())
+                return True
+            return False
+        except Exception:
+            # A corrupt/raising settings store must never tank enter() (the user
+            # would be locked out of transparent mode until they clear config):
+            # degrade to defaults (default anchor + scale 1.0) so the overlay still
+            # opens, and trace it.
+            from utils.overlay.backend import overlay_trace
+            import traceback
+            overlay_trace("cluster_controller._load_persisted_state() FAILED; "
+                          "degrading to defaults:\n" + traceback.format_exc())
+            self._scale = 1.0
+            self._anchor = self._default_anchor()
+            return False
 
     def _save_state(self) -> None:
         """Persist the current cluster anchor + scale + the monitor it sits on.
@@ -669,10 +691,11 @@ class ClusterOverlayController:
         save_overlay_state(self._settings, self._anchor, self._scale, monitor)
 
     def _schedule_save(self) -> None:
-        """Debounce a persistence write: a burst of drag/scale changes collapses
-        into one settings write ~250ms after the last change. No-op without
-        settings, while framed, or when a save is already pending."""
-        if self._settings is None or not self._active or self._save_pending:
+        """Debounce a persistence write (TRAILING edge): each call (re)starts the
+        single-shot timer, so a burst of drag/scale changes collapses into ONE
+        settings write ~250ms after the LAST change. No-op without settings or
+        while framed."""
+        if self._settings is None or not self._active:
             return
         from PySide6.QtCore import QTimer
         self._save_pending = True
@@ -681,14 +704,19 @@ class ClusterOverlayController:
             self._save_timer.setSingleShot(True)
             self._save_timer.setInterval(250)
             self._save_timer.timeout.connect(self._run_pending_save)
+        # Restart on every call: a still-running timer is reset so only a quiescent
+        # gesture (no change for 250ms) actually fires the write (true debounce, not
+        # a throttle that writes every 250ms during a long drag).
         self._save_timer.start()
 
     def _run_pending_save(self) -> None:
-        """Debounce timeout: write the pending state, then clear the gate. A late
-        timeout with no pending save (e.g. flushed by leave) is a true no-op."""
-        if not self._save_pending:
-            return
+        """Debounce timeout: write the pending state. Clears the pending gate
+        regardless, then guards active/settings so a stray timeout AFTER the
+        controller is framed can never write state (defense-in-depth: leave() also
+        stops the timer)."""
         self._save_pending = False
+        if not self._active or self._settings is None:
+            return
         self._save_state()
 
     def flush_pending_save(self) -> None:
