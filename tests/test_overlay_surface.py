@@ -236,6 +236,55 @@ def test_host_none_is_noop(qapp):
     assert s.release() is w
 
 
+def test_emblem_surface_source_clears_backing_transparent(qapp):
+    """The emblem surface must SOURCE-clear its whole rect to transparent on paint,
+    so the square window's corners (outside the disc) are written to the native ARGB
+    backing on every repaint. Without this the surface 'paints nothing', so only the
+    child disc region is flushed and the corners retain stale/opaque native-backing
+    content - a dark 'square backdrop' blip when the parked emblem is revealed at the
+    scale-gesture settle. Simulated by rendering onto a pre-filled OPAQUE target: the
+    surface's paint must overwrite the corners transparent (alpha 0)."""
+    from PySide6.QtCore import QPoint
+    from PySide6.QtGui import QImage, QPainter, QColor
+    from utils.overlay.surface import EmblemSurface
+    s = EmblemSurface()
+    s.resize(40, 40)
+    img = QImage(40, 40, QImage.Format_ARGB32_Premultiplied)
+    img.fill(QColor(0, 0, 0, 255))            # stale opaque backing (the dark square)
+    p = QPainter(img)
+    s.render(p, QPoint(0, 0))                  # must source-clear its rect transparent
+    p.end()
+    assert img.pixelColor(0, 0).alpha() == 0    # a corner is now transparent
+    assert img.pixelColor(39, 39).alpha() == 0  # opposite corner too
+
+
+def test_emblem_surface_clear_preserves_hosted_child_paint(qapp):
+    """The parent's source-clear must NOT erase the hosted child's painting (the
+    disc): a stub child's opaque center survives, while the corners stay transparent."""
+    from PySide6.QtCore import QPoint, QRect
+    from PySide6.QtGui import QImage, QPainter, QColor
+    from PySide6.QtWidgets import QWidget
+    from utils.overlay.surface import EmblemSurface
+
+    class _Center(QWidget):
+        def paintEvent(self, ev):
+            pp = QPainter(self)
+            pp.fillRect(QRect(10, 10, 20, 20), QColor(255, 0, 0, 255))  # opaque center
+            pp.end()
+
+    s = EmblemSurface()
+    child = _Center()
+    s.host(child)
+    s.resize(40, 40)                          # apply the full-bleed layout
+    img = QImage(40, 40, QImage.Format_ARGB32_Premultiplied)
+    img.fill(QColor(0, 0, 0, 255))
+    p = QPainter(img)
+    s.render(p, QPoint(0, 0))
+    p.end()
+    assert img.pixelColor(20, 20).alpha() == 255   # child center preserved over the clear
+    assert img.pixelColor(0, 0).alpha() == 0       # corner cleared transparent
+
+
 def test_cross_surface_rehost_clears_old_tracking(qapp):
     """Hosting a widget already hosted by another surface releases it there
     first, so the old surface's _hosted does not go stale (else its later
