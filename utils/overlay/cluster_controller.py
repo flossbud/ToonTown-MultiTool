@@ -22,8 +22,11 @@ exception escapes ``enter()`` (it returns ``False``). ``leave()`` is likewise
 guarded: a restore failure must still reset metrics, restore the window, and
 clear state.
 
-Scaling, occupancy, hover-peek, ghost clicks, the radial menu, drag, and
-persistence are LATER tasks and are intentionally NOT built here.
+Scaling (single-window metrics + input-shape phase machine), drag, and occupancy
+(the visible set narrows the EXACT input shape while the grid SHELL stays fixed -
+empty cards keep their cell, never hidden/reshaped) are built here. Hover-peek,
+ghost clicks, the radial menu, and persistence are LATER tasks and are
+intentionally NOT built here.
 """
 from __future__ import annotations
 
@@ -87,6 +90,16 @@ class ClusterOverlayController:
         self._scaling_active: bool = False
         self._input_phase: str | None = None
         self._settle_timer = None
+
+        # Occupancy. The grid SHELL is fixed (the permanent quadrant shells never
+        # move/resize), so an empty card keeps its cell; occupancy only narrows the
+        # EXACT input (click-through) shape so empty cards drop OUT of the click
+        # region. The cards' CONTENT suppression is the provider's job, not the
+        # controller's. _visible_cells seeds from provider.occupied_cells() on
+        # enter() (all four when the provider has no occupancy) and is reconciled
+        # live off occupied_cells_changed.
+        self._visible_cells: set = {0, 1, 2, 3}
+        self._occupancy_connected: bool = False
 
     # ------------------------------------------------------------------
     # State queries
@@ -225,6 +238,11 @@ class ClusterOverlayController:
             return False
         self._surface = surface
         self._token = token
+        # Seed the visible set from live occupancy and subscribe to changes so the
+        # exact input shape tracks which cards actually hold a window. A provider
+        # without occupancy degrades to all-visible (no signal -> no subscription).
+        self._visible_cells = self._target_visible_cells()
+        self._connect_occupancy()
         self._active = True
         self._emit_active_changed()   # self._active is True here
         return True
@@ -250,6 +268,10 @@ class ClusterOverlayController:
         self._scaling_active = False
         self._input_phase = None
         self._scale = 1.0
+        # Disconnect occupancy first so a late occupied_cells_changed after teardown
+        # is a safe no-op, and reset the visible set to the framed default.
+        self._disconnect_occupancy()
+        self._visible_cells = {0, 1, 2, 3}
         # Reset framed (scale-1.0) metrics so the cards come back at base scale.
         if provider is not None:
             try:
@@ -387,13 +409,19 @@ class ClusterOverlayController:
         if not self._active or self._surface is None:
             return
         self._input_phase = "exact"
+        self._apply_exact_input_shape()
+
+    def _apply_exact_input_shape(self) -> None:
+        """Build + apply the EXACT (per-control) input shape: the emblem union the
+        controls of the VISIBLE cards only, so empty cards drop OUT of the click
+        region. Best-effort + guarded: a no-op when framed or surfaceless. Shared by
+        the settle callback and the occupancy reconcile."""
+        if not self._active or self._surface is None:
+            return
         from utils.overlay.cluster_geometry import input_union
         emblem_rect = self._emblem_rect()
         card_controls = self._window_control_rects()
-        # Occupancy refines the visible set in a LATER task; for now every slot
-        # with controls is visible.
-        visible = list(card_controls.keys())
-        region = input_union(emblem_rect, card_controls, visible)
+        region = input_union(emblem_rect, card_controls, self._visible_cells)
         self._apply_input_shape(self._region_to_path(region))
 
     def _apply_input_shape(self, path) -> None:
@@ -473,6 +501,68 @@ class ClusterOverlayController:
             except Exception:
                 continue
         return out
+
+    # ------------------------------------------------------------------
+    # Occupancy (keep the grid shell fixed; only narrow the input shape)
+    # ------------------------------------------------------------------
+    def _target_visible_cells(self) -> set:
+        """The slot ids whose cards currently hold a window: the provider's
+        ``occupied_cells()``, or all four ``{0, 1, 2, 3}`` when the provider has no
+        occupancy (a stub provider degrades to all-visible). Pure read; a provider
+        that raises also degrades to all-visible."""
+        provider = self._card_provider
+        fn = getattr(provider, "occupied_cells", None) if provider is not None else None
+        if fn is None:
+            return {0, 1, 2, 3}
+        try:
+            return set(fn())
+        except Exception:
+            return {0, 1, 2, 3}
+
+    def _connect_occupancy(self) -> None:
+        """Subscribe ``_reconcile_occupancy`` to the provider's
+        ``occupied_cells_changed`` signal, if it exposes one. Idempotent + guarded:
+        a provider without the signal (a stub) is a safe no-op."""
+        provider = self._card_provider
+        sig = getattr(provider, "occupied_cells_changed", None) if provider is not None else None
+        if sig is None:
+            return
+        try:
+            sig.connect(self._reconcile_occupancy)
+            self._occupancy_connected = True
+        except Exception:
+            pass
+
+    def _disconnect_occupancy(self) -> None:
+        """Unsubscribe from ``occupied_cells_changed`` so a late signal after
+        teardown never reaches ``_reconcile_occupancy``. Guarded: disconnecting a
+        signal that was never connected (or is gone) must never raise."""
+        if not self._occupancy_connected:
+            return
+        self._occupancy_connected = False
+        provider = self._card_provider
+        sig = getattr(provider, "occupied_cells_changed", None) if provider is not None else None
+        if sig is None:
+            return
+        try:
+            sig.disconnect(self._reconcile_occupancy)
+        except Exception:
+            pass
+
+    def _reconcile_occupancy(self) -> None:
+        """Occupancy nudge (the signal slot): re-read ``occupied_cells()``, update
+        ``self._visible_cells``, and RE-APPLY the exact input shape so empty cards
+        drop out of the click region. No-op when framed (a stray post-leave signal
+        is safe).
+
+        The grid SHELL is left untouched: no cell is hidden/``setVisible(False)``
+        (that would collapse the pinwheel) and the window is NOT resized or reshaped
+        (the cluster bbox is fixed by the permanent shells). Only the click region
+        changes."""
+        if not self._active:
+            return
+        self._visible_cells = self._target_visible_cells()
+        self._apply_exact_input_shape()
 
     @staticmethod
     def _screens_xywh() -> list:

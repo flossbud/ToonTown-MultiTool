@@ -25,7 +25,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("TTMT_NO_VENV_REEXEC", "1")
 
 import pytest
-from PySide6.QtCore import QRect
+from PySide6.QtCore import QObject, QPointF, QRect, Signal
 from PySide6.QtWidgets import QWidget
 
 from utils.overlay.backend import NoOpOverlayBackend
@@ -56,6 +56,10 @@ _CONTROL_RECTS_LOCAL = [QRect(8, 8, 30, 18), QRect(8, 40, 30, 18)]   # card-loca
 # (218,18,30,18)) but OUTSIDE the emblem - so an emblem-only union (the
 # production card_cell_rects regression) would NOT contain it.
 _CONTROL_PROBE = (220, 20)
+# A control point inside cell 0's first control (window-local (18,18,30,18)) and
+# OUTSIDE the emblem - the occupancy tests use it as the VISIBLE-card probe paired
+# with _CONTROL_PROBE (cell 1) as the EMPTY-card probe.
+_VISIBLE_CONTROL_PROBE = (20, 20)
 
 
 # ---------------------------------------------------------------------------
@@ -199,6 +203,75 @@ class _RecordingBackend(NoOpOverlayBackend):
 
     def apply_input_shape(self, window, path, dpr) -> None:
         self.shapes.append((window, path, dpr))
+
+
+class _OccupancyStubProvider(QObject):
+    """``_StubProvider`` analog that ALSO exposes occupancy: a controllable
+    ``occupied_cells()`` plus a REAL ``occupied_cells_changed`` Signal (so it
+    subclasses QObject, like the production ``_CompactLayout``). Cell widgets'
+    ``setVisible`` is shadowed at the INSTANCE level so a stray ``setVisible(False)``
+    - a pinwheel collapse, which this task forbids - is recorded and assertable.
+    Instance shadowing (not a virtual override) catches only PYTHON-level calls, so
+    Qt's own internal visibility changes are not mistaken for a controller collapse."""
+
+    occupied_cells_changed = Signal()
+
+    def __init__(self, occupied=None):
+        super().__init__()
+        self._holder = QWidget()
+        self._grid_host = QWidget(self._holder)
+        self._grid_host.resize(_HOST_W, _HOST_H)
+        self._emblem = QWidget(self._grid_host)
+        self._emblem.setGeometry(_EMBLEM_X, _EMBLEM_Y, _EMBLEM_S, _EMBLEM_S)
+        self.hidden_cells: list = []   # any cell that got setVisible(False)
+        self._cell_widgets = []
+        for i in range(4):
+            cw = QWidget(self._grid_host)
+            ox, oy = _CELL_ORIGINS[i]
+            cw.setGeometry(ox, oy, *_CELL_SIZE)
+            self._shadow_set_visible(cw)
+            self._cell_widgets.append(cw)
+        self._token = object()
+        self.captured = 0
+        self.restored: list = []
+        self.last_metrics = None
+        self._occupied = set(occupied if occupied is not None else {0, 1, 2, 3})
+
+    def _shadow_set_visible(self, cw):
+        original = cw.setVisible
+        sink = self.hidden_cells
+
+        def _spy(visible):
+            if not visible:
+                sink.append(cw)
+            original(visible)
+
+        cw.setVisible = _spy
+
+    def occupied_cells(self):
+        return frozenset(self._occupied)
+
+    def set_occupied(self, cells):
+        self._occupied = set(cells)
+
+    def capture_cluster_host(self):
+        self.captured += 1
+        self._grid_host.setParent(None)
+        return self._token
+
+    def restore_cluster_host(self, token):
+        self.restored.append(token)
+        self._grid_host.setParent(self._holder)
+
+    def apply_metrics(self, metrics):
+        self.last_metrics = metrics
+
+    @property
+    def _card_slots(self):
+        return [{"cell": cw} for cw in self._cell_widgets]
+
+    def control_rects(self, cell_index):
+        return [QRect(r) for r in _CONTROL_RECTS_LOCAL]
 
 
 def _make(provider=None, window=None, host_raises=False, release_raises=False,
@@ -588,3 +661,89 @@ def test_move_group_clamp_reconciles_anchor_no_dead_zone(qapp):
     assert ctrl.move_group(-big, 0) is True
     assert surface.geom != pinned_geom
     assert surface.geom.x() < pinned_geom.x()    # moved back to the left
+
+
+# ---------------------------------------------------------------------------
+# 8. Occupancy: filters the exact input union, keeps the grid shell fixed
+#    (no card hide, no window reshape)
+# ---------------------------------------------------------------------------
+def test_enter_initializes_visible_cells_from_occupancy(qapp):
+    """enter() seeds _visible_cells from the provider's occupied_cells()."""
+    provider = _OccupancyStubProvider(occupied={0, 2})
+    ctrl, provider, window, created = _make(provider=provider)
+
+    ctrl.enter()
+
+    assert ctrl._visible_cells == {0, 2}
+
+
+def test_exact_union_includes_visible_excludes_empty(qapp):
+    """With occupancy {0,2}, the EXACT input union (after _settle_input) CONTAINS a
+    control point of a visible card (cell 0) and EXCLUDES one of an empty card
+    (cell 1) - empty cards drop OUT of the click region."""
+    backend = _RecordingBackend()
+    provider = _OccupancyStubProvider(occupied={0, 2})
+    ctrl, provider, window, created = _make(provider=provider, backend=backend)
+    ctrl.enter()
+
+    ctrl._settle_input()
+
+    exact_path = backend.shapes[-1][1]
+    assert exact_path.contains(QPointF(*_VISIBLE_CONTROL_PROBE))   # cell 0 visible
+    assert not exact_path.contains(QPointF(*_CONTROL_PROBE))        # cell 1 empty
+
+
+def test_occupancy_change_reapplies_input_without_hiding_or_reshaping(qapp):
+    """An occupancy nudge re-reads occupied_cells, updates _visible_cells, and
+    RE-APPLIES the input shape (a new apply) - WITHOUT hiding any grid cell and
+    WITHOUT resizing/reshaping the window (the grid shell stays fixed)."""
+    backend = _RecordingBackend()
+    provider = _OccupancyStubProvider(occupied={0, 2})
+    ctrl, provider, window, created = _make(provider=provider, backend=backend)
+    ctrl.enter()
+    surface = created[0]
+    geom_before = surface.geom
+    backend.shapes.clear()
+
+    provider.set_occupied({1, 3})
+    provider.occupied_cells_changed.emit()
+
+    assert ctrl._visible_cells == {1, 3}
+    assert len(backend.shapes) >= 1              # input shape RE-APPLIED
+    assert surface.geom == geom_before           # window NOT resized/reshaped
+    assert provider.hidden_cells == []           # NO grid cell setVisible(False)
+    # The new union now blocks the newly-occupied cell 1 and frees the now-empty 0.
+    new_path = backend.shapes[-1][1]
+    assert new_path.contains(QPointF(*_CONTROL_PROBE))                # cell 1 visible
+    assert not new_path.contains(QPointF(*_VISIBLE_CONTROL_PROBE))    # cell 0 empty
+
+
+def test_leave_disconnects_occupancy_signal(qapp):
+    """leave() disconnects the occupancy signal: a post-leave emit does not raise
+    and does not change state; _visible_cells resets to the framed default."""
+    backend = _RecordingBackend()
+    provider = _OccupancyStubProvider(occupied={0, 2})
+    ctrl, provider, window, created = _make(provider=provider, backend=backend)
+    ctrl.enter()
+
+    ctrl.leave()
+
+    assert ctrl._occupancy_connected is False
+    assert ctrl._visible_cells == {0, 1, 2, 3}   # reset to the framed default
+    backend.shapes.clear()
+
+    provider.set_occupied({1, 3})
+    provider.occupied_cells_changed.emit()        # must be a safe no-op
+
+    assert ctrl.is_active is False
+    assert backend.shapes == []                    # nothing re-applied post-leave
+    assert ctrl._visible_cells == {0, 1, 2, 3}     # unchanged by the stray emit
+
+
+def test_provider_without_occupancy_degrades_to_all_visible(qapp):
+    """A provider lacking occupied_cells degrades to all-visible and enter() runs
+    without crashing."""
+    ctrl, provider, window, created = _make()      # _StubProvider has NO occupancy
+
+    assert ctrl.enter() is True
+    assert ctrl._visible_cells == {0, 1, 2, 3}
