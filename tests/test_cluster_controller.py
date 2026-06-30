@@ -28,11 +28,12 @@ os.environ.setdefault("TTMT_NO_VENV_REEXEC", "1")
 os.environ.setdefault("TTMT_NO_RADIAL_ANIM", "1")
 
 import pytest
-from PySide6.QtCore import QObject, QPointF, QRect, Signal
+from PySide6.QtCore import QObject, QPoint, QPointF, QRect, Signal
 from PySide6.QtWidgets import QWidget
 
 from utils.overlay.backend import NoOpOverlayBackend
 from utils.overlay.cluster_controller import ClusterOverlayController
+from utils.overlay.cluster_surface import ClusterSurface
 from utils.overlay.persistence import KEY_ANCHOR, KEY_MONITOR, KEY_SCALE
 from utils.overlay.scale import SCALE_MAX, SCALE_MIN
 
@@ -1118,37 +1119,86 @@ def test_internal_dim_built_hidden_child_of_grid_host_on_enter(qapp):
     ctrl.leave()
 
 
-def test_window_expands_to_dim_extent_when_radial_open(qapp, monkeypatch):
-    """open_radial_menu() expands the ONE cluster window so it contains the
-    emblem-centered dim canvas (emblem*4); close_radial_menu() shrinks it back."""
+def test_radial_open_does_not_reflow_cluster_or_move_emblem(qapp, monkeypatch):
+    """REGRESSION (Task 7 Critical): opening the radial must NOT expand the cluster
+    window, reflow the borrowed host, or move the emblem off the anchor.
+
+    Built on a REAL ``ClusterSurface`` (not the recording stub) so
+    ``OverlaySurface.host()``'s zero-margin FILL ``QVBoxLayout`` is actually
+    exercised - the full-bleed path the recording stub hid. In the borrowed state
+    the emblem is a fixed-position child (the framed ``_relayout_all`` that would
+    re-center it is detached), so if the radial-open code re-grows the window the
+    fill layout resizes ``_grid_host`` while the emblem stays put, dragging the
+    emblem's global center off the anchor (with this geometry + anchor (1000,700)
+    the old code moved it to (798,478)). The fix keeps the window at the closed
+    bbox, so the host never reflows and the emblem center holds across
+    open -> scale-while-open -> close, while the radial top-level still gets the
+    full ``emblem*4`` canvas."""
     from utils.overlay.cluster_geometry import window_rect_for
     from utils.overlay.card_metrics import CardMetrics
 
-    _patch_radial(monkeypatch)
+    created_radial = _patch_radial(monkeypatch)
+    provider = _StubProvider()
     anchor = (1000, 700)
-    ctrl, provider, window, created = _make(anchor=anchor)
-    ctrl.enter()
-    surface = created[0]
-    before = surface.geom
+    created_surfaces: list = []
 
-    ctrl.open_radial_menu()
-    after = surface.geom
+    def factory():
+        s = ClusterSurface(backend=NoOpOverlayBackend())
+        created_surfaces.append(s)
+        return s
 
-    assert after.width() >= before.width() and after.height() >= before.height()
-    assert after.width() > before.width() or after.height() > before.height()
-    # The applied rect is EXACTLY the radial-open extent (proves the controller
-    # passed radial_open=True + the emblem*4 canvas to window_rect_for). The
-    # off-center stub emblem means the rect's geometric center is NOT the emblem
-    # center, so the real invariant is the emblem-anchor placement below, not
-    # rect.center() == before.center().
-    canvas = int(CardMetrics(1.0).emblem * 4)
-    expected = window_rect_for((_HOST_W, _HOST_H), (_EMBLEM_CX, _EMBLEM_CY),
-                               anchor, True, (canvas, canvas))
-    assert after == expected
+    ctrl = ClusterOverlayController(
+        _StubWindow(), backend=NoOpOverlayBackend(), settings=None,
+        surface_factory=factory, card_provider=provider)
+    ctrl._anchor = anchor
 
+    assert ctrl.enter() is True
+    surface = created_surfaces[0]
+    qapp.processEvents()
+
+    def emblem_global_center():
+        # Use width//2 (the controller's _emblem_center_local convention) so the
+        # mapped point matches the placement math exactly (no QRect.center() skew).
+        e = provider._emblem
+        return e.mapToGlobal(QPoint(e.width() // 2, e.height() // 2))
+
+    host_size_before = QRect(provider._grid_host.rect()).size()
+    c0 = emblem_global_center()
+    assert (c0.x(), c0.y()) == anchor                # framed-open: emblem on anchor
+
+    # --- open: NO window expansion, NO host reflow, emblem stays on anchor ---
+    menu = ctrl.open_radial_menu()
+    qapp.processEvents()
+    assert menu is not None
+    assert provider._grid_host.size() == host_size_before     # host did NOT reflow
+    c1 = emblem_global_center()
+    assert (c1.x(), c1.y()) == anchor
+    # The cluster window stays at the CLOSED bbox rect (never the dim canvas).
+    w, h = ctrl._cluster_size()
+    ecx, ecy = ctrl._emblem_center_local(w, h)
+    assert surface.geometry() == window_rect_for((w, h), (ecx, ecy), anchor, False, (0, 0))
+    # The radial top-level still receives the full emblem*4 canvas.
+    canvas = int(CardMetrics(ctrl.scale).emblem * 4)
+    rsurf = created_radial["surfaces"][-1]
+    assert rsurf.geom.width() == canvas and rsurf.geom.height() == canvas
+
+    # --- scale while open: emblem still on anchor, window still the (scaled) bbox ---
+    ctrl.set_scale_by_notches(2)
+    qapp.processEvents()
+    c2 = emblem_global_center()
+    assert (c2.x(), c2.y()) == anchor
+    w2, h2 = ctrl._cluster_size()
+    ecx2, ecy2 = ctrl._emblem_center_local(w2, h2)
+    assert surface.geometry() == window_rect_for(
+        (w2, h2), (ecx2, ecy2), anchor, False, (0, 0))
+
+    # --- close: emblem still on anchor ---
     ctrl.close_radial_menu()
-    assert surface.geom.size() == before.size()
-    assert surface.geom == before
+    qapp.processEvents()
+    c3 = emblem_global_center()
+    assert (c3.x(), c3.y()) == anchor
+
+    ctrl.leave()
 
 
 def test_open_radial_menu_returns_widget_shows_dim_and_centers_radial(qapp, monkeypatch):
@@ -1245,19 +1295,39 @@ def test_leave_closes_radial_and_removes_internal_dim(qapp, monkeypatch):
     rsurf = created_radial["surfaces"][-1]
     assert ctrl.is_radial_open is True
 
+    # Spy on restore_cluster_host so we can inspect the grid host's children AT THE
+    # MOMENT the host is handed back to framed mode. The dim must already be detached
+    # by then (removed BEFORE the restore, not merely by the time leave() returns).
+    dims_at_restore: list = []
+    orig_restore = provider.restore_cluster_host
+
+    def _spy_restore(token):
+        dims_at_restore.append([
+            c for c in provider._grid_host.children()
+            if isinstance(c, RadialDimWidget)])
+        return orig_restore(token)
+
+    provider.restore_cluster_host = _spy_restore
+
     ctrl.leave()
 
     assert ctrl.is_radial_open is False
     assert rsurf.hidden == 1 and rsurf.deleted == 1
     assert ctrl._dim is None
+    # restore_cluster_host ran exactly once, and at that instant NO RadialDimWidget
+    # was still parented under the grid host (dim removed before the host handoff).
+    assert dims_at_restore == [[]]
     leftover = [c for c in provider._grid_host.children()
                 if isinstance(c, RadialDimWidget)]
     assert leftover == []
 
 
-def test_scale_while_radial_open_keeps_window_expanded_and_recenters_radial(qapp, monkeypatch):
+def test_scale_while_radial_open_keeps_window_at_bbox_and_recenters_radial(qapp, monkeypatch):
     """A scale change WHILE the radial is open keeps the cluster window sized to the
-    (new) dim extent and re-sizes + re-centers the radial top-level on the anchor."""
+    (new, scaled) cluster BBOX - never the dim extent - and re-sizes + re-centers the
+    SEPARATE radial top-level on the anchor. The window must NOT grow to the dim
+    canvas (that reflow was the Task 7 Critical); the dim canvas lives entirely on the
+    radial top-level + the host-clipped internal dim."""
     from utils.overlay.cluster_geometry import window_rect_for
     from utils.overlay.card_metrics import CardMetrics
 
@@ -1272,15 +1342,131 @@ def test_scale_while_radial_open_keeps_window_expanded_and_recenters_radial(qapp
 
     ctrl.set_scale_by_notches(2)                  # scale up while the radial is open
 
-    assert ctrl._radial_size > canvas_before       # canvas grew with the emblem
+    assert ctrl._radial_size > canvas_before       # radial canvas grew with the emblem
     assert menu.diameters                          # set_emblem_diameter re-applied
-    # The cluster window stays sized to the (new) dim extent, not the bare cluster.
+    # The cluster window stays at the (new, scaled) BBOX, NOT the dim extent.
     s = ctrl.scale
     new_canvas = int(CardMetrics(s).emblem * 4)
     w, h = ctrl._cluster_size()
     ecx, ecy = ctrl._emblem_center_local(w, h)
-    expected = window_rect_for((w, h), (ecx, ecy), ctrl._anchor, True,
-                               (new_canvas, new_canvas))
+    expected = window_rect_for((w, h), (ecx, ecy), ctrl._anchor, False, (0, 0))
     assert surface.geom == expected
     assert rsurf.geom.width() == new_canvas        # radial re-sized to the new canvas
     ctrl.close_radial_menu()
+
+
+def test_open_repositions_dim_to_current_scale_after_scale_while_closed(qapp, monkeypatch):
+    """The internal dim must track scale even while the radial is CLOSED, and
+    open_radial_menu() must (re)position it to the CURRENT scale's emblem*4 canvas
+    before showing it - otherwise a scale-while-closed leaves the dim at the stale
+    enter-scale size and it flashes wrong on open."""
+    from utils.overlay.card_metrics import CardMetrics
+
+    _patch_radial(monkeypatch)
+    ctrl, provider, window, created = _make()
+    ctrl.enter()
+    enter_canvas = int(CardMetrics(1.0).emblem * 4)
+    assert ctrl._dim.width() == enter_canvas       # dim built at the enter scale
+
+    ctrl.set_scale_by_notches(2)                    # scale change while the radial is CLOSED
+    s = ctrl.scale
+    scaled_canvas = int(CardMetrics(s).emblem * 4)
+    assert scaled_canvas != enter_canvas
+    # (a) The dim tracked the scale even while closed (no stale enter-scale size).
+    assert ctrl._dim.width() == scaled_canvas
+    assert ctrl._dim.height() == scaled_canvas
+
+    ctrl.open_radial_menu()
+    # (b) open positions the dim to the CURRENT scale's canvas, centered on the
+    # (scaled) emblem center - never the enter-scale one.
+    w, h = ctrl._cluster_size()
+    ecx, ecy = ctrl._emblem_center_local(w, h)
+    assert ctrl._dim.geometry() == QRect(
+        ecx - scaled_canvas // 2, ecy - scaled_canvas // 2, scaled_canvas, scaled_canvas)
+    ctrl.close_radial_menu()
+    ctrl.leave()
+
+
+def test_open_radial_menu_failclosed_on_setup_error(qapp, monkeypatch):
+    """A failure mid-open (here the radial surface's host raises) must fail closed:
+    no exception escapes, is_radial_open is False, no radial surface/menu is tracked,
+    and the partially-built top-level is torn down (not leaked)."""
+    created: dict = {"surfaces": []}
+
+    class _BoomRadialSurface(QWidget):
+        def __init__(self, backend=None):
+            super().__init__()
+            self.hidden = 0
+            self.deleted = 0
+            created["surfaces"].append(self)
+
+        def host(self, widget):
+            raise RuntimeError("radial host boom")
+
+        def hide(self):
+            self.hidden += 1
+
+        def deleteLater(self):
+            self.deleted += 1
+
+    class _StubRadialMenu(QWidget):
+        def __init__(self, emblem_diameter=0.0, **kw):
+            super().__init__()
+
+        def start_reveal(self):
+            pass
+
+    monkeypatch.setattr("utils.overlay.cluster_surface.RadialSurface",
+                        _BoomRadialSurface)
+    monkeypatch.setattr("utils.overlay.radial_menu.RadialMenuWidget",
+                        _StubRadialMenu)
+
+    ctrl, provider, window, c = _make()
+    ctrl.enter()
+
+    result = ctrl.open_radial_menu()                # must not raise
+
+    assert result is None
+    assert ctrl.is_radial_open is False
+    assert ctrl._radial_surface is None
+    assert ctrl._radial_menu is None
+    # The half-built radial top-level was cleaned up by the rollback, not leaked.
+    assert len(created["surfaces"]) == 1
+    assert created["surfaces"][0].deleted == 1
+    ctrl.leave()
+
+
+def test_radial_input_shape_applied_once_then_deferred_to_settle(qapp, monkeypatch):
+    """The radial click region is applied EXACTLY ONCE on open; a scale-while-open
+    does NOT re-apply it immediately (the X11 reshape is deferred to the settle
+    timer); firing the settle (_reapply_radial_shape) applies it; and a stray settle
+    after close()/leave() is a safe no-op. Shapes are filtered to the radial surface
+    so the cluster window's broad/exact shapes are excluded."""
+    backend = _RecordingBackend()
+    created_radial = _patch_radial(monkeypatch)
+    ctrl, provider, window, created = _make(anchor=(1000, 700), backend=backend)
+    ctrl.enter()
+
+    ctrl.open_radial_menu()
+    rsurf = created_radial["surfaces"][-1]
+
+    def radial_shapes():
+        return [s for s in backend.shapes if s[0] is rsurf]
+
+    assert len(radial_shapes()) == 1               # exactly one apply on open
+
+    ctrl.set_scale_by_notches(2)                    # scale while open
+    assert len(radial_shapes()) == 1               # NOT re-applied (deferred to settle)
+
+    ctrl._reapply_radial_shape()                    # the settle fires
+    assert len(radial_shapes()) == 2               # now re-applied
+
+    ctrl.close_radial_menu()
+    after_close = len(radial_shapes())
+    ctrl._reapply_radial_shape()                    # stray late settle after close
+    assert len(radial_shapes()) == after_close     # safe no-op (radial surface gone)
+
+    ctrl.leave()
+    after_leave = len(radial_shapes())
+    ctrl._reapply_radial_shape()                    # stray late settle after leave
+    assert len(radial_shapes()) == after_leave     # still a safe no-op

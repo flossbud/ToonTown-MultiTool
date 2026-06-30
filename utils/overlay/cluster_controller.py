@@ -217,26 +217,24 @@ class ClusterOverlayController:
         emblem_dia = float(CardMetrics(self._scale).emblem)
         return emblem_dia, int(emblem_dia * 4)
 
-    def _radial_rect_params(self) -> tuple[bool, tuple[int, int]]:
-        """The ``(radial_open, dim_extent)`` pair to feed ``window_rect_for``: while
-        the radial is open the window must grow to contain the emblem-centered
-        ``emblem*4`` dim canvas; closed it stays sized to the bare cluster."""
-        if self.is_radial_open:
-            _dia, canvas = self._radial_canvas()
-            return True, (canvas, canvas)
-        return False, (0, 0)
-
     def _compute_window_rect(self):
         """The SCREEN rect for the single cluster window: sized to the borrowed host
-        (plus the emblem-centered dim canvas while the radial is open) and placed so
-        the emblem center lands on the anchor."""
+        (the closed cluster bbox) and placed so the emblem center lands on the anchor.
+
+        The window is ALWAYS the closed bbox - radial-open never grows it. The
+        internal dim is a CHILD of ``_grid_host`` (Qt hard-clips it to the host
+        regardless of window size), so expanding the window can never enlarge the
+        dim; it only stretches the host's fill layout, reflowing the cards and
+        dragging the emblem off the anchor. Keeping the window at the bbox preserves
+        the emblem-center invariant open, closed, and while scaling. The radial menu
+        is its OWN top-level (sized to the full ``emblem*4`` canvas), independent of
+        this window."""
         from utils.overlay.cluster_geometry import window_rect_for
         w, h = self._cluster_size()
         emblem_center = self._emblem_center_local(w, h)
-        radial_open, dim_extent = self._radial_rect_params()
         return window_rect_for(
             (w, h), emblem_center, self._anchor,
-            radial_open=radial_open, dim_extent=dim_extent,
+            radial_open=False, dim_extent=(0, 0),
         )
 
     def _build_surface(self):
@@ -420,8 +418,13 @@ class ClusterOverlayController:
                 pass
         # Radial open: keep its top-level + the internal dim sized + centered to the
         # new emblem (the click-region re-apply is deferred to the settle timer).
+        # Radial CLOSED: still re-size + re-center the internal dim to the new scale's
+        # emblem*4 canvas so it tracks scale regardless of radial state (otherwise a
+        # scale-while-closed leaves the dim stale and the next open would flash it).
         if self.is_radial_open:
             self._reposition_radial()
+        else:
+            self._position_internal_dim()
         # Drive the input-shape phase machine: broad now, exact on settle.
         self._enter_broad_phase(rect)
         # Persist the new scale (debounced) - but only when the scale ACTUALLY
@@ -468,12 +471,11 @@ class ClusterOverlayController:
         # should not change where the cluster parks.
         self._anchor = (clamped.x() + ex, clamped.y() + ey)
         if self._surface is not None:
-            # Closed: apply the clamped rect as-is. Open: apply the radial-aware
-            # (expanded) rect at the reconciled anchor so the window keeps the dim
-            # room, then re-center the radial top-level + dim on the new anchor.
-            applied = self._compute_window_rect() if self.is_radial_open else clamped
+            # The window is always the closed bbox rect (radial-open no longer grows
+            # it), so the clamped rect IS the rect to apply whether or not the radial
+            # is open; the radial top-level + dim re-center separately below.
             try:
-                self._surface.set_overlay_geometry(applied)
+                self._surface.set_overlay_geometry(clamped)
             except Exception:
                 pass
         if self.is_radial_open:
@@ -813,11 +815,20 @@ class ClusterOverlayController:
 
         Builds a source-cleared ``RadialSurface`` top-level hosting a
         ``RadialMenuWidget`` at the ``emblem*4`` canvas centered on the anchor (the
-        emblem's screen center, by the emblem-center invariant), reveals the
-        internal dim, EXPANDS the one cluster window to contain the dim canvas
-        (radial-aware ``_compute_window_rect``), and returns the menu so the caller
-        (a LATER task) can wire its intent signals. A no-op (returns None) when
-        framed or already open."""
+        emblem's screen center, by the emblem-center invariant) and reveals the
+        internal dim, then returns the menu so the caller can wire its intent
+        signals. A no-op (returns None) when framed or already open.
+
+        The cluster window is NOT resized: the dim is a child of ``_grid_host`` (Qt
+        clips it to the host), so growing the window can never enlarge the dim - it
+        only reflows the host's fill layout and drags the emblem off the anchor. The
+        window stays at the closed bbox; only the SEPARATE radial top-level spans the
+        full canvas.
+
+        Transaction-safe: the whole setup is guarded so a mid-build failure can never
+        leak an untracked top-level. The surface + menu are tracked BEFORE any
+        fallible step, so on ANY error ``close_radial_menu()`` tears the partial state
+        down and the method fails closed (returns None, ``is_radial_open`` False)."""
         if not self._active:
             return None
         if self._radial_surface is not None:
@@ -826,52 +837,61 @@ class ClusterOverlayController:
         from utils.overlay.radial_menu import RadialMenuWidget, radial_anim_enabled
         from PySide6.QtCore import QRect
         from PySide6.QtGui import QPainterPath
-        emblem_dia, canvas = self._radial_canvas()
-        menu = RadialMenuWidget(emblem_diameter=emblem_dia)
-        self._radial_size = canvas
-        ax, ay = self._anchor
-        geom = QRect(int(ax - canvas / 2), int(ay - canvas / 2), canvas, canvas)
-        surface = RadialSurface(backend=self._backend)
-        surface.host(menu)
-        surface.set_overlay_geometry(geom)
-        self._safe_call(surface, "prepare_initial_state")
-        surface.show()
-        # Set state BEFORE the window resize so is_radial_open is True and the
-        # cluster window sizes to the dim extent.
-        self._radial_surface = surface
-        self._radial_menu = menu
-        # NON-EMPTY click region: the whole radial canvas accepts clicks (the cluster
-        # window stays click-through; this surface is additive).
-        path = QPainterPath()
-        path.addRect(0, 0, canvas, canvas)
-        self._apply_radial_input_shape(path)
-        # Reveal the internal dim behind the ring.
-        dim = self._dim
-        if dim is not None:
-            self._safe_call(dim, "show")
-            try:
-                dim.start_reveal(animate=radial_anim_enabled())
-            except Exception:
-                pass
-        # Expand the ONE cluster window so it contains the emblem-centered dim canvas.
-        if self._surface is not None:
-            try:
-                self._surface.set_overlay_geometry(self._compute_window_rect())
-            except Exception:
-                pass
-        self._restack_internal_layers()
         try:
-            menu.start_reveal()
+            emblem_dia, canvas = self._radial_canvas()
+            menu = RadialMenuWidget(emblem_diameter=emblem_dia)
+            self._radial_size = canvas
+            ax, ay = self._anchor
+            geom = QRect(int(ax - canvas / 2), int(ay - canvas / 2), canvas, canvas)
+            surface = RadialSurface(backend=self._backend)
+            # Track the surface + menu IMMEDIATELY (before any fallible host/show), so
+            # a failure from here on is cleaned up by close_radial_menu() instead of
+            # leaking a built-but-untracked top-level.
+            self._radial_surface = surface
+            self._radial_menu = menu
+            surface.host(menu)
+            surface.set_overlay_geometry(geom)
+            self._safe_call(surface, "prepare_initial_state")
+            surface.show()
+            # NON-EMPTY click region: the whole radial canvas accepts clicks (the
+            # cluster window stays click-through; this surface is additive).
+            path = QPainterPath()
+            path.addRect(0, 0, canvas, canvas)
+            self._apply_radial_input_shape(path)
+            # Reposition the dim to the CURRENT scale's emblem*4 canvas BEFORE showing
+            # it: a scale-while-CLOSED leaves the dim sized to the old (enter-time)
+            # canvas, so without this it would flash stale on open.
+            self._position_internal_dim()
+            # Reveal the internal dim behind the ring.
+            dim = self._dim
+            if dim is not None:
+                self._safe_call(dim, "show")
+                try:
+                    dim.start_reveal(animate=radial_anim_enabled())
+                except Exception:
+                    pass
+            self._restack_internal_layers()
+            try:
+                menu.start_reveal()
+            except Exception:
+                pass
+            return menu
         except Exception:
-            pass
-        return menu
+            from utils.overlay.backend import overlay_trace
+            import traceback
+            overlay_trace("cluster_controller.open_radial_menu() FAILED; rolling "
+                          "back (fail-closed):\n" + traceback.format_exc())
+            self.close_radial_menu()
+            return None
 
     def close_radial_menu(self) -> None:
-        """Tear down the radial top-level, hide (but keep) the internal dim, and
-        shrink the cluster window back to the bare-cluster extent. Idempotent: a
-        call when the radial was never open is a safe no-op (no window resize)."""
+        """Tear down the radial top-level and hide (but keep) the internal dim.
+        Idempotent: a call when the radial was never open is a safe no-op.
+
+        The cluster window is never resized here: it stays at the closed bbox the
+        whole time the radial is open (the radial-open expansion was removed), so
+        there is nothing to shrink back."""
         surface = self._radial_surface
-        was_open = surface is not None
         self._radial_surface = None
         self._radial_menu = None
         self._radial_size = 0
@@ -883,14 +903,6 @@ class ClusterOverlayController:
         if surface is not None:
             self._safe_call(surface, "hide")
             self._safe_call(surface, "deleteLater")  # the menu is OWNED; it dies too
-        # Shrink the window back (is_radial_open is now False, so _compute_window_rect
-        # returns the bare-cluster rect). Only when the radial WAS open + still active,
-        # so an idempotent close never churns the window geometry.
-        if was_open and self._active and self._surface is not None:
-            try:
-                self._surface.set_overlay_geometry(self._compute_window_rect())
-            except Exception:
-                pass
         self._restack_internal_layers()
 
     def _reposition_radial(self) -> None:
