@@ -23,6 +23,9 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("TTMT_NO_VENV_REEXEC", "1")
+# Calm the radial/dim animations so the internal dim (a real RadialDimWidget) and
+# the radial menu snap instead of starting QVariantAnimations during unit tests.
+os.environ.setdefault("TTMT_NO_RADIAL_ANIM", "1")
 
 import pytest
 from PySide6.QtCore import QObject, QPointF, QRect, Signal
@@ -1026,3 +1029,258 @@ def test_enter_degrades_to_defaults_on_corrupt_settings(qapp):
     assert ctrl._scale == 1.0
     assert ctrl._anchor == ClusterOverlayController._default_anchor()
     ctrl.leave()
+
+
+# ---------------------------------------------------------------------------
+# 10. Radial menu + internal dim layer + radial-open window expansion
+# ---------------------------------------------------------------------------
+def _patch_radial(monkeypatch):
+    """Replace the real RadialSurface + RadialMenuWidget with lightweight recording
+    stubs so open/close exercise the controller wiring WITHOUT building real
+    top-levels or touching the global pose fetcher (mirrors the group-controller
+    radial tests). Returns a dict capturing the created stub surfaces + menus."""
+    created = {"surfaces": [], "menus": []}
+
+    class _StubRadialSurface(QWidget):
+        def __init__(self, backend=None):
+            super().__init__()
+            self.backend = backend
+            self.geom = None
+            self.shown = 0
+            self.hidden = 0
+            self.deleted = 0
+            self.prepared = 0
+            self.hosted = None
+            created["surfaces"].append(self)
+
+        def host(self, widget):
+            self.hosted = widget
+
+        def set_overlay_geometry(self, rect):
+            self.geom = rect
+
+        def prepare_initial_state(self):
+            self.prepared += 1
+
+        def show(self):
+            self.shown += 1
+
+        def hide(self):
+            self.hidden += 1
+
+        def deleteLater(self):
+            self.deleted += 1
+
+    class _StubRadialMenu(QWidget):
+        def __init__(self, emblem_diameter=0.0, customizations=None,
+                     variant="transparent", parent=None):
+            super().__init__()
+            self.emblem_diameter = emblem_diameter
+            self.diameters = []
+            self.reveals = 0
+            created["menus"].append(self)
+
+        def set_emblem_diameter(self, d):
+            self.diameters.append(d)
+
+        def start_reveal(self):
+            self.reveals += 1
+
+    monkeypatch.setattr("utils.overlay.cluster_surface.RadialSurface",
+                        _StubRadialSurface)
+    monkeypatch.setattr("utils.overlay.radial_menu.RadialMenuWidget",
+                        _StubRadialMenu)
+    return created
+
+
+def test_dim_layer_sits_between_cards_and_emblem(qapp):
+    """After enter(), the internal dim widget's z-order is ABOVE the cards and
+    BELOW the emblem (so it dims the cards behind the ring, never the emblem)."""
+    ctrl, provider, window, created = _make()
+    ctrl.enter()
+
+    order = ctrl.cluster_layer_order()           # e.g. ["glow","cards","dim","emblem"]
+
+    assert "cards" in order and "dim" in order and "emblem" in order
+    assert order.index("cards") < order.index("dim") < order.index("emblem")
+    ctrl.leave()
+
+
+def test_internal_dim_built_hidden_child_of_grid_host_on_enter(qapp):
+    """enter() builds the internal dim as a HIDDEN child of the borrowed grid host
+    (shown only while the radial is open)."""
+    ctrl, provider, window, created = _make()
+    ctrl.enter()
+
+    assert ctrl._dim is not None
+    assert ctrl._dim.parent() is provider._grid_host
+    assert ctrl._dim.isHidden() is True
+    ctrl.leave()
+
+
+def test_window_expands_to_dim_extent_when_radial_open(qapp, monkeypatch):
+    """open_radial_menu() expands the ONE cluster window so it contains the
+    emblem-centered dim canvas (emblem*4); close_radial_menu() shrinks it back."""
+    from utils.overlay.cluster_geometry import window_rect_for
+    from utils.overlay.card_metrics import CardMetrics
+
+    _patch_radial(monkeypatch)
+    anchor = (1000, 700)
+    ctrl, provider, window, created = _make(anchor=anchor)
+    ctrl.enter()
+    surface = created[0]
+    before = surface.geom
+
+    ctrl.open_radial_menu()
+    after = surface.geom
+
+    assert after.width() >= before.width() and after.height() >= before.height()
+    assert after.width() > before.width() or after.height() > before.height()
+    # The applied rect is EXACTLY the radial-open extent (proves the controller
+    # passed radial_open=True + the emblem*4 canvas to window_rect_for). The
+    # off-center stub emblem means the rect's geometric center is NOT the emblem
+    # center, so the real invariant is the emblem-anchor placement below, not
+    # rect.center() == before.center().
+    canvas = int(CardMetrics(1.0).emblem * 4)
+    expected = window_rect_for((_HOST_W, _HOST_H), (_EMBLEM_CX, _EMBLEM_CY),
+                               anchor, True, (canvas, canvas))
+    assert after == expected
+
+    ctrl.close_radial_menu()
+    assert surface.geom.size() == before.size()
+    assert surface.geom == before
+
+
+def test_open_radial_menu_returns_widget_shows_dim_and_centers_radial(qapp, monkeypatch):
+    """open_radial_menu(): returns the RadialMenuWidget, shows the internal dim,
+    flips is_radial_open, and centers the radial top-level on the anchor."""
+    from utils.overlay.card_metrics import CardMetrics
+
+    created_radial = _patch_radial(monkeypatch)
+    anchor = (1000, 700)
+    ctrl, provider, window, created = _make(anchor=anchor)
+    ctrl.enter()
+    assert ctrl.is_radial_open is False
+
+    menu = ctrl.open_radial_menu()
+
+    assert menu is not None and menu in created_radial["menus"]
+    assert ctrl.is_radial_open is True
+    assert ctrl._dim.isHidden() is False                # dim revealed
+    canvas = int(CardMetrics(1.0).emblem * 4)
+    rsurf = created_radial["surfaces"][-1]
+    assert rsurf.geom.width() == canvas and rsurf.geom.height() == canvas
+    assert rsurf.geom.x() == int(anchor[0] - canvas / 2)
+    assert rsurf.geom.y() == int(anchor[1] - canvas / 2)
+    assert rsurf.shown == 1
+    ctrl.close_radial_menu()
+
+
+def test_open_radial_menu_idempotent(qapp, monkeypatch):
+    """A second open while already open is a no-op (returns None, no 2nd surface)."""
+    created_radial = _patch_radial(monkeypatch)
+    ctrl, provider, window, created = _make()
+    ctrl.enter()
+
+    m1 = ctrl.open_radial_menu()
+    m2 = ctrl.open_radial_menu()
+
+    assert m1 is not None and m2 is None
+    assert len(created_radial["surfaces"]) == 1
+    ctrl.close_radial_menu()
+
+
+def test_open_radial_menu_noop_when_inactive(qapp, monkeypatch):
+    """open_radial_menu is a no-op (None, no surface) while framed."""
+    created_radial = _patch_radial(monkeypatch)
+    ctrl, provider, window, created = _make()
+
+    assert ctrl.open_radial_menu() is None
+    assert created_radial["surfaces"] == []
+    assert ctrl.is_radial_open is False
+
+
+def test_close_radial_menu_tears_down_radial_and_hides_dim(qapp, monkeypatch):
+    """close_radial_menu(): tears down the radial top-level, hides (keeps) the
+    internal dim, clears is_radial_open."""
+    created_radial = _patch_radial(monkeypatch)
+    ctrl, provider, window, created = _make(anchor=(1000, 700))
+    ctrl.enter()
+    ctrl.open_radial_menu()
+    rsurf = created_radial["surfaces"][-1]
+
+    ctrl.close_radial_menu()
+
+    assert ctrl.is_radial_open is False
+    assert ctrl._radial_surface is None
+    assert rsurf.hidden == 1 and rsurf.deleted == 1
+    assert ctrl._dim is not None and ctrl._dim.isHidden() is True
+
+
+def test_close_radial_menu_idempotent_when_never_open(qapp, monkeypatch):
+    """close_radial_menu when the radial was never open is a safe no-op and does
+    NOT resize the window."""
+    _patch_radial(monkeypatch)
+    ctrl, provider, window, created = _make()
+    ctrl.enter()
+    surface = created[0]
+    before = surface.geom
+
+    ctrl.close_radial_menu()
+
+    assert ctrl.is_radial_open is False
+    assert surface.geom == before
+
+
+def test_leave_closes_radial_and_removes_internal_dim(qapp, monkeypatch):
+    """leave() closes the radial (it must never outlive the overlay) and removes
+    the internal dim BEFORE the borrowed host is restored, so framed mode gets the
+    host back with NO stray dim child."""
+    from utils.overlay.radial_menu import RadialDimWidget
+
+    created_radial = _patch_radial(monkeypatch)
+    ctrl, provider, window, created = _make()
+    ctrl.enter()
+    ctrl.open_radial_menu()
+    rsurf = created_radial["surfaces"][-1]
+    assert ctrl.is_radial_open is True
+
+    ctrl.leave()
+
+    assert ctrl.is_radial_open is False
+    assert rsurf.hidden == 1 and rsurf.deleted == 1
+    assert ctrl._dim is None
+    leftover = [c for c in provider._grid_host.children()
+                if isinstance(c, RadialDimWidget)]
+    assert leftover == []
+
+
+def test_scale_while_radial_open_keeps_window_expanded_and_recenters_radial(qapp, monkeypatch):
+    """A scale change WHILE the radial is open keeps the cluster window sized to the
+    (new) dim extent and re-sizes + re-centers the radial top-level on the anchor."""
+    from utils.overlay.cluster_geometry import window_rect_for
+    from utils.overlay.card_metrics import CardMetrics
+
+    created_radial = _patch_radial(monkeypatch)
+    ctrl, provider, window, created = _make(anchor=(1000, 700))
+    ctrl.enter()
+    surface = created[0]
+    ctrl.open_radial_menu()
+    rsurf = created_radial["surfaces"][-1]
+    menu = created_radial["menus"][-1]
+    canvas_before = ctrl._radial_size
+
+    ctrl.set_scale_by_notches(2)                  # scale up while the radial is open
+
+    assert ctrl._radial_size > canvas_before       # canvas grew with the emblem
+    assert menu.diameters                          # set_emblem_diameter re-applied
+    # The cluster window stays sized to the (new) dim extent, not the bare cluster.
+    s = ctrl.scale
+    new_canvas = int(CardMetrics(s).emblem * 4)
+    w, h = ctrl._cluster_size()
+    ecx, ecy = ctrl._emblem_center_local(w, h)
+    expected = window_rect_for((w, h), (ecx, ecy), ctrl._anchor, True,
+                               (new_canvas, new_canvas))
+    assert surface.geom == expected
+    assert rsurf.geom.width() == new_canvas        # radial re-sized to the new canvas
+    ctrl.close_radial_menu()

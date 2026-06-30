@@ -111,12 +111,37 @@ class ClusterOverlayController:
         self._save_pending: bool = False
         self._save_timer = None
 
+        # Radial menu + internal dim. The radial menu stays a SEPARATE source-cleared
+        # top-level (RadialSurface): it must sit ABOVE the click-through cluster
+        # window AND accept clicks, so it cannot be a child of the cluster. The DIM,
+        # by contrast, is INTERNAL: a child of the borrowed _grid_host, stacked ABOVE
+        # the cards and BELOW the emblem, so it dims the cards behind the ring without
+        # a second backdrop window (z-order: glow -> cards -> dim -> emblem). The dim
+        # widget is built (hidden) on enter() and REMOVED on leave() before the host
+        # is restored, so framed mode is 100% unaffected. The radial surface + menu
+        # exist only between open_radial_menu() and close_radial_menu().
+        self._dim = None
+        self._radial_surface = None
+        self._radial_menu = None
+        self._radial_size: int = 0
+        # Re-applying the radial's click region on every scroll tick stalls the wheel
+        # stream, so a scale-while-open change DEFERS the reshape to this settle timer
+        # (mirrors OverlayGroupController._schedule_radial_reshape).
+        self._radial_reshape_timer = None
+
     # ------------------------------------------------------------------
     # State queries
     # ------------------------------------------------------------------
     @property
     def is_active(self) -> bool:
         return self._active
+
+    @property
+    def is_radial_open(self) -> bool:
+        """True while the radial menu top-level is up (between open_radial_menu and
+        close_radial_menu). Drives the radial-aware window sizing and lets the
+        emblem click toggle the ring shut (caller wiring, a LATER task)."""
+        return self._radial_surface is not None
 
     @property
     def scale(self) -> float:
@@ -183,16 +208,35 @@ class ClusterOverlayController:
                 return (g.x() + g.width() // 2, g.y() + g.height() // 2)
         return (bbox_w // 2, bbox_h // 2)
 
+    def _radial_canvas(self) -> tuple[float, int]:
+        """``(emblem disc diameter, square canvas px)`` for the radial menu + dim at
+        the current cluster scale. ONE formula shared by open_radial_menu and the
+        scale path so the two never drift (mirrors
+        ``OverlayGroupController._radial_canvas``)."""
+        from utils.overlay.card_metrics import CardMetrics
+        emblem_dia = float(CardMetrics(self._scale).emblem)
+        return emblem_dia, int(emblem_dia * 4)
+
+    def _radial_rect_params(self) -> tuple[bool, tuple[int, int]]:
+        """The ``(radial_open, dim_extent)`` pair to feed ``window_rect_for``: while
+        the radial is open the window must grow to contain the emblem-centered
+        ``emblem*4`` dim canvas; closed it stays sized to the bare cluster."""
+        if self.is_radial_open:
+            _dia, canvas = self._radial_canvas()
+            return True, (canvas, canvas)
+        return False, (0, 0)
+
     def _compute_window_rect(self):
-        """The SCREEN rect for the single cluster window: sized to the borrowed
-        host and placed so the emblem center lands on the anchor. Radial/dim are
-        LATER tasks, so radial_open=False, dim_extent=(0, 0)."""
+        """The SCREEN rect for the single cluster window: sized to the borrowed host
+        (plus the emblem-centered dim canvas while the radial is open) and placed so
+        the emblem center lands on the anchor."""
         from utils.overlay.cluster_geometry import window_rect_for
         w, h = self._cluster_size()
         emblem_center = self._emblem_center_local(w, h)
+        radial_open, dim_extent = self._radial_rect_params()
         return window_rect_for(
             (w, h), emblem_center, self._anchor,
-            radial_open=False, dim_extent=(0, 0),
+            radial_open=radial_open, dim_extent=dim_extent,
         )
 
     def _build_surface(self):
@@ -264,6 +308,10 @@ class ClusterOverlayController:
         self._visible_cells = self._target_visible_cells()
         self._connect_occupancy()
         self._active = True
+        # Build the internal dim (hidden) now that the host is borrowed + measured.
+        # Decorative + best-effort: a dim failure must never flip a successful enter
+        # back to framed, so _build_internal_dim swallows its own errors.
+        self._build_internal_dim()
         self._emit_active_changed()   # self._active is True here
         return True
 
@@ -289,6 +337,10 @@ class ClusterOverlayController:
         self.flush_pending_save()
         if self._save_timer is not None:
             self._save_timer.stop()
+        # The radial must never outlive the overlay: close it FIRST (tears down its
+        # top-level + hides the dim) before any host teardown (mirrors
+        # OverlayGroupController._teardown calling close_radial_menu()).
+        self.close_radial_menu()
         # Cancel any pending settle and reset scaling state so a re-enter starts
         # framed (scale 1.0, no in-flight gesture). A late timer firing post-leave
         # is a guarded no-op, but stopping it here avoids the wasted callback.
@@ -308,6 +360,9 @@ class ClusterOverlayController:
                 provider.apply_metrics(CardMetrics(1.0))
             except Exception:
                 pass
+        # Remove the internal dim BEFORE restoring the host, so the borrowed
+        # _grid_host returns to framed mode with no stray overlay-only child.
+        self._teardown_internal_dim()
         # Release the borrowed host from the surface, then restore it to the tab.
         self._release_and_restore(surface, token)
         # Destroy the now-empty surface.
@@ -363,6 +418,10 @@ class ClusterOverlayController:
                 self._surface.set_overlay_geometry(rect)
             except Exception:
                 pass
+        # Radial open: keep its top-level + the internal dim sized + centered to the
+        # new emblem (the click-region re-apply is deferred to the settle timer).
+        if self.is_radial_open:
+            self._reposition_radial()
         # Drive the input-shape phase machine: broad now, exact on settle.
         self._enter_broad_phase(rect)
         # Persist the new scale (debounced) - but only when the scale ACTUALLY
@@ -403,13 +462,22 @@ class ClusterOverlayController:
             candidate, self._screens_xywh(), self._move_margin())
         if clamped == current:
             return False  # clamp pinned -> no visual move (no anchor drift)
-        # Reconcile the anchor onto the clamped rect's emblem-center.
+        # Reconcile the anchor onto the clamped rect's emblem-center. The clamp +
+        # reconcile run on the CLOSED (bare-cluster) geometry: the anchor IS the
+        # emblem center regardless of radial state, and the transient dim canvas
+        # should not change where the cluster parks.
         self._anchor = (clamped.x() + ex, clamped.y() + ey)
         if self._surface is not None:
+            # Closed: apply the clamped rect as-is. Open: apply the radial-aware
+            # (expanded) rect at the reconciled anchor so the window keeps the dim
+            # room, then re-center the radial top-level + dim on the new anchor.
+            applied = self._compute_window_rect() if self.is_radial_open else clamped
             try:
-                self._surface.set_overlay_geometry(clamped)
+                self._surface.set_overlay_geometry(applied)
             except Exception:
                 pass
+        if self.is_radial_open:
+            self._reposition_radial()
         # Persist the new (reconciled) anchor (debounced).
         self._schedule_save()
         return True
@@ -631,6 +699,267 @@ class ClusterOverlayController:
         stay on-screen while the rest of the cluster slides off any edge."""
         from utils.overlay.card_metrics import CardMetrics
         return int(CardMetrics(self._scale).emblem // 4)
+
+    # ------------------------------------------------------------------
+    # Radial menu + internal dim layer
+    # ------------------------------------------------------------------
+    def cluster_layer_order(self) -> list:
+        """The EFFECTIVE z-order of the cluster subtree as role names, derived from
+        the real child stacking of the borrowed ``_grid_host`` (Qt's ``children()``
+        reflects ``raise_()``/``lower_()`` order). Maps the glow, the four card
+        cells (collapsed into a single ``"cards"`` entry), the internal dim, and the
+        emblem to ``["glow", "cards", "dim", "emblem"]`` bottom-to-top. Layers that
+        are absent (e.g. a stub provider with no glow, or before the dim is built)
+        are simply omitted. Used by tests + future re-stack assertions."""
+        provider = self._card_provider
+        grid_host = getattr(provider, "_grid_host", None) if provider is not None else None
+        if grid_host is None:
+            return []
+        from PySide6.QtWidgets import QWidget
+        glow = getattr(provider, "_glow", None)
+        emblem = getattr(provider, "_emblem", None)
+        dim = self._dim
+        cells = set()
+        slots = getattr(provider, "_card_slots", None)
+        if slots:
+            for slot in slots:
+                cell = slot.get("cell") if isinstance(slot, dict) else None
+                if cell is not None:
+                    cells.add(cell)
+        order: list = []
+        for child in grid_host.children():
+            if not isinstance(child, QWidget):
+                continue
+            if glow is not None and child is glow:
+                role = "glow"
+            elif dim is not None and child is dim:
+                role = "dim"
+            elif emblem is not None and child is emblem:
+                role = "emblem"
+            elif child in cells:
+                role = "cards"
+            else:
+                continue
+            if order and order[-1] == role:
+                continue  # collapse the four consecutive card cells into one entry
+            order.append(role)
+        return order
+
+    def _build_internal_dim(self) -> None:
+        """Create the internal dim as a HIDDEN child of the borrowed ``_grid_host``,
+        sized to the ``emblem*4`` canvas centered on the emblem, stacked ABOVE the
+        cards and BELOW the emblem. Best-effort: a failure leaves ``_dim`` None (the
+        radial then opens without the dim) and never tanks enter()."""
+        provider = self._card_provider
+        grid_host = getattr(provider, "_grid_host", None) if provider is not None else None
+        if grid_host is None:
+            return
+        try:
+            from utils.overlay.radial_menu import RadialDimWidget
+            dim = RadialDimWidget(grid_host)
+            self._dim = dim
+            self._position_internal_dim()
+            dim.hide()
+            self._restack_internal_layers()
+        except Exception:
+            from utils.overlay.backend import overlay_trace
+            import traceback
+            overlay_trace("cluster_controller._build_internal_dim() FAILED "
+                          "(continuing without dim):\n" + traceback.format_exc())
+            self._dim = None
+
+    def _position_internal_dim(self) -> None:
+        """Center the internal dim on the emblem (``_grid_host``-local coords) at the
+        current ``emblem*4`` canvas. The dim follows the emblem as the cluster
+        scales (apply_metrics moves the emblem center)."""
+        dim = self._dim
+        if dim is None:
+            return
+        from PySide6.QtCore import QRect
+        w, h = self._cluster_size()
+        ecx, ecy = self._emblem_center_local(w, h)
+        _dia, canvas = self._radial_canvas()
+        dim.setGeometry(QRect(ecx - canvas // 2, ecy - canvas // 2, canvas, canvas))
+
+    def _restack_internal_layers(self) -> None:
+        """Re-assert the dim < emblem z-order inside ``_grid_host``: raise the dim
+        above the cards, then raise the emblem above the dim. The glow stays at the
+        bottom (never raised). Each step is a guarded no-op when that widget is
+        absent."""
+        dim = self._dim
+        if dim is not None:
+            self._safe_call(dim, "raise_")
+        emblem = getattr(self._card_provider, "_emblem", None) if self._card_provider is not None else None
+        if emblem is not None:
+            self._safe_call(emblem, "raise_")
+
+    def _teardown_internal_dim(self) -> None:
+        """Detach + destroy the internal dim. Detaching (``setParent(None)``) runs
+        BEFORE the host is restored so framed mode never sees a stray dim child.
+        Idempotent + guarded."""
+        dim = self._dim
+        self._dim = None
+        if dim is None:
+            return
+        try:
+            dim.hide()
+            dim.setParent(None)
+            dim.deleteLater()
+        except Exception:
+            pass
+
+    def open_radial_menu(self):
+        """Show the click-accepting radial menu centered on the emblem.
+
+        Builds a source-cleared ``RadialSurface`` top-level hosting a
+        ``RadialMenuWidget`` at the ``emblem*4`` canvas centered on the anchor (the
+        emblem's screen center, by the emblem-center invariant), reveals the
+        internal dim, EXPANDS the one cluster window to contain the dim canvas
+        (radial-aware ``_compute_window_rect``), and returns the menu so the caller
+        (a LATER task) can wire its intent signals. A no-op (returns None) when
+        framed or already open."""
+        if not self._active:
+            return None
+        if self._radial_surface is not None:
+            return None  # already open (and already wired by the first call)
+        from utils.overlay.cluster_surface import RadialSurface
+        from utils.overlay.radial_menu import RadialMenuWidget, radial_anim_enabled
+        from PySide6.QtCore import QRect
+        from PySide6.QtGui import QPainterPath
+        emblem_dia, canvas = self._radial_canvas()
+        menu = RadialMenuWidget(emblem_diameter=emblem_dia)
+        self._radial_size = canvas
+        ax, ay = self._anchor
+        geom = QRect(int(ax - canvas / 2), int(ay - canvas / 2), canvas, canvas)
+        surface = RadialSurface(backend=self._backend)
+        surface.host(menu)
+        surface.set_overlay_geometry(geom)
+        self._safe_call(surface, "prepare_initial_state")
+        surface.show()
+        # Set state BEFORE the window resize so is_radial_open is True and the
+        # cluster window sizes to the dim extent.
+        self._radial_surface = surface
+        self._radial_menu = menu
+        # NON-EMPTY click region: the whole radial canvas accepts clicks (the cluster
+        # window stays click-through; this surface is additive).
+        path = QPainterPath()
+        path.addRect(0, 0, canvas, canvas)
+        self._apply_radial_input_shape(path)
+        # Reveal the internal dim behind the ring.
+        dim = self._dim
+        if dim is not None:
+            self._safe_call(dim, "show")
+            try:
+                dim.start_reveal(animate=radial_anim_enabled())
+            except Exception:
+                pass
+        # Expand the ONE cluster window so it contains the emblem-centered dim canvas.
+        if self._surface is not None:
+            try:
+                self._surface.set_overlay_geometry(self._compute_window_rect())
+            except Exception:
+                pass
+        self._restack_internal_layers()
+        try:
+            menu.start_reveal()
+        except Exception:
+            pass
+        return menu
+
+    def close_radial_menu(self) -> None:
+        """Tear down the radial top-level, hide (but keep) the internal dim, and
+        shrink the cluster window back to the bare-cluster extent. Idempotent: a
+        call when the radial was never open is a safe no-op (no window resize)."""
+        surface = self._radial_surface
+        was_open = surface is not None
+        self._radial_surface = None
+        self._radial_menu = None
+        self._radial_size = 0
+        if self._radial_reshape_timer is not None:
+            self._radial_reshape_timer.stop()  # drop any pending settle reshape
+        dim = self._dim
+        if dim is not None:
+            self._safe_call(dim, "hide")
+        if surface is not None:
+            self._safe_call(surface, "hide")
+            self._safe_call(surface, "deleteLater")  # the menu is OWNED; it dies too
+        # Shrink the window back (is_radial_open is now False, so _compute_window_rect
+        # returns the bare-cluster rect). Only when the radial WAS open + still active,
+        # so an idempotent close never churns the window geometry.
+        if was_open and self._active and self._surface is not None:
+            try:
+                self._surface.set_overlay_geometry(self._compute_window_rect())
+            except Exception:
+                pass
+        self._restack_internal_layers()
+
+    def _reposition_radial(self) -> None:
+        """Keep the radial top-level + internal dim sized and centered on the emblem
+        (anchor) at the CURRENT scale. On a scale change the ``emblem*4`` canvas
+        grows/shrinks with the emblem, so the menu's emblem diameter + the surface
+        size + the dim follow; the radial click-region re-apply is DEFERRED to the
+        settle timer (re-applying the X11 input shape under the pointer mid-scroll
+        stalls the wheel stream). No-op when the radial is closed."""
+        if not self.is_radial_open:
+            return
+        from PySide6.QtCore import QRect
+        emblem_dia, canvas = self._radial_canvas()
+        resized = canvas != self._radial_size
+        self._radial_size = canvas
+        ax, ay = self._anchor
+        geom = QRect(int(ax - canvas / 2), int(ay - canvas / 2), canvas, canvas)
+        surface = self._radial_surface
+        if surface is not None:
+            if resized and self._radial_menu is not None:
+                try:
+                    self._radial_menu.set_emblem_diameter(emblem_dia)
+                except Exception:
+                    pass
+            try:
+                surface.set_overlay_geometry(geom)
+            except Exception:
+                pass
+            if resized:
+                self._schedule_radial_reshape()
+        # The dim is a _grid_host-local child, so it re-centers on the emblem (which
+        # apply_metrics already moved) at the new canvas.
+        self._position_internal_dim()
+        self._restack_internal_layers()
+
+    def _schedule_radial_reshape(self) -> None:
+        """(Re)start the settle timer that re-applies the radial click region after a
+        scale burst quiesces. Re-armed every notch, so the X11 ShapeInput re-apply
+        runs ONCE after scrolling pauses (mirrors
+        ``OverlayGroupController._schedule_radial_reshape``)."""
+        from PySide6.QtCore import QTimer
+        if self._radial_reshape_timer is None:
+            self._radial_reshape_timer = QTimer()
+            self._radial_reshape_timer.setSingleShot(True)
+            self._radial_reshape_timer.setInterval(100)
+            self._radial_reshape_timer.timeout.connect(self._reapply_radial_shape)
+        self._radial_reshape_timer.start()
+
+    def _reapply_radial_shape(self) -> None:
+        """Apply the full-canvas click region at the current radial size. Fired by
+        the settle timer; a no-op once the menu is closed."""
+        surface = self._radial_surface
+        if surface is None or self._radial_size <= 0:
+            return
+        from PySide6.QtGui import QPainterPath
+        path = QPainterPath()
+        path.addRect(0, 0, self._radial_size, self._radial_size)
+        self._apply_radial_input_shape(path)
+
+    def _apply_radial_input_shape(self, path) -> None:
+        """Apply *path* as the radial surface's INPUT (click-accept) shape via the
+        backend. Best-effort: a shape failure must never break open/scale."""
+        surface = self._radial_surface
+        if surface is None:
+            return
+        try:
+            self._backend.apply_input_shape(surface, path, surface.devicePixelRatio())
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # Persistence (anchor + scale + monitor identity)

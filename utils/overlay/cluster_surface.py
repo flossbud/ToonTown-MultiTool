@@ -49,3 +49,25 @@ class ClusterSurface(OverlaySurface):
         p.setCompositionMode(QPainter.CompositionMode_Source)
         p.fillRect(self.rect(), QColor(0, 0, 0, 0))
         p.end()
+
+
+class RadialSurface(ClusterSurface):
+    """Source-cleared top-level for the radial menu widget.
+
+    Even in the single-window cluster design the radial menu
+    (``utils.overlay.radial_menu.RadialMenuWidget``) stays a SEPARATE
+    override-redirect top-level: it must sit ABOVE the cluster window AND be
+    click-accepting (the cluster window is click-through), neither of which a
+    child-of-the-cluster widget can do. Like the cluster window it is a single
+    translucent ARGB top-level that resizes as the menu scales, so it needs the
+    exact SAME mandatory full-rect transparent source-clear to avoid a stale /
+    opaque backing flash on resize.
+
+    ``RadialSurface`` inherits that source-clear ``paintEvent`` (the only thing
+    ``ClusterSurface`` adds over ``OverlaySurface``) and nothing else, so the two
+    windows' source-clear can never drift apart. Unlike the cluster window it hosts
+    its OWN widget (the menu it was created with, not a borrowed subtree), so the
+    controller tears it down with a plain ``hide()`` + ``deleteLater()`` - the menu
+    dies with the surface, which is the intent.
+    """
+
