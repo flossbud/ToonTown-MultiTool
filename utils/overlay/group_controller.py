@@ -2101,6 +2101,12 @@ class OverlayGroupController:
             pw.prepare_initial_state()
         pw.show()
         pw.raise_()
+        # Native handle exists now; ask KWin to skip its close animation so the
+        # proxy drops instantly (no fade-out) at settle. [seamless-settle]
+        try:
+            self._backend.set_skip_close_animation(pw)
+        except Exception:
+            pass
         offset = bbox.topLeft() - envelope.topLeft()
         path = QPainterPath()
         for r in wheel_rects:
@@ -2140,21 +2146,87 @@ class OverlayGroupController:
                 out.append(surface)
         return out
 
-    def hide_scaling_windows(self):
-        """Hide every scaling surface (visible cards + emblem + glow/dim/radial),
-        leaving the proxy snapshot to stand in for them. The settings panel is
-        left untouched."""
-        for surface in self._scaling_surfaces():
-            self._safe_call(surface, "hide")
+    def _offscreen_origin(self):
+        """A point just past the bottom-right of the screen union (sane coords, not
+        huge sentinels, so Qt never recreates the native window when parking).
+        Falls back to a fixed far point when there are no screens. _screens()
+        returns (name, left, top, right, bottom) tuples."""
+        screens = self._screens()
+        if screens:
+            right = max(s[3] for s in screens)
+            bottom = max(s[4] for s in screens)
+            return (right + 200, bottom + 200)
+        return (200000, 200000)
 
-    def show_scaling_windows(self):
-        """Re-show the scaling surfaces hidden by hide_scaling_windows() and
-        re-assert their topmost z-order. When the radial is open, also re-assert
-        the dim/emblem/radial(/panel) layer order: _reassert_topmost only raises
-        the emblem, so without this the emblem could end up ABOVE the radial menu
-        after a scale-while-radial-open settle (wrong visual + click order)."""
+    def park_scaling_windows(self):
+        """Move every scaling surface (visible cards + emblem + glow/dim/radial)
+        just off-screen, KEEPING it mapped (never hide()), so the frozen proxy can
+        stand in without ever re-mapping the reals (no fadingpopups fade at settle).
+        Records each surface's on-screen geometry for un-park. The settings panel
+        is untouched. [seamless-settle Approach A]"""
+        from PySide6.QtCore import QRect
+        ox, oy = self._offscreen_origin()
+        self._parked_geom = {}
         for surface in self._scaling_surfaces():
-            self._safe_call(surface, "show")
+            try:
+                geo = surface.geometry
+                geo = geo() if callable(geo) else geo  # real: bound method; stub: attr
+                if geo is None:
+                    continue
+                self._parked_geom[id(surface)] = geo
+                surface.set_overlay_geometry(QRect(ox, oy, geo.width(), geo.height()))
+            except Exception:
+                pass
+
+    def unpark_scaling_windows(self):
+        """Best-effort restore of every parked surface to its recorded on-screen
+        geometry. Safety net for cancel() so the cluster is never left off-screen
+        even if settle_placement raised. Idempotent / safe with nothing parked.
+        [seamless-settle Fix 6]"""
+        for surface in self._scaling_surfaces():
+            geo = self._parked_geom.get(id(surface))
+            if geo is not None:
+                try:
+                    surface.set_overlay_geometry(geo)
+                except Exception:
+                    pass
+        self._parked_geom = {}
+
+    def repaint_scaling_windows(self):
+        """Synchronously repaint the live scaling surfaces at the current scale so
+        their backing stores hold the final image before the proxy is dropped.
+        Repaints the top-level surfaces (which cascades to hosted children) AND the
+        card viewports explicitly (the card pixels live in the QGraphicsView
+        viewport; LIVE-fidelity, mirrors _layer_widget). [seamless-settle Fix 5]"""
+        for surface in self._scaling_surfaces():
+            self._safe_call(surface, "repaint")
+        for idx in sorted(self._visible_cells):
+            widget, _ = self._layer_widget("card", idx)
+            if widget is not None:
+                try:
+                    widget.repaint()
+                except Exception:
+                    pass
+
+    def capture_full_input(self, proxy):
+        """Expand the proxy's X11 input shape to its full envelope so, during the
+        settle hold, pointer events cannot pass through the proxy's transparent
+        margins onto the real windows now sitting behind it. [seamless-settle Fix 4]"""
+        from PySide6.QtGui import QPainterPath
+        from PySide6.QtCore import QRectF
+        try:
+            path = QPainterPath()
+            path.addRect(QRectF(0, 0, proxy.width(), proxy.height()))
+            self._backend.apply_input_shape(proxy, path, proxy.devicePixelRatio())
+        except Exception:
+            pass
+
+    def reassert_after_settle(self):
+        """Re-assert real-window topmost z-order + radial/dim/emblem/panel layering
+        AFTER the proxy is dropped. Mirrors the old show_scaling_windows tail but
+        does NOT show() anything (the reals were never hidden, only parked+placed).
+        The caller clears _scale_handoff_active before this so _reassert_topmost is
+        not suppressed."""
         self._reassert_topmost()
         if self._radial_surface is not None or self._dim_surface is not None \
                 or self._panel_surface is not None:
@@ -2163,9 +2235,12 @@ class OverlayGroupController:
     def on_gesture_end(self):
         """Commit-side cleanup the proxy calls once the gesture settles: persist
         (debounced) and replay any occupancy reconcile deferred while the gesture
-        was live. The anchor was already clamped in settle_placement (before the
-        real windows were placed), so it is not re-clamped here."""
+        was live, ONE TICK LATER so the first revealed frame after the proxy drop
+        matches the snapshot (occupancy changes apply on the next turn). The anchor
+        was already clamped in settle_placement (before the real windows were
+        placed), so it is not re-clamped here."""
+        from PySide6.QtCore import QTimer
         self._schedule_save()
         if self._occupancy_deferred:
             self._occupancy_deferred = False
-            self._reconcile_visibility()
+            QTimer.singleShot(0, self._reconcile_visibility)  # [seamless-settle Fix 7]

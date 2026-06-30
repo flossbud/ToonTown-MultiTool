@@ -82,6 +82,9 @@ class _StubSurface:
     def deleteLater(self):
         self._log("deleteLater")
 
+    def repaint(self):
+        self._log("repaint")
+
     def devicePixelRatio(self):
         return self._dpr
 
@@ -821,7 +824,7 @@ class TestScaleProxyGesture:
         assert isinstance(wheel, list)
         assert isinstance(dpr, float)
 
-    def test_hide_show_skip_panel_and_use_visible_cards(self, qapp):
+    def test_park_skips_panel_and_empty_cards_uses_visible_set(self, qapp):
         ctl, factory, win = _make()
         ctl.enter()
         ctl._card_provider = _StubProvider()
@@ -831,21 +834,23 @@ class TestScaleProxyGesture:
         cards = factory.created           # [card0, card1, card2, card3, emblem]
         for s in cards:
             s.calls.clear()
-        ctl.hide_scaling_windows()
-        assert "hide" in cards[0].methods()       # card 0 visible -> hidden
-        assert "hide" in cards[2].methods()       # card 2 visible -> hidden
-        assert "hide" not in cards[1].methods()   # card 1 empty -> untouched
-        assert "hide" not in cards[3].methods()   # card 3 empty -> untouched
-        assert "hide" in cards[-1].methods()      # emblem always a scaling surface
-        assert "hide" not in panel.methods()      # the settings panel never scales
-        # And show brings the same set back (panel still untouched).
+        ctl.park_scaling_windows()
+        assert "set_overlay_geometry" in cards[0].methods()     # card 0 visible -> parked
+        assert "set_overlay_geometry" in cards[2].methods()     # card 2 visible -> parked
+        assert "set_overlay_geometry" not in cards[1].methods()  # card 1 empty -> untouched
+        assert "set_overlay_geometry" not in cards[3].methods()  # card 3 empty -> untouched
+        assert "set_overlay_geometry" in cards[-1].methods()    # emblem always a scaling surface
+        assert "set_overlay_geometry" not in panel.methods()    # the settings panel never scales
+        assert "hide" not in cards[0].methods()                 # parked, NEVER unmapped
+        # unpark restores the same set to its recorded geometry (panel untouched).
+        before0 = ctl._parked_geom[id(cards[0])]
         for s in cards:
             s.calls.clear()
-        ctl.show_scaling_windows()
-        assert "show" in cards[0].methods() and "show" in cards[2].methods()
-        assert "show" not in cards[1].methods() and "show" not in cards[3].methods()
-        assert "show" in cards[-1].methods()
-        assert "show" not in panel.methods()
+        ctl.unpark_scaling_windows()
+        assert "set_overlay_geometry" in cards[0].methods()
+        assert "set_overlay_geometry" in cards[2].methods()
+        assert cards[0].geometry == before0
+        assert "set_overlay_geometry" not in panel.methods()
 
     def test_on_gesture_end_applies_deferred_occupancy(self, qapp):
         ctl, factory, win = _make()
@@ -853,8 +858,10 @@ class TestScaleProxyGesture:
         calls = []
         ctl._reconcile_visibility = lambda: calls.append(True)
         ctl.on_gesture_end()
-        assert calls == [True]
+        assert calls == []                  # deferred one tick: NOT in the reveal frame
         assert ctl._occupancy_deferred is False
+        qapp.processEvents()
+        assert calls == [True]              # replayed on the next tick
 
     def test_on_gesture_end_skips_reconcile_when_not_deferred(self, qapp):
         ctl, factory, win = _make()
@@ -1008,3 +1015,67 @@ class TestScaleHandoffGuard:
         ctl._reassert_topmost = lambda: called.append(True)
         ctl.settle_placement()                     # default reassert=True
         assert called == [True]
+
+
+# ---------------------------------------------------------------------------
+# Seamless settle: park/unpark/repaint/capture_input/reassert host seam (Task 3)
+# ---------------------------------------------------------------------------
+class TestScaleHandoffSeam:
+    def test_park_moves_scaling_surfaces_offscreen_without_hiding(self, qapp):
+        ctl, factory, win = _make()
+        ctl.enter()
+        union_right = max((scr[3] for scr in ctl._screens()), default=0)  # (name,l,t,r,b)
+        for s in factory.created:
+            s.calls.clear()
+        ctl.park_scaling_windows()
+        for s in factory.created:                        # cards + emblem are scaling surfaces
+            assert "hide" not in s.methods()             # NEVER unmapped
+            assert "set_overlay_geometry" in s.methods()  # moved off-screen
+            assert s.geometry.x() > union_right          # parked past every screen's right edge
+
+    def test_unpark_restores_recorded_geometry(self, qapp):
+        ctl, factory, win = _make()
+        ctl.enter()
+        before = {id(s): s.geometry for s in factory.created}
+        ctl.park_scaling_windows()
+        for s in factory.created:
+            s.calls.clear()
+        ctl.unpark_scaling_windows()
+        for s in factory.created:
+            assert s.geometry == before[id(s)]           # restored to pre-park geometry
+
+    def test_repaint_scaling_windows_repaints_each_surface(self, qapp):
+        ctl, factory, win = _make()
+        ctl.enter()
+        for s in factory.created:
+            s.calls.clear()
+        ctl.repaint_scaling_windows()
+        for s in factory.created:
+            assert "repaint" in s.methods()
+
+    def test_reassert_after_settle_restacks_when_not_guarded(self, qapp):
+        ctl, factory, win = _make()
+        ctl.enter()
+        rec = _RecordingBackend(); ctl._backend = rec
+        ctl._scale_handoff_active = False
+        ctl.reassert_after_settle()
+        assert rec.above > 0                             # re-applied ABOVE after the drop
+
+    def test_capture_full_input_applies_a_shape(self, qapp):
+        ctl, factory, win = _make()
+        ctl.enter()
+        shapes = []
+
+        class _RecShape(NoOpOverlayBackend):
+            def apply_input_shape(self, window, path, dpr):
+                shapes.append((window, path, dpr))
+
+        ctl._backend = _RecShape()
+
+        class _Proxy:
+            def width(self): return 200
+            def height(self): return 100
+            def devicePixelRatio(self): return 1.0
+
+        ctl.capture_full_input(_Proxy())
+        assert len(shapes) == 1                          # full-envelope input shape applied
