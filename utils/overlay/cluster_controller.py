@@ -22,10 +22,11 @@ exception escapes ``enter()`` (it returns ``False``). ``leave()`` is likewise
 guarded: a restore failure must still reset metrics, restore the window, and
 clear state.
 
-Scaling (single-window metrics + input-shape phase machine), drag, and occupancy
+Scaling (single-window metrics + input-shape phase machine), drag, occupancy
 (the visible set narrows the EXACT input shape while the grid SHELL stays fixed -
-empty cards keep their cell, never hidden/reshaped) are built here. Hover-peek,
-ghost clicks, the radial menu, and persistence are LATER tasks and are
+empty cards keep their cell, never hidden/reshaped), and persistence (load the
+saved anchor + scale on enter, debounced save on scale/move, flush on leave) are
+built here. Hover-peek, ghost clicks, and the radial menu are LATER tasks and are
 intentionally NOT built here.
 """
 from __future__ import annotations
@@ -52,7 +53,9 @@ class ClusterOverlayController:
                  card_provider=None, on_active_changed=None):
         self._window = window
         self._backend = backend if backend is not None else get_overlay_backend()
-        # Stored for later tasks (anchor/scale persistence); unused in this slice.
+        # The settings object the anchor/scale/monitor persistence reads + writes
+        # through (load on enter, debounced save on scale/move). None -> persistence
+        # is a no-op (the stub/orchestration tests).
         self._settings = settings
         # Zero-arg factory -> the single cluster surface. None -> a real
         # ClusterSurface bound to the backend.
@@ -100,6 +103,12 @@ class ClusterOverlayController:
         # live off occupied_cells_changed.
         self._visible_cells: set = {0, 1, 2, 3}
         self._occupancy_connected: bool = False
+
+        # Persistence (anchor + scale + monitor identity). A burst of drag/scale
+        # changes collapses into ONE debounced settings write ~250ms after the last
+        # change; leave() flushes any pending write synchronously before teardown.
+        self._save_pending: bool = False
+        self._save_timer = None
 
     # ------------------------------------------------------------------
     # State queries
@@ -213,6 +222,16 @@ class ClusterOverlayController:
             surface = self._build_surface()
             token = provider.capture_cluster_host()
             surface.host(provider._grid_host)
+            # Restore the persisted scale + anchor BEFORE measuring the host, so the
+            # cluster window spans the host at the RESTORED scale and re-centers on
+            # the remembered anchor. Nothing saved (or no settings) -> scale stays
+            # 1.0 + the default anchor (current default behavior). At a restored
+            # scale the host must be resized FIRST (apply_metrics) so the rect the
+            # window is sized to reflects the scaled host.
+            self._load_persisted_state()
+            if self._scale != 1.0:
+                from utils.overlay.card_metrics import CardMetrics
+                provider.apply_metrics(CardMetrics(self._scale))
             rect = self._compute_window_rect()
             surface.set_overlay_geometry(rect)
             surface.show()
@@ -260,6 +279,11 @@ class ClusterOverlayController:
         provider = self._card_provider
         surface = self._surface
         token = self._token
+        # Persist the FINAL anchor + scale before any teardown/reset (the remembered
+        # overlay position, restored on the next enter). MUST run before the scale
+        # reset below, else the flush would save the framed 1.0 instead of the scale
+        # the user left at.
+        self.flush_pending_save()
         # Cancel any pending settle and reset scaling state so a re-enter starts
         # framed (scale 1.0, no in-flight gesture). A late timer firing post-leave
         # is a guarded no-op, but stopping it here avoids the wasted callback.
@@ -335,6 +359,9 @@ class ClusterOverlayController:
                 pass
         # Drive the input-shape phase machine: broad now, exact on settle.
         self._enter_broad_phase(rect)
+        # Persist the new scale (debounced: a continuous wheel spin collapses into
+        # one write ~250ms after the last notch).
+        self._schedule_save()
 
     def move_group(self, dx: int, dy: int) -> bool:
         """Shift the cluster anchor by (dx, dy), clamp to the screen envelope, and
@@ -375,6 +402,8 @@ class ClusterOverlayController:
                 self._surface.set_overlay_geometry(clamped)
             except Exception:
                 pass
+        # Persist the new (reconciled) anchor (debounced).
+        self._schedule_save()
         return True
 
     # ------------------------------------------------------------------
@@ -594,6 +623,82 @@ class ClusterOverlayController:
         stay on-screen while the rest of the cluster slides off any edge."""
         from utils.overlay.card_metrics import CardMetrics
         return int(CardMetrics(self._scale).emblem // 4)
+
+    # ------------------------------------------------------------------
+    # Persistence (anchor + scale + monitor identity)
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _screens() -> list:
+        """Connected screens as ``(name, left, top, right, bottom)`` logical tuples
+        - the primitive form the pure persistence helpers consume."""
+        from PySide6.QtGui import QGuiApplication
+        out = []
+        for s in QGuiApplication.screens():
+            g = s.geometry()
+            out.append((s.name(), g.left(), g.top(), g.right(), g.bottom()))
+        return out
+
+    def _load_persisted_state(self) -> bool:
+        """Restore the saved cluster scale + anchor, clamping the anchor to a
+        currently-visible monitor (recenter if the saved monitor is gone). No-op
+        without a settings object (the stub/orchestration tests).
+
+        Returns True if a SAVED anchor was restored, so a caller can skip the
+        default-anchor fallback: a saved anchor of (0, 0) is a VALID origin point
+        and must NOT be mistaken for the no-QApplication sentinel. The scale is
+        always set (the saved value, or 1.0 when nothing is saved)."""
+        if self._settings is None:
+            return False
+        from utils.overlay.persistence import (
+            clamp_anchor_to_screens, load_overlay_state,
+        )
+        anchor, scale, monitor = load_overlay_state(self._settings)
+        self._scale = scale
+        if anchor is not None:
+            self._anchor = clamp_anchor_to_screens(anchor, monitor, self._screens())
+            return True
+        return False
+
+    def _save_state(self) -> None:
+        """Persist the current cluster anchor + scale + the monitor it sits on.
+        No-op without a settings object."""
+        if self._settings is None:
+            return
+        from utils.overlay.persistence import monitor_for_anchor, save_overlay_state
+        monitor = monitor_for_anchor(self._anchor, self._screens())
+        save_overlay_state(self._settings, self._anchor, self._scale, monitor)
+
+    def _schedule_save(self) -> None:
+        """Debounce a persistence write: a burst of drag/scale changes collapses
+        into one settings write ~250ms after the last change. No-op without
+        settings, while framed, or when a save is already pending."""
+        if self._settings is None or not self._active or self._save_pending:
+            return
+        from PySide6.QtCore import QTimer
+        self._save_pending = True
+        if self._save_timer is None:
+            self._save_timer = QTimer()
+            self._save_timer.setSingleShot(True)
+            self._save_timer.setInterval(250)
+            self._save_timer.timeout.connect(self._run_pending_save)
+        self._save_timer.start()
+
+    def _run_pending_save(self) -> None:
+        """Debounce timeout: write the pending state, then clear the gate. A late
+        timeout with no pending save (e.g. flushed by leave) is a true no-op."""
+        if not self._save_pending:
+            return
+        self._save_pending = False
+        self._save_state()
+
+    def flush_pending_save(self) -> None:
+        """Write any pending debounced save synchronously NOW and stop the timer
+        (tests + leave). No-op when nothing is pending."""
+        if self._save_pending:
+            self._save_pending = False
+            if self._save_timer is not None:
+                self._save_timer.stop()
+            self._save_state()
 
     # ------------------------------------------------------------------
     # Teardown helpers

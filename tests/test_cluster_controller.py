@@ -30,6 +30,7 @@ from PySide6.QtWidgets import QWidget
 
 from utils.overlay.backend import NoOpOverlayBackend
 from utils.overlay.cluster_controller import ClusterOverlayController
+from utils.overlay.persistence import KEY_ANCHOR, KEY_MONITOR, KEY_SCALE
 from utils.overlay.scale import SCALE_MAX, SCALE_MIN
 
 
@@ -275,7 +276,7 @@ class _OccupancyStubProvider(QObject):
 
 
 def _make(provider=None, window=None, host_raises=False, release_raises=False,
-          on_active_changed=None, anchor=None, backend=None):
+          on_active_changed=None, anchor=None, backend=None, settings=None):
     """Build a controller wired to recording stubs. Returns
     (controller, provider, window, created_surfaces)."""
     provider = provider if provider is not None else _StubProvider()
@@ -290,6 +291,7 @@ def _make(provider=None, window=None, host_raises=False, release_raises=False,
     ctrl = ClusterOverlayController(
         window,
         backend=backend if backend is not None else NoOpOverlayBackend(),
+        settings=settings,
         surface_factory=factory,
         card_provider=provider,
         on_active_changed=on_active_changed,
@@ -802,3 +804,157 @@ def test_connect_occupancy_is_idempotent(qapp):
     provider.occupied_cells_changed.emit()
 
     assert len(backend.shapes) == 1              # reconcile fired exactly once
+
+
+# ---------------------------------------------------------------------------
+# 9. Persistence: load anchor+scale on enter, debounced save, flush on leave
+# ---------------------------------------------------------------------------
+class _DictSettings:
+    """Mirror tests/test_overlay_persistence.py's stub: a dict-backed settings
+    object the pure persistence helpers read/write via get()/set()."""
+
+    def __init__(self, d=None):
+        self._d = dict(d or {})
+
+    def get(self, key, default=None):
+        return self._d.get(key, default)
+
+    def set(self, key, value):
+        self._d[key] = value
+
+
+class _CountingSettings(_DictSettings):
+    """A _DictSettings that counts each FULL save (one per KEY_ANCHOR write), so a
+    test can assert a debounced save was written exactly once."""
+
+    def __init__(self, d=None):
+        super().__init__(d)
+        self.saves = 0
+
+    def set(self, key, value):
+        if key == KEY_ANCHOR:
+            self.saves += 1
+        super().set(key, value)
+
+
+def test_enter_restores_saved_scale_and_anchor(qapp):
+    """enter() with a SAVED scale+anchor adopts the saved scale and the saved
+    (clamped) anchor; the cluster window is sized at the RESTORED scale (the host
+    is resized via apply_metrics) and the scaled emblem center lands on the anchor."""
+    from PySide6.QtGui import QGuiApplication
+    screen = QGuiApplication.primaryScreen()
+    name = screen.name()
+    g = screen.geometry()
+    inside = (g.left() + 120, g.top() + 120)   # well inside -> clamp keeps it
+    s = _DictSettings({KEY_ANCHOR: list(inside), KEY_SCALE: 1.5, KEY_MONITOR: name})
+
+    ctrl, provider, window, created = _make(settings=s)
+    assert ctrl.enter() is True
+
+    assert ctrl._scale == 1.5
+    assert ctrl._anchor == inside
+    surface = created[0]
+    # The window spans the host at the RESTORED scale (host resized by apply_metrics).
+    assert surface.geom.width() == round(_HOST_W * 1.5)
+    assert surface.geom.height() == round(_HOST_H * 1.5)
+    # The (scaled) emblem center still lands exactly on the saved anchor.
+    emb_cx = round(_EMBLEM_X * 1.5) + round(_EMBLEM_S * 1.5) // 2
+    emb_cy = round(_EMBLEM_Y * 1.5) + round(_EMBLEM_S * 1.5) // 2
+    assert surface.geom.x() + emb_cx == inside[0]
+    assert surface.geom.y() + emb_cy == inside[1]
+    ctrl.leave()
+
+
+def test_enter_with_no_saved_state_uses_defaults(qapp):
+    """enter() with empty settings keeps scale 1.0 + the default anchor (no crash,
+    current default behavior preserved)."""
+    s = _DictSettings()
+    ctrl, provider, window, created = _make(settings=s)
+
+    assert ctrl.enter() is True
+
+    assert ctrl._scale == 1.0
+    assert ctrl._anchor == ClusterOverlayController._default_anchor()
+    ctrl.leave()
+
+
+def test_scale_change_schedules_debounced_save_of_current_state(qapp):
+    """set_scale_by_notches() schedules a debounced save; firing _run_pending_save()
+    writes the CURRENT scale (+ anchor + monitor)."""
+    s = _DictSettings()
+    ctrl, provider, window, created = _make(settings=s)
+    ctrl.enter()
+
+    ctrl.set_scale_by_notches(-2)
+    assert ctrl._save_pending is True            # debounced (not yet written)
+    assert s.get(KEY_SCALE) is None              # nothing flushed yet
+
+    ctrl._run_pending_save()
+
+    assert ctrl._save_pending is False
+    assert s.get(KEY_SCALE) == ctrl._scale
+    assert s.get(KEY_ANCHOR) == [ctrl._anchor[0], ctrl._anchor[1]]
+    assert s.get(KEY_MONITOR) is not None         # the (offscreen) screen the anchor sits on
+    ctrl.leave()
+
+
+def test_move_schedules_save_with_clamped_anchor(qapp):
+    """A real move_group() schedules a save; the saved anchor reflects the moved
+    (clamped/reconciled) anchor, not the raw accumulated target."""
+    s = _DictSettings()
+    ctrl, provider, window, created = _make(settings=s, anchor=(700, 400))
+    ctrl.enter()
+
+    assert ctrl.move_group(5000, 0) is True       # slam far past the right edge -> clamped
+    assert ctrl._save_pending is True
+
+    ctrl._run_pending_save()
+
+    assert s.get(KEY_ANCHOR) == [ctrl._anchor[0], ctrl._anchor[1]]
+    assert ctrl._anchor[0] != 700 + 5000           # the anchor was actually clamped
+    ctrl.leave()
+
+
+def test_leave_flushes_pending_save_once_and_stops_timer(qapp):
+    """leave() flushes a pending debounced save (writes the final state exactly
+    once) and stops/clears the save timer."""
+    s = _CountingSettings()
+    ctrl, provider, window, created = _make(settings=s, anchor=(700, 400))
+    ctrl.enter()
+    ctrl.move_group(40, 25)                        # schedules a save (pending, unwritten)
+    assert ctrl._save_pending is True
+    assert s.saves == 0                            # debounced -> nothing written yet
+    final_anchor = [ctrl._anchor[0], ctrl._anchor[1]]
+
+    ctrl.leave()
+
+    assert ctrl._save_pending is False
+    assert s.saves == 1                            # flushed exactly once
+    assert s.get(KEY_ANCHOR) == final_anchor       # final anchor persisted
+    assert s.get(KEY_SCALE) is not None
+    # The timer is stopped (a stray late timeout cannot re-save after leave).
+    if ctrl._save_timer is not None:
+        assert ctrl._save_timer.isActive() is False
+    # A second run after leave is a no-op (the save already happened once).
+    ctrl._run_pending_save()
+    assert s.saves == 1
+
+
+def test_load_recenters_anchor_when_saved_monitor_gone(qapp):
+    """A loaded anchor on a now-missing monitor is recentered onto a currently
+    visible monitor (lands inside the screen envelope), not the bogus saved coords."""
+    s = _DictSettings({
+        KEY_ANCHOR: [999999, 999999],             # far off any real/offscreen screen
+        KEY_SCALE: 0.75,
+        KEY_MONITOR: "NONEXISTENT-DISPLAY",
+    })
+    ctrl, provider, window, created = _make(settings=s)
+
+    ctrl._load_persisted_state()
+
+    assert ctrl._scale == 0.75
+    assert ctrl._anchor != (999999, 999999)
+    cx, cy = ctrl._anchor
+    screens = ctrl._screens()
+    assert any(l <= cx <= r and t <= cy <= b for (_n, l, t, r, b) in screens), \
+        "recentered anchor must land within a visible monitor"
