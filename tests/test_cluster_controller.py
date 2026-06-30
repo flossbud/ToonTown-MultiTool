@@ -42,15 +42,20 @@ _EMBLEM_X, _EMBLEM_Y, _EMBLEM_S = 60, 40, 100
 _EMBLEM_CX = _EMBLEM_X + _EMBLEM_S // 2   # 110
 _EMBLEM_CY = _EMBLEM_Y + _EMBLEM_S // 2   # 90
 
-# Four card-cell rects (window-local), INSET from the host edges so the exact
-# input union's bbox (20,20)->(380,280) is strictly inside the broad full-window
-# rect - the scaling tests rely on the exact shape differing from the broad one.
-_CELL_RECTS = {
-    0: QRect(20, 20, 160, 110),
-    1: QRect(220, 20, 160, 110),
-    2: QRect(20, 170, 160, 110),
-    3: QRect(220, 170, 160, 110),
-}
+# Four card cells parented under the grid host at known WINDOW-LOCAL origins
+# (cells live in the grid host, exactly like the real _CompactLayout), each
+# exposing two CARD-LOCAL control rects via control_rects() - matching the real
+# _CompactLayout.control_rects(cell_index) -> list[QRect] signature. The exact
+# input union translates each card-local control rect by its cell origin into
+# window-local coords.
+_CELL_ORIGINS = {0: (10, 10), 1: (210, 10), 2: (10, 160), 3: (210, 160)}
+_CELL_SIZE = (180, 130)
+_CONTROL_RECTS_LOCAL = [QRect(8, 8, 30, 18), QRect(8, 40, 30, 18)]   # card-local
+
+# A control point that lands inside cell 1's first control (window-local
+# (218,18,30,18)) but OUTSIDE the emblem - so an emblem-only union (the
+# production card_cell_rects regression) would NOT contain it.
+_CONTROL_PROBE = (220, 20)
 
 
 # ---------------------------------------------------------------------------
@@ -68,6 +73,15 @@ class _StubProvider:
         self._grid_host.resize(_HOST_W, _HOST_H)
         self._emblem = QWidget(self._grid_host)
         self._emblem.setGeometry(_EMBLEM_X, _EMBLEM_Y, _EMBLEM_S, _EMBLEM_S)
+        # Four card cells under the grid host at known origins (cells live in the
+        # grid host, like the real _CompactLayout). control_rects() returns their
+        # card-local control rects; the controller translates by each cell origin.
+        self._cell_widgets = []
+        for i in range(4):
+            cw = QWidget(self._grid_host)
+            ox, oy = _CELL_ORIGINS[i]
+            cw.setGeometry(ox, oy, *_CELL_SIZE)
+            self._cell_widgets.append(cw)
         self._token = object()
         self.captured = 0
         self.restored: list = []
@@ -101,10 +115,17 @@ class _StubProvider:
             round(_EMBLEM_S * s), round(_EMBLEM_S * s),
         )
 
-    def card_cell_rects(self):
-        """{slot_id: QRect} per-card cell rects in window-local coords. Placeholder
-        for the exact input union; real per-control rects + occupancy land later."""
-        return dict(_CELL_RECTS)
+    @property
+    def _card_slots(self):
+        """Mirror _CompactLayout._card_slots: the list of cell dicts (each with a
+        ``"cell"`` widget). The controller reads the cell origin from these to
+        translate control_rects into window-local coords."""
+        return [{"cell": cw} for cw in self._cell_widgets]
+
+    def control_rects(self, cell_index):
+        """Mirror _CompactLayout.control_rects(cell_index) -> list[QRect]: the
+        CARD-LOCAL rects of the cell's interactive controls."""
+        return [QRect(r) for r in _CONTROL_RECTS_LOCAL]
 
 
 class _StubWindow:
@@ -479,6 +500,45 @@ def test_settle_applies_exact_shape_and_clears_scaling(qapp):
     # The exact shape differs from the broad full-window shape.
     assert (exact_path.boundingRect().toRect()
             != broad_path.boundingRect().toRect())
+    # The exact union must CONTAIN a real (translated) card control - a point that
+    # is inside a control but outside the emblem. An emblem-only union (the
+    # production card_cell_rects regression, where the real provider lacks that
+    # method) would NOT contain it.
+    from PySide6.QtCore import QPointF
+    assert exact_path.contains(QPointF(*_CONTROL_PROBE))
+
+
+def test_settle_input_post_leave_is_true_noop(qapp):
+    """A stray settle timeout AFTER leave() must not apply a shape or flip the
+    framed phase from None to 'exact' (the guard runs before the phase assign)."""
+    backend = _RecordingBackend()
+    ctrl, provider, window, created = _make(backend=backend)
+    ctrl.enter()
+    ctrl.set_scale_by_notches(1)
+    ctrl.leave()                                 # framed; phase reset to None
+    backend.shapes.clear()
+
+    ctrl._settle_input()                          # stray late timeout
+
+    assert ctrl._input_phase is None              # NOT flipped to "exact"
+    assert backend.shapes == []                    # no shape applied to a dead surface
+
+
+def test_notch_keeps_emblem_center_on_anchor(qapp):
+    """The scaling anchor invariant: after a notch (the emblem geometry changes
+    with apply_metrics), the emblem center still lands exactly on the anchor."""
+    anchor = (1234, 567)
+    ctrl, provider, window, created = _make(anchor=anchor)
+    ctrl.enter()
+    surface = created[0]
+
+    ctrl.set_scale_by_notches(1)
+
+    g = provider._emblem.geometry()              # scaled by apply_metrics
+    cx = g.x() + g.width() // 2
+    cy = g.y() + g.height() // 2
+    assert surface.geom.x() + cx == anchor[0]
+    assert surface.geom.y() + cy == anchor[1]
 
 
 def test_move_group_locked_out_during_scale_then_allowed_after_settle(qapp):
@@ -504,3 +564,27 @@ def test_move_group_noop_when_inactive(qapp):
     """move_group is a no-op (False) when the controller is framed."""
     ctrl, provider, window, created = _make()
     assert ctrl.move_group(10, 10) is False
+
+
+def test_move_group_clamp_reconciles_anchor_no_dead_zone(qapp):
+    """At the envelope edge the anchor is reconciled to the CLAMPED rect, so:
+    a further push the SAME way is a pinned no-op (False, no visual move), and a
+    push back the OPPOSITE way moves IMMEDIATELY (no accumulated dead zone)."""
+    ctrl, provider, window, created = _make(anchor=(700, 400))  # on the 800x800 screen
+    ctrl.enter()
+    surface = created[0]
+    big = 5000   # far past the right envelope edge
+
+    # First push past the edge: clamps to the boundary and actually moves.
+    assert ctrl.move_group(big, 0) is True
+    pinned_geom = surface.geom
+
+    # Push further the SAME way: already pinned -> no visual move -> False.
+    assert ctrl.move_group(big, 0) is False
+    assert surface.geom == pinned_geom
+
+    # Push back the OPPOSITE way by the same delta: moves immediately (no dead
+    # zone). With a raw-accumulated anchor this would still be pinned (False).
+    assert ctrl.move_group(-big, 0) is True
+    assert surface.geom != pinned_geom
+    assert surface.geom.x() < pinned_geom.x()    # moved back to the left

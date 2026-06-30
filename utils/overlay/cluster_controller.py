@@ -302,32 +302,57 @@ class ClusterOverlayController:
             except Exception:
                 pass
         # The cluster size changed: recompute + apply the window rect ONCE (same
-        # emblem-centered placement path enter() uses).
+        # emblem-centered placement path enter() uses). Best-effort, like enter():
+        # a resize failure self-corrects on the next notch rather than propagating
+        # into the Qt wheel handler.
         rect = self._compute_window_rect()
         if self._surface is not None:
-            self._surface.set_overlay_geometry(rect)
+            try:
+                self._surface.set_overlay_geometry(rect)
+            except Exception:
+                pass
         # Drive the input-shape phase machine: broad now, exact on settle.
         self._enter_broad_phase(rect)
 
     def move_group(self, dx: int, dy: int) -> bool:
         """Shift the cluster anchor by (dx, dy), clamp to the screen envelope, and
-        reposition the window. Returns True if the window moved.
+        reposition the window. Returns True only if the window ACTUALLY moved.
 
         Drag is LOCKED OUT while a scale gesture is live (``_scaling_active``):
         returns False without moving so a wheel-zoom is never fought by a stray
         drag. Also a no-op (False) when not active.
+
+        Anchor reconciliation: the anchor is stored as the emblem-center of the
+        CLAMPED rect (not the raw accumulated point), so dragging into an envelope
+        edge cannot build up a phantom offset that a reverse drag must first unwind
+        (the dead-zone bug). A clamp that pins the rect to its current position is
+        reported as no move (returns False).
         """
         if not self._active:
             return False
         if self._scaling_active:
             return False
+        from utils.overlay.cluster_geometry import window_rect_for, clamp_to_envelope
+        w, h = self._cluster_size()
+        emblem_center = self._emblem_center_local(w, h)
+        ex, ey = emblem_center
         ax, ay = self._anchor
-        self._anchor = (ax + dx, ay + dy)
-        rect = self._compute_window_rect()
-        from utils.overlay.cluster_geometry import clamp_to_envelope
-        rect = clamp_to_envelope(rect, self._screens_xywh(), self._move_margin())
+        # The rect at the CURRENT (already-reconciled) anchor == the on-screen
+        # placement; the candidate is the shifted rect, clamped to the envelope.
+        current = window_rect_for((w, h), emblem_center, (ax, ay), False, (0, 0))
+        candidate = window_rect_for(
+            (w, h), emblem_center, (ax + dx, ay + dy), False, (0, 0))
+        clamped = clamp_to_envelope(
+            candidate, self._screens_xywh(), self._move_margin())
+        if clamped == current:
+            return False  # clamp pinned -> no visual move (no anchor drift)
+        # Reconcile the anchor onto the clamped rect's emblem-center.
+        self._anchor = (clamped.x() + ex, clamped.y() + ey)
         if self._surface is not None:
-            self._surface.set_overlay_geometry(rect)
+            try:
+                self._surface.set_overlay_geometry(clamped)
+            except Exception:
+                pass
         return True
 
     # ------------------------------------------------------------------
@@ -353,18 +378,21 @@ class ClusterOverlayController:
         self._settle_timer.start(_SETTLE_INTERVAL_MS)
 
     def _settle_input(self) -> None:
-        """Settle callback (directly callable from tests): leave the broad phase,
-        mark the exact phase, and apply the EXACT input shape (emblem + visible
-        controls union). No-op once framed (a late timer firing post-leave)."""
+        """Settle callback (directly callable from tests): leave the broad phase
+        and apply the EXACT input shape (emblem + visible controls union). A late
+        timeout that fires AFTER leave() is a true no-op: the guard runs BEFORE the
+        phase assignment, so a framed controller never flips to the 'exact' phase
+        and never shapes a dead surface."""
         self._scaling_active = False
-        self._input_phase = "exact"
         if not self._active or self._surface is None:
             return
+        self._input_phase = "exact"
         from utils.overlay.cluster_geometry import input_union
         emblem_rect = self._emblem_rect()
-        cells = self._card_cell_rects()
-        card_controls = {slot_id: [r] for slot_id, r in cells.items()}
-        visible = list(cells.keys())
+        card_controls = self._window_control_rects()
+        # Occupancy refines the visible set in a LATER task; for now every slot
+        # with controls is visible.
+        visible = list(card_controls.keys())
         region = input_union(emblem_rect, card_controls, visible)
         self._apply_input_shape(self._region_to_path(region))
 
@@ -408,17 +436,43 @@ class ClusterOverlayController:
                 return QRect(g)
         return QRect()
 
-    def _card_cell_rects(self) -> dict:
-        """``{slot_id: QRect}`` per-card control rects (window-local). Placeholder
-        per-cell rects today; occupancy refines ``visible`` + the real per-control
-        rects in a LATER task. Empty dict when the provider has no accessor."""
-        fn = getattr(self._card_provider, "card_cell_rects", None)
-        if fn is None:
+    def _window_control_rects(self) -> dict:
+        """``{slot_id: [QRect, ...]}`` of each card's interactive-control rects in
+        WINDOW-LOCAL coords - the input-union's per-slot ``card_controls``.
+
+        The provider's real ``control_rects(cell_index)`` returns CARD-LOCAL rects
+        (relative to that cell's root). In the single-window cluster the whole grid
+        host is one window, so each rect is translated by its cell's origin within
+        the grid host (``cell.mapTo(grid_host)``). ``apply_metrics`` has already
+        resized the cards to the current scale, so both the control rects and the
+        cell origins are at-scale - no extra scaling here.
+
+        Empty dict when the provider lacks ``control_rects``/``_card_slots`` (the
+        exact union then collapses to the emblem only - documented placeholder
+        behavior; occupancy + the per-control refinements land in a LATER task).
+        """
+        provider = self._card_provider
+        rects_fn = getattr(provider, "control_rects", None)
+        slots = getattr(provider, "_card_slots", None)
+        if rects_fn is None or slots is None:
             return {}
-        try:
-            return dict(fn())
-        except Exception:
-            return {}
+        from PySide6.QtCore import QPoint
+        grid_host = getattr(provider, "_grid_host", None)
+        out: dict = {}
+        for cell_index, slot in enumerate(slots):
+            root = slot.get("cell") if isinstance(slot, dict) else None
+            if root is None:
+                continue
+            try:
+                if grid_host is not None and root is not grid_host:
+                    origin = root.mapTo(grid_host, QPoint(0, 0))
+                else:
+                    origin = root.pos()
+                local_rects = rects_fn(cell_index)
+                out[cell_index] = [r.translated(origin) for r in local_rects]
+            except Exception:
+                continue
+        return out
 
     @staticmethod
     def _screens_xywh() -> list:
