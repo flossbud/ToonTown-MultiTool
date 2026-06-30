@@ -2223,10 +2223,9 @@ class OverlayGroupController:
 
     def reassert_after_settle(self):
         """Re-assert real-window topmost z-order + radial/dim/emblem/panel layering
-        AFTER the proxy is dropped. Mirrors the old show_scaling_windows tail but
-        does NOT show() anything (the reals were never hidden, only parked+placed).
-        The caller clears _scale_handoff_active before this so _reassert_topmost is
-        not suppressed."""
+        AFTER the proxy is dropped. Does NOT show() anything (the reals were never
+        hidden, only parked then placed back on-screen). The caller clears
+        _scale_handoff_active before this so _reassert_topmost is not suppressed."""
         self._reassert_topmost()
         if self._radial_surface is not None or self._dim_surface is not None \
                 or self._panel_surface is not None:
