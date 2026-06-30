@@ -4,12 +4,13 @@ The single-window cluster controller borrows the WHOLE `_grid_host` subtree into
 one ``ClusterSurface`` (instead of one surface per card), minimizes the main
 window, and on leave restores the host + resets framed (scale-1.0) metrics. It is
 a drop-in analog of ``OverlayGroupController`` for the single-window cluster, and
-mirrors its minimize + fail-closed discipline.
+mirrors its minimize, fail-closed, and orphan-retention discipline.
 
 These tests use LIGHT STUBS (no heavy real _CompactLayout): a stub provider whose
-capture/restore record calls and actually re-parent a real `_grid_host`, a stub
-window recording showMinimized/showNormal, and a stub surface recording
-host/geometry/show/hide/deleteLater. Real integration is validated live later.
+capture/restore record calls and ACTUALLY re-parent a real `_grid_host` (capture
+detaches it; restore re-parents it to a holder widget), a stub window recording
+showMinimized/showNormal, and a stub surface recording host/geometry/show/hide/
+release/deleteLater. Real integration is validated live later.
 
 Run (NEVER the whole tests/ dir):
     TTMT_NO_VENV_REEXEC=1 QT_QPA_PLATFORM=offscreen \
@@ -24,24 +25,38 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("TTMT_NO_VENV_REEXEC", "1")
 
 import pytest
+from PySide6.QtCore import QRect
 from PySide6.QtWidgets import QWidget
 
 from utils.overlay.backend import NoOpOverlayBackend
 from utils.overlay.cluster_controller import ClusterOverlayController
 
 
+# Known cluster geometry baked into the stub provider so placement is exact.
+_HOST_W, _HOST_H = 400, 300
+# OFF-CENTER emblem so emblem_center_local (60+50, 40+50) = (110, 90) differs from
+# the bbox center (200, 150) - this pins the emblem-center invariant and would
+# catch a bbox-center regression.
+_EMBLEM_X, _EMBLEM_Y, _EMBLEM_S = 60, 40, 100
+_EMBLEM_CX = _EMBLEM_X + _EMBLEM_S // 2   # 110
+_EMBLEM_CY = _EMBLEM_Y + _EMBLEM_S // 2   # 90
+
+
 # ---------------------------------------------------------------------------
 # Light stubs
 # ---------------------------------------------------------------------------
 class _StubProvider:
-    """Stand-in for _CompactLayout: a real `_grid_host` (+ a real `_emblem`
-    child with a geometry) plus recording capture/restore/apply_metrics."""
+    """Stand-in for _CompactLayout: a real `_grid_host` (parented under a holder,
+    with a real off-center `_emblem` child) plus recording capture/restore/
+    apply_metrics. capture DETACHES the host; restore RE-PARENTS it to the holder,
+    so restoration is real and verifiable."""
 
     def __init__(self, capture_raises: bool = False):
-        self._grid_host = QWidget()
-        self._grid_host.resize(400, 300)
+        self._holder = QWidget()                      # stands in for the tab parent
+        self._grid_host = QWidget(self._holder)
+        self._grid_host.resize(_HOST_W, _HOST_H)
         self._emblem = QWidget(self._grid_host)
-        self._emblem.setGeometry(150, 100, 100, 100)   # center (200, 150)
+        self._emblem.setGeometry(_EMBLEM_X, _EMBLEM_Y, _EMBLEM_S, _EMBLEM_S)
         self._token = object()
         self.captured = 0
         self.restored: list = []
@@ -53,14 +68,14 @@ class _StubProvider:
         self.captured += 1
         if self.capture_raises:
             raise RuntimeError("capture boom")
-        # Actually detach so the borrow is observable.
-        self._grid_host.setParent(None)
+        self._grid_host.setParent(None)               # detach (observable borrow)
         return self._token
 
     def restore_cluster_host(self, token):
         self.restored.append(token)
         if self.restore_raises:
             raise RuntimeError("restore boom")
+        self._grid_host.setParent(self._holder)       # real restoration
 
     def apply_metrics(self, metrics):
         self.last_metrics = metrics
@@ -84,12 +99,14 @@ class _StubWindow:
 
 
 class _StubSurface(QWidget):
-    """Recording surface exposing host/set_overlay_geometry/show/hide/
-    deleteLater/release; host() actually re-parents so the borrow is observable."""
+    """Recording surface exposing host/set_overlay_geometry/show/hide/release/
+    deleteLater; host() actually re-parents so the borrow is observable. host()
+    and release() can be made to raise to exercise the fail-closed / orphan paths."""
 
-    def __init__(self, host_raises: bool = False):
+    def __init__(self, host_raises: bool = False, release_raises: bool = False):
         super().__init__()
         self.host_raises = host_raises
+        self.release_raises = release_raises
         self.hosted = None
         self.geom = None
         self.shown = 0
@@ -105,6 +122,8 @@ class _StubSurface(QWidget):
 
     def release(self):
         self.released += 1
+        if self.release_raises:
+            raise RuntimeError("release boom")
         w = self.hosted
         if w is not None:
             w.setParent(None)
@@ -124,7 +143,8 @@ class _StubSurface(QWidget):
         self.deleted += 1
 
 
-def _make(provider=None, window=None, host_raises=False, on_active_changed=None):
+def _make(provider=None, window=None, host_raises=False, release_raises=False,
+          on_active_changed=None, anchor=None):
     """Build a controller wired to recording stubs. Returns
     (controller, provider, window, created_surfaces)."""
     provider = provider if provider is not None else _StubProvider()
@@ -132,7 +152,7 @@ def _make(provider=None, window=None, host_raises=False, on_active_changed=None)
     created: list = []
 
     def factory():
-        s = _StubSurface(host_raises=host_raises)
+        s = _StubSurface(host_raises=host_raises, release_raises=release_raises)
         created.append(s)
         return s
 
@@ -143,15 +163,19 @@ def _make(provider=None, window=None, host_raises=False, on_active_changed=None)
         card_provider=provider,
         on_active_changed=on_active_changed,
     )
+    if anchor is not None:
+        ctrl._anchor = anchor   # inject a known anchor for exact placement
     return ctrl, provider, window, created
 
 
 # ---------------------------------------------------------------------------
-# 1. enter() borrows + minimizes
+# 1. enter() borrows + minimizes + places at the EXACT emblem-centered rect
 # ---------------------------------------------------------------------------
-def test_enter_borrows_and_minimizes(qapp):
+def test_enter_borrows_minimizes_and_places_emblem_on_anchor(qapp):
     events: list = []
-    ctrl, provider, window, created = _make(on_active_changed=events.append)
+    anchor = (1000, 700)
+    ctrl, provider, window, created = _make(
+        on_active_changed=events.append, anchor=anchor)
 
     ok = ctrl.enter()
 
@@ -162,7 +186,10 @@ def test_enter_borrows_and_minimizes(qapp):
     # The WHOLE grid_host is hosted into the single cluster surface.
     assert surface.hosted is provider._grid_host
     assert provider._grid_host.parent() is surface
-    assert surface.geom is not None        # geometry was placed
+    # EXACT placement: the window is sized to the host and positioned so the
+    # OFF-CENTER emblem center lands on the anchor (NOT the bbox center).
+    ax, ay = anchor
+    assert surface.geom == QRect(ax - _EMBLEM_CX, ay - _EMBLEM_CY, _HOST_W, _HOST_H)
     assert surface.shown == 1
     assert window.minimized == 1
     assert ctrl.is_active is True
@@ -170,9 +197,9 @@ def test_enter_borrows_and_minimizes(qapp):
 
 
 # ---------------------------------------------------------------------------
-# 2. leave() restores + resets metrics
+# 2. leave() restores (before delete) + resets metrics
 # ---------------------------------------------------------------------------
-def test_leave_restores_and_resets_metrics(qapp):
+def test_leave_restores_before_delete_and_resets_metrics(qapp):
     events: list = []
     ctrl, provider, window, created = _make(on_active_changed=events.append)
     ctrl.enter()
@@ -186,6 +213,9 @@ def test_leave_restores_and_resets_metrics(qapp):
     assert provider.last_metrics.scale == 1.0
     # Host restored with the SAME token captured at enter.
     assert provider.restored == [provider._token]
+    # The host was released + restored to the holder BEFORE the surface was torn
+    # down: its parent is the holder, NOT the (deleted) surface.
+    assert provider._grid_host.parent() is provider._holder
     # Surface torn down.
     assert surface.hidden == 1
     assert surface.deleted == 1
@@ -195,7 +225,7 @@ def test_leave_restores_and_resets_metrics(qapp):
 
 
 # ---------------------------------------------------------------------------
-# 3. enter() while active is a no-op
+# 3. enter/leave no-ops + clean re-cycle
 # ---------------------------------------------------------------------------
 def test_enter_while_active_is_noop(qapp):
     ctrl, provider, window, created = _make()
@@ -218,6 +248,24 @@ def test_leave_while_inactive_is_noop(qapp):
     assert ctrl.is_active is False
 
 
+def test_enter_leave_enter_recycles_cleanly(qapp):
+    """enter -> leave -> enter again borrows fresh (state reset between cycles)."""
+    ctrl, provider, window, created = _make()
+
+    assert ctrl.enter() is True
+    ctrl.leave()
+    assert ctrl.is_active is False
+    assert ctrl._surface is None and ctrl._token is None
+
+    assert ctrl.enter() is True
+    assert ctrl.is_active is True
+    assert provider.captured == 2           # captured fresh on the second enter
+    assert len(created) == 2                # a brand-new surface
+    assert provider._grid_host.parent() is created[1]
+    assert window.minimized == 2
+    assert ctrl._orphans == []              # nothing orphaned across clean cycles
+
+
 # ---------------------------------------------------------------------------
 # 4. FAIL-CLOSED enter
 # ---------------------------------------------------------------------------
@@ -232,7 +280,7 @@ def test_enter_failclosed_on_capture_raise(qapp):
     assert ok is False
     assert ctrl.is_active is False
     assert window.minimized == 0            # never minimized -> no showNormal needed
-    # A surface may have been built before capture; if so it was torn down.
+    # A surface was built before capture; it was torn down (release ok -> deleted).
     if created:
         assert created[0].deleted == 1
 
@@ -248,6 +296,7 @@ def test_enter_failclosed_on_host_raise_restores_borrow(qapp):
     assert ctrl.is_active is False
     assert provider.captured == 1
     assert provider.restored == [provider._token]   # borrow returned to the tab
+    assert provider._grid_host.parent() is provider._holder
     assert created[0].deleted == 1
     assert window.minimized == 0
 
@@ -266,6 +315,7 @@ def test_enter_failclosed_on_minimize_raise_restores_window(qapp):
     assert window.minimized == 1
     assert window.normaled == 1             # restored after the mid-enter failure
     assert provider.restored == [provider._token]
+    assert provider._grid_host.parent() is provider._holder
     assert created[0].deleted == 1
 
 
@@ -287,3 +337,32 @@ def test_leave_resets_metrics_even_if_restore_raises(qapp):
     assert window.normaled == 1
     assert ctrl.is_active is False
     assert surface.deleted == 1
+
+
+# ---------------------------------------------------------------------------
+# 6. CRITICAL: release() raises -> surface is ORPHANED, never destroyed
+# ---------------------------------------------------------------------------
+def test_leave_orphans_surface_when_release_raises(qapp):
+    """If release() raises (surface may still host the live cluster subtree) AND
+    the host can't be re-parented out, the surface must be RETAINED as an orphan
+    and NEVER deleteLater'd - so the borrowed cards/emblem/glow are never
+    destroyed. The window is still restored and the controller goes framed."""
+    ctrl, provider, window, created = _make(release_raises=True)
+    ctrl.enter()
+    surface = created[0]
+    # Make restore a no-op re-parent too, so the host stays inside the surface.
+    provider.restore_raises = True
+    provider.restored.clear()
+
+    ctrl.leave()                            # must not raise
+
+    # Surface retained as an orphan, NOT destroyed.
+    assert surface.deleted == 0
+    assert surface in ctrl._orphans
+    # release() raised -> restore was skipped -> the host is still hosted (ALIVE)
+    # inside the retained surface, never deleted.
+    assert provider._grid_host.parent() is surface
+    assert provider.restored == []          # restore skipped (release failed)
+    # The window is still restored and the controller is framed.
+    assert window.normaled == 1
+    assert ctrl.is_active is False

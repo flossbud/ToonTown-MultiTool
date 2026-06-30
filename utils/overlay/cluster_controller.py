@@ -60,6 +60,12 @@ class ClusterOverlayController:
 
         self._surface = None
         self._token = None
+        # Surfaces whose release() raised during teardown: we KEEP a reference so
+        # Python GC cannot destroy the parentless surface (which would delete the
+        # still-hosted borrowed cluster subtree - the 4 cards + emblem + glow).
+        # Leaking the surface keeps the cluster ALIVE (recoverable). Mirrors
+        # OverlayGroupController._orphans.
+        self._orphans: list = []
         self._anchor: tuple[int, int] = self._default_anchor()
         self._active: bool = False
 
@@ -242,13 +248,18 @@ class ClusterOverlayController:
         release-before-restore: the surface NEVER owns the borrowed host, but Qt
         parent-child destruction would delete a still-hosted child, so the host
         is released from the surface first; then ``restore_cluster_host`` re-inserts
-        it into the tab's outer layout at its exact slot. Both steps are
-        exception-isolated so a half-built enter still returns the host.
-        ``token`` is None when capture never ran (restore is then skipped); a None
-        token is a documented safe no-op for ``restore_cluster_host`` regardless.
+        it into the tab's outer layout at its exact slot.
+
+        If release() RAISES, the host may still be hosted in the surface, so the
+        restore is SKIPPED (and ``_teardown_surface`` will orphan the surface
+        rather than destroy the still-hosted live cluster subtree) - mirroring
+        OverlayGroupController._restore_widgets, which likewise skips restore on a
+        release failure. ``token`` is None when capture never ran (restore is then
+        skipped); a None token is a documented safe no-op for
+        ``restore_cluster_host`` regardless.
         """
-        if surface is not None:
-            self._safe_call(surface, "release")
+        if surface is not None and not self._safe_call(surface, "release"):
+            return  # release failed: host may still be hosted -> skip restore
         if token is not None and self._card_provider is not None:
             try:
                 self._card_provider.restore_cluster_host(token)
@@ -256,12 +267,23 @@ class ClusterOverlayController:
                 pass
 
     def _teardown_surface(self, surface) -> None:
-        """Hide, release (a no-op once already released), then destroy *surface*."""
+        """Hide, then destroy *surface* - but ONLY if release() succeeds.
+
+        Mirrors OverlayGroupController._teardown: release() MUST succeed before
+        deleteLater(). If release() raises, the surface may still host the
+        borrowed cluster subtree (4 cards + emblem + glow); destroying it would
+        delete those live widgets, so the surface is RETAINED in ``_orphans``
+        (Python GC can't collect a referenced object) and never deleted. Leaking
+        the surface keeps the cluster ALIVE (recoverable) instead of deleted
+        (fatal to the tab's widget tree).
+        """
         if surface is None:
             return
         self._safe_call(surface, "hide")
-        self._safe_call(surface, "release")
-        self._safe_call(surface, "deleteLater")
+        if self._safe_call(surface, "release"):
+            self._safe_call(surface, "deleteLater")
+        else:
+            self._orphans.append(surface)
 
     def _emit_active_changed(self) -> None:
         """Notify the optional observer of the CURRENT active state. Best-effort:
