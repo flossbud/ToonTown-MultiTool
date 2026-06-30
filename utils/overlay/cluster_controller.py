@@ -28,6 +28,12 @@ persistence are LATER tasks and are intentionally NOT built here.
 from __future__ import annotations
 
 from utils.overlay.backend import get_overlay_backend
+from utils.overlay.scale import step_scale
+
+# Quiescence window after the last scale notch before the EXACT input shape is
+# swapped in. Long enough that a continuous wheel spin keeps re-arming it (so the
+# broad shape stays up and keeps capturing notches), short enough to feel instant.
+_SETTLE_INTERVAL_MS = 250
 
 
 class ClusterOverlayController:
@@ -69,12 +75,34 @@ class ClusterOverlayController:
         self._anchor: tuple[int, int] = self._default_anchor()
         self._active: bool = False
 
+        # Scaling state. The cluster is ONE window (no proxy/park/snapshot), so
+        # scaling is a synchronous metrics-apply + single resize + an input-shape
+        # phase machine (broad-while-scaling, exact-on-settle). Persistence of the
+        # scale across sessions is a LATER task.
+        self._scale: float = 1.0
+        # Input-shape phase machine: re-applying the EXACT (per-control) input
+        # shape under the pointer every notch can stall the wheel stream, so each
+        # notch applies one BROAD (full-window) shape and (re)arms a settle timer
+        # that swaps in the EXACT shape once the gesture quiesces.
+        self._scaling_active: bool = False
+        self._input_phase: str | None = None
+        self._settle_timer = None
+
     # ------------------------------------------------------------------
     # State queries
     # ------------------------------------------------------------------
     @property
     def is_active(self) -> bool:
         return self._active
+
+    @property
+    def scale(self) -> float:
+        """The live cluster scale (1.0 = framed base size)."""
+        return self._scale
+
+    @scale.setter
+    def scale(self, value) -> None:
+        self._scale = float(value)
 
     # ------------------------------------------------------------------
     # Defaults
@@ -214,6 +242,14 @@ class ClusterOverlayController:
         provider = self._card_provider
         surface = self._surface
         token = self._token
+        # Cancel any pending settle and reset scaling state so a re-enter starts
+        # framed (scale 1.0, no in-flight gesture). A late timer firing post-leave
+        # is a guarded no-op, but stopping it here avoids the wasted callback.
+        if self._settle_timer is not None:
+            self._settle_timer.stop()
+        self._scaling_active = False
+        self._input_phase = None
+        self._scale = 1.0
         # Reset framed (scale-1.0) metrics so the cards come back at base scale.
         if provider is not None:
             try:
@@ -238,6 +274,168 @@ class ClusterOverlayController:
         else:
             self.enter()
         return self._active
+
+    # ------------------------------------------------------------------
+    # Scaling + move (single window: no proxy, no park, no snapshot)
+    # ------------------------------------------------------------------
+    def set_scale_by_notches(self, notches: int) -> None:
+        """Step the cluster scale by *notches*, re-apply metrics, resize the ONE
+        window, and drive the input-shape phase machine. No-op if not active.
+
+        Crisp per-notch (no animation): the single window has no proxy/snapshot
+        machinery, so a notch is a synchronous metrics-apply (cards + emblem grow/
+        shrink), a SINGLE window resize (the cluster sizeHint changed - the surface
+        source-clear handles the backing), and one BROAD input-shape apply that
+        keeps the wheel stream captured while a settle timer arms the EXACT shape.
+
+        Unlike enter()/leave() this is NOT transactional: it is an idempotent
+        re-layout, so a mid-gesture failure self-corrects on the next notch.
+        """
+        if not self._active:
+            return
+        self.scale = step_scale(self.scale, notches)
+        provider = self._card_provider
+        if provider is not None:
+            try:
+                from utils.overlay.card_metrics import CardMetrics
+                provider.apply_metrics(CardMetrics(self.scale))
+            except Exception:
+                pass
+        # The cluster size changed: recompute + apply the window rect ONCE (same
+        # emblem-centered placement path enter() uses).
+        rect = self._compute_window_rect()
+        if self._surface is not None:
+            self._surface.set_overlay_geometry(rect)
+        # Drive the input-shape phase machine: broad now, exact on settle.
+        self._enter_broad_phase(rect)
+
+    def move_group(self, dx: int, dy: int) -> bool:
+        """Shift the cluster anchor by (dx, dy), clamp to the screen envelope, and
+        reposition the window. Returns True if the window moved.
+
+        Drag is LOCKED OUT while a scale gesture is live (``_scaling_active``):
+        returns False without moving so a wheel-zoom is never fought by a stray
+        drag. Also a no-op (False) when not active.
+        """
+        if not self._active:
+            return False
+        if self._scaling_active:
+            return False
+        ax, ay = self._anchor
+        self._anchor = (ax + dx, ay + dy)
+        rect = self._compute_window_rect()
+        from utils.overlay.cluster_geometry import clamp_to_envelope
+        rect = clamp_to_envelope(rect, self._screens_xywh(), self._move_margin())
+        if self._surface is not None:
+            self._surface.set_overlay_geometry(rect)
+        return True
+
+    # ------------------------------------------------------------------
+    # Input-shape phase machine
+    # ------------------------------------------------------------------
+    def _enter_broad_phase(self, rect) -> None:
+        """Enter (or stay in) the BROAD scaling phase: mark scaling active, apply
+        the full-window input shape so wheel notches keep landing as the window
+        resizes, and (re)arm the settle timer that will swap in the exact shape."""
+        self._scaling_active = True
+        self._input_phase = "broad"
+        self._apply_input_shape(self._broad_input_path(rect))
+        self._arm_settle_timer()
+
+    def _arm_settle_timer(self) -> None:
+        """(Re)start the single-shot settle timer. A continuous wheel spin re-arms
+        it every notch, so the exact shape only lands once the gesture quiesces."""
+        from PySide6.QtCore import QTimer
+        if self._settle_timer is None:
+            self._settle_timer = QTimer()
+            self._settle_timer.setSingleShot(True)
+            self._settle_timer.timeout.connect(self._settle_input)
+        self._settle_timer.start(_SETTLE_INTERVAL_MS)
+
+    def _settle_input(self) -> None:
+        """Settle callback (directly callable from tests): leave the broad phase,
+        mark the exact phase, and apply the EXACT input shape (emblem + visible
+        controls union). No-op once framed (a late timer firing post-leave)."""
+        self._scaling_active = False
+        self._input_phase = "exact"
+        if not self._active or self._surface is None:
+            return
+        from utils.overlay.cluster_geometry import input_union
+        emblem_rect = self._emblem_rect()
+        cells = self._card_cell_rects()
+        card_controls = {slot_id: [r] for slot_id, r in cells.items()}
+        visible = list(cells.keys())
+        region = input_union(emblem_rect, card_controls, visible)
+        self._apply_input_shape(self._region_to_path(region))
+
+    def _apply_input_shape(self, path) -> None:
+        """Apply *path* as the single window's INPUT (click-through) shape via the
+        backend. Best-effort: a shape failure must never break the scale gesture."""
+        surface = self._surface
+        if surface is None:
+            return
+        try:
+            self._backend.apply_input_shape(surface, path, surface.devicePixelRatio())
+        except Exception:
+            pass
+
+    @staticmethod
+    def _broad_input_path(rect):
+        """A QPainterPath covering the WHOLE window (window-local coords). The
+        rect's screen origin is irrelevant for an input shape, which is local."""
+        from PySide6.QtGui import QPainterPath
+        path = QPainterPath()
+        path.addRect(0, 0, rect.width(), rect.height())
+        return path
+
+    @staticmethod
+    def _region_to_path(region):
+        """Convert a QRegion (the exact input union) into a QPainterPath the
+        backend can consume."""
+        from PySide6.QtGui import QPainterPath
+        path = QPainterPath()
+        path.addRegion(region)
+        return path
+
+    def _emblem_rect(self):
+        """The emblem hit rect in window-local coords (the host fills the window),
+        from the emblem widget geometry. Null QRect when unavailable."""
+        from PySide6.QtCore import QRect
+        emblem = getattr(self._card_provider, "_emblem", None)
+        if emblem is not None:
+            g = emblem.geometry()
+            if g.width() > 0 and g.height() > 0:
+                return QRect(g)
+        return QRect()
+
+    def _card_cell_rects(self) -> dict:
+        """``{slot_id: QRect}`` per-card control rects (window-local). Placeholder
+        per-cell rects today; occupancy refines ``visible`` + the real per-control
+        rects in a LATER task. Empty dict when the provider has no accessor."""
+        fn = getattr(self._card_provider, "card_cell_rects", None)
+        if fn is None:
+            return {}
+        try:
+            return dict(fn())
+        except Exception:
+            return {}
+
+    @staticmethod
+    def _screens_xywh() -> list:
+        """Connected screens as ``(x, y, w, h)`` tuples - the form
+        ``clamp_to_envelope`` consumes."""
+        from PySide6.QtGui import QGuiApplication
+        out = []
+        for s in QGuiApplication.screens():
+            g = s.geometry()
+            out.append((g.x(), g.y(), g.width(), g.height()))
+        return out
+
+    def _move_margin(self) -> int:
+        """Envelope inflation for parking: a quarter of the (scaled) emblem may
+        stay on-screen while the rest of the cluster slides off any edge."""
+        from utils.overlay.card_metrics import CardMetrics
+        return int(CardMetrics(self._scale).emblem // 4)
 
     # ------------------------------------------------------------------
     # Teardown helpers

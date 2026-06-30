@@ -30,6 +30,7 @@ from PySide6.QtWidgets import QWidget
 
 from utils.overlay.backend import NoOpOverlayBackend
 from utils.overlay.cluster_controller import ClusterOverlayController
+from utils.overlay.scale import SCALE_MAX, SCALE_MIN
 
 
 # Known cluster geometry baked into the stub provider so placement is exact.
@@ -40,6 +41,16 @@ _HOST_W, _HOST_H = 400, 300
 _EMBLEM_X, _EMBLEM_Y, _EMBLEM_S = 60, 40, 100
 _EMBLEM_CX = _EMBLEM_X + _EMBLEM_S // 2   # 110
 _EMBLEM_CY = _EMBLEM_Y + _EMBLEM_S // 2   # 90
+
+# Four card-cell rects (window-local), INSET from the host edges so the exact
+# input union's bbox (20,20)->(380,280) is strictly inside the broad full-window
+# rect - the scaling tests rely on the exact shape differing from the broad one.
+_CELL_RECTS = {
+    0: QRect(20, 20, 160, 110),
+    1: QRect(220, 20, 160, 110),
+    2: QRect(20, 170, 160, 110),
+    3: QRect(220, 170, 160, 110),
+}
 
 
 # ---------------------------------------------------------------------------
@@ -79,6 +90,21 @@ class _StubProvider:
 
     def apply_metrics(self, metrics):
         self.last_metrics = metrics
+        # Real apply_metrics changes each card's size, so the host's sizeHint (and
+        # thus the cluster window) grows/shrinks with scale. Mirror that here so a
+        # notch OBSERVABLY resizes the surface: scale the host + (off-center)
+        # emblem geometry by metrics.scale.
+        s = metrics.scale
+        self._grid_host.resize(round(_HOST_W * s), round(_HOST_H * s))
+        self._emblem.setGeometry(
+            round(_EMBLEM_X * s), round(_EMBLEM_Y * s),
+            round(_EMBLEM_S * s), round(_EMBLEM_S * s),
+        )
+
+    def card_cell_rects(self):
+        """{slot_id: QRect} per-card cell rects in window-local coords. Placeholder
+        for the exact input union; real per-control rects + occupancy land later."""
+        return dict(_CELL_RECTS)
 
 
 class _StubWindow:
@@ -143,8 +169,19 @@ class _StubSurface(QWidget):
         self.deleted += 1
 
 
+class _RecordingBackend(NoOpOverlayBackend):
+    """NoOp backend that records every apply_input_shape call as
+    (window, path, dpr) so the scaling tests can inspect the broad/exact shapes."""
+
+    def __init__(self):
+        self.shapes: list = []
+
+    def apply_input_shape(self, window, path, dpr) -> None:
+        self.shapes.append((window, path, dpr))
+
+
 def _make(provider=None, window=None, host_raises=False, release_raises=False,
-          on_active_changed=None, anchor=None):
+          on_active_changed=None, anchor=None, backend=None):
     """Build a controller wired to recording stubs. Returns
     (controller, provider, window, created_surfaces)."""
     provider = provider if provider is not None else _StubProvider()
@@ -158,7 +195,7 @@ def _make(provider=None, window=None, host_raises=False, release_raises=False,
 
     ctrl = ClusterOverlayController(
         window,
-        backend=NoOpOverlayBackend(),
+        backend=backend if backend is not None else NoOpOverlayBackend(),
         surface_factory=factory,
         card_provider=provider,
         on_active_changed=on_active_changed,
@@ -366,3 +403,104 @@ def test_leave_orphans_surface_when_release_raises(qapp):
     # The window is still restored and the controller is framed.
     assert window.normaled == 1
     assert ctrl.is_active is False
+
+
+# ---------------------------------------------------------------------------
+# 7. Single-window scaling: clamp, broad/exact input-shape timing, drag lockout
+# ---------------------------------------------------------------------------
+def test_set_scale_by_notches_clamps_to_range(qapp):
+    """A big notch burst clamps to SCALE_MAX; a big negative burst to SCALE_MIN."""
+    ctrl, provider, window, created = _make()
+    ctrl.enter()
+
+    ctrl.set_scale_by_notches(100)
+    assert ctrl.scale == SCALE_MAX
+
+    ctrl.set_scale_by_notches(-100)
+    assert ctrl.scale == SCALE_MIN
+
+
+def test_set_scale_by_notches_noop_when_inactive(qapp):
+    """No surface, no metrics, no shape applied while framed."""
+    backend = _RecordingBackend()
+    ctrl, provider, window, created = _make(backend=backend)
+
+    ctrl.set_scale_by_notches(1)
+
+    assert ctrl.scale == 1.0
+    assert provider.last_metrics is None
+    assert backend.shapes == []
+    assert ctrl._scaling_active is False
+
+
+def test_notch_resizes_surface_and_applies_broad_shape(qapp):
+    """One notch: applies metrics, RESIZES the cluster window (size changed), and
+    applies a BROAD (full-window-rect) input shape; scaling-active in 'broad'."""
+    backend = _RecordingBackend()
+    ctrl, provider, window, created = _make(backend=backend)
+    ctrl.enter()
+    surface = created[0]
+    geom_before = surface.geom
+    backend.shapes.clear()                       # ignore any enter-time shaping
+
+    ctrl.set_scale_by_notches(1)
+
+    # Metrics applied at the new scale, and the surface was resized (one resize).
+    assert provider.last_metrics.scale == ctrl.scale
+    assert surface.geom != geom_before
+    # Broad phase: scaling active, one broad apply of the FULL window-local rect.
+    assert ctrl._scaling_active is True
+    assert ctrl._input_phase == "broad"
+    assert len(backend.shapes) == 1
+    win, broad_path, _dpr = backend.shapes[0]
+    assert win is surface
+    assert broad_path.boundingRect().toRect() == QRect(
+        0, 0, surface.geom.width(), surface.geom.height())
+
+
+def test_settle_applies_exact_shape_and_clears_scaling(qapp):
+    """_settle_input(): scaling clears, phase -> 'exact', a SECOND (different)
+    input shape is applied (the precise emblem+controls union, not the full rect)."""
+    backend = _RecordingBackend()
+    ctrl, provider, window, created = _make(backend=backend)
+    ctrl.enter()
+    surface = created[0]
+    ctrl.set_scale_by_notches(1)
+    assert len(backend.shapes) == 1
+    broad_path = backend.shapes[-1][1]
+
+    ctrl._settle_input()
+
+    assert ctrl._scaling_active is False
+    assert ctrl._input_phase == "exact"
+    assert len(backend.shapes) == 2              # broad, then exact
+    win, exact_path, _dpr = backend.shapes[-1]
+    assert win is surface
+    # The exact shape differs from the broad full-window shape.
+    assert (exact_path.boundingRect().toRect()
+            != broad_path.boundingRect().toRect())
+
+
+def test_move_group_locked_out_during_scale_then_allowed_after_settle(qapp):
+    """Drag is LOCKED OUT (returns False, no move) while a scale gesture is live;
+    after settle it returns True and moves the window."""
+    ctrl, provider, window, created = _make()
+    ctrl.enter()
+    surface = created[0]
+
+    ctrl.set_scale_by_notches(1)
+    assert ctrl._scaling_active is True
+    geom_during = surface.geom
+    assert ctrl.move_group(10, 10) is False      # locked out mid-gesture
+    assert surface.geom == geom_during           # window did NOT move
+
+    ctrl._settle_input()
+    geom_after_settle = surface.geom
+    assert ctrl.move_group(10, 10) is True        # gesture settled -> drag allowed
+    assert surface.geom != geom_after_settle     # window moved
+
+
+def test_move_group_noop_when_inactive(qapp):
+    """move_group is a no-op (False) when the controller is framed."""
+    ctrl, provider, window, created = _make()
+    assert ctrl.move_group(10, 10) is False
