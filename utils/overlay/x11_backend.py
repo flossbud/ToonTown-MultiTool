@@ -138,6 +138,30 @@ class X11OverlayBackend(OverlayBackend):
         except Exception:
             pass
 
+    def set_skip_close_animation(self, window) -> None:
+        """Ask KWin to skip its close/hide animation for this window.
+
+        Set _KDE_NET_WM_SKIP_CLOSE_ANIMATION = 1 so dropping the scale proxy is
+        an instant unmap with no fade-out. Best-effort: a property-set failure
+        must never block the drop. Requires a realized winId.
+        """
+        if not self.is_available():
+            return
+        try:
+            from Xlib import X, Xatom
+            d = self._display
+            win = d.create_resource_object("window", int(window.winId()))
+            win.change_property(
+                d.intern_atom("_KDE_NET_WM_SKIP_CLOSE_ANIMATION"),
+                Xatom.CARDINAL,
+                32,
+                [1],
+                X.PropModeReplace,
+            )
+            d.flush()
+        except Exception:
+            pass
+
     def apply_input_shape(self, window, path, dpr: float) -> None:
         """Apply a logical-coord QPainterPath as the X11 ShapeInput region.
 
