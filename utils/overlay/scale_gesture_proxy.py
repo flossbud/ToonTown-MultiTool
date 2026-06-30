@@ -30,7 +30,14 @@ from PySide6.QtWidgets import QWidget
 
 from utils.overlay.scale import step_scale
 
-_SETTLE_IDLE_MS = 130
+# Cooldown before the frozen proxy hands back to the live windows. Scaling is
+# smooth while the proxy is up; the only visible artifact is the settle swap back
+# to the real surfaces. Holding for a full second of wheel-idle means that during
+# an active zoom (including burst scrolling with short pauses) the proxy covers
+# the whole interaction and the swap fires exactly once, after the user has
+# clearly stopped. The cost is that pointer interaction stays frozen for up to
+# this long after the last notch.
+_SETTLE_IDLE_MS = 1000
 _ANIM_MS = 140
 
 
