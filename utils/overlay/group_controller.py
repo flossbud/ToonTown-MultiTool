@@ -583,6 +583,12 @@ class OverlayGroupController:
         The emblem is the last surface (it is the last element of _states), so
         raising the final surface puts it on top of the cluster.
         """
+        if getattr(self, "_scale_handoff_active", False):
+            # During a scale handoff the real surfaces are placed behind the
+            # still-on-top frozen proxy; raising the emblem now would lift it ABOVE
+            # the proxy and make its move-into-place visible (the settle judder).
+            # All raising is deferred to reassert_after_settle, post-drop. [seamless-settle]
+            return
         if self._surfaces:
             emblem = self._surfaces[-1]
             from utils.overlay.backend import overlay_trace
@@ -1619,6 +1625,11 @@ class OverlayGroupController:
         """Enforce cards -> dim -> emblem -> radial -> panel z-order. Each step is
         a no-op when that layer is not open, so this is safe to call from every
         path that re-asserts cluster z-order."""
+        if getattr(self, "_scale_handoff_active", False):
+            # Defer radial/dim/panel restacking during a scale handoff so nothing is
+            # raised above the held proxy mid-hold; reassert_after_settle restacks
+            # post-drop. _reposition_radial still sets their geometry. [seamless-settle]
+            return
         if self._dim_surface is not None:
             self._safe_call(self._dim_surface, "raise_")
         self._raise_emblem()

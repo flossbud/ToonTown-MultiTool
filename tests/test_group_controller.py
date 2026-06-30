@@ -1016,6 +1016,48 @@ class TestScaleHandoffGuard:
         ctl.settle_placement()                     # default reassert=True
         assert called == [True]
 
+    def test_handoff_settle_positions_emblem_but_does_not_raise_it(self, qapp):
+        # The judder fix: during a scale handoff (guard set), the settle places the
+        # emblem on-screen (un-parks it) but must NOT raise it above the held proxy.
+        # _place_all calls _raise_emblem() unconditionally, so without the guard the
+        # emblem pops above the proxy and its move-in is visible during the hold.
+        ctl, factory, win = _make()
+        ctl.enter()
+        ctl._scale_handoff_active = True
+        emblem = factory.created[-1]
+        emblem.calls.clear()
+        ctl.settle_placement(reassert=False)
+        assert "set_overlay_geometry" in emblem.methods()  # still positioned (un-parked)
+        assert "raise_" not in emblem.methods()            # but NOT raised during the hold
+
+    def test_raise_emblem_noops_during_handoff(self, qapp):
+        ctl, factory, win = _make()
+        ctl.enter()
+        ctl._scale_handoff_active = True
+        emblem = factory.created[-1]
+        emblem.calls.clear()
+        ctl._raise_emblem()
+        assert "raise_" not in emblem.methods()            # suppressed during handoff
+        ctl._scale_handoff_active = False
+        ctl._raise_emblem()
+        assert "raise_" in emblem.methods()                # raised normally otherwise
+
+    def test_restack_radial_layers_noops_during_handoff(self, qapp):
+        # Radial-open case: restacking must also be deferred during a handoff so the
+        # dim/radial/panel are not raised above the held proxy.
+        ctl, factory, win = _make()
+        ctl.enter()
+        dim = _StubSurface("dim", [])
+        ctl._dim_surface = dim
+        ctl._scale_handoff_active = True
+        dim.calls.clear()
+        ctl._restack_radial_layers()
+        assert "raise_" not in dim.methods()               # suppressed during handoff
+        ctl._scale_handoff_active = False
+        dim.calls.clear()
+        ctl._restack_radial_layers()
+        assert "raise_" in dim.methods()                   # restacked normally otherwise
+
 
 # ---------------------------------------------------------------------------
 # Seamless settle: park/unpark/repaint/capture_input/reassert host seam (Task 3)
