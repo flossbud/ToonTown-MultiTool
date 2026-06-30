@@ -15,6 +15,8 @@ requests a repaint, and that ``wheelEvent`` emits the notch count. The visual
 correctness of the scaled paint is validated live, not offscreen.
 """
 
+import os
+
 from PySide6.QtCore import (
     Qt,
     QRect,
@@ -39,6 +41,13 @@ from utils.overlay.scale import step_scale
 # this long after the last notch.
 _SETTLE_IDLE_MS = 1000
 _ANIM_MS = 140
+# Hold the opaque proxy this long AFTER placing+repainting the real windows behind
+# it, so any KWin appearance/move/scale effect plays out UNSEEN behind the frozen
+# image before the instant drop. Sized to outlast KWin's default effect duration;
+# invisible to the user (the frozen final-scale image is already on screen), it only
+# delays when live hover/click resumes, after the 1s cooldown. Tunable for live
+# tuning without a rebuild.
+_HANDOFF_HOLD_MS = int(os.environ.get("TTMT_OVERLAY_HANDOFF_HOLD_MS", "300"))
 
 
 class ScaleProxyWindow(QWidget):
@@ -141,6 +150,7 @@ class ScaleGestureProxy(QObject):
         self._idle = None
         self.active = False
         self._settling = False
+        self._park_pending = False
         self.target = float(getattr(host, "scale", 1.0))
         self._start_scale = self.target   # scale at gesture start; restored on cancel
 
@@ -159,23 +169,29 @@ class ScaleGestureProxy(QObject):
         self._proxy = host.make_proxy(snapshot, bbox, anchor, start, wheel)
         self._proxy.wheel_notch.connect(self.notch)
         self.active = True
-        # Queue the hide so the just-shown proxy maps first: the real windows
-        # are only hidden once the proxy is up, reducing the swap flicker. (The
-        # proxy is shown synchronously by make_proxy; make_proxy MUST stay
-        # before this queued hide.) Route it through _hide_real so a cancel() that
-        # runs before this zero-timer drains neutralizes it - otherwise a stale
-        # hide would hide the real windows with no later show (cluster vanishes).
-        # True exposed-confirmation is LIVE-only.
-        QTimer.singleShot(0, self._hide_real)
-        self._start_anim(start)
-        self._restart_idle()
+        self._settling = False
+        self._park_pending = True
+        # Suppress the controller's own restacks for the whole gesture so nothing
+        # raises the reals over the on-top proxy (the 1.5s above-timer, the
+        # post-minimize/screen-change reasserts). Cleared at the drop.
+        setattr(host, "_scale_handoff_active", True)
+        # Park the reals (mapped, off-screen) THEN start animating, so no scaled
+        # proxy frame can ever reveal un-parked reals. Queued so the just-shown
+        # proxy maps first; guarded so a cancel before this drains neutralizes it
+        # (the reals are then never parked).
+        QTimer.singleShot(0, self._park_then_start)
 
-    def _hide_real(self):
-        # Guarded queued hide: only hide if the gesture is still live. cancel()
-        # sets active False (and drops the proxy), so a stale queued hide after a
-        # cancel is a no-op.
-        if self.active:
-            self._host.hide_scaling_windows()
+    def _park_then_start(self):
+        # Guarded queued step: a cancel before this drains sets active False /
+        # _park_pending False, so it no-ops (reals never parked).
+        if not self.active or not self._park_pending:
+            return
+        self._host.park_scaling_windows()
+        self._park_pending = False
+        # Animate from the live scale to the LATEST target (a notch may have
+        # accumulated while park was pending).
+        self._start_anim(float(self._host.scale))
+        self._restart_idle()
 
     def notch(self, notches):
         if self._settling:
@@ -188,20 +204,39 @@ class ScaleGestureProxy(QObject):
         # Accumulate off the coordinator's OWN target, not the animated host
         # scale, so rapid notches sum cleanly.
         self.target = step_scale(self.target, notches)
+        if self._park_pending:
+            # Not parked yet: only accumulate the target. _park_then_start will
+            # start the animation toward this latest target once parking has run.
+            return
         self._start_anim(float(self._host.scale))
         self._restart_idle()
 
     def cancel(self):
-        # Teardown WITHOUT settling: drop the proxy and restore the gesture's
-        # START scale (no commit, no persist). The animation walked host.scale to
-        # a transient mid-value; without restoring it, a later save flush (e.g. on
-        # leave()) could persist that transient scale - violating "cancel = no
-        # commit". Resetting _settling here leaves clean state even if cancel runs
-        # mid-settle; a _finish_settle already queued becomes a no-op (guarded on
-        # the dropped proxy).
+        # Teardown WITHOUT committing: restore the gesture's START scale, place the
+        # reals back on-screen at that scale, reveal them, then drop the proxy. The
+        # animation walked host.scale to a transient mid-value; restoring it keeps
+        # "cancel = no commit" (a later save flush must not persist a transient).
+        # unpark_scaling_windows is a finally-style safety net so even if
+        # settle_placement raises the cluster is never left parked off-screen, and
+        # the handoff guard is always cleared (never stuck on after a teardown).
         self._stop_timers()
+        host = self._host
+        host.scale = self._start_scale
+        self._park_pending = False
+        try:
+            host.settle_placement(reassert=False)  # re-place on-screen at start scale
+        except Exception:
+            pass
+        try:
+            host.unpark_scaling_windows()          # safety net: restore recorded geom
+        except Exception:
+            pass
+        setattr(host, "_scale_handoff_active", False)
+        try:
+            host.reassert_after_settle()           # restore z-order
+        except Exception:
+            pass
         self._drop_proxy()
-        self._host.scale = self._start_scale
         self.active = False
         self._settling = False
 
@@ -232,31 +267,40 @@ class ScaleGestureProxy(QObject):
         self._idle.start()
 
     def _settle(self):
-        # Synchronous front half of the handoff: place + show the real windows
-        # over the still-present proxy, then queue the back half. The proxy is
-        # NOT dropped and the gesture stays "busy" (active True, _settling True)
-        # so occupancy/peek/ghost stay frozen until the proxy is actually gone.
+        # Front half of the handoff (synchronous): swallow all input via the proxy,
+        # place the reals on-screen behind the still-topmost proxy WITHOUT restack,
+        # repaint them at the new scale, then queue the timed drop. The proxy stays
+        # up and the gesture stays "busy" (active/_settling) through the hold so
+        # occupancy/peek/ghost stay frozen until the proxy is actually gone.
         if not self.active:
             return
         self._stop_timers()
         self._settling = True
         host = self._host
         host.scale = float(self.target)
-        host.settle_placement()       # real windows placed while hidden
-        host.show_scaling_windows()   # real shown over the proxy
-        QTimer.singleShot(0, self._finish_settle)
+        if self._proxy is not None:
+            host.capture_full_input(self._proxy)   # block input to reals during hold
+        host.settle_placement(reassert=False)      # place behind proxy, no restack
+        host.repaint_scaling_windows()             # fill backing stores at new scale
+        QTimer.singleShot(_HANDOFF_HOLD_MS, self._finish_settle)
 
     def _finish_settle(self):
-        # Queued back half: the proxy is gone and the real windows are up BEFORE
-        # deferred occupancy replays. Guard against a cancel() that already tore
-        # the proxy down mid-settle so we never double-drop or fire
-        # on_gesture_end after a cancel.
+        # Back half: drop the proxy instantly (skip-close-anim was set at creation),
+        # clear the handoff guard BEFORE reasserting z-order, end. Guard against a
+        # cancel() that already tore the proxy down mid-hold so the stale queued
+        # back half no-ops (no double-drop, no on_gesture_end after cancel).
         if self._proxy is None and not self.active:
             return
         self._drop_proxy()
+        host = self._host
+        setattr(host, "_scale_handoff_active", False)   # clear BEFORE reassert
+        try:
+            host.reassert_after_settle()
+        except Exception:
+            pass
         self.active = False
         self._settling = False
-        self._host.on_gesture_end()
+        host.on_gesture_end()
 
     def _stop_timers(self):
         if self._anim is not None:
