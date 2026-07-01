@@ -134,15 +134,18 @@ class ClusterOverlayController:
         self._input_phase: str | None = None
         self._settle_timer = None
 
-        # Occupancy. The grid SHELL is fixed (the permanent quadrant shells never
-        # move/resize), so an empty card keeps its cell; occupancy only narrows the
-        # EXACT input (click-through) shape so empty cards drop OUT of the click
-        # region. The cards' CONTENT suppression is the provider's job, not the
-        # controller's. _visible_cells seeds from provider.occupied_cells() on
-        # enter() (all four when the provider has no occupancy) and is reconciled
-        # live off occupied_cells_changed.
+        # Occupancy. The grid GEOMETRY is fixed (retainSizeWhenHidden keeps every
+        # quadrant's space, so the pinwheel never reflows), but an EMPTY card is
+        # hidden VISUALLY (cell setVisible(False)) as well as dropped from the
+        # EXACT input (click-through) shape - matching the legacy overlay, which
+        # hid empty card SURFACES (0 toons -> 0 cards, 1 toon -> 1 card).
+        # _visible_cells seeds from provider.occupied_cells() on enter() (all four
+        # when the provider has no occupancy) and is reconciled live off
+        # occupied_cells_changed; leave() restores every shell visible for framed
+        # mode (which always shows all four) with its original retain flag.
         self._visible_cells: set = {0, 1, 2, 3}
         self._occupancy_connected: bool = False
+        self._cell_retain_flags: dict = {}
 
         # Persistence (anchor + scale + monitor identity). A TRAILING-edge debounce:
         # a burst of drag/scale changes restarts the single-shot timer so it
@@ -470,6 +473,10 @@ class ClusterOverlayController:
         # without occupancy degrades to all-visible (no signal -> no subscription).
         self._visible_cells = self._target_visible_cells()
         self._connect_occupancy()
+        # Hide the EMPTY cells visually (retain-size so the pinwheel keeps its
+        # shape): 0 toons -> 0 cards, 1 toon -> 1 card, matching the legacy
+        # overlay's hidden empty surfaces. leave() restores every shell.
+        self._apply_cell_visibility()
         self._active = True
         # Build the internal dim (hidden) now that the host is borrowed + measured.
         # Decorative + best-effort: a dim failure must never flip a successful enter
@@ -559,6 +566,9 @@ class ClusterOverlayController:
         # is a safe no-op, and reset the visible set to the framed default.
         self._disconnect_occupancy()
         self._visible_cells = {0, 1, 2, 3}
+        # Un-hide every cell shell (framed mode always shows all four) and restore
+        # the original retain-size flags BEFORE the host returns to the tab.
+        self._restore_cell_visibility()
         # Re-assert framed (scale-1.0) metrics. In the transform model the host
         # never left its 1.0 layout, so this is a defensive idempotent no-op that
         # guarantees the cards come back at base scale even if something external
@@ -1337,16 +1347,68 @@ class ClusterOverlayController:
         except Exception:
             pass
 
+    def _apply_cell_visibility(self) -> None:
+        """Show occupied cells, hide empty ones VISUALLY (0 toons -> 0 cards).
+
+        Each cell's size policy gets ``retainSizeWhenHidden`` BEFORE the hide so
+        the 2x2 grid keeps the hidden quadrant's space - the pinwheel shape and
+        the emblem-center invariant never reflow (the legacy overlay achieved the
+        same by hiding empty card SURFACES; the single window hides the cell
+        widgets inside the transformed host instead). The original retain flag is
+        recorded once per cell and restored by ``_restore_cell_visibility`` on
+        leave. Best-effort per cell: a provider without ``_card_slots`` (a bare
+        stub) is a safe no-op."""
+        provider = self._card_provider
+        slots = getattr(provider, "_card_slots", None) if provider is not None else None
+        if not slots:
+            return
+        for cell_index, slot in enumerate(slots):
+            root = slot.get("cell") if isinstance(slot, dict) else None
+            if root is None:
+                continue
+            try:
+                sp = root.sizePolicy()
+                if cell_index not in self._cell_retain_flags:
+                    self._cell_retain_flags[cell_index] = sp.retainSizeWhenHidden()
+                if not sp.retainSizeWhenHidden():
+                    sp.setRetainSizeWhenHidden(True)
+                    root.setSizePolicy(sp)
+                root.setVisible(cell_index in self._visible_cells)
+            except Exception:
+                continue
+
+    def _restore_cell_visibility(self) -> None:
+        """leave(): every shell visible again (framed mode always shows all four)
+        with its original retain-size flag. Idempotent; safe with nothing hidden."""
+        provider = self._card_provider
+        slots = getattr(provider, "_card_slots", None) if provider is not None else None
+        flags, self._cell_retain_flags = self._cell_retain_flags, {}
+        if not slots:
+            return
+        for cell_index, slot in enumerate(slots):
+            root = slot.get("cell") if isinstance(slot, dict) else None
+            if root is None:
+                continue
+            try:
+                root.setVisible(True)
+                if cell_index in flags and not flags[cell_index]:
+                    sp = root.sizePolicy()
+                    sp.setRetainSizeWhenHidden(False)
+                    root.setSizePolicy(sp)
+            except Exception:
+                continue
+
     def _reconcile_occupancy(self) -> None:
         """Occupancy nudge (the signal slot): re-read ``occupied_cells()``, update
-        ``self._visible_cells``, and RE-APPLY the exact input shape so empty cards
-        drop out of the click region. No-op when framed (a stray post-leave signal
-        is safe).
+        ``self._visible_cells``, hide/show the cells to match, and RE-APPLY the
+        exact input shape so empty cards drop out of the click region. No-op when
+        framed (a stray post-leave signal is safe).
 
-        The grid SHELL is left untouched: no cell is hidden/``setVisible(False)``
-        (that would collapse the pinwheel) and the window is NOT resized or reshaped
-        (the cluster bbox is fixed by the permanent shells). Only the click region
-        changes.
+        The grid GEOMETRY is untouched: hidden cells retain their space
+        (``retainSizeWhenHidden``) so the pinwheel never collapses, and the window
+        is NOT resized or reshaped (the fixed envelope). The VISUAL hide/show runs
+        regardless of gesture state (paint-safe); only the INPUT-shape swap is
+        deferred during a scale.
 
         Mid scale gesture (BROAD phase: ``_scaling_active`` True, the full-window
         capture shape is up) the visible set is refreshed but the EXACT shape is NOT
@@ -1367,6 +1429,7 @@ class ClusterOverlayController:
         # is paint-time safe; only the INPUT-shape swap is deferred during a scale.
         for slot in prev_visible - self._visible_cells:
             self._settle_peek_slot(slot)
+        self._apply_cell_visibility()
         if self._scaling_active:
             return
         self._apply_exact_input_shape()

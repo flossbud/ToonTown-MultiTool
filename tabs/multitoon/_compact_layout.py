@@ -660,14 +660,22 @@ class _Emblem(QWidget):
         self._press_anim.stop()
         self._press_scale = 0.92
         self.update()
-        super().mousePressEvent(event)
+        # ACCEPT the press - never QWidget's default ignore (super()). Through
+        # the single-window cluster's QGraphicsProxyWidget an IGNORED press means
+        # the proxy never becomes the scene mouse grabber, so the follow-up
+        # move/release events are never forwarded and every press-derived gesture
+        # (drag, radial click, right-click toggle) silently dies - while wheel
+        # kept working because the armed wheelEvent branch accepts. Plain-window
+        # hosting (framed tab, legacy per-window overlay) routes the release to
+        # the pressed child regardless, which is why this only broke the cluster.
+        event.accept()
 
     def mouseMoveEvent(self, event):
         if self._press is not None and not self._dragging:
             if is_drag(self._press, event.position().toPoint()):
                 self._dragging = True
                 self.move_requested.emit()
-        super().mouseMoveEvent(event)
+        event.accept()   # keep the gesture stream (see mousePressEvent)
 
     def mouseReleaseEvent(self, event):
         self._animate_press(1.0)
@@ -681,7 +689,7 @@ class _Emblem(QWidget):
                 self.menu_requested.emit()         # left-click = open the wheel
             # other buttons: no-op
         self._dragging = False
-        super().mouseReleaseEvent(event)
+        event.accept()   # keep the gesture stream (see mousePressEvent)
 
     def wheelEvent(self, event):
         if self._armed:

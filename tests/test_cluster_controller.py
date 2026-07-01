@@ -261,10 +261,11 @@ class _OccupancyStubProvider(QObject):
     """``_StubProvider`` analog that ALSO exposes occupancy: a controllable
     ``occupied_cells()`` plus a REAL ``occupied_cells_changed`` Signal (so it
     subclasses QObject, like the production ``_CompactLayout``). Cell widgets'
-    ``setVisible`` is shadowed at the INSTANCE level so a stray ``setVisible(False)``
-    - a pinwheel collapse, which this task forbids - is recorded and assertable.
+    ``setVisible`` is shadowed at the INSTANCE level so every hide is recorded
+    WITH the cell's retain-size flag at hide time - the controller must set
+    ``retainSizeWhenHidden`` BEFORE hiding, or the pinwheel grid would collapse.
     Instance shadowing (not a virtual override) catches only PYTHON-level calls, so
-    Qt's own internal visibility changes are not mistaken for a controller collapse."""
+    Qt's own internal visibility changes are not mistaken for a controller hide."""
 
     occupied_cells_changed = Signal()
 
@@ -299,7 +300,9 @@ class _OccupancyStubProvider(QObject):
 
         def _spy(visible):
             if not visible:
-                sink.append(cw)
+                # Record the retain flag AT HIDE TIME: the controller must have
+                # set retainSizeWhenHidden BEFORE the hide (no grid collapse).
+                sink.append((cw, cw.sizePolicy().retainSizeWhenHidden()))
             original(visible)
 
         cw.setVisible = _spy
@@ -819,16 +822,24 @@ def test_exact_union_includes_visible_excludes_empty(qapp):
     assert not exact_path.contains(QPointF(*_CONTROL_PROBE))        # cell 1 empty
 
 
-def test_occupancy_change_reapplies_input_without_hiding_or_reshaping(qapp):
-    """An occupancy nudge re-reads occupied_cells, updates _visible_cells, and
-    RE-APPLIES the input shape (a new apply) - WITHOUT hiding any grid cell and
-    WITHOUT resizing/reshaping the window (the grid shell stays fixed)."""
+def test_occupancy_change_updates_cell_visibility_and_input_without_reshaping(qapp):
+    """An occupancy nudge re-reads occupied_cells, updates _visible_cells,
+    hides/shows the cells to match (0 toons -> 0 cards), and RE-APPLIES the input
+    shape (a new apply) - WITHOUT resizing/reshaping the window (fixed envelope)
+    and with retainSizeWhenHidden set BEFORE every hide (no pinwheel collapse)."""
     backend = _RecordingBackend()
     provider = _OccupancyStubProvider(occupied={0, 2})
     ctrl, provider, window, created = _make(provider=provider, backend=backend)
     ctrl.enter()
     surface = created[0]
     geom_before = surface.geom
+    # enter() hid exactly the EMPTY cells (1, 3), each with retain already set.
+    assert [c for c, _r in provider.hidden_cells] == [
+        provider._cell_widgets[1], provider._cell_widgets[3]]
+    assert all(retained for _c, retained in provider.hidden_cells)
+    assert not provider._cell_widgets[0].isHidden()
+    assert provider._cell_widgets[1].isHidden()
+    provider.hidden_cells.clear()
     backend.shapes.clear()
 
     provider.set_occupied({1, 3})
@@ -837,11 +848,35 @@ def test_occupancy_change_reapplies_input_without_hiding_or_reshaping(qapp):
     assert ctrl._visible_cells == {1, 3}
     assert len(backend.shapes) >= 1              # input shape RE-APPLIED
     assert surface.geom == geom_before           # window NOT resized/reshaped
-    assert provider.hidden_cells == []           # NO grid cell setVisible(False)
+    # Visibility flipped to the new occupancy: 0, 2 hidden (retain set), 1, 3 shown.
+    assert {c for c, _r in provider.hidden_cells} == {
+        provider._cell_widgets[0], provider._cell_widgets[2]}
+    assert all(retained for _c, retained in provider.hidden_cells)
+    assert not provider._cell_widgets[1].isHidden()
+    assert provider._cell_widgets[0].isHidden()
     # The new union now blocks the newly-occupied cell 1 and frees the now-empty 0.
     new_path = backend.shapes[-1][1]
     assert new_path.contains(QPointF(*_CONTROL_PROBE))                # cell 1 visible
     assert not new_path.contains(QPointF(*_VISIBLE_CONTROL_PROBE))    # cell 0 empty
+
+
+def test_leave_restores_all_cells_visible_with_original_retain_flags(qapp):
+    """leave() must un-hide every cell (framed mode always shows all four shells)
+    and restore each cell's ORIGINAL retainSizeWhenHidden flag (False here), so
+    the borrowed host returns to the tab exactly as captured."""
+    provider = _OccupancyStubProvider(occupied={2})
+    ctrl, provider, window, created = _make(provider=provider)
+    ctrl.enter()
+    assert provider._cell_widgets[0].isHidden()          # empty cells hidden
+    assert not provider._cell_widgets[2].isHidden()      # occupied cell shown
+    assert provider._cell_widgets[0].sizePolicy().retainSizeWhenHidden()
+
+    ctrl.leave()
+
+    for cw in provider._cell_widgets:
+        assert not cw.isHidden()                          # all shells visible again
+        assert cw.sizePolicy().retainSizeWhenHidden() is False   # flag restored
+    assert ctrl._cell_retain_flags == {}                  # bookkeeping cleared
 
 
 def test_leave_disconnects_occupancy_signal(qapp):
