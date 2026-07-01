@@ -1656,6 +1656,74 @@ def test_move_while_radial_open_recenters_radial_top_level_on_new_anchor(qapp, m
     ctrl.leave()
 
 
+def test_radial_click_region_has_emblem_disc_hole(qapp, monkeypatch):
+    """The radial's input shape must EXCLUDE the emblem disc at its center (so
+    emblem gestures - click-to-close, scroll-to-scale, drag - pass through to
+    the cluster window while the ring is open) while still ACCEPTING clicks in
+    the ring area of the current canvas and staying inert outside it."""
+    from utils.overlay.card_metrics import CardMetrics
+
+    backend = _RecordingBackend()
+    created_radial = _patch_radial(monkeypatch)
+    ctrl, provider, window, created = _make(anchor=(1000, 700), backend=backend)
+    ctrl.enter()
+    ctrl.open_radial_menu()
+    rsurf = created_radial["surfaces"][-1]
+    path = [s for s in backend.shapes if s[0] is rsurf][-1][1]
+
+    canvas_max = ctrl._radial_canvas_max()
+    center = canvas_max / 2.0
+    emblem_dia, canvas = ctrl._radial_canvas()
+    assert emblem_dia == float(CardMetrics(1.0).emblem)
+    # The emblem disc is a HOLE: the exact center and a point well inside the
+    # disc are click-through.
+    assert not path.contains(QPointF(center, center))
+    assert not path.contains(QPointF(center + emblem_dia * 0.3, center))
+    # The ring area (outside the disc, inside the current canvas) accepts clicks.
+    assert path.contains(QPointF(center + emblem_dia * 0.77, center))
+    # The inert margin outside the CURRENT canvas (inside the max window) does not.
+    off = (canvas_max - canvas) // 2
+    assert not path.contains(QPointF(off - 10, center))
+    ctrl.close_radial_menu()
+
+    # After a scale + settle, the reshaped region's hole tracks the NEW disc:
+    # a point inside the grown disc (was ring at 1.0) is now click-through.
+    ctrl.open_radial_menu()
+    rsurf = created_radial["surfaces"][-1]          # the REOPENED surface
+    backend.shapes.clear()
+    ctrl.set_scale_by_notches(5)                    # grow the emblem
+    ctrl._reapply_radial_shape()                    # the settle fires
+    path2 = [s for s in backend.shapes if s[0] is rsurf][-1][1]
+    new_dia = float(CardMetrics(ctrl.scale).emblem)
+    probe = center + (emblem_dia / 2.0 + (new_dia - emblem_dia) / 4.0)
+    assert not path2.contains(QPointF(probe, center))   # inside the NEW disc
+    assert path2.contains(QPointF(center + new_dia * 0.77, center))
+    ctrl.close_radial_menu()
+    ctrl.leave()
+
+
+def test_begin_group_drag_closes_open_radial_and_starts_drag(qapp, monkeypatch):
+    """Dragging the emblem while the ring is open must auto-close the ring and
+    still start the drag poll (the user asked the emblem to move, not the menu)."""
+    from PySide6.QtGui import QCursor
+
+    created_radial = _patch_radial(monkeypatch)
+    ctrl, provider, window, created = _make(anchor=(400, 400))
+    ctrl.enter()
+    ctrl.open_radial_menu()
+    assert ctrl.is_radial_open is True
+    rsurf = created_radial["surfaces"][-1]
+    monkeypatch.setattr(QCursor, "pos", staticmethod(lambda: QPoint(100, 100)))
+
+    ctrl.begin_group_drag()
+
+    assert ctrl.is_radial_open is False                  # ring auto-closed
+    assert rsurf.hidden == 1 and rsurf.deleted == 1      # actually torn down
+    assert ctrl._drag_timer is not None and ctrl._drag_timer.isActive()
+    ctrl._end_drag()
+    ctrl.leave()
+
+
 def test_dim_is_scale_independent_and_open_reasserts_it(qapp, monkeypatch):
     """The internal dim lives INSIDE the transformed host, so its widget geometry
     must stay at the framed-1.0 ``emblem*4`` canvas centered on the 1.0 emblem

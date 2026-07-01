@@ -1270,9 +1270,16 @@ class ClusterOverlayController:
         move_requested fires ONCE at drag-start with no delta, so the controller
         tracks the GLOBAL cursor itself (a ~16ms poll) and shifts the anchor via the
         clamped ``move_group`` until the left button is released. No-op when framed;
-        re-entrant-safe (restarts from the current cursor)."""
+        re-entrant-safe (restarts from the current cursor).
+
+        An OPEN radial ring auto-closes at drag start: the drag reaches the emblem
+        through the ring's emblem-disc input hole (see ``_radial_click_path``), and
+        the user asked the emblem to move, not the menu - dragging the cluster with
+        the ring trailing along would fight the ring's anchor-centered placement."""
         if not self._active:
             return
+        if self.is_radial_open:
+            self.close_radial_menu()
         from PySide6.QtGui import QCursor
         from PySide6.QtCore import QTimer
         self._drag_last = QCursor.pos()
@@ -1717,7 +1724,6 @@ class ClusterOverlayController:
         from utils.overlay.cluster_surface import RadialSurface
         from utils.overlay.radial_menu import RadialMenuWidget, radial_anim_enabled
         from PySide6.QtCore import QRect
-        from PySide6.QtGui import QPainterPath
         try:
             emblem_dia, canvas = self._radial_canvas()
             canvas_max = self._radial_canvas_max()
@@ -1741,13 +1747,12 @@ class ClusterOverlayController:
             self._safe_call(surface, "prepare_initial_state")
             surface.show()
             # NON-EMPTY click region: the CURRENT-scale canvas, centered in the
-            # fixed max-canvas window, accepts clicks (the cluster window stays
-            # click-through; this surface is additive). Clicks in the inert margin
-            # outside it pass through to the games as before.
-            off = (canvas_max - canvas) // 2
-            path = QPainterPath()
-            path.addRect(off, off, canvas, canvas)
-            self._apply_radial_input_shape(path)
+            # fixed max-canvas window, MINUS the emblem disc - the hole lets
+            # emblem gestures (click-to-close, scroll-to-scale, drag) pass
+            # through to the cluster window while the ring is open. The cluster
+            # window stays click-through; this surface is additive. Clicks in
+            # the inert margin outside the canvas pass through to the games.
+            self._apply_radial_input_shape(self._radial_click_path())
             # Re-assert the dim's framed-1.0 placement BEFORE showing it (it is
             # scale-independent in the transform model; this is belt-and-suspenders
             # against anything having moved it while closed).
@@ -1857,17 +1862,42 @@ class ClusterOverlayController:
         self._radial_reshape_timer.start()
 
     def _reapply_radial_shape(self) -> None:
-        """Apply the CURRENT-scale canvas click region, centered in the fixed
-        max-canvas window. Fired by the settle timer; a no-op once the menu is
-        closed."""
+        """Apply the CURRENT-scale canvas click region (with the emblem-disc
+        hole), centered in the fixed max-canvas window. Fired by the settle
+        timer; a no-op once the menu is closed."""
         surface = self._radial_surface
         if surface is None or self._radial_size <= 0:
             return
+        self._apply_radial_input_shape(self._radial_click_path())
+
+    def _radial_click_path(self):
+        """The radial surface's click region: the CURRENT-scale ``emblem*4``
+        canvas centered in the fixed max-canvas window, MINUS the emblem disc at
+        its center.
+
+        The hole is load-bearing: the radial top-level sits ABOVE the
+        click-through cluster window, so without it the ring would swallow every
+        pointer event over the emblem and all emblem gestures would die while
+        the ring is open - click-to-toggle-close, hover-dwell + scroll-to-scale,
+        and drag (which auto-closes the ring via ``begin_group_drag``). This
+        mirrors the legacy path, where the emblem was its own top-level stacked
+        ABOVE the radial and owned those events natively. The hole is the
+        emblem's visual DISC (diameter ``CardMetrics(scale).emblem``, the same
+        formula the ring geometry uses), not the wider widget rect: clicks in
+        the ring-margin gap around the disc still hit the ring (dismiss), as
+        before."""
+        from PySide6.QtCore import QRectF
         from PySide6.QtGui import QPainterPath
-        off = (self._radial_canvas_max() - self._radial_size) // 2
-        path = QPainterPath()
-        path.addRect(off, off, self._radial_size, self._radial_size)
-        self._apply_radial_input_shape(path)
+        emblem_dia, canvas = self._radial_canvas()
+        canvas_max = self._radial_canvas_max()
+        off = (canvas_max - canvas) // 2
+        outer = QPainterPath()
+        outer.addRect(off, off, canvas, canvas)
+        hole = QPainterPath()
+        c = canvas_max / 2.0
+        r = emblem_dia / 2.0
+        hole.addEllipse(QRectF(c - r, c - r, emblem_dia, emblem_dia))
+        return outer.subtracted(hole)
 
     def _apply_radial_input_shape(self, path) -> None:
         """Apply *path* as the radial surface's INPUT (click-accept) shape via the
