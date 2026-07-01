@@ -22,13 +22,22 @@ exception escapes ``enter()`` (it returns ``False``). ``leave()`` is likewise
 guarded: a restore failure must still reset metrics, restore the window, and
 clear state.
 
-Scaling (single-window metrics + input-shape phase machine), drag, occupancy
-(the visible set narrows the EXACT input shape while the grid SHELL stays fixed -
-empty cards keep their cell, never hidden/reshaped), and persistence (load the
-saved anchor + scale on enter, debounced save on scale/move, flush on leave) are
-built here. Hover-peek, ghost-click pass-through, the radial menu, and the
-portable Settings panel are built here too: this module is the whole single-window
-controller.
+Scaling is a FIXED-ENVELOPE TRANSFORM: the window is sized ONCE (on enter) to
+the SCALE_MAX bounding box pivoted on the emblem center, and NEVER resizes or
+moves during a scale gesture - a scroll notch is one uniform zoom transform on
+the live host (``ClusterSurface.set_cluster_scale``, optionally tweened), plus
+the input-shape phase machine (broad-while-scaling, exact-on-settle). The host
+keeps its framed 1.0 layout forever; every window-local hit/shape consumer maps
+host coordinates through ``cluster_geometry.map_host_rect_to_window``. Window
+geometry changing per notch was the scale judder (an XWayland resize+move is
+never atomic across the compositor), and per-notch metric re-layout was the
+non-uniformity (independent per-element rounding); the transform removes both
+by construction. Drag, occupancy (the visible set narrows the EXACT input shape
+while the grid SHELL stays fixed - empty cards keep their cell, never
+hidden/reshaped), and persistence (load the saved anchor + scale on enter,
+debounced save on scale/move, flush on leave) are built here. Hover-peek,
+ghost-click pass-through, the radial menu, and the portable Settings panel are
+built here too: this module is the whole single-window controller.
 """
 from __future__ import annotations
 
@@ -42,6 +51,20 @@ from utils.settings_keys import GHOST_CURSORS_ENABLED, GHOST_CURSORS_CONTROL_CAR
 # swapped in. Long enough that a continuous wheel spin keeps re-arming it (so the
 # broad shape stays up and keeps capturing notches), short enough to feel instant.
 _SETTLE_INTERVAL_MS = 250
+
+# Per-notch zoom tween duration. Each notch retargets the running animation from
+# the CURRENT rendered scale to the accumulated target, so a scroll burst reads
+# as one continuous zoom (mirrors the proven proxy-era ramp timing).
+_SCALE_ANIM_MS = 140
+
+
+def _scale_anim_enabled() -> bool:
+    """False when ``TTMT_NO_OVERLAY_SCALE_ANIM`` is set truthy: notches then snap
+    to the target scale synchronously (still perfectly uniform - the tween is
+    polish, not correctness). Kill switch for live tuning + deterministic tests."""
+    import os
+    return os.environ.get("TTMT_NO_OVERLAY_SCALE_ANIM", "").strip().lower() \
+        in ("", "0", "no", "n", "false", "f", "off")
 
 
 class ClusterOverlayController:
@@ -85,11 +108,24 @@ class ClusterOverlayController:
         self._anchor: tuple[int, int] = self._default_anchor()
         self._active: bool = False
 
-        # Scaling state. The cluster is ONE window (no proxy/park/snapshot), so
-        # scaling is a synchronous metrics-apply + single resize + an input-shape
-        # phase machine (broad-while-scaling, exact-on-settle). Persistence of the
-        # scale across sessions is a LATER task.
+        # Scaling state. The cluster is ONE window with FIXED geometry (no proxy/
+        # park/snapshot, no per-notch resize): a notch retargets the zoom tween on
+        # the surface's whole-cluster transform, plus the input-shape phase machine
+        # (broad-while-scaling, exact-on-settle). _scale is the AUTHORITATIVE
+        # target (persisted, used for all hit/shape mapping); _view_scale tracks
+        # the value the view currently RENDERS at (they differ only mid-tween,
+        # while every mapping consumer is suspended by _scaling_active).
         self._scale: float = 1.0
+        self._view_scale: float = 1.0
+        self._scale_anim = None
+        # Fixed-envelope placement, computed once per enter() from the framed 1.0
+        # host: envelope size, the window-local pivot the emblem center sits on at
+        # every scale, the emblem center within the 1.0 host, and the 1.0 host
+        # size. None while framed (pre-enter callers recompute fresh).
+        self._envelope: tuple[int, int] | None = None
+        self._pivot: tuple[int, int] | None = None
+        self._emblem_center: tuple[int, int] | None = None
+        self._host_size: tuple[int, int] | None = None
         # Input-shape phase machine: re-applying the EXACT (per-control) input
         # shape under the pointer every notch can stall the wheel stream, so each
         # notch applies one BROAD (full-window) shape and (re)arms a settle timer
@@ -271,7 +307,7 @@ class ClusterOverlayController:
         return (bbox_w // 2, bbox_h // 2)
 
     def _radial_canvas(self) -> tuple[float, int]:
-        """``(emblem disc diameter, square canvas px)`` for the radial menu + dim at
+        """``(emblem disc diameter, square canvas px)`` for the radial menu at
         the current cluster scale. ONE formula shared by open_radial_menu and the
         scale path so the two never drift (mirrors
         ``OverlayGroupController._radial_canvas``)."""
@@ -279,22 +315,54 @@ class ClusterOverlayController:
         emblem_dia = float(CardMetrics(self._scale).emblem)
         return emblem_dia, int(emblem_dia * 4)
 
-    def _compute_window_rect(self):
-        """The SCREEN rect for the single cluster window: sized to the borrowed host
-        (the closed cluster bbox) and placed so the emblem center lands on the anchor.
+    def _radial_canvas_max(self) -> int:
+        """The FIXED radial-surface side: the ``emblem*4`` canvas at SCALE_MAX.
+        The radial top-level is sized to this once at open and never resized by a
+        scale gesture (only the menu's painted ring diameter and the centered
+        click region track the live scale) - the same no-geometry-during-scale
+        discipline as the cluster window, so scaling with the ring open cannot
+        judder the ring window either."""
+        from utils.overlay.card_metrics import CardMetrics
+        from utils.overlay.scale import SCALE_MAX
+        return int(CardMetrics(SCALE_MAX).emblem) * 4
 
-        The window is ALWAYS the closed bbox - radial-open never grows it. The
-        internal dim is a CHILD of ``_grid_host`` (Qt hard-clips it to the host
-        regardless of window size), so expanding the window can never enlarge the
-        dim; it only stretches the host's fill layout, reflowing the cards and
-        dragging the emblem off the anchor. Keeping the window at the bbox preserves
-        the emblem-center invariant open, closed, and while scaling. The radial menu
-        is its OWN top-level (sized to the full ``emblem*4`` canvas), independent of
-        this window."""
-        from utils.overlay.cluster_geometry import window_rect_for
+    def _envelope_spec(self):
+        """``(envelope_size, pivot, emblem_center, host_size)`` for placement and
+        transform mapping. Returns the values stored by ``enter()`` while active;
+        recomputes fresh from the provider otherwise (pre-enter callers), so the
+        math is identical either way."""
+        if self._envelope is not None:
+            return (self._envelope, self._pivot, self._emblem_center,
+                    self._host_size)
+        from utils.overlay.cluster_geometry import envelope_for
+        from utils.overlay.scale import SCALE_MAX
         w, h = self._cluster_size()
         emblem_center = self._emblem_center_local(w, h)
-        return window_rect_for((w, h), emblem_center, self._anchor)
+        size, pivot = envelope_for((w, h), emblem_center, SCALE_MAX)
+        return (size, pivot, emblem_center, (w, h))
+
+    def _map_host_rect(self, rect):
+        """Map a host-local (framed 1.0) rect into window coords under the current
+        AUTHORITATIVE scale - the same math the surface's proxy transform renders
+        with, so hit/shape rects and pixels can never drift apart."""
+        from utils.overlay.cluster_geometry import map_host_rect_to_window
+        _size, pivot, emblem_center, _hs = self._envelope_spec()
+        return map_host_rect_to_window(rect, emblem_center, pivot, self._scale)
+
+    def _compute_window_rect(self):
+        """The SCREEN rect for the single cluster window: the FIXED max-scale
+        envelope placed so the pivot (= the emblem center at every scale) lands on
+        the anchor.
+
+        The rect is independent of the current scale AND of radial state - scaling
+        zooms the transform inside this window; radial-open never grows it (the
+        radial menu is its own top-level, the internal dim a Qt-clipped child of
+        ``_grid_host``). The window only ever MOVES (drag/clamp), never resizes,
+        which is the whole judder fix: there is no per-notch geometry for the
+        compositor to mis-order."""
+        from utils.overlay.cluster_geometry import window_rect_for
+        size, pivot, _emblem_center, _host_size = self._envelope_spec()
+        return window_rect_for(size, pivot, self._anchor)
 
     def _build_surface(self):
         if self._surface_factory is not None:
@@ -316,6 +384,13 @@ class ClusterOverlayController:
         """
         if self._active:
             return True
+        from utils.overlay.backend import overlay_trace
+        from PySide6.QtCore import Qt as _Qt
+        _emb0 = getattr(self._card_provider, "_emblem", None)
+        overlay_trace(
+            f"cluster.enter begin: backend_avail={self._backend.is_available()} "
+            f"emblem={_emb0 is not None} emblem_passive="
+            f"{_emb0.testAttribute(_Qt.WA_TransparentForMouseEvents) if _emb0 is not None else 'n/a'}")
         provider = self._card_provider
         surface = None
         token = None
@@ -323,17 +398,40 @@ class ClusterOverlayController:
         try:
             surface = self._build_surface()
             token = provider.capture_cluster_host()
-            surface.host(provider._grid_host)
-            # Restore the persisted scale + anchor BEFORE measuring the host, so the
-            # cluster window spans the host at the RESTORED scale and re-centers on
-            # the remembered anchor. Nothing saved (or no settings) -> scale stays
-            # 1.0 + the default anchor (current default behavior). At a restored
-            # scale the host must be resized FIRST (apply_metrics) so the rect the
-            # window is sized to reflects the scaled host.
+            # Restore the persisted scale + anchor BEFORE computing placement so
+            # the window re-centers on the remembered anchor and the transform
+            # renders at the remembered zoom. Nothing saved (or no settings) ->
+            # scale 1.0 + the default anchor.
             self._load_persisted_state()
-            if self._scale != 1.0:
-                from utils.overlay.card_metrics import CardMetrics
-                provider.apply_metrics(CardMetrics(self._scale))
+            # Measure the FRAMED 1.0 host (its layout is intact after the detach)
+            # and derive the fixed envelope + pivot from it. The host keeps this
+            # 1.0 layout for the whole overlay session: a restored/changed scale
+            # is a TRANSFORM, never an apply_metrics re-layout.
+            from utils.overlay.cluster_geometry import envelope_for
+            from utils.overlay.scale import SCALE_MAX
+            w, h = self._cluster_size()
+            emblem_center = self._emblem_center_local(w, h)
+            size, pivot = envelope_for((w, h), emblem_center, SCALE_MAX)
+            self._host_size = (w, h)
+            self._emblem_center = emblem_center
+            self._envelope = size
+            self._pivot = pivot
+            # Fix the host at its 1.0 size so the proxy scene geometry is stable
+            # (mirrors CardSurface.host's base_size clamp; the captured token
+            # restores the original constraints on leave).
+            host = provider._grid_host
+            host.setFixedSize(w, h)
+            # Host through the transform seam when the surface provides it (the
+            # real ClusterSurface); a plain-host surface (test stubs) still gets
+            # correct placement + input shapes - the mapping math is controller-
+            # side - it just renders unscaled.
+            host_scaled = getattr(surface, "host_scaled", None)
+            if host_scaled is not None:
+                host_scaled(host, emblem_center, pivot, size,
+                            initial_scale=self._scale)
+            else:
+                surface.host(host)
+            self._view_scale = self._scale
             rect = self._compute_window_rect()
             surface.set_overlay_geometry(rect)
             # Install the pre-map EWMH state (skip-taskbar/pager + above) BEFORE the
@@ -363,6 +461,7 @@ class ClusterOverlayController:
             self._surface = None
             self._token = None
             self._active = False
+            self._clear_envelope_state()
             return False
         self._surface = surface
         self._token = token
@@ -396,6 +495,13 @@ class ClusterOverlayController:
         # so the phase is "exact" - identical to what _settle_input() lands on.
         self._input_phase = "exact"
         self._apply_exact_input_shape()
+        from utils.overlay.backend import overlay_trace as _ot_ok
+        _emb1 = getattr(self._card_provider, "_emblem", None)
+        from PySide6.QtCore import Qt as _Qt2
+        _ot_ok(
+            f"cluster.enter OK: active={self._active} visible={self._visible_cells} "
+            f"emblem_rect={self._emblem_rect()} emblem_passive="
+            f"{_emb1.testAttribute(_Qt2.WA_TransparentForMouseEvents) if _emb1 is not None else 'n/a'}")
         self._emit_active_changed()   # self._active is True here
         return True
 
@@ -437,19 +543,26 @@ class ClusterOverlayController:
         # Stop reshaping on monitor/DPI changes: disconnect the screenChanged handler
         # so a late signal after teardown can never re-apply a shape to a dead surface.
         self._disconnect_screen_change()
-        # Cancel any pending settle and reset scaling state so a re-enter starts
-        # framed (scale 1.0, no in-flight gesture). A late timer firing post-leave
-        # is a guarded no-op, but stopping it here avoids the wasted callback.
+        # Cancel any pending settle, stop the zoom tween, and reset scaling state
+        # so a re-enter starts framed (scale 1.0, no in-flight gesture). A late
+        # timer/frame firing post-leave is a guarded no-op, but stopping here
+        # avoids the wasted callback.
         if self._settle_timer is not None:
             self._settle_timer.stop()
+        if self._scale_anim is not None:
+            self._scale_anim.stop()
         self._scaling_active = False
         self._input_phase = None
         self._scale = 1.0
+        self._view_scale = 1.0
         # Disconnect occupancy first so a late occupied_cells_changed after teardown
         # is a safe no-op, and reset the visible set to the framed default.
         self._disconnect_occupancy()
         self._visible_cells = {0, 1, 2, 3}
-        # Reset framed (scale-1.0) metrics so the cards come back at base scale.
+        # Re-assert framed (scale-1.0) metrics. In the transform model the host
+        # never left its 1.0 layout, so this is a defensive idempotent no-op that
+        # guarantees the cards come back at base scale even if something external
+        # re-metered the host mid-overlay.
         if provider is not None:
             try:
                 from utils.overlay.card_metrics import CardMetrics
@@ -465,6 +578,7 @@ class ClusterOverlayController:
         self._teardown_surface(surface)
         self._surface = None
         self._token = None
+        self._clear_envelope_state()
         self._safe_call(self._window, "showNormal")
         self._active = False
         self._emit_active_changed()   # self._active is False here
@@ -481,63 +595,115 @@ class ClusterOverlayController:
     # Scaling + move (single window: no proxy, no park, no snapshot)
     # ------------------------------------------------------------------
     def set_scale_by_notches(self, notches: int) -> None:
-        """Step the cluster scale by *notches*, re-apply metrics, resize the ONE
-        window, and drive the input-shape phase machine. No-op if not active.
+        """Step the cluster scale by *notches* as ONE transform retarget. No-op
+        if not active.
 
-        Crisp per-notch (no animation): the single window has no proxy/snapshot
-        machinery, so a notch is a synchronous metrics-apply (cards + emblem grow/
-        shrink), a SINGLE window resize (the cluster sizeHint changed - the surface
-        source-clear handles the backing), and one BROAD input-shape apply that
-        keeps the wheel stream captured while a settle timer arms the EXACT shape.
+        The window geometry does NOT change (fixed max-scale envelope) and the
+        host is NOT re-laid-out (no apply_metrics): a notch updates the
+        authoritative target scale, retargets the zoom tween on the surface's
+        whole-cluster transform (snap when the tween is killed/absent), and
+        drives the input-shape phase machine (one BROAD full-window apply that
+        keeps the wheel stream captured, then the EXACT shape on settle). This
+        is what makes scaling judder-free: there is nothing for the compositor
+        to mis-order and nothing that scales on a different curve.
 
         Unlike enter()/leave() this is NOT transactional: it is an idempotent
-        re-layout, so a mid-gesture failure self-corrects on the next notch.
+        retarget, so a mid-gesture failure self-corrects on the next notch.
         """
         if not self._active:
             return
         prev_scale = self.scale
         self.scale = step_scale(self.scale, notches)
         # Clamped at SCALE_MIN/MAX -> the scale did not actually change: skip the
-        # whole reshape + broad phase (which would otherwise mark _scaling_active and
-        # lock out drag for the ~250ms settle window on a NO-OP scroll) and the save.
+        # whole broad phase (which would otherwise mark _scaling_active and lock
+        # out drag for the ~250ms settle window on a NO-OP scroll) and the save.
         # Mirrors move_group's clamp-pinned no-op early-return.
         if self.scale == prev_scale:
             return
-        provider = self._card_provider
-        if provider is not None:
-            try:
-                from utils.overlay.card_metrics import CardMetrics
-                provider.apply_metrics(CardMetrics(self.scale))
-            except Exception:
-                pass
-        # The cluster size changed: recompute + apply the window rect ONCE (same
-        # emblem-centered placement path enter() uses). Best-effort, like enter():
-        # a resize failure self-corrects on the next notch rather than propagating
-        # into the Qt wheel handler.
-        rect = self._compute_window_rect()
-        if self._surface is not None:
-            try:
-                self._surface.set_overlay_geometry(rect)
-            except Exception:
-                pass
-        # Radial open: keep its top-level + the internal dim sized + centered to the
-        # new emblem (the click-region re-apply is deferred to the settle timer).
-        # Radial CLOSED: still re-size + re-center the internal dim to the new scale's
-        # emblem*4 canvas so it tracks scale regardless of radial state (otherwise a
-        # scale-while-closed leaves the dim stale and the next open would flash it).
+        # Retarget the rendered zoom toward the new authoritative scale.
+        self._drive_view_scale(self.scale)
+        # Radial open: keep the ring diameter in lockstep with the emblem (its
+        # top-level stays at the FIXED max canvas; the click-region re-apply is
+        # deferred to the radial settle timer). The internal dim needs nothing:
+        # it is a child of the transformed host, so it zooms with the cluster.
         if self.is_radial_open:
             self._reposition_radial()
-        else:
-            self._position_internal_dim()
         # Keep the portable panel centered on the anchor (it is NOT rescaled - only
         # re-centered) regardless of radial state.
         if self.is_panel_open:
             self._reposition_panel()
         # Drive the input-shape phase machine: broad now, exact on settle.
-        self._enter_broad_phase(rect)
+        self._enter_broad_phase(self._compute_window_rect())
         # Persist the new scale (debounced). A clamp-pinned no-op scroll already
         # returned above, so reaching here always means the scale actually changed.
         self._schedule_save()
+
+    def _drive_view_scale(self, target: float) -> None:
+        """Bring the RENDERED scale to *target*: retarget the zoom tween from the
+        current visual value (so a scroll burst reads as one continuous zoom), or
+        snap synchronously when animation is disabled or the surface has no
+        transform seam (test stubs). Best-effort: a surface error must never
+        propagate into the Qt wheel handler."""
+        target = float(target)
+        surface = self._surface
+        setter = getattr(surface, "set_cluster_scale", None) \
+            if surface is not None else None
+        if setter is None:
+            self._view_scale = target
+            return
+        if not _scale_anim_enabled():
+            self._view_scale = target
+            try:
+                setter(target)
+            except Exception:
+                pass
+            return
+        from PySide6.QtCore import QVariantAnimation, QEasingCurve
+        anim = self._scale_anim
+        if anim is None:
+            anim = QVariantAnimation()
+            anim.setDuration(_SCALE_ANIM_MS)
+            anim.setEasingCurve(QEasingCurve.OutCubic)
+            anim.valueChanged.connect(self._on_scale_anim_frame)
+            self._scale_anim = anim
+        anim.stop()
+        anim.setStartValue(float(self._view_scale))
+        anim.setEndValue(target)
+        anim.start()
+
+    def _on_scale_anim_frame(self, value) -> None:
+        """One zoom-tween frame: push the interpolated scale to the surface's
+        transform. Guarded against a frame landing after leave() (anim stopped
+        there, but a queued frame must still be harmless)."""
+        if not self._active:
+            return
+        self._view_scale = float(value)
+        surface = self._surface
+        setter = getattr(surface, "set_cluster_scale", None) \
+            if surface is not None else None
+        if setter is None:
+            return
+        try:
+            setter(self._view_scale)
+        except Exception:
+            pass
+
+    def _sync_view_scale_to_target(self) -> None:
+        """Snap the rendered scale to the authoritative target and stop any
+        running tween. Used at settle (paranoia: a lagging/killed animation must
+        never leave the visual mid-ramp once hit-mapping resumes) and on leave."""
+        if self._scale_anim is not None:
+            self._scale_anim.stop()
+        self._view_scale = self._scale
+        surface = self._surface
+        setter = getattr(surface, "set_cluster_scale", None) \
+            if surface is not None else None
+        if setter is None:
+            return
+        try:
+            setter(self._view_scale)
+        except Exception:
+            pass
 
     def move_group(self, dx: int, dy: int) -> bool:
         """Shift the cluster anchor by (dx, dy), clamp to the screen envelope, and
@@ -547,40 +713,48 @@ class ClusterOverlayController:
         returns False without moving so a wheel-zoom is never fought by a stray
         drag. Also a no-op (False) when not active.
 
-        Anchor reconciliation: the anchor is stored as the emblem-center of the
-        CLAMPED rect (not the raw accumulated point), so dragging into an envelope
-        edge cannot build up a phantom offset that a reverse drag must first unwind
-        (the dead-zone bug). A clamp that pins the rect to its current position is
-        reported as no move (returns False).
+        Anchor reconciliation: the anchor accumulates only the delta the clamp
+        actually applied (not the raw requested point), so dragging into an
+        envelope edge cannot build up a phantom offset that a reverse drag must
+        first unwind (the dead-zone bug). The clamp operates on the VISIBLE
+        content rect at the current scale, not the fixed envelope window (which
+        overstates the content below SCALE_MAX). A clamp that pins the rect to
+        its current position is reported as no move (returns False).
         """
         if not self._active:
             return False
         if self._scaling_active:
             return False
-        from utils.overlay.cluster_geometry import window_rect_for, clamp_to_envelope
-        w, h = self._cluster_size()
-        emblem_center = self._emblem_center_local(w, h)
-        ex, ey = emblem_center
+        from utils.overlay.cluster_geometry import (
+            clamp_to_envelope, scaled_content_rect,
+        )
+        _size, _pivot, emblem_center, host_size = self._envelope_spec()
         ax, ay = self._anchor
-        # The rect at the CURRENT (already-reconciled) anchor == the on-screen
-        # placement; the candidate is the shifted rect, clamped to the envelope.
-        current = window_rect_for((w, h), emblem_center, (ax, ay))
-        candidate = window_rect_for((w, h), emblem_center, (ax + dx, ay + dy))
+        # Clamp the VISIBLE CONTENT rect, not the window: the window is the fixed
+        # max-scale envelope, which overstates the content at any smaller scale -
+        # clamping it would let every visible pixel slide off-screen. The content
+        # rect at the CURRENT (already-reconciled) anchor == the on-screen
+        # placement; the candidate is the shifted rect, clamped to the screens.
+        current = scaled_content_rect(host_size, emblem_center, (ax, ay),
+                                      self._scale)
+        candidate = scaled_content_rect(host_size, emblem_center,
+                                        (ax + dx, ay + dy), self._scale)
         clamped = clamp_to_envelope(
             candidate, self._screens_xywh(), self._move_margin())
         if clamped == current:
             return False  # clamp pinned -> no visual move (no anchor drift)
-        # Reconcile the anchor onto the clamped rect's emblem-center. The clamp +
-        # reconcile run on the CLOSED (bare-cluster) geometry: the anchor IS the
-        # emblem center regardless of radial state, and the transient dim canvas
-        # should not change where the cluster parks.
-        self._anchor = (clamped.x() + ex, clamped.y() + ey)
+        # Reconcile the anchor by the delta the clamp actually applied (the clamp
+        # only translates), so the anchor accumulates exactly the visual move and
+        # a drag into an envelope edge cannot build a phantom offset that a
+        # reverse drag must first unwind (the dead-zone bug).
+        self._anchor = (ax + dx + (clamped.x() - candidate.x()),
+                        ay + dy + (clamped.y() - candidate.y()))
         if self._surface is not None:
-            # The window is always the closed bbox rect (radial-open no longer grows
-            # it), so the clamped rect IS the rect to apply whether or not the radial
-            # is open; the radial top-level + dim re-center separately below.
+            # Pure MOVE of the fixed envelope (size never changes here): place the
+            # pivot on the reconciled anchor; the radial top-level + panel
+            # re-center separately below.
             try:
-                self._surface.set_overlay_geometry(clamped)
+                self._surface.set_overlay_geometry(self._compute_window_rect())
             except Exception:
                 pass
         if self.is_radial_open:
@@ -623,6 +797,9 @@ class ClusterOverlayController:
         self._scaling_active = False
         if not self._active or self._surface is None:
             return
+        # The gesture is over: the rendered scale must equal the authoritative
+        # target before hit-mapping consumers (peek/ghost/drag) resume.
+        self._sync_view_scale_to_target()
         self._input_phase = "exact"
         self._apply_exact_input_shape()
 
@@ -645,6 +822,20 @@ class ClusterOverlayController:
         surface = self._surface
         if surface is None:
             return
+        try:
+            from utils.overlay.backend import overlay_trace
+            try:
+                br = path.boundingRect()
+                wid = int(surface.winId())
+                dpr = surface.devicePixelRatio()
+            except Exception as _e:
+                br, wid, dpr = f"<err {_e!r}>", None, None
+            overlay_trace(
+                f"cluster.apply_input_shape phase={self._input_phase} bbox={br} "
+                f"dpr={dpr} winId={wid} visible={self._visible_cells} "
+                f"empty_path={getattr(path, 'isEmpty', lambda: '?')()}")
+        except Exception:
+            pass
         try:
             self._backend.apply_input_shape(surface, path, surface.devicePixelRatio())
         except Exception:
@@ -669,14 +860,15 @@ class ClusterOverlayController:
         return path
 
     def _emblem_rect(self):
-        """The emblem hit rect in window-local coords (the host fills the window),
-        from the emblem widget geometry. Null QRect when unavailable."""
+        """The emblem hit rect in window-local coords: the emblem widget's framed
+        1.0 geometry mapped through the cluster transform (the host renders scaled
+        about the pivot inside the fixed envelope). Null QRect when unavailable."""
         from PySide6.QtCore import QRect
         emblem = getattr(self._card_provider, "_emblem", None)
         if emblem is not None:
             g = emblem.geometry()
             if g.width() > 0 and g.height() > 0:
-                return QRect(g)
+                return self._map_host_rect(QRect(g))
         return QRect()
 
     @staticmethod
@@ -696,11 +888,11 @@ class ClusterOverlayController:
         WINDOW-LOCAL coords - the input-union's per-slot ``card_controls``.
 
         The provider's real ``control_rects(cell_index)`` returns CARD-LOCAL rects
-        (relative to that cell's root). In the single-window cluster the whole grid
-        host is one window, so each rect is translated by its cell's origin within
-        the grid host (``cell.mapTo(grid_host)``). ``apply_metrics`` has already
-        resized the cards to the current scale, so both the control rects and the
-        cell origins are at-scale - no extra scaling here.
+        at the framed 1.0 layout (the host never re-layouts in the transform
+        model). Each rect is translated by its cell's origin within the grid host
+        (``cell.mapTo(grid_host)``) into HOST coords, then mapped through the
+        cluster transform into window coords - the same math the proxy renders
+        with, so the click region always sits on the pixels.
 
         Empty dict when the provider lacks ``control_rects``/``_card_slots`` (the
         exact union then collapses to the emblem only - documented placeholder
@@ -720,7 +912,10 @@ class ClusterOverlayController:
             try:
                 origin = self._cell_origin(root, grid_host)
                 local_rects = rects_fn(cell_index)
-                out[cell_index] = [r.translated(origin) for r in local_rects]
+                out[cell_index] = [
+                    self._map_host_rect(r.translated(origin))
+                    for r in local_rects
+                ]
             except Exception:
                 continue
         return out
@@ -769,11 +964,12 @@ class ClusterOverlayController:
 
         A card's SCREEN rect = the window placement origin (``_compute_window_rect``,
         derived from the anchor - matching the surface geometry and robust to a stub
-        surface that never really moves) PLUS the cell's origin within ``_grid_host``,
-        at the cell's at-scale size. The control rects are the raw card-local
-        (at-scale) rects; ``apply_metrics`` has already scaled the cards, so no extra
-        scaling is applied here. Empty when the provider lacks the ``control_rects`` /
-        ``_card_slots`` hooks."""
+        surface that never really moves) PLUS the cell's framed 1.0 rect within
+        ``_grid_host`` mapped through the cluster transform (where the transform
+        actually renders it). The control rects are the raw CARD-LOCAL 1.0 rects -
+        exactly the ``control_hits`` contract, which divides by the scale passed to
+        it. Empty when the provider lacks the ``control_rects`` / ``_card_slots``
+        hooks."""
         provider = self._card_provider
         rects_fn = getattr(provider, "control_rects", None) if provider is not None else None
         slots = getattr(provider, "_card_slots", None) if provider is not None else None
@@ -793,8 +989,9 @@ class ClusterOverlayController:
             try:
                 origin = self._cell_origin(root, grid_host)
                 size = root.size()
-                screen_rect = QRect(ox + origin.x(), oy + origin.y(),
-                                    size.width(), size.height())
+                host_rect = QRect(origin.x(), origin.y(),
+                                  size.width(), size.height())
+                screen_rect = self._map_host_rect(host_rect).translated(ox, oy)
                 out.append((cell_index, screen_rect, rects_fn(cell_index)))
             except Exception:
                 continue
@@ -877,11 +1074,13 @@ class ClusterOverlayController:
         """Map each (already-logical, SCREEN) ghost point to a card control and
         deliver a synthetic click at its CELL-ROOT-LOCAL coordinate.
 
-        The cards list feeds the shared ``control_hits`` helper: each visible slot's
-        SCREEN rect (window origin + cell offset) plus its card-local control rects.
-        Both are already at-scale (``apply_metrics`` resized the cards), so the scale
-        passed is 1.0 and the resolved (x, y) is the at-scale cell-root-local point
-        ``deliver_ghost_click`` expects. Defensive per card: ``on_ghost_event`` is a
+        The cards list feeds the shared ``control_hits`` helper: each visible
+        slot's SCREEN rect (the transform-mapped cell rect at the window origin)
+        plus its card-local FRAMED 1.0 control rects. ``control_hits`` divides the
+        in-rect offset by the cluster scale, so the resolved (x, y) is the 1.0
+        cell-root-local point ``deliver_ghost_click``'s ``childAt`` walk expects
+        (the cells keep their 1.0 layout in the transform model - same contract as
+        the legacy per-card path). Defensive per card: ``on_ghost_event`` is a
         QUEUED Qt slot, so one bad card drops only its own click, never the whole
         press."""
         provider = self._card_provider
@@ -895,7 +1094,7 @@ class ClusterOverlayController:
                            screen_rect.width(), screen_rect.height()),
                           rect_tuples))
         points = [(x, y) for _slot, x, y in items]
-        for slot, x, y in control_hits(points, cards, 1.0):
+        for slot, x, y in control_hits(points, cards, self._scale):
             try:
                 provider.deliver_ghost_click(slot, x, y)
             except Exception:
@@ -1354,16 +1553,18 @@ class ClusterOverlayController:
             self._dim = None
 
     def _position_internal_dim(self) -> None:
-        """Center the internal dim on the emblem (``_grid_host``-local coords) at the
-        current ``emblem*4`` canvas. The dim follows the emblem as the cluster
-        scales (apply_metrics moves the emblem center)."""
+        """Center the internal dim on the emblem in FRAMED 1.0 ``_grid_host``-local
+        coords at the 1.0 ``emblem*4`` canvas. Scale-independent by design: the dim
+        is a child of the transformed host, so the cluster zoom scales it in
+        lockstep with the emblem - positioning it at the current scale would
+        double-scale it."""
         dim = self._dim
         if dim is None:
             return
         from PySide6.QtCore import QRect
-        w, h = self._cluster_size()
-        ecx, ecy = self._emblem_center_local(w, h)
-        _dia, canvas = self._radial_canvas()
+        from utils.overlay.card_metrics import CardMetrics
+        _size, _pivot, (ecx, ecy), _host_size = self._envelope_spec()
+        canvas = int(CardMetrics(1.0).emblem) * 4
         dim.setGeometry(QRect(ecx - canvas // 2, ecy - canvas // 2, canvas, canvas))
 
     def _restack_internal_layers(self) -> None:
@@ -1428,6 +1629,9 @@ class ClusterOverlayController:
         leak an untracked top-level. The surface + menu are tracked BEFORE any
         fallible step, so on ANY error ``close_radial_menu()`` tears the partial state
         down and the method fails closed (returns None, ``is_radial_open`` False)."""
+        from utils.overlay.backend import overlay_trace as _otr
+        _otr(f"cluster.open_radial_menu called: active={self._active} "
+             f"already_open={self._radial_surface is not None}")
         if not self._active:
             return None
         if self._radial_surface is not None:
@@ -1438,10 +1642,16 @@ class ClusterOverlayController:
         from PySide6.QtGui import QPainterPath
         try:
             emblem_dia, canvas = self._radial_canvas()
+            canvas_max = self._radial_canvas_max()
             menu = RadialMenuWidget(emblem_diameter=emblem_dia)
             self._radial_size = canvas
             ax, ay = self._anchor
-            geom = QRect(int(ax - canvas / 2), int(ay - canvas / 2), canvas, canvas)
+            # The radial top-level is sized to the FIXED max-scale canvas (never
+            # resized by a scale gesture - the same no-geometry-during-scale
+            # discipline as the cluster window); the menu paints its ring from
+            # emblem_dia about the widget center, so the extra margin is inert.
+            geom = QRect(int(ax - canvas_max / 2), int(ay - canvas_max / 2),
+                         canvas_max, canvas_max)
             surface = RadialSurface(backend=self._backend)
             # Track the surface + menu IMMEDIATELY (before any fallible host/show), so
             # a failure from here on is cleaned up by close_radial_menu() instead of
@@ -1452,14 +1662,17 @@ class ClusterOverlayController:
             surface.set_overlay_geometry(geom)
             self._safe_call(surface, "prepare_initial_state")
             surface.show()
-            # NON-EMPTY click region: the whole radial canvas accepts clicks (the
-            # cluster window stays click-through; this surface is additive).
+            # NON-EMPTY click region: the CURRENT-scale canvas, centered in the
+            # fixed max-canvas window, accepts clicks (the cluster window stays
+            # click-through; this surface is additive). Clicks in the inert margin
+            # outside it pass through to the games as before.
+            off = (canvas_max - canvas) // 2
             path = QPainterPath()
-            path.addRect(0, 0, canvas, canvas)
+            path.addRect(off, off, canvas, canvas)
             self._apply_radial_input_shape(path)
-            # Reposition the dim to the CURRENT scale's emblem*4 canvas BEFORE showing
-            # it: a scale-while-CLOSED leaves the dim sized to the old (enter-time)
-            # canvas, so without this it would flash stale on open.
+            # Re-assert the dim's framed-1.0 placement BEFORE showing it (it is
+            # scale-independent in the transform model; this is belt-and-suspenders
+            # against anything having moved it while closed).
             self._position_internal_dim()
             # Reveal the internal dim behind the ring.
             dim = self._dim
@@ -1517,20 +1730,23 @@ class ClusterOverlayController:
         self._restack_internal_layers()
 
     def _reposition_radial(self) -> None:
-        """Keep the radial top-level + internal dim sized and centered on the emblem
-        (anchor) at the CURRENT scale. On a scale change the ``emblem*4`` canvas
-        grows/shrinks with the emblem, so the menu's emblem diameter + the surface
-        size + the dim follow; the radial click-region re-apply is DEFERRED to the
-        settle timer (re-applying the X11 input shape under the pointer mid-scroll
-        stalls the wheel stream). No-op when the radial is closed."""
+        """Keep the radial top-level centered on the anchor and its painted ring in
+        lockstep with the emblem at the CURRENT scale. The surface geometry is the
+        FIXED max-scale canvas - a scale change only updates the menu's emblem
+        diameter (a repaint) and defers the click-region re-apply to the settle
+        timer (re-applying the X11 input shape under the pointer mid-scroll stalls
+        the wheel stream); a drag re-centers the fixed-size window (a pure move).
+        No-op when the radial is closed."""
         if not self.is_radial_open:
             return
         from PySide6.QtCore import QRect
         emblem_dia, canvas = self._radial_canvas()
+        canvas_max = self._radial_canvas_max()
         resized = canvas != self._radial_size
         self._radial_size = canvas
         ax, ay = self._anchor
-        geom = QRect(int(ax - canvas / 2), int(ay - canvas / 2), canvas, canvas)
+        geom = QRect(int(ax - canvas_max / 2), int(ay - canvas_max / 2),
+                     canvas_max, canvas_max)
         surface = self._radial_surface
         if surface is not None:
             if resized and self._radial_menu is not None:
@@ -1544,8 +1760,8 @@ class ClusterOverlayController:
                 pass
             if resized:
                 self._schedule_radial_reshape()
-        # The dim is a _grid_host-local child, so it re-centers on the emblem (which
-        # apply_metrics already moved) at the new canvas.
+        # The dim is scale-independent (a child of the transformed host); this is
+        # a cheap idempotent re-assert of its framed-1.0 placement.
         self._position_internal_dim()
         self._restack_internal_layers()
 
@@ -1563,14 +1779,16 @@ class ClusterOverlayController:
         self._radial_reshape_timer.start()
 
     def _reapply_radial_shape(self) -> None:
-        """Apply the full-canvas click region at the current radial size. Fired by
-        the settle timer; a no-op once the menu is closed."""
+        """Apply the CURRENT-scale canvas click region, centered in the fixed
+        max-canvas window. Fired by the settle timer; a no-op once the menu is
+        closed."""
         surface = self._radial_surface
         if surface is None or self._radial_size <= 0:
             return
         from PySide6.QtGui import QPainterPath
+        off = (self._radial_canvas_max() - self._radial_size) // 2
         path = QPainterPath()
-        path.addRect(0, 0, self._radial_size, self._radial_size)
+        path.addRect(off, off, self._radial_size, self._radial_size)
         self._apply_radial_input_shape(path)
 
     def _apply_radial_input_shape(self, path) -> None:
@@ -1859,6 +2077,14 @@ class ClusterOverlayController:
     # ------------------------------------------------------------------
     # Teardown helpers
     # ------------------------------------------------------------------
+    def _clear_envelope_state(self) -> None:
+        """Drop the enter()-computed fixed-envelope placement (leave / a failed
+        enter), so a framed controller recomputes fresh from the provider."""
+        self._envelope = None
+        self._pivot = None
+        self._emblem_center = None
+        self._host_size = None
+
     def _release_and_restore(self, surface, token) -> None:
         """Release the borrowed host from *surface*, then restore it to the tab.
 

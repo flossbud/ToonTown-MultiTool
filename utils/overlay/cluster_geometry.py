@@ -10,9 +10,20 @@ window is positioned so the EMBLEM CENTER lands exactly on the anchor screen
 point, regardless of where the emblem sits within the cluster subtree. Naively
 centering the bounding box on the anchor is WRONG whenever the emblem is
 off-center; do not "simplify" it back to that.
+
+Transform scaling (fixed-envelope model): the cluster window is sized ONCE to
+the :func:`envelope_for` rect - the bounding box of the scaled cluster at
+SCALE_MAX, pivoted on the emblem center - and NEVER resized or moved during a
+scale gesture. The live host stays at its framed 1.0 layout and is zoomed by a
+single uniform transform about the pivot; :func:`map_host_rect_to_window` /
+:func:`map_window_point_to_host` convert between the 1.0 host coordinates and
+the window coordinates that transform produces. Window geometry changing on a
+scale notch was the judder (an XWayland resize+move is never atomic); keeping
+the envelope fixed removes it by construction.
 """
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable, Mapping
 from typing import Tuple
 
@@ -68,6 +79,136 @@ def window_rect_for(
     height = top + bottom
 
     return QRect(ax - left, ay - top, width, height)
+
+
+def envelope_for(
+    cluster_size: Tuple[int, int],
+    emblem_center_local: Tuple[int, int],
+    max_scale: float,
+) -> Tuple[Tuple[int, int], Tuple[int, int]]:
+    """Size the fixed cluster window envelope and locate the zoom pivot in it.
+
+    The envelope is the bounding box of the cluster scaled by *max_scale* about
+    the emblem center: relative to the emblem center the 1.0 host extends
+    ``left=ex``/``right=w-ex``/``top=ey``/``bottom=h-ey``, so at *max_scale*
+    each extent grows by that factor. Extents are ceil'd independently so the
+    scaled content can never clip at SCALE_MAX by a sub-pixel.
+
+    Args:
+        cluster_size: ``(w, h)`` of the host subtree at scale 1.0.
+        emblem_center_local: ``(ex, ey)`` emblem center within the 1.0 host.
+        max_scale: the largest scale the envelope must contain (SCALE_MAX).
+
+    Returns:
+        ``((width, height), (pivot_x, pivot_y))`` - the envelope size and the
+        fixed window-local point the emblem center sits on at EVERY scale.
+    """
+    w, h = cluster_size
+    ex, ey = emblem_center_local
+    left = math.ceil(ex * max_scale)
+    top = math.ceil(ey * max_scale)
+    right = math.ceil((w - ex) * max_scale)
+    bottom = math.ceil((h - ey) * max_scale)
+    return ((left + right, top + bottom), (left, top))
+
+
+def map_host_rect_to_window(
+    rect: QRect,
+    emblem_center_local: Tuple[int, int],
+    pivot: Tuple[int, int],
+    scale: float,
+) -> QRect:
+    """Map a host-local (scale-1.0) rect into window coords under the transform.
+
+    The transform scales about the emblem center ``(ex, ey)`` and pins that
+    point onto the window-local *pivot*:
+    ``window = pivot + (host - emblem_center) * scale``. Edges are rounded
+    OUTWARD (floor near, ceil far) so a mapped input/hit rect always CONTAINS
+    the true scaled rect - a clickable control can end up 1px generous, never
+    1px dead.
+
+    Args:
+        rect: host-local rect at scale 1.0.
+        emblem_center_local: ``(ex, ey)`` emblem center within the 1.0 host.
+        pivot: ``(px, py)`` fixed window-local point the emblem center sits on.
+        scale: the current uniform cluster scale.
+
+    Returns:
+        The window-local ``QRect`` covering *rect* under the transform.
+    """
+    ex, ey = emblem_center_local
+    px, py = pivot
+    s = float(scale)
+    left = px + (rect.x() - ex) * s
+    top = py + (rect.y() - ey) * s
+    right = px + (rect.x() + rect.width() - ex) * s
+    bottom = py + (rect.y() + rect.height() - ey) * s
+    x0, y0 = math.floor(left), math.floor(top)
+    return QRect(x0, y0, math.ceil(right) - x0, math.ceil(bottom) - y0)
+
+
+def map_window_point_to_host(
+    point: Tuple[int, int],
+    emblem_center_local: Tuple[int, int],
+    pivot: Tuple[int, int],
+    scale: float,
+) -> Tuple[int, int]:
+    """Inverse of :func:`map_host_rect_to_window` for a single point.
+
+    ``host = emblem_center + (window - pivot) / scale``, rounded to the nearest
+    host pixel. A non-positive *scale* is treated as 1.0 (defensive; the scale
+    machinery clamps to SCALE_MIN well above zero).
+
+    Args:
+        point: ``(x, y)`` window-local point.
+        emblem_center_local: ``(ex, ey)`` emblem center within the 1.0 host.
+        pivot: ``(px, py)`` fixed window-local pivot.
+        scale: the current uniform cluster scale.
+
+    Returns:
+        ``(x, y)`` in host-local scale-1.0 coordinates.
+    """
+    ex, ey = emblem_center_local
+    px, py = pivot
+    s = float(scale) if scale and scale > 0 else 1.0
+    x, y = point
+    return (round(ex + (x - px) / s), round(ey + (y - py) / s))
+
+
+def scaled_content_rect(
+    cluster_size: Tuple[int, int],
+    emblem_center_local: Tuple[int, int],
+    anchor: Tuple[int, int],
+    scale: float,
+) -> QRect:
+    """The SCREEN rect the scaled cluster content actually covers.
+
+    With a fixed max-scale envelope window, the window rect overstates the
+    visible content at any scale below SCALE_MAX - clamping the WINDOW to the
+    screen envelope would let all visible content slide fully off-screen. Move
+    clamping must therefore operate on this content rect: the 1.0 host scaled
+    about the emblem center, with that center pinned on *anchor*. Rounded
+    outward (floor near, ceil far) so the clamp is never a pixel too permissive.
+
+    Args:
+        cluster_size: ``(w, h)`` of the host subtree at scale 1.0.
+        emblem_center_local: ``(ex, ey)`` emblem center within the 1.0 host.
+        anchor: ``(ax, ay)`` screen point the emblem center occupies.
+        scale: the current uniform cluster scale.
+
+    Returns:
+        The screen ``QRect`` covering the visible cluster content.
+    """
+    w, h = cluster_size
+    ex, ey = emblem_center_local
+    ax, ay = anchor
+    s = float(scale)
+    left = ax - ex * s
+    top = ay - ey * s
+    right = ax + (w - ex) * s
+    bottom = ay + (h - ey) * s
+    x0, y0 = math.floor(left), math.floor(top)
+    return QRect(x0, y0, math.ceil(right) - x0, math.ceil(bottom) - y0)
 
 
 def input_union(

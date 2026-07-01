@@ -14,7 +14,11 @@ from PySide6.QtGui import QRegion
 from utils.overlay.cluster_geometry import (
     clamp_to_envelope,
     cluster_bbox,
+    envelope_for,
     input_union,
+    map_host_rect_to_window,
+    map_window_point_to_host,
+    scaled_content_rect,
     window_rect_for,
 )
 
@@ -184,3 +188,102 @@ def test_input_union_visible_slot_absent_from_controls_is_safe():
     region = input_union(emblem, {0: [QRect(0, 0, 10, 5)]}, visible={5})
     assert region.contains(QPoint(45, 45))       # emblem present
     assert not region.contains(QPoint(2, 2))     # slot 0 not visible -> excluded
+
+
+# --------------------------------------------------------------------------- #
+# envelope_for (fixed max-scale window)
+# --------------------------------------------------------------------------- #
+def test_envelope_for_integer_scale_is_exact():
+    # 400x300 host, off-center emblem (110, 90), max scale 2.0: every extent
+    # doubles exactly, pivot = scaled emblem offsets.
+    (w, h), (px, py) = envelope_for((400, 300), (110, 90), 2.0)
+    assert (w, h) == (800, 600)
+    assert (px, py) == (220, 180)
+
+
+def test_envelope_for_ceils_outward_never_clips():
+    # Fractional extents must round UP: 1.75 * 110 = 192.5 -> 193, etc. The
+    # envelope must CONTAIN the true scaled bbox at max scale on every side.
+    (w, h), (px, py) = envelope_for((400, 300), (110, 90), 1.75)
+    assert px >= 110 * 1.75 and py >= 90 * 1.75
+    assert w - px >= (400 - 110) * 1.75
+    assert h - py >= (300 - 90) * 1.75
+    # And it is tight to within the 1px-per-side ceil.
+    assert w <= 400 * 1.75 + 2 and h <= 300 * 1.75 + 2
+
+
+def test_envelope_window_rect_composes_with_window_rect_for():
+    # Placing the envelope via window_rect_for puts the PIVOT on the anchor.
+    (size, pivot) = envelope_for((400, 300), (110, 90), 1.75)
+    rect = window_rect_for(size, pivot, (1000, 700))
+    assert (rect.x() + pivot[0], rect.y() + pivot[1]) == (1000, 700)
+    assert (rect.width(), rect.height()) == size
+
+
+# --------------------------------------------------------------------------- #
+# map_host_rect_to_window / map_window_point_to_host
+# --------------------------------------------------------------------------- #
+def test_map_host_rect_identity_at_pivot_scale_one():
+    # scale 1.0 with pivot == emblem center is the identity.
+    r = map_host_rect_to_window(QRect(10, 20, 30, 40), (110, 90), (110, 90), 1.0)
+    assert r == QRect(10, 20, 30, 40)
+
+
+def test_map_host_rect_scales_about_emblem_center():
+    # The emblem's own rect maps CENTERED on the pivot at every scale.
+    emblem = QRect(60, 40, 100, 100)           # center (110, 90)
+    for s in (0.5, 1.0, 1.5, 2.0):
+        m = map_host_rect_to_window(emblem, (110, 90), (220, 180), s)
+        cx = m.x() + m.width() / 2.0
+        cy = m.y() + m.height() / 2.0
+        # Outward rounding may shift the center by at most half a pixel.
+        assert abs(cx - 220) <= 1.0 and abs(cy - 180) <= 1.0
+        assert m.width() >= 100 * s - 1e-9     # never clips the true rect
+
+
+def test_map_host_rect_rounds_outward():
+    # A rect whose scaled edges are fractional must round outward (contain).
+    r = map_host_rect_to_window(QRect(0, 0, 3, 3), (0, 0), (0, 0), 1.5)
+    assert r == QRect(0, 0, 5, 5)              # 4.5 -> ceil 5
+    r2 = map_host_rect_to_window(QRect(1, 1, 3, 3), (0, 0), (0, 0), 1.5)
+    assert r2.x() == 1 and r2.y() == 1         # 1.5 -> floor 1
+    assert r2.width() == 5                     # right 6.0 - floor(1.5) = 5
+
+
+def test_map_window_point_round_trips_host_point():
+    ec, pivot = (110, 90), (220, 180)
+    for s in (0.5, 1.0, 1.75):
+        for hx, hy in ((0, 0), (110, 90), (399, 299), (25, 250)):
+            wr = map_host_rect_to_window(QRect(hx, hy, 1, 1), ec, pivot, s)
+            bx, by = map_window_point_to_host(
+                (wr.x() + wr.width() // 2, wr.y() + wr.height() // 2),
+                ec, pivot, s)
+            assert abs(bx - hx) <= 1 and abs(by - hy) <= 1
+
+
+def test_map_window_point_nonpositive_scale_degrades_to_identity():
+    assert map_window_point_to_host((10, 20), (0, 0), (0, 0), 0) == (10, 20)
+    assert map_window_point_to_host((10, 20), (0, 0), (0, 0), -3) == (10, 20)
+
+
+# --------------------------------------------------------------------------- #
+# scaled_content_rect (move clamping operates on CONTENT, not the envelope)
+# --------------------------------------------------------------------------- #
+def test_scaled_content_rect_pins_emblem_center_on_anchor():
+    r = scaled_content_rect((400, 300), (110, 90), (1000, 700), 1.0)
+    assert r == QRect(1000 - 110, 700 - 90, 400, 300)
+
+
+def test_scaled_content_rect_shrinks_with_scale_about_anchor():
+    r = scaled_content_rect((400, 300), (110, 90), (1000, 700), 0.5)
+    # Half-size content, emblem center still on the anchor.
+    assert r.x() == 1000 - 55 and r.y() == 700 - 45
+    assert r.width() == 200 and r.height() == 150
+
+
+def test_scaled_content_rect_rounds_outward_on_fractional_scale():
+    r = scaled_content_rect((401, 301), (110, 90), (0, 0), 1.75)
+    # Contains the true rect: left/top floored, right/bottom ceiled.
+    assert r.x() <= -110 * 1.75 and r.y() <= -90 * 1.75
+    assert r.x() + r.width() >= (401 - 110) * 1.75
+    assert r.y() + r.height() >= (301 - 90) * 1.75

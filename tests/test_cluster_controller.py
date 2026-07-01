@@ -33,9 +33,14 @@ from PySide6.QtWidgets import QWidget
 
 from utils.overlay.backend import NoOpOverlayBackend
 from utils.overlay.cluster_controller import ClusterOverlayController
+from utils.overlay.cluster_geometry import envelope_for
 from utils.overlay.cluster_surface import ClusterSurface
 from utils.overlay.persistence import KEY_ANCHOR, KEY_MONITOR, KEY_SCALE
 from utils.overlay.scale import SCALE_MAX, SCALE_MIN
+
+# Deterministic scaling in tests: notches snap the rendered scale to the target
+# synchronously instead of tweening it over the event loop.
+os.environ.setdefault("TTMT_NO_OVERLAY_SCALE_ANIM", "1")
 
 
 # Known cluster geometry baked into the stub provider so placement is exact.
@@ -47,24 +52,40 @@ _EMBLEM_X, _EMBLEM_Y, _EMBLEM_S = 60, 40, 100
 _EMBLEM_CX = _EMBLEM_X + _EMBLEM_S // 2   # 110
 _EMBLEM_CY = _EMBLEM_Y + _EMBLEM_S // 2   # 90
 
-# Four card cells parented under the grid host at known WINDOW-LOCAL origins
+# The FIXED window envelope + pivot for that host/emblem (transform model): the
+# window is sized to the SCALE_MAX bbox about the emblem center, and the emblem
+# center sits on the PIVOT (window-local) at every scale.
+_ENV_SIZE, _PIVOT = envelope_for(
+    (_HOST_W, _HOST_H), (_EMBLEM_CX, _EMBLEM_CY), SCALE_MAX)
+
+
+def _win_pt(hx, hy, scale=1.0):
+    """Map a HOST-local (framed 1.0) point into WINDOW coords under the fixed-
+    envelope transform: ``pivot + (host - emblem_center) * scale`` - the same
+    math the controller's _map_host_rect / the surface's proxy transform use."""
+    return (_PIVOT[0] + (hx - _EMBLEM_CX) * scale,
+            _PIVOT[1] + (hy - _EMBLEM_CY) * scale)
+
+
+# Four card cells parented under the grid host at known HOST-LOCAL origins
 # (cells live in the grid host, exactly like the real _CompactLayout), each
 # exposing two CARD-LOCAL control rects via control_rects() - matching the real
 # _CompactLayout.control_rects(cell_index) -> list[QRect] signature. The exact
 # input union translates each card-local control rect by its cell origin into
-# window-local coords.
+# host coords, then maps it through the transform into window-local coords.
 _CELL_ORIGINS = {0: (10, 10), 1: (210, 10), 2: (10, 160), 3: (210, 160)}
 _CELL_SIZE = (180, 130)
 _CONTROL_RECTS_LOCAL = [QRect(8, 8, 30, 18), QRect(8, 40, 30, 18)]   # card-local
 
-# A control point that lands inside cell 1's first control (window-local
-# (218,18,30,18)) but OUTSIDE the emblem - so an emblem-only union (the
-# production card_cell_rects regression) would NOT contain it.
-_CONTROL_PROBE = (220, 20)
-# A control point inside cell 0's first control (window-local (18,18,30,18)) and
-# OUTSIDE the emblem - the occupancy tests use it as the VISIBLE-card probe paired
-# with _CONTROL_PROBE (cell 1) as the EMPTY-card probe.
-_VISIBLE_CONTROL_PROBE = (20, 20)
+# A WINDOW-LOCAL point inside cell 1's first control (host rect (218,18,30,18),
+# mapped through the scale-1.0 transform) but OUTSIDE the emblem - so an
+# emblem-only union (the production card_cell_rects regression) would NOT
+# contain it.
+_CONTROL_PROBE = _win_pt(220, 20)
+# A WINDOW-LOCAL point inside cell 0's first control (host rect (18,18,30,18),
+# mapped) and OUTSIDE the emblem - the occupancy tests use it as the
+# VISIBLE-card probe paired with _CONTROL_PROBE (cell 1) as the EMPTY-card probe.
+_VISIBLE_CONTROL_PROBE = _win_pt(20, 20)
 
 
 # ---------------------------------------------------------------------------
@@ -128,17 +149,10 @@ class _StubProvider:
         self._grid_host.setParent(self._holder)       # real restoration
 
     def apply_metrics(self, metrics):
+        # Record-only: in the transform model the controller never re-lays-out the
+        # host on a scale change; the ONLY apply_metrics call left is leave()'s
+        # defensive framed (1.0) reset, which the leave tests assert via this.
         self.last_metrics = metrics
-        # Real apply_metrics changes each card's size, so the host's sizeHint (and
-        # thus the cluster window) grows/shrinks with scale. Mirror that here so a
-        # notch OBSERVABLY resizes the surface: scale the host + (off-center)
-        # emblem geometry by metrics.scale.
-        s = metrics.scale
-        self._grid_host.resize(round(_HOST_W * s), round(_HOST_H * s))
-        self._emblem.setGeometry(
-            round(_EMBLEM_X * s), round(_EMBLEM_Y * s),
-            round(_EMBLEM_S * s), round(_EMBLEM_S * s),
-        )
 
     @property
     def _card_slots(self):
@@ -323,78 +337,6 @@ class _OccupancyStubProvider(QObject):
             (cell_index, round(float(bg_opacity), 4), round(float(portrait_opacity), 4)))
 
 
-class _ScaledStubProvider:
-    """Like ``_StubProvider`` but ``apply_metrics`` FAITHFULLY scales the cell origins
-    AND the control rects by ``metrics.scale`` - mirroring how the real
-    ``_CompactLayout`` physically resizes the card widgets so both the cell
-    screen-geometry and ``control_rects()`` come back AT-SCALE.
-
-    The plain ``_StubProvider`` only scales ``_grid_host`` + ``_emblem``, leaving the
-    cell origins + control rects at their base (scale-1.0) values, so at any scale its
-    at-scale layout is a fiction. That makes ``control_hits(..., 1.0)`` and
-    ``control_hits(..., self._scale)`` INDISTINGUISHABLE (a ghost-click regression
-    that reintroduced ``/ self._scale`` would pass unnoticed). This stub models a REAL
-    at-scale layout so a NON-1.0-scale ghost-click test can pin the load-bearing
-    ``scale=1.0`` decision in ``_ghost_click_pass``."""
-
-    def __init__(self):
-        self._holder = QWidget()
-        self._grid_host = QWidget(self._holder)
-        self._grid_host.resize(_HOST_W, _HOST_H)
-        self._emblem = QWidget(self._grid_host)
-        self._emblem.setGeometry(_EMBLEM_X, _EMBLEM_Y, _EMBLEM_S, _EMBLEM_S)
-        self._scale = 1.0
-        self._cell_widgets = []
-        for i in range(4):
-            cw = QWidget(self._grid_host)
-            ox, oy = _CELL_ORIGINS[i]
-            cw.setGeometry(ox, oy, *_CELL_SIZE)
-            self._cell_widgets.append(cw)
-        self._token = object()
-        self.ghost_clicks: list = []
-        self.shell_opacities: list = []
-
-    def capture_cluster_host(self):
-        self._grid_host.setParent(None)
-        return self._token
-
-    def restore_cluster_host(self, token):
-        self._grid_host.setParent(self._holder)
-
-    def apply_metrics(self, metrics):
-        s = metrics.scale
-        self._scale = s
-        self._grid_host.resize(round(_HOST_W * s), round(_HOST_H * s))
-        self._emblem.setGeometry(
-            round(_EMBLEM_X * s), round(_EMBLEM_Y * s),
-            round(_EMBLEM_S * s), round(_EMBLEM_S * s))
-        # Faithfully move + resize each cell so its origin within the grid host and
-        # its size are AT-SCALE (like the real physical card resize).
-        for i, cw in enumerate(self._cell_widgets):
-            ox, oy = _CELL_ORIGINS[i]
-            cw.setGeometry(round(ox * s), round(oy * s),
-                           round(_CELL_SIZE[0] * s), round(_CELL_SIZE[1] * s))
-
-    @property
-    def _card_slots(self):
-        return [{"cell": cw} for cw in self._cell_widgets]
-
-    def control_rects(self, cell_index):
-        """AT-SCALE card-local control rects (the real _CompactLayout returns the
-        controls at the current scale, not the framed base rects)."""
-        s = self._scale
-        return [QRect(round(r.x() * s), round(r.y() * s),
-                      round(r.width() * s), round(r.height() * s))
-                for r in _CONTROL_RECTS_LOCAL]
-
-    def deliver_ghost_click(self, cell_index, x, y):
-        self.ghost_clicks.append((cell_index, x, y))
-
-    def set_shell_extra_opacity(self, cell_index, bg_opacity, portrait_opacity):
-        self.shell_opacities.append(
-            (cell_index, round(float(bg_opacity), 4), round(float(portrait_opacity), 4)))
-
-
 def _make(provider=None, window=None, host_raises=False, release_raises=False,
           on_active_changed=None, anchor=None, backend=None, settings=None):
     """Build a controller wired to recording stubs. Returns
@@ -439,10 +381,11 @@ def test_enter_borrows_minimizes_and_places_emblem_on_anchor(qapp):
     # The WHOLE grid_host is hosted into the single cluster surface.
     assert surface.hosted is provider._grid_host
     assert provider._grid_host.parent() is surface
-    # EXACT placement: the window is sized to the host and positioned so the
-    # OFF-CENTER emblem center lands on the anchor (NOT the bbox center).
+    # EXACT placement: the window is the FIXED max-scale envelope, positioned so
+    # the PIVOT (where the OFF-CENTER emblem center renders at every scale) lands
+    # on the anchor (NOT the bbox center).
     ax, ay = anchor
-    assert surface.geom == QRect(ax - _EMBLEM_CX, ay - _EMBLEM_CY, _HOST_W, _HOST_H)
+    assert surface.geom == QRect(ax - _PIVOT[0], ay - _PIVOT[1], *_ENV_SIZE)
     assert surface.shown == 1
     assert window.minimized == 1
     assert ctrl.is_active is True
@@ -471,13 +414,14 @@ def test_enter_prepares_state_then_applies_exact_click_through_shape(qapp):
     assert len(backend.shapes) == 1
     win, path, _dpr = backend.shapes[0]
     assert win is surface
-    # Solid over the emblem + every visible card's controls (click-catching)...
-    assert path.contains(QPointF(_EMBLEM_CX, _EMBLEM_CY))
+    # Solid over the emblem (its center renders on the PIVOT) + every visible
+    # card's transform-mapped controls (click-catching)...
+    assert path.contains(QPointF(*_PIVOT))
     assert path.contains(QPointF(*_VISIBLE_CONTROL_PROBE))   # cell 0 control
     assert path.contains(QPointF(*_CONTROL_PROBE))           # cell 1 control
     # ...but CLICK-THROUGH over a gap (a cell interior away from its controls and
     # the emblem): the shape is the exact union, not the full window rect.
-    assert not path.contains(QPointF(380, 280))
+    assert not path.contains(QPointF(*_win_pt(380, 280)))
 
 
 # ---------------------------------------------------------------------------
@@ -680,21 +624,25 @@ def test_set_scale_by_notches_noop_when_inactive(qapp):
     assert ctrl._scaling_active is False
 
 
-def test_notch_resizes_surface_and_applies_broad_shape(qapp):
-    """One notch: applies metrics, RESIZES the cluster window (size changed), and
-    applies a BROAD (full-window-rect) input shape; scaling-active in 'broad'."""
+def test_notch_keeps_window_geometry_and_applies_broad_shape(qapp):
+    """One notch: the window geometry does NOT change (the fixed max-scale
+    envelope - the judder fix: nothing for the compositor to mis-order), the host
+    is NOT re-laid-out (no apply_metrics - the non-uniformity fix), the rendered
+    scale tracks the target, and one BROAD (full-window-rect) input shape is
+    applied; scaling-active in 'broad'."""
     backend = _RecordingBackend()
     ctrl, provider, window, created = _make(backend=backend)
     ctrl.enter()
     surface = created[0]
-    geom_before = surface.geom
+    geom_before = QRect(surface.geom)
     backend.shapes.clear()                       # ignore any enter-time shaping
 
     ctrl.set_scale_by_notches(1)
 
-    # Metrics applied at the new scale, and the surface was resized (one resize).
-    assert provider.last_metrics.scale == ctrl.scale
-    assert surface.geom != geom_before
+    # Transform-only: no re-layout, no resize, no move.
+    assert provider.last_metrics is None
+    assert surface.geom == geom_before
+    assert ctrl._view_scale == ctrl.scale        # rendered scale tracked the target
     # Broad phase: scaling active, one broad apply of the FULL window-local rect.
     assert ctrl._scaling_active is True
     assert ctrl._input_phase == "broad"
@@ -703,6 +651,26 @@ def test_notch_resizes_surface_and_applies_broad_shape(qapp):
     assert win is surface
     assert broad_path.boundingRect().toRect() == QRect(
         0, 0, surface.geom.width(), surface.geom.height())
+
+
+def test_scale_burst_and_settle_never_touch_window_geometry(qapp):
+    """The load-bearing fixed-envelope invariant: an entire scroll burst (up and
+    down) plus the settle leaves the window geometry BIT-IDENTICAL to enter's.
+    Any regression that reintroduces a per-notch resize/move (the XWayland judder)
+    fails here."""
+    ctrl, provider, window, created = _make()
+    ctrl.enter()
+    surface = created[0]
+    geom_at_enter = QRect(surface.geom)
+
+    for notches in (1, 1, 1, -2, 3, -1):
+        ctrl.set_scale_by_notches(notches)
+        assert surface.geom == geom_at_enter
+    ctrl._settle_input()
+
+    assert surface.geom == geom_at_enter
+    assert ctrl._view_scale == ctrl.scale
+    ctrl.leave()
 
 
 def test_settle_applies_exact_shape_and_clears_scaling(qapp):
@@ -727,12 +695,13 @@ def test_settle_applies_exact_shape_and_clears_scaling(qapp):
     # The exact shape differs from the broad full-window shape.
     assert (exact_path.boundingRect().toRect()
             != broad_path.boundingRect().toRect())
-    # The exact union must CONTAIN a real (translated) card control - a point that
-    # is inside a control but outside the emblem. An emblem-only union (the
-    # production card_cell_rects regression, where the real provider lacks that
-    # method) would NOT contain it.
+    # The exact union must CONTAIN a real (transform-mapped) card control - a
+    # point inside a control but outside the emblem, mapped at the SETTLED scale
+    # (a notch was scrolled above). An emblem-only union (the production
+    # card_cell_rects regression, where the real provider lacks that method)
+    # would NOT contain it.
     from PySide6.QtCore import QPointF
-    assert exact_path.contains(QPointF(*_CONTROL_PROBE))
+    assert exact_path.contains(QPointF(*_win_pt(220, 20, ctrl.scale)))
 
 
 def test_settle_input_post_leave_is_true_noop(qapp):
@@ -752,8 +721,9 @@ def test_settle_input_post_leave_is_true_noop(qapp):
 
 
 def test_notch_keeps_emblem_center_on_anchor(qapp):
-    """The scaling anchor invariant: after a notch (the emblem geometry changes
-    with apply_metrics), the emblem center still lands exactly on the anchor."""
+    """The scaling anchor invariant: after a notch the transform-MAPPED emblem
+    rect still centers on the anchor - the window never moved (pivot on anchor)
+    and the transform pins the emblem center on the pivot at every scale."""
     anchor = (1234, 567)
     ctrl, provider, window, created = _make(anchor=anchor)
     ctrl.enter()
@@ -761,11 +731,13 @@ def test_notch_keeps_emblem_center_on_anchor(qapp):
 
     ctrl.set_scale_by_notches(1)
 
-    g = provider._emblem.geometry()              # scaled by apply_metrics
-    cx = g.x() + g.width() // 2
-    cy = g.y() + g.height() // 2
-    assert surface.geom.x() + cx == anchor[0]
-    assert surface.geom.y() + cy == anchor[1]
+    # The window itself did not move: the pivot sits exactly on the anchor.
+    assert (surface.geom.x() + _PIVOT[0], surface.geom.y() + _PIVOT[1]) == anchor
+    # The mapped emblem rect centers on the pivot (outward edge rounding may
+    # shift the integer center by at most 1px).
+    er = ctrl._emblem_rect()
+    assert abs(surface.geom.x() + er.x() + er.width() / 2 - anchor[0]) <= 1.0
+    assert abs(surface.geom.y() + er.y() + er.height() / 2 - anchor[1]) <= 1.0
 
 
 def test_move_group_locked_out_during_scale_then_allowed_after_settle(qapp):
@@ -935,11 +907,12 @@ def test_occupancy_change_during_scale_defers_exact_until_settle(qapp):
     assert backend.shapes[-1][1].contains(QPointF(*_CONTROL_PROBE))   # cell 1 still in
 
     # (c) On settle the exact shape replays with the NEW visible set: cell 0 in,
-    # cell 1 (now empty) out.
+    # cell 1 (now empty) out. Probes are mapped at the SETTLED scale (the exact
+    # union is transform-mapped, and the scale changed with the notch above).
     ctrl._settle_input()
     exact_path = backend.shapes[-1][1]
-    assert exact_path.contains(QPointF(*_VISIBLE_CONTROL_PROBE))      # cell 0 visible
-    assert not exact_path.contains(QPointF(*_CONTROL_PROBE))           # cell 1 empty
+    assert exact_path.contains(QPointF(*_win_pt(20, 20, ctrl.scale)))       # cell 0 visible
+    assert not exact_path.contains(QPointF(*_win_pt(220, 20, ctrl.scale)))  # cell 1 empty
 
 
 def test_connect_occupancy_is_idempotent(qapp):
@@ -991,8 +964,9 @@ class _CountingSettings(_DictSettings):
 
 def test_enter_restores_saved_scale_and_anchor(qapp):
     """enter() with a SAVED scale+anchor adopts the saved scale and the saved
-    (clamped) anchor; the cluster window is sized at the RESTORED scale (the host
-    is resized via apply_metrics) and the scaled emblem center lands on the anchor."""
+    (clamped) anchor. The window is the FIXED max-scale envelope regardless of the
+    restored scale (the transform renders the zoom - no apply_metrics re-layout),
+    with the pivot on the anchor so the emblem center lands there."""
     from PySide6.QtGui import QGuiApplication
     screen = QGuiApplication.primaryScreen()
     name = screen.name()
@@ -1004,16 +978,18 @@ def test_enter_restores_saved_scale_and_anchor(qapp):
     assert ctrl.enter() is True
 
     assert ctrl._scale == 1.5
+    assert ctrl._view_scale == 1.5              # rendered at the restored scale
     assert ctrl._anchor == inside
+    assert provider.last_metrics is None        # transform, never a re-layout
     surface = created[0]
-    # The window spans the host at the RESTORED scale (host resized by apply_metrics).
-    assert surface.geom.width() == round(_HOST_W * 1.5)
-    assert surface.geom.height() == round(_HOST_H * 1.5)
-    # The (scaled) emblem center still lands exactly on the saved anchor.
-    emb_cx = round(_EMBLEM_X * 1.5) + round(_EMBLEM_S * 1.5) // 2
-    emb_cy = round(_EMBLEM_Y * 1.5) + round(_EMBLEM_S * 1.5) // 2
-    assert surface.geom.x() + emb_cx == inside[0]
-    assert surface.geom.y() + emb_cy == inside[1]
+    # Fixed envelope, independent of the restored scale; pivot on the anchor.
+    assert (surface.geom.width(), surface.geom.height()) == _ENV_SIZE
+    assert surface.geom.x() + _PIVOT[0] == inside[0]
+    assert surface.geom.y() + _PIVOT[1] == inside[1]
+    # The mapped (scale-1.5) emblem rect still centers on the saved anchor.
+    er = ctrl._emblem_rect()
+    assert abs(surface.geom.x() + er.x() + er.width() / 2 - inside[0]) <= 1.0
+    assert abs(surface.geom.y() + er.y() + er.height() / 2 - inside[1]) <= 1.0
     ctrl.leave()
 
 
@@ -1280,10 +1256,10 @@ def test_radial_open_does_not_reflow_cluster_or_move_emblem(qapp, monkeypatch):
     re-center it is detached), so if the radial-open code re-grows the window the
     fill layout resizes ``_grid_host`` while the emblem stays put, dragging the
     emblem's global center off the anchor (with this geometry + anchor (1000,700)
-    the old code moved it to (798,478)). The fix keeps the window at the closed
-    bbox, so the host never reflows and the emblem center holds across
-    open -> scale-while-open -> close, while the radial top-level still gets the
-    full ``emblem*4`` canvas."""
+    the old code moved it to (798,478)). The fix keeps the window at the FIXED
+    max-scale envelope, so the host never reflows and the emblem center holds
+    across open -> scale-while-open -> close, while the radial top-level gets its
+    own fixed max-scale ``emblem*4`` canvas."""
     from utils.overlay.cluster_geometry import window_rect_for
     from utils.overlay.card_metrics import CardMetrics
 
@@ -1315,6 +1291,8 @@ def test_radial_open_does_not_reflow_cluster_or_move_emblem(qapp, monkeypatch):
     host_size_before = QRect(provider._grid_host.rect()).size()
     c0 = emblem_global_center()
     assert (c0.x(), c0.y()) == anchor                # framed-open: emblem on anchor
+    envelope_rect = window_rect_for(_ENV_SIZE, _PIVOT, anchor)
+    assert surface.geometry() == envelope_rect       # the fixed envelope placement
 
     # --- open: NO window expansion, NO host reflow, emblem stays on anchor ---
     menu = ctrl.open_radial_menu()
@@ -1323,23 +1301,19 @@ def test_radial_open_does_not_reflow_cluster_or_move_emblem(qapp, monkeypatch):
     assert provider._grid_host.size() == host_size_before     # host did NOT reflow
     c1 = emblem_global_center()
     assert (c1.x(), c1.y()) == anchor
-    # The cluster window stays at the CLOSED bbox rect (never the dim canvas).
-    w, h = ctrl._cluster_size()
-    ecx, ecy = ctrl._emblem_center_local(w, h)
-    assert surface.geometry() == window_rect_for((w, h), (ecx, ecy), anchor)
-    # The radial top-level still receives the full emblem*4 canvas.
-    canvas = int(CardMetrics(ctrl.scale).emblem * 4)
+    # The cluster window stays at the fixed envelope (never the dim canvas).
+    assert surface.geometry() == envelope_rect
+    # The radial top-level receives the FIXED max-scale emblem*4 canvas.
+    canvas_max = int(CardMetrics(SCALE_MAX).emblem) * 4
     rsurf = created_radial["surfaces"][-1]
-    assert rsurf.geom.width() == canvas and rsurf.geom.height() == canvas
+    assert rsurf.geom.width() == canvas_max and rsurf.geom.height() == canvas_max
 
-    # --- scale while open: emblem still on anchor, window still the (scaled) bbox ---
+    # --- scale while open: emblem still on anchor, window geometry UNCHANGED ---
     ctrl.set_scale_by_notches(2)
     qapp.processEvents()
     c2 = emblem_global_center()
     assert (c2.x(), c2.y()) == anchor
-    w2, h2 = ctrl._cluster_size()
-    ecx2, ecy2 = ctrl._emblem_center_local(w2, h2)
-    assert surface.geometry() == window_rect_for((w2, h2), (ecx2, ecy2), anchor)
+    assert surface.geometry() == envelope_rect       # fixed envelope: no resize/move
 
     # --- close: emblem still on anchor ---
     ctrl.close_radial_menu()
@@ -1366,11 +1340,15 @@ def test_open_radial_menu_returns_widget_shows_dim_and_centers_radial(qapp, monk
     assert menu is not None and menu in created_radial["menus"]
     assert ctrl.is_radial_open is True
     assert ctrl._dim.isHidden() is False                # dim revealed
-    canvas = int(CardMetrics(1.0).emblem * 4)
+    # The radial top-level is the FIXED max-scale canvas centered on the anchor
+    # (never resized by a scale gesture; only the click region tracks the scale).
+    canvas_max = int(CardMetrics(SCALE_MAX).emblem) * 4
     rsurf = created_radial["surfaces"][-1]
-    assert rsurf.geom.width() == canvas and rsurf.geom.height() == canvas
-    assert rsurf.geom.x() == int(anchor[0] - canvas / 2)
-    assert rsurf.geom.y() == int(anchor[1] - canvas / 2)
+    assert rsurf.geom.width() == canvas_max and rsurf.geom.height() == canvas_max
+    assert rsurf.geom.x() == int(anchor[0] - canvas_max / 2)
+    assert rsurf.geom.y() == int(anchor[1] - canvas_max / 2)
+    # The click-region bookkeeping tracks the CURRENT-scale canvas.
+    assert ctrl._radial_size == int(CardMetrics(1.0).emblem * 4)
     assert rsurf.shown == 1
     ctrl.close_radial_menu()
 
@@ -1492,36 +1470,33 @@ def test_leave_closes_radial_and_removes_internal_dim(qapp, monkeypatch):
     assert leftover == []
 
 
-def test_scale_while_radial_open_keeps_window_at_bbox_and_recenters_radial(qapp, monkeypatch):
-    """A scale change WHILE the radial is open keeps the cluster window sized to the
-    (new, scaled) cluster BBOX - never the dim extent - and re-sizes + re-centers the
-    SEPARATE radial top-level on the anchor. The window must NOT grow to the dim
-    canvas (that reflow was the Task 7 Critical); the dim canvas lives entirely on the
-    radial top-level + the host-clipped internal dim."""
-    from utils.overlay.cluster_geometry import window_rect_for
+def test_scale_while_radial_open_keeps_both_windows_fixed(qapp, monkeypatch):
+    """A scale change WHILE the radial is open changes NO window geometry at all:
+    the cluster window stays at its fixed envelope AND the radial top-level stays
+    at its fixed max-scale canvas (the same no-geometry-during-scale discipline).
+    Only the menu's painted ring diameter and the click-region bookkeeping track
+    the new scale; the click-region re-apply is deferred to the settle timer."""
     from utils.overlay.card_metrics import CardMetrics
 
     created_radial = _patch_radial(monkeypatch)
     ctrl, provider, window, created = _make(anchor=(1000, 700))
     ctrl.enter()
     surface = created[0]
+    cluster_geom_before = QRect(surface.geom)
     ctrl.open_radial_menu()
     rsurf = created_radial["surfaces"][-1]
     menu = created_radial["menus"][-1]
+    radial_geom_before = QRect(rsurf.geom)
     canvas_before = ctrl._radial_size
 
     ctrl.set_scale_by_notches(2)                  # scale up while the radial is open
 
-    assert ctrl._radial_size > canvas_before       # radial canvas grew with the emblem
+    assert ctrl._radial_size > canvas_before       # click-region canvas tracked the emblem
     assert menu.diameters                          # set_emblem_diameter re-applied
-    # The cluster window stays at the (new, scaled) BBOX, NOT the dim extent.
-    s = ctrl.scale
-    new_canvas = int(CardMetrics(s).emblem * 4)
-    w, h = ctrl._cluster_size()
-    ecx, ecy = ctrl._emblem_center_local(w, h)
-    expected = window_rect_for((w, h), (ecx, ecy), ctrl._anchor)
-    assert surface.geom == expected
-    assert rsurf.geom.width() == new_canvas        # radial re-sized to the new canvas
+    assert menu.diameters[-1] == float(CardMetrics(ctrl.scale).emblem)
+    # NEITHER window changed geometry (the whole point of the transform model).
+    assert surface.geom == cluster_geom_before
+    assert rsurf.geom == radial_geom_before
     ctrl.close_radial_menu()
 
 
@@ -1560,6 +1535,7 @@ def test_move_while_radial_open_recenters_radial_top_level_on_new_anchor(qapp, m
     qapp.processEvents()
     rsurf = created_radial["surfaces"][-1]
     canvas = ctrl._radial_size                  # unchanged by a pure move (no scale)
+    canvas_max = ctrl._radial_canvas_max()      # the fixed radial window side
 
     # A real move (small delta -> no clamp on the 800x800 screen) while OPEN.
     assert ctrl.move_group(30, -20) is True
@@ -1567,11 +1543,12 @@ def test_move_while_radial_open_recenters_radial_top_level_on_new_anchor(qapp, m
     new_anchor = ctrl._anchor
     assert new_anchor != anchor                 # the anchor actually moved
 
-    # The move-while-open branch re-centered the radial top-level on the NEW anchor.
-    assert ctrl._radial_size == canvas          # pure move: canvas unchanged
-    assert rsurf.geom.width() == canvas and rsurf.geom.height() == canvas
-    assert rsurf.geom.x() == int(new_anchor[0] - canvas / 2)
-    assert rsurf.geom.y() == int(new_anchor[1] - canvas / 2)
+    # The move-while-open branch re-centered the (fixed max-canvas) radial
+    # top-level on the NEW anchor.
+    assert ctrl._radial_size == canvas          # pure move: click canvas unchanged
+    assert rsurf.geom.width() == canvas_max and rsurf.geom.height() == canvas_max
+    assert rsurf.geom.x() == int(new_anchor[0] - canvas_max / 2)
+    assert rsurf.geom.y() == int(new_anchor[1] - canvas_max / 2)
     # ... and the emblem global center still lands exactly on the new anchor.
     c1 = emblem_global_center()
     assert (c1.x(), c1.y()) == new_anchor
@@ -1580,42 +1557,37 @@ def test_move_while_radial_open_recenters_radial_top_level_on_new_anchor(qapp, m
     ctrl.leave()
 
 
-def test_open_repositions_dim_to_current_scale_after_scale_while_closed(qapp, monkeypatch):
-    """The internal dim must track scale even while the radial is CLOSED, and
-    open_radial_menu() must (re)position it to the CURRENT scale's emblem*4 canvas
-    before showing it - otherwise a scale-while-closed leaves the dim at the stale
-    enter-scale size and it flashes wrong on open."""
+def test_dim_is_scale_independent_and_open_reasserts_it(qapp, monkeypatch):
+    """The internal dim lives INSIDE the transformed host, so its widget geometry
+    must stay at the framed-1.0 ``emblem*4`` canvas centered on the 1.0 emblem
+    center regardless of scale - the cluster transform already zooms it in
+    lockstep with the emblem, and positioning it at the current scale would
+    DOUBLE-scale it. open_radial_menu() re-asserts that framed placement, so a
+    desynced dim can never flash wrong on open."""
     from utils.overlay.card_metrics import CardMetrics
 
     _patch_radial(monkeypatch)
     ctrl, provider, window, created = _make()
     ctrl.enter()
-    enter_canvas = int(CardMetrics(1.0).emblem * 4)
-    assert ctrl._dim.width() == enter_canvas       # dim built at the enter scale
+    canvas0 = int(CardMetrics(1.0).emblem) * 4
+    expected = QRect(_EMBLEM_CX - canvas0 // 2, _EMBLEM_CY - canvas0 // 2,
+                     canvas0, canvas0)
+    assert ctrl._dim.geometry() == expected        # built at the framed placement
 
-    ctrl.set_scale_by_notches(2)                    # scale change while the radial is CLOSED
-    s = ctrl.scale
-    scaled_canvas = int(CardMetrics(s).emblem * 4)
-    assert scaled_canvas != enter_canvas
-    # (a) The dim tracked the scale even while closed (no stale enter-scale size).
-    assert ctrl._dim.width() == scaled_canvas
-    assert ctrl._dim.height() == scaled_canvas
+    ctrl.set_scale_by_notches(2)                    # scale while the radial is CLOSED
+    # Scale-independent: the dim's HOST-local geometry is untouched (the zoom is
+    # the transform's job - a current-scale reposition here would double-scale).
+    assert ctrl._dim.geometry() == expected
 
     # Deliberately DESYNC the dim geometry so ONLY open_radial_menu()'s own
-    # open-time _position_internal_dim() call can correct it. Without this, the
-    # scale-while-closed reposition already left the dim right and the assertion
-    # below would pass even if the open-time reposition were deleted.
+    # open-time _position_internal_dim() re-assert can correct it.
     ctrl._dim.setGeometry(QRect(0, 0, 3, 3))
     assert ctrl._dim.geometry() == QRect(0, 0, 3, 3)   # desync took effect
 
     ctrl.open_radial_menu()
-    # (b) open positions the dim to the CURRENT scale's canvas, centered on the
-    # (scaled) emblem center - never the stale (desynced) one. Fails if the
-    # open-time _position_internal_dim() call is removed.
-    w, h = ctrl._cluster_size()
-    ecx, ecy = ctrl._emblem_center_local(w, h)
-    assert ctrl._dim.geometry() == QRect(
-        ecx - scaled_canvas // 2, ecy - scaled_canvas // 2, scaled_canvas, scaled_canvas)
+    # Open re-asserts the framed placement (never the stale desynced one). Fails
+    # if the open-time _position_internal_dim() call is removed.
+    assert ctrl._dim.geometry() == expected
     ctrl.close_radial_menu()
     ctrl.leave()
 
@@ -2534,40 +2506,31 @@ def test_occupancy_drop_settles_peeked_card_back_to_opaque(qapp):
     ctrl.leave()
 
 
-def test_ghost_press_resolves_at_scale_local_coords_at_non_unit_scale(qapp):
-    """GUARD (protects the load-bearing scale=1.0 in _ghost_click_pass): at a NON-1.0
-    scale a ghost 'press' over a control resolves to the correct AT-SCALE
-    cell-root-local coordinate. The cluster physically resizes the cards (via
-    apply_metrics), so BOTH the card screen-geometry AND control_rects are already
-    at-scale - control_hits must therefore divide by 1.0, not self._scale.
-
-    Uses a stub whose apply_metrics FAITHFULLY scales the cell origins + control rects,
-    so scale 1.0 vs self._scale are DISTINGUISHABLE here (they are not at scale 1.0):
-    passing self._scale would divide the at-scale offset again and deliver the WRONG
-    (framed) coordinate."""
-    provider = _ScaledStubProvider()
-    # Save scale 1.5 so enter() applies at-scale metrics (cells + controls scaled).
+def test_ghost_press_resolves_to_framed_local_coords_at_non_unit_scale(qapp):
+    """GUARD (protects the load-bearing scale=self._scale in _ghost_click_pass):
+    at a NON-1.0 scale the cells keep their FRAMED 1.0 layout (the zoom is a paint
+    transform, never a re-layout), so a ghost 'press' at a control's
+    TRANSFORM-MAPPED screen position must resolve back to the framed (1.0)
+    cell-root-local coordinate that ``deliver_ghost_click``'s ``childAt`` walk
+    expects. Passing 1.0 to ``control_hits`` would keep the at-scale offset and
+    deliver a scaled - wrong - point (with scale 1.5 the true (23, 17) would
+    arrive as ~(34, 26))."""
+    # Save scale 1.5 so enter() restores a non-unit transform scale.
     s = _DictSettings({KEY_SCALE: 1.5})
-    ctrl, provider, window, created = _make(
-        provider=provider, anchor=_GHOST_ANCHOR, settings=s)
+    ctrl, provider, window, created = _make(anchor=_GHOST_ANCHOR, settings=s)
     ctrl.enter()
     assert ctrl.scale == 1.5
 
-    # Screen center of cell 1's first control, computed from the ACTUAL at-scale
-    # placement: window origin + at-scale cell origin + at-scale control center.
+    # Cell 1's first control center, in FRAMED coords: card-local (23, 17),
+    # host-local (233, 27) - then its transform-mapped SCREEN position.
     win = ctrl._compute_window_rect()
-    ox, oy = win.x(), win.y()
-    cell_origin = provider._cell_widgets[1].pos()
-    ctrl_rect = provider.control_rects(1)[0]              # AT-SCALE card-local
-    cx = ctrl_rect.x() + ctrl_rect.width() // 2
-    cy = ctrl_rect.y() + ctrl_rect.height() // 2
-    sx = ox + cell_origin.x() + cx
-    sy = oy + cell_origin.y() + cy
+    cx = 8 + 15
+    cy = 8 + 9
+    wx, wy = _win_pt(210 + cx, 10 + cy, 1.5)
+    ctrl.on_ghost_event(("press", [(1, win.x() + round(wx), win.y() + round(wy))]))
 
-    ctrl.on_ghost_event(("press", [(1, sx, sy)]))
-    # Delivered click is the AT-SCALE cell-root-local coord (cx, cy) - control_hits
-    # divides by 1.0. Passing self._scale (1.5) would instead deliver
-    # (round(cx / 1.5), round(cy / 1.5)) - a different, wrong point.
+    # Delivered click is the FRAMED cell-root-local coord (control_hits divided
+    # the at-scale offset back down by self._scale).
     assert provider.ghost_clicks == [(1, cx, cy)]
     ctrl.leave()
 
