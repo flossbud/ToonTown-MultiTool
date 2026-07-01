@@ -97,6 +97,9 @@ class _StubProvider:
         self.last_metrics = None
         self.capture_raises = capture_raises
         self.restore_raises = False
+        # Recording hooks for the cluster-local hover-peek / ghost-click port (T8).
+        self.ghost_clicks: list = []      # (cell_index, x, y) from deliver_ghost_click
+        self.shell_opacities: list = []   # (cell_index, bg, portrait) from the peek fade
 
     def capture_cluster_host(self):
         self.captured += 1
@@ -135,6 +138,17 @@ class _StubProvider:
         """Mirror _CompactLayout.control_rects(cell_index) -> list[QRect]: the
         CARD-LOCAL rects of the cell's interactive controls."""
         return [QRect(r) for r in _CONTROL_RECTS_LOCAL]
+
+    def deliver_ghost_click(self, cell_index, x, y):
+        """Mirror _CompactLayout.deliver_ghost_click: record the cluster-local
+        (cell-root-local) click coordinate the controller resolved."""
+        self.ghost_clicks.append((cell_index, x, y))
+
+    def set_shell_extra_opacity(self, cell_index, bg_opacity, portrait_opacity):
+        """Mirror _CompactLayout.set_shell_extra_opacity: record the SAFE
+        paint-time hover-peek translucency the controller pushed per shell."""
+        self.shell_opacities.append(
+            (cell_index, round(float(bg_opacity), 4), round(float(portrait_opacity), 4)))
 
 
 class _StubWindow:
@@ -2035,4 +2049,242 @@ def test_close_panel_surface_protects_hosted_widget_when_on_close_raises(qapp):
     assert _cpp_alive(surface) is False              # the surface WAS really destroyed
     assert _cpp_alive(widget) is True                # BORROWED widget survived that destruction
     assert widget.parent() is None                   # released out of the (dead) surface
+    ctrl.leave()
+
+
+# ---------------------------------------------------------------------------
+# 12. Hover-peek / ghost-click / drag in CLUSTER-LOCAL coords (T8)
+#
+# The single-window cluster hosts all four cards in ONE window, so the old
+# per-surface SCREEN hit tests become CLUSTER-LOCAL: a control lives at its
+# cell's origin within _grid_host (window-local), and a card's SCREEN rect is
+# the window origin plus that cell's offset. These tests pin the load-bearing
+# hit-test round-trip, the ghost-click delivery, the emblem-drag poll, and the
+# SAFE (paint-time set_shell_extra_opacity) hover-peek fade.
+# ---------------------------------------------------------------------------
+
+# Window origin for anchor (1000, 700): the placement rect top-left is
+# anchor - emblem_center_local = (1000 - 110, 700 - 90) = (890, 610).
+_GHOST_ANCHOR = (1000, 700)
+_WIN_ORIGIN = (_GHOST_ANCHOR[0] - _EMBLEM_CX, _GHOST_ANCHOR[1] - _EMBLEM_CY)  # (890, 610)
+
+
+def test_hover_peek_and_ghost_use_cluster_local_card_rects(qapp):
+    """The load-bearing deliverable: slot_at_window_point / card_control_point are
+    exact INVERSES in WINDOW-LOCAL coords for every slot, a point over no card
+    returns None, and a point inside a NON-visible cell is excluded."""
+    ctrl, provider, window, created = _make()
+    ctrl.enter()
+
+    # Round-trip: the representative control point of slot N hit-tests back to N.
+    assert ctrl.slot_at_window_point(ctrl.card_control_point(0)) == 0
+    assert ctrl.slot_at_window_point(ctrl.card_control_point(2)) == 2
+    assert ctrl.slot_at_window_point(ctrl.card_control_point(1)) == 1
+    assert ctrl.slot_at_window_point(ctrl.card_control_point(3)) == 3
+
+    # A point over no card control (well outside every cell's control rects, and
+    # off the emblem) returns None.
+    assert ctrl.slot_at_window_point(QPoint(2, 2)) is None
+
+    # A point INSIDE a non-visible cell's control is excluded (returns None): the
+    # geometric point still exists, but the slot dropped out of the visible set.
+    probe1 = ctrl.card_control_point(1)
+    ctrl._visible_cells = {0, 2}
+    assert ctrl.slot_at_window_point(probe1) is None
+    ctrl._visible_cells = {0, 1, 2, 3}
+    assert ctrl.slot_at_window_point(probe1) == 1
+    ctrl.leave()
+
+
+def test_ghost_press_over_control_delivers_cluster_local_click(qapp):
+    """A SCREEN ghost 'press' over card N's control maps to
+    deliver_ghost_click(N, card_local_x, card_local_y): the controller builds the
+    cards list from the window origin + each cell's offset and resolves the click
+    in cell-root-local coords. A press over no card delivers nothing."""
+    ctrl, provider, window, created = _make(anchor=_GHOST_ANCHOR, settings=_DictSettings())
+    ctrl.enter()
+
+    # Center of cell 1's first control in SCREEN coords: window origin (890,610) +
+    # cell 1 origin (210,10) + control card-local (8,8,30,18) center (23,17).
+    ox, oy = _WIN_ORIGIN
+    sx = ox + 210 + 8 + 15
+    sy = oy + 10 + 8 + 9
+    ctrl.on_ghost_event(("press", [(1, sx, sy)]))
+    assert provider.ghost_clicks == [(1, 23, 17)]     # cell-root-local (at-scale) coords
+
+    # A press over the card BODY (no control) delivers nothing.
+    provider.ghost_clicks.clear()
+    body_x = ox + 210 + 100          # inside cell 1, not on either control
+    body_y = oy + 10 + 100
+    ctrl.on_ghost_event(("press", [(1, body_x, body_y)]))
+    assert provider.ghost_clicks == []
+
+    # A press over open space (no card at all) delivers nothing.
+    ctrl.on_ghost_event(("press", [(1, 2, 2)]))
+    assert provider.ghost_clicks == []
+    ctrl.leave()
+
+
+def test_ghost_press_excludes_non_visible_cell(qapp):
+    """A ghost press over a NON-visible cell's control delivers nothing (empty
+    cards drop out of the click pass), while a visible cell still delivers."""
+    ctrl, provider, window, created = _make(anchor=_GHOST_ANCHOR, settings=_DictSettings())
+    ctrl.enter()
+    ctrl._visible_cells = {0}                          # only cell 0 is occupied
+    ox, oy = _WIN_ORIGIN
+
+    # Screen center of cell 1's first control (cell 1 is NOT visible).
+    s1x = ox + 210 + 8 + 15
+    s1y = oy + 10 + 8 + 9
+    ctrl.on_ghost_event(("press", [(1, s1x, s1y)]))
+    assert provider.ghost_clicks == []                 # non-visible cell excluded
+
+    # Screen center of cell 0's first control (cell 0 IS visible).
+    s0x = ox + 10 + 8 + 15
+    s0y = oy + 10 + 8 + 9
+    ctrl.on_ghost_event(("press", [(0, s0x, s0y)]))
+    assert provider.ghost_clicks == [(0, 23, 17)]
+    ctrl.leave()
+
+
+def test_ghost_click_disabled_without_settings(qapp):
+    """No settings object -> ghost clicks are gated OFF (a press delivers nothing),
+    mirroring the old controller's _ghost_click_enabled gate."""
+    ctrl, provider, window, created = _make(anchor=_GHOST_ANCHOR)   # settings=None
+    ctrl.enter()
+    ox, oy = _WIN_ORIGIN
+    ctrl.on_ghost_event(("press", [(1, ox + 210 + 8 + 15, oy + 10 + 8 + 9)]))
+    assert provider.ghost_clicks == []
+    ctrl.leave()
+
+
+def test_begin_group_drag_follows_cursor_delta(qapp, monkeypatch):
+    """begin_group_drag() starts a ~16ms cursor poll; each _drag_step shifts the
+    anchor by the cursor delta (via the clamped move_group), and a left-button
+    release ends the drag."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QCursor
+    from PySide6.QtWidgets import QApplication
+
+    ctrl, provider, window, created = _make(anchor=(400, 400))   # well inside 800x800
+    ctrl.enter()
+
+    monkeypatch.setattr(QCursor, "pos", staticmethod(lambda: QPoint(100, 100)))
+    ctrl.begin_group_drag()
+    assert ctrl._drag_last == QPoint(100, 100)
+    assert ctrl._drag_timer is not None and ctrl._drag_timer.isActive()
+
+    anchor0 = ctrl._anchor
+    monkeypatch.setattr(QApplication, "mouseButtons", staticmethod(lambda: Qt.LeftButton))
+    monkeypatch.setattr(QCursor, "pos", staticmethod(lambda: QPoint(130, 80)))
+    ctrl._drag_step()
+    # The anchor followed the cursor delta (30, -20), clamped to the envelope (no
+    # clamp needed this far from the edge).
+    assert ctrl._anchor == (anchor0[0] + 30, anchor0[1] - 20)
+
+    # Button released -> the poll ends (timer stopped, last cleared).
+    monkeypatch.setattr(QApplication, "mouseButtons", staticmethod(lambda: Qt.NoButton))
+    ctrl._drag_step()
+    assert ctrl._drag_timer.isActive() is False
+    assert ctrl._drag_last is None
+    ctrl.leave()
+
+
+def test_drag_step_locked_out_during_scale(qapp, monkeypatch):
+    """The emblem drag inherits the Task-5 drag-lockout-during-scale for free: while
+    a scale gesture is live (_scaling_active), _drag_step's move_group call is a
+    no-op, so the anchor does NOT move mid-zoom."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QCursor
+    from PySide6.QtWidgets import QApplication
+
+    ctrl, provider, window, created = _make(anchor=(400, 400))
+    ctrl.enter()
+
+    monkeypatch.setattr(QCursor, "pos", staticmethod(lambda: QPoint(100, 100)))
+    ctrl.begin_group_drag()
+    ctrl.set_scale_by_notches(1)                        # scale gesture live
+    assert ctrl._scaling_active is True
+
+    anchor0 = ctrl._anchor
+    monkeypatch.setattr(QApplication, "mouseButtons", staticmethod(lambda: Qt.LeftButton))
+    monkeypatch.setattr(QCursor, "pos", staticmethod(lambda: QPoint(160, 60)))
+    ctrl._drag_step()
+    assert ctrl._anchor == anchor0                     # locked out: no anchor move
+
+    # After settle the lockout lifts and a drag step moves again.
+    ctrl._settle_input()
+    assert ctrl._scaling_active is False
+    monkeypatch.setattr(QCursor, "pos", staticmethod(lambda: QPoint(180, 40)))
+    ctrl._drag_step()
+    assert ctrl._anchor != anchor0                     # gesture settled -> drag allowed
+    ctrl.leave()
+
+
+def test_hover_peek_fades_hovered_card_via_shell_opacity(qapp):
+    """A ghost point over card N fades ONLY card N via the SAFE paint-time
+    set_shell_extra_opacity hook (bg + portrait < 1.0), leaving the other visible
+    cards fully opaque. Ten ticks drive the fade to its net targets."""
+    ctrl, provider, window, created = _make(anchor=_GHOST_ANCHOR, settings=_DictSettings())
+    ctrl.enter()
+
+    # Ghost motion over the CENTER of card 1 (screen coords): window origin +
+    # cell 1 origin (210,10) + half the cell size (90, 65).
+    ox, oy = _WIN_ORIGIN
+    gx = ox + 210 + 90
+    gy = oy + 10 + 65
+    ctrl.on_ghost_event(("motion", [(1, gx, gy)]))
+    for _ in range(10):
+        ctrl._peek_tick(None)                          # no real cursor; ghost drives it
+
+    assert ctrl._peek_progress[1] == pytest.approx(1.0, abs=1e-6)
+    assert ctrl._peek_progress[0] == 0.0
+    # Card 1 was faded via set_shell_extra_opacity to its net body/portrait targets;
+    # the non-hovered visible cards never repainted (idle cards stay opaque).
+    card1 = [c for c in provider.shell_opacities if c[0] == 1]
+    assert card1, "hovered card 1 must receive a shell-opacity fade"
+    _, bg1, portrait1 = card1[-1]
+    assert bg1 == pytest.approx(0.65, abs=1e-6)         # PEEK_BODY_OPACITY (net)
+    assert portrait1 == pytest.approx(0.25, abs=1e-6)   # PEEK_PORTRAIT_OPACITY (net)
+    assert bg1 < 1.0 and portrait1 < 1.0
+    assert all(c[0] == 1 for c in provider.shell_opacities)   # only card 1 repainted
+    ctrl.leave()
+
+
+def test_on_ghost_clear_settles_peek_back_to_opaque(qapp):
+    """on_ghost_clear() drops the ghost points AND settles a peeked card back to
+    fully opaque (bg + portrait == 1.0), so a borrowed card never returns to the
+    framed grid stuck dim."""
+    ctrl, provider, window, created = _make(anchor=_GHOST_ANCHOR, settings=_DictSettings())
+    ctrl.enter()
+    ox, oy = _WIN_ORIGIN
+    ctrl.on_ghost_event(("motion", [(1, ox + 210 + 90, oy + 10 + 65)]))
+    for _ in range(10):
+        ctrl._peek_tick(None)
+    assert ctrl._peek_progress[1] == pytest.approx(1.0, abs=1e-6)
+    provider.shell_opacities.clear()
+
+    ctrl.on_ghost_clear()
+
+    assert ctrl._peek_store.points() == []             # ghost points dropped
+    assert ctrl._peek_progress[1] == 0.0               # progress reset
+    assert provider.shell_opacities[-1] == (1, 1.0, 1.0)   # settled fully opaque
+    ctrl.leave()
+
+
+def test_peek_tick_noop_during_scale_gesture(qapp):
+    """A peek tick during an active scale gesture (BROAD phase) is a no-op: the
+    frozen-gesture rule forbids peek state changes mid-zoom."""
+    ctrl, provider, window, created = _make(anchor=_GHOST_ANCHOR, settings=_DictSettings())
+    ctrl.enter()
+    ox, oy = _WIN_ORIGIN
+    ctrl.on_ghost_event(("motion", [(1, ox + 210 + 90, oy + 10 + 65)]))
+    ctrl.set_scale_by_notches(1)
+    assert ctrl._scaling_active is True
+    provider.shell_opacities.clear()
+
+    ctrl._peek_tick(None)
+
+    assert provider.shell_opacities == []              # no peek change mid-gesture
+    assert ctrl._peek_progress[1] == 0.0
     ctrl.leave()

@@ -32,7 +32,10 @@ intentionally NOT built here.
 from __future__ import annotations
 
 from utils.overlay.backend import get_overlay_backend
+from utils.overlay.peek import GhostPointStore, peeking_indices, control_hits
 from utils.overlay.scale import step_scale
+from utils.screen_coords import emitted_to_logical
+from utils.settings_keys import GHOST_CURSORS_ENABLED, GHOST_CURSORS_CONTROL_CARDS
 
 # Quiescence window after the last scale notch before the EXACT input shape is
 # swapped in. Long enough that a continuous wheel spin keeps re-arming it (so the
@@ -142,6 +145,24 @@ class ClusterOverlayController:
         self._panel_surface = None
         self._panel_on_close = None
         self._panel_size: int = 0
+
+        # Hover-peek / ghost-click / drag (Task 8), ported from
+        # OverlayGroupController to CLUSTER-LOCAL (one window) hit tests.
+        #
+        # Ghost points (click-sync ghost cursors) accumulate in the store, fed by
+        # on_ghost_event/on_ghost_clear (caller wiring is a LATER task). A ~30ms
+        # QCursor poll (_peek_timer) unions the real cursor with the ghost points
+        # and fades the hovered card via the provider's SAFE paint-time
+        # set_shell_extra_opacity (never windowOpacity, never a QGraphicsEffect).
+        # Per-slot (0-3) fade progress 0.0 (opaque) -> 1.0 (peeked).
+        self._peek_store = GhostPointStore()
+        self._peek_timer = None
+        self._peek_progress = [0.0, 0.0, 0.0, 0.0]
+        # Emblem-drag poll: move_requested fires ONCE at drag-start with no delta,
+        # so the controller tracks the global cursor itself (a ~16ms poll) and
+        # shifts the anchor via the clamped move_group until the button releases.
+        self._drag_timer = None
+        self._drag_last = None
 
     # ------------------------------------------------------------------
     # State queries
@@ -328,6 +349,10 @@ class ClusterOverlayController:
         # Decorative + best-effort: a dim failure must never flip a successful enter
         # back to framed, so _build_internal_dim swallows its own errors.
         self._build_internal_dim()
+        # Start the hover-peek poll (the ~30ms QCursor union that fades the hovered
+        # card). Ghost points arrive via on_ghost_event (caller wiring is a LATER
+        # task); the timer drives the fade regardless of the real cursor.
+        self._start_peek_timer()
         self._emit_active_changed()   # self._active is True here
         return True
 
@@ -360,6 +385,12 @@ class ClusterOverlayController:
         # close_panel_surface() + close_radial_menu().
         self.close_panel_surface()
         self.close_radial_menu()
+        # Stop the emblem-drag poll and the hover-peek poll. Settling the peek
+        # (restoring every faded card to fully opaque) runs HERE - before the host
+        # is restored - so the borrowed cards never return to the framed grid stuck
+        # dim.
+        self._end_drag()
+        self._stop_peek_timer()
         # Cancel any pending settle and reset scaling state so a re-enter starts
         # framed (scale 1.0, no in-flight gesture). A late timer firing post-leave
         # is a guarded no-op, but stopping it here avoids the wasted callback.
@@ -635,6 +666,305 @@ class ClusterOverlayController:
             except Exception:
                 continue
         return out
+
+    # ------------------------------------------------------------------
+    # Hover-peek / ghost-click / drag (cluster-local hit tests)
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _point_xy(pt):
+        """Accept a QPoint(F) or an (x, y) pair -> (x, y) ints."""
+        x = getattr(pt, "x", None)
+        if callable(x):
+            return int(pt.x()), int(pt.y())
+        return int(pt[0]), int(pt[1])
+
+    def slot_at_window_point(self, pt):
+        """The VISIBLE slot whose control rect(s) contain the WINDOW-LOCAL point
+        *pt* (a QPoint or (x, y)), or None. Considers only ``self._visible_cells``,
+        using the same window-local control rects the exact input shape is built from
+        (``_window_control_rects``)."""
+        from PySide6.QtCore import QPoint
+        px, py = self._point_xy(pt)
+        p = QPoint(px, py)
+        for slot, rects in self._window_control_rects().items():
+            if slot not in self._visible_cells:
+                continue
+            for r in rects:
+                if r.contains(p):
+                    return slot
+        return None
+
+    def card_control_point(self, slot):
+        """A representative WINDOW-LOCAL QPoint INSIDE *slot*'s control region: the
+        center of its first control rect. None when the slot has no control rects.
+        The inverse of ``slot_at_window_point`` for a visible slot."""
+        from PySide6.QtCore import QPoint
+        rects = self._window_control_rects().get(slot)
+        if not rects:
+            return None
+        r = rects[0]
+        return QPoint(r.x() + r.width() // 2, r.y() + r.height() // 2)
+
+    def _visible_card_geoms(self):
+        """``[(slot, screen_rect QRect, [card-local control QRect, ...]), ...]`` for
+        the VISIBLE cells.
+
+        A card's SCREEN rect = the window placement origin (``_compute_window_rect``,
+        derived from the anchor - matching the surface geometry and robust to a stub
+        surface that never really moves) PLUS the cell's origin within ``_grid_host``,
+        at the cell's at-scale size. The control rects are the raw card-local
+        (at-scale) rects; ``apply_metrics`` has already scaled the cards, so no extra
+        scaling is applied here. Empty when the provider lacks the ``control_rects`` /
+        ``_card_slots`` hooks."""
+        provider = self._card_provider
+        rects_fn = getattr(provider, "control_rects", None) if provider is not None else None
+        slots = getattr(provider, "_card_slots", None) if provider is not None else None
+        if rects_fn is None or slots is None:
+            return []
+        from PySide6.QtCore import QPoint, QRect
+        grid_host = getattr(provider, "_grid_host", None)
+        win = self._compute_window_rect()
+        ox, oy = win.x(), win.y()
+        out = []
+        for cell_index, slot in enumerate(slots):
+            if cell_index not in self._visible_cells:
+                continue
+            root = slot.get("cell") if isinstance(slot, dict) else None
+            if root is None:
+                continue
+            try:
+                if grid_host is not None and root is not grid_host:
+                    origin = root.mapTo(grid_host, QPoint(0, 0))
+                else:
+                    origin = root.pos()
+                size = root.size()
+                screen_rect = QRect(ox + origin.x(), oy + origin.y(),
+                                    size.width(), size.height())
+                out.append((cell_index, screen_rect, rects_fn(cell_index)))
+            except Exception:
+                continue
+        return out
+
+    # ---- Ghost events -------------------------------------------------
+    def on_ghost_event(self, payload) -> None:
+        """Receive a click-sync ghost_pointer_event (motion/press/release).
+
+        Converts the native points to logical coords once (HiDPI-correct), feeds the
+        hover-peek store, and - on a 'press', when ghost-control-clicks are enabled -
+        fires the matching card controls. A no-op mid scale gesture (the frozen
+        cluster must not take ghost clicks). Caller wiring is a LATER task."""
+        if self._scaling_active:
+            return
+        payload = self._ghost_payload_to_logical(payload)
+        self._peek_store.ingest(payload)
+        if not self._ghost_click_enabled():
+            return
+        try:
+            kind, items = payload
+        except (TypeError, ValueError):
+            return
+        if kind == "press":
+            self._ghost_click_pass(items)
+
+    def on_ghost_clear(self) -> None:
+        """Receive click-sync ghost_clear: drop all ghost points and settle any faded
+        card back to fully opaque."""
+        self._peek_store.clear()
+        self._settle_peek()
+
+    def _ghost_payload_to_logical(self, payload):
+        """Convert a ghost payload's native points to logical coords (fetching the
+        screen list once). A malformed payload is returned UNCHANGED (best-effort
+        degrade); the well-formed service payloads always convert."""
+        from PySide6.QtGui import QGuiApplication
+        try:
+            kind, items = payload
+            screens = QGuiApplication.screens()
+            conv = [(slot, *emitted_to_logical(x, y, screens))
+                    for slot, x, y in items]
+        except (TypeError, ValueError):
+            return payload
+        return (kind, conv)
+
+    def _ghost_click_enabled(self) -> bool:
+        """True when ghost cursors may press card controls: a settings object, an
+        active overlay, a card provider, and both ghost settings on."""
+        if self._settings is None or not self._active or self._card_provider is None:
+            return False
+        return bool(self._settings.get(GHOST_CURSORS_ENABLED, True)
+                    and self._settings.get(GHOST_CURSORS_CONTROL_CARDS, True))
+
+    def _ghost_click_pass(self, items) -> None:
+        """Map each (already-logical, SCREEN) ghost point to a card control and
+        deliver a synthetic click at its CELL-ROOT-LOCAL coordinate.
+
+        The cards list feeds the shared ``control_hits`` helper: each visible slot's
+        SCREEN rect (window origin + cell offset) plus its card-local control rects.
+        Both are already at-scale (``apply_metrics`` resized the cards), so the scale
+        passed is 1.0 and the resolved (x, y) is the at-scale cell-root-local point
+        ``deliver_ghost_click`` expects. Defensive per card: ``on_ghost_event`` is a
+        QUEUED Qt slot, so one bad card drops only its own click, never the whole
+        press."""
+        provider = self._card_provider
+        if provider is None:
+            return
+        cards = []
+        for slot, screen_rect, local_rects in self._visible_card_geoms():
+            rect_tuples = [(r.x(), r.y(), r.width(), r.height()) for r in local_rects]
+            cards.append((slot,
+                          (screen_rect.x(), screen_rect.y(),
+                           screen_rect.width(), screen_rect.height()),
+                          rect_tuples))
+        points = [(x, y) for _slot, x, y in items]
+        for slot, x, y in control_hits(points, cards, 1.0):
+            try:
+                provider.deliver_ghost_click(slot, x, y)
+            except Exception:
+                continue
+
+    # ---- Hover-peek (SAFE paint-time opacity only) --------------------
+    PEEK_BODY_OPACITY = 0.65       # card BACKGROUND fill at full hover-peek
+    PEEK_PORTRAIT_OPACITY = 0.25   # circular portrait (frame + toon image) at full peek
+    _PEEK_FADE_STEP = 0.25         # progress per 30ms tick -> ~120ms full fade
+
+    def _peek_opacities(self, progress):
+        """``(bg, portrait)`` net opacities for a peek *progress* 0..1.
+
+        Unlike the per-surface controller there is NO whole-card content tier in the
+        single window (``windowOpacity`` is banned; a ``QGraphicsEffect`` on a custom
+        ``paintEvent`` widget is banned), so the background fill + portrait fade
+        DIRECTLY to their net targets via the provider's SAFE
+        ``set_shell_extra_opacity`` (each widget's own paint-time ``setOpacity``)."""
+        bg = 1.0 - (1.0 - self.PEEK_BODY_OPACITY) * progress
+        portrait = 1.0 - (1.0 - self.PEEK_PORTRAIT_OPACITY) * progress
+        return bg, portrait
+
+    def _apply_peek_fade(self, slot, active) -> None:
+        """Step one card's hover-peek progress toward its target and push the SAFE
+        paint-time translucency (background fill + portrait) via the provider. A
+        settled card (already at its target) is skipped so idle cards never repaint."""
+        target = 1.0 if active else 0.0
+        cur = self._peek_progress[slot]
+        if cur < target:
+            cur = min(target, cur + self._PEEK_FADE_STEP)
+        elif cur > target:
+            cur = max(target, cur - self._PEEK_FADE_STEP)
+        else:
+            return  # already settled; nothing to repaint
+        self._peek_progress[slot] = cur
+        bg, portrait = self._peek_opacities(cur)
+        provider = self._card_provider
+        if provider is not None:
+            try:
+                provider.set_shell_extra_opacity(slot, bg, portrait)
+            except Exception:
+                pass
+
+    def _peek_tick(self, real_point) -> None:
+        """One hover-peek detection pass: union the real cursor with the ghost points
+        and fade each VISIBLE card toward peeked (hovered) or opaque (not).
+
+        real_point: (x, y) SCREEN global, or None when the OS pointer is unavailable.
+        A no-op mid scale gesture (frozen cluster) or while framed."""
+        if self._scaling_active:
+            return
+        if not self._active:
+            return
+        cards = self._visible_card_geoms()
+        rects = [(g.x(), g.y(), g.width(), g.height()) for _slot, g, _cr in cards]
+        points = list(self._peek_store.points())
+        if real_point is not None:
+            points.append(real_point)
+        peeking = peeking_indices(points, rects)
+        for i, (slot, _g, _cr) in enumerate(cards):
+            self._apply_peek_fade(slot, i in peeking)
+
+    def _settle_peek(self) -> None:
+        """Restore every faded card to fully opaque (both tiers) and reset progress,
+        so a borrowed card never returns to the framed grid stuck dim. Used by
+        ``on_ghost_clear`` + ``_stop_peek_timer`` (leave)."""
+        provider = self._card_provider
+        for slot in range(len(self._peek_progress)):
+            if self._peek_progress[slot] != 0.0:
+                self._peek_progress[slot] = 0.0
+                if provider is not None:
+                    try:
+                        provider.set_shell_extra_opacity(slot, 1.0, 1.0)
+                    except Exception:
+                        pass
+
+    def _on_peek_timer(self) -> None:
+        from PySide6.QtGui import QCursor
+        try:
+            p = QCursor.pos()
+            point = (p.x(), p.y())
+        except Exception:
+            point = None
+        self._peek_tick(point)
+
+    def _start_peek_timer(self) -> None:
+        from PySide6.QtCore import QTimer
+        if self._peek_timer is None:
+            self._peek_timer = QTimer()
+            self._peek_timer.setInterval(30)  # ~33Hz, light
+            self._peek_timer.timeout.connect(self._on_peek_timer)
+        self._peek_timer.start()
+
+    def _stop_peek_timer(self) -> None:
+        """Stop the poll, drop the ghost points, and settle every card opaque."""
+        if self._peek_timer is not None:
+            self._peek_timer.stop()
+        self._peek_store.clear()
+        self._settle_peek()
+
+    # ---- Emblem drag (cluster-local, one window) ----------------------
+    def begin_group_drag(self) -> None:
+        """Start a manual drag of the whole cluster, following the cursor.
+
+        move_requested fires ONCE at drag-start with no delta, so the controller
+        tracks the GLOBAL cursor itself (a ~16ms poll) and shifts the anchor via the
+        clamped ``move_group`` until the left button is released. No-op when framed;
+        re-entrant-safe (restarts from the current cursor)."""
+        if not self._active:
+            return
+        from PySide6.QtGui import QCursor
+        from PySide6.QtCore import QTimer
+        self._drag_last = QCursor.pos()
+        if self._drag_timer is None:
+            self._drag_timer = QTimer()
+            self._drag_timer.setInterval(16)
+            self._drag_timer.timeout.connect(self._drag_step)
+        self._drag_timer.start()
+
+    def _drag_step(self) -> None:
+        """One poll of the manual drag: move the group by the cursor delta, or end the
+        drag when the left button is released / the cluster left transparent.
+
+        The move is the clamped ``move_group``, which is a NO-OP while a scale gesture
+        is live (the Task-5 drag-lockout-during-scale), so the drag inherits that
+        lockout for free."""
+        from PySide6.QtGui import QCursor
+        from PySide6.QtWidgets import QApplication
+        from PySide6.QtCore import Qt
+        if not self._active:
+            self._end_drag()
+            return
+        if not (QApplication.mouseButtons() & Qt.LeftButton):
+            self._end_drag()
+            return
+        pos = QCursor.pos()
+        if self._drag_last is not None:
+            dx = pos.x() - self._drag_last.x()
+            dy = pos.y() - self._drag_last.y()
+            if dx or dy:
+                self.move_group(dx, dy)
+        self._drag_last = pos
+
+    def _end_drag(self) -> None:
+        """Stop the manual-drag poll (idempotent)."""
+        if self._drag_timer is not None:
+            self._drag_timer.stop()
+        self._drag_last = None
 
     # ------------------------------------------------------------------
     # Occupancy (keep the grid shell fixed; only narrow the input shape)
