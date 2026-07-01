@@ -349,9 +349,13 @@ class ClusterOverlayController:
         # Decorative + best-effort: a dim failure must never flip a successful enter
         # back to framed, so _build_internal_dim swallows its own errors.
         self._build_internal_dim()
-        # Start the hover-peek poll (the ~30ms QCursor union that fades the hovered
-        # card). Ghost points arrive via on_ghost_event (caller wiring is a LATER
-        # task); the timer drives the fade regardless of the real cursor.
+        # Clear any ghost points that leaked into the store while framed (a queued
+        # on_ghost_event arriving after a prior leave()), so a stale hover can never
+        # survive into this fresh session, then start the hover-peek poll (the ~30ms
+        # QCursor union that fades the hovered card). Ghost points arrive via
+        # on_ghost_event (caller wiring is a LATER task); the timer drives the fade
+        # regardless of the real cursor.
+        self._peek_store.clear()
         self._start_peek_timer()
         self._emit_active_changed()   # self._active is True here
         return True
@@ -629,6 +633,18 @@ class ClusterOverlayController:
                 return QRect(g)
         return QRect()
 
+    @staticmethod
+    def _cell_origin(root, grid_host):
+        """The cell root's origin within ``grid_host`` (window-local coords). Uses
+        ``mapTo`` when the cell is a nested descendant, falling back to ``pos()`` when
+        it is a direct child (or when there is no grid host). Shared by
+        ``_window_control_rects`` (input-shape) and ``_visible_card_geoms``
+        (peek/ghost) so the cell-origin computation never drifts between them."""
+        from PySide6.QtCore import QPoint
+        if grid_host is not None and root is not grid_host:
+            return root.mapTo(grid_host, QPoint(0, 0))
+        return root.pos()
+
     def _window_control_rects(self) -> dict:
         """``{slot_id: [QRect, ...]}`` of each card's interactive-control rects in
         WINDOW-LOCAL coords - the input-union's per-slot ``card_controls``.
@@ -649,7 +665,6 @@ class ClusterOverlayController:
         slots = getattr(provider, "_card_slots", None)
         if rects_fn is None or slots is None:
             return {}
-        from PySide6.QtCore import QPoint
         grid_host = getattr(provider, "_grid_host", None)
         out: dict = {}
         for cell_index, slot in enumerate(slots):
@@ -657,10 +672,7 @@ class ClusterOverlayController:
             if root is None:
                 continue
             try:
-                if grid_host is not None and root is not grid_host:
-                    origin = root.mapTo(grid_host, QPoint(0, 0))
-                else:
-                    origin = root.pos()
+                origin = self._cell_origin(root, grid_host)
                 local_rects = rects_fn(cell_index)
                 out[cell_index] = [r.translated(origin) for r in local_rects]
             except Exception:
@@ -721,7 +733,7 @@ class ClusterOverlayController:
         slots = getattr(provider, "_card_slots", None) if provider is not None else None
         if rects_fn is None or slots is None:
             return []
-        from PySide6.QtCore import QPoint, QRect
+        from PySide6.QtCore import QRect
         grid_host = getattr(provider, "_grid_host", None)
         win = self._compute_window_rect()
         ox, oy = win.x(), win.y()
@@ -733,10 +745,7 @@ class ClusterOverlayController:
             if root is None:
                 continue
             try:
-                if grid_host is not None and root is not grid_host:
-                    origin = root.mapTo(grid_host, QPoint(0, 0))
-                else:
-                    origin = root.pos()
+                origin = self._cell_origin(root, grid_host)
                 size = root.size()
                 screen_rect = QRect(ox + origin.x(), oy + origin.y(),
                                     size.width(), size.height())
@@ -752,19 +761,34 @@ class ClusterOverlayController:
         Converts the native points to logical coords once (HiDPI-correct), feeds the
         hover-peek store, and - on a 'press', when ghost-control-clicks are enabled -
         fires the matching card controls. A no-op mid scale gesture (the frozen
-        cluster must not take ghost clicks). Caller wiring is a LATER task."""
-        if self._scaling_active:
-            return
-        payload = self._ghost_payload_to_logical(payload)
-        self._peek_store.ingest(payload)
-        if not self._ghost_click_enabled():
+        cluster must not take ghost clicks) OR while framed: a QUEUED event that
+        arrives after leave() must NEVER re-seed the peek store, or a stale hover
+        would survive into the next enter(). Caller wiring is a LATER task.
+
+        This is a QUEUED Qt slot in production (fired from the input-service capture
+        thread, marshalled to the GUI thread), so it MUST NEVER raise into Qt's
+        dispatch. Malformed payload items are already dropped in
+        ``_ghost_payload_to_logical``; the whole body is ALSO wrapped in a defensive
+        try/except as a backstop for anything else (e.g. a
+        ``QGuiApplication.screens()`` failure in the logical conversion)."""
+        if self._scaling_active or not self._active:
             return
         try:
-            kind, items = payload
-        except (TypeError, ValueError):
-            return
-        if kind == "press":
-            self._ghost_click_pass(items)
+            payload = self._ghost_payload_to_logical(payload)
+            self._peek_store.ingest(payload)
+            if not self._ghost_click_enabled():
+                return
+            try:
+                kind, items = payload
+            except (TypeError, ValueError):
+                return
+            if kind == "press":
+                self._ghost_click_pass(items)
+        except Exception:
+            from utils.overlay.backend import overlay_trace
+            import traceback
+            overlay_trace("cluster_controller.on_ghost_event() suppressed "
+                          "(never raise into Qt dispatch):\n" + traceback.format_exc())
 
     def on_ghost_clear(self) -> None:
         """Receive click-sync ghost_clear: drop all ghost points and settle any faded
@@ -774,16 +798,25 @@ class ClusterOverlayController:
 
     def _ghost_payload_to_logical(self, payload):
         """Convert a ghost payload's native points to logical coords (fetching the
-        screen list once). A malformed payload is returned UNCHANGED (best-effort
-        degrade); the well-formed service payloads always convert."""
+        screen list once), DROPPING any malformed item (one that is not a
+        ``(slot, x, y)`` triple) instead of passing it downstream where the unpack in
+        ``_peek_store.ingest`` / ``_ghost_click_pass`` would raise into the queued Qt
+        slot. A payload that is not a ``(kind, items)`` pair is returned UNCHANGED
+        (the downstream ingest + press guards then no-op on it); the well-formed
+        service payloads always convert."""
         from PySide6.QtGui import QGuiApplication
         try:
             kind, items = payload
-            screens = QGuiApplication.screens()
-            conv = [(slot, *emitted_to_logical(x, y, screens))
-                    for slot, x, y in items]
         except (TypeError, ValueError):
             return payload
+        screens = QGuiApplication.screens()
+        conv = []
+        for item in items:
+            try:
+                slot, x, y = item
+            except (TypeError, ValueError):
+                continue  # drop a malformed item; never propagate a bad unpack
+            conv.append((slot, *emitted_to_logical(x, y, screens)))
         return (kind, conv)
 
     def _ghost_click_enabled(self) -> bool:
@@ -879,19 +912,30 @@ class ClusterOverlayController:
         for i, (slot, _g, _cr) in enumerate(cards):
             self._apply_peek_fade(slot, i in peeking)
 
+    def _settle_peek_slot(self, slot) -> None:
+        """Restore ONE card to fully opaque (both tiers) and reset its progress, if it
+        is currently faded. A settled card (progress already 0.0) is a no-op so idle
+        cards never repaint. Guarded: a provider without ``set_shell_extra_opacity``
+        (a bare stub) is a safe no-op. Shared by ``_settle_peek`` and the occupancy
+        reconcile (a card that drops out of the visible set)."""
+        if not (0 <= slot < len(self._peek_progress)):
+            return
+        if self._peek_progress[slot] == 0.0:
+            return
+        self._peek_progress[slot] = 0.0
+        provider = self._card_provider
+        if provider is not None:
+            try:
+                provider.set_shell_extra_opacity(slot, 1.0, 1.0)
+            except Exception:
+                pass
+
     def _settle_peek(self) -> None:
         """Restore every faded card to fully opaque (both tiers) and reset progress,
         so a borrowed card never returns to the framed grid stuck dim. Used by
         ``on_ghost_clear`` + ``_stop_peek_timer`` (leave)."""
-        provider = self._card_provider
         for slot in range(len(self._peek_progress)):
-            if self._peek_progress[slot] != 0.0:
-                self._peek_progress[slot] = 0.0
-                if provider is not None:
-                    try:
-                        provider.set_shell_extra_opacity(slot, 1.0, 1.0)
-                    except Exception:
-                        pass
+            self._settle_peek_slot(slot)
 
     def _on_peek_timer(self) -> None:
         from PySide6.QtGui import QCursor
@@ -1037,7 +1081,15 @@ class ClusterOverlayController:
         ``OverlayGroupController._on_occupancy_changed``'s gesture deferral."""
         if not self._active:
             return
+        prev_visible = self._visible_cells
         self._visible_cells = self._target_visible_cells()
+        # Settle any card that just LEFT the visible set back to fully opaque. The
+        # hover-peek poll (_peek_tick) only iterates VISIBLE cards, so a card that was
+        # mid-peek when it dropped out of occupancy would otherwise stay extra-dimmed
+        # until on_ghost_clear/leave. Runs regardless of gesture state - the opacity
+        # is paint-time safe; only the INPUT-shape swap is deferred during a scale.
+        for slot in prev_visible - self._visible_cells:
+            self._settle_peek_slot(slot)
         if self._scaling_active:
             return
         self._apply_exact_input_shape()

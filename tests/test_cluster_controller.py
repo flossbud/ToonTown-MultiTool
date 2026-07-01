@@ -255,6 +255,10 @@ class _OccupancyStubProvider(QObject):
         self.restored: list = []
         self.last_metrics = None
         self._occupied = set(occupied if occupied is not None else {0, 1, 2, 3})
+        # Recording hook for the hover-peek settle (a peeked card that drops out of
+        # the visible set must be pushed back to fully opaque via this SAFE
+        # paint-time hook - mirrors _StubProvider.set_shell_extra_opacity).
+        self.shell_opacities: list = []
 
     def _shadow_set_visible(self, cw):
         original = cw.setVisible
@@ -291,6 +295,85 @@ class _OccupancyStubProvider(QObject):
 
     def control_rects(self, cell_index):
         return [QRect(r) for r in _CONTROL_RECTS_LOCAL]
+
+    def deliver_ghost_click(self, cell_index, x, y):
+        pass
+
+    def set_shell_extra_opacity(self, cell_index, bg_opacity, portrait_opacity):
+        self.shell_opacities.append(
+            (cell_index, round(float(bg_opacity), 4), round(float(portrait_opacity), 4)))
+
+
+class _ScaledStubProvider:
+    """Like ``_StubProvider`` but ``apply_metrics`` FAITHFULLY scales the cell origins
+    AND the control rects by ``metrics.scale`` - mirroring how the real
+    ``_CompactLayout`` physically resizes the card widgets so both the cell
+    screen-geometry and ``control_rects()`` come back AT-SCALE.
+
+    The plain ``_StubProvider`` only scales ``_grid_host`` + ``_emblem``, leaving the
+    cell origins + control rects at their base (scale-1.0) values, so at any scale its
+    at-scale layout is a fiction. That makes ``control_hits(..., 1.0)`` and
+    ``control_hits(..., self._scale)`` INDISTINGUISHABLE (a ghost-click regression
+    that reintroduced ``/ self._scale`` would pass unnoticed). This stub models a REAL
+    at-scale layout so a NON-1.0-scale ghost-click test can pin the load-bearing
+    ``scale=1.0`` decision in ``_ghost_click_pass``."""
+
+    def __init__(self):
+        self._holder = QWidget()
+        self._grid_host = QWidget(self._holder)
+        self._grid_host.resize(_HOST_W, _HOST_H)
+        self._emblem = QWidget(self._grid_host)
+        self._emblem.setGeometry(_EMBLEM_X, _EMBLEM_Y, _EMBLEM_S, _EMBLEM_S)
+        self._scale = 1.0
+        self._cell_widgets = []
+        for i in range(4):
+            cw = QWidget(self._grid_host)
+            ox, oy = _CELL_ORIGINS[i]
+            cw.setGeometry(ox, oy, *_CELL_SIZE)
+            self._cell_widgets.append(cw)
+        self._token = object()
+        self.ghost_clicks: list = []
+        self.shell_opacities: list = []
+
+    def capture_cluster_host(self):
+        self._grid_host.setParent(None)
+        return self._token
+
+    def restore_cluster_host(self, token):
+        self._grid_host.setParent(self._holder)
+
+    def apply_metrics(self, metrics):
+        s = metrics.scale
+        self._scale = s
+        self._grid_host.resize(round(_HOST_W * s), round(_HOST_H * s))
+        self._emblem.setGeometry(
+            round(_EMBLEM_X * s), round(_EMBLEM_Y * s),
+            round(_EMBLEM_S * s), round(_EMBLEM_S * s))
+        # Faithfully move + resize each cell so its origin within the grid host and
+        # its size are AT-SCALE (like the real physical card resize).
+        for i, cw in enumerate(self._cell_widgets):
+            ox, oy = _CELL_ORIGINS[i]
+            cw.setGeometry(round(ox * s), round(oy * s),
+                           round(_CELL_SIZE[0] * s), round(_CELL_SIZE[1] * s))
+
+    @property
+    def _card_slots(self):
+        return [{"cell": cw} for cw in self._cell_widgets]
+
+    def control_rects(self, cell_index):
+        """AT-SCALE card-local control rects (the real _CompactLayout returns the
+        controls at the current scale, not the framed base rects)."""
+        s = self._scale
+        return [QRect(round(r.x() * s), round(r.y() * s),
+                      round(r.width() * s), round(r.height() * s))
+                for r in _CONTROL_RECTS_LOCAL]
+
+    def deliver_ghost_click(self, cell_index, x, y):
+        self.ghost_clicks.append((cell_index, x, y))
+
+    def set_shell_extra_opacity(self, cell_index, bg_opacity, portrait_opacity):
+        self.shell_opacities.append(
+            (cell_index, round(float(bg_opacity), 4), round(float(portrait_opacity), 4)))
 
 
 def _make(provider=None, window=None, host_raises=False, release_raises=False,
@@ -2287,4 +2370,127 @@ def test_peek_tick_noop_during_scale_gesture(qapp):
 
     assert provider.shell_opacities == []              # no peek change mid-gesture
     assert ctrl._peek_progress[1] == 0.0
+    ctrl.leave()
+
+
+# ---------------------------------------------------------------------------
+# 12b. T8 review fixes (dual-review consensus): inactive-seed guard,
+#      malformed-payload fail-safe, occupancy-drop peek settle, and a
+#      NON-1.0-scale ghost-click guard for the load-bearing scale=1.0 decision.
+# ---------------------------------------------------------------------------
+def test_ghost_event_while_inactive_does_not_seed_and_enter_clears(qapp):
+    """FIX A: a queued ghost event arriving while the overlay is FRAMED must NOT seed
+    the peek store (a stale hover would otherwise survive into the next enter()), and
+    enter() clears the store as defense-in-depth."""
+    ctrl, provider, window, created = _make(anchor=_GHOST_ANCHOR, settings=_DictSettings())
+
+    # (1) Inactive: on_ghost_event must NOT seed the store (guards the active-gate;
+    # reverting it re-seeds the store here).
+    ctrl.on_ghost_event(("motion", [(1, 900, 620)]))
+    assert ctrl._peek_store.points() == []
+
+    # (2) Even a store somehow seeded while framed is cleared by enter() (guards the
+    # enter-clear; reverting it leaves the injected point in the store after enter).
+    ctrl._peek_store.ingest(("motion", [(2, 950, 650)]))
+    assert ctrl._peek_store.points() != []
+    ctrl.enter()
+    assert ctrl._peek_store.points() == []
+    ctrl.leave()
+
+
+def test_on_ghost_event_malformed_payload_never_raises_and_delivers_no_click(qapp):
+    """FIX B: a malformed ghost payload (items that are not (slot, x, y) triples) must
+    NOT raise into the queued Qt slot and must deliver no click - the bad items are
+    dropped in _ghost_payload_to_logical and the whole body is defensively wrapped.
+    Reverting the fix makes the 2-tuple unpack raise ValueError (in _ghost_click_pass
+    for a press, or GhostPointStore.ingest for a motion)."""
+    ctrl, provider, window, created = _make(anchor=_GHOST_ANCHOR, settings=_DictSettings())
+    ctrl.enter()
+
+    ctrl.on_ghost_event(("press", [(1, 900)]))          # 2-tuple item (press path)
+    assert provider.ghost_clicks == []
+    assert ctrl._peek_store.points() == []
+
+    ctrl.on_ghost_event(("motion", [(1, 900)]))         # 2-tuple item (motion path)
+    assert ctrl._peek_store.points() == []
+
+    # Other malformed shapes are also safe no-ops.
+    ctrl.on_ghost_event("not-a-tuple")
+    ctrl.on_ghost_event(("motion", "not-a-list"))
+    ctrl.on_ghost_event(("press", [(1, 2, 3, 4)]))      # 4-tuple item
+    assert provider.ghost_clicks == []
+
+    # A WELL-FORMED press still delivers after the malformed ones (fail-safe did not
+    # wedge the slot): center of cell 1's first control.
+    ox, oy = _WIN_ORIGIN
+    ctrl.on_ghost_event(("press", [(1, ox + 210 + 8 + 15, oy + 10 + 8 + 9)]))
+    assert provider.ghost_clicks == [(1, 23, 17)]
+    ctrl.leave()
+
+
+def test_occupancy_drop_settles_peeked_card_back_to_opaque(qapp):
+    """FIX C: a card that is mid hover-peek (progress>0) and then DROPS OUT of the
+    visible set on an occupancy nudge is settled back to fully opaque immediately. The
+    visible-only _peek_tick never settles a non-visible card, so without the fix the
+    card stays stuck extra-dimmed until on_ghost_clear/leave."""
+    backend = _RecordingBackend()
+    provider = _OccupancyStubProvider(occupied={0, 1, 2, 3})
+    ctrl, provider, window, created = _make(
+        provider=provider, backend=backend, anchor=_GHOST_ANCHOR,
+        settings=_DictSettings())
+    ctrl.enter()
+
+    # Peek card 1: a ghost point over its center, then tick to build up progress.
+    ox, oy = _WIN_ORIGIN
+    ctrl.on_ghost_event(("motion", [(1, ox + 210 + 90, oy + 10 + 65)]))
+    for _ in range(10):
+        ctrl._peek_tick(None)
+    assert ctrl._peek_progress[1] > 0.0
+    provider.shell_opacities.clear()
+
+    # Card 1 drops out of occupancy -> reconcile settles it opaque + resets progress.
+    provider.set_occupied({0, 2, 3})
+    provider.occupied_cells_changed.emit()
+
+    assert 1 not in ctrl._visible_cells
+    assert ctrl._peek_progress[1] == 0.0                  # progress reset
+    assert (1, 1.0, 1.0) in provider.shell_opacities      # settled fully opaque
+    ctrl.leave()
+
+
+def test_ghost_press_resolves_at_scale_local_coords_at_non_unit_scale(qapp):
+    """GUARD (protects the load-bearing scale=1.0 in _ghost_click_pass): at a NON-1.0
+    scale a ghost 'press' over a control resolves to the correct AT-SCALE
+    cell-root-local coordinate. The cluster physically resizes the cards (via
+    apply_metrics), so BOTH the card screen-geometry AND control_rects are already
+    at-scale - control_hits must therefore divide by 1.0, not self._scale.
+
+    Uses a stub whose apply_metrics FAITHFULLY scales the cell origins + control rects,
+    so scale 1.0 vs self._scale are DISTINGUISHABLE here (they are not at scale 1.0):
+    passing self._scale would divide the at-scale offset again and deliver the WRONG
+    (framed) coordinate."""
+    provider = _ScaledStubProvider()
+    # Save scale 1.5 so enter() applies at-scale metrics (cells + controls scaled).
+    s = _DictSettings({KEY_SCALE: 1.5})
+    ctrl, provider, window, created = _make(
+        provider=provider, anchor=_GHOST_ANCHOR, settings=s)
+    ctrl.enter()
+    assert ctrl.scale == 1.5
+
+    # Screen center of cell 1's first control, computed from the ACTUAL at-scale
+    # placement: window origin + at-scale cell origin + at-scale control center.
+    win = ctrl._compute_window_rect()
+    ox, oy = win.x(), win.y()
+    cell_origin = provider._cell_widgets[1].pos()
+    ctrl_rect = provider.control_rects(1)[0]              # AT-SCALE card-local
+    cx = ctrl_rect.x() + ctrl_rect.width() // 2
+    cy = ctrl_rect.y() + ctrl_rect.height() // 2
+    sx = ox + cell_origin.x() + cx
+    sy = oy + cell_origin.y() + cy
+
+    ctrl.on_ghost_event(("press", [(1, sx, sy)]))
+    # Delivered click is the AT-SCALE cell-root-local coord (cx, cy) - control_hits
+    # divides by 1.0. Passing self._scale (1.5) would instead deliver
+    # (round(cx / 1.5), round(cy / 1.5)) - a different, wrong point.
+    assert provider.ghost_clicks == [(1, cx, cy)]
     ctrl.leave()
