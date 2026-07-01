@@ -70,4 +70,3 @@ class RadialSurface(ClusterSurface):
     controller tears it down with a plain ``hide()`` + ``deleteLater()`` - the menu
     dies with the surface, which is the intent.
     """
-

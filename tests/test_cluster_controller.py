@@ -28,7 +28,7 @@ os.environ.setdefault("TTMT_NO_VENV_REEXEC", "1")
 os.environ.setdefault("TTMT_NO_RADIAL_ANIM", "1")
 
 import pytest
-from PySide6.QtCore import QObject, QPoint, QPointF, QRect, Signal
+from PySide6.QtCore import QObject, QPoint, QPointF, QRect, QTimer, Signal
 from PySide6.QtWidgets import QWidget
 
 from utils.overlay.backend import NoOpOverlayBackend
@@ -1176,7 +1176,7 @@ def test_radial_open_does_not_reflow_cluster_or_move_emblem(qapp, monkeypatch):
     # The cluster window stays at the CLOSED bbox rect (never the dim canvas).
     w, h = ctrl._cluster_size()
     ecx, ecy = ctrl._emblem_center_local(w, h)
-    assert surface.geometry() == window_rect_for((w, h), (ecx, ecy), anchor, False, (0, 0))
+    assert surface.geometry() == window_rect_for((w, h), (ecx, ecy), anchor)
     # The radial top-level still receives the full emblem*4 canvas.
     canvas = int(CardMetrics(ctrl.scale).emblem * 4)
     rsurf = created_radial["surfaces"][-1]
@@ -1189,8 +1189,7 @@ def test_radial_open_does_not_reflow_cluster_or_move_emblem(qapp, monkeypatch):
     assert (c2.x(), c2.y()) == anchor
     w2, h2 = ctrl._cluster_size()
     ecx2, ecy2 = ctrl._emblem_center_local(w2, h2)
-    assert surface.geometry() == window_rect_for(
-        (w2, h2), (ecx2, ecy2), anchor, False, (0, 0))
+    assert surface.geometry() == window_rect_for((w2, h2), (ecx2, ecy2), anchor)
 
     # --- close: emblem still on anchor ---
     ctrl.close_radial_menu()
@@ -1349,10 +1348,65 @@ def test_scale_while_radial_open_keeps_window_at_bbox_and_recenters_radial(qapp,
     new_canvas = int(CardMetrics(s).emblem * 4)
     w, h = ctrl._cluster_size()
     ecx, ecy = ctrl._emblem_center_local(w, h)
-    expected = window_rect_for((w, h), (ecx, ecy), ctrl._anchor, False, (0, 0))
+    expected = window_rect_for((w, h), (ecx, ecy), ctrl._anchor)
     assert surface.geom == expected
     assert rsurf.geom.width() == new_canvas        # radial re-sized to the new canvas
     ctrl.close_radial_menu()
+
+
+def test_move_while_radial_open_recenters_radial_top_level_on_new_anchor(qapp, monkeypatch):
+    """COVERAGE: move_group() while the radial is open must run the move-while-open
+    branch (``if self.is_radial_open: self._reposition_radial()``), re-centering the
+    SEPARATE radial top-level on the NEW (reconciled) anchor - while the emblem
+    global center still lands on that new anchor. Built on a REAL ``ClusterSurface``
+    so the emblem's ``mapToGlobal`` reflects the actual on-screen placement."""
+    created_radial = _patch_radial(monkeypatch)
+    provider = _StubProvider()
+    anchor = (400, 400)                        # well inside the 800x800 offscreen screen
+    created_surfaces: list = []
+
+    def factory():
+        s = ClusterSurface(backend=NoOpOverlayBackend())
+        created_surfaces.append(s)
+        return s
+
+    ctrl = ClusterOverlayController(
+        _StubWindow(), backend=NoOpOverlayBackend(), settings=None,
+        surface_factory=factory, card_provider=provider)
+    ctrl._anchor = anchor
+
+    assert ctrl.enter() is True
+    qapp.processEvents()
+
+    def emblem_global_center():
+        e = provider._emblem
+        return e.mapToGlobal(QPoint(e.width() // 2, e.height() // 2))
+
+    c0 = emblem_global_center()
+    assert (c0.x(), c0.y()) == anchor           # framed-open: emblem on the anchor
+
+    assert ctrl.open_radial_menu() is not None
+    qapp.processEvents()
+    rsurf = created_radial["surfaces"][-1]
+    canvas = ctrl._radial_size                  # unchanged by a pure move (no scale)
+
+    # A real move (small delta -> no clamp on the 800x800 screen) while OPEN.
+    assert ctrl.move_group(30, -20) is True
+    qapp.processEvents()
+    new_anchor = ctrl._anchor
+    assert new_anchor != anchor                 # the anchor actually moved
+
+    # The move-while-open branch re-centered the radial top-level on the NEW anchor.
+    assert ctrl._radial_size == canvas          # pure move: canvas unchanged
+    assert rsurf.geom.width() == canvas and rsurf.geom.height() == canvas
+    assert rsurf.geom.x() == int(new_anchor[0] - canvas / 2)
+    assert rsurf.geom.y() == int(new_anchor[1] - canvas / 2)
+    # ... and the emblem global center still lands exactly on the new anchor.
+    c1 = emblem_global_center()
+    assert (c1.x(), c1.y()) == new_anchor
+
+    ctrl.close_radial_menu()
+    ctrl.leave()
 
 
 def test_open_repositions_dim_to_current_scale_after_scale_while_closed(qapp, monkeypatch):
@@ -1376,9 +1430,17 @@ def test_open_repositions_dim_to_current_scale_after_scale_while_closed(qapp, mo
     assert ctrl._dim.width() == scaled_canvas
     assert ctrl._dim.height() == scaled_canvas
 
+    # Deliberately DESYNC the dim geometry so ONLY open_radial_menu()'s own
+    # open-time _position_internal_dim() call can correct it. Without this, the
+    # scale-while-closed reposition already left the dim right and the assertion
+    # below would pass even if the open-time reposition were deleted.
+    ctrl._dim.setGeometry(QRect(0, 0, 3, 3))
+    assert ctrl._dim.geometry() == QRect(0, 0, 3, 3)   # desync took effect
+
     ctrl.open_radial_menu()
     # (b) open positions the dim to the CURRENT scale's canvas, centered on the
-    # (scaled) emblem center - never the enter-scale one.
+    # (scaled) emblem center - never the stale (desynced) one. Fails if the
+    # open-time _position_internal_dim() call is removed.
     w, h = ctrl._cluster_size()
     ecx, ecy = ctrl._emblem_center_local(w, h)
     assert ctrl._dim.geometry() == QRect(
@@ -1457,11 +1519,20 @@ def test_radial_input_shape_applied_once_then_deferred_to_settle(qapp, monkeypat
 
     ctrl.set_scale_by_notches(2)                    # scale while open
     assert len(radial_shapes()) == 1               # NOT re-applied (deferred to settle)
+    # The deferral is a REAL armed settle timer (not just a direct-call artifact):
+    # _schedule_radial_reshape() must have created + started a single-shot QTimer.
+    timer = ctrl._radial_reshape_timer
+    assert isinstance(timer, QTimer)
+    assert timer.isSingleShot() is True
+    assert timer.isActive() is True                 # actually armed by the scale-while-open
 
     ctrl._reapply_radial_shape()                    # the settle fires
     assert len(radial_shapes()) == 2               # now re-applied
 
     ctrl.close_radial_menu()
+    # close_radial_menu() must STOP the armed reshape timer so no late reshape
+    # fires against the torn-down radial surface.
+    assert timer.isActive() is False
     after_close = len(radial_shapes())
     ctrl._reapply_radial_shape()                    # stray late settle after close
     assert len(radial_shapes()) == after_close     # safe no-op (radial surface gone)

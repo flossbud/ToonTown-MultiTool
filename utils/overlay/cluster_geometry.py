@@ -37,48 +37,32 @@ def window_rect_for(
     cluster_bbox_size: Tuple[int, int],
     emblem_center_local: Tuple[int, int],
     anchor: Tuple[int, int],
-    radial_open: bool,
-    dim_extent: Tuple[int, int],
 ) -> QRect:
     """Compute the SCREEN rect for the single cluster window.
 
-    The window is sized and placed so the emblem center sits exactly on
-    *anchor*. Relative to the emblem center the cluster subtree extends
-    ``left=ex``, ``right=w-ex``, ``top=ey``, ``bottom=h-ey``. When *radial_open*
-    the emblem-centered dim/radial canvas adds ``dw/2`` on each horizontal side
-    and ``dh/2`` on each vertical side. The window must contain BOTH, so each
-    side extent is the max of the two demands.
+    The window is sized to the cluster subtree and placed so the emblem center
+    sits exactly on *anchor*. Relative to the emblem center the cluster subtree
+    extends ``left=ex``, ``right=w-ex``, ``top=ey``, ``bottom=h-ey``, so the
+    window hugs the bbox exactly and the emblem center lands on the anchor.
 
     Args:
         cluster_bbox_size: ``(w, h)`` of the cluster subtree.
         emblem_center_local: ``(ex, ey)`` emblem center within the subtree
             (top-left origin).
         anchor: ``(ax, ay)`` screen point the emblem center must occupy.
-        radial_open: whether the radial menu / dim canvas is showing.
-        dim_extent: ``(dw, dh)`` of the emblem-centered dim canvas (only used
-            when *radial_open*).
 
     Returns:
-        The screen ``QRect`` for the window. In every case
-        ``(rect.x() + Lx, rect.y() + Ty) == anchor`` where ``Lx``/``Ty`` are the
-        left/top extents below.
+        The screen ``QRect`` for the window, with
+        ``(rect.x() + ex, rect.y() + ey) == anchor``.
     """
     w, h = cluster_bbox_size
     ex, ey = emblem_center_local
     ax, ay = anchor
-    dw, dh = dim_extent
 
-    # CEIL the half-extent ((dw+1)//2) so an ODD dim canvas is fully contained
-    # (left+right >= dw); flooring (dw//2) would under-size the window by 1px and
-    # clip the emblem-centered dim. The emblem-center invariant is unaffected
-    # (the same `left`/`top` are used for both sizing and positioning).
-    half_w = (dw + 1) // 2 if radial_open else 0
-    half_h = (dh + 1) // 2 if radial_open else 0
-
-    left = max(ex, half_w)
-    right = max(w - ex, half_w)
-    top = max(ey, half_h)
-    bottom = max(h - ey, half_h)
+    left = ex
+    right = w - ex
+    top = ey
+    bottom = h - ey
 
     width = left + right
     height = top + bottom

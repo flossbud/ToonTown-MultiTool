@@ -232,10 +232,7 @@ class ClusterOverlayController:
         from utils.overlay.cluster_geometry import window_rect_for
         w, h = self._cluster_size()
         emblem_center = self._emblem_center_local(w, h)
-        return window_rect_for(
-            (w, h), emblem_center, self._anchor,
-            radial_open=False, dim_extent=(0, 0),
-        )
+        return window_rect_for((w, h), emblem_center, self._anchor)
 
     def _build_surface(self):
         if self._surface_factory is not None:
@@ -458,9 +455,8 @@ class ClusterOverlayController:
         ax, ay = self._anchor
         # The rect at the CURRENT (already-reconciled) anchor == the on-screen
         # placement; the candidate is the shifted rect, clamped to the envelope.
-        current = window_rect_for((w, h), emblem_center, (ax, ay), False, (0, 0))
-        candidate = window_rect_for(
-            (w, h), emblem_center, (ax + dx, ay + dy), False, (0, 0))
+        current = window_rect_for((w, h), emblem_center, (ax, ay))
+        candidate = window_rect_for((w, h), emblem_center, (ax + dx, ay + dy))
         clamped = clamp_to_envelope(
             candidate, self._screens_xywh(), self._move_margin())
         if clamped == current:

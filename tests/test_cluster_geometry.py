@@ -56,8 +56,6 @@ def test_window_rect_for_centered_emblem_centers_bbox_on_anchor():
         cluster_bbox_size=(100, 70),
         emblem_center_local=(50, 35),
         anchor=(500, 400),
-        radial_open=False,
-        dim_extent=(0, 0),
     )
     assert rect == QRect(450, 365, 100, 70)
     # Emblem center (== bbox center here) sits exactly on the anchor.
@@ -72,39 +70,14 @@ def test_window_rect_for_noncentered_emblem_keeps_emblem_on_anchor():
         cluster_bbox_size=(100, 70),
         emblem_center_local=(60, 20),
         anchor=(500, 400),
-        radial_open=False,
-        dim_extent=(0, 0),
     )
-    # radial closed -> window hugs the bbox exactly.
+    # The window hugs the bbox exactly.
     assert rect.width() == 100
     assert rect.height() == 70
     assert rect == QRect(440, 380, 100, 70)
     # Emblem center (offset emblem_center_local from the subtree top-left,
-    # which equals the window top-left when radial is closed) lands on anchor.
+    # which equals the window top-left) lands on anchor.
     assert (rect.x() + 60, rect.y() + 20) == (500, 400)
-
-
-def test_window_rect_for_radial_open_grows_to_dim_but_keeps_emblem_on_anchor():
-    # Dim canvas (240x240, emblem-centered) is larger than the bbox (100x70).
-    # The window must grow to contain the dim, yet the emblem center stays put.
-    dim = (240, 240)
-    ecx, ecy = 50, 35
-    rect = window_rect_for(
-        cluster_bbox_size=(100, 70),
-        emblem_center_local=(ecx, ecy),
-        anchor=(500, 400),
-        radial_open=True,
-        dim_extent=dim,
-    )
-    # Grows to at least the dim extent.
-    assert rect.width() >= dim[0]
-    assert rect.height() >= dim[1]
-    assert rect == QRect(380, 280, 240, 240)
-    # Emblem center offset from the window top-left is max(ex, dw//2),
-    # max(ey, dh//2) - derived from the documented contract, not internals.
-    lx = max(ecx, dim[0] // 2)
-    ty = max(ecy, dim[1] // 2)
-    assert (rect.x() + lx, rect.y() + ty) == (500, 400)
 
 
 # --------------------------------------------------------------------------- #
@@ -175,18 +148,6 @@ def test_clamp_to_envelope_pulls_off_left_edge_back():
     assert clamped.width() == 100 and clamped.height() == 100
     assert clamped.intersects(QRect(*screen))
     assert clamped.x() > off.x()
-
-
-def test_window_rect_for_odd_dim_extent_fully_contains_canvas():
-    # ODD dim_extent must NOT under-size the window (ceil half-extent), and the
-    # emblem center must still land on the anchor.
-    r = window_rect_for(cluster_bbox_size=(100, 70), emblem_center_local=(50, 35),
-                        anchor=(500, 400), radial_open=True, dim_extent=(241, 241))
-    assert r.width() >= 241 and r.height() >= 241        # full odd canvas contained
-    # emblem center (left/top extents) still exactly at the anchor
-    left = max(50, (241 + 1) // 2)
-    top = max(35, (241 + 1) // 2)
-    assert (r.x() + left, r.y() + top) == (500, 400)
 
 
 def test_cluster_bbox_does_not_alias_caller_input():
