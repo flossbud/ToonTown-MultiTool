@@ -1296,7 +1296,8 @@ def _patch_radial(monkeypatch):
             self.deleted += 1
 
     class _StubRadialMenu(QWidget):
-        closing = Signal()      # fly-back begun -> internal dim collapse (parity)
+        closing = Signal()         # fly-back begun -> internal dim collapse (parity)
+        close_requested = Signal()  # fly-back done -> teardown (parity)
 
         def __init__(self, emblem_diameter=0.0, customizations=None,
                      variant="transparent", parent=None):
@@ -1304,6 +1305,7 @@ def _patch_radial(monkeypatch):
             self.emblem_diameter = emblem_diameter
             self.diameters = []
             self.reveals = 0
+            self.begin_closes = 0
             created["menus"].append(self)
 
         def set_emblem_diameter(self, d):
@@ -1311,6 +1313,14 @@ def _patch_radial(monkeypatch):
 
         def start_reveal(self):
             self.reveals += 1
+
+        def _begin_close(self):
+            # Mirror the real menu's kill-switch (no-anim) mode: closing fires at
+            # the start of the fly-back, close_requested on (here: immediate)
+            # completion - the controller's wiring then runs the real teardown.
+            self.begin_closes += 1
+            self.closing.emit()
+            self.close_requested.emit()
 
     monkeypatch.setattr("utils.overlay.cluster_surface.RadialSurface",
                         _StubRadialSurface)
@@ -1653,6 +1663,101 @@ def test_move_while_radial_open_recenters_radial_top_level_on_new_anchor(qapp, m
     assert (c1.x(), c1.y()) == new_anchor
 
     ctrl.close_radial_menu()
+    ctrl.leave()
+
+
+def test_radial_click_region_has_emblem_disc_hole(qapp, monkeypatch):
+    """The radial's input shape must EXCLUDE the emblem disc at its center (so
+    emblem gestures - click-to-close, scroll-to-scale, drag - pass through to
+    the cluster window while the ring is open) while still ACCEPTING clicks in
+    the ring area of the current canvas and staying inert outside it."""
+    from utils.overlay.card_metrics import CardMetrics
+
+    backend = _RecordingBackend()
+    created_radial = _patch_radial(monkeypatch)
+    ctrl, provider, window, created = _make(anchor=(1000, 700), backend=backend)
+    ctrl.enter()
+    ctrl.open_radial_menu()
+    rsurf = created_radial["surfaces"][-1]
+    path = [s for s in backend.shapes if s[0] is rsurf][-1][1]
+
+    canvas_max = ctrl._radial_canvas_max()
+    center = canvas_max / 2.0
+    emblem_dia, canvas = ctrl._radial_canvas()
+    assert emblem_dia == float(CardMetrics(1.0).emblem)
+    # The emblem disc is a HOLE: the exact center and a point well inside the
+    # disc are click-through.
+    assert not path.contains(QPointF(center, center))
+    assert not path.contains(QPointF(center + emblem_dia * 0.3, center))
+    # The ring area (outside the disc, inside the current canvas) accepts clicks.
+    assert path.contains(QPointF(center + emblem_dia * 0.77, center))
+    # The inert margin outside the CURRENT canvas (inside the max window) does not.
+    off = (canvas_max - canvas) // 2
+    assert not path.contains(QPointF(off - 10, center))
+    ctrl.close_radial_menu()
+
+    # After a scale + settle, the reshaped region's hole tracks the NEW disc:
+    # a point inside the grown disc (was ring at 1.0) is now click-through.
+    ctrl.open_radial_menu()
+    rsurf = created_radial["surfaces"][-1]          # the REOPENED surface
+    backend.shapes.clear()
+    ctrl.set_scale_by_notches(5)                    # grow the emblem
+    ctrl._reapply_radial_shape()                    # the settle fires
+    path2 = [s for s in backend.shapes if s[0] is rsurf][-1][1]
+    new_dia = float(CardMetrics(ctrl.scale).emblem)
+    probe = center + (emblem_dia / 2.0 + (new_dia - emblem_dia) / 4.0)
+    assert not path2.contains(QPointF(probe, center))   # inside the NEW disc
+    assert path2.contains(QPointF(center + new_dia * 0.77, center))
+    ctrl.close_radial_menu()
+    ctrl.leave()
+
+
+def test_begin_group_drag_dismisses_open_radial_animated_and_starts_drag(qapp, monkeypatch):
+    """Dragging the emblem while the ring is open must dismiss the ring through
+    the ANIMATED path (the menu's _begin_close: fly-back into the emblem, then
+    close_requested -> teardown) - never the hard fade-out teardown - and still
+    start the drag poll."""
+    from PySide6.QtGui import QCursor
+
+    created_radial = _patch_radial(monkeypatch)
+    ctrl, provider, window, created = _make(anchor=(400, 400))
+    ctrl.enter()
+    menu = ctrl.open_radial_menu()
+    assert ctrl.is_radial_open is True
+    rsurf = created_radial["surfaces"][-1]
+    monkeypatch.setattr(QCursor, "pos", staticmethod(lambda: QPoint(100, 100)))
+
+    ctrl.begin_group_drag()
+
+    assert menu.begin_closes == 1                        # ANIMATED dismiss used
+    # The stub completes its fly-back synchronously (kill-switch mode), so the
+    # close_requested wiring has already run the real teardown.
+    assert ctrl.is_radial_open is False
+    assert rsurf.hidden == 1 and rsurf.deleted == 1
+    assert ctrl._drag_timer is not None and ctrl._drag_timer.isActive()
+    ctrl._end_drag()
+    ctrl.leave()
+
+
+def test_dismiss_radial_menu_falls_back_to_hard_close_without_anim_engine(qapp, monkeypatch):
+    """A menu without _begin_close (a bare stub / degraded build) must still
+    close: dismiss_radial_menu falls back to the immediate teardown. And with no
+    ring open at all, dismiss is a safe no-op."""
+    created_radial = _patch_radial(monkeypatch)
+    ctrl, provider, window, created = _make(anchor=(400, 400))
+    ctrl.enter()
+
+    ctrl.dismiss_radial_menu()                           # nothing open: no-op
+    assert ctrl.is_radial_open is False
+
+    menu = ctrl.open_radial_menu()
+    rsurf = created_radial["surfaces"][-1]
+    monkeypatch.delattr(type(menu), "_begin_close")      # degrade the menu
+
+    ctrl.dismiss_radial_menu()
+
+    assert ctrl.is_radial_open is False                  # hard-close fallback ran
+    assert rsurf.hidden == 1 and rsurf.deleted == 1
     ctrl.leave()
 
 
