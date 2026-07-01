@@ -413,17 +413,32 @@ class ClusterOverlayController:
             from utils.overlay.cluster_geometry import envelope_for
             from utils.overlay.scale import SCALE_MAX
             w, h = self._cluster_size()
+            # Fix the host at its 1.0 size and SETTLE it BEFORE measuring the
+            # pivot (mirrors CardSurface.host's base_size clamp; the captured
+            # token restores the original constraints on leave). Order is
+            # load-bearing: framed mode STRETCHES the host past its sizeHint and
+            # centers the emblem on that live size, so measuring first and
+            # resizing after freezes a STALE emblem center into the pivot - the
+            # next provider relayout (apply_cell_permutation -> _relayout_all ->
+            # _position_emblem) re-centers the emblem to the fixed size's center
+            # and the emblem drifts off the pivot (seen live as the radial ring
+            # off-center from the emblem). Fixing the size, activating the
+            # layout, and re-asserting the provider's own emblem placement FIRST
+            # makes the measured center the settled one; any later
+            # _position_emblem lands on the same point (the size never changes
+            # again).
+            host = provider._grid_host
+            host.setFixedSize(w, h)
+            lay = host.layout()
+            if lay is not None:
+                lay.activate()
+            self._safe_call(provider, "_position_emblem")
             emblem_center = self._emblem_center_local(w, h)
             size, pivot = envelope_for((w, h), emblem_center, SCALE_MAX)
             self._host_size = (w, h)
             self._emblem_center = emblem_center
             self._envelope = size
             self._pivot = pivot
-            # Fix the host at its 1.0 size so the proxy scene geometry is stable
-            # (mirrors CardSurface.host's base_size clamp; the captured token
-            # restores the original constraints on leave).
-            host = provider._grid_host
-            host.setFixedSize(w, h)
             # Host through the transform seam when the surface provides it (the
             # real ClusterSurface); a plain-host surface (test stubs) still gets
             # correct placement + input shapes - the mapping math is controller-

@@ -723,6 +723,70 @@ def test_settle_input_post_leave_is_true_noop(qapp):
     assert backend.shapes == []                    # no shape applied to a dead surface
 
 
+def test_enter_measures_emblem_after_fixing_host_size(qapp):
+    """REGRESSION (live: radial ring off-center from the emblem): framed mode
+    STRETCHES the host past its sizeHint and centers the emblem on that live
+    size. enter() must fix the host at its 1.0 hint, activate the layout, and
+    re-assert the provider's own emblem placement BEFORE measuring the pivot -
+    so the measured center is the SETTLED one, and any later provider relayout
+    (_position_emblem via apply_cell_permutation) lands on the same point,
+    keeping the emblem exactly on the pivot (where the radial ring centers)."""
+
+    class _Host(QWidget):
+        def sizeHint(self):
+            from PySide6.QtCore import QSize
+            return QSize(_HOST_W, _HOST_H)
+
+    class _Provider:
+        def __init__(self):
+            self._holder = QWidget()
+            self._grid_host = _Host(self._holder)
+            self._grid_host.resize(600, 500)          # framed live stretch > hint
+            self._emblem = QWidget(self._grid_host)
+            self._emblem.setFixedSize(100, 100)
+            self._position_emblem()                    # centered on the LIVE size
+            self._token = object()
+
+        def _position_emblem(self):
+            # Mirror _CompactLayout._position_emblem: center on the CURRENT size.
+            gh, e = self._grid_host, self._emblem
+            e.move(int(gh.width() / 2 - e.width() / 2),
+                   int(gh.height() / 2 - e.height() / 2))
+
+        def capture_cluster_host(self):
+            self._grid_host.setParent(None)
+            return self._token
+
+        def restore_cluster_host(self, token):
+            self._grid_host.setParent(self._holder)
+
+        def apply_metrics(self, metrics):
+            pass
+
+    provider = _Provider()
+    g = provider._emblem.geometry()
+    assert (g.x() + 50, g.y() + 50) == (300, 250)      # on the STRETCHED center
+
+    ctrl, provider, window, created = _make(provider=provider)
+    assert ctrl.enter() is True
+
+    # Host fixed at its 1.0 hint; the emblem re-centered BEFORE the pivot measure.
+    assert (provider._grid_host.width(), provider._grid_host.height()) == (
+        _HOST_W, _HOST_H)
+    assert ctrl._emblem_center == (_HOST_W // 2, _HOST_H // 2)
+    # The mapped emblem rect centers on the pivot (= where the radial centers).
+    er = ctrl._emblem_rect()
+    px, py = ctrl._pivot
+    assert abs(er.x() + er.width() / 2 - px) <= 1.0
+    assert abs(er.y() + er.height() / 2 - py) <= 1.0
+
+    # A LATER provider relayout must not move the emblem off the pivot: with the
+    # size fixed, _position_emblem is idempotent.
+    provider._position_emblem()
+    assert ctrl._emblem_rect() == er
+    ctrl.leave()
+
+
 def test_notch_keeps_emblem_center_on_anchor(qapp):
     """The scaling anchor invariant: after a notch the transform-MAPPED emblem
     rect still centers on the anchor - the window never moved (pivot on anchor)
