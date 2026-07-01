@@ -154,6 +154,12 @@ class OverlaySurface(QWidget):
             prev.release()
         widget.setParent(self)
         self._layout.addWidget(widget)
+        # Hosting into an ALREADY-VISIBLE surface (the persistent radial/panel
+        # windows, kept mapped between opens): reparenting hides the widget and
+        # Qt does not implicitly re-show a child added to a visible parent, so
+        # show it explicitly. A hidden surface shows its children on map as before.
+        if self.isVisible():
+            widget.show()
         self._hosted = widget
 
     def release(self) -> QWidget | None:

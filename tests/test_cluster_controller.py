@@ -421,10 +421,16 @@ def test_enter_prepares_state_then_applies_exact_click_through_shape(qapp):
     assert surface.prepared_at_show == 1        # prepare_initial_state ran before show()
     assert surface.shown == 1
 
-    # (b) exactly ONE shape applied on enter, and it is the settled EXACT shape.
+    # (b) exactly ONE shape applied to the CLUSTER surface on enter, and it is
+    # the settled EXACT shape. The persistent radial/panel top-levels pre-mapped
+    # by enter get their own EMPTY (fully click-through) shapes.
     assert ctrl._input_phase == "exact"
-    assert len(backend.shapes) == 1
-    win, path, _dpr = backend.shapes[0]
+    cluster_shapes = [s for s in backend.shapes if s[0] is surface]
+    assert len(cluster_shapes) == 1
+    others = [s for s in backend.shapes if s[0] is not surface]
+    assert len(others) == 2                       # persistent radial + panel
+    assert all(p.isEmpty() for _w, p, _d in others)
+    win, path, _dpr = cluster_shapes[0]
     assert win is surface
     # Solid over the emblem (its center renders on the PIVOT) + every visible
     # card's transform-mapped controls (click-catching)...
@@ -1495,9 +1501,11 @@ def test_open_radial_menu_noop_when_inactive(qapp, monkeypatch):
     assert ctrl.is_radial_open is False
 
 
-def test_close_radial_menu_tears_down_radial_and_hides_dim(qapp, monkeypatch):
-    """close_radial_menu(): tears down the radial top-level, hides (keeps) the
-    internal dim, clears is_radial_open."""
+def test_close_radial_menu_tears_down_menu_keeps_surface_and_hides_dim(qapp, monkeypatch):
+    """close_radial_menu(): deletes the MENU, hides (keeps) the internal dim,
+    clears is_radial_open - but the PERSISTENT radial top-level stays MAPPED
+    (unmapping + re-mapping per open is what plays the compositor's window-open
+    animation: the notification slide-in seen live). leave() destroys it."""
     created_radial = _patch_radial(monkeypatch)
     ctrl, provider, window, created = _make(anchor=(1000, 700))
     ctrl.enter()
@@ -1507,9 +1515,21 @@ def test_close_radial_menu_tears_down_radial_and_hides_dim(qapp, monkeypatch):
     ctrl.close_radial_menu()
 
     assert ctrl.is_radial_open is False
-    assert ctrl._radial_surface is None
-    assert rsurf.hidden == 1 and rsurf.deleted == 1
+    assert ctrl._radial_surface is rsurf          # surface persists across opens
+    assert rsurf.hidden == 0 and rsurf.deleted == 0
+    assert ctrl._radial_menu is None
     assert ctrl._dim is not None and ctrl._dim.isHidden() is True
+
+    # Re-open hosts a NEW menu into the SAME (never re-mapped) surface.
+    menu2 = ctrl.open_radial_menu()
+    assert menu2 is not None
+    assert created_radial["surfaces"][-1] is rsurf
+    assert rsurf.shown == 1                       # mapped ONCE, at enter
+
+    # leave() is what finally unmaps + deletes the persistent top-level.
+    ctrl.leave()
+    assert rsurf.hidden >= 1 and rsurf.deleted >= 1
+    assert ctrl._radial_surface is None
 
 
 def test_radial_closing_signal_collapses_internal_dim(qapp, monkeypatch):
@@ -1740,9 +1760,11 @@ def test_begin_group_drag_dismisses_open_radial_animated_and_starts_drag(qapp, m
 
     assert menu.begin_closes == 1                        # ANIMATED dismiss used
     # The stub completes its fly-back synchronously (kill-switch mode), so the
-    # close_requested wiring has already run the real teardown.
+    # close_requested wiring has already run the real teardown. The PERSISTENT
+    # radial top-level stays mapped (only the menu died).
     assert ctrl.is_radial_open is False
-    assert rsurf.hidden == 1 and rsurf.deleted == 1
+    assert rsurf.hidden == 0 and rsurf.deleted == 0
+    assert ctrl._radial_surface is rsurf
     assert ctrl._drag_timer is not None and ctrl._drag_timer.isActive()
     ctrl._end_drag()
     ctrl.leave()
@@ -1766,7 +1788,8 @@ def test_dismiss_radial_menu_falls_back_to_hard_close_without_anim_engine(qapp, 
     ctrl.dismiss_radial_menu()
 
     assert ctrl.is_radial_open is False                  # hard-close fallback ran
-    assert rsurf.hidden == 1 and rsurf.deleted == 1
+    assert rsurf.hidden == 0 and rsurf.deleted == 0      # persistent surface kept
+    assert ctrl._radial_surface is rsurf
     ctrl.leave()
 
 
@@ -1807,8 +1830,8 @@ def test_dim_is_scale_independent_and_open_reasserts_it(qapp, monkeypatch):
 
 def test_open_radial_menu_failclosed_on_setup_error(qapp, monkeypatch):
     """A failure mid-open (here the radial surface's host raises) must fail closed:
-    no exception escapes, is_radial_open is False, no radial surface/menu is tracked,
-    and the partially-built top-level is torn down (not leaked)."""
+    no exception escapes, is_radial_open is False, no menu is tracked - and the
+    PERSISTENT radial top-level survives the rollback (only leave() deletes it)."""
     created: dict = {"surfaces": []}
 
     class _BoomRadialSurface(QWidget):
@@ -1816,10 +1839,20 @@ def test_open_radial_menu_failclosed_on_setup_error(qapp, monkeypatch):
             super().__init__()
             self.hidden = 0
             self.deleted = 0
+            self.geom = None
             created["surfaces"].append(self)
 
         def host(self, widget):
             raise RuntimeError("radial host boom")
+
+        def set_overlay_geometry(self, rect):
+            self.geom = rect
+
+        def prepare_initial_state(self):
+            pass
+
+        def show(self):
+            pass
 
         def hide(self):
             self.hidden += 1
@@ -1846,35 +1879,44 @@ def test_open_radial_menu_failclosed_on_setup_error(qapp, monkeypatch):
 
     assert result is None
     assert ctrl.is_radial_open is False
-    assert ctrl._radial_surface is None
     assert ctrl._radial_menu is None
-    # The half-built radial top-level was cleaned up by the rollback, not leaked.
+    # The PERSISTENT top-level (pre-mapped at enter) survives the rollback -
+    # deleting + re-mapping it per open would replay the compositor's window-open
+    # animation. leave() is what finally destroys it.
     assert len(created["surfaces"]) == 1
-    assert created["surfaces"][0].deleted == 1
+    assert ctrl._radial_surface is created["surfaces"][0]
+    assert created["surfaces"][0].deleted == 0
     ctrl.leave()
+    assert created["surfaces"][0].deleted == 1
+    assert ctrl._radial_surface is None
 
 
 def test_radial_input_shape_applied_once_then_deferred_to_settle(qapp, monkeypatch):
-    """The radial click region is applied EXACTLY ONCE on open; a scale-while-open
-    does NOT re-apply it immediately (the X11 reshape is deferred to the settle
-    timer); firing the settle (_reapply_radial_shape) applies it; and a stray settle
-    after close()/leave() is a safe no-op. Shapes are filtered to the radial surface
-    so the cluster window's broad/exact shapes are excluded."""
+    """The radial click region is applied EXACTLY ONCE on open (on top of the
+    EMPTY click-through shape the persistent surface got when enter() pre-mapped
+    it); a scale-while-open does NOT re-apply it immediately (the X11 reshape is
+    deferred to the settle timer); firing the settle (_reapply_radial_shape)
+    applies it; close returns the surface to an EMPTY shape; and a stray settle
+    after close()/leave() is a safe no-op. Shapes are filtered to the radial
+    surface so the cluster window's broad/exact shapes are excluded."""
     backend = _RecordingBackend()
     created_radial = _patch_radial(monkeypatch)
     ctrl, provider, window, created = _make(anchor=(1000, 700), backend=backend)
     ctrl.enter()
-
-    ctrl.open_radial_menu()
-    rsurf = created_radial["surfaces"][-1]
+    rsurf = created_radial["surfaces"][-1]          # persistent, pre-mapped at enter
 
     def radial_shapes():
         return [s for s in backend.shapes if s[0] is rsurf]
 
-    assert len(radial_shapes()) == 1               # exactly one apply on open
+    assert len(radial_shapes()) == 1                # enter: the EMPTY shape
+    assert radial_shapes()[0][1].isEmpty()
+
+    ctrl.open_radial_menu()
+    assert len(radial_shapes()) == 2                # exactly one apply on open...
+    assert not radial_shapes()[-1][1].isEmpty()     # ...and it is the CLICK region
 
     ctrl.set_scale_by_notches(2)                    # scale while open
-    assert len(radial_shapes()) == 1               # NOT re-applied (deferred to settle)
+    assert len(radial_shapes()) == 2               # NOT re-applied (deferred to settle)
     # The deferral is a REAL armed settle timer (not just a direct-call artifact):
     # _schedule_radial_reshape() must have created + started a single-shot QTimer.
     timer = ctrl._radial_reshape_timer
@@ -1883,15 +1925,17 @@ def test_radial_input_shape_applied_once_then_deferred_to_settle(qapp, monkeypat
     assert timer.isActive() is True                 # actually armed by the scale-while-open
 
     ctrl._reapply_radial_shape()                    # the settle fires
-    assert len(radial_shapes()) == 2               # now re-applied
+    assert len(radial_shapes()) == 3               # now re-applied
 
     ctrl.close_radial_menu()
     # close_radial_menu() must STOP the armed reshape timer so no late reshape
-    # fires against the torn-down radial surface.
+    # fires against the emptied radial surface, and returns the persistent
+    # surface to its EMPTY click-through shape.
     assert timer.isActive() is False
+    assert radial_shapes()[-1][1].isEmpty()
     after_close = len(radial_shapes())
     ctrl._reapply_radial_shape()                    # stray late settle after close
-    assert len(radial_shapes()) == after_close     # safe no-op (radial surface gone)
+    assert len(radial_shapes()) == after_close     # safe no-op (menu gone, size 0)
 
     ctrl.leave()
     after_leave = len(radial_shapes())
@@ -2011,10 +2055,11 @@ def test_open_panel_surface_centers_on_anchor_at_emblem_times_six(qapp, monkeypa
 
 
 def test_close_panel_surface_runs_on_close_before_teardown_and_is_idempotent(qapp, monkeypatch):
-    """close_panel_surface() runs on_close BEFORE tearing the surface down (the
-    surface still exists + is undestroyed at that instant, so the caller can
-    reparent its content out first), then hides + deletes it. A second close is a
-    safe no-op."""
+    """close_panel_surface() runs on_close FIRST (the surface still exists + is
+    undestroyed at that instant, so the caller can reparent its content out),
+    then returns the PERSISTENT surface to its empty state - still mapped, never
+    deleted per close (re-mapping would replay the compositor's open animation).
+    leave() deletes it. A second close is a safe no-op."""
     created_panel = _patch_panel(monkeypatch)
     ctrl, provider, window, created = _make()
     ctrl.enter()
@@ -2033,21 +2078,26 @@ def test_close_panel_surface_runs_on_close_before_teardown_and_is_idempotent(qap
     ctrl.close_panel_surface()
 
     assert order == [("on_close", True, 0)]          # ran first, surface alive
-    assert surface.hidden == 1 and surface.deleted == 1
+    assert surface.hidden == 0 and surface.deleted == 0   # persistent: kept mapped
+    assert ctrl._panel_surface is surface
     assert ctrl.is_panel_open is False
     assert ctrl._panel_on_close is None
 
-    # Idempotent: a second close does nothing (no re-run, no re-delete).
+    # Idempotent: a second close does nothing (no re-run).
     ctrl.close_panel_surface()
-    assert surface.deleted == 1
     assert order == [("on_close", True, 0)]
+
+    # leave() is what finally unmaps + deletes the persistent top-level.
+    ctrl.leave()
+    assert surface.hidden == 1 and surface.deleted == 1
+    assert ctrl._panel_surface is None
 
 
 def test_open_panel_surface_failclosed_on_setup_error(qapp, monkeypatch):
     """A failure mid-open (the panel surface's host raises) must fail closed: no
-    exception escapes, is_panel_open False, no surface/on_close tracked, the
-    partially-built top-level is torn down (not leaked), and on_close still runs
-    during the rollback so the caller reclaims its widget."""
+    exception escapes, is_panel_open False, no on_close/size left tracked, the
+    PERSISTENT top-level survives the rollback (leave() deletes it), and on_close
+    still runs during the rollback so the caller reclaims its widget."""
     created: dict = {"surfaces": []}
     ran_on_close: list = []
 
@@ -2056,10 +2106,20 @@ def test_open_panel_surface_failclosed_on_setup_error(qapp, monkeypatch):
             super().__init__()
             self.hidden = 0
             self.deleted = 0
+            self.geom = None
             created["surfaces"].append(self)
 
         def host(self, widget):
             raise RuntimeError("panel host boom")
+
+        def set_overlay_geometry(self, rect):
+            self.geom = rect
+
+        def prepare_initial_state(self):
+            pass
+
+        def show(self):
+            pass
 
         def hide(self):
             self.hidden += 1
@@ -2077,15 +2137,17 @@ def test_open_panel_surface_failclosed_on_setup_error(qapp, monkeypatch):
 
     assert result is None
     assert ctrl.is_panel_open is False
-    assert ctrl._panel_surface is None
     assert ctrl._panel_on_close is None
     assert ctrl._panel_size == 0
-    # The half-built panel top-level was cleaned up by the rollback, not leaked.
+    # The PERSISTENT top-level (pre-mapped at enter) survives the rollback.
     assert len(created["surfaces"]) == 1
-    assert created["surfaces"][0].deleted == 1
+    assert ctrl._panel_surface is created["surfaces"][0]
+    assert created["surfaces"][0].deleted == 0
     # The rollback ran on_close (so the caller reclaims its widget on a failed open).
     assert ran_on_close == [1]
     ctrl.leave()
+    assert created["surfaces"][0].deleted == 1
+    assert ctrl._panel_surface is None
 
 
 def test_move_group_recenters_open_panel_on_new_anchor(qapp, monkeypatch):
@@ -2219,14 +2281,15 @@ def _patch_boom_step_panel(monkeypatch, boom_on):
     return created
 
 
-@pytest.mark.parametrize("boom_on", ["prepare", "raise", "shape"])
+@pytest.mark.parametrize("boom_on", ["raise", "shape"])
 def test_open_panel_surface_failclosed_on_open_step_raise(qapp, monkeypatch, boom_on):
-    """Transaction-safe open: a failure in ANY fallible open step
-    (prepare_initial_state, raise_, or the input-shape apply) fails closed - open
-    returns None, is_panel_open is False, no surface/on_close/size is left tracked,
-    the half-built top-level is torn down (deleted), and on_close ran during the
-    rollback. Reverting the fix (re-guarding these steps with _safe_call / swallow)
-    would swallow the failure and return the surface with is_panel_open True."""
+    """Transaction-safe open: a failure in ANY fallible open step (raise_ or the
+    input-shape apply; prepare_initial_state moved to the best-effort persistent
+    pre-map at enter) fails closed - open returns None, is_panel_open is False, no
+    on_close/size is left tracked, the PERSISTENT top-level survives (leave()
+    deletes it), and on_close ran during the rollback. Reverting the fix
+    (re-guarding these steps with _safe_call / swallow) would swallow the failure
+    and return the surface with is_panel_open True."""
     created = _patch_boom_step_panel(monkeypatch, boom_on)
     ran_on_close: list = []
     ctrl, provider, window, c = _make()
@@ -2237,15 +2300,16 @@ def test_open_panel_surface_failclosed_on_open_step_raise(qapp, monkeypatch, boo
 
     assert result is None
     assert ctrl.is_panel_open is False
-    assert ctrl._panel_surface is None
     assert ctrl._panel_on_close is None
     assert ctrl._panel_size == 0
-    # The half-built panel top-level was cleaned up by the rollback, not leaked.
+    # The persistent top-level survives the rollback (never re-mapped per open).
     assert len(created["surfaces"]) == 1
-    assert created["surfaces"][0].deleted == 1
+    assert ctrl._panel_surface is created["surfaces"][0]
+    assert created["surfaces"][0].deleted == 0
     # The rollback ran on_close (so the caller reclaims its widget on a failed open).
     assert ran_on_close == [1]
     ctrl.leave()
+    assert created["surfaces"][0].deleted == 1
 
 
 # ---------------------------------------------------------------------------
@@ -2253,11 +2317,13 @@ def test_open_panel_surface_failclosed_on_open_step_raise(qapp, monkeypatch, boo
 # ---------------------------------------------------------------------------
 def test_panel_stays_above_radial_when_both_open(qapp, monkeypatch):
     """Opening the radial while the panel is already open must re-raise the panel
-    ABOVE the just-shown radial top-level (the panel floats above the emblem AND the
-    radial). A shared z-event log records the radial show + the panel raise; the panel
-    re-raise must occur AFTER the radial is shown (so the panel ends up on top).
-    Reverting the fix (dropping the panel re-raise in open_radial_menu) removes the
-    post-clear panel-raise, failing this test."""
+    (it floats above the emblem AND the radial) - and must NOT re-map (show) the
+    persistent radial top-level: re-mapping per open is what played the
+    compositor's window-open animation. Both surfaces are mapped once at enter
+    (radial first, panel second - the map order that stacks the panel on top);
+    after that, opens only re-raise. Reverting the persistent-surface fix would
+    re-show the radial here; dropping the panel re-raise in open_radial_menu
+    would drop the post-clear panel-raise event."""
     z_events: list = []
 
     class _StubRadialSurface(QWidget):
@@ -2329,6 +2395,8 @@ def test_panel_stays_above_radial_when_both_open(qapp, monkeypatch):
 
     ctrl, provider, window, created = _make(anchor=(1000, 700))
     ctrl.enter()
+    # Both persistent surfaces were mapped ONCE at enter, radial before panel.
+    assert [k for k, _ in z_events] == [("radial-show")]
 
     psurf = ctrl.open_panel_surface(QWidget())
     assert psurf is not None
@@ -2339,11 +2407,8 @@ def test_panel_stays_above_radial_when_both_open(qapp, monkeypatch):
     assert menu is not None
 
     kinds = [k for k, _ in z_events]
-    assert "radial-show" in kinds               # the radial top-level was shown
+    assert "radial-show" not in kinds           # NEVER re-mapped per open (no anim)
     assert "panel-raise" in kinds               # the panel was re-raised while opening it
-    # ... and the panel re-raise happened AFTER the radial was shown, so the panel is
-    # stacked ABOVE the radial.
-    assert kinds.index("panel-raise") > kinds.index("radial-show")
 
     ctrl.close_radial_menu()
     ctrl.close_panel_surface()
@@ -2364,12 +2429,13 @@ def _cpp_alive(widget) -> bool:
 
 
 def test_close_panel_surface_protects_hosted_widget_when_on_close_raises(qapp):
-    """A raising on_close must not let the surface teardown destroy the BORROWED
-    hosted widget. Built on a REAL PanelSurface so deleteLater actually cascades to
-    children: close_panel_surface() reparents the still-hosted widget out of the
-    surface BEFORE deleteLater, so the widget survives even though on_close raised and
-    never reclaimed it. Reverting the fix (dropping _release_panel_content) lets the
-    surface's destruction cascade delete the borrowed widget."""
+    """A raising on_close must not strand the BORROWED hosted widget inside the
+    persistent surface. Built on a REAL PanelSurface: close_panel_surface()
+    reparents the still-hosted widget out even though on_close raised and never
+    reclaimed it, so leave()'s later surface destruction (deleteLater DOES
+    cascade to children) cannot delete the borrowed widget. Reverting the fix
+    (dropping _release_panel_content) leaves the widget parented to the surface
+    and leave() would destroy it."""
     ctrl, provider, window, created = _make()
     ctrl.enter()
     widget = QWidget()
@@ -2382,18 +2448,22 @@ def test_close_panel_surface_protects_hosted_widget_when_on_close_raises(qapp):
     assert ctrl.is_panel_open is True
     assert widget.parent() is surface                # hosted in the surface
 
-    ctrl.close_panel_surface()                       # on_close raises; must not tank teardown
+    ctrl.close_panel_surface()                       # on_close raises; must not tank the close
+
+    assert ctrl.is_panel_open is False
+    assert widget.parent() is None                   # released out of the persistent surface
+    assert _cpp_alive(surface) is True               # persistent: still alive after close
+
+    ctrl.leave()                                     # destroys the persistent surface
     # Force the surface's deleteLater to actually run: DeferredDelete is NOT processed
-    # by a plain processEvents(), so without this the surface (and its child) would
-    # still be alive and the survival check below would be meaningless.
+    # by a plain processEvents(), so without this the surface (and any stranded child)
+    # would still be alive and the survival check below would be meaningless.
     from PySide6.QtCore import QEvent
     qapp.sendPostedEvents(None, QEvent.DeferredDelete)
 
-    assert ctrl.is_panel_open is False               # surface fully torn down
     assert _cpp_alive(surface) is False              # the surface WAS really destroyed
     assert _cpp_alive(widget) is True                # BORROWED widget survived that destruction
-    assert widget.parent() is None                   # released out of the (dead) surface
-    ctrl.leave()
+    assert widget.parent() is None
 
 
 # ---------------------------------------------------------------------------
@@ -3012,7 +3082,9 @@ def test_screen_change_reapplies_radial_shape_at_new_dpr(qapp, monkeypatch):
     def radial_shapes():
         return [s for s in backend.shapes if s[0] is rsurf]
 
-    assert len(radial_shapes()) == 1          # applied once on open (dpr 1.0)
+    # Two applies so far: the persistent surface's EMPTY shape at enter, then
+    # the click region once on open - both at dpr 1.0.
+    assert len(radial_shapes()) == 2
     assert radial_shapes()[-1][2] == 1.0
 
     # Both surfaces cross to the HiDPI monitor.
@@ -3047,7 +3119,9 @@ def test_screen_change_reapplies_panel_shape_at_new_dpr(qapp, monkeypatch):
     def panel_shapes():
         return [s for s in backend.shapes if s[0] is psurf]
 
-    assert len(panel_shapes()) == 1           # applied once on open (dpr 1.0)
+    # Two applies so far: the persistent surface's EMPTY shape at enter, then
+    # the full-rect click region once on open - both at dpr 1.0.
+    assert len(panel_shapes()) == 2
     assert panel_shapes()[-1][2] == 1.0
 
     cluster.set_dpr(2.0)

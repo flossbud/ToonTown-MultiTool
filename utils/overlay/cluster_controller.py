@@ -232,17 +232,21 @@ class ClusterOverlayController:
 
     @property
     def is_radial_open(self) -> bool:
-        """True while the radial menu top-level is up (between open_radial_menu and
-        close_radial_menu). Drives the radial-aware window sizing and lets the
-        emblem click toggle the ring shut (caller wiring, a LATER task)."""
-        return self._radial_surface is not None
+        """True while the radial MENU is up (between open_radial_menu and
+        close_radial_menu). The radial top-level itself is PERSISTENT - pre-mapped
+        empty at enter() and reused across opens, because MAPPING a fresh
+        notification-typed window is what plays the compositor's open animation
+        (KWin slides it in from the screen edge) - so the hosted menu, not the
+        surface, is the open marker."""
+        return self._radial_menu is not None
 
     @property
     def is_panel_open(self) -> bool:
-        """True while the portable Settings panel top-level is up (between
-        open_panel_surface and close_panel_surface). The caller wiring (the radial's
-        Settings action opening the panel) is a LATER task."""
-        return self._panel_surface is not None
+        """True while the portable Settings panel is up (between open_panel_surface
+        and close_panel_surface). Like the radial, the panel top-level is
+        PERSISTENT (pre-mapped empty at enter, content swapped per open), so the
+        open marker is the nonzero open-time size, not surface existence."""
+        return self._panel_surface is not None and self._panel_size > 0
 
     @property
     def scale(self) -> float:
@@ -505,6 +509,13 @@ class ClusterOverlayController:
         # Decorative + best-effort: a dim failure must never flip a successful enter
         # back to framed, so _build_internal_dim swallows its own errors.
         self._build_internal_dim()
+        # Pre-map the PERSISTENT radial + panel top-levels now, empty (transparent
+        # + click-through), in this order - the compositor's window-open animation
+        # plays once here on invisible windows, and the notification-layer map
+        # order (cluster < radial < panel) is frozen for the session. Best-effort:
+        # both ensures self-clean on failure and re-run lazily at open.
+        self._ensure_radial_surface()
+        self._ensure_panel_surface()
         # Clear any ghost points that leaked into the store while framed (a queued
         # on_ghost_event arriving after a prior leave()), so a stale hover can never
         # survive into this fresh session, then start the hover-peek poll (the ~30ms
@@ -559,11 +570,13 @@ class ClusterOverlayController:
             self._save_timer.stop()
         # The radial + portable panel must never outlive the overlay: close them
         # FIRST (the panel's on_close runs so the caller reparents its content out;
-        # the radial tears down its top-level + hides the dim) before any host
-        # teardown - mirrors OverlayGroupController._teardown calling
-        # close_panel_surface() + close_radial_menu().
+        # the radial deletes its menu + hides the dim) before any host teardown -
+        # mirrors OverlayGroupController._teardown calling close_panel_surface() +
+        # close_radial_menu(). Then destroy the PERSISTENT (now-empty) top-levels;
+        # per-open close keeps them mapped by design.
         self.close_panel_surface()
         self.close_radial_menu()
+        self._destroy_persistent_surfaces()
         # Stop the emblem-drag poll and the hover-peek poll. Settling the peek
         # (restoring every faded card to fully opaque) runs HERE - before the host
         # is restored - so the borrowed cards never return to the framed grid stuck
@@ -1748,6 +1761,116 @@ class ClusterOverlayController:
         except Exception:
             pass
 
+    def _ensure_radial_surface(self):
+        """The PERSISTENT radial top-level: created + MAPPED once per overlay
+        session (empty, fully transparent via the source-clear paint, and
+        click-through via an EMPTY input shape), then reused by every ring open.
+
+        WHY persistent (load-bearing): mapping a window is what triggers the
+        compositor's open animation, and for NOTIFICATION-typed windows KWin
+        slides the new window in from the screen edge - live round 3 saw the
+        ring's buttons "fly up from below the monitor". Probed 2026-07-01: the
+        geometry is honored from the first frame (the slide is purely visual)
+        and no skip-OPEN-animation property exists (only
+        _KDE_NET_WM_SKIP_CLOSE_ANIMATION is in the server's atom table). So the
+        one map happens at enter() on an EMPTY invisible window; opening the
+        ring later only hosts content into the already-mapped surface - nothing
+        for the compositor to animate, under ANY effect configuration.
+        Pre-mapping at enter also freezes the session's stacking by map order:
+        cluster < radial < panel.
+
+        Returns the surface, or None when construction failed (the caller then
+        fails closed). Best-effort self-cleaning: a mid-build failure never
+        leaks a half-built top-level."""
+        if self._radial_surface is not None:
+            return self._radial_surface
+        if not self._active:
+            return None
+        surface = None
+        try:
+            from utils.overlay.cluster_surface import RadialSurface
+            from PySide6.QtCore import QRect
+            from PySide6.QtGui import QPainterPath
+            canvas_max = self._radial_canvas_max()
+            ax, ay = self._anchor
+            surface = RadialSurface(backend=self._backend)
+            surface.set_overlay_geometry(
+                QRect(int(ax - canvas_max / 2), int(ay - canvas_max / 2),
+                      canvas_max, canvas_max))
+            self._safe_call(surface, "prepare_initial_state")
+            surface.show()
+            self._radial_surface = surface
+            # Click-through while empty: a mapped window without a shape keeps
+            # X11's default FULL-RECT input region and would swallow every
+            # click over its (invisible) canvas.
+            self._apply_radial_input_shape(QPainterPath())
+            return surface
+        except Exception:
+            from utils.overlay.backend import overlay_trace
+            import traceback
+            overlay_trace("cluster_controller._ensure_radial_surface() FAILED:\n"
+                          + traceback.format_exc())
+            self._radial_surface = None
+            if surface is not None:
+                self._safe_call(surface, "hide")
+                self._safe_call(surface, "deleteLater")
+            return None
+
+    def _ensure_panel_surface(self):
+        """The PERSISTENT portable-Settings top-level: same lifecycle and same
+        rationale as ``_ensure_radial_surface`` (one map per session on an empty
+        invisible window; per-open content swaps never re-map, so the
+        compositor's notification open animation can never play over content).
+        Sized to the max-scale ``emblem*6`` canvas here; every open re-sizes and
+        re-centers it (a move/resize of a MAPPED window - no animation)."""
+        if self._panel_surface is not None:
+            return self._panel_surface
+        if not self._active:
+            return None
+        surface = None
+        try:
+            from utils.overlay.cluster_surface import PanelSurface
+            from utils.overlay.card_metrics import CardMetrics
+            from utils.overlay.scale import SCALE_MAX
+            from PySide6.QtCore import QRect
+            from PySide6.QtGui import QPainterPath
+            size = int(CardMetrics(SCALE_MAX).emblem * 6)
+            ax, ay = self._anchor
+            surface = PanelSurface(backend=self._backend)
+            surface.set_overlay_geometry(
+                QRect(int(ax - size / 2), int(ay - size / 2), size, size))
+            self._safe_call(surface, "prepare_initial_state")
+            surface.show()
+            self._panel_surface = surface
+            self._apply_panel_input_shape(QPainterPath())   # click-through while empty
+            return surface
+        except Exception:
+            from utils.overlay.backend import overlay_trace
+            import traceback
+            overlay_trace("cluster_controller._ensure_panel_surface() FAILED:\n"
+                          + traceback.format_exc())
+            self._panel_surface = None
+            if surface is not None:
+                self._safe_call(surface, "hide")
+                self._safe_call(surface, "deleteLater")
+            return None
+
+    def _destroy_persistent_surfaces(self) -> None:
+        """Unmap + delete the persistent radial/panel top-levels. leave() only:
+        per-open close keeps them mapped (unmapping and re-mapping is what
+        replays the compositor's open animation). Content is already gone by
+        the time this runs (close_radial_menu/close_panel_surface ran first)."""
+        surface = self._radial_surface
+        self._radial_surface = None
+        if surface is not None:
+            self._safe_call(surface, "hide")
+            self._safe_call(surface, "deleteLater")
+        panel = self._panel_surface
+        self._panel_surface = None
+        if panel is not None:
+            self._safe_call(panel, "hide")
+            self._safe_call(panel, "deleteLater")
+
     def open_radial_menu(self):
         """Show the click-accepting radial menu centered on the emblem.
 
@@ -1764,17 +1887,22 @@ class ClusterOverlayController:
         full canvas.
 
         Transaction-safe: the whole setup is guarded so a mid-build failure can never
-        leak an untracked top-level. The surface + menu are tracked BEFORE any
-        fallible step, so on ANY error ``close_radial_menu()`` tears the partial state
-        down and the method fails closed (returns None, ``is_radial_open`` False)."""
+        leak untracked state. The menu is tracked BEFORE any fallible step, so on
+        ANY error ``close_radial_menu()`` tears the partial state down and the
+        method fails closed (returns None, ``is_radial_open`` False). The surface
+        is the PERSISTENT pre-mapped top-level (``_ensure_radial_surface``); it is
+        never mapped here, so the compositor's window-open animation cannot play
+        over the ring - the menu's own fly-out is the only reveal motion."""
         from utils.overlay.backend import overlay_trace as _otr
         _otr(f"cluster.open_radial_menu called: active={self._active} "
-             f"already_open={self._radial_surface is not None}")
+             f"already_open={self.is_radial_open}")
         if not self._active:
             return None
-        if self._radial_surface is not None:
+        if self.is_radial_open:
             return None  # already open (and already wired by the first call)
-        from utils.overlay.cluster_surface import RadialSurface
+        surface = self._ensure_radial_surface()
+        if surface is None:
+            return None  # fail-closed: no top-level to host the ring in
         from utils.overlay.radial_menu import RadialMenuWidget, radial_anim_enabled
         from PySide6.QtCore import QRect
         try:
@@ -1789,16 +1917,14 @@ class ClusterOverlayController:
             # emblem_dia about the widget center, so the extra margin is inert.
             geom = QRect(int(ax - canvas_max / 2), int(ay - canvas_max / 2),
                          canvas_max, canvas_max)
-            surface = RadialSurface(backend=self._backend)
-            # Track the surface + menu IMMEDIATELY (before any fallible host/show), so
-            # a failure from here on is cleaned up by close_radial_menu() instead of
-            # leaking a built-but-untracked top-level.
-            self._radial_surface = surface
+            # Track the menu IMMEDIATELY (before any fallible host step), so a
+            # failure from here on is cleaned up by close_radial_menu() instead
+            # of leaking a built-but-untracked menu.
             self._radial_menu = menu
             surface.host(menu)
+            # Re-center the ALREADY-MAPPED window on the current anchor: a pure
+            # move, which the compositor never animates (only a map does).
             surface.set_overlay_geometry(geom)
-            self._safe_call(surface, "prepare_initial_state")
-            surface.show()
             # NON-EMPTY click region: the CURRENT-scale canvas, centered in the
             # fixed max-canvas window, MINUS the emblem disc - the hole lets
             # emblem gestures (click-to-close, scroll-to-scale, drag) pass
@@ -1878,14 +2004,20 @@ class ClusterOverlayController:
             self.close_radial_menu()
 
     def close_radial_menu(self) -> None:
-        """Tear down the radial top-level and hide (but keep) the internal dim.
+        """Tear down the radial MENU and hide (but keep) the internal dim.
         Idempotent: a call when the radial was never open is a safe no-op.
+
+        The persistent radial top-level is NOT unmapped: it goes back to its
+        empty state (transparent + EMPTY input shape = invisible and
+        click-through) so the next open never re-maps a window - re-mapping is
+        what plays the compositor's open animation. The surface dies only at
+        leave() (``_destroy_persistent_surfaces``).
 
         The cluster window is never resized here: it stays at the closed bbox the
         whole time the radial is open (the radial-open expansion was removed), so
         there is nothing to shrink back."""
-        surface = self._radial_surface
-        self._radial_surface = None
+        surface = self._radial_surface           # persists across opens
+        menu = self._radial_menu
         self._radial_menu = None
         self._radial_size = 0
         if self._radial_reshape_timer is not None:
@@ -1893,9 +2025,28 @@ class ClusterOverlayController:
         dim = self._dim
         if dim is not None:
             self._safe_call(dim, "hide")
+        if menu is not None:
+            # Reparent the menu OUT of the persistent surface, then delete it.
+            # release() (the OverlaySurface API) unhooks the layout tracking; a
+            # stub surface without it degrades to a plain hide + unparent.
+            released = None
+            release = getattr(surface, "release", None) if surface is not None else None
+            if release is not None:
+                try:
+                    released = release()
+                except Exception:
+                    released = None
+            if released is None:
+                self._safe_call(menu, "hide")
+                try:
+                    menu.setParent(None)
+                except Exception:
+                    pass
+            self._safe_call(menu, "deleteLater")
         if surface is not None:
-            self._safe_call(surface, "hide")
-            self._safe_call(surface, "deleteLater")  # the menu is OWNED; it dies too
+            # Click-through while empty (see _ensure_radial_surface).
+            from PySide6.QtGui import QPainterPath
+            self._apply_radial_input_shape(QPainterPath())
         self._restack_internal_layers()
 
     def _reposition_radial(self) -> None:
@@ -2029,31 +2180,33 @@ class ClusterOverlayController:
         propagates; the post-open _reposition_panel() path stays best-effort."""
         if not self._active:
             return None
-        if self._panel_surface is not None:
+        if self.is_panel_open:
             return self._panel_surface   # already open (and already wired)
-        from utils.overlay.cluster_surface import PanelSurface
+        surface = self._ensure_panel_surface()
+        if surface is None:
+            return None   # fail-closed: no persistent top-level to host into
         from utils.overlay.card_metrics import CardMetrics
         from PySide6.QtCore import QRect
         from PySide6.QtGui import QPainterPath
         try:
             size = int(CardMetrics(self._scale).emblem * 6)
+            # Track the open marker + on_close IMMEDIATELY (before any fallible
+            # host step), so a failure from here on is cleaned up by
+            # close_panel_surface() instead of leaking untracked state. The
+            # surface itself is the persistent pre-mapped top-level
+            # (_ensure_panel_surface) - it is never mapped here, so the
+            # compositor's window-open animation cannot play over the panel.
             self._panel_size = size
-            surface = PanelSurface(backend=self._backend)
-            # Track the surface + on_close IMMEDIATELY (before any fallible host/show),
-            # so a failure from here on is cleaned up by close_panel_surface() instead
-            # of leaking a built-but-untracked top-level.
-            self._panel_surface = surface
             self._panel_on_close = on_close
             # EVERY fallible open step runs UNGUARDED so any failure PROPAGATES to the
             # except-clause (fail-closed rollback). Do NOT wrap these in _safe_call /
             # swallow=True: that would leave is_panel_open True with a panel that was
-            # never prepared/shown/raised/shaped. (_reposition_panel stays guarded.)
+            # never hosted/raised/shaped. (_reposition_panel stays guarded.)
             surface.host(widget)
             ax, ay = self._anchor
+            # Re-size + re-center the ALREADY-MAPPED window (no map, no animation).
             surface.set_overlay_geometry(
                 QRect(int(ax - size / 2), int(ay - size / 2), size, size))
-            surface.prepare_initial_state()
-            surface.show()
             surface.raise_()
             # NON-EMPTY click region: the WHOLE panel accepts clicks.
             path = QPainterPath()
@@ -2069,10 +2222,12 @@ class ClusterOverlayController:
             return None
 
     def close_panel_surface(self) -> None:
-        """Destroy the owned panel surface. Runs ``on_close`` FIRST so the caller can
-        reparent its hosted content out BEFORE the surface (and with it the hosted
-        container) is torn down; then nulls state and hides + deletes the surface.
-        Idempotent: a call when the panel was never open is a safe no-op.
+        """Close the panel: run ``on_close`` FIRST so the caller can reparent its
+        hosted content out, then return the PERSISTENT surface to its empty state
+        (invisible + click-through, still mapped - see ``_ensure_panel_surface``
+        for why it is never unmapped per close). The surface itself dies only at
+        leave() (``_destroy_persistent_surfaces``). Idempotent: a call when the
+        panel was never open is a safe no-op.
 
         ``on_close`` CONTRACT: it MUST be idempotent and safe to call even when the
         hosted widget was never reparented IN. This method runs it during a
@@ -2081,10 +2236,10 @@ class ClusterOverlayController:
         None return - so ``on_close`` can fire more than once and must tolerate it.
 
         Borrowed-content safety: ``on_close`` runs in a try/except (a raise must never
-        abort the teardown), and BEFORE the surface is deleteLater'd any child STILL
-        hosted in the surface is reparented out (see ``_release_panel_content``), so a
-        raising on_close that never reclaimed the caller's widget cannot let Qt's
-        parent-child destruction delete that borrowed widget."""
+        abort the teardown), and any child STILL hosted in the surface afterwards is
+        reparented out (see ``_release_panel_content``), so a raising on_close that
+        never reclaimed the caller's widget cannot strand it inside the persistent
+        surface (where leave()'s deleteLater would destroy it)."""
         cb = self._panel_on_close
         self._panel_on_close = None
         if cb is not None:
@@ -2092,18 +2247,21 @@ class ClusterOverlayController:
                 cb()                          # restore reparented content FIRST
             except Exception:
                 pass
-        surface = self._panel_surface
-        self._panel_surface = None
+        surface = self._panel_surface         # persists across opens (leave() kills it)
         self._panel_size = 0
         if surface is not None:
             # Protect BORROWED content: if on_close raised (or otherwise failed to
             # reparent the caller's widget out), the widget may still be a child of the
-            # surface, and deleteLater would destroy it. Reparent any still-hosted
-            # child out FIRST (best effort); a child the caller already moved elsewhere
-            # is left alone, so the happy path is untouched.
+            # surface, and the surface outliving this close would strand it there.
+            # Reparent any still-hosted child out FIRST (best effort); a child the
+            # caller already moved elsewhere is left alone, so the happy path is
+            # untouched.
             self._release_panel_content(surface)
-            self._safe_call(surface, "hide")
-            self._safe_call(surface, "deleteLater")
+            # Back to the empty persistent state: invisible (source-cleared, no
+            # content) + click-through. NOT unmapped - re-mapping on the next open
+            # would replay the compositor's window-open animation.
+            from PySide6.QtGui import QPainterPath
+            self._apply_panel_input_shape(QPainterPath())
 
     def _release_panel_content(self, surface) -> None:
         """Reparent the panel surface's still-hosted child out to None so a subsequent

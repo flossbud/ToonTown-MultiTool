@@ -90,6 +90,19 @@ def test_delete_on_close_is_off(qapp):
 # host() / release()
 # ---------------------------------------------------------------------------
 
+def test_host_into_visible_surface_shows_widget(qapp):
+    """Hosting into an ALREADY-VISIBLE surface must show the widget explicitly:
+    the persistent radial/panel top-levels stay mapped between opens, and Qt
+    does not implicitly re-show a child reparented into a visible parent."""
+    s = OverlaySurface()
+    s.show()
+    w = QWidget()
+    s.host(w)
+    assert w.isHidden() is False
+    s.release()
+    s.hide()
+
+
 def test_host_reparents_widget(qapp):
     s = OverlaySurface()
     w = QWidget()
