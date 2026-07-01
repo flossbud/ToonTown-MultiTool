@@ -1532,6 +1532,44 @@ def test_close_radial_menu_tears_down_menu_keeps_surface_and_hides_dim(qapp, mon
     assert ctrl._radial_surface is None
 
 
+def test_closed_persistent_surfaces_track_anchor_so_open_has_no_delta(qapp, monkeypatch):
+    """Moving the cluster while the ring/panel are CLOSED must re-center the empty
+    persistent top-levels immediately: the compositor animates geometry changes of
+    the notification-typed windows, so a stale window caught up at open time would
+    visibly MORPH in from the old spot (seen live: reopen-after-drag animated the
+    ring from the previous emblem position). Kept glued while invisible, the
+    open-time geometry call carries no delta."""
+    created_radial = _patch_radial(monkeypatch)
+    created_panel = _patch_panel(monkeypatch)
+    ctrl, provider, window, created = _make(anchor=(1000, 700), settings=_DictSettings())
+    ctrl.enter()
+    menu = ctrl.open_radial_menu()
+    assert menu is not None
+    rsurf = created_radial["surfaces"][-1]
+    psurf = created_panel["surfaces"][-1]
+    ctrl.close_radial_menu()
+
+    ctrl.move_group(-60, 40)                     # drag while everything is CLOSED
+    ax, ay = ctrl._anchor
+
+    from utils.overlay.card_metrics import CardMetrics
+    canvas_max = ctrl._radial_canvas_max()
+    expected_radial = QRect(int(ax - canvas_max / 2), int(ay - canvas_max / 2),
+                            canvas_max, canvas_max)
+    psize = int(CardMetrics(ctrl.scale).emblem * 6)
+    expected_panel = QRect(int(ax - psize / 2), int(ay - psize / 2), psize, psize)
+
+    # The EMPTY surfaces already sit at the new-anchor placement...
+    assert rsurf.geom == expected_radial
+    assert psurf.geom == expected_panel
+
+    # ...so reopening produces NO geometry change (nothing to morph).
+    ctrl.open_radial_menu()
+    assert rsurf.geom == expected_radial
+    ctrl.close_radial_menu()
+    ctrl.leave()
+
+
 def test_radial_closing_signal_collapses_internal_dim(qapp, monkeypatch):
     """The menu's `closing` signal (fly-back begun) retracts the internal dim via
     its reverse animation, so the backdrop collapses IN STEP with the ring instead

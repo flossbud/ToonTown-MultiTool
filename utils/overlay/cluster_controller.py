@@ -672,12 +672,11 @@ class ClusterOverlayController:
         # top-level stays at the FIXED max canvas; the click-region re-apply is
         # deferred to the radial settle timer). The internal dim needs nothing:
         # it is a child of the transformed host, so it zooms with the cluster.
-        if self.is_radial_open:
-            self._reposition_radial()
-        # Keep the portable panel centered on the anchor (it is NOT rescaled - only
-        # re-centered) regardless of radial state.
-        if self.is_panel_open:
-            self._reposition_panel()
+        # Both calls run even while CLOSED so the empty persistent windows track
+        # the state the next open will use (the closed panel resizes to the new
+        # scale's emblem*6 here) - any compositor morph plays invisibly.
+        self._reposition_radial()
+        self._reposition_panel()
         # Drive the input-shape phase machine: broad now, exact on settle.
         self._enter_broad_phase(self._compute_window_rect())
         # Persist the new scale (debounced). A clamp-pinned no-op scroll already
@@ -803,11 +802,11 @@ class ClusterOverlayController:
                 self._surface.set_overlay_geometry(self._compute_window_rect())
             except Exception:
                 pass
-        if self.is_radial_open:
-            self._reposition_radial()
-        # Re-center the portable panel on the new (reconciled) anchor (fixed size).
-        if self.is_panel_open:
-            self._reposition_panel()
+        # Both persistent top-levels track the anchor even while CLOSED (empty +
+        # invisible): the compositor animates their geometry changes, so a stale
+        # window caught up at open time would visibly morph in from the old spot.
+        self._reposition_radial()
+        self._reposition_panel()
         # Persist the new (reconciled) anchor (debounced).
         self._schedule_save()
         return True
@@ -1613,22 +1612,22 @@ class ClusterOverlayController:
                 self._arm_settle_timer()
             else:
                 self._apply_exact_input_shape()
-            # Radial open: ALWAYS re-center/re-size on the fresh emblem (cheap; and
-            # _reposition_radial schedules its OWN deferred reshape when the canvas
-            # changed). The IMMEDIATE full-canvas click-region re-apply is GATED on
-            # not-scaling, mirroring the cluster's broad-phase deferral above - forcing
-            # it mid-scale would narrow the X11 input region under the pointer and undo
-            # _reposition_radial's own settle-timer deferral.
-            if self.is_radial_open:
-                self._reposition_radial()
-                if not scaling:
-                    self._reapply_radial_shape()
-            # Panel open: re-center ALWAYS; the immediate full-rect click-region
-            # re-apply is likewise gated on not-scaling (same broad-phase deferral).
-            if self.is_panel_open:
-                self._reposition_panel()
-                if not scaling:
-                    self._reapply_panel_shape()
+            # Radial: ALWAYS re-center/re-size on the fresh emblem (cheap; runs
+            # even while CLOSED so the empty persistent window never goes stale -
+            # a stale window caught up at open would visibly morph in; and
+            # _reposition_radial schedules its OWN deferred reshape when the
+            # canvas changed). The IMMEDIATE full-canvas click-region re-apply is
+            # GATED on open + not-scaling, mirroring the cluster's broad-phase
+            # deferral above - forcing it mid-scale would narrow the X11 input
+            # region under the pointer and undo the settle-timer deferral.
+            self._reposition_radial()
+            if self.is_radial_open and not scaling:
+                self._reapply_radial_shape()
+            # Panel: re-center ALWAYS (open or empty); the immediate full-rect
+            # click-region re-apply is likewise gated (same broad-phase deferral).
+            self._reposition_panel()
+            if self.is_panel_open and not scaling:
+                self._reapply_panel_shape()
         except Exception:
             from utils.overlay.backend import overlay_trace
             import traceback
@@ -1821,8 +1820,10 @@ class ClusterOverlayController:
         rationale as ``_ensure_radial_surface`` (one map per session on an empty
         invisible window; per-open content swaps never re-map, so the
         compositor's notification open animation can never play over content).
-        Sized to the max-scale ``emblem*6`` canvas here; every open re-sizes and
-        re-centers it (a move/resize of a MAPPED window - no animation)."""
+        Sized to the CURRENT-scale ``emblem*6`` canvas - the size the next open
+        will use - so the open-time geometry call carries no delta for the
+        compositor to morph; ``_reposition_panel`` keeps the empty window glued
+        to that size + the anchor as they change while closed."""
         if self._panel_surface is not None:
             return self._panel_surface
         if not self._active:
@@ -1831,10 +1832,9 @@ class ClusterOverlayController:
         try:
             from utils.overlay.cluster_surface import PanelSurface
             from utils.overlay.card_metrics import CardMetrics
-            from utils.overlay.scale import SCALE_MAX
             from PySide6.QtCore import QRect
             from PySide6.QtGui import QPainterPath
-            size = int(CardMetrics(SCALE_MAX).emblem * 6)
+            size = int(CardMetrics(self._scale).emblem * 6)
             ax, ay = self._anchor
             surface = PanelSurface(backend=self._backend)
             surface.set_overlay_geometry(
@@ -2056,30 +2056,37 @@ class ClusterOverlayController:
         diameter (a repaint) and defers the click-region re-apply to the settle
         timer (re-applying the X11 input shape under the pointer mid-scroll stalls
         the wheel stream); a drag re-centers the fixed-size window (a pure move).
-        No-op when the radial is closed."""
-        if not self.is_radial_open:
+
+        The surface move runs even while CLOSED (empty persistent window): the
+        compositor animates geometry changes of the notification-typed window,
+        so it must track the anchor while INVISIBLE - if it only caught up at
+        open, KWin would morph the ring from the stale position to the emblem
+        (seen live: reopen-after-drag animated in from the old spot). Kept glued
+        here, the open-time geometry call has no delta left to animate."""
+        surface = self._radial_surface
+        if surface is None:
             return
         from PySide6.QtCore import QRect
-        emblem_dia, canvas = self._radial_canvas()
         canvas_max = self._radial_canvas_max()
-        resized = canvas != self._radial_size
-        self._radial_size = canvas
         ax, ay = self._anchor
         geom = QRect(int(ax - canvas_max / 2), int(ay - canvas_max / 2),
                      canvas_max, canvas_max)
-        surface = self._radial_surface
-        if surface is not None:
-            if resized and self._radial_menu is not None:
+        try:
+            surface.set_overlay_geometry(geom)
+        except Exception:
+            pass
+        if not self.is_radial_open:
+            return   # empty persistent window: anchoring it is all there is to do
+        emblem_dia, canvas = self._radial_canvas()
+        resized = canvas != self._radial_size
+        self._radial_size = canvas
+        if resized:
+            if self._radial_menu is not None:
                 try:
                     self._radial_menu.set_emblem_diameter(emblem_dia)
                 except Exception:
                     pass
-            try:
-                surface.set_overlay_geometry(geom)
-            except Exception:
-                pass
-            if resized:
-                self._schedule_radial_reshape()
+            self._schedule_radial_reshape()
         # The dim is scale-independent (a child of the transformed host); this is
         # a cheap idempotent re-assert of its framed-1.0 placement.
         self._position_internal_dim()
@@ -2285,23 +2292,31 @@ class ClusterOverlayController:
             pass
 
     def _reposition_panel(self) -> None:
-        """Re-center the open panel top-level on the anchor at its FIXED open-time
-        size. The panel is NOT rescaled (mirrors the old ``_reposition_radial`` panel
-        handling): only re-centered so it follows the cluster as it moves/scales, and
-        re-raised so it stays above the emblem + radial. No-op when the panel is
-        closed."""
+        """Re-center the panel top-level on the anchor. While OPEN it stays at its
+        FIXED open-time size (the panel is re-centered, never rescaled) and is
+        re-raised above the emblem + radial. While CLOSED (empty persistent
+        window) it tracks the anchor AND the current-scale ``emblem*6`` size the
+        NEXT open will use - same rationale as ``_reposition_radial``: the
+        compositor animates geometry changes of the notification-typed window,
+        so any catch-up move/resize must happen while it is invisible, leaving
+        the open-time geometry call with no delta to animate."""
         surface = self._panel_surface
-        if surface is None or self._panel_size <= 0:
+        if surface is None:
             return
         from PySide6.QtCore import QRect
-        size = self._panel_size
+        if self._panel_size > 0:
+            size = self._panel_size
+        else:
+            from utils.overlay.card_metrics import CardMetrics
+            size = int(CardMetrics(self._scale).emblem * 6)
         ax, ay = self._anchor
         try:
             surface.set_overlay_geometry(
                 QRect(int(ax - size / 2), int(ay - size / 2), size, size))
         except Exception:
             pass
-        self._safe_call(surface, "raise_")
+        if self.is_panel_open:
+            self._safe_call(surface, "raise_")
 
     def _apply_panel_input_shape(self, path, swallow: bool = True) -> None:
         """Apply *path* as the panel surface's INPUT (click-accept) shape via the
