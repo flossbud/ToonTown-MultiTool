@@ -57,6 +57,18 @@ class OverlaySurface(QWidget):
     ``close()`` path, not destruction/GC.
     """
 
+    # EWMH window type the backend writes pre-map (x11_backend.set_initial_state).
+    # DOCK exempts managed windows from KWin's fit-to-desktop move clamp while
+    # keep-above holds them over the games. Subclasses that must ALWAYS stack
+    # above the cluster window (radial ring, settings panel) override this with
+    # NOTIFICATION: a strictly HIGHER KWin layer, because within the dock layer
+    # KWin ignores client restack requests and its own click-raise can lift the
+    # (click-accepting-on-the-emblem) cluster window above a same-layer sibling
+    # - which put the cluster's internal dim over the radial buttons. Layer
+    # separation makes that inversion impossible regardless of raise order.
+    # (NOTIFICATION is also exempt from the move clamp - probed on KWin 6.7.1.)
+    WM_WINDOW_TYPE = "_NET_WM_WINDOW_TYPE_DOCK"
+
     def __init__(self, backend: OverlayBackend | None = None) -> None:
         # Parentless: do not pass a parent so this is always a top-level window.
         super().__init__(None)

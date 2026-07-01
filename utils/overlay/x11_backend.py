@@ -65,20 +65,24 @@ class X11OverlayBackend(OverlayBackend):
         Must be called while the window is realized (winId valid) but NOT yet
         mapped (before show()).
 
-        The window TYPE is set to DOCK (load-bearing for MANAGED overlay windows):
-        KWin force-fits a managed NORMAL window's client-requested geometry into
-        the virtual-desktop bounding box, which walled the cluster's fixed
-        max-scale envelope short of the top screen edge and desynced the drag
-        anchor from the pinned window. DOCK (and NOTIFICATION/OSD) windows are
-        exempt from that clamp - probed empirically on KWin 6.7.1, 2026-07-01,
-        with keep-above applied, i.e. exactly this configuration. With
-        _NET_WM_STATE_ABOVE also set the dock stacks in the same keep-above
-        layer as before (over the games, still below the compositor's system
-        layers such as the screenshot region picker), and docks are visible on
-        all virtual desktops - matching the old override-redirect behavior. No
-        _NET_WM_STRUT is set, so no screen space is reserved. On an
-        override-redirect window (TTMT_OVERLAY_UNMANAGED=1) the WM ignores both
-        properties, so writing them unconditionally is harmless.
+        The window TYPE (the surface class's ``WM_WINDOW_TYPE``, default DOCK)
+        is load-bearing for MANAGED overlay windows: KWin force-fits a managed
+        NORMAL window's client-requested geometry into the virtual-desktop
+        bounding box, which walled the cluster's fixed max-scale envelope short
+        of the top screen edge and desynced the drag anchor from the pinned
+        window. DOCK and NOTIFICATION windows are exempt from that clamp -
+        probed empirically on KWin 6.7.1, 2026-07-01, with keep-above applied,
+        i.e. exactly this configuration. With _NET_WM_STATE_ABOVE also set the
+        dock stacks in the same keep-above layer as before (over the games,
+        still below the compositor's system layers such as the screenshot
+        region picker), and docks are visible on all virtual desktops -
+        matching the old override-redirect behavior. No _NET_WM_STRUT is set,
+        so no screen space is reserved. The radial/panel surfaces override
+        ``WM_WINDOW_TYPE`` to NOTIFICATION (a strictly higher KWin layer) so
+        they can never be click-raised below the cluster window - see
+        ``OverlaySurface.WM_WINDOW_TYPE``. On an override-redirect window
+        (TTMT_OVERLAY_UNMANAGED=1) the WM ignores both properties, so writing
+        them unconditionally is harmless.
         """
         if not self.is_available():
             return
@@ -98,16 +102,17 @@ class X11OverlayBackend(OverlayBackend):
                 ],
                 X.PropModeReplace,
             )
+            wtype = getattr(window, "WM_WINDOW_TYPE", "_NET_WM_WINDOW_TYPE_DOCK")
             win.change_property(
                 a("_NET_WM_WINDOW_TYPE"),
                 Xatom.ATOM,
                 32,
-                [a("_NET_WM_WINDOW_TYPE_DOCK")],
+                [a(wtype)],
                 X.PropModeReplace,
             )
             d.flush()
             overlay_trace("x11 set_initial_state: pre-map _NET_WM_STATE"
-                          "(above+skip) + _NET_WM_WINDOW_TYPE(DOCK) applied")
+                          f"(above+skip) + _NET_WM_WINDOW_TYPE({wtype}) applied")
         except Exception:
             pass
 
