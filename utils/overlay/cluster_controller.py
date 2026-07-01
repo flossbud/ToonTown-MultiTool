@@ -7,7 +7,7 @@ the WHOLE ``_grid_host`` subtree (glow + the 2x2 card grid + the emblem) into ON
 constructor is drop-in compatible with ``OverlayGroupController`` so the two can
 be swapped behind the same call sites.
 
-This module implements ONLY the lifecycle slice:
+Lifecycle entry points:
 
 * ``enter()`` - build the cluster surface, borrow the host, place + show it, then
   MINIMIZE the main window (never hide, so the single taskbar icon stays).
@@ -26,8 +26,9 @@ Scaling (single-window metrics + input-shape phase machine), drag, occupancy
 (the visible set narrows the EXACT input shape while the grid SHELL stays fixed -
 empty cards keep their cell, never hidden/reshaped), and persistence (load the
 saved anchor + scale on enter, debounced save on scale/move, flush on leave) are
-built here. Hover-peek, ghost clicks, and the radial menu are LATER tasks and are
-intentionally NOT built here.
+built here. Hover-peek, ghost-click pass-through, the radial menu, and the
+portable Settings panel are built here too: this module is the whole single-window
+controller.
 """
 from __future__ import annotations
 
@@ -335,6 +336,13 @@ class ClusterOverlayController:
                 provider.apply_metrics(CardMetrics(self._scale))
             rect = self._compute_window_rect()
             surface.set_overlay_geometry(rect)
+            # Install the pre-map EWMH state (skip-taskbar/pager + above) BEFORE the
+            # window is mapped, mirroring the proven OverlayGroupController.enter()
+            # discipline, so the single cluster window never flashes in the taskbar
+            # or maps below the games on the first frame. Best-effort (_safe_call): a
+            # decorative WM-hint failure must never fail-close an otherwise valid
+            # borrow.
+            self._safe_call(surface, "prepare_initial_state")
             surface.show()
             # Set the flag BEFORE the call so a showMinimized() failure still
             # triggers the except-path window restore (mirrors OverlayGroupController).
@@ -380,6 +388,14 @@ class ClusterOverlayController:
         # windowHandle exists, so connect screenChanged to re-apply the input shape at
         # the new device-pixel ratio when the window crosses to another monitor.
         self._connect_screen_change()
+        # Apply the EXACT click-through shape NOW (emblem + visible-card controls
+        # union) so the cluster is click-through the instant it appears. Without this
+        # the freshly-mapped window keeps X11's default FULL-RECT input region and
+        # blocks clicks to the games underneath until the first scale/occupancy/
+        # screen event reshapes it. This is the settled (non-scaling) terminal state,
+        # so the phase is "exact" - identical to what _settle_input() lands on.
+        self._input_phase = "exact"
+        self._apply_exact_input_shape()
         self._emit_active_changed()   # self._active is True here
         return True
 
@@ -481,6 +497,12 @@ class ClusterOverlayController:
             return
         prev_scale = self.scale
         self.scale = step_scale(self.scale, notches)
+        # Clamped at SCALE_MIN/MAX -> the scale did not actually change: skip the
+        # whole reshape + broad phase (which would otherwise mark _scaling_active and
+        # lock out drag for the ~250ms settle window on a NO-OP scroll) and the save.
+        # Mirrors move_group's clamp-pinned no-op early-return.
+        if self.scale == prev_scale:
+            return
         provider = self._card_provider
         if provider is not None:
             try:
@@ -513,11 +535,9 @@ class ClusterOverlayController:
             self._reposition_panel()
         # Drive the input-shape phase machine: broad now, exact on settle.
         self._enter_broad_phase(rect)
-        # Persist the new scale (debounced) - but only when the scale ACTUALLY
-        # changed: scrolling against SCALE_MIN/MAX is a no-op that must not churn a
-        # save (mirrors move_group, which only saves on a real move).
-        if self.scale != prev_scale:
-            self._schedule_save()
+        # Persist the new scale (debounced). A clamp-pinned no-op scroll already
+        # returned above, so reaching here always means the scale actually changed.
+        self._schedule_save()
 
     def move_group(self, dx: int, dy: int) -> bool:
         """Shift the cluster anchor by (dx, dy), clamp to the screen envelope, and
@@ -1373,6 +1393,22 @@ class ClusterOverlayController:
         except Exception:
             pass
 
+    def _collapse_internal_dim(self) -> None:
+        """Play the internal dim's reverse (fly-back) animation, driven by
+        ``RadialMenuWidget.closing`` (emitted when a dismiss path BEGINS its
+        fly-back). The dim child is hidden/torn down later by ``close_radial_menu``;
+        this only retracts the backdrop IN STEP WITH the ring instead of a single
+        hard ``hide()`` at teardown. Mirrors ``OverlayGroupController._collapse_dim``.
+        Best-effort + guarded: a no-op when there is no dim."""
+        dim = self._dim
+        if dim is None:
+            return
+        try:
+            from utils.overlay.radial_menu import radial_anim_enabled
+            dim.start_close(animate=radial_anim_enabled())
+        except Exception:
+            pass
+
     def open_radial_menu(self):
         """Show the click-accepting radial menu centered on the emblem.
 
@@ -1434,6 +1470,12 @@ class ClusterOverlayController:
                 except Exception:
                     pass
             self._restack_internal_layers()
+            # Retract the internal dim IN STEP WITH the ring's fly-back: the menu
+            # emits `closing` when any dismiss path begins its fly-back (and defers
+            # `close_requested` until the animation completes), so this makes the
+            # backdrop collapse with the ring instead of a hard hide at teardown.
+            # Mirrors OverlayGroupController's `menu.closing.connect(_collapse_dim)`.
+            menu.closing.connect(self._collapse_internal_dim)
             try:
                 menu.start_reveal()
             except Exception:

@@ -70,6 +70,19 @@ _VISIBLE_CONTROL_PROBE = (20, 20)
 # ---------------------------------------------------------------------------
 # Light stubs
 # ---------------------------------------------------------------------------
+class _NoopSignal:
+    """Minimal signal stand-in for the PLAIN-object radial-menu stubs (the ones that
+    avoid QObject to dodge the PySide6/3.14 GC flake): supports connect()/emit() as
+    no-ops so open_radial_menu()'s ``menu.closing.connect(...)`` wiring works without
+    a real QObject signal. QWidget-based stubs use a real ``Signal()`` instead."""
+
+    def connect(self, *_a, **_k):
+        pass
+
+    def emit(self, *_a, **_k):
+        pass
+
+
 class _StubProvider:
     """Stand-in for _CompactLayout: a real `_grid_host` (parented under a holder,
     with a real off-center `_emblem` child) plus recording capture/restore/
@@ -183,6 +196,11 @@ class _StubSurface(QWidget):
         self.hidden = 0
         self.released = 0
         self.deleted = 0
+        self.prepared = 0
+        self.prepared_at_show = None      # value of self.prepared when show() ran
+
+    def prepare_initial_state(self):
+        self.prepared += 1
 
     def host(self, widget):
         if self.host_raises:
@@ -204,6 +222,7 @@ class _StubSurface(QWidget):
         self.geom = rect
 
     def show(self):
+        self.prepared_at_show = self.prepared     # capture pre-map ordering
         self.shown += 1
 
     def hide(self):
@@ -428,6 +447,37 @@ def test_enter_borrows_minimizes_and_places_emblem_on_anchor(qapp):
     assert window.minimized == 1
     assert ctrl.is_active is True
     assert events == [True]                 # on_active_changed(True) fired
+
+
+def test_enter_prepares_state_then_applies_exact_click_through_shape(qapp):
+    """enter() must (a) install the pre-map EWMH state BEFORE show() and (b) apply
+    the EXACT emblem+controls input shape immediately, so the cluster is
+    click-through the instant it appears - NOT left with X11's default full-rect
+    input region that blocks clicks to the games until the first scale/occupancy/
+    screen event heals it (the review's Important finding)."""
+    backend = _RecordingBackend()
+    ctrl, provider, window, created = _make(backend=backend)
+
+    ok = ctrl.enter()
+    assert ok is True
+    surface = created[0]
+
+    # (a) pre-map WM state installed BEFORE the window was mapped.
+    assert surface.prepared_at_show == 1        # prepare_initial_state ran before show()
+    assert surface.shown == 1
+
+    # (b) exactly ONE shape applied on enter, and it is the settled EXACT shape.
+    assert ctrl._input_phase == "exact"
+    assert len(backend.shapes) == 1
+    win, path, _dpr = backend.shapes[0]
+    assert win is surface
+    # Solid over the emblem + every visible card's controls (click-catching)...
+    assert path.contains(QPointF(_EMBLEM_CX, _EMBLEM_CY))
+    assert path.contains(QPointF(*_VISIBLE_CONTROL_PROBE))   # cell 0 control
+    assert path.contains(QPointF(*_CONTROL_PROBE))           # cell 1 control
+    # ...but CLICK-THROUGH over a gap (a cell interior away from its controls and
+    # the emblem): the shape is the exact union, not the full window rect.
+    assert not path.contains(QPointF(380, 280))
 
 
 # ---------------------------------------------------------------------------
@@ -662,6 +712,7 @@ def test_settle_applies_exact_shape_and_clears_scaling(qapp):
     ctrl, provider, window, created = _make(backend=backend)
     ctrl.enter()
     surface = created[0]
+    backend.shapes.clear()                       # ignore the enter-time exact shape
     ctrl.set_scale_by_notches(1)
     assert len(backend.shapes) == 1
     broad_path = backend.shapes[-1][1]
@@ -1170,6 +1221,8 @@ def _patch_radial(monkeypatch):
             self.deleted += 1
 
     class _StubRadialMenu(QWidget):
+        closing = Signal()      # fly-back begun -> internal dim collapse (parity)
+
         def __init__(self, emblem_diameter=0.0, customizations=None,
                      variant="transparent", parent=None):
             super().__init__()
@@ -1361,6 +1414,27 @@ def test_close_radial_menu_tears_down_radial_and_hides_dim(qapp, monkeypatch):
     assert ctrl._radial_surface is None
     assert rsurf.hidden == 1 and rsurf.deleted == 1
     assert ctrl._dim is not None and ctrl._dim.isHidden() is True
+
+
+def test_radial_closing_signal_collapses_internal_dim(qapp, monkeypatch):
+    """The menu's `closing` signal (fly-back begun) retracts the internal dim via
+    its reverse animation, so the backdrop collapses IN STEP with the ring instead
+    of the old hard hide() at teardown (OverlayGroupController._collapse_dim
+    parity)."""
+    _patch_radial(monkeypatch)
+    ctrl, provider, window, created = _make(anchor=(1000, 700))
+    ctrl.enter()
+    menu = ctrl.open_radial_menu()
+    assert menu is not None
+    dim = ctrl._dim
+    assert dim is not None
+    calls: list = []
+    monkeypatch.setattr(dim, "start_close", lambda animate=True: calls.append(animate))
+
+    menu.closing.emit()                     # ring fly-back begins
+
+    assert calls, "internal dim did not collapse on menu.closing"
+    ctrl.leave()
 
 
 def test_close_radial_menu_idempotent_when_never_open(qapp, monkeypatch):
@@ -2025,6 +2099,8 @@ def test_panel_stays_above_radial_when_both_open(qapp, monkeypatch):
             pass
 
     class _StubRadialMenu(QWidget):
+        closing = Signal()      # fly-back begun -> internal dim collapse (parity)
+
         def __init__(self, emblem_diameter=0.0, **kw):
             super().__init__()
 
@@ -2685,6 +2761,8 @@ def test_screen_change_reapplies_radial_shape_at_new_dpr(qapp, monkeypatch):
     _DprRadialSurface = _make_dpr_surface_stub()
 
     class _StubRadialMenu:
+        closing = _NoopSignal()     # no-op signal stand-in (plain-object stub)
+
         def __init__(self, emblem_diameter=0.0, **kw):
             pass
 
@@ -2781,6 +2859,8 @@ def test_screen_change_defers_all_reshapes_during_active_scale(qapp, monkeypatch
     _DprPanelSurface = _make_dpr_surface_stub()
 
     class _StubRadialMenu:
+        closing = _NoopSignal()     # no-op signal stand-in (plain-object stub)
+
         def __init__(self, emblem_diameter=0.0, **kw):
             pass
 
