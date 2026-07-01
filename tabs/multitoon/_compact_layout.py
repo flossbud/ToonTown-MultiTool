@@ -660,14 +660,22 @@ class _Emblem(QWidget):
         self._press_anim.stop()
         self._press_scale = 0.92
         self.update()
-        super().mousePressEvent(event)
+        # ACCEPT the press - never QWidget's default ignore (super()). Through
+        # the single-window cluster's QGraphicsProxyWidget an IGNORED press means
+        # the proxy never becomes the scene mouse grabber, so the follow-up
+        # move/release events are never forwarded and every press-derived gesture
+        # (drag, radial click, right-click toggle) silently dies - while wheel
+        # kept working because the armed wheelEvent branch accepts. Plain-window
+        # hosting (framed tab, legacy per-window overlay) routes the release to
+        # the pressed child regardless, which is why this only broke the cluster.
+        event.accept()
 
     def mouseMoveEvent(self, event):
         if self._press is not None and not self._dragging:
             if is_drag(self._press, event.position().toPoint()):
                 self._dragging = True
                 self.move_requested.emit()
-        super().mouseMoveEvent(event)
+        event.accept()   # keep the gesture stream (see mousePressEvent)
 
     def mouseReleaseEvent(self, event):
         self._animate_press(1.0)
@@ -681,7 +689,7 @@ class _Emblem(QWidget):
                 self.menu_requested.emit()         # left-click = open the wheel
             # other buttons: no-op
         self._dragging = False
-        super().mouseReleaseEvent(event)
+        event.accept()   # keep the gesture stream (see mousePressEvent)
 
     def wheelEvent(self, event):
         if self._armed:
@@ -804,6 +812,31 @@ class SlotRecord:
     geometry: "QRect | None" = None
     pos: "QPoint | None" = None
     raised: bool = False
+
+
+@dataclass
+class ClusterHostToken:
+    """Snapshot of the WHOLE `_grid_host` subtree's place in the outer layout,
+    enough to re-insert it byte-for-byte after the single-window overlay borrows
+    the entire cluster (glow + 2x2 cards + emblem) as ONE unit and later returns
+    it to framed mode.
+
+    Unlike SlotRecord (which round-trips individual cards/emblem), this records
+    the host's slot in the OUTER QVBoxLayout: the layout itself, the item index,
+    the box stretch factor, intrinsic visibility, and the full size constraints
+    (a copied QSizePolicy plus minimum/maximum size held by value). `widget` is
+    a direct reference to `_grid_host` so it is never recreated across the
+    borrow; restore re-uses the SAME object.
+    """
+
+    widget: "QWidget | None"
+    layout: "QVBoxLayout | None"
+    index: int
+    stretch: int
+    visible: bool
+    size_policy: "QSizePolicy | None"
+    minimum_size: "QSize | None"
+    maximum_size: "QSize | None"
 
 
 # ── The layout ─────────────────────────────────────────────────────────────
@@ -1965,6 +1998,113 @@ class _CompactLayout(QWidget):
         if record.raised:
             # Keep the emblem above the cards (it nests in the carved centre).
             widget.raise_()
+
+    # ── Whole-cluster borrow (single-window overlay) ─────────────────────────
+    def capture_cluster_host(self) -> "ClusterHostToken | None":
+        """Detach the ENTIRE `_grid_host` subtree (glow + 2x2 cards + emblem) as
+        one unit and return a token that restore_cluster_host() can use to put it
+        back EXACTLY. The single-window overlay borrows the whole cluster in one
+        reparent (replacing the old per-card/per-emblem borrow); on leave it
+        restores the host to framed mode.
+
+        The token records the host's slot in the OUTER layout: the layout, the
+        item index, the box stretch, intrinsic visibility, and the full size
+        constraints (size policy + minimum/maximum size, all held by value so a
+        later mutation of the live widget can't corrupt the snapshot). The host
+        itself is referenced (never copied/recreated), so the borrow round-trips
+        the SAME object.
+
+        Returns None if there is no host/outer layout to borrow (a graceful
+        degrade: restore_cluster_host(None) is a safe no-op).
+
+        IDEMPOTENT: a second capture while a prior capture is still outstanding
+        (e.g. a re-entrant overlay enter) returns the SAME valid token instead of
+        recording a degraded one (the host is already detached, so re-deriving
+        index/stretch would yield index=-1/stretch=0 and restore the framed layout
+        to the wrong slot). The token is cleared on restore_cluster_host()."""
+        existing = getattr(self, "_cluster_token", None)
+        if existing is not None:
+            return existing
+        host = self._grid_host
+        outer = self._outer
+        if host is None or outer is None:
+            return None
+
+        index = outer.indexOf(host)
+        stretch = outer.stretch(index) if index >= 0 else 0
+
+        # QSizePolicy is a value type; copy it via the (horizontal, vertical,
+        # type) constructor (NOT the copy-constructor, which the older PySide6 in
+        # the frozen build rejects - see capture_slot) so the snapshot is immune
+        # to a later mutation of the live widget's policy.
+        _sp = host.sizePolicy()
+        size_policy = QSizePolicy(_sp.horizontalPolicy(), _sp.verticalPolicy(),
+                                  _sp.controlType())
+        size_policy.setHorizontalStretch(_sp.horizontalStretch())
+        size_policy.setVerticalStretch(_sp.verticalStretch())
+        size_policy.setHeightForWidth(_sp.hasHeightForWidth())
+        size_policy.setRetainSizeWhenHidden(_sp.retainSizeWhenHidden())
+
+        token = ClusterHostToken(
+            widget=host,
+            layout=outer,
+            index=index,
+            stretch=stretch,
+            # Intrinsic hidden flag (not isVisible(), which is ancestor-dependent
+            # and False whenever the tab page isn't current / the window is
+            # minimized - exactly the overlay case). Symmetric with setVisible().
+            visible=not host.isHidden(),
+            size_policy=size_policy,
+            minimum_size=QSize(host.minimumSize()),
+            maximum_size=QSize(host.maximumSize()),
+        )
+
+        # Detach: parentless, leaving the outer layout. Reparenting to None drops
+        # the host's outer-layout item automatically.
+        host.setParent(None)
+        self._cluster_token = token   # mark outstanding capture (idempotency guard)
+        return token
+
+    def restore_cluster_host(self, token) -> None:
+        """Re-insert the `_grid_host` captured by capture_cluster_host() into the
+        outer layout at its recorded index + stretch, and restore its visibility
+        and size constraints (policy + min/max).
+
+        IDEMPOTENT: a second call re-inserts the same host once (the existing
+        item is dropped first), never duplicating it. FAIL-CLOSED: None, an empty
+        dict, or any malformed token is a safe no-op (never raises)."""
+        if not isinstance(token, ClusterHostToken):
+            return
+        host = token.widget
+        outer = token.layout
+        if host is None or outer is None:
+            return
+        # Clear the outstanding-capture marker so a subsequent capture re-derives a
+        # fresh token (the idempotent-capture guard above keys off this).
+        if getattr(self, "_cluster_token", None) is token:
+            self._cluster_token = None
+        try:
+            # Idempotent: drop any existing layout item for this host first so a
+            # double-restore (or a restore without a prior detach) can't create a
+            # duplicate item. removeWidget is a no-op when the host isn't present
+            # and does NOT reparent the host.
+            outer.removeWidget(host)
+            idx = token.index
+            if idx is None or idx < 0:
+                outer.addWidget(host, token.stretch)
+            else:
+                # Clamp to the current count so a stale index can't error.
+                outer.insertWidget(min(idx, outer.count()), host, token.stretch)
+            if token.size_policy is not None:
+                host.setSizePolicy(token.size_policy)
+            if token.minimum_size is not None:
+                host.setMinimumSize(token.minimum_size)
+            if token.maximum_size is not None:
+                host.setMaximumSize(token.maximum_size)
+            host.setVisible(token.visible)
+        except Exception:
+            # Fail-closed: a restore must never raise into the overlay teardown.
+            pass
 
     def showEvent(self, event):
         super().showEvent(event)

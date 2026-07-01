@@ -364,3 +364,21 @@ class EmblemSurface(OverlaySurface):
     def set_scale(self, scale: float) -> None:
         """Record the current overlay zoom factor (0.5-1.75)."""
         self._scale = scale
+
+    def paintEvent(self, ev) -> None:
+        """SOURCE-clear the whole window to transparent on every paint.
+
+        The base OverlaySurface paints nothing, so Qt's partial-update flushes only
+        the hosted _Emblem disc region; the square window's CORNERS (outside the
+        disc) are never written to the native ARGB backing and retain stale/opaque
+        content. KWin then composites that as a dark 'square backdrop' for one frame
+        when the parked emblem is revealed at the scale-gesture settle (visible
+        because, since the judder fix, the emblem is no longer raised+composited
+        during the hold). An explicit full-rect transparent source-clear forces the
+        corners into the backing every repaint, so the reveal is clean. The hosted
+        _Emblem child paints its disc over this transparent fill as usual."""
+        from PySide6.QtGui import QPainter, QColor
+        p = QPainter(self)
+        p.setCompositionMode(QPainter.CompositionMode_Source)
+        p.fillRect(self.rect(), QColor(0, 0, 0, 0))
+        p.end()

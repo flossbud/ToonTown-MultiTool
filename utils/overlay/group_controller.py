@@ -39,7 +39,7 @@ from utils.screen_coords import emitted_to_logical
 from utils.settings_keys import (
     GHOST_CURSORS_ENABLED, GHOST_CURSORS_CONTROL_CARDS,
 )
-from utils.overlay.scale import step_scale
+from utils.overlay.scale import step_scale, SCALE_MAX
 from utils.overlay.surface import CardSurface, EmblemSurface, ShapeMode
 
 
@@ -293,6 +293,22 @@ class OverlayGroupController:
         # event-loop tick; this flag is the single scheduling/cancel gate (see
         # _schedule_recompute / _run_pending_recompute / flush_pending_recompute).
         self._recompute_pending: bool = False
+        # Scale-gesture coordinator (Task 4): the ScaleGestureProxy that drives the
+        # begin/notch/settle ramp against a frozen composited snapshot. Built lazily
+        # on the first provider-backed scale notch, then reused across gestures.
+        self._scale_gesture = None
+        # True from a scale gesture's begin() through the proxy drop. While set,
+        # _reassert_topmost() no-ops so no stray restack (the 1.5s _above_timer,
+        # post-minimize, or screen-change reassert) can raise the real windows over
+        # the on-top snapshot proxy mid-handoff. [seamless-settle Fix 3]
+        self._scale_handoff_active: bool = False
+        # id(surface) -> pre-park QRect, recorded by park_scaling_windows() so
+        # unpark_scaling_windows() can restore on-screen geometry. [seamless-settle Fix 6]
+        self._parked_geom: dict = {}
+        # When an occupancy change arrives WHILE a scale gesture is live, the
+        # reconcile is deferred (set True) and replayed at on_gesture_end() so the
+        # frozen snapshot is never disturbed mid-gesture.
+        self._occupancy_deferred: bool = False
         # Emblem gesture wiring (Task 5.1). The emblem reference + an active
         # manual-drag poll: move_requested fires ONCE at drag-start and carries no
         # delta, so the controller tracks the global cursor itself and moves the
@@ -567,6 +583,12 @@ class OverlayGroupController:
         The emblem is the last surface (it is the last element of _states), so
         raising the final surface puts it on top of the cluster.
         """
+        if getattr(self, "_scale_handoff_active", False):
+            # During a scale handoff the real surfaces are placed behind the
+            # still-on-top frozen proxy; raising the emblem now would lift it ABOVE
+            # the proxy and make its move-into-place visible (the settle judder).
+            # All raising is deferred to reassert_after_settle, post-drop. [seamless-settle]
+            return
         if self._surfaces:
             emblem = self._surfaces[-1]
             from utils.overlay.backend import overlay_trace
@@ -597,6 +619,8 @@ class OverlayGroupController:
         agree, and the dim is correct on HiDPI), feeds the hover-peek store, and
         on a "press" - when ghost-control-clicks are enabled and the overlay is
         active - fires the matching card controls."""
+        if self._scale_gesture_active():
+            return  # frozen snapshot: ignore ghost clicks mid-gesture
         payload = self._ghost_payload_to_logical(payload)
         self._peek_store.ingest(payload)
         if not self._ghost_click_enabled():
@@ -695,6 +719,9 @@ class OverlayGroupController:
         the next event-loop tick is load-bearing - it lets both window-manager
         routing handlers (ids then cell-assignment) settle first, so the reconcile
         reads the final occupancy (no one-frame wrong picture)."""
+        if self._scale_gesture_active():
+            self._occupancy_deferred = True  # replayed in on_gesture_end()
+            return
         if not self._active or self._occupancy_pending:
             return
         self._occupancy_pending = True
@@ -706,6 +733,13 @@ class OverlayGroupController:
             return
         self._occupancy_pending = False
         if not self._active:
+            return
+        # A reconcile queued BEFORE a scale gesture began can fire one tick into
+        # the gesture; reconciling here would map/unmap a real card surface over
+        # the frozen proxy. Defer (the pending flag is already consumed, so future
+        # nudges re-schedule) and replay at settle via on_gesture_end().
+        if self._scale_gesture_active():
+            self._occupancy_deferred = True
             return
         self._reconcile_visibility()
 
@@ -804,6 +838,8 @@ class OverlayGroupController:
 
         real_point: (x, y) global, or None when the OS pointer is unavailable.
         """
+        if self._scale_gesture_active():
+            return  # frozen snapshot: no peek state changes mid-gesture
         if not self._active:
             return
         cards = self._visible_card_surfaces()
@@ -909,6 +945,8 @@ class OverlayGroupController:
         after the main window minimizes (they briefly become the app's only managed
         windows), so both hints are re-asserted on enter, after a scale change, and
         on a low-frequency timer."""
+        if getattr(self, "_scale_handoff_active", False):
+            return  # suppressed during a scale handoff; reassert_after_settle re-runs it
         for surface in self._surfaces:
             try:
                 self._backend.set_above(surface)
@@ -1442,6 +1480,10 @@ class OverlayGroupController:
         """
         if not self._active:
             return
+        # Cancel any in-progress scale gesture WITHOUT settling: drop the frozen
+        # proxy + stop its timers so it never commits against a teardown overlay.
+        if self._scale_gesture is not None and self._scale_gesture.active:
+            self._scale_gesture.cancel()
         # Cancel any in-progress group drag (the emblem window is going away).
         self._end_drag()
         # Stop the topmost re-assert timer (no surfaces to keep above once framed).
@@ -1583,6 +1625,11 @@ class OverlayGroupController:
         """Enforce cards -> dim -> emblem -> radial -> panel z-order. Each step is
         a no-op when that layer is not open, so this is safe to call from every
         path that re-asserts cluster z-order."""
+        if getattr(self, "_scale_handoff_active", False):
+            # Defer radial/dim/panel restacking during a scale handoff so nothing is
+            # raised above the held proxy mid-hold; reassert_after_settle restacks
+            # post-drop. _reposition_radial still sets their geometry. [seamless-settle]
+            return
         if self._dim_surface is not None:
             self._safe_call(self._dim_surface, "raise_")
         self._raise_emblem()
@@ -1735,18 +1782,17 @@ class OverlayGroupController:
     def set_scale_by_notches(self, notches: int) -> None:
         """Step the cluster scale by *notches*. No-op if not active.
 
-        The scale value updates SYNCHRONOUSLY (so any read of self._scale right
-        after this call is current). The recompute differs by mode:
+        Two paths, by whether a card_provider is present:
 
-        * provider present (unit-scaling): scale the emblem disc (scale_emblem) +
-          set each card's view transform (set_card_scale) + re-geometry/reshape the
-          windows to base*scale. The cards do NOT re-layout (the transform zooms the
-          fixed 1.0 card), so this is cheaper than the old apply_metrics path, but it
-          is still DEBOUNCED: a burst of notches in one event-loop tick collapses
-          into ONE recompute at the FINAL scale (scheduled on the next tick via
-          _schedule_recompute; force it now with flush_pending_recompute()).
-        * provider None (Task 3.2 stub flow): no content rescale; re-geometry +
-          reshape SYNCHRONOUSLY at the placeholder sizes, exactly as before.
+        * provider None (Task 3.2 stub flow): step the scale SYNCHRONOUSLY (so any
+          read of self._scale right after this call is current) and re-geometry +
+          reshape the placeholder surfaces inline, exactly as before. No proxy.
+        * provider present (float + real cards): route through the snapshot-proxy
+          gesture coordinator (ScaleGestureProxy). The coordinator OWNS the scale
+          ramp - it freezes the cluster into one composited snapshot, animates the
+          zoom on that snapshot, and commits the real windows at settle (via
+          settle_placement() + on_gesture_end()). Do NOT pre-set self._scale or
+          call _schedule_recompute here; that would double-drive the ramp.
 
         Unlike enter()/leave(), the re-layout mutators (this, move_group,
         update_shapes) are NOT transactional - they are idempotent re-layouts, so
@@ -1755,18 +1801,35 @@ class OverlayGroupController:
         """
         if not self._active:
             return
-        self._scale = step_scale(self._scale, notches)
-        for state in self._states:
-            state.scale = self._scale
-        self._clamp_anchor()  # emblem size changed -> re-clamp the parked anchor
-        self._schedule_save()  # persist the new scale (debounced)
         if self._card_provider is None:
             # Task 3.2 path: no apply_metrics, placeholder geometry, synchronous.
+            self._scale = step_scale(self._scale, notches)
+            for state in self._states:
+                state.scale = self._scale
+            self._clamp_anchor()  # emblem size changed -> re-clamp the parked anchor
+            self._schedule_save()  # persist the new scale (debounced)
             self._place_all(reshape=True)
             self._reassert_topmost()  # re-assert ABOVE after a scale change
             return
-        # Provider path: coalesce the expensive recompute to one per tick.
-        self._schedule_recompute()
+        # Provider path: the coordinator owns the scale ramp + commit.
+        self._begin_or_continue_scale(notches)
+
+    def _begin_or_continue_scale(self, notches: int) -> None:
+        """Begin (or continue) the snapshot-proxy scale gesture by *notches*.
+
+        The ScaleGestureProxy is built lazily on first use and reused thereafter;
+        its ``begin`` continues an already-live gesture as another notch, so this
+        is correct whether or not a gesture is already in flight."""
+        if self._scale_gesture is None:
+            from utils.overlay.scale_gesture_proxy import ScaleGestureProxy
+            self._scale_gesture = ScaleGestureProxy(self)
+        self._scale_gesture.begin(notches)
+
+    def _scale_gesture_active(self) -> bool:
+        """True while a snapshot-proxy scale gesture is live (real windows hidden,
+        frozen proxy shown). The overlay's interaction handlers consult this to
+        freeze themselves and defer occupancy until the gesture settles."""
+        return self._scale_gesture is not None and self._scale_gesture.active
 
     def _schedule_recompute(self) -> None:
         """Coalesce a burst of scale changes into ONE recompute on the next
@@ -1802,10 +1865,13 @@ class OverlayGroupController:
         if self._active:
             self._recompute_now()
 
-    def _recompute_now(self) -> None:
+    def _recompute_now(self, reassert: bool = True) -> None:
         """Re-place every surface at the current scale: scale ONLY the emblem via
         metrics (single widget, never floats) and scale each card via its view
-        transform (the card stays at framed 1.0, so it never re-layouts/floats)."""
+        transform (the card stays at framed 1.0, so it never re-layouts/floats).
+
+        ``reassert=False`` skips the in-line topmost re-assert so the scale-handoff
+        settle can place the real windows WITHOUT raising them over the proxy."""
         provider = self._card_provider
         if provider is not None:
             provider.scale_emblem(self._scale)
@@ -1814,7 +1880,8 @@ class OverlayGroupController:
             if setter is not None:
                 setter(self._scale)
         self._place_all(reshape=True)
-        self._reassert_topmost()  # re-assert ABOVE after a scale change (interaction)
+        if reassert:
+            self._reassert_topmost()  # re-assert ABOVE after a scale change (interaction)
 
     def _clamp_anchor(self) -> None:
         """Clamp self._anchor to the parking envelope at the current scale and
@@ -1854,3 +1921,336 @@ class OverlayGroupController:
             return
         self._place_all(reshape=True)
         self._reassert_topmost()  # screen/DPI change can also drop ABOVE
+
+    # ------------------------------------------------------------------
+    # Scale-gesture snapshot seam (Task 4)
+    # ------------------------------------------------------------------
+    # The scale gesture (scale_gesture_proxy.py) zooms a STATIC composited
+    # snapshot of the cluster while the user scrolls, then settles the real
+    # windows on release. These methods are the host seam it calls: gather the
+    # live layers (in z-order), settle the real placement, and read/write the
+    # group scale. The scale handler itself (set_scale_by_notches) is wired to
+    # the proxy in a later task.
+    @property
+    def scale(self) -> float:
+        """The live cluster scale (1.0 = framed base size)."""
+        return self._scale
+
+    @scale.setter
+    def scale(self, value) -> None:
+        """Set the live scale and mirror it onto every surface state (so a later
+        detach / persistence read sees the same value the cluster is drawn at)."""
+        self._scale = float(value)
+        for st in self._states:
+            st.scale = self._scale
+
+    def settle_placement(self, reassert: bool = True) -> None:
+        """Settle the real windows to the current scale after a scale gesture.
+
+        Clamp the parked anchor to the (scale-dependent) parking envelope FIRST,
+        then run the settled-placement path (_recompute_now) so the real windows
+        are placed at the clamped anchor - matching the synchronous no-provider
+        path (clamp-before-place). Scaling down while parked at a screen edge
+        shrinks the envelope, so without clamping first the cluster would be
+        placed slightly off until the next interaction.
+
+        ``reassert=False`` places WITHOUT re-raising, used by the seamless handoff
+        so the reals are positioned behind the still-on-top proxy."""
+        self._clamp_anchor()
+        self._recompute_now(reassert=reassert)
+
+    def _layer_widget(self, kind, idx=None):
+        """Return ``(widget, screen_top_left_QPoint)`` for one snapshot layer, or
+        ``(None, None)`` when that layer is not present.
+
+        ``widget`` is the paint device the snapshot composes; ``top_left`` is its
+        surface's screen origin (so the composer offsets each layer correctly).
+        Card layers render the ScaledCardView's inner-view VIEWPORT (the actual
+        card pixels); the emblem renders its surface full-bleed; glow/dim/radial
+        render their hosted widget.
+        """
+        from PySide6.QtCore import QPoint
+        widget = None
+        surface = None
+        if kind == "glow":
+            widget, surface = self._glow_widget, self._glow_surface
+        elif kind == "card":
+            if idx is not None and 0 <= idx < len(self._surfaces):
+                surface = self._surfaces[idx]
+                view = getattr(surface, "_scaled_view", None)
+                if view is not None:
+                    widget = view._view.viewport()
+        elif kind == "dim":
+            widget, surface = self._dim_widget, self._dim_surface
+        elif kind == "emblem":
+            surface = self._surfaces[-1] if self._surfaces else None
+            widget = surface
+        elif kind == "radial":
+            widget, surface = self._radial_menu, self._radial_surface
+        if widget is None or surface is None:
+            return (None, None)
+        geo = surface.geometry()
+        return (widget, QPoint(geo.x(), geo.y()))
+
+    def _render_layer(self, kind, idx=None):
+        """Render one snapshot layer to a ``Layer``, or None when absent.
+
+        Renders the layer widget into an ARGB32-premultiplied QImage at the
+        widget's device-pixel ratio (physical px = ``round(logical * dpr)``),
+        transparent-filled, so the composite preserves HiDPI fidelity and alpha.
+        LIVE-fidelity code: the unit tests STUB this method, so it stays isolated
+        and simple.
+        """
+        widget, top_left = self._layer_widget(kind, idx)
+        if widget is None:
+            return None
+        from PySide6.QtCore import QPoint
+        from PySide6.QtGui import QImage, QPainter
+        from utils.overlay.scale_snapshot import Layer
+        dpr = widget.devicePixelRatio()
+        phys_w = max(1, round(widget.width() * dpr))
+        phys_h = max(1, round(widget.height() * dpr))
+        img = QImage(phys_w, phys_h, QImage.Format_ARGB32_Premultiplied)
+        img.setDevicePixelRatio(dpr)
+        img.fill(0)
+        painter = QPainter(img)
+        try:
+            # QWidget.render has no painter-only overload; the QPainter form needs
+            # a target offset. Render onto the transparent-filled image at the
+            # origin (alpha preserved for the translucent layers).
+            widget.render(painter, QPoint(0, 0))
+        finally:
+            painter.end()
+        return Layer(img, top_left)
+
+    def _gather_scale_layers(self):
+        """The cluster's snapshot layers in Z-ORDER (back to front).
+
+        Order: the glow, the VISIBLE cards only (``sorted(self._visible_cells)`` -
+        empty quadrants are skipped, NOT always 0-3), then - only while the radial
+        is open - the dim backdrop, the emblem, and the radial menu on top. The
+        settings PANEL is excluded entirely (it does not scale with the cluster).
+        Absent layers (``_render_layer`` returns None) drop out.
+        """
+        layers: list = []
+
+        def add(kind, idx=None):
+            layer = self._render_layer(kind, idx)
+            if layer is not None:
+                layers.append(layer)
+
+        radial_open = self._radial_surface is not None
+        add("glow")
+        for idx in sorted(self._visible_cells):
+            add("card", idx)
+        if radial_open:
+            add("dim")
+        add("emblem")
+        if radial_open:
+            add("radial")
+        return layers
+
+    # ------------------------------------------------------------------
+    # Scale-gesture host seam (Task 4): the methods ScaleGestureProxy calls
+    # ------------------------------------------------------------------
+    def snapshot(self):
+        """Compose the live cluster into one frozen snapshot for the scale proxy.
+
+        Returns ``(image, bbox, anchor, wheel_rects, dpr)``:
+
+        * ``image``   - the composited ARGB32 snapshot of every scaling layer.
+        * ``bbox``    - the cluster bounding rect in screen coords.
+        * ``anchor``  - the emblem center (the fixed zoom pivot) as a QPoint.
+        * ``wheel_rects`` - bbox-local rects where the proxy still takes wheel.
+        * ``dpr``     - the emblem surface device-pixel ratio.
+        """
+        from PySide6.QtCore import QRect, QPoint
+        from utils.overlay.card_metrics import CardMetrics
+        from utils.overlay.scale_snapshot import (
+            cluster_bbox, compose_snapshot, wheel_zone_rects,
+        )
+        layers = self._gather_scale_layers()
+        rects = []
+        for l in layers:
+            image = l.image
+            # FLOAT division: a layer image is physical px = logical * dpr, so the
+            # logical size is width()/dpr. Integer-truncating the dpr (int(1.5)==1)
+            # would inflate the rect ~1.5x on a fractional-DPR display, blowing up
+            # the bbox + snapshot + proxy envelope (a HiDPI-only misplacement bug).
+            dpr_i = max(1.0, float(image.devicePixelRatio()))
+            logical_w = round(image.width() / dpr_i)
+            logical_h = round(image.height() / dpr_i)
+            rects.append(QRect(l.top_left.x(), l.top_left.y(), logical_w, logical_h))
+        bbox = cluster_bbox(rects)
+        dpr = float(self._surfaces[-1].devicePixelRatio()) if self._surfaces else 1.0
+        snap = compose_snapshot(layers, bbox, dpr)
+        anchor = QPoint(int(self._anchor[0]), int(self._anchor[1]))
+        emblem_rect = self._surfaces[-1].geometry() if self._surfaces else QRect()
+        radial_rect = (self._radial_surface.geometry()
+                       if self._radial_surface is not None else None)
+        wheel = wheel_zone_rects(
+            bbox, QRect(emblem_rect), radial_rect,
+            inflate=int(CardMetrics(self._scale).emblem // 2),
+        )
+        return (snap, bbox, anchor, wheel, dpr)
+
+    def make_proxy(self, snapshot, bbox, anchor, base_scale, wheel_rects):
+        """Create + show the override-redirect ScaleProxyWindow for the gesture.
+
+        The window is sized to the MAX-zoom envelope (so the scaled bitmap never
+        clips at SCALE_MAX), painted from ``snapshot``, and given a click-through
+        input shape that is open only over the wheel zones (translated from
+        bbox-local into envelope-local coords)."""
+        from PySide6.QtGui import QPainterPath
+        from PySide6.QtCore import QRectF
+        from utils.overlay.scale_gesture_proxy import ScaleProxyWindow
+        f = (SCALE_MAX / base_scale) if base_scale else 1.0
+        envelope = self._scaled_about(bbox, anchor, f)
+        pw = ScaleProxyWindow(snapshot, bbox, anchor, base_scale)
+        pw.setGeometry(envelope)
+        if hasattr(pw, "prepare_initial_state"):
+            pw.prepare_initial_state()
+        pw.show()
+        pw.raise_()
+        # Native handle exists now; ask KWin to skip its close animation so the
+        # proxy drops instantly (no fade-out) at settle. [seamless-settle]
+        try:
+            self._backend.set_skip_close_animation(pw)
+        except Exception:
+            pass
+        offset = bbox.topLeft() - envelope.topLeft()
+        path = QPainterPath()
+        for r in wheel_rects:
+            path.addRect(QRectF(r.translated(offset)))
+        self._backend.apply_input_shape(pw, path, pw.devicePixelRatio())
+        return pw
+
+    def _scaled_about(self, rect, anchor, f):
+        """Return ``rect`` scaled by factor ``f`` about ``anchor`` (a QPoint),
+        rounded OUTWARD so the result always CONTAINS the true scaled rect.
+
+        Floor the near (left/top) edges and ceil the far (right/bottom) edges;
+        rounding each edge independently inward could clip the rendered max-zoom
+        bitmap by up to a pixel (the proxy envelope must never clip the snapshot)."""
+        import math
+        from PySide6.QtCore import QRect
+        ax, ay = anchor.x(), anchor.y()
+        left = ax + (rect.x() - ax) * f
+        top = ay + (rect.y() - ay) * f
+        right = ax + ((rect.x() + rect.width()) - ax) * f
+        bottom = ay + ((rect.y() + rect.height()) - ay) * f
+        ix, iy = math.floor(left), math.floor(top)
+        return QRect(ix, iy, math.ceil(right) - ix, math.ceil(bottom) - iy)
+
+    def _scaling_surfaces(self):
+        """The live surfaces the scale gesture freezes: the VISIBLE card surfaces,
+        the emblem, and the owned glow/dim/radial surfaces. The settings PANEL is
+        deliberately excluded (it does not scale with the cluster)."""
+        out = []
+        for sid in sorted(self._visible_cells):
+            if 0 <= sid < len(self._surfaces):
+                out.append(self._surfaces[sid])
+        if self._surfaces:
+            out.append(self._surfaces[-1])  # emblem
+        for surface in (self._glow_surface, self._dim_surface, self._radial_surface):
+            if surface is not None:
+                out.append(surface)
+        return out
+
+    def _offscreen_origin(self):
+        """A point just past the bottom-right of the screen union (sane coords, not
+        huge sentinels, so Qt never recreates the native window when parking).
+        Falls back to a fixed far point when there are no screens. _screens()
+        returns (name, left, top, right, bottom) tuples."""
+        screens = self._screens()
+        if screens:
+            right = max(s[3] for s in screens)
+            bottom = max(s[4] for s in screens)
+            return (right + 200, bottom + 200)
+        return (200000, 200000)
+
+    def park_scaling_windows(self):
+        """Move every scaling surface (visible cards + emblem + glow/dim/radial)
+        just off-screen, KEEPING it mapped (never hide()), so the frozen proxy can
+        stand in without ever re-mapping the reals (no fadingpopups fade at settle).
+        Records each surface's on-screen geometry for un-park. The settings panel
+        is untouched. [seamless-settle Approach A]"""
+        from PySide6.QtCore import QRect
+        ox, oy = self._offscreen_origin()
+        self._parked_geom = {}
+        for surface in self._scaling_surfaces():
+            try:
+                geo = surface.geometry
+                geo = geo() if callable(geo) else geo  # real: bound method; stub: attr
+                if geo is None:
+                    continue
+                self._parked_geom[id(surface)] = geo
+                surface.set_overlay_geometry(QRect(ox, oy, geo.width(), geo.height()))
+            except Exception:
+                pass
+
+    def unpark_scaling_windows(self):
+        """Best-effort restore of every parked surface to its recorded on-screen
+        geometry. Safety net for cancel() so the cluster is never left off-screen
+        even if settle_placement raised. Idempotent / safe with nothing parked.
+        [seamless-settle Fix 6]"""
+        for surface in self._scaling_surfaces():
+            geo = self._parked_geom.get(id(surface))
+            if geo is not None:
+                try:
+                    surface.set_overlay_geometry(geo)
+                except Exception:
+                    pass
+        self._parked_geom = {}
+
+    def repaint_scaling_windows(self):
+        """Synchronously repaint the live scaling surfaces at the current scale so
+        their backing stores hold the final image before the proxy is dropped.
+        Repaints the top-level surfaces (which cascades to hosted children) AND the
+        card viewports explicitly (the card pixels live in the QGraphicsView
+        viewport; LIVE-fidelity, mirrors _layer_widget). [seamless-settle Fix 5]"""
+        for surface in self._scaling_surfaces():
+            self._safe_call(surface, "repaint")
+        for idx in sorted(self._visible_cells):
+            widget, _ = self._layer_widget("card", idx)
+            if widget is not None:
+                try:
+                    widget.repaint()
+                except Exception:
+                    pass
+
+    def capture_full_input(self, proxy):
+        """Expand the proxy's X11 input shape to its full envelope so, during the
+        settle hold, pointer events cannot pass through the proxy's transparent
+        margins onto the real windows now sitting behind it. [seamless-settle Fix 4]"""
+        from PySide6.QtGui import QPainterPath
+        from PySide6.QtCore import QRectF
+        try:
+            path = QPainterPath()
+            path.addRect(QRectF(0, 0, proxy.width(), proxy.height()))
+            self._backend.apply_input_shape(proxy, path, proxy.devicePixelRatio())
+        except Exception:
+            pass
+
+    def reassert_after_settle(self):
+        """Re-assert real-window topmost z-order + radial/dim/emblem/panel layering
+        AFTER the proxy is dropped. Does NOT show() anything (the reals were never
+        hidden, only parked then placed back on-screen). The caller clears
+        _scale_handoff_active before this so _reassert_topmost is not suppressed."""
+        self._reassert_topmost()
+        if self._radial_surface is not None or self._dim_surface is not None \
+                or self._panel_surface is not None:
+            self._restack_radial_layers()
+
+    def on_gesture_end(self):
+        """Commit-side cleanup the proxy calls once the gesture settles: persist
+        (debounced) and replay any occupancy reconcile deferred while the gesture
+        was live, ONE TICK LATER so the first revealed frame after the proxy drop
+        matches the snapshot (occupancy changes apply on the next turn). The anchor
+        was already clamped in settle_placement (before the real windows were
+        placed), so it is not re-clamped here."""
+        from PySide6.QtCore import QTimer
+        self._schedule_save()
+        if self._occupancy_deferred:
+            self._occupancy_deferred = False
+            QTimer.singleShot(0, self._reconcile_visibility)  # [seamless-settle Fix 7]

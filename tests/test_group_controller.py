@@ -82,6 +82,9 @@ class _StubSurface:
     def deleteLater(self):
         self._log("deleteLater")
 
+    def repaint(self):
+        self._log("repaint")
+
     def devicePixelRatio(self):
         return self._dpr
 
@@ -578,6 +581,79 @@ class _FakeRadialMenu:
         self.diameters.append(d)
 
 
+# ---------------------------------------------------------------------------
+# Scale-gesture snapshot seam (Task 4): layer gathering + settle + scale
+# ---------------------------------------------------------------------------
+class _StubProvider:
+    """Minimal card-provider stand-in for the layer-gathering tests.
+
+    The gather tests stub ``_render_layer`` outright, so none of these accessors
+    are exercised; the provider only needs to exist so the controller reports as
+    provider-backed when those tests want it to."""
+    def slot_widget(self, i): return object()
+    def emblem_widget(self): return object()
+    def capture_slot(self, w): return None
+    def restore_slot(self, rec): pass
+    def apply_metrics(self, m): pass
+    def control_rects(self, slot): return []
+
+
+class TestGatherScaleLayers:
+    def test_gather_layers_zorder_visible_cards(self, qapp):
+        ctl, factory, win = _make()
+        ctl.enter()
+        ctl._card_provider = _StubProvider()
+        ctl._visible_cells = {0, 1, 2, 3}
+        # Tag, not a real Layer: isolates the gather Z-ORDER from the live render.
+        ctl._render_layer = lambda kind, idx=None: (kind, idx)
+        layers = ctl._gather_scale_layers()
+        # glow, the four visible cards (0-3, in order), then the emblem LAST.
+        assert layers[0] == ("glow", None)
+        assert layers[1:5] == [("card", 0), ("card", 1), ("card", 2), ("card", 3)]
+        assert layers[-1] == ("emblem", None)
+        # Radial closed -> no dim/radial; the settings panel never scales.
+        kinds = [k for (k, _i) in layers]
+        assert "dim" not in kinds and "radial" not in kinds and "panel" not in kinds
+
+    def test_gather_layers_only_visible_cards(self, qapp):
+        ctl, factory, win = _make()
+        ctl.enter()
+        ctl._card_provider = _StubProvider()
+        ctl._visible_cells = {0, 2}            # partial occupancy
+        ctl._render_layer = lambda kind, idx=None: (kind, idx)
+        layers = ctl._gather_scale_layers()
+        cards = [(k, i) for (k, i) in layers if k == "card"]
+        assert cards == [("card", 0), ("card", 2)]   # only 0 and 2, not 1/3
+
+    def test_gather_layers_includes_dim_and_radial_when_open(self, qapp):
+        ctl, factory, win = _make()
+        ctl.enter()
+        ctl._card_provider = _StubProvider()
+        ctl._radial_surface = object()        # truthy -> radial open
+        ctl._visible_cells = {0}
+        ctl._render_layer = lambda kind, idx=None: (kind, idx)
+        layers = ctl._gather_scale_layers()
+        kinds = [k for (k, _i) in layers]
+        assert "dim" in kinds and "radial" in kinds
+        assert kinds.index("dim") < kinds.index("emblem")    # dim below emblem
+        assert kinds.index("radial") > kinds.index("emblem")  # radial above emblem
+
+
+class TestSettleAndScale:
+    def test_settle_placement_calls_recompute_now(self, qapp):
+        ctl, factory, win = _make()
+        calls = []
+        ctl._recompute_now = lambda reassert=True: calls.append(reassert)
+        ctl.settle_placement()
+        assert calls == [True]
+
+    def test_scale_property_sets_and_mirrors(self, qapp):
+        ctl, factory, win = _make()
+        ctl.scale = 1.3
+        assert ctl._scale == 1.3
+        assert all(st.scale == 1.3 for st in ctl._states)
+
+
 class TestRepositionRadialResize:
     def test_resizes_radial_and_dim_to_scale_when_open(self, qapp):
         ctl, factory, win = _make()
@@ -634,3 +710,414 @@ class TestRepositionRadialResize:
         assert menu.diameters == []                     # no re-geometry
         assert ctl._radial_surface.shapes == []         # no shape re-apply
         assert ctl._radial_size == size and ctl._dim_size == size
+
+
+class TestLayerRenderingSeam:
+    """Direct coverage of the riskiest seam bits (_layer_widget / _render_layer)
+    that the gather tests stub out - the real card-viewport selection, screen
+    top-left, absent-card None, and that a Layer is produced."""
+
+    def test_layer_widget_and_render_for_a_card(self, qapp):
+        from PySide6.QtWidgets import QWidget
+        from PySide6.QtCore import QRect, QPoint
+        from utils.overlay.surface import CardSurface
+        from utils.overlay.scale_snapshot import Layer
+        ctl, factory, win = _make()
+        cs = CardSurface(0)
+        card = QWidget(); card.setFixedSize(100, 80)
+        cs.host(card, base_size=(100, 80))
+        cs.set_overlay_geometry(QRect(50, 60, 150, 120))
+        cs.show(); qapp.processEvents()
+        ctl._surfaces = [cs]
+        try:
+            widget, tl = ctl._layer_widget("card", 0)
+            assert widget is cs._scaled_view._view.viewport()  # real card paint device
+            assert tl == QPoint(50, 60)                         # surface screen top-left
+            layer = ctl._render_layer("card", 0)
+            assert isinstance(layer, Layer)
+            assert layer.top_left == QPoint(50, 60)
+            assert layer.image.width() > 0 and layer.image.height() > 0
+        finally:
+            cs.release()
+            cs.hide()
+
+    def test_layer_widget_none_for_absent_card(self, qapp):
+        from PySide6.QtCore import QRect
+        from utils.overlay.surface import CardSurface
+        ctl, factory, win = _make()
+        cs = CardSurface(0)                     # nothing hosted
+        cs.set_overlay_geometry(QRect(0, 0, 50, 50))
+        ctl._surfaces = [cs]
+        try:
+            assert ctl._layer_widget("card", 0) == (None, None)
+            assert ctl._render_layer("card", 0) is None
+        finally:
+            cs.hide()
+
+
+# ---------------------------------------------------------------------------
+# Scale-gesture proxy wiring (Task 4): routing, snapshot host, hide/show, settle
+# ---------------------------------------------------------------------------
+class _FakeGesture:
+    """Recording stand-in for ScaleGestureProxy: an ``active`` flag the controller
+    consults via _scale_gesture_active(), plus a cancel() that records its call."""
+
+    def __init__(self, active=True):
+        self.active = active
+        self.cancelled = 0
+
+    def cancel(self):
+        self.cancelled += 1
+        self.active = False
+
+
+class TestScaleProxyGesture:
+    def test_provider_scale_routes_to_proxy(self, qapp):
+        """A provider-backed scale notch routes through the snapshot-proxy gesture
+        coordinator, NOT the old synchronous _schedule_recompute path."""
+        ctl, factory, win = _make()
+        ctl.enter()
+        ctl._card_provider = _StubProvider()
+        begun = []
+        recomputes = []
+        ctl._begin_or_continue_scale = lambda n: begun.append(n)
+        ctl._schedule_recompute = lambda: recomputes.append(True)
+        ctl.set_scale_by_notches(2)
+        assert begun == [2]              # routed to the gesture coordinator
+        assert recomputes == []          # the coordinator owns the ramp, not this
+
+    def test_no_provider_scale_stays_synchronous(self, qapp):
+        """With no card_provider the placeholder path still steps the scale
+        synchronously (the Task 3.2 stub-orchestration contract)."""
+        ctl, factory, win = _make()
+        ctl.enter()
+        before = ctl._scale
+        ctl.set_scale_by_notches(1)
+        assert ctl._scale == step_scale(before, 1)
+
+    def test_snapshot_returns_5tuple(self, qapp):
+        from PySide6.QtCore import QPoint, QRect
+        from PySide6.QtGui import QImage
+        from utils.overlay.scale_snapshot import Layer
+        ctl, factory, win = _make()
+        ctl.enter()
+        ctl._card_provider = _StubProvider()
+        ctl._visible_cells = {0, 1, 2, 3}
+        # Real surfaces expose geometry() as a method; adapt the stub emblem so
+        # snapshot() can read its screen rect + dpr.
+        emblem = ctl._surfaces[-1]
+        geo = emblem.geometry
+        emblem.geometry = lambda: geo
+
+        def _layers():
+            img1 = QImage(10, 8, QImage.Format_ARGB32_Premultiplied); img1.fill(0)
+            img2 = QImage(12, 6, QImage.Format_ARGB32_Premultiplied); img2.fill(0)
+            return [Layer(img1, QPoint(100, 100)), Layer(img2, QPoint(140, 120))]
+
+        ctl._gather_scale_layers = _layers
+        result = ctl.snapshot()
+        assert len(result) == 5
+        snap, bbox, anchor, wheel, dpr = result
+        assert isinstance(snap, QImage) and not snap.isNull()
+        assert isinstance(bbox, QRect)
+        assert isinstance(anchor, QPoint)
+        assert isinstance(wheel, list)
+        assert isinstance(dpr, float)
+
+    def test_park_skips_panel_and_empty_cards_uses_visible_set(self, qapp):
+        ctl, factory, win = _make()
+        ctl.enter()
+        ctl._card_provider = _StubProvider()
+        ctl._visible_cells = {0, 2}
+        panel = _StubSurface("panel", [])
+        ctl._panel_surface = panel
+        cards = factory.created           # [card0, card1, card2, card3, emblem]
+        for s in cards:
+            s.calls.clear()
+        ctl.park_scaling_windows()
+        assert "set_overlay_geometry" in cards[0].methods()     # card 0 visible -> parked
+        assert "set_overlay_geometry" in cards[2].methods()     # card 2 visible -> parked
+        assert "set_overlay_geometry" not in cards[1].methods()  # card 1 empty -> untouched
+        assert "set_overlay_geometry" not in cards[3].methods()  # card 3 empty -> untouched
+        assert "set_overlay_geometry" in cards[-1].methods()    # emblem always a scaling surface
+        assert "set_overlay_geometry" not in panel.methods()    # the settings panel never scales
+        assert "hide" not in cards[0].methods()                 # parked, NEVER unmapped
+        # unpark restores the same set to its recorded geometry (panel untouched).
+        before0 = ctl._parked_geom[id(cards[0])]
+        for s in cards:
+            s.calls.clear()
+        ctl.unpark_scaling_windows()
+        assert "set_overlay_geometry" in cards[0].methods()
+        assert "set_overlay_geometry" in cards[2].methods()
+        assert cards[0].geometry == before0
+        assert "set_overlay_geometry" not in panel.methods()
+
+    def test_on_gesture_end_applies_deferred_occupancy(self, qapp):
+        ctl, factory, win = _make()
+        ctl._occupancy_deferred = True
+        calls = []
+        ctl._reconcile_visibility = lambda: calls.append(True)
+        ctl.on_gesture_end()
+        assert calls == []                  # deferred one tick: NOT in the reveal frame
+        assert ctl._occupancy_deferred is False
+        qapp.processEvents()
+        assert calls == [True]              # replayed on the next tick
+
+    def test_on_gesture_end_skips_reconcile_when_not_deferred(self, qapp):
+        ctl, factory, win = _make()
+        ctl._occupancy_deferred = False
+        calls = []
+        ctl._reconcile_visibility = lambda: calls.append(True)
+        ctl.on_gesture_end()
+        assert calls == []
+        assert ctl._occupancy_deferred is False
+
+    def test_occupancy_deferred_during_gesture(self, qapp):
+        """An occupancy nudge during a live gesture must NOT reconcile (the frozen
+        snapshot would be disturbed); it sets the deferred flag for on_gesture_end."""
+        ctl, factory, win = _make()
+        ctl.enter()
+        ctl._card_provider = _StubProvider()
+        ctl._scale_gesture = _FakeGesture(active=True)
+        reconciled = []
+        ctl._reconcile_visibility = lambda: reconciled.append(True)
+        ctl._on_occupancy_changed()
+        assert reconciled == []                   # not reconciled mid-gesture
+        assert ctl._occupancy_deferred is True    # queued for on_gesture_end()
+        assert ctl._occupancy_pending is False    # the normal scheduling path skipped
+
+    def test_occupancy_not_deferred_without_gesture(self, qapp):
+        """With no active gesture the occupancy handler takes its normal path:
+        schedule a reconcile, never set the deferred flag."""
+        ctl, factory, win = _make()
+        ctl.enter()
+        ctl._card_provider = _StubProvider()
+        # No _scale_gesture -> _scale_gesture_active() is False.
+        ctl._on_occupancy_changed()
+        assert ctl._occupancy_deferred is False   # never deferred without a gesture
+        assert ctl._occupancy_pending is True     # the normal path scheduled a reconcile
+        ctl._active = False                        # neutralize the queued singleShot
+
+    def test_peek_suppressed_during_gesture(self, qapp):
+        """The hover-peek tick must do no per-card peek work while a gesture freezes
+        the cluster (no opacity changes against the snapshot)."""
+        ctl, factory, win = _make()
+        ctl.enter()
+        ctl._scale_gesture = _FakeGesture(active=True)
+        applied = []
+        ctl._apply_peek_fade = lambda *a: applied.append(a)
+        ctl._peek_tick((10, 10))
+        assert applied == []                      # guard returned before peek work
+
+    def test_ghost_ignored_during_gesture(self, qapp):
+        """A ghost-pointer event must be ignored outright during a gesture (no
+        peek ingest, no click delivery) - the guard returns before any handling."""
+        ctl, factory, win = _make()
+        ctl.enter()
+        ctl._scale_gesture = _FakeGesture(active=True)
+        seen = []
+        ctl._ghost_payload_to_logical = lambda p: seen.append(p) or p
+        ctl.on_ghost_event(("press", [(0, 100, 100)]))
+        assert seen == []                         # guard returned before delivery
+
+    def test_leave_cancels_active_gesture(self, qapp):
+        """leave() must cancel a live gesture WITHOUT settling so the proxy never
+        commits against a teardown overlay."""
+        ctl, factory, win = _make()
+        ctl.enter()
+        gesture = _FakeGesture(active=True)
+        ctl._scale_gesture = gesture
+        ctl.leave()
+        assert gesture.cancelled == 1
+        assert gesture.active is False
+
+
+def test_scaled_about_envelope_contains_scaled_rect(qapp):
+    """_scaled_about must round OUTWARD so the proxy envelope always contains the
+    true float-scaled rect (independent rounding could clip the max-zoom bitmap)."""
+    from PySide6.QtCore import QRect, QPoint
+    ctl, factory, win = _make()
+    cases = [
+        (QRect(-50, -50, 3, 3), QPoint(-10, -10), 1.75),   # the -74.75 inward-round case
+        (QRect(100, 100, 80, 60), QPoint(140, 130), 1.75),
+        (QRect(0, 0, 7, 11), QPoint(3, 5), 1.6),
+    ]
+    for rect, anchor, f in cases:
+        env = ctl._scaled_about(rect, anchor, f)
+        ax, ay = anchor.x(), anchor.y()
+        sl = ax + (rect.x() - ax) * f
+        st = ay + (rect.y() - ay) * f
+        sr = ax + ((rect.x() + rect.width()) - ax) * f
+        sb = ay + ((rect.y() + rect.height()) - ay) * f
+        assert env.x() <= sl and env.y() <= st, (env, sl, st)
+        assert env.x() + env.width() >= sr and env.y() + env.height() >= sb, (env, sr, sb)
+
+
+def test_queued_occupancy_reconcile_defers_during_gesture(qapp):
+    """A reconcile queued BEFORE the gesture (pending flag set) that fires one tick
+    into an active gesture must defer (not map/unmap over the frozen proxy) and
+    consume the pending flag so future nudges still schedule."""
+    ctl, factory, win = _make()
+    ctl.enter()
+    ctl._card_provider = _StubProvider()
+    ctl._scale_gesture = type("G", (), {"active": True})()
+    ctl._occupancy_pending = True
+    ctl._occupancy_deferred = False
+    ran = []
+    ctl._reconcile_visibility = lambda: ran.append(1)
+    ctl._run_occupancy_reconcile()
+    assert ran == []                       # did NOT reconcile over the proxy
+    assert ctl._occupancy_deferred is True  # will replay at settle
+    assert ctl._occupancy_pending is False  # pending consumed -> future nudges reschedule
+
+
+# ---------------------------------------------------------------------------
+# Seamless settle: restack control (Task 2)
+# ---------------------------------------------------------------------------
+class _RecordingBackend(NoOpOverlayBackend):
+    """NoOp backend that counts set_above calls (the observable for whether
+    _reassert_topmost actually ran; _place_all only calls _raise_emblem)."""
+    def __init__(self):
+        self.above = 0
+    def set_above(self, window):
+        self.above += 1
+
+
+class TestScaleHandoffGuard:
+    def test_reassert_topmost_noops_during_handoff(self, qapp):
+        ctl, factory, win = _make()
+        ctl.enter()
+        rec = _RecordingBackend(); ctl._backend = rec
+        ctl._scale_handoff_active = True
+        ctl._reassert_topmost()
+        assert rec.above == 0                     # suppressed during handoff
+
+    def test_reassert_topmost_runs_when_not_in_handoff(self, qapp):
+        ctl, factory, win = _make()
+        ctl.enter()
+        rec = _RecordingBackend(); ctl._backend = rec
+        ctl._scale_handoff_active = False
+        ctl._reassert_topmost()
+        assert rec.above > 0                       # normal reassert re-applies ABOVE
+
+    def test_settle_placement_no_reassert_when_reassert_false(self, qapp):
+        ctl, factory, win = _make()
+        ctl.enter()
+        called = []
+        ctl._reassert_topmost = lambda: called.append(True)
+        ctl.settle_placement(reassert=False)
+        assert called == []                        # no restack during handoff settle
+
+    def test_settle_placement_reasserts_by_default(self, qapp):
+        ctl, factory, win = _make()
+        ctl.enter()
+        called = []
+        ctl._reassert_topmost = lambda: called.append(True)
+        ctl.settle_placement()                     # default reassert=True
+        assert called == [True]
+
+    def test_handoff_settle_positions_emblem_but_does_not_raise_it(self, qapp):
+        # The judder fix: during a scale handoff (guard set), the settle places the
+        # emblem on-screen (un-parks it) but must NOT raise it above the held proxy.
+        # _place_all calls _raise_emblem() unconditionally, so without the guard the
+        # emblem pops above the proxy and its move-in is visible during the hold.
+        ctl, factory, win = _make()
+        ctl.enter()
+        ctl._scale_handoff_active = True
+        emblem = factory.created[-1]
+        emblem.calls.clear()
+        ctl.settle_placement(reassert=False)
+        assert "set_overlay_geometry" in emblem.methods()  # still positioned (un-parked)
+        assert "raise_" not in emblem.methods()            # but NOT raised during the hold
+
+    def test_raise_emblem_noops_during_handoff(self, qapp):
+        ctl, factory, win = _make()
+        ctl.enter()
+        ctl._scale_handoff_active = True
+        emblem = factory.created[-1]
+        emblem.calls.clear()
+        ctl._raise_emblem()
+        assert "raise_" not in emblem.methods()            # suppressed during handoff
+        ctl._scale_handoff_active = False
+        ctl._raise_emblem()
+        assert "raise_" in emblem.methods()                # raised normally otherwise
+
+    def test_restack_radial_layers_noops_during_handoff(self, qapp):
+        # Radial-open case: restacking must also be deferred during a handoff so the
+        # dim/radial/panel are not raised above the held proxy.
+        ctl, factory, win = _make()
+        ctl.enter()
+        dim = _StubSurface("dim", [])
+        ctl._dim_surface = dim
+        ctl._scale_handoff_active = True
+        dim.calls.clear()
+        ctl._restack_radial_layers()
+        assert "raise_" not in dim.methods()               # suppressed during handoff
+        ctl._scale_handoff_active = False
+        dim.calls.clear()
+        ctl._restack_radial_layers()
+        assert "raise_" in dim.methods()                   # restacked normally otherwise
+
+
+# ---------------------------------------------------------------------------
+# Seamless settle: park/unpark/repaint/capture_input/reassert host seam (Task 3)
+# ---------------------------------------------------------------------------
+class TestScaleHandoffSeam:
+    def test_park_moves_scaling_surfaces_offscreen_without_hiding(self, qapp):
+        ctl, factory, win = _make()
+        ctl.enter()
+        union_right = max((scr[3] for scr in ctl._screens()), default=0)  # (name,l,t,r,b)
+        for s in factory.created:
+            s.calls.clear()
+        ctl.park_scaling_windows()
+        for s in factory.created:                        # cards + emblem are scaling surfaces
+            assert "hide" not in s.methods()             # NEVER unmapped
+            assert "set_overlay_geometry" in s.methods()  # moved off-screen
+            assert s.geometry.x() > union_right          # parked past every screen's right edge
+
+    def test_unpark_restores_recorded_geometry(self, qapp):
+        ctl, factory, win = _make()
+        ctl.enter()
+        before = {id(s): s.geometry for s in factory.created}
+        ctl.park_scaling_windows()
+        for s in factory.created:
+            s.calls.clear()
+        ctl.unpark_scaling_windows()
+        for s in factory.created:
+            assert s.geometry == before[id(s)]           # restored to pre-park geometry
+
+    def test_repaint_scaling_windows_repaints_each_surface(self, qapp):
+        ctl, factory, win = _make()
+        ctl.enter()
+        for s in factory.created:
+            s.calls.clear()
+        ctl.repaint_scaling_windows()
+        for s in factory.created:
+            assert "repaint" in s.methods()
+
+    def test_reassert_after_settle_restacks_when_not_guarded(self, qapp):
+        ctl, factory, win = _make()
+        ctl.enter()
+        rec = _RecordingBackend(); ctl._backend = rec
+        ctl._scale_handoff_active = False
+        ctl.reassert_after_settle()
+        assert rec.above > 0                             # re-applied ABOVE after the drop
+
+    def test_capture_full_input_applies_a_shape(self, qapp):
+        ctl, factory, win = _make()
+        ctl.enter()
+        shapes = []
+
+        class _RecShape(NoOpOverlayBackend):
+            def apply_input_shape(self, window, path, dpr):
+                shapes.append((window, path, dpr))
+
+        ctl._backend = _RecShape()
+
+        class _Proxy:
+            def width(self): return 200
+            def height(self): return 100
+            def devicePixelRatio(self): return 1.0
+
+        ctl.capture_full_input(_Proxy())
+        assert len(shapes) == 1                          # full-envelope input shape applied
