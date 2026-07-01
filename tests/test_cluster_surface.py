@@ -15,7 +15,7 @@ from PySide6.QtCore import Qt, QPoint, QRect
 from PySide6.QtGui import QImage, QPainter, QColor
 from PySide6.QtWidgets import QApplication, QWidget
 
-from utils.overlay.cluster_surface import ClusterSurface, RadialSurface
+from utils.overlay.cluster_surface import ClusterSurface, PanelSurface, RadialSurface
 
 
 @pytest.fixture(scope="module")
@@ -96,6 +96,28 @@ def test_radial_surface_source_clears_backing(qapp):
     bug). Same probe as the cluster surface: rendering onto a pre-filled OPAQUE black
     target must overwrite both corners transparent (alpha 0)."""
     s = RadialSurface()
+    s.resize(40, 40)
+    img = QImage(40, 40, QImage.Format_ARGB32_Premultiplied)
+    img.fill(QColor(0, 0, 0, 255))            # stale opaque backing
+    p = QPainter(img)
+    s.render(p, QPoint(0, 0))                 # must source-clear its rect transparent
+    p.end()
+    assert img.pixelColor(0, 0).alpha() == 0
+    assert img.pixelColor(39, 39).alpha() == 0
+
+
+# ---------------------------------------------------------------------------
+# PanelSurface inherits the SAME mandatory source-clear
+# ---------------------------------------------------------------------------
+
+def test_panel_surface_source_clears_backing(qapp):
+    """PanelSurface is the portable Settings panel's own source-cleared top-level
+    and MUST inherit ClusterSurface's mandatory full-rect transparent source-clear,
+    so the resizing panel window can never flash a stale opaque square (the
+    EmblemSurface bug). Same probe as the cluster + radial surfaces: rendering onto
+    a pre-filled OPAQUE black target must overwrite both corners transparent
+    (alpha 0)."""
+    s = PanelSurface()
     s.resize(40, 40)
     img = QImage(40, 40, QImage.Format_ARGB32_Premultiplied)
     img.fill(QColor(0, 0, 0, 255))            # stale opaque backing

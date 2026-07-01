@@ -70,3 +70,25 @@ class RadialSurface(ClusterSurface):
     controller tears it down with a plain ``hide()`` + ``deleteLater()`` - the menu
     dies with the surface, which is the intent.
     """
+
+
+class PanelSurface(ClusterSurface):
+    """Source-cleared top-level for the portable Settings panel.
+
+    Like the radial menu, the portable Settings panel is a SEPARATE
+    override-redirect top-level rather than a child of the click-through cluster
+    window: it hosts an arbitrary CALLER-PROVIDED widget (the floating SettingsTab
+    container) and must be fully CLICK-ACCEPTING and float ABOVE the cluster window
+    + emblem + radial, none of which a child-of-the-cluster widget can do. Being a
+    single translucent ARGB top-level that the controller sizes to a generous
+    ``emblem*6`` canvas, it needs the exact SAME mandatory full-rect transparent
+    source-clear as the cluster + radial windows so it can never flash a stale /
+    opaque square on show/resize (the EmblemSurface bug).
+
+    ``PanelSurface`` inherits that source-clear ``paintEvent`` (the only thing
+    ``ClusterSurface`` adds over ``OverlaySurface``) and nothing else, so all three
+    windows' source-clear can never drift apart. Like the radial it hosts its OWN
+    (borrowed-from-the-caller) widget, so the controller tears it down with a plain
+    ``hide()`` + ``deleteLater()`` AFTER running the caller's ``on_close`` (which
+    reparents the hosted content back out first).
+    """

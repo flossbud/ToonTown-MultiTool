@@ -129,6 +129,20 @@ class ClusterOverlayController:
         # (mirrors OverlayGroupController._schedule_radial_reshape).
         self._radial_reshape_timer = None
 
+        # Portable Settings panel. A SEPARATE click-accepting source-cleared
+        # top-level (PanelSurface) hosting an arbitrary CALLER-PROVIDED widget (the
+        # floating SettingsTab container), centered on the anchor and floating ABOVE
+        # the emblem + radial. Unlike the cluster window it does NOT borrow/reflow
+        # _grid_host, so it is simpler than the dim: a plain owned surface. Its size
+        # is fixed at open (emblem*6 at the open-time scale) and only re-CENTERED as
+        # the cluster moves/scales - never rescaled. ``_panel_on_close`` runs FIRST
+        # in close_panel_surface() so the caller reparents its hosted content out
+        # before the surface (and with it the hosted container) is torn down. The
+        # panel exists only between open_panel_surface() and close_panel_surface().
+        self._panel_surface = None
+        self._panel_on_close = None
+        self._panel_size: int = 0
+
     # ------------------------------------------------------------------
     # State queries
     # ------------------------------------------------------------------
@@ -142,6 +156,13 @@ class ClusterOverlayController:
         close_radial_menu). Drives the radial-aware window sizing and lets the
         emblem click toggle the ring shut (caller wiring, a LATER task)."""
         return self._radial_surface is not None
+
+    @property
+    def is_panel_open(self) -> bool:
+        """True while the portable Settings panel top-level is up (between
+        open_panel_surface and close_panel_surface). The caller wiring (the radial's
+        Settings action opening the panel) is a LATER task."""
+        return self._panel_surface is not None
 
     @property
     def scale(self) -> float:
@@ -332,9 +353,12 @@ class ClusterOverlayController:
         self.flush_pending_save()
         if self._save_timer is not None:
             self._save_timer.stop()
-        # The radial must never outlive the overlay: close it FIRST (tears down its
-        # top-level + hides the dim) before any host teardown (mirrors
-        # OverlayGroupController._teardown calling close_radial_menu()).
+        # The radial + portable panel must never outlive the overlay: close them
+        # FIRST (the panel's on_close runs so the caller reparents its content out;
+        # the radial tears down its top-level + hides the dim) before any host
+        # teardown - mirrors OverlayGroupController._teardown calling
+        # close_panel_surface() + close_radial_menu().
+        self.close_panel_surface()
         self.close_radial_menu()
         # Cancel any pending settle and reset scaling state so a re-enter starts
         # framed (scale 1.0, no in-flight gesture). A late timer firing post-leave
@@ -422,6 +446,10 @@ class ClusterOverlayController:
             self._reposition_radial()
         else:
             self._position_internal_dim()
+        # Keep the portable panel centered on the anchor (it is NOT rescaled - only
+        # re-centered) regardless of radial state.
+        if self.is_panel_open:
+            self._reposition_panel()
         # Drive the input-shape phase machine: broad now, exact on settle.
         self._enter_broad_phase(rect)
         # Persist the new scale (debounced) - but only when the scale ACTUALLY
@@ -476,6 +504,9 @@ class ClusterOverlayController:
                 pass
         if self.is_radial_open:
             self._reposition_radial()
+        # Re-center the portable panel on the new (reconciled) anchor (fixed size).
+        if self.is_panel_open:
+            self._reposition_panel()
         # Persist the new (reconciled) anchor (debounced).
         self._schedule_save()
         return True
@@ -962,6 +993,111 @@ class ClusterOverlayController:
         """Apply *path* as the radial surface's INPUT (click-accept) shape via the
         backend. Best-effort: a shape failure must never break open/scale."""
         surface = self._radial_surface
+        if surface is None:
+            return
+        try:
+            self._backend.apply_input_shape(surface, path, surface.devicePixelRatio())
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------
+    # Portable Settings panel surface
+    # ------------------------------------------------------------------
+    def open_panel_surface(self, widget, on_close=None):
+        """Host an arbitrary *widget* on a centered, click-accepting owned top-level
+        (the portable Settings panel), floating ABOVE the emblem + radial.
+
+        Sizes the panel to a generous ``emblem*6`` canvas at the current scale,
+        centers it on the anchor (the emblem's screen center), shows + raises it, and
+        applies a FULL-RECT click-accepting input shape (the whole panel is
+        interactive - unlike the click-through cluster window). ``on_close`` runs in
+        close_panel_surface() BEFORE teardown so the caller reparents its hosted
+        content out first. Returns the surface, or None when framed / already open.
+
+        Transaction-safe (the Task-7 lesson): the surface + on_close are tracked
+        BEFORE any fallible host/geometry/show step, so on ANY error
+        close_panel_surface() tears the partial state down (and runs on_close so the
+        caller reclaims its widget) and the method fails closed (returns None,
+        is_panel_open False) rather than leaking a built-but-untracked top-level."""
+        if not self._active:
+            return None
+        if self._panel_surface is not None:
+            return self._panel_surface   # already open (and already wired)
+        from utils.overlay.cluster_surface import PanelSurface
+        from utils.overlay.card_metrics import CardMetrics
+        from PySide6.QtCore import QRect
+        from PySide6.QtGui import QPainterPath
+        try:
+            size = int(CardMetrics(self._scale).emblem * 6)
+            self._panel_size = size
+            surface = PanelSurface(backend=self._backend)
+            # Track the surface + on_close IMMEDIATELY (before any fallible host/show),
+            # so a failure from here on is cleaned up by close_panel_surface() instead
+            # of leaking a built-but-untracked top-level.
+            self._panel_surface = surface
+            self._panel_on_close = on_close
+            surface.host(widget)
+            ax, ay = self._anchor
+            surface.set_overlay_geometry(
+                QRect(int(ax - size / 2), int(ay - size / 2), size, size))
+            self._safe_call(surface, "prepare_initial_state")
+            surface.show()
+            self._safe_call(surface, "raise_")
+            # NON-EMPTY click region: the WHOLE panel accepts clicks.
+            path = QPainterPath()
+            path.addRect(0, 0, size, size)
+            self._apply_panel_input_shape(path)
+            return surface
+        except Exception:
+            from utils.overlay.backend import overlay_trace
+            import traceback
+            overlay_trace("cluster_controller.open_panel_surface() FAILED; rolling "
+                          "back (fail-closed):\n" + traceback.format_exc())
+            self.close_panel_surface()
+            return None
+
+    def close_panel_surface(self) -> None:
+        """Destroy the owned panel surface. Runs ``on_close`` FIRST so the caller can
+        reparent its hosted content out BEFORE the surface (and with it the hosted
+        container) is torn down; then nulls state and hides + deletes the surface.
+        Idempotent: a call when the panel was never open is a safe no-op."""
+        cb = self._panel_on_close
+        self._panel_on_close = None
+        if cb is not None:
+            try:
+                cb()                          # restore reparented content FIRST
+            except Exception:
+                pass
+        surface = self._panel_surface
+        self._panel_surface = None
+        self._panel_size = 0
+        if surface is not None:
+            self._safe_call(surface, "hide")
+            self._safe_call(surface, "deleteLater")
+
+    def _reposition_panel(self) -> None:
+        """Re-center the open panel top-level on the anchor at its FIXED open-time
+        size. The panel is NOT rescaled (mirrors the old ``_reposition_radial`` panel
+        handling): only re-centered so it follows the cluster as it moves/scales, and
+        re-raised so it stays above the emblem + radial. No-op when the panel is
+        closed."""
+        surface = self._panel_surface
+        if surface is None or self._panel_size <= 0:
+            return
+        from PySide6.QtCore import QRect
+        size = self._panel_size
+        ax, ay = self._anchor
+        try:
+            surface.set_overlay_geometry(
+                QRect(int(ax - size / 2), int(ay - size / 2), size, size))
+        except Exception:
+            pass
+        self._safe_call(surface, "raise_")
+
+    def _apply_panel_input_shape(self, path) -> None:
+        """Apply *path* as the panel surface's INPUT (click-accept) shape via the
+        backend. Best-effort: a shape failure must never break open."""
+        surface = self._panel_surface
         if surface is None:
             return
         try:

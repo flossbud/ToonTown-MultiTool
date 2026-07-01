@@ -1541,3 +1541,264 @@ def test_radial_input_shape_applied_once_then_deferred_to_settle(qapp, monkeypat
     after_leave = len(radial_shapes())
     ctrl._reapply_radial_shape()                    # stray late settle after leave
     assert len(radial_shapes()) == after_leave     # still a safe no-op
+
+
+# ---------------------------------------------------------------------------
+# 11. Portable Settings-panel surface (T7b)
+# ---------------------------------------------------------------------------
+def _patch_panel(monkeypatch):
+    """Replace the real PanelSurface with a lightweight recording stub so the panel
+    lifecycle can be exercised WITHOUT building a real override-redirect top-level.
+    Returns a dict capturing the created stub surfaces (mirrors _patch_radial)."""
+    created = {"surfaces": []}
+
+    class _StubPanelSurface(QWidget):
+        def __init__(self, backend=None):
+            super().__init__()
+            self.backend = backend
+            self.geom = None
+            self.shown = 0
+            self.hidden = 0
+            self.deleted = 0
+            self.prepared = 0
+            self.raised = 0
+            self.hosted = None
+            created["surfaces"].append(self)
+
+        def host(self, widget):
+            self.hosted = widget
+            widget.setParent(self)
+
+        def set_overlay_geometry(self, rect):
+            self.geom = rect
+
+        def prepare_initial_state(self):
+            self.prepared += 1
+
+        def show(self):
+            self.shown += 1
+
+        def hide(self):
+            self.hidden += 1
+
+        def raise_(self):
+            self.raised += 1
+
+        def deleteLater(self):
+            self.deleted += 1
+
+    monkeypatch.setattr("utils.overlay.cluster_surface.PanelSurface",
+                        _StubPanelSurface)
+    return created
+
+
+def _panel_size(scale):
+    from utils.overlay.card_metrics import CardMetrics
+    return int(CardMetrics(scale).emblem * 6)
+
+
+def test_open_panel_surface_noop_when_inactive(qapp, monkeypatch):
+    """open_panel_surface is a no-op (None, no surface) while framed."""
+    created_panel = _patch_panel(monkeypatch)
+    ctrl, provider, window, created = _make()
+
+    assert ctrl.open_panel_surface(QWidget()) is None
+    assert created_panel["surfaces"] == []
+    assert ctrl.is_panel_open is False
+
+
+def test_open_panel_surface_double_open_returns_same_surface(qapp, monkeypatch):
+    """A second open while already open returns the SAME surface (no 2nd top-level)."""
+    created_panel = _patch_panel(monkeypatch)
+    ctrl, provider, window, created = _make()
+    ctrl.enter()
+
+    s1 = ctrl.open_panel_surface(QWidget())
+    s2 = ctrl.open_panel_surface(QWidget())
+
+    assert s1 is not None
+    assert s2 is s1
+    assert len(created_panel["surfaces"]) == 1
+    assert ctrl.is_panel_open is True
+    ctrl.close_panel_surface()
+
+
+def test_open_panel_surface_centers_on_anchor_at_emblem_times_six(qapp, monkeypatch):
+    """open_panel_surface(): hosts the widget, sizes the panel to emblem*6, centers
+    it on the anchor, shows + raises it, and applies a FULL-RECT click-accepting
+    input shape."""
+    backend = _RecordingBackend()
+    created_panel = _patch_panel(monkeypatch)
+    anchor = (1000, 700)
+    ctrl, provider, window, created = _make(anchor=anchor, backend=backend)
+    ctrl.enter()
+    backend.shapes.clear()                          # ignore enter-time cluster shaping
+    widget = QWidget()
+
+    surface = ctrl.open_panel_surface(widget)
+
+    assert surface is not None
+    assert surface.hosted is widget
+    size = _panel_size(1.0)
+    ax, ay = anchor
+    assert surface.geom == QRect(
+        int(ax - size / 2), int(ay - size / 2), size, size)
+    assert surface.shown == 1
+    assert surface.raised >= 1
+    assert surface.prepared == 1
+    # A FULL-RECT click-accepting input shape was applied to the PANEL surface.
+    panel_shapes = [s for s in backend.shapes if s[0] is surface]
+    assert len(panel_shapes) == 1
+    _win, path, _dpr = panel_shapes[0]
+    assert path.boundingRect().toRect() == QRect(0, 0, size, size)
+    ctrl.close_panel_surface()
+
+
+def test_close_panel_surface_runs_on_close_before_teardown_and_is_idempotent(qapp, monkeypatch):
+    """close_panel_surface() runs on_close BEFORE tearing the surface down (the
+    surface still exists + is undestroyed at that instant, so the caller can
+    reparent its content out first), then hides + deletes it. A second close is a
+    safe no-op."""
+    created_panel = _patch_panel(monkeypatch)
+    ctrl, provider, window, created = _make()
+    ctrl.enter()
+    surface = ctrl.open_panel_surface(QWidget())
+
+    order: list = []
+
+    def on_close():
+        # At the moment on_close runs, the surface is still tracked + NOT yet
+        # torn down (deleteLater not called) - so the caller can reclaim content.
+        order.append(("on_close", ctrl._panel_surface is surface, surface.deleted))
+
+    # Re-open path can't set on_close after the fact, so wire it directly.
+    ctrl._panel_on_close = on_close
+
+    ctrl.close_panel_surface()
+
+    assert order == [("on_close", True, 0)]          # ran first, surface alive
+    assert surface.hidden == 1 and surface.deleted == 1
+    assert ctrl.is_panel_open is False
+    assert ctrl._panel_on_close is None
+
+    # Idempotent: a second close does nothing (no re-run, no re-delete).
+    ctrl.close_panel_surface()
+    assert surface.deleted == 1
+    assert order == [("on_close", True, 0)]
+
+
+def test_open_panel_surface_failclosed_on_setup_error(qapp, monkeypatch):
+    """A failure mid-open (the panel surface's host raises) must fail closed: no
+    exception escapes, is_panel_open False, no surface/on_close tracked, the
+    partially-built top-level is torn down (not leaked), and on_close still runs
+    during the rollback so the caller reclaims its widget."""
+    created: dict = {"surfaces": []}
+    ran_on_close: list = []
+
+    class _BoomPanelSurface(QWidget):
+        def __init__(self, backend=None):
+            super().__init__()
+            self.hidden = 0
+            self.deleted = 0
+            created["surfaces"].append(self)
+
+        def host(self, widget):
+            raise RuntimeError("panel host boom")
+
+        def hide(self):
+            self.hidden += 1
+
+        def deleteLater(self):
+            self.deleted += 1
+
+    monkeypatch.setattr("utils.overlay.cluster_surface.PanelSurface",
+                        _BoomPanelSurface)
+
+    ctrl, provider, window, c = _make()
+    ctrl.enter()
+
+    result = ctrl.open_panel_surface(QWidget(), on_close=lambda: ran_on_close.append(1))
+
+    assert result is None
+    assert ctrl.is_panel_open is False
+    assert ctrl._panel_surface is None
+    assert ctrl._panel_on_close is None
+    assert ctrl._panel_size == 0
+    # The half-built panel top-level was cleaned up by the rollback, not leaked.
+    assert len(created["surfaces"]) == 1
+    assert created["surfaces"][0].deleted == 1
+    # The rollback ran on_close (so the caller reclaims its widget on a failed open).
+    assert ran_on_close == [1]
+    ctrl.leave()
+
+
+def test_move_group_recenters_open_panel_on_new_anchor(qapp, monkeypatch):
+    """A real move_group() while the panel is open re-centers the SEPARATE panel
+    top-level on the NEW (reconciled) anchor; the panel size is unchanged (the panel
+    is re-centered, never rescaled)."""
+    created_panel = _patch_panel(monkeypatch)
+    ctrl, provider, window, created = _make(anchor=(400, 400))
+    ctrl.enter()
+    surface = ctrl.open_panel_surface(QWidget())
+    size_before = surface.geom.width()
+
+    assert ctrl.move_group(30, -20) is True
+    new_anchor = ctrl._anchor
+    assert new_anchor != (400, 400)
+
+    size = _panel_size(ctrl.scale)
+    assert surface.geom.width() == size_before       # size unchanged
+    assert surface.geom == QRect(
+        int(new_anchor[0] - size / 2), int(new_anchor[1] - size / 2), size, size)
+    ctrl.close_panel_surface()
+
+
+def test_scale_while_panel_open_recenters_panel_without_rescaling(qapp, monkeypatch):
+    """A scale change WHILE the panel is open keeps the panel at its open-time size
+    (NOT rescaled) and centered on the anchor - the panel follows the anchor, never
+    the growing emblem."""
+    created_panel = _patch_panel(monkeypatch)
+    anchor = (1000, 700)
+    ctrl, provider, window, created = _make(anchor=anchor)
+    ctrl.enter()
+    surface = ctrl.open_panel_surface(QWidget())
+    size_at_open = surface.geom.width()
+
+    ctrl.set_scale_by_notches(2)                     # scale up while the panel is open
+
+    # The panel is NOT rescaled: it stays at the open-time size, centered on anchor.
+    assert surface.geom.width() == size_at_open
+    assert surface.geom == QRect(
+        int(anchor[0] - size_at_open / 2), int(anchor[1] - size_at_open / 2),
+        size_at_open, size_at_open)
+    ctrl.close_panel_surface()
+
+
+def test_leave_closes_panel_and_runs_on_close_before_restore(qapp, monkeypatch):
+    """leave() closes the panel (it must never outlive the overlay), running its
+    on_close BEFORE the borrowed host is restored, and leaves nothing behind."""
+    created_panel = _patch_panel(monkeypatch)
+    ctrl, provider, window, created = _make()
+    ctrl.enter()
+    surface = ctrl.open_panel_surface(QWidget())
+
+    events: list = []
+    orig_restore = provider.restore_cluster_host
+
+    def _spy_restore(token):
+        events.append("restore")
+        return orig_restore(token)
+
+    provider.restore_cluster_host = _spy_restore
+    ctrl._panel_on_close = lambda: events.append("on_close")
+
+    ctrl.leave()
+
+    # on_close ran, and it ran BEFORE the host was handed back to framed mode.
+    assert "on_close" in events and "restore" in events
+    assert events.index("on_close") < events.index("restore")
+    # The panel is fully torn down, nothing left behind.
+    assert ctrl.is_panel_open is False
+    assert ctrl._panel_surface is None
+    assert ctrl._panel_on_close is None
+    assert surface.hidden == 1 and surface.deleted == 1
