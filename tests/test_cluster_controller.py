@@ -2521,9 +2521,9 @@ def test_peek_tick_noop_during_scale_gesture(qapp):
 
 
 # ---------------------------------------------------------------------------
-# 12b. T8 review fixes (dual-review consensus): inactive-seed guard,
-#      malformed-payload fail-safe, occupancy-drop peek settle, and a
-#      NON-1.0-scale ghost-click guard for the load-bearing scale=1.0 decision.
+# 12b. Ghost/peek hardening: inactive-seed guard, malformed-payload fail-safe,
+#      occupancy-drop peek settle, and a NON-1.0-scale ghost-click guard for
+#      the framed-local coordinate contract under the cluster transform.
 # ---------------------------------------------------------------------------
 def test_ghost_event_while_inactive_does_not_seed_and_enter_clears(qapp):
     """FIX A: a queued ghost event arriving while the overlay is FRAMED must NOT seed
