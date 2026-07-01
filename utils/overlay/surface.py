@@ -83,12 +83,15 @@ class OverlaySurface(QWidget):
         # cluster covered e.g. the region-screenshot UI. Managed mode leans on
         # machinery that already exists: the controller sets geometry BEFORE
         # show (program-specified position, so the WM honors placement), the
-        # backend writes _NET_WM_STATE (ABOVE + SKIP_TASKBAR/PAGER) as a pre-map
-        # property, and showEvent re-asserts it per show - those calls were
-        # belt-and-suspenders under override-redirect and are load-bearing now.
-        # TTMT_OVERLAY_UNMANAGED=1 restores override-redirect in case a WM
-        # mishandles managed placement (clamping/repositioning that bypass was
-        # immune to).
+        # backend writes _NET_WM_STATE (ABOVE + SKIP_TASKBAR/PAGER) plus a DOCK
+        # _NET_WM_WINDOW_TYPE as pre-map properties, and showEvent re-asserts
+        # the state per show - those calls were belt-and-suspenders under
+        # override-redirect and are load-bearing now. The DOCK type is what
+        # exempts these windows from KWin's fit-to-desktop clamp on client
+        # moves (see x11_backend.set_initial_state) - without it the fixed
+        # max-scale envelope walls against the desktop bounds well short of the
+        # visible content reaching a screen edge. TTMT_OVERLAY_UNMANAGED=1
+        # restores override-redirect in case a WM mishandles managed placement.
         flags = (
             Qt.Window
             | Qt.FramelessWindowHint

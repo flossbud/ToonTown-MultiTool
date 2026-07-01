@@ -6,7 +6,7 @@ NOT in the region to the window behind. Bounding/clip shape is left untouched
 from __future__ import annotations
 
 from PySide6.QtGui import QRegion
-from utils.overlay.backend import OverlayBackend
+from utils.overlay.backend import OverlayBackend, overlay_trace
 
 
 def region_to_rects(region: QRegion) -> list[tuple[int, int, int, int]]:
@@ -55,7 +55,7 @@ class X11OverlayBackend(OverlayBackend):
         return
 
     def set_initial_state(self, window) -> None:
-        """Set _NET_WM_STATE as a PROPERTY before the window is mapped.
+        """Set _NET_WM_STATE and _NET_WM_WINDOW_TYPE as PROPERTIES before map.
 
         This is the EWMH-canonical way to request a window's INITIAL state: the WM
         reads it when it manages (maps) the window, so above + skip-taskbar/pager
@@ -64,6 +64,21 @@ class X11OverlayBackend(OverlayBackend):
         case the WM re-evaluates the window (e.g. when the main window minimizes).
         Must be called while the window is realized (winId valid) but NOT yet
         mapped (before show()).
+
+        The window TYPE is set to DOCK (load-bearing for MANAGED overlay windows):
+        KWin force-fits a managed NORMAL window's client-requested geometry into
+        the virtual-desktop bounding box, which walled the cluster's fixed
+        max-scale envelope short of the top screen edge and desynced the drag
+        anchor from the pinned window. DOCK (and NOTIFICATION/OSD) windows are
+        exempt from that clamp - probed empirically on KWin 6.7.1, 2026-07-01,
+        with keep-above applied, i.e. exactly this configuration. With
+        _NET_WM_STATE_ABOVE also set the dock stacks in the same keep-above
+        layer as before (over the games, still below the compositor's system
+        layers such as the screenshot region picker), and docks are visible on
+        all virtual desktops - matching the old override-redirect behavior. No
+        _NET_WM_STRUT is set, so no screen space is reserved. On an
+        override-redirect window (TTMT_OVERLAY_UNMANAGED=1) the WM ignores both
+        properties, so writing them unconditionally is harmless.
         """
         if not self.is_available():
             return
@@ -83,7 +98,16 @@ class X11OverlayBackend(OverlayBackend):
                 ],
                 X.PropModeReplace,
             )
+            win.change_property(
+                a("_NET_WM_WINDOW_TYPE"),
+                Xatom.ATOM,
+                32,
+                [a("_NET_WM_WINDOW_TYPE_DOCK")],
+                X.PropModeReplace,
+            )
             d.flush()
+            overlay_trace("x11 set_initial_state: pre-map _NET_WM_STATE"
+                          "(above+skip) + _NET_WM_WINDOW_TYPE(DOCK) applied")
         except Exception:
             pass
 
