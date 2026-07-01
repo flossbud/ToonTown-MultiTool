@@ -2895,3 +2895,79 @@ def test_enter_leave_enter_reconnects_screen_change(qapp):
     surface2 = created[1]
     assert len(surface2.windowHandle().screenChanged.slots) == 1
     ctrl.leave()
+
+
+# ---------------------------------------------------------------------------
+# connect_emblem: wire the _Emblem gesture signals (Task 9)
+#
+# A straight port of OverlayGroupController.connect_emblem: the three gesture
+# signals map to toggle()/begin_group_drag()/set_scale_by_notches(). Live in both
+# modes (the controller methods are mode-aware); idempotent (re-connecting the
+# SAME emblem is a no-op, never double-firing) and re-bindable (a NEW emblem drops
+# the previous emblem's three connections).
+# ---------------------------------------------------------------------------
+class _SignalEmblem(QObject):
+    """Minimal stand-in carrying the three real _Emblem gesture signals."""
+    toggle_requested = Signal()
+    move_requested = Signal()
+    resize_scrolled = Signal(int)
+
+
+def test_connect_emblem_wires_the_three_signals(qapp):
+    ctrl, _p, _w, _c = _make()
+    calls = {"toggle": 0, "drag": 0, "scale": []}
+    # Spy BEFORE connect so the bound lookups in connect_emblem resolve to these
+    # instance attributes (mirrors the group_controller wiring test).
+    ctrl.toggle = lambda: calls.__setitem__("toggle", calls["toggle"] + 1)
+    ctrl.begin_group_drag = lambda: calls.__setitem__("drag", calls["drag"] + 1)
+    ctrl.set_scale_by_notches = lambda n: calls["scale"].append(n)
+
+    emblem = _SignalEmblem()
+    ctrl.connect_emblem(emblem)
+    assert ctrl._emblem is emblem
+
+    emblem.toggle_requested.emit()
+    emblem.move_requested.emit()
+    emblem.resize_scrolled.emit(2)
+
+    assert calls["toggle"] == 1
+    assert calls["drag"] == 1
+    assert calls["scale"] == [2]        # the int notch passes through
+
+
+def test_connect_emblem_is_idempotent_no_double_fire(qapp):
+    ctrl, _p, _w, _c = _make()
+    calls = {"toggle": 0}
+    ctrl.toggle = lambda: calls.__setitem__("toggle", calls["toggle"] + 1)
+    emblem = _SignalEmblem()
+    ctrl.connect_emblem(emblem)
+    ctrl.connect_emblem(emblem)         # SAME emblem -> no-op, must NOT double-fire
+    emblem.toggle_requested.emit()
+    assert calls["toggle"] == 1
+
+
+def test_connect_emblem_rebinds_to_a_new_emblem(qapp):
+    ctrl, _p, _w, _c = _make()
+    calls = {"toggle": 0, "drag": 0, "scale": []}
+    ctrl.toggle = lambda: calls.__setitem__("toggle", calls["toggle"] + 1)
+    ctrl.begin_group_drag = lambda: calls.__setitem__("drag", calls["drag"] + 1)
+    ctrl.set_scale_by_notches = lambda n: calls["scale"].append(n)
+
+    old, new = _SignalEmblem(), _SignalEmblem()
+    ctrl.connect_emblem(old)
+    ctrl.connect_emblem(new)            # drops old's three connections
+    assert ctrl._emblem is new
+
+    # The OLD emblem no longer drives the controller (all three disconnected).
+    old.toggle_requested.emit()
+    old.move_requested.emit()
+    old.resize_scrolled.emit(5)
+    assert calls == {"toggle": 0, "drag": 0, "scale": []}
+
+    # The NEW emblem drives it.
+    new.toggle_requested.emit()
+    new.move_requested.emit()
+    new.resize_scrolled.emit(7)
+    assert calls["toggle"] == 1
+    assert calls["drag"] == 1
+    assert calls["scale"] == [7]

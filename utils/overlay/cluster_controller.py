@@ -163,6 +163,12 @@ class ClusterOverlayController:
         # shifts the anchor via the clamped move_group until the button releases.
         self._drag_timer = None
         self._drag_last = None
+        # The _Emblem whose gesture signals (toggle/move/scroll) are wired to this
+        # controller by connect_emblem. Tracked so a re-bind can drop the previous
+        # emblem's three connections (mirrors OverlayGroupController._emblem). This
+        # is the controller's OWN bookkeeping slot - distinct from the provider's
+        # self._card_provider._emblem (the widget used for placement/hit tests).
+        self._emblem = None
 
         # Multi-monitor / HiDPI screen-change reshape. The single cluster window's
         # input shape is a LOGICAL surface-local path that the backend converts to
@@ -982,6 +988,38 @@ class ClusterOverlayController:
         self._settle_peek()
 
     # ---- Emblem drag (cluster-local, one window) ----------------------
+    def connect_emblem(self, emblem) -> None:
+        """Wire an _Emblem's gesture signals to this controller. The connections
+        are live in BOTH modes; the controller methods are mode-aware (toggle
+        flips; move/scale no-op when framed):
+
+          * toggle_requested (click)        -> toggle()  (enter/leave)
+          * move_requested (drag start)     -> begin_group_drag()
+          * resize_scrolled (dwell wheel)   -> set_scale_by_notches(notches)
+
+        Idempotent and re-bindable: re-connecting the SAME emblem is a no-op (Qt
+        permits duplicate connections, which would double-fire), and connecting a
+        NEW emblem first drops the previous emblem's connections. A straight port
+        of ``OverlayGroupController.connect_emblem`` so the two controllers stay
+        drop-in interchangeable behind the same call site.
+        """
+        if emblem is self._emblem:
+            return
+        if self._emblem is not None:
+            for sig, slot in (
+                (self._emblem.toggle_requested, self.toggle),
+                (self._emblem.move_requested, self.begin_group_drag),
+                (self._emblem.resize_scrolled, self.set_scale_by_notches),
+            ):
+                try:
+                    sig.disconnect(slot)
+                except (TypeError, RuntimeError):
+                    pass
+        self._emblem = emblem
+        emblem.toggle_requested.connect(self.toggle)
+        emblem.move_requested.connect(self.begin_group_drag)
+        emblem.resize_scrolled.connect(self.set_scale_by_notches)
+
     def begin_group_drag(self) -> None:
         """Start a manual drag of the whole cluster, following the cursor.
 
