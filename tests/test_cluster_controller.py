@@ -2555,6 +2555,54 @@ class _DprStubSurface(_StubSurface):
         return self._handle
 
 
+def _make_dpr_surface_stub():
+    """Build a fresh PLAIN (non-QWidget) recording surface-stub CLASS with a
+    controllable ``devicePixelRatio()`` and the exact owned-top-level API the
+    controller drives on the radial/panel surfaces (host / set_overlay_geometry /
+    prepare_initial_state / show / hide / raise_ / deleteLater). Deliberately NOT a
+    QWidget: a real QWidget subclass whose ``deleteLater`` is a no-op leaks a LIVE Qt
+    object, which under this venv (Python 3.14 + PySide6 6.10) trips the paint-time GC
+    race (the ~1/80 screen-change flake). A plain object has nothing live to leak, yet
+    still records geometry + dpr so the screen-change re-apply behavior stays
+    observable. Returns a NEW class per call so radial and panel stubs never share
+    state."""
+
+    class _DprSurfaceStub:
+        def __init__(self, backend=None):
+            self._dpr = 1.0
+            self.geom = None
+            self.raised = 0
+
+        def host(self, widget):
+            pass
+
+        def set_overlay_geometry(self, rect):
+            self.geom = rect
+
+        def prepare_initial_state(self):
+            pass
+
+        def show(self):
+            pass
+
+        def hide(self):
+            pass
+
+        def raise_(self):
+            self.raised += 1
+
+        def deleteLater(self):
+            pass
+
+        def set_dpr(self, d):
+            self._dpr = float(d)
+
+        def devicePixelRatio(self):
+            return self._dpr
+
+    return _DprSurfaceStub
+
+
 def _make_dpr(dpr: float = 1.0, provider=None, anchor=None, backend=None,
               settings=None):
     """Build a controller whose surface is a _DprStubSurface (controllable DPR + fake
@@ -2630,39 +2678,15 @@ def test_screen_change_reapplies_radial_shape_at_new_dpr(qapp, monkeypatch):
     converts to device pixels via the surface's dpr at apply time)."""
     backend = _RecordingBackend()
 
-    class _DprRadialSurface(QWidget):
-        def __init__(self, backend=None):
-            super().__init__()
-            self._dpr = 1.0
-            self.geom = None
+    # PLAIN (non-QWidget) recording stubs: a real QWidget subclass whose deleteLater
+    # is a no-op leaks a LIVE Qt object, which under this venv (Python 3.14 +
+    # PySide6 6.10) trips the paint-time GC race (~1/80 flake). These expose exactly
+    # the surface/menu API the controller drives, with NO live Qt object to leak.
+    _DprRadialSurface = _make_dpr_surface_stub()
 
-        def host(self, widget):
-            pass
-
-        def set_overlay_geometry(self, rect):
-            self.geom = rect
-
-        def prepare_initial_state(self):
-            pass
-
-        def show(self):
-            pass
-
-        def hide(self):
-            pass
-
-        def deleteLater(self):
-            pass
-
-        def set_dpr(self, d):
-            self._dpr = float(d)
-
-        def devicePixelRatio(self):
-            return self._dpr
-
-    class _StubRadialMenu(QWidget):
+    class _StubRadialMenu:
         def __init__(self, emblem_diameter=0.0, **kw):
-            super().__init__()
+            pass
 
         def set_emblem_diameter(self, d):
             pass
@@ -2702,46 +2726,17 @@ def test_screen_change_reapplies_panel_shape_at_new_dpr(qapp, monkeypatch):
     full-rect input shape at the NEW device-pixel ratio too."""
     backend = _RecordingBackend()
 
-    class _DprPanelSurface(QWidget):
-        def __init__(self, backend=None):
-            super().__init__()
-            self._dpr = 1.0
-            self.geom = None
-            self.raised = 0
-
-        def host(self, widget):
-            widget.setParent(self)
-
-        def set_overlay_geometry(self, rect):
-            self.geom = rect
-
-        def prepare_initial_state(self):
-            pass
-
-        def show(self):
-            pass
-
-        def hide(self):
-            pass
-
-        def raise_(self):
-            self.raised += 1
-
-        def deleteLater(self):
-            pass
-
-        def set_dpr(self, d):
-            self._dpr = float(d)
-
-        def devicePixelRatio(self):
-            return self._dpr
+    # PLAIN (non-QWidget) recording stub - see _make_dpr_surface_stub: no live Qt
+    # object to leak into the paint-time GC race, host() is a no-op (the panel's
+    # click shape re-apply, not the reparent, is what these tests assert).
+    _DprPanelSurface = _make_dpr_surface_stub()
 
     monkeypatch.setattr("utils.overlay.cluster_surface.PanelSurface", _DprPanelSurface)
 
     ctrl, provider, window, created = _make_dpr(dpr=1.0, backend=backend, anchor=(1000, 700))
     ctrl.enter()
     cluster = created[0]
-    psurf = ctrl.open_panel_surface(QWidget())
+    psurf = ctrl.open_panel_surface(object())   # hosted content placeholder (host is a no-op)
 
     def panel_shapes():
         return [s for s in backend.shapes if s[0] is psurf]
@@ -2757,6 +2752,94 @@ def test_screen_change_reapplies_panel_shape_at_new_dpr(qapp, monkeypatch):
     assert len(panel_shapes()) == n_before + 1    # panel shape RE-APPLIED on the move
     assert panel_shapes()[-1][2] == 2.0            # ... at the new dpr
     ctrl.close_panel_surface()
+    ctrl.leave()
+
+
+def test_screen_change_defers_all_reshapes_during_active_scale(qapp, monkeypatch):
+    """The ACTIVE broad-phase deferral: when a scale gesture is genuinely mid-flight
+    (``_scaling_active`` True) a monitor move must DEFER every input-shape re-apply to
+    the settle timer instead of narrowing the X11 capture region under the pointer -
+    re-applying mid-scroll stalls the wheel stream.
+
+    With the cluster ACTIVE, the radial AND the panel open, and a fresh (higher) DPR,
+    ``_on_screen_changed`` must (a) ARM the settle timer rather than apply the exact
+    cluster shape immediately, and (b) NOT re-apply the radial's or panel's click shape
+    immediately either. Re-centering (``_reposition_radial``/``_reposition_panel``)
+    still runs - it is cheap and schedules its OWN deferred reshape - so only the
+    IMMEDIATE full-shape re-apply is withheld.
+
+    Red-green: forcing ``_apply_exact_input_shape()`` (or the immediate radial/panel
+    reapply) during an active scale lands a shape at the NEW dpr and fails the
+    'no new shape' / 'nothing at dpr 2.0' assertions below. The only existing active-
+    flag screen-change test sets the flag while INACTIVE, proving the inactive guard -
+    NOT this active deferral branch."""
+    backend = _RecordingBackend()
+
+    # Plain, non-QWidget stubs (see _make_dpr_surface_stub): no live Qt object to leak
+    # into the paint-time GC race.
+    _DprRadialSurface = _make_dpr_surface_stub()
+    _DprPanelSurface = _make_dpr_surface_stub()
+
+    class _StubRadialMenu:
+        def __init__(self, emblem_diameter=0.0, **kw):
+            pass
+
+        def set_emblem_diameter(self, d):
+            pass
+
+        def start_reveal(self):
+            pass
+
+    monkeypatch.setattr("utils.overlay.cluster_surface.RadialSurface", _DprRadialSurface)
+    monkeypatch.setattr("utils.overlay.radial_menu.RadialMenuWidget", _StubRadialMenu)
+    monkeypatch.setattr("utils.overlay.cluster_surface.PanelSurface", _DprPanelSurface)
+
+    ctrl, provider, window, created = _make_dpr(dpr=1.0, backend=backend, anchor=(1000, 700))
+    ctrl.enter()
+    cluster = created[0]
+    ctrl._settle_input()                        # baseline EXACT cluster shape at dpr 1.0
+    ctrl.open_radial_menu()
+    rsurf = ctrl._radial_surface
+    psurf = ctrl.open_panel_surface(object())   # hosted content placeholder (host no-op)
+
+    def cluster_shapes():
+        return [s for s in backend.shapes if s[0] is cluster]
+
+    def radial_shapes():
+        return [s for s in backend.shapes if s[0] is rsurf]
+
+    def panel_shapes():
+        return [s for s in backend.shapes if s[0] is psurf]
+
+    n_cluster = len(cluster_shapes())
+    n_radial = len(radial_shapes())
+    n_panel = len(panel_shapes())
+    assert n_radial >= 1 and n_panel >= 1        # each shaped once on open (dpr 1.0)
+
+    # A scale gesture is genuinely LIVE, and the window crosses to a HiDPI monitor.
+    ctrl._scaling_active = True
+    cluster.set_dpr(2.0)
+    rsurf.set_dpr(2.0)
+    psurf.set_dpr(2.0)
+    ctrl._on_screen_changed()
+
+    # DEFERRED: the settle timer is armed for the cluster's exact reshape ...
+    assert ctrl._settle_timer is not None
+    assert ctrl._settle_timer.isActive()
+    # ... and NOTHING was re-applied IMMEDIATELY at the new dpr - not the cluster, not
+    # the radial, not the panel.
+    assert len(cluster_shapes()) == n_cluster
+    assert len(radial_shapes()) == n_radial
+    assert len(panel_shapes()) == n_panel
+    assert not any(s[2] == 2.0 for s in backend.shapes)
+
+    # Draining the settle timer DOES land the deferred exact cluster shape at the new
+    # dpr - proving the reshape was DEFERRED, not dropped.
+    ctrl._settle_input()
+    assert any(s[0] is cluster and s[2] == 2.0 for s in cluster_shapes())
+
+    ctrl.close_panel_surface()
+    ctrl.close_radial_menu()
     ctrl.leave()
 
 

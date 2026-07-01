@@ -1200,20 +1200,27 @@ class ClusterOverlayController:
         try:
             # Cluster exact shape: immediate on a plain monitor move; deferred to the
             # settle timer if a scale gesture is genuinely live.
-            if self._scaling_active:
+            scaling = self._scaling_active
+            if scaling:
                 self._arm_settle_timer()
             else:
                 self._apply_exact_input_shape()
-            # Radial open: re-center/re-size on the fresh emblem AND re-apply its
-            # (full-canvas) click region immediately at the new DPR.
+            # Radial open: ALWAYS re-center/re-size on the fresh emblem (cheap; and
+            # _reposition_radial schedules its OWN deferred reshape when the canvas
+            # changed). The IMMEDIATE full-canvas click-region re-apply is GATED on
+            # not-scaling, mirroring the cluster's broad-phase deferral above - forcing
+            # it mid-scale would narrow the X11 input region under the pointer and undo
+            # _reposition_radial's own settle-timer deferral.
             if self.is_radial_open:
                 self._reposition_radial()
-                self._reapply_radial_shape()
-            # Panel open: re-center AND re-apply its (full-rect) click region at the
-            # new DPR.
+                if not scaling:
+                    self._reapply_radial_shape()
+            # Panel open: re-center ALWAYS; the immediate full-rect click-region
+            # re-apply is likewise gated on not-scaling (same broad-phase deferral).
             if self.is_panel_open:
                 self._reposition_panel()
-                self._reapply_panel_shape()
+                if not scaling:
+                    self._reapply_panel_shape()
         except Exception:
             from utils.overlay.backend import overlay_trace
             import traceback
