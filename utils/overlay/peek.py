@@ -10,20 +10,33 @@ ghost_pointer_event payloads. All are pure so they unit-test without a QApplicat
 from __future__ import annotations
 
 
-def peeking_indices(points, rects) -> set:
+def peeking_indices(points, rects, cutouts=None) -> set:
     """Return the set of rect indices that contain at least one point.
 
     points: iterable of (x, y). rects: iterable of (x, y, w, h). A rect contains
     a point when x <= px < x+w and y <= py < y+h (top/left inclusive, bottom/right
     exclusive - matches Qt's pixel coverage).
+
+    cutouts: optional iterable parallel to rects, each entry a (cx, cy, r)
+    circle (same coordinate space as rects/points) or None. A point strictly
+    inside a rect's cutout circle does NOT count as containment: the card's
+    painted body is the rect MINUS the concave corner carve the emblem nests
+    in, so a cursor on the emblem must never read as hovering the card.
     """
     pts = list(points)
+    cuts = list(cutouts) if cutouts is not None else []
     result = set()
     for i, (rx, ry, rw, rh) in enumerate(rects):
+        cut = cuts[i] if i < len(cuts) else None
         for (px, py) in pts:
-            if rx <= px < rx + rw and ry <= py < ry + rh:
-                result.add(i)
-                break
+            if not (rx <= px < rx + rw and ry <= py < ry + rh):
+                continue
+            if cut is not None:
+                cx, cy, r = cut
+                if (px - cx) ** 2 + (py - cy) ** 2 < r * r:
+                    continue
+            result.add(i)
+            break
     return result
 
 

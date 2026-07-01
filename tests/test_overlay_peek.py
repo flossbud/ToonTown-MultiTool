@@ -25,6 +25,45 @@ def test_peeking_indices_empty_inputs():
     assert peeking_indices([(1, 1)], []) == set()
 
 
+def test_peeking_indices_cutout_excludes_carved_corner():
+    # One card with a concave carve circle on its bottom-right corner (the
+    # emblem nests there): a point inside the rect but inside the circle is NOT
+    # a hover; a point inside the rect and outside the circle still is.
+    rects = [(0, 0, 100, 100)]
+    cutouts = [(100, 100, 30)]
+    assert peeking_indices([(95, 95)], rects, cutouts) == set()   # in the carve
+    assert peeking_indices([(50, 50)], rects, cutouts) == {0}     # card body
+
+
+def test_peeking_indices_cutout_circle_boundary_counts_as_card():
+    # Exclusion is STRICTLY inside the circle: a point exactly ON the carve arc
+    # still belongs to the card (matches the painted subtracted shape).
+    rects = [(0, 0, 100, 100)]
+    cutouts = [(100, 100, 30)]
+    # (82, 76) is exactly on the arc: 18^2 + 24^2 == 30^2 (integer-exact).
+    assert peeking_indices([(82, 76)], rects, cutouts) == {0}
+    assert peeking_indices([(83, 77)], rects, cutouts) == set()   # one px inside
+
+
+def test_peeking_indices_cutout_none_and_short_lists_fall_back_to_rect():
+    # A None entry, a cutouts list shorter than rects, and no cutouts at all
+    # each degrade to the plain rect test for the uncovered cards.
+    rects = [(0, 0, 100, 100), (200, 0, 100, 100)]
+    in_carve_0 = (95, 95)
+    assert peeking_indices([in_carve_0], rects, [None, None]) == {0}
+    assert peeking_indices([in_carve_0], rects, [(100, 100, 30)]) == set()
+    assert peeking_indices([(295, 95)], rects, [(100, 100, 30)]) == {1}  # index 1 uncovered
+    assert peeking_indices([in_carve_0], rects) == {0}
+
+
+def test_peeking_indices_cutout_only_masks_its_own_rect():
+    # Card 1's carve must not shadow card 0: the same point tested against both
+    # cards only skips the one whose OWN circle contains it.
+    rects = [(0, 0, 100, 100), (90, 0, 100, 100)]                 # overlapping rects
+    cutouts = [None, (90, 100, 30)]                               # carve on card 1 only
+    assert peeking_indices([(95, 95)], rects, cutouts) == {0}
+
+
 def test_ghost_store_motion_and_points():
     s = GhostPointStore()
     s.ingest(("motion", [(0, 10, 20), (2, 30, 40)]))

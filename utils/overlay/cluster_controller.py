@@ -352,6 +352,14 @@ class ClusterOverlayController:
         _size, pivot, emblem_center, _hs = self._envelope_spec()
         return map_host_rect_to_window(rect, emblem_center, pivot, self._scale)
 
+    def _map_host_point(self, point):
+        """Map a host-local (framed 1.0) ``(x, y)`` point into window coords under
+        the current AUTHORITATIVE scale - the single-point companion of
+        ``_map_host_rect``."""
+        from utils.overlay.cluster_geometry import map_host_point_to_window
+        _size, pivot, emblem_center, _hs = self._envelope_spec()
+        return map_host_point_to_window(point, emblem_center, pivot, self._scale)
+
     def _compute_window_rect(self):
         """The SCREEN rect for the single cluster window: the FIXED max-scale
         envelope placed so the pivot (= the emblem center at every scale) lands on
@@ -983,9 +991,42 @@ class ClusterOverlayController:
         r = rects[0]
         return QPoint(r.x() + r.width() // 2, r.y() + r.height() // 2)
 
+    # Card-local corner the concave carve is centered on, keyed by the cell
+    # cfg's "cutout" token (the same table _card_body_path paints from).
+    _CUTOUT_CORNERS = {
+        "tl": (0.0, 0.0), "tr": (1.0, 0.0),
+        "bl": (0.0, 1.0), "br": (1.0, 1.0),
+    }
+
+    def _cutout_circle(self, slot, host_rect):
+        """*slot*'s concave-corner carve as a SCREEN-space circle ``(cx, cy, r)``,
+        or None when the provider carries no cutout spec/metrics (bare stubs).
+
+        The painted card body fills its cell rect exactly
+        (``_position_cell_bg``) and is carved by a circle of the metrics'
+        ``cutout_r`` centered ON the cell's emblem-facing corner
+        (``_card_body_path``) - the emblem nests inside that carve. Mapping the
+        corner + radius through the cluster transform lets hit tests follow the
+        PAINTED shape instead of the flat rect, so a cursor on the emblem (or in
+        the transparent breathing ring around it) never reads as over the card.
+        *host_rect* is the cell's framed 1.0 rect; the returned circle is in
+        WINDOW coords (the caller translates to screen with the card rect)."""
+        cfg = slot.get("cfg") if isinstance(slot, dict) else None
+        corner_key = cfg.get("cutout") if isinstance(cfg, dict) else None
+        frac = self._CUTOUT_CORNERS.get(corner_key)
+        metrics = getattr(self._card_provider, "_metrics", None)
+        radius = getattr(metrics, "cutout_r", None)
+        if frac is None or not radius:
+            return None
+        fx, fy = frac
+        corner = (host_rect.x() + host_rect.width() * fx,
+                  host_rect.y() + host_rect.height() * fy)
+        cx, cy = self._map_host_point(corner)
+        return (cx, cy, float(radius) * self._scale)
+
     def _visible_card_geoms(self):
-        """``[(slot, screen_rect QRect, [card-local control QRect, ...]), ...]`` for
-        the VISIBLE cells.
+        """``[(slot, screen_rect QRect, [card-local control QRect, ...],
+        cutout_circle), ...]`` for the VISIBLE cells.
 
         A card's SCREEN rect = the window placement origin (``_compute_window_rect``,
         derived from the anchor - matching the surface geometry and robust to a stub
@@ -993,8 +1034,9 @@ class ClusterOverlayController:
         ``_grid_host`` mapped through the cluster transform (where the transform
         actually renders it). The control rects are the raw CARD-LOCAL 1.0 rects -
         exactly the ``control_hits`` contract, which divides by the scale passed to
-        it. Empty when the provider lacks the ``control_rects`` / ``_card_slots``
-        hooks."""
+        it. ``cutout_circle`` is the cell's concave carve as a SCREEN ``(cx, cy, r)``
+        circle (``_cutout_circle``), or None without a cutout spec. Empty when the
+        provider lacks the ``control_rects`` / ``_card_slots`` hooks."""
         provider = self._card_provider
         rects_fn = getattr(provider, "control_rects", None) if provider is not None else None
         slots = getattr(provider, "_card_slots", None) if provider is not None else None
@@ -1017,7 +1059,10 @@ class ClusterOverlayController:
                 host_rect = QRect(origin.x(), origin.y(),
                                   size.width(), size.height())
                 screen_rect = self._map_host_rect(host_rect).translated(ox, oy)
-                out.append((cell_index, screen_rect, rects_fn(cell_index)))
+                cutout = self._cutout_circle(slot, host_rect)
+                if cutout is not None:
+                    cutout = (cutout[0] + ox, cutout[1] + oy, cutout[2])
+                out.append((cell_index, screen_rect, rects_fn(cell_index), cutout))
             except Exception:
                 continue
         return out
@@ -1112,7 +1157,9 @@ class ClusterOverlayController:
         if provider is None:
             return
         cards = []
-        for slot, screen_rect, local_rects in self._visible_card_geoms():
+        # The cutout circle is irrelevant here: ghost clicks resolve against the
+        # CONTROL rects, which never overlap the carved corner.
+        for slot, screen_rect, local_rects, _cutout in self._visible_card_geoms():
             rect_tuples = [(r.x(), r.y(), r.width(), r.height()) for r in local_rects]
             cards.append((slot,
                           (screen_rect.x(), screen_rect.y(),
@@ -1165,7 +1212,9 @@ class ClusterOverlayController:
 
     def _peek_tick(self, real_point) -> None:
         """One hover-peek detection pass: union the real cursor with the ghost points
-        and fade each VISIBLE card toward peeked (hovered) or opaque (not).
+        and fade each VISIBLE card toward peeked (hovered) or opaque (not). The hit
+        test follows the card's PAINTED shape (rect minus the concave corner carve),
+        so a cursor on the emblem never peeks the cards it nests between.
 
         real_point: (x, y) SCREEN global, or None when the OS pointer is unavailable.
         A no-op mid scale gesture (frozen cluster) or while framed."""
@@ -1174,12 +1223,13 @@ class ClusterOverlayController:
         if not self._active:
             return
         cards = self._visible_card_geoms()
-        rects = [(g.x(), g.y(), g.width(), g.height()) for _slot, g, _cr in cards]
+        rects = [(g.x(), g.y(), g.width(), g.height()) for _slot, g, _cr, _cut in cards]
+        cutouts = [cut for _slot, _g, _cr, cut in cards]
         points = list(self._peek_store.points())
         if real_point is not None:
             points.append(real_point)
-        peeking = peeking_indices(points, rects)
-        for i, (slot, _g, _cr) in enumerate(cards):
+        peeking = peeking_indices(points, rects, cutouts)
+        for i, (slot, _g, _cr, _cut) in enumerate(cards):
             self._apply_peek_fade(slot, i in peeking)
 
     def _settle_peek_slot(self, slot) -> None:
