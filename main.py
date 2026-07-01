@@ -1303,10 +1303,14 @@ class MultiToonTool(QMainWindow):
         ring's center, so its click is the natural close affordance). Transparent
         mode uses the X11 overlay path; windowed mode hosts the same widget as an
         in-window child (WindowedWheelHost)."""
-        # Second emblem click closes an open wheel (toggle).
+        # Second emblem click closes an open wheel (toggle) - the ANIMATED
+        # dismiss (spokes fly back into the emblem), not the hard teardown:
+        # since the radial input region gained its emblem-disc hole, this click
+        # reaches the EMBLEM (not the menu), so the menu-side animated close no
+        # longer fires on its own; dismiss_radial_menu routes back through it.
         if self._mode_controller.is_active:
             if self._mode_controller.is_radial_open:
-                self._mode_controller.close_radial_menu()
+                self._mode_controller.dismiss_radial_menu()
                 return
         elif self._windowed_wheel is not None:       # windowed wheel already open
             self._windowed_wheel.dismiss()

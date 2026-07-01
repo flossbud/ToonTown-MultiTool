@@ -1638,6 +1638,24 @@ class OverlayGroupController:
         if self._panel_surface is not None:
             self._safe_call(self._panel_surface, "raise_")
 
+    def dismiss_radial_menu(self) -> None:
+        """Begin the ring's ANIMATED dismiss (the menu's own ``_begin_close``:
+        spokes fly back, dim collapses via ``closing``, teardown deferred to
+        ``close_requested`` -> the caller-wired ``close_radial_menu``). Falls back
+        to the immediate ``close_radial_menu()`` when the menu lacks the animation
+        engine. Drop-in parity with ``ClusterOverlayController.dismiss_radial_menu``
+        so main.py's emblem-click toggle animates on either controller."""
+        menu = self._radial_menu
+        begin = getattr(menu, "_begin_close", None) if menu is not None else None
+        if begin is None:
+            if self.is_radial_open:
+                self.close_radial_menu()
+            return
+        try:
+            begin()
+        except Exception:
+            self.close_radial_menu()
+
     def close_radial_menu(self) -> None:
         """Destroy the owned radial-menu surface (+ its hosted widget) and its dim
         backdrop. Idempotent."""

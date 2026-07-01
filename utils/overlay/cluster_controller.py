@@ -1272,14 +1272,17 @@ class ClusterOverlayController:
         clamped ``move_group`` until the left button is released. No-op when framed;
         re-entrant-safe (restarts from the current cursor).
 
-        An OPEN radial ring auto-closes at drag start: the drag reaches the emblem
-        through the ring's emblem-disc input hole (see ``_radial_click_path``), and
-        the user asked the emblem to move, not the menu - dragging the cluster with
-        the ring trailing along would fight the ring's anchor-centered placement."""
+        An OPEN radial ring auto-dismisses at drag start: the drag reaches the
+        emblem through the ring's emblem-disc input hole (see
+        ``_radial_click_path``), and the user asked the emblem to move, not the
+        menu. The dismiss is the ANIMATED one (spokes fly back into the emblem)
+        - the ring window keeps following the anchor during the fly-back via
+        move_group's ``_reposition_radial``, so the icons retract into the
+        moving emblem instead of fading out with a hard teardown."""
         if not self._active:
             return
         if self.is_radial_open:
-            self.close_radial_menu()
+            self.dismiss_radial_menu()
         from PySide6.QtGui import QCursor
         from PySide6.QtCore import QTimer
         self._drag_last = QCursor.pos()
@@ -1772,6 +1775,17 @@ class ClusterOverlayController:
             # backdrop collapse with the ring instead of a hard hide at teardown.
             # Mirrors OverlayGroupController's `menu.closing.connect(_collapse_dim)`.
             menu.closing.connect(self._collapse_internal_dim)
+            # Teardown when the fly-back completes: every dismiss path (menu-side
+            # Esc/idle/close-spoke AND the controller-side dismiss_radial_menu used
+            # by the drag auto-close) funnels through close_requested. The caller
+            # (main._wire_radial_menu) also connects this; close_radial_menu is
+            # idempotent, so the double invocation is harmless - this
+            # controller-side connect keeps dismiss_radial_menu self-sufficient.
+            # Guarded: a stub menu without the signal must not tank the open.
+            try:
+                menu.close_requested.connect(self.close_radial_menu)
+            except Exception:
+                pass
             try:
                 menu.start_reveal()
             except Exception:
@@ -1790,6 +1804,28 @@ class ClusterOverlayController:
                           "back (fail-closed):\n" + traceback.format_exc())
             self.close_radial_menu()
             return None
+
+    def dismiss_radial_menu(self) -> None:
+        """Begin the ring's ANIMATED dismiss: the spokes fly back into the emblem
+        (the menu's own ``_begin_close``), the internal dim collapses in step
+        (via the ``closing`` signal), and the actual teardown runs when the
+        fly-back completes (``close_requested`` -> ``close_radial_menu``) - the
+        exact same sequence as every menu-side dismiss (Esc / idle / close
+        spoke), so a controller-side close (emblem click toggle, drag start)
+        looks identical. Falls back to the immediate ``close_radial_menu()``
+        when the menu lacks the animation engine (a bare stub) or begin-close
+        raises. Idempotent: ``_begin_close`` self-guards while already closing,
+        and a call with no ring open is a no-op."""
+        menu = self._radial_menu
+        begin = getattr(menu, "_begin_close", None) if menu is not None else None
+        if begin is None:
+            if self.is_radial_open:
+                self.close_radial_menu()
+            return
+        try:
+            begin()
+        except Exception:
+            self.close_radial_menu()
 
     def close_radial_menu(self) -> None:
         """Tear down the radial top-level and hide (but keep) the internal dim.
