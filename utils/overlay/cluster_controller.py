@@ -902,6 +902,12 @@ class ClusterOverlayController:
                 menu.start_reveal()
             except Exception:
                 pass
+            # If the portable Settings panel is ALSO open, keep it ABOVE the
+            # just-shown/-restacked radial top-level (the panel must always float
+            # above the emblem AND the radial). Best-effort re-raise: a failure here
+            # must never tank a successful radial open.
+            if self.is_panel_open:
+                self._safe_call(self._panel_surface, "raise_")
             return menu
         except Exception:
             from utils.overlay.backend import overlay_trace
@@ -1012,13 +1018,25 @@ class ClusterOverlayController:
         applies a FULL-RECT click-accepting input shape (the whole panel is
         interactive - unlike the click-through cluster window). ``on_close`` runs in
         close_panel_surface() BEFORE teardown so the caller reparents its hosted
-        content out first. Returns the surface, or None when framed / already open.
+        content out first. Returns the surface (the SAME surface when already open),
+        or None when framed / when the open transaction fails.
 
-        Transaction-safe (the Task-7 lesson): the surface + on_close are tracked
-        BEFORE any fallible host/geometry/show step, so on ANY error
-        close_panel_surface() tears the partial state down (and runs on_close so the
-        caller reclaims its widget) and the method fails closed (returns None,
-        is_panel_open False) rather than leaking a built-but-untracked top-level."""
+        ``on_close`` CONTRACT: it MUST be idempotent and safe to call even when the
+        hosted widget was never reparented IN. On a failed-open rollback the widget may
+        never have been hosted (``host`` can raise before the reparent) yet
+        close_panel_surface() still runs ``on_close``; and the real caller
+        (``main.py``) also runs its own restore on a None return - so ``on_close`` can
+        fire TWICE (once during the rollback, once from the caller's None-guard) and
+        must tolerate both.
+
+        Transaction-safe (the Task-7 lesson): the surface + on_close are tracked BEFORE
+        any fallible step, and EVERY fallible open step (host, geometry,
+        prepare_initial_state, show, raise_, and the input-shape apply) runs UNGUARDED
+        so ANY failure PROPAGATES to the except-clause, which rolls back via
+        close_panel_surface() (runs on_close, tears the partial top-level down) and
+        fails closed (returns None, is_panel_open False) - never a half-open panel that
+        was tracked but never prepared/shown/raised/shaped. Only THIS open path
+        propagates; the post-open _reposition_panel() path stays best-effort."""
         if not self._active:
             return None
         if self._panel_surface is not None:
@@ -1036,17 +1054,21 @@ class ClusterOverlayController:
             # of leaking a built-but-untracked top-level.
             self._panel_surface = surface
             self._panel_on_close = on_close
+            # EVERY fallible open step runs UNGUARDED so any failure PROPAGATES to the
+            # except-clause (fail-closed rollback). Do NOT wrap these in _safe_call /
+            # swallow=True: that would leave is_panel_open True with a panel that was
+            # never prepared/shown/raised/shaped. (_reposition_panel stays guarded.)
             surface.host(widget)
             ax, ay = self._anchor
             surface.set_overlay_geometry(
                 QRect(int(ax - size / 2), int(ay - size / 2), size, size))
-            self._safe_call(surface, "prepare_initial_state")
+            surface.prepare_initial_state()
             surface.show()
-            self._safe_call(surface, "raise_")
+            surface.raise_()
             # NON-EMPTY click region: the WHOLE panel accepts clicks.
             path = QPainterPath()
             path.addRect(0, 0, size, size)
-            self._apply_panel_input_shape(path)
+            self._apply_panel_input_shape(path, swallow=False)
             return surface
         except Exception:
             from utils.overlay.backend import overlay_trace
@@ -1060,7 +1082,19 @@ class ClusterOverlayController:
         """Destroy the owned panel surface. Runs ``on_close`` FIRST so the caller can
         reparent its hosted content out BEFORE the surface (and with it the hosted
         container) is torn down; then nulls state and hides + deletes the surface.
-        Idempotent: a call when the panel was never open is a safe no-op."""
+        Idempotent: a call when the panel was never open is a safe no-op.
+
+        ``on_close`` CONTRACT: it MUST be idempotent and safe to call even when the
+        hosted widget was never reparented IN. This method runs it during a
+        failed-open rollback (where ``host`` may have raised before the reparent) as
+        well as on a normal close, and the real caller also runs its own restore on a
+        None return - so ``on_close`` can fire more than once and must tolerate it.
+
+        Borrowed-content safety: ``on_close`` runs in a try/except (a raise must never
+        abort the teardown), and BEFORE the surface is deleteLater'd any child STILL
+        hosted in the surface is reparented out (see ``_release_panel_content``), so a
+        raising on_close that never reclaimed the caller's widget cannot let Qt's
+        parent-child destruction delete that borrowed widget."""
         cb = self._panel_on_close
         self._panel_on_close = None
         if cb is not None:
@@ -1072,8 +1106,35 @@ class ClusterOverlayController:
         self._panel_surface = None
         self._panel_size = 0
         if surface is not None:
+            # Protect BORROWED content: if on_close raised (or otherwise failed to
+            # reparent the caller's widget out), the widget may still be a child of the
+            # surface, and deleteLater would destroy it. Reparent any still-hosted
+            # child out FIRST (best effort); a child the caller already moved elsewhere
+            # is left alone, so the happy path is untouched.
+            self._release_panel_content(surface)
             self._safe_call(surface, "hide")
             self._safe_call(surface, "deleteLater")
+
+    def _release_panel_content(self, surface) -> None:
+        """Reparent the panel surface's still-hosted child out to None so a subsequent
+        deleteLater cannot destroy a BORROWED widget. Best-effort + guarded, and a
+        no-op unless the child is STILL parented to *surface* (a child the caller's
+        on_close already reparented elsewhere is left where it is - the happy path).
+        Uses the surface's ``release()`` when present (the OverlaySurface API), else a
+        direct ``setParent(None)`` fallback."""
+        if surface is None:
+            return
+        try:
+            hosted = getattr(surface, "_hosted", None)
+            if hosted is None or hosted.parent() is not surface:
+                return
+            release = getattr(surface, "release", None)
+            if release is not None:
+                release()
+            else:
+                hosted.setParent(None)
+        except Exception:
+            pass
 
     def _reposition_panel(self) -> None:
         """Re-center the open panel top-level on the anchor at its FIXED open-time
@@ -1094,16 +1155,19 @@ class ClusterOverlayController:
             pass
         self._safe_call(surface, "raise_")
 
-    def _apply_panel_input_shape(self, path) -> None:
+    def _apply_panel_input_shape(self, path, swallow: bool = True) -> None:
         """Apply *path* as the panel surface's INPUT (click-accept) shape via the
-        backend. Best-effort: a shape failure must never break open."""
+        backend. Best-effort by default (``swallow=True``) so a shape failure never
+        breaks a reposition; the OPEN path calls with ``swallow=False`` so a failure
+        PROPAGATES into the open transaction (fail-closed rollback)."""
         surface = self._panel_surface
         if surface is None:
             return
         try:
             self._backend.apply_input_shape(surface, path, surface.devicePixelRatio())
         except Exception:
-            pass
+            if not swallow:
+                raise
 
     # ------------------------------------------------------------------
     # Persistence (anchor + scale + monitor identity)

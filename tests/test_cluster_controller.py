@@ -1763,6 +1763,7 @@ def test_scale_while_panel_open_recenters_panel_without_rescaling(qapp, monkeypa
     ctrl.enter()
     surface = ctrl.open_panel_surface(QWidget())
     size_at_open = surface.geom.width()
+    raised_before = surface.raised
 
     ctrl.set_scale_by_notches(2)                     # scale up while the panel is open
 
@@ -1771,6 +1772,11 @@ def test_scale_while_panel_open_recenters_panel_without_rescaling(qapp, monkeypa
     assert surface.geom == QRect(
         int(anchor[0] - size_at_open / 2), int(anchor[1] - size_at_open / 2),
         size_at_open, size_at_open)
+    # De-tautologized: the geometry alone is unchanged (fixed size + same anchor), so
+    # assert a side effect ONLY _reposition_panel() performs - it re-RAISES the panel
+    # from the scale path. This FAILS if the scale-path _reposition_panel() call is
+    # removed (the geometry assertions above would still pass without it).
+    assert surface.raised == raised_before + 1
     ctrl.close_panel_surface()
 
 
@@ -1802,3 +1808,231 @@ def test_leave_closes_panel_and_runs_on_close_before_restore(qapp, monkeypatch):
     assert ctrl._panel_surface is None
     assert ctrl._panel_on_close is None
     assert surface.hidden == 1 and surface.deleted == 1
+
+
+# ---------------------------------------------------------------------------
+# 11b. Transaction-safe panel OPEN: a failure in ANY fallible open step rolls back
+# ---------------------------------------------------------------------------
+def _patch_boom_step_panel(monkeypatch, boom_on):
+    """Patch PanelSurface with a recording stub that RAISES at a chosen OPEN step
+    (``boom_on`` in {"prepare", "raise", "shape"}) so the transaction-safe rollback
+    can be exercised per-step. ``shape`` raises inside ``devicePixelRatio()`` so the
+    input-shape apply step (the last open step) fails. Returns the created dict."""
+    created = {"surfaces": []}
+
+    class _BoomStepPanelSurface(QWidget):
+        def __init__(self, backend=None):
+            super().__init__()
+            self.hidden = 0
+            self.deleted = 0
+            self.hosted = None
+            self.geom = None
+            created["surfaces"].append(self)
+
+        def host(self, widget):
+            self.hosted = widget
+            widget.setParent(self)
+
+        def set_overlay_geometry(self, rect):
+            self.geom = rect
+
+        def prepare_initial_state(self):
+            if boom_on == "prepare":
+                raise RuntimeError("prepare boom")
+
+        def show(self):
+            pass
+
+        def raise_(self):
+            if boom_on == "raise":
+                raise RuntimeError("raise boom")
+
+        def devicePixelRatio(self):
+            if boom_on == "shape":
+                raise RuntimeError("dpr boom")
+            return super().devicePixelRatio()
+
+        def hide(self):
+            self.hidden += 1
+
+        def deleteLater(self):
+            self.deleted += 1
+
+    monkeypatch.setattr("utils.overlay.cluster_surface.PanelSurface",
+                        _BoomStepPanelSurface)
+    return created
+
+
+@pytest.mark.parametrize("boom_on", ["prepare", "raise", "shape"])
+def test_open_panel_surface_failclosed_on_open_step_raise(qapp, monkeypatch, boom_on):
+    """Transaction-safe open: a failure in ANY fallible open step
+    (prepare_initial_state, raise_, or the input-shape apply) fails closed - open
+    returns None, is_panel_open is False, no surface/on_close/size is left tracked,
+    the half-built top-level is torn down (deleted), and on_close ran during the
+    rollback. Reverting the fix (re-guarding these steps with _safe_call / swallow)
+    would swallow the failure and return the surface with is_panel_open True."""
+    created = _patch_boom_step_panel(monkeypatch, boom_on)
+    ran_on_close: list = []
+    ctrl, provider, window, c = _make()
+    ctrl.enter()
+
+    result = ctrl.open_panel_surface(
+        QWidget(), on_close=lambda: ran_on_close.append(1))     # must not raise
+
+    assert result is None
+    assert ctrl.is_panel_open is False
+    assert ctrl._panel_surface is None
+    assert ctrl._panel_on_close is None
+    assert ctrl._panel_size == 0
+    # The half-built panel top-level was cleaned up by the rollback, not leaked.
+    assert len(created["surfaces"]) == 1
+    assert created["surfaces"][0].deleted == 1
+    # The rollback ran on_close (so the caller reclaims its widget on a failed open).
+    assert ran_on_close == [1]
+    ctrl.leave()
+
+
+# ---------------------------------------------------------------------------
+# 11c. Panel stays ABOVE the radial when BOTH are open
+# ---------------------------------------------------------------------------
+def test_panel_stays_above_radial_when_both_open(qapp, monkeypatch):
+    """Opening the radial while the panel is already open must re-raise the panel
+    ABOVE the just-shown radial top-level (the panel floats above the emblem AND the
+    radial). A shared z-event log records the radial show + the panel raise; the panel
+    re-raise must occur AFTER the radial is shown (so the panel ends up on top).
+    Reverting the fix (dropping the panel re-raise in open_radial_menu) removes the
+    post-clear panel-raise, failing this test."""
+    z_events: list = []
+
+    class _StubRadialSurface(QWidget):
+        def __init__(self, backend=None):
+            super().__init__()
+            self.geom = None
+
+        def host(self, widget):
+            pass
+
+        def set_overlay_geometry(self, rect):
+            self.geom = rect
+
+        def prepare_initial_state(self):
+            pass
+
+        def show(self):
+            z_events.append(("radial-show", self))
+
+        def hide(self):
+            pass
+
+        def deleteLater(self):
+            pass
+
+    class _StubRadialMenu(QWidget):
+        def __init__(self, emblem_diameter=0.0, **kw):
+            super().__init__()
+
+        def set_emblem_diameter(self, d):
+            pass
+
+        def start_reveal(self):
+            pass
+
+    class _StubPanelSurface(QWidget):
+        def __init__(self, backend=None):
+            super().__init__()
+            self.geom = None
+            self.raised = 0
+
+        def host(self, widget):
+            widget.setParent(self)
+
+        def set_overlay_geometry(self, rect):
+            self.geom = rect
+
+        def prepare_initial_state(self):
+            pass
+
+        def show(self):
+            pass
+
+        def raise_(self):
+            self.raised += 1
+            z_events.append(("panel-raise", self))
+
+        def hide(self):
+            pass
+
+        def deleteLater(self):
+            pass
+
+    monkeypatch.setattr("utils.overlay.cluster_surface.RadialSurface", _StubRadialSurface)
+    monkeypatch.setattr("utils.overlay.radial_menu.RadialMenuWidget", _StubRadialMenu)
+    monkeypatch.setattr("utils.overlay.cluster_surface.PanelSurface", _StubPanelSurface)
+
+    ctrl, provider, window, created = _make(anchor=(1000, 700))
+    ctrl.enter()
+
+    psurf = ctrl.open_panel_surface(QWidget())
+    assert psurf is not None
+    assert psurf.raised >= 1                    # single-open z-order: panel raised on open
+    z_events.clear()
+
+    menu = ctrl.open_radial_menu()
+    assert menu is not None
+
+    kinds = [k for k, _ in z_events]
+    assert "radial-show" in kinds               # the radial top-level was shown
+    assert "panel-raise" in kinds               # the panel was re-raised while opening it
+    # ... and the panel re-raise happened AFTER the radial was shown, so the panel is
+    # stacked ABOVE the radial.
+    assert kinds.index("panel-raise") > kinds.index("radial-show")
+
+    ctrl.close_radial_menu()
+    ctrl.close_panel_surface()
+    ctrl.leave()
+
+
+# ---------------------------------------------------------------------------
+# 11d. A raising on_close must not destroy the BORROWED hosted widget
+# ---------------------------------------------------------------------------
+def _cpp_alive(widget) -> bool:
+    """True while the widget's underlying C++ object is not yet destroyed (a deleted
+    QWidget raises RuntimeError on any method access)."""
+    try:
+        widget.objectName()
+        return True
+    except RuntimeError:
+        return False
+
+
+def test_close_panel_surface_protects_hosted_widget_when_on_close_raises(qapp):
+    """A raising on_close must not let the surface teardown destroy the BORROWED
+    hosted widget. Built on a REAL PanelSurface so deleteLater actually cascades to
+    children: close_panel_surface() reparents the still-hosted widget out of the
+    surface BEFORE deleteLater, so the widget survives even though on_close raised and
+    never reclaimed it. Reverting the fix (dropping _release_panel_content) lets the
+    surface's destruction cascade delete the borrowed widget."""
+    ctrl, provider, window, created = _make()
+    ctrl.enter()
+    widget = QWidget()
+
+    def boom():
+        raise RuntimeError("on_close boom")
+
+    surface = ctrl.open_panel_surface(widget, on_close=boom)   # REAL PanelSurface
+    assert surface is not None
+    assert ctrl.is_panel_open is True
+    assert widget.parent() is surface                # hosted in the surface
+
+    ctrl.close_panel_surface()                       # on_close raises; must not tank teardown
+    # Force the surface's deleteLater to actually run: DeferredDelete is NOT processed
+    # by a plain processEvents(), so without this the surface (and its child) would
+    # still be alive and the survival check below would be meaningless.
+    from PySide6.QtCore import QEvent
+    qapp.sendPostedEvents(None, QEvent.DeferredDelete)
+
+    assert ctrl.is_panel_open is False               # surface fully torn down
+    assert _cpp_alive(surface) is False              # the surface WAS really destroyed
+    assert _cpp_alive(widget) is True                # BORROWED widget survived that destruction
+    assert widget.parent() is None                   # released out of the (dead) surface
+    ctrl.leave()
