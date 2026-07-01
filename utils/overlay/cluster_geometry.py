@@ -147,6 +147,35 @@ def map_host_rect_to_window(
     return QRect(x0, y0, math.ceil(right) - x0, math.ceil(bottom) - y0)
 
 
+def map_host_point_to_window(
+    point: Tuple[int, int],
+    emblem_center_local: Tuple[int, int],
+    pivot: Tuple[int, int],
+    scale: float,
+) -> Tuple[int, int]:
+    """Map a host-local (scale-1.0) point into window coords under the transform.
+
+    The single-point counterpart of :func:`map_host_rect_to_window` (and the
+    exact inverse of :func:`map_window_point_to_host`):
+    ``window = pivot + (host - emblem_center) * scale``, rounded to the nearest
+    window pixel.
+
+    Args:
+        point: ``(x, y)`` host-local point at scale 1.0.
+        emblem_center_local: ``(ex, ey)`` emblem center within the 1.0 host.
+        pivot: ``(px, py)`` fixed window-local point the emblem center sits on.
+        scale: the current uniform cluster scale.
+
+    Returns:
+        ``(x, y)`` in window-local coordinates.
+    """
+    ex, ey = emblem_center_local
+    px, py = pivot
+    s = float(scale)
+    x, y = point
+    return (round(px + (x - ex) * s), round(py + (y - ey) * s))
+
+
 def map_window_point_to_host(
     point: Tuple[int, int],
     emblem_center_local: Tuple[int, int],

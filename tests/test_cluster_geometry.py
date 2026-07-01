@@ -16,6 +16,7 @@ from utils.overlay.cluster_geometry import (
     cluster_bbox,
     envelope_for,
     input_union,
+    map_host_point_to_window,
     map_host_rect_to_window,
     map_window_point_to_host,
     scaled_content_rect,
@@ -264,6 +265,28 @@ def test_map_window_point_round_trips_host_point():
 def test_map_window_point_nonpositive_scale_degrades_to_identity():
     assert map_window_point_to_host((10, 20), (0, 0), (0, 0), 0) == (10, 20)
     assert map_window_point_to_host((10, 20), (0, 0), (0, 0), -3) == (10, 20)
+
+
+def test_map_host_point_identity_at_pivot_scale_one():
+    assert map_host_point_to_window((10, 20), (110, 90), (110, 90), 1.0) == (10, 20)
+
+
+def test_map_host_point_scales_about_emblem_center():
+    # The emblem center itself always lands on the pivot; other points scale
+    # their offset from it: window = pivot + (host - emblem_center) * s.
+    ec, pivot = (110, 90), (220, 180)
+    assert map_host_point_to_window(ec, ec, pivot, 1.75) == pivot
+    assert map_host_point_to_window((110 + 40, 90 - 20), ec, pivot, 1.5) == (
+        220 + 60, 180 - 30)
+
+
+def test_map_host_point_inverts_map_window_point():
+    ec, pivot = (110, 90), (220, 180)
+    for s in (0.5, 1.0, 1.75):
+        for hx, hy in ((0, 0), (110, 90), (399, 299), (25, 250)):
+            wx, wy = map_host_point_to_window((hx, hy), ec, pivot, s)
+            bx, by = map_window_point_to_host((wx, wy), ec, pivot, s)
+            assert abs(bx - hx) <= 1 and abs(by - hy) <= 1
 
 
 # --------------------------------------------------------------------------- #

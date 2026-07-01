@@ -32,6 +32,7 @@ from PySide6.QtCore import QObject, QPoint, QPointF, QRect, QTimer, Signal
 from PySide6.QtWidgets import QWidget
 
 from utils.overlay.backend import NoOpOverlayBackend
+from utils.overlay.card_metrics import CardMetrics
 from utils.overlay.cluster_controller import ClusterOverlayController
 from utils.overlay.cluster_geometry import envelope_for
 from utils.overlay.cluster_surface import ClusterSurface
@@ -76,6 +77,11 @@ def _win_pt(hx, hy, scale=1.0):
 _CELL_ORIGINS = {0: (10, 10), 1: (210, 10), 2: (10, 160), 3: (210, 160)}
 _CELL_SIZE = (180, 130)
 _CONTROL_RECTS_LOCAL = [QRect(8, 8, 30, 18), QRect(8, 40, 30, 18)]   # card-local
+# Per-quadrant concave-carve corner, mirroring _compact_layout._CFG: the carve
+# always faces the pinwheel center. The stub provider exposes it via each slot's
+# "cfg" plus a CardMetrics(1.0) `_metrics` (cutout_r 96), so the controller
+# builds the same cutout circles the real layout paints.
+_CELL_CUTOUTS = {0: "br", 1: "bl", 2: "tr", 3: "tl"}
 
 # A WINDOW-LOCAL point inside cell 1's first control (host rect (218,18,30,18),
 # mapped through the scale-1.0 transform) but OUTSIDE the emblem - so an
@@ -126,6 +132,7 @@ class _StubProvider:
             cw.setGeometry(ox, oy, *_CELL_SIZE)
             self._cell_widgets.append(cw)
         self._token = object()
+        self._metrics = CardMetrics(1.0)   # real metrics: cutout_r feeds the carve circles
         self.captured = 0
         self.restored: list = []
         self.last_metrics = None
@@ -157,9 +164,11 @@ class _StubProvider:
     @property
     def _card_slots(self):
         """Mirror _CompactLayout._card_slots: the list of cell dicts (each with a
-        ``"cell"`` widget). The controller reads the cell origin from these to
-        translate control_rects into window-local coords."""
-        return [{"cell": cw} for cw in self._cell_widgets]
+        ``"cell"`` widget and its quadrant ``"cfg"``). The controller reads the
+        cell origin from these to translate control_rects into window-local
+        coords, and the cfg's carve corner to build the peek cutout circles."""
+        return [{"cell": cw, "cfg": {"cutout": _CELL_CUTOUTS[i]}}
+                for i, cw in enumerate(self._cell_widgets)]
 
     def control_rects(self, cell_index):
         """Mirror _CompactLayout.control_rects(cell_index) -> list[QRect]: the
@@ -2583,6 +2592,58 @@ def test_hover_peek_fades_hovered_card_via_shell_opacity(qapp):
     assert portrait1 == pytest.approx(0.25, abs=1e-6)   # PEEK_PORTRAIT_OPACITY (net)
     assert bg1 < 1.0 and portrait1 < 1.0
     assert all(c[0] == 1 for c in provider.shell_opacities)   # only card 1 repainted
+    ctrl.leave()
+
+
+def test_hover_peek_excludes_carved_corner_and_emblem(qapp):
+    """The peek hit test follows the PAINTED card shape (rect minus the concave
+    carve the emblem nests in): a cursor inside a card's flat rect but within its
+    carve circle fades nothing - putting the cursor on the emblem must never make
+    any card transparent - while a body point still peeks. The carve scales with
+    the cluster transform, so the exclusion holds at non-1.0 scales too."""
+    ctrl, provider, window, created = _make(anchor=_GHOST_ANCHOR, settings=_DictSettings())
+    ctrl.enter()
+    ax, ay = _GHOST_ANCHOR
+
+    def screen_pt(hx, hy, s=1.0):
+        # Window origin = anchor - pivot and window pt = pivot + (host - ec) * s,
+        # so a host point lands on screen at anchor + (host - emblem_center) * s.
+        return (round(ax + (hx - _EMBLEM_CX) * s),
+                round(ay + (hy - _EMBLEM_CY) * s))
+
+    # Host (215, 135) is inside cell 1's rect but ~7px from its carve corner
+    # (210, 140) - deep inside the cutout_r=96 circle: no fade, no repaint.
+    for _ in range(10):
+        ctrl._peek_tick(screen_pt(215, 135))
+    assert ctrl._peek_progress[1] == 0.0
+    assert provider.shell_opacities == []
+
+    # The stub emblem center (110, 90) sits inside cell 0's rect AND inside its
+    # carve circle: hovering the emblem itself peeks NO card.
+    for _ in range(10):
+        ctrl._peek_tick(screen_pt(_EMBLEM_CX, _EMBLEM_CY))
+    assert ctrl._peek_progress == [0.0, 0.0, 0.0, 0.0]
+
+    # A card-body point (cell 1 center, outside the carve) still peeks.
+    for _ in range(10):
+        ctrl._peek_tick(screen_pt(300, 75))
+    assert ctrl._peek_progress[1] == pytest.approx(1.0, abs=1e-6)
+
+    # At a settled non-1.0 scale the carve circle tracks the transform - center
+    # AND radius. Peek the body first, then probe host (264, 68): distance 90
+    # from the carve corner, so it is inside the SCALED circle (90 < 96) but
+    # would fall OUTSIDE an unscaled radius (90 * 1.24 > 96) - a regression in
+    # either the center mapping or the radius scaling re-peeks the card here.
+    ctrl.set_scale_by_notches(3)               # 1.0 + 3 * 0.08 = 1.24
+    ctrl._settle_input()
+    s = ctrl.scale
+    assert s != 1.0
+    for _ in range(10):
+        ctrl._peek_tick(screen_pt(300, 75, s))
+    assert ctrl._peek_progress[1] == pytest.approx(1.0, abs=1e-6)
+    for _ in range(10):
+        ctrl._peek_tick(screen_pt(264, 68, s))
+    assert ctrl._peek_progress[1] == 0.0
     ctrl.leave()
 
 
