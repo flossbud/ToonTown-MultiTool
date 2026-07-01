@@ -164,6 +164,19 @@ class ClusterOverlayController:
         self._drag_timer = None
         self._drag_last = None
 
+        # Multi-monitor / HiDPI screen-change reshape. The single cluster window's
+        # input shape is a LOGICAL surface-local path that the backend converts to
+        # DEVICE pixels via surface.devicePixelRatio() AT APPLY TIME. When the window
+        # moves to a monitor with a different device-pixel ratio the logical path is
+        # unchanged but the device conversion changes, so the shape MUST be re-applied
+        # at the new DPR (else the click-through region is wrong on the new monitor).
+        # The QWindow's screenChanged signal drives that re-apply. windowHandle() may
+        # be None until the window is shown, so the connect runs AFTER show() in
+        # enter(); the guard flag keeps it idempotent + the handle is remembered so
+        # leave() can disconnect exactly what it connected.
+        self._screen_change_connected: bool = False
+        self._screen_change_handle = None
+
     # ------------------------------------------------------------------
     # State queries
     # ------------------------------------------------------------------
@@ -357,6 +370,10 @@ class ClusterOverlayController:
         # regardless of the real cursor.
         self._peek_store.clear()
         self._start_peek_timer()
+        # Reshape on a monitor/DPI change: now that the surface is shown its native
+        # windowHandle exists, so connect screenChanged to re-apply the input shape at
+        # the new device-pixel ratio when the window crosses to another monitor.
+        self._connect_screen_change()
         self._emit_active_changed()   # self._active is True here
         return True
 
@@ -395,6 +412,9 @@ class ClusterOverlayController:
         # dim.
         self._end_drag()
         self._stop_peek_timer()
+        # Stop reshaping on monitor/DPI changes: disconnect the screenChanged handler
+        # so a late signal after teardown can never re-apply a shape to a dead surface.
+        self._disconnect_screen_change()
         # Cancel any pending settle and reset scaling state so a re-enter starts
         # framed (scale 1.0, no in-flight gesture). A late timer firing post-leave
         # is a guarded no-op, but stopping it here avoids the wasted callback.
@@ -1112,6 +1132,95 @@ class ClusterOverlayController:
         return int(CardMetrics(self._scale).emblem // 4)
 
     # ------------------------------------------------------------------
+    # Multi-monitor / HiDPI screen-change reshape
+    # ------------------------------------------------------------------
+    def _connect_screen_change(self) -> None:
+        """Connect the cluster window's ``screenChanged`` to ``_on_screen_changed`` so
+        the input shape is re-applied at the new device-pixel ratio when the window
+        crosses to another monitor.
+
+        Called from ``enter()`` AFTER ``surface.show()`` because ``windowHandle()`` may
+        be None until the window is shown (a None handle is a safe no-op). Idempotent:
+        the guard flag stops a re-enter (or a double call) from double-connecting the
+        slot, so a single screenChanged fires the reshape exactly once. Fully guarded -
+        a wiring failure must never tank a successful ``enter()``."""
+        if self._screen_change_connected:
+            return
+        surface = self._surface
+        if surface is None:
+            return
+        get_handle = getattr(surface, "windowHandle", None)
+        if get_handle is None:
+            return
+        try:
+            wh = get_handle()
+            if wh is None:
+                return
+            wh.screenChanged.connect(self._on_screen_changed)
+            self._screen_change_handle = wh
+            self._screen_change_connected = True
+        except Exception:
+            pass
+
+    def _disconnect_screen_change(self) -> None:
+        """Disconnect the ``screenChanged`` handler (``leave()`` / teardown) so a late
+        signal after the surface is gone can never re-apply a shape. Idempotent +
+        guarded: a no-op when never connected, and safe if the handle is already gone
+        or the disconnect raises."""
+        if not self._screen_change_connected:
+            return
+        self._screen_change_connected = False
+        wh = self._screen_change_handle
+        self._screen_change_handle = None
+        if wh is None:
+            return
+        try:
+            wh.screenChanged.disconnect(self._on_screen_changed)
+        except Exception:
+            pass
+
+    def _on_screen_changed(self, *_args) -> None:
+        """The window moved to another monitor: its device-pixel ratio may have
+        changed, so RE-APPLY the input shape(s) at the surface's CURRENT (fresh) DPR.
+
+        The input path is LOGICAL surface-local; the backend converts it to DEVICE
+        pixels via ``surface.devicePixelRatio()`` at apply time, so the SAME logical
+        path yields a different device region on a different-DPR monitor - hence the
+        re-apply. No-op when framed (a stray post-leave emit is safe).
+
+        A screen change is a DISCRETE event (not a scroll burst), so the exact shape is
+        re-applied IMMEDIATELY - it does NOT need the wheel-stall settle deferral. The
+        one exception: if a scale gesture is genuinely mid-flight (``_scaling_active``)
+        the broad-phase discipline is respected - the (re-armed) settle timer replays
+        the exact shape on quiesce rather than narrowing the wheel-capture region under
+        the pointer. A screenChanged handler must never raise into Qt dispatch, so the
+        whole body is guarded (traced, never propagated)."""
+        if not self._active:
+            return
+        try:
+            # Cluster exact shape: immediate on a plain monitor move; deferred to the
+            # settle timer if a scale gesture is genuinely live.
+            if self._scaling_active:
+                self._arm_settle_timer()
+            else:
+                self._apply_exact_input_shape()
+            # Radial open: re-center/re-size on the fresh emblem AND re-apply its
+            # (full-canvas) click region immediately at the new DPR.
+            if self.is_radial_open:
+                self._reposition_radial()
+                self._reapply_radial_shape()
+            # Panel open: re-center AND re-apply its (full-rect) click region at the
+            # new DPR.
+            if self.is_panel_open:
+                self._reposition_panel()
+                self._reapply_panel_shape()
+        except Exception:
+            from utils.overlay.backend import overlay_trace
+            import traceback
+            overlay_trace("cluster_controller._on_screen_changed() suppressed "
+                          "(never raise into Qt dispatch):\n" + traceback.format_exc())
+
+    # ------------------------------------------------------------------
     # Radial menu + internal dim layer
     # ------------------------------------------------------------------
     def cluster_layer_order(self) -> list:
@@ -1550,6 +1659,19 @@ class ClusterOverlayController:
         except Exception:
             if not swallow:
                 raise
+
+    def _reapply_panel_shape(self) -> None:
+        """Re-apply the panel's FULL-RECT click region at the current panel size (and
+        thus the surface's CURRENT device-pixel ratio). The panel's LOGICAL rect is
+        unchanged; only the device conversion differs on a new monitor, so a
+        screen-change re-apply honors the logical/device contract. No-op when the
+        panel is closed. Mirrors ``_reapply_radial_shape``."""
+        if self._panel_surface is None or self._panel_size <= 0:
+            return
+        from PySide6.QtGui import QPainterPath
+        path = QPainterPath()
+        path.addRect(0, 0, self._panel_size, self._panel_size)
+        self._apply_panel_input_shape(path)
 
     # ------------------------------------------------------------------
     # Persistence (anchor + scale + monitor identity)

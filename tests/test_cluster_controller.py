@@ -2494,3 +2494,321 @@ def test_ghost_press_resolves_at_scale_local_coords_at_non_unit_scale(qapp):
     # (round(cx / 1.5), round(cy / 1.5)) - a different, wrong point.
     assert provider.ghost_clicks == [(1, cx, cy)]
     ctrl.leave()
+
+
+# ---------------------------------------------------------------------------
+# 13. Multi-monitor / HiDPI screen-change reshape (T8d)
+#
+# The single cluster window's input shape is a LOGICAL surface-local path that the
+# backend converts to DEVICE pixels via surface.devicePixelRatio() AT APPLY TIME.
+# When the window moves to a monitor with a DIFFERENT device-pixel ratio the logical
+# path is unchanged but the device conversion changes, so the shape MUST be
+# RE-APPLIED at the new DPR (else the click-through region is wrong on the new
+# monitor). These tests use a stub surface whose devicePixelRatio() is controllable
+# and whose fake windowHandle() exposes a recordable screenChanged signal.
+# ---------------------------------------------------------------------------
+class _FakeSignal:
+    """A minimal screenChanged stand-in recording connect/disconnect + emit, so the
+    connect/disconnect LIFECYCLE (not just the _on_screen_changed guard) is exercised
+    against the REAL wiring (mirrors tests/test_overlay_topmost.py). disconnect()
+    raises (like Qt) when the slot was never connected, so the idempotent guard is
+    what keeps double-leave safe."""
+
+    def __init__(self):
+        self.slots: list = []
+
+    def connect(self, slot):
+        self.slots.append(slot)
+
+    def disconnect(self, slot):
+        self.slots.remove(slot)   # bound-method equality; raises if absent (like Qt)
+
+    def emit(self, *args):
+        for slot in list(self.slots):
+            slot(*args)
+
+
+class _FakeWindowHandle:
+    def __init__(self):
+        self.screenChanged = _FakeSignal()
+
+
+class _DprStubSurface(_StubSurface):
+    """A recording surface with a CONTROLLABLE devicePixelRatio() and a fake
+    windowHandle() exposing a recordable screenChanged signal - so a monitor move (a
+    DPR change plus a screenChanged emit) can be simulated headlessly. Everything else
+    (host/release/geometry/show/hide/deleteLater) is inherited from _StubSurface."""
+
+    def __init__(self, dpr: float = 1.0, host_raises: bool = False,
+                 release_raises: bool = False):
+        super().__init__(host_raises=host_raises, release_raises=release_raises)
+        self._dpr = float(dpr)
+        self._handle = _FakeWindowHandle()
+
+    def set_dpr(self, dpr: float) -> None:
+        self._dpr = float(dpr)
+
+    def devicePixelRatio(self):
+        return self._dpr
+
+    def windowHandle(self):
+        return self._handle
+
+
+def _make_dpr(dpr: float = 1.0, provider=None, anchor=None, backend=None,
+              settings=None):
+    """Build a controller whose surface is a _DprStubSurface (controllable DPR + fake
+    screenChanged). Returns (controller, provider, window, created)."""
+    provider = provider if provider is not None else _StubProvider()
+    window = _StubWindow()
+    created: list = []
+
+    def factory():
+        s = _DprStubSurface(dpr=dpr)
+        created.append(s)
+        return s
+
+    ctrl = ClusterOverlayController(
+        window,
+        backend=backend if backend is not None else NoOpOverlayBackend(),
+        settings=settings,
+        surface_factory=factory,
+        card_provider=provider,
+    )
+    if anchor is not None:
+        ctrl._anchor = anchor
+    return ctrl, provider, window, created
+
+
+def test_screen_change_reapplies_cluster_shape_at_new_dpr(qapp):
+    """The load-bearing contract: when the window moves to a HiDPI monitor the
+    cluster's EXACT input shape is RE-APPLIED with the NEW device-pixel ratio, so the
+    backend's device conversion of the (unchanged) LOGICAL path tracks the new
+    monitor. Reverting _on_screen_changed's re-apply leaves NO new shape after the
+    move (backend.shapes stays empty) and fails the assertion."""
+    backend = _RecordingBackend()
+    ctrl, provider, window, created = _make_dpr(dpr=1.0, backend=backend)
+    ctrl.enter()
+    surface = created[0]
+    # Settle so the EXACT shape lands at the ORIGINAL dpr (1.0), establishing baseline.
+    ctrl._settle_input()
+    assert backend.shapes, "expected an exact shape at the original dpr"
+    assert backend.shapes[-1][2] == 1.0
+    backend.shapes.clear()
+
+    # The window crossed to a HiDPI monitor: its device-pixel ratio is now 2.0.
+    surface.set_dpr(2.0)
+    ctrl._on_screen_changed()
+
+    cluster_shapes = [s for s in backend.shapes if s[0] is surface]
+    assert cluster_shapes, "screen change must re-apply the cluster input shape"
+    assert cluster_shapes[-1][2] == 2.0       # ... at the NEW dpr, not the stale 1.0
+    ctrl.leave()
+
+
+def test_screen_change_noop_when_inactive(qapp):
+    """A stray screenChanged while FRAMED (never entered / after leave) is a safe
+    no-op: nothing applied, nothing armed, no raise. To make the `not self._active`
+    early-return LOAD-BEARING, a leftover mid-gesture flag is set: reverting the guard
+    would let the handler arm the settle timer even while framed."""
+    backend = _RecordingBackend()
+    ctrl, provider, window, created = _make_dpr(dpr=1.0, backend=backend)
+
+    # Simulate a stray mid-gesture screenChanged that arrives while FRAMED: with the
+    # active-guard removed, the _scaling_active branch would arm the settle timer.
+    ctrl._scaling_active = True
+    ctrl._on_screen_changed()                  # must not raise
+
+    assert backend.shapes == []                # nothing applied while framed
+    assert ctrl._settle_timer is None          # active-guard short-circuited the arm
+    assert ctrl.is_active is False
+
+
+def test_screen_change_reapplies_radial_shape_at_new_dpr(qapp, monkeypatch):
+    """With the radial open, a monitor move re-applies the radial surface's input
+    shape at the NEW device-pixel ratio too (the radial canvas is LOGICAL; the backend
+    converts to device pixels via the surface's dpr at apply time)."""
+    backend = _RecordingBackend()
+
+    class _DprRadialSurface(QWidget):
+        def __init__(self, backend=None):
+            super().__init__()
+            self._dpr = 1.0
+            self.geom = None
+
+        def host(self, widget):
+            pass
+
+        def set_overlay_geometry(self, rect):
+            self.geom = rect
+
+        def prepare_initial_state(self):
+            pass
+
+        def show(self):
+            pass
+
+        def hide(self):
+            pass
+
+        def deleteLater(self):
+            pass
+
+        def set_dpr(self, d):
+            self._dpr = float(d)
+
+        def devicePixelRatio(self):
+            return self._dpr
+
+    class _StubRadialMenu(QWidget):
+        def __init__(self, emblem_diameter=0.0, **kw):
+            super().__init__()
+
+        def set_emblem_diameter(self, d):
+            pass
+
+        def start_reveal(self):
+            pass
+
+    monkeypatch.setattr("utils.overlay.cluster_surface.RadialSurface", _DprRadialSurface)
+    monkeypatch.setattr("utils.overlay.radial_menu.RadialMenuWidget", _StubRadialMenu)
+
+    ctrl, provider, window, created = _make_dpr(dpr=1.0, backend=backend, anchor=(1000, 700))
+    ctrl.enter()
+    cluster = created[0]
+    ctrl.open_radial_menu()
+    rsurf = ctrl._radial_surface
+
+    def radial_shapes():
+        return [s for s in backend.shapes if s[0] is rsurf]
+
+    assert len(radial_shapes()) == 1          # applied once on open (dpr 1.0)
+    assert radial_shapes()[-1][2] == 1.0
+
+    # Both surfaces cross to the HiDPI monitor.
+    cluster.set_dpr(2.0)
+    rsurf.set_dpr(2.0)
+    n_before = len(radial_shapes())
+    ctrl._on_screen_changed()
+
+    assert len(radial_shapes()) == n_before + 1   # radial shape RE-APPLIED on the move
+    assert radial_shapes()[-1][2] == 2.0           # ... at the new dpr
+    ctrl.close_radial_menu()
+    ctrl.leave()
+
+
+def test_screen_change_reapplies_panel_shape_at_new_dpr(qapp, monkeypatch):
+    """With the portable panel open, a monitor move re-applies the panel surface's
+    full-rect input shape at the NEW device-pixel ratio too."""
+    backend = _RecordingBackend()
+
+    class _DprPanelSurface(QWidget):
+        def __init__(self, backend=None):
+            super().__init__()
+            self._dpr = 1.0
+            self.geom = None
+            self.raised = 0
+
+        def host(self, widget):
+            widget.setParent(self)
+
+        def set_overlay_geometry(self, rect):
+            self.geom = rect
+
+        def prepare_initial_state(self):
+            pass
+
+        def show(self):
+            pass
+
+        def hide(self):
+            pass
+
+        def raise_(self):
+            self.raised += 1
+
+        def deleteLater(self):
+            pass
+
+        def set_dpr(self, d):
+            self._dpr = float(d)
+
+        def devicePixelRatio(self):
+            return self._dpr
+
+    monkeypatch.setattr("utils.overlay.cluster_surface.PanelSurface", _DprPanelSurface)
+
+    ctrl, provider, window, created = _make_dpr(dpr=1.0, backend=backend, anchor=(1000, 700))
+    ctrl.enter()
+    cluster = created[0]
+    psurf = ctrl.open_panel_surface(QWidget())
+
+    def panel_shapes():
+        return [s for s in backend.shapes if s[0] is psurf]
+
+    assert len(panel_shapes()) == 1           # applied once on open (dpr 1.0)
+    assert panel_shapes()[-1][2] == 1.0
+
+    cluster.set_dpr(2.0)
+    psurf.set_dpr(2.0)
+    n_before = len(panel_shapes())
+    ctrl._on_screen_changed()
+
+    assert len(panel_shapes()) == n_before + 1    # panel shape RE-APPLIED on the move
+    assert panel_shapes()[-1][2] == 2.0            # ... at the new dpr
+    ctrl.close_panel_surface()
+    ctrl.leave()
+
+
+def test_enter_connects_screen_change_leave_disconnects(qapp):
+    """Lifecycle: enter() connects the surface's screenChanged (when windowHandle is
+    available); leave() disconnects; both are idempotent (double-enter/leave safe);
+    and a screenChanged after leave() is a no-op."""
+    backend = _RecordingBackend()
+    ctrl, provider, window, created = _make_dpr(dpr=1.0, backend=backend)
+    ctrl.enter()
+    surface = created[0]
+    handle = surface.windowHandle()
+
+    # enter() connected exactly one slot.
+    assert ctrl._screen_change_connected is True
+    assert len(handle.screenChanged.slots) == 1
+
+    # Double-enter (already active -> a no-op) must NOT double-connect.
+    ctrl.enter()
+    assert len(handle.screenChanged.slots) == 1
+
+    # A REAL screenChanged emit while active drives the reshape at the fresh DPR.
+    ctrl._settle_input()                        # exact shape at dpr 1.0
+    surface.set_dpr(2.0)
+    backend.shapes.clear()
+    handle.screenChanged.emit(object())
+    assert any(s[0] is surface and s[2] == 2.0 for s in backend.shapes)
+
+    ctrl.leave()
+
+    # leave() disconnected the slot.
+    assert ctrl._screen_change_connected is False
+    assert handle.screenChanged.slots == []
+
+    # Idempotent: a second leave (a no-op) is safe, and a stray post-leave emit does
+    # nothing (the slot is gone AND _active is False).
+    ctrl.leave()
+    backend.shapes.clear()
+    handle.screenChanged.emit(object())         # no slots -> nothing fires
+    assert backend.shapes == []
+
+
+def test_enter_leave_enter_reconnects_screen_change(qapp):
+    """A fresh enter after leave re-connects screenChanged on the NEW surface's
+    handle (the guard flag reset in leave lets the re-enter connect again)."""
+    ctrl, provider, window, created = _make_dpr(dpr=1.0)
+    ctrl.enter()
+    ctrl.leave()
+    assert ctrl._screen_change_connected is False
+
+    ctrl.enter()
+    assert ctrl._screen_change_connected is True
+    surface2 = created[1]
+    assert len(surface2.windowHandle().screenChanged.slots) == 1
+    ctrl.leave()
