@@ -1,12 +1,13 @@
 """Single always-mapped translucent window that hosts the borrowed cluster.
 
-``ClusterSurface`` is the one override-redirect, frameless, always-on-top,
-non-activating top-level that will host the borrowed ``_grid_host`` cluster
-subtree (the four cards + emblem) as a single rigid window, instead of one
-surface per card. It subclasses ``OverlaySurface`` to inherit all of the
-window flags (Qt.Window | Frameless | StaysOnTop | DoesNotAcceptFocus |
-X11BypassWindowManagerHint), ``WA_TranslucentBackground``, the non-activating
-attributes, the ``host()``/``release()`` plumbing, and the backend hookup.
+``ClusterSurface`` is the one frameless, always-on-top, non-activating
+top-level that will host the borrowed ``_grid_host`` cluster subtree (the four
+cards + emblem) as a single rigid window, instead of one surface per card. It
+subclasses ``OverlaySurface`` to inherit all of the window flags (Qt.Window |
+Frameless | StaysOnTop | DoesNotAcceptFocus; MANAGED keep-above by default,
+override-redirect only under TTMT_OVERLAY_UNMANAGED), ``WA_TranslucentBackground``,
+the non-activating attributes, the ``host()``/``release()`` plumbing, and the
+backend hookup.
 
 It adds exactly ONE thing: a mandatory full-rect transparent SOURCE-CLEAR
 ``paintEvent``.
@@ -132,7 +133,7 @@ class RadialSurface(ClusterSurface):
 
     Even in the single-window cluster design the radial menu
     (``utils.overlay.radial_menu.RadialMenuWidget``) stays a SEPARATE
-    override-redirect top-level: it must sit ABOVE the cluster window AND be
+    overlay top-level: it must sit ABOVE the cluster window AND be
     click-accepting (the cluster window is click-through), neither of which a
     child-of-the-cluster widget can do. Like the cluster window it is a single
     translucent ARGB top-level that resizes as the menu scales, so it needs the
@@ -152,7 +153,7 @@ class PanelSurface(ClusterSurface):
     """Source-cleared top-level for the portable Settings panel.
 
     Like the radial menu, the portable Settings panel is a SEPARATE
-    override-redirect top-level rather than a child of the click-through cluster
+    overlay top-level rather than a child of the click-through cluster
     window: it hosts an arbitrary CALLER-PROVIDED widget (the floating SettingsTab
     container) and must be fully CLICK-ACCEPTING and float ABOVE the cluster window
     + emblem + radial, none of which a child-of-the-cluster widget can do. Being a
