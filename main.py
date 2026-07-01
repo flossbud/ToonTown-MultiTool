@@ -498,12 +498,13 @@ class MultiToonTool(QMainWindow):
         from utils.overlay.backend import get_overlay_backend
         from utils.overlay import overlay_entry
         self._overlay_backend = get_overlay_backend()
-        # The overlay controller reparents the four cards + emblem out of the tab
-        # and minimizes this main window while transparent. card_provider is the
-        # _CompactLayout it borrows from. overlay_entry.controller_class() selects
-        # the legacy multi-window OverlayGroupController by default, or the
-        # single-window ClusterOverlayController when TTMT_OVERLAY_SINGLE_WINDOW is
-        # set - the two share this constructor signature + caller surface.
+        # The overlay controller borrows the cluster out of the tab and minimizes
+        # this main window while transparent. card_provider is the _CompactLayout
+        # it borrows from. overlay_entry.controller_class() selects the
+        # single-window ClusterOverlayController by default (fixed-envelope
+        # transform scaling), or the legacy multi-window OverlayGroupController
+        # when TTMT_OVERLAY_SINGLE_WINDOW is set to a falsey token - the two
+        # share this constructor signature + caller surface.
         self._mode_controller = overlay_entry.controller_class()(
             self, self._overlay_backend, self.settings_manager,
             card_provider=self.multitoon_tab._compact,

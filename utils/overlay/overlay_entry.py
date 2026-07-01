@@ -1,10 +1,11 @@
-"""Overlay controller selection behind an OFF-by-default env flag.
+"""Overlay controller selection: single-window cluster by DEFAULT.
 
 ``controller_class()`` returns the overlay controller CLASS the app should
-construct. The single-window ``ClusterOverlayController`` is opt-in via the
-``TTMT_OVERLAY_SINGLE_WINDOW`` environment variable; with the flag unset (or set
-to a falsey value) the legacy multi-window ``OverlayGroupController`` - the
-shipped default - is returned, so behavior is unchanged unless the user opts in.
+construct. The single-window ``ClusterOverlayController`` is the default (it
+scales as one fixed-envelope transform - judder-free by construction, live-
+validated 2026-07-01); the legacy multi-window ``OverlayGroupController``
+remains reachable as a fallback by setting ``TTMT_OVERLAY_SINGLE_WINDOW`` to a
+falsey token (``0`` / ``no`` / ``off`` / ...).
 
 The two controllers share the same constructor signature and caller surface, so
 the selection here is a pure drop-in swap; the caller instantiates whichever
@@ -14,36 +15,37 @@ from __future__ import annotations
 
 import os
 
-# Env var that opts INTO the single-window cluster overlay.
+# Env var that selects the overlay path. Unset or truthy -> the single-window
+# cluster (default); a falsey token -> the legacy multi-window fallback.
 _ENV_FLAG = "TTMT_OVERLAY_SINGLE_WINDOW"
 
-# Values (case-insensitive, surrounding whitespace ignored) that count as OFF
-# even when the variable is present. An empty/whitespace-only value is OFF too.
-# Matches the widely-understood strtobool false tokens so a user who writes
-# ``=off`` / ``=no`` / ``=f`` to DISABLE the flag isn't surprised by it turning ON.
-_FALSEY = {"", "0", "no", "n", "false", "f", "off"}
+# Values (case-insensitive, surrounding whitespace ignored) that select the
+# LEGACY fallback. Matches the widely-understood strtobool false tokens so a
+# user who writes ``=off`` / ``=no`` / ``=f`` gets the legacy path as expected.
+# NOTE: unlike the opt-in era, an EMPTY/whitespace-only value now counts as
+# unset (default = cluster); only an explicit falsey token opts out.
+_FALSEY = {"0", "no", "n", "false", "f", "off"}
 
 
 def _single_window_enabled() -> bool:
-    """True when ``TTMT_OVERLAY_SINGLE_WINDOW`` opts into the single-window cluster.
+    """True (the default) unless ``TTMT_OVERLAY_SINGLE_WINDOW`` opts OUT.
 
-    Truthy = the variable is set to a non-empty value that is NOT one of the
-    strtobool falsey tokens ``0`` / ``no`` / ``n`` / ``false`` / ``f`` / ``off``
-    (case-insensitive, surrounding whitespace ignored). Everything else - unset,
-    empty/whitespace-only, or one of those falsey tokens - is OFF and keeps the
-    legacy controller.
+    Unset, empty/whitespace-only, or any non-falsey value -> the single-window
+    cluster. Only an explicit strtobool falsey token ``0`` / ``no`` / ``n`` /
+    ``false`` / ``f`` / ``off`` (case-insensitive, surrounding whitespace
+    ignored) selects the legacy multi-window fallback.
     """
     raw = os.environ.get(_ENV_FLAG)
     if raw is None:
-        return False
+        return True
     return raw.strip().lower() not in _FALSEY
 
 
 def controller_class():
     """Return the overlay controller CLASS to construct (the caller instantiates
-    it). The single-window ``ClusterOverlayController`` when
-    ``TTMT_OVERLAY_SINGLE_WINDOW`` is truthy; otherwise the legacy
-    ``OverlayGroupController`` (the default).
+    it). The single-window ``ClusterOverlayController`` by default; the legacy
+    ``OverlayGroupController`` when ``TTMT_OVERLAY_SINGLE_WINDOW`` is set to a
+    falsey token.
 
     The chosen class is LAZY-imported inside this function so importing this
     module never drags in either controller (avoiding import cost + potential
