@@ -2,10 +2,10 @@
 legacy multi-window OverlayGroupController (the shipped default) and the opt-in
 single-window ClusterOverlayController.
 
-The flag is TTMT_OVERLAY_SINGLE_WINDOW: truthy (a non-empty value that is NOT
-``0`` / ``false`` / ``no``, case-insensitive, surrounding whitespace ignored)
-selects the cluster controller; unset / empty / a falsey token keeps the legacy
-controller. Importing both controller classes here is fine - the selection under
+The flag is TTMT_OVERLAY_SINGLE_WINDOW: truthy (a non-empty value that is NOT a
+strtobool falsey token - ``0`` / ``no`` / ``n`` / ``false`` / ``f`` / ``off``,
+case-insensitive, surrounding whitespace ignored) selects the cluster controller;
+unset / empty / a falsey token keeps the legacy controller. Importing both controller classes here is fine - the selection under
 test only builds the CLASS object, never the app.
 
 Run (NEVER the whole tests/ dir):
@@ -43,8 +43,13 @@ def test_truthy_selects_cluster(monkeypatch, val):
     assert overlay_entry.controller_class() is ClusterOverlayController
 
 
-@pytest.mark.parametrize("val", ["0", "", "false", "FALSE", "no", "  "])
+@pytest.mark.parametrize(
+    "val",
+    ["0", "", "false", "FALSE", "no", "  ", "off", "OFF", "n", "f", " off "],
+)
 def test_falsey_returns_legacy(monkeypatch, val):
-    """Empty / 0 / false / no (any case, whitespace ignored) stay on legacy."""
+    """The strtobool falsey tokens (0/no/n/false/f/off, any case, whitespace
+    ignored) plus empty/whitespace-only stay on the legacy controller - so a user
+    who writes ``=off`` to disable the flag isn't surprised by it turning on."""
     monkeypatch.setenv(_ENV, val)
     assert overlay_entry.controller_class() is OverlayGroupController

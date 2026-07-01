@@ -19,16 +19,19 @@ _ENV_FLAG = "TTMT_OVERLAY_SINGLE_WINDOW"
 
 # Values (case-insensitive, surrounding whitespace ignored) that count as OFF
 # even when the variable is present. An empty/whitespace-only value is OFF too.
-_FALSEY = {"", "0", "false", "no"}
+# Matches the widely-understood strtobool false tokens so a user who writes
+# ``=off`` / ``=no`` / ``=f`` to DISABLE the flag isn't surprised by it turning ON.
+_FALSEY = {"", "0", "no", "n", "false", "f", "off"}
 
 
 def _single_window_enabled() -> bool:
     """True when ``TTMT_OVERLAY_SINGLE_WINDOW`` opts into the single-window cluster.
 
-    Truthy = the variable is set to a non-empty value that is NOT one of
-    ``0`` / ``false`` / ``no`` (case-insensitive, surrounding whitespace ignored).
-    Everything else - unset, empty/whitespace-only, or one of those falsey tokens
-    - is OFF and keeps the legacy controller.
+    Truthy = the variable is set to a non-empty value that is NOT one of the
+    strtobool falsey tokens ``0`` / ``no`` / ``n`` / ``false`` / ``f`` / ``off``
+    (case-insensitive, surrounding whitespace ignored). Everything else - unset,
+    empty/whitespace-only, or one of those falsey tokens - is OFF and keeps the
+    legacy controller.
     """
     raw = os.environ.get(_ENV_FLAG)
     if raw is None:
