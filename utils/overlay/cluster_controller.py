@@ -1803,6 +1803,15 @@ class ClusterOverlayController:
             # X11's default FULL-RECT input region and would swallow every
             # click over its (invisible) canvas.
             self._apply_radial_input_shape(QPainterPath())
+            # Running-code stamp (anchor-tracking build): live validation must be
+            # able to prove THIS lifecycle is running and identify the window.
+            try:
+                from utils.overlay.backend import overlay_trace
+                overlay_trace(
+                    "persistent radial surface pre-mapped (anchor-tracking build) "
+                    f"xid={int(surface.winId()):#x} at {surface.geometry()}")
+            except Exception:
+                pass
             return surface
         except Exception:
             from utils.overlay.backend import overlay_trace
@@ -1917,6 +1926,16 @@ class ClusterOverlayController:
             # emblem_dia about the widget center, so the extra margin is inert.
             geom = QRect(int(ax - canvas_max / 2), int(ay - canvas_max / 2),
                          canvas_max, canvas_max)
+            # Diagnostic: the open-time geometry DELTA must be zero (the closed-
+            # state anchor tracking already parked the window here); a nonzero
+            # delta live means the tracking never ran (stale build / missed path).
+            try:
+                cur = surface.geometry()
+                _otr(f"radial open: surface at ({cur.x()},{cur.y()}) target "
+                     f"({geom.x()},{geom.y()}) delta "
+                     f"({geom.x() - cur.x()},{geom.y() - cur.y()})")
+            except Exception:
+                pass
             # Track the menu IMMEDIATELY (before any fallible host step), so a
             # failure from here on is cleaned up by close_radial_menu() instead
             # of leaking a built-but-untracked menu.
@@ -2072,7 +2091,13 @@ class ClusterOverlayController:
         geom = QRect(int(ax - canvas_max / 2), int(ay - canvas_max / 2),
                      canvas_max, canvas_max)
         try:
+            moved = geom != surface.geometry()
             surface.set_overlay_geometry(geom)
+            if moved and not self.is_radial_open:
+                # Diagnostic: proves the CLOSED-state tracking executed live
+                # (per drag step). Silent unless TTMT_OVERLAY_TRACE is set.
+                from utils.overlay.backend import overlay_trace
+                overlay_trace(f"closed radial tracked anchor -> {geom}")
         except Exception:
             pass
         if not self.is_radial_open:
