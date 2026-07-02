@@ -12,16 +12,24 @@ thread EXCEPT overlay_wids(), which the click-sync source resolver calls
 from the capture thread — it returns a prebuilt frozenset (an atomic
 reference read; the set is rebuilt on the GUI thread when an overlay is
 created).
+
+Confined mode (xcb only): each overlay is a MANAGED window kept directly
+above its game window via WM_TRANSIENT_FOR (utils.x11_transient), so a
+window overlapping the game covers the ghost instead of the ghost floating
+over everything, and the glove is mask-clipped to the game rect at the
+edges. Everywhere else (win32/cocoa/offscreen) the legacy always-on-top
+float is unchanged. Kill switch: TTMT_GHOST_UNCONFINED=1.
 """
 from __future__ import annotations
 
 import os
 import sys
 
-from PySide6.QtCore import QObject, QPropertyAnimation, Qt, QTimer
-from PySide6.QtGui import QGuiApplication, QPainter, QPixmap
+from PySide6.QtCore import QObject, QPropertyAnimation, QRect, Qt, QTimer
+from PySide6.QtGui import QGuiApplication, QPainter, QPixmap, QRegion
 from PySide6.QtWidgets import QWidget
 
+from utils import x11_transient
 from utils.settings_keys import GHOST_CURSORS_ENABLED
 
 CURSOR_SIZE = 32   # px; matches TTR's own glove cursor
@@ -49,6 +57,22 @@ def _cursor_path(slot: int) -> str:
     return os.path.join(base, "assets", "cursors", f"toon{slot + 1}.png")
 
 
+def _confinement_reason() -> str | None:
+    """None when overlays can be confined to their game window (stacked
+    directly above it via WM_TRANSIENT_FOR — probed on KWin Wayland
+    2026-07-02); otherwise why not. xcb only: win32/cocoa keep the legacy
+    always-on-top float and offscreen has no WM."""
+    if os.environ.get("TTMT_GHOST_UNCONFINED") == "1":
+        return "TTMT_GHOST_UNCONFINED=1"
+    app = QGuiApplication.instance()
+    name = (app.platformName() if app is not None else "") or ""
+    if name.lower() != "xcb":
+        return f"platform {name!r} (xcb only)"
+    if not x11_transient.available():
+        return "python-xlib/X display unavailable"
+    return None
+
+
 # The native->logical conversion lives in utils.screen_coords (shared with the
 # overlay controller). Imported as the module-global name `_native_to_logical`
 # so existing tests that import or monkeypatch it here keep working, and so the
@@ -70,24 +94,42 @@ def _emitted_to_logical(x, y, screens=None):
 
 
 class GhostCursorOverlay(QWidget):
-    """One toon's glove: a 32x32 frameless, always-on-top, input-transparent
-    toplevel. The EMPTY input shape (WindowTransparentForInput) is
-    load-bearing: the click-sync source resolver's hit tests skip
-    input-shape-empty windows on both platforms, so the overlay can never
-    register as a foreign toplevel under the real pointer (spec: Resolver
-    safety)."""
+    """One toon's glove: a 32x32 frameless, input-transparent toplevel. The
+    EMPTY input shape (WindowTransparentForInput) is load-bearing: the
+    click-sync source resolver's hit tests skip input-shape-empty windows on
+    both platforms, so the overlay can never register as a foreign toplevel
+    under the real pointer (spec: Resolver safety).
 
-    def __init__(self, pixmap: QPixmap, parent: QWidget | None = None):
-        flags = (Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
-                 | Qt.Tool | Qt.WindowTransparentForInput
-                 | Qt.WindowDoesNotAcceptFocus)
-        if sys.platform != "win32":
-            flags |= Qt.X11BypassWindowManagerHint
+    Legacy (win32/cocoa/offscreen): always-on-top, WM-bypassed float.
+    Confined (xcb): a MANAGED window whose WM_TRANSIENT_FOR is (re)asserted
+    after every map — Qt rewrites the property on each show(), and only a
+    managed window gets the WM's above-its-parent stacking constraint. The
+    overlay stays MAPPED once shown (hides become opacity 0): unmapping
+    would strip the property and flash the taskbar on every remap."""
+
+    def __init__(self, pixmap: QPixmap, parent: QWidget | None = None,
+                 confined: bool = False):
+        if confined:
+            flags = (Qt.Window | Qt.FramelessWindowHint
+                     | Qt.WindowTransparentForInput
+                     | Qt.WindowDoesNotAcceptFocus)
+        else:
+            flags = (Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
+                     | Qt.Tool | Qt.WindowTransparentForInput
+                     | Qt.WindowDoesNotAcceptFocus)
+            if sys.platform != "win32":
+                flags |= Qt.X11BypassWindowManagerHint
         super().__init__(parent, flags)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
         self.setFixedSize(CURSOR_SIZE, CURSOR_SIZE)
         self._pixmap = pixmap
+        self._confined = confined
+        self._game_wid: int | None = None      # confinement target
+        self._confined_this_map = False        # per-map assert latch
+        self._pending_show_opacity: float | None = None
+        self._confine_warned = False
+        self._clip_rect: QRect | None = None
         # macOS NSWindow hardening state (no-op off cocoa).
         self._hardened = False
         self._harden_failed = False
@@ -96,23 +138,109 @@ class GhostCursorOverlay(QWidget):
         self._fade = QPropertyAnimation(self, b"windowOpacity", self)
         self._fade.setDuration(FADE_MS)
         self._fade.setEndValue(0.0)
-        self._fade.finished.connect(self.hide)
+        if not confined:
+            # Confined overlays stay mapped at opacity 0 instead (see class
+            # docstring); the animation already ends there.
+            self._fade.finished.connect(self.hide)
 
     def paintEvent(self, _event):
         p = QPainter(self)
         p.drawPixmap(0, 0, self._pixmap)
+        if self._confined and not self._confined_this_map:
+            # First paint after a map == the window is really mapped, so the
+            # WM has managed it and the transient assert can land.
+            QTimer.singleShot(0, self._confine)
 
     def show_at(self, x: int, y: int) -> None:
         if self._harden_failed:
             return   # macOS fail-closed: never show an un-hardenable ghost
         self._fade.stop()
-        self.setWindowOpacity(1.0)
         self.move(int(x) - HOTSPOT[0], int(y) - HOTSPOT[1])
+        if self._confined and not self._confined_this_map:
+            # Opacity-stage the map: invisible until _confine() has stacked
+            # us above the game window, so the glove can never flash over an
+            # occluding window in the pre-transient gap.
+            self._pending_show_opacity = 1.0
+            if not self.isVisible():
+                self.setWindowOpacity(0.0)
+        else:
+            self.setWindowOpacity(1.0)
         if not self.isVisible():
             self.show()
 
+    def set_game_window(self, wid: int | None) -> None:
+        """Confinement target for this slot. On change while mapped the
+        transient property is rewritten immediately — the WM tracks
+        WM_TRANSIENT_FOR changes dynamically (probed on KWin)."""
+        wid = int(wid) if wid else None
+        if wid == self._game_wid:
+            return
+        self._game_wid = wid
+        if (self._confined and wid is not None and self.isVisible()
+                and self._confined_this_map):
+            self._assert_confinement(wid)
+
+    def clip_to(self, rect_logical: tuple[int, int, int, int] | None) -> None:
+        """Clip the glove to the game window's rect (logical coords) so it
+        never pokes past the game's edges; None restores the full shape.
+        Cheap when nothing changes: the common fully-inside case clears any
+        mask once and then skips the shape traffic."""
+        if not self._confined:
+            return
+        if rect_logical is None:
+            if self._clip_rect is not None:
+                self._clip_rect = None
+                self.clearMask()
+            return
+        local = QRect(*rect_logical).translated(-self.x(), -self.y())
+        if local.contains(self.rect()):
+            if self._clip_rect is not None:
+                self._clip_rect = None
+                self.clearMask()
+            return
+        if local != self._clip_rect:
+            self._clip_rect = local
+            self.setMask(QRegion(local.intersected(self.rect())))
+
+    def _confine(self) -> None:
+        """Post-map confinement (idempotent per map): WM_TRANSIENT_FOR ->
+        the game window plus the skip-taskbar/switcher states, then lift the
+        staged opacity."""
+        if (not self._confined or self._confined_this_map
+                or not self.isVisible()):
+            return
+        self._confined_this_map = True
+        if self._game_wid is not None:
+            self._assert_confinement(self._game_wid)
+        op, self._pending_show_opacity = self._pending_show_opacity, None
+        if op is not None and self._fade.state() != QPropertyAnimation.Running:
+            self.setWindowOpacity(op)
+
+    def _assert_confinement(self, wid: int) -> None:
+        if not x11_transient.confine(int(self.winId()), wid):
+            if not self._confine_warned:
+                self._confine_warned = True
+                print("[GhostCursors] transient confinement failed; "
+                      "ghost may stack unconfined")
+
+    def hideEvent(self, e):
+        super().hideEvent(e)
+        if self._confined:
+            # A real unmap strips WM_TRANSIENT_FOR (Qt rewrites it on the
+            # next show), so the next map must re-stage and re-assert. Reset
+            # HERE, not in showEvent: show_at() checks the latch before
+            # show() fires showEvent, and a stale latch would skip the
+            # opacity staging for the first post-remap frame.
+            self._confined_this_map = False
+            self._pending_show_opacity = None
+
     def showEvent(self, e):
         super().showEvent(e)
+        if self._confined:
+            # Fresh map: confinement must be (re)asserted. First paint is
+            # the primary trigger (the window is provably mapped by then);
+            # this timer is the fallback if no paint arrives promptly.
+            QTimer.singleShot(120, self._confine)
         # Gate on the REAL cocoa backend, not sys.platform: under the offscreen
         # QPA (tests on a Mac) winId() is not an NSView, so hardening must not
         # run (project_qt_winid_objc_offscreen_segv).
@@ -144,19 +272,28 @@ class GhostCursorOverlay(QWidget):
     def fade_out(self) -> None:
         if not self.isVisible():
             return
+        if self._confined and self.windowOpacity() == 0.0:
+            return   # keep-mapped "hidden" state: nothing to fade
         self._fade.setStartValue(self.windowOpacity())
         self._fade.start()
 
     def hide_now(self) -> None:
         self._fade.stop()
-        self.hide()
+        if self._confined and self.isVisible():
+            # Stay mapped: unmapping strips WM_TRANSIENT_FOR (Qt rewrites it
+            # each show) and blips the taskbar on every remap. Invisible +
+            # input-transparent is equivalent to hidden.
+            self._pending_show_opacity = None
+            self.setWindowOpacity(0.0)
+        else:
+            self.hide()
 
 
 class GhostCursorController(QObject):
     """Drives up to four lazily-created overlays from the service signals."""
 
     def __init__(self, service, settings_manager, parent=None,
-                 slot_window_resolver=None):
+                 slot_window_resolver=None, slot_rect_resolver=None):
         super().__init__(parent)
         self._enabled = True
         if settings_manager is not None:
@@ -171,10 +308,21 @@ class GhostCursorController(QObject):
         # window never shows a ghost. Resolver maps slot -> wid (the tab's
         # _cs_slot_wid closure); without one, focus calls are inert.
         self._slot_window_resolver = slot_window_resolver
+        # slot -> (x, y, w, h) NATIVE game-window rect (the tab's
+        # _cs_slot_rect closure); confined mode clips the glove to it.
+        self._slot_rect_resolver = slot_rect_resolver
         self._focused_wid = ""
         self._disabled_reason = self._platform_unsupported()
         if self._disabled_reason:
             print(f"[GhostCursors] disabled: {self._disabled_reason}")
+        self._confine_reason = (self._disabled_reason
+                                or _confinement_reason())
+        self._confined = self._confine_reason is None
+        if self._disabled_reason is None:
+            # Running-code stamp: live validation starts by checking this.
+            mode = ("confined-to-game (transient stacking)" if self._confined
+                    else f"unconfined float ({self._confine_reason})")
+            print(f"[GhostCursors] mode: {mode}")
         if service is not None:
             service.ghost_pointer_event.connect(self._on_pointer_event)
             service.ghost_clear.connect(self._on_clear)
@@ -222,7 +370,13 @@ class GhostCursorController(QObject):
                 if self._disabled_reason is not None:
                     return  # asset failure just disabled the feature
                 continue    # out-of-range slot: drop it, keep the batch
+            if self._confined:
+                # Target BEFORE show: a fresh map must confine to the
+                # slot's current game window, not a stale one.
+                ov.set_game_window(self._slot_wid_int(slot))
             ov.show_at(*_emitted_to_logical(x, y))
+            if self._confined:
+                ov.clip_to(self._slot_rect_logical(slot))
             self._restart_idle_timer(slot)
 
     def _on_clear(self) -> None:
@@ -239,6 +393,30 @@ class GhostCursorController(QObject):
         return (self._slot_window_resolver is not None
                 and bool(self._focused_wid)
                 and self._slot_window_resolver(slot) == self._focused_wid)
+
+    def _slot_wid_int(self, slot: int) -> int | None:
+        """The slot's game-window id as an int (resolvers hand out the
+        decimal-string form), or None."""
+        if self._slot_window_resolver is None:
+            return None
+        wid = self._slot_window_resolver(slot)
+        try:
+            return int(wid) if wid else None
+        except (TypeError, ValueError):
+            return None
+
+    def _slot_rect_logical(self, slot: int):
+        """The slot's game-window rect mapped into Qt logical space (both
+        corners through the same conversion as the pointer), or None."""
+        if self._slot_rect_resolver is None:
+            return None
+        g = self._slot_rect_resolver(slot)
+        if g is None:
+            return None
+        x, y, w, h = g
+        left, top = _emitted_to_logical(x, y)
+        right, bottom = _emitted_to_logical(x + w, y + h)
+        return (left, top, right - left, bottom - top)
 
     # -- internals -------------------------------------------------------
 
@@ -265,7 +443,8 @@ class GhostCursorController(QObject):
         scaled.setDevicePixelRatio(dpr)
         parent = self.parent()
         ov = GhostCursorOverlay(
-            scaled, parent=parent if isinstance(parent, QWidget) else None)
+            scaled, parent=parent if isinstance(parent, QWidget) else None,
+            confined=self._confined)
         self._overlays[slot] = ov
         # winId() forces native-window creation: GUI thread only, done once
         # here so the capture thread never touches Qt internals.

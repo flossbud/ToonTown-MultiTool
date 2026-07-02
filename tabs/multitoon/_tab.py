@@ -3017,9 +3017,18 @@ class MultitoonTab(QWidget):
         # unused on darwin (the active-window source resolver never hit-tests
         # toplevels), so no extra wiring is needed there.
         from tabs.multitoon._ghost_cursors import GhostCursorController
+
+        def _cs_slot_rect(slot, _wid=_cs_slot_wid,
+                          _g=_geom if _geom is not None else (lambda _w: None)):
+            # NATIVE game-window rect for the slot; the confined ghost
+            # renderer clips the glove to it (cache-backed, GUI-thread safe).
+            wid = _wid(slot)
+            return _g(wid) if wid else None
+
         self.ghost_cursor_controller = GhostCursorController(
             self.click_sync_service, self.settings_manager, parent=self,
-            slot_window_resolver=_cs_slot_wid)
+            slot_window_resolver=_cs_slot_wid,
+            slot_rect_resolver=_cs_slot_rect)
         # The focused window never shows a ghost (spec
         # 2026-06-12-ghost-cursor-focus-suppress-design.md). Same duck-typed
         # guard as window_geometry_updated above: offscreen fakes without the
