@@ -1678,12 +1678,18 @@ class _CompactLayout(QWidget):
 
     def _refresh_glow(self) -> None:
         """Feed the glow layer each lit card's body rect (in grid-host coords)
-        + accent. Dimmed/empty cards contribute no glow."""
+        + accent. Dimmed/empty cards contribute no glow, and neither does a
+        VISUALLY HIDDEN shell (the float overlay hides cells via setVisible
+        with retained size - Hide-Cards toggle / empty-cell hide): the glow
+        layer is a SIBLING behind the cells, so a hidden card's halo would
+        otherwise keep painting over bare desktop."""
         if self._glow is None:
             return
         specs = []
         for cell in self._cells:
             if not cell.get("active"):
+                continue
+            if cell["cell"].isHidden():
                 continue
             geo = cell["cell"].geometry()   # cells live in the grid host
             specs.append({

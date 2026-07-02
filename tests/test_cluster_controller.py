@@ -307,6 +307,12 @@ class _OccupancyStubProvider(QObject):
         # the visible set must be pushed back to fully opaque via this SAFE
         # paint-time hook - mirrors _StubProvider.set_shell_extra_opacity).
         self.shell_opacities: list = []
+        # Every visibility flip must re-derive the painted glow specs (the
+        # _GlowLayer sibling would otherwise keep a hidden card's accent halo).
+        self.glow_refreshes = 0
+
+    def _refresh_glow(self):
+        self.glow_refreshes += 1
 
     def _shadow_set_visible(self, cw):
         original = cw.setVisible
@@ -1106,9 +1112,14 @@ def test_set_cards_hidden_hides_all_cells_and_frees_input(qapp):
     assert not provider._cell_widgets[0].isHidden()   # occupied cell visible
     provider.hidden_cells.clear()
     backend.shapes.clear()
+    glow_before = provider.glow_refreshes
 
     ctrl.set_cards_hidden(True)
 
+    # The painted accent glow is a SIBLING layer keyed on lit state: every
+    # visibility flip must re-derive its specs or a hidden lit card's halo
+    # would keep painting over bare desktop (live bug, 2026-07-02).
+    assert provider.glow_refreshes == glow_before + 1
     assert ctrl.cards_hidden is True
     assert ctrl._visible_cells == set()
     for cw in provider._cell_widgets:

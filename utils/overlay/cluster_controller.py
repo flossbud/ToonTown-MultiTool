@@ -1622,6 +1622,23 @@ class ClusterOverlayController:
                 root.setVisible(cell_index in self._visible_cells)
             except Exception:
                 continue
+        self._refresh_provider_glow()
+
+    def _refresh_provider_glow(self) -> None:
+        """Rebuild the provider's painted accent-glow specs after a cell
+        visibility flip. The ``_GlowLayer`` is a SIBLING widget behind the
+        cells keyed on each cell's LIT state, so hiding a shell does not
+        remove its halo by itself - without this re-derive (whose spec build
+        skips hidden shells) a lit card's accent glow would keep painting
+        over bare desktop after Hide-Cards. Guarded: a provider without the
+        hook (a bare stub) is a safe no-op."""
+        refresh = getattr(self._card_provider, "_refresh_glow", None)
+        if refresh is None:
+            return
+        try:
+            refresh()
+        except Exception:
+            pass
 
     def _restore_cell_visibility(self) -> None:
         """leave(): every shell visible again (framed mode always shows all four)
@@ -1643,6 +1660,7 @@ class ClusterOverlayController:
                     root.setSizePolicy(sp)
             except Exception:
                 continue
+        self._refresh_provider_glow()
 
     def _reconcile_occupancy(self) -> None:
         """Occupancy nudge (the signal slot; also driven by the Hide-Cards
