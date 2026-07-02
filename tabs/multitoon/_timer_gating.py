@@ -12,7 +12,7 @@ def timers_should_run(*, is_current_page: bool, window_visible: bool,
     """Return (glow_should_run, bars_should_run).
 
     overlay_active: True while the transparent-mode cluster is up. The overlay
-    minimizes the main window, so the normal on-page test would stop the timers;
+    hides the main window, so the normal on-page test would stop the timers;
     but the cluster is visible in its own surfaces, so overlay_active forces
     on-page. Defaults False -> framed-mode behavior is unchanged.
     """
