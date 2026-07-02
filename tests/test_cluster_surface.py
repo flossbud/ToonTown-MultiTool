@@ -28,17 +28,19 @@ def qapp():
 # Flags / attributes (inherited from OverlaySurface)
 # ---------------------------------------------------------------------------
 
-def test_wm_window_types_all_dock(qapp):
-    """EVERY overlay surface is a DOCK: exempt from KWin's fit-to-desktop move
-    clamp AND never animated by the slidingnotifications effect - the earlier
-    NOTIFICATION type for radial/panel made that effect paint the ring
-    traveling in from a stale position (its invisible empty-state moves
-    replayed on the first content paint; live-bisected). Stacking above the
-    cluster is enforced by WM_TRANSIENT_FOR instead of a layer split (see
-    test_cluster_controller.test_persistent_surfaces_wire_transient_chain)."""
+def test_wm_window_types_dock_cluster_osd_chrome(qapp):
+    """The cluster is a DOCK (clamp-exempt, over the games, never animated);
+    the radial + panel are KDE OSD - the ONLY type that simultaneously (a)
+    sits in a layer KWin's internal click-raise cannot cross (so the cluster's
+    internal dim can never cover the ring/panel), (b) is NOT matched by the
+    slidingnotifications effect whose queued per-move displace animations
+    painted the ring traveling in from a stale position (NOTIFICATION and
+    CRITICAL_NOTIFICATION both are matched - live-bisected + source-verified),
+    and (c) keeps the fit-to-desktop move-clamp exemption. DISPROVEN (do not
+    revisit): dock+keep-above layering, WM_TRANSIENT_FOR vs internal raise."""
     assert ClusterSurface.WM_WINDOW_TYPE == "_NET_WM_WINDOW_TYPE_DOCK"
-    assert RadialSurface.WM_WINDOW_TYPE == "_NET_WM_WINDOW_TYPE_DOCK"
-    assert PanelSurface.WM_WINDOW_TYPE == "_NET_WM_WINDOW_TYPE_DOCK"
+    assert RadialSurface.WM_WINDOW_TYPE == "_KDE_NET_WM_WINDOW_TYPE_ON_SCREEN_DISPLAY"
+    assert PanelSurface.WM_WINDOW_TYPE == "_KDE_NET_WM_WINDOW_TYPE_ON_SCREEN_DISPLAY"
 
 
 def test_cluster_surface_flags_and_translucent(qapp):

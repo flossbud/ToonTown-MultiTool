@@ -59,12 +59,15 @@ class OverlaySurface(QWidget):
 
     # EWMH window type the backend writes pre-map (x11_backend.set_initial_state).
     # DOCK exempts managed windows from KWin's fit-to-desktop move clamp while
-    # keep-above holds them over the games - and, unlike NOTIFICATION, docks are
-    # not animated by the slidingnotifications effect (which painted the ring
-    # traveling in from a stale position - bisected live 2026-07-01). ALL overlay
-    # surfaces are DOCK; the radial/panel stacking above the cluster (which KWin's
-    # click-raise would otherwise invert within the shared dock layer) is enforced
-    # by WM_TRANSIENT_FOR instead - see X11OverlayBackend.set_transient_for.
+    # stacking over the games, and is not animated by the slidingnotifications
+    # effect (which painted the ring traveling in from a stale position -
+    # bisected live + source-verified). The radial/panel subclasses override
+    # this with the KDE OSD type: a strictly higher layer that KWin's internal
+    # click-raise cannot cross, so an emblem press can never lift the cluster's
+    # internal dim above them. DISPROVEN alternatives (probed, do not revisit):
+    # dock+keep-above does NOT elevate above plain docks; WM_TRANSIENT_FOR is
+    # NOT honored against KWin's internal raiseWindow; NOTIFICATION and
+    # CRITICAL_NOTIFICATION are both move-animated by slidingnotifications.
     WM_WINDOW_TYPE = "_NET_WM_WINDOW_TYPE_DOCK"
 
     def __init__(self, backend: OverlayBackend | None = None) -> None:

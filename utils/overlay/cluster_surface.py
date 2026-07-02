@@ -147,16 +147,29 @@ class RadialSurface(ClusterSurface):
     controller tears it down with a plain ``hide()`` + ``deleteLater()`` - the menu
     dies with the surface, which is the intent.
 
-    Stacking above the cluster is enforced by WM_TRANSIENT_FOR (the controller
-    sets this surface transient for the cluster window pre-map): KWin keeps a
-    transient above its parent in every restack, so a click-raise on the
-    cluster (any emblem press) can never lift the cluster - and its internal
-    radial dim - above this ring. The type stays DOCK like the cluster: the
-    earlier NOTIFICATION layering made the ``slidingnotifications`` effect
-    paint the ring traveling in from a stale position (its moves accumulate
-    invisibly while empty; the first content paint replayed them), and docks
-    are not animated by it. See ``X11OverlayBackend.set_transient_for``.
+    OSD type (_KDE_NET_WM_WINDOW_TYPE_ON_SCREEN_DISPLAY): the only window type
+    that satisfies all three stacking/animation constraints at once - probed on
+    KWin 6.7.1, 2026-07-02:
+      (a) its layer is strictly above the dock layer and KWin's INTERNAL
+          click-raise (workspace.raiseWindow) cannot cross layers, so an emblem
+          press can never lift the cluster - and its internal radial dim -
+          above this ring (NOTIFICATION/CRITICAL also pass this, DOCK variants
+          all fail: keep-above does not elevate docks, and WM_TRANSIENT_FOR is
+          not honored against internal raises);
+      (b) it is NOT matched by the slidingnotifications effect (kwin source:
+          isNotification() || isCriticalNotification() only), whose per-move
+          displace animations QUEUE while a window is invisible and replay on
+          the first content paint - the "ring travels from the old position"
+          bug that killed NOTIFICATION and CRITICAL_NOTIFICATION typing;
+      (c) it keeps the fit-to-desktop move-clamp exemption the ring needs to
+          track the emblem near screen edges.
+    Trade-off (accepted): the OSD layer sits above fullscreen windows, so an
+    OPEN ring could cover system UI like the screenshot picker; the persistent
+    cluster (dock) stays below such UI, and the ring is transient user-invoked
+    chrome.
     """
+
+    WM_WINDOW_TYPE = "_KDE_NET_WM_WINDOW_TYPE_ON_SCREEN_DISPLAY"
 
 
 class PanelSurface(ClusterSurface):
@@ -179,9 +192,12 @@ class PanelSurface(ClusterSurface):
     ``hide()`` + ``deleteLater()`` AFTER running the caller's ``on_close`` (which
     reparents the hosted content back out first).
 
-    Stacking: DOCK type like the radial, transient-for the RADIAL surface (a
-    chain - panel above radial above cluster - so no sibling-order policy can
-    ever invert panel vs radial either; a click on the radial's spokes raises
-    the panel along with it, transients ride their parent's raise). See
-    ``RadialSurface`` for why the NOTIFICATION layering was abandoned.
+    OSD type like the radial (see ``RadialSurface`` for the full rationale and
+    the probe record): the OSD layer guarantees the panel stacks above the
+    DOCK cluster through any KWin internal click-raise. Panel-vs-radial are
+    same-layer siblings; their relative order is click-to-front UX, not a
+    correctness invariant - the hard invariant (both above the cluster, so
+    the internal dim can never cover either) holds by layer.
     """
+
+    WM_WINDOW_TYPE = "_KDE_NET_WM_WINDOW_TYPE_ON_SCREEN_DISPLAY"
