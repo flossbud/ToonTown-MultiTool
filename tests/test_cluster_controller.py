@@ -615,13 +615,49 @@ def test_leave_reshows_window_before_surface_teardown(qapp):
     ctrl, provider, window, created = _make()
     ctrl.enter()
     surface = created[0]
+    real_restore = provider.restore_cluster_host
+
+    def _recording_restore(token):
+        order.append("host_restored")
+        return real_restore(token)
+
+    provider.restore_cluster_host = _recording_restore
     window.showNormal = lambda: order.append("window_shown")
     surface.hide = lambda: order.append("surface_hidden")
     surface.deleteLater = lambda: order.append("surface_deleted")
     ctrl.leave()
     assert "window_shown" in order
+    # Host back in the tab BEFORE the window is shown (complete, no gutted flash)...
+    assert order.index("host_restored") < order.index("window_shown")
+    # ...and the window shown BEFORE the surface teardown (never zero visible windows).
     assert order.index("window_shown") < order.index("surface_hidden")
     assert order.index("window_shown") < order.index("surface_deleted")
+
+
+def test_leave_failclosed_when_teardown_step_raises(qapp):
+    """FAIL-CLOSED PIN: a raising teardown step (here the settings save flush,
+    the first step of leave()) must never strand the app - leave() swallows it,
+    re-shows the main window, restores the quit guard, deletes the surface, and
+    lands framed. No exit from leave() may leave the main window hidden or the
+    guard off."""
+    prev = qapp.quitOnLastWindowClosed()
+    try:
+        qapp.setQuitOnLastWindowClosed(True)
+        ctrl, provider, window, created = _make()
+        assert ctrl.enter() is True
+        surface = created[0]
+
+        def _boom():
+            raise RuntimeError("flush boom")
+
+        ctrl.flush_pending_save = _boom
+        ctrl.leave()                            # must not raise
+        assert window.normaled == 1
+        assert qapp.quitOnLastWindowClosed() is True
+        assert ctrl.is_active is False
+        assert surface.deleted == 1
+    finally:
+        qapp.setQuitOnLastWindowClosed(prev)
 
 
 # ---------------------------------------------------------------------------

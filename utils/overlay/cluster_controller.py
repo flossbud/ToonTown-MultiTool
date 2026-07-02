@@ -515,12 +515,14 @@ class ClusterOverlayController:
             # this overlay). A hidden window has no taskbar entry and no Alt-Tab
             # entry - the radial Window spoke is the only way back, by
             # construction. The surface was shown above, so there is never an
-            # instant with zero visible windows. Flag BEFORE the call so a
-            # hide() failure still triggers the except-path restore; the quit
-            # guard BEFORE the hide so no window close can quit the app while
-            # the main window is not counted as visible.
-            hidden = True
+            # instant with zero visible windows. Capture the previous guard value
+            # BEFORE the flag, so a capture failure can never trigger a restore
+            # of a value the guard never modified; flag BEFORE the guard-off +
+            # hide so a failure in either still triggers the except-path restore;
+            # the quit guard BEFORE the hide so no window close can quit the app
+            # while the main window is not counted as visible.
             self._quit_prev = self._quit_on_last_window()
+            hidden = True
             self._set_quit_on_last_window(False)
             self._window.hide()
             overlay_trace("cluster.enter: main window HIDDEN "
@@ -533,12 +535,12 @@ class ClusterOverlayController:
             # Fail-closed: return the borrowed host to the tab FIRST
             # (release-before-restore so the surface never deletes the live host),
             # THEN restore the window (and the quit guard) if hidden, then destroy
-            # the now-empty surface - same never-zero-visible-windows ordering as
-            # leave().
+            # the now-empty surface - same never-zero-visible-windows ordering
+            # (and the same showNormal-then-guard order) as leave().
             self._release_and_restore(surface, token)
             if hidden:
-                self._set_quit_on_last_window(self._quit_prev)
                 self._safe_call(self._window, "showNormal")
+                self._set_quit_on_last_window(self._quit_prev)
             self._teardown_surface(surface)
             self._surface = None
             self._token = None
@@ -604,81 +606,100 @@ class ClusterOverlayController:
         metrics, tear down the cluster surface, and restore the main window.
         No-op if framed.
 
-        Fail-closed: a restore failure must still reset metrics, restore the
-        window, and clear state.
+        Fail-closed BY CONSTRUCTION: the whole teardown sequence runs inside a
+        try/except, and the window restore + quit-guard restore + state clear
+        run unconditionally after it - so no exit from leave() (not even a
+        raising teardown step, e.g. a settings write failing inside the save
+        flush) can leave the main window hidden, the quit guard off, or the
+        controller stuck active.
         """
         if not self._active:
             return
         provider = self._card_provider
         surface = self._surface
         token = self._token
-        # Persist the FINAL anchor + scale before any teardown/reset (the remembered
-        # overlay position, restored on the next enter). MUST run before the scale
-        # reset below, else the flush would save the framed 1.0 instead of the scale
-        # the user left at. Then stop the save timer unconditionally so no late
-        # timeout survives the leave (the active guard in _run_pending_save is the
-        # backstop).
-        self.flush_pending_save()
-        if self._save_timer is not None:
-            self._save_timer.stop()
-        # The radial + portable panel must never outlive the overlay: close them
-        # FIRST (the panel's on_close runs so the caller reparents its content out;
-        # the radial deletes its menu + hides the dim) before any host teardown -
-        # mirrors OverlayGroupController._teardown calling close_panel_surface() +
-        # close_radial_menu(). Then destroy the PERSISTENT (now-empty) top-levels;
-        # per-open close keeps them mapped by design.
-        self.close_panel_surface()
-        self.close_radial_menu()
-        self._destroy_persistent_surfaces()
-        # Stop the emblem-drag poll and the hover-peek poll. Settling the peek
-        # (restoring every faded card to fully opaque) runs HERE - before the host
-        # is restored - so the borrowed cards never return to the framed grid stuck
-        # dim.
-        self._end_drag()
-        self._stop_peek_timer()
-        # Stop reshaping on monitor/DPI changes: disconnect the screenChanged handler
-        # so a late signal after teardown can never re-apply a shape to a dead surface.
-        self._disconnect_screen_change()
-        # Cancel any pending settle, stop the zoom tween, and reset scaling state
-        # so a re-enter starts framed (scale 1.0, no in-flight gesture). A late
-        # timer/frame firing post-leave is a guarded no-op, but stopping here
-        # avoids the wasted callback.
-        if self._settle_timer is not None:
-            self._settle_timer.stop()
-        if self._scale_anim is not None:
-            self._scale_anim.stop()
-        self._scaling_active = False
-        self._input_phase = None
-        self._scale = 1.0
-        self._view_scale = 1.0
-        # Disconnect occupancy first so a late occupied_cells_changed after teardown
-        # is a safe no-op, and reset the visible set to the framed default.
-        self._disconnect_occupancy()
-        self._visible_cells = {0, 1, 2, 3}
-        # Un-hide every cell shell (framed mode always shows all four) and restore
-        # the original retain-size flags BEFORE the host returns to the tab.
-        self._restore_cell_visibility()
-        # Re-assert framed (scale-1.0) metrics. In the transform model the host
-        # never left its 1.0 layout, so this is a defensive idempotent no-op that
-        # guarantees the cards come back at base scale even if something external
-        # re-metered the host mid-overlay.
-        if provider is not None:
-            try:
-                from utils.overlay.card_metrics import CardMetrics
-                provider.apply_metrics(CardMetrics(1.0))
-            except Exception:
-                pass
-        # Remove the internal dim BEFORE restoring the host, so the borrowed
-        # _grid_host returns to framed mode with no stray overlay-only child.
-        self._teardown_internal_dim()
-        # Release the borrowed host from the surface, then restore it to the tab.
-        self._release_and_restore(surface, token)
-        # Re-show the main window BEFORE the surface teardown: the host is
-        # already restored (the window is complete - no gutted flash) and the
-        # cluster surface is still mapped, so there is never an instant with
-        # zero visible windows - destroying the last visible window would post
-        # the app quit before the re-show ran. Then restore the
-        # quit-on-last-window value captured at enter.
+        try:
+            # Persist the FINAL anchor + scale before any teardown/reset (the
+            # remembered overlay position, restored on the next enter). MUST run
+            # before the scale reset below, else the flush would save the framed
+            # 1.0 instead of the scale the user left at. Then stop the save timer
+            # unconditionally so no late timeout survives the leave (the active
+            # guard in _run_pending_save is the backstop).
+            self.flush_pending_save()
+            if self._save_timer is not None:
+                self._save_timer.stop()
+            # The radial + portable panel must never outlive the overlay: close
+            # them FIRST (the panel's on_close runs so the caller reparents its
+            # content out; the radial deletes its menu + hides the dim) before any
+            # host teardown - mirrors OverlayGroupController._teardown calling
+            # close_panel_surface() + close_radial_menu(). Then destroy the
+            # PERSISTENT (now-empty) top-levels; per-open close keeps them mapped
+            # by design.
+            self.close_panel_surface()
+            self.close_radial_menu()
+            self._destroy_persistent_surfaces()
+            # Stop the emblem-drag poll and the hover-peek poll. Settling the peek
+            # (restoring every faded card to fully opaque) runs HERE - before the
+            # host is restored - so the borrowed cards never return to the framed
+            # grid stuck dim.
+            self._end_drag()
+            self._stop_peek_timer()
+            # Stop reshaping on monitor/DPI changes: disconnect the screenChanged
+            # handler so a late signal after teardown can never re-apply a shape
+            # to a dead surface.
+            self._disconnect_screen_change()
+            # Cancel any pending settle, stop the zoom tween, and reset scaling
+            # state so a re-enter starts framed (scale 1.0, no in-flight gesture).
+            # A late timer/frame firing post-leave is a guarded no-op, but
+            # stopping here avoids the wasted callback.
+            if self._settle_timer is not None:
+                self._settle_timer.stop()
+            if self._scale_anim is not None:
+                self._scale_anim.stop()
+            self._scaling_active = False
+            self._input_phase = None
+            self._scale = 1.0
+            self._view_scale = 1.0
+            # Disconnect occupancy first so a late occupied_cells_changed after
+            # teardown is a safe no-op, and reset the visible set to the framed
+            # default.
+            self._disconnect_occupancy()
+            self._visible_cells = {0, 1, 2, 3}
+            # Un-hide every cell shell (framed mode always shows all four) and
+            # restore the original retain-size flags BEFORE the host returns to
+            # the tab.
+            self._restore_cell_visibility()
+            # Re-assert framed (scale-1.0) metrics. In the transform model the
+            # host never left its 1.0 layout, so this is a defensive idempotent
+            # no-op that guarantees the cards come back at base scale even if
+            # something external re-metered the host mid-overlay.
+            if provider is not None:
+                try:
+                    from utils.overlay.card_metrics import CardMetrics
+                    provider.apply_metrics(CardMetrics(1.0))
+                except Exception:
+                    pass
+            # Remove the internal dim BEFORE restoring the host, so the borrowed
+            # _grid_host returns to framed mode with no stray overlay-only child.
+            self._teardown_internal_dim()
+            # Release the borrowed host from the surface, then restore it to the
+            # tab.
+            self._release_and_restore(surface, token)
+        except Exception:
+            # Swallow: leave() must be TOTAL. The window/guard restore and the
+            # state clear below run regardless of where the teardown broke.
+            from utils.overlay.backend import overlay_trace
+            import traceback
+            overlay_trace("cluster.leave teardown raised:\n"
+                          + traceback.format_exc())
+        # INVARIANT: no exit from leave() may leave the main window hidden or the
+        # quit guard off - the two lines below run on EVERY path (success or a
+        # swallowed teardown failure). Re-show the main window BEFORE the surface
+        # teardown: on the success path the host is already restored (the window
+        # is complete - no gutted flash) and the cluster surface is still mapped,
+        # so there is never an instant with zero visible windows - destroying the
+        # last visible window would post the app quit before the re-show ran.
+        # Then restore the quit-on-last-window value captured at enter.
         self._safe_call(self._window, "showNormal")
         self._set_quit_on_last_window(self._quit_prev)
         # Destroy the now-empty surface.
