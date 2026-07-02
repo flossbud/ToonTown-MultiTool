@@ -3883,6 +3883,70 @@ def test_rep_blanked_while_peek_active(qapp):
     ctrl.leave()
 
 
+def test_rep_blanked_during_drag_and_restored_at_end(qapp, monkeypatch):
+    """A drag moves the cluster out from over the mirror: drag start must blank
+    the rep, and drag end must unblank it with a fresh re-anchored mirror."""
+    from PySide6.QtGui import QCursor
+    backend = _AvailableBackend()
+    ctrl, provider, window, created = _make(backend=backend, anchor=(400, 400))
+    ctrl.enter()
+    rep = ctrl._taskbar_rep
+    assert rep.is_blanked() is False
+
+    monkeypatch.setattr(QCursor, "pos", staticmethod(lambda: QPoint(100, 100)))
+    ctrl.begin_group_drag()
+    assert ctrl._drag_timer is not None and ctrl._drag_timer.isActive()
+    assert rep.is_blanked() is True                # gesture live -> blanked
+    before = rep._mirror
+    ctrl._end_drag()
+    assert rep.is_blanked() is False               # drag over -> restored
+    assert rep._mirror is not before               # re-grabbed at drag end
+    ctrl.leave()
+
+
+def test_rep_blanked_while_radial_open(qapp, monkeypatch):
+    """The radial dims the cluster (internal dim + ring): the mirror behind it
+    would shine through undimmed, so radial-open must blank the rep and
+    close must restore it."""
+    _patch_radial(monkeypatch)
+    backend = _AvailableBackend()
+    ctrl, provider, window, created = _make(backend=backend)
+    ctrl.enter()
+    rep = ctrl._taskbar_rep
+    assert rep.is_blanked() is False
+
+    menu = ctrl.open_radial_menu()
+    assert menu is not None
+    assert rep.is_blanked() is True                # radial up -> blanked
+    ctrl.close_radial_menu()
+    assert rep.is_blanked() is False               # radial gone -> restored
+    ctrl.leave()
+
+
+def test_peek_tick_latch_drives_rep_blanking(qapp):
+    """The ~30ms peek poll keeps the rep's peek latch in sync: a cursor over a
+    card body blanks the rep (the faded card would break pixel identity with
+    the opaque mirror), and moving off every card unblanks it."""
+    backend = _AvailableBackend()
+    ctrl, provider, window, created = _make(
+        backend=backend, anchor=_GHOST_ANCHOR, settings=_DictSettings())
+    ctrl.enter()
+    rep = ctrl._taskbar_rep
+    ax, ay = _GHOST_ANCHOR
+
+    # Cell 1's body center (host 300, 75), outside the carve: screen point =
+    # anchor + (host - emblem_center) - the same math the existing peek tests use.
+    on_card = (ax + (300 - _EMBLEM_CX), ay + (75 - _EMBLEM_CY))
+    ctrl._peek_tick(on_card)
+    assert ctrl._rep_peek_active is True
+    assert rep.is_blanked() is True                # peek live -> blanked
+
+    ctrl._peek_tick((ax + 4000, ay + 4000))        # far off every card
+    assert ctrl._rep_peek_active is False
+    assert rep.is_blanked() is False               # peek over -> restored
+    ctrl.leave()
+
+
 def test_opaque_only_strips_subopaque_pixels(qapp):
     """The on-screen rep may only paint pixels the cluster hides with identical
     fully-opaque ones: translucent pixels (shadows, AA edges) would
