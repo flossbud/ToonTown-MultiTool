@@ -29,10 +29,12 @@ NORMAL-type top-level takes the app's place in the taskbar and Alt-Tab:
   (probe C proved minimize caches the composited image); a WM-initiated
   minimize is restored immediately.
 
-The controller feeds the mirror via ``set_mirror`` on state changes and on a
-slow tick (``on_tick``) so in-card timers do not read frozen in the preview;
-mapped-window repaints are invisible on screen (covered) and free of any
-compositor animation.
+The controller feeds the mirror via ``set_mirror``: immediately on every
+composition change (the preview is composition-accurate), plus a RARE
+safety-net tick (``on_tick``) so long-lived in-card text (timers) does not
+freeze entirely - preview text may lag up to the tick interval, an accepted
+trade in this judder-sensitive codebase. Mapped-window repaints are invisible
+on screen (covered) and free of any compositor animation.
 """
 from __future__ import annotations
 
@@ -42,8 +44,12 @@ from PySide6.QtWidgets import QWidget
 
 from utils.overlay.backend import get_overlay_backend, overlay_trace
 
-# Slow mirror refresh: keeps preview timers roughly current at negligible cost.
-MIRROR_TICK_MS = 2000
+# RARE safety-net mirror refresh. Composition changes re-grab immediately via
+# the controller; this tick only keeps long-lived in-card text (timers) from
+# freezing entirely, so preview text may lag up to 10s - accepted. Kept rare
+# on purpose: every grab walks the whole cluster paint path (judder-sensitive
+# codebase, the taskbar preview is decorative).
+MIRROR_TICK_MS = 10_000
 
 
 class TaskbarRepresentative(QWidget):
@@ -170,5 +176,6 @@ class TaskbarRepresentative(QWidget):
         if ev.type() == QEvent.WindowStateChange and self.isMinimized():
             # A minimized rep freezes the taskbar preview into a stale snapshot:
             # bounce back. Deferred so the WM's state change settles before the
-            # counter-request.
-            QTimer.singleShot(0, self.showNormal)
+            # counter-request; context-object form so the pending bounce dies
+            # with the widget instead of firing on a destroyed one.
+            QTimer.singleShot(0, self, self.showNormal)

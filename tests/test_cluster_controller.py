@@ -3704,6 +3704,19 @@ class _AvailableBackend(NoOpOverlayBackend):
         self.opacities.append((window, float(opacity)))
 
 
+class _MirrorAtOpacityBackend(_AvailableBackend):
+    """Also snapshots the rep's installed mirror object at every opacity write,
+    to pin the paint-before-opacity ordering of the unblank."""
+
+    def __init__(self):
+        super().__init__()
+        self.mirror_at_opacity: list = []
+
+    def set_window_opacity(self, window, opacity):
+        super().set_window_opacity(window, opacity)
+        self.mirror_at_opacity.append((float(opacity), window._mirror))
+
+
 class _FakeSpontaneousClose:
     def __init__(self):
         self.ignored = False
@@ -3791,9 +3804,16 @@ def test_occupancy_change_refreshes_rep_mirror(qapp):
     ctrl.enter()
     rep = ctrl._taskbar_rep
     first = rep._mirror
-    provider.set_occupied({0})
+    # {1} MOVES the bbox min-corner (cell 0 at host (10,10) was the min; the
+    # emblem-union-cell-1 bbox starts at host (60,10)): the rep must be
+    # RE-ALIGNED, not just re-grabbed - a stale origin would offset every
+    # mirror pixel into a persistent visible ghost over bare desktop.
+    provider.set_occupied({1})
     provider.occupied_cells_changed.emit()
     assert rep._mirror is not first                # re-grabbed on occupancy
+    expected = ctrl._content_bbox_window_coords().translated(
+        ctrl._compute_window_rect().topLeft())
+    assert rep.geometry() == expected              # re-ALIGNED on occupancy
 
 
 def test_content_bbox_covers_emblem_and_cells_and_is_a_crop(qapp):
@@ -3822,6 +3842,28 @@ def test_rep_blanked_during_scale_gesture_and_restored_at_settle(qapp):
     ctrl._settle_input()                           # clears the flag + updates
     assert rep.is_blanked() is False
     assert rep._mirror is not before               # re-grabbed at settle
+    ctrl.leave()
+
+
+def test_unblank_aligns_and_regrabs_before_opacity_write(qapp):
+    """ORDERING PIN: the opacity-1 write is the LAST step of the unblank. The
+    opacity hint flushes on the xlib connection immediately while the
+    re-align/re-grab land as Qt-side paints - unblanking first would show one
+    full-opacity frame of the STALE mirror at the OLD position after every
+    drag end / scale settle. At the moment of the opacity-1 write the fresh
+    mirror must already be installed."""
+    backend = _MirrorAtOpacityBackend()
+    ctrl, provider, window, created = _make(backend=backend)
+    ctrl.enter()
+    rep = ctrl._taskbar_rep
+    ctrl._scaling_active = True
+    ctrl._update_rep_blanking()
+    assert rep.is_blanked() is True
+    stale = rep._mirror
+    ctrl._settle_input()                           # unblank terminal
+    assert rep.is_blanked() is False
+    ones = [m for (op, m) in backend.mirror_at_opacity if op == 1.0]
+    assert ones and ones[-1] is not stale          # fresh mirror BEFORE opacity 1
     ctrl.leave()
 
 

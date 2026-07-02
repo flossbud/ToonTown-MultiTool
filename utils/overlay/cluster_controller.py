@@ -585,6 +585,10 @@ class ClusterOverlayController:
         # on_ghost_event (caller wiring is a LATER task); the timer drives the fade
         # regardless of the real cursor.
         self._peek_store.clear()
+        # Unlatch the rep's peek flag too: leave() resets it inside its try, so
+        # a raising teardown step could carry a stale True into this session
+        # and keep the fresh rep blanked until the next hover.
+        self._rep_peek_active = False
         self._start_peek_timer()
         # Reshape on a monitor/DPI change: now that the surface is shown its native
         # windowHandle exists, so connect screenChanged to re-apply the input shape at
@@ -1628,9 +1632,13 @@ class ClusterOverlayController:
         for slot in prev_visible - self._visible_cells:
             self._settle_peek_slot(slot)
         self._apply_cell_visibility()
-        # The preview must track composition immediately (visual hide/show runs
-        # regardless of gesture state; only the input-shape swap is deferred).
-        self._refresh_taskbar_rep()
+        # Keep the representative aligned with the new composition: the bbox
+        # ORIGIN can move when the visible set changes (not just its size), so
+        # a bare mirror refresh would leave every pixel offset - a persistent
+        # visible ghost over bare desktop. _update_rep_blanking re-aligns THEN
+        # re-grabs when settled; while blanked (mid-gesture) it defers, and the
+        # settle terminal replays it with this fresh visible set.
+        self._update_rep_blanking()
         if self._scaling_active:
             return
         self._apply_exact_input_shape()
@@ -2063,26 +2071,32 @@ class ClusterOverlayController:
         IDENTICAL fully-opaque ones; translucent pixels (card shadows, glow,
         AA edges) would double-composite and read darker/stronger inside the
         bbox. Byte-level translate keeps this C-speed. ARGB32 little-endian
-        memory layout is BGRA, so the alpha byte sits at offset 3."""
+        memory layout is BGRA, so the alpha byte sits at offset 3. The wrapping
+        QImage references the mutated bytearray WITHOUT copying; the single
+        defensive ``out.copy()`` detaches the result from that scope-local
+        buffer before it leaves the function."""
         from PySide6.QtGui import QImage, QPixmap
         img = pixmap.toImage().convertToFormat(QImage.Format_ARGB32)
         buf = bytearray(img.constBits())
         tbl = bytes(255 if a >= 250 else 0 for a in range(256))
         buf[3::4] = buf[3::4].translate(tbl)
-        out = QImage(bytes(buf), img.width(), img.height(),
+        out = QImage(buf, img.width(), img.height(),
                      img.bytesPerLine(), QImage.Format_ARGB32)
         out.setDevicePixelRatio(img.devicePixelRatio())
         return QPixmap.fromImage(out.copy())
 
-    def _refresh_taskbar_rep(self) -> None:
+    def _refresh_taskbar_rep(self, force: bool = False) -> None:
         """Re-grab the cropped, opaque-only float-UI mirror into the
         representative. Best-effort and cheap enough for the slow tick; no-op
         when inactive or blanked (a blanked rep is invisible everywhere, so a
-        grab mid-gesture would be wasted work on frozen pixels)."""
+        grab mid-gesture would be wasted work on frozen pixels). *force*
+        bypasses ONLY the blanked early-return: the unblank sequence must grab
+        the fresh mirror while the rep is still blanked (paint-before-opacity,
+        see _update_rep_blanking)."""
         rep = self._taskbar_rep
         if rep is None or not self._active or self._surface is None:
             return
-        if rep.is_blanked():
+        if rep.is_blanked() and not force:
             return
         try:
             bbox = self._content_bbox_window_coords()
@@ -2115,17 +2129,33 @@ class ClusterOverlayController:
         """Single source of truth for the aligned-mirror invariant: the rep may
         be visible ONLY in the settled, unobstructed state. Any gesture that
         moves/scales/fades the cluster out from over the mirror blanks it;
-        settling unblanks, re-aligns, and re-grabs."""
+        settling re-aligns, re-grabs, and only THEN unblanks.
+
+        ORDERING INVARIANT (paint-before-opacity): the opacity-1 write goes
+        LAST. set_blanked(False) flushes on the xlib connection immediately,
+        while the re-align/re-grab land as Qt-side paints - unblanking first
+        would show one full-opacity frame of the STALE mirror at the OLD
+        position after every drag end / scale settle. So the settled branch
+        aligns, force-grabs (the rep is still blanked, hence force=True to
+        bypass the refresh's blanked early-return), synchronously repaints,
+        and writes the opacity only once the visible window already holds the
+        fresh aligned mirror."""
         rep = self._taskbar_rep
         if rep is None:
             return
         drag_active = self._drag_timer is not None and self._drag_timer.isActive()
         obstructed = (self._scaling_active or drag_active
                       or self._rep_peek_active or self.is_radial_open)
-        rep.set_blanked(obstructed)
-        if not obstructed:
-            self._position_taskbar_rep()
-            self._refresh_taskbar_rep()
+        if obstructed:
+            rep.set_blanked(True)
+            return
+        self._position_taskbar_rep()
+        self._refresh_taskbar_rep(force=True)
+        try:
+            rep.repaint()             # paint lands before the opacity flush
+        except Exception:
+            pass
+        rep.set_blanked(False)
 
     def open_radial_menu(self):
         """Show the click-accepting radial menu centered on the emblem.
