@@ -9,7 +9,7 @@ mirrors its minimize, fail-closed, and orphan-retention discipline.
 These tests use LIGHT STUBS (no heavy real _CompactLayout): a stub provider whose
 capture/restore record calls and ACTUALLY re-parent a real `_grid_host` (capture
 detaches it; restore re-parents it to a holder widget), a stub window recording
-showMinimized/showNormal, and a stub surface recording host/geometry/show/hide/
+hide/showNormal/close, and a stub surface recording host/geometry/show/hide/
 release/deleteLater. Real integration is validated live later.
 
 Run (NEVER the whole tests/ dir):
@@ -188,20 +188,24 @@ class _StubProvider:
 
 
 class _StubWindow:
-    """Records showMinimized / showNormal; can be told to raise on minimize."""
+    """Records hide / showNormal / close; can be told to raise on hide."""
 
     def __init__(self):
-        self.minimized = 0
+        self.hidden = 0
         self.normaled = 0
-        self.minimize_raises = False
+        self.closed = 0
+        self.hide_raises = False
 
-    def showMinimized(self):
-        self.minimized += 1
-        if self.minimize_raises:
-            raise RuntimeError("minimize boom")
+    def hide(self):
+        self.hidden += 1
+        if self.hide_raises:
+            raise RuntimeError("hide boom")
 
     def showNormal(self):
         self.normaled += 1
+
+    def close(self):
+        self.closed += 1
 
 
 class _StubSurface(QWidget):
@@ -378,9 +382,9 @@ def _make(provider=None, window=None, host_raises=False, release_raises=False,
 
 
 # ---------------------------------------------------------------------------
-# 1. enter() borrows + minimizes + places at the EXACT emblem-centered rect
+# 1. enter() borrows + hides + places at the EXACT emblem-centered rect
 # ---------------------------------------------------------------------------
-def test_enter_borrows_minimizes_and_places_emblem_on_anchor(qapp):
+def test_enter_borrows_hides_and_places_emblem_on_anchor(qapp):
     events: list = []
     anchor = (1000, 700)
     ctrl, provider, window, created = _make(
@@ -401,7 +405,7 @@ def test_enter_borrows_minimizes_and_places_emblem_on_anchor(qapp):
     ax, ay = anchor
     assert surface.geom == QRect(ax - _PIVOT[0], ay - _PIVOT[1], *_ENV_SIZE)
     assert surface.shown == 1
-    assert window.minimized == 1
+    assert window.hidden == 1
     assert ctrl.is_active is True
     assert events == [True]                 # on_active_changed(True) fired
 
@@ -485,7 +489,7 @@ def test_enter_while_active_is_noop(qapp):
     assert again is True
     assert provider.captured == 1           # no second capture
     assert len(created) == 1                # no second surface
-    assert window.minimized == 1            # not minimized again
+    assert window.hidden == 1            # not hidden again
 
 
 def test_leave_while_inactive_is_noop(qapp):
@@ -510,7 +514,7 @@ def test_enter_leave_enter_recycles_cleanly(qapp):
     assert provider.captured == 2           # captured fresh on the second enter
     assert len(created) == 2                # a brand-new surface
     assert provider._grid_host.parent() is created[1]
-    assert window.minimized == 2
+    assert window.hidden == 2
     assert ctrl._orphans == []              # nothing orphaned across clean cycles
 
 
@@ -518,8 +522,8 @@ def test_enter_leave_enter_recycles_cleanly(qapp):
 # 4. FAIL-CLOSED enter
 # ---------------------------------------------------------------------------
 def test_enter_failclosed_on_capture_raise(qapp):
-    """capture raises (before minimize): no exception escapes, stays framed,
-    the window is never minimized (so never left minimized)."""
+    """capture raises (before hide): no exception escapes, stays framed,
+    the window is never hidden (so never left hidden)."""
     provider = _StubProvider(capture_raises=True)
     ctrl, provider, window, created = _make(provider=provider)
 
@@ -527,7 +531,7 @@ def test_enter_failclosed_on_capture_raise(qapp):
 
     assert ok is False
     assert ctrl.is_active is False
-    assert window.minimized == 0            # never minimized -> no showNormal needed
+    assert window.hidden == 0            # never hidden -> no showNormal needed
     # A surface was built before capture; it was torn down (release ok -> deleted).
     if created:
         assert created[0].deleted == 1
@@ -546,25 +550,75 @@ def test_enter_failclosed_on_host_raise_restores_borrow(qapp):
     assert provider.restored == [provider._token]   # borrow returned to the tab
     assert provider._grid_host.parent() is provider._holder
     assert created[0].deleted == 1
-    assert window.minimized == 0
+    assert window.hidden == 0
 
 
-def test_enter_failclosed_on_minimize_raise_restores_window(qapp):
-    """showMinimized raises (after show): the window is restored via showNormal,
-    the borrow is returned, the surface is torn down, stays framed."""
-    window = _StubWindow()
-    window.minimize_raises = True
-    ctrl, provider, window, created = _make(window=window)
+def test_enter_failclosed_on_hide_raise(qapp):
+    """hide() raises (after show): the window is restored via showNormal, the
+    quit guard is restored, and the controller stays framed."""
+    prev = qapp.quitOnLastWindowClosed()
+    try:
+        qapp.setQuitOnLastWindowClosed(True)
+        ctrl, provider, window, created = _make()
+        window.hide_raises = True
+        ok = ctrl.enter()
+        assert ok is False
+        assert ctrl.is_active is False
+        assert window.hidden == 1
+        assert window.normaled == 1             # restored after the mid-enter failure
+        assert qapp.quitOnLastWindowClosed() is True
+    finally:
+        qapp.setQuitOnLastWindowClosed(prev)
 
-    ok = ctrl.enter()
 
-    assert ok is False
-    assert ctrl.is_active is False
-    assert window.minimized == 1
-    assert window.normaled == 1             # restored after the mid-enter failure
-    assert provider.restored == [provider._token]
-    assert provider._grid_host.parent() is provider._holder
-    assert created[0].deleted == 1
+# ---------------------------------------------------------------------------
+# Quit guard + teardown ordering (float owns the taskbar; main window HIDDEN)
+# ---------------------------------------------------------------------------
+def test_enter_sets_quit_guard_and_leave_restores_it(qapp):
+    """While active the main window is HIDDEN (no taskbar entry to restore the
+    gutted window UI from), so quit-on-last-window-closed must be OFF - a
+    mid-float window close would otherwise quit the app. leave() restores the
+    value captured at enter."""
+    prev = qapp.quitOnLastWindowClosed()
+    try:
+        qapp.setQuitOnLastWindowClosed(True)
+        ctrl, provider, window, created = _make()
+        assert ctrl.enter() is True
+        assert qapp.quitOnLastWindowClosed() is False
+        ctrl.leave()
+        assert qapp.quitOnLastWindowClosed() is True
+    finally:
+        qapp.setQuitOnLastWindowClosed(prev)
+
+
+def test_quit_guard_restores_the_captured_value_not_hardcoded_true(qapp):
+    prev = qapp.quitOnLastWindowClosed()
+    try:
+        qapp.setQuitOnLastWindowClosed(False)
+        ctrl, provider, window, created = _make()
+        ctrl.enter()
+        ctrl.leave()
+        assert qapp.quitOnLastWindowClosed() is False
+    finally:
+        qapp.setQuitOnLastWindowClosed(prev)
+
+
+def test_leave_reshows_window_before_surface_teardown(qapp):
+    """ORDERING PIN: with the main window hidden, destroying the last visible
+    window posts the app quit - so leave() must re-show the main window while
+    the cluster surface is still mapped (the host is already restored at that
+    point, so the shown window is complete - no gutted flash)."""
+    order: list = []
+    ctrl, provider, window, created = _make()
+    ctrl.enter()
+    surface = created[0]
+    window.showNormal = lambda: order.append("window_shown")
+    surface.hide = lambda: order.append("surface_hidden")
+    surface.deleteLater = lambda: order.append("surface_deleted")
+    ctrl.leave()
+    assert "window_shown" in order
+    assert order.index("window_shown") < order.index("surface_hidden")
+    assert order.index("window_shown") < order.index("surface_deleted")
 
 
 # ---------------------------------------------------------------------------

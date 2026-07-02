@@ -10,13 +10,13 @@ be swapped behind the same call sites.
 Lifecycle entry points:
 
 * ``enter()`` - build the cluster surface, borrow the host, place + show it, then
-  MINIMIZE the main window (never hide, so the single taskbar icon stays).
+  HIDE the main window (no taskbar/Alt-Tab entry while floating).
 * ``leave()`` - reset framed (scale-1.0) metrics, restore the borrowed host to the
-  tab, tear down the surface, and restore the main window.
+  tab, tear down the surface, and re-show the main window.
 
 Both are FAIL-CLOSED, mirroring ``OverlayGroupController``: if any step of
 ``enter()`` raises, the borrowed host is returned to the tab, the surface is torn
-down, the window is restored if it was minimized, and the controller stays Framed
+down, the window is re-shown if it was hidden, and the controller stays Framed
 (``is_active`` False) - the app is never left with a half-built overlay. No
 exception escapes ``enter()`` (it returns ``False``). ``leave()`` is likewise
 guarded: a restore failure must still reset metrics, restore the window, and
@@ -108,6 +108,10 @@ class ClusterOverlayController:
         self._orphans: list = []
         self._anchor: tuple[int, int] = self._default_anchor()
         self._active: bool = False
+        # quitOnLastWindowClosed value captured at enter (restored on leave/fail):
+        # while active the main window is HIDDEN, so Qt's quit-on-last-window
+        # default would fire if anything closed the remaining overlay windows.
+        self._quit_prev: bool = True
 
         # Scaling state. The cluster is ONE window with FIXED geometry (no proxy/
         # park/snapshot, no per-notch resize): a notch retargets the zoom tween on
@@ -297,6 +301,28 @@ class ClusterOverlayController:
         except Exception:
             return False
 
+    @staticmethod
+    def _quit_on_last_window() -> bool:
+        """Current QApplication.quitOnLastWindowClosed (True when appless)."""
+        from PySide6.QtWidgets import QApplication
+        app = QApplication.instance()
+        return bool(app.quitOnLastWindowClosed()) if app is not None else True
+
+    @staticmethod
+    def _set_quit_on_last_window(value: bool) -> None:
+        """Scoped quit guard. While the overlay is active the main window is
+        HIDDEN (not minimized) so it no longer counts as a visible window;
+        without this guard, closing/destroying the overlay windows mid-float
+        (or during leave() teardown) would fire quit-on-last-window-closed and
+        exit the app. Best-effort: never raises."""
+        try:
+            from PySide6.QtWidgets import QApplication
+            app = QApplication.instance()
+            if app is not None:
+                app.setQuitOnLastWindowClosed(bool(value))
+        except Exception:
+            pass
+
     # ------------------------------------------------------------------
     # Placement
     # ------------------------------------------------------------------
@@ -399,13 +425,14 @@ class ClusterOverlayController:
     # Lifecycle
     # ------------------------------------------------------------------
     def enter(self) -> bool:
-        """Build + show the cluster surface around the borrowed host, then
-        minimize the main window. No-op (returns True) if already active.
+        """Build + show the cluster surface around the borrowed host, then hide
+        the main window (no taskbar/Alt-Tab entry while floating). No-op
+        (returns True) if already active.
 
         Transactional / fail-closed: returns True on success (now transparent),
         or False if any step raised - in which case the borrowed host is returned
-        to the tab, the surface is torn down, the main window is restored if it
-        was minimized, and the controller stays Framed. No exception escapes.
+        to the tab, the surface is torn down, the main window is re-shown if it
+        was hidden, and the controller stays Framed. No exception escapes.
         """
         if self._active:
             return True
@@ -419,7 +446,7 @@ class ClusterOverlayController:
         provider = self._card_provider
         surface = None
         token = None
-        minimized = False
+        hidden = False
         try:
             surface = self._build_surface()
             token = provider.capture_cluster_host()
@@ -482,10 +509,22 @@ class ClusterOverlayController:
             # borrow.
             self._safe_call(surface, "prepare_initial_state")
             surface.show()
-            # Set the flag BEFORE the call so a showMinimized() failure still
-            # triggers the except-path window restore (mirrors OverlayGroupController).
-            minimized = True
-            self._window.showMinimized()
+            # HIDE, not minimize: a minimized window keeps a taskbar entry whose
+            # hover preview is the stale window-UI texture and whose click
+            # restores the gutted window UI (the cards+emblem are borrowed into
+            # this overlay). A hidden window has no taskbar entry and no Alt-Tab
+            # entry - the radial Window spoke is the only way back, by
+            # construction. The surface was shown above, so there is never an
+            # instant with zero visible windows. Flag BEFORE the call so a
+            # hide() failure still triggers the except-path restore; the quit
+            # guard BEFORE the hide so no window close can quit the app while
+            # the main window is not counted as visible.
+            hidden = True
+            self._quit_prev = self._quit_on_last_window()
+            self._set_quit_on_last_window(False)
+            self._window.hide()
+            overlay_trace("cluster.enter: main window HIDDEN "
+                          "(float UI owns the taskbar); quit guard OFF")
         except Exception:
             from utils.overlay.backend import overlay_trace
             import traceback
@@ -493,11 +532,14 @@ class ClusterOverlayController:
                           + traceback.format_exc())
             # Fail-closed: return the borrowed host to the tab FIRST
             # (release-before-restore so the surface never deletes the live host),
-            # THEN destroy the now-empty surface; restore the window if minimized.
+            # THEN restore the window (and the quit guard) if hidden, then destroy
+            # the now-empty surface - same never-zero-visible-windows ordering as
+            # leave().
             self._release_and_restore(surface, token)
-            self._teardown_surface(surface)
-            if minimized:
+            if hidden:
+                self._set_quit_on_last_window(self._quit_prev)
                 self._safe_call(self._window, "showNormal")
+            self._teardown_surface(surface)
             self._surface = None
             self._token = None
             self._active = False
@@ -631,12 +673,19 @@ class ClusterOverlayController:
         self._teardown_internal_dim()
         # Release the borrowed host from the surface, then restore it to the tab.
         self._release_and_restore(surface, token)
+        # Re-show the main window BEFORE the surface teardown: the host is
+        # already restored (the window is complete - no gutted flash) and the
+        # cluster surface is still mapped, so there is never an instant with
+        # zero visible windows - destroying the last visible window would post
+        # the app quit before the re-show ran. Then restore the
+        # quit-on-last-window value captured at enter.
+        self._safe_call(self._window, "showNormal")
+        self._set_quit_on_last_window(self._quit_prev)
         # Destroy the now-empty surface.
         self._teardown_surface(surface)
         self._surface = None
         self._token = None
         self._clear_envelope_state()
-        self._safe_call(self._window, "showNormal")
         self._active = False
         self._emit_active_changed()   # self._active is False here
 
