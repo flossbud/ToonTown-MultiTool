@@ -3734,6 +3734,31 @@ def test_enter_builds_taskbar_rep_and_leave_destroys_it(qapp):
     assert ctrl._taskbar_rep is None
 
 
+def test_taskbar_rep_torn_down_when_leave_teardown_step_raises(qapp):
+    """FAIL-CLOSED PIN: the representative may not outlive leave() on ANY path.
+    A raising teardown step (here the settings save flush, the first step of
+    leave()'s try) is swallowed, but the unconditional tail must still destroy
+    the rep - a survivor would be a stale mapped keep-below window painting the
+    old mirror, plus a live taskbar/Alt-Tab entry beside the restored framed
+    app's own."""
+    backend = _AvailableBackend()
+    ctrl, provider, window, created = _make(backend=backend)
+    assert ctrl.enter() is True
+    assert ctrl._taskbar_rep is not None
+
+    def _boom():
+        raise RuntimeError("flush boom")
+
+    ctrl.flush_pending_save = _boom
+    ctrl.leave()                            # must not raise
+    assert ctrl._taskbar_rep is None        # the rep may not outlive leave()
+    # The existing fail-closed invariants still hold on this path.
+    assert window.normaled == 1
+    assert ctrl.is_active is False
+    assert provider.restored == [provider._token]
+    assert provider._grid_host.parent() is provider._holder
+
+
 def test_no_taskbar_rep_without_backend(qapp):
     """No X11 backend -> no thumbnail mechanism to lean on: the plain hide()
     behavior stands alone and nothing extra is mapped."""

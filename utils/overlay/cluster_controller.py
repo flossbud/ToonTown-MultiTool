@@ -702,19 +702,24 @@ class ClusterOverlayController:
             overlay_trace("cluster.leave teardown raised:\n"
                           + traceback.format_exc())
         # INVARIANT: no exit from leave() may leave the host un-restored, the
-        # main window hidden, or the quit guard off - the lines below run on
-        # EVERY path (success or a swallowed teardown failure). The host restore
-        # sits OUTSIDE the try (it is fully self-guarded, so it cannot raise
-        # here): inside it, a raising earlier step would skip it, and the
-        # unconditional _teardown_surface below would then release the borrowed
-        # host PARENTLESS (bypassing the _orphans net) while showNormal re-shows
-        # a GUTTED main window. Release the host from the surface and restore it
-        # to the tab, THEN re-show the main window BEFORE the surface teardown:
-        # the host is back (the window is complete - no gutted flash) and the
-        # cluster surface is still mapped, so there is never an instant with
-        # zero visible windows - destroying the last visible window would post
-        # the app quit before the re-show ran. Then restore the
-        # quit-on-last-window value captured at enter.
+        # main window hidden, the quit guard off, or the taskbar representative
+        # alive - the lines below run on EVERY path (success or a swallowed
+        # teardown failure). The host restore sits OUTSIDE the try (it is fully
+        # self-guarded, so it cannot raise here): inside it, a raising earlier
+        # step would skip it, and the unconditional _teardown_surface below
+        # would then release the borrowed host PARENTLESS (bypassing the
+        # _orphans net) while showNormal re-shows a GUTTED main window. Release
+        # the host from the surface and restore it to the tab, THEN re-show the
+        # main window BEFORE the surface teardown: the host is back (the window
+        # is complete - no gutted flash) and the cluster surface is still
+        # mapped, so there is never an instant with zero visible windows -
+        # destroying the last visible window would post the app quit before the
+        # re-show ran. Then restore the quit-on-last-window value captured at
+        # enter. The rep teardown re-runs here (idempotent, never raises): a
+        # raising step inside the try would skip the in-try call and leave a
+        # stale mapped keep-below window painting the old mirror, plus a live
+        # taskbar/Alt-Tab entry beside the restored framed app's own.
+        self._teardown_taskbar_rep()
         self._release_and_restore(surface, token)
         self._safe_call(self._window, "showNormal")
         self._set_quit_on_last_window(self._quit_prev)
