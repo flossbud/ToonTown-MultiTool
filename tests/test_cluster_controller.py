@@ -637,9 +637,9 @@ def test_leave_reshows_window_before_surface_teardown(qapp):
 def test_leave_failclosed_when_teardown_step_raises(qapp):
     """FAIL-CLOSED PIN: a raising teardown step (here the settings save flush,
     the first step of leave()) must never strand the app - leave() swallows it,
-    re-shows the main window, restores the quit guard, deletes the surface, and
-    lands framed. No exit from leave() may leave the main window hidden or the
-    guard off."""
+    restores the borrowed host to the tab, re-shows the main window, restores
+    the quit guard, deletes the surface, and lands framed. No exit from leave()
+    may leave the host un-restored, the main window hidden, or the guard off."""
     prev = qapp.quitOnLastWindowClosed()
     try:
         qapp.setQuitOnLastWindowClosed(True)
@@ -656,6 +656,11 @@ def test_leave_failclosed_when_teardown_step_raises(qapp):
         assert qapp.quitOnLastWindowClosed() is True
         assert ctrl.is_active is False
         assert surface.deleted == 1
+        # The borrowed host must return to the tab on EVERY path - a skipped
+        # restore would leave it PARENTLESS (the surface release orphans it,
+        # bypassing the _orphans net) and the re-shown main window gutted.
+        assert provider.restored == [provider._token]
+        assert provider._grid_host.parent() is provider._holder
     finally:
         qapp.setQuitOnLastWindowClosed(prev)
 
