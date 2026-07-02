@@ -312,6 +312,15 @@ class GhostCursorController(QObject):
         # _cs_slot_rect closure); confined mode clips the glove to it.
         self._slot_rect_resolver = slot_rect_resolver
         self._focused_wid = ""
+        # Glove echo over the float cards: the confined ghost windows stack
+        # BELOW the dock-layer cluster, so the overlay paints its own echo of
+        # each glove (clipped to visible card pixels). This controller is the
+        # single owner of glove visibility (show/fade/focus-suppress/off), so
+        # it mirrors every state change into the sink - the cluster
+        # controller's ghost_echo_* methods (wired in main.py; None framed-only
+        # setups). Unconfined floats already draw over the cards, so mirroring
+        # is confined-mode only.
+        self._echo_sink = None
         self._disabled_reason = self._platform_unsupported()
         if self._disabled_reason:
             print(f"[GhostCursors] disabled: {self._disabled_reason}")
@@ -341,6 +350,29 @@ class GhostCursorController(QObject):
         id format toplevel_at_point returns). Safe from any thread."""
         return self._wid_cache
 
+    def set_echo_sink(self, sink) -> None:
+        """Attach the overlay-side glove-echo sink (duck-typed: the cluster
+        controller's ghost_echo_shown/fading/hidden/cleared). GUI thread."""
+        self._echo_sink = sink
+        if self._disabled_reason is None and sink is not None:
+            # Running-code stamp: live validation of the card echo starts here.
+            state = ("armed (confined mode)" if self._confined
+                     else "inert (unconfined float draws over cards already)")
+            print(f"[GhostCursors] card echo: {state}")
+
+    def _echo_notify(self, method: str, *args) -> None:
+        """Best-effort mirror of a glove state change to the echo sink.
+        Cosmetic by contract: never raises into the ghost pipeline, and never
+        runs unconfined (the legacy always-on-top float already renders over
+        the cards, so an echo would double-draw)."""
+        sink = self._echo_sink
+        if sink is None or not self._confined:
+            return
+        try:
+            getattr(sink, method)(*args)
+        except Exception:
+            pass
+
     def set_focused_window(self, wid: str | None) -> None:
         """Hide any ghost on the newly focused window and keep it
         suppressed while focus stays (the per-point guard in
@@ -352,6 +384,7 @@ class GhostCursorController(QObject):
         for slot, ov in self._overlays.items():
             if self._slot_window_resolver(slot) == self._focused_wid:
                 ov.hide_now()
+                self._echo_notify("ghost_echo_hidden", slot)
                 t = self._timers.get(slot)
                 if t is not None:
                     t.stop()
@@ -374,9 +407,15 @@ class GhostCursorController(QObject):
                 # Target BEFORE show: a fresh map must confine to the
                 # slot's current game window, not a stale one.
                 ov.set_game_window(self._slot_wid_int(slot))
-            ov.show_at(*_emitted_to_logical(x, y))
+            lx, ly = _emitted_to_logical(x, y)
+            ov.show_at(lx, ly)
             if self._confined:
                 ov.clip_to(self._slot_rect_logical(slot))
+                # Mirror the sprite onto the float cards (top-left = the same
+                # hotspot-adjusted point show_at moved the window to).
+                self._echo_notify("ghost_echo_shown", slot,
+                                  lx - HOTSPOT[0], ly - HOTSPOT[1],
+                                  ov._pixmap)
             self._restart_idle_timer(slot)
 
     def _on_clear(self) -> None:
@@ -466,9 +505,11 @@ class GhostCursorController(QObject):
         ov = self._overlays.get(slot)
         if ov is not None:
             ov.fade_out()
+            self._echo_notify("ghost_echo_fading", slot, FADE_MS)
 
     def _hide_all(self) -> None:
         for t in self._timers.values():
             t.stop()
         for ov in self._overlays.values():
             ov.hide_now()
+        self._echo_notify("ghost_echo_cleared")

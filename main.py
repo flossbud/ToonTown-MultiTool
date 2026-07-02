@@ -523,6 +523,14 @@ class MultiToonTool(QMainWindow):
         if _click_sync is not None:
             _click_sync.ghost_pointer_event.connect(self._mode_controller.on_ghost_event)
             _click_sync.ghost_clear.connect(self._mode_controller.on_ghost_clear)
+        # Glove echo: confined ghost windows stack BELOW the dock-layer cluster,
+        # so the cluster paints its own echo of each glove over the visible
+        # cards. The ghost controller (single owner of glove visibility) mirrors
+        # into the cluster controller's ghost_echo_* sink; the legacy
+        # multi-window controller has no sink, so it is simply not wired.
+        _ghosts = getattr(self.multitoon_tab, "ghost_cursor_controller", None)
+        if _ghosts is not None and hasattr(self._mode_controller, "ghost_echo_shown"):
+            _ghosts.set_echo_sink(self._mode_controller)
         emblem = self.multitoon_tab._compact._emblem
         self._windowed_wheel = None
         from utils.overlay.backend import overlay_trace as _overlay_trace
