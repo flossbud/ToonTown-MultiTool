@@ -1,10 +1,10 @@
 """Tests for ClusterOverlayController: enter / leave / borrow / metrics-reset.
 
 The single-window cluster controller borrows the WHOLE `_grid_host` subtree into
-one ``ClusterSurface`` (instead of one surface per card), minimizes the main
+one ``ClusterSurface`` (instead of one surface per card), hides the main
 window, and on leave restores the host + resets framed (scale-1.0) metrics. It is
 a drop-in analog of ``OverlayGroupController`` for the single-window cluster, and
-mirrors its minimize, fail-closed, and orphan-retention discipline.
+mirrors its hide, fail-closed, and orphan-retention discipline.
 
 These tests use LIGHT STUBS (no heavy real _CompactLayout): a stub provider whose
 capture/restore record calls and ACTUALLY re-parent a real `_grid_host` (capture

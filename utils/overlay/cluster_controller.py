@@ -68,7 +68,7 @@ def _scale_anim_enabled() -> bool:
 
 
 class ClusterOverlayController:
-    """Borrow the whole cluster into one window; minimize the main window.
+    """Borrow the whole cluster into one window; hide the main window.
 
     Drop-in compatible constructor with ``OverlayGroupController``. The single
     ``ClusterSurface`` is built by ``surface_factory`` (a zero-arg callable) when
@@ -94,7 +94,7 @@ class ClusterOverlayController:
         self._card_provider = card_provider
         # Best-effort observer notified with the new active state after a
         # successful enter() and after leave() (the tab uses it to keep repaint
-        # timers running while the minimized main window would stop them). Never
+        # timers running while the hidden main window would stop them). Never
         # invoked on a failed enter().
         self._on_active_changed = on_active_changed
 
