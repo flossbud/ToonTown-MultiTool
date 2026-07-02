@@ -65,24 +65,24 @@ class X11OverlayBackend(OverlayBackend):
         Must be called while the window is realized (winId valid) but NOT yet
         mapped (before show()).
 
-        The window TYPE (the surface class's ``WM_WINDOW_TYPE``, default DOCK)
-        is load-bearing for MANAGED overlay windows: KWin force-fits a managed
-        NORMAL window's client-requested geometry into the virtual-desktop
-        bounding box, which walled the cluster's fixed max-scale envelope short
-        of the top screen edge and desynced the drag anchor from the pinned
-        window. DOCK and NOTIFICATION windows are exempt from that clamp -
-        probed empirically on KWin 6.7.1, 2026-07-01, with keep-above applied,
-        i.e. exactly this configuration. With _NET_WM_STATE_ABOVE also set the
-        dock stacks in the same keep-above layer as before (over the games,
-        still below the compositor's system layers such as the screenshot
-        region picker), and docks are visible on all virtual desktops -
-        matching the old override-redirect behavior. No _NET_WM_STRUT is set,
-        so no screen space is reserved. The radial/panel surfaces override
-        ``WM_WINDOW_TYPE`` to NOTIFICATION (a strictly higher KWin layer) so
-        they can never be click-raised below the cluster window - see
-        ``OverlaySurface.WM_WINDOW_TYPE``. On an override-redirect window
-        (TTMT_OVERLAY_UNMANAGED=1) the WM ignores both properties, so writing
-        them unconditionally is harmless.
+        The window TYPE (the surface class's ``WM_WINDOW_TYPE``, DOCK for every
+        overlay surface) is load-bearing for MANAGED overlay windows: KWin
+        force-fits a managed NORMAL window's client-requested geometry into the
+        virtual-desktop bounding box, which walled the cluster's fixed
+        max-scale envelope short of the top screen edge and desynced the drag
+        anchor from the pinned window. DOCK windows are exempt from that clamp
+        - probed empirically on KWin 6.7.1, 2026-07-01, with keep-above
+        applied, i.e. exactly this configuration - and, unlike NOTIFICATION,
+        are not animated by the slidingnotifications effect (which painted the
+        radial ring traveling in from a stale position; live-bisected). With
+        _NET_WM_STATE_ABOVE also set the dock stacks in the same keep-above
+        layer as before (over the games, still below the compositor's system
+        layers such as the screenshot region picker), and docks are visible on
+        all virtual desktops - matching the old override-redirect behavior. No
+        _NET_WM_STRUT is set, so no screen space is reserved. The radial/panel
+        stacking above the cluster is enforced by ``set_transient_for``. On an
+        override-redirect window (TTMT_OVERLAY_UNMANAGED=1) the WM ignores
+        these properties, so writing them unconditionally is harmless.
         """
         if not self.is_available():
             return
@@ -113,6 +113,39 @@ class X11OverlayBackend(OverlayBackend):
             d.flush()
             overlay_trace("x11 set_initial_state: pre-map _NET_WM_STATE"
                           f"(above+skip) + _NET_WM_WINDOW_TYPE({wtype}) applied")
+        except Exception:
+            pass
+
+    def set_transient_for(self, window, parent) -> None:
+        """Set WM_TRANSIENT_FOR = *parent*'s window, PRE-MAP (both realized).
+
+        Load-bearing for the overlay stacking: KWin keeps a transient ABOVE its
+        parent in EVERY restack computation - probed on KWin 6.7.1 (2026-07-01):
+        neither ``parent.raise_()`` nor an explicit ``child.lower()`` can invert
+        the order, so KWin's internal click-raise of the (click-accepting)
+        cluster window can never lift it - and its internal dim - above the
+        radial/panel. This replaces the earlier NOTIFICATION-type layering,
+        which collided with the ``slidingnotifications`` effect: it paints
+        notification windows with a translation toward their geometry, so a
+        window whose moves accumulated invisibly (zero damage while empty)
+        visibly replayed the whole travel on its first content paint. DOCK
+        windows are not animated by it (bisected live) and keep the
+        fit-to-desktop clamp exemption, transient or not (probed)."""
+        if not self.is_available():
+            return
+        try:
+            from Xlib import Xatom
+            d = self._display
+            win = d.create_resource_object("window", int(window.winId()))
+            win.change_property(
+                d.intern_atom("WM_TRANSIENT_FOR"),
+                Xatom.WINDOW,
+                32,
+                [int(parent.winId())],
+            )
+            d.flush()
+            overlay_trace("x11 set_transient_for: WM_TRANSIENT_FOR applied "
+                          f"({int(window.winId()):#x} -> {int(parent.winId()):#x})")
         except Exception:
             pass
 

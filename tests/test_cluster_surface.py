@@ -28,16 +28,17 @@ def qapp():
 # Flags / attributes (inherited from OverlaySurface)
 # ---------------------------------------------------------------------------
 
-def test_wm_window_types_layer_the_surfaces(qapp):
-    """The cluster window is a DOCK (exempt from KWin's fit-to-desktop move
-    clamp, keep-above layer); the radial + panel are NOTIFICATION - a strictly
-    HIGHER KWin layer, so a click-raise on the cluster (any emblem press) can
-    never lift the cluster's internal dim above the ring/panel. Client restack
-    requests are ignored within the dock layer, so raise_() alone cannot
-    guarantee this - the type split does."""
+def test_wm_window_types_all_dock(qapp):
+    """EVERY overlay surface is a DOCK: exempt from KWin's fit-to-desktop move
+    clamp AND never animated by the slidingnotifications effect - the earlier
+    NOTIFICATION type for radial/panel made that effect paint the ring
+    traveling in from a stale position (its invisible empty-state moves
+    replayed on the first content paint; live-bisected). Stacking above the
+    cluster is enforced by WM_TRANSIENT_FOR instead of a layer split (see
+    test_cluster_controller.test_persistent_surfaces_wire_transient_chain)."""
     assert ClusterSurface.WM_WINDOW_TYPE == "_NET_WM_WINDOW_TYPE_DOCK"
-    assert RadialSurface.WM_WINDOW_TYPE == "_NET_WM_WINDOW_TYPE_NOTIFICATION"
-    assert PanelSurface.WM_WINDOW_TYPE == "_NET_WM_WINDOW_TYPE_NOTIFICATION"
+    assert RadialSurface.WM_WINDOW_TYPE == "_NET_WM_WINDOW_TYPE_DOCK"
+    assert PanelSurface.WM_WINDOW_TYPE == "_NET_WM_WINDOW_TYPE_DOCK"
 
 
 def test_cluster_surface_flags_and_translucent(qapp):

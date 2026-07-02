@@ -1532,6 +1532,31 @@ def test_close_radial_menu_tears_down_menu_keeps_surface_and_hides_dim(qapp, mon
     assert ctrl._radial_surface is None
 
 
+def test_persistent_surfaces_wire_transient_chain(qapp):
+    """enter() must wire WM_TRANSIENT_FOR: radial -> cluster window and panel ->
+    radial (via the backend), BEFORE each surface is shown. The chain is what
+    keeps cluster < radial < panel in every KWin restack now that all three are
+    DOCK-typed (a click-raise on the cluster could otherwise lift its internal
+    dim above the ring - the live inversion bug)."""
+    class _TransientRecordingBackend(NoOpOverlayBackend):
+        def __init__(self):
+            self.transients: list = []   # (child, parent)
+
+        def set_transient_for(self, window, parent):
+            self.transients.append((window, parent))
+
+    backend = _TransientRecordingBackend()
+    ctrl, provider, window, created = _make(backend=backend)
+    ctrl.enter()
+
+    cluster = created[0]
+    assert ctrl._radial_surface is not None
+    assert ctrl._panel_surface is not None
+    assert (ctrl._radial_surface, cluster) in backend.transients
+    assert (ctrl._panel_surface, ctrl._radial_surface) in backend.transients
+    ctrl.leave()
+
+
 def test_closed_persistent_surfaces_track_anchor_so_open_has_no_delta(qapp, monkeypatch):
     """Moving the cluster while the ring/panel are CLOSED must re-center the empty
     persistent top-levels immediately: the compositor animates geometry changes of

@@ -147,14 +147,16 @@ class RadialSurface(ClusterSurface):
     controller tears it down with a plain ``hide()`` + ``deleteLater()`` - the menu
     dies with the surface, which is the intent.
 
-    NOTIFICATION type (vs the cluster's DOCK): a strictly higher KWin layer, so
-    a click-raise on the cluster window (any emblem press) can never lift the
-    cluster - and its internal radial dim - above this ring. Within the dock
-    layer KWin ignores client restack requests, so ``raise_()`` alone cannot
-    guarantee the order; the layer split does. See OverlaySurface.WM_WINDOW_TYPE.
+    Stacking above the cluster is enforced by WM_TRANSIENT_FOR (the controller
+    sets this surface transient for the cluster window pre-map): KWin keeps a
+    transient above its parent in every restack, so a click-raise on the
+    cluster (any emblem press) can never lift the cluster - and its internal
+    radial dim - above this ring. The type stays DOCK like the cluster: the
+    earlier NOTIFICATION layering made the ``slidingnotifications`` effect
+    paint the ring traveling in from a stale position (its moves accumulate
+    invisibly while empty; the first content paint replayed them), and docks
+    are not animated by it. See ``X11OverlayBackend.set_transient_for``.
     """
-
-    WM_WINDOW_TYPE = "_NET_WM_WINDOW_TYPE_NOTIFICATION"
 
 
 class PanelSurface(ClusterSurface):
@@ -177,9 +179,9 @@ class PanelSurface(ClusterSurface):
     ``hide()`` + ``deleteLater()`` AFTER running the caller's ``on_close`` (which
     reparents the hosted content back out first).
 
-    NOTIFICATION type like the radial: the panel must float above the cluster
-    window no matter what KWin click-raises within the dock layer; it opens
-    AFTER (and maps above) the radial within the notification layer.
+    Stacking: DOCK type like the radial, transient-for the RADIAL surface (a
+    chain - panel above radial above cluster - so no sibling-order policy can
+    ever invert panel vs radial either; a click on the radial's spokes raises
+    the panel along with it, transients ride their parent's raise). See
+    ``RadialSurface`` for why the NOTIFICATION layering was abandoned.
     """
-
-    WM_WINDOW_TYPE = "_NET_WM_WINDOW_TYPE_NOTIFICATION"

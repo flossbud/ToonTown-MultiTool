@@ -510,10 +510,11 @@ class ClusterOverlayController:
         # back to framed, so _build_internal_dim swallows its own errors.
         self._build_internal_dim()
         # Pre-map the PERSISTENT radial + panel top-levels now, empty (transparent
-        # + click-through), in this order - the compositor's window-open animation
-        # plays once here on invisible windows, and the notification-layer map
-        # order (cluster < radial < panel) is frozen for the session. Best-effort:
-        # both ensures self-clean on failure and re-run lazily at open.
+        # + click-through), in this order - any compositor window-open animation
+        # plays once here on invisible windows, and the transient chain (panel ->
+        # radial -> cluster) locks cluster < radial < panel stacking for the
+        # session regardless of raise order. Best-effort: both ensures self-clean
+        # on failure and re-run lazily at open.
         self._ensure_radial_surface()
         self._ensure_panel_surface()
         # Clear any ghost points that leaked into the store while framed (a queued
@@ -1765,18 +1766,18 @@ class ClusterOverlayController:
         session (empty, fully transparent via the source-clear paint, and
         click-through via an EMPTY input shape), then reused by every ring open.
 
-        WHY persistent (load-bearing): mapping a window is what triggers the
-        compositor's open animation, and for NOTIFICATION-typed windows KWin
-        slides the new window in from the screen edge - live round 3 saw the
-        ring's buttons "fly up from below the monitor". Probed 2026-07-01: the
-        geometry is honored from the first frame (the slide is purely visual)
-        and no skip-OPEN-animation property exists (only
+        WHY persistent (load-bearing): mapping a window is what triggers
+        compositor open animations (when the surfaces were NOTIFICATION-typed,
+        the slidingnotifications effect slid every fresh map in from the screen
+        edge - live round 3's "fly up from below the monitor"). Probed
+        2026-07-01: the geometry is honored from the first frame (such slides
+        are purely visual) and no skip-OPEN-animation property exists (only
         _KDE_NET_WM_SKIP_CLOSE_ANIMATION is in the server's atom table). So the
         one map happens at enter() on an EMPTY invisible window; opening the
-        ring later only hosts content into the already-mapped surface - nothing
-        for the compositor to animate, under ANY effect configuration.
-        Pre-mapping at enter also freezes the session's stacking by map order:
-        cluster < radial < panel.
+        ring later only hosts content into the already-mapped surface. The
+        surfaces are DOCK-typed besides (never animated by that effect -
+        live-bisected), and stacking is locked by the transient chain
+        (panel -> radial -> cluster), not by map order.
 
         Returns the surface, or None when construction failed (the caller then
         fails closed). Best-effort self-cleaning: a mid-build failure never
@@ -1797,6 +1798,16 @@ class ClusterOverlayController:
                 QRect(int(ax - canvas_max / 2), int(ay - canvas_max / 2),
                       canvas_max, canvas_max))
             self._safe_call(surface, "prepare_initial_state")
+            # TRANSIENT FOR the cluster window (pre-map): KWin keeps a transient
+            # above its parent in EVERY restack, so a click-raise on the cluster
+            # can never lift its internal dim above this ring. Both are DOCK -
+            # the type the compositor never animates (the NOTIFICATION layering
+            # collided with slidingnotifications; see set_transient_for).
+            if self._surface is not None:
+                try:
+                    self._backend.set_transient_for(surface, self._surface)
+                except Exception:
+                    pass
             surface.show()
             self._radial_surface = surface
             # Click-through while empty: a mapped window without a shape keeps
@@ -1849,6 +1860,17 @@ class ClusterOverlayController:
             surface.set_overlay_geometry(
                 QRect(int(ax - size / 2), int(ay - size / 2), size, size))
             self._safe_call(surface, "prepare_initial_state")
+            # TRANSIENT chain (pre-map): panel -> radial -> cluster, so the panel
+            # stacks above the radial above the cluster in every KWin restack -
+            # no sibling map-order or click-raise can invert any pair. The radial
+            # is ensured first (enter order; lazily here as the fallback); if it
+            # is somehow unavailable, chain to the cluster window directly.
+            parent = self._ensure_radial_surface() or self._surface
+            if parent is not None:
+                try:
+                    self._backend.set_transient_for(surface, parent)
+                except Exception:
+                    pass
             surface.show()
             self._panel_surface = surface
             self._apply_panel_input_shape(QPainterPath())   # click-through while empty
@@ -1868,17 +1890,19 @@ class ClusterOverlayController:
         """Unmap + delete the persistent radial/panel top-levels. leave() only:
         per-open close keeps them mapped (unmapping and re-mapping is what
         replays the compositor's open animation). Content is already gone by
-        the time this runs (close_radial_menu/close_panel_surface ran first)."""
-        surface = self._radial_surface
-        self._radial_surface = None
-        if surface is not None:
-            self._safe_call(surface, "hide")
-            self._safe_call(surface, "deleteLater")
+        the time this runs (close_radial_menu/close_panel_surface ran first).
+        Order is child-before-parent along the transient chain (panel ->
+        radial -> cluster), so a transient never briefly outlives its parent."""
         panel = self._panel_surface
         self._panel_surface = None
         if panel is not None:
             self._safe_call(panel, "hide")
             self._safe_call(panel, "deleteLater")
+        surface = self._radial_surface
+        self._radial_surface = None
+        if surface is not None:
+            self._safe_call(surface, "hide")
+            self._safe_call(surface, "deleteLater")
 
     def open_radial_menu(self):
         """Show the click-accepting radial menu centered on the emblem.
