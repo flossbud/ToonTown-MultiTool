@@ -25,11 +25,16 @@ WINDOWED_RING_ANGLES: dict[str, float] = {
 
 
 def account_ring_angles(n: int) -> list[float]:
-    """Angles (deg) for ``n`` account circles, top slot reserved for Back."""
+    """Angles (deg) for ``n`` account circles, top slot reserved for Back.
+
+    Index 0 (the most recent account) gets the slot immediately
+    counter-clockwise of Back, so recency reads newest to oldest, left to
+    right (the sweep continues down the left side and up the right).
+    """
     if n <= 0:
         return []
     step = 360.0 / (n + 1)
-    return [-90.0 + step * k for k in range(1, n + 1)]
+    return [-90.0 + step * k for k in range(n, 0, -1)]
 
 
 def polar_point(cx: float, cy: float, radius: float, angle_deg: float) -> tuple[float, float]:
