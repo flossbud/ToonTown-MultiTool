@@ -3739,7 +3739,11 @@ def test_enter_builds_taskbar_rep_and_leave_destroys_it(qapp):
     assert rep is not None
     assert rep.isVisible()
     assert backend.rep_state == [rep]              # pre-map keep-below hint
-    assert backend.opacities == []                 # aligned, NOT opacity-hidden
+    # Pre-map opacity STAGE only (a mapped window with no buffer composites
+    # BLACK - probed); the first real paint lifts it. Every write at enter is
+    # a 0.0 stage (rep + persistent radial/panel) - nothing map-time-visible.
+    assert [(w, o) for w, o in backend.opacities if w is rep] == [(rep, 0.0)]
+    assert all(o == 0.0 for _, o in backend.opacities)
     assert rep.is_blanked() is False                # settled state at enter
     # First mirror grabbed BEFORE the map: the entry never shows a blank preview.
     assert rep._mirror is not None and not rep._mirror.isNull()

@@ -70,15 +70,16 @@ def test_flags_listed_focusable_and_translucent(qapp):
     rep.deleteLater()
 
 
-def test_prepare_initial_state_requests_below_and_clickthrough_no_opacity(qapp):
-    """Pre-map: keep-below + empty input shape. NO opacity write - the rep maps
-    ALIGNED under the cluster (invisible by construction); opacity is reserved
-    for set_blanked()."""
+def test_prepare_initial_state_requests_below_clickthrough_and_opacity_stage(qapp):
+    """Pre-map: keep-below + empty input shape + OPACITY 0. A mapped window
+    with no buffer composites as an opaque black rect on KWin/XWayland, and at
+    a startup float launch the first paint can be seconds after the map - so
+    the rep maps opacity-staged; the first real paint lifts the stage."""
     backend = _RecordingBackend()
     rep = _make_rep(backend=backend)
     rep.prepare_initial_state()
     assert backend.rep_state == [rep]
-    assert backend.opacities == []           # opacity is set_blanked's job only
+    assert backend.opacities == [(rep, 0.0)]   # staged until first paint
     assert len(backend.input_regions) == 1
     win, region = backend.input_regions[0]
     assert win is rep
@@ -164,4 +165,53 @@ def test_tick_runs_only_while_shown(qapp):
     assert ticks == [1]
     rep.hide()
     assert not rep._tick.isActive()
+    rep.deleteLater()
+
+
+def test_first_paint_lifts_opacity_stage_repaint_before_opacity(qapp):
+    """After the first real paint, the pre-map opacity stage is lifted one
+    loop turn later: repaint FIRST (current buffer), THEN the 1.0 write - the
+    anti-stale-frame ordering."""
+    backend = _RecordingBackend()
+    rep = _make_rep(backend=backend)
+    events: list = []
+    backend.set_window_opacity = lambda w, o: events.append(("opacity", float(o)))
+    orig_repaint = rep.repaint
+    rep.repaint = lambda: (events.append(("repaint",)), orig_repaint())[1]
+
+    rep.prepare_initial_state()
+    assert events == [("opacity", 0.0)]
+    pm = QPixmap(QSize(40, 30))
+    pm.fill(QColor("black"))
+    rep.set_mirror(pm)
+    rep.show()
+    rep.repaint()                            # deterministic first paint
+    for _ in range(10):                      # zero-timer fires next loop pass
+        qapp.processEvents()
+        if ("opacity", 1.0) in events:
+            break
+    assert events[-1] == ("opacity", 1.0)
+    assert ("repaint",) in events[:-1]       # repaint preceded the 1.0 write
+    assert events.count(("opacity", 1.0)) == 1
+    rep.hide()
+    rep.deleteLater()
+
+
+def test_first_paint_lift_defers_to_engaged_blank(qapp):
+    """If a blank engages between the first paint and the lift, the lift must
+    NOT write opacity 1 - blanking owns opacity until its own unblank."""
+    backend = _RecordingBackend()
+    rep = _make_rep(backend=backend)
+    rep.prepare_initial_state()
+    pm = QPixmap(QSize(40, 30))
+    pm.fill(QColor("black"))
+    rep.set_mirror(pm)
+    rep.show()
+    rep.repaint()                            # first paint schedules the lift
+    rep.set_blanked(True)                    # blank engages BEFORE the lift runs
+    for _ in range(10):
+        qapp.processEvents()
+    assert (rep, 1.0) not in backend.opacities
+    assert rep.is_blanked() is True
+    rep.hide()
     rep.deleteLater()

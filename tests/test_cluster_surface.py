@@ -248,3 +248,75 @@ def test_emblem_center_lands_on_pivot_at_every_scale(qapp):
         # And the mapped size is the true scaled size (uniform zoom).
         assert abs(mapped.width() - 100 * scale) < 1e-6
     s.release()
+
+
+# ---------------------------------------------------------------------------
+# Pre-map opacity stage (mapped-with-no-buffer composites black - probed)
+# ---------------------------------------------------------------------------
+
+class _OpacityRecordingBackend:
+    """Minimal backend recording set_window_opacity; everything else no-ops."""
+    def __init__(self):
+        self.opacities: list = []
+    def is_available(self):
+        return True
+    def set_window_opacity(self, window, opacity):
+        self.opacities.append((window, float(opacity)))
+    def __getattr__(self, name):
+        return lambda *a, **k: None
+
+
+def test_prepare_initial_state_stages_opacity_zero(qapp):
+    """prepare_initial_state must write _NET_WM_WINDOW_OPACITY=0 pre-map: a
+    mapped window with NO buffer composites as an OPAQUE BLACK rect on
+    KWin/XWayland, and at a startup float launch the event loop's first paint
+    (= first buffer) can be seconds after enter() maps the surface. Applies to
+    the cluster AND the persistent radial/panel (inherited)."""
+    for cls in (ClusterSurface, RadialSurface, PanelSurface):
+        backend = _OpacityRecordingBackend()
+        s = cls(backend=backend)
+        s.prepare_initial_state()
+        assert [o for w, o in backend.opacities if w is s] == [0.0], cls.__name__
+        s.deleteLater()
+
+
+def test_first_paint_lifts_opacity_stage_repaint_before_opacity(qapp):
+    """The stage is lifted one loop turn AFTER the first real paint: repaint
+    first (flushes a current buffer now that the window is exposed), THEN the
+    opacity write - the taskbar rep's proven anti-stale-frame ordering."""
+    backend = _OpacityRecordingBackend()
+    s = ClusterSurface(backend=backend)
+    events: list = []
+    backend.set_window_opacity = lambda w, o: events.append(("opacity", float(o)))
+    orig_repaint = s.repaint
+    s.repaint = lambda: (events.append(("repaint",)), orig_repaint())[1]
+
+    s.prepare_initial_state()
+    assert events == [("opacity", 0.0)]
+    s.resize(60, 40)
+    s.show()
+    s.repaint()                              # deterministic first paint
+    for _ in range(10):                      # zero-timer fires next loop pass
+        qapp.processEvents()
+        if ("opacity", 1.0) in events:
+            break
+    assert events[-1] == ("opacity", 1.0)
+    assert ("repaint",) in events[:-1]       # repaint preceded the 1.0 write
+    assert events.count(("opacity", 1.0)) == 1
+    s.hide()
+    s.deleteLater()
+
+
+def test_paint_without_prepare_never_touches_opacity(qapp):
+    """A surface that was never opacity-staged (prepare_initial_state not
+    called - e.g. legacy paths) must never emit opacity writes from painting:
+    the lift is armed exclusively by the stage."""
+    backend = _OpacityRecordingBackend()
+    s = ClusterSurface(backend=backend)
+    s.resize(60, 40)
+    s.show()
+    s.repaint()
+    qapp.processEvents()
+    assert backend.opacities == []
+    s.hide()
+    s.deleteLater()
