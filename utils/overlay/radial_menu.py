@@ -471,6 +471,7 @@ class RadialMenuWidget(QWidget):
     back_requested = Signal()
     account_clicked = Signal(str)
     closing = Signal()           # fly-back begun (all dismiss paths) -> dim collapse
+    state_changed = Signal()     # main <-> accounts ring swapped (spoke set/geometry changed)
 
     _IDLE_MS = 15000
     _APPEAR_MS = 360
@@ -763,6 +764,23 @@ class RadialMenuWidget(QWidget):
                 return (state, key)
         return None
 
+    def interactive_path(self):
+        """Union of the CURRENT state's spoke circles (WIDGET coords), slightly
+        padded for the hover lift - the only regions of the ring that actually
+        take clicks. The cluster controller applies this as the radial window's
+        X11 input shape, so everything else (canvas corners, the gap between
+        the emblem and the spokes) clicks straight through to whatever sits
+        beneath - game UI, the cards - instead of being swallowed by the
+        invisible canvas. Click-off dismissal is handled by the controller's
+        global-press watcher, not by this widget."""
+        from PySide6.QtCore import QRectF
+        from PySide6.QtGui import QPainterPath
+        path = QPainterPath()
+        for (_state, _key, cx, cy, r) in self._visible_circles():
+            rr = r * 1.12 + 4.0   # hover lift (~10%) + a forgiving edge
+            path.addEllipse(QRectF(cx - rr, cy - rr, rr * 2.0, rr * 2.0))
+        return path
+
     def activate_at(self, x: float, y: float) -> None:
         if self._closing:
             return
@@ -797,6 +815,7 @@ class RadialMenuWidget(QWidget):
             if key == "back":
                 self._state = "main"
                 self._hover = None
+                self.state_changed.emit()   # spoke geometry swapped -> input reshape
                 self.back_requested.emit()
                 self.start_reveal()
             else:
@@ -925,6 +944,7 @@ class RadialMenuWidget(QWidget):
                 self._loading.add(a.account_id)
         self._state = "accounts"
         self._hover = None
+        self.state_changed.emit()   # spoke geometry swapped -> input reshape
         self.start_reveal()
 
     def _on_pose_ready(self, dna, pose, pixmap):

@@ -77,7 +77,8 @@ class ClusterOverlayController:
     """
 
     def __init__(self, window, backend=None, settings=None, surface_factory=None,
-                 card_provider=None, on_active_changed=None):
+                 card_provider=None, on_active_changed=None,
+                 dismiss_capture_factory=None):
         self._window = window
         self._backend = backend if backend is not None else get_overlay_backend()
         # The settings object the anchor/scale/monitor persistence reads + writes
@@ -171,6 +172,15 @@ class ClusterOverlayController:
         # stream, so a scale-while-open change DEFERS the reshape to this settle timer
         # (mirrors OverlayGroupController._schedule_radial_reshape).
         self._radial_reshape_timer = None
+        # Click-off dismissal: while the ring is open, a portal-safe GLOBAL
+        # mouse-press watcher (XRecord; injectable factory for tests) dismisses
+        # the ring on any press that is not on our chrome. The press itself is
+        # never consumed - the radial window's input shape is only the spokes,
+        # so it lands on whatever sits beneath. The bridge marshals the capture
+        # thread's events onto the GUI thread (created lazily, GUI thread only).
+        self._dismiss_capture_factory = dismiss_capture_factory
+        self._radial_dismiss_capture = None
+        self._press_bridge = None
 
         # Portable Settings panel. A SEPARATE click-accepting source-cleared
         # top-level (PanelSurface) hosting an arbitrary CALLER-PROVIDED widget (the
@@ -1983,10 +1993,20 @@ class ClusterOverlayController:
                 menu.close_requested.connect(self.close_radial_menu)
             except Exception:
                 pass
+            # Re-apply the spokes-only input shape when the ring swaps between the
+            # main and accounts states (different spoke count/geometry). Guarded:
+            # a stub menu without the signal must not tank the open.
+            try:
+                menu.state_changed.connect(self._reapply_radial_shape)
+            except Exception:
+                pass
             try:
                 menu.start_reveal()
             except Exception:
                 pass
+            # Click-off dismissal: watch global presses for the ring's lifetime
+            # (best-effort; self-guarded + backend-gated).
+            self._start_radial_dismiss_capture()
             # If the portable Settings panel is ALSO open, keep it ABOVE the
             # just-shown/-restacked radial top-level (the panel must always float
             # above the emblem AND the radial). Best-effort re-raise: a failure here
@@ -2041,6 +2061,7 @@ class ClusterOverlayController:
         menu = self._radial_menu
         self._radial_menu = None
         self._radial_size = 0
+        self._stop_radial_dismiss_capture()      # the ring is gone; stop watching
         if self._radial_reshape_timer is not None:
             self._radial_reshape_timer.stop()  # drop any pending settle reshape
         dim = self._dim
@@ -2142,21 +2163,29 @@ class ClusterOverlayController:
         self._apply_radial_input_shape(self._radial_click_path())
 
     def _radial_click_path(self):
-        """The radial surface's click region: the CURRENT-scale ``emblem*4``
-        canvas centered in the fixed max-canvas window, MINUS the emblem disc at
-        its center.
+        """The radial surface's click region: ONLY the ring's interactive spoke
+        circles (``menu.interactive_path()``; widget coords == window coords
+        because the menu fills the fixed max-canvas window full-bleed).
 
-        The hole is load-bearing: the radial top-level sits ABOVE the
-        click-through cluster window, so without it the ring would swallow every
-        pointer event over the emblem and all emblem gestures would die while
-        the ring is open - click-to-toggle-close, hover-dwell + scroll-to-scale,
-        and drag (which auto-closes the ring via ``begin_group_drag``). This
-        mirrors the legacy path, where the emblem was its own top-level stacked
-        ABOVE the radial and owned those events natively. The hole is the
-        emblem's visual DISC (diameter ``CardMetrics(scale).emblem``, the same
-        formula the ring geometry uses), not the wider widget rect: clicks in
-        the ring-margin gap around the disc still hit the ring (dismiss), as
-        before."""
+        Everything else on the invisible canvas - the corners, the gap between
+        the emblem and the spokes - is CLICK-THROUGH, so game UI or card
+        controls sitting under the canvas stay usable while the ring is open
+        (live complaint: the old full-canvas square swallowed the game's
+        friends button). Click-off dismissal is the global-press watcher's job
+        (``_on_radial_global_press``), not an input-shape concern. The emblem
+        needs no explicit hole anymore - the spokes never overlap its disc, so
+        emblem gestures (click-to-toggle, scroll-to-scale, drag) pass through
+        by construction.
+
+        Fallback for a menu without ``interactive_path`` (bare stubs): the
+        legacy CURRENT-scale canvas square minus the emblem disc."""
+        menu = self._radial_menu
+        path_fn = getattr(menu, "interactive_path", None) if menu is not None else None
+        if path_fn is not None:
+            try:
+                return path_fn()
+            except Exception:
+                pass
         from PySide6.QtCore import QRectF
         from PySide6.QtGui import QPainterPath
         emblem_dia, canvas = self._radial_canvas()
@@ -2180,6 +2209,113 @@ class ClusterOverlayController:
             self._backend.apply_input_shape(surface, path, surface.devicePixelRatio())
         except Exception:
             pass
+
+    # ---- Click-off dismissal (global-press watcher) --------------------
+    def _start_radial_dismiss_capture(self) -> None:
+        """Start watching GLOBAL mouse presses while the ring is open (portal-safe
+        XRecord observation, same machinery click-sync uses): a press that is
+        not on the ring's spokes, the emblem, or the open panel dismisses the
+        ring through the SAME fly-back path as every other close. The press is
+        never consumed - the radial window is click-through outside the spokes,
+        so it lands on whatever is beneath (game UI, card controls).
+
+        Gated on backend availability so offscreen tests (NoOp backends) never
+        open real X connections. Degrades silently: without the watcher the
+        ring still closes via emblem toggle / spoke / Esc / idle timer. Only
+        real DEVICE presses are observed (XRecord excludes the app's own
+        synthetic XSendEvent clicks by construction)."""
+        if self._radial_dismiss_capture is not None:
+            return
+        factory = self._dismiss_capture_factory
+        if factory is None:
+            if not self._backend.is_available():
+                return
+            from utils.xrecord_capture import XRecordCapture
+            factory = XRecordCapture
+        try:
+            if self._press_bridge is None:
+                from PySide6.QtCore import QObject, Signal
+
+                class _PressBridge(QObject):
+                    pressed = Signal(int, int)
+
+                self._press_bridge = _PressBridge()
+                # Connected on the GUI thread: emits from the capture thread are
+                # QUEUED onto it (the on_ghost_event marshalling pattern).
+                self._press_bridge.pressed.connect(self._on_radial_global_press)
+            bridge = self._press_bridge
+
+            def _on_event(kind, root_x, root_y, _state, _time):
+                # Capture thread: filter cheap, marshal presses only.
+                if kind == "press":
+                    bridge.pressed.emit(int(root_x), int(root_y))
+
+            capture = factory(_on_event)
+            if capture.start():
+                self._radial_dismiss_capture = capture
+        except Exception:
+            from utils.overlay.backend import overlay_trace
+            import traceback
+            overlay_trace("radial dismiss capture start FAILED (degrading to "
+                          "menu-side closes only):\n" + traceback.format_exc())
+            self._radial_dismiss_capture = None
+
+    def _stop_radial_dismiss_capture(self) -> None:
+        capture = self._radial_dismiss_capture
+        self._radial_dismiss_capture = None
+        if capture is not None:
+            try:
+                capture.stop()
+            except Exception:
+                pass
+
+    def _on_radial_global_press(self, x, y) -> None:
+        """A GLOBAL device press while the ring is open (GUI thread; queued from
+        the capture thread). *x*, *y* are physical root pixels - convert like the
+        ghost path does. Dismiss with the fly-back unless the press is on our
+        chrome. Never raises into Qt dispatch."""
+        if not self.is_radial_open:
+            return   # late queued press after close: no-op
+        try:
+            lx, ly = emitted_to_logical(x, y)
+            if self._point_on_radial_chrome(lx, ly):
+                return
+            self.dismiss_radial_menu()
+        except Exception:
+            from utils.overlay.backend import overlay_trace
+            import traceback
+            overlay_trace("cluster_controller._on_radial_global_press() suppressed "
+                          "(never raise into Qt dispatch):\n" + traceback.format_exc())
+
+    def _point_on_radial_chrome(self, lx, ly) -> bool:
+        """True when the LOGICAL screen point sits on ring chrome that handles its
+        own clicks: the spokes (the menu acts), the emblem (the toggle acts), or
+        the open Settings panel (interacting with it must not dismiss the ring
+        beneath it). Everything else is 'off' - the dismissal zone."""
+        from PySide6.QtCore import QPointF
+        surface = self._radial_surface
+        if surface is not None:
+            try:
+                g = surface.geometry()
+                if self._radial_click_path().contains(QPointF(lx - g.x(), ly - g.y())):
+                    return True
+            except Exception:
+                pass
+        try:
+            emblem = self._emblem_rect()
+            if not emblem.isNull():
+                win = self._compute_window_rect()
+                if emblem.translated(win.x(), win.y()).contains(int(lx), int(ly)):
+                    return True
+        except Exception:
+            pass
+        if self.is_panel_open and self._panel_surface is not None:
+            try:
+                if self._panel_surface.geometry().contains(int(lx), int(ly)):
+                    return True
+            except Exception:
+                pass
+        return False
 
     # ------------------------------------------------------------------
     # Portable Settings panel surface
