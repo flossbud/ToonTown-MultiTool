@@ -1394,10 +1394,12 @@ class MultiToonTool(QMainWindow):
 
     def _radial_toggle_cards(self):
         """Hide-Cards spoke: dismiss the ring (animated fly-back), then flip the
-        cards' visibility. The emblem always stays; reopening the ring offers the
-        same spoke as "Show Cards" to bring the cards back."""
+        cards' visibility with the tuck animation - the cards shrink into the
+        emblem in step with the retracting spokes (and grow back out of it on
+        Show). The emblem always stays; reopening the ring offers the same
+        spoke as "Show Cards" to bring the cards back."""
         self._mode_controller.dismiss_radial_menu()
-        self._mode_controller.toggle_cards_hidden()
+        self._mode_controller.toggle_cards_hidden(animate=True)
 
     def _radial_launch_account(self, account_id):
         """Account spoke clicked: launch it (the sub-ring stays open so the user

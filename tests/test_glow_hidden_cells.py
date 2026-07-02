@@ -75,3 +75,26 @@ def test_refresh_glow_skips_hidden_shells(qapp, tmp_path, monkeypatch):
     cell["cell"].setVisible(True)
     compact._refresh_glow()
     assert len(compact._glow._cards) == 1        # restored on re-show
+
+
+def test_glow_pixmap_for_cell_seam(qapp, tmp_path, monkeypatch):
+    """The tuck animation's halo seam: a lit cell yields its (pixmap, pad)
+    halo from the same cache _refresh_glow feeds; an unlit cell yields None
+    (no halo ghost for a card that paints no halo)."""
+    tab = _build_tab(qapp, tmp_path, monkeypatch)
+    compact = tab._compact
+    cell = compact._card_slots[0]
+
+    assert compact.glow_pixmap_for_cell(0) is None      # unlit -> no halo
+    assert compact.glow_pixmap_for_cell(99) is None     # out of range
+
+    cell["active"] = True
+    cell["accent"] = QColor("#56c856")
+    entry = compact.glow_pixmap_for_cell(0)
+    assert entry is not None
+    pm, pad = entry
+    assert not pm.isNull() and pad > 0
+    geo = cell["cell"].geometry()
+    # The halo canvas wraps the (rounded) card size plus the blur pad on
+    # every side - the rect the ghost layer blits at (x-pad, y-pad).
+    assert pm.width() >= geo.width() and pm.height() >= geo.height()

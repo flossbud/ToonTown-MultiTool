@@ -223,27 +223,36 @@ class _GlowLayer(QWidget):
         """Set the gaussian halo radius (scaled per CardMetrics.glow_blur)."""
         self._blur = blur
 
+    def halo_pixmap(self, w: int, h: int, cutout: str, accent,
+                    radius: float = CARD_RADIUS, cutout_r: float = CUTOUT_R):
+        """``(pixmap, pad)`` halo for one card spec, from the LRU cache (built
+        on a miss). Sizes are rounded to 8 so drags reuse cache entries. Also
+        the seam the overlay's tuck animation uses to move a card's halo with
+        its snapshot. Returns None for a degenerate size."""
+        if w <= 0 or h <= 0:
+            return None
+        rw, rh = ((int(w) + 7) // 8) * 8, ((int(h) + 7) // 8) * 8
+        accent = QColor(accent)
+        key = (rw, rh, cutout, accent.rgba(), radius, cutout_r, self._blur)
+        entry = self._cache.get(key)
+        if entry is None:
+            entry = _make_glow_pixmap(rw, rh, cutout, accent, radius, cutout_r,
+                                      self._blur)
+            self._cache[key] = entry
+            if len(self._cache) > _GLOW_CACHE_MAX:
+                self._cache.popitem(last=False)   # evict least-recently used
+        else:
+            self._cache.move_to_end(key)          # mark most-recently used
+        return entry
+
     def set_cards(self, specs) -> None:
         cards = []
         for s in specs:
-            w, h = int(s["w"]), int(s["h"])
-            if w <= 0 or h <= 0:
-                continue
-            rw, rh = ((w + 7) // 8) * 8, ((h + 7) // 8) * 8   # round so drags reuse cache
-            accent = QColor(s["accent"])
-            radius = s.get("radius", CARD_RADIUS)
-            cutout_r = s.get("cutout_r", CUTOUT_R)
-            key = (rw, rh, s["cutout"], accent.rgba(), radius, cutout_r, self._blur)
-            entry = self._cache.get(key)
+            entry = self.halo_pixmap(
+                int(s["w"]), int(s["h"]), s["cutout"], s["accent"],
+                s.get("radius", CARD_RADIUS), s.get("cutout_r", CUTOUT_R))
             if entry is None:
-                entry = _make_glow_pixmap(
-                    rw, rh, s["cutout"], accent, radius, cutout_r, self._blur
-                )
-                self._cache[key] = entry
-                if len(self._cache) > _GLOW_CACHE_MAX:
-                    self._cache.popitem(last=False)   # evict least-recently used
-            else:
-                self._cache.move_to_end(key)          # mark most-recently used
+                continue
             pm, pad = entry
             cards.append({"x": s["x"], "y": s["y"], "pm": pm, "pad": pad})
         self._cards = cards
@@ -1699,6 +1708,23 @@ class _CompactLayout(QWidget):
                 "cutout_r": self._metrics.cutout_r,
             })
         self._glow.set_cards(specs)
+
+    def glow_pixmap_for_cell(self, cell_index: int):
+        """``(pixmap, pad)`` accent halo for cell ``cell_index``'s CURRENT spec
+        (same LRU cache ``_refresh_glow`` feeds), or None when the cell is not
+        lit / out of range / the layer is absent. Consumed by the overlay's
+        tuck animation so a card's halo travels with its snapshot instead of
+        popping off at the first frame."""
+        if self._glow is None or not (0 <= cell_index < len(self._cells)):
+            return None
+        cell = self._cells[cell_index]
+        if not cell.get("active"):
+            return None
+        geo = cell["cell"].geometry()
+        return self._glow.halo_pixmap(
+            geo.width(), geo.height(), cell["cfg"]["cutout"],
+            QColor(cell["accent"]), self._metrics.card_radius,
+            self._metrics.cutout_r)
 
     def _position_cell_bg(self, cell: dict) -> None:
         c = cell["cell"]
