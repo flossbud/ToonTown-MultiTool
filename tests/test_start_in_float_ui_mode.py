@@ -187,3 +187,63 @@ def test_settings_switch_disabled_when_backend_unavailable(isolated_config, monk
     assert sw is not None
     assert sw.isEnabled() is False
     assert "Shape extension" in sw.toolTip()
+
+
+# ── _show_or_float_at_startup ordering (startup black-square fix) ──────────
+#
+# On plain-show window modes the float entry must be attempted BEFORE the
+# first show: a never-mapped main window cannot flash on its way to hidden.
+# Bootstrap modes need the window realized first and keep show -> enter.
+
+_PLAIN_ENV = {
+    "platform": "linux", "session_type": "wayland", "qpa_platform": "xcb",
+    "wm_name": "KWin", "use_system_title_bar": False, "qt_version": "6.10.0",
+}
+_BOOTSTRAP_ENV = dict(_PLAIN_ENV, wm_name="GNOME Shell")
+
+
+class _OrderWindow:
+    """Records the relative order of float attempts and shows."""
+    def __init__(self, float_returns):
+        self._float_returns = float_returns
+        self.calls = []
+    def _maybe_enter_float_mode_at_startup(self):
+        self.calls.append("float")
+        return self._float_returns
+
+
+def _order_show(window, *, settings, env):
+    window.calls.append("show")
+
+
+def test_startup_plain_mode_floats_before_any_show():
+    from main import _show_or_float_at_startup
+    w = _OrderWindow(float_returns=True)
+    _show_or_float_at_startup(
+        w, settings=_FakeSettings({}), env=_PLAIN_ENV, _show=_order_show)
+    assert w.calls == ["float"]          # never shown at all
+
+
+def test_startup_plain_mode_shows_when_float_does_not_engage():
+    from main import _show_or_float_at_startup
+    w = _OrderWindow(float_returns=False)
+    _show_or_float_at_startup(
+        w, settings=_FakeSettings({}), env=_PLAIN_ENV, _show=_order_show)
+    assert w.calls == ["float", "show"]  # fallback to the normal show
+
+
+def test_startup_native_title_bar_also_floats_first():
+    from main import _show_or_float_at_startup
+    w = _OrderWindow(float_returns=True)
+    env = dict(_PLAIN_ENV, use_system_title_bar=True)
+    _show_or_float_at_startup(
+        w, settings=_FakeSettings({}), env=env, _show=_order_show)
+    assert w.calls == ["float"]
+
+
+def test_startup_bootstrap_mode_keeps_show_then_enter():
+    from main import _show_or_float_at_startup
+    w = _OrderWindow(float_returns=True)
+    _show_or_float_at_startup(
+        w, settings=_FakeSettings({}), env=_BOOTSTRAP_ENV, _show=_order_show)
+    assert w.calls == ["show", "float"]  # bootstrap needs the pre-map

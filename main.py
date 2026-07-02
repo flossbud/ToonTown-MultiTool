@@ -2195,6 +2195,34 @@ def _self_check_exit(code: int) -> None:
     sys.exit(code)
 
 
+def _show_or_float_at_startup(window, *, settings, env, _show=None) -> None:
+    """Map the main window and/or enter Float UI in the artifact-free order.
+
+    Plain-show window modes (PURE_FRAMELESS / NATIVE_TITLE_BAR) attempt the
+    startup Float UI entry BEFORE the first show: a never-mapped main window
+    cannot flash on screen (or in the taskbar) on its way to being hidden.
+    Only when Float UI does not engage (setting off, backend unavailable,
+    enter failed) is the window shown. Bootstrap modes (frame-then-strip /
+    border-only) need the window realized+mapped before the strip, so they
+    keep the historical show -> enter -> hide order; the brief map there is
+    the price of the bootstrap, not a regression.
+
+    `_show` is injectable for tests; defaults to show_with_bootstrap."""
+    from utils.x11_frameless_bootstrap import (
+        NATIVE_TITLE_BAR, PURE_FRAMELESS, resolve_mode_for_env,
+        show_with_bootstrap,
+    )
+    shower = _show or show_with_bootstrap
+    mode = resolve_mode_for_env(settings, env)
+    if mode in (PURE_FRAMELESS, NATIVE_TITLE_BAR):
+        if window._maybe_enter_float_mode_at_startup():
+            return
+        shower(window, settings=settings, env=env)
+        return
+    shower(window, settings=settings, env=env)
+    window._maybe_enter_float_mode_at_startup()
+
+
 if __name__ == "__main__":
     if "--self-check-keyring" in sys.argv:
         sys.exit(_run_self_check_keyring())
@@ -2246,8 +2274,11 @@ if __name__ == "__main__":
     window = MultiToonTool()
     _wire_app_lifecycle(app, window)
     from PySide6.QtCore import QLibraryInfo as _QLI
-    from utils.x11_frameless_bootstrap import show_with_bootstrap
-    show_with_bootstrap(window, settings=window.settings_manager, env={
+    # Show the window and/or honor "Start in Float UI mode". Float-first on
+    # plain-show window modes: entering the overlay BEFORE the first show
+    # means the main window is never mapped at all on a float launch, so it
+    # cannot flash on screen between show() and the overlay's hide().
+    _show_or_float_at_startup(window, settings=window.settings_manager, env={
         "platform": sys.platform,
         "session_type": os.getenv("XDG_SESSION_TYPE", "").lower(),
         "qpa_platform": app.platformName(),
@@ -2255,10 +2286,6 @@ if __name__ == "__main__":
         "use_system_title_bar": bool(window.settings_manager.get("use_system_title_bar", False)),
         "qt_version": _QLI.version().toString() if hasattr(_QLI, "version") else "",
     })
-    # Honor "Start in Float UI mode": enter the overlay now, before the event
-    # loop's first paint, so the windowed UI does not flash before minimizing.
-    # No-op (and never raises) when the setting is off or Float UI is unsupported.
-    window._maybe_enter_float_mode_at_startup()
     QTimer.singleShot(0, window._maybe_notify_float_startup_recovered)
     _lock_cc_prefs_silently()
     # macOS first-run permission onboarding. Fired POST-show (so --self-check,

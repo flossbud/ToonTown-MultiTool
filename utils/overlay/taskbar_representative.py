@@ -64,6 +64,7 @@ class TaskbarRepresentative(QWidget):
         self._on_tick = on_tick
         self._mirror: QPixmap | None = None
         self._blanked = False
+        self._awaiting_first_paint = False  # opacity-staged until the first buffer
         # Plain frameless top-level that ACCEPTS focus (no WindowDoesNotAcceptFocus:
         # KWin's TabBox skips focus-refusing windows and Alt-Tab listing is a
         # requirement). WA_ShowWithoutActivating keeps the initial map from
@@ -89,16 +90,38 @@ class TaskbarRepresentative(QWidget):
     # WM identity
     # ------------------------------------------------------------------
     def prepare_initial_state(self) -> None:
-        """Pre-map hints: keep-below + empty input shape. Mirrors the cluster
-        surface's prepare-before-show discipline so this window never maps
-        above anything or blocks a click on its first frame. Deliberately NO
-        opacity write: the rep maps ALIGNED under the cluster with the mirror
-        already painted (invisible by construction); opacity is reserved for
-        ``set_blanked``."""
+        """Pre-map hints: keep-below + empty input shape + opacity 0. Mirrors
+        the cluster surface's prepare-before-show discipline so this window
+        never maps above anything or blocks a click on its first frame.
+
+        The pre-map opacity 0 exists for the same reason as ClusterSurface's:
+        a mapped window with NO buffer composites as an OPAQUE BLACK rect on
+        KWin/XWayland (probed 2026-07-02), and at a startup float launch the
+        first paint can be seconds after the map. ``paintEvent`` lifts the
+        stage after the first real paint; ``set_blanked`` owns opacity from
+        then on (the lift defers to an already-engaged blank)."""
         from PySide6.QtGui import QRegion
         self._backend.set_rep_initial_state(self)
         self._backend.apply_input_region(self, QRegion())
-        overlay_trace("taskbar_rep: prepared (below + click-through, aligned mirror)")
+        try:
+            self._backend.set_window_opacity(self, 0.0)
+            self._awaiting_first_paint = True
+        except Exception:
+            pass
+        overlay_trace("taskbar_rep: prepared (below + click-through, aligned "
+                      "mirror, opacity-staged until first paint)")
+
+    def _lift_first_paint_stage(self) -> None:
+        """One loop turn after the first paint: repaint (current buffer),
+        then opacity - unless a blank engaged meanwhile, which owns opacity
+        until its own unblank path (align -> grab -> repaint -> opacity)."""
+        if self._blanked:
+            return
+        try:
+            self.repaint()
+            self._backend.set_window_opacity(self, 1.0)
+        except Exception:
+            pass
 
     def set_blanked(self, blanked: bool) -> None:
         """Blank (opacity 0) while the cluster is mid-gesture/peek/dim - any
@@ -128,6 +151,12 @@ class TaskbarRepresentative(QWidget):
         self.update()
 
     def paintEvent(self, ev) -> None:
+        if self._awaiting_first_paint:
+            # First paint: a buffer exists after this pass. Lift the pre-map
+            # opacity stage NEXT loop turn (context-object form: a destroyed
+            # rep cancels the timer rather than firing into a dead object).
+            self._awaiting_first_paint = False
+            QTimer.singleShot(0, self, self._lift_first_paint_stage)
         if self._mirror is None or self._mirror.isNull():
             return
         p = QPainter(self)

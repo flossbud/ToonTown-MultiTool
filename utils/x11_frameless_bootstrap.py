@@ -108,19 +108,27 @@ WATCHDOG_MS = 1500
 _STAGE_OPACITY = 1  # near-invisible; avoids 'exactly 0 optimized away'
 
 
+def resolve_mode_for_env(settings, env):
+    """Resolve the window mode for `env` - the same decision
+    show_with_bootstrap makes, side-effect free. `env` is a dict with keys:
+    platform, session_type, qpa_platform, wm_name, use_system_title_bar,
+    qt_version."""
+    sig = environment_signature(
+        qpa_platform=env["qpa_platform"], session_type=env["session_type"],
+        wm_name=env["wm_name"], qt_version=env["qt_version"])
+    return resolve_window_mode(
+        platform=env["platform"], session_type=env["session_type"],
+        qpa_platform=env["qpa_platform"], wm_name=env["wm_name"],
+        use_system_title_bar=env["use_system_title_bar"],
+        cached_mode=cached_mode_for(settings, sig))
+
+
 def show_with_bootstrap(window, *, settings, env, _run_frame_then_strip=None):
     """Resolve the window mode and either show() normally or run the bootstrap.
     `env` is a dict with keys: platform, session_type, qpa_platform, wm_name,
     use_system_title_bar, qt_version. `_run_frame_then_strip` is injectable for
     tests; defaults to the live runner."""
-    sig = environment_signature(
-        qpa_platform=env["qpa_platform"], session_type=env["session_type"],
-        wm_name=env["wm_name"], qt_version=env["qt_version"])
-    mode = resolve_window_mode(
-        platform=env["platform"], session_type=env["session_type"],
-        qpa_platform=env["qpa_platform"], wm_name=env["wm_name"],
-        use_system_title_bar=env["use_system_title_bar"],
-        cached_mode=cached_mode_for(settings, sig))
+    mode = resolve_mode_for_env(settings, env)
 
     if mode in (PURE_FRAMELESS, NATIVE_TITLE_BAR):
         window.show()

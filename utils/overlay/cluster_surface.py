@@ -47,6 +47,7 @@ class ClusterSurface(OverlaySurface):
     def __init__(self, backend=None) -> None:
         super().__init__(backend=backend)
         self._cluster_view = None  # ScaledClusterView holding the borrowed host
+        self._awaiting_first_paint = False  # opacity-staged until the first buffer
 
     def host_scaled(self, widget, emblem_center, pivot, envelope_size,
                     initial_scale: float = 1.0) -> None:
@@ -102,6 +103,35 @@ class ClusterSurface(OverlaySurface):
         view.deleteLater()  # the view is owned by the surface; the host was borrowed
         return host
 
+    def prepare_initial_state(self) -> None:
+        """Base pre-map EWMH state, plus ``_NET_WM_WINDOW_OPACITY = 0``.
+
+        A mapped window with NO buffer composites as an OPAQUE BLACK rect on
+        KWin/XWayland, and KWin force-places OSD-typed windows mid-screen
+        regardless of the requested geometry (both probed 2026-07-02). At a
+        startup float launch the first buffer - the event loop's first paint -
+        can be SECONDS after enter() maps this window, so the black square is
+        user-visible. Opacity 0 makes it invisible by construction whatever
+        KWin composites; ``paintEvent`` lifts the stage only after this
+        window's own first real paint (paint-before-opacity ordering)."""
+        super().prepare_initial_state()
+        try:
+            self._backend.set_window_opacity(self, 0.0)
+            self._awaiting_first_paint = True
+        except Exception:
+            pass
+
+    def _lift_first_paint_stage(self) -> None:
+        """Runs one event-loop turn after the first paint: a synchronous
+        repaint (the window is exposed now, so this flushes a CURRENT buffer)
+        and only then the opacity write - the taskbar rep's proven
+        anti-stale-frame ordering."""
+        try:
+            self.repaint()
+            self._backend.set_window_opacity(self, 1.0)
+        except Exception:
+            pass
+
     def closeEvent(self, ev):
         # Honour the base's spontaneous-close refusal first; only release the
         # borrowed host when the close is actually going through, so Qt's
@@ -126,6 +156,14 @@ class ClusterSurface(OverlaySurface):
         p.setCompositionMode(QPainter.CompositionMode_Source)
         p.fillRect(self.rect(), QColor(0, 0, 0, 0))
         p.end()
+        if self._awaiting_first_paint:
+            # First real paint: a buffer exists now. Lift the pre-map opacity
+            # stage NEXT loop turn (after this paint's flush), never inside
+            # the paint pass. Context-object form so a destroyed surface
+            # cancels the timer instead of firing into a dead C++ object.
+            self._awaiting_first_paint = False
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(0, self, self._lift_first_paint_stage)
 
 
 class RadialSurface(ClusterSurface):
