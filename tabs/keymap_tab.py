@@ -1137,8 +1137,11 @@ class KeymapTab(QWidget):
         add_btn.setMaximumWidth(260)
         add_btn.setCursor(Qt.PointingHandCursor)
         add_btn.clicked.connect(lambda _checked, g=game: self._on_add_set_for_game(g))
-        add_btn.setVisible(len(sets) < self.keymap_manager.MAX_SETS_PER_GAME)
+        # Parent BEFORE setVisible: setVisible(True) on a parentless widget
+        # shows it as a decorated top-level X window for a few frames (the
+        # startup "black square" flash).
         page_layout.addWidget(add_btn, alignment=Qt.AlignHCenter)
+        add_btn.setVisible(len(sets) < self.keymap_manager.MAX_SETS_PER_GAME)
         page_layout.addStretch()
         self._add_btns[game] = add_btn
 
