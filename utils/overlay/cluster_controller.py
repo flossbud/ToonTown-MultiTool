@@ -10,13 +10,13 @@ be swapped behind the same call sites.
 Lifecycle entry points:
 
 * ``enter()`` - build the cluster surface, borrow the host, place + show it, then
-  MINIMIZE the main window (never hide, so the single taskbar icon stays).
+  HIDE the main window (no taskbar/Alt-Tab entry while floating).
 * ``leave()`` - reset framed (scale-1.0) metrics, restore the borrowed host to the
-  tab, tear down the surface, and restore the main window.
+  tab, tear down the surface, and re-show the main window.
 
 Both are FAIL-CLOSED, mirroring ``OverlayGroupController``: if any step of
 ``enter()`` raises, the borrowed host is returned to the tab, the surface is torn
-down, the window is restored if it was minimized, and the controller stays Framed
+down, the window is re-shown if it was hidden, and the controller stays Framed
 (``is_active`` False) - the app is never left with a half-built overlay. No
 exception escapes ``enter()`` (it returns ``False``). ``leave()`` is likewise
 guarded: a restore failure must still reset metrics, restore the window, and
@@ -68,7 +68,7 @@ def _scale_anim_enabled() -> bool:
 
 
 class ClusterOverlayController:
-    """Borrow the whole cluster into one window; minimize the main window.
+    """Borrow the whole cluster into one window; hide the main window.
 
     Drop-in compatible constructor with ``OverlayGroupController``. The single
     ``ClusterSurface`` is built by ``surface_factory`` (a zero-arg callable) when
@@ -94,7 +94,7 @@ class ClusterOverlayController:
         self._card_provider = card_provider
         # Best-effort observer notified with the new active state after a
         # successful enter() and after leave() (the tab uses it to keep repaint
-        # timers running while the minimized main window would stop them). Never
+        # timers running while the hidden main window would stop them). Never
         # invoked on a failed enter().
         self._on_active_changed = on_active_changed
 
@@ -108,6 +108,14 @@ class ClusterOverlayController:
         self._orphans: list = []
         self._anchor: tuple[int, int] = self._default_anchor()
         self._active: bool = False
+        # quitOnLastWindowClosed value captured at enter (restored on leave/fail):
+        # while active the main window is HIDDEN, so Qt's quit-on-last-window
+        # default would fire if anything closed the remaining overlay windows.
+        self._quit_prev: bool = True
+        self._taskbar_rep = None   # TaskbarRepresentative while active (or None)
+        # Peek-active latch for the rep's blanking rule (set by _peek_tick): a
+        # faded card under an opaque mirror copy would visibly cancel the fade.
+        self._rep_peek_active = False
 
         # Scaling state. The cluster is ONE window with FIXED geometry (no proxy/
         # park/snapshot, no per-notch resize): a notch retargets the zoom tween on
@@ -297,6 +305,28 @@ class ClusterOverlayController:
         except Exception:
             return False
 
+    @staticmethod
+    def _quit_on_last_window() -> bool:
+        """Current QApplication.quitOnLastWindowClosed (True when appless)."""
+        from PySide6.QtWidgets import QApplication
+        app = QApplication.instance()
+        return bool(app.quitOnLastWindowClosed()) if app is not None else True
+
+    @staticmethod
+    def _set_quit_on_last_window(value: bool) -> None:
+        """Scoped quit guard. While the overlay is active the main window is
+        HIDDEN (not minimized) so it no longer counts as a visible window;
+        without this guard, closing/destroying the overlay windows mid-float
+        (or during leave() teardown) would fire quit-on-last-window-closed and
+        exit the app. Best-effort: never raises."""
+        try:
+            from PySide6.QtWidgets import QApplication
+            app = QApplication.instance()
+            if app is not None:
+                app.setQuitOnLastWindowClosed(bool(value))
+        except Exception:
+            pass
+
     # ------------------------------------------------------------------
     # Placement
     # ------------------------------------------------------------------
@@ -399,13 +429,14 @@ class ClusterOverlayController:
     # Lifecycle
     # ------------------------------------------------------------------
     def enter(self) -> bool:
-        """Build + show the cluster surface around the borrowed host, then
-        minimize the main window. No-op (returns True) if already active.
+        """Build + show the cluster surface around the borrowed host, then hide
+        the main window (no taskbar/Alt-Tab entry while floating). No-op
+        (returns True) if already active.
 
         Transactional / fail-closed: returns True on success (now transparent),
         or False if any step raised - in which case the borrowed host is returned
-        to the tab, the surface is torn down, the main window is restored if it
-        was minimized, and the controller stays Framed. No exception escapes.
+        to the tab, the surface is torn down, the main window is re-shown if it
+        was hidden, and the controller stays Framed. No exception escapes.
         """
         if self._active:
             return True
@@ -419,7 +450,7 @@ class ClusterOverlayController:
         provider = self._card_provider
         surface = None
         token = None
-        minimized = False
+        hidden = False
         try:
             surface = self._build_surface()
             token = provider.capture_cluster_host()
@@ -482,10 +513,24 @@ class ClusterOverlayController:
             # borrow.
             self._safe_call(surface, "prepare_initial_state")
             surface.show()
-            # Set the flag BEFORE the call so a showMinimized() failure still
-            # triggers the except-path window restore (mirrors OverlayGroupController).
-            minimized = True
-            self._window.showMinimized()
+            # HIDE, not minimize: a minimized window keeps a taskbar entry whose
+            # hover preview is the stale window-UI texture and whose click
+            # restores the gutted window UI (the cards+emblem are borrowed into
+            # this overlay). A hidden window has no taskbar entry and no Alt-Tab
+            # entry - the radial Window spoke is the only way back, by
+            # construction. The surface was shown above, so there is never an
+            # instant with zero visible windows. Capture the previous guard value
+            # BEFORE the flag, so a capture failure can never trigger a restore
+            # of a value the guard never modified; flag BEFORE the guard-off +
+            # hide so a failure in either still triggers the except-path restore;
+            # the quit guard BEFORE the hide so no window close can quit the app
+            # while the main window is not counted as visible.
+            self._quit_prev = self._quit_on_last_window()
+            hidden = True
+            self._set_quit_on_last_window(False)
+            self._window.hide()
+            overlay_trace("cluster.enter: main window HIDDEN "
+                          "(float UI owns the taskbar); quit guard OFF")
         except Exception:
             from utils.overlay.backend import overlay_trace
             import traceback
@@ -493,11 +538,14 @@ class ClusterOverlayController:
                           + traceback.format_exc())
             # Fail-closed: return the borrowed host to the tab FIRST
             # (release-before-restore so the surface never deletes the live host),
-            # THEN destroy the now-empty surface; restore the window if minimized.
+            # THEN restore the window (and the quit guard) if hidden, then destroy
+            # the now-empty surface - same never-zero-visible-windows ordering
+            # (and the same showNormal-then-guard order) as leave().
             self._release_and_restore(surface, token)
-            self._teardown_surface(surface)
-            if minimized:
+            if hidden:
                 self._safe_call(self._window, "showNormal")
+                self._set_quit_on_last_window(self._quit_prev)
+            self._teardown_surface(surface)
             self._surface = None
             self._token = None
             self._active = False
@@ -527,6 +575,9 @@ class ClusterOverlayController:
         # ensures self-clean on failure and re-run lazily at open.
         self._ensure_radial_surface()
         self._ensure_panel_surface()
+        # Taskbar representative: the app's taskbar/Alt-Tab entry while the
+        # main window is hidden (best-effort; see _ensure_taskbar_rep).
+        self._ensure_taskbar_rep()
         # Clear any ghost points that leaked into the store while framed (a queued
         # on_ghost_event arriving after a prior leave()), so a stale hover can never
         # survive into this fresh session, then start the hover-peek poll (the ~30ms
@@ -534,6 +585,10 @@ class ClusterOverlayController:
         # on_ghost_event (caller wiring is a LATER task); the timer drives the fade
         # regardless of the real cursor.
         self._peek_store.clear()
+        # Unlatch the rep's peek flag too: leave() resets it inside its try, so
+        # a raising teardown step could carry a stale True into this session
+        # and keep the fresh rep blanked until the next hover.
+        self._rep_peek_active = False
         self._start_peek_timer()
         # Reshape on a monitor/DPI change: now that the surface is shown its native
         # windowHandle exists, so connect screenChanged to re-apply the input shape at
@@ -562,81 +617,121 @@ class ClusterOverlayController:
         metrics, tear down the cluster surface, and restore the main window.
         No-op if framed.
 
-        Fail-closed: a restore failure must still reset metrics, restore the
-        window, and clear state.
+        Fail-closed BY CONSTRUCTION: the whole teardown sequence runs inside a
+        try/except, and the window restore + quit-guard restore + state clear
+        run unconditionally after it - so no exit from leave() (not even a
+        raising teardown step, e.g. a settings write failing inside the save
+        flush) can leave the main window hidden, the quit guard off, or the
+        controller stuck active.
         """
         if not self._active:
             return
         provider = self._card_provider
         surface = self._surface
         token = self._token
-        # Persist the FINAL anchor + scale before any teardown/reset (the remembered
-        # overlay position, restored on the next enter). MUST run before the scale
-        # reset below, else the flush would save the framed 1.0 instead of the scale
-        # the user left at. Then stop the save timer unconditionally so no late
-        # timeout survives the leave (the active guard in _run_pending_save is the
-        # backstop).
-        self.flush_pending_save()
-        if self._save_timer is not None:
-            self._save_timer.stop()
-        # The radial + portable panel must never outlive the overlay: close them
-        # FIRST (the panel's on_close runs so the caller reparents its content out;
-        # the radial deletes its menu + hides the dim) before any host teardown -
-        # mirrors OverlayGroupController._teardown calling close_panel_surface() +
-        # close_radial_menu(). Then destroy the PERSISTENT (now-empty) top-levels;
-        # per-open close keeps them mapped by design.
-        self.close_panel_surface()
-        self.close_radial_menu()
-        self._destroy_persistent_surfaces()
-        # Stop the emblem-drag poll and the hover-peek poll. Settling the peek
-        # (restoring every faded card to fully opaque) runs HERE - before the host
-        # is restored - so the borrowed cards never return to the framed grid stuck
-        # dim.
-        self._end_drag()
-        self._stop_peek_timer()
-        # Stop reshaping on monitor/DPI changes: disconnect the screenChanged handler
-        # so a late signal after teardown can never re-apply a shape to a dead surface.
-        self._disconnect_screen_change()
-        # Cancel any pending settle, stop the zoom tween, and reset scaling state
-        # so a re-enter starts framed (scale 1.0, no in-flight gesture). A late
-        # timer/frame firing post-leave is a guarded no-op, but stopping here
-        # avoids the wasted callback.
-        if self._settle_timer is not None:
-            self._settle_timer.stop()
-        if self._scale_anim is not None:
-            self._scale_anim.stop()
-        self._scaling_active = False
-        self._input_phase = None
-        self._scale = 1.0
-        self._view_scale = 1.0
-        # Disconnect occupancy first so a late occupied_cells_changed after teardown
-        # is a safe no-op, and reset the visible set to the framed default.
-        self._disconnect_occupancy()
-        self._visible_cells = {0, 1, 2, 3}
-        # Un-hide every cell shell (framed mode always shows all four) and restore
-        # the original retain-size flags BEFORE the host returns to the tab.
-        self._restore_cell_visibility()
-        # Re-assert framed (scale-1.0) metrics. In the transform model the host
-        # never left its 1.0 layout, so this is a defensive idempotent no-op that
-        # guarantees the cards come back at base scale even if something external
-        # re-metered the host mid-overlay.
-        if provider is not None:
-            try:
-                from utils.overlay.card_metrics import CardMetrics
-                provider.apply_metrics(CardMetrics(1.0))
-            except Exception:
-                pass
-        # Remove the internal dim BEFORE restoring the host, so the borrowed
-        # _grid_host returns to framed mode with no stray overlay-only child.
-        self._teardown_internal_dim()
-        # Release the borrowed host from the surface, then restore it to the tab.
+        try:
+            # Persist the FINAL anchor + scale before any teardown/reset (the
+            # remembered overlay position, restored on the next enter). MUST run
+            # before the scale reset below, else the flush would save the framed
+            # 1.0 instead of the scale the user left at. Then stop the save timer
+            # unconditionally so no late timeout survives the leave (the active
+            # guard in _run_pending_save is the backstop).
+            self.flush_pending_save()
+            if self._save_timer is not None:
+                self._save_timer.stop()
+            # The radial + portable panel must never outlive the overlay: close
+            # them FIRST (the panel's on_close runs so the caller reparents its
+            # content out; the radial deletes its menu + hides the dim) before any
+            # host teardown - mirrors OverlayGroupController._teardown calling
+            # close_panel_surface() + close_radial_menu(). Then destroy the
+            # PERSISTENT (now-empty) top-levels; per-open close keeps them mapped
+            # by design.
+            self.close_panel_surface()
+            self.close_radial_menu()
+            self._destroy_persistent_surfaces()
+            # The representative must not outlive the float session (the cluster
+            # surface is still mapped here, so no zero-visible-window instant).
+            self._teardown_taskbar_rep()
+            # Stop the emblem-drag poll and the hover-peek poll. Settling the peek
+            # (restoring every faded card to fully opaque) runs HERE - before the
+            # host is restored - so the borrowed cards never return to the framed
+            # grid stuck dim.
+            self._end_drag()
+            self._stop_peek_timer()
+            self._rep_peek_active = False   # re-enter starts unlatched
+            # Stop reshaping on monitor/DPI changes: disconnect the screenChanged
+            # handler so a late signal after teardown can never re-apply a shape
+            # to a dead surface.
+            self._disconnect_screen_change()
+            # Cancel any pending settle, stop the zoom tween, and reset scaling
+            # state so a re-enter starts framed (scale 1.0, no in-flight gesture).
+            # A late timer/frame firing post-leave is a guarded no-op, but
+            # stopping here avoids the wasted callback.
+            if self._settle_timer is not None:
+                self._settle_timer.stop()
+            if self._scale_anim is not None:
+                self._scale_anim.stop()
+            self._scaling_active = False
+            self._input_phase = None
+            self._scale = 1.0
+            self._view_scale = 1.0
+            # Disconnect occupancy first so a late occupied_cells_changed after
+            # teardown is a safe no-op, and reset the visible set to the framed
+            # default.
+            self._disconnect_occupancy()
+            self._visible_cells = {0, 1, 2, 3}
+            # Un-hide every cell shell (framed mode always shows all four) and
+            # restore the original retain-size flags BEFORE the host returns to
+            # the tab.
+            self._restore_cell_visibility()
+            # Re-assert framed (scale-1.0) metrics. In the transform model the
+            # host never left its 1.0 layout, so this is a defensive idempotent
+            # no-op that guarantees the cards come back at base scale even if
+            # something external re-metered the host mid-overlay.
+            if provider is not None:
+                try:
+                    from utils.overlay.card_metrics import CardMetrics
+                    provider.apply_metrics(CardMetrics(1.0))
+                except Exception:
+                    pass
+            # Remove the internal dim BEFORE restoring the host, so the borrowed
+            # _grid_host returns to framed mode with no stray overlay-only child.
+            self._teardown_internal_dim()
+        except Exception:
+            # Swallow: leave() must be TOTAL. The host restore, window/guard
+            # restore, and state clear below run regardless of where the
+            # teardown broke.
+            from utils.overlay.backend import overlay_trace
+            import traceback
+            overlay_trace("cluster.leave teardown raised:\n"
+                          + traceback.format_exc())
+        # INVARIANT: no exit from leave() may leave the host un-restored, the
+        # main window hidden, the quit guard off, or the taskbar representative
+        # alive - the lines below run on EVERY path (success or a swallowed
+        # teardown failure). The host restore sits OUTSIDE the try (it is fully
+        # self-guarded, so it cannot raise here): inside it, a raising earlier
+        # step would skip it, and the unconditional _teardown_surface below
+        # would then release the borrowed host PARENTLESS (bypassing the
+        # _orphans net) while showNormal re-shows a GUTTED main window. Release
+        # the host from the surface and restore it to the tab, THEN re-show the
+        # main window BEFORE the surface teardown: the host is back (the window
+        # is complete - no gutted flash) and the cluster surface is still
+        # mapped, so there is never an instant with zero visible windows -
+        # destroying the last visible window would post the app quit before the
+        # re-show ran. Then restore the quit-on-last-window value captured at
+        # enter. The rep teardown re-runs here (idempotent, never raises): a
+        # raising step inside the try would skip the in-try call and leave a
+        # stale mapped keep-below window painting the old mirror, plus a live
+        # taskbar/Alt-Tab entry beside the restored framed app's own.
+        self._teardown_taskbar_rep()
         self._release_and_restore(surface, token)
+        self._safe_call(self._window, "showNormal")
+        self._set_quit_on_last_window(self._quit_prev)
         # Destroy the now-empty surface.
         self._teardown_surface(surface)
         self._surface = None
         self._token = None
         self._clear_envelope_state()
-        self._safe_call(self._window, "showNormal")
         self._active = False
         self._emit_active_changed()   # self._active is False here
 
@@ -830,6 +925,7 @@ class ClusterOverlayController:
         the full-window input shape so wheel notches keep landing as the window
         resizes, and (re)arm the settle timer that will swap in the exact shape."""
         self._scaling_active = True
+        self._update_rep_blanking()
         self._input_phase = "broad"
         self._apply_input_shape(self._broad_input_path(rect))
         self._arm_settle_timer()
@@ -858,6 +954,7 @@ class ClusterOverlayController:
         self._sync_view_scale_to_target()
         self._input_phase = "exact"
         self._apply_exact_input_shape()
+        self._update_rep_blanking()   # settled: unblank + re-align + re-grab
 
     def _apply_exact_input_shape(self) -> None:
         """Build + apply the EXACT (per-control) input shape: the emblem union the
@@ -1252,6 +1349,10 @@ class ClusterOverlayController:
         if real_point is not None:
             points.append(real_point)
         peeking = peeking_indices(points, rects, cutouts)
+        peek_now = bool(peeking)   # `peeking` = this tick's peeked-indices set
+        if peek_now != self._rep_peek_active:
+            self._rep_peek_active = peek_now
+            self._update_rep_blanking()
         for i, (slot, _g, _cr, _cut) in enumerate(cards):
             self._apply_peek_fade(slot, i in peeking)
 
@@ -1364,6 +1465,7 @@ class ClusterOverlayController:
             self._drag_timer.setInterval(16)
             self._drag_timer.timeout.connect(self._drag_step)
         self._drag_timer.start()
+        self._update_rep_blanking()
 
     def _drag_step(self) -> None:
         """One poll of the manual drag: move the group by the cursor delta, or end the
@@ -1394,6 +1496,8 @@ class ClusterOverlayController:
         if self._drag_timer is not None:
             self._drag_timer.stop()
         self._drag_last = None
+        # The drag is over: unblank + re-anchor + re-grab the representative.
+        self._update_rep_blanking()
 
     # ------------------------------------------------------------------
     # Occupancy (keep the grid shell fixed; only narrow the input shape)
@@ -1528,6 +1632,13 @@ class ClusterOverlayController:
         for slot in prev_visible - self._visible_cells:
             self._settle_peek_slot(slot)
         self._apply_cell_visibility()
+        # Keep the representative aligned with the new composition: the bbox
+        # ORIGIN can move when the visible set changes (not just its size), so
+        # a bare mirror refresh would leave every pixel offset - a persistent
+        # visible ghost over bare desktop. _update_rep_blanking re-aligns THEN
+        # re-grabs when settled; while blanked (mid-gesture) it defers, and the
+        # settle terminal replays it with this fresh visible set.
+        self._update_rep_blanking()
         if self._scaling_active:
             return
         self._apply_exact_input_shape()
@@ -1892,6 +2003,160 @@ class ClusterOverlayController:
             self._safe_call(surface, "hide")
             self._safe_call(surface, "deleteLater")
 
+    # ------------------------------------------------------------------
+    # Taskbar representative (float UI owns the taskbar)
+    # ------------------------------------------------------------------
+    def _ensure_taskbar_rep(self) -> None:
+        """Create + show the taskbar representative. Best-effort and decorative:
+        a failure must never affect an otherwise-successful enter. No-op when
+        one is already up or when the backend is unavailable (no X11 = no
+        thumbnail/stacking machinery to lean on; the plain hide() behavior of
+        enter() stands alone)."""
+        if self._taskbar_rep is not None:
+            return
+        if not self._backend.is_available():
+            return
+        try:
+            from utils.overlay.taskbar_representative import TaskbarRepresentative
+            rep = TaskbarRepresentative(
+                on_close_requested=self._request_app_quit,
+                on_tick=self._refresh_taskbar_rep,
+                backend=self._backend)
+            self._taskbar_rep = rep
+            self._position_taskbar_rep()    # geometry BEFORE map (program-specified)
+            self._refresh_taskbar_rep()     # first mirror BEFORE map (no blank preview)
+            rep.prepare_initial_state()     # pre-map hints (below + click-through)
+            rep.show()
+            from utils.overlay.backend import overlay_trace
+            overlay_trace("taskbar_rep: shown (float UI owns the taskbar)")
+        except Exception:
+            self._teardown_taskbar_rep()
+
+    def _teardown_taskbar_rep(self) -> None:
+        """Destroy the representative (idempotent; never raises)."""
+        rep = self._taskbar_rep
+        self._taskbar_rep = None
+        if rep is None:
+            return
+        try:
+            rep.hide()
+            rep.deleteLater()
+        except Exception:
+            pass
+
+    def _request_app_quit(self) -> None:
+        """Close on the representative = quit the app via the main window's
+        normal close() -> shutdown path (the exact route the radial Exit spoke
+        takes; close() reaches a hidden window's closeEvent normally)."""
+        self._safe_call(self._window, "close")
+
+    def _content_bbox_window_coords(self):
+        """Union of the emblem rect and every VISIBLE cell's transform-mapped
+        rect, in window-local coords: the tight crop the taskbar preview shows
+        ("the emblem plus however many cards are up" - never the mostly-empty
+        max-scale envelope). Null QRect when nothing is measurable."""
+        from PySide6.QtCore import QRect
+        bbox = QRect(self._emblem_rect())
+        win = self._compute_window_rect()
+        ox, oy = win.x(), win.y()
+        for _idx, screen_rect, _controls, _cutout in self._visible_card_geoms():
+            bbox = bbox.united(screen_rect.translated(-ox, -oy))
+        return bbox
+
+    @staticmethod
+    def _opaque_only(pixmap):
+        """Strip sub-opaque pixels (alpha < 250 -> fully transparent).
+
+        The on-screen rep may only paint pixels the cluster hides with
+        IDENTICAL fully-opaque ones; translucent pixels (card shadows, glow,
+        AA edges) would double-composite and read darker/stronger inside the
+        bbox. Byte-level translate keeps this C-speed. ARGB32 little-endian
+        memory layout is BGRA, so the alpha byte sits at offset 3. The wrapping
+        QImage references the mutated bytearray WITHOUT copying; the single
+        defensive ``out.copy()`` detaches the result from that scope-local
+        buffer before it leaves the function."""
+        from PySide6.QtGui import QImage, QPixmap
+        img = pixmap.toImage().convertToFormat(QImage.Format_ARGB32)
+        buf = bytearray(img.constBits())
+        tbl = bytes(255 if a >= 250 else 0 for a in range(256))
+        buf[3::4] = buf[3::4].translate(tbl)
+        out = QImage(buf, img.width(), img.height(),
+                     img.bytesPerLine(), QImage.Format_ARGB32)
+        out.setDevicePixelRatio(img.devicePixelRatio())
+        return QPixmap.fromImage(out.copy())
+
+    def _refresh_taskbar_rep(self, force: bool = False) -> None:
+        """Re-grab the cropped, opaque-only float-UI mirror into the
+        representative. Best-effort and cheap enough for the slow tick; no-op
+        when inactive or blanked (a blanked rep is invisible everywhere, so a
+        grab mid-gesture would be wasted work on frozen pixels). *force*
+        bypasses ONLY the blanked early-return: the unblank sequence must grab
+        the fresh mirror while the rep is still blanked (paint-before-opacity,
+        see _update_rep_blanking)."""
+        rep = self._taskbar_rep
+        if rep is None or not self._active or self._surface is None:
+            return
+        if rep.is_blanked() and not force:
+            return
+        try:
+            bbox = self._content_bbox_window_coords()
+            if bbox.isNull() or bbox.isEmpty():
+                return
+            grab = getattr(self._surface, "grab", None)
+            if grab is None:
+                return
+            rep.set_mirror(self._opaque_only(grab(bbox)))
+        except Exception:
+            pass
+
+    def _position_taskbar_rep(self) -> None:
+        """Pixel-align the representative UNDER the on-screen content bbox: the
+        aligned-mirror invariant (every opaque rep pixel covered by an identical
+        cluster pixel above it) is what makes it invisible. Best-effort."""
+        rep = self._taskbar_rep
+        if rep is None:
+            return
+        try:
+            bbox = self._content_bbox_window_coords()
+            if bbox.isNull() or bbox.isEmpty():
+                return
+            win = self._compute_window_rect()
+            rep.setGeometry(bbox.translated(win.topLeft()))
+        except Exception:
+            pass
+
+    def _update_rep_blanking(self) -> None:
+        """Single source of truth for the aligned-mirror invariant: the rep may
+        be visible ONLY in the settled, unobstructed state. Any gesture that
+        moves/scales/fades the cluster out from over the mirror blanks it;
+        settling re-aligns, re-grabs, and only THEN unblanks.
+
+        ORDERING INVARIANT (paint-before-opacity): the opacity-1 write goes
+        LAST. set_blanked(False) flushes on the xlib connection immediately,
+        while the re-align/re-grab land as Qt-side paints - unblanking first
+        would show one full-opacity frame of the STALE mirror at the OLD
+        position after every drag end / scale settle. So the settled branch
+        aligns, force-grabs (the rep is still blanked, hence force=True to
+        bypass the refresh's blanked early-return), synchronously repaints,
+        and writes the opacity only once the visible window already holds the
+        fresh aligned mirror."""
+        rep = self._taskbar_rep
+        if rep is None:
+            return
+        drag_active = self._drag_timer is not None and self._drag_timer.isActive()
+        obstructed = (self._scaling_active or drag_active
+                      or self._rep_peek_active or self.is_radial_open)
+        if obstructed:
+            rep.set_blanked(True)
+            return
+        self._position_taskbar_rep()
+        self._refresh_taskbar_rep(force=True)
+        try:
+            rep.repaint()             # paint lands before the opacity flush
+        except Exception:
+            pass
+        rep.set_blanked(False)
+
     def open_radial_menu(self):
         """Show the click-accepting radial menu centered on the emblem.
 
@@ -2013,6 +2278,7 @@ class ClusterOverlayController:
             # must never tank a successful radial open.
             if self.is_panel_open:
                 self._safe_call(self._panel_surface, "raise_")
+            self._update_rep_blanking()
             return menu
         except Exception:
             from utils.overlay.backend import overlay_trace
@@ -2090,6 +2356,9 @@ class ClusterOverlayController:
             from PySide6.QtGui import QPainterPath
             self._apply_radial_input_shape(QPainterPath())
         self._restack_internal_layers()
+        # Radial gone (immediate close or the dismiss fly-back's terminal step,
+        # which funnels here via close_requested): unblank + re-align + re-grab.
+        self._update_rep_blanking()
 
     def _reposition_radial(self) -> None:
         """Keep the radial top-level centered on the anchor and its painted ring in

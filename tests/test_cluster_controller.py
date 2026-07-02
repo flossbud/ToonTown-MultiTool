@@ -1,15 +1,15 @@
 """Tests for ClusterOverlayController: enter / leave / borrow / metrics-reset.
 
 The single-window cluster controller borrows the WHOLE `_grid_host` subtree into
-one ``ClusterSurface`` (instead of one surface per card), minimizes the main
+one ``ClusterSurface`` (instead of one surface per card), hides the main
 window, and on leave restores the host + resets framed (scale-1.0) metrics. It is
 a drop-in analog of ``OverlayGroupController`` for the single-window cluster, and
-mirrors its minimize, fail-closed, and orphan-retention discipline.
+mirrors its hide, fail-closed, and orphan-retention discipline.
 
 These tests use LIGHT STUBS (no heavy real _CompactLayout): a stub provider whose
 capture/restore record calls and ACTUALLY re-parent a real `_grid_host` (capture
 detaches it; restore re-parents it to a holder widget), a stub window recording
-showMinimized/showNormal, and a stub surface recording host/geometry/show/hide/
+hide/showNormal/close, and a stub surface recording host/geometry/show/hide/
 release/deleteLater. Real integration is validated live later.
 
 Run (NEVER the whole tests/ dir):
@@ -29,6 +29,7 @@ os.environ.setdefault("TTMT_NO_RADIAL_ANIM", "1")
 
 import pytest
 from PySide6.QtCore import QObject, QPoint, QPointF, QRect, QTimer, Signal
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QWidget
 
 from utils.overlay.backend import NoOpOverlayBackend
@@ -188,20 +189,24 @@ class _StubProvider:
 
 
 class _StubWindow:
-    """Records showMinimized / showNormal; can be told to raise on minimize."""
+    """Records hide / showNormal / close; can be told to raise on hide."""
 
     def __init__(self):
-        self.minimized = 0
+        self.hidden = 0
         self.normaled = 0
-        self.minimize_raises = False
+        self.closed = 0
+        self.hide_raises = False
 
-    def showMinimized(self):
-        self.minimized += 1
-        if self.minimize_raises:
-            raise RuntimeError("minimize boom")
+    def hide(self):
+        self.hidden += 1
+        if self.hide_raises:
+            raise RuntimeError("hide boom")
 
     def showNormal(self):
         self.normaled += 1
+
+    def close(self):
+        self.closed += 1
 
 
 class _StubSurface(QWidget):
@@ -378,9 +383,9 @@ def _make(provider=None, window=None, host_raises=False, release_raises=False,
 
 
 # ---------------------------------------------------------------------------
-# 1. enter() borrows + minimizes + places at the EXACT emblem-centered rect
+# 1. enter() borrows + hides + places at the EXACT emblem-centered rect
 # ---------------------------------------------------------------------------
-def test_enter_borrows_minimizes_and_places_emblem_on_anchor(qapp):
+def test_enter_borrows_hides_and_places_emblem_on_anchor(qapp):
     events: list = []
     anchor = (1000, 700)
     ctrl, provider, window, created = _make(
@@ -401,7 +406,7 @@ def test_enter_borrows_minimizes_and_places_emblem_on_anchor(qapp):
     ax, ay = anchor
     assert surface.geom == QRect(ax - _PIVOT[0], ay - _PIVOT[1], *_ENV_SIZE)
     assert surface.shown == 1
-    assert window.minimized == 1
+    assert window.hidden == 1
     assert ctrl.is_active is True
     assert events == [True]                 # on_active_changed(True) fired
 
@@ -485,7 +490,7 @@ def test_enter_while_active_is_noop(qapp):
     assert again is True
     assert provider.captured == 1           # no second capture
     assert len(created) == 1                # no second surface
-    assert window.minimized == 1            # not minimized again
+    assert window.hidden == 1            # not hidden again
 
 
 def test_leave_while_inactive_is_noop(qapp):
@@ -510,7 +515,7 @@ def test_enter_leave_enter_recycles_cleanly(qapp):
     assert provider.captured == 2           # captured fresh on the second enter
     assert len(created) == 2                # a brand-new surface
     assert provider._grid_host.parent() is created[1]
-    assert window.minimized == 2
+    assert window.hidden == 2
     assert ctrl._orphans == []              # nothing orphaned across clean cycles
 
 
@@ -518,8 +523,8 @@ def test_enter_leave_enter_recycles_cleanly(qapp):
 # 4. FAIL-CLOSED enter
 # ---------------------------------------------------------------------------
 def test_enter_failclosed_on_capture_raise(qapp):
-    """capture raises (before minimize): no exception escapes, stays framed,
-    the window is never minimized (so never left minimized)."""
+    """capture raises (before hide): no exception escapes, stays framed,
+    the window is never hidden (so never left hidden)."""
     provider = _StubProvider(capture_raises=True)
     ctrl, provider, window, created = _make(provider=provider)
 
@@ -527,7 +532,7 @@ def test_enter_failclosed_on_capture_raise(qapp):
 
     assert ok is False
     assert ctrl.is_active is False
-    assert window.minimized == 0            # never minimized -> no showNormal needed
+    assert window.hidden == 0            # never hidden -> no showNormal needed
     # A surface was built before capture; it was torn down (release ok -> deleted).
     if created:
         assert created[0].deleted == 1
@@ -546,25 +551,119 @@ def test_enter_failclosed_on_host_raise_restores_borrow(qapp):
     assert provider.restored == [provider._token]   # borrow returned to the tab
     assert provider._grid_host.parent() is provider._holder
     assert created[0].deleted == 1
-    assert window.minimized == 0
+    assert window.hidden == 0
 
 
-def test_enter_failclosed_on_minimize_raise_restores_window(qapp):
-    """showMinimized raises (after show): the window is restored via showNormal,
-    the borrow is returned, the surface is torn down, stays framed."""
-    window = _StubWindow()
-    window.minimize_raises = True
-    ctrl, provider, window, created = _make(window=window)
+def test_enter_failclosed_on_hide_raise(qapp):
+    """hide() raises (after show): the window is restored via showNormal, the
+    quit guard is restored, and the controller stays framed."""
+    prev = qapp.quitOnLastWindowClosed()
+    try:
+        qapp.setQuitOnLastWindowClosed(True)
+        ctrl, provider, window, created = _make()
+        window.hide_raises = True
+        ok = ctrl.enter()
+        assert ok is False
+        assert ctrl.is_active is False
+        assert window.hidden == 1
+        assert window.normaled == 1             # restored after the mid-enter failure
+        assert qapp.quitOnLastWindowClosed() is True
+        assert provider.restored == [provider._token]
+        assert provider._grid_host.parent() is provider._holder
+        assert created[0].deleted == 1
+    finally:
+        qapp.setQuitOnLastWindowClosed(prev)
 
-    ok = ctrl.enter()
 
-    assert ok is False
-    assert ctrl.is_active is False
-    assert window.minimized == 1
-    assert window.normaled == 1             # restored after the mid-enter failure
-    assert provider.restored == [provider._token]
-    assert provider._grid_host.parent() is provider._holder
-    assert created[0].deleted == 1
+# ---------------------------------------------------------------------------
+# Quit guard + teardown ordering (float owns the taskbar; main window HIDDEN)
+# ---------------------------------------------------------------------------
+def test_enter_sets_quit_guard_and_leave_restores_it(qapp):
+    """While active the main window is HIDDEN (no taskbar entry to restore the
+    gutted window UI from), so quit-on-last-window-closed must be OFF - a
+    mid-float window close would otherwise quit the app. leave() restores the
+    value captured at enter."""
+    prev = qapp.quitOnLastWindowClosed()
+    try:
+        qapp.setQuitOnLastWindowClosed(True)
+        ctrl, provider, window, created = _make()
+        assert ctrl.enter() is True
+        assert qapp.quitOnLastWindowClosed() is False
+        ctrl.leave()
+        assert qapp.quitOnLastWindowClosed() is True
+    finally:
+        qapp.setQuitOnLastWindowClosed(prev)
+
+
+def test_quit_guard_restores_the_captured_value_not_hardcoded_true(qapp):
+    prev = qapp.quitOnLastWindowClosed()
+    try:
+        qapp.setQuitOnLastWindowClosed(False)
+        ctrl, provider, window, created = _make()
+        ctrl.enter()
+        ctrl.leave()
+        assert qapp.quitOnLastWindowClosed() is False
+    finally:
+        qapp.setQuitOnLastWindowClosed(prev)
+
+
+def test_leave_reshows_window_before_surface_teardown(qapp):
+    """ORDERING PIN: with the main window hidden, destroying the last visible
+    window posts the app quit - so leave() must re-show the main window while
+    the cluster surface is still mapped (the host is already restored at that
+    point, so the shown window is complete - no gutted flash)."""
+    order: list = []
+    ctrl, provider, window, created = _make()
+    ctrl.enter()
+    surface = created[0]
+    real_restore = provider.restore_cluster_host
+
+    def _recording_restore(token):
+        order.append("host_restored")
+        return real_restore(token)
+
+    provider.restore_cluster_host = _recording_restore
+    window.showNormal = lambda: order.append("window_shown")
+    surface.hide = lambda: order.append("surface_hidden")
+    surface.deleteLater = lambda: order.append("surface_deleted")
+    ctrl.leave()
+    assert "window_shown" in order
+    # Host back in the tab BEFORE the window is shown (complete, no gutted flash)...
+    assert order.index("host_restored") < order.index("window_shown")
+    # ...and the window shown BEFORE the surface teardown (never zero visible windows).
+    assert order.index("window_shown") < order.index("surface_hidden")
+    assert order.index("window_shown") < order.index("surface_deleted")
+
+
+def test_leave_failclosed_when_teardown_step_raises(qapp):
+    """FAIL-CLOSED PIN: a raising teardown step (here the settings save flush,
+    the first step of leave()) must never strand the app - leave() swallows it,
+    restores the borrowed host to the tab, re-shows the main window, restores
+    the quit guard, deletes the surface, and lands framed. No exit from leave()
+    may leave the host un-restored, the main window hidden, or the guard off."""
+    prev = qapp.quitOnLastWindowClosed()
+    try:
+        qapp.setQuitOnLastWindowClosed(True)
+        ctrl, provider, window, created = _make()
+        assert ctrl.enter() is True
+        surface = created[0]
+
+        def _boom():
+            raise RuntimeError("flush boom")
+
+        ctrl.flush_pending_save = _boom
+        ctrl.leave()                            # must not raise
+        assert window.normaled == 1
+        assert qapp.quitOnLastWindowClosed() is True
+        assert ctrl.is_active is False
+        assert surface.deleted == 1
+        # The borrowed host must return to the tab on EVERY path - a skipped
+        # restore would leave it PARENTLESS (the surface release orphans it,
+        # bypassing the _orphans net) and the re-shown main window gutted.
+        assert provider.restored == [provider._token]
+        assert provider._grid_host.parent() is provider._holder
+    finally:
+        qapp.setQuitOnLastWindowClosed(prev)
 
 
 # ---------------------------------------------------------------------------
@@ -3582,3 +3681,280 @@ def test_connect_emblem_rebinds_to_a_new_emblem(qapp):
     assert calls["toggle"] == 1
     assert calls["drag"] == 1
     assert calls["scale"] == [7]
+
+
+# ---------------------------------------------------------------------------
+# Taskbar representative (float UI owns the taskbar)
+# ---------------------------------------------------------------------------
+class _AvailableBackend(NoOpOverlayBackend):
+    """is_available True so enter() builds the taskbar representative; records
+    the representative-specific hint calls."""
+
+    def __init__(self):
+        self.rep_state: list = []
+        self.opacities: list = []
+
+    def is_available(self):
+        return True
+
+    def set_rep_initial_state(self, window):
+        self.rep_state.append(window)
+
+    def set_window_opacity(self, window, opacity):
+        self.opacities.append((window, float(opacity)))
+
+
+class _MirrorAtOpacityBackend(_AvailableBackend):
+    """Also snapshots the rep's installed mirror object at every opacity write,
+    to pin the paint-before-opacity ordering of the unblank."""
+
+    def __init__(self):
+        super().__init__()
+        self.mirror_at_opacity: list = []
+
+    def set_window_opacity(self, window, opacity):
+        super().set_window_opacity(window, opacity)
+        self.mirror_at_opacity.append((float(opacity), window._mirror))
+
+
+class _FakeSpontaneousClose:
+    def __init__(self):
+        self.ignored = False
+
+    def spontaneous(self):
+        return True
+
+    def ignore(self):
+        self.ignored = True
+
+    def accept(self):
+        pass
+
+
+def test_enter_builds_taskbar_rep_and_leave_destroys_it(qapp):
+    backend = _AvailableBackend()
+    ctrl, provider, window, created = _make(backend=backend)
+    assert ctrl.enter() is True
+    rep = ctrl._taskbar_rep
+    assert rep is not None
+    assert rep.isVisible()
+    assert backend.rep_state == [rep]              # pre-map keep-below hint
+    assert backend.opacities == []                 # aligned, NOT opacity-hidden
+    assert rep.is_blanked() is False                # settled state at enter
+    # First mirror grabbed BEFORE the map: the entry never shows a blank preview.
+    assert rep._mirror is not None and not rep._mirror.isNull()
+    ctrl.leave()
+    assert ctrl._taskbar_rep is None
+
+
+def test_taskbar_rep_torn_down_when_leave_teardown_step_raises(qapp):
+    """FAIL-CLOSED PIN: the representative may not outlive leave() on ANY path.
+    A raising teardown step (here the settings save flush, the first step of
+    leave()'s try) is swallowed, but the unconditional tail must still destroy
+    the rep - a survivor would be a stale mapped keep-below window painting the
+    old mirror, plus a live taskbar/Alt-Tab entry beside the restored framed
+    app's own."""
+    backend = _AvailableBackend()
+    ctrl, provider, window, created = _make(backend=backend)
+    assert ctrl.enter() is True
+    assert ctrl._taskbar_rep is not None
+
+    def _boom():
+        raise RuntimeError("flush boom")
+
+    ctrl.flush_pending_save = _boom
+    ctrl.leave()                            # must not raise
+    assert ctrl._taskbar_rep is None        # the rep may not outlive leave()
+    # The existing fail-closed invariants still hold on this path.
+    assert window.normaled == 1
+    assert ctrl.is_active is False
+    assert provider.restored == [provider._token]
+    assert provider._grid_host.parent() is provider._holder
+
+
+def test_no_taskbar_rep_without_backend(qapp):
+    """No X11 backend -> no thumbnail mechanism to lean on: the plain hide()
+    behavior stands alone and nothing extra is mapped."""
+    ctrl, provider, window, created = _make()      # NoOp backend: unavailable
+    ctrl.enter()
+    assert ctrl._taskbar_rep is None
+    ctrl.leave()
+
+
+def test_rep_close_request_routes_to_main_window_close(qapp):
+    """Taskbar Close on the representative = the radial-Exit quit path (the
+    main window's close() -> shutdown -> app quit)."""
+    backend = _AvailableBackend()
+    ctrl, provider, window, created = _make(backend=backend)
+    ctrl.enter()
+    rep = ctrl._taskbar_rep
+    ev = _FakeSpontaneousClose()
+    rep.closeEvent(ev)
+    assert ev.ignored
+    for _ in range(3):
+        qapp.processEvents()                       # run the deferred callback
+    assert window.closed == 1
+    ctrl.leave()
+
+
+def test_occupancy_change_refreshes_rep_mirror(qapp):
+    backend = _AvailableBackend()
+    provider = _OccupancyStubProvider({0, 1, 2, 3})
+    ctrl, provider, window, created = _make(provider=provider, backend=backend)
+    ctrl.enter()
+    rep = ctrl._taskbar_rep
+    first = rep._mirror
+    # {1} MOVES the bbox min-corner (cell 0 at host (10,10) was the min; the
+    # emblem-union-cell-1 bbox starts at host (60,10)): the rep must be
+    # RE-ALIGNED, not just re-grabbed - a stale origin would offset every
+    # mirror pixel into a persistent visible ghost over bare desktop.
+    provider.set_occupied({1})
+    provider.occupied_cells_changed.emit()
+    assert rep._mirror is not first                # re-grabbed on occupancy
+    expected = ctrl._content_bbox_window_coords().translated(
+        ctrl._compute_window_rect().topLeft())
+    assert rep.geometry() == expected              # re-ALIGNED on occupancy
+
+
+def test_content_bbox_covers_emblem_and_cells_and_is_a_crop(qapp):
+    ctrl, provider, window, created = _make()
+    ctrl.enter()
+    bbox = ctrl._content_bbox_window_coords()
+    assert bbox.contains(QPoint(*_PIVOT))          # emblem center renders on the pivot
+    assert bbox.contains(QPoint(*_VISIBLE_CONTROL_PROBE))
+    env_w, env_h = _ENV_SIZE
+    assert bbox.width() < env_w and bbox.height() < env_h   # a CROP, not the envelope
+    ctrl.leave()
+
+
+def test_rep_blanked_during_scale_gesture_and_restored_at_settle(qapp):
+    """The aligned-mirror invariant cannot hold mid-gesture: the rep must be
+    blanked while _scaling_active and unblanked (with a fresh mirror) once
+    _settle_input runs."""
+    backend = _AvailableBackend()
+    ctrl, provider, window, created = _make(backend=backend)
+    ctrl.enter()
+    rep = ctrl._taskbar_rep
+    ctrl._scaling_active = True
+    ctrl._update_rep_blanking()
+    assert rep.is_blanked() is True
+    before = rep._mirror
+    ctrl._settle_input()                           # clears the flag + updates
+    assert rep.is_blanked() is False
+    assert rep._mirror is not before               # re-grabbed at settle
+    ctrl.leave()
+
+
+def test_unblank_aligns_and_regrabs_before_opacity_write(qapp):
+    """ORDERING PIN: the opacity-1 write is the LAST step of the unblank. The
+    opacity hint flushes on the xlib connection immediately while the
+    re-align/re-grab land as Qt-side paints - unblanking first would show one
+    full-opacity frame of the STALE mirror at the OLD position after every
+    drag end / scale settle. At the moment of the opacity-1 write the fresh
+    mirror must already be installed."""
+    backend = _MirrorAtOpacityBackend()
+    ctrl, provider, window, created = _make(backend=backend)
+    ctrl.enter()
+    rep = ctrl._taskbar_rep
+    ctrl._scaling_active = True
+    ctrl._update_rep_blanking()
+    assert rep.is_blanked() is True
+    stale = rep._mirror
+    ctrl._settle_input()                           # unblank terminal
+    assert rep.is_blanked() is False
+    ones = [m for (op, m) in backend.mirror_at_opacity if op == 1.0]
+    assert ones and ones[-1] is not stale          # fresh mirror BEFORE opacity 1
+    ctrl.leave()
+
+
+def test_rep_blanked_while_peek_active(qapp):
+    """A hover-peeked (faded) card breaks pixel identity with the opaque
+    mirror behind it: peek-active must blank the rep."""
+    backend = _AvailableBackend()
+    ctrl, provider, window, created = _make(backend=backend)
+    ctrl.enter()
+    rep = ctrl._taskbar_rep
+    ctrl._rep_peek_active = True
+    ctrl._update_rep_blanking()
+    assert rep.is_blanked() is True
+    ctrl._rep_peek_active = False
+    ctrl._update_rep_blanking()
+    assert rep.is_blanked() is False
+    ctrl.leave()
+
+
+def test_rep_blanked_during_drag_and_restored_at_end(qapp, monkeypatch):
+    """A drag moves the cluster out from over the mirror: drag start must blank
+    the rep, and drag end must unblank it with a fresh re-anchored mirror."""
+    from PySide6.QtGui import QCursor
+    backend = _AvailableBackend()
+    ctrl, provider, window, created = _make(backend=backend, anchor=(400, 400))
+    ctrl.enter()
+    rep = ctrl._taskbar_rep
+    assert rep.is_blanked() is False
+
+    monkeypatch.setattr(QCursor, "pos", staticmethod(lambda: QPoint(100, 100)))
+    ctrl.begin_group_drag()
+    assert ctrl._drag_timer is not None and ctrl._drag_timer.isActive()
+    assert rep.is_blanked() is True                # gesture live -> blanked
+    before = rep._mirror
+    ctrl._end_drag()
+    assert rep.is_blanked() is False               # drag over -> restored
+    assert rep._mirror is not before               # re-grabbed at drag end
+    ctrl.leave()
+
+
+def test_rep_blanked_while_radial_open(qapp, monkeypatch):
+    """The radial dims the cluster (internal dim + ring): the mirror behind it
+    would shine through undimmed, so radial-open must blank the rep and
+    close must restore it."""
+    _patch_radial(monkeypatch)
+    backend = _AvailableBackend()
+    ctrl, provider, window, created = _make(backend=backend)
+    ctrl.enter()
+    rep = ctrl._taskbar_rep
+    assert rep.is_blanked() is False
+
+    menu = ctrl.open_radial_menu()
+    assert menu is not None
+    assert rep.is_blanked() is True                # radial up -> blanked
+    ctrl.close_radial_menu()
+    assert rep.is_blanked() is False               # radial gone -> restored
+    ctrl.leave()
+
+
+def test_peek_tick_latch_drives_rep_blanking(qapp):
+    """The ~30ms peek poll keeps the rep's peek latch in sync: a cursor over a
+    card body blanks the rep (the faded card would break pixel identity with
+    the opaque mirror), and moving off every card unblanks it."""
+    backend = _AvailableBackend()
+    ctrl, provider, window, created = _make(
+        backend=backend, anchor=_GHOST_ANCHOR, settings=_DictSettings())
+    ctrl.enter()
+    rep = ctrl._taskbar_rep
+    ax, ay = _GHOST_ANCHOR
+
+    # Cell 1's body center (host 300, 75), outside the carve: screen point =
+    # anchor + (host - emblem_center) - the same math the existing peek tests use.
+    on_card = (ax + (300 - _EMBLEM_CX), ay + (75 - _EMBLEM_CY))
+    ctrl._peek_tick(on_card)
+    assert ctrl._rep_peek_active is True
+    assert rep.is_blanked() is True                # peek live -> blanked
+
+    ctrl._peek_tick((ax + 4000, ay + 4000))        # far off every card
+    assert ctrl._rep_peek_active is False
+    assert rep.is_blanked() is False               # peek over -> restored
+    ctrl.leave()
+
+
+def test_opaque_only_strips_subopaque_pixels(qapp):
+    """The on-screen rep may only paint pixels the cluster hides with identical
+    fully-opaque ones: translucent pixels (shadows, AA edges) would
+    double-composite and read darker inside the bbox."""
+    from PySide6.QtGui import QImage, QPixmap
+    img = QImage(2, 1, QImage.Format_ARGB32)
+    img.setPixelColor(0, 0, QColor(255, 0, 170, 255))    # opaque: kept
+    img.setPixelColor(1, 0, QColor(255, 0, 170, 128))    # translucent: stripped
+    out = ClusterOverlayController._opaque_only(QPixmap.fromImage(img)).toImage()
+    assert out.pixelColor(0, 0).alpha() == 255
+    assert out.pixelColor(1, 0).alpha() == 0

@@ -2374,7 +2374,7 @@ class MultitoonTab(QWidget):
         """Called by the overlay controller on enter (True) / leave (False).
 
         Flips the overlay flag so the repaint timers stay alive while the main
-        window is minimized (the cluster is visible in its own surfaces), and on
+        window is hidden (the cluster is visible in its own surfaces), and on
         enter reconciles the borrowed keep-alive bars' paint state (clears any
         stale graphics effect + restores visibility per the master setting) so
         the bar paints in the overlay. Phase is preserved by the untouched
