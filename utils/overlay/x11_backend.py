@@ -168,6 +168,63 @@ class X11OverlayBackend(OverlayBackend):
         except Exception:
             pass
 
+    def set_rep_initial_state(self, window) -> None:
+        """Pre-map state for the taskbar REPRESENTATIVE: keep-below only.
+
+        Deliberately NO skip-taskbar / skip-pager (being listed is the whole
+        point) and NO _NET_WM_WINDOW_TYPE write (the default NORMAL type is
+        what Plasma's task manager and KWin's TabBox list - probe B control run,
+        2026-07-02; DOCK is taskbar-listed but Alt-Tab-filtered - probe A).
+        BELOW keeps the rep in the below-normal layer: games (normal) and the
+        cluster (dock) always stack over it, so anything covering the mirror
+        area hides it MORE - the aligned-mirror invariant only has to hold over
+        bare desktop.
+        """
+        if not self.is_available():
+            return
+        try:
+            from Xlib import X, Xatom
+            d = self._display
+            win = d.create_resource_object("window", int(window.winId()))
+            a = d.intern_atom
+            win.change_property(
+                a("_NET_WM_STATE"),
+                Xatom.ATOM,
+                32,
+                [a("_NET_WM_STATE_BELOW")],
+                X.PropModeReplace,
+            )
+            d.flush()
+            overlay_trace("x11 set_rep_initial_state: pre-map BELOW "
+                          "(listed in taskbar/Alt-Tab by design)")
+        except Exception:
+            pass
+
+    def set_window_opacity(self, window, opacity: float) -> None:
+        """_NET_WM_WINDOW_OPACITY: compositor-applied whole-window opacity as a
+        32-bit cardinal fraction of 0xFFFFFFFF. NOTE (probed 2026-07-02): KWin
+        applies this to taskbar/Alt-Tab thumbnails too, so 0 blanks the preview
+        as well - which is exactly how the representative uses it: a BLANKING
+        mechanism for gesture windows where the aligned-mirror invariant cannot
+        hold. Best-effort: never raises."""
+        if not self.is_available():
+            return
+        try:
+            from Xlib import X, Xatom
+            d = self._display
+            win = d.create_resource_object("window", int(window.winId()))
+            val = max(0, min(0xFFFFFFFF, int(round(float(opacity) * 0xFFFFFFFF))))
+            win.change_property(
+                d.intern_atom("_NET_WM_WINDOW_OPACITY"),
+                Xatom.CARDINAL,
+                32,
+                [val],
+                X.PropModeReplace,
+            )
+            d.flush()
+        except Exception:
+            pass
+
     def set_skip_close_animation(self, window) -> None:
         """Ask KWin to skip its close/hide animation for this window.
 
