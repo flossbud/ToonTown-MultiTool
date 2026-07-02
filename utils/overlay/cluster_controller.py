@@ -155,6 +155,13 @@ class ClusterOverlayController:
         self._visible_cells: set = {0, 1, 2, 3}
         self._occupancy_connected: bool = False
         self._cell_retain_flags: dict = {}
+        # User Hide-Cards toggle (the radial's bottom-center spoke): while True,
+        # _target_visible_cells returns the EMPTY set - every card is hidden even
+        # if its game window is present - and the same occupancy-reconcile path
+        # applies it (visual hide with retained size, input shape, rep re-align).
+        # Float-session-scoped: leave() always resets it, so a session never
+        # starts with invisible cards.
+        self._cards_hidden: bool = False
 
         # Persistence (anchor + scale + monitor identity). A TRAILING-edge debounce:
         # a burst of drag/scale changes restarts the single-shot timer so it
@@ -732,6 +739,10 @@ class ClusterOverlayController:
         self._surface = None
         self._token = None
         self._clear_envelope_state()
+        # The Hide-Cards toggle never outlives the float session (reset HERE, on
+        # the unconditional path, so not even a raising teardown step can leak a
+        # stale True into the next enter()'s _target_visible_cells seed).
+        self._cards_hidden = False
         self._active = False
         self._emit_active_changed()   # self._active is False here
 
@@ -1502,11 +1513,44 @@ class ClusterOverlayController:
     # ------------------------------------------------------------------
     # Occupancy (keep the grid shell fixed; only narrow the input shape)
     # ------------------------------------------------------------------
+    @property
+    def cards_hidden(self) -> bool:
+        """True while the user's Hide-Cards toggle is holding every card hidden."""
+        return self._cards_hidden
+
+    def set_cards_hidden(self, hidden) -> None:
+        """Hide (True) or show (False) ALL cards, occupied or not - the radial's
+        Hide-Cards toggle. The cards are never torn down or reparented: the flip
+        rides the exact live occupancy-reconcile path (cells ``setVisible`` with
+        retained size - no grid reflow, no window resize, one repaint - the exact
+        input shape re-applied so hidden cards click through to the games, and
+        the taskbar representative re-aligned to the new composition), so hiding
+        and unhiding are instant. The emblem always stays. Idempotent; ignored
+        while framed (the toggle is float-session state - ``leave()`` resets it,
+        so a session can never START with invisible cards)."""
+        if not self._active:
+            return
+        hidden = bool(hidden)
+        if hidden == self._cards_hidden:
+            return
+        self._cards_hidden = hidden
+        self._reconcile_occupancy()
+
+    def toggle_cards_hidden(self) -> bool:
+        """Flip the Hide-Cards toggle; returns the new hidden state."""
+        self.set_cards_hidden(not self._cards_hidden)
+        return self._cards_hidden
+
     def _target_visible_cells(self) -> set:
         """The slot ids whose cards currently hold a window: the provider's
         ``occupied_cells()``, or all four ``{0, 1, 2, 3}`` when the provider has no
         occupancy (a stub provider degrades to all-visible). Pure read; a provider
-        that raises also degrades to all-visible."""
+        that raises also degrades to all-visible. The user Hide-Cards toggle
+        OVERRIDES occupancy: while it is on, the target set is EMPTY (occupancy
+        churn while hidden lands here and stays hidden; the toggle-off reconcile
+        re-reads the then-current occupancy)."""
+        if self._cards_hidden:
+            return set()
         provider = self._card_provider
         fn = getattr(provider, "occupied_cells", None) if provider is not None else None
         if fn is None:
@@ -1601,7 +1645,8 @@ class ClusterOverlayController:
                 continue
 
     def _reconcile_occupancy(self) -> None:
-        """Occupancy nudge (the signal slot): re-read ``occupied_cells()``, update
+        """Occupancy nudge (the signal slot; also driven by the Hide-Cards
+        toggle): re-read ``occupied_cells()``, update
         ``self._visible_cells``, hide/show the cells to match, and RE-APPLY the
         exact input shape so empty cards drop out of the click region. No-op when
         framed (a stray post-leave signal is safe).

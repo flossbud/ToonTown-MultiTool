@@ -1090,6 +1090,104 @@ def test_provider_without_occupancy_degrades_to_all_visible(qapp):
     assert ctrl._visible_cells == {0, 1, 2, 3}
 
 
+def test_set_cards_hidden_hides_all_cells_and_frees_input(qapp):
+    """The user Hide-Cards toggle (radial spoke) hides EVERY cell - occupied or
+    not - via the same reconcile path as occupancy: retain-size set before each
+    hide (no grid reflow), the window NOT resized (fixed envelope), and the
+    exact input shape re-applied so the hidden cards click through. Toggling
+    back re-reads occupancy and restores exactly the occupied cells."""
+    backend = _RecordingBackend()
+    provider = _OccupancyStubProvider(occupied={0, 2})
+    ctrl, provider, window, created = _make(provider=provider, backend=backend)
+    ctrl.enter()
+    surface = created[0]
+    geom_before = surface.geom
+    assert ctrl.cards_hidden is False
+    assert not provider._cell_widgets[0].isHidden()   # occupied cell visible
+    provider.hidden_cells.clear()
+    backend.shapes.clear()
+
+    ctrl.set_cards_hidden(True)
+
+    assert ctrl.cards_hidden is True
+    assert ctrl._visible_cells == set()
+    for cw in provider._cell_widgets:
+        assert cw.isHidden()                          # ALL cells hidden
+    assert all(retained for _c, retained in provider.hidden_cells)
+    assert surface.geom == geom_before                # window NOT resized
+    assert len(backend.shapes) >= 1                   # input shape RE-APPLIED
+    path = backend.shapes[-1][1]
+    assert not path.contains(QPointF(*_VISIBLE_CONTROL_PROBE))   # card freed
+    backend.shapes.clear()
+
+    ctrl.set_cards_hidden(False)
+
+    assert ctrl.cards_hidden is False
+    assert ctrl._visible_cells == {0, 2}              # back to occupancy
+    assert not provider._cell_widgets[0].isHidden()
+    assert provider._cell_widgets[1].isHidden()       # empty cell stays hidden
+    assert backend.shapes[-1][1].contains(QPointF(*_VISIBLE_CONTROL_PROBE))
+
+
+def test_occupancy_churn_while_cards_hidden_stays_hidden(qapp):
+    """Occupancy changes while the Hide-Cards toggle is on must NOT re-show any
+    card (the toggle overrides occupancy); toggling off then shows the
+    THEN-CURRENT occupancy, not the stale one from before the hide."""
+    provider = _OccupancyStubProvider(occupied={0, 2})
+    ctrl, provider, window, created = _make(provider=provider)
+    ctrl.enter()
+    ctrl.set_cards_hidden(True)
+
+    provider.set_occupied({1, 3})
+    provider.occupied_cells_changed.emit()
+
+    assert ctrl._visible_cells == set()               # still all hidden
+    for cw in provider._cell_widgets:
+        assert cw.isHidden()
+
+    ctrl.set_cards_hidden(False)
+
+    assert ctrl._visible_cells == {1, 3}              # the CURRENT occupancy
+    assert provider._cell_widgets[1].isHidden() is False
+    assert provider._cell_widgets[0].isHidden()
+
+
+def test_leave_resets_cards_hidden_and_ignored_while_framed(qapp):
+    """leave() resets the Hide-Cards toggle (a float session never STARTS with
+    invisible cards) and set_cards_hidden while framed is ignored, so a stray
+    framed-mode call can never poison the next enter()'s visible-cells seed."""
+    provider = _OccupancyStubProvider(occupied={0, 2})
+    ctrl, provider, window, created = _make(provider=provider)
+    ctrl.enter()
+    ctrl.set_cards_hidden(True)
+    assert ctrl.cards_hidden is True
+
+    ctrl.leave()
+
+    assert ctrl.cards_hidden is False
+    for cw in provider._cell_widgets:
+        assert not cw.isHidden()                      # framed shows all four
+
+    ctrl.set_cards_hidden(True)                       # framed: ignored
+    assert ctrl.cards_hidden is False
+
+    ctrl.enter()
+    assert ctrl._visible_cells == {0, 2}              # seeded from occupancy
+    ctrl.leave()
+
+
+def test_toggle_cards_hidden_flips_and_returns_state(qapp):
+    provider = _OccupancyStubProvider(occupied={0, 2})
+    ctrl, provider, window, created = _make(provider=provider)
+    ctrl.enter()
+
+    assert ctrl.toggle_cards_hidden() is True
+    assert ctrl._visible_cells == set()
+    assert ctrl.toggle_cards_hidden() is False
+    assert ctrl._visible_cells == {0, 2}
+    ctrl.leave()
+
+
 def test_occupancy_change_during_scale_defers_exact_until_settle(qapp):
     """An occupancy nudge that arrives DURING an active scale (BROAD phase) updates
     _visible_cells but must NOT swap in the narrow exact shape mid-gesture (that

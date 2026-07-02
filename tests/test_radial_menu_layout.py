@@ -30,7 +30,7 @@ def test_polar_point_places_on_circle():
 def test_main_ring_angles_match_locked_layout():
     assert MAIN_RING_ANGLES == {
         "accounts": -142.0, "home": -90.0, "settings": -38.0,
-        "close": 138.0, "exit": 42.0,
+        "close": 138.0, "hide": 90.0, "exit": 42.0,
     }
 
 

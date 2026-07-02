@@ -13,8 +13,9 @@ MAIN_RING_ANGLES: dict[str, float] = {
     "accounts": -142.0,   # top-left
     "home": -90.0,        # top-center
     "settings": -38.0,    # top-right
-    "close": 138.0,       # bottom-left  (dismiss the ring)
-    "exit": 42.0,         # bottom-right (quit the app)
+    "close": 138.0,       # bottom-left    (dismiss the ring)
+    "hide": 90.0,         # bottom-center  (hide/show the cards)
+    "exit": 42.0,         # bottom-right   (quit the app)
 }
 
 WINDOWED_RING_ANGLES: dict[str, float] = {
