@@ -5,13 +5,30 @@ paints nothing; the hosted widget paints its own opaque body.
 """
 from __future__ import annotations
 
+import os
 from enum import Enum
 
 from PySide6.QtCore import Qt, QRect
 from PySide6.QtGui import QPainterPath
 from PySide6.QtWidgets import QWidget, QVBoxLayout
 
-from utils.overlay.backend import OverlayBackend, get_overlay_backend
+from utils.overlay.backend import OverlayBackend, get_overlay_backend, overlay_trace
+
+# Explicit truthy tokens (mirrors overlay_entry's falsey set) for the
+# TTMT_OVERLAY_UNMANAGED escape hatch below.
+_TRUTHY = {"1", "yes", "y", "true", "t", "on"}
+
+
+def _bypass_wm_enabled() -> bool:
+    """True when TTMT_OVERLAY_UNMANAGED opts back into OVERRIDE-REDIRECT
+    (WM-bypassed) overlay windows - the pre-managed behavior. Default OFF:
+    surfaces are MANAGED keep-above windows, which stay above the game windows
+    but BELOW the compositor's system layers (screenshot region selection,
+    OSDs, lock screen). Override-redirect windows sit above those system
+    layers too, which is exactly the screenshot-UI conflict this default
+    fixes; the escape hatch exists in case a WM mishandles managed placement
+    (clamping, repositioning) that override-redirect was immune to."""
+    return os.environ.get("TTMT_OVERLAY_UNMANAGED", "").strip().lower() in _TRUTHY
 
 
 class ShapeMode(Enum):
@@ -40,6 +57,19 @@ class OverlaySurface(QWidget):
     ``close()`` path, not destruction/GC.
     """
 
+    # EWMH window type the backend writes pre-map (x11_backend.set_initial_state).
+    # DOCK exempts managed windows from KWin's fit-to-desktop move clamp while
+    # stacking over the games, and is not animated by the slidingnotifications
+    # effect (which painted the ring traveling in from a stale position -
+    # bisected live + source-verified). The radial/panel subclasses override
+    # this with the KDE OSD type: a strictly higher layer that KWin's internal
+    # click-raise cannot cross, so an emblem press can never lift the cluster's
+    # internal dim above them. DISPROVEN alternatives (probed, do not revisit):
+    # dock+keep-above does NOT elevate above plain docks; WM_TRANSIENT_FOR is
+    # NOT honored against KWin's internal raiseWindow; NOTIFICATION and
+    # CRITICAL_NOTIFICATION are both move-animated by slidingnotifications.
+    WM_WINDOW_TYPE = "_NET_WM_WINDOW_TYPE_DOCK"
+
     def __init__(self, backend: OverlayBackend | None = None) -> None:
         # Parentless: do not pass a parent so this is always a top-level window.
         super().__init__(None)
@@ -57,21 +87,40 @@ class OverlaySurface(QWidget):
         # window's minimize, so they are plain frameless top-levels and rely on
         # the explicit _NET_WM_STATE_SKIP_TASKBAR/_SKIP_PAGER hints (set per show)
         # to stay out of the taskbar/pager.
-        # X11BypassWindowManagerHint makes the X window override-redirect under
-        # xcb/XWayland, so the window manager never manages or REPOSITIONS it. That
-        # is load-bearing: the controller's anchor becomes the single source of
-        # truth, so the cluster moves as one rigid unit and can be parked past a
-        # screen edge (the WM would otherwise clamp each window independently,
-        # compressing the cluster and blocking off-screen parking). Override-redirect
-        # windows are also inherently above managed windows and absent from the
-        # taskbar, so the EWMH above/skip-taskbar calls become belt-and-suspenders.
-        self.setWindowFlags(
+        #
+        # MANAGED by default (no X11BypassWindowManagerHint): a managed frameless
+        # keep-above window sits in the WM's "above" layer - over the game windows
+        # (all this overlay must beat) but BELOW the compositor's system layers
+        # (screenshot region selection, OSDs, lock screen). The old
+        # override-redirect mode stacked above those system layers too, so the
+        # cluster covered e.g. the region-screenshot UI. Managed mode leans on
+        # machinery that already exists: the controller sets geometry BEFORE
+        # show (program-specified position, so the WM honors placement), the
+        # backend writes _NET_WM_STATE (ABOVE + SKIP_TASKBAR/PAGER) plus a DOCK
+        # _NET_WM_WINDOW_TYPE as pre-map properties, and showEvent re-asserts
+        # the state per show - those calls were belt-and-suspenders under
+        # override-redirect and are load-bearing now. The DOCK type is what
+        # exempts these windows from KWin's fit-to-desktop clamp on client
+        # moves (see x11_backend.set_initial_state) - without it the fixed
+        # max-scale envelope walls against the desktop bounds well short of the
+        # visible content reaching a screen edge. TTMT_OVERLAY_UNMANAGED=1
+        # restores override-redirect in case a WM mishandles managed placement.
+        flags = (
             Qt.Window
             | Qt.FramelessWindowHint
             | Qt.WindowStaysOnTopHint
             | Qt.WindowDoesNotAcceptFocus
-            | Qt.X11BypassWindowManagerHint
         )
+        bypass = _bypass_wm_enabled()
+        if bypass:
+            flags |= Qt.X11BypassWindowManagerHint
+        self.setWindowFlags(flags)
+        # Running-code stamp: live validation must be able to prove which window
+        # mode this build is actually running (TTMT_OVERLAY_TRACE=1 to see it).
+        overlay_trace(
+            f"{type(self).__name__} window mode: "
+            + ("UNMANAGED override-redirect (TTMT_OVERLAY_UNMANAGED)" if bypass
+               else "MANAGED keep-above (default)"))
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WA_ShowWithoutActivating, True)
         # Explicitly keep WA_DeleteOnClose OFF to avoid destroying a borrowed widget.
@@ -106,6 +155,12 @@ class OverlaySurface(QWidget):
             prev.release()
         widget.setParent(self)
         self._layout.addWidget(widget)
+        # Hosting into an ALREADY-VISIBLE surface (the persistent radial/panel
+        # windows, kept mapped between opens): reparenting hides the widget and
+        # Qt does not implicitly re-show a child added to a visible parent, so
+        # show it explicitly. A hidden surface shows its children on map as before.
+        if self.isVisible():
+            widget.show()
         self._hosted = widget
 
     def release(self) -> QWidget | None:

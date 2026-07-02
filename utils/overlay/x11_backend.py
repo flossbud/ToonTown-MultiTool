@@ -6,7 +6,7 @@ NOT in the region to the window behind. Bounding/clip shape is left untouched
 from __future__ import annotations
 
 from PySide6.QtGui import QRegion
-from utils.overlay.backend import OverlayBackend
+from utils.overlay.backend import OverlayBackend, overlay_trace
 
 
 def region_to_rects(region: QRegion) -> list[tuple[int, int, int, int]]:
@@ -55,7 +55,7 @@ class X11OverlayBackend(OverlayBackend):
         return
 
     def set_initial_state(self, window) -> None:
-        """Set _NET_WM_STATE as a PROPERTY before the window is mapped.
+        """Set _NET_WM_STATE and _NET_WM_WINDOW_TYPE as PROPERTIES before map.
 
         This is the EWMH-canonical way to request a window's INITIAL state: the WM
         reads it when it manages (maps) the window, so above + skip-taskbar/pager
@@ -64,6 +64,26 @@ class X11OverlayBackend(OverlayBackend):
         case the WM re-evaluates the window (e.g. when the main window minimizes).
         Must be called while the window is realized (winId valid) but NOT yet
         mapped (before show()).
+
+        The window TYPE (the surface class's ``WM_WINDOW_TYPE``: DOCK for the
+        cluster, OSD for the radial/panel) is load-bearing for MANAGED overlay
+        windows: KWin force-fits a managed NORMAL window's client-requested
+        geometry into the virtual-desktop bounding box, which walled the
+        cluster's fixed max-scale envelope short of the top screen edge and
+        desynced the drag anchor from the pinned window. DOCK and OSD windows
+        are exempt from that clamp - probed empirically on KWin 6.7.1 with
+        keep-above applied, i.e. exactly this configuration - and neither is
+        animated by the slidingnotifications effect (which matched the earlier
+        NOTIFICATION/CRITICAL_NOTIFICATION typings and painted the radial ring
+        traveling in from a stale position; live-bisected + source-verified).
+        The dock stacks over the games but below the compositor's system
+        layers (screenshot region picker), and docks are visible on all
+        virtual desktops - matching the old override-redirect behavior. No
+        _NET_WM_STRUT is set, so no screen space is reserved. The radial/panel
+        OSD layer sits strictly above the dock layer, which KWin's internal
+        click-raise cannot cross - see ``RadialSurface.WM_WINDOW_TYPE``. On an
+        override-redirect window (TTMT_OVERLAY_UNMANAGED=1) the WM ignores
+        these properties, so writing them unconditionally is harmless.
         """
         if not self.is_available():
             return
@@ -83,7 +103,17 @@ class X11OverlayBackend(OverlayBackend):
                 ],
                 X.PropModeReplace,
             )
+            wtype = getattr(window, "WM_WINDOW_TYPE", "_NET_WM_WINDOW_TYPE_DOCK")
+            win.change_property(
+                a("_NET_WM_WINDOW_TYPE"),
+                Xatom.ATOM,
+                32,
+                [a(wtype)],
+                X.PropModeReplace,
+            )
             d.flush()
+            overlay_trace("x11 set_initial_state: pre-map _NET_WM_STATE"
+                          f"(above+skip) + _NET_WM_WINDOW_TYPE({wtype}) applied")
         except Exception:
             pass
 
