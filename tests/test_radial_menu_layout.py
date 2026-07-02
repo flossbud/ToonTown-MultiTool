@@ -5,12 +5,19 @@ from utils.radial_menu_layout import account_ring_angles, polar_point, MAIN_RING
 def test_account_ring_angles_reserves_top_and_spaces_evenly():
     assert account_ring_angles(0) == []
     assert account_ring_angles(1) == [90.0]
-    assert account_ring_angles(3) == [0.0, 90.0, 180.0]
+    assert account_ring_angles(3) == [180.0, 90.0, 0.0]
     a8 = account_ring_angles(8)
     assert len(a8) == 8
     step = 360.0 / 9
-    assert a8 == [-90.0 + step * k for k in range(1, 9)]
+    assert a8 == [-90.0 + step * k for k in range(8, 0, -1)]
     assert all(round((ang - (-90.0)) % 360.0, 6) != 0.0 for ang in a8)
+
+
+def test_account_ring_reads_newest_to_oldest_left_to_right():
+    # Index 0 is the most recent account; it must land on the leftmost slot,
+    # with x strictly increasing toward the oldest (rightmost) slot.
+    xs = [polar_point(0.0, 0.0, 1.0, ang)[0] for ang in account_ring_angles(4)]
+    assert all(b - a > 1e-9 for a, b in zip(xs, xs[1:]))
 
 
 def test_polar_point_places_on_circle():
