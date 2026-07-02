@@ -53,6 +53,35 @@ def test_click_outside_any_circle_does_not_emit():
     assert fired == []
 
 
+def test_interactive_path_covers_spokes_only():
+    """interactive_path() - the radial window's X11 input shape - contains every
+    visible spoke circle (with the hover-lift padding) and NOTHING else: not the
+    widget center (the emblem shows through there) and not the corners, so game
+    UI beneath the invisible canvas stays clickable while the ring is open.
+    Swapping to the accounts sub-ring re-announces via state_changed (the
+    controller's input-reshape hook) and the path follows the new spoke set."""
+    _app()
+    from PySide6.QtCore import QPointF
+    from utils.overlay.radial_menu import RadialMenuWidget
+    from utils.radial_menu_model import RingAccount
+    w = RadialMenuWidget(emblem_diameter=160)
+    w.resize(640, 640)
+    path = w.interactive_path()
+    for (_state, _key, cx, cy, r) in w._visible_circles():
+        assert path.contains(QPointF(cx, cy))              # spoke center
+        assert path.contains(QPointF(cx + r, cy))          # spoke edge (padded)
+    assert not path.contains(QPointF(320, 320))            # emblem center: excluded
+    assert not path.contains(QPointF(5, 5))                # canvas corner: excluded
+
+    fired = []
+    w.state_changed.connect(lambda: fired.append(1))
+    w.set_accounts([RingAccount("a1", "ttr", "L1", None, "", False)])
+    assert fired == [1]                                    # swap announced
+    path2 = w.interactive_path()
+    for (_state, _key, cx, cy, r) in w._visible_circles():
+        assert path2.contains(QPointF(cx, cy))             # accounts spokes covered
+
+
 def test_paint_does_not_crash():
     _app()
     from PySide6.QtCore import QPoint

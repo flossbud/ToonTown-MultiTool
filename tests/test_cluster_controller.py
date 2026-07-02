@@ -350,7 +350,8 @@ class _OccupancyStubProvider(QObject):
 
 
 def _make(provider=None, window=None, host_raises=False, release_raises=False,
-          on_active_changed=None, anchor=None, backend=None, settings=None):
+          on_active_changed=None, anchor=None, backend=None, settings=None,
+          dismiss_capture_factory=None):
     """Build a controller wired to recording stubs. Returns
     (controller, provider, window, created_surfaces)."""
     provider = provider if provider is not None else _StubProvider()
@@ -369,6 +370,7 @@ def _make(provider=None, window=None, host_raises=False, release_raises=False,
         surface_factory=factory,
         card_provider=provider,
         on_active_changed=on_active_changed,
+        dismiss_capture_factory=dismiss_capture_factory,
     )
     if anchor is not None:
         ctrl._anchor = anchor   # inject a known anchor for exact placement
@@ -1297,6 +1299,9 @@ def _patch_radial(monkeypatch):
 
         def set_overlay_geometry(self, rect):
             self.geom = rect
+            # Real geometry too: the click-off chrome hit-test reads geometry()
+            # to translate screen points into window-local path coords.
+            self.setGeometry(rect)
 
         def prepare_initial_state(self):
             self.prepared += 1
@@ -1313,6 +1318,13 @@ def _patch_radial(monkeypatch):
     class _StubRadialMenu(QWidget):
         closing = Signal()         # fly-back begun -> internal dim collapse (parity)
         close_requested = Signal()  # fly-back done -> teardown (parity)
+        state_changed = Signal()    # main <-> accounts swap -> input reshape (parity)
+
+        # Two known spoke circles in WINDOW-LOCAL coords (the menu fills the
+        # fixed max-canvas window full-bleed): one off-center at (700, 400)
+        # r=40 and one at (346, 346) r=40. The controller's input shape and the
+        # click-off chrome hit-test both consume this.
+        SPOKES = ((700.0, 400.0, 40.0), (346.0, 346.0, 40.0))
 
         def __init__(self, emblem_diameter=0.0, customizations=None,
                      variant="transparent", parent=None):
@@ -1322,6 +1334,14 @@ def _patch_radial(monkeypatch):
             self.reveals = 0
             self.begin_closes = 0
             created["menus"].append(self)
+
+        def interactive_path(self):
+            from PySide6.QtCore import QRectF
+            from PySide6.QtGui import QPainterPath
+            path = QPainterPath()
+            for (cx, cy, r) in self.SPOKES:
+                path.addEllipse(QRectF(cx - r, cy - r, r * 2, r * 2))
+            return path
 
         def set_emblem_diameter(self, d):
             self.diameters.append(d)
@@ -1570,6 +1590,113 @@ def test_closed_persistent_surfaces_track_anchor_so_open_has_no_delta(qapp, monk
     ctrl.leave()
 
 
+class _StubDismissCapture:
+    """Recording stand-in for XRecordCapture: start/stop counters + the on_event
+    callback exposed so tests can feed synthetic global presses."""
+
+    def __init__(self, on_event):
+        self.on_event = on_event
+        self.started = 0
+        self.stopped = 0
+
+    def start(self):
+        self.started += 1
+        return True
+
+    def stop(self):
+        self.stopped += 1
+
+    def is_running(self):
+        return self.started > self.stopped
+
+
+def test_click_off_dismisses_ring_with_flyback(qapp, monkeypatch):
+    """A global press OFF the ring's chrome dismisses through the ANIMATED path
+    (menu._begin_close -> fly-back -> close_requested -> close). Presses ON a
+    spoke or ON the emblem do nothing (their owners handle them natively), and
+    motion events are filtered before the bridge. The watcher starts with the
+    open, stops with the close, and a late press after close is a safe no-op."""
+    caps: list = []
+
+    def cap_factory(cb):
+        c = _StubDismissCapture(cb)
+        caps.append(c)
+        return c
+
+    created_radial = _patch_radial(monkeypatch)
+    ctrl, provider, window, created = _make(anchor=(1000, 700),
+                                            dismiss_capture_factory=cap_factory)
+    ctrl.enter()
+    menu = ctrl.open_radial_menu()
+    assert len(caps) == 1 and caps[0].is_running()
+    rsurf = created_radial["surfaces"][-1]
+    ox, oy = rsurf.geometry().x(), rsurf.geometry().y()
+
+    # ON a spoke (window-local spoke center -> screen): the menu owns the press.
+    sx, sy = menu.SPOKES[0][0] + ox, menu.SPOKES[0][1] + oy
+    caps[0].on_event("press", sx, sy, 0, 0)
+    qapp.processEvents()
+    assert menu.begin_closes == 0 and ctrl.is_radial_open is True
+
+    # ON the emblem (the anchor IS the emblem center): the toggle owns it.
+    caps[0].on_event("press", 1000, 700, 0, 0)
+    qapp.processEvents()
+    assert menu.begin_closes == 0 and ctrl.is_radial_open is True
+
+    # Motion anywhere is filtered out before the bridge.
+    caps[0].on_event("motion", 50, 50, 0, 0)
+    qapp.processEvents()
+    assert ctrl.is_radial_open is True
+
+    # OFF chrome: the ANIMATED dismiss runs; the stub fly-back completes
+    # synchronously, so close_requested has already torn the menu down.
+    caps[0].on_event("press", 50, 50, 0, 0)
+    qapp.processEvents()
+    assert menu.begin_closes == 1
+    assert ctrl.is_radial_open is False
+    assert caps[0].stopped == 1                     # watcher stopped with the close
+
+    # Late queued press after close: safe no-op.
+    ctrl._on_radial_global_press(50, 50)
+    assert ctrl.is_radial_open is False
+    ctrl.leave()
+
+
+def test_click_on_open_panel_does_not_dismiss_ring(qapp, monkeypatch):
+    """With the Settings panel open above the ring, pressing INSIDE the panel
+    must not dismiss the ring beneath it; pressing off everything still does."""
+    caps: list = []
+
+    def cap_factory(cb):
+        c = _StubDismissCapture(cb)
+        caps.append(c)
+        return c
+
+    created_radial = _patch_radial(monkeypatch)
+    created_panel = _patch_panel(monkeypatch)
+    ctrl, provider, window, created = _make(anchor=(1000, 700), settings=_DictSettings(),
+                                            dismiss_capture_factory=cap_factory)
+    ctrl.enter()
+    menu = ctrl.open_radial_menu()
+    psurf = ctrl.open_panel_surface(QWidget())
+    assert psurf is not None
+
+    # Inside the panel rect (well away from the spokes and the emblem).
+    g = psurf.geometry()
+    caps[0].on_event("press", g.x() + 20, g.y() + 20, 0, 0)
+    qapp.processEvents()
+    assert menu.begin_closes == 0 and ctrl.is_radial_open is True
+
+    # Off everything: dismiss (the panel stays; only the ring closes).
+    caps[0].on_event("press", 30, 30, 0, 0)
+    qapp.processEvents()
+    assert menu.begin_closes == 1
+    assert ctrl.is_radial_open is False
+    assert ctrl.is_panel_open is True
+    ctrl.close_panel_surface()
+    ctrl.leave()
+
+
 def test_radial_closing_signal_collapses_internal_dim(qapp, monkeypatch):
     """The menu's `closing` signal (fly-back begun) retracts the internal dim via
     its reverse animation, so the backdrop collapses IN STEP with the ring instead
@@ -1733,48 +1860,110 @@ def test_move_while_radial_open_recenters_radial_top_level_on_new_anchor(qapp, m
     ctrl.leave()
 
 
-def test_radial_click_region_has_emblem_disc_hole(qapp, monkeypatch):
-    """The radial's input shape must EXCLUDE the emblem disc at its center (so
-    emblem gestures - click-to-close, scroll-to-scale, drag - pass through to
-    the cluster window while the ring is open) while still ACCEPTING clicks in
-    the ring area of the current canvas and staying inert outside it."""
-    from utils.overlay.card_metrics import CardMetrics
-
+def test_radial_click_region_is_menu_spokes_only(qapp, monkeypatch):
+    """The radial input shape is EXACTLY the menu's interactive spokes: canvas
+    corners, the emblem disc, and the gap between them are all CLICK-THROUGH,
+    so game UI / card controls beneath the invisible canvas stay usable while
+    the ring is open (live complaint: the old full-canvas square swallowed the
+    game's friends button). Click-off dismissal belongs to the global-press
+    watcher, not the input shape."""
     backend = _RecordingBackend()
     created_radial = _patch_radial(monkeypatch)
     ctrl, provider, window, created = _make(anchor=(1000, 700), backend=backend)
     ctrl.enter()
-    ctrl.open_radial_menu()
+    menu = ctrl.open_radial_menu()
     rsurf = created_radial["surfaces"][-1]
+    path = [s for s in backend.shapes if s[0] is rsurf][-1][1]
+
+    canvas_max = ctrl._radial_canvas_max()
+    center = canvas_max / 2.0
+    for (cx, cy, _r) in menu.SPOKES:
+        assert path.contains(QPointF(cx, cy))          # spokes accept clicks
+    assert not path.contains(QPointF(center, center))  # emblem center: through
+    assert not path.contains(QPointF(10, 10))          # canvas corner: through
+    assert not path.contains(QPointF(666, 546))        # emblem-spoke gap: through
+    ctrl.close_radial_menu()
+    ctrl.leave()
+
+
+def test_radial_state_change_reapplies_input_shape(qapp, monkeypatch):
+    """Swapping the ring between the main and accounts states re-applies the
+    spokes-only input shape (the spoke set/geometry changed); the controller
+    wires menu.state_changed for exactly this."""
+    backend = _RecordingBackend()
+    created_radial = _patch_radial(monkeypatch)
+    ctrl, provider, window, created = _make(anchor=(1000, 700), backend=backend)
+    ctrl.enter()
+    menu = ctrl.open_radial_menu()
+    rsurf = created_radial["surfaces"][-1]
+    n = len([s for s in backend.shapes if s[0] is rsurf])
+
+    menu.state_changed.emit()
+
+    assert len([s for s in backend.shapes if s[0] is rsurf]) == n + 1
+    ctrl.close_radial_menu()
+    ctrl.leave()
+
+
+def test_radial_click_region_fallback_without_interactive_path(qapp, monkeypatch):
+    """A menu WITHOUT interactive_path (bare stub / degraded build) falls back
+    to the legacy canvas-minus-emblem-disc region: the ring still takes clicks
+    and emblem gestures still pass through the center hole."""
+    from utils.overlay.card_metrics import CardMetrics
+
+    created = {"surfaces": [], "menus": []}
+
+    class _BareRadialSurface(QWidget):
+        def __init__(self, backend=None):
+            super().__init__()
+            created["surfaces"].append(self)
+
+        def host(self, widget):
+            pass
+
+        def set_overlay_geometry(self, rect):
+            self.setGeometry(rect)
+
+        def prepare_initial_state(self):
+            pass
+
+        def show(self):
+            pass
+
+        def hide(self):
+            pass
+
+        def deleteLater(self):
+            pass
+
+    class _BareRadialMenu(QWidget):
+        closing = _NoopSignal()
+
+        def __init__(self, emblem_diameter=0.0, **kw):
+            super().__init__()
+
+        def start_reveal(self):
+            pass
+
+    monkeypatch.setattr("utils.overlay.cluster_surface.RadialSurface",
+                        _BareRadialSurface)
+    monkeypatch.setattr("utils.overlay.radial_menu.RadialMenuWidget",
+                        _BareRadialMenu)
+    backend = _RecordingBackend()
+    ctrl, provider, window, c = _make(anchor=(1000, 700), backend=backend)
+    ctrl.enter()
+    ctrl.open_radial_menu()
+    rsurf = created["surfaces"][-1]
     path = [s for s in backend.shapes if s[0] is rsurf][-1][1]
 
     canvas_max = ctrl._radial_canvas_max()
     center = canvas_max / 2.0
     emblem_dia, canvas = ctrl._radial_canvas()
     assert emblem_dia == float(CardMetrics(1.0).emblem)
-    # The emblem disc is a HOLE: the exact center and a point well inside the
-    # disc are click-through.
-    assert not path.contains(QPointF(center, center))
-    assert not path.contains(QPointF(center + emblem_dia * 0.3, center))
-    # The ring area (outside the disc, inside the current canvas) accepts clicks.
-    assert path.contains(QPointF(center + emblem_dia * 0.77, center))
-    # The inert margin outside the CURRENT canvas (inside the max window) does not.
+    assert not path.contains(QPointF(center, center))            # disc hole
+    assert path.contains(QPointF(center + emblem_dia * 0.77, center))  # ring area
     off = (canvas_max - canvas) // 2
-    assert not path.contains(QPointF(off - 10, center))
-    ctrl.close_radial_menu()
-
-    # After a scale + settle, the reshaped region's hole tracks the NEW disc:
-    # a point inside the grown disc (was ring at 1.0) is now click-through.
-    ctrl.open_radial_menu()
-    rsurf = created_radial["surfaces"][-1]          # the REOPENED surface
-    backend.shapes.clear()
-    ctrl.set_scale_by_notches(5)                    # grow the emblem
-    ctrl._reapply_radial_shape()                    # the settle fires
-    path2 = [s for s in backend.shapes if s[0] is rsurf][-1][1]
-    new_dia = float(CardMetrics(ctrl.scale).emblem)
-    probe = center + (emblem_dia / 2.0 + (new_dia - emblem_dia) / 4.0)
-    assert not path2.contains(QPointF(probe, center))   # inside the NEW disc
-    assert path2.contains(QPointF(center + new_dia * 0.77, center))
+    assert not path.contains(QPointF(off - 10, center))          # inert margin
     ctrl.close_radial_menu()
     ctrl.leave()
 
@@ -2009,6 +2198,8 @@ def _patch_panel(monkeypatch):
 
         def set_overlay_geometry(self, rect):
             self.geom = rect
+            # Real geometry too: the click-off chrome hit-test reads geometry().
+            self.setGeometry(rect)
 
         def prepare_initial_state(self):
             self.prepared += 1
