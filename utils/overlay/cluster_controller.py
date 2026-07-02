@@ -172,6 +172,14 @@ class ClusterOverlayController:
         self._tuck_anim = None
         self._tuck_show_pending: bool = False
 
+        # Glove echo (ghost cursors over the cards). The confined ghost windows
+        # stack BELOW this dock-layer cluster by construction, so the cluster
+        # paints its own glove echo: a paint-only GhostEchoLayer child of the
+        # surface, clipped to the visible painted content (_echo_content_path).
+        # Fed by GhostCursorController through the ghost_echo_* sink methods;
+        # created lazily per float session, dies with the surface.
+        self._ghost_echo = None
+
         # Persistence (anchor + scale + monitor identity). A TRAILING-edge debounce:
         # a burst of drag/scale changes restarts the single-shot timer so it
         # collapses into ONE settings write ~250ms after the LAST change; leave()
@@ -957,6 +965,11 @@ class ClusterOverlayController:
         self._update_rep_blanking()
         self._input_phase = "broad"
         self._apply_input_shape(self._broad_input_path(rect))
+        # The echo clip is settled-state geometry: it would lag the live view
+        # transform every notch, poking echoes past shrinking cards. Hide the
+        # layer for the gesture; _settle_input re-shows it under a fresh clip.
+        if self._ghost_echo is not None:
+            self._ghost_echo.setVisible(False)
         self._arm_settle_timer()
 
     def _arm_settle_timer(self) -> None:
@@ -982,7 +995,9 @@ class ClusterOverlayController:
         # target before hit-mapping consumers (peek/ghost/drag) resume.
         self._sync_view_scale_to_target()
         self._input_phase = "exact"
-        self._apply_exact_input_shape()
+        self._apply_exact_input_shape()   # also refreshes the echo clip
+        if self._ghost_echo is not None:
+            self._ghost_echo.setVisible(True)
         self._update_rep_blanking()   # settled: unblank + re-align + re-grab
 
     def _apply_exact_input_shape(self) -> None:
@@ -997,6 +1012,9 @@ class ClusterOverlayController:
         card_controls = self._window_control_rects()
         region = input_union(emblem_rect, card_controls, self._visible_cells)
         self._apply_input_shape(self._region_to_path(region))
+        # The settled painted content just (potentially) changed - keep the
+        # glove-echo clip on the same cadence as the exact input shape.
+        self._refresh_echo_clip()
 
     def _apply_input_shape(self, path) -> None:
         """Apply *path* as the single window's INPUT (click-through) shape via the
@@ -1320,6 +1338,195 @@ class ClusterOverlayController:
                 provider.deliver_ghost_click(slot, x, y)
             except Exception:
                 continue
+
+    # ---- Glove echo (ghost cursors over the cards) ---------------------
+    # The confined ghost overlays stack directly above their game window and
+    # below everything else - including this DOCK-layer cluster, whose cards
+    # deliberately float over the games. "Above the cards but below other
+    # windows" is a stacking cycle (the dock layer beats every regular
+    # window), so the cluster paints the glove itself: GhostCursorController
+    # mirrors each glove change into these sink methods, and a paint-only
+    # GhostEchoLayer child draws the sprites clipped to the visible painted
+    # content. Everything here is best-effort - a cosmetic echo failure must
+    # never raise into the ghost pipeline (mirrors on_ghost_event).
+
+    def ghost_echo_shown(self, slot, x, y, pixmap) -> None:
+        """A glove sprite was shown/moved: mirror it onto the echo layer.
+        ``(x, y)`` is the sprite TOP-LEFT in logical SCREEN coords (hotspot
+        already applied by the caller)."""
+        if not self._active or self._surface is None:
+            return
+        try:
+            echo = self._ensure_ghost_echo()
+            if echo is None:
+                return
+            from PySide6.QtCore import QPoint
+            win = self._compute_window_rect()
+            echo.show_slot(slot, QPoint(int(x) - win.x(), int(y) - win.y()),
+                           pixmap)
+        except Exception:
+            from utils.overlay.backend import overlay_trace
+            import traceback
+            overlay_trace("cluster.ghost_echo_shown suppressed:\n"
+                          + traceback.format_exc())
+
+    def ghost_echo_fading(self, slot, duration_ms) -> None:
+        """The glove's idle fade started: fade the echo in step (the caller
+        passes its own fade duration, so the two can never drift)."""
+        if self._ghost_echo is None:
+            return
+        try:
+            self._ghost_echo.fade_slot(slot, duration_ms)
+        except Exception:
+            pass
+
+    def ghost_echo_hidden(self, slot) -> None:
+        """A glove was hidden immediately (focus suppression): drop its echo."""
+        if self._ghost_echo is None:
+            return
+        try:
+            self._ghost_echo.hide_slot(slot)
+        except Exception:
+            pass
+
+    def ghost_echo_cleared(self) -> None:
+        """All gloves hidden (ghost_clear / setting off): drop every echo."""
+        if self._ghost_echo is None:
+            return
+        try:
+            self._ghost_echo.clear()
+        except Exception:
+            pass
+
+    def _ensure_ghost_echo(self):
+        """The per-session echo layer, created on first use as a full-envelope
+        child of the surface, raised above the hosted cluster view. None when
+        framed/surfaceless. The surface never resizes while active (fixed
+        envelope), so the geometry is set once."""
+        if self._ghost_echo is not None:
+            return self._ghost_echo
+        surface = self._surface
+        if not self._active or surface is None:
+            return None
+        from utils.overlay.ghost_echo import GhostEchoLayer
+        echo = GhostEchoLayer(surface)
+        echo.setGeometry(surface.rect())
+        echo.raise_()
+        echo.show()
+        self._ghost_echo = echo
+        self._refresh_echo_clip()
+        from utils.overlay.backend import overlay_trace
+        overlay_trace(f"cluster.ghost_echo created: geom={echo.geometry()}")
+        return echo
+
+    def _refresh_echo_clip(self) -> None:
+        """Rebuild the echo layer's content clip from the CURRENT visible set,
+        scale, and provider geometry. Piggybacks on _apply_exact_input_shape
+        (enter / settle / occupancy / hide-cards / screen change), so the clip
+        refreshes exactly when the settled painted content changes. Guarded:
+        a geometry failure clears the clip (fail closed - the layer then
+        draws nothing) rather than raising."""
+        echo = self._ghost_echo
+        if echo is None:
+            return
+        try:
+            echo.set_clip(self._echo_content_path())
+        except Exception:
+            from utils.overlay.backend import overlay_trace
+            import traceback
+            overlay_trace("cluster._refresh_echo_clip failed (echo cleared):\n"
+                          + traceback.format_exc())
+            try:
+                echo.set_clip(None)
+            except Exception:
+                pass
+
+    def _echo_content_path(self):
+        """The cluster's visible painted content as a WINDOW-LOCAL
+        QPainterPath: each VISIBLE cell's card-body path (rounded rect minus
+        the concave carve - the exact shape the card paints, from
+        ``_card_body_path``) translated to host coords and mapped through the
+        cluster transform, plus the emblem DISC (the emblem widget rect inset
+        by its transparent ring margin). This is deliberately the PAINTED
+        union, not the input union: the echo must cover card bodies, not just
+        their interactive controls."""
+        from PySide6.QtCore import QRectF
+        from PySide6.QtGui import QPainterPath, QTransform
+        path = QPainterPath()
+        provider = self._card_provider
+        if provider is None:
+            return path
+        _size, pivot, emblem_center, _hs = self._envelope_spec()
+        s = float(self._scale)
+        # window = pivot + (host - emblem_center) * scale; QTransform composes
+        # last-called-first, so this maps host-local points exactly like
+        # map_host_rect_to_window / the surface's proxy transform.
+        t = (QTransform()
+             .translate(float(pivot[0]), float(pivot[1]))
+             .scale(s, s)
+             .translate(-float(emblem_center[0]), -float(emblem_center[1])))
+        # Emblem disc: the widget rect includes the transparent ring/glow
+        # room around the disc (_Emblem._RING_MARGIN); inset it back out so
+        # the echo never paints over the see-through breathing ring.
+        emblem = getattr(provider, "_emblem", None)
+        if emblem is not None:
+            g = emblem.geometry()
+            if g.width() > 0 and g.height() > 0:
+                try:
+                    margin = int(getattr(emblem, "_ring_margin", 0) or 0)
+                except Exception:
+                    margin = 0
+                disc = g.adjusted(margin, margin, -margin, -margin)
+                if disc.width() > 0 and disc.height() > 0:
+                    dp = QPainterPath()
+                    dp.addEllipse(QRectF(disc))
+                    path.addPath(t.map(dp))
+        # Visible cards' painted bodies (host 1.0 layout; the transform does
+        # the scaling - same contract as every other hit/shape consumer).
+        slots = getattr(provider, "_card_slots", None)
+        if slots is None:
+            return path
+        metrics = getattr(provider, "_metrics", None)
+        grid_host = getattr(provider, "_grid_host", None)
+        for cell_index, slot in enumerate(slots):
+            if cell_index not in self._visible_cells:
+                continue
+            root = slot.get("cell") if isinstance(slot, dict) else None
+            if root is None:
+                continue
+            try:
+                origin = self._cell_origin(root, grid_host)
+                size = root.size()
+                if size.width() <= 0 or size.height() <= 0:
+                    continue
+                cfg = slot.get("cfg") if isinstance(slot, dict) else None
+                cutout = cfg.get("cutout") if isinstance(cfg, dict) else None
+                body = self._card_body_path_local(
+                    size.width(), size.height(), cutout, metrics)
+                body.translate(origin.x(), origin.y())
+                path.addPath(t.map(body))
+            except Exception:
+                continue
+        return path
+
+    @staticmethod
+    def _card_body_path_local(w, h, cutout, metrics):
+        """One card's painted body outline at host-local 1.0 (card-local
+        coords): the shared ``_card_body_path`` when the cell carries a valid
+        carve-corner token, a plain rounded rect otherwise (a bare stub still
+        gets a sane echo clip)."""
+        from PySide6.QtGui import QPainterPath
+        from tabs.multitoon._compact_layout import _card_body_path
+        radius = getattr(metrics, "card_radius", None)
+        cutout_r = getattr(metrics, "cutout_r", None)
+        if cutout in ("tl", "tr", "bl", "br"):
+            if radius and cutout_r:
+                return _card_body_path(w, h, cutout, radius, cutout_r)
+            return _card_body_path(w, h, cutout)
+        body = QPainterPath()
+        body.addRoundedRect(0.0, 0.0, float(w), float(h),
+                            float(radius or 0.0), float(radius or 0.0))
+        return body
 
     # ---- Hover-peek (SAFE paint-time opacity only) --------------------
     PEEK_BODY_OPACITY = 0.65       # card BACKGROUND fill at full hover-peek
@@ -3129,6 +3336,9 @@ class ClusterOverlayController:
         self._pivot = None
         self._emblem_center = None
         self._host_size = None
+        # The echo layer is a child of the (just-torn-down) surface: it dies
+        # with it; only the reference is dropped here.
+        self._ghost_echo = None
 
     def _release_and_restore(self, surface, token) -> None:
         """Release the borrowed host from *surface*, then restore it to the tab.
