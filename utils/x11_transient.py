@@ -17,6 +17,13 @@ Two probed facts shape this API:
 - ``_NET_WM_STATE`` changes on a mapped window only stick as ClientMessages
   to the root window (the WM owns the property post-map), so the
   skip-taskbar/pager/switcher and demands-attention states are sent that way.
+- The transient constraint is only a LOWER bound, enforced when the WM
+  restacks: a freshly MAPPED window still lands on top of the whole stack,
+  above windows already raised over the game, and nothing ever lowers it
+  (live symptom 2026-07-02: the glove floated over a file manager until its
+  game window was next raised). So confinement ends with an explicit EWMH
+  ``_NET_RESTACK_WINDOW`` (source=pager, detail=Above, sibling=game), which
+  KWin honors in both directions -- verified on the live symptom itself.
 
 GUI-thread only. This module keeps one lazily-opened python-xlib Display of
 its own -- never the input backend's connection, which lives on capture
@@ -61,9 +68,11 @@ def available() -> bool:
 
 def confine(ghost_wid: int, game_wid: int) -> bool:
     """Stack ghost_wid directly above game_wid: WM_TRANSIENT_FOR ->
-    game_wid, plus skip-taskbar/pager/switcher and clear demands-attention.
-    Only valid on a MAPPED ghost window (see module docstring). Returns
-    False on any X error; the connection is dropped for a lazy reopen."""
+    game_wid, skip-taskbar/pager/switcher, clear demands-attention, then
+    restack the ghost to sit immediately above the game (see module
+    docstring: the transient constraint alone never LOWERS a fresh map).
+    Only valid on a MAPPED ghost window. Returns False on any X error; the
+    connection is dropped for a lazy reopen."""
     try:
         from Xlib import X, Xatom
         from Xlib.protocol import event as xevent
@@ -74,21 +83,26 @@ def confine(ghost_wid: int, game_wid: int) -> bool:
                               Xatom.WINDOW, 32, [int(game_wid)])
 
         root = d.screen().root
-        state = d.intern_atom("_NET_WM_STATE")
+        redirect = X.SubstructureRedirectMask | X.SubstructureNotifyMask
+
+        def send_message(type_name, data):
+            ev = xevent.ClientMessage(
+                window=ghost, client_type=d.intern_atom(type_name),
+                data=(32, data))
+            root.send_event(ev, event_mask=redirect)
 
         def send_state(action, *names):
             atoms = [d.intern_atom(n) for n in names]
             # data.l = [action, atom1, atom2, source(1=application), 0]
-            data = ([action] + atoms + [1, 0, 0])[:5]
-            ev = xevent.ClientMessage(
-                window=ghost, client_type=state, data=(32, data))
-            root.send_event(ev, event_mask=X.SubstructureRedirectMask
-                            | X.SubstructureNotifyMask)
+            send_message("_NET_WM_STATE", ([action] + atoms + [1, 0, 0])[:5])
 
         send_state(_ADD, "_NET_WM_STATE_SKIP_TASKBAR",
                    "_NET_WM_STATE_SKIP_PAGER")
         send_state(_ADD, "_KDE_NET_WM_STATE_SKIP_SWITCHER")
         send_state(_REMOVE, "_NET_WM_STATE_DEMANDS_ATTENTION")
+        # data.l = [source(2=pager/user), sibling, detail, 0, 0]
+        send_message("_NET_RESTACK_WINDOW",
+                     [2, int(game_wid), X.Above, 0, 0])
         d.flush()
         return True
     except Exception:
