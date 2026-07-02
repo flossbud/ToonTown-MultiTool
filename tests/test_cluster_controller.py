@@ -567,6 +567,9 @@ def test_enter_failclosed_on_hide_raise(qapp):
         assert window.hidden == 1
         assert window.normaled == 1             # restored after the mid-enter failure
         assert qapp.quitOnLastWindowClosed() is True
+        assert provider.restored == [provider._token]
+        assert provider._grid_host.parent() is provider._holder
+        assert created[0].deleted == 1
     finally:
         qapp.setQuitOnLastWindowClosed(prev)
 
