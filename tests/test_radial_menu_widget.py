@@ -32,14 +32,15 @@ def test_main_ring_emits_action_intents_on_hit():
     w.accounts_requested.connect(lambda: fired.append("accounts"))
     w.home_requested.connect(lambda: fired.append("home"))
     w.settings_requested.connect(lambda: fired.append("settings"))
+    w.hide_cards_requested.connect(lambda: fired.append("hide"))
     w.exit_requested.connect(lambda: fired.append("exit"))
     closed = []
     w.close_requested.connect(lambda: closed.append(1))
     # action spokes fire immediately; "close" is deferred (covered separately)
-    for key in ("accounts", "home", "settings", "exit"):
+    for key in ("accounts", "home", "settings", "hide", "exit"):
         cx, cy, r = w.circle_geometry("main", key)
         w.activate_at(cx, cy)
-    assert fired == ["accounts", "home", "settings", "exit"]
+    assert fired == ["accounts", "home", "settings", "hide", "exit"]
     assert closed == []          # no close spoke was hit
 
 
@@ -271,12 +272,12 @@ def test_reveal_animates_then_completes():
     pm2 = QPixmap(400, 400); p2 = QPainter(pm2); w.render(p2, QPoint(0, 0)); p2.end()
 
 
-def test_default_variant_is_transparent_five_spokes():
+def test_default_variant_is_transparent_six_spokes():
     _app()
     from utils.overlay.radial_menu import RadialMenuWidget
     w = RadialMenuWidget(emblem_diameter=160); w.resize(400, 400)
     assert sorted(w.reveal_order("main")) == sorted(
-        ["accounts", "home", "settings", "close", "exit"])
+        ["accounts", "home", "settings", "hide", "close", "exit"])
 
 
 def test_windowed_variant_has_three_spokes():
@@ -302,6 +303,53 @@ def test_windowed_variant_emits_per_spoke():
         w.activate_at(cx, cy)
     assert fired == ["accounts", "transparent"]
     assert closed == []          # no close spoke was hit
+
+
+def test_hide_spoke_is_bottom_center():
+    _app()
+    from utils.overlay.radial_menu import RadialMenuWidget
+    w = RadialMenuWidget(emblem_diameter=160); w.resize(400, 400)
+    cx, cy, r = w.circle_geometry("main", "hide")
+    # bottom-center: x == widget center x, y below center
+    assert round(cx, 3) == round(w.width() / 2.0, 3)
+    assert cy > w.height() / 2.0
+
+
+def test_windowed_variant_has_no_hide_spoke():
+    _app()
+    from utils.overlay.radial_menu import RadialMenuWidget
+    w = RadialMenuWidget(emblem_diameter=160, variant="windowed"); w.resize(500, 500)
+    assert "hide" not in w.reveal_order("main")
+
+
+def test_hide_spoke_label_and_glyph_follow_cards_hidden_state():
+    """The Hide-Cards spoke is a TOGGLE display: label "Hide Cards" (slashed
+    eye) while the cards are visible, "Show Cards" (open eye) once the host
+    feeds set_cards_hidden(True). Both glyph variants must paint. The label is
+    a BOTTOM label (renders below the spoke, like Back/Exit)."""
+    _app()
+    from PySide6.QtCore import QPoint
+    from PySide6.QtGui import QPixmap, QPainter
+    from utils.overlay.radial_menu import (RadialMenuWidget, _MAIN_BOTTOM_KEYS,
+                                           _MAIN_LABELS, _eye)
+    assert _MAIN_LABELS["hide"] == "Hide Cards"
+    assert "hide" in _MAIN_BOTTOM_KEYS
+    assert callable(_eye)
+    w = RadialMenuWidget(emblem_diameter=160); w.resize(400, 400)
+    w.start_reveal(); w._advance(10_000)
+    w._hover = ("main", "hide")                 # exercise hover label + glyph
+    assert w._label_for("hide") == "Hide Cards"
+    pm = QPixmap(400, 400); p = QPainter(pm); w.render(p, QPoint(0, 0)); p.end()
+
+    w.set_cards_hidden(True)                    # host says: cards now hidden
+
+    assert w._label_for("hide") == "Show Cards"
+    pm2 = QPixmap(400, 400); p2 = QPainter(pm2); w.render(p2, QPoint(0, 0)); p2.end()
+    # set_cards_hidden is idempotent (no crash / state flip on a repeat call)
+    w.set_cards_hidden(True)
+    assert w._label_for("hide") == "Show Cards"
+    w.set_cards_hidden(False)
+    assert w._label_for("hide") == "Hide Cards"
 
 
 def test_windowed_transparent_spoke_is_top_center():

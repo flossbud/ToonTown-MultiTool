@@ -155,6 +155,22 @@ class ClusterOverlayController:
         self._visible_cells: set = {0, 1, 2, 3}
         self._occupancy_connected: bool = False
         self._cell_retain_flags: dict = {}
+        # User Hide-Cards toggle (the radial's bottom-center spoke): while True,
+        # _target_visible_cells returns the EMPTY set - every card is hidden even
+        # if its game window is present - and the same occupancy-reconcile path
+        # applies it (visual hide with retained size, input shape, rep re-align).
+        # Float-session-scoped: leave() always resets it, so a session never
+        # starts with invisible cards.
+        self._cards_hidden: bool = False
+        # Tuck animation (Hide-Cards): a transient TuckGhostLayer child of the
+        # borrowed _grid_host (the internal-dim hosting pattern) animating card
+        # SNAPSHOTS into/out of the emblem while the real cells flip via the
+        # instant path. _tuck_show_pending marks a show whose authoritative
+        # flip is deferred to the animation's end (the cells stay hidden until
+        # the ghosts land); _finish_tuck() is the single idempotent finalizer.
+        self._tuck_layer = None
+        self._tuck_anim = None
+        self._tuck_show_pending: bool = False
 
         # Persistence (anchor + scale + monitor identity). A TRAILING-edge debounce:
         # a burst of drag/scale changes restarts the single-shot timer so it
@@ -648,6 +664,11 @@ class ClusterOverlayController:
             # by design.
             self.close_panel_surface()
             self.close_radial_menu()
+            # Snap any in-flight card tuck to its final state and destroy the
+            # ghost layer BEFORE the host is restored - a stray ghost child
+            # must never ride the borrowed _grid_host back into framed mode
+            # (same discipline as the internal dim below).
+            self._finish_tuck()
             self._destroy_persistent_surfaces()
             # The representative must not outlive the float session (the cluster
             # surface is still mapped here, so no zero-visible-window instant).
@@ -723,6 +744,10 @@ class ClusterOverlayController:
         # raising step inside the try would skip the in-try call and leave a
         # stale mapped keep-below window painting the old mirror, plus a live
         # taskbar/Alt-Tab entry beside the restored framed app's own.
+        # _finish_tuck re-runs here for the same reason (total + idempotent): a
+        # raising step before the in-try call would otherwise leak a live ghost
+        # layer child on the host as it returns to the framed tab.
+        self._finish_tuck()
         self._teardown_taskbar_rep()
         self._release_and_restore(surface, token)
         self._safe_call(self._window, "showNormal")
@@ -732,6 +757,10 @@ class ClusterOverlayController:
         self._surface = None
         self._token = None
         self._clear_envelope_state()
+        # The Hide-Cards toggle never outlives the float session (reset HERE, on
+        # the unconditional path, so not even a raising teardown step can leak a
+        # stale True into the next enter()'s _target_visible_cells seed).
+        self._cards_hidden = False
         self._active = False
         self._emit_active_changed()   # self._active is False here
 
@@ -1502,7 +1531,192 @@ class ClusterOverlayController:
     # ------------------------------------------------------------------
     # Occupancy (keep the grid shell fixed; only narrow the input shape)
     # ------------------------------------------------------------------
-    def _target_visible_cells(self) -> set:
+    @property
+    def cards_hidden(self) -> bool:
+        """True while the user's Hide-Cards toggle is holding every card hidden."""
+        return self._cards_hidden
+
+    def set_cards_hidden(self, hidden, animate: bool = False) -> None:
+        """Hide (True) or show (False) ALL cards, occupied or not - the radial's
+        Hide-Cards toggle. The cards are never torn down or reparented: the flip
+        rides the exact live occupancy-reconcile path (cells ``setVisible`` with
+        retained size - no grid reflow, no window resize, one repaint - the exact
+        input shape re-applied so hidden cards click through to the games, and
+        the taskbar representative re-aligned to the new composition), so hiding
+        and unhiding are instant. The emblem always stays. Idempotent; ignored
+        while framed (the toggle is float-session state - ``leave()`` resets it,
+        so a session can never START with invisible cards).
+
+        ``animate=True`` (the UI path) additionally plays the tuck: card
+        SNAPSHOTS shrink into / grow out of the emblem on a transient ghost
+        layer while the real cells use the instant path above. HIDE flips the
+        authoritative state FIRST (input shape and taskbar mirror are correct
+        from the first frame; the ghosts are pure decoration), SHOW defers the
+        flip to the ghosts' landing (the live cells swap in pixel-identical
+        under the ghosts' final frame). Honors the radial animation gate
+        (kill switch + reduce motion) by snapping to the instant path."""
+        if not self._active:
+            return
+        # Complete any in-flight tuck first so toggles can never interleave
+        # (a pending deferred show-flip is applied here, making the state
+        # comparison below authoritative).
+        self._finish_tuck()
+        hidden = bool(hidden)
+        if hidden == self._cards_hidden:
+            return
+        if animate:
+            try:
+                from utils.overlay.radial_menu import radial_anim_enabled
+                animate = radial_anim_enabled()
+            except Exception:
+                animate = False
+        if not animate:
+            self._cards_hidden = hidden
+            self._reconcile_occupancy()
+            return
+        if hidden:
+            # Snapshot BEFORE the flip (the cells are still visible), settle any
+            # hover-peek fade first so the ghosts are grabbed fully opaque.
+            for slot in self._visible_cells:
+                self._settle_peek_slot(slot)
+            specs = self._grab_tuck_specs(self._visible_cells)
+            self._cards_hidden = True
+            self._reconcile_occupancy()
+            self._begin_tuck(specs, hiding=True)
+        else:
+            # Ghosts fly OUT of the emblem over the still-hidden cells (grab()
+            # renders hidden widgets - retained size keeps their geometry), and
+            # the authoritative flip lands with them in _finish_tuck.
+            specs = self._grab_tuck_specs(self._occupancy_cells())
+            if not specs:
+                self._cards_hidden = False
+                self._reconcile_occupancy()
+                return
+            self._tuck_show_pending = True
+            self._begin_tuck(specs, hiding=False)
+
+    def toggle_cards_hidden(self, animate: bool = False) -> bool:
+        """Flip the Hide-Cards toggle; returns the new hidden state. NOTE: with
+        ``animate=True`` a show's authoritative flip is deferred to the ghosts'
+        landing, so the returned state is the INTENT (False) only after the
+        animation completes; callers needing the settled state read
+        ``cards_hidden`` later."""
+        target = not (self._cards_hidden or self._tuck_show_pending)
+        self.set_cards_hidden(target, animate=animate)
+        return target if self._active else self._cards_hidden
+
+    def _grab_tuck_specs(self, cells) -> list:
+        """Snapshot each of ``cells`` as a tuck-ghost spec: the cell widget's
+        grabbed pixmap at its resting host-coords rect, plus its accent-halo
+        pixmap (via the provider's glow-cache seam) at the halo's blit rect.
+        ``QWidget.grab()`` renders hidden widgets too (retained size keeps
+        their geometry live), which is what lets the SHOW path snapshot cards
+        that are still hidden. Best-effort per cell; never raises."""
+        from PySide6.QtCore import QRectF
+        provider = self._card_provider
+        slots = getattr(provider, "_card_slots", None) if provider is not None else None
+        if not slots:
+            return []
+        halo_fn = getattr(provider, "glow_pixmap_for_cell", None)
+        specs = []
+        for i in sorted(cells):
+            if not (0 <= i < len(slots)):
+                continue
+            root = slots[i].get("cell") if isinstance(slots[i], dict) else None
+            if root is None:
+                continue
+            try:
+                pm = root.grab()
+                if pm.isNull():
+                    continue
+                geo = root.geometry()   # cells live in the grid host
+                halo_pm = halo_rect = None
+                if halo_fn is not None:
+                    entry = halo_fn(i)
+                    if entry is not None:
+                        halo_pm, pad = entry
+                        # Reproduce _GlowLayer's blit exactly: top-left at
+                        # (x - pad, y - pad), NATIVE pixmap size (the rounded
+                        # halo canvas), so progress 0 matches the live halo.
+                        halo_rect = QRectF(geo.x() - pad, geo.y() - pad,
+                                           halo_pm.width(), halo_pm.height())
+                specs.append({"pm": pm, "rect": QRectF(geo),
+                              "halo_pm": halo_pm, "halo_rect": halo_rect})
+            except Exception:
+                continue
+        return specs
+
+    def _begin_tuck(self, specs, hiding: bool) -> None:
+        """Build the ghost layer and start the tuck driver. HIDE runs 0 -> 1
+        (ease-in, in step with the ring's fly-back), SHOW 1 -> 0 (ease-out,
+        the ring's fly-out). Transaction-safe: any failure finalizes through
+        ``_finish_tuck`` (which also applies a pending show-flip), so the
+        authoritative state can never be stranded on the animation."""
+        if not specs:
+            self._finish_tuck()
+            return
+        provider = self._card_provider
+        grid_host = getattr(provider, "_grid_host", None) if provider is not None else None
+        if grid_host is None:
+            self._finish_tuck()
+            return
+        try:
+            from PySide6.QtCore import QPointF, QVariantAnimation, QEasingCurve
+            from utils.overlay.tuck_animation import (
+                TuckGhostLayer, TUCK_HIDE_MS, TUCK_SHOW_MS)
+            _size, _pivot, (ecx, ecy), (hw, hh) = self._envelope_spec()
+            layer = TuckGhostLayer(grid_host, QPointF(ecx, ecy))
+            layer.setGeometry(0, 0, int(hw), int(hh))
+            layer.set_specs(specs)
+            layer.set_progress(0.0 if hiding else 1.0)
+            self._tuck_layer = layer
+            layer.show()
+            self._restack_internal_layers()   # cards < ghosts < dim < emblem
+            anim = QVariantAnimation(layer)
+            anim.setStartValue(0.0 if hiding else 1.0)
+            anim.setEndValue(1.0 if hiding else 0.0)
+            anim.setDuration(TUCK_HIDE_MS if hiding else TUCK_SHOW_MS)
+            anim.setEasingCurve(QEasingCurve.InCubic if hiding
+                                else QEasingCurve.OutCubic)
+            anim.valueChanged.connect(
+                lambda v, lyr=layer: lyr.set_progress(float(v)))
+            anim.finished.connect(self._finish_tuck)
+            self._tuck_anim = anim
+            anim.start()
+        except Exception:
+            from utils.overlay.backend import overlay_trace
+            import traceback
+            overlay_trace("cluster._begin_tuck FAILED (snapping to final "
+                          "state):\n" + traceback.format_exc())
+            self._finish_tuck()
+
+    def _finish_tuck(self) -> None:
+        """Complete the tuck NOW: stop the driver, apply a deferred show-flip
+        (the ghosts' landing = the real cells appear), destroy the ghost
+        layer. THE single finalizer - the animation's natural end, a second
+        toggle, ``leave()``, and any begin failure all funnel here. Idempotent
+        and total (every step guarded); a no-op when nothing is in flight."""
+        anim, self._tuck_anim = self._tuck_anim, None
+        if anim is not None:
+            try:
+                anim.stop()
+            except Exception:
+                pass
+        if self._tuck_show_pending:
+            self._tuck_show_pending = False
+            self._cards_hidden = False
+            if self._active:
+                self._reconcile_occupancy()
+        layer, self._tuck_layer = self._tuck_layer, None
+        if layer is not None:
+            try:
+                layer.hide()
+                layer.setParent(None)
+                layer.deleteLater()
+            except Exception:
+                pass
+
+    def _occupancy_cells(self) -> set:
         """The slot ids whose cards currently hold a window: the provider's
         ``occupied_cells()``, or all four ``{0, 1, 2, 3}`` when the provider has no
         occupancy (a stub provider degrades to all-visible). Pure read; a provider
@@ -1515,6 +1729,15 @@ class ClusterOverlayController:
             return set(fn())
         except Exception:
             return {0, 1, 2, 3}
+
+    def _target_visible_cells(self) -> set:
+        """``_occupancy_cells()``, except the user Hide-Cards toggle OVERRIDES
+        occupancy: while it is on, the target set is EMPTY (occupancy churn
+        while hidden lands here and stays hidden; the toggle-off reconcile
+        re-reads the then-current occupancy)."""
+        if self._cards_hidden:
+            return set()
+        return self._occupancy_cells()
 
     def _connect_occupancy(self) -> None:
         """Subscribe ``_reconcile_occupancy`` to the provider's
@@ -1578,6 +1801,23 @@ class ClusterOverlayController:
                 root.setVisible(cell_index in self._visible_cells)
             except Exception:
                 continue
+        self._refresh_provider_glow()
+
+    def _refresh_provider_glow(self) -> None:
+        """Rebuild the provider's painted accent-glow specs after a cell
+        visibility flip. The ``_GlowLayer`` is a SIBLING widget behind the
+        cells keyed on each cell's LIT state, so hiding a shell does not
+        remove its halo by itself - without this re-derive (whose spec build
+        skips hidden shells) a lit card's accent glow would keep painting
+        over bare desktop after Hide-Cards. Guarded: a provider without the
+        hook (a bare stub) is a safe no-op."""
+        refresh = getattr(self._card_provider, "_refresh_glow", None)
+        if refresh is None:
+            return
+        try:
+            refresh()
+        except Exception:
+            pass
 
     def _restore_cell_visibility(self) -> None:
         """leave(): every shell visible again (framed mode always shows all four)
@@ -1599,9 +1839,11 @@ class ClusterOverlayController:
                     root.setSizePolicy(sp)
             except Exception:
                 continue
+        self._refresh_provider_glow()
 
     def _reconcile_occupancy(self) -> None:
-        """Occupancy nudge (the signal slot): re-read ``occupied_cells()``, update
+        """Occupancy nudge (the signal slot; also driven by the Hide-Cards
+        toggle): re-read ``occupied_cells()``, update
         ``self._visible_cells``, hide/show the cells to match, and RE-APPLY the
         exact input shape so empty cards drop out of the click region. No-op when
         framed (a stray post-leave signal is safe).
@@ -1840,10 +2082,14 @@ class ClusterOverlayController:
         dim.setGeometry(QRect(ecx - canvas // 2, ecy - canvas // 2, canvas, canvas))
 
     def _restack_internal_layers(self) -> None:
-        """Re-assert the dim < emblem z-order inside ``_grid_host``: raise the dim
-        above the cards, then raise the emblem above the dim. The glow stays at the
-        bottom (never raised). Each step is a guarded no-op when that widget is
-        absent."""
+        """Re-assert the cards < tuck-ghosts < dim < emblem z-order inside
+        ``_grid_host``: raise the tuck ghost layer above the cards (the ghosts
+        must slide UNDER the emblem disc), then the dim, then the emblem. The
+        glow stays at the bottom (never raised). Each step is a guarded no-op
+        when that widget is absent."""
+        tuck = self._tuck_layer
+        if tuck is not None:
+            self._safe_call(tuck, "raise_")
         dim = self._dim
         if dim is not None:
             self._safe_call(dim, "raise_")

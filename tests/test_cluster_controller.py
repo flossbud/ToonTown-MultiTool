@@ -307,6 +307,12 @@ class _OccupancyStubProvider(QObject):
         # the visible set must be pushed back to fully opaque via this SAFE
         # paint-time hook - mirrors _StubProvider.set_shell_extra_opacity).
         self.shell_opacities: list = []
+        # Every visibility flip must re-derive the painted glow specs (the
+        # _GlowLayer sibling would otherwise keep a hidden card's accent halo).
+        self.glow_refreshes = 0
+
+    def _refresh_glow(self):
+        self.glow_refreshes += 1
 
     def _shadow_set_visible(self, cw):
         original = cw.setVisible
@@ -1088,6 +1094,238 @@ def test_provider_without_occupancy_degrades_to_all_visible(qapp):
 
     assert ctrl.enter() is True
     assert ctrl._visible_cells == {0, 1, 2, 3}
+
+
+def test_set_cards_hidden_hides_all_cells_and_frees_input(qapp):
+    """The user Hide-Cards toggle (radial spoke) hides EVERY cell - occupied or
+    not - via the same reconcile path as occupancy: retain-size set before each
+    hide (no grid reflow), the window NOT resized (fixed envelope), and the
+    exact input shape re-applied so the hidden cards click through. Toggling
+    back re-reads occupancy and restores exactly the occupied cells."""
+    backend = _RecordingBackend()
+    provider = _OccupancyStubProvider(occupied={0, 2})
+    ctrl, provider, window, created = _make(provider=provider, backend=backend)
+    ctrl.enter()
+    surface = created[0]
+    geom_before = surface.geom
+    assert ctrl.cards_hidden is False
+    assert not provider._cell_widgets[0].isHidden()   # occupied cell visible
+    provider.hidden_cells.clear()
+    backend.shapes.clear()
+    glow_before = provider.glow_refreshes
+
+    ctrl.set_cards_hidden(True)
+
+    # The painted accent glow is a SIBLING layer keyed on lit state: every
+    # visibility flip must re-derive its specs or a hidden lit card's halo
+    # would keep painting over bare desktop (live bug, 2026-07-02).
+    assert provider.glow_refreshes == glow_before + 1
+    assert ctrl.cards_hidden is True
+    assert ctrl._visible_cells == set()
+    for cw in provider._cell_widgets:
+        assert cw.isHidden()                          # ALL cells hidden
+    assert all(retained for _c, retained in provider.hidden_cells)
+    assert surface.geom == geom_before                # window NOT resized
+    assert len(backend.shapes) >= 1                   # input shape RE-APPLIED
+    path = backend.shapes[-1][1]
+    assert not path.contains(QPointF(*_VISIBLE_CONTROL_PROBE))   # card freed
+    backend.shapes.clear()
+
+    ctrl.set_cards_hidden(False)
+
+    assert ctrl.cards_hidden is False
+    assert ctrl._visible_cells == {0, 2}              # back to occupancy
+    assert not provider._cell_widgets[0].isHidden()
+    assert provider._cell_widgets[1].isHidden()       # empty cell stays hidden
+    assert backend.shapes[-1][1].contains(QPointF(*_VISIBLE_CONTROL_PROBE))
+
+
+def test_occupancy_churn_while_cards_hidden_stays_hidden(qapp):
+    """Occupancy changes while the Hide-Cards toggle is on must NOT re-show any
+    card (the toggle overrides occupancy); toggling off then shows the
+    THEN-CURRENT occupancy, not the stale one from before the hide."""
+    provider = _OccupancyStubProvider(occupied={0, 2})
+    ctrl, provider, window, created = _make(provider=provider)
+    ctrl.enter()
+    ctrl.set_cards_hidden(True)
+
+    provider.set_occupied({1, 3})
+    provider.occupied_cells_changed.emit()
+
+    assert ctrl._visible_cells == set()               # still all hidden
+    for cw in provider._cell_widgets:
+        assert cw.isHidden()
+
+    ctrl.set_cards_hidden(False)
+
+    assert ctrl._visible_cells == {1, 3}              # the CURRENT occupancy
+    assert provider._cell_widgets[1].isHidden() is False
+    assert provider._cell_widgets[0].isHidden()
+
+
+def test_leave_resets_cards_hidden_and_ignored_while_framed(qapp):
+    """leave() resets the Hide-Cards toggle (a float session never STARTS with
+    invisible cards) and set_cards_hidden while framed is ignored, so a stray
+    framed-mode call can never poison the next enter()'s visible-cells seed."""
+    provider = _OccupancyStubProvider(occupied={0, 2})
+    ctrl, provider, window, created = _make(provider=provider)
+    ctrl.enter()
+    ctrl.set_cards_hidden(True)
+    assert ctrl.cards_hidden is True
+
+    ctrl.leave()
+
+    assert ctrl.cards_hidden is False
+    for cw in provider._cell_widgets:
+        assert not cw.isHidden()                      # framed shows all four
+
+    ctrl.set_cards_hidden(True)                       # framed: ignored
+    assert ctrl.cards_hidden is False
+
+    ctrl.enter()
+    assert ctrl._visible_cells == {0, 2}              # seeded from occupancy
+    ctrl.leave()
+
+
+def test_toggle_cards_hidden_flips_and_returns_state(qapp):
+    provider = _OccupancyStubProvider(occupied={0, 2})
+    ctrl, provider, window, created = _make(provider=provider)
+    ctrl.enter()
+
+    assert ctrl.toggle_cards_hidden() is True
+    assert ctrl._visible_cells == set()
+    assert ctrl.toggle_cards_hidden() is False
+    assert ctrl._visible_cells == {0, 2}
+    ctrl.leave()
+
+
+def _force_tuck_anim(monkeypatch, enabled=True):
+    """Pin the radial animation gate (kill switch + reduce motion) for the tuck
+    tests; set_cards_hidden resolves it via a call-time import."""
+    import utils.overlay.radial_menu as _rm
+    monkeypatch.setattr(_rm, "radial_anim_enabled", lambda: enabled)
+
+
+def test_animated_hide_flips_instantly_and_tucks_ghosts(qapp, monkeypatch):
+    """Animated HIDE: the authoritative flip is immediate (cells hidden, input
+    freed - the ghosts are pure decoration), a TuckGhostLayer with one spec per
+    previously-visible card rides the grid host, and the animation's natural
+    end destroys it via the finalizer."""
+    _force_tuck_anim(monkeypatch)
+    provider = _OccupancyStubProvider(occupied={0, 2})
+    ctrl, provider, window, created = _make(provider=provider)
+    ctrl.enter()
+
+    ctrl.set_cards_hidden(True, animate=True)
+
+    assert ctrl.cards_hidden is True                  # flip at START
+    assert ctrl._visible_cells == set()
+    for cw in provider._cell_widgets:
+        assert cw.isHidden()
+    layer = ctrl._tuck_layer
+    assert layer is not None
+    assert layer.parent() is provider._grid_host
+    assert len(layer._specs) == 2                     # cells 0 and 2
+    assert all(not s["pm"].isNull() for s in layer._specs)
+    anim = ctrl._tuck_anim
+    assert anim is not None
+    anim.setCurrentTime(anim.duration())              # drive to natural end
+    assert ctrl._tuck_layer is None                   # finalizer ran
+    assert ctrl._tuck_anim is None
+    assert ctrl.cards_hidden is True                  # hide flip stays
+    ctrl.leave()
+
+
+def test_animated_show_defers_flip_until_ghosts_land(qapp, monkeypatch):
+    """Animated SHOW: the cells stay hidden while the ghosts fly out of the
+    emblem (grab() snapshots hidden cells - retained size keeps geometry), and
+    the authoritative flip lands WITH them (finalizer: cells visible, input
+    restored, layer gone)."""
+    _force_tuck_anim(monkeypatch)
+    provider = _OccupancyStubProvider(occupied={0, 2})
+    ctrl, provider, window, created = _make(provider=provider)
+    ctrl.enter()
+    ctrl.set_cards_hidden(True)                       # instant hide
+    assert provider._cell_widgets[0].isHidden()
+
+    ctrl.set_cards_hidden(False, animate=True)
+
+    assert ctrl.cards_hidden is True                  # flip DEFERRED
+    assert provider._cell_widgets[0].isHidden()       # still hidden in flight
+    layer = ctrl._tuck_layer
+    assert layer is not None
+    assert len(layer._specs) == 2                     # hidden cells grabbed OK
+    assert all(not s["pm"].isNull() for s in layer._specs)
+    anim = ctrl._tuck_anim
+    anim.setCurrentTime(anim.duration())              # land
+
+    assert ctrl.cards_hidden is False                 # flip applied at landing
+    assert ctrl._visible_cells == {0, 2}
+    assert not provider._cell_widgets[0].isHidden()
+    assert ctrl._tuck_layer is None
+    ctrl.leave()
+
+
+def test_leave_mid_tuck_destroys_ghosts_and_settles_state(qapp, monkeypatch):
+    """leave() mid-flight funnels through the finalizer: the pending show-flip
+    is applied, the ghost layer is detached from the host (it must never ride
+    the borrowed grid host back to framed mode), and framed shows all cells."""
+    _force_tuck_anim(monkeypatch)
+    provider = _OccupancyStubProvider(occupied={0, 2})
+    ctrl, provider, window, created = _make(provider=provider)
+    ctrl.enter()
+    ctrl.set_cards_hidden(True)
+    ctrl.set_cards_hidden(False, animate=True)        # show in flight
+    assert ctrl._tuck_layer is not None
+    grid_host = provider._grid_host
+
+    ctrl.leave()
+
+    from utils.overlay.tuck_animation import TuckGhostLayer
+    assert ctrl._tuck_layer is None
+    assert not any(isinstance(c, TuckGhostLayer) for c in grid_host.children())
+    assert ctrl.cards_hidden is False
+    for cw in provider._cell_widgets:
+        assert not cw.isHidden()
+
+
+def test_retoggle_mid_show_snaps_to_completion(qapp, monkeypatch):
+    """A second toggle while a show is in flight snaps the animation to its
+    final state first (the single-finalizer contract), so state can never
+    interleave: the pending flip applies, then the new intent is evaluated."""
+    _force_tuck_anim(monkeypatch)
+    provider = _OccupancyStubProvider(occupied={0, 2})
+    ctrl, provider, window, created = _make(provider=provider)
+    ctrl.enter()
+    ctrl.set_cards_hidden(True)
+    ctrl.set_cards_hidden(False, animate=True)        # show in flight
+    assert ctrl._tuck_layer is not None
+
+    ctrl.set_cards_hidden(False)                      # same intent, mid-flight
+
+    assert ctrl.cards_hidden is False                 # snap-completed
+    assert not provider._cell_widgets[0].isHidden()
+    assert ctrl._tuck_layer is None
+    ctrl.leave()
+
+
+def test_animate_respects_kill_switch(qapp, monkeypatch):
+    """With the animation gate off (kill switch / reduce motion), animate=True
+    degrades to the exact instant path: no ghost layer either way."""
+    _force_tuck_anim(monkeypatch, enabled=False)
+    provider = _OccupancyStubProvider(occupied={0, 2})
+    ctrl, provider, window, created = _make(provider=provider)
+    ctrl.enter()
+
+    ctrl.set_cards_hidden(True, animate=True)
+    assert ctrl._tuck_layer is None
+    assert provider._cell_widgets[0].isHidden()
+
+    ctrl.set_cards_hidden(False, animate=True)
+    assert ctrl._tuck_layer is None
+    assert ctrl.cards_hidden is False
+    assert not provider._cell_widgets[0].isHidden()
+    ctrl.leave()
 
 
 def test_occupancy_change_during_scale_defers_exact_until_settle(qapp):

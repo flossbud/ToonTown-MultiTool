@@ -5,7 +5,8 @@ intent signals. The soft radial dim behind the ring is a separate click-through
 layer (RadialDimWidget) so it can sit behind the emblem while the buttons stay
 in front of it. The main ring has two variants
 (selected by the ``variant`` ctor arg): transparent mode (Accounts, Window,
-Settings, Back, Exit) and windowed mode (Accounts, Float, Back). Clicking
+Settings, Hide/Show Cards, Back, Exit) and windowed mode (Accounts, Float,
+Back). Clicking
 Accounts opens the accounts sub-ring (Back plus up to 8 recent accounts rendered
 as their toon's customized portrait, with a green dot for a running account). Supports a staggered left-to-right pop-in reveal, hover labels,
 Esc-to-close, and a 15s idle auto-hide. Geometry comes from
@@ -29,14 +30,18 @@ _OUT_CUBIC = QEasingCurve.OutCubic
 _IN_CUBIC = QEasingCurve.InCubic
 
 _MAIN_KEYS_BY_VARIANT = {
-    "transparent": ("accounts", "home", "settings", "close", "exit"),
+    "transparent": ("accounts", "home", "settings", "hide", "close", "exit"),
     "windowed":    ("accounts", "transparent", "close"),
 }
-_MAIN_BOTTOM_KEYS = ("close", "exit")   # labels render below these
+_MAIN_BOTTOM_KEYS = ("hide", "close", "exit")   # labels render below these
 # Hover labels. "close" dismisses the ring (one level up), so it reads as "Back"
-# (the X glyph next to "Exit" was confusingly two ways to leave).
+# (the X glyph next to "Exit" was confusingly two ways to leave). "hide" is a
+# TOGGLE: its label (and glyph) follows the cards' current visibility - see
+# RadialMenuWidget._label_for / set_cards_hidden.
 _MAIN_LABELS = {"accounts": "Accounts", "home": "Window", "settings": "Settings",
-                "transparent": "Float", "close": "Back", "exit": "Exit"}
+                "transparent": "Float", "hide": "Hide Cards",
+                "close": "Back", "exit": "Exit"}
+_HIDE_LABEL_WHEN_HIDDEN = "Show Cards"   # the "hide" spoke's label while hidden
 # NOTE: the "home" key (Window spoke) returns to the windowed app; the internal
 # key/signal names stay "home" while the user-facing label is "Window".
 
@@ -233,6 +238,32 @@ def _overlay_cards(p: QPainter, cx: float, cy: float, r: float) -> None:
                              cw + 2 * gap, ch + 2 * gap), rad + gap, rad + gap)
     p.setBrush(QColor(255, 255, 255))
     p.drawRoundedRect(QRectF(fxc - cw / 2, fyc - ch / 2, cw, ch), rad, rad)
+
+
+def _eye(p: QPainter, cx: float, cy: float, r: float, slashed: bool) -> None:
+    """White eye for the Hide-Cards toggle: an almond outline with a solid
+    pupil, and - when ``slashed`` - the classic hide-icon diagonal stroke,
+    seated on a dark seam so it reads over the outline (the same seam trick
+    as the window/cards glyphs). Slashed = the cards are visible and the
+    spoke will HIDE them; open eye = hidden, the spoke will show them."""
+    w, h = r, r * 0.62
+    pen = QPen(QColor(255, 255, 255)); pen.setWidthF(max(2.0, r * 0.22))
+    pen.setCapStyle(Qt.RoundCap); pen.setJoinStyle(Qt.RoundJoin)
+    outline = QPainterPath()
+    outline.moveTo(cx - w, cy)
+    outline.quadTo(cx, cy - 2.0 * h, cx + w, cy)   # upper lid (peak at cy - h)
+    outline.quadTo(cx, cy + 2.0 * h, cx - w, cy)   # lower lid
+    p.setPen(pen); p.setBrush(Qt.NoBrush)
+    p.drawPath(outline)
+    p.setPen(Qt.NoPen); p.setBrush(QColor(255, 255, 255))
+    p.drawEllipse(QPointF(cx, cy), r * 0.30, r * 0.30)
+    if slashed:
+        s = r * 0.72
+        a, b = QPointF(cx - s, cy - s), QPointF(cx + s, cy + s)
+        seam = QPen(QColor(10, 12, 16)); seam.setWidthF(pen.widthF() * 1.9)
+        seam.setCapStyle(Qt.RoundCap)
+        p.setPen(seam); p.drawLine(a, b)
+        p.setPen(pen); p.drawLine(a, b)
 
 
 def _status_dot(p: QPainter, cx: float, cy: float, r: float) -> None:
@@ -466,6 +497,7 @@ class RadialMenuWidget(QWidget):
     home_requested = Signal()
     settings_requested = Signal()
     transparent_requested = Signal()
+    hide_cards_requested = Signal()
     close_requested = Signal()
     exit_requested = Signal()
     back_requested = Signal()
@@ -493,6 +525,7 @@ class RadialMenuWidget(QWidget):
         self._state = "main"
         self._hover = None          # (state, key) or None
         self._accounts = []         # RingAccount entries for the accounts sub-ring
+        self._cards_hidden = False  # mirror of the controller's Hide-Cards state
         self._portraits = {}        # account_id -> circular QPixmap (set in set_accounts)
         self._launched = set()      # indices clicked-to-launch in the current sub-ring
         self._loading = set()       # account_ids whose pose is pending (spinner)
@@ -532,6 +565,25 @@ class RadialMenuWidget(QWidget):
     @property
     def state(self) -> str:
         return self._state
+
+    def set_cards_hidden(self, hidden: bool) -> None:
+        """Tell the ring whether the float cards are currently HIDDEN, so the
+        Hide-Cards toggle spoke paints the matching glyph and label (slashed
+        eye / "Hide Cards" while visible; open eye / "Show Cards" while
+        hidden). Display state only - the cluster controller owns the truth;
+        the host feeds this when it wires a freshly opened ring."""
+        hidden = bool(hidden)
+        if hidden == self._cards_hidden:
+            return
+        self._cards_hidden = hidden
+        self.update()
+
+    def _label_for(self, key) -> str:
+        """Hover-label text for a main-ring spoke. Static per key, except the
+        Hide-Cards toggle, whose label follows the cards' current visibility."""
+        if key == "hide" and self._cards_hidden:
+            return _HIDE_LABEL_WHEN_HIDDEN
+        return _MAIN_LABELS.get(key, key.capitalize())
 
     def idle_timeout_ms(self) -> int:
         return self._IDLE_MS
@@ -807,6 +859,8 @@ class RadialMenuWidget(QWidget):
                 self.settings_requested.emit()
             elif key == "transparent":
                 self.transparent_requested.emit()
+            elif key == "hide":
+                self.hide_cards_requested.emit()
             elif key == "close":
                 self._begin_close()
             elif key == "exit":
@@ -892,6 +946,9 @@ class RadialMenuWidget(QWidget):
             _window_frame(p, cx, cy, r * 0.52)
         elif key == "transparent":
             _overlay_cards(p, cx, cy, r * 0.72)
+        elif key == "hide":
+            # Icon shows the ACTION: slashed eye = "hide", open eye = "show".
+            _eye(p, cx, cy, r * 0.62, slashed=not self._cards_hidden)
         else:   # accounts
             _person(p, cx, cy, r * 0.52)
 
@@ -918,8 +975,7 @@ class RadialMenuWidget(QWidget):
             self._paint_glyph(p, key, icx, icy, ir)
             p.setOpacity(1.0)
             if hot and settled:
-                _label_pill(p, icx, icy, ir,
-                            _MAIN_LABELS.get(key, key.capitalize()),
+                _label_pill(p, icx, icy, ir, self._label_for(key),
                             above=(key not in _MAIN_BOTTOM_KEYS))
 
     def set_accounts(self, accounts, customizations=None) -> None:
