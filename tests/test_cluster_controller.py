@@ -29,6 +29,7 @@ os.environ.setdefault("TTMT_NO_RADIAL_ANIM", "1")
 
 import pytest
 from PySide6.QtCore import QObject, QPoint, QPointF, QRect, QTimer, Signal
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QWidget
 
 from utils.overlay.backend import NoOpOverlayBackend
@@ -3680,3 +3681,149 @@ def test_connect_emblem_rebinds_to_a_new_emblem(qapp):
     assert calls["toggle"] == 1
     assert calls["drag"] == 1
     assert calls["scale"] == [7]
+
+
+# ---------------------------------------------------------------------------
+# Taskbar representative (float UI owns the taskbar)
+# ---------------------------------------------------------------------------
+class _AvailableBackend(NoOpOverlayBackend):
+    """is_available True so enter() builds the taskbar representative; records
+    the representative-specific hint calls."""
+
+    def __init__(self):
+        self.rep_state: list = []
+        self.opacities: list = []
+
+    def is_available(self):
+        return True
+
+    def set_rep_initial_state(self, window):
+        self.rep_state.append(window)
+
+    def set_window_opacity(self, window, opacity):
+        self.opacities.append((window, float(opacity)))
+
+
+class _FakeSpontaneousClose:
+    def __init__(self):
+        self.ignored = False
+
+    def spontaneous(self):
+        return True
+
+    def ignore(self):
+        self.ignored = True
+
+    def accept(self):
+        pass
+
+
+def test_enter_builds_taskbar_rep_and_leave_destroys_it(qapp):
+    backend = _AvailableBackend()
+    ctrl, provider, window, created = _make(backend=backend)
+    assert ctrl.enter() is True
+    rep = ctrl._taskbar_rep
+    assert rep is not None
+    assert rep.isVisible()
+    assert backend.rep_state == [rep]              # pre-map keep-below hint
+    assert backend.opacities == []                 # aligned, NOT opacity-hidden
+    assert rep.is_blanked() is False                # settled state at enter
+    # First mirror grabbed BEFORE the map: the entry never shows a blank preview.
+    assert rep._mirror is not None and not rep._mirror.isNull()
+    ctrl.leave()
+    assert ctrl._taskbar_rep is None
+
+
+def test_no_taskbar_rep_without_backend(qapp):
+    """No X11 backend -> no thumbnail mechanism to lean on: the plain hide()
+    behavior stands alone and nothing extra is mapped."""
+    ctrl, provider, window, created = _make()      # NoOp backend: unavailable
+    ctrl.enter()
+    assert ctrl._taskbar_rep is None
+    ctrl.leave()
+
+
+def test_rep_close_request_routes_to_main_window_close(qapp):
+    """Taskbar Close on the representative = the radial-Exit quit path (the
+    main window's close() -> shutdown -> app quit)."""
+    backend = _AvailableBackend()
+    ctrl, provider, window, created = _make(backend=backend)
+    ctrl.enter()
+    rep = ctrl._taskbar_rep
+    ev = _FakeSpontaneousClose()
+    rep.closeEvent(ev)
+    assert ev.ignored
+    for _ in range(3):
+        qapp.processEvents()                       # run the deferred callback
+    assert window.closed == 1
+    ctrl.leave()
+
+
+def test_occupancy_change_refreshes_rep_mirror(qapp):
+    backend = _AvailableBackend()
+    provider = _OccupancyStubProvider({0, 1, 2, 3})
+    ctrl, provider, window, created = _make(provider=provider, backend=backend)
+    ctrl.enter()
+    rep = ctrl._taskbar_rep
+    first = rep._mirror
+    provider.set_occupied({0})
+    provider.occupied_cells_changed.emit()
+    assert rep._mirror is not first                # re-grabbed on occupancy
+
+
+def test_content_bbox_covers_emblem_and_cells_and_is_a_crop(qapp):
+    ctrl, provider, window, created = _make()
+    ctrl.enter()
+    bbox = ctrl._content_bbox_window_coords()
+    assert bbox.contains(QPoint(*_PIVOT))          # emblem center renders on the pivot
+    assert bbox.contains(QPoint(*_VISIBLE_CONTROL_PROBE))
+    env_w, env_h = _ENV_SIZE
+    assert bbox.width() < env_w and bbox.height() < env_h   # a CROP, not the envelope
+    ctrl.leave()
+
+
+def test_rep_blanked_during_scale_gesture_and_restored_at_settle(qapp):
+    """The aligned-mirror invariant cannot hold mid-gesture: the rep must be
+    blanked while _scaling_active and unblanked (with a fresh mirror) once
+    _settle_input runs."""
+    backend = _AvailableBackend()
+    ctrl, provider, window, created = _make(backend=backend)
+    ctrl.enter()
+    rep = ctrl._taskbar_rep
+    ctrl._scaling_active = True
+    ctrl._update_rep_blanking()
+    assert rep.is_blanked() is True
+    before = rep._mirror
+    ctrl._settle_input()                           # clears the flag + updates
+    assert rep.is_blanked() is False
+    assert rep._mirror is not before               # re-grabbed at settle
+    ctrl.leave()
+
+
+def test_rep_blanked_while_peek_active(qapp):
+    """A hover-peeked (faded) card breaks pixel identity with the opaque
+    mirror behind it: peek-active must blank the rep."""
+    backend = _AvailableBackend()
+    ctrl, provider, window, created = _make(backend=backend)
+    ctrl.enter()
+    rep = ctrl._taskbar_rep
+    ctrl._rep_peek_active = True
+    ctrl._update_rep_blanking()
+    assert rep.is_blanked() is True
+    ctrl._rep_peek_active = False
+    ctrl._update_rep_blanking()
+    assert rep.is_blanked() is False
+    ctrl.leave()
+
+
+def test_opaque_only_strips_subopaque_pixels(qapp):
+    """The on-screen rep may only paint pixels the cluster hides with identical
+    fully-opaque ones: translucent pixels (shadows, AA edges) would
+    double-composite and read darker inside the bbox."""
+    from PySide6.QtGui import QImage, QPixmap
+    img = QImage(2, 1, QImage.Format_ARGB32)
+    img.setPixelColor(0, 0, QColor(255, 0, 170, 255))    # opaque: kept
+    img.setPixelColor(1, 0, QColor(255, 0, 170, 128))    # translucent: stripped
+    out = ClusterOverlayController._opaque_only(QPixmap.fromImage(img)).toImage()
+    assert out.pixelColor(0, 0).alpha() == 255
+    assert out.pixelColor(1, 0).alpha() == 0

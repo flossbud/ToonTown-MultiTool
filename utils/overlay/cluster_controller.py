@@ -112,6 +112,10 @@ class ClusterOverlayController:
         # while active the main window is HIDDEN, so Qt's quit-on-last-window
         # default would fire if anything closed the remaining overlay windows.
         self._quit_prev: bool = True
+        self._taskbar_rep = None   # TaskbarRepresentative while active (or None)
+        # Peek-active latch for the rep's blanking rule (set by _peek_tick): a
+        # faded card under an opaque mirror copy would visibly cancel the fade.
+        self._rep_peek_active = False
 
         # Scaling state. The cluster is ONE window with FIXED geometry (no proxy/
         # park/snapshot, no per-notch resize): a notch retargets the zoom tween on
@@ -571,6 +575,9 @@ class ClusterOverlayController:
         # ensures self-clean on failure and re-run lazily at open.
         self._ensure_radial_surface()
         self._ensure_panel_surface()
+        # Taskbar representative: the app's taskbar/Alt-Tab entry while the
+        # main window is hidden (best-effort; see _ensure_taskbar_rep).
+        self._ensure_taskbar_rep()
         # Clear any ghost points that leaked into the store while framed (a queued
         # on_ghost_event arriving after a prior leave()), so a stale hover can never
         # survive into this fresh session, then start the hover-peek poll (the ~30ms
@@ -638,12 +645,16 @@ class ClusterOverlayController:
             self.close_panel_surface()
             self.close_radial_menu()
             self._destroy_persistent_surfaces()
+            # The representative must not outlive the float session (the cluster
+            # surface is still mapped here, so no zero-visible-window instant).
+            self._teardown_taskbar_rep()
             # Stop the emblem-drag poll and the hover-peek poll. Settling the peek
             # (restoring every faded card to fully opaque) runs HERE - before the
             # host is restored - so the borrowed cards never return to the framed
             # grid stuck dim.
             self._end_drag()
             self._stop_peek_timer()
+            self._rep_peek_active = False   # re-enter starts unlatched
             # Stop reshaping on monitor/DPI changes: disconnect the screenChanged
             # handler so a late signal after teardown can never re-apply a shape
             # to a dead surface.
@@ -905,6 +916,7 @@ class ClusterOverlayController:
         the full-window input shape so wheel notches keep landing as the window
         resizes, and (re)arm the settle timer that will swap in the exact shape."""
         self._scaling_active = True
+        self._update_rep_blanking()
         self._input_phase = "broad"
         self._apply_input_shape(self._broad_input_path(rect))
         self._arm_settle_timer()
@@ -933,6 +945,7 @@ class ClusterOverlayController:
         self._sync_view_scale_to_target()
         self._input_phase = "exact"
         self._apply_exact_input_shape()
+        self._update_rep_blanking()   # settled: unblank + re-align + re-grab
 
     def _apply_exact_input_shape(self) -> None:
         """Build + apply the EXACT (per-control) input shape: the emblem union the
@@ -1327,6 +1340,10 @@ class ClusterOverlayController:
         if real_point is not None:
             points.append(real_point)
         peeking = peeking_indices(points, rects, cutouts)
+        peek_now = bool(peeking)   # `peeking` = this tick's peeked-indices set
+        if peek_now != self._rep_peek_active:
+            self._rep_peek_active = peek_now
+            self._update_rep_blanking()
         for i, (slot, _g, _cr, _cut) in enumerate(cards):
             self._apply_peek_fade(slot, i in peeking)
 
@@ -1439,6 +1456,7 @@ class ClusterOverlayController:
             self._drag_timer.setInterval(16)
             self._drag_timer.timeout.connect(self._drag_step)
         self._drag_timer.start()
+        self._update_rep_blanking()
 
     def _drag_step(self) -> None:
         """One poll of the manual drag: move the group by the cursor delta, or end the
@@ -1469,6 +1487,8 @@ class ClusterOverlayController:
         if self._drag_timer is not None:
             self._drag_timer.stop()
         self._drag_last = None
+        # The drag is over: unblank + re-anchor + re-grab the representative.
+        self._update_rep_blanking()
 
     # ------------------------------------------------------------------
     # Occupancy (keep the grid shell fixed; only narrow the input shape)
@@ -1603,6 +1623,9 @@ class ClusterOverlayController:
         for slot in prev_visible - self._visible_cells:
             self._settle_peek_slot(slot)
         self._apply_cell_visibility()
+        # The preview must track composition immediately (visual hide/show runs
+        # regardless of gesture state; only the input-shape swap is deferred).
+        self._refresh_taskbar_rep()
         if self._scaling_active:
             return
         self._apply_exact_input_shape()
@@ -1967,6 +1990,138 @@ class ClusterOverlayController:
             self._safe_call(surface, "hide")
             self._safe_call(surface, "deleteLater")
 
+    # ------------------------------------------------------------------
+    # Taskbar representative (float UI owns the taskbar)
+    # ------------------------------------------------------------------
+    def _ensure_taskbar_rep(self) -> None:
+        """Create + show the taskbar representative. Best-effort and decorative:
+        a failure must never affect an otherwise-successful enter. No-op when
+        one is already up or when the backend is unavailable (no X11 = no
+        thumbnail/stacking machinery to lean on; the plain hide() behavior of
+        enter() stands alone)."""
+        if self._taskbar_rep is not None:
+            return
+        if not self._backend.is_available():
+            return
+        try:
+            from utils.overlay.taskbar_representative import TaskbarRepresentative
+            rep = TaskbarRepresentative(
+                on_close_requested=self._request_app_quit,
+                on_tick=self._refresh_taskbar_rep,
+                backend=self._backend)
+            self._taskbar_rep = rep
+            self._position_taskbar_rep()    # geometry BEFORE map (program-specified)
+            self._refresh_taskbar_rep()     # first mirror BEFORE map (no blank preview)
+            rep.prepare_initial_state()     # pre-map hints (below + click-through)
+            rep.show()
+            from utils.overlay.backend import overlay_trace
+            overlay_trace("taskbar_rep: shown (float UI owns the taskbar)")
+        except Exception:
+            self._teardown_taskbar_rep()
+
+    def _teardown_taskbar_rep(self) -> None:
+        """Destroy the representative (idempotent; never raises)."""
+        rep = self._taskbar_rep
+        self._taskbar_rep = None
+        if rep is None:
+            return
+        try:
+            rep.hide()
+            rep.deleteLater()
+        except Exception:
+            pass
+
+    def _request_app_quit(self) -> None:
+        """Close on the representative = quit the app via the main window's
+        normal close() -> shutdown path (the exact route the radial Exit spoke
+        takes; close() reaches a hidden window's closeEvent normally)."""
+        self._safe_call(self._window, "close")
+
+    def _content_bbox_window_coords(self):
+        """Union of the emblem rect and every VISIBLE cell's transform-mapped
+        rect, in window-local coords: the tight crop the taskbar preview shows
+        ("the emblem plus however many cards are up" - never the mostly-empty
+        max-scale envelope). Null QRect when nothing is measurable."""
+        from PySide6.QtCore import QRect
+        bbox = QRect(self._emblem_rect())
+        win = self._compute_window_rect()
+        ox, oy = win.x(), win.y()
+        for _idx, screen_rect, _controls, _cutout in self._visible_card_geoms():
+            bbox = bbox.united(screen_rect.translated(-ox, -oy))
+        return bbox
+
+    @staticmethod
+    def _opaque_only(pixmap):
+        """Strip sub-opaque pixels (alpha < 250 -> fully transparent).
+
+        The on-screen rep may only paint pixels the cluster hides with
+        IDENTICAL fully-opaque ones; translucent pixels (card shadows, glow,
+        AA edges) would double-composite and read darker/stronger inside the
+        bbox. Byte-level translate keeps this C-speed. ARGB32 little-endian
+        memory layout is BGRA, so the alpha byte sits at offset 3."""
+        from PySide6.QtGui import QImage, QPixmap
+        img = pixmap.toImage().convertToFormat(QImage.Format_ARGB32)
+        buf = bytearray(img.constBits())
+        tbl = bytes(255 if a >= 250 else 0 for a in range(256))
+        buf[3::4] = buf[3::4].translate(tbl)
+        out = QImage(bytes(buf), img.width(), img.height(),
+                     img.bytesPerLine(), QImage.Format_ARGB32)
+        out.setDevicePixelRatio(img.devicePixelRatio())
+        return QPixmap.fromImage(out.copy())
+
+    def _refresh_taskbar_rep(self) -> None:
+        """Re-grab the cropped, opaque-only float-UI mirror into the
+        representative. Best-effort and cheap enough for the slow tick; no-op
+        when inactive or blanked (a blanked rep is invisible everywhere, so a
+        grab mid-gesture would be wasted work on frozen pixels)."""
+        rep = self._taskbar_rep
+        if rep is None or not self._active or self._surface is None:
+            return
+        if rep.is_blanked():
+            return
+        try:
+            bbox = self._content_bbox_window_coords()
+            if bbox.isNull() or bbox.isEmpty():
+                return
+            grab = getattr(self._surface, "grab", None)
+            if grab is None:
+                return
+            rep.set_mirror(self._opaque_only(grab(bbox)))
+        except Exception:
+            pass
+
+    def _position_taskbar_rep(self) -> None:
+        """Pixel-align the representative UNDER the on-screen content bbox: the
+        aligned-mirror invariant (every opaque rep pixel covered by an identical
+        cluster pixel above it) is what makes it invisible. Best-effort."""
+        rep = self._taskbar_rep
+        if rep is None:
+            return
+        try:
+            bbox = self._content_bbox_window_coords()
+            if bbox.isNull() or bbox.isEmpty():
+                return
+            win = self._compute_window_rect()
+            rep.setGeometry(bbox.translated(win.topLeft()))
+        except Exception:
+            pass
+
+    def _update_rep_blanking(self) -> None:
+        """Single source of truth for the aligned-mirror invariant: the rep may
+        be visible ONLY in the settled, unobstructed state. Any gesture that
+        moves/scales/fades the cluster out from over the mirror blanks it;
+        settling unblanks, re-aligns, and re-grabs."""
+        rep = self._taskbar_rep
+        if rep is None:
+            return
+        drag_active = self._drag_timer is not None and self._drag_timer.isActive()
+        obstructed = (self._scaling_active or drag_active
+                      or self._rep_peek_active or self.is_radial_open)
+        rep.set_blanked(obstructed)
+        if not obstructed:
+            self._position_taskbar_rep()
+            self._refresh_taskbar_rep()
+
     def open_radial_menu(self):
         """Show the click-accepting radial menu centered on the emblem.
 
@@ -2088,6 +2243,7 @@ class ClusterOverlayController:
             # must never tank a successful radial open.
             if self.is_panel_open:
                 self._safe_call(self._panel_surface, "raise_")
+            self._update_rep_blanking()
             return menu
         except Exception:
             from utils.overlay.backend import overlay_trace
@@ -2165,6 +2321,9 @@ class ClusterOverlayController:
             from PySide6.QtGui import QPainterPath
             self._apply_radial_input_shape(QPainterPath())
         self._restack_internal_layers()
+        # Radial gone (immediate close or the dismiss fly-back's terminal step,
+        # which funnels here via close_requested): unblank + re-align + re-grab.
+        self._update_rep_blanking()
 
     def _reposition_radial(self) -> None:
         """Keep the radial top-level centered on the anchor and its painted ring in
