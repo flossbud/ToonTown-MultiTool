@@ -2372,6 +2372,15 @@ class ClusterOverlayController:
                 QRect(int(ax - canvas_max / 2), int(ay - canvas_max / 2),
                       canvas_max, canvas_max))
             self._safe_call(surface, "prepare_initial_state")
+            # Opacity-0 while EMPTY (not just until first paint): a closed
+            # mapped window that changes geometry exposes buffer-less regions
+            # KWin composites as opaque black; the blank makes every
+            # closed-state move/resize invisible by construction. Lifted only
+            # by the open path once content is hosted + painted. Guarded:
+            # test stubs may lack the method.
+            blank = getattr(surface, "set_content_blanked", None)
+            if blank is not None:
+                blank(True)
             surface.show()
             self._radial_surface = surface
             # Click-through while empty: a mapped window without a shape keeps
@@ -2424,6 +2433,16 @@ class ClusterOverlayController:
             surface.set_overlay_geometry(
                 QRect(int(ax - size / 2), int(ay - size / 2), size, size))
             self._safe_call(surface, "prepare_initial_state")
+            # Opacity-0 while EMPTY - the closed panel is RESIZED on every
+            # scale notch (emblem*6 tracking), and a resize of a mapped
+            # buffer-behind window composites its fresh L-band as opaque
+            # black whenever the paint flush lags (the busy GUI thread during
+            # a scale burst) - the live J-shaped black rectangle. Blanked,
+            # the tracking geometry changes are invisible by construction.
+            # Guarded: test stubs may lack the method.
+            blank = getattr(surface, "set_content_blanked", None)
+            if blank is not None:
+                blank(True)
             surface.show()
             self._panel_surface = surface
             self._apply_panel_input_shape(QPainterPath())   # click-through while empty
@@ -2681,6 +2700,14 @@ class ClusterOverlayController:
             # window stays click-through; this surface is additive. Clicks in
             # the inert margin outside the canvas pass through to the games.
             self._apply_radial_input_shape(self._radial_click_path())
+            # Menu hosted + shaped: lift the empty-state blank BEFORE the
+            # reveal animations (the surface paints-before-opacity
+            # internally, so no buffer-less frame can show). Stub surfaces
+            # without the method open unblanked as before; on the real
+            # surface a failure propagates into the rollback.
+            unblank = getattr(surface, "set_content_blanked", None)
+            if unblank is not None:
+                unblank(False)
             # Re-assert the dim's framed-1.0 placement BEFORE showing it (it is
             # scale-independent in the transform model; this is belt-and-suspenders
             # against anything having moved it while closed).
@@ -2808,6 +2835,14 @@ class ClusterOverlayController:
             # Click-through while empty (see _ensure_radial_surface).
             from PySide6.QtGui import QPainterPath
             self._apply_radial_input_shape(QPainterPath())
+            # Re-engage the empty-state blank so closed-state anchor tracking
+            # stays invisible by construction (guarded: stubs may lack it).
+            blank = getattr(surface, "set_content_blanked", None)
+            if blank is not None:
+                try:
+                    blank(True)
+                except Exception:
+                    pass
         self._restack_internal_layers()
         # Radial gone (immediate close or the dismiss fly-back's terminal step,
         # which funnels here via close_requested): unblank + re-align + re-grab.
@@ -3104,6 +3139,13 @@ class ClusterOverlayController:
             path = QPainterPath()
             path.addRect(0, 0, size, size)
             self._apply_panel_input_shape(path, swallow=False)
+            # Content hosted + shaped: lift the empty-state blank LAST (the
+            # surface paints-before-opacity internally). A stub surface
+            # without the method opens unblanked as before. Unguarded on the
+            # real surface: a failure propagates into the rollback.
+            unblank = getattr(surface, "set_content_blanked", None)
+            if unblank is not None:
+                unblank(False)
             return surface
         except Exception:
             from utils.overlay.backend import overlay_trace
@@ -3154,6 +3196,15 @@ class ClusterOverlayController:
             # would replay the compositor's window-open animation.
             from PySide6.QtGui import QPainterPath
             self._apply_panel_input_shape(QPainterPath())
+            # Re-engage the empty-state blank: the closed panel resumes its
+            # per-notch geometry tracking, which must stay invisible by
+            # construction (guarded: stubs may lack the method).
+            blank = getattr(surface, "set_content_blanked", None)
+            if blank is not None:
+                try:
+                    blank(True)
+                except Exception:
+                    pass
 
     def _release_panel_content(self, surface) -> None:
         """Reparent the panel surface's still-hosted child out to None so a subsequent
