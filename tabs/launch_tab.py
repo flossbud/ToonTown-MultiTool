@@ -522,8 +522,8 @@ class LaunchTab(QWidget):
         account's last in-world toon (name + DNA) for its portrait. Works even
         when the keyring is locked."""
         from utils.radial_menu_model import build_account_ring
-        basic_by_id = {aid: (game, label)
-                       for (aid, game, label) in self.cred_manager.get_accounts_basic()}
+        basics = list(self.cred_manager.get_accounts_basic())
+        basic_by_id = {aid: (game, label) for (aid, game, label) in basics}
 
         def account_for(aid):
             return basic_by_id.get(aid)      # (game, label) or None (deleted)
@@ -538,6 +538,9 @@ class LaunchTab(QWidget):
             toon_for,
             self.is_account_running,
             limit=limit,
+            # Saved accounts (list order) fill any spare ring capacity, so a
+            # first launch with no recorded recents still shows every account.
+            fallback_ids=[aid for (aid, _game, _label) in basics],
         )
 
     def game_of_account(self, account_id: str) -> str | None:

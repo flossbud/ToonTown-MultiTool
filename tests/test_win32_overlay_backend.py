@@ -275,3 +275,154 @@ def test_dismiss_capture_dispatch_skips_unsupported_platform(qapp, monkeypatch):
     ctrl = _controller(qapp, _AvailableBackend())
     ctrl._start_radial_dismiss_capture()
     assert ctrl._radial_dismiss_capture is None
+
+
+# ---------------------------------------------------------------------------
+# Taskbar identity (Milestone B): surface behaviors + controller wiring
+# ---------------------------------------------------------------------------
+
+class _FakeCloseEvent:
+    def __init__(self, spontaneous):
+        self._spont = spontaneous
+        self.accepted = None
+
+    def spontaneous(self):
+        return self._spont
+
+    def ignore(self):
+        self.accepted = False
+
+    def accept(self):
+        self.accepted = True
+
+    def isAccepted(self):
+        return bool(self.accepted)
+
+
+def _process(qapp, ms=50):
+    import time
+    end = time.monotonic() + ms / 1000
+    while time.monotonic() < end:
+        qapp.processEvents()
+
+
+def test_identity_spontaneous_close_quits_deferred(qapp):
+    from utils.overlay.cluster_surface import ClusterSurface
+
+    calls = []
+    s = ClusterSurface(backend=NoOpOverlayBackend())
+    s._on_spontaneous_close = lambda: calls.append(1)
+    ev = _FakeCloseEvent(spontaneous=True)
+    s.closeEvent(ev)
+    assert ev.accepted is False          # the close itself is refused
+    assert calls == []                   # callback is DEFERRED, not synchronous
+    _process(qapp)
+    assert calls == [1]
+    s.deleteLater()
+
+
+def test_spontaneous_close_without_callback_stays_refused(qapp):
+    from utils.overlay.cluster_surface import ClusterSurface
+
+    s = ClusterSurface(backend=NoOpOverlayBackend())
+    ev = _FakeCloseEvent(spontaneous=True)
+    s.closeEvent(ev)
+    assert ev.accepted is False
+    _process(qapp)                       # nothing pending must fire
+    s.deleteLater()
+
+
+def test_programmatic_close_still_goes_through(qapp):
+    from utils.overlay.cluster_surface import ClusterSurface
+
+    s = ClusterSurface(backend=NoOpOverlayBackend())
+    s._on_spontaneous_close = lambda: (_ for _ in ()).throw(AssertionError)
+    ev = _FakeCloseEvent(spontaneous=False)
+    s.closeEvent(ev)
+    assert ev.accepted is True
+    s.deleteLater()
+
+
+def test_identity_minimize_bounces(qapp):
+    from PySide6.QtCore import Qt
+    from utils.overlay.cluster_surface import ClusterSurface
+
+    s = ClusterSurface(backend=NoOpOverlayBackend())
+    s._bounce_minimize = True
+    s.show()
+    _process(qapp)
+    s.setWindowState(Qt.WindowMinimized)
+    _process(qapp, 100)
+    assert s.isMinimized() is False      # bounced back
+    s.hide()
+    s.deleteLater()
+
+
+def test_minimize_not_bounced_by_default(qapp):
+    from PySide6.QtCore import Qt
+    from utils.overlay.cluster_surface import ClusterSurface
+
+    s = ClusterSurface(backend=NoOpOverlayBackend())
+    s.show()
+    _process(qapp)
+    s.setWindowState(Qt.WindowMinimized)
+    _process(qapp, 100)
+    assert s.isMinimized() is True
+    s.hide()
+    s.deleteLater()
+
+
+def test_enter_sets_taskbar_identity_when_backend_declines_rep(qapp):
+    from tests.test_cluster_controller import _make
+
+    ctrl, provider, window, created = _make(backend=_DecliningBackend())
+    assert ctrl.enter() is True
+    surface = created[0]
+    assert getattr(surface, "WIN_TASKBAR_IDENTITY", False) is True
+    assert surface.windowTitle() == "ToonTown MultiTool"
+    assert getattr(surface, "_on_spontaneous_close", None) is not None
+    assert getattr(surface, "_bounce_minimize", False) is True
+    ctrl.leave()
+
+
+def test_enter_leaves_identity_off_when_rep_wanted(qapp):
+    from tests.test_cluster_controller import _make
+
+    ctrl, provider, window, created = _make()   # NoOp backend: wants rep
+    assert ctrl.enter() is True
+    surface = created[0]
+    assert getattr(surface, "WIN_TASKBAR_IDENTITY", False) is False
+    ctrl.leave()
+
+
+# ---------------------------------------------------------------------------
+# Ghost click emblem parity
+# ---------------------------------------------------------------------------
+
+def test_ghost_click_on_emblem_disc_fires_menu_requested(qapp, monkeypatch):
+    from PySide6.QtCore import QObject, QRect, Signal
+
+    class _Emblem(QObject):
+        menu_requested = Signal()
+
+    ctrl = _controller(qapp, _AvailableBackend())
+    emblem = _Emblem()
+    fired = []
+    emblem.menu_requested.connect(lambda: fired.append(1))
+    ctrl._emblem = emblem
+    monkeypatch.setattr(ctrl, "_visible_card_geoms", lambda: [])
+    monkeypatch.setattr(ctrl, "_emblem_rect", lambda: QRect(100, 100, 50, 50))
+    monkeypatch.setattr(ctrl, "_compute_window_rect",
+                        lambda: QRect(1000, 1000, 400, 400))
+    # Disc center = (1125, 1125), radius 25.
+    ctrl._ghost_click_pass([(0, 1125, 1125)])
+    assert fired == [1]
+    # A batch with several emblem hits toggles at most once.
+    ctrl._ghost_click_pass([(0, 1125, 1125), (1, 1120, 1120)])
+    assert fired == [1, 1]
+    # Corner of the rect but outside the disc: no fire.
+    ctrl._ghost_click_pass([(0, 1102, 1102)])
+    assert fired == [1, 1]
+    # No emblem wired: never raises.
+    ctrl._emblem = None
+    ctrl._ghost_click_pass([(0, 1125, 1125)])

@@ -477,6 +477,24 @@ class ClusterOverlayController:
         hidden = False
         try:
             surface = self._build_surface()
+            if not getattr(self._backend, "wants_taskbar_rep", lambda: True)():
+                # Windows taskbar identity: the backend skips the aligned-mirror
+                # rep, so the CLUSTER window itself is the app's taskbar entry
+                # while floating. WIN_TASKBAR_IDENTITY is read pre-map by
+                # set_initial_state (APPWINDOW instead of TOOLWINDOW); the title
+                # names the button; spontaneous close (taskbar Close / preview
+                # X) quits like the rep did; minimize is bounced (a minimized
+                # cluster strands the whole float UI). Plain attributes so
+                # injected test surfaces need no extra API.
+                surface.WIN_TASKBAR_IDENTITY = True
+                surface._on_spontaneous_close = self._request_app_quit
+                surface._bounce_minimize = True
+                try:
+                    surface.setWindowTitle("ToonTown MultiTool")
+                except Exception:
+                    pass
+                overlay_trace("cluster.enter: taskbar identity ON "
+                              "(cluster window is the taskbar entry)")
             token = provider.capture_cluster_host()
             # Restore the persisted scale + anchor BEFORE computing placement so
             # the window re-centers on the remembered anchor and the transform
@@ -1338,6 +1356,28 @@ class ClusterOverlayController:
                 provider.deliver_ghost_click(slot, x, y)
             except Exception:
                 continue
+        # Emblem parity: a ghost press on the emblem DISC acts like a real
+        # left-click on the emblem (menu_requested -> main's radial toggle).
+        # Controls and the emblem never overlap, so the two hit passes are
+        # disjoint; one batch fires the toggle at most once. Best-effort like
+        # everything on this queued path.
+        emblem = self._emblem
+        if emblem is None:
+            return
+        try:
+            er = self._emblem_rect()
+            if er.isNull():
+                return
+            win = self._compute_window_rect()
+            cx = win.x() + er.x() + er.width() / 2.0
+            cy = win.y() + er.y() + er.height() / 2.0
+            radius = min(er.width(), er.height()) / 2.0
+            for _slot, x, y in items:
+                if (x - cx) ** 2 + (y - cy) ** 2 <= radius * radius:
+                    emblem.menu_requested.emit()
+                    break
+        except Exception:
+            pass
 
     # ---- Glove echo (ghost cursors over the cards) ---------------------
     # The confined ghost overlays stack directly above their game window and

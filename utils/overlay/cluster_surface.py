@@ -174,12 +174,38 @@ class ClusterSurface(OverlaySurface):
             pass
 
     def closeEvent(self, ev):
+        # Taskbar-identity mode (Windows: this window IS the app's taskbar
+        # entry): a spontaneous close (taskbar Close, preview X) means QUIT
+        # THE APP - refuse the close itself and route to the owner's callback
+        # DEFERRED, the taskbar representative's proven pattern (never
+        # re-enter the WM close handshake synchronously). Without the
+        # callback the base refusal stands: a stray WM close must never
+        # destroy an overlay window.
+        cb = getattr(self, "_on_spontaneous_close", None)
+        if ev.spontaneous() and cb is not None:
+            ev.ignore()
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(0, cb)
+            return
         # Honour the base's spontaneous-close refusal first; only release the
         # borrowed host when the close is actually going through, so Qt's
         # destruction cascade can never delete the proxied live cluster.
         super().closeEvent(ev)
         if ev.isAccepted() and self._cluster_view is not None:
             self.release()
+
+    def changeEvent(self, ev):
+        super().changeEvent(ev)
+        from PySide6.QtCore import QEvent
+        if (getattr(self, "_bounce_minimize", False)
+                and ev.type() == QEvent.WindowStateChange
+                and self.isMinimized()):
+            # Taskbar-identity mode: a taskbar-button minimize would freeze
+            # the float UI into a stranded thumbnail; bounce back DEFERRED so
+            # the WM's state change settles first (the rep's pattern), with
+            # the context-object form so a destroyed surface cancels it.
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(0, self, self.showNormal)
 
     def paintEvent(self, ev) -> None:
         """SOURCE-clear the whole window to transparent on every paint.

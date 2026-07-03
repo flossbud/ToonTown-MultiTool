@@ -93,6 +93,34 @@ def _emitted_to_logical(x, y, screens=None):
     return _native_to_logical(x, y, screens)
 
 
+def _win32_root_at(x: int, y: int):
+    """Root top-level under the RAW (physical) point, or None on failure.
+
+    The gloves themselves and the click-through overlay surfaces are layered
+    WS_EX_TRANSPARENT windows, which WindowFromPoint skips by construction,
+    so a glove can never occlude itself or read the float cluster where it is
+    click-through."""
+    try:
+        import win32gui
+        h = win32gui.WindowFromPoint((int(x), int(y)))
+        if not h:
+            return None
+        root = win32gui.GetAncestor(h, 2)  # GA_ROOT
+        return int(root or h)
+    except Exception:
+        return None
+
+
+def _win32_pid_of(hwnd: int):
+    """Owning process id of *hwnd*, or None on failure."""
+    try:
+        import win32process
+        _tid, pid = win32process.GetWindowThreadProcessId(int(hwnd))
+        return int(pid)
+    except Exception:
+        return None
+
+
 class GhostCursorOverlay(QWidget):
     """One toon's glove: a 32x32 frameless, input-transparent toplevel. The
     EMPTY input shape (WindowTransparentForInput) is load-bearing: the
@@ -327,10 +355,31 @@ class GhostCursorController(QObject):
         self._confine_reason = (self._disabled_reason
                                 or _confinement_reason())
         self._confined = self._confine_reason is None
+        # Windows occlusion gate: with no transient stacking on win32, the
+        # unconfined float would draw gloves over EVERY window (file managers
+        # included). Gate VISIBILITY instead: a glove shows only while the
+        # top-level under its point is its own game window or a window of
+        # THIS process (the float UI / main window). Probes are instance
+        # attributes so tests can inject fakes; TTMT_GHOST_UNCONFINED=1 is
+        # the shared kill switch (gloves float over everything, old behavior).
+        self._occlusion_gated = (
+            self._disabled_reason is None
+            and not self._confined
+            and sys.platform == "win32"
+            and os.environ.get("TTMT_GHOST_UNCONFINED") != "1")
+        self._top_probe = _win32_root_at
+        self._pid_probe = _win32_pid_of
+        self._own_pid = os.getpid()
+        self._last_raw: dict[int, tuple[int, int]] = {}
+        self._last_logical: dict[int, tuple[int, int]] = {}
+        self._occlusion_hidden: set[int] = set()
+        self._occlusion_timer: QTimer | None = None
         if self._disabled_reason is None:
             # Running-code stamp: live validation starts by checking this.
             mode = ("confined-to-game (transient stacking)" if self._confined
                     else f"unconfined float ({self._confine_reason})")
+            if self._occlusion_gated:
+                mode += " + win32 occlusion gate"
             print(f"[GhostCursors] mode: {mode}")
         if service is not None:
             service.ghost_pointer_event.connect(self._on_pointer_event)
@@ -398,6 +447,20 @@ class GhostCursorController(QObject):
         for slot, x, y in points:
             if self._suppressed_by_focus(slot):
                 continue
+            if self._occlusion_gated:
+                self._last_raw[slot] = (int(x), int(y))
+                if self._glove_occluded(slot, x, y):
+                    # A foreign window covers this point: keep the glove
+                    # hidden but remember the position so the sweep can
+                    # re-show it the moment the occluder moves away.
+                    self._occlusion_hidden.add(slot)
+                    self._last_logical[slot] = _emitted_to_logical(x, y)
+                    prev = self._overlays.get(slot)
+                    if prev is not None:
+                        prev.hide_now()
+                    self._start_occlusion_sweep()
+                    continue
+                self._occlusion_hidden.discard(slot)
             ov = self._overlay_for(slot)
             if ov is None:
                 if self._disabled_reason is not None:
@@ -409,6 +472,9 @@ class GhostCursorController(QObject):
                 ov.set_game_window(self._slot_wid_int(slot))
             lx, ly = _emitted_to_logical(x, y)
             ov.show_at(lx, ly)
+            if self._occlusion_gated:
+                self._last_logical[slot] = (lx, ly)
+                self._start_occlusion_sweep()
             if self._confined:
                 ov.clip_to(self._slot_rect_logical(slot))
                 # Mirror the sprite onto the float cards (top-left = the same
@@ -491,6 +557,60 @@ class GhostCursorController(QObject):
             str(int(o.winId())) for o in self._overlays.values())
         return ov
 
+    # -- win32 occlusion gate ---------------------------------------------
+
+    def _glove_occluded(self, slot: int, raw_x: int, raw_y: int) -> bool:
+        """True when a FOREIGN window covers the glove's point: the top-level
+        there is neither the slot's own game window nor a window of this
+        process. Fail-OPEN (probe failure -> visible): the gate is cosmetic
+        and must never make gloves flaky."""
+        top = self._top_probe(raw_x, raw_y)
+        if top is None:
+            return False
+        if self._slot_wid_int(slot) == top:
+            return False
+        return self._pid_probe(top) != self._own_pid
+
+    def _start_occlusion_sweep(self) -> None:
+        """Run the periodic re-check while any glove is live: windows move
+        OVER stationary gloves (hide) and away again (re-show) without any
+        pointer traffic to tell us."""
+        if not self._occlusion_gated:
+            return
+        t = self._occlusion_timer
+        if t is None:
+            t = QTimer(self)
+            t.setInterval(150)
+            t.timeout.connect(self._occlusion_sweep)
+            self._occlusion_timer = t
+        if not t.isActive():
+            t.start()
+
+    def _occlusion_sweep(self) -> None:
+        any_live = False
+        for slot, raw in list(self._last_raw.items()):
+            ov = self._overlays.get(slot)
+            occluded = self._glove_occluded(slot, *raw)
+            if occluded:
+                if slot not in self._occlusion_hidden:
+                    self._occlusion_hidden.add(slot)
+                    if ov is not None:
+                        ov.hide_now()
+                any_live = True   # keep sweeping: it may clear again
+            elif slot in self._occlusion_hidden:
+                self._occlusion_hidden.discard(slot)
+                if not self._suppressed_by_focus(slot):
+                    pos = self._last_logical.get(slot)
+                    ov = ov if ov is not None else self._overlay_for(slot)
+                    if pos is not None and ov is not None:
+                        ov.show_at(*pos)
+                        self._restart_idle_timer(slot)
+                        any_live = True
+            elif ov is not None and ov.isVisible():
+                any_live = True   # visible glove: watch for new occluders
+        if not any_live and self._occlusion_timer is not None:
+            self._occlusion_timer.stop()
+
     def _restart_idle_timer(self, slot: int) -> None:
         t = self._timers.get(slot)
         if t is None:
@@ -512,4 +632,9 @@ class GhostCursorController(QObject):
             t.stop()
         for ov in self._overlays.values():
             ov.hide_now()
+        if self._occlusion_timer is not None:
+            self._occlusion_timer.stop()
+        self._occlusion_hidden.clear()
+        self._last_raw.clear()
+        self._last_logical.clear()
         self._echo_notify("ghost_echo_cleared")

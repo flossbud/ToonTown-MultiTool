@@ -51,3 +51,56 @@ def test_skips_deleted_accounts():
         limit=8,
     )
     assert [r.account_id for r in ring] == ["ok"]
+
+
+# -- fallback_ids: saved accounts fill spare ring capacity -------------------
+
+def test_empty_recents_falls_back_to_saved_order():
+    saved = ["s1", "s2", "s3"]
+    views = {aid: ("ttr", aid.upper()) for aid in saved}
+    ring = build_account_ring(
+        [],
+        account_for=_account_for(views),
+        toon_for=lambda aid: None,
+        is_running=lambda game, aid: False,
+        limit=8,
+        fallback_ids=saved,
+    )
+    assert [r.account_id for r in ring] == saved
+
+
+def test_fallbacks_append_after_recents_without_duplicates():
+    views = {aid: ("ttr", aid) for aid in ("r1", "r2", "s1", "s2")}
+    ring = build_account_ring(
+        ["r2", "r1"],                      # most-recent first
+        account_for=_account_for(views),
+        toon_for=lambda aid: None,
+        is_running=lambda game, aid: False,
+        limit=8,
+        fallback_ids=["r1", "s1", "s2"],   # r1 is both recent and saved
+    )
+    assert [r.account_id for r in ring] == ["r2", "r1", "s1", "s2"]
+
+
+def test_fallbacks_respect_the_limit():
+    views = {f"a{i}": ("ttr", f"a{i}") for i in range(12)}
+    ring = build_account_ring(
+        ["a0", "a1"],
+        account_for=_account_for(views),
+        toon_for=lambda aid: None,
+        is_running=lambda game, aid: False,
+        limit=4,
+        fallback_ids=[f"a{i}" for i in range(12)],
+    )
+    assert [r.account_id for r in ring] == ["a0", "a1", "a2", "a3"]
+
+
+def test_no_fallbacks_keeps_existing_behavior():
+    ring = build_account_ring(
+        [],
+        account_for=lambda aid: ("ttr", "L"),
+        toon_for=lambda aid: None,
+        is_running=lambda game, aid: False,
+        limit=8,
+    )
+    assert ring == []

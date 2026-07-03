@@ -23,16 +23,28 @@ class RingAccount:
         return not self.toon_name
 
 
-def build_account_ring(ordered_ids, account_for, toon_for, is_running, limit=8):
+def build_account_ring(ordered_ids, account_for, toon_for, is_running, limit=8,
+                       fallback_ids=()):
     """Build the ordered list of ring accounts (most-recent first, capped).
 
     - ``ordered_ids``: account IDs, most-recent-first (RecentLaunchesStore).
     - ``account_for(aid)``: ``(game, label) | None`` (None => deleted).
     - ``toon_for(aid)``: ``(toon_name, dna) | None`` (None => placeholder).
     - ``is_running(game, aid)``: True if a launcher for the account is running.
+    - ``fallback_ids``: saved-account IDs in their saved (list) order, appended
+      after the recents with duplicates dropped - spare ring capacity shows the
+      rest of the saved accounts, so a FIRST launch (no recorded recents) still
+      gets the full account list instead of an empty ring.
     """
+    seen: set = set()
+    merged: list = []
+    for aid in list(ordered_ids) + list(fallback_ids):
+        if aid in seen:
+            continue
+        seen.add(aid)
+        merged.append(aid)
     out: list[RingAccount] = []
-    for aid in ordered_ids:
+    for aid in merged:
         if len(out) >= limit:
             break
         view = account_for(aid)
