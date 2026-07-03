@@ -33,7 +33,7 @@ def test_refresh_action_invokes_manual_refresh(qapp, monkeypatch, tmp_path):
         # _on_refresh_requested calls self.manual_refresh(); spy on that so we
         # verify the full wire hook -> _on_hotkey_action -> dispatch -> action.
         monkeypatch.setattr(w.multitoon_tab, "manual_refresh", lambda: called.append(1))
-        assert w._hotkey_hook(frozenset(), "F5") == "app.refresh"
+        assert w._hotkey_hook(frozenset(), frozenset({"F5"})) == "app.refresh"
         w._on_hotkey_action("app.refresh")
         assert called == [1]
     finally:

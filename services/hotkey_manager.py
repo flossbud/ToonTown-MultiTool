@@ -95,13 +95,17 @@ class HotkeyManager(QObject):
         self.key_event_queue = key_event_queue
         self.suppress_predicate = suppress_predicate
 
-        # hotkey_hook(mods: frozenset, key: str) -> action_id|None resolves a
-        # chord against the current bindings; a match is SKIPPED (never enters
-        # the input queue). fire_hotkeys=True additionally emits
-        # hotkey_triggered for the match (win/darwin, where this listener is
-        # the only global-hotkey source); Linux passes False (the X11 provider
-        # fires the action instead). Actions in hotkey_repeat_ok re-fire on OS
-        # auto-repeat while held; all others fire once per physical press.
+        # hotkey_hook(mods: frozenset, keys: frozenset) -> action_id|None is a
+        # PURE exact-set lookup against the current bindings. The manager
+        # consults it TWICE per press, larger set first: the full held
+        # non-modifier key set (matches two-key chords), then the just-pressed
+        # key alone (matches single-key bindings while an unbound key happens
+        # to be held). A match is SKIPPED (never enters the input queue).
+        # fire_hotkeys=True additionally emits hotkey_triggered for the match
+        # (win/darwin, where this listener is the only global-hotkey source);
+        # Linux passes False (the X11 provider fires the action instead).
+        # Actions in hotkey_repeat_ok re-fire on OS auto-repeat while held;
+        # all others fire once per physical press.
         self._hotkey_hook = hotkey_hook
         self._fire_hotkeys = bool(fire_hotkeys)
         self._hotkey_repeat_ok = frozenset(hotkey_repeat_ok)
@@ -109,6 +113,10 @@ class HotkeyManager(QObject):
         # must be skipped too. Cleared in _stop_listener (a focus-out can stop
         # the listener before the physical release arrives).
         self._hotkey_down = set()
+        # Held canonical NON-MODIFIER keys (ctrl-char presses tracked under
+        # their mapped letter), feeding the hook's full-set consult. Cleared
+        # in _stop_listener like _hotkey_down.
+        self._held_keys = set()
 
         self.pressed_keys = set()
         self.listener = None
@@ -347,8 +355,9 @@ class HotkeyManager(QObject):
         self.pressed_keys.clear()
         # Clearing _hotkey_down prevents a permanent wedge when a skipped key's
         # physical release is missed because it happened while the listener was
-        # stopped (a focus-out).
+        # stopped (a focus-out). _held_keys goes stale the same way.
         self._hotkey_down.clear()
+        self._held_keys.clear()
         # Race guard: pynput's _stop_platform reaches for self._display_record
         # which the worker thread sets early in _run(). If stop() is called
         # before that line lands (very fast app launch + close cycle), pynput
@@ -409,7 +418,7 @@ class HotkeyManager(QObject):
                 self.pressed_keys.add(key.char)
 
             normalized = self.normalize_key(key)
-            if normalized and self._hotkey_hook is not None:
+            if normalized and not fam and self._hotkey_hook is not None:
                 mods = frozenset(m for m in ("ctrl", "alt", "shift", "super")
                                  if m in self.pressed_keys)
                 # Ctrl chords surface as control chars ('\x08' for ctrl+h);
@@ -420,7 +429,19 @@ class HotkeyManager(QObject):
                 if (len(hook_key) == 1 and ord(hook_key) < 32
                         and "ctrl" in self.pressed_keys):
                     hook_key = chr(ord(hook_key) + 96)   # '\x08' -> 'h'
-                action_id = self._hotkey_hook(mods, hook_key)
+                self._held_keys.add(hook_key)
+                # Two-step consult, larger set first: the full held set
+                # matches a two-key chord on its SECOND key's press; on a
+                # miss, the just-pressed key alone matches single-key
+                # bindings even while an unbound key happens to be held.
+                # A two-key chord's FIRST member missed the table when it
+                # was pressed and was enqueued normally - this mirrors the
+                # X-side replay semantics, where a partner-up member press
+                # replays to the focused window.
+                held = frozenset(self._held_keys)
+                action_id = self._hotkey_hook(mods, held)
+                if action_id is None and len(held) > 1:
+                    action_id = self._hotkey_hook(mods, frozenset({hook_key}))
                 if action_id is not None:
                     if _ITRACE:
                         _itrace("hk_press", f"HOTKEY {action_id} ({hook_key})")
@@ -477,6 +498,15 @@ class HotkeyManager(QObject):
                 if (len(hook_key) == 1 and ord(hook_key) < 32
                         and "ctrl" in self.pressed_keys):
                     hook_key = chr(ord(hook_key) + 96)   # '\x08' -> 'h'
+                # Held-set tracking: drop EVERY form this release can take.
+                # The press may have been tracked under the ctrl-mapped
+                # letter while this release surfaces as the raw control char
+                # (ctrl already released), so the letter form is derived
+                # unconditionally, not just while ctrl is still held.
+                self._held_keys.discard(normalized)
+                self._held_keys.discard(hook_key)
+                if len(normalized) == 1 and ord(normalized) < 32:
+                    self._held_keys.discard(chr(ord(normalized) + 96))
                 if normalized in self._hotkey_down or hook_key in self._hotkey_down:
                     self._hotkey_down.discard(normalized)
                     self._hotkey_down.discard(hook_key)

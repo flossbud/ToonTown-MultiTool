@@ -41,7 +41,7 @@ def test_bound_chord_keypress_is_dispatched_not_routed():
     g = _grabber()
     dispatched = []
     g.set_hotkey_lookup(
-        lambda keycode, state: "app.refresh" if keycode == 71 else None,
+        lambda keycode, state, is_down: "app.refresh" if keycode == 71 else None,
         dispatched.append,
     )
     g._handle_event_route_all(_Ev(71, state=0))      # bare F5
@@ -54,7 +54,7 @@ def test_keyrelease_of_bound_keycode_is_not_dispatched():
     g = _grabber()
     dispatched = []
     g.set_hotkey_lookup(
-        lambda keycode, state: "app.refresh" if keycode == 71 else None,
+        lambda keycode, state, is_down: "app.refresh" if keycode == 71 else None,
         dispatched.append,
     )
     g._handle_event_route_all(_Ev(71, etype=X.KeyRelease))
@@ -68,7 +68,7 @@ def test_unbound_key_proceeds_with_normal_routing():
     # (delivery is the pynput feed's job) -- assert no dispatch and no callbacks.
     g = _grabber()
     dispatched = []
-    g.set_hotkey_lookup(lambda keycode, state: None, dispatched.append)
+    g.set_hotkey_lookup(lambda keycode, state, is_down: None, dispatched.append)
     g._handle_event_route_all(_Ev(25))               # movement key, unbound
     g._handle_event_route_all(_Ev(36))               # passthrough key, unbound
     assert dispatched == []
@@ -77,7 +77,7 @@ def test_unbound_key_proceeds_with_normal_routing():
 
 
 def test_raising_lookup_is_treated_as_none():
-    def _boom(keycode, state):
+    def _boom(keycode, state, is_down):
         raise RuntimeError("lookup exploded")
 
     g = _grabber()
@@ -100,7 +100,7 @@ def test_autorepeat_press_dispatches_once():
     g = _grabber()
     dispatched = []
     g.set_hotkey_lookup(
-        lambda keycode, state: "app.refresh" if keycode == 71 else None,
+        lambda keycode, state, is_down: "app.refresh" if keycode == 71 else None,
         dispatched.append,
     )
     g._handle_event_route_all(_Ev(71))
@@ -113,7 +113,7 @@ def test_repeat_ok_action_redispatches_on_autorepeat():
     g = _grabber()
     dispatched = []
     g.set_hotkey_lookup(
-        lambda keycode, state: "overlay.scale_up" if keycode == 86 else None,
+        lambda keycode, state, is_down: "overlay.scale_up" if keycode == 86 else None,
         dispatched.append,
         repeat_ok_ids=frozenset({"overlay.scale_up"}),
     )
@@ -126,7 +126,7 @@ def test_release_clears_and_repress_fires_again():
     g = _grabber()
     dispatched = []
     g.set_hotkey_lookup(
-        lambda keycode, state: "app.refresh" if keycode == 71 else None,
+        lambda keycode, state, is_down: "app.refresh" if keycode == 71 else None,
         dispatched.append,
     )
     g._handle_event_route_all(_Ev(71))
@@ -135,6 +135,46 @@ def test_release_clears_and_repress_fires_again():
     g._handle_event_route_all(_Ev(71, etype=X.KeyRelease))
     g._handle_event_route_all(_Ev(71))               # fresh physical press
     assert dispatched == ["app.refresh", "app.refresh"]
+
+
+def test_partner_entry_dispatches_only_while_partner_held():
+    # The 3rd lookup arg is the grabber's own _key_physically_down; a
+    # partner-gated (two-key chord) lookup dispatches only while the OTHER
+    # member is physically held.
+    g = _grabber()
+    km = [0] * 32
+    km[44 >> 3] |= (1 << (44 & 7))                   # partner keycode 44 held
+    g._display = MagicMock()
+    g._display.query_keymap.return_value = km
+    dispatched = []
+    g.set_hotkey_lookup(
+        lambda keycode, state, is_down:
+            "a.pair" if keycode == 43 and is_down(44) else None,
+        dispatched.append,
+    )
+    g._handle_event_route_all(_Ev(43))
+    assert dispatched == ["a.pair"]
+    g._on_key.assert_not_called()
+    g._on_passthrough.assert_not_called()
+
+
+def test_partner_up_member_press_falls_through_to_routing():
+    # Partner physically up -> the lookup misses and the member press keeps
+    # route_all's normal suppress-only handling (no dispatch, no callbacks;
+    # delivery stays the pynput feed's job).
+    g = _grabber()
+    g._display = MagicMock()
+    g._display.query_keymap.return_value = [0] * 32  # nothing held
+    dispatched = []
+    g.set_hotkey_lookup(
+        lambda keycode, state, is_down:
+            "a.pair" if keycode == 43 and is_down(44) else None,
+        dispatched.append,
+    )
+    g._handle_event_route_all(_Ev(43))
+    assert dispatched == []
+    g._on_key.assert_not_called()
+    g._on_passthrough.assert_not_called()
 
 
 def test_autorepeat_release_does_not_clear_tracking():
@@ -148,7 +188,7 @@ def test_autorepeat_release_does_not_clear_tracking():
     g._display.query_keymap.return_value = km
     dispatched = []
     g.set_hotkey_lookup(
-        lambda keycode, state: "app.refresh" if keycode == 71 else None,
+        lambda keycode, state, is_down: "app.refresh" if keycode == 71 else None,
         dispatched.append,
     )
     g._handle_event_route_all(_Ev(71))

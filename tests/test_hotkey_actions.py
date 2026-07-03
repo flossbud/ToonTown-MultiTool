@@ -85,11 +85,12 @@ def test_make_hotkey_hook_matches_and_tracks_changes():
 
     s = _S()
     hook = make_hotkey_hook(s)
-    assert hook(frozenset(), "F5") == "app.refresh"
-    assert hook(frozenset({"ctrl"}), "2") == "profile.load_2"
-    assert hook(frozenset({"ctrl", "alt"}), "h") is None
+    assert hook(frozenset(), frozenset({"F5"})) == "app.refresh"
+    assert hook(frozenset({"ctrl"}), frozenset({"2"})) == "profile.load_2"
+    assert hook(frozenset({"ctrl", "alt"}), frozenset({"h"})) is None
     s.set(HOTKEY_BINDINGS, {"overlay.toggle_cards": "ctrl+alt+h"})
-    assert hook(frozenset({"ctrl", "alt"}), "h") == "overlay.toggle_cards"
+    assert hook(frozenset({"ctrl", "alt"}),
+                frozenset({"h"})) == "overlay.toggle_cards"
 
 
 def test_make_hotkey_hook_duplicate_chord_first_wins():
@@ -100,18 +101,23 @@ def test_make_hotkey_hook_duplicate_chord_first_wins():
     # X11 provider's _compile_bindings.
     s = _FakeSettings({HOTKEY_BINDINGS: {"overlay.toggle_cards": "F5"}})
     hook = make_hotkey_hook(s)
-    assert hook(frozenset(), "F5") == "overlay.toggle_cards"
+    assert hook(frozenset(), frozenset({"F5"})) == "overlay.toggle_cards"
 
 
-def test_make_hotkey_hook_multikey_binding_never_matches_single_key():
+def test_make_hotkey_hook_multikey_keyset_matching():
     from utils.hotkey_actions import make_hotkey_hook
 
-    # A multi-key chord is keyed by its full keys-set; the single-key lookup
-    # can never match it (multi-key matching is the X provider's job until
-    # the hook's callers grow held-set support).
+    # The hook is a PURE (mods, keys-frozenset) table lookup: a multi-key
+    # chord matches its exact full keys-set and nothing else. The two-step
+    # preference (full held set first, then the just-pressed key alone)
+    # lives in HotkeyManager, not here.
     s = _FakeSettings({HOTKEY_BINDINGS: {"overlay.toggle_cards": "ctrl+h+t"}})
     hook = make_hotkey_hook(s)
-    assert hook(frozenset({"ctrl"}), "h") is None
-    assert hook(frozenset({"ctrl"}), "t") is None
+    assert hook(frozenset({"ctrl"}),
+                frozenset({"h", "t"})) == "overlay.toggle_cards"
+    assert hook(frozenset({"ctrl"}), frozenset({"h"})) is None
+    assert hook(frozenset({"ctrl"}), frozenset({"t"})) is None
+    # exact-set matching: a superset never matches
+    assert hook(frozenset({"ctrl"}), frozenset({"h", "t", "x"})) is None
     # single-key bindings still resolve
-    assert hook(frozenset(), "F5") == "app.refresh"
+    assert hook(frozenset(), frozenset({"F5"})) == "app.refresh"

@@ -9,6 +9,15 @@ the hold (matched or ignored, never logged), and stray root-selected
 events may arrive; nothing else is ever delivered.
 XGrabKey is portal-safe (probed; see the route_all memory). NEVER XTEST.
 
+Two-key chords (e.g. shift+1+t): the server cannot grab a two-KEY
+combination, so EACH member key is grabbed with keyboard_mode=
+GrabModeSync. The activating KeyPress freezes keyboard event processing
+until this client answers with AllowEvents: partner key physically held
+(query_keymap) -> AsyncKeyboard (consume + fire; the grab continues
+async until release), partner up -> ReplayKeyboard (the event replays
+to the focused window as if never grabbed - shift+t alone still types
+into the game). See _handle_event's freeze-safety invariant.
+
 Structure mirrors utils/x11_movement_grabber.py (the proven in-repo
 pattern): own Display, a command queue drained by the event thread, a
 select() loop on the display fd with a wakeup pipe, and a defensive
@@ -61,29 +70,42 @@ _USER_MOD_MASK = ((X.ShiftMask | X.ControlMask | X.Mod1Mask | X.Mod4Mask)
 
 
 def _compile_bindings(display, bindings):
-    """{action_id: chord-string} -> ({(keycode, exact_user_mask): action_id},
-    {action_id: reason}). Unresolvable entries land in failures, never raise."""
+    """{action_id: chord-string} ->
+    ({(keycode, exact_user_mask): (action_id, partner_keycode_or_None)},
+    {action_id: reason}). Unresolvable entries land in failures, never raise.
+
+    A single-key chord contributes ONE entry with partner None. A two-key
+    chord contributes TWO entries, one per member key (resolved in sorted
+    order: frozenset iteration order is unstable), each carrying the OTHER
+    member's keycode as its partner. Any (keycode, mask) collision - across
+    actions or between a pair's own members - fails the WHOLE action before
+    anything is inserted, so a chord can never be half-compiled."""
     table, failures = {}, {}
     for action_id, chord_text in bindings.items():
         try:
             chord = parse_chord(chord_text)
-            if len(chord.keys) > 1:
-                # Deliberate deferral: passive per-chord grabs cannot express
-                # a two-key hold; the sync-grab task arms these. Until then a
-                # multi-key binding is a legible failure (surfaced verbatim
-                # in the Settings badge), never a bad grab.
-                raise ValueError("two-key chords not supported yet")
-            keysym = XK.string_to_keysym(chord.key)
-            if keysym == 0:
-                raise ValueError(f"unknown keysym {chord.key!r}")
-            keycode = display.keysym_to_keycode(keysym)
-            if not keycode:
-                raise ValueError(f"no keycode for {chord.key!r}")
-            key = (int(keycode), x_modmask(chord))
-            if key in table:
-                failures[action_id] = f"duplicate of {table[key]}"
+            keycodes = []
+            for key_name in sorted(chord.keys):
+                keysym = XK.string_to_keysym(key_name)
+                if keysym == 0:
+                    raise ValueError(f"unknown keysym {key_name!r}")
+                keycode = display.keysym_to_keycode(keysym)
+                if not keycode:
+                    raise ValueError(f"no keycode for {key_name!r}")
+                keycodes.append(int(keycode))
+            mask = x_modmask(chord)
+            if len(keycodes) == 1:
+                entries = {(keycodes[0], mask): None}
+            else:
+                kc_a, kc_b = keycodes
+                entries = {(kc_a, mask): kc_b, (kc_b, mask): kc_a}
+            dup = next((key for key in entries if key in table), None)
+            if dup is not None or len(entries) < len(keycodes):
+                owner = table[dup][0] if dup is not None else action_id
+                failures[action_id] = f"duplicate of {owner}"
                 continue
-            table[key] = action_id
+            for key, partner in entries.items():
+                table[key] = (action_id, partner)
         except Exception as e:                        # noqa: BLE001
             failures[action_id] = str(e)
     return table, failures
@@ -107,8 +129,9 @@ class X11GlobalHotkeys(GlobalHotkeyProvider):
         self._repeat_ok = repeat_ok_ids
         self._display = None
         self._root = None
-        self._table = {}          # (keycode, user_mask) -> action_id
-        self._grabbed = {}        # same keys, marks server-side grabs
+        self._table = {}          # (keycode, user_mask) -> (action_id, partner_kc|None)
+        self._grabbed = {}        # same keys -> action_id, marks server-side grabs
+        self._grab_sync = set()   # keys grabbed keyboard_mode=GrabModeSync (pair members)
         self._down = set()        # (keycode, user_mask) logically held
         self._failures = {}       # action_id -> reason (for the settings UI)
         self._cmd = queue.Queue()
@@ -226,30 +249,57 @@ class X11GlobalHotkeys(GlobalHotkeyProvider):
             line += f"; unavailable: {sorted(self._failures)}"
         print(line)
 
+    def _release_grab(self, key) -> None:
+        """Ungrab every lock-combo variant of *key* and drop all local state
+        for it. Safe on keys that were never grabbed."""
+        keycode, mask = key
+        for lock in _LOCK_COMBOS:
+            try:
+                self._root.ungrab_key(keycode, mask | lock)
+            except Exception:
+                pass
+        self._grabbed.pop(key, None)
+        self._grab_sync.discard(key)
+        self._down.discard(key)
+
     def _apply_compiled(self, compiled: dict) -> None:
         """Diff grabs: ungrab removed chords, grab added ones. Per-chord
         BadAccess (another client owns it) is recorded in _failures and
-        never tanks the rest."""
+        never tanks the rest.
+
+        compiled: {(keycode, user_mask): (action_id, partner_keycode|None)}.
+        Pair members (partner not None) grab with keyboard_mode=GrabModeSync:
+        the server FREEZES keyboard event processing on the activating
+        KeyPress until _handle_event answers with AllowEvents, which is what
+        lets the handler decide fire-vs-replay from the partner key's
+        physical state. Singles stay GrabModeAsync (today's behavior). A key
+        whose REQUIRED MODE changed since the last apply is ungrabbed and
+        re-grabbed: a pair member left on a stale async grab would silently
+        EAT the key on the partner-up path (async grabs consume; only a
+        sync freeze can be replayed)."""
         for key in list(self._grabbed):
-            if key not in compiled:
-                keycode, mask = key
-                for lock in _LOCK_COMBOS:
-                    try:
-                        self._root.ungrab_key(keycode, mask | lock)
-                    except Exception:
-                        pass
-                del self._grabbed[key]
-                self._down.discard(key)
-        for key, action_id in compiled.items():
+            entry = compiled.get(key)
+            needs_sync = entry is not None and entry[1] is not None
+            if entry is None or (key in self._grab_sync) != needs_sync:
+                self._release_grab(key)
+        for key, (action_id, partner) in compiled.items():
+            if action_id in self._failures:
+                # A pair whose OTHER member already failed this apply: never
+                # half-arm - release this member too if an earlier apply (or
+                # this one) had grabbed it, and record the failure only once.
+                self._release_grab(key)
+                continue
             if key in self._grabbed:
+                self._grabbed[key] = action_id   # keep the stamp's action current
                 continue
             keycode, mask = key
+            kbd_mode = X.GrabModeSync if partner is not None else X.GrabModeAsync
             catch = xerror.CatchError()   # traps async errors for THESE requests only
             ok = True
             for lock in _LOCK_COMBOS:
                 try:
                     self._root.grab_key(keycode, mask | lock, True,
-                                        X.GrabModeAsync, X.GrabModeAsync,
+                                        X.GrabModeAsync, kbd_mode,
                                         onerror=catch)
                 except Exception:
                     ok = False
@@ -262,32 +312,84 @@ class X11GlobalHotkeys(GlobalHotkeyProvider):
                 ok = False
             if ok:
                 self._grabbed[key] = action_id
+                if partner is not None:
+                    self._grab_sync.add(key)
             else:
                 self._failures[action_id] = (
                     "in use by another application"
                     if err is None or isinstance(err, xerror.BadAccess)
                     else f"grab failed: {err.__class__.__name__}")
                 # All-or-nothing: release any lock-combo grabs that DID succeed
-                # so a half-armed chord can't silently consume keys.
-                for lock in _LOCK_COMBOS:
-                    try:
-                        self._root.ungrab_key(keycode, mask | lock)
-                    except Exception:
-                        pass
+                # so a half-armed chord can't silently consume keys...
+                self._release_grab(key)
+                # ...and for a PAIR, cascade to the other member (whether it
+                # was grabbed earlier in this loop or kept from a previous
+                # apply): one dead member must never leave a half-armed chord.
+                if partner is not None:
+                    partner_key = (partner, mask)
+                    if self._grabbed.get(partner_key) == action_id:
+                        self._release_grab(partner_key)
         self._table = dict(compiled)
 
+    def _allow_events(self, mode) -> None:
+        """AllowEvents(mode) + flush. NEVER raises. The sync() matters: xlib
+        BUFFERS requests, and an AllowEvents sitting in the output buffer
+        thaws nothing (the in-repo precedent, x11_movement_grabber, flushes
+        the same way). Per the X protocol, AllowEvents is a no-op when the
+        device is not frozen by this client, so over-calling is safe."""
+        try:
+            self._display.allow_events(mode, X.CurrentTime)
+            self._display.sync()
+        except Exception:
+            pass
+
     def _handle_event(self, event) -> None:
+        """FREEZE-SAFETY INVARIANT: every KeyPress that MAY be sync-frozen
+        (any pair-member grab is keyboard_mode=GrabModeSync) must reach an
+        AllowEvents on every path, or the user's keyboard freezes
+        SYSTEM-WIDE until this client dies. Hence: nothing that can raise
+        sits between event receipt and the thaw; the partner check runs
+        inside try/finally with fail-safe ReplayKeyboard; and unmatched or
+        partner-less presses thaw defensively (a rebind can remove/retype a
+        grab while its frozen KeyPress is already in flight - UngrabKey does
+        not thaw an ACTIVE grab's freeze). AllowEvents is a no-op when
+        nothing is frozen, so the defensive calls cost one round-trip and
+        change nothing on the normal async paths."""
         try:
             if event.type not in (X.KeyPress, X.KeyRelease):
                 return
             key = (int(event.detail), int(event.state) & _USER_MOD_MASK)
-            action_id = self._table.get(key)
-            if action_id is None:
+            entry = self._table.get(key)
+            if entry is None:
+                if event.type == X.KeyPress:
+                    # Rebind-race thaw: grab gone, act as if never grabbed.
+                    self._allow_events(X.ReplayKeyboard)
                 return
+            action_id, partner = entry
             if event.type == X.KeyRelease:
+                # No AllowEvents on releases, ever: after AsyncKeyboard the
+                # activated grab continues ASYNC (the terminating release
+                # arrives unfrozen); after ReplayKeyboard the grab was
+                # released (the release goes to the focus window, not here).
+                # Neither path can deliver a frozen release.
                 if not self._key_physically_down(int(event.detail)):
                     self._down.discard(key)       # real release, not auto-repeat
                 return
+            if partner is not None:
+                # Sync-frozen pair-member press: decide fire-vs-replay from
+                # the PARTNER key's physical state, then thaw NO MATTER WHAT.
+                mode = X.ReplayKeyboard           # fail-safe default: never eat
+                try:
+                    if self._key_physically_down(partner):
+                        mode = X.AsyncKeyboard    # both held: consume + fire
+                finally:
+                    self._allow_events(mode)      # cannot raise
+                if mode != X.AsyncKeyboard:
+                    return                        # replayed to the focused window
+            else:
+                # Matched single on an async grab: no-op thaw (covers the
+                # pair->single rebind race, where this press was frozen).
+                self._allow_events(X.AsyncKeyboard)
             if action_id not in self._repeat_ok:
                 if key in self._down:
                     return                        # auto-repeat press: fire once
@@ -324,13 +426,25 @@ class X11GlobalHotkeys(GlobalHotkeyProvider):
 
 
 def make_event_lookup(display_like, settings_manager):
-    """Build lookup(keycode, state) -> action_id from the CURRENT effective
-    bindings, resolving keycodes via *display_like* (any object with
-    keysym_to_keycode). The caller rebuilds it on settings change."""
+    """Build lookup(keycode, state, is_down) -> action_id|None from the
+    CURRENT effective bindings, resolving keycodes via *display_like* (any
+    object with keysym_to_keycode). is_down(keycode)->bool is supplied by
+    the caller (route_all's query_keymap physical check): a pair member
+    matches only while its PARTNER key is physically held; otherwise the
+    press returns None and falls through to normal routing. No replay
+    semantics are needed there - route_all's XGrabKeyboard is an active
+    async grab that swallows everything, and delivery is the pynput feed's
+    job. The caller rebuilds the lookup on settings change."""
     from utils.hotkey_actions import effective_bindings
     table, _failures = _compile_bindings(
         display_like, effective_bindings(settings_manager))
 
-    def lookup(keycode, state):
-        return table.get((int(keycode), int(state) & _USER_MOD_MASK))
+    def lookup(keycode, state, is_down):
+        entry = table.get((int(keycode), int(state) & _USER_MOD_MASK))
+        if entry is None:
+            return None
+        action_id, partner = entry
+        if partner is not None and not is_down(partner):
+            return None
+        return action_id
     return lookup

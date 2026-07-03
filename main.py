@@ -633,17 +633,19 @@ class MultiToonTool(QMainWindow):
                 from services.global_hotkeys import make_event_lookup
                 # The lookup builds lazily ON the grabber's event thread from
                 # the grabber's OWN display (correct X connection discipline)
-                # and is invalidated on any bindings change.
+                # and is invalidated on any bindings change. is_down is the
+                # grabber's physical-state check, passed through so two-key
+                # chord members match only while their partner key is held.
                 state = {"lookup": None}
 
-                def lookup(keycode, kstate):
+                def lookup(keycode, kstate, is_down):
                     if state["lookup"] is None:
                         display = getattr(grabber, "_display", None)
                         if display is None:
                             return None
                         state["lookup"] = make_event_lookup(
                             display, self.settings_manager)
-                    return state["lookup"](keycode, kstate)
+                    return state["lookup"](keycode, kstate, is_down)
 
                 self.settings_manager.on_change(
                     lambda key, _v: state.update(lookup=None)
