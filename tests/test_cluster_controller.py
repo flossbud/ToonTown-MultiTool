@@ -2611,6 +2611,30 @@ def test_persistent_surfaces_blank_while_empty(qapp, monkeypatch):
     assert ps.blank_calls[-1] is True
 
 
+def test_radial_unblank_only_after_reveal_staging(qapp, monkeypatch):
+    """The radial open lifts the empty-state blank only AFTER start_reveal has
+    staged the entrance's frame-0 state: set_content_blanked(False) force-paints
+    before its opacity write, so unblanking earlier flashes one frame of the
+    RESTING fully-open ring before the fly-out resets it (seen live
+    2026-07-02)."""
+    created_radial = _patch_radial(monkeypatch)
+    ctrl, provider, window, created = _make()
+    ctrl.enter()
+    rs = created_radial["surfaces"][0]
+    seen = []
+    orig = rs.set_content_blanked
+
+    def spy(blanked):
+        menus = created_radial["menus"]
+        seen.append((bool(blanked), menus[-1].reveals if menus else None))
+        orig(blanked)
+
+    monkeypatch.setattr(rs, "set_content_blanked", spy)
+    assert ctrl.open_radial_menu() is not None
+    # Exactly one unblank, and it observed the reveal already staged.
+    assert [reveals for blanked, reveals in seen if not blanked] == [1]
+
+
 def test_failed_panel_open_leaves_surface_blanked(qapp, monkeypatch):
     """A failed open rolls back to the EMPTY persistent state: the surface
     must end content-blanked (never a full-opacity empty window). The boom
