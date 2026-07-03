@@ -1601,11 +1601,21 @@ class SettingsTab(QWidget):
             for action in ACTIONS:
                 if action.category != category:
                     continue
-                field = SettingsField(f"{category} - {action.label}")
+                # Skip the prefix when the label already leads with the
+                # category name ("Launch account slot 1" under Launch):
+                # prefixing would double the word.
+                if action.label.lower().startswith(category.lower()):
+                    field_label = action.label
+                else:
+                    field_label = f"{category} - {action.label}"
+                field = SettingsField(field_label)
                 button = ChordCaptureButton(
                     self._hotkey_stored_chord(action.id),
                     lambda text, aid=action.id: self._on_hotkey_chord(aid, text),
+                    on_capture_end=self._refresh_hotkey_status,
                 )
+                button.setCursor(Qt.PointingHandCursor)
+                button.setFixedHeight(28)
                 field.set_control(button)
                 panel.add_field(field)
                 self._hotkey_rows[action.id] = button
@@ -1645,6 +1655,8 @@ class SettingsTab(QWidget):
         registry default) prompts steal-or-cancel; stealing clears the other
         action's binding explicitly (None) so the default cannot re-arm it."""
         from utils.hotkey_actions import ACTIONS, action_by_id
+        from utils.hotkey_capture import display_chord
+        from utils.hotkey_chords import format_chord, parse_chord
         from utils.settings_keys import HOTKEY_BINDINGS
         raw = self.settings_manager.get(HOTKEY_BINDINGS, {}) or {}
         stored = dict(raw) if isinstance(raw, dict) else {}
@@ -1655,13 +1667,20 @@ class SettingsTab(QWidget):
                     continue
                 current = (stored[action.id] if action.id in stored
                            else action.default_chord)
+                if current is not None:
+                    # Canonicalize before comparing: a hand-edited store can
+                    # hold "alt+ctrl+H" for the same chord as "ctrl+alt+h".
+                    try:
+                        current = format_chord(parse_chord(current))
+                    except ValueError:
+                        pass                     # garbage: compare raw
                 if current == chord_text:
                     holder = action.id
                     break
             if holder is not None:
                 answer = QMessageBox.question(
                     self, "Hotkey in use",
-                    f"'{chord_text}' is already bound to "
+                    f"'{display_chord(chord_text)}' is already bound to "
                     f"{action_by_id(holder).label}. Move it here?")
                 if answer != QMessageBox.Yes:
                     self._hotkey_rows[action_id].set_chord(
@@ -1714,8 +1733,10 @@ class SettingsTab(QWidget):
 
     def set_hotkey_status(self, failures: dict) -> None:
         """Push the provider's failure map. Rows mid-capture are left alone
-        (the prompt text must not be clobbered); _refresh_hotkey_status
-        re-applies afterwards."""
+        (the prompt text must not be clobbered); the status re-applies when
+        the capture ends: cancelled captures fire the button's
+        on_capture_end (_refresh_hotkey_status), successful ones write
+        settings, which triggers main's delayed status push."""
         self._hotkey_status = dict(failures or {})
         self._refresh_hotkey_status()
 
@@ -1727,6 +1748,15 @@ class SettingsTab(QWidget):
             reason = self._hotkey_status.get(action_id)
             if reason:
                 btn.setText(btn.text() + " - " + reason)
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        # Accounts can be added or renamed while Settings is hidden, so the
+        # launch-slot pickers repopulate on every show. Safe and cheap: the
+        # rebuild is signal-blocked and preselect-preserving, and
+        # get_accounts_basic never touches the keyring.
+        if getattr(self, "_hotkey_accounts_provider", None) is not None:
+            self._rebuild_hotkey_slot_rows()
 
     def _build_chat_handling_card(self, page):
         from utils.settings_keys import (

@@ -118,3 +118,22 @@ def test_space_and_return_do_not_bind(qapp):
     assert seen == [] and b.is_capturing()
     _key(b, Qt.Key_Return, Qt.ControlModifier, "\r")
     assert seen == [] and b.is_capturing()
+
+
+def test_on_capture_end_fires_on_cancel_paths_only(qapp):
+    # Cancelled captures (Esc, focus-out) must notify the owner so it can
+    # restore decorations the prompt replaced (Settings failure badges).
+    # A SUCCESSFUL capture must not: it writes settings, which already
+    # triggers the owner's delayed status push.
+    ended = []
+    b = ChordCaptureButton("F5", on_chord=lambda *_: None,
+                           on_capture_end=lambda: ended.append("end"))
+    b.begin_capture()
+    _key(b, Qt.Key_Escape)
+    assert ended == ["end"]
+    b.begin_capture()
+    b.focusOutEvent(QFocusEvent(QEvent.FocusOut))
+    assert ended == ["end", "end"]
+    b.begin_capture()
+    _key(b, Qt.Key_H, Qt.ControlModifier | Qt.AltModifier, "h")
+    assert ended == ["end", "end"]           # success path: no callback

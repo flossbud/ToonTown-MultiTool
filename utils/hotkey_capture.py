@@ -63,10 +63,17 @@ def _key_name(event) -> str | None:
 class ChordCaptureButton(QPushButton):
     """One binding row's press-to-record control."""
 
-    def __init__(self, chord_text: str | None, on_chord, parent=None):
+    def __init__(self, chord_text: str | None, on_chord, parent=None,
+                 *, on_capture_end=None):
         super().__init__(_display(chord_text), parent)
         self._chord_text = chord_text
         self._on_chord = on_chord
+        # Fired when a capture ends WITHOUT a chord (Esc / focus-out), so
+        # the owner can restore decorations the capture prompt replaced
+        # (e.g. the Settings card's failure badges). Deliberately NOT fired
+        # on the success path: a successful capture writes settings, which
+        # already triggers the owner's delayed status push.
+        self._on_capture_end = on_capture_end
         self._capturing = False
         self.clicked.connect(self.begin_capture)
 
@@ -99,6 +106,8 @@ class ChordCaptureButton(QPushButton):
         if self._capturing:
             self._end_capture()
             self.set_chord(self._chord_text)
+            if self._on_capture_end is not None:
+                self._on_capture_end()
         super().focusOutEvent(event)
 
     def keyPressEvent(self, event) -> None:
@@ -108,6 +117,8 @@ class ChordCaptureButton(QPushButton):
         if key == Qt.Key_Escape:
             self._end_capture()
             self.set_chord(self._chord_text)     # unchanged
+            if self._on_capture_end is not None:
+                self._on_capture_end()
             return
         if key == Qt.Key_Backspace:
             self._end_capture()
@@ -132,3 +143,8 @@ class ChordCaptureButton(QPushButton):
         self._end_capture()
         self.set_chord(text)
         self._on_chord(text)
+
+
+# Public alias: the Settings Hotkeys card renders chords in user-facing
+# prose (the steal prompt) with the same display form the button uses.
+display_chord = _display

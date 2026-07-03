@@ -111,6 +111,36 @@ def test_launch_slot_picker_persists_account(settings_tab):
     assert settings_tab.settings_manager.get(HOTKEY_LAUNCH_SLOTS)["2"] == "acct-2"
 
 
+def test_conflict_detects_noncanonical_stored_chord(settings_tab, monkeypatch):
+    # A hand-edited store can hold "alt+ctrl+H" for the same chord as
+    # "ctrl+alt+h"; the holder scan must canonicalize before comparing.
+    from utils.settings_keys import HOTKEY_BINDINGS
+    from PySide6.QtWidgets import QMessageBox
+    tab = settings_tab
+    tab.settings_manager.set(HOTKEY_BINDINGS, {"app.refresh": "alt+ctrl+H"})
+    monkeypatch.setattr(QMessageBox, "question",
+                        staticmethod(lambda *a, **k: QMessageBox.Yes))
+    tab._on_hotkey_chord("overlay.toggle_cards", "ctrl+alt+h")
+    stored = tab.settings_manager.get(HOTKEY_BINDINGS)
+    assert stored["overlay.toggle_cards"] == "ctrl+alt+h"
+    assert stored["app.refresh"] is None
+    assert tab._hotkey_rows["app.refresh"].text() == "Not set"
+
+
+def test_slot_pickers_refresh_on_show(settings_tab):
+    from PySide6.QtGui import QShowEvent
+    tab = settings_tab
+    accounts = [("acct-1", "ttr", "Duke")]
+    tab.set_hotkey_accounts_provider(lambda: accounts)
+    combo = tab._hotkey_slot_combos["1"]
+    assert combo.count() == 2                     # (none) + Duke
+    # an account added AFTER the provider was wired appears on next show
+    accounts.append(("acct-2", "cc", "Mata"))
+    tab.showEvent(QShowEvent())
+    items = [combo.itemText(i) for i in range(combo.count())]
+    assert "Mata (CC)" in items
+
+
 def test_hotkey_status_badges_failures_and_respects_capture(settings_tab):
     tab = settings_tab
     tab.set_hotkey_status({"app.refresh": "in use by another application"})
@@ -123,11 +153,11 @@ def test_hotkey_status_badges_failures_and_respects_capture(settings_tab):
     btn.begin_capture()
     tab.set_hotkey_status({"app.refresh": "in use by another application"})
     assert "Press a chord" in btn.text()
-    # simulate capture end via Esc; the pending status re-applies
+    # cancelling the capture via Esc re-applies the pending status by
+    # itself (the button's on_capture_end hook) - no manual refresh
     from PySide6.QtCore import Qt
     from PySide6.QtGui import QKeyEvent
     btn.keyPressEvent(QKeyEvent(QKeyEvent.KeyPress, Qt.Key_Escape, Qt.NoModifier))
-    tab._refresh_hotkey_status()
     assert "in use" in btn.text()
 
 
