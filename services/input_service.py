@@ -392,7 +392,7 @@ class InputService(QObject):
         # targets stuck at UNKNOWN, so the blocked-movement modal would never fire
         # for an elevated background game (the feature's primary case).
         self._refresh_uipi_capabilities()
-        # TTR strict separation is supported on Linux/X11 and Windows; macOS and
+        # TTR strict separation is supported on Linux/X11, Windows, and macOS;
         # other platforms keep pre-feature behavior (_ttr_strict_supported).
         if game == "ttr" and not (
             self._strict_ttr_enabled()
@@ -436,8 +436,9 @@ class InputService(QObject):
         # (CC has its own always-on routing and must not flip the TTR gate).
         self._intended_ttr_strict = (game == "ttr")
         if game == "ttr":
-            # Linux (X11 passive grab) and Windows (Win32 LL hook), gated above:
-            # route both keysets, suppress native delivery.
+            # Linux (X11 passive grab), Windows (Win32 LL hook), and macOS
+            # (darwin_intercept filter), gated above: route both keysets,
+            # suppress native delivery.
             if self.global_chat_active or self._phantom_active:
                 # Input capture (chat/whisper) is active: keep grabs OFF so
                 # keystrokes land natively in the focused TTR window. Intent
@@ -960,8 +961,8 @@ class InputService(QObject):
         existence. When grabs are not installed, strict separation degrades to
         today's unconditional focused-window skip.
 
-        Supported on Linux/X11 and Windows (`_ttr_strict_supported`); other
-        platforms keep pre-feature behavior. Also requires a usable delivery
+        Supported on Linux/X11, Windows, and macOS (`_ttr_strict_supported`);
+        other platforms keep pre-feature behavior. Also requires a usable delivery
         backend (`_delivery_backend_ready`) so suppression never outlives the
         ability to re-synthesize (which would freeze the focused toon). The
         `_key_grabber is not None` check is a safety net against a stale flag

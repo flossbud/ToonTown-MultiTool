@@ -71,6 +71,7 @@ class MacOSMovementKeyGrabber:
         canonical_set: str,
         passthrough_keysyms: Optional[list[str]] = None,
         route_all: bool = False,
+        route_keys=None,
     ) -> None:
         """route_all=True (TTR strict): grab BOTH keysets so every focused-window
         movement key is suppressed and the router re-synthesizes the correct
@@ -78,7 +79,12 @@ class MacOSMovementKeyGrabber:
         keyset. passthrough_keysyms is accepted for parity but ignored (the
         non-exclusive darwin_intercept filter needs no passthrough list). Fires
         on_grabs_changed(canonical_set) synchronously after updating the grab
-        set, or on_grabs_changed(None) if the resulting grab set is empty."""
+        set, or on_grabs_changed(None) if the resulting grab set is empty.
+
+        route_keys is accepted for signature parity with the Win32 grabber
+        and ignored for now: darwin still suppresses only the preset movement
+        keysets; honoring the full keymap union here is a recorded
+        follow-up."""
         keys = _both_keysets() if route_all else _opposite_keys(canonical_set)
         self._grabbed_keysyms = frozenset(keys) if keys else None
         # Report the focused canonical only when a real grab set is installed, so

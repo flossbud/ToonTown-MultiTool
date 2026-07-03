@@ -188,6 +188,41 @@ class TestRouteAll:
         assert g.should_suppress("w") is False
 
 
+class TestRouteKeysParity:
+    def test_route_keys_kwarg_accepted_and_ignored(self, monkeypatch):
+        # InputService passes route_keys= unconditionally when installing TTR
+        # strict grabs, so install_grabs must accept the kwarg (signature
+        # parity with the Win32/X11 grabbers) and behave exactly as if it were
+        # omitted -- honoring the keymap union on darwin is a recorded
+        # follow-up.
+        monkeypatch.setattr(sys, "platform", "darwin")
+        with_kwarg = mmg.MacOSMovementKeyGrabber()
+        with_kwarg.prepare(_always_consume)
+        with_kwarg.install_grabs(
+            "wasd", passthrough_keysyms=["space"], route_all=True,
+            route_keys={"w", "Alt_R"})
+        without_kwarg = mmg.MacOSMovementKeyGrabber()
+        without_kwarg.prepare(_always_consume)
+        without_kwarg.install_grabs(
+            "wasd", passthrough_keysyms=["space"], route_all=True)
+        for k in ("w", "a", "s", "d", "Up", "Down", "Left", "Right",
+                  "Alt_R", "space"):
+            assert with_kwarg.should_suppress(k) == \
+                without_kwarg.should_suppress(k), k
+        # Ignored means keys outside the preset keysets stay unsuppressed even
+        # when named in route_keys.
+        assert with_kwarg.should_suppress("Alt_R") is False
+
+    def test_route_keys_ignored_on_legacy_cc_path(self, monkeypatch):
+        monkeypatch.setattr(sys, "platform", "darwin")
+        g = mmg.MacOSMovementKeyGrabber()
+        g.prepare(_always_consume)
+        g.install_grabs("wasd", route_keys={"w", "Alt_R"})
+        assert g.should_suppress("Up") is True
+        assert g.should_suppress("w") is False
+        assert g.should_suppress("Alt_R") is False
+
+
 class TestOnGrabsChanged:
     def test_install_route_all_notifies_canonical(self, monkeypatch):
         monkeypatch.setattr(sys, "platform", "darwin")
