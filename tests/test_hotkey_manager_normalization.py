@@ -56,6 +56,28 @@ def test_normalize_f1_through_f12():
         )
 
 
+def test_normalize_modifier_sides():
+    """Left/right modifier events must normalize to side-specific canonicals,
+    or a keymap bound to one side matches the wrong side (or nothing)."""
+    hm = _make_hotkey_manager()
+    assert hm.normalize_key(_named_key("alt_l")) == "Alt_L"
+    assert hm.normalize_key(_named_key("alt_r")) == "Alt_R"
+    assert hm.normalize_key(_named_key("ctrl_l")) == "Control_L"
+    assert hm.normalize_key(_named_key("ctrl_r")) == "Control_R"
+    assert hm.normalize_key(_named_key("shift_l")) == "Shift_L"
+    assert hm.normalize_key(_named_key("shift_r")) == "Shift_R"
+
+
+def test_normalize_alt_gr_is_right_alt():
+    # pynput's win32 backend resolves VK_RMENU (0xA5) to Key.alt_gr, not
+    # Key.alt_r: both enum members share the vk and alt_gr is defined later,
+    # so it wins the vk->Key dict. Every physical right-alt press on Windows
+    # therefore arrives named "alt_gr"; without this mapping the press is
+    # dropped before the event queue and Alt_R keymap bindings can never fire.
+    hm = _make_hotkey_manager()
+    assert hm.normalize_key(_named_key("alt_gr")) == "Alt_R"
+
+
 def test_win32_vk_fallback_maps_letters_and_digits(monkeypatch):
     # win32: Ctrl/Alt+letter suppresses the WM char translation so pynput
     # reports char=None; the VK code (ASCII for 0-9/A-Z) is all that's left.

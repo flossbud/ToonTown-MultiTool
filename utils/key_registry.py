@@ -45,7 +45,12 @@ NAMED_KEY_REGISTRY: tuple[KeyDef, ...] = (
     KeyDef("Control_L", "L Ctrl",  ("Control_L",), pynput_names=("ctrl_l", "ctrl"),     category="modifier"),
     KeyDef("Control_R", "R Ctrl",  ("Control_R",), pynput_names=("ctrl_r",),            category="modifier"),
     KeyDef("Alt_L",     "L Alt",   ("Alt_L",),     pynput_names=("alt_l", "alt"),       category="modifier"),
-    KeyDef("Alt_R",     "R Alt",   ("Alt_R",),     pynput_names=("alt_r",),             category="modifier"),
+    # "alt_gr": pynput's win32 backend resolves VK_RMENU to Key.alt_gr (it
+    # shares the vk with Key.alt_r and, defined later, wins the vk->Key dict),
+    # so every physical right-alt press on Windows arrives named "alt_gr".
+    # On X11 layouts where right alt is AltGr (ISO_Level3_Shift) pynput also
+    # reports "alt_gr" -- same physical key, same canonical.
+    KeyDef("Alt_R",     "R Alt",   ("Alt_R",),     pynput_names=("alt_r", "alt_gr"),    category="modifier"),
 
     # ── Control keys ───────────────────────────────────────────────────────
 
