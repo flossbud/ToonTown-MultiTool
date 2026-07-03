@@ -101,3 +101,17 @@ def test_make_hotkey_hook_duplicate_chord_first_wins():
     s = _FakeSettings({HOTKEY_BINDINGS: {"overlay.toggle_cards": "F5"}})
     hook = make_hotkey_hook(s)
     assert hook(frozenset(), "F5") == "overlay.toggle_cards"
+
+
+def test_make_hotkey_hook_multikey_binding_never_matches_single_key():
+    from utils.hotkey_actions import make_hotkey_hook
+
+    # A multi-key chord is keyed by its full keys-set; the single-key lookup
+    # can never match it (multi-key matching is the X provider's job until
+    # the hook's callers grow held-set support).
+    s = _FakeSettings({HOTKEY_BINDINGS: {"overlay.toggle_cards": "ctrl+h+t"}})
+    hook = make_hotkey_hook(s)
+    assert hook(frozenset({"ctrl"}), "h") is None
+    assert hook(frozenset({"ctrl"}), "t") is None
+    # single-key bindings still resolve
+    assert hook(frozenset(), "F5") == "app.refresh"

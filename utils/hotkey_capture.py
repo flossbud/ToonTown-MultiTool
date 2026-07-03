@@ -1,9 +1,15 @@
 """Press-to-record chord button for the Settings Hotkeys card.
 
 Click -> capture mode (Qt keyboard grab so the chord cannot leak into the
-app or fire other widgets' shortcuts). Esc cancels, Backspace clears the
-binding (on_chord(None)), a guardrail-violating chord shows the refusal
-inline and keeps capturing. on_chord receives the canonical chord string.
+app or fire other widgets' shortcuts). The chord COMMITS on the first key
+RELEASE: it is the maximum simultaneously-held set of keys (up to TWO
+non-modifier keys, a third is refused inline) plus the modifiers held at
+the last key press, so 'shift held + t held + 1 pressed' records
+'shift+1+t' in either press order. While keys are held the button shows
+the would-be chord live with a trailing '...'. Esc cancels, Backspace
+clears the binding (on_chord(None)), a guardrail-violating chord shows
+the refusal inline and keeps capturing. on_chord receives the canonical
+chord string.
 """
 from __future__ import annotations
 
@@ -28,7 +34,8 @@ _PUNCT_KEYSYMS = {
 
 
 def _display(chord_text: str | None) -> str:
-    """Human form of a canonical chord: 'ctrl+alt+h' -> 'Ctrl+Alt+H'."""
+    """Human form of a canonical chord, per part: 'ctrl+alt+h' ->
+    'Ctrl+Alt+H', 'shift+1+t' -> 'Shift+1+T'."""
     if not chord_text:
         return "Not set"
     parts = []
@@ -75,6 +82,9 @@ class ChordCaptureButton(QPushButton):
         # already triggers the owner's delayed status push.
         self._on_capture_end = on_capture_end
         self._capturing = False
+        self._held: list = []        # canonical key names physically held
+        self._max_set: set = set()   # largest simultaneous held set observed
+        self._mods_at_last_press: frozenset = frozenset()
         self.clicked.connect(self.begin_capture)
 
     def is_capturing(self) -> bool:
@@ -88,6 +98,7 @@ class ChordCaptureButton(QPushButton):
         if self._capturing:
             return
         self._capturing = True
+        self._reset_held()
         # Take focus BEFORE grabbing: if another row is mid-capture, its
         # focusOutEvent cancels (and releases its grab) right now, so our
         # grab below is never stomped by that release.
@@ -97,7 +108,13 @@ class ChordCaptureButton(QPushButton):
 
     def _end_capture(self) -> None:
         self._capturing = False
+        self._reset_held()
         self.releaseKeyboard()
+
+    def _reset_held(self) -> None:
+        self._held = []
+        self._max_set = set()
+        self._mods_at_last_press = frozenset()
 
     def focusOutEvent(self, event) -> None:
         # Losing focus while capturing = the user moved on (clicked another
@@ -113,6 +130,8 @@ class ChordCaptureButton(QPushButton):
     def keyPressEvent(self, event) -> None:
         if not self._capturing:
             return super().keyPressEvent(event)
+        if event.isAutoRepeat():
+            return                               # held key echo: not a press
         key = event.key()
         if key == Qt.Key_Escape:
             self._end_capture()
@@ -126,19 +145,41 @@ class ChordCaptureButton(QPushButton):
             self._on_chord(None)
             return
         if key in _MOD_KEYS:
-            return                               # wait for the terminal key
+            return                               # wait for a terminal key
         name = _key_name(event)
         if name is None:
             self.setText("Refused: unsupported key - use letters, digits, "
                          "F-keys, or common punctuation")
-            return                               # keep capturing
-        mods = frozenset(m for qt_m, m in _QT_MODS
-                         if event.modifiers() & qt_m)
-        chord = Chord(mods=mods, key=name)
+            return                               # keep capturing, held intact
+        if name not in self._held:
+            if len(self._held) >= 2:
+                self.setText("Refused: chords support at most two keys")
+                return                           # third key never joins
+            self._held.append(name)
+        self._max_set.update(self._held)
+        self._mods_at_last_press = frozenset(
+            m for qt_m, m in _QT_MODS if event.modifiers() & qt_m)
+        would_be = Chord(mods=self._mods_at_last_press,
+                         keys=frozenset(self._max_set))
+        self.setText(_display(format_chord(would_be)) + "...")
+
+    def keyReleaseEvent(self, event) -> None:
+        if not self._capturing:
+            return super().keyReleaseEvent(event)
+        if event.isAutoRepeat():
+            return                               # held key echo: not a release
+        name = _key_name(event)
+        if name is None or name not in self._held:
+            return                               # modifier/stale/unbound key
+        # First release of a captured key: commit the maximum held set.
+        self._held.remove(name)
+        chord = Chord(mods=self._mods_at_last_press,
+                      keys=frozenset(self._max_set))
         err = chord_error(chord)
         if err is not None:
             self.setText(f"Refused: {err}")
-            return                               # keep capturing
+            self._reset_held()
+            return                               # keep capturing, retry OK
         text = format_chord(chord)
         self._end_capture()
         self.set_chord(text)

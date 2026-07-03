@@ -67,6 +67,11 @@ def _compile_bindings(display, bindings):
     for action_id, chord_text in bindings.items():
         try:
             chord = parse_chord(chord_text)
+            if len(chord.keys) > 1:
+                # Deliberate deferral: passive per-chord grabs cannot express
+                # a two-key hold; the sync-grab task arms these. Until then a
+                # multi-key binding is a legible failure, never a bad grab.
+                raise ValueError("multi-key chords not yet armed (Task 11)")
             keysym = XK.string_to_keysym(chord.key)
             if keysym == 0:
                 raise ValueError(f"unknown keysym {chord.key!r}")

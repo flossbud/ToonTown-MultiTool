@@ -89,7 +89,12 @@ def effective_bindings(settings_manager) -> dict[str, str]:
 def make_hotkey_hook(settings_manager):
     """(mods: frozenset, key: str) -> action_id|None against the CURRENT
     effective bindings. Rebuilds its table on HOTKEY_BINDINGS changes via
-    the manager's on_change (cheap: the table is a small dict)."""
+    the manager's on_change (cheap: the table is a small dict).
+
+    The table is keyed by the chord's full keys-frozenset; the lookup wraps
+    its single incoming key, so a MULTI-KEY binding can never match here.
+    Multi-key chords are matched only by the X provider, until this hook's
+    callers grow held-set support (the sync-grab arming task)."""
     table = {}
 
     def _rebuild(*_a):
@@ -98,10 +103,10 @@ def make_hotkey_hook(settings_manager):
             c = parse_chord(chord_text)
             # First-wins on duplicate chords (effective_bindings iterates in
             # ACTIONS order), mirroring the X11 provider's _compile_bindings.
-            table.setdefault((c.mods, c.key), action_id)
+            table.setdefault((c.mods, c.keys), action_id)
 
     _rebuild()
     on_change = getattr(settings_manager, "on_change", None)
     if on_change is not None:
         on_change(lambda key, _v: _rebuild() if key == HOTKEY_BINDINGS else None)
-    return lambda mods, key: table.get((frozenset(mods), key))
+    return lambda mods, key: table.get((frozenset(mods), frozenset({key})))

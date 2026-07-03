@@ -68,6 +68,15 @@ def test_compile_reports_unresolvable_keysym():
     assert table == {} and "x.y" in failures
 
 
+def test_compile_defers_multikey_chords_to_failures():
+    # Passive per-chord grabs cannot express a two-key hold; a multi-key
+    # binding must land in failures with a legible reason and never grab.
+    d = _fake_display()
+    table, failures = _compile_bindings(d, {"a.b": "ctrl+1+h"})
+    assert table == {}
+    assert failures["a.b"] == "multi-key chords not yet armed (Task 11)"
+
+
 def _bare_provider():
     prov = X11GlobalHotkeys.__new__(X11GlobalHotkeys)   # no real X connect
     prov._display, prov._root = _fake_display(), _FakeRoot()
