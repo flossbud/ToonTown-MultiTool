@@ -1652,6 +1652,10 @@ def _patch_radial(monkeypatch):
         def deleteLater(self):
             self.deleted += 1
 
+        def set_content_blanked(self, blanked):
+            self.blank_calls = getattr(self, "blank_calls", [])
+            self.blank_calls.append(bool(blanked))
+
     class _StubRadialMenu(QWidget):
         closing = Signal()         # fly-back begun -> internal dim collapse (parity)
         close_requested = Signal()  # fly-back done -> teardown (parity)
@@ -2553,6 +2557,10 @@ def _patch_panel(monkeypatch):
         def deleteLater(self):
             self.deleted += 1
 
+        def set_content_blanked(self, blanked):
+            self.blank_calls = getattr(self, "blank_calls", [])
+            self.blank_calls.append(bool(blanked))
+
     monkeypatch.setattr("utils.overlay.cluster_surface.PanelSurface",
                         _StubPanelSurface)
     return created
@@ -2570,6 +2578,56 @@ def test_open_panel_surface_noop_when_inactive(qapp, monkeypatch):
 
     assert ctrl.open_panel_surface(QWidget()) is None
     assert created_panel["surfaces"] == []
+
+
+def test_persistent_surfaces_blank_while_empty(qapp, monkeypatch):
+    """The persistent radial/panel top-levels are content-blanked (opacity 0)
+    from creation, unblanked only while hosting content, and re-blanked at
+    close. A closed mapped window keeps moving/resizing (anchor + emblem*6
+    scale tracking), and its buffer-less fresh bands composite as opaque black
+    whenever a scale burst delays the paint flush (the live J-shaped black
+    rectangle) - blanked, that state is invisible by construction."""
+    created_radial = _patch_radial(monkeypatch)
+    created_panel = _patch_panel(monkeypatch)
+    ctrl, provider, window, created = _make()
+    ctrl.enter()
+
+    # Radial: blanked at ensure -> unblanked across open -> re-blanked at close.
+    menu = ctrl.open_radial_menu()
+    assert menu is not None
+    rs = created_radial["surfaces"][0]
+    assert rs.blank_calls[0] is True          # empty from creation
+    assert rs.blank_calls[-1] is False        # visible only once hosted+shaped
+    ctrl.close_radial_menu()
+    assert rs.blank_calls[-1] is True         # empty again
+
+    # Panel: same lifecycle.
+    surf = ctrl.open_panel_surface(QWidget())
+    assert surf is not None
+    ps = created_panel["surfaces"][0]
+    assert ps.blank_calls[0] is True
+    assert ps.blank_calls[-1] is False
+    ctrl.close_panel_surface()
+    assert ps.blank_calls[-1] is True
+
+
+def test_failed_panel_open_leaves_surface_blanked(qapp, monkeypatch):
+    """A failed open rolls back to the EMPTY persistent state: the surface
+    must end content-blanked (never a full-opacity empty window). The boom
+    lands at raise_ - BEFORE the unblank, which is the last open step."""
+    created_panel = _patch_panel(monkeypatch)
+    ctrl, provider, window, created = _make()
+    ctrl.enter()
+    ps = created_panel["surfaces"][0]
+
+    def _boom_raise():
+        raise RuntimeError("raise boom")
+    monkeypatch.setattr(ps, "raise_", _boom_raise)
+
+    assert ctrl.open_panel_surface(QWidget()) is None
+    assert ctrl.is_panel_open is False
+    assert False not in ps.blank_calls        # never unblanked
+    assert ps.blank_calls[-1] is True         # rollback re-asserted the blank
     assert ctrl.is_panel_open is False
 
 

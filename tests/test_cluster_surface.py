@@ -320,3 +320,59 @@ def test_paint_without_prepare_never_touches_opacity(qapp):
     assert backend.opacities == []
     s.hide()
     s.deleteLater()
+
+
+# ---------------------------------------------------------------------------
+# Content blanking (empty persistent surfaces stay opacity-0: a closed mapped
+# window that RESIZES exposes buffer-less regions KWin composites as opaque
+# black whenever the paint flush lags - the scale-burst J-band, probed)
+# ---------------------------------------------------------------------------
+
+def test_content_blank_writes_opacity_and_is_idempotent(qapp):
+    """set_content_blanked drives _NET_WM_WINDOW_OPACITY 0/1 through the
+    backend and never re-writes an unchanged state."""
+    backend = _OpacityRecordingBackend()
+    s = PanelSurface(backend=backend)
+    s.set_content_blanked(True)
+    s.set_content_blanked(True)          # idempotent: no second write
+    s.set_content_blanked(False)
+    s.set_content_blanked(False)         # idempotent
+    assert [o for w, o in backend.opacities if w is s] == [0.0, 1.0]
+    s.deleteLater()
+
+
+def test_first_paint_lift_defers_to_engaged_content_blank(qapp):
+    """An EMPTY persistent surface (content-blanked before its first paint)
+    must stay at opacity 0 forever: the first-paint stage lift defers to the
+    engaged blank, so the closed panel's per-notch resize can never composite
+    a buffer-less band at visible opacity."""
+    backend = _OpacityRecordingBackend()
+    s = PanelSurface(backend=backend)
+    s.prepare_initial_state()
+    s.set_content_blanked(True)          # empty persistent state (ensure path)
+    s.resize(60, 40)
+    s.show()
+    s.repaint()                          # deterministic first paint
+    for _ in range(10):                  # let the deferred lift fire (and defer)
+        qapp.processEvents()
+    assert 1.0 not in [o for w, o in backend.opacities if w is s]
+    s.hide()
+    s.deleteLater()
+
+
+def test_content_unblank_repaints_before_opacity(qapp):
+    """Lifting the blank paints first, THEN writes opacity 1 - the ordering is
+    enforced INSIDE set_content_blanked so no open path can reorder it."""
+    backend = _OpacityRecordingBackend()
+    s = PanelSurface(backend=backend)
+    s.resize(60, 40)
+    s.show()
+    s.set_content_blanked(True)
+    events: list = []
+    backend.set_window_opacity = lambda w, o: events.append(("opacity", float(o)))
+    orig_repaint = s.repaint
+    s.repaint = lambda: (events.append(("repaint",)), orig_repaint())[1]
+    s.set_content_blanked(False)
+    assert events == [("repaint",), ("opacity", 1.0)]
+    s.hide()
+    s.deleteLater()
