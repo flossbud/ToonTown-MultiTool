@@ -1204,9 +1204,9 @@ class InputService(QObject):
         """Route a movement-class action to toons.
 
         only_windows / skip_windows (optional sets of window ids) restrict
-        delivery — used by the FSM's GRACE tap deferral, where the FOCUSED
-        half of a bound printable tap is delivered immediately and the
-        background half only after hold-confirmation.
+        delivery — generic filters kept for FSM-mode callers that need to
+        split focused vs background delivery (e.g. a future
+        re-synth-on-flip for in-flight suppressed keys).
 
         Strict per-toon routing: each toon responds only to keys that its
         own assigned set binds. No cross-game broadcast fallback.
@@ -1617,9 +1617,8 @@ class InputService(QObject):
 
         # Focused passthrough parity with the legacy dispatcher: every key
         # except BackSpace (its own branch) and movement-as-movement (the
-        # router delivers focused) — DEFER delivers its focused half below.
-        if key != "BackSpace" and dec.kind not in (KeyClass.MOVEMENT,
-                                                   KeyClass.DEFER_BG_TAP):
+        # router delivers focused).
+        if key != "BackSpace" and dec.kind is not KeyClass.MOVEMENT:
             self._send_passthrough_to_focused(key)
 
         if dec.kind is KeyClass.MODIFIER:
@@ -1632,16 +1631,6 @@ class InputService(QObject):
                     extra = f" (action: {logical})" if logical else ""
                     self._log_key(key, "pressed", extra)
                 self._send_logical_action_km("keydown", key, enabled, assignments)
-        elif dec.kind is KeyClass.DEFER_BG_TAP:
-            # Focused half immediately (never deferred); the bg half waits
-            # for hold-confirmation via on_tick. Acquire the hold NOW so the
-            # eventual keyup pairs for the focused toon; a dropped defer's
-            # unpaired bg keyup is a benign in-game no-op.
-            if self.holds.acquire(key, HoldKind.MOVEMENT, now):
-                active = self.window_manager.get_active_window()
-                self._send_logical_action_km(
-                    "keydown", key, enabled, assignments,
-                    only_windows={active} if active else set())
         elif dec.kind is KeyClass.TYPING:
             if key not in self.bg_typing_held:
                 self.bg_typing_held.add(key)
@@ -1674,7 +1663,7 @@ class InputService(QObject):
 
     def _fsm_handle_keyup(self, key, event_t, enabled, assignments,
                           movement_keys) -> None:
-        """Evidence/defer bookkeeping for a flushed keyup. event_t is the
+        """Evidence bookkeeping for a flushed keyup. event_t is the
         pending_keyups buffered_at time so tap measurements avoid the flush
         skew. The actual keyup routing stays with _dispatch_keyup."""
         self._fsm_seen_down.discard(key)
@@ -1688,13 +1677,6 @@ class InputService(QObject):
         res = self._chat_fsm.on_tick(now, ctx)
         if res.transitions:
             self._fsm_apply_transitions(res.transitions, enabled, assignments)
-        for key in res.confirmed_defers:
-            # Hold-confirmed GRACE tap: deliver the bg half late (the
-            # focused half went out at keydown).
-            active = self.window_manager.get_active_window()
-            self._send_logical_action_km(
-                "keydown", key, enabled, assignments,
-                skip_windows={active} if active else None)
 
     def _fsm_route_cleanup(self) -> None:
         """Cleanup-branch / release_all_keys hook: force ROUTE and run the
@@ -2073,11 +2055,10 @@ class InputService(QObject):
                         if _phys is True:
                             continue
                         if self._fsm_enabled:
-                            # Evidence/defer bookkeeping. buffered_at is the
-                            # event time (avoids the flush skew on tap
+                            # Evidence bookkeeping. buffered_at is the event
+                            # time (avoids the flush skew on tap
                             # measurements); routing stays with the dispatch
-                            # below (a dropped defer's unpaired bg keyup is a
-                            # benign in-game no-op).
+                            # below.
                             self._fsm_handle_keyup(stale_key, buffered_at,
                                                    enabled, assignments,
                                                    movement_keys)

@@ -4,7 +4,7 @@ Pure module — no Qt, no threads, no real clock. Every rule here maps to a
 line in docs/superpowers/plans/2026-07-03-chat-fsm-redesign.md; the
 worst-case-bounds properties at the bottom are the design's contract:
 no reachable state blocks a HELD bound key longer than T_DEMOTE, and no
-reachable state defers a background tap longer than GRACE_DEFER.
+reachable state delays a bound key's routing outside a live capture.
 
 Run: TTMT_NO_VENV_REEXEC=1 QT_QPA_PLATFORM=offscreen pytest tests/test_chat_fsm.py -v
 """
@@ -446,36 +446,25 @@ class TestGrace:
         assert r.transitions[-1].cause == "grace_end"
         assert fsm.state is ChatState.ROUTE
 
-    def test_bound_printable_tap_deferred_and_dropped(self):
+    def test_bound_printable_routes_instantly_in_grace(self):
+        """DISPROVEN experiment regression: post-send WASD movement must be
+        instant — the 200ms tap-deferral made both-toons-on-Default feel
+        restricted after every message (live Fedora finding, 2026-07-03)."""
         fsm, c = ChatFsm(), ctx()
         t = self._grace(fsm, c)
-        d = fsm.on_keydown("w", t, c)
-        assert d.kind is KeyClass.DEFER_BG_TAP
-        u = fsm.on_keyup("w", t + 0.1, c)        # released early: was typing
-        assert u.dropped_defer == "w"
-
-    def test_bound_printable_hold_confirmed(self):
-        fsm, c = ChatFsm(), ctx()
-        t = self._grace(fsm, c)
-        d = fsm.on_keydown("w", t, c)
-        assert d.kind is KeyClass.DEFER_BG_TAP
-        r = fsm.on_tick(t + CFG.grace_defer + 0.02, c)
-        assert r.confirmed_defers == ("w",)      # deliver late keydown, acquire hold
+        assert fsm.on_keydown("w", t, c).kind is KeyClass.MOVEMENT
 
     def test_bound_nonprintable_routes_instantly(self):
         fsm, c = ChatFsm(), ctx()
         t = self._grace(fsm, c)
         assert fsm.on_keydown("Up", t, c).kind is KeyClass.MOVEMENT
 
-    def test_burst_in_grace_reenters_soft_and_drops_defers(self):
+    def test_burst_in_grace_reenters_soft(self):
         fsm, c = ChatFsm(), ctx()
         t = self._grace(fsm, c)
-        fsm.on_keydown("w", t, c)                # deferred
         tap(fsm, "o", t + 0.1, c)
         _, u, _ = tap(fsm, "k", t + 0.3, c)
         assert fsm.state is ChatState.CAPTURE_SOFT
-        r = fsm.on_tick(t + 5.0, c)
-        assert r.confirmed_defers == ()          # defer was cleared, not confirmed
 
     def test_enter_in_grace_opens_fresh(self):
         fsm, c = ChatFsm(), ctx()
@@ -542,7 +531,7 @@ class TestRobustness:
         transition."""
         fsm, c = ChatFsm(), ctx()
         u = fsm.on_keyup("k", 10.0, c)
-        assert u.transitions == () and u.dropped_defer is None
+        assert u.transitions == ()
 
     def test_keydown_without_keyup_heals_via_ttl(self):
         """queue.Full can drop a keyup: a stuck-down unbound printable keeps
@@ -580,15 +569,17 @@ class TestRobustness:
             fsm.on_tick(t + CFG.t_demote + 0.05, c)
             assert not fsm.in_capture, f"trial {trial}: stuck in {fsm.state}"
 
-    def test_no_defer_outlives_grace_defer(self):
-        """Contract property: a deferred bg tap is resolved (confirmed or
-        dropped) within GRACE_DEFER of its keydown."""
+    def test_post_close_movement_never_delayed(self):
+        """Contract property (replaces the DISPROVEN tap-deferral): after
+        any close, a bound keydown routes as MOVEMENT immediately in GRACE
+        and ROUTE alike."""
         fsm, c = ChatFsm(), ctx()
         fsm.on_keydown("Return", 10.0, c)
         fsm.on_keydown("Escape", 10.2, c)        # -> GRACE
-        fsm.on_keydown("w", 10.4, c)
-        r = fsm.on_tick(10.4 + CFG.grace_defer + 0.01, c)
-        assert r.confirmed_defers == ("w",)
+        assert fsm.on_keydown("w", 10.4, c).kind is KeyClass.MOVEMENT
+        fsm.on_keyup("w", 10.5, c)
+        fsm.on_tick(10.2 + CFG.grace_s + 0.1, c)  # -> ROUTE
+        assert fsm.on_keydown("a", 12.5, c).kind is KeyClass.MOVEMENT
 
     def test_late_flushed_keyups_after_send_do_not_recapture(self):
         """Keyups buffered by the autorepeat dedup can flush AFTER the

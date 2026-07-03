@@ -59,7 +59,6 @@ class KeyClass(Enum):
     CHORD_SEND = auto()     # chord consumed as send in ROUTE/GRACE; focused passthrough only
     CHORD_CLOSE = auto()    # capture closed by chord/Escape; mirror close to bg_chat_open
     ESCAPE_CLEAR = auto()   # unbound Escape outside capture: terminal, focused passthrough only
-    DEFER_BG_TAP = auto()   # GRACE: bg copy deferred pending hold-confirmation
 
 
 @dataclass(frozen=True)
@@ -81,13 +80,11 @@ class KeyDecision:
 @dataclass(frozen=True)
 class UpResult:
     transitions: tuple[Transition, ...] = ()
-    dropped_defer: Optional[str] = None  # GRACE tap released early: drop its bg copy
 
 
 @dataclass(frozen=True)
 class TickResult:
     transitions: tuple[Transition, ...] = ()
-    confirmed_defers: tuple[str, ...] = ()  # GRACE taps that proved to be holds: deliver late
 
 
 @dataclass(frozen=True)
@@ -112,9 +109,22 @@ class ChatFsmConfig:
     chord_min_hold: float = 0.25 # each concurrent-hold member must be held this long
     burst_n: int = 2             # typing-evidence events ...
     burst_window: float = 1.0    # ... within this window => CAPTURE_SOFT
-    grace_s: float = 1.5         # post-capture cooldown
-    grace_defer: float = 0.20    # bg tap hold-confirmation delay during GRACE
+    grace_s: float = 1.5         # post-capture cooldown (bookkeeping only; routing
+    #                              is fully live in GRACE — see DISPROVEN note below)
     capture_ttl: float = 15.0    # hands-off backstop; also composition-context expiry
+
+
+# DISPROVEN (live Fedora validation, 2026-07-03): GRACE tap-deferral — bound
+# printable taps hold-confirmed for GRACE_DEFER=200ms during the post-close
+# window — as trailing-chat protection. With both toons on the Default
+# (WASD) set it made background movement visibly sluggish for the whole
+# GRACE window after EVERY sent message (late keydowns, dropped taps), while
+# the leak it guarded against (letters typed after a send routing as one bg
+# tap each) was never protected by the legacy system, was never reported,
+# and was never covered on the whisper-send path anyway. Removed: bound keys
+# route instantly in GRACE; continued typing is still caught by the burst
+# detector; a stray trailing letter costs one bg tap (accepted residual
+# class 1 in the plan).
 
 
 # Keys that are legitimate chat-box editing: they never demote alone and they
@@ -173,8 +183,6 @@ class ChatFsm:
         self._typing_events: deque = deque()
         # Capture TTL bookkeeping (chat-consistent evidence only).
         self._last_chat_evidence = 0.0
-        # GRACE deferred background taps: key -> keydown time.
-        self._deferred: dict = {}
         # Close-empty detection: was anything typed since the chord OPEN?
         self._open_had_typing = False
         # A chord verdict ENDS the composition: taps that STARTED before it
@@ -283,12 +291,8 @@ class ChatFsm:
             return KeyDecision(KeyClass.EDIT, self._note_typing_evidence(now))
 
         if is_bound:
-            if self._state is ChatState.GRACE and _is_printable_char(key):
-                # A tap right after a close is presumed trailing chat
-                # content; the background copy waits for hold-confirmation.
-                # The focused window is never deferred (dispatcher rule).
-                self._deferred[key] = now
-                return KeyDecision(KeyClass.DEFER_BG_TAP)
+            # GRACE included: bound keys route INSTANTLY after a close (the
+            # tap-deferral experiment is DISPROVEN — see the module note).
             return KeyDecision(KeyClass.MOVEMENT)
 
         if _is_printable_char(key):
@@ -314,11 +318,6 @@ class ChatFsm:
         down_at = self._down.pop(key, None)
         self._unbound_printable_down.discard(key)
 
-        dropped = None
-        if key in self._deferred:
-            del self._deferred[key]
-            dropped = key  # released before confirmation: it was typing
-
         transitions: tuple = ()
         if (down_at is not None
                 and down_at > self._last_chord_at
@@ -327,12 +326,11 @@ class ChatFsm:
                 and now - down_at < self.config.tap_max):
             transitions = self._note_typing_evidence(now)
 
-        return UpResult(transitions, dropped_defer=dropped)
+        return UpResult(transitions)
 
     def on_tick(self, now: float, ctx: ChatCtx) -> TickResult:
         cfg = self.config
         transitions: list = []
-        confirmed: list = []
 
         if self.in_capture:
             demote = self._gameplay_demote_cause(now, ctx)
@@ -342,10 +340,6 @@ class ChatFsm:
                     and now - self._last_chat_evidence > cfg.capture_ttl):
                 transitions.extend(self._go(ChatState.GRACE, "ttl", now))
         elif self._state is ChatState.GRACE:
-            for key, t0 in list(self._deferred.items()):
-                if now - t0 >= cfg.grace_defer:
-                    del self._deferred[key]
-                    confirmed.append(key)  # still held: it is movement
             if now - self._state_entered >= cfg.grace_s:
                 transitions.extend(self._go(ChatState.ROUTE, "grace_end", now))
         elif self._state is ChatState.ROUTE and self._context_active:
@@ -354,7 +348,7 @@ class ChatFsm:
             if self._gameplay_demote_cause(now, ctx):
                 self._context_active = False
 
-        return TickResult(tuple(transitions), tuple(confirmed))
+        return TickResult(tuple(transitions))
 
     def on_focus_change_managed(self, now: float) -> tuple:
         """Focus moved between managed game windows. Mid-capture, the box
@@ -373,7 +367,7 @@ class ChatFsm:
         orphan guard (close key to bg_chat_open) — signalled by the
         returned transition."""
         if self._state is ChatState.ROUTE:
-            if self._down or self._deferred or self._context_active:
+            if self._down or self._context_active:
                 self._reset_volatile()
             return ()
         tr = self._go(ChatState.ROUTE, "force", now)
@@ -396,7 +390,6 @@ class ChatFsm:
     def _reset_volatile(self) -> None:
         self._down.clear()
         self._mods_down.clear()
-        self._deferred.clear()
         self._typing_events.clear()
         self._unbound_printable_down.clear()
         self._context_active = False
@@ -464,7 +457,6 @@ class ChatFsm:
         self._state_entered = now
         if new in (ChatState.CAPTURE, ChatState.CAPTURE_SOFT):
             self._last_chat_evidence = now
-            self._deferred.clear()  # GRACE->CAPTURE_SOFT: pending taps were typing
         else:
             self._context_active = False
             self._typing_events.clear()
