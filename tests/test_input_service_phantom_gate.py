@@ -6,11 +6,24 @@ from the check because its chat state does not affect what gets broadcast
 to other toons.
 
 See: docs/superpowers/specs/2026-05-26-chat-disabled-phantom-bypass-design.md
+
+LEGACY SUITE: this file pins the LEGACY chat path, kept behind the
+TTMT_CHAT_FSM=0 kill switch since the chat gate FSM became the default
+(2026-07-03). It retires wholesale with the legacy-path deletion; the
+FSM's whisper protection is pinned by test_chat_fsm(_integration).py.
 """
 
+import pytest
 from unittest.mock import MagicMock
 
 from services.input_service import InputService
+
+
+@pytest.fixture(autouse=True)
+def _legacy_chat_mode(monkeypatch):
+    # Every service in this file must run the legacy path (the flag is read
+    # at InputService construction).
+    monkeypatch.setenv("TTMT_CHAT_FSM", "0")
 
 
 class _FakeWindowManager:

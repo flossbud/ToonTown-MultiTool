@@ -27,7 +27,8 @@ def _build_service(monkeypatch, tmp_path, *, fsm=True, windows=None,
     if fsm:
         monkeypatch.setenv("TTMT_CHAT_FSM", "1")
     else:
-        monkeypatch.delenv("TTMT_CHAT_FSM", raising=False)
+        # Default is ON since 2026-07-03: legacy needs the kill switch.
+        monkeypatch.setenv("TTMT_CHAT_FSM", "0")
     monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
     monkeypatch.setattr(
         "services.input_service.InputService._start_key_grabber",
@@ -93,6 +94,21 @@ def _args(svc):
 # ── construction / flag plumbing ─────────────────────────────────────────────
 
 class TestFlagPlumbing:
+    def test_fsm_is_the_default(self, monkeypatch, tmp_path):
+        """No env var at all -> FSM mode (default flipped 2026-07-03)."""
+        svc, _, _ = _build_service(monkeypatch, tmp_path)  # fsm=True path
+        monkeypatch.delenv("TTMT_CHAT_FSM", raising=False)
+        from services.input_service import InputService
+        import queue as _q
+        bare = InputService(
+            window_manager=svc.window_manager,
+            get_enabled_toons=lambda: [True],
+            get_movement_modes=lambda: ["both"],
+            get_event_queue_func=lambda: _q.Queue(),
+            settings_manager=None,
+        )
+        assert bare._fsm_enabled is True and bare._chat_fsm is not None
+
     def test_flag_off_no_fsm_plain_attrs(self, monkeypatch, tmp_path):
         svc, _, _ = _build_service(monkeypatch, tmp_path, fsm=False)
         assert svc._fsm_enabled is False and svc._chat_fsm is None

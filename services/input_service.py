@@ -128,14 +128,16 @@ class InputService(QObject):
         self._stop_event = threading.Event()
         self.logging_enabled = False
 
-        # ── Chat gate FSM (TTMT_CHAT_FSM=1) ─────────────────────────────
-        # Flag-gated redesign of the chat-open inference; see
-        # docs/superpowers/plans/2026-07-03-chat-fsm-redesign.md. Flag off:
-        # the legacy Return-toggle/phantom path runs unchanged and the
-        # global_chat_active/_phantom_active properties read/write plain
+        # ── Chat gate FSM (DEFAULT ON; TTMT_CHAT_FSM=0 = legacy kill switch)
+        # Redesign of the chat-open inference; see
+        # docs/superpowers/plans/2026-07-03-chat-fsm-redesign.md. Default
+        # flipped 2026-07-03 after Fedora live validation. With the kill
+        # switch: the legacy Return-toggle/phantom path runs unchanged and
+        # the global_chat_active/_phantom_active properties read/write plain
         # backing fields, so every legacy writer and test seed keeps
-        # working. Flag on: the properties reflect/force FSM state.
-        self._fsm_enabled = os.environ.get("TTMT_CHAT_FSM") == "1"
+        # working. FSM mode: the properties reflect/force FSM state. The
+        # legacy path (and this switch) is deleted after one beta cycle.
+        self._fsm_enabled = os.environ.get("TTMT_CHAT_FSM", "1") != "0"
         self._chat_fsm: ChatFsm | None = ChatFsm() if self._fsm_enabled else None
         self._legacy_global_chat_active = False
         self._legacy_phantom_active = False
