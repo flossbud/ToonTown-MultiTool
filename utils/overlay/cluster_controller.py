@@ -2700,14 +2700,6 @@ class ClusterOverlayController:
             # window stays click-through; this surface is additive. Clicks in
             # the inert margin outside the canvas pass through to the games.
             self._apply_radial_input_shape(self._radial_click_path())
-            # Menu hosted + shaped: lift the empty-state blank BEFORE the
-            # reveal animations (the surface paints-before-opacity
-            # internally, so no buffer-less frame can show). Stub surfaces
-            # without the method open unblanked as before; on the real
-            # surface a failure propagates into the rollback.
-            unblank = getattr(surface, "set_content_blanked", None)
-            if unblank is not None:
-                unblank(False)
             # Re-assert the dim's framed-1.0 placement BEFORE showing it (it is
             # scale-independent in the transform model; this is belt-and-suspenders
             # against anything having moved it while closed).
@@ -2749,6 +2741,19 @@ class ClusterOverlayController:
                 menu.start_reveal()
             except Exception:
                 pass
+            # Lift the empty-state blank only AFTER start_reveal has staged the
+            # entrance's frame-0 state: set_content_blanked(False) force-paints
+            # before its opacity-1 write (paint-before-opacity), so unblanking
+            # any earlier flashes one frame of the RESTING fully-open ring
+            # before the fly-out resets it (seen live 2026-07-02). After the
+            # staging, the painted frame IS the animation start - the flash is
+            # impossible by ordering. With animations disabled start_reveal
+            # snaps to the settled ring and this paints exactly that. Stub
+            # surfaces without the method open unblanked as before; on the
+            # real surface a failure propagates into the rollback.
+            unblank = getattr(surface, "set_content_blanked", None)
+            if unblank is not None:
+                unblank(False)
             # Click-off dismissal: watch global presses for the ring's lifetime
             # (best-effort; self-guarded + backend-gated).
             self._start_radial_dismiss_capture()
