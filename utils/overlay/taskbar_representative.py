@@ -65,6 +65,7 @@ class TaskbarRepresentative(QWidget):
         self._mirror: QPixmap | None = None
         self._blanked = False
         self._awaiting_first_paint = False  # opacity-staged until the first buffer
+        self._awaiting_unblank = False      # unblank staged through a paint pass
         # Plain frameless top-level that ACCEPTS focus (no WindowDoesNotAcceptFocus:
         # KWin's TabBox skips focus-refusing windows and Alt-Tab listing is a
         # requirement). WA_ShowWithoutActivating keeps the initial map from
@@ -127,12 +128,27 @@ class TaskbarRepresentative(QWidget):
         """Blank (opacity 0) while the cluster is mid-gesture/peek/dim - any
         state where the aligned-mirror invariant cannot hold. Blanking also
         blanks the taskbar/Alt-Tab preview (KWin composites opacity into
-        thumbnails - probed), an accepted transient. Idempotent."""
+        thumbnails - probed), an accepted transient. Idempotent.
+
+        UNBLANK is staged through a paint pass, never written directly: the
+        settle path resizes/realigns this window on Qt's xcb connection while
+        the opacity property rides the backend's separate xlib connection,
+        and the X server orders the two sockets by arrival luck. Writing
+        opacity-1 in the same instant as the resize can composite a frame of
+        the STALE mirror (or the buffer-less fresh band) at the emblem - the
+        settle-time flicker. Deferring the write until one loop turn AFTER a
+        real paint pass (the first-paint stage's proven ordering) puts the
+        matching buffer a full turn ahead of the opacity flush."""
         blanked = bool(blanked)
         if blanked == self._blanked:
             return
         self._blanked = blanked
-        self._backend.set_window_opacity(self, 0.0 if blanked else 1.0)
+        if blanked:
+            self._awaiting_unblank = False   # a pending lift must not re-raise
+            self._backend.set_window_opacity(self, 0.0)
+            return
+        self._awaiting_unblank = True
+        self.update()                        # paintEvent lifts via the stage
 
     def is_blanked(self) -> bool:
         return self._blanked
@@ -156,6 +172,11 @@ class TaskbarRepresentative(QWidget):
             # opacity stage NEXT loop turn (context-object form: a destroyed
             # rep cancels the timer rather than firing into a dead object).
             self._awaiting_first_paint = False
+            QTimer.singleShot(0, self, self._lift_first_paint_stage)
+        if self._awaiting_unblank:
+            # Unblank staging (see set_blanked): this pass painted the
+            # aligned mirror at the CURRENT size; lift opacity next turn.
+            self._awaiting_unblank = False
             QTimer.singleShot(0, self, self._lift_first_paint_stage)
         if self._mirror is None or self._mirror.isNull():
             return

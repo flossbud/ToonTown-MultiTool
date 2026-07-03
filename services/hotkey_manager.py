@@ -7,7 +7,7 @@ when the user is focused on a different application.
 import sys
 import queue
 import threading
-from PySide6.QtCore import QObject, Signal, Qt, QMetaObject, Q_ARG
+from PySide6.QtCore import QObject, Signal
 
 from utils.key_registry import PYNPUT_NAME_MAP_BASE
 from utils.input_trace import trace as _itrace, ENABLED as _ITRACE
@@ -64,21 +64,59 @@ def _join_quietly(listener):
         pass
 
 
+# pynput key.name -> side-agnostic modifier family, for the hotkey hook's
+# modifier tracking (a chord binds "ctrl", never "ctrl_l" vs "ctrl_r").
+_MOD_FAMILY = {
+    "ctrl_l": "ctrl", "ctrl_r": "ctrl", "ctrl": "ctrl",
+    "alt_l": "alt", "alt_r": "alt", "alt_gr": "alt", "alt": "alt",
+    "shift_l": "shift", "shift_r": "shift", "shift": "shift",
+    "cmd": "super", "cmd_l": "super", "cmd_r": "super",
+}
+
+
 class HotkeyManager(QObject):
-    profile_load_requested = Signal(int)
-    refresh_requested = Signal()
+    # Fired (when fire_hotkeys) with the matched action_id. The emission
+    # happens on the pynput listener thread; Qt auto-queues the cross-thread
+    # emission to the GUI-thread receiver, which is the whole point -- the
+    # listener thread must never touch Qt widgets directly.
+    hotkey_triggered = Signal(str)
 
     PYNPUT_VK_MAP = _PYNPUT_VK_MAP
-    
+
     # Derived from key_registry.py — all pynput key.name values across the
     # full registry, including side-agnostic modifier aliases (shift/ctrl/alt).
     PYNPUT_NAME_MAP: dict[str, str] = dict(PYNPUT_NAME_MAP_BASE)
 
-    def __init__(self, window_manager, key_event_queue, suppress_predicate=None):
+    def __init__(self, window_manager, key_event_queue, suppress_predicate=None,
+                 hotkey_hook=None, fire_hotkeys: bool = False,
+                 hotkey_repeat_ok=frozenset()):
         super().__init__()
         self.window_manager = window_manager
         self.key_event_queue = key_event_queue
         self.suppress_predicate = suppress_predicate
+
+        # hotkey_hook(mods: frozenset, keys: frozenset) -> action_id|None is a
+        # PURE exact-set lookup against the current bindings. The manager
+        # consults it TWICE per press, larger set first: the full held
+        # non-modifier key set (matches two-key chords), then the just-pressed
+        # key alone (matches single-key bindings while an unbound key happens
+        # to be held). A match is SKIPPED (never enters the input queue).
+        # fire_hotkeys=True additionally emits hotkey_triggered for the match
+        # (win/darwin, where this listener is the only global-hotkey source);
+        # Linux passes False (the X11 provider fires the action instead).
+        # Actions in hotkey_repeat_ok re-fire on OS auto-repeat while held;
+        # all others fire once per physical press.
+        self._hotkey_hook = hotkey_hook
+        self._fire_hotkeys = bool(fire_hotkeys)
+        self._hotkey_repeat_ok = frozenset(hotkey_repeat_ok)
+        # Normalized keys whose press was skipped as a hotkey; their release
+        # must be skipped too. Cleared in _stop_listener (a focus-out can stop
+        # the listener before the physical release arrives).
+        self._hotkey_down = set()
+        # Held canonical NON-MODIFIER keys (ctrl-char presses tracked under
+        # their mapped letter), feeding the hook's full-set consult. Cleared
+        # in _stop_listener like _hotkey_down.
+        self._held_keys = set()
 
         self.pressed_keys = set()
         self.listener = None
@@ -88,11 +126,6 @@ class HotkeyManager(QObject):
         # on focus changes (NOT on the per-keystroke hot path); empty means the
         # gate is inactive / unknown. Off darwin it stays empty.
         self._darwin_game_pids: frozenset = frozenset()
-
-        # Tracks F5's physical down-state so OS auto-repeat does not re-fire the
-        # refresh hotkey. Reset in _stop_listener (a focus-out can stop the
-        # listener before the physical release arrives).
-        self._f5_down = False
 
         # We hook into active window changes to start/stop the listener dynamically
         self.window_manager.active_window_changed.connect(self._on_active_window_changed)
@@ -320,15 +353,11 @@ class HotkeyManager(QObject):
         self.listener = None
         self.is_listening = False
         self.pressed_keys.clear()
-        # Deliberate tradeoff: clearing _f5_down here prevents a permanent wedge
-        # when F5's physical release is missed because it happened while the
-        # listener was stopped (a focus-out). The cost is that F5 held ACROSS a
-        # stop+restart can emit one extra refresh on the restarted listener's
-        # auto-repeat; that is bounded to one per excursion and coalesced
-        # downstream by manual_refresh's cooldown. Avoiding both the wedge and
-        # the double-fire would require querying global key state, which pynput
-        # does not provide.
-        self._f5_down = False
+        # Clearing _hotkey_down prevents a permanent wedge when a skipped key's
+        # physical release is missed because it happened while the listener was
+        # stopped (a focus-out). _held_keys goes stale the same way.
+        self._hotkey_down.clear()
+        self._held_keys.clear()
         # Race guard: pynput's _stop_platform reaches for self._display_record
         # which the worker thread sets early in _run(). If stop() is called
         # before that line lands (very fast app launch + close cycle), pynput
@@ -358,6 +387,18 @@ class HotkeyManager(QObject):
         name = getattr(key, 'name', None)
         if name:
             return self.PYNPUT_NAME_MAP.get(name.lower(), None)
+        # win32 ONLY: with Ctrl/Alt held, pynput reports char=None for letter
+        # and digit keys (the WM_CHAR translation is suppressed), leaving only
+        # the raw virtual-key code. VK 0x30-0x39 / 0x41-0x5A ARE the ASCII
+        # digit/uppercase-letter codes, so map them directly. NOT applied on
+        # darwin (ANSI keycodes are layout-relative, not ASCII) or Linux
+        # (X keysyms surface the char even under modifiers).
+        if sys.platform == "win32" and vk is not None:
+            vk = int(vk)
+            if 0x30 <= vk <= 0x39:
+                return chr(vk)           # '0'..'9'
+            if 0x41 <= vk <= 0x5A:
+                return chr(vk + 32)      # 'a'..'z' (lowercase, chord canonical)
         return None
 
     def on_global_key_press(self, key):
@@ -370,24 +411,58 @@ class HotkeyManager(QObject):
 
         normalized = None
         try:
-            keyboard_module = _keyboard_module()
-            if key in [keyboard_module.Key.ctrl_l, keyboard_module.Key.ctrl_r]:
-                self.pressed_keys.add("ctrl")
+            fam = _MOD_FAMILY.get(getattr(key, "name", "") or "")
+            if fam:
+                self.pressed_keys.add(fam)
             elif hasattr(key, 'char') and key.char:
                 self.pressed_keys.add(key.char)
-                if "ctrl" in self.pressed_keys and key.char in "12345":
-                    idx = int(key.char) - 1
-                    # Emit signal on the main thread via Qt
-                    self.profile_load_requested.emit(idx)
 
             normalized = self.normalize_key(key)
-            if normalized == "F5":
-                if not self._f5_down:
-                    self._f5_down = True
+            # `not fam` matters: modifiers DO normalize (ctrl_l -> Control_L),
+            # so without it modifier presses would enter _held_keys and
+            # poison the full-set consult.
+            if normalized and not fam and self._hotkey_hook is not None:
+                mods = frozenset(m for m in ("ctrl", "alt", "shift", "super")
+                                 if m in self.pressed_keys)
+                # Ctrl chords surface as control chars ('\x08' for ctrl+h);
+                # map back to the letter so the binding table ('h') matches.
+                # Accepted limitation: shifted symbols (shift+2 = '@') are not
+                # reverse-mapped; letter/digit/F-key chords are the supported set.
+                hook_key = normalized
+                if (len(hook_key) == 1 and ord(hook_key) < 32
+                        and "ctrl" in self.pressed_keys):
+                    hook_key = chr(ord(hook_key) + 96)   # '\x08' -> 'h'
+                self._held_keys.add(hook_key)
+                # Two-step consult, larger set first: the full held set
+                # matches a two-key chord on its SECOND key's press; on a
+                # miss, the just-pressed key alone matches single-key
+                # bindings even while an unbound key happens to be held.
+                # A two-key chord's FIRST member missed the table when it
+                # was pressed and was enqueued normally - this mirrors the
+                # X-side replay semantics, where a partner-up member press
+                # replays to the focused window.
+                held = frozenset(self._held_keys)
+                action_id = self._hotkey_hook(mods, held)
+                if action_id is None and len(held) > 1:
+                    action_id = self._hotkey_hook(mods, frozenset({hook_key}))
+                if action_id is not None:
                     if _ITRACE:
-                        _itrace("hk_press", "F5 refresh requested")
-                    self.refresh_requested.emit()
-                return None  # tool hotkey: never route F5 to the input queue
+                        _itrace("hk_press", f"HOTKEY {action_id} ({hook_key})")
+                    first = hook_key not in self._hotkey_down
+                    self._hotkey_down.add(hook_key)
+                    if self._fire_hotkeys and (
+                            first or action_id in self._hotkey_repeat_ok):
+                        # Cross-thread emission auto-queues to the GUI-thread
+                        # receiver (this runs on the pynput listener thread).
+                        self.hotkey_triggered.emit(action_id)
+                    return None                       # never enqueue
+                # No match: drop any tracked hold for BOTH key forms BEFORE the
+                # enqueue. A chord key held while its modifiers are released
+                # re-presses (auto-repeat) WITHOUT a match and is enqueued as a
+                # keydown -- by construction its keyup must then pass too, or
+                # the game is stuck with a stranded held key.
+                self._hotkey_down.discard(normalized)
+                self._hotkey_down.discard(hook_key)
             if normalized:
                 try:
                     self.key_event_queue.put(("keydown", normalized), timeout=0.05)
@@ -408,20 +483,37 @@ class HotkeyManager(QObject):
     def on_global_key_release(self, key):
         normalized = None
         try:
-            keyboard_module = _keyboard_module()
-            if key in [keyboard_module.Key.ctrl_l, keyboard_module.Key.ctrl_r]:
-                self.pressed_keys.discard("ctrl")
+            fam = _MOD_FAMILY.get(getattr(key, "name", "") or "")
+            if fam:
+                self.pressed_keys.discard(fam)
             elif hasattr(key, 'char') and key.char:
                 self.pressed_keys.discard(key.char)
 
             normalized = self.normalize_key(key)
-            if normalized == "F5":
-                # Release always clears _f5_down (no should_capture_input() gate,
-                # like the keyup path below): keyups must fire even when capture is
-                # off so a held key is never stranded down. Returning here keeps F5
-                # out of the input queue, mirroring the press handler.
-                self._f5_down = False
-                return None
+            if normalized:
+                # The press was tracked under the ctrl-mapped form when ctrl was
+                # held; ctrl may be released before OR after the letter, so the
+                # release can surface as EITHER form ('\x08' or 'h') -- skip if
+                # either is tracked (no should_capture_input() gate, like the
+                # keyup path below: this must run even when capture turned off
+                # mid-hold).
+                hook_key = normalized
+                if (len(hook_key) == 1 and ord(hook_key) < 32
+                        and "ctrl" in self.pressed_keys):
+                    hook_key = chr(ord(hook_key) + 96)   # '\x08' -> 'h'
+                # Held-set tracking: drop EVERY form this release can take.
+                # The press may have been tracked under the ctrl-mapped
+                # letter while this release surfaces as the raw control char
+                # (ctrl already released), so the letter form is derived
+                # unconditionally, not just while ctrl is still held.
+                self._held_keys.discard(normalized)
+                self._held_keys.discard(hook_key)
+                if len(normalized) == 1 and ord(normalized) < 32:
+                    self._held_keys.discard(chr(ord(normalized) + 96))
+                if normalized in self._hotkey_down or hook_key in self._hotkey_down:
+                    self._hotkey_down.discard(normalized)
+                    self._hotkey_down.discard(hook_key)
+                    return None
             if normalized:
                 try:
                     self.key_event_queue.put(("keyup", normalized), timeout=0.05)

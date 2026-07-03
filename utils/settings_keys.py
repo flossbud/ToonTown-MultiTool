@@ -110,3 +110,7 @@ START_IN_FLOAT_UI_MODE = "start_in_float_ui_mode"
 # already set, the previous auto-enter crashed/hung mid-enter, so Float UI is
 # skipped that launch (fall back to the windowed UI + a one-time notice).
 FLOAT_UI_STARTUP_PENDING = "float_ui_startup_pending"
+
+# Global hotkeys (docs/superpowers/specs/2026-07-02-hotkey-support-design.md)
+HOTKEY_BINDINGS = "hotkey_bindings"          # {action_id: chord-string | None}
+HOTKEY_LAUNCH_SLOTS = "hotkey_launch_slots"  # {"1".."4": account_id | None}

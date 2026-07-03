@@ -1421,6 +1421,7 @@ class SettingsTab(QWidget):
         )
         self._build_keep_alive_card(page)
         self._build_click_sync_card(page)
+        self._build_hotkeys_card(page)
         self._build_chat_handling_card(page)
 
     def _build_keep_alive_card(self, page):
@@ -1512,6 +1513,17 @@ class SettingsTab(QWidget):
         )
         field.set_control(switch)
         panel.add_field(field)
+        self._click_sync_switch = switch
+
+        # External flips (the clicksync.toggle hotkey, another Settings
+        # surface) must move this switch too. The isChecked guard breaks the
+        # set -> on_change -> setChecked -> toggled -> set loop.
+        on_change = getattr(self.settings_manager, "on_change", None)
+        if on_change is not None:
+            on_change(
+                lambda key, value: switch.setChecked(bool(value))
+                if key == CLICK_SYNC_ENABLED and switch.isChecked() != bool(value)
+                else None)
 
         ghost_field = SettingsField(
             "Show ghost cursors",
@@ -1554,6 +1566,261 @@ class SettingsTab(QWidget):
             self.settings_manager.get(GHOST_CURSORS_ENABLED, True))
 
         lay.insertWidget(insert_at, panel)
+
+    def _build_hotkeys_card(self, page):
+        from utils.hotkey_actions import ACTIONS
+        from utils.hotkey_capture import ChordCaptureButton
+
+        lay = page._panel_layout
+        insert_at = lay.count() - 1
+
+        panel = SettingsPanel(
+            title="Hotkeys",
+            sub=(
+                "Trigger app actions from anywhere with keyboard shortcuts. "
+                "Shortcuts are grabbed system-wide while the app runs."
+            ),
+            stripe="green",
+        )
+        self._panels.append(panel)
+        self._hotkeys_panel = panel
+        self._hotkey_rows: dict = {}
+        self._hotkey_status: dict = {}
+        self._hotkey_slot_combos: dict = {}
+        self._hotkey_accounts_provider = None
+
+        # One capture row per registry action, grouped by category. The
+        # SettingsPanel API has no section separator, so the category is
+        # rendered as a label prefix (matching the flat-row convention of
+        # the other Features cards).
+        categories: list[str] = []
+        for action in ACTIONS:
+            if action.category not in categories:
+                categories.append(action.category)
+        first_category = categories[0]
+
+        # The card is tall (16 rows), so only the first category shows by
+        # default; every later row lives in this collapsible container,
+        # revealed by the Show more toggle added below. Collapsed is the
+        # default on every construction - no persistence by design.
+        more_container = QWidget()
+        more_container.setStyleSheet("background: transparent;")
+        more_lay = QVBoxLayout(more_container)
+        more_lay.setContentsMargins(0, 0, 0, 0)
+        more_lay.setSpacing(0)
+        self._hotkey_more_container = more_container
+
+        for category in categories:
+            for action in ACTIONS:
+                if action.category != category:
+                    continue
+                # Skip the prefix when the label already leads with the
+                # category name ("Launch account slot 1" under Launch):
+                # prefixing would double the word.
+                if action.label.lower().startswith(category.lower()):
+                    field_label = action.label
+                else:
+                    field_label = f"{category} - {action.label}"
+                field = SettingsField(field_label)
+                button = ChordCaptureButton(
+                    self._hotkey_stored_chord(action.id),
+                    lambda text, aid=action.id: self._on_hotkey_chord(aid, text),
+                    on_capture_end=self._refresh_hotkey_status,
+                )
+                button.setCursor(Qt.PointingHandCursor)
+                button.setFixedHeight(28)
+                if action.id.startswith("launch.slot_"):
+                    # The slot's account picker sits inline between the
+                    # label and the chord button. Built empty here; main
+                    # wires the accounts provider after tab construction
+                    # and the combos repopulate then (and on every show).
+                    slot = action.id.rsplit("_", 1)[-1]
+                    combo = SettingsComboBox()
+                    combo.setFixedWidth(220)
+                    combo.currentIndexChanged.connect(
+                        lambda _i, s=slot, c=combo:
+                        self._on_hotkey_slot_selected(s, c.currentData()))
+                    inline = QWidget()
+                    inline.setStyleSheet("background: transparent;")
+                    inline_lay = QHBoxLayout(inline)
+                    inline_lay.setContentsMargins(0, 0, 0, 0)
+                    inline_lay.setSpacing(6)
+                    inline_lay.addWidget(combo)
+                    inline_lay.addWidget(button)
+                    field.set_control(inline)
+                    self._hotkey_slot_combos[slot] = combo
+                else:
+                    field.set_control(button)
+                if category == first_category:
+                    panel.add_field(field)
+                else:
+                    # Placement bypasses add_field (the row lives inside
+                    # the collapsible container, not the panel body), but
+                    # the field still registers in panel.fields so theming
+                    # and the last-row divider flag cover it.
+                    panel.fields.append(field)
+                    more_lay.addWidget(field)
+                self._hotkey_rows[action.id] = button
+        panel._refresh_last_flag()
+
+        self._hotkey_more_count = sum(
+            1 for a in ACTIONS if a.category != first_category)
+
+        # Link-styled expander between the always-visible rows and the
+        # container; themed in refresh_theme.
+        toggle = QPushButton(f"Show {self._hotkey_more_count} more...")
+        toggle.setCursor(Qt.PointingHandCursor)
+        toggle.setFlat(True)
+        toggle.setStyleSheet("background: transparent; border: none;")
+        toggle.clicked.connect(self._on_hotkey_more_toggled)
+        self._hotkey_more_toggle = toggle
+        toggle_row = QWidget()
+        toggle_row.setStyleSheet("background: transparent;")
+        toggle_lay = QHBoxLayout(toggle_row)
+        toggle_lay.setContentsMargins(16, 8, 16, 10)
+        toggle_lay.setSpacing(0)
+        toggle_lay.addWidget(toggle)
+        toggle_lay.addStretch(1)
+        panel._body_layout.addWidget(toggle_row)
+        panel._body_layout.addWidget(more_container)
+        more_container.hide()
+
+        self._rebuild_hotkey_slot_rows()
+
+        lay.insertWidget(insert_at, panel)
+
+    def _on_hotkey_more_toggled(self) -> None:
+        """Expand/collapse the below-the-fold hotkey rows. The state is
+        per-widget-construction (SettingsTab is built once per app run),
+        so every app start opens collapsed by design. Status badges and
+        the slot-combo rebuild touch rows directly and never depend on -
+        or change - this visibility."""
+        container = self._hotkey_more_container
+        show = container.isHidden()
+        container.setVisible(show)
+        self._hotkey_more_toggle.setText(
+            "Show less" if show
+            else f"Show {self._hotkey_more_count} more...")
+
+    def _hotkey_stored_chord(self, action_id):
+        """The chord this row should DISPLAY: stored override (None = cleared)
+        or the registry default when the id is absent from the store."""
+        from utils.hotkey_actions import action_by_id
+        from utils.settings_keys import HOTKEY_BINDINGS
+        stored = self.settings_manager.get(HOTKEY_BINDINGS, {}) or {}
+        if not isinstance(stored, dict):
+            stored = {}
+        if action_id in stored:
+            return stored[action_id]
+        return action_by_id(action_id).default_chord
+
+    def _on_hotkey_chord(self, action_id, chord_text):
+        """Persist a capture-row change. Binding an in-use chord (stored OR
+        registry default) prompts steal-or-cancel; stealing clears the other
+        action's binding explicitly (None) so the default cannot re-arm it."""
+        from utils.hotkey_actions import ACTIONS, action_by_id
+        from utils.hotkey_capture import display_chord
+        from utils.hotkey_chords import format_chord, parse_chord
+        from utils.settings_keys import HOTKEY_BINDINGS
+        raw = self.settings_manager.get(HOTKEY_BINDINGS, {}) or {}
+        stored = dict(raw) if isinstance(raw, dict) else {}
+        if chord_text is not None:
+            holder = None
+            for action in ACTIONS:
+                if action.id == action_id:
+                    continue
+                current = (stored[action.id] if action.id in stored
+                           else action.default_chord)
+                if current is not None:
+                    # Canonicalize before comparing: a hand-edited store can
+                    # hold "alt+ctrl+H" for the same chord as "ctrl+alt+h".
+                    try:
+                        current = format_chord(parse_chord(current))
+                    except ValueError:
+                        pass                     # garbage: compare raw
+                if current == chord_text:
+                    holder = action.id
+                    break
+            if holder is not None:
+                answer = QMessageBox.question(
+                    self, "Hotkey in use",
+                    f"'{display_chord(chord_text)}' is already bound to "
+                    f"{action_by_id(holder).label}. Move it here?")
+                if answer != QMessageBox.Yes:
+                    self._hotkey_rows[action_id].set_chord(
+                        self._hotkey_stored_chord(action_id))
+                    return
+                stored[holder] = None
+                self._hotkey_rows[holder].set_chord(None)
+        stored[action_id] = chord_text
+        self.settings_manager.set(HOTKEY_BINDINGS, stored)
+
+    def set_hotkey_accounts_provider(self, fn) -> None:
+        """Late-bound accounts source for the launch-slot pickers: a callable
+        returning [(account_id, game, label), ...] (get_accounts_basic shape).
+        main wires this after tab construction."""
+        self._hotkey_accounts_provider = fn
+        if self._hotkey_slot_combos:
+            self._rebuild_hotkey_slot_rows()
+
+    def _rebuild_hotkey_slot_rows(self) -> None:
+        """Repopulate the four launch-slot pickers from the accounts provider,
+        preselecting the persisted assignment. Signal-blocked: repopulating
+        must never fire a spurious _on_hotkey_slot_selected persist."""
+        from utils.settings_keys import HOTKEY_LAUNCH_SLOTS
+        accounts = []
+        if self._hotkey_accounts_provider is not None:
+            try:
+                accounts = list(self._hotkey_accounts_provider() or [])
+            except Exception:
+                accounts = []
+        raw = self.settings_manager.get(HOTKEY_LAUNCH_SLOTS, {}) or {}
+        assigned = raw if isinstance(raw, dict) else {}
+        for slot, combo in self._hotkey_slot_combos.items():
+            combo.blockSignals(True)
+            try:
+                combo.clear()
+                combo.addItem("(none)", None)
+                for account_id, game, label in accounts:
+                    combo.addItem(f"{label} ({str(game).upper()})", account_id)
+                idx = combo.findData(assigned.get(slot))
+                combo.setCurrentIndex(idx if idx >= 0 else 0)
+            finally:
+                combo.blockSignals(False)
+
+    def _on_hotkey_slot_selected(self, slot, account_id) -> None:
+        from utils.settings_keys import HOTKEY_LAUNCH_SLOTS
+        raw = self.settings_manager.get(HOTKEY_LAUNCH_SLOTS, {}) or {}
+        assigned = dict(raw) if isinstance(raw, dict) else {}
+        assigned[slot] = account_id
+        self.settings_manager.set(HOTKEY_LAUNCH_SLOTS, assigned)
+
+    def set_hotkey_status(self, failures: dict) -> None:
+        """Push the provider's failure map. Rows mid-capture are left alone
+        (the prompt text must not be clobbered); the status re-applies when
+        the capture ends: cancelled captures fire the button's
+        on_capture_end (_refresh_hotkey_status), successful ones write
+        settings, which triggers main's delayed status push."""
+        self._hotkey_status = dict(failures or {})
+        self._refresh_hotkey_status()
+
+    def _refresh_hotkey_status(self) -> None:
+        for action_id, btn in self._hotkey_rows.items():
+            if btn.is_capturing():
+                continue
+            btn.set_chord(self._hotkey_stored_chord(action_id))  # base text
+            reason = self._hotkey_status.get(action_id)
+            if reason:
+                btn.setText(btn.text() + " - " + reason)
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        # Accounts can be added or renamed while Settings is hidden, so the
+        # launch-slot pickers repopulate on every show. Safe and cheap: the
+        # rebuild is signal-blocked and preselect-preserving, and
+        # get_accounts_basic never touches the keyring.
+        if getattr(self, "_hotkey_accounts_provider", None) is not None:
+            self._rebuild_hotkey_slot_rows()
 
     def _build_chat_handling_card(self, page):
         from utils.settings_keys import (
@@ -1982,4 +2249,15 @@ class SettingsTab(QWidget):
         from utils.shared_widgets import SettingsRadioList
         for rl in self.findChildren(SettingsRadioList):
             rl.set_theme_colors(c, is_dark)
+        # Hotkeys card "Show more" expander — link-styled flat button.
+        toggle = getattr(self, "_hotkey_more_toggle", None)
+        if toggle is not None:
+            toggle.setStyleSheet(
+                "QPushButton {"
+                f" color: {c['accent_blue_btn']};"
+                " background: transparent; border: none; padding: 0;"
+                " font-size: 12px; font-weight: 600; text-align: left;"
+                " }"
+                "QPushButton:hover { text-decoration: underline; }"
+            )
 
