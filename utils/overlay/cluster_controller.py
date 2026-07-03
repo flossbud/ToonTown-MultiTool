@@ -2488,6 +2488,14 @@ class ClusterOverlayController:
             return
         if not self._backend.is_available():
             return
+        # Capability gate: on Windows the cluster window itself is taskbar-
+        # listed (WIN_TASKBAR_IDENTITY ex-styles), so the aligned-mirror rep -
+        # a KWin-specific workaround - is never built there.
+        if not getattr(self._backend, "wants_taskbar_rep", lambda: True)():
+            from utils.overlay.backend import overlay_trace
+            overlay_trace("taskbar_rep: skipped (backend declines; cluster "
+                          "carries the taskbar identity)")
+            return
         try:
             from utils.overlay.taskbar_representative import TaskbarRepresentative
             rep = TaskbarRepresentative(
@@ -2992,8 +3000,18 @@ class ClusterOverlayController:
         if factory is None:
             if not self._backend.is_available():
                 return
-            from utils.xrecord_capture import XRecordCapture
-            factory = XRecordCapture
+            import sys
+            if sys.platform == "win32":
+                # Same contract as XRecordCapture (factory(on_event) ->
+                # .start()/.stop()); pynput WH_MOUSE_LL, observe-only, and
+                # blind to the app's own PostMessage traffic by construction.
+                from utils.win32_mouse_capture import Win32MouseCapture
+                factory = Win32MouseCapture
+            elif sys.platform.startswith("linux"):
+                from utils.xrecord_capture import XRecordCapture
+                factory = XRecordCapture
+            else:
+                return
         try:
             if self._press_bridge is None:
                 from PySide6.QtCore import QObject, Signal

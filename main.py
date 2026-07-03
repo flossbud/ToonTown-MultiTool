@@ -541,7 +541,7 @@ class MultiToonTool(QMainWindow):
             emblem.menu_requested.connect(self._open_emblem_wheel)
         else:
             _overlay_trace("main: overlay backend UNAVAILABLE -> emblem inert (transparent mode off)")
-            emblem.setToolTip("Float UI requires the X11 Shape extension")
+            emblem.setToolTip("Float UI is not available on this system")
 
         # Install event filter to globally block tooltips when hints disabled
         QApplication.instance().installEventFilter(self)

@@ -26,6 +26,13 @@ class OverlayBackend:
     def set_rep_initial_state(self, window) -> None: ...
     def set_window_opacity(self, window, opacity: float) -> None: ...
 
+    def wants_taskbar_rep(self) -> bool:
+        """Whether the controller should build the aligned-mirror taskbar
+        representative while floating. True on X11 (a DOCK cluster cannot be
+        taskbar-listed on KWin, so the rep stands in); False on Windows,
+        where the cluster window itself carries the taskbar identity."""
+        return True
+
 
 class NoOpOverlayBackend(OverlayBackend):
     """Windows/macOS, or Linux without the X Shape extension."""
@@ -45,6 +52,24 @@ def get_overlay_backend() -> OverlayBackend:
             import traceback
             overlay_trace(f"get_overlay_backend: X11 backend raised {e!r} -> NoOp\n"
                           + traceback.format_exc())
+    elif sys.platform == "win32":
+        # Escape hatch: TTMT_OVERLAY_WIN32 set to a falsey token disables the
+        # Windows backend entirely (Float UI reverts to unavailable/inert).
+        raw = os.environ.get("TTMT_OVERLAY_WIN32")
+        if raw is not None and raw.strip().lower() in {"0", "no", "n", "false", "f", "off"}:
+            overlay_trace("get_overlay_backend: TTMT_OVERLAY_WIN32 opt-out -> NoOp")
+            return NoOpOverlayBackend()
+        try:
+            from utils.overlay.win32_backend import Win32OverlayBackend
+            backend = Win32OverlayBackend()
+            if backend.is_available():
+                overlay_trace("get_overlay_backend: Win32OverlayBackend AVAILABLE")
+                return backend
+            overlay_trace("get_overlay_backend: Win32OverlayBackend NOT available -> NoOp")
+        except Exception as e:
+            import traceback
+            overlay_trace(f"get_overlay_backend: win32 backend raised {e!r} -> NoOp\n"
+                          + traceback.format_exc())
     else:
-        overlay_trace(f"get_overlay_backend: non-linux ({sys.platform}) -> NoOp")
+        overlay_trace(f"get_overlay_backend: unsupported platform ({sys.platform}) -> NoOp")
     return NoOpOverlayBackend()

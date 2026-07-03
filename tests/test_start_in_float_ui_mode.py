@@ -186,7 +186,7 @@ def test_settings_switch_disabled_when_backend_unavailable(isolated_config, monk
     tab, sw = _build_settings_tab(isolated_config)
     assert sw is not None
     assert sw.isEnabled() is False
-    assert "Shape extension" in sw.toolTip()
+    assert "not available" in sw.toolTip()
 
 
 # ── _show_or_float_at_startup ordering (startup black-square fix) ──────────

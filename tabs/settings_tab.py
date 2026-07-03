@@ -852,8 +852,8 @@ class SettingsTab(QWidget):
             )
         else:
             float_switch.setEnabled(False)
-            float_switch.setToolTip("Float UI requires the X11 Shape extension")
-            float_field.setToolTip("Float UI requires the X11 Shape extension")
+            float_switch.setToolTip("Float UI is not available on this system")
+            float_field.setToolTip("Float UI is not available on this system")
         float_field.set_control(float_switch)
         appearance.add_field(float_field)
 
