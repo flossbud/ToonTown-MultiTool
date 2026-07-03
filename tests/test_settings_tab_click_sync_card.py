@@ -56,10 +56,11 @@ def test_features_page_has_pink_click_sync_card(qapp, settings_manager):
 
 
 def test_features_card_order_keep_alive_click_sync_chat(qapp, settings_manager):
-    """Cards must appear in spec order: Keep-Alive, Click Sync, Chat Handling.
-    Assert against the actual page layout order (what the user sees), not
-    findChildren -- findChildren reflects QObject creation order, which can
-    diverge from layout order if an insertWidget index is wrong."""
+    """Cards must appear in spec order: Keep-Alive, Click Sync, Hotkeys,
+    Chat Handling. Assert against the actual page layout order (what the
+    user sees), not findChildren -- findChildren reflects QObject creation
+    order, which can diverge from layout order if an insertWidget index is
+    wrong."""
     from tabs.settings_tab import SettingsTab, SettingsPanel
     tab = SettingsTab(settings_manager)
     layout = tab.pages["features"]._panel_layout
@@ -68,7 +69,7 @@ def test_features_card_order_keep_alive_click_sync_chat(qapp, settings_manager):
         w = layout.itemAt(i).widget()
         if isinstance(w, SettingsPanel):
             titles.append(w.title_label.text())
-    assert titles == ["Keep-Alive", "Click Sync", "Chat Handling"]
+    assert titles == ["Keep-Alive", "Click Sync", "Hotkeys", "Chat Handling"]
 
 
 def test_click_sync_toggle_lives_inside_the_pink_card(qapp, settings_manager):
@@ -81,9 +82,12 @@ def test_click_sync_toggle_lives_inside_the_pink_card(qapp, settings_manager):
         if p.stripe_kind == "pink"
     )
     labels = [f.label_widget.text() for f in pink.fields]
-    assert labels == ["Enable Click Sync", "Show ghost cursors"]
-    assert isinstance(pink.fields[0].control_widget, Switch)
-    assert isinstance(pink.fields[1].control_widget, Switch)
+    assert labels == [
+        "Enable Click Sync",
+        "Show ghost cursors",
+        "Ghost cursors can use card controls",
+    ]
+    assert all(isinstance(f.control_widget, Switch) for f in pink.fields)
 
 
 def test_click_sync_toggle_default_off(qapp, settings_manager):

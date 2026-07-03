@@ -1421,6 +1421,7 @@ class SettingsTab(QWidget):
         )
         self._build_keep_alive_card(page)
         self._build_click_sync_card(page)
+        self._build_hotkeys_card(page)
         self._build_chat_handling_card(page)
 
     def _build_keep_alive_card(self, page):
@@ -1512,6 +1513,17 @@ class SettingsTab(QWidget):
         )
         field.set_control(switch)
         panel.add_field(field)
+        self._click_sync_switch = switch
+
+        # External flips (the clicksync.toggle hotkey, another Settings
+        # surface) must move this switch too. The isChecked guard breaks the
+        # set -> on_change -> setChecked -> toggled -> set loop.
+        on_change = getattr(self.settings_manager, "on_change", None)
+        if on_change is not None:
+            on_change(
+                lambda key, value: switch.setChecked(bool(value))
+                if key == CLICK_SYNC_ENABLED and switch.isChecked() != bool(value)
+                else None)
 
         ghost_field = SettingsField(
             "Show ghost cursors",
@@ -1554,6 +1566,167 @@ class SettingsTab(QWidget):
             self.settings_manager.get(GHOST_CURSORS_ENABLED, True))
 
         lay.insertWidget(insert_at, panel)
+
+    def _build_hotkeys_card(self, page):
+        from utils.hotkey_actions import ACTIONS
+        from utils.hotkey_capture import ChordCaptureButton
+
+        lay = page._panel_layout
+        insert_at = lay.count() - 1
+
+        panel = SettingsPanel(
+            title="Hotkeys",
+            sub=(
+                "Trigger app actions from anywhere with keyboard shortcuts. "
+                "Shortcuts are grabbed system-wide while the app runs."
+            ),
+            stripe="green",
+        )
+        self._panels.append(panel)
+        self._hotkeys_panel = panel
+        self._hotkey_rows: dict = {}
+        self._hotkey_status: dict = {}
+        self._hotkey_slot_combos: dict = {}
+        self._hotkey_accounts_provider = None
+
+        # One capture row per registry action, grouped by category. The
+        # SettingsPanel API has no section separator, so the category is
+        # rendered as a label prefix (matching the flat-row convention of
+        # the other Features cards).
+        categories: list[str] = []
+        for action in ACTIONS:
+            if action.category not in categories:
+                categories.append(action.category)
+        for category in categories:
+            for action in ACTIONS:
+                if action.category != category:
+                    continue
+                field = SettingsField(f"{category} - {action.label}")
+                button = ChordCaptureButton(
+                    self._hotkey_stored_chord(action.id),
+                    lambda text, aid=action.id: self._on_hotkey_chord(aid, text),
+                )
+                field.set_control(button)
+                panel.add_field(field)
+                self._hotkey_rows[action.id] = button
+            if category == "Launch":
+                # Slot-assignment pickers sit right under the launch chords.
+                # Built empty here; main wires the accounts provider after
+                # tab construction and the rows repopulate then.
+                for slot in ("1", "2", "3", "4"):
+                    slot_field = SettingsField(f"Launch slot {slot}")
+                    combo = SettingsComboBox()
+                    combo.setFixedWidth(220)
+                    combo.currentIndexChanged.connect(
+                        lambda _i, s=slot, c=combo:
+                        self._on_hotkey_slot_selected(s, c.currentData()))
+                    slot_field.set_control(combo)
+                    panel.add_field(slot_field)
+                    self._hotkey_slot_combos[slot] = combo
+
+        self._rebuild_hotkey_slot_rows()
+
+        lay.insertWidget(insert_at, panel)
+
+    def _hotkey_stored_chord(self, action_id):
+        """The chord this row should DISPLAY: stored override (None = cleared)
+        or the registry default when the id is absent from the store."""
+        from utils.hotkey_actions import action_by_id
+        from utils.settings_keys import HOTKEY_BINDINGS
+        stored = self.settings_manager.get(HOTKEY_BINDINGS, {}) or {}
+        if not isinstance(stored, dict):
+            stored = {}
+        if action_id in stored:
+            return stored[action_id]
+        return action_by_id(action_id).default_chord
+
+    def _on_hotkey_chord(self, action_id, chord_text):
+        """Persist a capture-row change. Binding an in-use chord (stored OR
+        registry default) prompts steal-or-cancel; stealing clears the other
+        action's binding explicitly (None) so the default cannot re-arm it."""
+        from utils.hotkey_actions import ACTIONS, action_by_id
+        from utils.settings_keys import HOTKEY_BINDINGS
+        raw = self.settings_manager.get(HOTKEY_BINDINGS, {}) or {}
+        stored = dict(raw) if isinstance(raw, dict) else {}
+        if chord_text is not None:
+            holder = None
+            for action in ACTIONS:
+                if action.id == action_id:
+                    continue
+                current = (stored[action.id] if action.id in stored
+                           else action.default_chord)
+                if current == chord_text:
+                    holder = action.id
+                    break
+            if holder is not None:
+                answer = QMessageBox.question(
+                    self, "Hotkey in use",
+                    f"'{chord_text}' is already bound to "
+                    f"{action_by_id(holder).label}. Move it here?")
+                if answer != QMessageBox.Yes:
+                    self._hotkey_rows[action_id].set_chord(
+                        self._hotkey_stored_chord(action_id))
+                    return
+                stored[holder] = None
+                self._hotkey_rows[holder].set_chord(None)
+        stored[action_id] = chord_text
+        self.settings_manager.set(HOTKEY_BINDINGS, stored)
+
+    def set_hotkey_accounts_provider(self, fn) -> None:
+        """Late-bound accounts source for the launch-slot pickers: a callable
+        returning [(account_id, game, label), ...] (get_accounts_basic shape).
+        main wires this after tab construction."""
+        self._hotkey_accounts_provider = fn
+        if self._hotkey_slot_combos:
+            self._rebuild_hotkey_slot_rows()
+
+    def _rebuild_hotkey_slot_rows(self) -> None:
+        """Repopulate the four launch-slot pickers from the accounts provider,
+        preselecting the persisted assignment. Signal-blocked: repopulating
+        must never fire a spurious _on_hotkey_slot_selected persist."""
+        from utils.settings_keys import HOTKEY_LAUNCH_SLOTS
+        accounts = []
+        if self._hotkey_accounts_provider is not None:
+            try:
+                accounts = list(self._hotkey_accounts_provider() or [])
+            except Exception:
+                accounts = []
+        raw = self.settings_manager.get(HOTKEY_LAUNCH_SLOTS, {}) or {}
+        assigned = raw if isinstance(raw, dict) else {}
+        for slot, combo in self._hotkey_slot_combos.items():
+            combo.blockSignals(True)
+            try:
+                combo.clear()
+                combo.addItem("(none)", None)
+                for account_id, game, label in accounts:
+                    combo.addItem(f"{label} ({str(game).upper()})", account_id)
+                idx = combo.findData(assigned.get(slot))
+                combo.setCurrentIndex(idx if idx >= 0 else 0)
+            finally:
+                combo.blockSignals(False)
+
+    def _on_hotkey_slot_selected(self, slot, account_id) -> None:
+        from utils.settings_keys import HOTKEY_LAUNCH_SLOTS
+        raw = self.settings_manager.get(HOTKEY_LAUNCH_SLOTS, {}) or {}
+        assigned = dict(raw) if isinstance(raw, dict) else {}
+        assigned[slot] = account_id
+        self.settings_manager.set(HOTKEY_LAUNCH_SLOTS, assigned)
+
+    def set_hotkey_status(self, failures: dict) -> None:
+        """Push the provider's failure map. Rows mid-capture are left alone
+        (the prompt text must not be clobbered); _refresh_hotkey_status
+        re-applies afterwards."""
+        self._hotkey_status = dict(failures or {})
+        self._refresh_hotkey_status()
+
+    def _refresh_hotkey_status(self) -> None:
+        for action_id, btn in self._hotkey_rows.items():
+            if btn.is_capturing():
+                continue
+            btn.set_chord(self._hotkey_stored_chord(action_id))  # base text
+            reason = self._hotkey_status.get(action_id)
+            if reason:
+                btn.setText(btn.text() + " - " + reason)
 
     def _build_chat_handling_card(self, page):
         from utils.settings_keys import (

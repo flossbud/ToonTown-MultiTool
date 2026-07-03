@@ -593,6 +593,23 @@ class MultiToonTool(QMainWindow):
                     if key == HOTKEY_BINDINGS else None)
                 self.global_hotkeys = provider
 
+        # Hotkeys card: saved accounts for the launch-slot pickers + provider
+        # failure badges. The pushes are delayed so the provider's event
+        # thread processes the queued apply before the failures() snapshot.
+        self.settings_tab.set_hotkey_accounts_provider(
+            lambda: self.launch_tab.cred_manager.get_accounts_basic())
+        if self.global_hotkeys is not None:
+            def _push_hotkey_status():
+                try:
+                    self.settings_tab.set_hotkey_status(
+                        self.global_hotkeys.failures())
+                except Exception:
+                    pass
+            QTimer.singleShot(1000, _push_hotkey_status)   # startup apply
+            self.settings_manager.on_change(
+                lambda key, _v: QTimer.singleShot(300, _push_hotkey_status)
+                if key == HOTKEY_BINDINGS else None)
+
         # route_all interop: while the persistent keyboard grab is held it
         # preempts the provider's passive grabs, so the router consults the
         # SAME effective bindings and dispatches matches instead of routing.
