@@ -204,12 +204,21 @@ class X11GlobalHotkeys(GlobalHotkeyProvider):
                 return
             if kind == "apply":
                 compiled, failures = _compile_bindings(self._display, payload)
+                # _apply_compiled mutates this same dict with grab-time
+                # refusals, so the stamp below sees BOTH failure kinds.
                 self._failures = failures
                 self._apply_compiled(compiled)
-                armed = {aid: None for aid in compiled.values()}
-                print("[GlobalHotkeys] armed: "
-                      + (", ".join(sorted(armed)) or "(none)")
-                      + (f"; unavailable: {sorted(failures)}" if failures else ""))
+                self._print_stamp()
+
+    def _print_stamp(self) -> None:
+        """Running-code stamp: reports what is ACTUALLY armed (grabbed) and
+        every failure, compile-time and grab-time alike - the live-validation
+        gate trusts this line, so it must never claim a refused chord."""
+        armed = sorted(set(self._grabbed.values()))
+        line = "[GlobalHotkeys] armed: " + (", ".join(armed) or "(none)")
+        if self._failures:
+            line += f"; unavailable: {sorted(self._failures)}"
+        print(line)
 
     def _apply_compiled(self, compiled: dict) -> None:
         """Diff grabs: ungrab removed chords, grab added ones. Per-chord

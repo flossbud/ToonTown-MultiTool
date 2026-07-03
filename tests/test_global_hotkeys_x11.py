@@ -118,3 +118,18 @@ def test_grab_refusal_records_failure_and_releases_all(monkeypatch):
     # all-or-nothing cleanup: every lock-combo grab released
     assert sorted(prov._root.ungrabs) == sorted(
         (43, 12 | lock) for lock in _LOCK_COMBOS)
+
+
+def test_stamp_reports_actual_grabs_and_every_failure(capsys):
+    # The stamp derives from _grabbed (real server-side grabs), never the
+    # compiled table, so a grab-time refusal can't print as armed.
+    prov = _bare_provider()
+    prov._grabbed = {(71, 0): "c.d"}
+    prov._failures = {"a.b": "in use by another application"}
+    prov._print_stamp()
+    assert capsys.readouterr().out.strip() == \
+        "[GlobalHotkeys] armed: c.d; unavailable: ['a.b']"
+    # fully-armed: no unavailable suffix
+    prov._failures = {}
+    prov._print_stamp()
+    assert capsys.readouterr().out.strip() == "[GlobalHotkeys] armed: c.d"
