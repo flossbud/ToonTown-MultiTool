@@ -48,3 +48,22 @@ def test_effective_bindings_drops_invalid_entries():
     assert eff["app.refresh"] == "F5"     # invalid override -> default survives
     assert "no.such.action" not in eff
     assert "clicksync.toggle" not in eff
+
+
+def test_default_chords_are_canonical_and_bindable():
+    from utils.hotkey_chords import parse_chord, chord_error, format_chord
+    for action in ACTIONS:
+        if action.default_chord is None:
+            continue
+        chord = parse_chord(action.default_chord)
+        assert chord_error(chord) is None, action.id
+        assert format_chord(chord) == action.default_chord, action.id
+
+
+def test_effective_bindings_canonicalizes_and_survives_wrong_type():
+    eff = effective_bindings(_FakeSettings({
+        HOTKEY_BINDINGS: {"overlay.toggle_cards": "alt+ctrl+H"}}))
+    assert eff["overlay.toggle_cards"] == "ctrl+alt+h"
+    eff = effective_bindings(_FakeSettings({HOTKEY_BINDINGS: "oops"}))
+    assert eff["app.refresh"] == "F5"     # wrong-typed store -> defaults only
+    assert "overlay.toggle_cards" not in eff

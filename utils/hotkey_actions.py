@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from utils.hotkey_chords import parse_chord, chord_error
+from utils.hotkey_chords import parse_chord, chord_error, format_chord
 from utils.settings_keys import HOTKEY_BINDINGS
 
 
@@ -63,6 +63,8 @@ def action_by_id(action_id: str) -> HotkeyAction:
 def effective_bindings(settings_manager) -> dict[str, str]:
     """action_id -> canonical chord string, for every BOUND action."""
     stored = settings_manager.get(HOTKEY_BINDINGS, {}) or {}
+    if not isinstance(stored, dict):
+        stored = {}                       # hand-edited config: wrong type
     out: dict[str, str] = {}
     for action in ACTIONS:
         if action.id in stored:
@@ -76,6 +78,7 @@ def effective_bindings(settings_manager) -> dict[str, str]:
             else:
                 if chord_error(chord) is not None:
                     continue                  # guardrail violation -> unbound
+                chord_text = format_chord(chord)
         else:
             chord_text = action.default_chord
         if chord_text:
