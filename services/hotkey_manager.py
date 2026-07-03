@@ -418,6 +418,9 @@ class HotkeyManager(QObject):
                 self.pressed_keys.add(key.char)
 
             normalized = self.normalize_key(key)
+            # `not fam` matters: modifiers DO normalize (ctrl_l -> Control_L),
+            # so without it modifier presses would enter _held_keys and
+            # poison the full-set consult.
             if normalized and not fam and self._hotkey_hook is not None:
                 mods = frozenset(m for m in ("ctrl", "alt", "shift", "super")
                                  if m in self.pressed_keys)

@@ -115,6 +115,21 @@ def test_compile_pair_member_collision_never_half_inserts():
     }
 
 
+def test_compile_pair_members_sharing_one_keycode_fails_legibly():
+    # Real on some layouts (e.g. KP_1/KP_End resolving to one keycode): the
+    # pair is un-armable and must refuse with a distinct message, never the
+    # confusing "duplicate of <itself>", and never insert anything.
+    from Xlib import XK
+    d = _FakeDisplay()
+    d._by_keysym = {
+        XK.string_to_keysym("1"): 43,      # both members -> keycode 43
+        XK.string_to_keysym("h"): 43,
+    }
+    table, failures = _compile_bindings(d, {"a.pair": "ctrl+1+h"})
+    assert failures == {"a.pair": "chord keys share a keycode"}
+    assert table == {}
+
+
 def _bare_provider():
     prov = X11GlobalHotkeys.__new__(X11GlobalHotkeys)   # no real X connect
     prov._display, prov._root = _fake_display(), _FakeRoot()
@@ -204,6 +219,30 @@ def test_apply_regrabs_key_whose_mode_changed():
     assert len(sync_grabs) == len(_LOCK_COMBOS)
     assert (43, X.ControlMask) in prov._grab_sync
     assert prov._grabbed[(43, X.ControlMask)] == "a.pair"
+
+
+def test_rebind_same_key_updates_action_and_partner():
+    from Xlib import X
+    # Same (keycode, mask), same mode, DIFFERENT action: the kept grab's
+    # _grabbed action must update so the stamp stays current (no re-grab).
+    prov = _bare_provider()
+    prov._apply_compiled({(43, X.ControlMask): ("a.first", None)})
+    grabs_before = len(prov._root.grabs)
+    prov._apply_compiled({(43, X.ControlMask): ("a.second", None)})
+    assert prov._grabbed[(43, X.ControlMask)] == "a.second"
+    assert len(prov._root.grabs) == grabs_before     # kept, not re-grabbed
+    assert prov._root.ungrabs == []
+    # pair -> pair partner swap: the shared member keeps its sync grab while
+    # _table's partner and _grabbed's action both update.
+    prov = _bare_provider()
+    prov._apply_compiled({(10, X.ControlMask): ("a.pair", 43),
+                          (43, X.ControlMask): ("a.pair", 10)})
+    prov._apply_compiled({(10, X.ControlMask): ("b.pair", 71),
+                          (71, X.ControlMask): ("b.pair", 10)})
+    assert prov._table[(10, X.ControlMask)] == ("b.pair", 71)
+    assert prov._grabbed[(10, X.ControlMask)] == "b.pair"
+    assert (10, X.ControlMask) in prov._grab_sync
+    assert (43, X.ControlMask) not in prov._grabbed  # old partner released
 
 
 def test_pair_member_grab_failure_cascades_to_both():

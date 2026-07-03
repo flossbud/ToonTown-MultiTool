@@ -99,10 +99,14 @@ def _compile_bindings(display, bindings):
             else:
                 kc_a, kc_b = keycodes
                 entries = {(kc_a, mask): kc_b, (kc_b, mask): kc_a}
+            if len(entries) < len(keycodes):
+                # Both members resolved to ONE keycode (real on some layouts,
+                # e.g. KP_1/KP_End): un-armable as a pair, legible refusal.
+                failures[action_id] = "chord keys share a keycode"
+                continue
             dup = next((key for key in entries if key in table), None)
-            if dup is not None or len(entries) < len(keycodes):
-                owner = table[dup][0] if dup is not None else action_id
-                failures[action_id] = f"duplicate of {owner}"
+            if dup is not None:
+                failures[action_id] = f"duplicate of {table[dup][0]}"
                 continue
             for key, partner in entries.items():
                 table[key] = (action_id, partner)
@@ -276,7 +280,11 @@ class X11GlobalHotkeys(GlobalHotkeyProvider):
         whose REQUIRED MODE changed since the last apply is ungrabbed and
         re-grabbed: a pair member left on a stale async grab would silently
         EAT the key on the partner-up path (async grabs consume; only a
-        sync freeze can be replayed)."""
+        sync freeze can be replayed).
+
+        Precondition: self._failures holds only THIS apply's compile
+        failures (reset by _drain_commands before every call); the
+        pair-cascade check reads it."""
         for key in list(self._grabbed):
             entry = compiled.get(key)
             needs_sync = entry is not None and entry[1] is not None
