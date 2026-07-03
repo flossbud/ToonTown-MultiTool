@@ -1,9 +1,10 @@
 import pytest
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QKeyEvent
+from PySide6.QtCore import QEvent, Qt
+from PySide6.QtGui import QFocusEvent, QKeyEvent
 from PySide6.QtWidgets import QApplication
 
 from utils.hotkey_capture import ChordCaptureButton
+from utils.hotkey_chords import chord_error, parse_chord
 
 
 @pytest.fixture(scope="module")
@@ -71,3 +72,49 @@ def test_ctrl_letter_key_range_path(qapp):
     b.begin_capture()
     _key(b, Qt.Key_H, Qt.ControlModifier, "\x08")
     assert seen == ["ctrl+h"]
+
+
+def test_focus_out_cancels_capture(qapp):
+    # Clicking another row/widget mid-capture must cancel like Esc so the
+    # app-wide keyboard grab never outlives the user's intent.
+    seen = []
+    b = ChordCaptureButton("ctrl+1", on_chord=seen.append)
+    b.begin_capture()
+    assert b.is_capturing()
+    b.focusOutEvent(QFocusEvent(QEvent.FocusOut))
+    assert not b.is_capturing()
+    assert seen == [] and b.text() == "Ctrl+1"
+
+
+def test_punctuation_binds_keysym_name(qapp):
+    # '+' must bind as the keysym NAME 'plus': a literal '+' key would
+    # corrupt the chord string ('alt+shift++') and parse_chord rejects it.
+    seen = []
+    b = ChordCaptureButton(None, on_chord=seen.append)
+    b.begin_capture()
+    _key(b, Qt.Key_Plus, Qt.AltModifier | Qt.ShiftModifier, "+")
+    assert seen == ["alt+shift+plus"]
+    assert b.text() == "Alt+Shift+plus"
+    assert not b.is_capturing()
+    chord = parse_chord(seen[0])            # round-trips through the parser
+    assert chord_error(chord) is None
+
+
+def test_unmapped_printable_refused_with_feedback(qapp):
+    seen = []
+    b = ChordCaptureButton(None, on_chord=seen.append)
+    b.begin_capture()
+    _key(b, Qt.Key_section, Qt.ControlModifier, "§")
+    assert seen == []                        # refused, no callback
+    assert "unsupported" in b.text().lower()
+    assert b.is_capturing()
+
+
+def test_space_and_return_do_not_bind(qapp):
+    seen = []
+    b = ChordCaptureButton(None, on_chord=seen.append)
+    b.begin_capture()
+    _key(b, Qt.Key_Space, Qt.ControlModifier, " ")
+    assert seen == [] and b.is_capturing()
+    _key(b, Qt.Key_Return, Qt.ControlModifier, "\r")
+    assert seen == [] and b.is_capturing()

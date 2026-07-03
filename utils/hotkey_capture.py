@@ -16,6 +16,15 @@ _QT_MODS = ((Qt.ControlModifier, "ctrl"), (Qt.AltModifier, "alt"),
             (Qt.ShiftModifier, "shift"), (Qt.MetaModifier, "super"))
 _MOD_KEYS = {Qt.Key_Control, Qt.Key_Alt, Qt.Key_AltGr, Qt.Key_Shift,
              Qt.Key_Meta, Qt.Key_Super_L, Qt.Key_Super_R}
+_MOD_NAMES = frozenset(("ctrl", "alt", "shift", "super"))
+
+# Punctuation binds by X keysym NAME so the emitted chord round-trips
+# through parse_chord (a literal '+' key would corrupt the chord string).
+_PUNCT_KEYSYMS = {
+    "+": "plus", "-": "minus", "=": "equal", ",": "comma", ".": "period",
+    "/": "slash", "\\": "backslash", ";": "semicolon", "'": "apostrophe",
+    "[": "bracketleft", "]": "bracketright", "`": "grave",
+}
 
 
 def _display(chord_text: str | None) -> str:
@@ -24,17 +33,17 @@ def _display(chord_text: str | None) -> str:
         return "Not set"
     parts = []
     for p in chord_text.split("+"):
-        if p.startswith("F") and p[1:].isdigit():
-            parts.append(p)                  # F-keys stay as-is
+        if p in _MOD_NAMES:
+            parts.append(p.capitalize())     # the four modifier names
         elif len(p) == 1:
             parts.append(p.upper())          # single key: H, 1
         else:
-            parts.append(p.capitalize())     # modifier / keysym name
+            parts.append(p)                  # F-keys / keysym names verbatim
     return "+".join(parts)
 
 
 def _key_name(event) -> str | None:
-    """The chord key for a Qt key event, or None if untranslatable."""
+    """The chord key for a Qt key event, or None if unbindable."""
     key = event.key()
     if Qt.Key_F1 <= key <= Qt.Key_F35:
         return f"F{key - Qt.Key_F1 + 1}"
@@ -44,8 +53,10 @@ def _key_name(event) -> str | None:
     if Qt.Key_0 <= key <= Qt.Key_9:
         return chr(ord("0") + key - Qt.Key_0)
     text = event.text()
-    if text and text.isprintable() and not text.isspace():
-        return text.lower()
+    if len(text) == 1 and text.isprintable() and not text.isspace():
+        if text.isascii() and text.isalnum():
+            return text.lower()
+        return _PUNCT_KEYSYMS.get(text)      # unmapped -> None (refused)
     return None
 
 
@@ -70,12 +81,25 @@ class ChordCaptureButton(QPushButton):
         if self._capturing:
             return
         self._capturing = True
+        # Take focus BEFORE grabbing: if another row is mid-capture, its
+        # focusOutEvent cancels (and releases its grab) right now, so our
+        # grab below is never stomped by that release.
+        self.setFocus(Qt.MouseFocusReason)
         self.setText("Press a chord... (Esc cancels, Backspace clears)")
         self.grabKeyboard()
 
     def _end_capture(self) -> None:
         self._capturing = False
         self.releaseKeyboard()
+
+    def focusOutEvent(self, event) -> None:
+        # Losing focus while capturing = the user moved on (clicked another
+        # widget/row, switched Settings pages): cancel like Esc so the
+        # app-wide keyboard grab can never outlive the user's intent.
+        if self._capturing:
+            self._end_capture()
+            self.set_chord(self._chord_text)
+        super().focusOutEvent(event)
 
     def keyPressEvent(self, event) -> None:
         if not self._capturing:
@@ -94,7 +118,9 @@ class ChordCaptureButton(QPushButton):
             return                               # wait for the terminal key
         name = _key_name(event)
         if name is None:
-            return                               # untranslatable: keep waiting
+            self.setText("Refused: unsupported key - use letters, digits, "
+                         "F-keys, or common punctuation")
+            return                               # keep capturing
         mods = frozenset(m for qt_m, m in _QT_MODS
                          if event.modifiers() & qt_m)
         chord = Chord(mods=mods, key=name)
