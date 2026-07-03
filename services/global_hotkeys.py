@@ -3,6 +3,10 @@
 The X server delivers ONLY the grabbed chords to this connection, so the
 app never sees any other keystroke (stronger privacy than a listener),
 and a grabbed chord is CONSUMED - it never reaches the focused window.
+Qualifier: while a grabbed chord is physically held, the activated grab
+redirects that key's events to this connection (they are matched or
+ignored, never logged), and stray root-selected events may arrive;
+nothing else is ever delivered.
 XGrabKey is portal-safe (probed; see the route_all memory). NEVER XTEST.
 
 Structure mirrors utils/x11_movement_grabber.py (the proven in-repo
@@ -26,6 +30,7 @@ from utils.hotkey_chords import parse_chord, x_modmask
 
 try:
     from Xlib import X, XK, display as xdisplay
+    from Xlib import error as xerror
     _HAS_XLIB = True
 except Exception:                                     # pragma: no cover
     _HAS_XLIB = False
@@ -68,7 +73,11 @@ def _compile_bindings(display, bindings):
             keycode = display.keysym_to_keycode(keysym)
             if not keycode:
                 raise ValueError(f"no keycode for {chord.key!r}")
-            table[(int(keycode), x_modmask(chord))] = action_id
+            key = (int(keycode), x_modmask(chord))
+            if key in table:
+                failures[action_id] = f"duplicate of {table[key]}"
+                continue
+            table[key] = action_id
         except Exception as e:                        # noqa: BLE001
             failures[action_id] = str(e)
     return table, failures
@@ -104,13 +113,21 @@ class X11GlobalHotkeys(GlobalHotkeyProvider):
     # -- public API (GUI thread) --------------------------------------
     def start(self) -> bool:
         if not _HAS_XLIB:
+            self._close_wake_pipe()
             return False
         try:
             self._display = xdisplay.Display()
             self._root = self._display.screen().root
             self._root.change_attributes(event_mask=X.KeyPressMask | X.KeyReleaseMask)
         except Exception:
+            try:
+                if self._display is not None:
+                    self._display.close()
+            except Exception:
+                pass
             self._display = None
+            self._root = None
+            self._close_wake_pipe()
             return False
         self._running = True
         self._thread = threading.Thread(
@@ -129,6 +146,8 @@ class X11GlobalHotkeys(GlobalHotkeyProvider):
         return dict(self._failures)
 
     def stop(self) -> None:
+        """Tear down grabs, the display connection, and the wake pipe.
+        NOT restartable: create a new provider to re-arm hotkeys."""
         if not self._running:
             return
         self._running = False
@@ -137,10 +156,24 @@ class X11GlobalHotkeys(GlobalHotkeyProvider):
             self._thread.join(timeout=2.0)
 
     def _wakeup(self) -> None:
+        if self._wake_w == -1:
+            return
         try:
             os.write(self._wake_w, b"x")
         except Exception:
             pass
+
+    def _close_wake_pipe(self) -> None:
+        """Invalidate the fds BEFORE closing so _wakeup() can never write
+        to a closed (and possibly reused) descriptor."""
+        for attr in ("_wake_r", "_wake_w"):
+            fd = getattr(self, attr)
+            setattr(self, attr, -1)
+            if fd != -1:
+                try:
+                    os.close(fd)
+                except Exception:
+                    pass
 
     # -- event thread ---------------------------------------------------
     def _run(self) -> None:
@@ -148,6 +181,11 @@ class X11GlobalHotkeys(GlobalHotkeyProvider):
             fd = self._display.fileno()
             while self._running:
                 self._drain_commands()
+                # Drain events buffered during a rebind BEFORE blocking in
+                # select (they are in xlib's queue, not on the socket, so
+                # select would sit on them for the full timeout).
+                while self._display.pending_events():
+                    self._handle_event(self._display.next_event())
                 r, _w, _x = select.select([fd, self._wake_r], [], [], 1.0)
                 if self._wake_r in r:
                     os.read(self._wake_r, 64)
@@ -191,21 +229,36 @@ class X11GlobalHotkeys(GlobalHotkeyProvider):
             if key in self._grabbed:
                 continue
             keycode, mask = key
+            catch = xerror.CatchError()   # traps async errors for THESE requests only
             ok = True
             for lock in _LOCK_COMBOS:
                 try:
                     self._root.grab_key(keycode, mask | lock, True,
-                                        X.GrabModeAsync, X.GrabModeAsync)
+                                        X.GrabModeAsync, X.GrabModeAsync,
+                                        onerror=catch)
                 except Exception:
                     ok = False
             try:
-                self._display.sync()
+                self._display.sync()      # forces the async errors to be parsed
             except Exception:
                 pass
+            err = catch.get_error()
+            if err is not None:
+                ok = False
             if ok:
                 self._grabbed[key] = action_id
             else:
-                self._failures[action_id] = "in use by another application"
+                self._failures[action_id] = (
+                    "in use by another application"
+                    if err is None or isinstance(err, xerror.BadAccess)
+                    else f"grab failed: {err.__class__.__name__}")
+                # All-or-nothing: release any lock-combo grabs that DID succeed
+                # so a half-armed chord can't silently consume keys.
+                for lock in _LOCK_COMBOS:
+                    try:
+                        self._root.ungrab_key(keycode, mask | lock)
+                    except Exception:
+                        pass
         self._table = dict(compiled)
 
     def _handle_event(self, event) -> None:
@@ -252,8 +305,4 @@ class X11GlobalHotkeys(GlobalHotkeyProvider):
                 self._display.close()
         except Exception:
             pass
-        for fd in (self._wake_r, self._wake_w):
-            try:
-                os.close(fd)
-            except Exception:
-                pass
+        self._close_wake_pipe()

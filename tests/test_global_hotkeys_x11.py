@@ -13,8 +13,11 @@ class _FakeRoot:
     def __init__(self):
         self.grabs = []      # (keycode, modmask)
         self.ungrabs = []
-    def grab_key(self, keycode, modmask, owner_events, ptr_mode, kbd_mode):
+        self.onerrors = []
+    def grab_key(self, keycode, modmask, owner_events, ptr_mode, kbd_mode,
+                 onerror=None):
         self.grabs.append((keycode, modmask))
+        self.onerrors.append(onerror)
     def ungrab_key(self, keycode, modmask):
         self.ungrabs.append((keycode, modmask))
 
@@ -65,15 +68,53 @@ def test_compile_reports_unresolvable_keysym():
     assert table == {} and "x.y" in failures
 
 
-def test_grab_diffing_grabs_and_ungrabs():
+def _bare_provider():
     prov = X11GlobalHotkeys.__new__(X11GlobalHotkeys)   # no real X connect
     prov._display, prov._root = _fake_display(), _FakeRoot()
     prov._grabbed = {}
     prov._table = {}
     prov._failures = {}
     prov._down = set()
+    return prov
+
+
+def test_grab_diffing_grabs_and_ungrabs():
+    prov = _bare_provider()
     prov._apply_compiled({(43, 12): "a.b"})
     assert len(prov._root.grabs) == len(_LOCK_COMBOS)    # one chord, all lock variants
     prov._apply_compiled({(71, 0): "c.d"})
     assert len(prov._root.ungrabs) == len(_LOCK_COMBOS)  # old chord ungrabbed
     assert prov._table == {(71, 0): "c.d"}
+
+
+def test_compile_reports_duplicate_chord_collision():
+    from Xlib import X
+    d = _fake_display()
+    table, failures = _compile_bindings(
+        d, {"a.first": "ctrl+alt+h", "a.second": "ctrl+alt+h"})
+    assert table == {(43, X.ControlMask | X.Mod1Mask): "a.first"}
+    assert failures["a.second"] == "duplicate of a.first"
+
+
+def test_grab_refusal_records_failure_and_releases_all(monkeypatch):
+    # A real-server grab refusal arrives as an ASYNC X error (never a raise),
+    # trapped by the per-request CatchError handler. Simulate BadAccess.
+    from Xlib import error as xerror
+
+    class _FakeCatch:
+        def __init__(self, *errors):
+            pass
+        def get_error(self):
+            return xerror.BadAccess.__new__(xerror.BadAccess)
+
+    monkeypatch.setattr("services.global_hotkeys.xerror.CatchError", _FakeCatch)
+    prov = _bare_provider()
+    prov._apply_compiled({(43, 12): "a.b"})
+    assert prov.failures() == {"a.b": "in use by another application"}
+    assert (43, 12) not in prov._grabbed
+    # every grab request carried the error trap
+    assert len(prov._root.grabs) == len(_LOCK_COMBOS)
+    assert all(h is not None for h in prov._root.onerrors)
+    # all-or-nothing cleanup: every lock-combo grab released
+    assert sorted(prov._root.ungrabs) == sorted(
+        (43, 12 | lock) for lock in _LOCK_COMBOS)
