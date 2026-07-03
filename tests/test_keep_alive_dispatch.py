@@ -1,7 +1,10 @@
 """Unit tests for the per-cycle keep-alive dispatch helper.
 
-The helper resolves (game, set, action) -> key per toon and dispatches via
-InputService.send_keep_alive_to_window. Tests stub all transports so no
+The helper resolves (game, action) -> the CLIENT's key per toon and
+dispatches via InputService.send_keep_alive_to_window. Outbound mirrors the
+router rule: CC movement uses the WASD-lock canonical, everything else uses
+set 0. A toon's assigned set never participates - the client only speaks
+its own (set-0/config-driven) bindings. Tests stub all transports so no
 real Qt event loop or wine bridge is exercised.
 """
 
@@ -56,7 +59,6 @@ def test_ttr_default_jump_fires_space_to_both(stub_input_service, stub_window_ma
         fire_toons=[0, 1],
         window_manager=stub_window_manager(["w1", "w2"]),
         keymap_manager=real_keymap,
-        assignments=[0, 0],
         input_service=stub_input_service,
     )
     assert fired == 2
@@ -64,9 +66,10 @@ def test_ttr_default_jump_fires_space_to_both(stub_input_service, stub_window_ma
     assert ("w2", "space") in stub_input_service.calls
 
 
-def test_custom_set_falls_back_to_default(stub_input_service, stub_window_manager,
-                                           real_keymap, patch_registry):
-    """Toon on a custom set with no binding for the action falls back to set 0."""
+def test_custom_set_never_participates(stub_input_service, stub_window_manager,
+                                        real_keymap, patch_registry):
+    """The toon's assigned set is irrelevant: even a set with no binding for
+    the action sends the client's set-0 key."""
     from tabs.multitoon._tab import _dispatch_keep_alive_cycle
     real_keymap.add_set("ttr", name="Minimal")
     # Wipe the 'book' binding on the new set so set 1 has no book key.
@@ -77,10 +80,30 @@ def test_custom_set_falls_back_to_default(stub_input_service, stub_window_manage
         fire_toons=[0],
         window_manager=stub_window_manager(["w1"]),
         keymap_manager=real_keymap,
-        assignments=[1],
         input_service=stub_input_service,
     )
-    assert ("w1", "Alt_L") in stub_input_service.calls  # fell back to set 0
+    assert ("w1", "Alt_L") in stub_input_service.calls  # set 0, the client binding
+
+
+def test_rebound_set_still_gets_client_key(stub_input_service, stub_window_manager,
+                                            real_keymap, patch_registry):
+    """Regression: a set that REBINDS the keep-alive action (jump=Alt_R) must
+    not leak its own key to the client. The client's jump is space; a raw
+    Alt_R reads as the side-agnostic 'alt' stickerBook binding and toggled
+    the book open every keep-alive cycle on the live winbox."""
+    from tabs.multitoon._tab import _dispatch_keep_alive_cycle
+    real_keymap.add_set("ttr", name="Arrows")
+    real_keymap.update_set_key("ttr", 1, "jump", "Alt_R")
+    patch_registry({"w1": "ttr", "w2": "ttr"})
+    _dispatch_keep_alive_cycle(
+        action="jump",
+        fire_toons=[0, 1],
+        window_manager=stub_window_manager(["w1", "w2"]),
+        keymap_manager=real_keymap,
+        input_service=stub_input_service,
+    )
+    assert ("w2", "space") in stub_input_service.calls
+    assert ("w2", "Alt_R") not in stub_input_service.calls
 
 
 def test_unclassified_window_skipped(stub_input_service, stub_window_manager,
@@ -92,7 +115,6 @@ def test_unclassified_window_skipped(stub_input_service, stub_window_manager,
         fire_toons=[0, 1],
         window_manager=stub_window_manager(["w1", "w2"]),
         keymap_manager=real_keymap,
-        assignments=[0, 0],
         input_service=stub_input_service,
     )
     assert fired == 1
@@ -109,7 +131,6 @@ def test_missing_window_slot_skipped(stub_input_service, stub_window_manager,
         fire_toons=[0, 1, 2],
         window_manager=stub_window_manager(["w1"]),
         keymap_manager=real_keymap,
-        assignments=[0, 0, 0],
         input_service=stub_input_service,
     )
     assert fired == 1
@@ -127,7 +148,6 @@ def test_up_alias_resolves_to_forward(stub_input_service, stub_window_manager,
         fire_toons=[0],
         window_manager=stub_window_manager(["w1"]),
         keymap_manager=real_keymap,
-        assignments=[0],
         input_service=stub_input_service,
     )
     assert ("w1", "Up") in stub_input_service.calls  # TTR default forward = Up
@@ -143,7 +163,6 @@ def test_zero_matches_returns_zero(stub_input_service, stub_window_manager,
         fire_toons=[0, 1],
         window_manager=stub_window_manager(["w1", "w2"]),
         keymap_manager=real_keymap,
-        assignments=[0, 0],
         input_service=stub_input_service,
     )
     assert fired == 0
@@ -161,11 +180,10 @@ def test_ttr_mixed_sets_forward(stub_input_service, stub_window_manager,
         fire_toons=[0, 1],
         window_manager=stub_window_manager(["w1", "w2"]),
         keymap_manager=real_keymap,
-        assignments=[0, 1],
         input_service=stub_input_service,
     )
     assert ("w1", "Up") in stub_input_service.calls  # TTR default forward = Up
-    assert ("w2", "Up") in stub_input_service.calls  # TTR Arrows forward = Up
+    assert ("w2", "Up") in stub_input_service.calls  # set 0 key, not the toon's set
 
 
 def test_cc_default_jump_fires_space(stub_input_service, stub_window_manager,
@@ -177,7 +195,6 @@ def test_cc_default_jump_fires_space(stub_input_service, stub_window_manager,
         fire_toons=[0, 1],
         window_manager=stub_window_manager(["w1", "w2"]),
         keymap_manager=real_keymap,
-        assignments=[0, 0],
         input_service=stub_input_service,
     )
     assert ("w1", "space") in stub_input_service.calls
@@ -195,11 +212,10 @@ def test_cc_mixed_sets_forward(stub_input_service, stub_window_manager,
         fire_toons=[0, 1],
         window_manager=stub_window_manager(["w1", "w2"]),
         keymap_manager=real_keymap,
-        assignments=[0, 1],
         input_service=stub_input_service,
     )
-    assert ("w1", "w") in stub_input_service.calls   # CC default forward = w
-    assert ("w2", "Up") in stub_input_service.calls  # CC Arrows forward = Up
+    assert ("w1", "w") in stub_input_service.calls  # CC WASD-lock canonical
+    assert ("w2", "w") in stub_input_service.calls  # canonical, not the toon's set
 
 
 def test_mixed_ttr_cc_book(stub_input_service, stub_window_manager,
@@ -211,7 +227,6 @@ def test_mixed_ttr_cc_book(stub_input_service, stub_window_manager,
         fire_toons=[0, 1],
         window_manager=stub_window_manager(["w1", "w2"]),
         keymap_manager=real_keymap,
-        assignments=[0, 0],
         input_service=stub_input_service,
     )
     assert ("w1", "Alt_L") in stub_input_service.calls   # TTR book = Alt_L
@@ -227,7 +242,6 @@ def test_mixed_ttr_cc_jump(stub_input_service, stub_window_manager,
         fire_toons=[0, 1],
         window_manager=stub_window_manager(["w1", "w2"]),
         keymap_manager=real_keymap,
-        assignments=[0, 0],
         input_service=stub_input_service,
     )
     assert ("w1", "space") in stub_input_service.calls

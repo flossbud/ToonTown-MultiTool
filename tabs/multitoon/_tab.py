@@ -4041,7 +4041,6 @@ class MultitoonTab(QWidget):
                     fire_toons=fire_toons,
                     window_manager=self.window_manager,
                     keymap_manager=self.keymap_manager,
-                    assignments=self.get_keymap_assignments(),
                     input_service=self.input_service,
                 )
 
@@ -4077,14 +4076,29 @@ class MultitoonTab(QWidget):
 
 
 def _dispatch_keep_alive_cycle(action, fire_toons, window_manager, keymap_manager,
-                                assignments, input_service):
+                                input_service):
     """Dispatch one keep-alive cycle to the requested toon slots.
 
     Returns the number of toons that actually received a keypress (after
-    per-toon game / set / binding resolution). A return of 0 with a non-empty
+    per-toon game / binding resolution). A return of 0 with a non-empty
     fire_toons list means every candidate was skipped.
+
+    The key sent is ALWAYS the game client's own binding, mirroring the
+    router's outbound rule (_send_logical_action_km): CC movement uses the
+    WASD-lock canonical, everything else uses set 0 (the config-driven
+    Default that tracks the client's settings file). A toon's assigned SET
+    must never leak here - sets are an input-translation layer for what the
+    USER presses, not what the client understands. Resolving through the
+    set sent raw Alt_R (an Arrows-set jump rebind) to a TTR client whose
+    real jump is space, which the client read as its side-agnostic 'alt'
+    stickerBook binding: the book toggled open every keep-alive cycle.
     """
+    from utils import cc_isolation
+
     logical = "forward" if action == "up" else action
+    cc_canonical = cc_isolation.canonical_to_ttmt_keysyms(
+        cc_isolation.DEFAULT_CANONICAL
+    )
     window_ids = window_manager.get_window_ids()
     fired = 0
     for i in fire_toons:
@@ -4099,12 +4113,8 @@ def _dispatch_keep_alive_cycle(action, fire_toons, window_manager, keymap_manage
             continue
         if not logical_actions.supports(game, logical):
             continue
-        set_idx = assignments[i] if i < len(assignments) else 0
-        key = keymap_manager.get_key_for_action(game, set_idx, logical)
-        # Fall back to set 0 when the toon's set has no binding for this
-        # action. `update_set_key` stores empty strings rather than deleting
-        # the entry, so treat falsy values (None or "") as missing.
-        if not key and set_idx != 0:
+        key = cc_canonical.get(logical) if game == "cc" else None
+        if not key:
             key = keymap_manager.get_key_for_action(game, 0, logical)
         if not key:
             continue
