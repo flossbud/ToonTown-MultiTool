@@ -373,3 +373,29 @@ class KeymapManager:
                     for j in range(i + 1, len(actions)):
                         pairs.append((actions[i], actions[j]))
         return (bool(pairs), pairs)
+
+    def cross_set_conflicts(self, game: str) -> list[tuple[int, str, int, str, str]]:
+        """Bindings in two DIFFERENT sets of `game` that share one key but
+        mean DIFFERENT actions, as (set_a, action_a, set_b, action_b, key)
+        with set_a < set_b. One key driving two toons differently is almost
+        always an accident; the same action on the same key across sets is
+        the normal broadcast case (every added set seeds from the game
+        defaults) and is not reported. Same-set duplicates are
+        has_conflicts()'s job."""
+        with self._lock:
+            by_key: dict[str, list[tuple[int, str]]] = {}
+            for idx, s in enumerate(self._sets.get(game, [])):
+                for action in logical_actions.actions_for(game):
+                    k = s.get(action)
+                    if not k:
+                        continue
+                    by_key.setdefault(k, []).append((idx, action))
+        out: list[tuple[int, str, int, str, str]] = []
+        for key, entries in by_key.items():
+            for i in range(len(entries)):
+                for j in range(i + 1, len(entries)):
+                    (set_a, act_a), (set_b, act_b) = entries[i], entries[j]
+                    if set_a == set_b or act_a == act_b:
+                        continue
+                    out.append((set_a, act_a, set_b, act_b, key))
+        return out

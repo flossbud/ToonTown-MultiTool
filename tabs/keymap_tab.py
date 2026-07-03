@@ -89,6 +89,7 @@ class MovementKeyField(QLineEdit):
         super().__init__(parent)
         self._key = initial_key
         self._awaiting = False
+        self._locked = False
         self.setReadOnly(True)
         self.setFocusPolicy(Qt.ClickFocus)
         self.setMinimumHeight(28)
@@ -110,8 +111,24 @@ class MovementKeyField(QLineEdit):
     def get_key(self) -> str:
         return self._key
 
+    def set_locked(self, locked: bool):
+        """A locked field displays its key but never enters capture mode -
+        used by the Default set while a game config file drives its keys."""
+        self._locked = bool(locked)
+        if self._locked:
+            self._awaiting = False
+        self.setCursor(Qt.ArrowCursor if self._locked else Qt.PointingHandCursor)
+        self.setFocusPolicy(Qt.NoFocus if self._locked else Qt.ClickFocus)
+        self.setProperty("locked", "true" if self._locked else "false")
+        self._update_display()
+
+    def is_locked(self) -> bool:
+        return self._locked
+
     def mousePressEvent(self, e):
         super().mousePressEvent(e)
+        if self._locked:
+            return
         self._awaiting = True
         self._update_display()
 
@@ -492,10 +509,14 @@ class SetCard(QFrame):
     key_changed       = Signal(str, str)   # (action_name, captured_key)
     detect_requested  = Signal()
 
-    def __init__(self, index: int, set_data: dict, active_game: str = "ttr", is_dark: bool = True, parent=None):
+    def __init__(self, index: int, set_data: dict, active_game: str = "ttr", is_dark: bool = True, parent=None,
+                 default_locked: bool = False):
         super().__init__(parent)
         self.index = index
         self.set_data = set_data
+        # Default set only: a found game config file drives these keys, so the
+        # fields render read-only (see MovementKeyField.set_locked).
+        self._default_locked = bool(default_locked) and index == 0
         self.setObjectName("set_card")
         self.setAttribute(Qt.WA_StyledBackground, True)
         self._is_dark = is_dark
@@ -571,10 +592,20 @@ class SetCard(QFrame):
         bl.setSpacing(8)
 
         if index == 0:
-            hint = QLabel(
-                "These keys are what is sent to all game windows for input.\n"
-                "Make sure these match with your in-game settings."
-            )
+            game_label = ("Toontown Rewritten" if active_game == "ttr"
+                          else "Corporate Clash")
+            if self._default_locked:
+                hint_text = (
+                    f"These keys were detected from your {game_label} settings "
+                    "and are what is sent to all game windows.\n"
+                    "Change them in-game, then use Detect to update them here."
+                )
+            else:
+                hint_text = (
+                    "These keys are what is sent to all game windows for input.\n"
+                    "Make sure these match with your in-game settings."
+                )
+            hint = QLabel(hint_text)
             hint.setObjectName("set_body_hint")
             hint.setWordWrap(True)
             bl.addWidget(hint)
@@ -614,6 +645,12 @@ class SetCard(QFrame):
         two_col.addLayout(aux_col)
         two_col.addStretch()
         bl.addLayout(two_col)
+
+        if self._default_locked:
+            for field in body_content.findChildren(MovementKeyField):
+                field.set_locked(True)
+                field.setToolTip("Detected from your game settings. "
+                                 "Change this key in-game, then use Detect.")
 
         if index == 0:
             label = "Detect TTR Settings" if active_game == "ttr" else "Detect CC Settings"
@@ -737,6 +774,13 @@ class SetCard(QFrame):
             f"QLineEdit:hover {{"
             f" background: {c['bg_card_inner_hover']};"
             f" border: 1px solid {c['border_card']};"
+            f"}}"
+            # locked beats hover (no interactive affordance) but must stay
+            # BEFORE conflict so a locked field in conflict still paints red.
+            f"QLineEdit[locked=\"true\"] {{"
+            f" background: transparent;"
+            f" border: 1px solid {c['border_muted']};"
+            f" color: {c['text_secondary']};"
             f"}}"
             f"QLineEdit[awaiting=\"true\"] {{"
             f" background: {c['bg_card_inner_hover']};"
@@ -956,6 +1000,7 @@ class KeymapTab(QWidget):
         self._page_layouts: dict[str, QVBoxLayout] = {}
         self._add_btns: dict[str, QPushButton] = {}
         self._entries_by_game: dict[str, list] = {"ttr": [], "cc": []}
+        self._default_locked_by_game: dict[str, bool] = {"ttr": False, "cc": False}
         self._expansion_initialized_for: set = set()
 
         for game in ("ttr", "cc"):
@@ -1101,11 +1146,14 @@ class KeymapTab(QWidget):
 
         # ── SetCards ───────────────────────────────────────────────────
         sets = self.keymap_manager.get_sets(game)
+        default_locked = self._default_set_locked(game)
+        self._default_locked_by_game[game] = default_locked
         for idx, s in enumerate(sets):
             if idx > 0:
                 page_layout.addSpacing(10)
             card = SetCard(index=idx, set_data=s, active_game=game,
-                           is_dark=is_dark, parent=self._pages[game])
+                           is_dark=is_dark, parent=self._pages[game],
+                           default_locked=(idx == 0 and default_locked))
             card.toggle_requested.connect(
                 lambda i=idx, g=game: self._toggle_for_game(g, i)
             )
@@ -1149,7 +1197,7 @@ class KeymapTab(QWidget):
         # and idempotent; safe to skip for inactive pages until they
         # become active).
         if game == self._active_game:
-            self._refresh_default_conflict_markers()
+            self._refresh_conflict_markers()
 
     # ── Game detection + segmented control ────────────────────────────────
 
@@ -1176,6 +1224,58 @@ class KeymapTab(QWidget):
             return bool(discover_cc_installs())
         except Exception:
             return False
+
+    def _default_set_locked(self, game: str) -> bool:
+        """True when a game config file is present and drives this game's
+        Default set, so its key fields must not be hand-editable.
+
+        TTR: settings.json is located (the startup auto-detect re-applies it
+        every launch, so hand edits are clobbered anyway), OR the cached
+        last-detected keymap exists (the startup fallback re-applies THAT
+        when settings.json is momentarily unreadable - edits made in such a
+        window would be silently lost, so the lock holds).
+        CC: any discovered install resolves a preferences.json.
+        No config source at all -> editable."""
+        if game == "ttr":
+            try:
+                from utils.ttr_settings import locate_settings_file
+                from services.ttr_login_service import find_engine_path
+            except Exception:
+                return False
+            engine = ""
+            if self.settings_manager is not None:
+                engine = self.settings_manager.get("ttr_engine_dir", "") or ""
+            if not engine or not os.path.exists(engine):
+                try:
+                    engine = find_engine_path() or ""
+                except Exception:
+                    engine = ""
+            try:
+                if locate_settings_file(engine_dir=engine or None):
+                    return True
+            except Exception:
+                pass
+            if self.settings_manager is not None:
+                cached = self.settings_manager.get("last_detected_keymap", None)
+                if isinstance(cached, dict) and cached:
+                    return True
+            return False
+        try:
+            from utils.cc_settings import locate_cc_preferences
+            from services.wine_runtimes import discover_cc_installs
+        except Exception:
+            return False
+        try:
+            installs = discover_cc_installs() or []
+        except Exception:
+            return False
+        for install in installs:
+            try:
+                if locate_cc_preferences(install):
+                    return True
+            except Exception:
+                continue
+        return False
 
     def _has_accounts(self, game: str) -> bool:
         """True when credentials_manager reports at least one account for
@@ -1205,7 +1305,7 @@ class KeymapTab(QWidget):
         if self._segmented is not None:
             self._segmented.set_active(game)
         push_slide_pages(self._game_stack, prev_idx, new_idx, axis="h")
-        self._refresh_default_conflict_markers()
+        self._refresh_conflict_markers()
 
     # ── Per-game callbacks ─────────────────────────────────────────────────
 
@@ -1225,9 +1325,14 @@ class KeymapTab(QWidget):
         self.keymap_manager.update_set_name(game, index, name)
 
     def _on_key_changed_for_game(self, game: str, set_index: int, action: str, key: str) -> None:
+        # Belt-and-suspenders: locked Default fields never enter capture mode,
+        # so this signal shouldn't fire for them - but a config-driven set 0
+        # must not be hand-edited even if one does.
+        if set_index == 0 and self._default_locked_by_game.get(game, False):
+            return
         self.keymap_manager.update_set_key(game, set_index, action, key)
         if game == self._active_game:
-            self._refresh_default_conflict_markers()
+            self._refresh_conflict_markers()
 
     def _on_add_set_for_game(self, game: str) -> None:
         self.keymap_manager.add_set(game)
@@ -1246,35 +1351,57 @@ class KeymapTab(QWidget):
         else:
             self._on_detect_cc_settings()
 
-    def _refresh_default_conflict_markers(self):
-        """Recompute conflicts in this game's Default set and paint affected fields red."""
-        if not self._entries:
+    def _refresh_conflict_markers(self):
+        """Recompute conflicts for the active game and paint affected fields red.
+
+        Two kinds feed one marker system:
+        - intra-set: two actions in ONE set share a key (has_conflicts, every
+          set - not just Default);
+        - cross-set: one key means DIFFERENT actions in two sets, so a single
+          press drives two toons differently (cross_set_conflicts; the same
+          action on the same key across sets is broadcast-normal and clean).
+        """
+        entries = self._entries
+        if not entries:
             return
-        default_entry = self._entries[0]
-        card = default_entry["card"]
-        has, pairs = self.keymap_manager.has_conflicts(self._active_game, 0)
-        conflicting_actions: set[str] = set()
-        for a, b in pairs:
-            conflicting_actions.add(a)
-            conflicting_actions.add(b)
-        for action in logical_actions.actions_for(self._active_game):
-            field = card.findChild(MovementKeyField, f"key_field_{action}")
-            if field is None:
+        game = self._active_game
+        names = self.keymap_manager.get_set_names(game)
+
+        def _set_label(idx: int) -> str:
+            name = names[idx] if idx < len(names) else ""
+            return name or f"Set {idx + 1}"
+
+        # (set_index, action) -> descriptions of everything it collides with
+        hits: dict[tuple[int, str], set[str]] = {}
+        for idx in range(len(entries)):
+            _, pairs = self.keymap_manager.has_conflicts(game, idx)
+            for a, b in pairs:
+                hits.setdefault((idx, a), set()).add(ACTION_LABELS.get(b, b.title()))
+                hits.setdefault((idx, b), set()).add(ACTION_LABELS.get(a, a.title()))
+        for set_a, act_a, set_b, act_b, _key in self.keymap_manager.cross_set_conflicts(game):
+            if set_a >= len(entries) or set_b >= len(entries):
                 continue
-            in_conflict = action in conflicting_actions
-            field.setProperty("conflict", "true" if in_conflict else "false")
-            repolish(field)
-            if in_conflict:
-                others = set()
-                for x, y in pairs:
-                    if x == action:
-                        others.add(y)
-                    elif y == action:
-                        others.add(x)
-                pretty = ", ".join(ACTION_LABELS.get(o, o.title()) for o in sorted(others))
-                field.setToolTip(f"Conflicts with: {pretty}")
-            else:
-                field.setToolTip("")
+            label_a = ACTION_LABELS.get(act_a, act_a.title())
+            label_b = ACTION_LABELS.get(act_b, act_b.title())
+            hits.setdefault((set_a, act_a), set()).add(f"{label_b} in {_set_label(set_b)}")
+            hits.setdefault((set_b, act_b), set()).add(f"{label_a} in {_set_label(set_a)}")
+
+        for idx, entry in enumerate(entries):
+            card = entry["card"]
+            for action in logical_actions.actions_for(game):
+                field = card.findChild(MovementKeyField, f"key_field_{action}")
+                if field is None:
+                    continue
+                others = hits.get((idx, action))
+                field.setProperty("conflict", "true" if others else "false")
+                repolish(field)
+                if others:
+                    field.setToolTip("Conflicts with: " + ", ".join(sorted(others)))
+                elif field.is_locked():
+                    field.setToolTip("Detected from your game settings. "
+                                     "Change this key in-game, then use Detect.")
+                else:
+                    field.setToolTip("")
 
     def _on_detect_ttr_settings(self):
         from utils.ttr_settings import locate_settings_file, parse_ttr_settings, apply_ttr_controls_to_set
@@ -1492,6 +1619,12 @@ class KeymapTab(QWidget):
         self._prev_segmented_visible = want_subrail_visible
 
     def _on_settings_change(self, key: str, value) -> None:
-        """Re-evaluate active games when an engine-dir setting changes."""
+        """Re-evaluate active games when an engine-dir setting changes.
+        Engine-dir changes can also flip whether a game's config file is
+        found, so the affected game's cards rebuild if the Default-set lock
+        state changed."""
         if key in ("ttr_engine_dir", "cc_engine_dir"):
             self._refresh_visibility()
+            game = "ttr" if key == "ttr_engine_dir" else "cc"
+            if self._default_set_locked(game) != self._default_locked_by_game.get(game, False):
+                self._build_cards_for_game(game)
