@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import queue
 import subprocess
 import threading
@@ -7,6 +8,7 @@ import time
 from functools import lru_cache
 from PySide6.QtCore import QObject, Signal
 
+from services.chat_fsm import ChatCtx, ChatFsm, ChatState, KeyClass
 from utils.cc_isolation import MOVEMENT_ACTIONS as _MOVEMENT_ACTIONS
 from utils.held_key_registry import HoldKind, HeldKeyRegistry
 from utils.key_registry import NAMED_KEYSYMS_FROM_REGISTRY, PASSTHROUGH_KEYSYMS
@@ -126,6 +128,37 @@ class InputService(QObject):
         self._stop_event = threading.Event()
         self.logging_enabled = False
 
+        # ── Chat gate FSM (TTMT_CHAT_FSM=1) ─────────────────────────────
+        # Flag-gated redesign of the chat-open inference; see
+        # docs/superpowers/plans/2026-07-03-chat-fsm-redesign.md. Flag off:
+        # the legacy Return-toggle/phantom path runs unchanged and the
+        # global_chat_active/_phantom_active properties read/write plain
+        # backing fields, so every legacy writer and test seed keeps
+        # working. Flag on: the properties reflect/force FSM state.
+        self._fsm_enabled = os.environ.get("TTMT_CHAT_FSM") == "1"
+        self._chat_fsm: ChatFsm | None = ChatFsm() if self._fsm_enabled else None
+        self._legacy_global_chat_active = False
+        self._legacy_phantom_active = False
+        # Window ids of background chat boxes WE opened by mirroring an
+        # open chord (mirror modes only). Scoped close/orphan Escapes
+        # target exactly this set; window-id keyed because toon indices
+        # remap whenever assign_windows re-sorts.
+        self._bg_chat_open: set = set()
+        # FSM-mode autorepeat guard: Windows delivers repeated WM_KEYDOWNs
+        # for a held key; a repeat must not reset the FSM's hold-duration
+        # tracking (750ms demote would never fire).
+        self._fsm_seen_down: set = set()
+        # True only during the FSM capture-entry drain: lets the drain's
+        # keyups (for keydowns dispatched pre-capture) pass the
+        # global_chat_active gate in _send_logical_action_km.
+        self._fsm_draining = False
+        # Previous managed game window, for the focus-switch-mid-capture
+        # hook (the open box belongs to the PREVIOUS window).
+        self._fsm_prev_game_window = None
+        # Wired post-construction (main.py) like get_chat_block_list;
+        # resolves TTR's configured chat/groupChat chords per event.
+        self.get_chat_open_chords = None
+
         self.holds = HeldKeyRegistry()
         self.bg_typing_held = set()
         self.chat_active = set()
@@ -211,6 +244,44 @@ class InputService(QObject):
     @property
     def action_held(self) -> set[str]:
         return set(self.holds.keys_by_kind(HoldKind.ACTION))
+
+    # ── chat-state compat aliases ────────────────────────────────────────
+    # Every enforcement seam (routing early-return, consume predicate, focus
+    # handler, UIPI disarm) and ~24 test seed sites read/write these names.
+    # Legacy mode: plain backing fields, bit-identical behavior. FSM mode:
+    # reads reflect FSM state (CAPTURE / CAPTURE_SOFT); writes FORCE the FSM
+    # without running capture side effects — _set_chat_active and the FSM
+    # transition applier own drains/grab resync.
+
+    @property
+    def global_chat_active(self) -> bool:
+        if self._fsm_enabled:
+            return self._chat_fsm.state is ChatState.CAPTURE
+        return self._legacy_global_chat_active
+
+    @global_chat_active.setter
+    def global_chat_active(self, value) -> None:
+        self._legacy_global_chat_active = bool(value)
+        if self._fsm_enabled:
+            if value:
+                self._chat_fsm.force_capture(time.monotonic())
+            elif self._chat_fsm.state is ChatState.CAPTURE:
+                self._chat_fsm.force_route(time.monotonic())
+
+    @property
+    def _phantom_active(self) -> bool:
+        if self._fsm_enabled:
+            return self._chat_fsm.state is ChatState.CAPTURE_SOFT
+        return self._legacy_phantom_active
+
+    @_phantom_active.setter
+    def _phantom_active(self, value) -> None:
+        self._legacy_phantom_active = bool(value)
+        if self._fsm_enabled:
+            if value:
+                self._chat_fsm.force_capture_soft(time.monotonic())
+            elif self._chat_fsm.state is ChatState.CAPTURE_SOFT:
+                self._chat_fsm.force_route(time.monotonic())
 
     def start(self):
         if self.running and self.thread is not None and self.thread.is_alive():
@@ -362,6 +433,13 @@ class InputService(QObject):
         self._ttr_grabs_active once grabs ACTUALLY change, so the router never
         synthesizes to a focused TTR window whose keys aren't yet suppressed.
         """
+        # FSM hook, BEFORE the chat/phantom grabs-off branch below: a focus
+        # switch between managed game windows during a capture means the box
+        # believed open belongs to the PREVIOUS window. Escape it (routed
+        # movement would otherwise type into it), run the orphan guard, and
+        # drop to GRACE — the properties then read False so this handler
+        # proceeds with a normal install for the new window.
+        self._fsm_handle_focus_change(window_id)
         # Record intent before any grabber call so the (possibly synchronous in
         # tests, async in production) completion callback observes the right
         # value. Default: not a TTR strict focus.
@@ -740,10 +818,13 @@ class InputService(QObject):
 
     def _should_consume_grabbed_key(self, keysym: str) -> bool:
         """Decide per-event whether to suppress the grabbed key from the
-        focused window. Consume only when chat broadcast isn't active AND the
-        active window is a CC window, or a TTR window with strict separation on.
+        focused window. Consume only when no typing capture is active AND the
+        active window is a CC window, or a TTR window with strict separation
+        on. The phantom/CAPTURE_SOFT check closes a documented gap: during a
+        soft capture the grabs are (being) uninstalled, but this per-event
+        predicate must never disagree with the capture state in the interim.
         """
-        if self.global_chat_active:
+        if self.global_chat_active or self._phantom_active:
             return False
         try:
             active = self.window_manager.get_active_window()
@@ -1118,8 +1199,14 @@ class InputService(QObject):
 
     # ── Keymap-aware send methods ──────────────────────────────────────────
 
-    def _send_logical_action_km(self, action, key, enabled, assignments):
+    def _send_logical_action_km(self, action, key, enabled, assignments,
+                                only_windows=None, skip_windows=None):
         """Route a movement-class action to toons.
+
+        only_windows / skip_windows (optional sets of window ids) restrict
+        delivery — used by the FSM's GRACE tap deferral, where the FOCUSED
+        half of a bound printable tap is delivered immediately and the
+        background half only after hold-confirmation.
 
         Strict per-toon routing: each toon responds only to keys that its
         own assigned set binds. No cross-game broadcast fallback.
@@ -1142,7 +1229,13 @@ class InputService(QObject):
         game's default (set 0) binding so the bg toon's settings.json
         (the user's native customization) is honored.
         """
-        if self.global_chat_active:
+        # _fsm_draining: the FSM applies its capture transition BEFORE the
+        # entry drain runs (the pure module cannot defer its own state), so
+        # the drain's keyups — for keydowns that WERE dispatched pre-capture —
+        # must bypass this gate. FSM-only; the legacy paths drain before the
+        # flag flips (chat-open) or intentionally skip keyups (release_all
+        # while chat active) and are unaffected.
+        if self.global_chat_active and not self._fsm_draining:
             return
         if self.keymap_manager is None:
             return
@@ -1162,6 +1255,10 @@ class InputService(QObject):
             if not is_enabled or i >= len(window_ids):
                 continue
             win = window_ids[i]
+            if only_windows is not None and win not in only_windows:
+                continue
+            if skip_windows is not None and win in skip_windows:
+                continue
             toon_game = registry.get_game_for_window(str(win))
             if toon_game is None:
                 toon_game = "ttr"  # Windows fallback: TTMT pre-dates CC support and TTR is the safe default
@@ -1408,6 +1505,252 @@ class InputService(QObject):
                 continue
             self._send_via_backend("key", win, "BackSpace")
 
+    # ── Chat gate FSM integration (TTMT_CHAT_FSM=1) ────────────────────────
+    # The FSM (services/chat_fsm.py) is pure; these helpers execute its
+    # decisions/transitions through the existing side-effect helpers so the
+    # pinned contracts hold: drain-then-ungrab on capture entry, reinstall at
+    # GRACE entry, close-key mirroring scoped to the boxes WE opened.
+
+    def _fsm_ctx(self, movement_keys, full: bool = True) -> ChatCtx:
+        """Per-event context. full=False (ticks/keyups, ~200Hz) skips the
+        settings.json-backed chord/mode lookups the classifier only needs on
+        keydowns — on_tick/on_keyup read bound_keys alone."""
+        if not full:
+            return ChatCtx(bound_keys=movement_keys)
+        game = self._foreground_game()
+        chords = ChatCtx.__dataclass_fields__["open_chords"].default
+        mode_b = False
+        if game == "ttr":
+            if self.get_chat_open_chords is not None:
+                try:
+                    resolved = tuple(self.get_chat_open_chords() or ())
+                    if resolved:
+                        chords = resolved
+                except Exception:
+                    pass
+            try:
+                mode_b = "a" in self.get_chat_block_list()
+            except Exception:
+                mode_b = False
+        return ChatCtx(bound_keys=movement_keys, open_chords=chords, mode_b=mode_b)
+
+    def _fsm_apply_transitions(self, transitions, enabled, assignments,
+                               pressed_key=None) -> None:
+        _capture_states = (ChatState.CAPTURE, ChatState.CAPTURE_SOFT)
+        for tr in transitions:
+            if _ITRACE:
+                _itrace("fsm", f"{tr.old.name}->{tr.new.name} cause={tr.cause}")
+            entering = tr.new in _capture_states and tr.old not in _capture_states
+            leaving = tr.old in _capture_states and tr.new not in _capture_states
+            if entering:
+                # Pinned order: drain ALL held keys (movement, action AND
+                # modifier holds — a held W at chat-open must stop the bg
+                # toons), THEN ungrab so typing lands natively. The FSM state
+                # already reads as captured here, so _fsm_draining lets the
+                # drain keyups pass the routing gate.
+                try:
+                    self._strict_drain_active = True
+                    self._fsm_draining = True
+                    self._drain_all_held(enabled, assignments)
+                except Exception as e:  # noqa: BLE001
+                    print(f"[InputService] fsm capture-entry drain failed: {e}")
+                finally:
+                    self._fsm_draining = False
+                    self._strict_drain_active = False
+                self.chat_state_changed.emit(True)
+                self._resync_grabs_for_input_capture(True)
+            elif leaving:
+                # Close the boxes WE opened: the pressed chord/Escape for
+                # user closes, Escape for ttl/demote/focus/force.
+                close_key = (pressed_key
+                             if tr.cause in ("send", "close_empty", "escape")
+                             and pressed_key is not None else "Escape")
+                self._fsm_close_bg_chat(close_key)
+                self.chat_state_changed.emit(False)
+                self._resync_grabs_for_input_capture(False)
+
+    def _fsm_close_bg_chat(self, key: str) -> None:
+        """Orphan guard: a mirrored bg chat box must never outlive the
+        capture that opened it."""
+        for win in list(self._bg_chat_open):
+            try:
+                self._send_via_backend("key", win, key)
+            except Exception as e:  # noqa: BLE001
+                print(f"[InputService] fsm bg-chat close to {win} failed: {e}")
+        self._bg_chat_open.clear()
+
+    def _fsm_mirror_open(self, open_key, enabled, assignments, movement_keys,
+                         window_ids) -> None:
+        """Mirror the open chord (or Mode B letter) to chat-allowed bg toons
+        and record their window ids — the scope for every later close."""
+        active = self.window_manager.get_active_window()
+        recipients = []
+        for i, is_en in enumerate(enabled):
+            if not is_en or i >= len(window_ids):
+                continue
+            win = window_ids[i]
+            if win == active:
+                continue
+            if self._is_chat_allowed(i):
+                recipients.append(win)
+        if not recipients:
+            return
+        self._send_typing_to_bg(open_key, enabled, assignments, movement_keys)
+        self._bg_chat_open.update(str(w) for w in recipients)
+
+    def _fsm_handle_keydown(self, key, now, enabled, assignments,
+                            movement_keys, window_ids):
+        """FSM-mode keydown dispatch. Returns the decision (None for an OS
+        autorepeat, which must not reset hold-duration tracking)."""
+        if key in self._fsm_seen_down:
+            return None
+        self._fsm_seen_down.add(key)
+        ctx = self._fsm_ctx(movement_keys)
+        dec = self._chat_fsm.on_keydown(key, now, ctx)
+        if dec.transitions:
+            self._fsm_apply_transitions(dec.transitions, enabled, assignments,
+                                        pressed_key=key)
+        if _ITRACE and dec.kind in (KeyClass.CHORD_OPEN, KeyClass.CHORD_SEND,
+                                    KeyClass.CHORD_CLOSE, KeyClass.ESCAPE_CLEAR):
+            _itrace("fsm", f"key={key} verdict={dec.kind.name} "
+                           f"state={self._chat_fsm.state.name}")
+
+        # Focused passthrough parity with the legacy dispatcher: every key
+        # except BackSpace (its own branch) and movement-as-movement (the
+        # router delivers focused) — DEFER delivers its focused half below.
+        if key != "BackSpace" and dec.kind not in (KeyClass.MOVEMENT,
+                                                   KeyClass.DEFER_BG_TAP):
+            self._send_passthrough_to_focused(key)
+
+        if dec.kind is KeyClass.MODIFIER:
+            if self.holds.acquire(key, HoldKind.MODIFIER, now):
+                self._send_modifier_to_bg("keydown", key, enabled, assignments)
+        elif dec.kind is KeyClass.MOVEMENT:
+            if self.holds.acquire(key, HoldKind.MOVEMENT, now):
+                if self.logging_enabled:
+                    logical = self._resolve_logical_action(key)
+                    extra = f" (action: {logical})" if logical else ""
+                    self._log_key(key, "pressed", extra)
+                self._send_logical_action_km("keydown", key, enabled, assignments)
+        elif dec.kind is KeyClass.DEFER_BG_TAP:
+            # Focused half immediately (never deferred); the bg half waits
+            # for hold-confirmation via on_tick. Acquire the hold NOW so the
+            # eventual keyup pairs for the focused toon; a dropped defer's
+            # unpaired bg keyup is a benign in-game no-op.
+            if self.holds.acquire(key, HoldKind.MOVEMENT, now):
+                active = self.window_manager.get_active_window()
+                self._send_logical_action_km(
+                    "keydown", key, enabled, assignments,
+                    only_windows={active} if active else set())
+        elif dec.kind is KeyClass.TYPING:
+            if key not in self.bg_typing_held:
+                self.bg_typing_held.add(key)
+                self._send_typing_to_bg(key, enabled, assignments, movement_keys)
+        elif dec.kind is KeyClass.EDIT:
+            # BackSpace: sends here, repeat timing stays in the run loop.
+            if self.holds.acquire(key, HoldKind.MOVEMENT, now):
+                self._log_key(key, "pressed")
+                self._send_backspace_to_background(enabled, assignments)
+                self._send_backspace_to_focused()
+        elif dec.kind is KeyClass.CHORD_OPEN:
+            self._log_key(key, "pressed")
+            self._fsm_mirror_open(dec.open_key or key, enabled, assignments,
+                                  movement_keys, window_ids)
+        elif dec.kind is KeyClass.SUPPRESS:
+            if key not in self.bg_typing_held:
+                self.bg_typing_held.add(key)
+        else:
+            # CHORD_SEND / CHORD_CLOSE / ESCAPE_CLEAR: terminal — never fall
+            # through to typing or ACTION broadcast (an unbound Escape must
+            # not reach _send_action_keydown_to_bg). CHORD_CLOSE mirroring
+            # already ran in the transition applier. ACTION handled here:
+            if dec.kind is KeyClass.ACTION:
+                if self.holds.acquire(key, HoldKind.ACTION, now):
+                    self._log_key(key, "pressed")
+                    self._send_action_keydown_to_bg(key, enabled, assignments)
+            elif key not in self.bg_typing_held:
+                self.bg_typing_held.add(key)
+        return dec
+
+    def _fsm_handle_keyup(self, key, event_t, enabled, assignments,
+                          movement_keys) -> None:
+        """Evidence/defer bookkeeping for a flushed keyup. event_t is the
+        pending_keyups buffered_at time so tap measurements avoid the flush
+        skew. The actual keyup routing stays with _dispatch_keyup."""
+        self._fsm_seen_down.discard(key)
+        ctx = self._fsm_ctx(movement_keys, full=False)
+        res = self._chat_fsm.on_keyup(key, event_t, ctx)
+        if res.transitions:
+            self._fsm_apply_transitions(res.transitions, enabled, assignments)
+
+    def _fsm_tick(self, now, enabled, assignments, movement_keys) -> None:
+        ctx = self._fsm_ctx(movement_keys, full=False)
+        res = self._chat_fsm.on_tick(now, ctx)
+        if res.transitions:
+            self._fsm_apply_transitions(res.transitions, enabled, assignments)
+        for key in res.confirmed_defers:
+            # Hold-confirmed GRACE tap: deliver the bg half late (the
+            # focused half went out at keydown).
+            active = self.window_manager.get_active_window()
+            self._send_logical_action_km(
+                "keydown", key, enabled, assignments,
+                skip_windows={active} if active else None)
+
+    def _fsm_route_cleanup(self) -> None:
+        """Cleanup-branch / release_all_keys hook: force ROUTE and run the
+        orphan guard. Idempotent and allocation-free when already ROUTE
+        (the cleanup branch runs at ~100Hz)."""
+        if not self._fsm_enabled:
+            return
+        trs = self._chat_fsm.force_route(time.monotonic())
+        if trs:
+            if _ITRACE:
+                _itrace("fsm", f"force_route from {trs[0].old.name}")
+            self._fsm_close_bg_chat("Escape")
+            self.chat_state_changed.emit(False)
+        self._fsm_seen_down.clear()
+
+    def _fsm_handle_focus_change(self, window_id) -> None:
+        """Managed-focus-switch-mid-capture guard (see call site)."""
+        if not self._fsm_enabled:
+            return
+        try:
+            from utils.game_registry import GameRegistry
+            wid = str(window_id) if window_id else None
+            is_game = bool(wid) and GameRegistry.instance().get_game_for_window(wid) is not None
+        except Exception:
+            return
+        prev = self._fsm_prev_game_window
+        if is_game and prev and wid != prev and self._chat_fsm.in_capture:
+            trs = self._chat_fsm.on_focus_change_managed(time.monotonic())
+            if trs:
+                if _ITRACE:
+                    _itrace("fsm", f"focus-switch mid-capture: escape prev={prev}")
+                try:
+                    self._send_via_backend("key", prev, "Escape")
+                except Exception as e:  # noqa: BLE001
+                    print(f"[InputService] fsm focus-switch escape failed: {e}")
+                enabled = self.get_enabled_toons()
+                self._fsm_apply_transitions(trs, enabled,
+                                            self._get_assignments(enabled))
+        if is_game:
+            self._fsm_prev_game_window = wid
+
+    def keep_alive_skip_window(self, win_id) -> bool:
+        """Keep-alive must not type its key into an open chat box: skip the
+        focused window during any capture, and any bg box we mirrored open.
+        Fail-open by construction — no capture, no skips."""
+        try:
+            wid = str(win_id)
+            if wid in self._bg_chat_open:
+                return True
+            if self.global_chat_active or self._phantom_active:
+                active = self.window_manager.get_active_window()
+                return active is not None and str(active) == wid
+        except Exception:
+            return False
+        return False
+
     # ── Run loop ───────────────────────────────────────────────────────────
 
     def run(self):
@@ -1417,6 +1760,22 @@ class InputService(QObject):
         bs_last_repeat = 0.0
         pending_keyups: dict[str, float] = {}
         cleanup_was_active = False  # edge-trigger for cleanup-branch trace
+
+        if self._fsm_enabled:
+            # Fresh service run starts from ROUTE (a restart must never
+            # resurrect a stale capture), and the startup stamp is the
+            # running-code proof: live validation BEGINS by confirming it.
+            self._chat_fsm.force_route(time.monotonic())
+            self._fsm_seen_down.clear()
+            self._bg_chat_open.clear()
+            try:
+                _ctx = self._fsm_ctx(frozenset())
+                stamp = (f"[chat] ChatFSM ACTIVE v1 open_chords={_ctx.open_chords} "
+                         f"mode_b={_ctx.mode_b}")
+            except Exception:
+                stamp = "[chat] ChatFSM ACTIVE v1"
+            _itrace("chat", stamp)
+            self.input_log.emit(stamp)
 
         try:
             while self.running:
@@ -1452,10 +1811,17 @@ class InputService(QObject):
                     self.bg_typing_held.clear()
                     self._drain_focused_passthrough()
                     pending_keyups.clear()
-                    self._phantom_reset()
-                    if self.global_chat_active:
-                        self._set_chat_active(False, cause="cleanup")
-                        self.chat_active.clear()
+                    if self._fsm_enabled:
+                        # Owns the reset (incl. orphan guard) and stays
+                        # allocation-free at this ~100Hz call rate; the
+                        # legacy resets below would only re-spam the GATED
+                        # resync trace every iteration.
+                        self._fsm_route_cleanup()
+                    else:
+                        self._phantom_reset()
+                        if self.global_chat_active:
+                            self._set_chat_active(False, cause="cleanup")
+                            self.chat_active.clear()
                     bs_press_time  = None
                     bs_last_repeat = 0.0
                     self._stop_event.wait(0.01)
@@ -1472,16 +1838,20 @@ class InputService(QObject):
                 assignments    = self._get_assignments(enabled)
                 movement_keys  = self._movement_keys()
 
-                # Idle timeout — reset chat state if no typing for 15s
-                if (self.global_chat_active or self._phantom_active) and self._chat_last_activity > 0:
-                    if now - self._chat_last_activity > self.CHAT_IDLE_TIMEOUT:
-                        self._timeout_reset_chat(enabled, assignments)
+                if not self._fsm_enabled:
+                    # Legacy-only maintenance. The FSM owns its own TTL (and
+                    # movement never refreshes it) via _fsm_tick below.
 
-                # Phantom gate — clear stale phantom state if the gate has closed
-                # since activation (e.g. user toggled chat off on the last
-                # chat-enabled bg toon while phantom was already suppressing).
-                if self._phantom_active and not self._phantom_gate_open():
-                    self._phantom_reset()
+                    # Idle timeout — reset chat state if no typing for 15s
+                    if (self.global_chat_active or self._phantom_active) and self._chat_last_activity > 0:
+                        if now - self._chat_last_activity > self.CHAT_IDLE_TIMEOUT:
+                            self._timeout_reset_chat(enabled, assignments)
+
+                    # Phantom gate — clear stale phantom state if the gate has
+                    # closed since activation (e.g. user toggled chat off on the
+                    # last chat-enabled bg toon while phantom was suppressing).
+                    if self._phantom_active and not self._phantom_gate_open():
+                        self._phantom_reset()
 
                 window_ids = self.window_manager.get_window_ids()
                 if not window_ids:
@@ -1513,6 +1883,16 @@ class InputService(QObject):
                         continue
 
                     if action == "keydown":
+
+                        if self._fsm_enabled:
+                            dec = self._fsm_handle_keydown(
+                                key, now, enabled, assignments,
+                                movement_keys, window_ids)
+                            if (dec is not None and key == "BackSpace"
+                                    and dec.kind is KeyClass.EDIT):
+                                bs_press_time  = now
+                                bs_last_repeat = 0.0
+                            continue
 
                         # When keymap is active, movement keys take priority over
                         # modifiers — e.g. Control_L as jump, Alt_L as book.
@@ -1692,10 +2072,22 @@ class InputService(QObject):
                                              f"-> {'DROP(held)' if _phys is True else 'dispatch'}")
                         if _phys is True:
                             continue
+                        if self._fsm_enabled:
+                            # Evidence/defer bookkeeping. buffered_at is the
+                            # event time (avoids the flush skew on tap
+                            # measurements); routing stays with the dispatch
+                            # below (a dropped defer's unpaired bg keyup is a
+                            # benign in-game no-op).
+                            self._fsm_handle_keyup(stale_key, buffered_at,
+                                                   enabled, assignments,
+                                                   movement_keys)
                         self._release_focused_passthrough(stale_key)
                         if self._dispatch_keyup(stale_key, enabled, assignments):
                             bs_press_time  = None
                             bs_last_repeat = 0.0
+
+                if self._fsm_enabled:
+                    self._fsm_tick(now, enabled, assignments, movement_keys)
 
                 if bs_press_time is not None and self.holds.contains("BackSpace") and not self._phantom_active:
                     held_for = now - bs_press_time
@@ -2049,6 +2441,10 @@ class InputService(QObject):
 
         self.bg_typing_held.clear()
         self.chat_active.clear()
+        # FSM orphan guard BEFORE the legacy resets (which are property-safe
+        # no-ops afterwards): a mirrored bg box must not outlive the service
+        # run that opened it.
+        self._fsm_route_cleanup()
         self._set_chat_active(False, cause="release_all")
         self._phantom_reset()
         self._drain_focused_passthrough()

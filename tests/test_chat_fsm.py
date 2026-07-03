@@ -590,6 +590,23 @@ class TestRobustness:
         r = fsm.on_tick(10.4 + CFG.grace_defer + 0.01, c)
         assert r.confirmed_defers == ("w",)
 
+    def test_late_flushed_keyups_after_send_do_not_recapture(self):
+        """Keyups buffered by the autorepeat dedup can flush AFTER the
+        send-Enter processes. Their taps belong to the SENT message: they
+        must not form a fresh burst into a capture nobody will close."""
+        fsm, c = ChatFsm(), ctx()
+        fsm.on_keydown("o", 10.00, c)
+        fsm.on_keydown("k", 10.10, c)            # rollover: both still down
+        d = fsm.on_keydown("Return", 10.15, c)
+        assert d.kind is KeyClass.CHORD_SEND     # held unbound chars = context
+        fsm.on_keyup("o", 10.16, c)              # late flush, tap-shaped
+        fsm.on_keyup("k", 10.17, c)
+        assert fsm.state is ChatState.ROUTE      # no phantom re-capture
+        # Fresh typing AFTER the send still counts normally.
+        tap(fsm, "h", 11.0, c)
+        tap(fsm, "i", 11.2, c)
+        assert fsm.state is ChatState.CAPTURE_SOFT
+
     def test_duplicate_chord_events_do_not_invert_forever(self):
         """No parity: a spurious extra Enter costs at most one bounded wrong
         capture, healed by the next hold."""

@@ -177,6 +177,11 @@ class ChatFsm:
         self._deferred: dict = {}
         # Close-empty detection: was anything typed since the chord OPEN?
         self._open_had_typing = False
+        # A chord verdict ENDS the composition: taps that STARTED before it
+        # belong to the sent/closed message, so their (possibly buffered,
+        # late-flushed) keyups must not count as fresh typing evidence and
+        # re-trigger a burst with no close ever coming.
+        self._last_chord_at = float("-inf")
 
     # ── public state ─────────────────────────────────────────────────────
 
@@ -225,11 +230,13 @@ class ChatFsm:
         # (CC book) or a bound chord key can still CLOSE a stuck capture —
         # the direction of the 45131ce shadowing bug that hurt.
         if is_chord:
+            self._last_chord_at = now
             cause = "send"
             if self._state is ChatState.CAPTURE and not self._open_had_typing:
                 cause = "close_empty"
             return KeyDecision(KeyClass.CHORD_CLOSE, self._go(ChatState.GRACE, cause, now))
         if key == "Escape":
+            self._last_chord_at = now
             return KeyDecision(KeyClass.CHORD_CLOSE, self._go(ChatState.GRACE, "escape", now))
         if key == "BackSpace":
             trs = self._note_typing_evidence(now)
@@ -314,6 +321,7 @@ class ChatFsm:
 
         transitions: tuple = ()
         if (down_at is not None
+                and down_at > self._last_chord_at
                 and key not in ctx.bound_keys
                 and _is_printable_char(key)
                 and now - down_at < self.config.tap_max):
@@ -372,6 +380,17 @@ class ChatFsm:
         self._reset_volatile()
         return tr
 
+    def force_capture(self, now: float) -> tuple:
+        """Compat/test seam for the legacy `global_chat_active = True`
+        attribute write: force the machine into CAPTURE without running any
+        side effects (seeding only — the caller's transition executor owns
+        drains/grab resync)."""
+        return self._go(ChatState.CAPTURE, "forced", now)
+
+    def force_capture_soft(self, now: float) -> tuple:
+        """Compat/test seam for the legacy `_phantom_active = True` write."""
+        return self._go(ChatState.CAPTURE_SOFT, "forced", now)
+
     # ── internals ────────────────────────────────────────────────────────
 
     def _reset_volatile(self) -> None:
@@ -390,6 +409,7 @@ class ChatFsm:
         return False
 
     def _classify_chord(self, key: str, now: float) -> KeyDecision:
+        self._last_chord_at = now
         if self.context_active(now):
             # SEND: the chord follows typing — it can never open. Consume
             # the context so the NEXT chord (with no typing between) reads

@@ -4100,11 +4100,22 @@ def _dispatch_keep_alive_cycle(action, fire_toons, window_manager, keymap_manage
         cc_isolation.DEFAULT_CANONICAL
     )
     window_ids = window_manager.get_window_ids()
+    # Chat gate: keep-alive must never type its key into an open chat box
+    # (the focused toon's during a capture, or a bg box TTMT mirrored open).
+    # Fail-open via getattr so bare test stubs without the method keep the
+    # historical behavior.
+    chat_skip = getattr(input_service, "keep_alive_skip_window", None)
     fired = 0
     for i in fire_toons:
         if i >= len(window_ids):
             continue
         wid = window_ids[i]
+        if chat_skip is not None:
+            try:
+                if chat_skip(wid):
+                    continue
+            except Exception:
+                pass
         try:
             game = GameRegistry.instance().get_game_for_window(str(wid))
         except Exception:

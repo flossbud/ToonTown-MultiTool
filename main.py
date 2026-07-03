@@ -413,6 +413,15 @@ class MultiToonTool(QMainWindow):
                 return {"Return", "Escape"}
             return resolve_chat_block_list(s)
         self.multitoon_tab.input_service.get_chat_block_list = _chat_block_list_provider
+        # Chat-open chords for the chat gate FSM (TTMT_CHAT_FSM=1): follow
+        # the client's OWN configured chat/groupChat chords. Same liveness
+        # rule as the block list; None -> the FSM's stock enter/alt-enter.
+        def _chat_open_chords_provider():
+            s = self._refresh_ttr_settings()
+            if s is None:
+                return None
+            return s.chat_open_chords
+        self.multitoon_tab.input_service.get_chat_open_chords = _chat_open_chords_provider
         ttr_api.set_debug(logging_on)
         self._api_log.connect(self.debug_tab.append_log)
         ttr_api.set_log_callback(self._api_log.emit)
