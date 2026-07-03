@@ -190,3 +190,36 @@ PY'`
   sentinel on acquire, a host `sh -c 'while [ -e "$0" ]; do sleep 1; done'`
   holder, delete the sentinel on release). The non-Flatpak pipe-EOF path is
   already validated and unaffected.
+
+## Windows Float UI (2026-07-03, feat/win32-overlay-backend)
+
+Run from source or a packaged build on a real Windows session. Stamp first
+(running-code proof): launch with `TTMT_OVERLAY_TRACE=1` and confirm stderr
+shows `Win32OverlayBackend AVAILABLE` and, on entering float,
+`cluster.enter OK: active=True`.
+
+- [ ] Right-click the emblem in the windowed app -> the window vanishes into
+  the floating cluster (cards for running toons + emblem).
+- [ ] Click-through: with a game under the overlay, clicks on card BODIES and
+  empty overlay areas reach the game; card CONTROLS still work.
+- [ ] Emblem drag moves the whole cluster; releasing the button stops it.
+- [ ] Wheel over the emblem zooms the cluster; settle is artifact-free.
+- [ ] Left-click emblem -> radial ring; a click off-ring on the desktop
+  dismisses it with the fly-back (Win32 mouse watcher).
+- [ ] Accounts flow: with accounts for BOTH games the selector shows one
+  logo disc per game; each opens only that game's ring; Back returns to the
+  selector. First-ever launch (no recents) still lists all saved accounts.
+- [ ] Taskbar: a "ToonTown MultiTool" entry exists while floating (live
+  thumbnail); Close on the button/preview quits the app; minimize from the
+  taskbar bounces back instead of stranding the float UI.
+- [ ] Ghost cursors (click sync on): gloves render over the game, are carved
+  at the edge of any foreign window dragged over them (slide UNDER, no
+  whole-sprite snap), reappear when it moves away, and clip at game edges.
+- [ ] Ghost click on a card control activates it; a ghost click on the
+  emblem disc toggles the radial.
+- [ ] Radial Window spoke returns to the windowed app; Exit spoke quits.
+- [ ] Start-in-float setting: enable in Settings, relaunch -> app opens
+  straight into float with no black flashes.
+- [ ] Kill switches honored: `TTMT_OVERLAY_WIN32=0` -> emblem inert
+  (Float UI unavailable); `TTMT_GHOST_UNCONFINED=1` -> gloves float over
+  everything again.

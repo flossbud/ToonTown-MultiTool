@@ -29,6 +29,36 @@ jobs:
           pip install -r requirements.txt
           python main.py --self-check
 
+      # Float UI smoke: prove the Win32 overlay backend selects and the full
+      # enter() arc runs on a real Windows session (the runner has an
+      # interactive desktop). Isolated config with start-in-float pre-set;
+      # the trace stamps are the oracle (running-code proof, not exit code:
+      # the app is killed while running by design).
+      - name: Float UI overlay smoke (source)
+        shell: pwsh
+        run: |
+          $cfg = "$env:RUNNER_TEMP\ttmt-float-cfg"
+          New-Item -ItemType Directory -Force -Path $cfg | Out-Null
+          Set-Content -Path "$cfg\settings.json" -Value '{ "start_in_float_ui_mode": true }'
+          $env:TTMT_CONFIG_DIR = $cfg
+          $env:PYTHON_KEYRING_BACKEND = 'keyring.backends.null.Keyring'
+          $env:TTMT_OVERLAY_TRACE = '1'
+          $env:TTMT_NO_VENV_REEXEC = '1'
+          $proc = Start-Process -FilePath python -ArgumentList 'main.py' -PassThru `
+            -RedirectStandardOutput float-out.txt -RedirectStandardError float-err.txt
+          Start-Sleep 25
+          Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+          Write-Host "--- float smoke stderr (trace) ---"
+          if (Test-Path float-err.txt) { Get-Content float-err.txt }
+          $err = if (Test-Path float-err.txt) { Get-Content float-err.txt -Raw } else { '' }
+          if ($err -notmatch 'Win32OverlayBackend AVAILABLE') {
+            throw 'Float smoke: Win32 overlay backend did not select'
+          }
+          if ($err -notmatch 'cluster\.enter OK: active=True') {
+            throw 'Float smoke: startup float enter did not complete'
+          }
+          Write-Host 'FLOAT SMOKE OK'
+
       - name: Launch-test the packaged EXE
         shell: pwsh
         run: |
