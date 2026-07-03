@@ -514,16 +514,27 @@ class LaunchTab(QWidget):
         overlay is active (so failure dialogs raise above it)."""
         self._overlay_active = fn
 
-    def recent_account_ring_model(self, limit: int = 8):
+    def account_games(self) -> list[str]:
+        """Games that have at least one saved account, in the app's canonical
+        order. Drives the radial menu's game-selector sub-ring (shown only
+        when more than one game qualifies). Metadata-only: no keyring."""
+        present = {g for (_aid, g, _label) in self.cred_manager.get_accounts_basic()}
+        return [g for g in ("ttr", "cc") if g in present]
+
+    def recent_account_ring_model(self, limit: int = 8, game: str | None = None):
         """Build the emblem radial menu's Accounts sub-ring from the recent-launch
         MRU. Uses only in-memory, keyring-free metadata, so opening the emblem
         wheel performs NO credential reads (the password is read only at launch).
         Includes running accounts (carrying a ``running`` flag) and attaches each
         account's last in-world toon (name + DNA) for its portrait. Works even
-        when the keyring is locked."""
+        when the keyring is locked.
+
+        ``game`` filters the ring to one game's accounts (the game-selector
+        flow): out-of-game recents drop out naturally because ``account_for``
+        cannot resolve them against the filtered account map."""
         from utils.radial_menu_model import build_account_ring
-        basics = list(self.cred_manager.get_accounts_basic())
-        basic_by_id = {aid: (game, label) for (aid, game, label) in basics}
+        basics = list(self.cred_manager.get_accounts_basic(game))
+        basic_by_id = {aid: (g, label) for (aid, g, label) in basics}
 
         def account_for(aid):
             return basic_by_id.get(aid)      # (game, label) or None (deleted)

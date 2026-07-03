@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import math
 import os
+import sys
 
 from PySide6.QtCore import (Qt, QRectF, QPointF, Signal, QTimer, QElapsedTimer,
                             Property, QEasingCurve, QVariantAnimation)
@@ -28,6 +29,28 @@ from utils.radial_menu_layout import (MAIN_RING_ANGLES, WINDOWED_RING_ANGLES,
 
 _OUT_CUBIC = QEasingCurve.OutCubic
 _IN_CUBIC = QEasingCurve.InCubic
+
+# Game-selector sub-ring: hover-label titles + logo pixmap cache
+# (assets/ttr.png / assets/cc.png, the launch tab's game icons).
+_GAME_TITLES = {"ttr": "Toontown Rewritten", "cc": "Corporate Clash"}
+_game_logo_cache: dict = {}
+
+
+def _game_logo(game: str):
+    """The game's bundled logo pixmap, cached (null pixmap when missing).
+    Resolves against the repo root / PyInstaller _MEIPASS like the launch
+    tab's _asset_path."""
+    pm = _game_logo_cache.get(game)
+    if pm is None:
+        from PySide6.QtGui import QPixmap
+        base = getattr(
+            sys, "_MEIPASS",
+            os.path.dirname(os.path.dirname(os.path.dirname(
+                os.path.abspath(__file__)))),
+        )
+        pm = QPixmap(os.path.join(base, "assets", f"{game}.png"))
+        _game_logo_cache[game] = pm
+    return pm
 
 _MAIN_KEYS_BY_VARIANT = {
     "transparent": ("accounts", "home", "settings", "hide", "close", "exit"),
@@ -502,8 +525,9 @@ class RadialMenuWidget(QWidget):
     exit_requested = Signal()
     back_requested = Signal()
     account_clicked = Signal(str)
+    game_selected = Signal(str)  # game-selector spoke picked ("ttr"/"cc")
     closing = Signal()           # fly-back begun (all dismiss paths) -> dim collapse
-    state_changed = Signal()     # main <-> accounts ring swapped (spoke set/geometry changed)
+    state_changed = Signal()     # ring state swapped (spoke set/geometry changed)
 
     _IDLE_MS = 15000
     _APPEAR_MS = 360
@@ -525,6 +549,8 @@ class RadialMenuWidget(QWidget):
         self._state = "main"
         self._hover = None          # (state, key) or None
         self._accounts = []         # RingAccount entries for the accounts sub-ring
+        self._games = []            # games on the selector sub-ring ("ttr"/"cc")
+        self._accounts_from_games = False  # Back from accounts returns to selector
         self._cards_hidden = False  # mirror of the controller's Hide-Cards state
         self._portraits = {}        # account_id -> circular QPixmap (set in set_accounts)
         self._launched = set()      # indices clicked-to-launch in the current sub-ring
@@ -592,6 +618,8 @@ class RadialMenuWidget(QWidget):
         """Keys for ``state`` ordered left-to-right by circle center-x."""
         if state == "main":
             keys = list(self._main_keys)
+        elif state == "games":
+            keys = ["back"] + list(range(len(self._games)))
         else:
             keys = ["back"] + list(range(len(self._accounts)))
         return sorted(keys, key=lambda k: self.circle_geometry(state, k)[0])
@@ -787,12 +815,13 @@ class RadialMenuWidget(QWidget):
         if state == "main":
             x, y = polar_point(cx, cy, self._ring, self._main_angles[key])
             return (x, y, self._sat_r)
-        # accounts sub-ring
+        # accounts / game-selector sub-ring (identical geometry model)
         sring = self._ring * 1.06   # sub-ring sits 6% further out
         if key == "back":
             x, y = polar_point(cx, cy, sring, -90.0)
             return (x, y, self._sat_r)
-        angles = account_ring_angles(len(self._accounts))
+        count = len(self._games) if state == "games" else len(self._accounts)
+        angles = account_ring_angles(count)
         x, y = polar_point(cx, cy, sring, angles[int(key)])
         return (x, y, self._sat_r)
 
@@ -802,6 +831,12 @@ class RadialMenuWidget(QWidget):
             for key in self._main_keys:
                 cx, cy, r = self.circle_geometry("main", key)
                 out.append(("main", key, cx, cy, r))
+        elif self._state == "games":
+            bx, by, br = self.circle_geometry("games", "back")
+            out.append(("games", "back", bx, by, br))
+            for i in range(len(self._games)):
+                cx, cy, r = self.circle_geometry("games", i)
+                out.append(("games", i, cx, cy, r))
         else:  # accounts sub-ring geometry
             bx, by, br = self.circle_geometry("accounts", "back")
             out.append(("accounts", "back", bx, by, br))
@@ -865,9 +900,24 @@ class RadialMenuWidget(QWidget):
                 self._begin_close()
             elif key == "exit":
                 self.exit_requested.emit()
-        elif state == "accounts":
+        elif state == "games":
             if key == "back":
                 self._state = "main"
+                self._hover = None
+                self.state_changed.emit()   # spoke geometry swapped -> input reshape
+                self.back_requested.emit()
+                self.start_reveal()
+            else:
+                # The caller answers with set_accounts(..., via_games=True).
+                self.game_selected.emit(self._games[int(key)])
+        elif state == "accounts":
+            if key == "back":
+                # Entered through the game selector -> Back returns THERE;
+                # a directly opened ring returns to the main ring as before.
+                if self._accounts_from_games and len(self._games) >= 2:
+                    self._state = "games"
+                else:
+                    self._state = "main"
                 self._hover = None
                 self.state_changed.emit()   # spoke geometry swapped -> input reshape
                 self.back_requested.emit()
@@ -931,6 +981,8 @@ class RadialMenuWidget(QWidget):
         # windowed_wheel) for the layering.
         if self._state == "main":
             self._paint_main(p)
+        elif self._state == "games":
+            self._paint_games(p)
         elif self._state == "accounts":
             self._paint_accounts(p)
         p.end()
@@ -978,15 +1030,86 @@ class RadialMenuWidget(QWidget):
                 _label_pill(p, icx, icy, ir, self._label_for(key),
                             above=(key not in _MAIN_BOTTOM_KEYS))
 
-    def set_accounts(self, accounts, customizations=None) -> None:
+    def _paint_games(self, p: QPainter) -> None:
+        """Game-selector sub-ring: Back + one glossy disc per game with the
+        game's logo. Chrome mirrors the accounts sub-ring exactly (same
+        geometry model, shadows, hover lift, press spring)."""
+        cx0, cy0 = self._center()
+        sring = self._ring * 1.06
+        settled = not self._appear_active and not self._closing
+        bvis = self._circle_vis("back")
+        if bvis > 0.001:
+            bx0, by0, br = self.circle_geometry("games", "back")
+            bx = _lerp(cx0, bx0, bvis)
+            by = _lerp(cy0, by0, bvis)
+            hp = self._hover_progress.get("back", 0.0)
+            ps = self._press_scale_val if self._press_hit == ("games", "back") else 1.0
+            r_eff = br * _lerp(0.4, 1.0, bvis) * (1.0 + 0.07 * hp) * ps
+            hot_back = self._hover == ("games", "back")
+            p.setOpacity(_clamp01(bvis))
+            if hp > 0.0:
+                _focus_glow(p, bx, by, r_eff, hp)
+            _drop_shadow(p, bx, by, r_eff, 1.0 + 0.6 * hp)
+            _disc(p, bx, by, r_eff, hot_back)
+            _back_arrow(p, bx, by, r_eff * 0.55)
+            p.setOpacity(1.0)
+            if hot_back and settled:
+                _label_pill(p, bx, by, r_eff, "Back", above=True)
+        angles = account_ring_angles(len(self._games))
+        for i, game in enumerate(self._games):
+            vis = self._circle_vis(i)
+            if vis <= 0.001:
+                continue
+            sx, sy, r = self.circle_geometry("games", i)
+            icx = _lerp(cx0, sx, vis)
+            icy = _lerp(cy0, sy, vis)
+            hp = self._hover_progress.get(i, 0.0)
+            ps = self._press_scale_val if self._press_hit == ("games", i) else 1.0
+            ir = r * _lerp(0.4, 1.0, vis) * (1.0 + 0.07 * hp) * ps
+            hot = self._hover == ("games", i)
+            p.setOpacity(_clamp01(vis))
+            if hp > 0.0:
+                _focus_glow(p, icx, icy, ir, hp)
+            _drop_shadow(p, icx, icy, ir, 1.0 + 0.6 * hp)
+            _disc(p, icx, icy, ir, hot)
+            pm = _game_logo(game)
+            if not pm.isNull():
+                side = max(1, int(ir * 2 * 0.68))
+                draw = (pm if abs(side - pm.width()) <= 1
+                        else pm.scaled(side, side, Qt.KeepAspectRatio,
+                                       Qt.SmoothTransformation))
+                p.drawPixmap(QPointF(icx - draw.width() / 2.0,
+                                     icy - draw.height() / 2.0), draw)
+            p.setOpacity(1.0)
+            if hot and settled:
+                lx, ly = polar_point(cx0, cy0, sring + ir + 22, angles[i])
+                _label_at(p, lx, ly, _GAME_TITLES.get(game, game.upper()))
+
+    def set_game_selector(self, games) -> None:
+        """Switch to the game-selector sub-ring: Back plus one logo disc per
+        game. Shown when accounts exist for MORE THAN ONE game; picking a disc
+        emits ``game_selected`` and the caller answers with
+        ``set_accounts(ring, via_games=True)`` so Back can return here."""
+        self._games = [str(g) for g in games]
+        self._accounts_from_games = False
+        self._state = "games"
+        self._hover = None
+        self.state_changed.emit()   # spoke geometry swapped -> input reshape
+        self.start_reveal()
+
+    def set_accounts(self, accounts, customizations=None,
+                     via_games: bool = False) -> None:
         """Switch to the accounts sub-ring and pre-render each toon portrait.
 
         ``customizations`` (a ToonCustomizationsManager) is optional so callers
         can supply real portrait styling after construction; backward compatible
-        with ``set_accounts(accts)`` (customizations stays whatever it was)."""
+        with ``set_accounts(accts)`` (customizations stays whatever it was).
+        ``via_games`` marks a ring reached through the game selector, so its
+        Back spoke returns to the selector instead of the main ring."""
         from utils.overlay.radial_portrait import render_account_portrait
         if customizations is not None:
             self._customizations = customizations
+        self._accounts_from_games = bool(via_games)
         self._accounts = list(accounts)
         self._portraits = {}
         self._launched = set()

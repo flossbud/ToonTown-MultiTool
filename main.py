@@ -1458,6 +1458,8 @@ class MultiToonTool(QMainWindow):
         self._windowed_wheel = host
         host.menu.accounts_requested.connect(
             lambda: self._populate_radial_accounts(host.menu))
+        host.menu.game_selected.connect(
+            lambda g, m=host.menu: self._populate_radial_accounts_for_game(m, g))
         host.menu.transparent_requested.connect(self._windowed_go_transparent)
         host.menu.account_clicked.connect(self._radial_launch_account)
         host.closed.connect(lambda: setattr(self, "_windowed_wheel", None))
@@ -1476,6 +1478,8 @@ class MultiToonTool(QMainWindow):
         coordinator. The widget is owned by the mode controller and torn down on
         close_radial_menu()/leave(), so its connections die with it."""
         menu.accounts_requested.connect(lambda: self._populate_radial_accounts(menu))
+        menu.game_selected.connect(
+            lambda g, m=menu: self._populate_radial_accounts_for_game(m, g))
         menu.home_requested.connect(self._radial_go_home)
         menu.settings_requested.connect(self._open_portable_settings)
         menu.hide_cards_requested.connect(self._radial_toggle_cards)
@@ -1505,11 +1509,28 @@ class MultiToonTool(QMainWindow):
             pass
 
     def _populate_radial_accounts(self, menu):
-        """Feed the radial's Accounts sub-ring. Reuses launch_tab's keyring-aware
-        ring builder (which INCLUDES running accounts, unlike the flat menu) and
-        supplies the real ToonCustomizationsManager so portraits render styled."""
-        ring = self.launch_tab.recent_account_ring_model(limit=8)
+        """Feed the radial's Accounts flow. With accounts saved for MORE THAN
+        ONE game, show the game-selector sub-ring first (one logo disc per
+        game; same-username accounts across games are otherwise
+        indistinguishable); with a single game, open its ring directly.
+        Reuses launch_tab's keyring-free ring builder (which INCLUDES running
+        accounts, unlike the flat menu) and supplies the real
+        ToonCustomizationsManager so portraits render styled."""
+        games = self.launch_tab.account_games()
+        if len(games) >= 2:
+            menu.set_game_selector(games)
+            return
+        game = games[0] if games else None
+        ring = self.launch_tab.recent_account_ring_model(limit=8, game=game)
         menu.set_accounts(ring, customizations=self.multitoon_tab.customizations)
+
+    def _populate_radial_accounts_for_game(self, menu, game):
+        """A game-selector disc was picked: open that game's accounts ring.
+        via_games=True routes its Back spoke to the selector, not the main
+        ring."""
+        ring = self.launch_tab.recent_account_ring_model(limit=8, game=game)
+        menu.set_accounts(ring, customizations=self.multitoon_tab.customizations,
+                          via_games=True)
 
     def _radial_go_home(self):
         """Window spoke: close the radial and return to the windowed app view."""
