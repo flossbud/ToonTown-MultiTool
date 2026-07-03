@@ -1,5 +1,6 @@
 """Tests for the Settings Hotkeys card - capture rows, steal prompt,
-launch-slot pickers, and provider failure badges."""
+inline launch-slot pickers, provider failure badges, and the partial
+collapse (first category visible + Show more toggle)."""
 
 import os
 import sys
@@ -166,3 +167,55 @@ def test_click_sync_switch_tracks_external_flip(settings_tab):
     sw = settings_tab._click_sync_switch
     settings_tab.settings_manager.set(CLICK_SYNC_ENABLED, True)
     assert sw.isChecked() is True
+
+
+def test_launch_slot_combo_sits_inline_with_chord_button(settings_tab):
+    # The slot-1 account picker and its chord button share one inline
+    # container inside the same SettingsField (no separate picker row).
+    from tabs.settings_tab import SettingsField
+    tab = settings_tab
+    combo = tab._hotkey_slot_combos["1"]
+    button = tab._hotkey_rows["launch.slot_1"]
+    assert combo.parentWidget() is button.parentWidget()
+    assert isinstance(combo.parentWidget().parentWidget(), SettingsField)
+
+
+def test_card_partially_collapsed_by_default(settings_tab):
+    from utils.hotkey_actions import ACTIONS
+    tab = settings_tab
+    card = tab._hotkeys_panel
+    assert tab._hotkey_more_container.isHidden()
+    first_category = ACTIONS[0].category
+    visible_ids = [a.id for a in ACTIONS if a.category == first_category]
+    hidden_ids = [a.id for a in ACTIONS if a.category != first_category]
+    assert len(visible_ids) == 3
+    assert len(hidden_ids) == 13
+    for aid in visible_ids:
+        assert tab._hotkey_rows[aid].isVisibleTo(card)
+    for aid in hidden_ids:
+        assert not tab._hotkey_rows[aid].isVisibleTo(card)
+        # ...because the row sits inside the hidden container
+        assert tab._hotkey_rows[aid].isVisibleTo(tab._hotkey_more_container)
+    assert tab._hotkey_more_toggle.text() == f"Show {len(hidden_ids)} more..."
+
+
+def test_show_more_toggle_reveals_and_collapses(settings_tab):
+    tab = settings_tab
+    tab._hotkey_more_toggle.click()
+    assert not tab._hotkey_more_container.isHidden()
+    assert tab._hotkey_more_toggle.text() == "Show less"
+    tab._hotkey_more_toggle.click()
+    assert tab._hotkey_more_container.isHidden()
+    assert tab._hotkey_more_toggle.text() == (
+        f"Show {tab._hotkey_more_count} more...")
+
+
+def test_status_badge_applies_to_hidden_rows(settings_tab):
+    # A failure badge pushed while the card is collapsed lands on the
+    # hidden row's button, so expanding shows it immediately.
+    tab = settings_tab
+    assert tab._hotkey_more_container.isHidden()      # collapsed default
+    tab.set_hotkey_status({"profile.load_1": "in use by another application"})
+    btn = tab._hotkey_rows["profile.load_1"]
+    assert btn.text().startswith("Ctrl+1")
+    assert "in use" in btn.text()

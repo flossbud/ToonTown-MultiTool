@@ -1597,6 +1597,19 @@ class SettingsTab(QWidget):
         for action in ACTIONS:
             if action.category not in categories:
                 categories.append(action.category)
+        first_category = categories[0]
+
+        # The card is tall (16 rows), so only the first category shows by
+        # default; every later row lives in this collapsible container,
+        # revealed by the Show more toggle added below. Collapsed is the
+        # default on every construction - no persistence by design.
+        more_container = QWidget()
+        more_container.setStyleSheet("background: transparent;")
+        more_lay = QVBoxLayout(more_container)
+        more_lay.setContentsMargins(0, 0, 0, 0)
+        more_lay.setSpacing(0)
+        self._hotkey_more_container = more_container
+
         for category in categories:
             for action in ACTIONS:
                 if action.category != category:
@@ -1616,27 +1629,78 @@ class SettingsTab(QWidget):
                 )
                 button.setCursor(Qt.PointingHandCursor)
                 button.setFixedHeight(28)
-                field.set_control(button)
-                panel.add_field(field)
-                self._hotkey_rows[action.id] = button
-            if category == "Launch":
-                # Slot-assignment pickers sit right under the launch chords.
-                # Built empty here; main wires the accounts provider after
-                # tab construction and the rows repopulate then.
-                for slot in ("1", "2", "3", "4"):
-                    slot_field = SettingsField(f"Launch slot {slot}")
+                if action.id.startswith("launch.slot_"):
+                    # The slot's account picker sits inline between the
+                    # label and the chord button. Built empty here; main
+                    # wires the accounts provider after tab construction
+                    # and the combos repopulate then (and on every show).
+                    slot = action.id.rsplit("_", 1)[-1]
                     combo = SettingsComboBox()
                     combo.setFixedWidth(220)
                     combo.currentIndexChanged.connect(
                         lambda _i, s=slot, c=combo:
                         self._on_hotkey_slot_selected(s, c.currentData()))
-                    slot_field.set_control(combo)
-                    panel.add_field(slot_field)
+                    inline = QWidget()
+                    inline.setStyleSheet("background: transparent;")
+                    inline_lay = QHBoxLayout(inline)
+                    inline_lay.setContentsMargins(0, 0, 0, 0)
+                    inline_lay.setSpacing(6)
+                    inline_lay.addWidget(combo)
+                    inline_lay.addWidget(button)
+                    field.set_control(inline)
                     self._hotkey_slot_combos[slot] = combo
+                else:
+                    field.set_control(button)
+                if category == first_category:
+                    panel.add_field(field)
+                else:
+                    # Placement bypasses add_field (the row lives inside
+                    # the collapsible container, not the panel body), but
+                    # the field still registers in panel.fields so theming
+                    # and the last-row divider flag cover it.
+                    panel.fields.append(field)
+                    more_lay.addWidget(field)
+                self._hotkey_rows[action.id] = button
+        panel._refresh_last_flag()
+
+        self._hotkey_more_count = sum(
+            1 for a in ACTIONS if a.category != first_category)
+
+        # Link-styled expander between the always-visible rows and the
+        # container; themed in refresh_theme.
+        toggle = QPushButton(f"Show {self._hotkey_more_count} more...")
+        toggle.setCursor(Qt.PointingHandCursor)
+        toggle.setFlat(True)
+        toggle.setStyleSheet("background: transparent; border: none;")
+        toggle.clicked.connect(self._on_hotkey_more_toggled)
+        self._hotkey_more_toggle = toggle
+        toggle_row = QWidget()
+        toggle_row.setStyleSheet("background: transparent;")
+        toggle_lay = QHBoxLayout(toggle_row)
+        toggle_lay.setContentsMargins(16, 8, 16, 10)
+        toggle_lay.setSpacing(0)
+        toggle_lay.addWidget(toggle)
+        toggle_lay.addStretch(1)
+        panel._body_layout.addWidget(toggle_row)
+        panel._body_layout.addWidget(more_container)
+        more_container.hide()
 
         self._rebuild_hotkey_slot_rows()
 
         lay.insertWidget(insert_at, panel)
+
+    def _on_hotkey_more_toggled(self) -> None:
+        """Expand/collapse the below-the-fold hotkey rows. The state is
+        per-widget-construction (SettingsTab is built once per app run),
+        so every app start opens collapsed by design. Status badges and
+        the slot-combo rebuild touch rows directly and never depend on -
+        or change - this visibility."""
+        container = self._hotkey_more_container
+        show = container.isHidden()
+        container.setVisible(show)
+        self._hotkey_more_toggle.setText(
+            "Show less" if show
+            else f"Show {self._hotkey_more_count} more...")
 
     def _hotkey_stored_chord(self, action_id):
         """The chord this row should DISPLAY: stored override (None = cleared)
@@ -2185,4 +2249,15 @@ class SettingsTab(QWidget):
         from utils.shared_widgets import SettingsRadioList
         for rl in self.findChildren(SettingsRadioList):
             rl.set_theme_colors(c, is_dark)
+        # Hotkeys card "Show more" expander — link-styled flat button.
+        toggle = getattr(self, "_hotkey_more_toggle", None)
+        if toggle is not None:
+            toggle.setStyleSheet(
+                "QPushButton {"
+                f" color: {c['accent_blue_btn']};"
+                " background: transparent; border: none; padding: 0;"
+                " font-size: 12px; font-weight: 600; text-align: left;"
+                " }"
+                "QPushButton:hover { text-decoration: underline; }"
+            )
 
