@@ -4186,6 +4186,13 @@ def test_unblank_aligns_and_regrabs_before_opacity_write(qapp):
     stale = rep._mirror
     ctrl._settle_input()                           # unblank terminal
     assert rep.is_blanked() is False
+    # The unblank is STAGED through a paint pass (settle-time two-connection
+    # race fix): drive a paint + the zero-timer so the deferred lift lands.
+    rep.repaint()
+    for _ in range(10):
+        qapp.processEvents()
+        if any(op == 1.0 for (op, _m) in backend.mirror_at_opacity):
+            break
     ones = [m for (op, m) in backend.mirror_at_opacity if op == 1.0]
     assert ones and ones[-1] is not stale          # fresh mirror BEFORE opacity 1
     ctrl.leave()

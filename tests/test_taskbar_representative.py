@@ -88,6 +88,9 @@ def test_prepare_initial_state_requests_below_clickthrough_and_opacity_stage(qap
 
 
 def test_set_blanked_toggles_window_opacity_idempotently(qapp):
+    """Blank writes opacity 0 immediately; UNBLANK never writes directly -
+    it stages through a paint pass (see set_blanked's race rationale), so
+    the opacity-1 write only lands one loop turn after a real paint."""
     backend = _RecordingBackend()
     rep = _make_rep(backend=backend)
     assert rep.is_blanked() is False
@@ -97,7 +100,64 @@ def test_set_blanked_toggles_window_opacity_idempotently(qapp):
     assert backend.opacities == [(rep, 0.0)]
     rep.set_blanked(False)
     assert rep.is_blanked() is False
+    assert backend.opacities == [(rep, 0.0)]   # staged: no direct 1.0 write
+    rep.resize(60, 40)
+    rep.show()                                 # offscreen: paints need a shown widget
+    rep.repaint()                              # deterministic paint pass
+    for _ in range(10):                        # zero-timer fires next turn
+        qapp.processEvents()
+        if (rep, 1.0) in backend.opacities:
+            break
     assert backend.opacities == [(rep, 0.0), (rep, 1.0)]
+    rep.deleteLater()
+
+
+def test_blank_during_pending_unblank_wins(qapp):
+    """A blank that engages while an unblank is staged cancels the pending
+    lift: opacity must never bounce to 1 under an active blank."""
+    backend = _RecordingBackend()
+    rep = _make_rep(backend=backend)
+    rep.set_blanked(True)
+    rep.set_blanked(False)                   # staged...
+    rep.set_blanked(True)                    # ...but a blank re-engages
+    rep.resize(60, 40)
+    rep.show()
+    rep.repaint()
+    for _ in range(10):
+        qapp.processEvents()
+    assert (rep, 1.0) not in backend.opacities
+    assert backend.opacities[-1] == (rep, 0.0)
+    rep.deleteLater()
+
+
+def test_unblank_after_resize_paints_before_opacity(qapp):
+    """The settle sequence (resize + unblank in the same instant) must emit
+    the paint for the NEW size before the opacity-1 write - the ordering
+    that prevents the settle-time flicker at the emblem."""
+    backend = _RecordingBackend()
+    rep = _make_rep(backend=backend)
+    rep.set_blanked(True)
+    events = []
+    backend.set_window_opacity = lambda w, o: events.append(("opacity", float(o)))
+    orig_paint = rep.paintEvent
+    def paint_spy(ev):
+        events.append(("paint", rep.width(), rep.height()))
+        orig_paint(ev)
+    rep.paintEvent = paint_spy
+    pm = QPixmap(250, 250)
+    pm.fill(QColor("#123456"))
+    rep.set_mirror(pm)                       # resize 250x250 while blanked
+    rep.show()                               # offscreen: paints need a shown widget
+    rep.set_blanked(False)                   # staged unblank
+    rep.repaint()
+    for _ in range(10):
+        qapp.processEvents()
+        if ("opacity", 1.0) in events:
+            break
+    assert ("opacity", 1.0) in events
+    lift = events.index(("opacity", 1.0))
+    paints = [e for e in events[:lift] if e[0] == "paint"]
+    assert paints and paints[-1][1:] == (250, 250)   # new-size paint precedes 1.0
     rep.deleteLater()
 
 
