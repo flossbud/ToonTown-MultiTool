@@ -556,6 +556,18 @@ class MultiToonTool(QMainWindow):
         self.hotkey_manager.refresh_requested.connect(self.multitoon_tab._on_refresh_requested)
         self.hotkey_manager.start()
 
+        # Global hotkeys (X11 per-chord grabs; spec 2026-07-02). DEV SLICE:
+        # one hardcoded binding, replaced by registry+settings in Task 6.
+        self.global_hotkeys = None
+        if sys.platform.startswith("linux"):
+            from services.global_hotkeys import X11GlobalHotkeys
+            provider = X11GlobalHotkeys(repeat_ok_ids=frozenset())
+            if provider.start():
+                provider.action_triggered.connect(self._on_hotkey_action)
+                provider.apply_bindings(
+                    {"overlay.toggle_cards": "ctrl+alt+h"})
+                self.global_hotkeys = provider
+
         self.multitoon_tab.dot_state_changed.connect(self.launch_tab.update_dot_state)
         self.multitoon_tab.dot_state_changed.connect(
             lambda *_: self._refresh_header_session_status()
@@ -1409,6 +1421,11 @@ class MultiToonTool(QMainWindow):
         self._mode_controller.dismiss_radial_menu()
         self._mode_controller.toggle_cards_hidden(animate=True)
 
+    def _on_hotkey_action(self, action_id: str):
+        # DEV SLICE (Task 4): replaced by utils.hotkey_dispatch in Task 6.
+        if action_id == "overlay.toggle_cards" and self._mode_controller.is_active:
+            self._mode_controller.toggle_cards_hidden(animate=True)
+
     def _radial_launch_account(self, account_id):
         """Account spoke clicked: launch it (the sub-ring stays open so the user
         can fire several). launch_account no-ops a re-launch of a running game."""
@@ -1858,6 +1875,7 @@ class MultiToonTool(QMainWindow):
         # attributes may be missing. Don't strip this guard under the
         # "no defensive bloat" rule.
         for label, obj_name, method_name in (
+            ("global_hotkeys", "global_hotkeys", "stop"),
             ("hotkey_manager", "hotkey_manager", "stop"),
             ("launch_tab", "launch_tab", "shutdown"),
             ("multitoon_tab", "multitoon_tab", "shutdown"),

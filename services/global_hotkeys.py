@@ -4,9 +4,9 @@ The X server delivers ONLY the grabbed chords to this connection, so the
 app never sees any other keystroke (stronger privacy than a listener),
 and a grabbed chord is CONSUMED - it never reaches the focused window.
 Qualifier: while a grabbed chord is physically held, the activated grab
-redirects that key's events to this connection (they are matched or
-ignored, never logged), and stray root-selected events may arrive;
-nothing else is ever delivered.
+redirects all keyboard events to this connection for the duration of
+the hold (matched or ignored, never logged), and stray root-selected
+events may arrive; nothing else is ever delivered.
 XGrabKey is portal-safe (probed; see the route_all memory). NEVER XTEST.
 
 Structure mirrors utils/x11_movement_grabber.py (the proven in-repo
