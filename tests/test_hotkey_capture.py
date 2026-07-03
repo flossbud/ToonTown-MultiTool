@@ -13,23 +13,25 @@ def qapp():
     yield app
 
 
-def _event(etype, key, mods, text, autorep, sc):
-    if sc:
+def _event(etype, key, mods, text, autorep, sc, vk):
+    if sc or vk:
         # Long form carries native params: (type, key, modifiers,
         # nativeScanCode, nativeVirtualKey, nativeModifiers, text,
         # autorep, count) - what real platform events look like.
-        return QKeyEvent(etype, key, mods, sc, 0, 0, text, autorep, 1)
-    return QKeyEvent(etype, key, mods, text, autorep, 1)   # scancode 0
+        return QKeyEvent(etype, key, mods, sc, vk, 0, text, autorep, 1)
+    return QKeyEvent(etype, key, mods, text, autorep, 1)   # natives (0, 0)
 
 
-def _press(widget, key, mods=Qt.NoModifier, text="", autorep=False, sc=0):
+def _press(widget, key, mods=Qt.NoModifier, text="", autorep=False,
+           sc=0, vk=0):
     widget.keyPressEvent(_event(QKeyEvent.KeyPress, key, mods, text,
-                                autorep, sc))
+                                autorep, sc, vk))
 
 
-def _release(widget, key, mods=Qt.NoModifier, text="", autorep=False, sc=0):
+def _release(widget, key, mods=Qt.NoModifier, text="", autorep=False,
+             sc=0, vk=0):
     widget.keyReleaseEvent(_event(QKeyEvent.KeyRelease, key, mods, text,
-                                  autorep, sc))
+                                  autorep, sc, vk))
 
 
 def test_records_a_chord_on_release(qapp):
@@ -259,6 +261,21 @@ def test_modifier_first_release_matches_by_scancode(qapp):
     _press(b, Qt.Key_Plus, Qt.ShiftModifier, "+", sc=13)
     _release(b, Qt.Key_Equal, Qt.NoModifier, "=", sc=13)
     assert seen == ["shift+plus"]
+    assert not b.is_capturing()
+
+
+def test_cocoa_constant_scancode_distinguished_by_virtual_key(qapp):
+    # cocoa hardcodes nativeScanCode() to 1 for EVERY key; only
+    # nativeVirtualKey distinguishes them. Identity must use the native
+    # PAIR, or every key collides on identity 1 and the second key can
+    # never join the held set (ctrl+t+1 would silently commit ctrl+t).
+    seen = []
+    b = ChordCaptureButton(None, on_chord=seen.append)
+    b.begin_capture()
+    _press(b, Qt.Key_T, Qt.ControlModifier, "t", sc=1, vk=17)
+    _press(b, Qt.Key_1, Qt.ControlModifier, "1", sc=1, vk=18)
+    _release(b, Qt.Key_1, Qt.ControlModifier, "1", sc=1, vk=18)
+    assert seen == ["ctrl+1+t"]
     assert not b.is_capturing()
 
 

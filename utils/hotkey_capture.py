@@ -6,8 +6,9 @@ RELEASE: it is the set of simultaneously-held keys (up to TWO
 non-modifier keys, a third is refused inline) plus the modifiers held at
 the last key press, so 'shift held + t held + 1 pressed' records
 'shift+1+t' in either press order. Held keys are tracked by PHYSICAL
-identity (native scancode) so a key whose reported symbol changes when a
-modifier lifts first ('+' releasing as '=') still matches its press.
+identity (native scancode + virtual-key pair) so a key whose reported
+symbol changes when a modifier lifts first ('+' releasing as '=') still
+matches its press.
 While keys are held the button shows the would-be chord live with a
 trailing '...'. Esc cancels, Backspace clears the binding
 (on_chord(None)), a guardrail-violating chord shows the refusal inline
@@ -83,13 +84,16 @@ def _key_name(event) -> str | None:
     return None
 
 
-def _identity(event, name: str):
-    """Physical identity of a key event: the native scancode when the
-    platform provides one (stable across modifier changes, so a press and
-    its release always match), else a name-keyed fallback for synthetic
-    events (tests, offscreen) whose scancode is 0."""
-    sc = event.nativeScanCode()
-    return sc if sc else f"name:{name}"
+def _identity(event, name):
+    """Physical-key identity for held-set tracking. The native PAIR is
+    required: cocoa hardcodes nativeScanCode() to 1 for every key (only
+    nativeVirtualKey distinguishes them), X11/Windows populate scancode.
+    Synthetic short-form events are (0, 0) -> name fallback (offscreen
+    tests). kVK_ANSI_A == 0 on cocoa is fine: (1, 0) != (0, 0)."""
+    native = (event.nativeScanCode(), event.nativeVirtualKey())
+    if native != (0, 0):
+        return native
+    return f"name:{name}" if name is not None else None
 
 
 class ChordCaptureButton(QPushButton):
@@ -192,9 +196,7 @@ class ChordCaptureButton(QPushButton):
             return super().keyReleaseEvent(event)
         if event.isAutoRepeat():
             return                               # held key echo: not a release
-        name = _key_name(event)
-        identity = (event.nativeScanCode()
-                    or (f"name:{name}" if name is not None else None))
+        identity = _identity(event, _key_name(event))
         if identity is None or identity not in self._held:
             return                               # modifier/stale/unbound key
         # First release of a captured key: the held set is at its maximum
