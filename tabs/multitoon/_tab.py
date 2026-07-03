@@ -3234,6 +3234,18 @@ class MultitoonTab(QWidget):
         self._update_glow_timer()
         self.apply_visual_state(index)
 
+    def toggle_keep_alive_all(self):
+        """Hotkey action: if ANY slot's keep-alive is on, turn those off;
+        otherwise turn all four on. Delegates per-slot to toggle_keep_alive
+        (master-flag guard, rapid-fire reset, loop start/stop, styling all
+        live there). Enabling an empty slot is inert by design - the
+        keep-alive loop is window-gated."""
+        if not self._keep_alive_globally_enabled():
+            return
+        on = [i for i in range(4) if self.keep_alive_enabled[i]]
+        for i in (on if on else range(4)):
+            self.toggle_keep_alive(i)
+
     def set_toon_enabled(self, index, enabled: bool):
         self.enabled_toons[index] = enabled
         self.toon_buttons[index].setChecked(enabled)
