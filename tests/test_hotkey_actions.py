@@ -90,3 +90,14 @@ def test_make_hotkey_hook_matches_and_tracks_changes():
     assert hook(frozenset({"ctrl", "alt"}), "h") is None
     s.set(HOTKEY_BINDINGS, {"overlay.toggle_cards": "ctrl+alt+h"})
     assert hook(frozenset({"ctrl", "alt"}), "h") == "overlay.toggle_cards"
+
+
+def test_make_hotkey_hook_duplicate_chord_first_wins():
+    from utils.hotkey_actions import make_hotkey_hook
+
+    # overlay.toggle_cards precedes app.refresh (default F5) in ACTIONS order;
+    # binding it to F5 creates a duplicate chord. First-wins, mirroring the
+    # X11 provider's _compile_bindings.
+    s = _FakeSettings({HOTKEY_BINDINGS: {"overlay.toggle_cards": "F5"}})
+    hook = make_hotkey_hook(s)
+    assert hook(frozenset(), "F5") == "overlay.toggle_cards"

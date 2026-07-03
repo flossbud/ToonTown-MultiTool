@@ -96,7 +96,9 @@ def make_hotkey_hook(settings_manager):
         table.clear()
         for action_id, chord_text in effective_bindings(settings_manager).items():
             c = parse_chord(chord_text)
-            table[(c.mods, c.key)] = action_id
+            # First-wins on duplicate chords (effective_bindings iterates in
+            # ACTIONS order), mirroring the X11 provider's _compile_bindings.
+            table.setdefault((c.mods, c.key), action_id)
 
     _rebuild()
     on_change = getattr(settings_manager, "on_change", None)

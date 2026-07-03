@@ -1,10 +1,11 @@
 """A chord the hotkey hook resolves to an action must be SKIPPED (never enter
-the InputService key queue, press or release), must fire the on_hotkey callback
-when one is provided (the win/darwin fallback path; Linux passes None and lets
-the X11 provider fire), must only be consulted while input capture is allowed,
-and must not strand a skipped key's release after the listener stops mid-hold.
-Modifier families (ctrl/alt/shift/super) are tracked side-agnostically so the
-hook sees the chord's modifier set."""
+the InputService key queue, press or release), must emit hotkey_triggered when
+fire_hotkeys is set (the win/darwin path; the emission happens on the pynput
+listener thread and Qt auto-queues it to the GUI-thread receiver -- Linux
+passes False and lets the X11 provider fire), must only be consulted while
+input capture is allowed, and must not strand a skipped key's release after
+the listener stops mid-hold. Modifier families (ctrl/alt/shift/super) are
+tracked side-agnostically so the hook sees the chord's modifier set."""
 from __future__ import annotations
 
 import queue
@@ -20,12 +21,12 @@ def _hook(mods, key):
     return None
 
 
-def _make_hotkey_manager(capture: bool = True, hook=_hook, on_hotkey=None,
-                         repeat_ok=frozenset()):
+def _make_hotkey_manager(capture: bool = True, hook=_hook,
+                         fire_hotkeys: bool = False, repeat_ok=frozenset()):
     wm = MagicMock()
     wm.should_capture_input.return_value = capture
     q = queue.Queue(maxsize=10)
-    hm = HotkeyManager(wm, q, hotkey_hook=hook, on_hotkey=on_hotkey,
+    hm = HotkeyManager(wm, q, hotkey_hook=hook, fire_hotkeys=fire_hotkeys,
                        hotkey_repeat_ok=repeat_ok)
     return hm, q
 
@@ -43,25 +44,30 @@ def _f5():
     return _fake_key(name="f5")
 
 
-def test_bound_chord_is_skipped_and_fires_callback():
+def test_bound_chord_is_skipped_and_fires_signal():
     fired = []
-    hm, q = _make_hotkey_manager(on_hotkey=fired.append)
+    hm, q = _make_hotkey_manager(fire_hotkeys=True)
+    hm.hotkey_triggered.connect(fired.append)
     assert hm.on_global_key_press(_f5()) is None
     assert fired == ["app.refresh"]
     assert q.qsize() == 0   # bound chord: never routed to the input queue
 
 
 def test_bound_chord_skip_without_fire():
-    # Linux mode: on_hotkey is None (the X11 provider fires the action); the
+    # Linux mode: fire_hotkeys=False (the X11 provider fires the action); the
     # pynput hook still SKIPS the chord so it never reaches the input queue.
-    hm, q = _make_hotkey_manager(on_hotkey=None)
+    fired = []
+    hm, q = _make_hotkey_manager(fire_hotkeys=False)
+    hm.hotkey_triggered.connect(fired.append)
     assert hm.on_global_key_press(_f5()) is None
+    assert fired == []
     assert q.qsize() == 0
 
 
 def test_release_of_skipped_key_is_also_skipped():
     fired = []
-    hm, q = _make_hotkey_manager(on_hotkey=fired.append)
+    hm, q = _make_hotkey_manager(fire_hotkeys=True)
+    hm.hotkey_triggered.connect(fired.append)
     hm.on_global_key_press(_f5())
     assert hm.on_global_key_release(_f5()) is None
     assert q.qsize() == 0   # neither the press nor the release is enqueued
@@ -92,7 +98,8 @@ def test_hook_not_consulted_when_capture_disabled():
         return "app.refresh"
 
     fired = []
-    hm, q = _make_hotkey_manager(capture=False, hook=hook, on_hotkey=fired.append)
+    hm, q = _make_hotkey_manager(capture=False, hook=hook, fire_hotkeys=True)
+    hm.hotkey_triggered.connect(fired.append)
     assert hm.on_global_key_press(_f5()) is None
     assert calls == [] and fired == []
     assert q.qsize() == 0
@@ -101,7 +108,7 @@ def test_hook_not_consulted_when_capture_disabled():
 def test_stop_listener_clears_hotkey_down():
     # A focus-out can stop the listener while a bound chord's key is still
     # physically held; _hotkey_down must not wedge across the stop.
-    hm, _ = _make_hotkey_manager(on_hotkey=lambda _aid: None)
+    hm, _ = _make_hotkey_manager(fire_hotkeys=True)
     hm.on_global_key_press(_f5())
     assert "F5" in hm._hotkey_down
     hm.is_listening = True
@@ -112,7 +119,8 @@ def test_stop_listener_clears_hotkey_down():
 
 def test_bound_chord_autorepeat_fires_once():
     fired = []
-    hm, q = _make_hotkey_manager(on_hotkey=fired.append)
+    hm, q = _make_hotkey_manager(fire_hotkeys=True)
+    hm.hotkey_triggered.connect(fired.append)
     hm.on_global_key_press(_f5())
     hm.on_global_key_press(_f5())   # OS auto-repeat while still held
     hm.on_global_key_press(_f5())
@@ -126,8 +134,9 @@ def test_repeat_ok_action_refires_on_autorepeat():
 
     fired = []
     hm, q = _make_hotkey_manager(
-        hook=hook, on_hotkey=fired.append,
+        hook=hook, fire_hotkeys=True,
         repeat_ok=frozenset({"overlay.scale_up"}))
+    hm.hotkey_triggered.connect(fired.append)
     hm.on_global_key_press(_f5())
     hm.on_global_key_press(_f5())   # auto-repeat: repeat_ok actions re-fire
     assert fired == ["overlay.scale_up", "overlay.scale_up"]
@@ -136,7 +145,8 @@ def test_repeat_ok_action_refires_on_autorepeat():
 
 def test_release_then_press_fires_again():
     fired = []
-    hm, q = _make_hotkey_manager(on_hotkey=fired.append)
+    hm, q = _make_hotkey_manager(fire_hotkeys=True)
+    hm.hotkey_triggered.connect(fired.append)
     hm.on_global_key_press(_f5())
     hm.on_global_key_release(_f5())
     hm.on_global_key_press(_f5())   # fresh physical press
@@ -158,7 +168,8 @@ def test_ctrl_control_char_maps_to_letter_and_skips():
     # be consulted with the letter form so the binding table ('h') matches.
     calls, fired = [], []
     hm, q = _make_hotkey_manager(hook=_ctrl_chord_hook(calls),
-                                 on_hotkey=fired.append)
+                                 fire_hotkeys=True)
+    hm.hotkey_triggered.connect(fired.append)
     hm.on_global_key_press(_fake_key(name="ctrl_l"))
     hm.on_global_key_press(_fake_key(name="alt_l"))
     baseline = q.qsize()                              # modifier keydowns enqueue
@@ -174,7 +185,7 @@ def test_ctrl_released_before_letter_release_still_skipped():
     # ctrl may be released BEFORE the letter: the letter's release then arrives
     # as the plain char ('h'), which must still match the tracked press.
     calls = []
-    hm, q = _make_hotkey_manager(hook=_ctrl_chord_hook(calls), on_hotkey=None)
+    hm, q = _make_hotkey_manager(hook=_ctrl_chord_hook(calls))
     hm.on_global_key_press(_fake_key(name="ctrl_l"))
     hm.on_global_key_press(_fake_key(name="alt_l"))
     hm.on_global_key_press(_fake_key(char="\x08"))    # skipped chord press
@@ -183,3 +194,24 @@ def test_ctrl_released_before_letter_release_still_skipped():
     baseline = q.qsize()
     hm.on_global_key_release(_fake_key(char="h"))     # plain-form release
     assert q.qsize() == baseline                      # still skipped
+
+
+def test_no_stranded_keyup_when_chord_key_held_past_modifiers():
+    # Hold ctrl+alt+h (skipped chord), release the modifiers while KEEPING h
+    # held: the next auto-repeat press MISSES the hook and is enqueued as a
+    # keydown -- by construction the final physical release must then be
+    # enqueued too, or the game is stuck with a stranded held key.
+    calls = []
+    hm, q = _make_hotkey_manager(hook=_ctrl_chord_hook(calls))
+    hm.on_global_key_press(_fake_key(name="ctrl_l"))
+    hm.on_global_key_press(_fake_key(name="alt_l"))
+    hm.on_global_key_press(_fake_key(char="\x08"))    # chord press: skipped
+    hm.on_global_key_release(_fake_key(name="ctrl_l"))
+    hm.on_global_key_release(_fake_key(name="alt_l"))
+    hm.on_global_key_press(_fake_key(char="h"))       # auto-repeat, no mods
+    hm.on_global_key_release(_fake_key(char="h"))     # final physical release
+    events = []
+    while not q.empty():
+        events.append(q.get_nowait())
+    assert ("keydown", "h") in events                 # the miss was enqueued
+    assert ("keyup", "h") in events                   # ...and its keyup passed

@@ -71,4 +71,6 @@ def _no_real_hotkey_grabs(monkeypatch):
         from services.global_hotkeys import X11GlobalHotkeys
     except Exception:
         return
-    monkeypatch.setattr(X11GlobalHotkeys, "start", lambda self: False)
+    # Close the wake pipe __init__ opened so the stubbed provider leaks no fds.
+    monkeypatch.setattr(X11GlobalHotkeys, "start",
+                        lambda self: (self._close_wake_pipe(), False)[1])

@@ -54,3 +54,40 @@ def test_normalize_f1_through_f12():
         assert hm.normalize_key(_named_key(f"f{n}")) == f"F{n}", (
             f"f{n} must normalize to F{n} (X keysym style) for keymap matching"
         )
+
+
+def test_win32_vk_fallback_maps_letters_and_digits(monkeypatch):
+    # win32: Ctrl/Alt+letter suppresses the WM char translation so pynput
+    # reports char=None; the VK code (ASCII for 0-9/A-Z) is all that's left.
+    import sys
+    monkeypatch.setattr(sys, "platform", "win32")
+    hm = _make_hotkey_manager()
+    assert hm.normalize_key(_bare_vk_key(0x48)) == "h"   # VK 'H' -> lowercase
+    assert hm.normalize_key(_bare_vk_key(0x41)) == "a"
+    assert hm.normalize_key(_bare_vk_key(0x5A)) == "z"
+    assert hm.normalize_key(_bare_vk_key(0x30)) == "0"
+    assert hm.normalize_key(_bare_vk_key(0x39)) == "9"
+
+
+def test_win32_vk_fallback_ignores_non_alnum_vks(monkeypatch):
+    import sys
+    monkeypatch.setattr(sys, "platform", "win32")
+    hm = _make_hotkey_manager()
+    assert hm.normalize_key(_bare_vk_key(0x2F)) is None   # below '0'
+    assert hm.normalize_key(_bare_vk_key(0x5B)) is None   # above 'Z' (VK_LWIN)
+
+
+def test_vk_fallback_not_applied_off_win32(monkeypatch):
+    # Linux keysyms already surface the char; darwin ANSI keycodes are
+    # layout-relative, not ASCII -- the fallback must stay win32-only.
+    import sys
+    hm = _make_hotkey_manager()
+    for platform in ("linux", "darwin"):
+        monkeypatch.setattr(sys, "platform", platform)
+        assert hm.normalize_key(_bare_vk_key(0x48)) is None
+
+
+def _bare_vk_key(vk):
+    """A key with ONLY a vk (char=None, name=None), as win32 pynput reports
+    letter/digit keys while Ctrl or Alt is held."""
+    return SimpleNamespace(char=None, name=None, vk=vk)

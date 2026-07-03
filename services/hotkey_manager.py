@@ -7,7 +7,7 @@ when the user is focused on a different application.
 import sys
 import queue
 import threading
-from PySide6.QtCore import QObject
+from PySide6.QtCore import QObject, Signal
 
 from utils.key_registry import PYNPUT_NAME_MAP_BASE
 from utils.input_trace import trace as _itrace, ENABLED as _ITRACE
@@ -75,14 +75,21 @@ _MOD_FAMILY = {
 
 
 class HotkeyManager(QObject):
+    # Fired (when fire_hotkeys) with the matched action_id. The emission
+    # happens on the pynput listener thread; Qt auto-queues the cross-thread
+    # emission to the GUI-thread receiver, which is the whole point -- the
+    # listener thread must never touch Qt widgets directly.
+    hotkey_triggered = Signal(str)
+
     PYNPUT_VK_MAP = _PYNPUT_VK_MAP
-    
+
     # Derived from key_registry.py — all pynput key.name values across the
     # full registry, including side-agnostic modifier aliases (shift/ctrl/alt).
     PYNPUT_NAME_MAP: dict[str, str] = dict(PYNPUT_NAME_MAP_BASE)
 
     def __init__(self, window_manager, key_event_queue, suppress_predicate=None,
-                 hotkey_hook=None, on_hotkey=None, hotkey_repeat_ok=frozenset()):
+                 hotkey_hook=None, fire_hotkeys: bool = False,
+                 hotkey_repeat_ok=frozenset()):
         super().__init__()
         self.window_manager = window_manager
         self.key_event_queue = key_event_queue
@@ -90,12 +97,13 @@ class HotkeyManager(QObject):
 
         # hotkey_hook(mods: frozenset, key: str) -> action_id|None resolves a
         # chord against the current bindings; a match is SKIPPED (never enters
-        # the input queue). on_hotkey(action_id) fires the action from here on
-        # win/darwin; Linux passes None (the X11 provider fires it instead).
-        # Actions in hotkey_repeat_ok re-fire on OS auto-repeat while held;
-        # all others fire once per physical press.
+        # the input queue). fire_hotkeys=True additionally emits
+        # hotkey_triggered for the match (win/darwin, where this listener is
+        # the only global-hotkey source); Linux passes False (the X11 provider
+        # fires the action instead). Actions in hotkey_repeat_ok re-fire on OS
+        # auto-repeat while held; all others fire once per physical press.
         self._hotkey_hook = hotkey_hook
-        self._on_hotkey = on_hotkey
+        self._fire_hotkeys = bool(fire_hotkeys)
         self._hotkey_repeat_ok = frozenset(hotkey_repeat_ok)
         # Normalized keys whose press was skipped as a hotkey; their release
         # must be skipped too. Cleared in _stop_listener (a focus-out can stop
@@ -370,6 +378,18 @@ class HotkeyManager(QObject):
         name = getattr(key, 'name', None)
         if name:
             return self.PYNPUT_NAME_MAP.get(name.lower(), None)
+        # win32 ONLY: with Ctrl/Alt held, pynput reports char=None for letter
+        # and digit keys (the WM_CHAR translation is suppressed), leaving only
+        # the raw virtual-key code. VK 0x30-0x39 / 0x41-0x5A ARE the ASCII
+        # digit/uppercase-letter codes, so map them directly. NOT applied on
+        # darwin (ANSI keycodes are layout-relative, not ASCII) or Linux
+        # (X keysyms surface the char even under modifiers).
+        if sys.platform == "win32" and vk is not None:
+            vk = int(vk)
+            if 0x30 <= vk <= 0x39:
+                return chr(vk)           # '0'..'9'
+            if 0x41 <= vk <= 0x5A:
+                return chr(vk + 32)      # 'a'..'z' (lowercase, chord canonical)
         return None
 
     def on_global_key_press(self, key):
@@ -406,10 +426,19 @@ class HotkeyManager(QObject):
                         _itrace("hk_press", f"HOTKEY {action_id} ({hook_key})")
                     first = hook_key not in self._hotkey_down
                     self._hotkey_down.add(hook_key)
-                    if self._on_hotkey is not None and (
+                    if self._fire_hotkeys and (
                             first or action_id in self._hotkey_repeat_ok):
-                        self._on_hotkey(action_id)   # win/darwin fallback fire
+                        # Cross-thread emission auto-queues to the GUI-thread
+                        # receiver (this runs on the pynput listener thread).
+                        self.hotkey_triggered.emit(action_id)
                     return None                       # never enqueue
+                # No match: drop any tracked hold for BOTH key forms BEFORE the
+                # enqueue. A chord key held while its modifiers are released
+                # re-presses (auto-repeat) WITHOUT a match and is enqueued as a
+                # keydown -- by construction its keyup must then pass too, or
+                # the game is stuck with a stranded held key.
+                self._hotkey_down.discard(normalized)
+                self._hotkey_down.discard(hook_key)
             if normalized:
                 try:
                     self.key_event_queue.put(("keydown", normalized), timeout=0.05)

@@ -568,10 +568,14 @@ class MultiToonTool(QMainWindow):
             self.multitoon_tab.key_event_queue,
             suppress_predicate=self.multitoon_tab.input_service._suppress_predicate,
             hotkey_hook=self._hotkey_hook,
-            on_hotkey=(None if sys.platform.startswith("linux")
-                       else self._on_hotkey_action),
+            fire_hotkeys=not sys.platform.startswith("linux"),
             hotkey_repeat_ok=repeat_ok_ids,
         )
+        # Signal bridge: hotkey_triggered is emitted on the pynput listener
+        # thread; the queued connection hops to the GUI thread before any
+        # dispatch target touches a widget. Connected unconditionally --
+        # emission is gated by fire_hotkeys inside the manager.
+        self.hotkey_manager.hotkey_triggered.connect(self._on_hotkey_action)
         self.hotkey_manager.start()
 
         # Global hotkeys provider (X11 per-chord passive grabs).
@@ -600,6 +604,7 @@ class MultiToonTool(QMainWindow):
         # signal emission is thread-safe); no provider (non-Linux) means no
         # route_all grabber either, so wiring is skipped entirely.
         self._grabber_hotkeys_wired = False
+        self._grabber_wire_error_logged = False
 
         def _wire_grabber_hotkeys(*_a):
             if self._grabber_hotkeys_wired or self.global_hotkeys is None:
@@ -632,8 +637,10 @@ class MultiToonTool(QMainWindow):
                     lambda action_id: provider.action_triggered.emit(action_id),
                     repeat_ok_ids=repeat_ok_ids)
                 self._grabber_hotkeys_wired = True
-            except Exception:
-                pass
+            except Exception as e:                    # noqa: BLE001
+                if not self._grabber_wire_error_logged:
+                    self._grabber_wire_error_logged = True
+                    print(f"[GlobalHotkeys] route_all interop wiring failed: {e}")
 
         _wire_grabber_hotkeys()
         if self.global_hotkeys is not None:
