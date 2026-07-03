@@ -67,3 +67,26 @@ def test_effective_bindings_canonicalizes_and_survives_wrong_type():
     eff = effective_bindings(_FakeSettings({HOTKEY_BINDINGS: "oops"}))
     assert eff["app.refresh"] == "F5"     # wrong-typed store -> defaults only
     assert "overlay.toggle_cards" not in eff
+
+
+def test_make_hotkey_hook_matches_and_tracks_changes():
+    from utils.hotkey_actions import make_hotkey_hook
+
+    class _S(_FakeSettings):
+        def __init__(self, data=None):
+            super().__init__(data)
+            self._cbs = []
+        def on_change(self, cb):
+            self._cbs.append(cb)
+        def set(self, key, value):
+            self._d[key] = value
+            for cb in self._cbs:
+                cb(key, value)
+
+    s = _S()
+    hook = make_hotkey_hook(s)
+    assert hook(frozenset(), "F5") == "app.refresh"
+    assert hook(frozenset({"ctrl"}), "2") == "profile.load_2"
+    assert hook(frozenset({"ctrl", "alt"}), "h") is None
+    s.set(HOTKEY_BINDINGS, {"overlay.toggle_cards": "ctrl+alt+h"})
+    assert hook(frozenset({"ctrl", "alt"}), "h") == "overlay.toggle_cards"

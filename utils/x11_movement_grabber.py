@@ -109,6 +109,16 @@ class MovementKeyGrabber:
         self._route_all: bool = False
         self._grab_ok: bool = False
         self._keyboard_grabbed: bool = False  # holding a persistent XGrabKeyboard
+        self._hotkey_lookup: Optional[Callable[[int, int], Optional[str]]] = None
+        self._hotkey_dispatch_cb: Optional[Callable[[str], None]] = None
+
+    def set_hotkey_lookup(self, lookup, dispatch_cb) -> None:
+        """lookup(keycode:int, state:int) -> action_id|None; dispatch_cb(action_id)
+        runs the action. While the persistent route_all XGrabKeyboard is held it
+        PREEMPTS the hotkey provider's passive grabs, so the router must
+        recognize bound chords itself and hand them back instead of routing."""
+        self._hotkey_lookup = lookup
+        self._hotkey_dispatch_cb = dispatch_cb
 
     def prepare(
         self,
@@ -569,5 +579,21 @@ class MovementKeyGrabber:
         before this call. The grab is GrabModeAsync, so doing nothing here does
         not freeze the keyboard; never ReplayKeyboard (that would leak native
         delivery and double-send). The legacy CC path (route_all=False) is
-        unchanged and still re-delivers via on_passthrough."""
+        unchanged and still re-delivers via on_passthrough.
+
+        ONE exception to suppress-only: a KeyPress matching a bound hotkey
+        chord (per set_hotkey_lookup) is handed to the dispatcher instead --
+        while this grab is held the provider's passive grabs never fire, so
+        the router must recognize bound chords itself."""
+        if self._hotkey_lookup is not None and event.type == X.KeyPress:
+            try:
+                action_id = self._hotkey_lookup(int(event.detail),
+                                                int(event.state))
+            except Exception:
+                action_id = None
+            if action_id is not None:
+                cb = self._hotkey_dispatch_cb
+                if cb is not None:
+                    cb(action_id)
+                return                     # consumed as a hotkey, never routed
         return

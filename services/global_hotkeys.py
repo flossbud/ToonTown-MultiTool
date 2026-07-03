@@ -315,3 +315,16 @@ class X11GlobalHotkeys(GlobalHotkeyProvider):
         except Exception:
             pass
         self._close_wake_pipe()
+
+
+def make_event_lookup(display_like, settings_manager):
+    """Build lookup(keycode, state) -> action_id from the CURRENT effective
+    bindings, resolving keycodes via *display_like* (any object with
+    keysym_to_keycode). The caller rebuilds it on settings change."""
+    from utils.hotkey_actions import effective_bindings
+    table, _failures = _compile_bindings(
+        display_like, effective_bindings(settings_manager))
+
+    def lookup(keycode, state):
+        return table.get((int(keycode), int(state) & _USER_MOD_MASK))
+    return lookup

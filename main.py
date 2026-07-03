@@ -546,27 +546,97 @@ class MultiToonTool(QMainWindow):
         # Install event filter to globally block tooltips when hints disabled
         QApplication.instance().installEventFilter(self)
 
+        # Global hotkeys (registry + settings driven; spec 2026-07-02).
+        from utils.hotkey_actions import (
+            ACTIONS, effective_bindings, make_hotkey_hook,
+        )
+        from utils.hotkey_dispatch import build_dispatch
+        from utils.settings_keys import HOTKEY_BINDINGS
+        self._hotkey_dispatch = build_dispatch(
+            mode_controller=self._mode_controller,
+            launch_tab=self.launch_tab,
+            multitoon_tab=self.multitoon_tab,
+            settings_manager=self.settings_manager,
+            load_profile=self.load_profile_slot,
+        )
+        self._hotkey_hook = make_hotkey_hook(self.settings_manager)
+
         from services.hotkey_manager import HotkeyManager
         self.hotkey_manager = HotkeyManager(
             self.window_manager,
             self.multitoon_tab.key_event_queue,
             suppress_predicate=self.multitoon_tab.input_service._suppress_predicate,
+            hotkey_hook=self._hotkey_hook,
+            on_hotkey=(None if sys.platform.startswith("linux")
+                       else self._on_hotkey_action),
         )
-        self.hotkey_manager.profile_load_requested.connect(self.load_profile_slot)
-        self.hotkey_manager.refresh_requested.connect(self.multitoon_tab._on_refresh_requested)
         self.hotkey_manager.start()
 
-        # Global hotkeys (X11 per-chord grabs; spec 2026-07-02). DEV SLICE:
-        # one hardcoded binding, replaced by registry+settings in Task 6.
+        # Global hotkeys provider (X11 per-chord passive grabs).
         self.global_hotkeys = None
         if sys.platform.startswith("linux"):
             from services.global_hotkeys import X11GlobalHotkeys
-            provider = X11GlobalHotkeys(repeat_ok_ids=frozenset())
+            provider = X11GlobalHotkeys(repeat_ok_ids=frozenset(
+                a.id for a in ACTIONS if a.repeat_ok))
             if provider.start():
                 provider.action_triggered.connect(self._on_hotkey_action)
                 provider.apply_bindings(
-                    {"overlay.toggle_cards": "ctrl+alt+h"})
+                    effective_bindings(self.settings_manager))
+                self.settings_manager.on_change(
+                    lambda key, _v: provider.apply_bindings(
+                        effective_bindings(self.settings_manager))
+                    if key == HOTKEY_BINDINGS else None)
                 self.global_hotkeys = provider
+
+        # route_all interop: while the persistent keyboard grab is held it
+        # preempts the provider's passive grabs, so the router consults the
+        # SAME effective bindings and dispatches matches instead of routing.
+        # The grabber is created lazily by InputService.start() (first service
+        # start), so wiring retries on focus changes until it exists; the
+        # window_manager signal fires before any game window can hold focus
+        # with an armed route_all grab. Dispatch hops to the GUI thread by
+        # re-emitting through the provider's action_triggered signal (Qt
+        # signal emission is thread-safe); no provider (non-Linux) means no
+        # route_all grabber either, so wiring is skipped entirely.
+        self._grabber_hotkeys_wired = False
+
+        def _wire_grabber_hotkeys(*_a):
+            if self._grabber_hotkeys_wired or self.global_hotkeys is None:
+                return
+            try:
+                grabber = self.multitoon_tab.input_service._key_grabber
+                if grabber is None or not hasattr(grabber, "set_hotkey_lookup"):
+                    return
+                from services.global_hotkeys import make_event_lookup
+                # The lookup builds lazily ON the grabber's event thread from
+                # the grabber's OWN display (correct X connection discipline)
+                # and is invalidated on any bindings change.
+                state = {"lookup": None}
+
+                def lookup(keycode, kstate):
+                    if state["lookup"] is None:
+                        display = getattr(grabber, "_display", None)
+                        if display is None:
+                            return None
+                        state["lookup"] = make_event_lookup(
+                            display, self.settings_manager)
+                    return state["lookup"](keycode, kstate)
+
+                self.settings_manager.on_change(
+                    lambda key, _v: state.update(lookup=None)
+                    if key == HOTKEY_BINDINGS else None)
+                provider = self.global_hotkeys
+                grabber.set_hotkey_lookup(
+                    lookup,
+                    lambda action_id: provider.action_triggered.emit(action_id))
+                self._grabber_hotkeys_wired = True
+            except Exception:
+                pass
+
+        _wire_grabber_hotkeys()
+        if self.global_hotkeys is not None:
+            self.window_manager.active_window_changed.connect(
+                _wire_grabber_hotkeys)
 
         self.multitoon_tab.dot_state_changed.connect(self.launch_tab.update_dot_state)
         self.multitoon_tab.dot_state_changed.connect(
@@ -1422,9 +1492,14 @@ class MultiToonTool(QMainWindow):
         self._mode_controller.toggle_cards_hidden(animate=True)
 
     def _on_hotkey_action(self, action_id: str):
-        # DEV SLICE (Task 4): replaced by utils.hotkey_dispatch in Task 6.
-        if action_id == "overlay.toggle_cards" and self._mode_controller.is_active:
-            self._mode_controller.toggle_cards_hidden(animate=True)
+        handler = self._hotkey_dispatch.get(action_id)
+        if handler is None:
+            print(f"[GlobalHotkeys] unknown action {action_id!r} (dropped)")
+            return
+        try:
+            handler()
+        except Exception as e:                        # noqa: BLE001
+            print(f"[GlobalHotkeys] {action_id} handler error: {e}")
 
     def _radial_launch_account(self, account_id):
         """Account spoke clicked: launch it (the sub-ring stays open so the user

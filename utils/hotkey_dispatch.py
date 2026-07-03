@@ -32,9 +32,20 @@ def build_dispatch(*, mode_controller, launch_tab, multitoon_tab,
         current = bool(settings_manager.get(CLICK_SYNC_ENABLED, False))
         settings_manager.set(CLICK_SYNC_ENABLED, not current)
 
+    def _dismiss_radial():
+        if getattr(mode_controller, "is_radial_open", False):
+            fn = getattr(mode_controller, "dismiss_radial_menu", None)
+            if fn is not None:
+                fn()
+
+    def _toggle_cards():
+        # Mirror the radial spoke (main._radial_toggle_cards): an open ring is
+        # dismissed first so it never floats stale over the tucked cards.
+        _dismiss_radial()
+        _overlay("toggle_cards_hidden", animate=True)
+
     dispatch = {
-        "overlay.toggle_cards":
-            lambda: _overlay("toggle_cards_hidden", animate=True),
+        "overlay.toggle_cards": _toggle_cards,
         "overlay.scale_up": lambda: _overlay("set_scale_by_notches", 1),
         "overlay.scale_down": lambda: _overlay("set_scale_by_notches", -1),
         "service.toggle": multitoon_tab.toggle_service,

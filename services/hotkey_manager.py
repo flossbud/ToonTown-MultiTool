@@ -7,7 +7,7 @@ when the user is focused on a different application.
 import sys
 import queue
 import threading
-from PySide6.QtCore import QObject, Signal, Qt, QMetaObject, Q_ARG
+from PySide6.QtCore import QObject
 
 from utils.key_registry import PYNPUT_NAME_MAP_BASE
 from utils.input_trace import trace as _itrace, ENABLED as _ITRACE
@@ -64,21 +64,40 @@ def _join_quietly(listener):
         pass
 
 
-class HotkeyManager(QObject):
-    profile_load_requested = Signal(int)
-    refresh_requested = Signal()
+# pynput key.name -> side-agnostic modifier family, for the hotkey hook's
+# modifier tracking (a chord binds "ctrl", never "ctrl_l" vs "ctrl_r").
+_MOD_FAMILY = {
+    "ctrl_l": "ctrl", "ctrl_r": "ctrl", "ctrl": "ctrl",
+    "alt_l": "alt", "alt_r": "alt", "alt_gr": "alt", "alt": "alt",
+    "shift_l": "shift", "shift_r": "shift", "shift": "shift",
+    "cmd": "super", "cmd_l": "super", "cmd_r": "super",
+}
 
+
+class HotkeyManager(QObject):
     PYNPUT_VK_MAP = _PYNPUT_VK_MAP
     
     # Derived from key_registry.py — all pynput key.name values across the
     # full registry, including side-agnostic modifier aliases (shift/ctrl/alt).
     PYNPUT_NAME_MAP: dict[str, str] = dict(PYNPUT_NAME_MAP_BASE)
 
-    def __init__(self, window_manager, key_event_queue, suppress_predicate=None):
+    def __init__(self, window_manager, key_event_queue, suppress_predicate=None,
+                 hotkey_hook=None, on_hotkey=None):
         super().__init__()
         self.window_manager = window_manager
         self.key_event_queue = key_event_queue
         self.suppress_predicate = suppress_predicate
+
+        # hotkey_hook(mods: frozenset, key: str) -> action_id|None resolves a
+        # chord against the current bindings; a match is SKIPPED (never enters
+        # the input queue). on_hotkey(action_id) fires the action from here on
+        # win/darwin; Linux passes None (the X11 provider fires it instead).
+        self._hotkey_hook = hotkey_hook
+        self._on_hotkey = on_hotkey
+        # Normalized keys whose press was skipped as a hotkey; their release
+        # must be skipped too. Cleared in _stop_listener (a focus-out can stop
+        # the listener before the physical release arrives).
+        self._hotkey_down = set()
 
         self.pressed_keys = set()
         self.listener = None
@@ -88,11 +107,6 @@ class HotkeyManager(QObject):
         # on focus changes (NOT on the per-keystroke hot path); empty means the
         # gate is inactive / unknown. Off darwin it stays empty.
         self._darwin_game_pids: frozenset = frozenset()
-
-        # Tracks F5's physical down-state so OS auto-repeat does not re-fire the
-        # refresh hotkey. Reset in _stop_listener (a focus-out can stop the
-        # listener before the physical release arrives).
-        self._f5_down = False
 
         # We hook into active window changes to start/stop the listener dynamically
         self.window_manager.active_window_changed.connect(self._on_active_window_changed)
@@ -320,15 +334,10 @@ class HotkeyManager(QObject):
         self.listener = None
         self.is_listening = False
         self.pressed_keys.clear()
-        # Deliberate tradeoff: clearing _f5_down here prevents a permanent wedge
-        # when F5's physical release is missed because it happened while the
-        # listener was stopped (a focus-out). The cost is that F5 held ACROSS a
-        # stop+restart can emit one extra refresh on the restarted listener's
-        # auto-repeat; that is bounded to one per excursion and coalesced
-        # downstream by manual_refresh's cooldown. Avoiding both the wedge and
-        # the double-fire would require querying global key state, which pynput
-        # does not provide.
-        self._f5_down = False
+        # Clearing _hotkey_down prevents a permanent wedge when a skipped key's
+        # physical release is missed because it happened while the listener was
+        # stopped (a focus-out).
+        self._hotkey_down.clear()
         # Race guard: pynput's _stop_platform reaches for self._display_record
         # which the worker thread sets early in _run(). If stop() is called
         # before that line lands (very fast app launch + close cycle), pynput
@@ -370,24 +379,24 @@ class HotkeyManager(QObject):
 
         normalized = None
         try:
-            keyboard_module = _keyboard_module()
-            if key in [keyboard_module.Key.ctrl_l, keyboard_module.Key.ctrl_r]:
-                self.pressed_keys.add("ctrl")
+            fam = _MOD_FAMILY.get(getattr(key, "name", "") or "")
+            if fam:
+                self.pressed_keys.add(fam)
             elif hasattr(key, 'char') and key.char:
                 self.pressed_keys.add(key.char)
-                if "ctrl" in self.pressed_keys and key.char in "12345":
-                    idx = int(key.char) - 1
-                    # Emit signal on the main thread via Qt
-                    self.profile_load_requested.emit(idx)
 
             normalized = self.normalize_key(key)
-            if normalized == "F5":
-                if not self._f5_down:
-                    self._f5_down = True
+            if normalized and self._hotkey_hook is not None:
+                mods = frozenset(m for m in ("ctrl", "alt", "shift", "super")
+                                 if m in self.pressed_keys)
+                action_id = self._hotkey_hook(mods, normalized)
+                if action_id is not None:
                     if _ITRACE:
-                        _itrace("hk_press", "F5 refresh requested")
-                    self.refresh_requested.emit()
-                return None  # tool hotkey: never route F5 to the input queue
+                        _itrace("hk_press", f"HOTKEY {action_id} ({normalized})")
+                    self._hotkey_down.add(normalized)
+                    if self._on_hotkey is not None:
+                        self._on_hotkey(action_id)   # win/darwin fallback fire
+                    return None                       # never enqueue
             if normalized:
                 try:
                     self.key_event_queue.put(("keydown", normalized), timeout=0.05)
@@ -408,19 +417,18 @@ class HotkeyManager(QObject):
     def on_global_key_release(self, key):
         normalized = None
         try:
-            keyboard_module = _keyboard_module()
-            if key in [keyboard_module.Key.ctrl_l, keyboard_module.Key.ctrl_r]:
-                self.pressed_keys.discard("ctrl")
+            fam = _MOD_FAMILY.get(getattr(key, "name", "") or "")
+            if fam:
+                self.pressed_keys.discard(fam)
             elif hasattr(key, 'char') and key.char:
                 self.pressed_keys.discard(key.char)
 
             normalized = self.normalize_key(key)
-            if normalized == "F5":
-                # Release always clears _f5_down (no should_capture_input() gate,
-                # like the keyup path below): keyups must fire even when capture is
-                # off so a held key is never stranded down. Returning here keeps F5
-                # out of the input queue, mirroring the press handler.
-                self._f5_down = False
+            if normalized and normalized in self._hotkey_down:
+                # The press was skipped as a hotkey chord; skip the release too
+                # (no should_capture_input() gate, like the keyup path below:
+                # this must run even when capture turned off mid-hold).
+                self._hotkey_down.discard(normalized)
                 return None
             if normalized:
                 try:

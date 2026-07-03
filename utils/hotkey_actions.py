@@ -84,3 +84,22 @@ def effective_bindings(settings_manager) -> dict[str, str]:
         if chord_text:
             out[action.id] = chord_text
     return out
+
+
+def make_hotkey_hook(settings_manager):
+    """(mods: frozenset, key: str) -> action_id|None against the CURRENT
+    effective bindings. Rebuilds its table on HOTKEY_BINDINGS changes via
+    the manager's on_change (cheap: the table is a small dict)."""
+    table = {}
+
+    def _rebuild(*_a):
+        table.clear()
+        for action_id, chord_text in effective_bindings(settings_manager).items():
+            c = parse_chord(chord_text)
+            table[(c.mods, c.key)] = action_id
+
+    _rebuild()
+    on_change = getattr(settings_manager, "on_change", None)
+    if on_change is not None:
+        on_change(lambda key, _v: _rebuild() if key == HOTKEY_BINDINGS else None)
+    return lambda mods, key: table.get((frozenset(mods), key))

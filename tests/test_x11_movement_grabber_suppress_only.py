@@ -22,6 +22,8 @@ def _grabber():
         36: ("passthrough", "Return"),
     }
     g._current_canonical = "wasd"
+    g._hotkey_lookup = None            # no hotkey hook wired in these tests
+    g._hotkey_dispatch_cb = None
     return g
 
 

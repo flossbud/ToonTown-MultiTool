@@ -10,9 +10,11 @@ class _Rec:
 
 
 class _Mode(_Rec):
-    def __init__(self, active=True):
+    def __init__(self, active=True, radial_open=False):
         super().__init__()
         self.is_active = active
+        # Real attribute (not a _Rec recorder): the dispatch reads it as a bool.
+        self.is_radial_open = radial_open
 
 
 class _Settings:
@@ -86,3 +88,71 @@ def test_service_keepalive_refresh_profiles_route():
                      "_on_refresh_requested"]
     d["profile.load_1"](); d["profile.load_5"]()
     assert seen == [0, 4]
+
+
+def test_toggle_cards_dismisses_open_radial_first():
+    # Mirrors the radial spoke's behavior (main._radial_toggle_cards): an open
+    # ring is dismissed BEFORE the cards tuck, never left floating stale.
+    mode = _Mode(active=True, radial_open=True)
+    d = _dispatch(mode=mode)
+    d["overlay.toggle_cards"]()
+    names = [c[0] for c in mode.calls]
+    assert names == ["dismiss_radial_menu", "toggle_cards_hidden"]
+    assert ("toggle_cards_hidden", (), {"animate": True}) in mode.calls
+    # Closed ring: no dismiss call at all.
+    mode = _Mode(active=True, radial_open=False)
+    d = _dispatch(mode=mode)
+    d["overlay.toggle_cards"]()
+    assert [c[0] for c in mode.calls] == ["toggle_cards_hidden"]
+
+
+def test_launch_slot_noops_when_account_deleted():
+    launch = _Launch()
+    settings = _Settings({HOTKEY_LAUNCH_SLOTS: {"1": "acct-2"}})  # unknown to game_of_account
+    d = _dispatch(launch=launch, settings=settings)
+    d["launch.slot_1"]()
+    assert not [c for c in launch.calls if c[0] == "launch_account"]
+
+
+def test_clicksync_flips_back_and_wrong_typed_slots_noop():
+    settings = _Settings({CLICK_SYNC_ENABLED: True,
+                          HOTKEY_LAUNCH_SLOTS: "oops"})
+    d = _dispatch(settings=settings)
+    d["clicksync.toggle"]()
+    assert (CLICK_SYNC_ENABLED, False) in settings.sets
+    d["launch.slot_1"]()          # wrong-typed slots store: no crash, no call
+
+
+def test_dispatch_targets_exist_on_real_classes():
+    from tabs.multitoon._tab import MultitoonTab
+    from tabs.launch_tab import LaunchTab
+    for name in ("toggle_service", "toggle_keep_alive_all",
+                 "_on_refresh_requested", "manual_refresh"):
+        assert hasattr(MultitoonTab, name), name
+    for name in ("game_of_account", "launch_account"):
+        assert hasattr(LaunchTab, name), name
+
+
+def test_toggle_keep_alive_all_semantics():
+    from tabs.multitoon._tab import MultitoonTab
+
+    class _Stub:
+        def __init__(self, enabled, master=True):
+            self.keep_alive_enabled = list(enabled)
+            self._master = master
+            self.flipped = []
+        def _keep_alive_globally_enabled(self):
+            return self._master
+        def toggle_keep_alive(self, i):
+            self.flipped.append(i)
+            self.keep_alive_enabled[i] = not self.keep_alive_enabled[i]
+
+    s = _Stub([False, True, False, True])
+    MultitoonTab.toggle_keep_alive_all(s)
+    assert s.flipped == [1, 3]                      # any on -> those off
+    s = _Stub([False, False, False, False])
+    MultitoonTab.toggle_keep_alive_all(s)
+    assert s.flipped == [0, 1, 2, 3]                # none on -> all on
+    s = _Stub([True, True, True, True], master=False)
+    MultitoonTab.toggle_keep_alive_all(s)
+    assert s.flipped == []                          # master flag off -> no-op
