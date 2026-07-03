@@ -79,13 +79,153 @@ def test_resolve_chat_block_list_letters_on_blocks_all_letters(tmp_path):
 def test_explicit_flag_in_settings_overrides_heuristic(tmp_path):
     """If TTR exposes an explicit chat-by-typing flag in settings.json, honor it.
 
-    NOTE: exact field name is TBD during real-data probing in B.3. The parser
-    accepts a tuple of candidate names; this test asserts the override behavior
-    works regardless of which candidate the field landed on.
+    NOTE: the REAL field turned out to be nested (controls["automatic-chat-input"],
+    see the real-shape tests below); the top-level candidate names are kept as
+    a legacy fallback for older/other client versions, and this test pins that
+    fallback path.
     """
     p = _write_settings(tmp_path, {"forward": "up"}, extras={"chat-by-typing": False})
     s = parse_ttr_settings(p)
     assert s.chat_by_typing_enabled_resolved is False
+
+
+# --- real-world settings.json shape --------------------------------------
+# Verified by reading a live Windows TTR install's settings.json:
+# C:\Program Files (x86)\Toontown Rewritten\settings.json. The chat-by-typing
+# toggle is NESTED under controls as "automatic-chat-input" (a JSON bool),
+# not any of the guessed top-level names.
+
+
+def test_real_shape_nested_flag_false_with_letters_resolves_off(tmp_path):
+    """The verbatim real-world shape: automatic-chat-input=false + wasd."""
+    p = _write_settings(tmp_path, {
+        "automatic-chat-input": False,
+        "chat": "enter",
+        "groupChat": "alt-enter",
+        "forward": "w", "left": "a", "reverse": "s", "right": "d",
+    }, extras={"game": {"want-local-api": True}})
+    s = parse_ttr_settings(p)
+    assert s.has_letter_hotkeys is True
+    assert s.chat_by_typing_enabled_resolved is False
+
+
+def test_nested_flag_false_overrides_arrow_heuristic(tmp_path):
+    """Explicit nested flag WINS over inference: arrows alone would infer
+    chat-by-typing ON, but automatic-chat-input=false forces it OFF."""
+    p = _write_settings(tmp_path, {
+        "automatic-chat-input": False,
+        "forward": "arrow_up", "reverse": "arrow_down",
+        "left": "arrow_left", "right": "arrow_right",
+    })
+    s = parse_ttr_settings(p)
+    assert s.has_letter_hotkeys is False
+    assert s.chat_by_typing_enabled_resolved is False
+    assert "a" not in resolve_chat_block_list(s)
+
+
+def test_nested_flag_true_overrides_letter_heuristic(tmp_path):
+    """The other direction: letters bound would infer chat-by-typing OFF,
+    but automatic-chat-input=true forces it ON."""
+    p = _write_settings(tmp_path, {
+        "automatic-chat-input": True,
+        "forward": "w", "reverse": "s",
+    })
+    s = parse_ttr_settings(p)
+    assert s.has_letter_hotkeys is True
+    assert s.chat_by_typing_enabled_resolved is True
+    assert "a" in resolve_chat_block_list(s)
+
+
+def test_nested_flag_wins_over_legacy_top_level_names(tmp_path):
+    """When both the real nested field and a legacy top-level name are
+    present, the real field is authoritative."""
+    p = _write_settings(
+        tmp_path,
+        {"automatic-chat-input": False, "forward": "arrow_up"},
+        extras={"chat-by-typing": True},
+    )
+    s = parse_ttr_settings(p)
+    assert s.chat_by_typing_enabled_resolved is False
+
+
+def test_nested_flag_non_bool_is_ignored(tmp_path):
+    """Only a genuine JSON bool counts as the explicit nested flag; a string
+    like "false" is treated as absent so the heuristic still applies."""
+    p = _write_settings(tmp_path, {
+        "automatic-chat-input": "false",
+        "forward": "arrow_up",
+    })
+    s = parse_ttr_settings(p)
+    assert s.chat_by_typing_enabled_resolved is True
+
+
+# --- chat-open chord parsing ----------------------------------------------
+
+_STOCK_CHORDS = ((frozenset(), "Return"), (frozenset({"alt"}), "Return"))
+
+
+def test_chat_open_chords_default_when_absent(tmp_path):
+    p = _write_settings(tmp_path, {"forward": "arrow_up"})
+    s = parse_ttr_settings(p)
+    assert s.chat_open_chords == _STOCK_CHORDS
+
+
+def test_chat_open_chords_default_on_bare_construction():
+    """Construction sites that don't pass chat_open_chords (e.g. test
+    fixtures elsewhere) get the stock chords."""
+    s = TtrSettings(
+        controls={},
+        chat_by_typing_enabled_resolved=True,
+        has_letter_hotkeys=False,
+    )
+    assert s.chat_open_chords == _STOCK_CHORDS
+
+
+def test_chat_open_chords_parses_real_default_strings(tmp_path):
+    p = _write_settings(tmp_path, {"chat": "enter", "groupChat": "alt-enter"})
+    s = parse_ttr_settings(p)
+    assert s.chat_open_chords == _STOCK_CHORDS
+
+
+def test_chat_open_chords_custom_rebinds(tmp_path):
+    """Rebinds parse: named keys translate through _TTR_VALUE_TO_KEYSYM,
+    single printable chars pass through verbatim (keymap convention), and
+    'control' normalizes to 'ctrl'."""
+    p = _write_settings(tmp_path, {"chat": "shift-enter", "groupChat": "ctrl-x"})
+    s = parse_ttr_settings(p)
+    assert s.chat_open_chords == (
+        (frozenset({"shift"}), "Return"),
+        (frozenset({"ctrl"}), "x"),
+    )
+    p2 = _write_settings(tmp_path, {"chat": "control-enter", "groupChat": "f8"})
+    s2 = parse_ttr_settings(p2)
+    assert s2.chat_open_chords == (
+        (frozenset({"ctrl"}), "Return"),
+        (frozenset(), "F8"),
+    )
+
+
+def test_chat_open_chords_unmappable_named_key_falls_back(tmp_path):
+    """Design choice: a named key with no keysym mapping (f13 — the table
+    covers F1-F12 only) falls back to that slot's stock chord rather than
+    storing an untranslatable string the input layer could never match."""
+    p = _write_settings(tmp_path, {"chat": "f13", "groupChat": "alt-enter"})
+    s = parse_ttr_settings(p)
+    assert s.chat_open_chords == _STOCK_CHORDS
+
+
+def test_chat_open_chords_malformed_values_fall_back_per_slot(tmp_path):
+    """Non-string / unknown-modifier / empty values each fall back to that
+    slot's stock chord independently."""
+    p = _write_settings(tmp_path, {"chat": 12, "groupChat": "banana-enter"})
+    s = parse_ttr_settings(p)
+    assert s.chat_open_chords == _STOCK_CHORDS
+    p2 = _write_settings(tmp_path, {"chat": "", "groupChat": "ctrl-enter"})
+    s2 = parse_ttr_settings(p2)
+    assert s2.chat_open_chords == (
+        (frozenset(), "Return"),
+        (frozenset({"ctrl"}), "Return"),
+    )
 
 
 def test_locate_returns_none_when_no_path_exists(tmp_path, monkeypatch):

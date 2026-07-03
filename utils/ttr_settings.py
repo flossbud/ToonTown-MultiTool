@@ -15,11 +15,27 @@ import string
 from dataclasses import dataclass
 from pathlib import Path
 
-# Field names TTR may expose for the chat-by-typing toggle. First present field
-# wins. Tightened during B.3 once a real-world settings.json is probed.
+# Legacy top-level field names guessed for the chat-by-typing toggle before a
+# real settings.json was probed. The REAL field on a live install is nested:
+# controls["automatic-chat-input"] (confirmed by reading
+# C:\Program Files (x86)\Toontown Rewritten\settings.json on the Windows test
+# box). These names are kept as a fallback for older/other client versions.
 _CHAT_BY_TYPING_FIELDS: tuple[str, ...] = (
     "chat-by-typing", "chatByTyping", "enableChatByTyping", "typingChat",
 )
+
+# Stock chat-open chords per a clean TTR install: controls["chat"]="enter",
+# controls["groupChat"]="alt-enter". Used whenever a chord value is missing
+# or unparseable.
+_DEFAULT_CHAT_OPEN_CHORDS: tuple = (
+    (frozenset(), "Return"),
+    (frozenset({"alt"}), "Return"),
+)
+
+# Modifier tokens TTR may emit in chord strings, normalized for TTMT.
+_CHORD_MOD_NORMALIZE = {
+    "alt": "alt", "ctrl": "ctrl", "control": "ctrl", "shift": "shift",
+}
 
 _FLATPAK_PATH = os.path.expanduser(
     "~/.var/app/com.toontownrewritten.Launcher/data/settings.json"
@@ -46,6 +62,9 @@ class TtrSettings:
     chat_by_typing_enabled_resolved: bool
     has_letter_hotkeys: bool
     source_path: Path | None = None
+    # (modifiers, keysym) pairs that open the chat input, parsed from
+    # controls["chat"] / controls["groupChat"]. Defaults to enter / alt-enter.
+    chat_open_chords: tuple[tuple[frozenset[str], str], ...] = _DEFAULT_CHAT_OPEN_CHORDS
 
 
 def locate_settings_file(engine_dir: str | None = None) -> Path | None:
@@ -81,6 +100,7 @@ def parse_ttr_settings(path: Path | str) -> TtrSettings:
         chat_by_typing_enabled_resolved=resolved,
         has_letter_hotkeys=has_letter,
         source_path=p,
+        chat_open_chords=_resolve_chat_open_chords(controls),
     )
 
 
@@ -92,10 +112,59 @@ def _has_letter_hotkeys(controls: dict) -> bool:
 
 
 def _explicit_chat_flag(data: dict) -> bool | None:
+    # Real field first: nested under controls, and only a genuine JSON bool
+    # counts (any other type is treated as absent, not coerced).
+    controls = data.get("controls")
+    if isinstance(controls, dict):
+        flag = controls.get("automatic-chat-input")
+        if isinstance(flag, bool):
+            return flag
     for f in _CHAT_BY_TYPING_FIELDS:
         if f in data:
             return bool(data[f])
     return None
+
+
+def _parse_chord(value) -> tuple[frozenset[str], str] | None:
+    """Parse a TTR chord string ('enter', 'alt-enter', 'ctrl-x') into a
+    (modifiers, keysym) pair.
+
+    Split on '-': the last token is the key, preceding tokens are modifiers
+    normalized to 'alt'/'ctrl'/'shift'. Named keys translate through
+    _TTR_VALUE_TO_KEYSYM; printable single chars pass through verbatim per
+    the keymap convention (see the table's comment). Returns None for
+    missing/unparseable values so the caller can fall back to the stock
+    chord."""
+    if not isinstance(value, str) or not value:
+        return None
+    tokens = value.lower().split("-")
+    mods = set()
+    for tok in tokens[:-1]:
+        norm = _CHORD_MOD_NORMALIZE.get(tok)
+        if norm is None:
+            return None
+        mods.add(norm)
+    key = tokens[-1]
+    if key in _TTR_VALUE_TO_KEYSYM:
+        keysym = _TTR_VALUE_TO_KEYSYM[key]
+    elif len(key) == 1 and key.isprintable() and not key.isspace():
+        keysym = key
+    else:
+        return None
+    return (frozenset(mods), keysym)
+
+
+def _resolve_chat_open_chords(controls: dict) -> tuple[tuple[frozenset[str], str], ...]:
+    """Chat-open chords for a parsed controls dict: (chat, groupChat).
+
+    Each slot independently falls back to its stock chord (enter /
+    alt-enter) when the value is missing or unparseable."""
+    chat = _parse_chord(controls.get("chat"))
+    group = _parse_chord(controls.get("groupChat"))
+    return (
+        chat if chat is not None else _DEFAULT_CHAT_OPEN_CHORDS[0],
+        group if group is not None else _DEFAULT_CHAT_OPEN_CHORDS[1],
+    )
 
 
 def resolve_chat_block_list(s: TtrSettings) -> set[str]:
