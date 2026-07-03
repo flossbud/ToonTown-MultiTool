@@ -570,6 +570,7 @@ class MultiToonTool(QMainWindow):
             hotkey_hook=self._hotkey_hook,
             fire_hotkeys=not sys.platform.startswith("linux"),
             hotkey_repeat_ok=repeat_ok_ids,
+            vk_keysym_lookup=self.multitoon_tab.input_service.grabber_keysym_for_vk,
         )
         # Signal bridge: hotkey_triggered is emitted on the pynput listener
         # thread; the queued connection hops to the GUI thread before any

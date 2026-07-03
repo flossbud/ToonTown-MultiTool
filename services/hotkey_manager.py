@@ -89,11 +89,22 @@ class HotkeyManager(QObject):
 
     def __init__(self, window_manager, key_event_queue, suppress_predicate=None,
                  hotkey_hook=None, fire_hotkeys: bool = False,
-                 hotkey_repeat_ok=frozenset()):
+                 hotkey_repeat_ok=frozenset(), vk_keysym_lookup=None):
         super().__init__()
         self.window_manager = window_manager
         self.key_event_queue = key_event_queue
         self.suppress_predicate = suppress_predicate
+        # vk_keysym_lookup(vkCode) -> keysym|None: the win32 grabber's DYNAMIC
+        # hook-side translation for the currently-installed grab set (all
+        # keymap-bound keys of the focused game, not just the 8 preset
+        # movement keys). None / a miss falls back to _WIN32_MOVEMENT_VK.
+        self.vk_keysym_lookup = vk_keysym_lookup
+        # Keysyms whose KEYDOWN this filter suppressed and that are still
+        # physically held. A keyup is only suppressed when its keydown was
+        # (else we would eat a release the OS/apps saw go down: for a
+        # modifier like Alt that strands the system's async alt state DOWN
+        # and turns the next Tab press into an accidental Alt+Tab).
+        self._suppressed_down = set()
 
         # hotkey_hook(mods: frozenset, keys: frozenset) -> action_id|None is a
         # PURE exact-set lookup against the current bindings. The manager
@@ -240,31 +251,51 @@ class HotkeyManager(QObject):
         (the cause of the "first grabbed key sticks, then no input works" bug).
         The supported mechanism is this filter calling ``suppress_event()``.
 
-        For a grabbed movement key that must be suppressed we enqueue the event
-        here (because suppress_event() prevents on_press/on_release from firing)
+        For a grabbed key that must be suppressed we enqueue the event here
+        (because suppress_event() prevents on_press/on_release from firing)
         and then suppress it at the OS level. Every other key returns True and
         flows through on_press/on_release unchanged, so the listener never stops.
+
+        vk translation is the grabber's dynamic map first (the installed grab
+        set: every keymap-bound key of the focused game), then the static
+        movement table as a no-grabber fallback. A keyup is suppressed IFF its
+        keydown was (tracked in _suppressed_down): eating a release whose
+        press the OS delivered would strand async modifier state down at the
+        OS level (a stuck-down Alt turns the next Tab into Alt+Tab).
         """
         keysym = None
         do_suppress = False
         try:
-            keysym = _WIN32_MOVEMENT_VK.get(getattr(data, "vkCode", None))
+            vk = getattr(data, "vkCode", None)
+            lookup = self.vk_keysym_lookup
+            if lookup is not None:
+                try:
+                    keysym = lookup(vk)
+                except Exception:
+                    keysym = None
             if keysym is None:
-                return True  # not a grabbable movement key — normal processing
-            sp = self.suppress_predicate
-            if sp is None or not sp(keysym):
-                return True  # not suppressed right now — on_press/on_release enqueue it
-            # Suppressed: enqueue ourselves, mirroring the on_press/on_release
-            # capture gating (keydown honours should_capture_input; keyup always
-            # enqueues so a held key is never stranded down on a bg toon).
+                keysym = _WIN32_MOVEMENT_VK.get(vk)
+            if keysym is None:
+                return True  # not a grabbable key — normal processing
             if msg in (_WM_KEYDOWN, _WM_SYSKEYDOWN):
+                sp = self.suppress_predicate
+                if sp is None or not sp(keysym):
+                    return True  # not suppressed right now — on_press enqueues it
+                # Suppressed: enqueue ourselves, honouring the same capture
+                # gate as on_press.
                 if self.window_manager.should_capture_input():
                     try:
                         self.key_event_queue.put(("keydown", keysym), timeout=0.05)
                     except queue.Full:
                         print("[HotkeyManager] queue full, dropping suppressed keydown")
+                    self._suppressed_down.add(keysym)
                     do_suppress = True
             elif msg in (_WM_KEYUP, _WM_SYSKEYUP):
+                if keysym not in self._suppressed_down:
+                    return True  # down was delivered natively; the up must be too
+                self._suppressed_down.discard(keysym)
+                # Withheld down -> withhold the up and enqueue it so a held
+                # key is never stranded down on a bg toon.
                 try:
                     self.key_event_queue.put(("keyup", keysym), timeout=0.05)
                 except queue.Full:
@@ -355,9 +386,13 @@ class HotkeyManager(QObject):
         self.pressed_keys.clear()
         # Clearing _hotkey_down prevents a permanent wedge when a skipped key's
         # physical release is missed because it happened while the listener was
-        # stopped (a focus-out). _held_keys goes stale the same way.
+        # stopped (a focus-out). _held_keys goes stale the same way, and so
+        # does _suppressed_down (a release that lands while the listener is
+        # stopped is delivered natively and never clears its entry; a stale
+        # entry would wrongly eat a future native keyup after restart).
         self._hotkey_down.clear()
         self._held_keys.clear()
+        self._suppressed_down.clear()
         # Race guard: pynput's _stop_platform reaches for self._display_record
         # which the worker thread sets early in _run(). If stop() is called
         # before that line lands (very fast app launch + close cycle), pynput

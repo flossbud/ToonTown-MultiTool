@@ -452,8 +452,24 @@ class InputService(QObject):
                 _itrace("focus", f"win={window_id} ttr idx={toon_index} install route_all "
                                  f"intent {_prev_intent}->True")
             passthrough = list(_passthrough_keysyms_for_canonical(canonical))
+            # Every key bound in ANY of the foreground game's sets must be
+            # suppressed, not just the 8 preset movement keys: an unsuppressed
+            # bound key reaches the focused client natively (raw Alt_R read as
+            # the side-agnostic 'alt' book binding) AND the router refuses to
+            # synthesize its action to the focused toon (double-delivery
+            # guard), so rebound non-movement keys were dead for the focused
+            # toon on Windows. Same union the router uses for is_movement, so
+            # suppression and re-synthesis stay in lockstep. The X11 grabber
+            # ignores route_keys (its whole-keyboard grab already covers all).
+            route_keys = None
+            if self.keymap_manager is not None:
+                try:
+                    route_keys = self.keymap_manager.get_keys_for_game(game)
+                except Exception:
+                    route_keys = None
             self._key_grabber.install_grabs(
-                canonical_set=canonical, passthrough_keysyms=passthrough, route_all=True)
+                canonical_set=canonical, passthrough_keysyms=passthrough,
+                route_all=True, route_keys=route_keys)
         else:
             # CC: legacy path. Omit route_all so CC keeps opposite-keyset-only
             # suppression on both platforms; both grabbers default route_all=False.
@@ -763,6 +779,20 @@ class InputService(QObject):
         if should_suppress is None:
             return False
         return bool(should_suppress(keysym))
+
+    def grabber_keysym_for_vk(self, vk):
+        """Bridge from HotkeyManager's win32 event filter to the grabber's
+        dynamic vk -> keysym map (built from the installed grab set). None
+        when no grabber, no map, or the vk is not grabbed; the filter then
+        falls back to its static movement table."""
+        grabber = self._key_grabber
+        lookup = getattr(grabber, "keysym_for_vk", None)
+        if lookup is None:
+            return None
+        try:
+            return lookup(vk)
+        except Exception:
+            return None
 
     def _apply_backend_setting(self):
         """Connect or disconnect backend based on platform and current settings."""

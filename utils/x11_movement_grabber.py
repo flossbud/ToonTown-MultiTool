@@ -174,6 +174,7 @@ class MovementKeyGrabber:
         canonical_set: str,
         passthrough_keysyms: Optional[list[str]] = None,
         route_all: bool = False,
+        route_keys=None,
     ) -> None:
         """route_all=True (TTR strict, X11 only): grab BOTH keysets,
         GrabModeAsync + owner_events=False, to SUPPRESS native movement
@@ -181,7 +182,11 @@ class MovementKeyGrabber:
         driven by the pynput/XRecord feed in InputService (movement to the
         correct toon; non-movement to the focused toon). route_all=False (CC,
         default): legacy conflicting-keyset / GrabModeSync / passthrough +
-        on_key routing. Safe from any thread."""
+        on_key routing. Safe from any thread.
+
+        route_keys is accepted for signature parity with the Win32 grabber
+        and ignored: the persistent XGrabKeyboard already redirects EVERY
+        key, so per-key suppression sets are meaningless here."""
         self._actions.put(("install", canonical_set,
                            list(passthrough_keysyms or []), route_all))
 

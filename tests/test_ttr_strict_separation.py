@@ -245,14 +245,18 @@ class _FakeGrabber:
     the now-current canonical (None on uninstall) AFTER each grab op. This is how
     _ttr_grabs_active gets set (the focus handler only records intent).
 
-    Accepts route_all and passthrough_keysyms kwargs so it can handle both the
-    TTR (route_all=True) and CC (passthrough_keysyms=[...]) install paths."""
+    Accepts route_all / passthrough_keysyms / route_keys kwargs so it can
+    handle both the TTR (route_all=True, route_keys=keymap union) and CC
+    (passthrough_keysyms=[...]) install paths."""
     def __init__(self, on_grabs_changed=None):
         self.calls = []
+        self.route_keys_seen = []
         self._on_grabs_changed = on_grabs_changed
         self._current = None
-    def install_grabs(self, canonical_set, passthrough_keysyms=None, route_all=False):
+    def install_grabs(self, canonical_set, passthrough_keysyms=None, route_all=False,
+                      route_keys=None):
         self.calls.append(("install", canonical_set))
+        self.route_keys_seen.append(route_keys)
         self._current = canonical_set
         if self._on_grabs_changed:
             self._on_grabs_changed(self._current)
@@ -275,6 +279,29 @@ def test_focus_ttr_installs_grabs_and_sets_flag(monkeypatch, tmp_path):
     assert svc._intended_ttr_strict is True
     # The grabber's completion callback flips the gate on once grabs are live.
     assert svc._ttr_grabs_active is True
+
+
+def test_focus_ttr_install_passes_keymap_union_as_route_keys(monkeypatch, tmp_path):
+    """The TTR install must hand the grabber EVERY key bound in any of the
+    game's sets (not just the 8 preset movement keys), so a rebound
+    non-movement key (jump=Alt_R) is suppressed from the focused window on
+    Windows instead of leaking its native meaning (alt = book)."""
+    svc, km = _make_service(
+        monkeypatch, tmp_path, active_wid="ttr-1",
+        windows=["ttr-1"], games={"ttr-1": "ttr"},
+        assignments=[0], settings={STRICT_TTR_SEPARATION: True},
+    )
+    km.add_set("ttr")
+    km.update_set_key("ttr", 1, "jump", "Alt_R")
+    km.update_set_key("ttr", 1, "book", "Shift_R")
+    fg = _FakeGrabber(on_grabs_changed=svc._on_grabs_changed); svc._key_grabber = fg
+    svc._on_active_window_changed_for_grabber("ttr-1")
+    assert fg.route_keys_seen, "install_grabs never called"
+    route_keys = fg.route_keys_seen[-1]
+    assert route_keys is not None
+    assert "Alt_R" in route_keys
+    assert "Shift_R" in route_keys
+    assert route_keys == km.get_keys_for_game("ttr")
     assert svc._strict_ttr_active() is True
 
 

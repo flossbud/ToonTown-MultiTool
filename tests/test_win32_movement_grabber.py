@@ -189,6 +189,68 @@ class TestRouteAll:
         assert g.should_suppress("w") is False
 
 
+class TestRouteKeys:
+    """route_keys carries the keymap union (every key bound in any of the
+    foreground game's sets) so rebound non-movement keys are suppressed from
+    the focused window instead of leaking their native meaning (raw Alt_R ->
+    the client's side-agnostic 'alt' book binding)."""
+
+    KEYS = frozenset({"w", "a", "s", "d", "Up", "Down", "Left", "Right",
+                      "space", "Alt_L", "Alt_R", "Shift_L", "Shift_R",
+                      "g", "t", "Delete"})
+
+    def _grabber(self, monkeypatch):
+        monkeypatch.setattr(sys, "platform", "win32")
+        g = wmg.Win32MovementKeyGrabber()
+        g.prepare(_always_consume)
+        return g
+
+    def test_route_keys_extends_suppression_beyond_movement(self, monkeypatch):
+        g = self._grabber(monkeypatch)
+        g.install_grabs("wasd", route_all=True, route_keys=self.KEYS)
+        for k in ("Alt_R", "Shift_R", "space", "g", "t", "Delete", "w", "Up"):
+            assert g.should_suppress(k) is True, k
+
+    def test_unbound_key_not_suppressed(self, monkeypatch):
+        g = self._grabber(monkeypatch)
+        g.install_grabs("wasd", route_all=True, route_keys=self.KEYS)
+        assert g.should_suppress("h") is False
+        assert g.should_suppress("Return") is False
+
+    def test_route_keys_ignored_without_route_all(self, monkeypatch):
+        g = self._grabber(monkeypatch)
+        g.install_grabs("wasd", route_keys=self.KEYS)  # CC legacy path
+        assert g.should_suppress("Alt_R") is False
+        assert g.should_suppress("Up") is True
+
+    def test_empty_route_keys_falls_back_to_both_keysets(self, monkeypatch):
+        g = self._grabber(monkeypatch)
+        g.install_grabs("wasd", route_all=True, route_keys=frozenset())
+        for k in ("w", "a", "s", "d", "Up", "Down", "Left", "Right"):
+            assert g.should_suppress(k) is True, k
+
+    def test_keysym_for_vk_covers_hook_side_modifier_vks(self, monkeypatch):
+        """LL hooks deliver the side-specific modifier vks (VK_RMENU 0xA5),
+        never the generic VK_MENU window-message codes."""
+        g = self._grabber(monkeypatch)
+        g.install_grabs("wasd", route_all=True, route_keys=self.KEYS)
+        assert g.keysym_for_vk(0xA5) == "Alt_R"
+        assert g.keysym_for_vk(0xA1) == "Shift_R"
+        assert g.keysym_for_vk(0xA0) == "Shift_L"
+        assert g.keysym_for_vk(0x20) == "space"
+        assert g.keysym_for_vk(0x2E) == "Delete"
+        assert g.keysym_for_vk(ord("G")) == "g"
+        assert g.keysym_for_vk(0x26) == "Up"
+
+    def test_keysym_for_vk_none_for_unbound_or_uninstalled(self, monkeypatch):
+        g = self._grabber(monkeypatch)
+        g.install_grabs("wasd", route_all=True, route_keys=self.KEYS)
+        assert g.keysym_for_vk(ord("H")) is None
+        assert g.keysym_for_vk(None) is None
+        g.uninstall_grabs()
+        assert g.keysym_for_vk(0xA5) is None
+
+
 class TestOnGrabsChanged:
     def test_install_route_all_notifies_canonical(self, monkeypatch):
         monkeypatch.setattr(sys, "platform", "win32")

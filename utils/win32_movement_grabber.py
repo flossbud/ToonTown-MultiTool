@@ -33,8 +33,52 @@ def _opposite_keys(canonical_set: str) -> tuple[str, ...]:
 
 
 def _both_keysets() -> tuple[str, ...]:
-    """All movement keys across both presets — the route_all grab set."""
+    """All movement keys across both presets — the route_all fallback set
+    when the caller supplies no route_keys."""
     return ("w", "a", "s", "d", "Up", "Down", "Left", "Right")
+
+
+# keysym name -> the virtual-key code the WH_KEYBOARD_LL hook reports for
+# that physical key. NOTE the modifiers use the LEFT/RIGHT-DISTINCT codes
+# (VK_LSHIFT 0xA0 .. VK_RMENU 0xA5): low-level hooks always deliver the
+# side-specific vk, never the generic VK_SHIFT/VK_CONTROL/VK_MENU that
+# window messages carry. This table is therefore the HOOK-side inverse and
+# must not be conflated with win32_backend.WIN32_MODIFIER_OVERRIDES, which
+# is the OUTBOUND (PostMessage wparam) table and deliberately generic.
+_HOOK_VK_FOR_KEYSYM: dict[str, int] = {
+    "Up": 0x26, "Down": 0x28, "Left": 0x25, "Right": 0x27,
+    "space": 0x20, "Tab": 0x09, "Return": 0x0D, "Escape": 0x1B,
+    "BackSpace": 0x08, "Delete": 0x2E, "Insert": 0x2D,
+    "Home": 0x24, "End": 0x23, "Prior": 0x21, "Next": 0x22,
+    "Shift_L": 0xA0, "Shift_R": 0xA1,
+    "Control_L": 0xA2, "Control_R": 0xA3,
+    "Alt_L": 0xA4, "Alt_R": 0xA5,
+    **{f"F{i}": 0x6F + i for i in range(1, 13)},
+    **{f"KP_{i}": 0x60 + i for i in range(10)},
+    "KP_Multiply": 0x6A, "KP_Add": 0x6B, "KP_Subtract": 0x6D,
+    "KP_Decimal": 0x6E, "KP_Divide": 0x6F,
+    **{c: ord(c) - 32 for c in "abcdefghijklmnopqrstuvwxyz"},
+    **{c: ord(c) for c in "0123456789"},
+}
+
+
+def _hook_vk_for_keysym(keysym: str) -> Optional[int]:
+    """Resolve a keymap keysym to its LL-hook vk. Named keys and
+    letters/digits come from the static table; other single printable chars
+    (e.g. '\\' for TTR's performAction) resolve through VkKeyScan, which is
+    layout-aware and only exists on Windows."""
+    vk = _HOOK_VK_FOR_KEYSYM.get(keysym)
+    if vk is not None:
+        return vk
+    if len(keysym) == 1 and sys.platform == "win32":
+        try:
+            import win32api
+            vk = win32api.VkKeyScan(keysym) & 0xFF
+            if vk not in (0, 0xFF):
+                return vk
+        except Exception:
+            return None
+    return None
 
 
 def win32_grabber_available() -> bool:
@@ -52,6 +96,7 @@ class Win32MovementKeyGrabber:
 
     def __init__(self) -> None:
         self._grabbed_keysyms: Optional[frozenset[str]] = None
+        self._vk_to_keysym: dict[int, str] = {}
         self._should_consume: Optional[Callable[[str], bool]] = None
         self._on_grabs_changed: Optional[Callable[[Optional[str]], None]] = None
 
@@ -71,16 +116,35 @@ class Win32MovementKeyGrabber:
         canonical_set: str,
         passthrough_keysyms: Optional[list[str]] = None,
         route_all: bool = False,
+        route_keys=None,
     ) -> None:
-        """route_all=True (TTR strict): grab BOTH keysets so every focused-window
-        movement key is suppressed and the router re-synthesizes the correct
-        native key. route_all=False (CC, default): suppress only the opposite
-        keyset. passthrough_keysyms is accepted for parity but ignored (the
-        non-exclusive hook needs no passthrough list). Fires
+        """route_all=True (TTR strict): suppress every key in route_keys — the
+        union of all keys bound in any of the foreground game's sets, supplied
+        by InputService from the keymap — so a bound key NEVER reaches the
+        focused window natively and the router re-synthesizes the client's own
+        binding instead. This is what lets a rebound non-movement key (e.g.
+        jump=Alt_R) drive the focused toon, and what stops the raw modifier
+        from triggering the client's native side-agnostic binding (alt=book).
+        The suppress set must stay a subset of the router's movement-class
+        classification (same keymap union) or a suppressed key would be
+        silently eaten: on Windows there is no focused-passthrough re-send.
+        Without route_keys, route_all falls back to the 8 preset movement
+        keys (pre-keymap behavior). route_all=False (CC, default): suppress
+        only the opposite keyset. passthrough_keysyms is accepted for parity
+        but ignored (the non-exclusive hook needs no passthrough list). Fires
         on_grabs_changed(canonical_set) synchronously after updating the grab
         set, or on_grabs_changed(None) if the resulting grab set is empty."""
-        keys = _both_keysets() if route_all else _opposite_keys(canonical_set)
+        if route_all:
+            keys = tuple(route_keys) if route_keys else _both_keysets()
+        else:
+            keys = _opposite_keys(canonical_set)
         self._grabbed_keysyms = frozenset(keys) if keys else None
+        vk_map: dict[int, str] = {}
+        for keysym in self._grabbed_keysyms or ():
+            vk = _hook_vk_for_keysym(keysym)
+            if vk is not None:
+                vk_map[vk] = keysym
+        self._vk_to_keysym = vk_map
         # Report the focused canonical only when a real grab set is installed, so
         # InputService._on_grabs_changed never marks strict active without
         # suppression actually happening.
@@ -88,7 +152,16 @@ class Win32MovementKeyGrabber:
 
     def uninstall_grabs(self) -> None:
         self._grabbed_keysyms = None
+        self._vk_to_keysym = {}
         self._notify_grabs_changed(None)
+
+    def keysym_for_vk(self, vk) -> Optional[str]:
+        """Hook-side vk -> keysym for the CURRENT grab set, or None when the
+        vk is not a grabbed key (the event filter then falls back to its
+        static movement table / normal processing)."""
+        if vk is None:
+            return None
+        return self._vk_to_keysym.get(vk)
 
     def _notify_grabs_changed(self, canonical: Optional[str]) -> None:
         cb = self._on_grabs_changed

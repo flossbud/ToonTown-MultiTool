@@ -22,11 +22,12 @@ VK_A = 0x41   # -> "a" (a grabbed movement key)
 VK_H = 0x48   # 'h' — not a movement key the grabber ever suppresses
 
 
-def _make_hk(suppress=None, should_capture=True):
+def _make_hk(suppress=None, should_capture=True, vk_lookup=None):
     wm = MagicMock()
     wm.should_capture_input.return_value = should_capture
     q: queue.Queue = queue.Queue()
-    hk = HotkeyManager(wm, q, suppress_predicate=suppress)
+    hk = HotkeyManager(wm, q, suppress_predicate=suppress,
+                       vk_keysym_lookup=vk_lookup)
     return hk, q, wm
 
 
@@ -78,12 +79,36 @@ class TestWin32EventFilter:
         assert q.get_nowait() == ("keydown", "a")
         assert hk.listener.suppressed == 1
 
-    def test_suppressed_keyup_enqueues_and_suppresses(self):
+    def test_keyup_of_suppressed_keydown_enqueues_and_suppresses(self):
         hk, q, _ = _make_hk(suppress=lambda k: True)
         hk.listener = _FakeListener()
+        hk._win32_event_filter(_WM_KEYDOWN, _data(VK_A))
+        assert q.get_nowait() == ("keydown", "a")
         hk._win32_event_filter(_WM_KEYUP, _data(VK_A))
         assert q.get_nowait() == ("keyup", "a")
-        assert hk.listener.suppressed == 1
+        assert hk.listener.suppressed == 2
+
+    def test_keyup_without_suppressed_keydown_passes_through(self):
+        """A release whose press was delivered natively must be delivered
+        natively too: eating it would strand OS async key state down (for a
+        modifier that turns the next Tab press into an accidental Alt+Tab)."""
+        hk, q, _ = _make_hk(suppress=lambda k: True)
+        hk.listener = _FakeListener()
+        assert hk._win32_event_filter(_WM_KEYUP, _data(VK_A)) is True
+        assert q.empty()
+        assert hk.listener.suppressed == 0
+
+    def test_stop_listener_clears_suppressed_down_tracking(self):
+        hk, q, _ = _make_hk(suppress=lambda k: True)
+        hk.listener = _FakeListener()
+        hk._win32_event_filter(_WM_KEYDOWN, _data(VK_A))
+        q.get_nowait()
+        hk.is_listening = True
+        hk._stop_listener()
+        hk.listener = _FakeListener()
+        # After the restart the tracked down is stale; its keyup must pass.
+        assert hk._win32_event_filter(_WM_KEYUP, _data(VK_A)) is True
+        assert q.empty()
 
     def test_suppressed_keydown_without_capture_neither_enqueues_nor_suppresses(self):
         # No game focused: pass the key natively, do not steal it.
@@ -107,6 +132,51 @@ class TestWin32EventFilter:
         hk._win32_event_filter(_WM_KEYDOWN, _data(VK_A))     # 0x41 -> "a"
         hk._win32_event_filter(_WM_KEYDOWN, _data(0x26))     # VK_UP -> "Up"
         assert seen == ["a", "Up"]
+
+
+class TestDynamicVkLookup:
+    """The grabber's dynamic vk map extends suppression beyond the static
+    8-key movement table to every keymap-bound key (e.g. a jump rebound to
+    right alt, whose LL-hook vk is the side-specific VK_RMENU 0xA5)."""
+
+    VK_RMENU = 0xA5
+
+    def test_lookup_hit_suppresses_non_movement_key(self):
+        hk, q, _ = _make_hk(
+            suppress=lambda k: True,
+            vk_lookup=lambda vk: "Alt_R" if vk == self.VK_RMENU else None,
+        )
+        hk.listener = _FakeListener()
+        hk._win32_event_filter(_WM_KEYDOWN, _data(self.VK_RMENU))
+        assert q.get_nowait() == ("keydown", "Alt_R")
+        assert hk.listener.suppressed == 1
+
+    def test_lookup_miss_falls_back_to_static_movement_table(self):
+        hk, q, _ = _make_hk(suppress=lambda k: True,
+                            vk_lookup=lambda vk: None)
+        hk.listener = _FakeListener()
+        hk._win32_event_filter(_WM_KEYDOWN, _data(VK_A))
+        assert q.get_nowait() == ("keydown", "a")
+        assert hk.listener.suppressed == 1
+
+    def test_lookup_raising_falls_back_and_never_unwinds(self):
+        def boom(vk):
+            raise RuntimeError("lookup died")
+        hk, q, _ = _make_hk(suppress=lambda k: True, vk_lookup=boom)
+        hk.listener = _FakeListener()
+        hk._win32_event_filter(_WM_KEYDOWN, _data(VK_A))
+        assert q.get_nowait() == ("keydown", "a")
+        assert hk.listener.suppressed == 1
+
+    def test_unbound_key_still_passes_through(self):
+        hk, q, _ = _make_hk(
+            suppress=lambda k: True,
+            vk_lookup=lambda vk: "Alt_R" if vk == self.VK_RMENU else None,
+        )
+        hk.listener = _FakeListener()
+        assert hk._win32_event_filter(_WM_KEYDOWN, _data(VK_H)) is True
+        assert q.empty()
+        assert hk.listener.suppressed == 0
 
 
 # ── The critical regression guard: callbacks must NEVER return False ─────────
