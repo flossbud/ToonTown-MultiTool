@@ -1,0 +1,50 @@
+from utils.hotkey_actions import ACTIONS, action_by_id, effective_bindings
+from utils.settings_keys import HOTKEY_BINDINGS
+
+
+class _FakeSettings:
+    def __init__(self, data=None):
+        self._d = dict(data or {})
+    def get(self, key, default=None):
+        return self._d.get(key, default)
+
+
+def test_registry_ids_and_defaults():
+    ids = [a.id for a in ACTIONS]
+    assert ids == [
+        "overlay.toggle_cards", "overlay.scale_up", "overlay.scale_down",
+        "launch.slot_1", "launch.slot_2", "launch.slot_3", "launch.slot_4",
+        "service.toggle", "keepalive.toggle_all", "clicksync.toggle",
+        "app.refresh",
+        "profile.load_1", "profile.load_2", "profile.load_3",
+        "profile.load_4", "profile.load_5",
+    ]
+    assert action_by_id("app.refresh").default_chord == "F5"
+    assert action_by_id("profile.load_3").default_chord == "ctrl+3"
+    assert action_by_id("overlay.toggle_cards").default_chord is None
+    assert action_by_id("overlay.scale_up").repeat_ok is True
+    assert action_by_id("service.toggle").repeat_ok is False
+
+
+def test_effective_bindings_defaults_absent_null():
+    # Empty config -> only the actions with defaults are bound.
+    eff = effective_bindings(_FakeSettings())
+    assert eff["app.refresh"] == "F5"
+    assert eff["profile.load_1"] == "ctrl+1"
+    assert "overlay.toggle_cards" not in eff
+    # Explicit null CLEARS a default; explicit chord overrides it.
+    eff = effective_bindings(_FakeSettings({
+        HOTKEY_BINDINGS: {"app.refresh": None,
+                          "overlay.toggle_cards": "ctrl+alt+h"}}))
+    assert "app.refresh" not in eff
+    assert eff["overlay.toggle_cards"] == "ctrl+alt+h"
+
+
+def test_effective_bindings_drops_invalid_entries():
+    eff = effective_bindings(_FakeSettings({
+        HOTKEY_BINDINGS: {"app.refresh": "not a + chord +",
+                          "no.such.action": "ctrl+9",
+                          "clicksync.toggle": "h"}}))   # guardrail violation
+    assert eff["app.refresh"] == "F5"     # invalid override -> default survives
+    assert "no.such.action" not in eff
+    assert "clicksync.toggle" not in eff
