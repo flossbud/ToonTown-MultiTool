@@ -2,7 +2,7 @@
 import pytest
 
 from utils.hotkey_chords import (
-    Chord, parse_chord, format_chord, chord_error, MOD_MASKS,
+    Chord, parse_chord, format_chord, chord_error, MOD_MASKS, x_modmask,
 )
 
 
@@ -33,3 +33,8 @@ def test_guardrail_bare_key_needs_fkey():
 
 def test_mod_masks_cover_all_four():
     assert set(MOD_MASKS) == {"ctrl", "shift", "alt", "super"}
+
+
+def test_x_modmask_composition():
+    assert MOD_MASKS == {"shift": 1, "ctrl": 4, "alt": 8, "super": 64}
+    assert x_modmask(parse_chord("ctrl+alt+h")) == 12
