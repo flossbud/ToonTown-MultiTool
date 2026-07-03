@@ -2,14 +2,16 @@
 
 Click -> capture mode (Qt keyboard grab so the chord cannot leak into the
 app or fire other widgets' shortcuts). The chord COMMITS on the first key
-RELEASE: it is the maximum simultaneously-held set of keys (up to TWO
+RELEASE: it is the set of simultaneously-held keys (up to TWO
 non-modifier keys, a third is refused inline) plus the modifiers held at
 the last key press, so 'shift held + t held + 1 pressed' records
-'shift+1+t' in either press order. While keys are held the button shows
-the would-be chord live with a trailing '...'. Esc cancels, Backspace
-clears the binding (on_chord(None)), a guardrail-violating chord shows
-the refusal inline and keeps capturing. on_chord receives the canonical
-chord string.
+'shift+1+t' in either press order. Held keys are tracked by PHYSICAL
+identity (native scancode) so a key whose reported symbol changes when a
+modifier lifts first ('+' releasing as '=') still matches its press.
+While keys are held the button shows the would-be chord live with a
+trailing '...'. Esc cancels, Backspace clears the binding
+(on_chord(None)), a guardrail-violating chord shows the refusal inline
+and keeps capturing. on_chord receives the canonical chord string.
 """
 from __future__ import annotations
 
@@ -31,6 +33,17 @@ _PUNCT_KEYSYMS = {
     "/": "slash", "\\": "backslash", ";": "semicolon", "'": "apostrophe",
     "[": "bracketleft", "]": "bracketright", "`": "grave",
 }
+
+# Shifted symbols record their BASE key (US-layout assumption, matching the
+# keysym-name vocabulary above): real shift+1 arrives as Key_Exclam text "!"
+# and must record "1", or the flagship shift+t+1 chord could never be
+# captured. "+" is deliberately absent: it stays a bindable key of its own
+# via _PUNCT_KEYSYMS -> "plus".
+_SHIFTED_US = {"!": "1", "@": "2", "#": "3", "$": "4", "%": "5", "^": "6",
+               "&": "7", "*": "8", "(": "9", ")": "0", "~": "grave",
+               "_": "minus", "{": "bracketleft", "}": "bracketright",
+               "|": "backslash", ":": "semicolon", "\"": "apostrophe",
+               "<": "comma", ">": "period", "?": "slash"}
 
 
 def _display(chord_text: str | None) -> str:
@@ -61,10 +74,22 @@ def _key_name(event) -> str | None:
         return chr(ord("0") + key - Qt.Key_0)
     text = event.text()
     if len(text) == 1 and text.isprintable() and not text.isspace():
+        base = _SHIFTED_US.get(text)
+        if base is not None:
+            return base                      # shifted symbol -> base key
         if text.isascii() and text.isalnum():
             return text.lower()
         return _PUNCT_KEYSYMS.get(text)      # unmapped -> None (refused)
     return None
+
+
+def _identity(event, name: str):
+    """Physical identity of a key event: the native scancode when the
+    platform provides one (stable across modifier changes, so a press and
+    its release always match), else a name-keyed fallback for synthetic
+    events (tests, offscreen) whose scancode is 0."""
+    sc = event.nativeScanCode()
+    return sc if sc else f"name:{name}"
 
 
 class ChordCaptureButton(QPushButton):
@@ -82,8 +107,8 @@ class ChordCaptureButton(QPushButton):
         # already triggers the owner's delayed status push.
         self._on_capture_end = on_capture_end
         self._capturing = False
-        self._held: list = []        # canonical key names physically held
-        self._max_set: set = set()   # largest simultaneous held set observed
+        # {identity: canonical key name} in press order, physically held.
+        self._held: dict = {}
         self._mods_at_last_press: frozenset = frozenset()
         self.clicked.connect(self.begin_capture)
 
@@ -112,8 +137,7 @@ class ChordCaptureButton(QPushButton):
         self.releaseKeyboard()
 
     def _reset_held(self) -> None:
-        self._held = []
-        self._max_set = set()
+        self._held = {}
         self._mods_at_last_press = frozenset()
 
     def focusOutEvent(self, event) -> None:
@@ -151,16 +175,16 @@ class ChordCaptureButton(QPushButton):
             self.setText("Refused: unsupported key - use letters, digits, "
                          "F-keys, or common punctuation")
             return                               # keep capturing, held intact
-        if name not in self._held:
+        identity = _identity(event, name)
+        if identity not in self._held:
             if len(self._held) >= 2:
                 self.setText("Refused: chords support at most two keys")
                 return                           # third key never joins
-            self._held.append(name)
-        self._max_set.update(self._held)
+            self._held[identity] = name
         self._mods_at_last_press = frozenset(
             m for qt_m, m in _QT_MODS if event.modifiers() & qt_m)
         would_be = Chord(mods=self._mods_at_last_press,
-                         keys=frozenset(self._max_set))
+                         keys=frozenset(self._held.values()))
         self.setText(_display(format_chord(would_be)) + "...")
 
     def keyReleaseEvent(self, event) -> None:
@@ -169,12 +193,16 @@ class ChordCaptureButton(QPushButton):
         if event.isAutoRepeat():
             return                               # held key echo: not a release
         name = _key_name(event)
-        if name is None or name not in self._held:
+        identity = (event.nativeScanCode()
+                    or (f"name:{name}" if name is not None else None))
+        if identity is None or identity not in self._held:
             return                               # modifier/stale/unbound key
-        # First release of a captured key: commit the maximum held set.
-        self._held.remove(name)
-        chord = Chord(mods=self._mods_at_last_press,
-                      keys=frozenset(self._max_set))
+        # First release of a captured key: the held set is at its maximum
+        # RIGHT NOW (commit happens before any captured key leaves), so the
+        # chord keys are exactly the held names before removal.
+        keys = frozenset(self._held.values())
+        del self._held[identity]
+        chord = Chord(mods=self._mods_at_last_press, keys=keys)
         err = chord_error(chord)
         if err is not None:
             self.setText(f"Refused: {err}")

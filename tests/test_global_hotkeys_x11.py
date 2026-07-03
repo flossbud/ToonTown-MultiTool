@@ -74,7 +74,7 @@ def test_compile_defers_multikey_chords_to_failures():
     d = _fake_display()
     table, failures = _compile_bindings(d, {"a.b": "ctrl+1+h"})
     assert table == {}
-    assert failures["a.b"] == "multi-key chords not yet armed (Task 11)"
+    assert failures["a.b"] == "two-key chords not supported yet"
 
 
 def _bare_provider():

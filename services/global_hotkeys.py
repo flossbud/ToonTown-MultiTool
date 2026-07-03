@@ -70,8 +70,9 @@ def _compile_bindings(display, bindings):
             if len(chord.keys) > 1:
                 # Deliberate deferral: passive per-chord grabs cannot express
                 # a two-key hold; the sync-grab task arms these. Until then a
-                # multi-key binding is a legible failure, never a bad grab.
-                raise ValueError("multi-key chords not yet armed (Task 11)")
+                # multi-key binding is a legible failure (surfaced verbatim
+                # in the Settings badge), never a bad grab.
+                raise ValueError("two-key chords not supported yet")
             keysym = XK.string_to_keysym(chord.key)
             if keysym == 0:
                 raise ValueError(f"unknown keysym {chord.key!r}")

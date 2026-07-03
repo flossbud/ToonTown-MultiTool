@@ -63,6 +63,17 @@ def test_single_key_compat_accessor():
         _ = parse_chord("shift+t+1").key             # ambiguous on multi
 
 
+def test_unknown_modlike_part_parses_as_key_but_is_refused():
+    # INTENTIONAL grammar loosening: the classify-every-part parser cannot
+    # tell a typo'd modifier ('hyper') from a keysym-name key ('KP_Add'),
+    # so it parses as a key; safety moved to chord_error (no modifier) and
+    # the X compiler's unknown-keysym failure.
+    c = parse_chord("hyper+h")
+    assert c == Chord(mods=frozenset(), keys=frozenset({"hyper", "h"}))
+    err = chord_error(c)
+    assert err is not None and "modifier" in err.lower()
+
+
 def test_mod_masks_cover_all_four():
     assert set(MOD_MASKS) == {"ctrl", "shift", "alt", "super"}
 

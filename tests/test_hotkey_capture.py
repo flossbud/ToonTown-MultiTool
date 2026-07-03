@@ -13,14 +13,23 @@ def qapp():
     yield app
 
 
-def _press(widget, key, mods=Qt.NoModifier, text="", autorep=False):
-    widget.keyPressEvent(
-        QKeyEvent(QKeyEvent.KeyPress, key, mods, text, autorep, 1))
+def _event(etype, key, mods, text, autorep, sc):
+    if sc:
+        # Long form carries native params: (type, key, modifiers,
+        # nativeScanCode, nativeVirtualKey, nativeModifiers, text,
+        # autorep, count) - what real platform events look like.
+        return QKeyEvent(etype, key, mods, sc, 0, 0, text, autorep, 1)
+    return QKeyEvent(etype, key, mods, text, autorep, 1)   # scancode 0
 
 
-def _release(widget, key, mods=Qt.NoModifier, text="", autorep=False):
-    widget.keyReleaseEvent(
-        QKeyEvent(QKeyEvent.KeyRelease, key, mods, text, autorep, 1))
+def _press(widget, key, mods=Qt.NoModifier, text="", autorep=False, sc=0):
+    widget.keyPressEvent(_event(QKeyEvent.KeyPress, key, mods, text,
+                                autorep, sc))
+
+
+def _release(widget, key, mods=Qt.NoModifier, text="", autorep=False, sc=0):
+    widget.keyReleaseEvent(_event(QKeyEvent.KeyRelease, key, mods, text,
+                                  autorep, sc))
 
 
 def test_records_a_chord_on_release(qapp):
@@ -223,3 +232,73 @@ def test_guardrail_refusal_resets_tracking_for_retry(qapp):
     _press(b, Qt.Key_H, Qt.ControlModifier, "h")
     _release(b, Qt.Key_H, Qt.ControlModifier, "h")
     assert seen == ["ctrl+h"]
+
+
+def test_shifted_symbol_records_base_key_by_scancode(qapp):
+    # Real shift+1 on a US layout arrives as Key_Exclam text "!"; it must
+    # record the BASE key "1" or the flagship shift+t+1 chord could never
+    # be captured live.
+    seen = []
+    b = ChordCaptureButton(None, on_chord=seen.append)
+    b.begin_capture()
+    _press(b, Qt.Key_T, Qt.ShiftModifier, "T", sc=28)
+    _press(b, Qt.Key_Exclam, Qt.ShiftModifier, "!", sc=2)
+    _release(b, Qt.Key_Exclam, Qt.ShiftModifier, "!", sc=2)
+    assert seen == ["shift+1+t"]
+    assert not b.is_capturing()
+
+
+def test_modifier_first_release_matches_by_scancode(qapp):
+    # Press shift+= (records "plus"); if shift lifts BEFORE '=', the release
+    # reports Key_Equal text "=" - a different symbol on the SAME physical
+    # key. The scancode identity must match the held entry and commit the
+    # chord as captured.
+    seen = []
+    b = ChordCaptureButton(None, on_chord=seen.append)
+    b.begin_capture()
+    _press(b, Qt.Key_Plus, Qt.ShiftModifier, "+", sc=13)
+    _release(b, Qt.Key_Equal, Qt.NoModifier, "=", sc=13)
+    assert seen == ["shift+plus"]
+    assert not b.is_capturing()
+
+
+def test_first_pressed_key_released_first_commits_full_set(qapp):
+    # Either release order commits the full held set, not just the survivor.
+    seen = []
+    b = ChordCaptureButton(None, on_chord=seen.append)
+    b.begin_capture()
+    _press(b, Qt.Key_T, Qt.ControlModifier, "t")
+    _press(b, Qt.Key_1, Qt.ControlModifier, "1")
+    _release(b, Qt.Key_T, Qt.ControlModifier, "t")   # FIRST-pressed leaves first
+    assert seen == ["ctrl+1+t"]
+    assert not b.is_capturing()
+
+
+def test_escape_mid_hold_stale_release_is_inert(qapp):
+    # Esc while a key is held cancels AND clears tracking: the stale release
+    # arriving in a fresh capture must not commit anything.
+    seen = []
+    b = ChordCaptureButton("ctrl+1", on_chord=seen.append)
+    b.begin_capture()
+    _press(b, Qt.Key_T, Qt.ControlModifier, "t")
+    _press(b, Qt.Key_Escape)                         # cancel mid-hold
+    assert not b.is_capturing() and b.text() == "Ctrl+1"
+    b.begin_capture()
+    _release(b, Qt.Key_T, Qt.ControlModifier, "t")   # stale: ignored
+    assert seen == [] and b.is_capturing()
+
+
+def test_refused_third_key_release_never_commits(qapp):
+    # The refused third key never joined the held set, so its release is
+    # inert; the chord still commits from the two captured keys.
+    seen = []
+    b = ChordCaptureButton(None, on_chord=seen.append)
+    b.begin_capture()
+    _press(b, Qt.Key_T, Qt.ControlModifier, "t")
+    _press(b, Qt.Key_1, Qt.ControlModifier, "1")
+    _press(b, Qt.Key_2, Qt.ControlModifier, "2")     # refused (third)
+    _release(b, Qt.Key_2, Qt.ControlModifier, "2")   # inert: never held
+    assert seen == [] and b.is_capturing()
+    _release(b, Qt.Key_1, Qt.ControlModifier, "1")
+    assert seen == ["ctrl+1+t"]
+    assert not b.is_capturing()
