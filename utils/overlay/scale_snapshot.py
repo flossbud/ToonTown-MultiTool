@@ -10,6 +10,7 @@ windows. These helpers compute the cluster bounding box, compose the snapshot
 image (honoring device pixel ratio and a hard physical-size cap), and describe
 the bbox-local regions where the proxy still accepts wheel events.
 """
+from __future__ import annotations
 
 from dataclasses import dataclass
 
