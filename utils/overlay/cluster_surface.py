@@ -48,6 +48,7 @@ class ClusterSurface(OverlaySurface):
         super().__init__(backend=backend)
         self._cluster_view = None  # ScaledClusterView holding the borrowed host
         self._awaiting_first_paint = False  # opacity-staged until the first buffer
+        self._content_blanked = False  # opacity-0 while an EMPTY persistent surface
 
     def host_scaled(self, widget, emblem_center, pivot, envelope_size,
                     initial_scale: float = 1.0) -> None:
@@ -125,10 +126,50 @@ class ClusterSurface(OverlaySurface):
         """Runs one event-loop turn after the first paint: a synchronous
         repaint (the window is exposed now, so this flushes a CURRENT buffer)
         and only then the opacity write - the taskbar rep's proven
-        anti-stale-frame ordering."""
+        anti-stale-frame ordering. A content-blanked surface defers: the blank
+        owns opacity until its own unblank path (host -> paint -> opacity)."""
+        if self._content_blanked:
+            return
         try:
             self.repaint()
             self._backend.set_window_opacity(self, 1.0)
+        except Exception:
+            pass
+
+    def set_content_blanked(self, blanked: bool) -> None:
+        """Blank (opacity 0) while this persistent surface hosts NO content.
+
+        An empty mapped window is only invisible while its buffer is fully
+        transparent - but a RESIZE exposes a fresh region with NO buffer,
+        which KWin/XWayland composites as an OPAQUE BLACK band until the next
+        paint flush lands (probed 2026-07-02, re-probed under a stalled event
+        loop). During a scale burst the GUI thread is saturated by the
+        whole-cluster repaint, so the closed panel's per-notch ``emblem*6``
+        resize showed exactly that band live (the J-shaped black rectangle).
+        Opacity 0 makes ANY closed-state geometry change invisible by
+        construction, whatever KWin composites and however late the paint
+        lands; the open paths lift it only AFTER content is hosted and
+        painted (paint-before-opacity, the taskbar rep's proven ordering).
+        Idempotent."""
+        blanked = bool(blanked)
+        if blanked == self._content_blanked:
+            return
+        self._content_blanked = blanked
+        try:
+            from utils.overlay.backend import overlay_trace
+            overlay_trace(f"{type(self).__name__}: content-blank -> {blanked}")
+        except Exception:
+            pass
+        if not blanked:
+            # Paint-before-opacity, enforced HERE so no caller can reorder it:
+            # flush a buffer that covers the full current canvas before the
+            # window becomes visible.
+            try:
+                self.repaint()
+            except Exception:
+                pass
+        try:
+            self._backend.set_window_opacity(self, 0.0 if blanked else 1.0)
         except Exception:
             pass
 
