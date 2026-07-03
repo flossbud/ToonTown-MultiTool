@@ -60,3 +60,15 @@ def _shutdown_multitoon_input_services():
             pass
     for _ in range(5):
         app.processEvents()
+
+
+@pytest.fixture(autouse=True)
+def _no_real_hotkey_grabs(monkeypatch):
+    """Full-window tests must never install real X root grabs (F5, Ctrl+1..5)
+    on the developer's live session; provider behavior is unit-tested against
+    fakes in tests/test_global_hotkeys_x11.py."""
+    try:
+        from services.global_hotkeys import X11GlobalHotkeys
+    except Exception:
+        return
+    monkeypatch.setattr(X11GlobalHotkeys, "start", lambda self: False)

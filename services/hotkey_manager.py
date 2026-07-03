@@ -82,7 +82,7 @@ class HotkeyManager(QObject):
     PYNPUT_NAME_MAP: dict[str, str] = dict(PYNPUT_NAME_MAP_BASE)
 
     def __init__(self, window_manager, key_event_queue, suppress_predicate=None,
-                 hotkey_hook=None, on_hotkey=None):
+                 hotkey_hook=None, on_hotkey=None, hotkey_repeat_ok=frozenset()):
         super().__init__()
         self.window_manager = window_manager
         self.key_event_queue = key_event_queue
@@ -92,8 +92,11 @@ class HotkeyManager(QObject):
         # chord against the current bindings; a match is SKIPPED (never enters
         # the input queue). on_hotkey(action_id) fires the action from here on
         # win/darwin; Linux passes None (the X11 provider fires it instead).
+        # Actions in hotkey_repeat_ok re-fire on OS auto-repeat while held;
+        # all others fire once per physical press.
         self._hotkey_hook = hotkey_hook
         self._on_hotkey = on_hotkey
+        self._hotkey_repeat_ok = frozenset(hotkey_repeat_ok)
         # Normalized keys whose press was skipped as a hotkey; their release
         # must be skipped too. Cleared in _stop_listener (a focus-out can stop
         # the listener before the physical release arrives).
@@ -389,12 +392,22 @@ class HotkeyManager(QObject):
             if normalized and self._hotkey_hook is not None:
                 mods = frozenset(m for m in ("ctrl", "alt", "shift", "super")
                                  if m in self.pressed_keys)
-                action_id = self._hotkey_hook(mods, normalized)
+                # Ctrl chords surface as control chars ('\x08' for ctrl+h);
+                # map back to the letter so the binding table ('h') matches.
+                # Accepted limitation: shifted symbols (shift+2 = '@') are not
+                # reverse-mapped; letter/digit/F-key chords are the supported set.
+                hook_key = normalized
+                if (len(hook_key) == 1 and ord(hook_key) < 32
+                        and "ctrl" in self.pressed_keys):
+                    hook_key = chr(ord(hook_key) + 96)   # '\x08' -> 'h'
+                action_id = self._hotkey_hook(mods, hook_key)
                 if action_id is not None:
                     if _ITRACE:
-                        _itrace("hk_press", f"HOTKEY {action_id} ({normalized})")
-                    self._hotkey_down.add(normalized)
-                    if self._on_hotkey is not None:
+                        _itrace("hk_press", f"HOTKEY {action_id} ({hook_key})")
+                    first = hook_key not in self._hotkey_down
+                    self._hotkey_down.add(hook_key)
+                    if self._on_hotkey is not None and (
+                            first or action_id in self._hotkey_repeat_ok):
                         self._on_hotkey(action_id)   # win/darwin fallback fire
                     return None                       # never enqueue
             if normalized:
@@ -424,12 +437,21 @@ class HotkeyManager(QObject):
                 self.pressed_keys.discard(key.char)
 
             normalized = self.normalize_key(key)
-            if normalized and normalized in self._hotkey_down:
-                # The press was skipped as a hotkey chord; skip the release too
-                # (no should_capture_input() gate, like the keyup path below:
-                # this must run even when capture turned off mid-hold).
-                self._hotkey_down.discard(normalized)
-                return None
+            if normalized:
+                # The press was tracked under the ctrl-mapped form when ctrl was
+                # held; ctrl may be released before OR after the letter, so the
+                # release can surface as EITHER form ('\x08' or 'h') -- skip if
+                # either is tracked (no should_capture_input() gate, like the
+                # keyup path below: this must run even when capture turned off
+                # mid-hold).
+                hook_key = normalized
+                if (len(hook_key) == 1 and ord(hook_key) < 32
+                        and "ctrl" in self.pressed_keys):
+                    hook_key = chr(ord(hook_key) + 96)   # '\x08' -> 'h'
+                if normalized in self._hotkey_down or hook_key in self._hotkey_down:
+                    self._hotkey_down.discard(normalized)
+                    self._hotkey_down.discard(hook_key)
+                    return None
             if normalized:
                 try:
                     self.key_event_queue.put(("keyup", normalized), timeout=0.05)

@@ -111,14 +111,22 @@ class MovementKeyGrabber:
         self._keyboard_grabbed: bool = False  # holding a persistent XGrabKeyboard
         self._hotkey_lookup: Optional[Callable[[int, int], Optional[str]]] = None
         self._hotkey_dispatch_cb: Optional[Callable[[str], None]] = None
+        self._hotkey_repeat_ok_ids: frozenset = frozenset()
+        self._hotkey_keys_down: set[int] = set()  # keycodes with a hotkey press held
 
-    def set_hotkey_lookup(self, lookup, dispatch_cb) -> None:
+    def set_hotkey_lookup(self, lookup, dispatch_cb,
+                          repeat_ok_ids: frozenset = frozenset()) -> None:
         """lookup(keycode:int, state:int) -> action_id|None; dispatch_cb(action_id)
         runs the action. While the persistent route_all XGrabKeyboard is held it
         PREEMPTS the hotkey provider's passive grabs, so the router must
-        recognize bound chords itself and hand them back instead of routing."""
-        self._hotkey_lookup = lookup
+        recognize bound chords itself and hand them back instead of routing.
+        Actions in repeat_ok_ids re-dispatch on X auto-repeat while held; all
+        others fire once per physical press. dispatch_cb is assigned FIRST so a
+        racing event at wiring instant can never be consumed without dispatch."""
         self._hotkey_dispatch_cb = dispatch_cb
+        self._hotkey_repeat_ok_ids = frozenset(repeat_ok_ids)
+        self._hotkey_keys_down = set()
+        self._hotkey_lookup = lookup
 
     def prepare(
         self,
@@ -210,6 +218,7 @@ class MovementKeyGrabber:
             self._route_all = False
             self._grab_ok = False
             self._keyboard_grabbed = False
+            self._hotkey_keys_down = set()
         # Discard any pending actions so a subsequent prepare() starts with a
         # clean queue. Without this, an install_grabs() enqueued between
         # stop() and the thread's exit would survive into the next lifecycle
@@ -346,6 +355,7 @@ class MovementKeyGrabber:
         self._current_canonical = None
         self._route_all = False
         self._grab_ok = False
+        self._hotkey_keys_down = set()   # held-hotkey state is stale once ungrabbed
 
     def _key_physically_down(self, keycode: int) -> bool:
         """True if `keycode` is currently held per the server's physical key
@@ -584,7 +594,15 @@ class MovementKeyGrabber:
         ONE exception to suppress-only: a KeyPress matching a bound hotkey
         chord (per set_hotkey_lookup) is handed to the dispatcher instead --
         while this grab is held the provider's passive grabs never fire, so
-        the router must recognize bound chords itself."""
+        the router must recognize bound chords itself. Repeat-gated: a held
+        chord re-dispatches only for repeat_ok actions; keycode-only tracking
+        on release (no lookup: a modifier-first release would miss the table)
+        with the query_keymap physical guard filtering auto-repeat releases."""
+        if (event.type == X.KeyRelease
+                and event.detail in self._hotkey_keys_down
+                and not self._key_physically_down(int(event.detail))):
+            self._hotkey_keys_down.discard(int(event.detail))
+            # fall through: releases keep today's suppress-only behavior
         if self._hotkey_lookup is not None and event.type == X.KeyPress:
             try:
                 action_id = self._hotkey_lookup(int(event.detail),
@@ -592,8 +610,12 @@ class MovementKeyGrabber:
             except Exception:
                 action_id = None
             if action_id is not None:
-                cb = self._hotkey_dispatch_cb
-                if cb is not None:
-                    cb(action_id)
+                detail = int(event.detail)
+                repeat = detail in self._hotkey_keys_down
+                self._hotkey_keys_down.add(detail)
+                if not repeat or action_id in self._hotkey_repeat_ok_ids:
+                    cb = self._hotkey_dispatch_cb
+                    if cb is not None:
+                        cb(action_id)
                 return                     # consumed as a hotkey, never routed
         return

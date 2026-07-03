@@ -20,11 +20,13 @@ def _hook(mods, key):
     return None
 
 
-def _make_hotkey_manager(capture: bool = True, hook=_hook, on_hotkey=None):
+def _make_hotkey_manager(capture: bool = True, hook=_hook, on_hotkey=None,
+                         repeat_ok=frozenset()):
     wm = MagicMock()
     wm.should_capture_input.return_value = capture
     q = queue.Queue(maxsize=10)
-    hm = HotkeyManager(wm, q, hotkey_hook=hook, on_hotkey=on_hotkey)
+    hm = HotkeyManager(wm, q, hotkey_hook=hook, on_hotkey=on_hotkey,
+                       hotkey_repeat_ok=repeat_ok)
     return hm, q
 
 
@@ -106,3 +108,78 @@ def test_stop_listener_clears_hotkey_down():
     hm.listener = MagicMock()
     hm._stop_listener()
     assert hm._hotkey_down == set()
+
+
+def test_bound_chord_autorepeat_fires_once():
+    fired = []
+    hm, q = _make_hotkey_manager(on_hotkey=fired.append)
+    hm.on_global_key_press(_f5())
+    hm.on_global_key_press(_f5())   # OS auto-repeat while still held
+    hm.on_global_key_press(_f5())
+    assert fired == ["app.refresh"]
+    assert q.qsize() == 0
+
+
+def test_repeat_ok_action_refires_on_autorepeat():
+    def hook(mods, key):
+        return "overlay.scale_up" if key == "F5" and not mods else None
+
+    fired = []
+    hm, q = _make_hotkey_manager(
+        hook=hook, on_hotkey=fired.append,
+        repeat_ok=frozenset({"overlay.scale_up"}))
+    hm.on_global_key_press(_f5())
+    hm.on_global_key_press(_f5())   # auto-repeat: repeat_ok actions re-fire
+    assert fired == ["overlay.scale_up", "overlay.scale_up"]
+    assert q.qsize() == 0
+
+
+def test_release_then_press_fires_again():
+    fired = []
+    hm, q = _make_hotkey_manager(on_hotkey=fired.append)
+    hm.on_global_key_press(_f5())
+    hm.on_global_key_release(_f5())
+    hm.on_global_key_press(_f5())   # fresh physical press
+    assert fired == ["app.refresh", "app.refresh"]
+    assert q.qsize() == 0
+
+
+def _ctrl_chord_hook(calls):
+    def hook(mods, key):
+        calls.append((mods, key))
+        if mods == frozenset({"ctrl", "alt"}) and key == "h":
+            return "overlay.toggle_cards"
+        return None
+    return hook
+
+
+def test_ctrl_control_char_maps_to_letter_and_skips():
+    # normalize_key yields the control char ('\x08') for ctrl+h; the hook must
+    # be consulted with the letter form so the binding table ('h') matches.
+    calls, fired = [], []
+    hm, q = _make_hotkey_manager(hook=_ctrl_chord_hook(calls),
+                                 on_hotkey=fired.append)
+    hm.on_global_key_press(_fake_key(name="ctrl_l"))
+    hm.on_global_key_press(_fake_key(name="alt_l"))
+    baseline = q.qsize()                              # modifier keydowns enqueue
+    hm.on_global_key_press(_fake_key(char="\x08"))    # ctrl+h as control char
+    assert (frozenset({"ctrl", "alt"}), "h") in calls
+    assert fired == ["overlay.toggle_cards"]
+    assert q.qsize() == baseline                      # chord press skipped
+    hm.on_global_key_release(_fake_key(char="\x08"))  # ctrl still held
+    assert q.qsize() == baseline                      # release skipped too
+
+
+def test_ctrl_released_before_letter_release_still_skipped():
+    # ctrl may be released BEFORE the letter: the letter's release then arrives
+    # as the plain char ('h'), which must still match the tracked press.
+    calls = []
+    hm, q = _make_hotkey_manager(hook=_ctrl_chord_hook(calls), on_hotkey=None)
+    hm.on_global_key_press(_fake_key(name="ctrl_l"))
+    hm.on_global_key_press(_fake_key(name="alt_l"))
+    hm.on_global_key_press(_fake_key(char="\x08"))    # skipped chord press
+    hm.on_global_key_release(_fake_key(name="ctrl_l"))
+    hm.on_global_key_release(_fake_key(name="alt_l"))
+    baseline = q.qsize()
+    hm.on_global_key_release(_fake_key(char="h"))     # plain-form release
+    assert q.qsize() == baseline                      # still skipped

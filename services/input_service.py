@@ -164,6 +164,9 @@ class InputService(QObject):
         # which is the desired focus-away behavior (no corruption, no double-send).
         self._focused_passthrough_sent: dict[str, tuple[str, str]] = {}
         self._key_grabber = None
+        # Fired (if set) right after _key_grabber is created and BEFORE the seed
+        # focus call, so main can wire hotkey interop before route_all can arm.
+        self.grabber_created_callback = None
         # True only while movement grabs are actually INSTALLED for a focused
         # TTR preset window. Set by _on_active_window_changed_for_grabber. Gates
         # the focused-window synth in _send_logical_action_km so we never
@@ -280,6 +283,13 @@ class InputService(QObject):
             if not ok:
                 return
             self._key_grabber = grabber
+
+        cb = getattr(self, "grabber_created_callback", None)
+        if cb is not None:
+            try:
+                cb()          # main wires hotkey interop before the seed can arm route_all
+            except Exception:
+                pass
 
         # Subscribe to focus changes; seed with current focus. (Both
         # platforms share this wiring because both grabbers honor

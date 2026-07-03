@@ -194,3 +194,44 @@ class TestWin32CcFocusSafety:
                 f"CC focus on win32 must NOT pass route_all to install_grabs; "
                 f"got kwargs={call_kwargs}"
             )
+
+
+class TestGrabberCreatedCallback:
+    """grabber_created_callback must fire AFTER _key_grabber is assigned and
+    BEFORE the seed focus call -- otherwise a service start with a game already
+    focused can arm route_all before main wires the hotkey interop (every
+    hotkey dead until the next focus change)."""
+
+    def _stubbed_service(self, monkeypatch):
+        monkeypatch.setattr(sys, "platform", "win32")
+        from utils import win32_movement_grabber as wmg
+        stub = MagicMock()
+        stub.prepare.return_value = True
+        monkeypatch.setattr(wmg, "Win32MovementKeyGrabber", lambda: stub)
+        return _make_service(), stub
+
+    def test_callback_fires_after_assignment_before_seed(self, monkeypatch):
+        svc, stub = self._stubbed_service(monkeypatch)
+        order = []
+        svc.grabber_created_callback = (
+            lambda: order.append(("callback", svc._key_grabber is stub)))
+        monkeypatch.setattr(
+            svc, "_on_active_window_changed_for_grabber",
+            lambda win_id: order.append(("seed", win_id)))
+        svc._start_key_grabber()
+        assert ("callback", True) in order            # grabber already assigned
+        assert ("seed", "") in order                  # seed still ran
+        assert order.index(("callback", True)) < order.index(("seed", ""))
+
+    def test_raising_callback_does_not_break_startup(self, monkeypatch):
+        svc, stub = self._stubbed_service(monkeypatch)
+
+        def _boom():
+            raise RuntimeError("wiring exploded")
+
+        svc.grabber_created_callback = _boom
+        seed = MagicMock()
+        monkeypatch.setattr(svc, "_on_active_window_changed_for_grabber", seed)
+        svc._start_key_grabber()                      # must not raise
+        assert svc._key_grabber is stub
+        seed.assert_called_once_with("")

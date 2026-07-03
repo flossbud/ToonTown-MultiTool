@@ -32,6 +32,8 @@ def _grabber():
     g._route_all = True
     g._hotkey_lookup = None
     g._hotkey_dispatch_cb = None
+    g._hotkey_repeat_ok_ids = frozenset()
+    g._hotkey_keys_down = set()
     return g
 
 
@@ -92,3 +94,64 @@ def test_no_lookup_wired_is_a_pure_noop():
     g._handle_event_route_all(_Ev(71))
     g._on_key.assert_not_called()
     g._on_passthrough.assert_not_called()
+
+
+def test_autorepeat_press_dispatches_once():
+    g = _grabber()
+    dispatched = []
+    g.set_hotkey_lookup(
+        lambda keycode, state: "app.refresh" if keycode == 71 else None,
+        dispatched.append,
+    )
+    g._handle_event_route_all(_Ev(71))
+    g._handle_event_route_all(_Ev(71))               # X auto-repeat press
+    assert dispatched == ["app.refresh"]
+    g._on_key.assert_not_called()                    # still consumed, never routed
+
+
+def test_repeat_ok_action_redispatches_on_autorepeat():
+    g = _grabber()
+    dispatched = []
+    g.set_hotkey_lookup(
+        lambda keycode, state: "overlay.scale_up" if keycode == 86 else None,
+        dispatched.append,
+        repeat_ok_ids=frozenset({"overlay.scale_up"}),
+    )
+    g._handle_event_route_all(_Ev(86))
+    g._handle_event_route_all(_Ev(86))
+    assert dispatched == ["overlay.scale_up", "overlay.scale_up"]
+
+
+def test_release_clears_and_repress_fires_again():
+    g = _grabber()
+    dispatched = []
+    g.set_hotkey_lookup(
+        lambda keycode, state: "app.refresh" if keycode == 71 else None,
+        dispatched.append,
+    )
+    g._handle_event_route_all(_Ev(71))
+    # Physical release: _key_physically_down fails closed on the bare fixture
+    # (no display) -> treated as physically up -> tracking cleared.
+    g._handle_event_route_all(_Ev(71, etype=X.KeyRelease))
+    g._handle_event_route_all(_Ev(71))               # fresh physical press
+    assert dispatched == ["app.refresh", "app.refresh"]
+
+
+def test_autorepeat_release_does_not_clear_tracking():
+    # X auto-repeat is Release+Press with the key STILL physically down; the
+    # query_keymap guard must keep the keycode tracked so the paired press is
+    # treated as a repeat (single dispatch overall).
+    g = _grabber()
+    km = [0] * 32
+    km[71 >> 3] |= (1 << (71 & 7))                   # keycode 71 held
+    g._display = MagicMock()
+    g._display.query_keymap.return_value = km
+    dispatched = []
+    g.set_hotkey_lookup(
+        lambda keycode, state: "app.refresh" if keycode == 71 else None,
+        dispatched.append,
+    )
+    g._handle_event_route_all(_Ev(71))
+    g._handle_event_route_all(_Ev(71, etype=X.KeyRelease))   # auto-repeat release
+    g._handle_event_route_all(_Ev(71))                        # auto-repeat press
+    assert dispatched == ["app.refresh"]

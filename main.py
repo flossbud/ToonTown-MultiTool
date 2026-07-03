@@ -560,6 +560,7 @@ class MultiToonTool(QMainWindow):
             load_profile=self.load_profile_slot,
         )
         self._hotkey_hook = make_hotkey_hook(self.settings_manager)
+        repeat_ok_ids = frozenset(a.id for a in ACTIONS if a.repeat_ok)
 
         from services.hotkey_manager import HotkeyManager
         self.hotkey_manager = HotkeyManager(
@@ -569,6 +570,7 @@ class MultiToonTool(QMainWindow):
             hotkey_hook=self._hotkey_hook,
             on_hotkey=(None if sys.platform.startswith("linux")
                        else self._on_hotkey_action),
+            hotkey_repeat_ok=repeat_ok_ids,
         )
         self.hotkey_manager.start()
 
@@ -576,8 +578,7 @@ class MultiToonTool(QMainWindow):
         self.global_hotkeys = None
         if sys.platform.startswith("linux"):
             from services.global_hotkeys import X11GlobalHotkeys
-            provider = X11GlobalHotkeys(repeat_ok_ids=frozenset(
-                a.id for a in ACTIONS if a.repeat_ok))
+            provider = X11GlobalHotkeys(repeat_ok_ids=repeat_ok_ids)
             if provider.start():
                 provider.action_triggered.connect(self._on_hotkey_action)
                 provider.apply_bindings(
@@ -628,13 +629,20 @@ class MultiToonTool(QMainWindow):
                 provider = self.global_hotkeys
                 grabber.set_hotkey_lookup(
                     lookup,
-                    lambda action_id: provider.action_triggered.emit(action_id))
+                    lambda action_id: provider.action_triggered.emit(action_id),
+                    repeat_ok_ids=repeat_ok_ids)
                 self._grabber_hotkeys_wired = True
             except Exception:
                 pass
 
         _wire_grabber_hotkeys()
         if self.global_hotkeys is not None:
+            # Belt and suspenders: the seed callback covers a service start
+            # while a game is already focused (route_all can arm before any
+            # focus change); the signal covers everything else.
+            input_service = getattr(self.multitoon_tab, "input_service", None)
+            if input_service is not None:
+                input_service.grabber_created_callback = _wire_grabber_hotkeys
             self.window_manager.active_window_changed.connect(
                 _wire_grabber_hotkeys)
 
