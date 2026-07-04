@@ -6,6 +6,7 @@ paints nothing; the hosted widget paints its own opaque body.
 from __future__ import annotations
 
 import os
+import sys
 from enum import Enum
 
 from PySide6.QtCore import Qt, QRect
@@ -17,6 +18,32 @@ from utils.overlay.backend import OverlayBackend, get_overlay_backend, overlay_t
 # Explicit truthy tokens (mirrors overlay_entry's falsey set) for the
 # TTMT_OVERLAY_UNMANAGED escape hatch below.
 _TRUTHY = {"1", "yes", "y", "true", "t", "on"}
+
+
+def _use_nonactivating_panel() -> bool:
+    """cocoa QPA only: realize overlay surfaces as Qt.Tool -> NSPanel.
+
+    On macOS a click on an interactive region of a plain NSWindow ACTIVATES
+    the app (the focused game loses key - probed, CP2 in the macOS overlay
+    probe ledger), and only an NSPanel accepts the NonactivatingPanelMask
+    that prevents it (CP2-C: 58 clicks, zero activations). The macOS backend
+    applies that mask pre-map (set_initial_state) and cures the NSPanel
+    hide-on-app-deactivate default the same way.
+
+    This is a deliberate exception to the "plain Qt.Window, never Qt.Tool"
+    rule in __init__ below: that rule is X11-motivated (KWin minimized Tool
+    windows with the main window and lost SKIP_TASKBAR on the recreated
+    handles). Neither applies on cocoa - the main window is HIDDEN (not
+    minimized) in float mode, and macOS has no taskbar hints to lose.
+    Off-cocoa (xcb, win32, offscreen tests) nothing changes."""
+    if sys.platform != "darwin":
+        return False
+    try:
+        from PySide6.QtGui import QGuiApplication
+        return (QGuiApplication.instance() is not None
+                and QGuiApplication.platformName() == "cocoa")
+    except Exception:
+        return False
 
 
 def _bypass_wm_enabled() -> bool:
@@ -105,8 +132,12 @@ class OverlaySurface(QWidget):
         # max-scale envelope walls against the desktop bounds well short of the
         # visible content reaching a screen edge. TTMT_OVERLAY_UNMANAGED=1
         # restores override-redirect in case a WM mishandles managed placement.
+        # cocoa exception (probe-backed; see _use_nonactivating_panel): the
+        # base type becomes Qt.Tool so the native window is an NSPanel and the
+        # macOS backend can apply the nonactivating mask pre-map.
+        panel = _use_nonactivating_panel()
         flags = (
-            Qt.Window
+            (Qt.Tool if panel else Qt.Window)
             | Qt.FramelessWindowHint
             | Qt.WindowStaysOnTopHint
             | Qt.WindowDoesNotAcceptFocus
@@ -120,7 +151,8 @@ class OverlaySurface(QWidget):
         overlay_trace(
             f"{type(self).__name__} window mode: "
             + ("UNMANAGED override-redirect (TTMT_OVERLAY_UNMANAGED)" if bypass
-               else "MANAGED keep-above (default)"))
+               else ("MANAGED nonactivating panel (cocoa)" if panel
+                     else "MANAGED keep-above (default)")))
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WA_ShowWithoutActivating, True)
         # Explicitly keep WA_DeleteOnClose OFF to avoid destroying a borrowed widget.

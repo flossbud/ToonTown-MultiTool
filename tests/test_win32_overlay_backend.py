@@ -271,7 +271,10 @@ def test_dismiss_capture_dispatch_picks_win32_twin(qapp, monkeypatch):
 
 
 def test_dismiss_capture_dispatch_skips_unsupported_platform(qapp, monkeypatch):
-    monkeypatch.setattr(sys, "platform", "darwin")
+    # darwin gained its own fork (MacOSMouseCapture, pinned in
+    # test_macos_overlay_backend.py), so the unsupported stand-in is a
+    # platform none of the branches match.
+    monkeypatch.setattr(sys, "platform", "freebsd14")
     ctrl = _controller(qapp, _AvailableBackend())
     ctrl._start_radial_dismiss_capture()
     assert ctrl._radial_dismiss_capture is None

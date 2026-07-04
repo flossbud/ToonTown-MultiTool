@@ -47,6 +47,12 @@ from __future__ import annotations
 import sys
 
 from utils.overlay.backend import OverlayBackend, overlay_trace
+# The arbiter core is platform-neutral and shared with the macOS backend.
+# Re-exported here so existing imports (tests, callers) keep working.
+from utils.overlay.cursor_arbiter import (  # noqa: F401 (re-export)
+    ARBITER_INTERVAL_MS,
+    CursorRegionArbiter,
+)
 
 try:  # guarded so the module imports everywhere (self-check sweep, Linux CI)
     import win32con
@@ -60,93 +66,6 @@ WS_EX_TRANSPARENT = 0x00000020
 WS_EX_NOACTIVATE = 0x08000000
 WS_EX_TOOLWINDOW = 0x00000080
 WS_EX_APPWINDOW = 0x00040000
-
-ARBITER_INTERVAL_MS = 16  # ~60 Hz; P2b raced 10/10 at this rate
-
-
-class CursorRegionArbiter:
-    """Flips per-window click-through as the cursor crosses region boundaries.
-
-    Pure logic: all OS access is injected (``cursor_pos()``,
-    ``window_origin(key)``, ``apply_transparent(key, bool)``) so the core is
-    testable off-Windows. Regions are DEVICE-pixel ``QRegion``s in
-    window-local coordinates - the exact payload the X11 backend receives -
-    and ``window_origin`` supplies the physical window origin per key
-    (returning ``None`` evicts a dead window).
-
-    ``applied`` state is cached per key so the (FRAMECHANGED) style apply only
-    fires on actual boundary crossings, never per tick.
-    """
-
-    def __init__(self, cursor_pos, window_origin, apply_transparent):
-        self._cursor_pos = cursor_pos
-        self._window_origin = window_origin
-        self._apply_transparent = apply_transparent
-        self._regions: dict = {}   # key -> QRegion (non-empty = dynamic)
-        self._applied: dict = {}   # key -> last applied transparent bool
-
-    # -- registration ---------------------------------------------------
-
-    def set_region(self, key, region) -> None:
-        """Register/replace *key*'s interactive region and arbitrate it NOW
-        (no polling-interval window of stale interactivity)."""
-        self._regions[key] = region
-        if region.isEmpty():
-            # Static: never interactive, no polling needed for this entry.
-            self._apply(key, True)
-            return
-        self._arbitrate(key)
-
-    def clear(self, key) -> None:
-        """Forget *key* and restore full interactivity (X: no shape = all input)."""
-        self._regions.pop(key, None)
-        if key in self._applied:
-            self._apply(key, False)
-        self._applied.pop(key, None)
-
-    def drop(self, key) -> None:
-        """Forget *key* without touching the (dead) window."""
-        self._regions.pop(key, None)
-        self._applied.pop(key, None)
-
-    @property
-    def needs_polling(self) -> bool:
-        """True while any registered region is non-empty (dynamic)."""
-        return any(not r.isEmpty() for r in self._regions.values())
-
-    # -- arbitration ----------------------------------------------------
-
-    def tick(self) -> None:
-        """Arbitrate every dynamic entry against the current cursor."""
-        pos = self._cursor_pos()
-        if pos is None:
-            return
-        for key in [k for k, r in self._regions.items() if not r.isEmpty()]:
-            self._arbitrate(key, pos)
-
-    def _arbitrate(self, key, pos=None) -> None:
-        if pos is None:
-            pos = self._cursor_pos()
-            if pos is None:
-                return
-        origin = self._window_origin(key)
-        if origin is None:
-            self.drop(key)  # window is gone
-            return
-        from PySide6.QtCore import QPoint
-        local = QPoint(int(pos[0]) - int(origin[0]), int(pos[1]) - int(origin[1]))
-        inside = self._regions[key].contains(local)
-        self._apply(key, not inside)
-
-    def _apply(self, key, transparent: bool) -> None:
-        if self._applied.get(key) == transparent:
-            return
-        # Cache-first: a raising port must not re-fire every tick.
-        self._applied[key] = transparent
-        try:
-            self._apply_transparent(key, transparent)
-        except Exception:
-            pass
 
 
 class Win32OverlayBackend(OverlayBackend):

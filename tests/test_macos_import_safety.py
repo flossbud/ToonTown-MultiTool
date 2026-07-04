@@ -21,6 +21,7 @@ _MACOS_MODULES = (
     "utils.macos_movement_grabber",
     "utils.macos_ttr_ports",
     "utils.platform_qt",
+    "utils.overlay.macos_backend",
 )
 
 # The repo root (this file lives in <root>/tests/).

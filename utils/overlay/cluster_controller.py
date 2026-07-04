@@ -3050,6 +3050,14 @@ class ClusterOverlayController:
             elif sys.platform.startswith("linux"):
                 from utils.xrecord_capture import XRecordCapture
                 factory = XRecordCapture
+            elif sys.platform == "darwin":
+                # Same contract again: listen-only CGEventTap, gated on the
+                # Input Monitoring TCC grant (start() returns False without
+                # it - the graceful no-dismiss degrade below), and blind to
+                # the app's own SkyLight/CGEventPostToPid traffic via the
+                # SPIKE_EVENT_TAG marker + own-pid guard by default.
+                from utils.macos_mouse_capture import MacOSMouseCapture
+                factory = MacOSMouseCapture
             else:
                 return
         try:

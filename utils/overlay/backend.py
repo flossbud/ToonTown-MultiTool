@@ -35,7 +35,7 @@ class OverlayBackend:
 
 
 class NoOpOverlayBackend(OverlayBackend):
-    """Windows/macOS, or Linux without the X Shape extension."""
+    """Unsupported platform, opted-out backend, or Linux without X Shape."""
     def is_available(self) -> bool: return False
 
 
@@ -69,6 +69,24 @@ def get_overlay_backend() -> OverlayBackend:
         except Exception as e:
             import traceback
             overlay_trace(f"get_overlay_backend: win32 backend raised {e!r} -> NoOp\n"
+                          + traceback.format_exc())
+    elif sys.platform == "darwin":
+        # Escape hatch: TTMT_OVERLAY_MACOS set to a falsey token disables the
+        # macOS backend entirely (Float UI reverts to unavailable/inert).
+        raw = os.environ.get("TTMT_OVERLAY_MACOS")
+        if raw is not None and raw.strip().lower() in {"0", "no", "n", "false", "f", "off"}:
+            overlay_trace("get_overlay_backend: TTMT_OVERLAY_MACOS opt-out -> NoOp")
+            return NoOpOverlayBackend()
+        try:
+            from utils.overlay.macos_backend import MacOSOverlayBackend
+            backend = MacOSOverlayBackend()
+            if backend.is_available():
+                overlay_trace("get_overlay_backend: MacOSOverlayBackend AVAILABLE")
+                return backend
+            overlay_trace("get_overlay_backend: MacOSOverlayBackend NOT available -> NoOp")
+        except Exception as e:
+            import traceback
+            overlay_trace(f"get_overlay_backend: macos backend raised {e!r} -> NoOp\n"
                           + traceback.format_exc())
     else:
         overlay_trace(f"get_overlay_backend: unsupported platform ({sys.platform}) -> NoOp")
