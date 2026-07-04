@@ -44,6 +44,8 @@ PyObjC) so the factory and tests can construct this class anywhere.
 """
 from __future__ import annotations
 
+import ctypes
+import ctypes.util
 import sys
 
 from utils.overlay.backend import OverlayBackend, overlay_trace
@@ -60,6 +62,124 @@ _COLLECTION_BEHAVIOR = (1 << 0) | (1 << 4)
 
 # NSWindowStyleMaskNonactivatingPanel - NSPanel-only (CP2-C).
 _NONACTIVATING_PANEL_MASK = 1 << 7
+
+# Runtime QNSPanel subclass whose constrainFrameRect:toScreen: is a
+# pass-through. AppKit clamps EVERY frame set (Qt setGeometry, NSWindow
+# setFrame/setFrameOrigin all probed CLAMPED, CP10) to the visible screen
+# area, so the oversized cluster envelope walls against the menu bar while
+# the controller model keeps moving - a 220 px model/window divergence that
+# displaced the input region and froze the whole float UI live. The subclass
+# inherits every Qt override (it derives from QNSPanel itself, never plain
+# NSPanel) and is applied per-instance via libobjc object_setClass (CP10b:
+# qt-thinks == actual == requested at negative Y after the swizzle). This is
+# the cocoa analog of the X11 DOCK-type clamp exemption (see
+# OverlaySurface.WM_WINDOW_TYPE).
+_FREE_PANEL_CLASS_NAME = "TTMTConstrainFreePanel"
+
+# Keep the method's Python callable + libobjc handle alive for the process
+# lifetime (PyObjC holds its own ref through the registration; the module
+# ref is cheap insurance).
+_LIBOBJC = None
+_FREE_PANEL_METHOD = None
+_FREE_PANEL_CLS = 0
+
+
+def _libobjc():
+    """libobjc with the runtime functions typed. Cached; None on failure."""
+    global _LIBOBJC
+    if _LIBOBJC is not None:
+        return _LIBOBJC
+    try:
+        lib = ctypes.CDLL(ctypes.util.find_library("objc"))
+        lib.objc_getClass.restype = ctypes.c_void_p
+        lib.objc_getClass.argtypes = [ctypes.c_char_p]
+        lib.objc_allocateClassPair.restype = ctypes.c_void_p
+        lib.objc_allocateClassPair.argtypes = [ctypes.c_void_p, ctypes.c_char_p,
+                                               ctypes.c_size_t]
+        lib.objc_registerClassPair.restype = None
+        lib.objc_registerClassPair.argtypes = [ctypes.c_void_p]
+        lib.sel_registerName.restype = ctypes.c_void_p
+        lib.sel_registerName.argtypes = [ctypes.c_char_p]
+        lib.class_getInstanceMethod.restype = ctypes.c_void_p
+        lib.class_getInstanceMethod.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        lib.method_getTypeEncoding.restype = ctypes.c_char_p
+        lib.method_getTypeEncoding.argtypes = [ctypes.c_void_p]
+        lib.class_addMethod.restype = ctypes.c_bool
+        lib.class_addMethod.argtypes = [ctypes.c_void_p, ctypes.c_void_p,
+                                        ctypes.c_void_p, ctypes.c_char_p]
+        lib.object_setClass.restype = ctypes.c_void_p
+        lib.object_setClass.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        lib.object_getClassName.restype = ctypes.c_char_p
+        lib.object_getClassName.argtypes = [ctypes.c_void_p]
+        _LIBOBJC = lib
+        return lib
+    except Exception:
+        return None
+
+
+def _ensure_free_panel_class(lib) -> int:
+    """Register the runtime subclass once; returns the Class pointer (or 0).
+
+    Two-step, each step chosen by a failed alternative:
+    1. The CLASS is registered bare through libobjc (objc_allocateClassPair,
+       zero ivars) so swizzled instances keep QNSPanel's memory layout -
+       a PyObjC-defined class adds a Python-state ivar and crashed live
+       (SIGSEGV in object_getattro, faulthandler 2026-07-03).
+    2. The METHOD is bridged onto it by PyObjC classAddMethods (the category
+       mechanism - touches no instance layout) because a raw ctypes IMP
+       cannot return NSRect: ctypes callbacks reject struct result types
+       ("invalid result type for callback function", probed CP10c)."""
+    global _FREE_PANEL_METHOD, _FREE_PANEL_CLS
+    if _FREE_PANEL_CLS:
+        return _FREE_PANEL_CLS
+    try:
+        import objc
+        existing = lib.objc_getClass(_FREE_PANEL_CLASS_NAME.encode())
+        if not existing:
+            base = lib.objc_getClass(b"QNSPanel")
+            if not base:
+                return 0
+            cls = lib.objc_allocateClassPair(
+                base, _FREE_PANEL_CLASS_NAME.encode(), 0)
+            if not cls:
+                return 0
+            lib.objc_registerClassPair(cls)
+            existing = cls
+        # Method encoding copied from QNSPanel's own implementation, with a
+        # clean-literal fallback (runtime encodings can carry offsets some
+        # PyObjC versions reject).
+        sel = lib.sel_registerName(b"constrainFrameRect:toScreen:")
+        method = lib.class_getInstanceMethod(
+            lib.objc_getClass(b"QNSPanel"), sel)
+        encoding = lib.method_getTypeEncoding(method) if method else None
+        rect_t = b"{CGRect={CGPoint=dd}{CGSize=dd}}"
+        fallback = rect_t + b"@:" + rect_t + b"@"
+
+        def constrainFrameRect_toScreen_(self, rect, screen):
+            return rect
+
+        target = objc.lookUpClass(_FREE_PANEL_CLASS_NAME)
+        added = False
+        for enc in (encoding, fallback):
+            if enc is None:
+                continue
+            try:
+                objc.classAddMethods(target, [objc.selector(
+                    constrainFrameRect_toScreen_,
+                    selector=b"constrainFrameRect:toScreen:",
+                    signature=enc)])
+                added = True
+                break
+            except Exception:
+                continue
+        if not added:
+            return 0
+        _FREE_PANEL_METHOD = constrainFrameRect_toScreen_
+        _FREE_PANEL_CLS = existing
+        overlay_trace("macos constrain-exempt: runtime class registered")
+        return existing
+    except Exception:
+        return 0
 
 
 class MacOSOverlayBackend(OverlayBackend):
@@ -188,10 +308,13 @@ class MacOSOverlayBackend(OverlayBackend):
         except Exception:
             return
         panel = self._apply_nonactivating(win)
+        free = self._exempt_frame_constrain(win)
+        self._disable_window_shadow(win)
         overlay_trace(
             f"macos set_initial_state: pre-map level={level} "
             f"behavior=allSpaces|stationary "
-            f"{'nonactivating-panel' if panel else 'NOT a panel (activation possible)'}")
+            f"{'nonactivating-panel' if panel else 'NOT a panel (activation possible)'} "
+            f"constrain-free={free} shadow=off")
 
     @staticmethod
     def _level_for(window) -> int:
@@ -217,6 +340,52 @@ class MacOSOverlayBackend(OverlayBackend):
         except Exception:
             return False
 
+    @staticmethod
+    def _disable_window_shadow(win) -> None:
+        """AppKit's own drop shadow traces the translucent content's alpha
+        silhouette as a thin choppy dark outline around the painted glow
+        (live finding, first float entry). The surfaces paint their own
+        glow/shadow; the native one is pure artifact."""
+        try:
+            win.setHasShadow_(False)
+        except Exception:
+            pass
+
+    def _exempt_frame_constrain(self, win) -> bool:
+        """isa-swizzle *win* onto the constrain-free QNSPanel subclass.
+
+        The subclass is registered at the PURE ObjC-runtime level
+        (objc_allocateClassPair, ZERO added ivars, ctypes IMP) so the
+        swizzled instance's memory layout is identical to QNSPanel - the
+        KVO pattern. DISPROVEN alternative (crashed live, faulthandler
+        2026-07-03): a PyObjC-defined subclass - PyObjC classes add a
+        Python-state ivar their already-allocated instances don't have, so
+        the first attribute access through the proxy dereferences garbage
+        (SIGSEGV in object_getattro). Never define the subclass in PyObjC.
+
+        Idempotent; QNSPanel-only by exact class-name match; all
+        verification goes through libobjc (never the PyObjC proxy) once the
+        isa has changed. Never raises."""
+        try:
+            import objc
+            lib = _libobjc()
+            if lib is None:
+                return False
+            win_ptr = objc.pyobjc_id(win)
+            name = lib.object_getClassName(win_ptr)
+            if name == _FREE_PANEL_CLASS_NAME.encode():
+                return True
+            if name != b"QNSPanel":
+                overlay_trace(f"macos constrain-exempt skipped: class={name!r}")
+                return False
+            cls_ptr = _ensure_free_panel_class(lib)
+            if not cls_ptr:
+                return False
+            lib.object_setClass(win_ptr, cls_ptr)
+            return lib.object_getClassName(win_ptr) == _FREE_PANEL_CLASS_NAME.encode()
+        except Exception:
+            return False
+
     def set_above(self, window) -> None:
         """Re-assert level+behavior per show (parity with the EWMH re-send).
 
@@ -234,6 +403,10 @@ class MacOSOverlayBackend(OverlayBackend):
             win.setCollectionBehavior_(_COLLECTION_BEHAVIOR)
         except Exception:
             pass
+        # A recreated native window is a fresh (clamping, shadowed) QNSPanel:
+        # re-assert the exemption and shadow-off beside the level.
+        self._exempt_frame_constrain(win)
+        self._disable_window_shadow(win)
         self._arbiter.invalidate(window)
 
     def set_non_activating(self, window) -> None:

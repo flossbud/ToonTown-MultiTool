@@ -682,12 +682,19 @@ class _Emblem(QWidget):
     def mouseMoveEvent(self, event):
         if self._press is not None and not self._dragging:
             if is_drag(self._press, event.position().toPoint()):
+                from utils.overlay.backend import overlay_trace
+                overlay_trace(f"emblem drag-flip: press={self._press} "
+                              f"now={event.position().toPoint()} "
+                              f"global={event.globalPosition().toPoint()}")
                 self._dragging = True
                 self.move_requested.emit()
         event.accept()   # keep the gesture stream (see mousePressEvent)
 
     def mouseReleaseEvent(self, event):
         self._animate_press(1.0)
+        from utils.overlay.backend import overlay_trace
+        overlay_trace(f"emblem release: btn={event.button()} "
+                      f"dragging={self._dragging}")
         if not self._dragging:
             if event.button() == Qt.RightButton:
                 self.toggle_requested.emit()      # right-click = quick mode-toggle

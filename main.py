@@ -1442,6 +1442,10 @@ class MultiToonTool(QMainWindow):
         # since the radial input region gained its emblem-disc hole, this click
         # reaches the EMBLEM (not the menu), so the menu-side animated close no
         # longer fires on its own; dismiss_radial_menu routes back through it.
+        from utils.overlay.backend import overlay_trace
+        overlay_trace(
+            f"emblem wheel: mode_active={self._mode_controller.is_active} "
+            f"wheel_open={self._windowed_wheel is not None}")
         if self._mode_controller.is_active:
             if self._mode_controller.is_radial_open:
                 self._mode_controller.dismiss_radial_menu()
@@ -1474,6 +1478,8 @@ class MultiToonTool(QMainWindow):
         host.menu.account_clicked.connect(self._radial_launch_account)
         host.closed.connect(lambda: setattr(self, "_windowed_wheel", None))
         host.show_centered()
+        overlay_trace(f"windowed wheel: shown geom={host.geometry()} "
+                      f"visible={host.isVisible()}")
 
     def _windowed_go_transparent(self):
         """Go-Transparent spoke: dismiss the windowed wheel, then enter
@@ -2441,6 +2447,49 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setWindowIcon(_resolve_app_icon())
     app.setStyle(NoFocusProxyStyle(app.style()))
+    if os.environ.get("TTMT_CLICK_DIAG"):
+        # Click/activation delivery diagnostics. Earned its keep in the
+        # 2026-07-04 eaten-clicks investigation (exposed window-level
+        # delivery vs widget dispatch vs drag classification); opt-in via
+        # TTMT_CLICK_DIAG because the per-widget activation lines are loud.
+        from PySide6.QtCore import QEvent, QObject
+        from PySide6.QtGui import QWindow
+        from utils.overlay.backend import overlay_trace as _otrace
+
+        class _ClickDiag(QObject):
+            _EVS = {QEvent.MouseButtonPress: "press",
+                    QEvent.MouseButtonRelease: "release",
+                    QEvent.ApplicationActivate: "APP-ACTIVATE",
+                    QEvent.ApplicationDeactivate: "APP-DEACTIVATE",
+                    QEvent.WindowActivate: "win-activate",
+                    QEvent.WindowDeactivate: "win-deactivate"}
+
+            def eventFilter(self, obj, ev):
+                kind = self._EVS.get(ev.type())
+                if kind in ("press", "release"):
+                    if isinstance(obj, QWindow):
+                        popup = QApplication.activePopupWidget()
+                        grabber = QWidget.mouseGrabber()
+                        _otrace(f"clickdiag {kind} win={obj.objectName() or type(obj).__name__} "
+                                f"active={obj.isActive()} btn={ev.button()} "
+                                f"popup={type(popup).__name__ if popup else None} "
+                                f"grabber={type(grabber).__name__ if grabber else None}")
+                    else:
+                        # Widget-level receiver: which widget owns each half of
+                        # the click, and is it still down/enabled at release.
+                        down = getattr(obj, "isDown", lambda: "?")()
+                        en = getattr(obj, "isEnabled", lambda: "?")()
+                        _otrace(f"clickdiag {kind}@widget {type(obj).__name__} "
+                                f"down={down} enabled={en}")
+                elif ev.type() == QEvent.EnabledChange and not isinstance(obj, QWindow):
+                    _otrace(f"clickdiag ENABLED-CHANGE {type(obj).__name__} "
+                            f"-> {getattr(obj, 'isEnabled', lambda: '?')()}")
+                elif kind is not None and isinstance(obj, QApplication):
+                    _otrace(f"clickdiag {kind}")
+                return False
+
+        _click_diag = _ClickDiag(app)
+        app.installEventFilter(_click_diag)
     if sys.platform == "linux":
         from PySide6.QtGui import QFont, QFontDatabase
         QFontDatabase.addApplicationFont("/usr/share/fonts/google-noto-color-emoji-fonts/Noto-COLRv1.ttf")

@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-DRAG_THRESHOLD = 5  # px of movement that turns a press into a drag rather than a click
+# Px of movement that turns a press into a drag rather than a click. 10 is
+# Qt's own startDragDistance() convention; the previous 5 misclassified real
+# clicks as drags (live on macOS 2026-07-03: 2-3 emblem clicks in a row
+# traced dragging=True from ordinary hand drift, so the windowed wheel
+# "randomly" refused to open).
+DRAG_THRESHOLD = 10
 
 
 def is_drag(start, current) -> bool:
