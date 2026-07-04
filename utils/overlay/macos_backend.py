@@ -55,6 +55,9 @@ from utils.overlay.cursor_arbiter import ARBITER_INTERVAL_MS, CursorRegionArbite
 # normal=0, floating=3, Qt StaysOnTop=8, status=25 on macOS 26.5).
 CLUSTER_WINDOW_LEVEL = 3   # kCGFloatingWindowLevel
 PANEL_WINDOW_LEVEL = 4     # floating+1: radial/panel strictly above (CP4)
+GHOST_WINDOW_LEVEL = 5     # panel+1: glove cursor mirrors draw above EVERY
+                           # overlay surface (a ghost press can activate radial
+                           # spokes, so the glove must be visible over the ring)
 
 # collectionBehavior bits: canJoinAllSpaces | stationary (the proven ghost
 # recipe, utils/macos_overlay.py; CP1 confirmed it sticks on plain Qt windows).

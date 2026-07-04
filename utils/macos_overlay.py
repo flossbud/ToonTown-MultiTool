@@ -22,7 +22,7 @@ def _once(reason: str) -> tuple[bool, str]:
     return (False, reason)
 
 
-def harden_overlay_window(widget) -> tuple[bool, str | None]:
+def harden_overlay_window(widget, level: int | None = None) -> tuple[bool, str | None]:
     """Apply the proven floating-overlay NSWindow recipe to a realized Qt widget.
 
     Recipe (spike winner): NSFloatingWindowLevel so it floats above a backgrounded
@@ -30,6 +30,11 @@ def harden_overlay_window(widget) -> tuple[bool, str | None]:
     so a click passes straight through to the toon. The NSWindow is resolved FRESH
     from `winId()` on every call (never caches a wrapped objc ref across native
     surface recreation). Never raises. Returns (ok, reason|None).
+
+    ``level`` overrides the NSWindow level (default: NSFloatingWindowLevel, the
+    spike recipe). The Float UI gloves pass the overlay stack's ghost band so
+    the cursor mirror draws above the level-4 radial/panel surfaces (CP4:
+    level beats order).
 
     Acts only on the real cocoa QPA; returns (False, reason) everywhere else so the
     caller can fail closed without risking the winId->objc segfault class.
@@ -55,7 +60,8 @@ def harden_overlay_window(widget) -> tuple[bool, str | None]:
     if window is None:
         return (False, "NSWindow not realized yet")
     try:
-        window.setLevel_(AppKit.NSFloatingWindowLevel)
+        window.setLevel_(AppKit.NSFloatingWindowLevel if level is None
+                         else int(level))
         window.setCollectionBehavior_(
             AppKit.NSWindowCollectionBehaviorCanJoinAllSpaces
             | AppKit.NSWindowCollectionBehaviorStationary)

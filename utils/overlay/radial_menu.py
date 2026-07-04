@@ -880,6 +880,15 @@ class RadialMenuWidget(QWidget):
             path.addEllipse(QRectF(cx - rr, cy - rr, rr * 2.0, rr * 2.0))
         return path
 
+    def spoke_at(self, x: float, y: float):
+        """The (state, key) spoke under a widget-local point, or None - the
+        same hit test real clicks use. Returns None while the close fly-back
+        plays (matching activate_at's guard) so a late ghost press is never
+        silently consumed. Public seam for the ghost-click resolver."""
+        if self._closing:
+            return None
+        return self._hit(x, y)
+
     def activate_at(self, x: float, y: float) -> None:
         if self._closing:
             return

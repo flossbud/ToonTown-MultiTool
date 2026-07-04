@@ -3187,6 +3187,175 @@ def test_ghost_press_over_control_delivers_cluster_local_click(qapp):
     ctrl.leave()
 
 
+class _FakeRadialMenu:
+    """Stub carrying the resolver's menu contract (mapFromGlobal / spoke_at /
+    activate_at): local = global - 1000 on each axis; hits is the set of LOCAL
+    points that count as spoke circles."""
+    def __init__(self, hits):
+        self.hits = set(hits)
+        self.activated = []
+
+    def mapFromGlobal(self, p):
+        return QPoint(p.x() - 1000, p.y() - 1000)
+
+    def spoke_at(self, x, y):
+        return ("main", "settings") if (x, y) in self.hits else None
+
+    def activate_at(self, x, y):
+        self.activated.append((x, y))
+
+
+def test_ghost_press_on_open_radial_spoke_activates_and_consumes(qapp):
+    """While the ring is open, a ghost press inside a spoke circle activates
+    that spoke through the real-click API and the point is CONSUMED - it must
+    never ALSO press a card control beneath the ring. Points outside spokes
+    fall through to the card pass unchanged (live finding 2026-07-04: ghost
+    presses could open the radial but not click its spokes)."""
+    ctrl, provider, window, created = _make(anchor=_GHOST_ANCHOR, settings=_DictSettings())
+    ctrl.enter()
+    menu = _FakeRadialMenu(hits={(50, 60)})
+    ctrl._radial_menu = menu
+    ox, oy = _WIN_ORIGIN
+    spoke_pt = (1050, 1060)                              # -> local (50, 60): a spoke
+    control_pt = (ox + 210 + 8 + 15, oy + 10 + 8 + 9)    # cell 1 control center
+    ctrl.on_ghost_event(("press", [(0, *spoke_pt), (1, *control_pt)]))
+    assert menu.activated == [(50, 60)]                  # spoke fired
+    assert provider.ghost_clicks == [(1, 23, 17)]        # non-spoke point fell through
+    ctrl._radial_menu = None
+    ctrl.leave()
+
+
+def test_ghost_press_with_spoke_hit_never_dismisses(qapp):
+    """A press with a spoke hit must keep the ring alive: the fan-out targeted
+    the ring, so the ghost-side click-off must not fire."""
+    ctrl, provider, window, created = _make(anchor=_GHOST_ANCHOR, settings=_DictSettings())
+    ctrl.enter()
+    ctrl._radial_menu = _FakeRadialMenu(hits={(50, 60)})
+    dismissed = []
+    ctrl.dismiss_radial_menu = lambda: dismissed.append(1)
+    ctrl.on_ghost_event(("press", [(0, 1050, 1060)]))
+    assert ctrl._radial_menu.activated == [(50, 60)]
+    assert dismissed == []
+    ctrl._radial_menu = None
+    ctrl.leave()
+
+
+def test_ghost_press_off_chrome_dismisses_the_ring(qapp):
+    """Ghost-side click-off parity: while the ring is open, a press whose
+    EVERY fan-out point misses spokes and chrome dismisses the ring (the same
+    semantic as a real off-press, decided from the ghost points because the
+    real-press watcher defers while gloves are live)."""
+    ctrl, provider, window, created = _make(anchor=_GHOST_ANCHOR, settings=_DictSettings())
+    ctrl.enter()
+    ctrl._radial_menu = _FakeRadialMenu(hits=set())      # no spoke anywhere
+    dismissed = []
+    ctrl.dismiss_radial_menu = lambda: dismissed.append(1)
+    ctrl.on_ghost_event(("press", [(0, 5000, 5000), (1, 6000, 6000)]))
+    assert dismissed == [1]                              # closed via fly-back path
+    ctrl._radial_menu = None
+    ctrl.leave()
+
+
+class _FakePanelSurface:
+    """geometry()-only stub standing in for the open portable Settings panel."""
+    def __init__(self, rect):
+        self._rect = rect
+
+    def geometry(self):
+        return self._rect
+
+
+def test_deliver_panel_ghost_click_presses_child_widget(qapp):
+    """_deliver_panel_ghost_click drives the panel's widget tree exactly like
+    the cards' deliver_ghost_click: childAt walk + press/release pair; a point
+    over no child is a safe no-op."""
+    from PySide6.QtWidgets import QPushButton
+    from utils.overlay.cluster_surface import PanelSurface
+    ctrl, provider, window, created = _make(anchor=_GHOST_ANCHOR, settings=_DictSettings())
+    surf = PanelSurface()
+    surf.resize(300, 300)                        # production sizes it emblem*6
+    btn = QPushButton("x", surf)
+    btn.setGeometry(20, 30, 80, 24)
+    clicks = []
+    btn.clicked.connect(lambda *_: clicks.append(1))
+    surf.show()                                  # childAt needs visible children
+    ctrl._panel_surface = surf
+    ctrl._deliver_panel_ghost_click(60, 42)      # inside the button
+    assert clicks == [1]
+    ctrl._deliver_panel_ghost_click(400, 400)    # empty area: no-op
+    assert clicks == [1]
+    ctrl._panel_surface = None
+    surf.close()
+
+
+def test_ghost_press_on_open_panel_clicks_panel_not_cards(qapp):
+    """The panel is full-rect click-accepting ABOVE everything: a ghost press
+    inside it goes to the panel and is CONSUMED - the card control directly
+    beneath the same point must not fire."""
+    from PySide6.QtCore import QRect
+    ctrl, provider, window, created = _make(anchor=_GHOST_ANCHOR, settings=_DictSettings())
+    ctrl.enter()
+    ox, oy = _WIN_ORIGIN
+    control_pt = (ox + 210 + 8 + 15, oy + 10 + 8 + 9)    # a live card control point
+    ctrl._panel_surface = _FakePanelSurface(
+        QRect(control_pt[0] - 5, control_pt[1] - 5, 50, 50))
+    ctrl._panel_size = 500                                # marks the panel OPEN
+    delivered = []
+    ctrl._deliver_panel_ghost_click = lambda x, y: delivered.append((x, y))
+    ctrl.on_ghost_event(("press", [(1, *control_pt)]))
+    assert delivered == [(5, 5)]                          # panel-local click
+    assert provider.ghost_clicks == []                    # card was shielded
+    ctrl._panel_surface = None
+    ctrl._panel_size = 0
+    ctrl.leave()
+
+
+def test_ghost_press_on_panel_keeps_ring_open(qapp):
+    """A ghost press on the open panel is ring chrome: it must never read as
+    'missed everything' and dismiss the ring behind the panel."""
+    from PySide6.QtCore import QRect
+    ctrl, provider, window, created = _make(anchor=_GHOST_ANCHOR, settings=_DictSettings())
+    ctrl.enter()
+    ctrl._radial_menu = _FakeRadialMenu(hits=set())
+    ctrl._panel_surface = _FakePanelSurface(QRect(4990, 4990, 100, 100))
+    ctrl._panel_size = 500
+    ctrl._deliver_panel_ghost_click = lambda x, y: None
+    dismissed = []
+    ctrl.dismiss_radial_menu = lambda: dismissed.append(1)
+    ctrl.on_ghost_event(("press", [(0, 5000, 5000)]))
+    assert dismissed == []                                # panel point = chrome
+    ctrl._radial_menu = None
+    ctrl._panel_surface = None
+    ctrl._panel_size = 0
+    ctrl.leave()
+
+
+def test_real_press_defers_to_ghost_pass_while_gloves_live(qapp):
+    """REGRESSION (live 2026-07-04): with click sync armed, the user's real
+    press in the focused game raced the queued ghost press - the click-off
+    watcher dismissed the ring (fly-back set _closing) before spoke_at ran,
+    so dead-center ghost presses on spokes resolved as misses. While ghost
+    clicks are enabled AND gloves are live (peek store non-empty), the
+    watcher must NOT dismiss; with no gloves live it dismisses as before."""
+    ctrl, provider, window, created = _make(anchor=_GHOST_ANCHOR, settings=_DictSettings())
+    ctrl.enter()
+    ctrl._radial_menu = _FakeRadialMenu(hits=set())      # ring open
+    dismissed = []
+    ctrl.dismiss_radial_menu = lambda: dismissed.append(1)
+
+    # Gloves live: the store holds a motion point -> watcher defers.
+    ctrl._peek_store.ingest(("motion", [(0, 400, 400)]))
+    ctrl._on_radial_global_press(5000, 5000)
+    assert dismissed == []
+
+    # No gloves live: the position-based dismissal behaves exactly as before.
+    ctrl._peek_store.clear()
+    ctrl._on_radial_global_press(5000, 5000)
+    assert dismissed == [1]
+    ctrl._radial_menu = None
+    ctrl.leave()
+
+
 def test_ghost_press_excludes_non_visible_cell(qapp):
     """A ghost press over a NON-visible cell's control delivers nothing (empty
     cards drop out of the click pass), while a visible cell still delivers."""

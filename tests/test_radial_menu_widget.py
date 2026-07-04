@@ -753,3 +753,19 @@ def test_darwin_poll_mirrors_hover_transition_and_rearms_idle(monkeypatch):
     monkeypatch.setattr(w, "mapFromGlobal", lambda _p: QPoint(-500, -500))
     w._poll_hover()
     assert w._hover is None
+
+
+def test_spoke_at_matches_real_hit_test_and_guards_closing():
+    """spoke_at is the ghost-click resolver's public hit test: same result as
+    the real-click _hit at a spoke center, None off-spoke, and None while the
+    close fly-back plays (matching activate_at's guard - a late ghost press
+    must not be silently consumed)."""
+    _app()
+    from utils.overlay.radial_menu import RadialMenuWidget
+    w = RadialMenuWidget(emblem_diameter=160); w.resize(400, 400)
+    w.start_reveal(); w._advance(10_000)
+    cx, cy, _r = w.circle_geometry("main", "settings")
+    assert w.spoke_at(cx, cy) == ("main", "settings")
+    assert w.spoke_at(2, 2) is None
+    w._closing = True
+    assert w.spoke_at(cx, cy) is None

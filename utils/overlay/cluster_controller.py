@@ -1341,6 +1341,84 @@ class ClusterOverlayController:
         provider = self._card_provider
         if provider is None:
             return
+        # While the ring is open, decide ghost-side click-off from the
+        # ORIGINAL fan-out points, BEFORE any pass consumes them: while
+        # gloves are live the real-press watcher defers to this pass
+        # (_on_radial_global_press), and the ring dismisses only when EVERY
+        # point missed the chrome (spoke region, emblem, open panel) - the
+        # same predicate the real off-press uses. Computed up front so a
+        # press CONSUMED by the panel pass can never read as "missed
+        # everything" and close the ring behind the panel. Fail-open: a
+        # broken check must never dismiss under a press that targeted us.
+        ring_open = self.is_radial_open
+        on_chrome = True
+        if ring_open:
+            try:
+                on_chrome = any(self._point_on_radial_chrome(x, y)
+                                for _slot, x, y in items)
+            except Exception:
+                on_chrome = True
+
+        # Panel parity: the portable Settings panel is full-rect
+        # click-accepting and floats ABOVE the ring, so a ghost press inside
+        # it clicks the control under the point (the cards' childAt+sendEvent
+        # mechanism) and is CONSUMED - it must never ALSO press a spoke or a
+        # card control beneath. Runs BEFORE the spoke pass for that reason.
+        if self.is_panel_open:
+            surf = self._panel_surface
+            remaining = []
+            for slot, x, y in items:
+                consumed = False
+                try:
+                    g = surf.geometry()
+                    if g.contains(int(x), int(y)):
+                        self._deliver_panel_ghost_click(int(x) - g.x(),
+                                                        int(y) - g.y())
+                        consumed = True
+                except Exception:
+                    pass
+                if not consumed:
+                    remaining.append((slot, x, y))
+            items = remaining
+
+        # Radial-spoke parity: while the ring is open, a ghost press inside a
+        # spoke circle activates that spoke exactly like a real click, and the
+        # point is CONSUMED - the ring's real input shape is spokes-only, so a
+        # spoke press must not ALSO reach a card control underneath. Points
+        # outside the spokes fall through to the card/emblem passes below,
+        # mirroring the shape's pass-through holes. Defensive per point (this
+        # is the queued ghost path - never raise).
+        menu = self._radial_menu
+        any_spoke = False
+        if menu is not None:
+            from PySide6.QtCore import QPoint
+            from utils.overlay.backend import overlay_trace
+            remaining = []
+            for slot, x, y in items:
+                consumed = False
+                try:
+                    lp = menu.mapFromGlobal(QPoint(int(round(x)), int(round(y))))
+                    hit = menu.spoke_at(lp.x(), lp.y())
+                    overlay_trace(f"ghost radial pass: slot={slot} "
+                                  f"screen=({x:.0f},{y:.0f}) "
+                                  f"local=({lp.x()},{lp.y()}) hit={hit}")
+                    if hit is not None:
+                        menu.activate_at(lp.x(), lp.y())
+                        any_spoke = True
+                        consumed = True
+                except Exception:
+                    import traceback
+                    overlay_trace("ghost radial pass raised:\n"
+                                  + traceback.format_exc())
+                if not consumed:
+                    remaining.append((slot, x, y))
+            items = remaining
+
+        # Ghost-side click-off (decision computed above; any_spoke is
+        # belt-and-suspenders in case a spoke hit ever falls outside the
+        # chrome path).
+        if ring_open and not on_chrome and not any_spoke:
+            self.dismiss_radial_menu()
         cards = []
         # The cutout circle is irrelevant here: ghost clicks resolve against the
         # CONTROL rects, which never overlap the carved corner.
@@ -3118,6 +3196,16 @@ class ClusterOverlayController:
         if not self.is_radial_open:
             return   # late queued press after close: no-op
         try:
+            # Click-sync fan-out owns the dismissal while gloves are LIVE and
+            # ghost clicks are armed: the user's real press in a game window
+            # is a SYNC gesture whose ghost points may target the ring, and a
+            # position-based dismissal here races the queued ghost press -
+            # the fly-back set _closing before spoke_at ran, so a dead-center
+            # ghost press on a spoke resolved as a miss (live 2026-07-04).
+            # The ghost pass dismisses instead when every fan-out point
+            # missed the ring chrome (_ghost_click_pass).
+            if self._ghost_click_enabled() and getattr(self._peek_store, "_by_slot", None):
+                return
             lx, ly = emitted_to_logical(x, y)
             if self._point_on_radial_chrome(lx, ly):
                 return
@@ -3157,6 +3245,32 @@ class ClusterOverlayController:
             except Exception:
                 pass
         return False
+
+    def _deliver_panel_ghost_click(self, x: int, y: int) -> None:
+        """Synthetic left-click on the portable Settings panel at a
+        PANEL-LOCAL point - the cards' ``deliver_ghost_click`` mechanism
+        (childAt walk + press/release sendEvent pair, still-held button set
+        on the press only) aimed at the panel surface's widget tree, so a
+        ghost cursor drives the panel the same way the real cursor does.
+        A point over no child widget is a safe no-op."""
+        from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
+        from PySide6.QtGui import QMouseEvent
+        from PySide6.QtWidgets import QApplication
+        surf = self._panel_surface
+        if surf is None:
+            return
+        local = QPoint(int(x), int(y))
+        target = surf.childAt(local)
+        if target is None:
+            return
+        target_local = target.mapFrom(surf, local)
+        local_f = QPointF(target_local)
+        global_f = QPointF(target.mapToGlobal(target_local))
+        for etype in (QEvent.MouseButtonPress, QEvent.MouseButtonRelease):
+            held = Qt.LeftButton if etype == QEvent.MouseButtonPress else Qt.NoButton
+            ev = QMouseEvent(etype, local_f, global_f,
+                             Qt.LeftButton, held, Qt.NoModifier)
+            QApplication.sendEvent(target, ev)
 
     # ------------------------------------------------------------------
     # Portable Settings panel surface

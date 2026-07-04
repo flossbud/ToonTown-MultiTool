@@ -297,3 +297,23 @@ def test_dismiss_capture_dispatch_picks_macos_twin(qapp, monkeypatch):
     assert _RecordingCapture.instances[0].started is True
     ctrl._stop_radial_dismiss_capture()
     assert _RecordingCapture.instances[0].stopped is True
+
+
+def test_ghost_level_sits_above_the_panel_band():
+    """Gloves must draw above EVERY overlay surface: a ghost press can
+    activate radial spokes (level 4), so the cursor mirror cannot live in the
+    cluster band (live finding 2026-07-04: gloves vanished under the ring at
+    the default floating level 3). CP4: level beats order."""
+    from utils.overlay.macos_backend import (
+        CLUSTER_WINDOW_LEVEL, PANEL_WINDOW_LEVEL, GHOST_WINDOW_LEVEL)
+    assert CLUSTER_WINDOW_LEVEL < PANEL_WINDOW_LEVEL < GHOST_WINDOW_LEVEL
+
+
+def test_harden_overlay_window_accepts_level_override_and_fails_closed():
+    """The glove harden call passes level=GHOST_WINDOW_LEVEL; the kwarg must
+    be accepted on every platform and fail closed (False, reason) off-cocoa
+    rather than raise."""
+    from utils.macos_overlay import harden_overlay_window
+    ok, reason = harden_overlay_window(object(), level=5)
+    assert ok is False
+    assert reason

@@ -363,7 +363,12 @@ class GhostCursorOverlay(QWidget):
         CLOSED: a cosmetic ghost must never risk a misbehaving overlay, so if it
         has NEVER hardened and this attempt fails, hide and stay hidden."""
         from utils.macos_overlay import harden_overlay_window
-        ok, _reason = harden_overlay_window(self)
+        from utils.overlay.macos_backend import GHOST_WINDOW_LEVEL
+        # Level 5 = above the cluster (3) AND the radial/panel band (4): a
+        # ghost press can activate radial spokes, so the glove must be
+        # visible over the open ring (live finding 2026-07-04 - gloves
+        # vanished under the ring at the default floating level 3).
+        ok, _reason = harden_overlay_window(self, level=GHOST_WINDOW_LEVEL)
         if ok:
             self._hardened = True
         elif not self._hardened:
