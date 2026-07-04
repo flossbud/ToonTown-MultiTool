@@ -1,10 +1,11 @@
-"""Win32 ghost-cursor occlusion gate, region model (offscreen, probes injected).
+"""Ghost-cursor occlusion gate, region model (offscreen, probes injected).
 
-On Windows the gloves are unconfined always-on-top floats; the gate clips
-each glove to its game window's VISIBLE surface - (glove ∩ game rect) minus
-every foreign window above the game in z-order - applied as a window mask so
-the sprite slides UNDER an occluder's edge pixel by pixel (the X11 confined
-look). A fully carved glove hides; the periodic sweep restores it when the
+On win32 AND darwin the gloves are unconfined always-on-top floats; the gate
+clips each glove to its game window's VISIBLE surface - (glove ∩ game rect)
+minus every foreign window above the game in z-order - applied as a window
+mask so the sprite slides UNDER an occluder's edge pixel by pixel (the X11
+confined look). A fully carved glove hides (explicit-hide rule: an EMPTY
+setMask is a no-op on cocoa, CP8); the periodic sweep restores it when the
 occluder moves away. The z-order probe is an instance attribute, faked here.
 """
 import pytest
@@ -202,10 +203,88 @@ def test_hide_all_clears_gate_state(gated):
     assert timer is None or timer.isActive() is False
 
 
-def test_gate_off_keeps_legacy_behavior(qapp):
+def test_gate_off_keeps_legacy_behavior(qapp, monkeypatch):
+    # The kill switch disarms the gate on every platform (win32/darwin arm
+    # it by default when unconfined).
+    monkeypatch.setenv("TTMT_GHOST_UNCONFINED", "1")
     ctrl = GhostCursorController(service=None, settings_manager=None)
-    assert ctrl._occlusion_gated is False   # not win32 here
+    assert ctrl._occlusion_gated is False
     ctrl._zorder_probe = lambda: [(FOREIGN, (0, 0, 1600, 1200), 555)]
     _press(ctrl)
     assert ctrl._overlays[0].isVisible() is True
+
+
+# ---------------------------------------------------------------------------
+# darwin arming + CGWindowList snapshot parsing
+# ---------------------------------------------------------------------------
+
+def test_gate_armed_on_darwin_unconfined(qapp, monkeypatch):
+    import sys as _sys
+    from tabs.multitoon import _ghost_cursors as gc
+    monkeypatch.setattr(_sys, "platform", "darwin")
+    ctrl = GhostCursorController(service=None, settings_manager=None)
+    assert ctrl._occlusion_gated is True
+    assert ctrl._zorder_probe is gc._darwin_zorder_snapshot
     ctrl._hide_all()
+
+
+def test_gate_armed_on_win32_unconfined_unchanged(qapp, monkeypatch):
+    import sys as _sys
+    from tabs.multitoon import _ghost_cursors as gc
+    monkeypatch.setattr(_sys, "platform", "win32")
+    ctrl = GhostCursorController(service=None, settings_manager=None)
+    assert ctrl._occlusion_gated is True
+    assert ctrl._zorder_probe is gc._win32_zorder_snapshot
+    ctrl._hide_all()
+
+
+def test_darwin_snapshot_parses_bounds_pid_number_only(monkeypatch):
+    """Front-to-back order preserved; bounds dict -> (l, t, r, b);
+    degenerate/malformed records dropped. Only kCGWindowNumber /
+    kCGWindowOwnerPID / kCGWindowBounds are consulted (kCGWindowName can
+    demand the Screen Recording TCC prompt - the fakes simply omit it)."""
+    from tabs.multitoon import _ghost_cursors as gc
+    from utils import macos_discovery as md
+
+    def _info(num, pid, x, y, w, h):
+        return {"kCGWindowNumber": num, "kCGWindowOwnerPID": pid,
+                "kCGWindowBounds": {"X": x, "Y": y, "Width": w, "Height": h}}
+
+    infos = [
+        _info(FOREIGN, 555, 10, 20, 100, 50),
+        _info(GAME, 777, 0, 30, 800, 600),
+        {"kCGWindowNumber": 999},                 # no pid/bounds: dropped
+        _info(1010, 888, 5, 5, 0, 40),            # zero width: dropped
+    ]
+    monkeypatch.setattr(md, "_raw_window_info", lambda: infos)
+    snap = gc._darwin_zorder_snapshot()
+    assert snap == [
+        (FOREIGN, (10, 20, 110, 70), 555),
+        (GAME, (0, 30, 800, 630), 777),
+    ]
+
+
+def test_darwin_snapshot_fails_open_on_error(monkeypatch):
+    from tabs.multitoon import _ghost_cursors as gc
+    from utils import macos_discovery as md
+
+    def _boom():
+        raise RuntimeError("window server gone")
+
+    monkeypatch.setattr(md, "_raw_window_info", _boom)
+    assert gc._darwin_zorder_snapshot() is None
+
+
+def test_set_visible_region_empty_hides_never_empty_masks(qapp):
+    """CP8 landmine defense: setMask(QRegion()) is a NO-OP on cocoa (fully
+    visible). A fully-carved region must HIDE the glove, never be handed to
+    setMask - enforced inside set_visible_region so no call site can trip
+    the trap."""
+    from PySide6.QtGui import QPixmap
+    from tabs.multitoon._ghost_cursors import GhostCursorOverlay
+    ov = GhostCursorOverlay(QPixmap(32, 32))
+    ov.show()
+    ov.set_visible_region(QRegion())
+    assert ov.isVisible() is False
+    assert ov._occ_region is None
+    ov.hide_now()

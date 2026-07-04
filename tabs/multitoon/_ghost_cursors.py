@@ -135,6 +135,38 @@ def _win32_zorder_snapshot():
         return None
 
 
+def _darwin_zorder_snapshot():
+    """Visible on-screen windows as (window_number, (l, t, r, b), pid),
+    TOP-FIRST (CGWindowListCopyWindowInfo with OnScreenOnly returns windows
+    front-to-back). Rects are GLOBAL points - identity with Qt logical space
+    on this backend (dpr-1.0 logical regions, D2), so the shared region math
+    runs unconverted. Reads ONLY kCGWindowNumber / kCGWindowOwnerPID /
+    kCGWindowBounds: kCGWindowName can demand the Screen Recording TCC
+    prompt and must never be touched here. None on failure (fail-open)."""
+    try:
+        from utils.macos_discovery import _raw_window_info
+        out = []
+        for info in _raw_window_info():
+            try:
+                num = info.get("kCGWindowNumber")
+                pid = info.get("kCGWindowOwnerPID")
+                b = info.get("kCGWindowBounds")
+                if num is None or pid is None or not b:
+                    continue
+                x, y = float(b.get("X", 0)), float(b.get("Y", 0))
+                w, h = float(b.get("Width", 0)), float(b.get("Height", 0))
+                if w <= 0 or h <= 0:
+                    continue
+                out.append((int(num),
+                            (int(x), int(y), int(x + w), int(y + h)),
+                            int(pid)))
+            except Exception:
+                continue
+        return out
+    except Exception:
+        return None
+
+
 def _visible_glove_region(glove_rect, target_wid, snapshot, own_pid,
                           to_logical):
     """The glove pixels that should be visible, as a glove-LOCAL QRegion.
@@ -265,16 +297,25 @@ class GhostCursorOverlay(QWidget):
             self._assert_confinement(wid)
 
     def set_visible_region(self, region: QRegion | None) -> None:
-        """win32 occlusion mask, glove-LOCAL coords: clip the sprite to the
-        part of its game window not covered by foreign windows, so it slides
-        UNDER an occluder edge pixel-by-pixel instead of vanishing whole.
-        None (fail-open) or a full-rect region clears the mask. The X11
-        confined path uses clip_to instead; the two never run together
-        (confined is xcb-only, this gate is win32-only)."""
+        """Occlusion-gate mask (win32 + darwin), glove-LOCAL coords: clip the
+        sprite to the part of its game window not covered by foreign windows,
+        so it slides UNDER an occluder edge pixel-by-pixel instead of
+        vanishing whole. None (fail-open) or a full-rect region clears the
+        mask. The X11 confined path uses clip_to instead; the two never run
+        together (confined is xcb-only, this gate is win32/darwin-only)."""
         if region is None or region == QRegion(self.rect()):
             if self._occ_region is not None:
                 self._occ_region = None
                 self.clearMask()
+            return
+        if region.isEmpty():
+            # CP8 landmine: setMask(QRegion()) is a NO-OP ("no mask") on
+            # cocoa, so an empty mask would show the WHOLE glove instead of
+            # nothing. Fully-carved is the controller's explicit-hide case;
+            # enforce it here too so no call site can ever trip the trap.
+            self._occ_region = None
+            self.clearMask()
+            self.hide_now()
             return
         if region == self._occ_region:
             return
@@ -433,19 +474,24 @@ class GhostCursorController(QObject):
         self._confine_reason = (self._disabled_reason
                                 or _confinement_reason())
         self._confined = self._confine_reason is None
-        # Windows occlusion gate: with no transient stacking on win32, the
-        # unconfined float would draw gloves over EVERY window (file managers
-        # included). Gate VISIBILITY instead: a glove shows only while the
-        # top-level under its point is its own game window or a window of
-        # THIS process (the float UI / main window). Probes are instance
-        # attributes so tests can inject fakes; TTMT_GHOST_UNCONFINED=1 is
-        # the shared kill switch (gloves float over everything, old behavior).
+        # Occlusion gate (win32 + darwin): with no transient stacking on
+        # these backends, the unconfined float would draw gloves over EVERY
+        # window (file managers included) - on cocoa the CP14 fix even lifts
+        # gloves to level 5, above the radial band. Gate VISIBILITY instead:
+        # clip each glove to its game window's visible surface ((glove ∩
+        # game) minus foreign windows above the game; own-pid windows never
+        # occlude - the float UI deliberately shows gloves over the cards
+        # and the ring). Probes are instance attributes so tests can inject
+        # fakes; TTMT_GHOST_UNCONFINED=1 is the shared kill switch (gloves
+        # float over everything, old behavior).
         self._occlusion_gated = (
             self._disabled_reason is None
             and not self._confined
-            and sys.platform == "win32"
+            and sys.platform in ("win32", "darwin")
             and os.environ.get("TTMT_GHOST_UNCONFINED") != "1")
-        self._zorder_probe = _win32_zorder_snapshot
+        self._zorder_probe = (_darwin_zorder_snapshot
+                              if sys.platform == "darwin"
+                              else _win32_zorder_snapshot)
         self._to_logical = _emitted_to_logical
         self._own_pid = os.getpid()
         self._last_logical: dict[int, tuple[int, int]] = {}
@@ -456,7 +502,9 @@ class GhostCursorController(QObject):
             mode = ("confined-to-game (transient stacking)" if self._confined
                     else f"unconfined float ({self._confine_reason})")
             if self._occlusion_gated:
-                mode += " + win32 occlusion gate"
+                probe = ("CGWindowList" if sys.platform == "darwin"
+                         else "win32")
+                mode += f" + {probe} occlusion gate"
             print(f"[GhostCursors] mode: {mode}")
         if service is not None:
             service.ghost_pointer_event.connect(self._on_pointer_event)
