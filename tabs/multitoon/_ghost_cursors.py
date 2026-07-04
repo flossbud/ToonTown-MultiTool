@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 
 from PySide6.QtCore import QObject, QPropertyAnimation, QRect, Qt, QTimer
 from PySide6.QtGui import QGuiApplication, QPainter, QPixmap, QRegion
@@ -135,6 +136,25 @@ def _win32_zorder_snapshot():
         return None
 
 
+# CGWindowListCopyWindowInfo is a WINDOW-SERVER ROUND TRIP (~1.5ms measured
+# with 40 windows on-screen, worse under game load). Ghost pointer events on
+# cocoa track the monitor refresh (up to 240Hz here), so probing per event
+# per glove saturated the GUI thread (2 gloves x 240Hz x 1.5ms ≈ 720ms/s of
+# probing) and the queued ghost events backed up SECONDS behind the real
+# cursor (live regression 2026-07-04). The snapshot is therefore TTL-cached:
+# probe cost is bounded by the TTL regardless of pointer rate, and the mask
+# is exactly as fresh as the 100ms occlusion sweep already assumes for
+# moving occluders. win32's user-mode z-order walk needs no cache.
+_DARWIN_SNAP_TTL_S = 0.05
+_darwin_snap_cache = {"t": -1.0, "snap": None}
+
+
+def _reset_darwin_snapshot_cache() -> None:
+    """Test hook (mirrors macos_discovery._reset_enum_cache)."""
+    _darwin_snap_cache["t"] = -1.0
+    _darwin_snap_cache["snap"] = None
+
+
 def _darwin_zorder_snapshot():
     """Visible on-screen windows as (window_number, (l, t, r, b), pid),
     TOP-FIRST (CGWindowListCopyWindowInfo with OnScreenOnly returns windows
@@ -142,7 +162,12 @@ def _darwin_zorder_snapshot():
     on this backend (dpr-1.0 logical regions, D2), so the shared region math
     runs unconverted. Reads ONLY kCGWindowNumber / kCGWindowOwnerPID /
     kCGWindowBounds: kCGWindowName can demand the Screen Recording TCC
-    prompt and must never be touched here. None on failure (fail-open)."""
+    prompt and must never be touched here. None on failure (fail-open,
+    never cached - a window-server hiccup must not lock the gate open for
+    a TTL). GUI thread only (like every gate caller)."""
+    now = time.monotonic()
+    if now - _darwin_snap_cache["t"] < _DARWIN_SNAP_TTL_S:
+        return _darwin_snap_cache["snap"]
     try:
         from utils.macos_discovery import _raw_window_info
         out = []
@@ -162,9 +187,11 @@ def _darwin_zorder_snapshot():
                             int(pid)))
             except Exception:
                 continue
-        return out
     except Exception:
         return None
+    _darwin_snap_cache["t"] = now
+    _darwin_snap_cache["snap"] = out
+    return out
 
 
 def _visible_glove_region(glove_rect, target_wid, snapshot, own_pid,

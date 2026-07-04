@@ -218,6 +218,17 @@ def test_gate_off_keeps_legacy_behavior(qapp, monkeypatch):
 # darwin arming + CGWindowList snapshot parsing
 # ---------------------------------------------------------------------------
 
+@pytest.fixture(autouse=True)
+def _reset_darwin_snap_cache():
+    """The darwin snapshot is TTL-cached (a CGWindowList probe per pointer
+    event per glove saturated the GUI thread live); keep the cache from
+    leaking between tests."""
+    from tabs.multitoon import _ghost_cursors as gc
+    gc._reset_darwin_snapshot_cache()
+    yield
+    gc._reset_darwin_snapshot_cache()
+
+
 def test_gate_armed_on_darwin_unconfined(qapp, monkeypatch):
     import sys as _sys
     from tabs.multitoon import _ghost_cursors as gc
@@ -273,6 +284,55 @@ def test_darwin_snapshot_fails_open_on_error(monkeypatch):
 
     monkeypatch.setattr(md, "_raw_window_info", _boom)
     assert gc._darwin_zorder_snapshot() is None
+
+
+def test_darwin_snapshot_cached_within_ttl(monkeypatch):
+    """The live-regression guard: pointer events arrive at monitor-refresh
+    rate, so the window-server probe must be bounded by the TTL, not the
+    pointer rate (2 gloves x 240Hz x ~1.5ms saturated the GUI thread and
+    gloves lagged SECONDS behind)."""
+    from tabs.multitoon import _ghost_cursors as gc
+    from utils import macos_discovery as md
+    calls = []
+
+    def _probe():
+        calls.append(1)
+        return [{"kCGWindowNumber": GAME, "kCGWindowOwnerPID": 777,
+                 "kCGWindowBounds": {"X": 0, "Y": 0,
+                                     "Width": 800, "Height": 600}}]
+
+    monkeypatch.setattr(md, "_raw_window_info", _probe)
+    first = gc._darwin_zorder_snapshot()
+    second = gc._darwin_zorder_snapshot()
+    assert len(calls) == 1          # second call served from cache
+    assert second is first
+
+
+def test_darwin_snapshot_reprobes_after_ttl(monkeypatch):
+    from tabs.multitoon import _ghost_cursors as gc
+    from utils import macos_discovery as md
+    calls = []
+    monkeypatch.setattr(md, "_raw_window_info", lambda: calls.append(1) or [])
+    gc._darwin_zorder_snapshot()
+    # Age the cache past the TTL instead of sleeping.
+    gc._darwin_snap_cache["t"] -= gc._DARWIN_SNAP_TTL_S * 2
+    gc._darwin_zorder_snapshot()
+    assert len(calls) == 2
+
+
+def test_darwin_snapshot_error_is_not_cached(monkeypatch):
+    """A window-server hiccup fails open (None) but must not lock the gate
+    open for a whole TTL: the next call re-probes immediately."""
+    from tabs.multitoon import _ghost_cursors as gc
+    from utils import macos_discovery as md
+
+    def _boom():
+        raise RuntimeError("window server gone")
+
+    monkeypatch.setattr(md, "_raw_window_info", _boom)
+    assert gc._darwin_zorder_snapshot() is None
+    monkeypatch.setattr(md, "_raw_window_info", lambda: [])
+    assert gc._darwin_zorder_snapshot() == []
 
 
 def test_set_visible_region_empty_hides_never_empty_masks(qapp):
