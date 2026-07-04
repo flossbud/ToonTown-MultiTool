@@ -1693,9 +1693,10 @@ class ClusterOverlayController:
 
         Idempotent and re-bindable: re-connecting the SAME emblem is a no-op (Qt
         permits duplicate connections, which would double-fire), and connecting a
-        NEW emblem first drops the previous emblem's connections. A straight port
-        of ``OverlayGroupController.connect_emblem`` so the two controllers stay
-        drop-in interchangeable behind the same call site.
+        NEW emblem first drops the previous emblem's connections. A port of
+        ``OverlayGroupController.connect_emblem`` with ONE deliberate divergence:
+        toggle is QUEUED here (see below) because only the cluster hosts the
+        emblem through a QGraphicsScene proxy.
         """
         if emblem is self._emblem:
             return
@@ -1710,7 +1711,19 @@ class ClusterOverlayController:
                 except (TypeError, RuntimeError):
                     pass
         self._emblem = emblem
-        emblem.toggle_requested.connect(self.toggle)
+        # toggle MUST be queued: while floating, the emblem's release handler
+        # runs INSIDE the cluster scene's mouse dispatch (forwarded by the
+        # QGraphicsProxyWidget, which is the scene's mouse grabber at that
+        # instant), and toggle()'s leave() tears down that very dispatch
+        # machinery. Direct delivery destroyed the proxy under
+        # QGraphicsScene::mouseReleaseEvent and the C++ continuation
+        # dereferenced it -> SIGSEGV (cocoa right-click exit, 2026-07-04).
+        # Queued delivery runs toggle() on the next loop turn, after the
+        # dispatch has fully unwound - true in both directions (leave AND
+        # enter, which reparents the dispatching emblem mid-gesture).
+        # move/scroll stay direct: they never tear down or reparent the host.
+        from PySide6.QtCore import Qt
+        emblem.toggle_requested.connect(self.toggle, Qt.QueuedConnection)
         emblem.move_requested.connect(self.begin_group_drag)
         emblem.resize_scrolled.connect(self.set_scale_by_notches)
 

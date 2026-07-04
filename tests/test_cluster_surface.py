@@ -202,6 +202,27 @@ def test_scaled_release_returns_host_undeleted_and_clears_constraints(qapp):
     host.resize(10, 10)
 
 
+def test_scaled_release_defers_proxy_destruction(qapp):
+    """REGRESSION (cocoa right-click float-exit SIGSEGV, 2026-07-04):
+    removeItem hands the proxy's ownership back to Python, so a bare ref-drop
+    in release_cluster() destroyed the C++ QGraphicsProxyWidget synchronously -
+    fatal when release runs from inside a scene dispatch still forwarding
+    through that proxy. The proxy must survive release() and die only on the
+    DeferredDelete flush. The C++ object's lifetime is observed via the
+    destroyed signal (PySide invalidates the PYTHON wrapper at deleteLater,
+    but Qt's dispatch continuation holds C++ pointers - that lifetime is the
+    one that matters)."""
+    from PySide6.QtCore import QCoreApplication, QEvent
+    s, host = _scaled_setup(qapp)
+    died = []
+    s._cluster_view._proxy.destroyed.connect(lambda *_: died.append(1))
+    out = s.release()
+    assert out is host
+    assert died == []                    # C++ alive right after release() returns
+    QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+    assert died == [1]                   # and gone once the loop turn flushes
+
+
 def test_scaled_close_never_deletes_borrowed_host(qapp):
     """The programmatic close() path must release the proxied host BEFORE Qt's
     destruction cascade (ownership contract): after close + deleteLater flush the

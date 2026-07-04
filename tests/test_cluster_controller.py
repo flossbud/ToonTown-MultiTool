@@ -3960,9 +3960,13 @@ def test_connect_emblem_wires_the_three_signals(qapp):
     emblem.move_requested.emit()
     emblem.resize_scrolled.emit(2)
 
-    assert calls["toggle"] == 1
+    # move/scroll deliver DIRECT; toggle is QUEUED (mid-dispatch teardown
+    # guard) so it lands only after the event loop turns.
     assert calls["drag"] == 1
     assert calls["scale"] == [2]        # the int notch passes through
+    assert calls["toggle"] == 0
+    qapp.processEvents()
+    assert calls["toggle"] == 1
 
 
 def test_connect_emblem_is_idempotent_no_double_fire(qapp):
@@ -3973,6 +3977,7 @@ def test_connect_emblem_is_idempotent_no_double_fire(qapp):
     ctrl.connect_emblem(emblem)
     ctrl.connect_emblem(emblem)         # SAME emblem -> no-op, must NOT double-fire
     emblem.toggle_requested.emit()
+    qapp.processEvents()                # flush the queued toggle delivery
     assert calls["toggle"] == 1
 
 
@@ -3992,15 +3997,35 @@ def test_connect_emblem_rebinds_to_a_new_emblem(qapp):
     old.toggle_requested.emit()
     old.move_requested.emit()
     old.resize_scrolled.emit(5)
+    qapp.processEvents()                # would flush a leaked queued toggle
     assert calls == {"toggle": 0, "drag": 0, "scale": []}
 
     # The NEW emblem drives it.
     new.toggle_requested.emit()
     new.move_requested.emit()
     new.resize_scrolled.emit(7)
+    qapp.processEvents()                # flush the queued toggle delivery
     assert calls["toggle"] == 1
     assert calls["drag"] == 1
     assert calls["scale"] == [7]
+
+
+def test_toggle_delivery_is_queued_never_synchronous(qapp):
+    """REGRESSION (cocoa right-click float-exit SIGSEGV, 2026-07-04): while
+    floating, the emblem's release handler runs INSIDE the cluster scene's
+    mouse dispatch (forwarded by the proxy = the scene's mouse grabber), and a
+    DIRECT toggle would tear down that dispatching machinery under
+    QGraphicsScene::mouseReleaseEvent. toggle_requested must therefore never
+    invoke toggle() on the emitting stack - only on the next loop turn."""
+    ctrl, _p, _w, _c = _make()
+    calls = []
+    ctrl.toggle = lambda: calls.append("t")
+    emblem = _SignalEmblem()
+    ctrl.connect_emblem(emblem)
+    emblem.toggle_requested.emit()
+    assert calls == []                  # never on the emitting stack
+    qapp.processEvents()
+    assert calls == ["t"]               # exactly once, one loop turn later
 
 
 # ---------------------------------------------------------------------------

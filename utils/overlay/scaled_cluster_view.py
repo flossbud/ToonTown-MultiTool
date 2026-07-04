@@ -115,8 +115,18 @@ class ScaledClusterView(QWidget):
         if host is None:
             return None
         if self._proxy is not None:
-            self._proxy.setWidget(None)     # detach + un-own the host (NOT deleted)
-            self._scene.removeItem(self._proxy)
+            proxy = self._proxy
+            proxy.setWidget(None)           # detach + un-own the host (NOT deleted)
+            self._scene.removeItem(proxy)
+            # removeItem hands the proxy's ownership back to Python, so a bare
+            # ref-drop here would destroy the C++ QGraphicsProxyWidget
+            # SYNCHRONOUSLY - fatal when release runs from inside a scene
+            # dispatch that is still forwarding through this proxy (the
+            # right-click float-exit crash: leave() ran inside the emblem's
+            # proxied mouseReleaseEvent and the dispatch continuation
+            # dereferenced the dead proxy). deleteLater defers destruction
+            # past any live dispatch frames, whoever the caller is.
+            proxy.deleteLater()
             self._proxy = None
         # setWidget(None) already re-parented the host to None; explicit for clarity.
         host.setParent(None)
