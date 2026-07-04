@@ -282,6 +282,23 @@ def get_active_window_id():
         return None
 
 
+def frontmost_is_self():
+    """True when the frontmost application is THIS process. The darwin basis of
+    WindowManager.is_multitool_active: get_active_window_id() only ever returns
+    GAME window ids (None while TTMT is frontmost) and the multitool_window_id
+    setting is captured via xdotool on X11 only, so the id-compare can never
+    identify self-focus here - the frontmost PID can. Never raises."""
+    try:
+        import os
+        from AppKit import NSWorkspace
+        app = NSWorkspace.sharedWorkspace().frontmostApplication()
+        if app is None:
+            return False
+        return int(app.processIdentifier()) == os.getpid()
+    except Exception:
+        return False
+
+
 def toplevel_at_point(x, y):
     """Out of scope for v1 click-sync (the safe active-window resolver is used
     instead; see active_source_window). Returns None."""

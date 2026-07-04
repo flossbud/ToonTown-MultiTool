@@ -2117,12 +2117,26 @@ class InputService(QObject):
 
     def should_send_input(self):
         active = self.window_manager.get_active_window()
-        if not active:
+        if active:
+            if active in self.window_manager.get_window_ids():
+                return True
+            multitool_id = self.settings_manager.get("multitool_window_id") if self.settings_manager else None
+            if multitool_id and active == str(multitool_id):
+                return True
+        # Self-focus off Linux: the multitool_window_id compare above is a
+        # dead path on darwin/win32 (capture is xdotool/X11-only, and darwin
+        # get_active_window() only ever returns game ids - it is None while
+        # TTMT is frontmost, which the early-return used to read as "send
+        # nothing"). The window manager's frontmost-PID fact is the truth
+        # there; on Linux this consult just repeats the compare that already
+        # failed. Un-deadens broadcast-while-self-focused.
+        is_self = getattr(self.window_manager, "is_multitool_active", None)
+        if is_self is None:
             return False
-        if active in self.window_manager.get_window_ids():
-            return True
-        multitool_id = self.settings_manager.get("multitool_window_id") if self.settings_manager else None
-        return bool(multitool_id and active == str(multitool_id))
+        try:
+            return bool(is_self())
+        except Exception:
+            return False
 
     def _foreground_game(self) -> str | None:
         from utils.game_registry import GameRegistry

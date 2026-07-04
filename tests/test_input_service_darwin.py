@@ -174,3 +174,67 @@ def test_send_via_backend_darwin_connected_backend_routes_correctly(monkeypatch)
     s._send_via_backend("keydown", "11", "w")
 
     assert calls == [("keydown", "11", "w")], f"Expected backend call, got: {calls}"
+
+
+# ── should_send_input: self-focus consult off Linux ──────────────────────────
+# The multitool_window_id compare is a dead path on darwin (get_active_window
+# only ever returns game ids - None while TTMT is frontmost) and win32 (the
+# setting is never captured off Linux). should_send_input must consult the
+# window manager's frontmost-PID fact so broadcast-while-self-focused works.
+
+class _SsiWindowManager:
+    def __init__(self, active=None, window_ids=(), self_active=False):
+        self._active = active
+        self._ids = list(window_ids)
+        self._self_active = self_active
+
+    def get_active_window(self):
+        return self._active
+
+    def get_window_ids(self):
+        return self._ids
+
+    def is_multitool_active(self):
+        return self._self_active
+
+
+def _ssi_service(wm):
+    from services.input_service import InputService
+    svc = InputService.__new__(InputService)
+    svc.window_manager = wm
+    svc.settings_manager = None
+    return svc
+
+
+def test_should_send_input_true_when_self_focused_and_active_none():
+    wm = _SsiWindowManager(active=None, self_active=True)
+    assert _ssi_service(wm).should_send_input() is True
+
+
+def test_should_send_input_false_when_nothing_focused():
+    wm = _SsiWindowManager(active=None, self_active=False)
+    assert _ssi_service(wm).should_send_input() is False
+
+
+def test_should_send_input_true_for_game_window_unchanged():
+    wm = _SsiWindowManager(active="42", window_ids=["42"], self_active=False)
+    assert _ssi_service(wm).should_send_input() is True
+
+
+def test_should_send_input_false_without_is_multitool_active_method():
+    class _Bare:
+        def get_active_window(self):
+            return None
+
+        def get_window_ids(self):
+            return []
+
+    assert _ssi_service(_Bare()).should_send_input() is False
+
+
+def test_should_send_input_swallows_is_multitool_active_error():
+    class _Boom(_SsiWindowManager):
+        def is_multitool_active(self):
+            raise RuntimeError("poll thread dead")
+
+    assert _ssi_service(_Boom()).should_send_input() is False

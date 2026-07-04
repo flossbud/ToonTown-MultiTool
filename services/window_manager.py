@@ -45,6 +45,12 @@ class WindowManager(QObject):
         self.window_games: dict[str, str] = {}  # window_id -> "ttr" | "cc"
         self.window_geometry: dict[str, tuple[int, int, int, int]] = {}
         self._active_id = None
+        # darwin/win32: whether the frontmost app is THIS process, recorded by
+        # the poll loop. The multitool_window_id id-compare in
+        # is_multitool_active can never be True off Linux (capture is
+        # xdotool/X11-only, and darwin _active_id only ever holds game ids),
+        # so self-focus is detected by frontmost PID instead.
+        self._self_frontmost = False
         self._detection_enabled = False
 
         self._lock = threading.Lock()
@@ -74,6 +80,7 @@ class WindowManager(QObject):
         self._detection_enabled = False
         with self._lock:
             self._active_id = None
+            self._self_frontmost = False
             had_ids = bool(self.ttr_window_ids)
             self.ttr_window_ids = []
             self.window_games = {}
@@ -170,6 +177,7 @@ class WindowManager(QObject):
 
             # Poll active window
             import sys
+            self_frontmost = False
             if sys.platform == "win32":
                 try:
                     import win32gui
@@ -177,6 +185,15 @@ class WindowManager(QObject):
                     current_active = str(hwnd) if hwnd else None
                 except Exception:
                     current_active = None
+                if current_active:
+                    try:
+                        import os
+                        import win32process
+                        self_frontmost = (
+                            win32process.GetWindowThreadProcessId(
+                                int(current_active))[1] == os.getpid())
+                    except Exception:
+                        self_frontmost = False
             elif sys.platform == "darwin":
                 # macos_discovery.get_active_window_id() touches CGWindowList /
                 # NSWorkspace and is not internally guarded the way
@@ -185,13 +202,16 @@ class WindowManager(QObject):
                 try:
                     from utils import macos_discovery
                     current_active = macos_discovery.get_active_window_id()
+                    self_frontmost = macos_discovery.frontmost_is_self()
                 except Exception:
                     current_active = None
+                    self_frontmost = False
             else:
                 current_active = x11_discovery.get_active_window_id()
-                
+
             with self._lock:
                 self._active_id = current_active
+                self._self_frontmost = self_frontmost
                 
             if current_active != last_active:
                 self.active_window_changed.emit(current_active or "")
@@ -376,6 +396,13 @@ class WindowManager(QObject):
         return self._assign_cells_to_wids(wids)[0]
 
     def is_multitool_active(self) -> bool:
+        # darwin/win32: the id-compare below is a dead path there (see
+        # _self_frontmost); the poll loop's frontmost-PID fact is the truth.
+        # Un-deadens hotkey capture and broadcast-while-self-focused, matching
+        # the Linux multitool_window_id behavior.
+        if sys.platform in ("darwin", "win32"):
+            with self._lock:
+                return self._self_frontmost
         active = self.active_window_id
         return bool(active and self.multitool_id and active == self.multitool_id)
         

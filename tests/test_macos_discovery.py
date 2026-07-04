@@ -326,3 +326,59 @@ def test_get_window_geometry_fresh_excludes_launcher(monkeypatch):
         lambda pid: _ENGINE if pid == 94197 else _LAUNCHER)
     assert md.get_window_geometry_fresh("15053") == (0, 0, 1440, 928)
     assert md.get_window_geometry_fresh("15071") is None  # launcher excluded
+
+
+# ── frontmost_is_self: the darwin is_multitool_active basis ──────────────────
+
+class _FakeFrontApp:
+    def __init__(self, pid):
+        self._pid = pid
+
+    def processIdentifier(self):
+        return self._pid
+
+
+class _FakeWorkspace:
+    def __init__(self, app):
+        self._app = app
+
+    def frontmostApplication(self):
+        return self._app
+
+
+def _install_fake_appkit(monkeypatch, app):
+    import sys as _sys
+    import types
+    mod = types.ModuleType("AppKit")
+    mod.NSWorkspace = types.SimpleNamespace(
+        sharedWorkspace=lambda: _FakeWorkspace(app))
+    monkeypatch.setitem(_sys.modules, "AppKit", mod)
+
+
+def test_frontmost_is_self_true_for_own_pid(monkeypatch):
+    import os
+    _install_fake_appkit(monkeypatch, _FakeFrontApp(os.getpid()))
+    assert md.frontmost_is_self() is True
+
+
+def test_frontmost_is_self_false_for_other_pid(monkeypatch):
+    _install_fake_appkit(monkeypatch, _FakeFrontApp(1))
+    assert md.frontmost_is_self() is False
+
+
+def test_frontmost_is_self_false_when_no_frontmost_app(monkeypatch):
+    _install_fake_appkit(monkeypatch, None)
+    assert md.frontmost_is_self() is False
+
+
+def test_frontmost_is_self_false_on_appkit_error(monkeypatch):
+    import sys as _sys
+    import types
+    mod = types.ModuleType("AppKit")
+
+    def _boom():
+        raise RuntimeError("window server gone")
+
+    mod.NSWorkspace = types.SimpleNamespace(sharedWorkspace=_boom)
+    monkeypatch.setitem(_sys.modules, "AppKit", mod)
+    assert md.frontmost_is_self() is False

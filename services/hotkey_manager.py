@@ -193,12 +193,20 @@ class HotkeyManager(QObject):
             # uninstalled grabs + should_capture_input checks in the
             # handlers) already make unfocused keystrokes pass through
             # untouched. The tap now churns only on first-game-launch /
-            # last-game-close, never on focus edges.
-            if not capture:
-                try:
-                    keep_alive = self.window_manager.has_game_windows()
-                except Exception:
-                    keep_alive = False
+            # last-game-close, never on focus edges. That includes the TTMT
+            # window's OWN focus edges: should_capture_input is now True
+            # while TTMT is frontmost (the self-focused capture fix), but
+            # with NO game windows there is nothing to broadcast to and a
+            # tap created here would be torn down on the very next focus-out
+            # - the exact churn class this rule outlaws. So on darwin the
+            # tap exists IFF game windows exist; no-game global hotkeys are
+            # the Carbon provider's job (no tap involved).
+            try:
+                game_windows = self.window_manager.has_game_windows()
+            except Exception:
+                game_windows = False
+            capture = capture and game_windows
+            keep_alive = (not capture) and game_windows
         if _ITRACE:
             _itrace("hk_listener", f"active={active_win_id!r} should_capture={capture} "
                                    f"keep_alive={keep_alive} "

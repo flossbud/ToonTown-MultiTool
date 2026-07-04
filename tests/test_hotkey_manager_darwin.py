@@ -403,3 +403,41 @@ class TestDarwinListenerKeepAlive:
         hk = self._mk(monkeypatch, "linux", capture=False, has_windows=True)
         hk._on_active_window_changed("")
         assert hk.calls[-1] == "stop"
+
+
+class TestDarwinSelfFocusTapLifecycle:
+    """Self-focused capture (TTMT frontmost) must NOT create a tap when no
+    game windows exist: it would be torn down on the very next focus-out -
+    the exact churn class the keep-alive rule outlaws. With games up, the
+    listener is already alive and self-focus rides it. No-game global
+    hotkeys are the Carbon provider's job (no tap)."""
+
+    def _mk(self, monkeypatch, platform, capture, has_windows):
+        monkeypatch.setattr(sys, "platform", platform)
+        hk = HotkeyManager.__new__(HotkeyManager)
+        hk.window_manager = _FakeWM(capture=capture, has_windows=has_windows)
+        hk.is_listening = False
+        hk._darwin_game_pids = frozenset()
+        hk.calls = []
+        hk._refresh_darwin_game_pids = lambda: hk.calls.append("refresh")
+        hk._start_listener = lambda: hk.calls.append("start")
+        hk._stop_listener = lambda: hk.calls.append("stop")
+        return hk
+
+    def test_darwin_self_focus_without_games_does_not_start_tap(self, monkeypatch):
+        hk = self._mk(monkeypatch, "darwin", capture=True, has_windows=False)
+        hk._on_active_window_changed("")
+        assert hk.calls == ["refresh", "stop"]
+
+    def test_darwin_self_focus_with_games_keeps_listener(self, monkeypatch):
+        hk = self._mk(monkeypatch, "darwin", capture=True, has_windows=True)
+        hk._on_active_window_changed("")
+        assert hk.calls == ["refresh", "start"]
+
+    def test_win32_self_focus_starts_listener(self, monkeypatch):
+        # win32 has no keep-alive/tap-churn constraint; self-focused capture
+        # starts the LL-hook listener directly (Linux-parity hotkeys while
+        # the tool is frontmost).
+        hk = self._mk(monkeypatch, "win32", capture=True, has_windows=False)
+        hk._on_active_window_changed("")
+        assert hk.calls == ["start"]
