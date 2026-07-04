@@ -173,19 +173,38 @@ class HotkeyManager(QObject):
 
     def _on_active_window_changed(self, active_win_id: str):
         capture = self.window_manager.should_capture_input()
+        keep_alive = False
         if sys.platform == "darwin":
             # Refresh the darwin target-PID suppression gate off the hot path:
             # populate it while a game is focused, clear it otherwise so the
-            # gate stays inactive when we are not capturing.
+            # gate stays inactive when we are not capturing (empty set =
+            # suppress nothing = pure passthrough).
             if capture:
                 self._refresh_darwin_game_pids()
             else:
                 self._darwin_game_pids = frozenset()
+            # darwin LIFECYCLE RULE (live finding 2026-07-04): the listener's
+            # CGEventTap is an ACTIVE tap gating the SYSTEM keyboard stream;
+            # tearing it down / recreating it on every game-focus edge stalls
+            # keystroke delivery machine-wide for the teardown window (the
+            # user saw delayed typing in a terminal after leaving TTR, gone
+            # the moment the app quit). Keep the listener RUNNING while any
+            # game window EXISTS - the per-event gates (empty PID set +
+            # uninstalled grabs + should_capture_input checks in the
+            # handlers) already make unfocused keystrokes pass through
+            # untouched. The tap now churns only on first-game-launch /
+            # last-game-close, never on focus edges.
+            if not capture:
+                try:
+                    keep_alive = self.window_manager.has_game_windows()
+                except Exception:
+                    keep_alive = False
         if _ITRACE:
             _itrace("hk_listener", f"active={active_win_id!r} should_capture={capture} "
+                                   f"keep_alive={keep_alive} "
                                    f"was_listening={self.is_listening} -> "
-                                   f"{'START' if capture else 'STOP'}")
-        if capture:
+                                   f"{'START' if (capture or keep_alive) else 'STOP'}")
+        if capture or keep_alive:
             self._start_listener()
         else:
             self._stop_listener()

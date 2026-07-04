@@ -91,6 +91,11 @@ class WindowManager(QObject):
         with self._lock:
             return list(self.ttr_window_ids)
 
+    def has_game_windows(self) -> bool:
+        """Any tracked game window exists (focused or not)."""
+        with self._lock:
+            return bool(self.ttr_window_ids)
+
     def count_for_game(self, game: str) -> int:
         """Number of currently-detected windows belonging to `game`."""
         with self._lock:

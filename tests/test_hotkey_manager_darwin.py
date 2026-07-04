@@ -235,3 +235,54 @@ class TestRefreshDarwinGamePids:
         hk._darwin_game_pids = frozenset({999})
         hk._refresh_darwin_game_pids()
         assert hk._darwin_game_pids == frozenset()
+
+
+class _FakeWM:
+    def __init__(self, *, capture: bool, has_windows: bool):
+        self._capture = capture
+        self._has = has_windows
+
+    def should_capture_input(self) -> bool:
+        return self._capture
+
+    def has_game_windows(self) -> bool:
+        return self._has
+
+
+class TestDarwinListenerKeepAlive:
+    """darwin lifecycle rule (live 2026-07-04): the ACTIVE keyboard tap must
+    not churn on game-focus edges - teardown/recreation stalls the SYSTEM
+    keyboard stream. While any game window EXISTS the listener stays up even
+    when capture is off (per-event gates keep unfocused keys passthrough)."""
+
+    def _mk(self, monkeypatch, platform, capture, has_windows):
+        monkeypatch.setattr(sys, "platform", platform)
+        hk = HotkeyManager.__new__(HotkeyManager)
+        hk.window_manager = _FakeWM(capture=capture, has_windows=has_windows)
+        hk.is_listening = False
+        hk._darwin_game_pids = frozenset()
+        hk.calls = []
+        hk._refresh_darwin_game_pids = lambda: hk.calls.append("refresh")
+        hk._start_listener = lambda: hk.calls.append("start")
+        hk._stop_listener = lambda: hk.calls.append("stop")
+        return hk
+
+    def test_darwin_unfocused_with_game_windows_keeps_listener(self, monkeypatch):
+        hk = self._mk(monkeypatch, "darwin", capture=False, has_windows=True)
+        hk._on_active_window_changed("")
+        assert hk.calls[-1] == "start"
+
+    def test_darwin_unfocused_without_game_windows_stops(self, monkeypatch):
+        hk = self._mk(monkeypatch, "darwin", capture=False, has_windows=False)
+        hk._on_active_window_changed("")
+        assert hk.calls[-1] == "stop"
+
+    def test_darwin_focused_still_starts_and_refreshes_pids(self, monkeypatch):
+        hk = self._mk(monkeypatch, "darwin", capture=True, has_windows=True)
+        hk._on_active_window_changed("123")
+        assert hk.calls == ["refresh", "start"]
+
+    def test_off_darwin_lifecycle_unchanged(self, monkeypatch):
+        hk = self._mk(monkeypatch, "linux", capture=False, has_windows=True)
+        hk._on_active_window_changed("")
+        assert hk.calls[-1] == "stop"
