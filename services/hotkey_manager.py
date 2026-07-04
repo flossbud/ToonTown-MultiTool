@@ -339,7 +339,19 @@ class HotkeyManager(QObject):
         """macOS suppression channel (suppress-only; mirrors the Linux model).
         Return None to suppress OS delivery, or the event to pass it through.
         NEVER enqueues — on_global_key_press/on_global_key_release are the single
-        enqueue point and fire even for events suppressed here."""
+        enqueue point and fire even for events suppressed here.
+
+        Pairing law (the win32 _suppressed_down analog, hardened): the INITIAL
+        (non-repeat) keydown's suppress decision owns the entire hold.
+        Autorepeat keydowns inherit it without a fresh consult, and the keyup
+        is suppressed IFF the keydown was. Deciding each event from CURRENT
+        grab state stranded keys at the OS level whenever that state flipped
+        mid-hold (grabs installed/uninstalled, chat opened/closed): a
+        natively-delivered keydown whose release got eaten leaves the focused
+        client holding the key forever. The repeat-inherit half closes the
+        hole win32 still has — without it, the first autorepeat after a
+        mid-hold flip re-decides suppress, enters the pairing set, and eats
+        the release of a key the client received natively."""
         try:
             Q = self._quartz_for_intercept()
         except Exception:
@@ -364,8 +376,33 @@ class HotkeyManager(QObject):
             keysym = macos_keycodes.keysym_for_cgkeycode(keycode)
             if keysym is None:
                 return event  # a key we don't translate -> normal processing
+            if event_type == Q.kCGEventKeyUp:
+                # Paired: eat the release IFF the press was eaten. A release
+                # whose press the OS delivered must be delivered too, and a
+                # release whose press we withheld must never leak (the client
+                # never saw the down). No fresh predicate/PID consult — the
+                # down's decision owns it.
+                if keysym in self._suppressed_down:
+                    self._suppressed_down.discard(keysym)
+                    if _ITRACE:
+                        _itrace("hk_intercept", f"suppress keyup (paired) keysym={keysym}")
+                    return None
+                return event
+            # KeyDown. Autorepeats inherit the initial down's decision; only a
+            # fresh physical press may change the pairing set.
+            try:
+                is_repeat = bool(Q.CGEventGetIntegerValueField(
+                    event, Q.kCGKeyboardEventAutorepeat))
+            except Exception:
+                is_repeat = False
+            if is_repeat:
+                return None if keysym in self._suppressed_down else event
             sp = self.suppress_predicate
             if sp is None or not sp(keysym):
+                # Fresh native down supersedes any stale pairing entry (a
+                # release lost while the tap was disabled would otherwise eat
+                # this hold's future release).
+                self._suppressed_down.discard(keysym)
                 return event  # not suppressed right now
             # Target-PID gate (amendment D): only suppress when the event targets
             # a known game PID. 0/absent target or empty known set -> fall back to
@@ -379,10 +416,12 @@ class HotkeyManager(QObject):
                 target_pid = 0
             pids = self._darwin_game_pids
             if pids and target_pid and int(target_pid) not in pids:
+                self._suppressed_down.discard(keysym)
                 if _ITRACE:
                     _itrace("hk_intercept",
                             f"pass (non-game target) keysym={keysym} pid={target_pid}")
                 return event  # targets a non-game process -> never eat it
+            self._suppressed_down.add(keysym)
             if _ITRACE:
                 _itrace("hk_intercept", f"suppress keysym={keysym} pid={target_pid}")
             return None  # suppress OS delivery (on_press/on_release still enqueue)

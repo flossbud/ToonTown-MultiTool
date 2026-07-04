@@ -129,9 +129,13 @@ def test_start_key_grabber_builds_real_macos_grabber(monkeypatch, tmp_path):
 
 def test_startup_focus_seeds_route_all_install_for_ttr(monkeypatch, tmp_path):
     """Startup focus seeding (the _start_key_grabber tail) installs route_all
-    grabs for a focused TTR window: BOTH movement keysets are suppressed
-    (w AND Up), non-movement keys (Return) are not, and the real-install gate
-    _ttr_grabs_active is flipped True via the grabber's on_grabs_changed."""
+    grabs for a focused TTR window. The grab set is the KEYMAP UNION (every
+    key bound in any of the game's sets) — the fresh tmp config has TTR's
+    single native arrows set, so Up/space/Delete are suppressed while w is
+    NOT (unbound: the router would never re-synthesize it, so suppressing it
+    would silently eat it). Non-movement keys (Return) are not suppressed,
+    and the real-install gate _ttr_grabs_active is flipped True via the
+    grabber's on_grabs_changed."""
     svc, _ = _make_service(
         monkeypatch, tmp_path, active_wid="ttr-1",
         windows=["ttr-1"], games={"ttr-1": "ttr"}, assignments=[0],
@@ -139,8 +143,10 @@ def test_startup_focus_seeds_route_all_install_for_ttr(monkeypatch, tmp_path):
     try:
         svc._start_key_grabber()  # seeds focus to ttr-1 -> route_all install
         g = svc._key_grabber
-        assert g.should_suppress("w") is True
         assert g.should_suppress("Up") is True
+        assert g.should_suppress("space") is True
+        assert g.should_suppress("Delete") is True
+        assert g.should_suppress("w") is False  # unbound in this config's union
         assert g.should_suppress("Return") is False
         assert svc._ttr_grabs_active is True
     finally:
@@ -156,18 +162,18 @@ def test_focus_game_to_nongame_uninstalls(monkeypatch, tmp_path):
     )
     try:
         svc._start_key_grabber()
-        assert svc._key_grabber.should_suppress("w") is True  # seeded TTR focus
+        assert svc._key_grabber.should_suppress("Up") is True  # seeded TTR focus
         # Focus a REAL non-game window: get_game_for_window -> None -> the
         # "game not in (cc, ttr)" uninstall branch (distinct from the empty-wid
         # focus-loss branch).
         svc._on_active_window_changed_for_grabber("finder-1")
-        assert svc._key_grabber.should_suppress("w") is False
+        assert svc._key_grabber.should_suppress("Up") is False
         assert svc._ttr_grabs_active is False
         # The empty-window focus-loss path also keeps grabs uninstalled.
         svc._on_active_window_changed_for_grabber("ttr-1")  # re-arm
-        assert svc._key_grabber.should_suppress("w") is True
+        assert svc._key_grabber.should_suppress("Up") is True
         svc._on_active_window_changed_for_grabber("")
-        assert svc._key_grabber.should_suppress("w") is False
+        assert svc._key_grabber.should_suppress("Up") is False
         assert svc._ttr_grabs_active is False
     finally:
         svc.shutdown()
@@ -183,7 +189,7 @@ def test_focus_game_to_game_reinstalls_safely(monkeypatch, tmp_path):
     )
     try:
         svc._start_key_grabber()
-        assert svc._key_grabber.should_suppress("w") is True
+        assert svc._key_grabber.should_suppress("Up") is True
         # Spy on the REAL grabber's install_grabs to PROVE the game->game focus
         # actually re-applies the grab set, rather than just observing that
         # suppression is still on from the ttr-1 seed (which would pass even if
@@ -199,7 +205,7 @@ def test_focus_game_to_game_reinstalls_safely(monkeypatch, tmp_path):
         svc._on_active_window_changed_for_grabber("ttr-2")
         assert installs, "focusing ttr-2 must (re)install the grab set"
         assert installs[-1][1].get("route_all") is True  # route_all reinstall
-        assert svc._key_grabber.should_suppress("w") is True
+        assert svc._key_grabber.should_suppress("Up") is True
         assert svc._ttr_grabs_active is True
     finally:
         svc.shutdown()
@@ -220,7 +226,7 @@ def test_readiness_loss_disables_suppression(monkeypatch, tmp_path):
     )
     try:
         svc._start_key_grabber()
-        assert svc._key_grabber.should_suppress("w") is True  # healthy backend
+        assert svc._key_grabber.should_suppress("Up") is True  # healthy backend
 
         # Simulate delivery-backend loss.
         svc._xlib = None
@@ -232,7 +238,7 @@ def test_readiness_loss_disables_suppression(monkeypatch, tmp_path):
         # health)...
         assert svc._ttr_grabs_active is True
         # ...but suppression is degraded OFF by the consume-gate -> not frozen.
-        assert svc._key_grabber.should_suppress("w") is False
+        assert svc._key_grabber.should_suppress("Up") is False
     finally:
         svc.shutdown()
 
@@ -251,11 +257,11 @@ def test_accessibility_revoked_disables_suppression_no_freeze(monkeypatch, tmp_p
     )
     try:
         svc._start_key_grabber()
-        assert svc._key_grabber.should_suppress("w") is True   # post-access OK
+        assert svc._key_grabber.should_suppress("Up") is True   # post-access OK
         # Accessibility revoked mid-session: backend object still present.
         svc._xlib.post_access = False
         assert svc._delivery_backend_ready() is False
-        assert svc._key_grabber.should_suppress("w") is False  # degraded -> no freeze
+        assert svc._key_grabber.should_suppress("Up") is False  # degraded -> no freeze
     finally:
         svc.shutdown()
 
@@ -286,11 +292,11 @@ def test_shutdown_stops_grabber(monkeypatch, tmp_path):
     try:
         svc._start_key_grabber()
         g = svc._key_grabber  # capture before shutdown() nulls it
-        assert g.should_suppress("w") is True
+        assert g.should_suppress("Up") is True
     finally:
         svc.shutdown()
     assert svc._key_grabber is None       # service dropped the reference
-    assert g.should_suppress("w") is False  # stop() uninstalled the grab set
+    assert g.should_suppress("Up") is False  # stop() uninstalled the grab set
     svc.shutdown()  # guard against double-shutdown: must not raise
 
 

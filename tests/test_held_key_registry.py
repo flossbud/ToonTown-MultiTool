@@ -114,3 +114,48 @@ def test_mixed_kinds_coexist_independently():
     assert reg.contains("F5") is True
     remaining = reg.drain()
     assert {e.key for e in remaining} == {"w", "F5"}
+
+
+def test_record_sends_attaches_delivered_pairs_to_entry():
+    """The keydown dispatcher records the (window, keysym) pairs it actually
+    delivered; the release entry carries them so the keyup can replay exactly
+    what the keydown pressed instead of re-translating the physical key."""
+    reg = HeldKeyRegistry()
+    reg.acquire("w", HoldKind.MOVEMENT, 1.0)
+    reg.record_sends("w", [("w1", "Up"), ("w2", "w")])
+    entry = reg.release("w")
+    assert entry.sends == (("w1", "Up"), ("w2", "w"))
+
+
+def test_sends_defaults_to_none_when_never_recorded():
+    reg = HeldKeyRegistry()
+    reg.acquire("w", HoldKind.MOVEMENT, 1.0)
+    assert reg.release("w").sends is None
+
+
+def test_record_sends_on_unheld_key_is_noop():
+    """A dispatch racing a drain: the drain already released everything the
+    keydown sent, so a late record must not resurrect an entry."""
+    reg = HeldKeyRegistry()
+    reg.record_sends("w", [("w1", "Up")])
+    assert len(reg) == 0
+    assert reg.contains("w") is False
+
+
+def test_drain_preserves_recorded_sends():
+    reg = HeldKeyRegistry()
+    reg.acquire("w", HoldKind.MOVEMENT, 1.0)
+    reg.record_sends("w", [("w1", "Up")])
+    reg.acquire("d", HoldKind.MOVEMENT, 2.0)
+    by_key = {e.key: e.sends for e in reg.drain()}
+    assert by_key == {"w": (("w1", "Up"),), "d": None}
+
+
+def test_record_sends_empty_is_recorded_not_none():
+    """An empty record means 'the keydown delivered nothing' (e.g. chat was
+    active) and must replay nothing - distinct from None (never recorded),
+    which falls back to legacy re-translation."""
+    reg = HeldKeyRegistry()
+    reg.acquire("w", HoldKind.MOVEMENT, 1.0)
+    reg.record_sends("w", [])
+    assert reg.release("w").sends == ()

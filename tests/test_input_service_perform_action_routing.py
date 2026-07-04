@@ -9,6 +9,7 @@ See docs/superpowers/specs/2026-05-26-perform-action-logical-action-design.md.
 """
 
 import queue
+import sys
 import time
 from unittest.mock import MagicMock
 
@@ -233,7 +234,15 @@ def test_holding_perform_action_sends_one_keydown_then_keyup(monkeypatch):
     background TTR toon. Autorepeat keydowns are suppressed by keys_held
     (the movement-branch dedup, not action_held; because the keymap now
     binds Delete as the 'action' logical action, the run loop routes it
-    through the movement branch)."""
+    through the movement branch).
+
+    Platform pin: these run-loop tests exercise hold semantics with NO
+    platform grabber armed. On the REAL darwin/win32 platform, start()'s
+    grabber seed arms route_all with the keymap union, which (correctly)
+    adds a focused-window synth for the suppressed action key — behavior
+    pinned deterministically by the grabber-union and focused-synth suites,
+    and racy here (the run thread starts before the grabber seed)."""
+    monkeypatch.setattr(sys, "platform", "freebsd14")
     sets = {
         "cc": [{"forward": "w", "reverse": "s", "left": "a", "right": "d"}],
         "ttr": [
@@ -272,7 +281,10 @@ def test_backslash_action_key_sends_keydown_and_keyup(monkeypatch):
     pressing backslash must route as a held logical action to bg toons — one
     keydown then one keyup. Prior to the fix, apply_ttr_controls_to_set() stored
     'backslash' (X11 name) which pynput never delivered, causing the key to fall
-    into the printable/phantom branch with no hold tracking."""
+    into the printable/phantom branch with no hold tracking.
+
+    Platform pin: see test_holding_perform_action_sends_one_keydown_then_keyup."""
+    monkeypatch.setattr(sys, "platform", "freebsd14")
     sets = {
         "cc": [{"forward": "w", "reverse": "s", "left": "a", "right": "d"}],
         "ttr": [

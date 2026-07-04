@@ -572,3 +572,111 @@ class TestDoubleFeedDedup:
         assert synth_count == 1, (
             f"order ({producer_a} first) must still deduplicate to a single synth"
         )
+
+
+class TestMovementKeyupReleasesRecordedSends:
+    """The stuck-movement-key fix: a movement keyup must release exactly the
+    (window, keysym) pairs its keydown delivered, recorded on the hold at
+    dispatch time. Re-translating the physical key at release time reads the
+    CURRENT assignments; a keyset switched mid-hold made the keyup resolve to
+    nothing, so the synthesized keydown was never released and the toon kept
+    moving (live darwin float repro - the overlay's nonactivating panel
+    switches keysets with no focus change to intervene)."""
+
+    def _strict_svc(self, monkeypatch, assignments):
+        svc, sent = _build_svc(
+            monkeypatch,
+            registry_mapping={"w1": "ttr", "w2": "ttr"},
+            focus_window_id="w1",
+            assignments=assignments,
+        )
+        # Focused-toon synth requires strict grabs active AND the physical key
+        # actually withheld (the non-exclusive-grab double-delivery guard).
+        monkeypatch.setattr(svc, "_strict_ttr_active", lambda: True)
+        monkeypatch.setattr(
+            svc, "_focused_native_key_suppressed", lambda key: True)
+        return svc, sent
+
+    def _press(self, svc, key, enabled, assignments):
+        """The movement-keydown site's shape: acquire, dispatch, record."""
+        from utils.held_key_registry import HoldKind
+        assert svc.holds.acquire(key, HoldKind.MOVEMENT, 0.0)
+        sent = svc._send_logical_action_km("keydown", key, enabled, assignments)
+        svc.holds.record_sends(key, sent)
+
+    def test_keyup_after_keyset_switch_releases_recorded_outbound(self, monkeypatch):
+        """The repro: focused toon on set 1 (wasd source), press w -> focused
+        gets outbound set-0 forward 'w'. Switch the toon to set 2 (arrows)
+        mid-hold; release w. Re-translation resolves no action (set 2 does
+        not bind w) - the recorded pairs must be replayed instead."""
+        enabled = [True, True]
+        svc, sent = self._strict_svc(monkeypatch, assignments=[0, 0])
+        self._press(svc, "w", enabled, [0, 0])
+        assert sent == [("keydown", "w1", "w"), ("keydown", "w2", "w")]
+        sent.clear()
+        # Keyset switch mid-hold: both toons now on the arrows set.
+        svc._dispatch_keyup("w", enabled, [1, 1])
+        assert sent == [("keyup", "w1", "w"), ("keyup", "w2", "w")]
+
+    def test_keyup_without_record_falls_back_to_retranslation(self, monkeypatch):
+        """Holds acquired outside the movement router (BackSpace taps,
+        phantom-suppressed presses) have sends=None and keep the legacy
+        re-translate dispatch."""
+        from utils.held_key_registry import HoldKind
+        enabled = [True, True]
+        svc, sent = self._strict_svc(monkeypatch, assignments=[0, 0])
+        assert svc.holds.acquire("w", HoldKind.MOVEMENT, 0.0)  # no record
+        svc._dispatch_keyup("w", enabled, [0, 0])
+        assert sent == [("keyup", "w1", "w"), ("keyup", "w2", "w")]
+
+    def test_replay_respects_chat_gate(self, monkeypatch):
+        """release_all while a chat capture is active must not send keyups
+        (in-game keydowns were drained at chat-open; late keyups would land
+        in the capture). Mirrors _send_logical_action_km's gate."""
+        enabled = [True, True]
+        svc, sent = self._strict_svc(monkeypatch, assignments=[0, 0])
+        self._press(svc, "w", enabled, [0, 0])
+        sent.clear()
+        svc.global_chat_active = True
+        svc._dispatch_keyup("w", enabled, [0, 0])
+        assert sent == []
+
+    def test_fsm_entry_drain_bypasses_chat_gate_on_replay(self, monkeypatch):
+        """The FSM applies its capture transition BEFORE the entry drain runs,
+        so the drain's keyups - for keydowns dispatched pre-capture - must
+        still be delivered."""
+        enabled = [True, True]
+        svc, sent = self._strict_svc(monkeypatch, assignments=[0, 0])
+        self._press(svc, "w", enabled, [0, 0])
+        sent.clear()
+        svc.global_chat_active = True
+        svc._fsm_draining = True
+        try:
+            svc._drain_all_held(enabled, [0, 0])
+        finally:
+            svc._fsm_draining = False
+        assert sent == [("keyup", "w1", "w"), ("keyup", "w2", "w")]
+
+    def test_drain_after_keyset_switch_releases_recorded_outbound(self, monkeypatch):
+        """Bulk drains (focus loss, chat-open, shutdown) replay the recorded
+        pairs too - the drain path had the same re-translation skew."""
+        enabled = [True, True]
+        svc, sent = self._strict_svc(monkeypatch, assignments=[0, 0])
+        self._press(svc, "w", enabled, [0, 0])
+        sent.clear()
+        svc._drain_all_held(enabled, [1, 1])  # assignments switched mid-hold
+        assert sent == [("keyup", "w1", "w"), ("keyup", "w2", "w")]
+
+    def test_chat_active_keydown_records_empty_and_replays_nothing(self, monkeypatch):
+        """A keydown dispatched while chat is active delivers nothing (the km
+        gate) and records (); after chat closes, the keyup must replay
+        nothing - the legacy path over-released keyups for downs that were
+        never sent."""
+        enabled = [True, True]
+        svc, sent = self._strict_svc(monkeypatch, assignments=[0, 0])
+        svc.global_chat_active = True
+        self._press(svc, "w", enabled, [0, 0])
+        assert sent == []
+        svc.global_chat_active = False  # chat closed mid-hold
+        svc._dispatch_keyup("w", enabled, [0, 0])
+        assert sent == []

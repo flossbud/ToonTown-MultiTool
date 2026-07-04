@@ -11,7 +11,7 @@ See docs/superpowers/specs/2026-05-26-held-key-registry-design.md.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum, auto
 from typing import Optional
 
@@ -27,6 +27,15 @@ class HeldKey:
     key: str
     kind: HoldKind
     pressed_at: float
+    # The (window_id, keysym) pairs the keydown ACTUALLY delivered, recorded
+    # at dispatch time. A keyup/drain that finds a non-None value replays
+    # keyups to exactly these targets instead of re-translating the physical
+    # key through the CURRENT keymap assignments — re-translation is what
+    # stranded a synthesized key when the toon's keyset was switched mid-hold
+    # (the new set no longer binds the physical key, so the keyup resolved to
+    # nothing). None means "not recorded" (paths that never dispatch through
+    # the movement router) and keeps the legacy re-translate dispatch.
+    sends: Optional[tuple[tuple[str, str], ...]] = None
 
 
 class HeldKeyRegistry:
@@ -38,6 +47,15 @@ class HeldKeyRegistry:
             return False
         self._entries[key] = HeldKey(key=key, kind=kind, pressed_at=pressed_at)
         return True
+
+    def record_sends(self, key: str, sends) -> None:
+        """Attach the delivered (window_id, keysym) pairs to an existing
+        entry. No-op when the key is not held (a dispatch raced a drain) —
+        the drain already released everything the keydown sent."""
+        entry = self._entries.get(key)
+        if entry is None:
+            return
+        self._entries[key] = replace(entry, sends=tuple(sends))
 
     def release(self, key: str) -> Optional[HeldKey]:
         return self._entries.pop(key, None)

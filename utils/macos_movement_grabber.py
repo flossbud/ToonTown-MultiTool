@@ -33,7 +33,8 @@ def _opposite_keys(canonical_set: str) -> tuple[str, ...]:
 
 
 def _both_keysets() -> tuple[str, ...]:
-    """All movement keys across both presets — the route_all grab set."""
+    """All movement keys across both presets — the route_all fallback set
+    when the caller supplies no route_keys."""
     return ("w", "a", "s", "d", "Up", "Down", "Left", "Right")
 
 
@@ -73,19 +74,30 @@ class MacOSMovementKeyGrabber:
         route_all: bool = False,
         route_keys=None,
     ) -> None:
-        """route_all=True (TTR strict): grab BOTH keysets so every focused-window
-        movement key is suppressed and the router re-synthesizes the correct
-        native key. route_all=False (CC, default): suppress only the opposite
-        keyset. passthrough_keysyms is accepted for parity but ignored (the
-        non-exclusive darwin_intercept filter needs no passthrough list). Fires
-        on_grabs_changed(canonical_set) synchronously after updating the grab
-        set, or on_grabs_changed(None) if the resulting grab set is empty.
-
-        route_keys is accepted for signature parity with the Win32 grabber
-        and ignored for now: darwin still suppresses only the preset movement
-        keysets; honoring the full keymap union here is a recorded
-        follow-up."""
-        keys = _both_keysets() if route_all else _opposite_keys(canonical_set)
+        """route_all=True (TTR strict): suppress every key in route_keys — the
+        union of all keys bound in any of the foreground game's sets, supplied
+        by InputService from the keymap — so a bound key NEVER reaches the
+        focused window natively and the router re-synthesizes the client's own
+        binding instead (the win32 shape; keysym translation already happens
+        at the intercept via macos_keycodes, so no vk-map analog is needed).
+        The suppress set must stay a subset of the router's movement-class
+        classification (same keymap union) or a suppressed key would be
+        silently eaten. Scope: NON-MODIFIER keys only — modifier-bound keys
+        (Alt_R-style rebinds) arrive as flagsChanged events, which bypass the
+        darwin_intercept entirely; a modifier keysym in route_keys just never
+        matches at the intercept. Covering modifiers is separate flagsChanged
+        suppression+synthesis machinery, deliberately NOT built here.
+        Without route_keys, route_all falls back to the 8 preset movement
+        keys (pre-keymap behavior). route_all=False (CC, default): suppress
+        only the opposite keyset. passthrough_keysyms is accepted for parity
+        but ignored (the non-exclusive darwin_intercept filter needs no
+        passthrough list). Fires on_grabs_changed(canonical_set) synchronously
+        after updating the grab set, or on_grabs_changed(None) if the
+        resulting grab set is empty."""
+        if route_all:
+            keys = tuple(route_keys) if route_keys else _both_keysets()
+        else:
+            keys = _opposite_keys(canonical_set)
         self._grabbed_keysyms = frozenset(keys) if keys else None
         # Report the focused canonical only when a real grab set is installed, so
         # InputService._on_grabs_changed never marks strict active without

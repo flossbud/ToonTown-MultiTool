@@ -1230,7 +1230,12 @@ class InputService(QObject):
         set is an input-translation layer only; outbound is always the
         game's default (set 0) binding so the bg toon's settings.json
         (the user's native customization) is honored.
+
+        Returns the list of (window_id, keysym) pairs actually delivered, so
+        keydown callers can record them on the hold (HeldKey.sends) and the
+        keyup can release exactly what the keydown pressed.
         """
+        sent: list[tuple[str, str]] = []
         # _fsm_draining: the FSM applies its capture transition BEFORE the
         # entry drain runs (the pure module cannot defer its own state), so
         # the drain's keyups — for keydowns that WERE dispatched pre-capture —
@@ -1238,9 +1243,9 @@ class InputService(QObject):
         # flag flips (chat-open) or intentionally skip keyups (release_all
         # while chat active) and are unaffected.
         if self.global_chat_active and not self._fsm_draining:
-            return
+            return sent
         if self.keymap_manager is None:
-            return
+            return sent
 
         from utils.game_registry import GameRegistry
         from utils import logical_actions, cc_isolation
@@ -1297,6 +1302,7 @@ class InputService(QObject):
                 keysym = self._resolve_keysym(canonical)
                 if keysym:
                     self._send_via_backend(action, win, keysym)
+                    sent.append((win, keysym))
                     if self.logging_enabled and action == "keydown" and key != canonical:
                         self.input_log.emit(
                             f"[Input] '{key}' -> '{canonical}' "
@@ -1346,6 +1352,7 @@ class InputService(QObject):
                 keysym = self._resolve_keysym(outbound)
                 if keysym:
                     self._send_via_backend(action, win, keysym)
+                    sent.append((win, keysym))
                     if action == "keydown" and win != active_window:
                         self._note_blocked_movement(win, toon_action, key)
                     if self.logging_enabled and action == "keydown" and key != outbound:
@@ -1353,6 +1360,7 @@ class InputService(QObject):
                             f"[Input] '{key}' -> '{outbound}' "
                             f"(action: {toon_action}, {toon_game} set {set_idx + 1})"
                         )
+        return sent
 
     def _dispatch_keyup_for_entry(self, entry, enabled, assignments) -> None:
         """Single-site keyup routing by HoldKind. Used by _dispatch_keyup
@@ -1362,7 +1370,26 @@ class InputService(QObject):
         if entry.kind == HoldKind.MODIFIER:
             self._send_modifier_to_bg("keyup", entry.key, enabled, assignments)
         elif entry.kind == HoldKind.MOVEMENT:
-            self._send_logical_action_km("keyup", entry.key, enabled, assignments)
+            sends = getattr(entry, "sends", None)
+            if sends is not None:
+                # Release exactly what the keydown delivered. Re-translating
+                # the physical key here reads the CURRENT assignments, and a
+                # keyset switched mid-hold makes the keyup resolve to nothing
+                # — the synthesized keydown is then never released and the
+                # toon keeps moving (live darwin float repro: the overlay's
+                # nonactivating panel switches keysets with no focus change,
+                # so no grab reinstall or cleanup drain intervenes either).
+                # Chat gate mirrors _send_logical_action_km: while a capture
+                # is active (and this is not the FSM's own entry drain),
+                # keydowns were never dispatched, so keyups must not be.
+                if not (self.global_chat_active and not self._fsm_draining):
+                    for win, keysym in sends:
+                        self._send_via_backend("keyup", win, keysym)
+            else:
+                # No record (hold acquired outside the movement router, e.g.
+                # BackSpace's tap path or a phantom-suppressed press): keep
+                # the legacy re-translate dispatch.
+                self._send_logical_action_km("keyup", entry.key, enabled, assignments)
             self._release_uipi_hold(entry.key)
         elif entry.kind == HoldKind.ACTION:
             self._send_action_keyup_to_bg(entry.key, enabled, assignments)
@@ -1632,7 +1659,9 @@ class InputService(QObject):
                     logical = self._resolve_logical_action(key)
                     extra = f" (action: {logical})" if logical else ""
                     self._log_key(key, "pressed", extra)
-                self._send_logical_action_km("keydown", key, enabled, assignments)
+                sent = self._send_logical_action_km(
+                    "keydown", key, enabled, assignments)
+                self.holds.record_sends(key, sent)
         elif dec.kind is KeyClass.TYPING:
             if key not in self.bg_typing_held:
                 self.bg_typing_held.add(key)
@@ -1923,7 +1952,9 @@ class InputService(QObject):
                                     # Stealth chat — suppress movement to bg toons
                                     self._chat_last_activity = now
                                 else:
-                                    self._send_logical_action_km("keydown", key, enabled, assignments)
+                                    sent = self._send_logical_action_km(
+                                        "keydown", key, enabled, assignments)
+                                    self.holds.record_sends(key, sent)
                                     # When global chat is active, movement keys (including space)
                                     # are suppressed natively, so we must broadcast them via typing.
                                     if self.global_chat_active:

@@ -45,6 +45,7 @@ class FakeQuartz:
     # Integer value field selectors
     kCGKeyboardEventKeycode = 9
     kCGEventTargetUnixProcessID = 39
+    kCGKeyboardEventAutorepeat = 8
 
     def __init__(self):
         self.tap_enable_calls = []  # list of (tap, on_bool)
@@ -57,12 +58,14 @@ class FakeQuartz:
         self.tap_enable_calls.append((tap, on))
 
 
-def _event(keycode=None, target_pid=None):
+def _event(keycode=None, target_pid=None, autorepeat=None):
     ev = {}
     if keycode is not None:
         ev[FakeQuartz.kCGKeyboardEventKeycode] = keycode
     if target_pid is not None:
         ev[FakeQuartz.kCGEventTargetUnixProcessID] = target_pid
+    if autorepeat is not None:
+        ev[FakeQuartz.kCGKeyboardEventAutorepeat] = autorepeat
     return ev
 
 
@@ -75,6 +78,7 @@ def _make_hk(quartz, *, suppress_predicate=None, game_pids=frozenset(), listener
     hk._darwin_game_pids = game_pids
     hk.listener = listener
     hk._quartz_for_intercept = lambda: quartz
+    hk._suppressed_down = set()
     return hk
 
 
@@ -141,11 +145,16 @@ class TestDarwinIntercept:
         assert hk._darwin_intercept(q.kCGEventKeyDown, ev) is ev  # pass through
         assert hk.key_event_queue.empty()
 
-    def test_keyup_of_suppressed_key_targeting_game_pid_is_suppressed(self):
+    def test_keyup_without_suppressed_keydown_passes_through(self):
+        # Pairing law: a release whose press the OS delivered must be
+        # delivered too, no matter what the CURRENT grab state says. Deciding
+        # the keyup from current state ate the release of a key held across a
+        # state flip and left the focused client holding it forever (the
+        # stuck-movement-key class).
         q = FakeQuartz()
         hk = _make_hk(q, suppress_predicate=lambda ks: True, game_pids=frozenset({101}))
         ev = _event(keycode=KC_W, target_pid=101)
-        assert hk._darwin_intercept(q.kCGEventKeyUp, ev) is None  # suppress
+        assert hk._darwin_intercept(q.kCGEventKeyUp, ev) is ev  # pass through
         assert hk.key_event_queue.empty()  # still never enqueues
 
     def test_raising_suppress_predicate_fails_open(self):
@@ -159,6 +168,114 @@ class TestDarwinIntercept:
         hk = _make_hk(q, suppress_predicate=_boom, game_pids=frozenset({101}))
         ev = _event(keycode=KC_W, target_pid=101)
         assert hk._darwin_intercept(q.kCGEventKeyDown, ev) is ev  # passed through
+        assert hk.key_event_queue.empty()
+
+
+# ── Keyup pairing: the initial keydown's decision owns the hold ──────────────
+# The win32 _suppressed_down analog, hardened with repeat-inherit: autorepeat
+# keydowns and the keyup follow the INITIAL (non-repeat) keydown's suppress
+# decision, so the OS/client can never see a half-delivered hold (down without
+# up, or up without down) when grab state flips mid-hold.
+
+class TestDarwinKeyupPairing:
+    def _down_up(self, hk, q, *, target_pid=101):
+        down = _event(keycode=KC_W, target_pid=target_pid)
+        up = _event(keycode=KC_W, target_pid=target_pid)
+        return (hk._darwin_intercept(q.kCGEventKeyDown, down),
+                hk._darwin_intercept(q.kCGEventKeyUp, up))
+
+    def test_suppressed_down_pairs_suppressed_up(self):
+        q = FakeQuartz()
+        hk = _make_hk(q, suppress_predicate=lambda ks: True, game_pids=frozenset({101}))
+        d, u = self._down_up(hk, q)
+        assert d is None and u is None
+        assert hk._suppressed_down == set()  # entry consumed by the release
+        assert hk.key_event_queue.empty()
+
+    def test_native_down_keeps_native_up_even_after_state_flip(self):
+        # The stuck-movement-key scenario: down delivered natively (grabs off,
+        # e.g. during chat), state flips to suppressing mid-hold (chat closed,
+        # grabs reinstalled), release must STILL pass or the client strands
+        # the key down.
+        q = FakeQuartz()
+        state = {"suppress": False}
+        hk = _make_hk(q, suppress_predicate=lambda ks: state["suppress"],
+                      game_pids=frozenset({101}))
+        down = _event(keycode=KC_W, target_pid=101)
+        assert hk._darwin_intercept(q.kCGEventKeyDown, down) is down
+        state["suppress"] = True  # mid-hold flip
+        up = _event(keycode=KC_W, target_pid=101)
+        assert hk._darwin_intercept(q.kCGEventKeyUp, up) is up  # delivered
+        assert hk.key_event_queue.empty()
+
+    def test_suppressed_down_pairs_suppressed_up_after_state_flip(self):
+        # Mirror image: down withheld, grabs uninstalled mid-hold, release
+        # must STILL be withheld (the client never saw the down).
+        q = FakeQuartz()
+        state = {"suppress": True}
+        hk = _make_hk(q, suppress_predicate=lambda ks: state["suppress"],
+                      game_pids=frozenset({101}))
+        down = _event(keycode=KC_W, target_pid=101)
+        assert hk._darwin_intercept(q.kCGEventKeyDown, down) is None
+        state["suppress"] = False  # mid-hold flip
+        up = _event(keycode=KC_W, target_pid=101)
+        assert hk._darwin_intercept(q.kCGEventKeyUp, up) is None  # withheld
+        assert hk.key_event_queue.empty()
+
+    def test_autorepeat_inherits_native_hold_and_never_pollutes_pairing(self):
+        # The hole the win32 shape still has: a native hold's autorepeat
+        # arriving after a mid-hold flip must NOT re-decide suppression (that
+        # would enter the pairing set and eat the release of a key the client
+        # received natively).
+        q = FakeQuartz()
+        state = {"suppress": False}
+        hk = _make_hk(q, suppress_predicate=lambda ks: state["suppress"],
+                      game_pids=frozenset({101}))
+        down = _event(keycode=KC_W, target_pid=101)
+        assert hk._darwin_intercept(q.kCGEventKeyDown, down) is down  # native
+        state["suppress"] = True  # mid-hold flip
+        rep = _event(keycode=KC_W, target_pid=101, autorepeat=1)
+        assert hk._darwin_intercept(q.kCGEventKeyDown, rep) is rep  # inherited
+        assert hk._suppressed_down == set()
+        up = _event(keycode=KC_W, target_pid=101)
+        assert hk._darwin_intercept(q.kCGEventKeyUp, up) is up  # delivered
+        assert hk.key_event_queue.empty()
+
+    def test_autorepeat_inherits_suppressed_hold(self):
+        q = FakeQuartz()
+        state = {"suppress": True}
+        hk = _make_hk(q, suppress_predicate=lambda ks: state["suppress"],
+                      game_pids=frozenset({101}))
+        down = _event(keycode=KC_W, target_pid=101)
+        assert hk._darwin_intercept(q.kCGEventKeyDown, down) is None
+        state["suppress"] = False  # mid-hold flip
+        rep = _event(keycode=KC_W, target_pid=101, autorepeat=1)
+        assert hk._darwin_intercept(q.kCGEventKeyDown, rep) is None  # inherited
+        up = _event(keycode=KC_W, target_pid=101)
+        assert hk._darwin_intercept(q.kCGEventKeyUp, up) is None  # paired
+        assert hk.key_event_queue.empty()
+
+    def test_fresh_native_down_clears_stale_pairing_entry(self):
+        # A release lost while the tap was down leaves a stale entry; the next
+        # physical press decides fresh and must supersede it, or this hold's
+        # real release would be eaten.
+        q = FakeQuartz()
+        hk = _make_hk(q, suppress_predicate=lambda ks: False,
+                      game_pids=frozenset({101}))
+        hk._suppressed_down.add("w")  # stale
+        down = _event(keycode=KC_W, target_pid=101)
+        assert hk._darwin_intercept(q.kCGEventKeyDown, down) is down
+        assert "w" not in hk._suppressed_down
+        assert hk.key_event_queue.empty()
+
+    def test_pid_gate_veto_leaves_no_pairing_entry(self):
+        q = FakeQuartz()
+        hk = _make_hk(q, suppress_predicate=lambda ks: True, game_pids=frozenset({101}))
+        down = _event(keycode=KC_W, target_pid=999)  # non-game target
+        assert hk._darwin_intercept(q.kCGEventKeyDown, down) is down
+        assert hk._suppressed_down == set()
+        up = _event(keycode=KC_W, target_pid=999)
+        assert hk._darwin_intercept(q.kCGEventKeyUp, up) is up
         assert hk.key_event_queue.empty()
 
 

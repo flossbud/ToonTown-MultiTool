@@ -188,30 +188,33 @@ class TestRouteAll:
         assert g.should_suppress("w") is False
 
 
-class TestRouteKeysParity:
-    def test_route_keys_kwarg_accepted_and_ignored(self, monkeypatch):
-        # InputService passes route_keys= unconditionally when installing TTR
-        # strict grabs, so install_grabs must accept the kwarg (signature
-        # parity with the Win32/X11 grabbers) and behave exactly as if it were
-        # omitted -- honoring the keymap union on darwin is a recorded
-        # follow-up.
+class TestRouteKeysUnion:
+    def test_route_keys_replaces_preset_table_on_route_all(self, monkeypatch):
+        # The win32 shape: route_all suppresses exactly the supplied keymap
+        # union (every key bound in any of the foreground game's sets), so a
+        # rebound non-modifier key (e.g. jump='t') is withheld from the
+        # focused window and the router synthesizes the client's own binding.
         monkeypatch.setattr(sys, "platform", "darwin")
-        with_kwarg = mmg.MacOSMovementKeyGrabber()
-        with_kwarg.prepare(_always_consume)
-        with_kwarg.install_grabs(
+        g = mmg.MacOSMovementKeyGrabber()
+        g.prepare(_always_consume)
+        g.install_grabs(
             "wasd", passthrough_keysyms=["space"], route_all=True,
-            route_keys={"w", "Alt_R"})
-        without_kwarg = mmg.MacOSMovementKeyGrabber()
-        without_kwarg.prepare(_always_consume)
-        without_kwarg.install_grabs(
-            "wasd", passthrough_keysyms=["space"], route_all=True)
-        for k in ("w", "a", "s", "d", "Up", "Down", "Left", "Right",
-                  "Alt_R", "space"):
-            assert with_kwarg.should_suppress(k) == \
-                without_kwarg.should_suppress(k), k
-        # Ignored means keys outside the preset keysets stay unsuppressed even
-        # when named in route_keys.
-        assert with_kwarg.should_suppress("Alt_R") is False
+            route_keys={"w", "t", "Alt_R"})
+        for k in ("w", "t", "Alt_R"):
+            assert g.should_suppress(k) is True, k
+        # Preset keys OUTSIDE the union are no longer suppressed: the union
+        # is authoritative, not additive.
+        for k in ("a", "s", "d", "Up", "Down", "Left", "Right", "space"):
+            assert g.should_suppress(k) is False, k
+
+    def test_route_all_without_route_keys_falls_back_to_presets(self, monkeypatch):
+        monkeypatch.setattr(sys, "platform", "darwin")
+        for empty in (None, set(), []):
+            g = mmg.MacOSMovementKeyGrabber()
+            g.prepare(_always_consume)
+            g.install_grabs("wasd", route_all=True, route_keys=empty)
+            for k in ("w", "a", "s", "d", "Up", "Down", "Left", "Right"):
+                assert g.should_suppress(k) is True, (empty, k)
 
     def test_route_keys_ignored_on_legacy_cc_path(self, monkeypatch):
         monkeypatch.setattr(sys, "platform", "darwin")
