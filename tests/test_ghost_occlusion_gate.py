@@ -348,3 +348,22 @@ def test_set_visible_region_empty_hides_never_empty_masks(qapp):
     assert ov.isVisible() is False
     assert ov._occ_region is None
     ov.hide_now()
+
+
+@pytest.fixture(autouse=True)
+def _sync_ghost_frames():
+    """Ghost rendering is frame-paced (the live smoothness fix): pointer
+    events SAMPLE the newest point per slot and the frame driver renders at
+    frame cadence. This suite asserts synchronously after each emit, so
+    flush the sampled points right after every pointer event; the paced
+    path itself is pinned by tests/test_ghost_frame_pacing.py."""
+    from tabs.multitoon._ghost_cursors import GhostCursorController
+    orig = GhostCursorController._on_pointer_event
+
+    def synced(self, payload):
+        orig(self, payload)
+        self._frame_tick()
+
+    GhostCursorController._on_pointer_event = synced
+    yield
+    GhostCursorController._on_pointer_event = orig

@@ -116,3 +116,22 @@ def test_focus_suppression_wired_to_window_manager(multitoon_tab):
     tab.click_sync_service.ghost_pointer_event.emit(
         ("motion", [(1, 220, 320)]))
     assert ov.isVisible()
+
+
+@pytest.fixture(autouse=True)
+def _sync_ghost_frames():
+    """Ghost rendering is frame-paced (the live smoothness fix): pointer
+    events SAMPLE the newest point per slot and the frame driver renders at
+    frame cadence. This suite asserts synchronously after each emit, so
+    flush the sampled points right after every pointer event; the paced
+    path itself is pinned by tests/test_ghost_frame_pacing.py."""
+    from tabs.multitoon._ghost_cursors import GhostCursorController
+    orig = GhostCursorController._on_pointer_event
+
+    def synced(self, payload):
+        orig(self, payload)
+        self._frame_tick()
+
+    GhostCursorController._on_pointer_event = synced
+    yield
+    GhostCursorController._on_pointer_event = orig

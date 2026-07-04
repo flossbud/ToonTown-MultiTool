@@ -250,3 +250,22 @@ def test_pointer_event_without_rect_leaves_unclipped(confined_rig):
     ctl._slot_rect_resolver = lambda slot: None
     svc.ghost_pointer_event.emit(("motion", [(1, 101, 103)]))
     assert ctl._overlays[1].mask().isEmpty()
+
+
+@pytest.fixture(autouse=True)
+def _sync_ghost_frames():
+    """Ghost rendering is frame-paced (the live smoothness fix): pointer
+    events SAMPLE the newest point per slot and the frame driver renders at
+    frame cadence. This suite asserts synchronously after each emit, so
+    flush the sampled points right after every pointer event; the paced
+    path itself is pinned by tests/test_ghost_frame_pacing.py."""
+    from tabs.multitoon._ghost_cursors import GhostCursorController
+    orig = GhostCursorController._on_pointer_event
+
+    def synced(self, payload):
+        orig(self, payload)
+        self._frame_tick()
+
+    GhostCursorController._on_pointer_event = synced
+    yield
+    GhostCursorController._on_pointer_event = orig

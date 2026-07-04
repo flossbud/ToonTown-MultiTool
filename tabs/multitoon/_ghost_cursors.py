@@ -194,6 +194,43 @@ def _darwin_zorder_snapshot():
     return out
 
 
+def _scan_region_inputs(target_wid, snapshot, own_pid, to_logical):
+    """One pass over the z-order snapshot -> (game_rect, occluder_rects) in
+    logical coords, or None when the game is not on screen. Split out of
+    _visible_glove_region so the per-frame path can reuse a scan per
+    SNAPSHOT instead of re-walking every window per glove move (at 240Hz
+    frame cadence the full-snapshot walk was measurable Python work)."""
+    def _logical_rect(raw):
+        left, top = to_logical(raw[0], raw[1])
+        right, bottom = to_logical(raw[2], raw[3])
+        return QRect(int(left), int(top),
+                     int(right - left), int(bottom - top))
+
+    occluders = []
+    for hwnd, raw, pid in snapshot:
+        if hwnd == target_wid:
+            return _logical_rect(raw), occluders
+        if pid == own_pid:
+            continue
+        occluders.append(_logical_rect(raw))
+    return None
+
+
+def _region_from_inputs(glove_rect, inputs):
+    """(game_rect, occluders) + glove rect -> glove-LOCAL visible QRegion.
+    EMPTY region when nothing of the glove should show."""
+    if inputs is None:
+        return QRegion()  # game not on screen: nothing to hover over
+    game_rect, occluders = inputs
+    region = QRegion(glove_rect.intersected(game_rect))
+    for occ in occluders:
+        # Only intersecting occluders change the region; skipping the rest
+        # keeps the common fully-visible case allocation-light.
+        if occ.intersects(glove_rect):
+            region -= QRegion(occ)
+    return region.translated(-glove_rect.x(), -glove_rect.y())
+
+
 def _visible_glove_region(glove_rect, target_wid, snapshot, own_pid,
                           to_logical):
     """The glove pixels that should be visible, as a glove-LOCAL QRegion.
@@ -211,28 +248,9 @@ def _visible_glove_region(glove_rect, target_wid, snapshot, own_pid,
     """
     if snapshot is None:
         return None
-
-    def _logical_rect(raw):
-        left, top = to_logical(raw[0], raw[1])
-        right, bottom = to_logical(raw[2], raw[3])
-        return QRect(int(left), int(top),
-                     int(right - left), int(bottom - top))
-
-    occluders = []
-    game_rect = None
-    for hwnd, raw, pid in snapshot:
-        if hwnd == target_wid:
-            game_rect = _logical_rect(raw)
-            break
-        if pid == own_pid:
-            continue
-        occluders.append(_logical_rect(raw))
-    if game_rect is None:
-        return QRegion()  # game not on screen: nothing to hover over
-    region = QRegion(glove_rect.intersected(game_rect))
-    for occ in occluders:
-        region -= QRegion(occ)
-    return region.translated(-glove_rect.x(), -glove_rect.y())
+    return _region_from_inputs(
+        glove_rect,
+        _scan_region_inputs(target_wid, snapshot, own_pid, to_logical))
 
 
 class GhostCursorOverlay(QWidget):
@@ -524,6 +542,26 @@ class GhostCursorController(QObject):
         self._last_logical: dict[int, tuple[int, int]] = {}
         self._occlusion_hidden: set[int] = set()
         self._occlusion_timer: QTimer | None = None
+        # Frame-paced rendering (live finding 2026-07-04): the service emits
+        # a ghost point per CAPTURED MOTION EVENT (up to the mouse's polling
+        # rate, 1000Hz on gaming mice), and running the full render per emit
+        # kept the GUI thread saturated even after the snapshot probe was
+        # cached - gloves stuttered instead of gliding. A real cursor is
+        # smooth because the display samples only the LATEST position once
+        # per frame; same here: _on_pointer_event just stores the newest
+        # point per slot, and the frame driver renders dirty slots at frame
+        # cadence. The FIRST event after idle renders synchronously (a press
+        # shows its glove instantly); backlog is impossible by construction
+        # at any polling rate. 4ms ~ 250fps ceiling (covers the 240Hz
+        # display); the driver stops itself when no samples arrive.
+        self._pending_points: dict[int, tuple[int, int]] = {}
+        self._frame_timer: QTimer | None = None
+        # Per-target (game_rect, occluders-above) derived from the CURRENT
+        # z-order snapshot, keyed by snapshot identity: the TTL-cached darwin
+        # snapshot is the same object across a cache window, so the scan of
+        # every on-screen window runs once per snapshot instead of once per
+        # rendered frame per glove. {target: (snap_id, inputs)}
+        self._region_inputs_cache: dict[int, tuple[int, object]] = {}
         if self._disabled_reason is None:
             # Running-code stamp: live validation starts by checking this.
             mode = ("confined-to-game (transient stacking)" if self._confined
@@ -593,49 +631,82 @@ class GhostCursorController(QObject):
     # -- signal handlers (GUI thread) -----------------------------------
 
     def _on_pointer_event(self, payload) -> None:
+        """Sampler half of the frame-paced pipeline: record the newest point
+        per slot (display-only - the event kind never mattered here) and let
+        the frame driver render it. Near-free, so a 1000Hz-polling mouse
+        costs the GUI thread nothing but dict stores."""
         if self._disabled_reason is not None or not self._enabled:
             return
         _kind, points = payload
         for slot, x, y in points:
-            if self._suppressed_by_focus(slot):
-                continue
-            lx, ly = _emitted_to_logical(x, y)
-            if self._occlusion_gated:
-                # Compute the mask BEFORE showing so a fully covered glove
-                # never flashes for a frame over the occluder.
-                self._last_logical[slot] = (lx, ly)
-                region = self._compute_glove_region(slot, lx, ly)
-                if region is not None and region.isEmpty():
-                    self._occlusion_hidden.add(slot)
-                    prev = self._overlays.get(slot)
-                    if prev is not None:
-                        prev.hide_now()
-                    self._start_occlusion_sweep()
-                    continue
-                self._occlusion_hidden.discard(slot)
-            else:
-                region = None
-            ov = self._overlay_for(slot)
-            if ov is None:
-                if self._disabled_reason is not None:
-                    return  # asset failure just disabled the feature
-                continue    # out-of-range slot: drop it, keep the batch
-            if self._confined:
-                # Target BEFORE show: a fresh map must confine to the
-                # slot's current game window, not a stale one.
-                ov.set_game_window(self._slot_wid_int(slot))
-            ov.show_at(lx, ly)
-            if self._occlusion_gated:
-                ov.set_visible_region(region)
+            self._pending_points[slot] = (int(x), int(y))
+        if self._pending_points:
+            self._drive_frames()
+
+    def _drive_frames(self) -> None:
+        """Render pending samples NOW if the driver was idle (instant first
+        paint), then keep the frame timer running for whatever streams in."""
+        t = self._frame_timer
+        if t is None:
+            t = QTimer(self)
+            t.setTimerType(Qt.PreciseTimer)
+            t.setInterval(4)   # ~250fps ceiling; stops itself when idle
+            t.timeout.connect(self._frame_tick)
+            self._frame_timer = t
+        if not t.isActive():
+            self._frame_tick()
+            t.start()   # next tick with nothing pending stops it again
+
+    def _frame_tick(self) -> None:
+        pending = self._pending_points
+        if not pending:
+            if self._frame_timer is not None:
+                self._frame_timer.stop()
+            return
+        self._pending_points = {}
+        for slot, (x, y) in pending.items():
+            self._render_point(slot, x, y)
+
+    def _render_point(self, slot: int, x: int, y: int) -> None:
+        if self._disabled_reason is not None or not self._enabled:
+            return
+        if self._suppressed_by_focus(slot):
+            return
+        lx, ly = _emitted_to_logical(x, y)
+        if self._occlusion_gated:
+            # Compute the mask BEFORE showing so a fully covered glove
+            # never flashes for a frame over the occluder.
+            self._last_logical[slot] = (lx, ly)
+            region = self._compute_glove_region(slot, lx, ly)
+            if region is not None and region.isEmpty():
+                self._occlusion_hidden.add(slot)
+                prev = self._overlays.get(slot)
+                if prev is not None:
+                    prev.hide_now()
                 self._start_occlusion_sweep()
-            if self._confined:
-                ov.clip_to(self._slot_rect_logical(slot))
-                # Mirror the sprite onto the float cards (top-left = the same
-                # hotspot-adjusted point show_at moved the window to).
-                self._echo_notify("ghost_echo_shown", slot,
-                                  lx - HOTSPOT[0], ly - HOTSPOT[1],
-                                  ov._pixmap)
-            self._restart_idle_timer(slot)
+                return
+            self._occlusion_hidden.discard(slot)
+        else:
+            region = None
+        ov = self._overlay_for(slot)
+        if ov is None:
+            return      # asset failure disabled the feature / bad slot
+        if self._confined:
+            # Target BEFORE show: a fresh map must confine to the
+            # slot's current game window, not a stale one.
+            ov.set_game_window(self._slot_wid_int(slot))
+        ov.show_at(lx, ly)
+        if self._occlusion_gated:
+            ov.set_visible_region(region)
+            self._start_occlusion_sweep()
+        if self._confined:
+            ov.clip_to(self._slot_rect_logical(slot))
+            # Mirror the sprite onto the float cards (top-left = the same
+            # hotspot-adjusted point show_at moved the window to).
+            self._echo_notify("ghost_echo_shown", slot,
+                              lx - HOTSPOT[0], ly - HOTSPOT[1],
+                              ov._pixmap)
+        self._restart_idle_timer(slot)
 
     def _on_clear(self) -> None:
         self._hide_all()
@@ -715,15 +786,30 @@ class GhostCursorController(QObject):
     def _compute_glove_region(self, slot: int, lx: int, ly: int):
         """Visible region for the glove at logical point (lx, ly): its game
         window's surface minus foreign windows above it, in glove-local
-        coords. None = fail open (no probe data / no resolver)."""
+        coords. None = fail open (no probe data / no resolver).
+
+        The snapshot scan is cached per (target, snapshot IDENTITY): the
+        TTL-cached darwin snapshot is the same object across a cache window,
+        so at frame cadence the full window-list walk runs once per snapshot
+        refresh, not once per rendered frame per glove. Identity is held by
+        strong reference (never id()) so a recycled allocation can never
+        false-hit."""
         target = self._slot_wid_int(slot)
         if target is None:
             return None
         snapshot = self._zorder_probe()
+        if snapshot is None:
+            return None
         glove = QRect(int(lx) - HOTSPOT[0], int(ly) - HOTSPOT[1],
                       CURSOR_SIZE, CURSOR_SIZE)
-        return _visible_glove_region(glove, target, snapshot, self._own_pid,
-                                     self._to_logical)
+        cached = self._region_inputs_cache.get(target)
+        if cached is not None and cached[0] is snapshot:
+            inputs = cached[1]
+        else:
+            inputs = _scan_region_inputs(target, snapshot, self._own_pid,
+                                         self._to_logical)
+            self._region_inputs_cache[target] = (snapshot, inputs)
+        return _region_from_inputs(glove, inputs)
 
     def _start_occlusion_sweep(self) -> None:
         """Run the periodic re-mask while any glove is live: windows move
@@ -787,6 +873,9 @@ class GhostCursorController(QObject):
             ov.hide_now()
         if self._occlusion_timer is not None:
             self._occlusion_timer.stop()
+        if self._frame_timer is not None:
+            self._frame_timer.stop()
+        self._pending_points.clear()
         self._occlusion_hidden.clear()
         self._last_logical.clear()
         self._echo_notify("ghost_echo_cleared")

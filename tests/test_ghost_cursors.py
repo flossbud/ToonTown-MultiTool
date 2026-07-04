@@ -354,3 +354,22 @@ def test_native_to_logical_negative_screen_origin():
     # native (-1620, 300) -> (-1920 + 300/1.5, 200) = (-1720, 200)
     screens = [FakeScreen(-1920, 0, 1280, 720, 1.5)]
     assert _native_to_logical(-1620, 300, screens) == (-1720, 200)
+
+
+@pytest.fixture(autouse=True)
+def _sync_ghost_frames():
+    """Ghost rendering is frame-paced (the live smoothness fix): pointer
+    events SAMPLE the newest point per slot and the frame driver renders at
+    frame cadence. This suite asserts synchronously after each emit, so
+    flush the sampled points right after every pointer event; the paced
+    path itself is pinned by tests/test_ghost_frame_pacing.py."""
+    from tabs.multitoon._ghost_cursors import GhostCursorController
+    orig = GhostCursorController._on_pointer_event
+
+    def synced(self, payload):
+        orig(self, payload)
+        self._frame_tick()
+
+    GhostCursorController._on_pointer_event = synced
+    yield
+    GhostCursorController._on_pointer_event = orig
