@@ -583,6 +583,18 @@ class RadialMenuWidget(QWidget):
         self._idle_timer.setSingleShot(True)
         self._idle_timer.setInterval(self._IDLE_MS)
         self._idle_timer.timeout.connect(self._begin_close)
+        # cocoa delivers mouse-tracking only to the ACTIVE app's windows, and
+        # this ring rides a nonactivating panel: while a game is frontmost
+        # mouseMoveEvent never fires, so hover (labels, lift, glow) was dead
+        # until a click - which on an account portrait LAUNCHES the account.
+        # A darwin global-cursor poll drives the same hover transitions
+        # instead (the emblem dwell fix's proven pattern); runs only while
+        # the ring is shown (showEvent/hideEvent).
+        self._hover_poll = None
+        if sys.platform == "darwin":
+            self._hover_poll = QTimer(self)
+            self._hover_poll.setInterval(50)
+            self._hover_poll.timeout.connect(self._poll_hover)
         from utils.rendition_poses import RenditionPoseFetcher
         # Live-refresh: fill in a pending portrait when its pose lands. Qt
         # auto-disconnects this bound-method slot when the widget is destroyed.
@@ -970,6 +982,36 @@ class RadialMenuWidget(QWidget):
         self._kick()
         self.update()
         super().mouseMoveEvent(e)
+
+    def _poll_hover(self) -> None:
+        """darwin only: mirror mouseMoveEvent's hover transition from the
+        REAL cursor position (see __init__ - cocoa tracking is active-app
+        only). Presence anywhere over a spoke also re-arms the idle
+        countdown: a cursor resting on a portrait to read its label must
+        never idle-close the ring (on the event-driven platforms the hand's
+        micro-jitter produces moves that re-arm it)."""
+        from PySide6.QtGui import QCursor
+        pos = self.mapFromGlobal(QCursor.pos())
+        hit = (self._hit(pos.x(), pos.y())
+               if self.rect().contains(pos) else None)
+        if hit is not None:
+            self._arm_idle()
+        if hit != self._hover:
+            self._hover = hit
+            self._kick()
+            self.update()
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        if self._hover_poll is not None:
+            from utils.overlay.backend import overlay_trace
+            overlay_trace("radial hover-poll: started (darwin)")
+            self._hover_poll.start()
+
+    def hideEvent(self, e):
+        super().hideEvent(e)
+        if self._hover_poll is not None:
+            self._hover_poll.stop()
 
     def paintEvent(self, e):
         p = QPainter(self)

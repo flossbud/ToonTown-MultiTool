@@ -697,3 +697,59 @@ def test_set_emblem_diameter_noop_for_same_value():
     before = (w._emblem_dia, w._ring, w._sat_r)
     w.set_emblem_diameter(160)      # unchanged
     assert (w._emblem_dia, w._ring, w._sat_r) == before
+
+
+# --- darwin hover-poll (cocoa tracking is active-app-only) --------------------
+# While a game is frontmost, cocoa never delivers mouseMoveEvent to the
+# nonactivating radial panel, so hover (labels, lift, glow) was dead until a
+# click - which on an account portrait LAUNCHES the account (user report
+# 2026-07-04). A 50ms global-cursor poll mirrors the mouseMoveEvent hover
+# transition on darwin; X11/win32 keep the pure event path.
+
+def _darwin_ring(monkeypatch):
+    import sys
+    monkeypatch.setattr(sys, "platform", "darwin")
+    from utils.overlay.radial_menu import RadialMenuWidget
+    w = RadialMenuWidget(emblem_diameter=160); w.resize(400, 400)
+    w.start_reveal(); w._advance(10_000)
+    return w
+
+
+def test_darwin_hover_poll_created_and_show_hide_gated(monkeypatch):
+    _app()
+    w = _darwin_ring(monkeypatch)
+    assert w._hover_poll is not None
+    w.show()
+    assert w._hover_poll.isActive() is True     # polling only while shown
+    w.hide()
+    assert w._hover_poll.isActive() is False
+
+
+def test_non_darwin_has_no_hover_poll(monkeypatch):
+    _app()
+    import sys
+    monkeypatch.setattr(sys, "platform", "linux")
+    from utils.overlay.radial_menu import RadialMenuWidget
+    w = RadialMenuWidget(emblem_diameter=160)
+    assert w._hover_poll is None                # event path untouched off-darwin
+
+
+def test_darwin_poll_mirrors_hover_transition_and_rearms_idle(monkeypatch):
+    _app()
+    from PySide6.QtCore import QPoint
+    w = _darwin_ring(monkeypatch)
+    cx, cy, _r = w.circle_geometry("main", "settings")
+
+    # Cursor over the settings spoke: hover set WITHOUT any mouseMoveEvent,
+    # and presence over a spoke re-arms the idle countdown (a cursor resting
+    # on a portrait to read its label must never idle-close the ring).
+    monkeypatch.setattr(w, "mapFromGlobal", lambda _p: QPoint(int(cx), int(cy)))
+    w._idle_timer.stop()
+    w._poll_hover()
+    assert w._hover == ("main", "settings")
+    assert w._idle_timer.isActive() is True
+
+    # Cursor far outside the widget: hover clears on the next tick.
+    monkeypatch.setattr(w, "mapFromGlobal", lambda _p: QPoint(-500, -500))
+    w._poll_hover()
+    assert w._hover is None

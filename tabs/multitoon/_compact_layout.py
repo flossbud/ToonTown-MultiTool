@@ -21,6 +21,7 @@ Both are expressed by the per-card lit/dimmed treatment driven from
 from __future__ import annotations
 
 import os
+import sys
 from collections import OrderedDict
 from dataclasses import dataclass
 
@@ -489,6 +490,28 @@ class _Emblem(QWidget):
         self._dwell_timer.setInterval(300)
         self._dwell_timer.timeout.connect(self._on_dwell_timeout)
 
+        # cocoa delivers mouse-tracking (enter/leave) only to the ACTIVE
+        # app's windows, and the float cluster is a nonactivating panel by
+        # design - while a game is frontmost the emblem never sees
+        # enterEvent, so dwell-arming was focus-gated (trace-proven: wheel
+        # events arrived with armed=False and zero enters). On darwin a
+        # global-cursor poll drives the same enter/leave transitions;
+        # QCursor.pos() is activation-independent (the peek/drag/arbiter
+        # polls rely on the same property). X11/win32 keep the pure event
+        # path. Runs only while interactive (set_interactive).
+        self._hover_on = False
+        self._hover_poll = None
+        if sys.platform == "darwin":
+            self._hover_poll = QTimer(self)
+            self._hover_poll.setInterval(100)
+            self._hover_poll.timeout.connect(self._poll_hover)
+
+        # High-resolution scroll accumulator: one scale notch per detent's
+        # worth (+-120) of angleDelta, so trackpads/Magic Mouse feel like
+        # notches instead of a slippery stream (classic wheels deliver one
+        # +-120 event per detent and behave exactly as before).
+        self._wheel_accum = 0
+
         self._broadcasting = False
         self._bg_app = QColor("#1a1a1a")
         self._ring = QColor("#0077ff")
@@ -619,6 +642,12 @@ class _Emblem(QWidget):
         Default is passive (WA_TransparentForMouseEvents set)."""
         self.setAttribute(Qt.WA_TransparentForMouseEvents, not on)
         self._armed = False
+        self._hover_on = False
+        if self._hover_poll is not None:
+            if on:
+                self._hover_poll.start()
+            else:
+                self._hover_poll.stop()
 
     def disc_diameter(self) -> float:
         """Current on-screen emblem disc diameter (excludes the ring margin).
@@ -626,12 +655,39 @@ class _Emblem(QWidget):
         return float(self._d)
 
     def _on_dwell_timeout(self) -> None:
+        from utils.overlay.backend import overlay_trace
+        overlay_trace("emblem dwell: ARMED")
         self._armed = True
+        self._wheel_accum = 0   # every arming gesture starts a fresh notch count
         self.update()
 
     def enterEvent(self, event):
+        from utils.overlay.backend import overlay_trace
+        overlay_trace("emblem enter: dwell timer started")
+        self._hover_on = True
         self._dwell_timer.start()
         super().enterEvent(event)
+
+    def _poll_hover(self) -> None:
+        """darwin only: activation-independent hover tracking (see __init__).
+        Mirrors the enterEvent/leaveEvent transitions from the REAL cursor
+        position, using the same inscribed-disc predicate as the leave guard
+        (square corners read as off, matching the design intent)."""
+        on = self._cursor_on_emblem()
+        if on and not self._hover_on:
+            self._hover_on = True
+            if not self._armed and not self._dwell_timer.isActive():
+                from utils.overlay.backend import overlay_trace
+                overlay_trace("emblem hover-poll: on-disc -> dwell started")
+                self._dwell_timer.start()
+        elif not on and self._hover_on:
+            self._hover_on = False
+            if self._armed or self._dwell_timer.isActive():
+                from utils.overlay.backend import overlay_trace
+                overlay_trace("emblem hover-poll: off-disc -> disarmed")
+            self._dwell_timer.stop()
+            self._armed = False
+            self.update()
 
     def _point_on_emblem(self, pt) -> bool:
         """True if a widget-local point lies within the emblem's inscribed disc.
@@ -657,6 +713,9 @@ class _Emblem(QWidget):
         # disarm; a synthetic crossing (cursor still on the disc) is ignored.
         if self._cursor_on_emblem():
             return
+        from utils.overlay.backend import overlay_trace
+        overlay_trace("emblem leave: disarmed")
+        self._hover_on = False
         self._dwell_timer.stop()
         self._armed = False
         self.update()
@@ -708,10 +767,25 @@ class _Emblem(QWidget):
         event.accept()   # keep the gesture stream (see mousePressEvent)
 
     def wheelEvent(self, event):
-        if self._armed:
-            self.resize_scrolled.emit(1 if event.angleDelta().y() > 0 else -1)
-        else:
+        from utils.overlay.backend import overlay_trace
+        dy = event.angleDelta().y()
+        overlay_trace(f"emblem scroll: armed={self._armed} dy={dy}")
+        if not self._armed:
             event.ignore()
+            return
+        # The momentum tail (trackpad/Magic Mouse coast) must not keep
+        # scaling after the finger stops - notch feel, not butter.
+        if event.phase() == Qt.ScrollMomentum:
+            return
+        # A direction flip mid-gesture starts a fresh notch count so leftover
+        # accumulation can never fire a notch the wrong way.
+        if self._wheel_accum and (dy > 0) != (self._wheel_accum > 0):
+            self._wheel_accum = 0
+        self._wheel_accum += dy
+        notches = int(self._wheel_accum / 120)
+        if notches:
+            self._wheel_accum -= notches * 120
+            self.resize_scrolled.emit(notches)
 
     def paintEvent(self, event):
         p = QPainter(self)
