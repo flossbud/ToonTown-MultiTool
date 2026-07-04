@@ -249,7 +249,7 @@ def test_gate_armed_on_win32_unconfined_unchanged(qapp, monkeypatch):
     ctrl._hide_all()
 
 
-def test_darwin_snapshot_parses_bounds_pid_number_only(monkeypatch):
+def test_darwin_refresh_parses_bounds_pid_number_only(monkeypatch):
     """Front-to-back order preserved; bounds dict -> (l, t, r, b);
     degenerate/malformed records dropped. Only kCGWindowNumber /
     kCGWindowOwnerPID / kCGWindowBounds are consulted (kCGWindowName can
@@ -268,71 +268,100 @@ def test_darwin_snapshot_parses_bounds_pid_number_only(monkeypatch):
         _info(1010, 888, 5, 5, 0, 40),            # zero width: dropped
     ]
     monkeypatch.setattr(md, "_raw_window_info", lambda: infos)
-    snap = gc._darwin_zorder_snapshot()
+    snap = gc._refresh_darwin_snapshot()
     assert snap == [
         (FOREIGN, (10, 20, 110, 70), 555),
         (GAME, (0, 30, 800, 630), 777),
     ]
+    # The frame-path read serves the freshly stored snapshot.
+    assert gc._darwin_zorder_snapshot() is snap
 
 
-def test_darwin_snapshot_fails_open_on_error(monkeypatch):
+def test_darwin_refresh_error_keeps_previous_snapshot(monkeypatch):
+    """A transient window-server error must not blank the mask basis: the
+    previous snapshot stays in place (stale beats blank; the next sweep or
+    TTL expiry retries)."""
     from tabs.multitoon import _ghost_cursors as gc
     from utils import macos_discovery as md
-
-    def _boom():
-        raise RuntimeError("window server gone")
-
-    monkeypatch.setattr(md, "_raw_window_info", _boom)
-    assert gc._darwin_zorder_snapshot() is None
-
-
-def test_darwin_snapshot_cached_within_ttl(monkeypatch):
-    """The live-regression guard: pointer events arrive at monitor-refresh
-    rate, so the window-server probe must be bounded by the TTL, not the
-    pointer rate (2 gloves x 240Hz x ~1.5ms saturated the GUI thread and
-    gloves lagged SECONDS behind)."""
-    from tabs.multitoon import _ghost_cursors as gc
-    from utils import macos_discovery as md
-    calls = []
-
-    def _probe():
-        calls.append(1)
-        return [{"kCGWindowNumber": GAME, "kCGWindowOwnerPID": 777,
-                 "kCGWindowBounds": {"X": 0, "Y": 0,
-                                     "Width": 800, "Height": 600}}]
-
-    monkeypatch.setattr(md, "_raw_window_info", _probe)
-    first = gc._darwin_zorder_snapshot()
-    second = gc._darwin_zorder_snapshot()
-    assert len(calls) == 1          # second call served from cache
-    assert second is first
-
-
-def test_darwin_snapshot_reprobes_after_ttl(monkeypatch):
-    from tabs.multitoon import _ghost_cursors as gc
-    from utils import macos_discovery as md
-    calls = []
-    monkeypatch.setattr(md, "_raw_window_info", lambda: calls.append(1) or [])
-    gc._darwin_zorder_snapshot()
-    # Age the cache past the TTL instead of sleeping.
-    gc._darwin_snap_cache["t"] -= gc._DARWIN_SNAP_TTL_S * 2
-    gc._darwin_zorder_snapshot()
-    assert len(calls) == 2
-
-
-def test_darwin_snapshot_error_is_not_cached(monkeypatch):
-    """A window-server hiccup fails open (None) but must not lock the gate
-    open for a whole TTL: the next call re-probes immediately."""
-    from tabs.multitoon import _ghost_cursors as gc
-    from utils import macos_discovery as md
-
-    def _boom():
-        raise RuntimeError("window server gone")
-
-    monkeypatch.setattr(md, "_raw_window_info", _boom)
-    assert gc._darwin_zorder_snapshot() is None
     monkeypatch.setattr(md, "_raw_window_info", lambda: [])
-    assert gc._darwin_zorder_snapshot() == []
+    good = gc._refresh_darwin_snapshot()
+    assert good == []
+
+    def _boom():
+        raise RuntimeError("window server gone")
+
+    monkeypatch.setattr(md, "_raw_window_info", _boom)
+    assert gc._refresh_darwin_snapshot() is good
+    assert gc._darwin_snap_cache["snap"] is good
+
+
+def test_darwin_read_never_probes_fresh_cache(monkeypatch):
+    """CP15/CP16 law: the frame path never talks to the window server.
+    A FRESH cache is served without any refresh kick."""
+    from tabs.multitoon import _ghost_cursors as gc
+    from utils import macos_discovery as md
+    monkeypatch.setattr(md, "_raw_window_info", lambda: [])
+    snap = gc._refresh_darwin_snapshot()
+    kicks = []
+    monkeypatch.setattr(gc, "_kick_darwin_snapshot_refresh",
+                        lambda: kicks.append(1))
+    assert gc._darwin_zorder_snapshot() is snap
+    assert kicks == []
+
+
+def test_darwin_read_serves_stale_and_kicks_refresh(monkeypatch):
+    """Expired cache: the read returns the STALE snapshot immediately (never
+    blocks) and kicks exactly one background refresh."""
+    from tabs.multitoon import _ghost_cursors as gc
+    from utils import macos_discovery as md
+    monkeypatch.setattr(md, "_raw_window_info", lambda: [])
+    stale = gc._refresh_darwin_snapshot()
+    gc._darwin_snap_cache["t"] -= gc._DARWIN_SNAP_TTL_S * 2  # age it
+    kicks = []
+    monkeypatch.setattr(gc, "_kick_darwin_snapshot_refresh",
+                        lambda: kicks.append(1))
+    assert gc._darwin_zorder_snapshot() is stale
+    assert kicks == [1]
+
+
+def test_darwin_read_before_first_refresh_fails_open(monkeypatch):
+    """Empty cache (startup): None = fail open (gloves render unmasked for
+    the first frames), refresh kicked."""
+    from tabs.multitoon import _ghost_cursors as gc
+    kicks = []
+    monkeypatch.setattr(gc, "_kick_darwin_snapshot_refresh",
+                        lambda: kicks.append(1))
+    assert gc._darwin_zorder_snapshot() is None
+    assert kicks == [1]
+
+
+def test_darwin_kick_spawns_single_refresh(monkeypatch):
+    """The refreshing flag admits ONE in-flight refresh; the thread updates
+    the cache and clears the flag (real-thread integration, bounded wait)."""
+    import time as _time
+    from tabs.multitoon import _ghost_cursors as gc
+    from utils import macos_discovery as md
+    monkeypatch.setattr(md, "_raw_window_info", lambda: [])
+    gc._kick_darwin_snapshot_refresh()
+    deadline = _time.monotonic() + 2.0
+    while gc._darwin_snap_cache["t"] < 0 and _time.monotonic() < deadline:
+        _time.sleep(0.005)
+    assert gc._darwin_snap_cache["snap"] == []
+    assert gc._darwin_snap_refreshing is False
+
+
+def test_darwin_kick_noop_while_refresh_in_flight(monkeypatch):
+    from tabs.multitoon import _ghost_cursors as gc
+    import threading as _threading
+    spawned = []
+    monkeypatch.setattr(
+        _threading, "Thread",
+        lambda *a, **k: spawned.append(1) or type(
+            "T", (), {"start": lambda self: None})())
+    with gc._darwin_snap_lock:
+        gc._darwin_snap_refreshing = True
+    gc._kick_darwin_snapshot_refresh()
+    assert spawned == []
 
 
 def test_set_visible_region_empty_hides_never_empty_masks(qapp):

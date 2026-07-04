@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import os
 import sys
+import threading
 import time
 
 from PySide6.QtCore import QObject, QPropertyAnimation, QRect, Qt, QTimer
@@ -136,38 +137,43 @@ def _win32_zorder_snapshot():
         return None
 
 
-# CGWindowListCopyWindowInfo is a WINDOW-SERVER ROUND TRIP (~1.5ms measured
-# with 40 windows on-screen, worse under game load). Ghost pointer events on
-# cocoa track the monitor refresh (up to 240Hz here), so probing per event
-# per glove saturated the GUI thread (2 gloves x 240Hz x 1.5ms ≈ 720ms/s of
-# probing) and the queued ghost events backed up SECONDS behind the real
-# cursor (live regression 2026-07-04). The snapshot is therefore TTL-cached:
-# probe cost is bounded by the TTL regardless of pointer rate, and the mask
-# is exactly as fresh as the 100ms occlusion sweep already assumes for
-# moving occluders. win32's user-mode z-order walk needs no cache.
+# CGWindowListCopyWindowInfo is a WINDOW-SERVER ROUND TRIP: ~1.5ms idle with
+# 40 windows on-screen, SPIKING to 12-16ms under live game load (measured
+# both ways). Two laws came out of the live smoothness saga (CP15/CP16):
+# probe cost must be bounded by a TTL, and the FRAME PATH must never pay the
+# round trip at all - a synchronous refresh every TTL hitched one frame by
+# 12-16ms ~20x/second. So the cache is STALE-WHILE-REVALIDATE: an expired
+# read serves the stale snapshot immediately and kicks ONE background
+# refresh; only the refresher thread ever talks to the window server. The
+# mask basis is at most a refresh behind (~the 100ms occlusion sweep already
+# accepts that staleness for moving occluders). win32's user-mode z-order
+# walk needs none of this.
 _DARWIN_SNAP_TTL_S = 0.05
 _darwin_snap_cache = {"t": -1.0, "snap": None}
+_darwin_snap_lock = threading.Lock()      # guards the refreshing flag
+_darwin_snap_refreshing = False
 
 
 def _reset_darwin_snapshot_cache() -> None:
     """Test hook (mirrors macos_discovery._reset_enum_cache)."""
+    global _darwin_snap_refreshing
+    with _darwin_snap_lock:
+        _darwin_snap_refreshing = False
     _darwin_snap_cache["t"] = -1.0
     _darwin_snap_cache["snap"] = None
 
 
-def _darwin_zorder_snapshot():
-    """Visible on-screen windows as (window_number, (l, t, r, b), pid),
+def _refresh_darwin_snapshot():
+    """Synchronous probe + store (refresher thread; tests call it directly).
+    Visible on-screen windows as (window_number, (l, t, r, b), pid),
     TOP-FIRST (CGWindowListCopyWindowInfo with OnScreenOnly returns windows
     front-to-back). Rects are GLOBAL points - identity with Qt logical space
     on this backend (dpr-1.0 logical regions, D2), so the shared region math
     runs unconverted. Reads ONLY kCGWindowNumber / kCGWindowOwnerPID /
     kCGWindowBounds: kCGWindowName can demand the Screen Recording TCC
-    prompt and must never be touched here. None on failure (fail-open,
-    never cached - a window-server hiccup must not lock the gate open for
-    a TTL). GUI thread only (like every gate caller)."""
-    now = time.monotonic()
-    if now - _darwin_snap_cache["t"] < _DARWIN_SNAP_TTL_S:
-        return _darwin_snap_cache["snap"]
+    prompt and must never be touched here. On failure the previous snapshot
+    stays in place (a transient window-server error must not blank the mask
+    basis); returns the stored snapshot or None."""
     try:
         from utils.macos_discovery import _raw_window_info
         out = []
@@ -188,10 +194,42 @@ def _darwin_zorder_snapshot():
             except Exception:
                 continue
     except Exception:
-        return None
-    _darwin_snap_cache["t"] = now
+        return _darwin_snap_cache["snap"]
     _darwin_snap_cache["snap"] = out
+    _darwin_snap_cache["t"] = time.monotonic()
     return out
+
+
+def _kick_darwin_snapshot_refresh() -> None:
+    """Spawn at most ONE background refresh (tests monkeypatch this to run
+    synchronously). Daemon: a refresh in flight at app exit is abandonable."""
+    global _darwin_snap_refreshing
+    with _darwin_snap_lock:
+        if _darwin_snap_refreshing:
+            return
+        _darwin_snap_refreshing = True
+
+    def _run():
+        global _darwin_snap_refreshing
+        try:
+            _refresh_darwin_snapshot()
+        finally:
+            with _darwin_snap_lock:
+                _darwin_snap_refreshing = False
+
+    threading.Thread(target=_run, name="ghost-snapshot-refresh",
+                     daemon=True).start()
+
+
+def _darwin_zorder_snapshot():
+    """Frame-path read: NEVER blocks on the window server. Fresh cache ->
+    serve it; expired -> kick a background refresh and serve the STALE
+    snapshot (None only before the first refresh ever lands = fail-open,
+    gloves render unmasked for those first frames)."""
+    now = time.monotonic()
+    if now - _darwin_snap_cache["t"] >= _DARWIN_SNAP_TTL_S:
+        _kick_darwin_snapshot_refresh()
+    return _darwin_snap_cache["snap"]
 
 
 def _scan_region_inputs(target_wid, snapshot, own_pid, to_logical):
@@ -565,7 +603,32 @@ class GhostCursorController(QObject):
         if os.environ.get("TTMT_CLICK_DIAG"):
             self._diag = {"t0": time.monotonic(), "emits": 0, "points": 0,
                           "renders": 0, "last_tick": 0.0,
-                          "gap_s": 0.0, "gap_max": 0.0, "gaps": 0}
+                          "gap_s": 0.0, "gap_max": 0.0, "gaps": 0,
+                          "move_s": 0.0, "move_max": 0.0,
+                          "region_s": 0.0, "region_max": 0.0,
+                          "ref_last": 0.0, "ref_s": 0.0,
+                          "ref_max": 0.0, "refs": 0}
+            # Reference jitter probe: a bare 4ms timer doing NOTHING but
+            # timing itself. If ITS gaps match the frame driver's, the
+            # event loop/GIL is the cadence floor - the ghost work is not
+            # what is late.
+            ref = QTimer(self)
+            ref.setTimerType(Qt.PreciseTimer)
+            ref.setInterval(4)
+
+            def _ref_tick():
+                d = self._diag
+                now = time.monotonic()
+                if d["ref_last"]:
+                    gap = now - d["ref_last"]
+                    d["ref_s"] += gap
+                    d["refs"] += 1
+                    if gap > d["ref_max"]:
+                        d["ref_max"] = gap
+                d["ref_last"] = now
+
+            ref.timeout.connect(_ref_tick)
+            ref.start()
         # Per-target (game_rect, occluders-above) derived from the CURRENT
         # z-order snapshot, keyed by snapshot identity: the TTL-cached darwin
         # snapshot is the same object across a cache window, so the scan of
@@ -694,13 +757,23 @@ class GhostCursorController(QObject):
             elapsed = now - d["t0"]
             if elapsed >= 1.0:
                 gap_mean = (d["gap_s"] / d["gaps"] * 1000) if d["gaps"] else 0.0
+                ref_mean = (d["ref_s"] / d["refs"] * 1000) if d["refs"] else 0.0
+                n = d["renders"] or 1
                 print(f"[ghost_perf] emits={d['emits']/elapsed:.0f}/s "
                       f"points={d['points']/elapsed:.0f}/s "
                       f"renders={d['renders']/elapsed:.0f}/s | tick gap "
-                      f"mean={gap_mean:.1f}ms max={d['gap_max']*1000:.1f}ms",
+                      f"mean={gap_mean:.1f}ms max={d['gap_max']*1000:.1f}ms | "
+                      f"move mean={d['move_s']/n*1000:.2f}ms "
+                      f"max={d['move_max']*1000:.1f}ms | region "
+                      f"mean={d['region_s']/n*1000:.2f}ms "
+                      f"max={d['region_max']*1000:.1f}ms | ref gap "
+                      f"mean={ref_mean:.1f}ms max={d['ref_max']*1000:.1f}ms",
                       flush=True)
                 d.update(t0=now, emits=0, points=0, renders=0,
-                         gap_s=0.0, gap_max=0.0, gaps=0)
+                         gap_s=0.0, gap_max=0.0, gaps=0,
+                         move_s=0.0, move_max=0.0,
+                         region_s=0.0, region_max=0.0,
+                         ref_s=0.0, ref_max=0.0, refs=0)
         for slot, (x, y) in pending.items():
             self._render_point(slot, x, y)
 
@@ -710,11 +783,20 @@ class GhostCursorController(QObject):
         if self._suppressed_by_focus(slot):
             return
         lx, ly = _emitted_to_logical(x, y)
+        d = self._diag
         if self._occlusion_gated:
             # Compute the mask BEFORE showing so a fully covered glove
             # never flashes for a frame over the occluder.
             self._last_logical[slot] = (lx, ly)
-            region = self._compute_glove_region(slot, lx, ly)
+            if d is not None:
+                _t0 = time.monotonic()
+                region = self._compute_glove_region(slot, lx, ly)
+                _dt = time.monotonic() - _t0
+                d["region_s"] += _dt
+                if _dt > d["region_max"]:
+                    d["region_max"] = _dt
+            else:
+                region = self._compute_glove_region(slot, lx, ly)
             if region is not None and region.isEmpty():
                 self._occlusion_hidden.add(slot)
                 prev = self._overlays.get(slot)
@@ -732,7 +814,15 @@ class GhostCursorController(QObject):
             # Target BEFORE show: a fresh map must confine to the
             # slot's current game window, not a stale one.
             ov.set_game_window(self._slot_wid_int(slot))
-        ov.show_at(lx, ly)
+        if d is not None:
+            _t0 = time.monotonic()
+            ov.show_at(lx, ly)
+            _dt = time.monotonic() - _t0
+            d["move_s"] += _dt
+            if _dt > d["move_max"]:
+                d["move_max"] = _dt
+        else:
+            ov.show_at(lx, ly)
         if self._occlusion_gated:
             ov.set_visible_region(region)
             self._start_occlusion_sweep()
