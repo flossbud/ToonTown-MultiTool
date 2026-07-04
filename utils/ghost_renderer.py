@@ -1,0 +1,276 @@
+"""Ghost-renderer helper process: cursor-class glove motion (main.py
+--ghost-renderer).
+
+CP17: the app's single Qt loop + GIL floor glove cadence at ~50-60Hz under
+live load no matter how cheap the per-frame work is. This process's loop
+does NOTHING but draw up to four glove windows, so its 4ms frame timer
+actually fires every ~4ms and glove motion tracks the display.
+
+Feed: newline protocol on STDIN (utils.ghost_feed_protocol), written by the
+app's CAPTURE THREAD - the app's GUI loop is not in the path at all. The
+reader thread stores positions into a newest-wins per-slot dict (never
+touches Qt); the GUI-side frame timer samples it - the same sampling model
+the in-process renderer uses, minus the busy loop underneath. Control
+messages (focus/clear/quit) ride a deque drained by the same tick, so ALL
+Qt work stays on this process's GUI thread with no cross-thread signals.
+
+Lifecycle: stdin EOF = the app died or dropped the pipe -> quit (the glove
+windows must never outlive the app; fail-closed). 'Q' is the polite form.
+
+Never-active-app laws honored here:
+- CP8: a panel belonging to a NEVER-ACTIVE app does not map on plain
+  show(); every show is followed by orderFrontRegardless.
+- The process sets NSApplicationActivationPolicyAccessory: no Dock icon,
+  no menu bar, never activates.
+- Hardening rides GhostCursorOverlay's own recipe (level GHOST_WINDOW_LEVEL,
+  click-through, all-Spaces, fail-closed) - one proven implementation.
+
+Occlusion: same shared machinery as in-process (snapshot stale-while-
+revalidate + per-snapshot region inputs), running on THIS process's
+threads; the target wid arrives with every position message.
+"""
+from __future__ import annotations
+
+import collections
+import os
+import sys
+import threading
+import time
+
+from utils.ghost_feed_protocol import decode_line
+
+IDLE_HIDE_S = 1.5      # match the in-process renderer's fade timing
+FRAME_INTERVAL_MS = 4  # ~250fps ceiling; this loop is otherwise idle
+SWEEP_INTERVAL_S = 0.10
+
+
+class GhostRendererCore:
+    """The renderer's testable core: message application + frame rendering.
+    Constructed on the GUI thread of a live QApplication (offscreen in
+    tests, cocoa in production)."""
+
+    def __init__(self):
+        from PySide6.QtCore import Qt, QTimer
+
+        self._latest: dict[int, tuple[int, int, str | None]] = {}
+        self._rendered_seq: dict[int, int] = {}
+        self._seq: dict[int, int] = {}
+        self._controls: collections.deque = collections.deque()
+        self._overlays: dict[int, object] = {}
+        self._focused_wid: str | None = None
+        self._last_sample_t: dict[int, float] = {}
+        self._last_sweep = 0.0
+        self._quit_requested = False
+        self._timer = QTimer()
+        self._timer.setTimerType(Qt.PreciseTimer)
+        self._timer.setInterval(FRAME_INTERVAL_MS)
+        self._timer.timeout.connect(self.tick)
+
+    # -- reader-thread side (never touches Qt) --------------------------
+
+    def feed_line(self, line: str) -> None:
+        msg = decode_line(line)
+        if msg is None:
+            return
+        if msg[0] == "position":
+            _kind, slot, x, y, wid = msg
+            self._latest[slot] = (x, y, wid)
+            self._seq[slot] = self._seq.get(slot, 0) + 1
+        else:
+            self._controls.append(msg)
+
+    def feed_eof(self) -> None:
+        self._controls.append(("quit",))
+
+    # -- GUI-thread side -------------------------------------------------
+
+    def start(self) -> None:
+        self._timer.start()
+
+    def tick(self) -> None:
+        now = time.monotonic()
+        while self._controls:
+            msg = self._controls.popleft()
+            if msg[0] == "quit":
+                self._quit_requested = True
+                self._hide_all()
+                from PySide6.QtWidgets import QApplication
+                app = QApplication.instance()
+                if app is not None:
+                    app.quit()
+                return
+            if msg[0] == "clear":
+                self._hide_all()
+            elif msg[0] == "focus":
+                self._focused_wid = msg[1]
+                # The focused window never shows a ghost: hide any glove
+                # currently on it (its stream stops arriving suppressed).
+                for slot, (_x, _y, wid) in list(self._latest.items()):
+                    if wid and wid == self._focused_wid:
+                        ov = self._overlays.get(slot)
+                        if ov is not None:
+                            ov.hide_now()
+        for slot, seq in list(self._seq.items()):
+            if self._rendered_seq.get(slot) == seq:
+                continue
+            self._rendered_seq[slot] = seq
+            x, y, wid = self._latest[slot]
+            self._last_sample_t[slot] = now
+            self._render(slot, x, y, wid)
+        if now - self._last_sweep >= SWEEP_INTERVAL_S:
+            self._last_sweep = now
+            self._sweep(now)
+
+    def _render(self, slot: int, x: int, y: int, wid: str | None) -> None:
+        if self._focused_wid and wid and wid == self._focused_wid:
+            ov = self._overlays.get(slot)
+            if ov is not None:
+                ov.hide_now()
+            return
+        region = self._compute_region(slot, x, y, wid)
+        ov = self._overlay_for(slot)
+        if ov is None:
+            return
+        if region is not None and region.isEmpty():
+            ov.hide_now()
+            return
+        ov.show_at(x, y)
+        _order_front(ov)   # CP8: never-active app - plain show() may not map
+        ov.set_visible_region(region)
+
+    def _compute_region(self, slot: int, x: int, y: int, wid: str | None):
+        """Occlusion mask, same shared machinery as in-process. None = fail
+        open (no wid / no snapshot yet / TTMT_GHOST_UNCONFINED=1 - the env
+        is inherited from the app, keeping the kill switch's semantics)."""
+        if not wid or os.environ.get("TTMT_GHOST_UNCONFINED") == "1":
+            return None
+        from PySide6.QtCore import QRect
+        from tabs.multitoon._ghost_cursors import (
+            CURSOR_SIZE, HOTSPOT, _darwin_zorder_snapshot,
+            _region_from_inputs, _scan_region_inputs,
+        )
+        snapshot = _darwin_zorder_snapshot()
+        if snapshot is None:
+            return None
+        try:
+            target = int(wid)
+        except (TypeError, ValueError):
+            return None
+        glove = QRect(int(x) - HOTSPOT[0], int(y) - HOTSPOT[1],
+                      CURSOR_SIZE, CURSOR_SIZE)
+        cached = getattr(self, "_inputs_cache", None)
+        if cached is not None and cached[0] is snapshot and cached[1] == target:
+            inputs = cached[2]
+        else:
+            inputs = _scan_region_inputs(target, snapshot, os.getpid(),
+                                         lambda a, b: (a, b))
+            self._inputs_cache = (snapshot, target, inputs)
+        return _region_from_inputs(glove, inputs)
+
+    def _sweep(self, now: float) -> None:
+        """Idle fades + occlusion refresh for stationary gloves (the same
+        two jobs the in-process idle timers and occlusion sweep do)."""
+        for slot, ov in self._overlays.items():
+            if not ov.isVisible():
+                continue
+            last = self._last_sample_t.get(slot, 0.0)
+            if now - last >= IDLE_HIDE_S:
+                ov.fade_out()
+                continue
+            latest = self._latest.get(slot)
+            if latest is not None:
+                x, y, wid = latest
+                region = self._compute_region(slot, x, y, wid)
+                if region is not None and region.isEmpty():
+                    ov.hide_now()
+                else:
+                    ov.set_visible_region(region)
+
+    def _overlay_for(self, slot: int):
+        ov = self._overlays.get(slot)
+        if ov is not None:
+            return ov
+        from PySide6.QtCore import Qt
+        from PySide6.QtGui import QGuiApplication, QPixmap
+        from tabs.multitoon._ghost_cursors import (
+            CURSOR_SIZE, SLOT_COUNT, GhostCursorOverlay, _cursor_path,
+        )
+        if not 0 <= slot < SLOT_COUNT:
+            return None
+        pm = QPixmap(_cursor_path(slot))
+        if pm.isNull():
+            return None
+        screen = QGuiApplication.primaryScreen()
+        dpr = screen.devicePixelRatio() if screen is not None else 1.0
+        scaled = pm.scaled(round(CURSOR_SIZE * dpr), round(CURSOR_SIZE * dpr),
+                           Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        scaled.setDevicePixelRatio(dpr)
+        ov = GhostCursorOverlay(scaled, confined=False)
+        self._overlays[slot] = ov
+        return ov
+
+    def _hide_all(self) -> None:
+        for ov in self._overlays.values():
+            ov.hide_now()
+        self._latest.clear()
+        self._seq.clear()
+        self._rendered_seq.clear()
+        self._last_sample_t.clear()
+
+
+def _order_front(ov) -> None:
+    """orderFrontRegardless on the overlay's NSWindow (cocoa only, queued
+    is unnecessary - show_at already ran). CP8: windows of a never-active
+    app need this to actually map. Never raises."""
+    try:
+        from PySide6.QtGui import QGuiApplication
+        if QGuiApplication.platformName() != "cocoa":
+            return
+        import objc
+        view = objc.objc_object(c_void_p=int(ov.winId()))
+        window = view.window()
+        if window is not None:
+            window.orderFrontRegardless()
+    except Exception:
+        pass
+
+
+def _set_accessory_policy() -> None:
+    """No Dock icon, no menu bar, never activates. Cocoa only; never
+    raises (offscreen tests and exotic setups just skip it)."""
+    try:
+        from PySide6.QtGui import QGuiApplication
+        if QGuiApplication.platformName() != "cocoa":
+            return
+        import AppKit
+        AppKit.NSApp.setActivationPolicy_(
+            AppKit.NSApplicationActivationPolicyAccessory)
+    except Exception:
+        pass
+
+
+def run_ghost_renderer() -> int:
+    """Process entry (main.py --ghost-renderer). Blocks in the Qt loop
+    until stdin EOF or a Q message."""
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication(sys.argv)
+    app.setQuitOnLastWindowClosed(False)   # gloves hide/show constantly
+    _set_accessory_policy()
+    core = GhostRendererCore()
+
+    def _reader():
+        try:
+            for line in sys.stdin:
+                core.feed_line(line)
+        except Exception:
+            pass
+        core.feed_eof()
+
+    threading.Thread(target=_reader, name="ghost-feed-reader",
+                     daemon=True).start()
+    core.start()
+    print(f"[GhostRenderer] ready pid={os.getpid()} "
+          f"frame={FRAME_INTERVAL_MS}ms", flush=True)
+    app.exec()
+    return 0

@@ -635,6 +635,29 @@ class GhostCursorController(QObject):
         # every on-screen window runs once per snapshot instead of once per
         # rendered frame per glove. {target: (snap_id, inputs)}
         self._region_inputs_cache: dict[int, tuple[int, object]] = {}
+        # Helper-process renderer (ledger CP17): the app's single Qt loop +
+        # GIL floor in-process glove cadence at ~50-60Hz under live load (a
+        # bare 4ms reference timer gapped 17-22ms, 1:1 with the frame
+        # driver). The renderer is a separate process whose loop only draws
+        # gloves; POSITIONS reach it from the CAPTURE THREAD over its stdin
+        # pipe (Qt.DirectConnection below runs _feed_renderer on the
+        # emitting thread), bypassing this process's GUI loop entirely.
+        # Falls back to in-process rendering if the spawn fails or the
+        # renderer dies mid-run. Kill switch: TTMT_GHOST_RENDERER=0.
+        self._renderer = None
+        if (self._disabled_reason is None and not self._confined
+                and sys.platform == "darwin" and service is not None
+                and os.environ.get("TTMT_GHOST_RENDERER") != "0"
+                and QGuiApplication.platformName() == "cocoa"):
+            # Real-cocoa gate: under the offscreen QPA (tests) a helper
+            # process adds nothing and every suite would fork one.
+            try:
+                from utils.ghost_renderer_client import GhostRendererClient
+                client = GhostRendererClient()
+                if client.start():
+                    self._renderer = client
+            except Exception as e:                     # noqa: BLE001
+                print(f"[GhostCursors] renderer client unavailable: {e}")
         if self._disabled_reason is None:
             # Running-code stamp: live validation starts by checking this.
             mode = ("confined-to-game (transient stacking)" if self._confined
@@ -643,10 +666,16 @@ class GhostCursorController(QObject):
                 probe = ("CGWindowList" if sys.platform == "darwin"
                          else "win32")
                 mode += f" + {probe} occlusion gate"
+            if self._renderer is not None:
+                mode += f" + helper renderer pid={self._renderer.pid}"
             print(f"[GhostCursors] mode: {mode}")
         if service is not None:
             service.ghost_pointer_event.connect(self._on_pointer_event)
             service.ghost_clear.connect(self._on_clear)
+            if self._renderer is not None:
+                # DIRECT: runs on the service's emitting (capture) thread.
+                service.ghost_pointer_event.connect(
+                    self._feed_renderer, Qt.DirectConnection)
 
     @staticmethod
     def _platform_unsupported(name: str | None = None) -> str | None:
@@ -691,6 +720,9 @@ class GhostCursorController(QObject):
         _on_pointer_event). GUI thread — queued from the WindowManager
         poll thread. None normalizes to "" (no active window)."""
         self._focused_wid = wid or ""
+        client = self._renderer
+        if client is not None:
+            client.send_focus(self._focused_wid or None)
         if self._slot_window_resolver is None or not self._focused_wid:
             return
         for slot, ov in self._overlays.items():
@@ -715,10 +747,35 @@ class GhostCursorController(QObject):
         if d is not None:
             d["emits"] += 1
             d["points"] += len(points)
+        if self._renderer is not None:
+            return   # the helper process renders; positions ride _feed_renderer
         for slot, x, y in points:
             self._pending_points[slot] = (int(x), int(y))
         if self._pending_points:
             self._drive_frames()
+
+    def _feed_renderer(self, payload) -> None:
+        """CAPTURE-THREAD feed (Qt.DirectConnection on the service signal):
+        encode positions + wids and write them to the renderer's stdin
+        without ever blocking (the client drops on a full pipe). A dead
+        renderer flips the controller back to in-process rendering - the
+        queued _on_pointer_event path resumes on the very next event."""
+        client = self._renderer
+        if (client is None or self._disabled_reason is not None
+                or not self._enabled):
+            return
+        _kind, points = payload
+        resolver = self._slot_window_resolver
+        batch = []
+        for slot, x, y in points:
+            wid = resolver(slot) if resolver is not None else None
+            batch.append((slot, int(x), int(y), wid))
+        if not batch:
+            return
+        if not client.send_positions(batch) or not client.alive():
+            self._renderer = None
+            print("[GhostCursors] renderer died - in-process rendering "
+                  "resumes")
 
     def _drive_frames(self) -> None:
         """Render pending samples NOW if the driver was idle (instant first
@@ -994,6 +1051,9 @@ class GhostCursorController(QObject):
             self._echo_notify("ghost_echo_fading", slot, FADE_MS)
 
     def _hide_all(self) -> None:
+        client = self._renderer
+        if client is not None:
+            client.send_clear()
         for t in self._timers.values():
             t.stop()
         for ov in self._overlays.values():

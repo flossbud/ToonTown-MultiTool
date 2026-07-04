@@ -2426,6 +2426,13 @@ def _show_or_float_at_startup(window, *, settings, env, _show=None) -> None:
 
 
 if __name__ == "__main__":
+    if "--ghost-renderer" in sys.argv:
+        # Ghost-renderer helper process (ledger CP17): a dedicated Qt loop
+        # for cursor-class glove motion, fed over stdin by the parent app.
+        # Dispatched before any app/service initialization.
+        from utils.ghost_renderer import run_ghost_renderer
+        sys.exit(run_ghost_renderer())
+
     if "--self-check-keyring" in sys.argv:
         sys.exit(_run_self_check_keyring())
 
