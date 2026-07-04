@@ -119,6 +119,13 @@ class HotkeyManager(QObject):
         # all others fire once per physical press.
         self._hotkey_hook = hotkey_hook
         self._fire_hotkeys = bool(fire_hotkeys)
+        # Provider mode (darwin Carbon, CP9): while a global provider is
+        # armed, this tap fires ONLY what Carbon can never see - chords
+        # whose key the darwin_intercept suppressed at the OS (the session
+        # tap PRECEDES Carbon dispatch, probed) and two-key chords
+        # (RegisterEventHotKey is single-key+modifiers). Everything else
+        # is the provider's, or non-suppressed chords double-fire.
+        self._hotkey_tap_fallback = False
         self._hotkey_repeat_ok = frozenset(hotkey_repeat_ok)
         # Normalized keys whose press was skipped as a hotkey; their release
         # must be skipped too. Cleared in _stop_listener (a focus-out can stop
@@ -160,6 +167,14 @@ class HotkeyManager(QObject):
             except Exception as e:  # noqa: BLE001 - never block construction
                 self._darwin_capture_ready = False
                 print(f"[HotkeyManager] macOS keycode_context shim failed: {e}")
+
+    def set_hotkey_provider_armed(self, armed: bool) -> None:
+        """Flip to provider mode (see _hotkey_tap_fallback). Called by main
+        after the platform hotkey provider starts successfully; a provider
+        that failed to start leaves the tap firing everything (scoped
+        pre-provider behavior)."""
+        self._fire_hotkeys = not armed
+        self._hotkey_tap_fallback = bool(armed)
 
     def start(self):
         """Start listening if the current window is an allowed target."""
@@ -544,6 +559,9 @@ class HotkeyManager(QObject):
                 # replays to the focused window.
                 held = frozenset(self._held_keys)
                 action_id = self._hotkey_hook(mods, held)
+                # A full-set match with >1 held keys is a two-key-chord
+                # binding (the hook is an exact-set lookup).
+                two_key_match = action_id is not None and len(held) > 1
                 if action_id is None and len(held) > 1:
                     action_id = self._hotkey_hook(mods, frozenset({hook_key}))
                 if action_id is not None:
@@ -551,7 +569,18 @@ class HotkeyManager(QObject):
                         _itrace("hk_press", f"HOTKEY {action_id} ({hook_key})")
                     first = hook_key not in self._hotkey_down
                     self._hotkey_down.add(hook_key)
-                    if self._fire_hotkeys and (
+                    fire = self._fire_hotkeys
+                    if not fire and self._hotkey_tap_fallback:
+                        # Provider mode: fire ONLY what the provider can
+                        # never see - a chord whose key this tap suppressed
+                        # at the OS (Carbon sits AFTER the session tap,
+                        # CP9), or a two-key chord (not representable by
+                        # RegisterEventHotKey). Everything else already
+                        # fired (or will fire) provider-side.
+                        fire = (two_key_match
+                                or normalized in self._suppressed_down
+                                or hook_key in self._suppressed_down)
+                    if fire and (
                             first or action_id in self._hotkey_repeat_ok):
                         # Cross-thread emission auto-queues to the GUI-thread
                         # receiver (this runs on the pynput listener thread).

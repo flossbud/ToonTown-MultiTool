@@ -456,3 +456,245 @@ def make_event_lookup(display_like, settings_manager):
             return None
         return action_id
     return lookup
+
+
+# ── macOS: Carbon RegisterEventHotKey provider (CP9-shaped) ──────────────────
+# Everything below runs on the GUI thread: InstallEventHandler targets the Qt
+# main event loop's dispatcher (GetEventDispatcherTarget), so hotkey events
+# arrive inside the running Qt loop and action_triggered emits GUI-side with
+# no thread hop. The provider starts NO keyboard listener and never touches
+# Text-Input-Source APIs, so the TIS-shim law is untouched (HotkeyManager's
+# constructor installs the shim before any pynput listener exists).
+#
+# CP9 delivery-order law (probed): the app's own CGEventTap PRECEDES Carbon
+# dispatch, so a chord whose key the tap suppresses (TTR route_all / CC
+# opposite-set grabs) can NEVER arrive here. The caller (main.py) therefore
+# flips HotkeyManager into provider mode: fire_hotkeys=False (or every chord
+# Carbon CAN see double-fires) + tap-side fallback for exactly what Carbon
+# can never see - suppressed chords and two-key chords (RegisterEventHotKey
+# is single-key + modifiers).
+
+_CARBON_PATH = "/System/Library/Frameworks/Carbon.framework/Carbon"
+_kEventClassKeyboard = 0x6B657962      # 'keyb'
+_kEventHotKeyPressed = 5
+_kEventHotKeyReleased = 6
+_kEventParamDirectObject = 0x2D2D2D2D  # '----'
+_typeEventHotKeyID = 0x686B6964        # 'hkid'
+_HOTKEY_SIGNATURE = 0x54544D54         # 'TTMT'
+
+# Carbon Events.h modifier masks (NOT CGEventFlags). TTMT canonical mod
+# names map: super=Command, alt=Option.
+CARBON_MOD_MASKS = {
+    "super": 0x0100,   # cmdKey
+    "shift": 0x0200,   # shiftKey
+    "alt": 0x0800,     # optionKey
+    "ctrl": 0x1000,    # controlKey
+}
+
+
+class MacOSCarbonHotkeys(GlobalHotkeyProvider):
+    """Carbon twin of X11GlobalHotkeys: system-wide chords via
+    RegisterEventHotKey (exact-modifier match, consumed system-wide when
+    matched - the X11 passive-grab semantic). Covers the truly-global case
+    the scoped pynput path never could (another app focused). Single-key +
+    modifier chords only; two-key chords are recorded as failures and stay
+    on HotkeyManager's tap-side fallback (scoped to capture)."""
+
+    def __init__(self, repeat_ok_ids: frozenset = frozenset()):
+        super().__init__()
+        self._repeat_ok = frozenset(repeat_ok_ids)
+        self._carbon = None            # ctypes.CDLL once started
+        self._target = None            # GetEventDispatcherTarget()
+        self._handler_cb = None        # CFUNCTYPE ref (GC anchor - required)
+        self._handler_ref = None
+        self._refs: list = []          # registered EventHotKeyRefs
+        self._id_to_action: dict[int, str] = {}
+        self._down_ids: set[int] = set()
+        self._failures: dict[str, str] = {}
+
+    # -- public API (GUI thread) --------------------------------------
+
+    def start(self) -> bool:
+        import sys
+        if sys.platform != "darwin":
+            return False
+        try:
+            import ctypes
+
+            class _EventTypeSpec(ctypes.Structure):
+                _fields_ = [("eventClass", ctypes.c_uint32),
+                            ("eventKind", ctypes.c_uint32)]
+
+            carbon = ctypes.CDLL(_CARBON_PATH)
+            carbon.GetEventDispatcherTarget.restype = ctypes.c_void_p
+            carbon.GetEventKind.restype = ctypes.c_uint32
+            carbon.GetEventKind.argtypes = [ctypes.c_void_p]
+            target = carbon.GetEventDispatcherTarget()
+            if not target:
+                print("[GlobalHotkeys] Carbon: no dispatcher target")
+                return False
+            handler_type = ctypes.CFUNCTYPE(
+                ctypes.c_int32, ctypes.c_void_p, ctypes.c_void_p,
+                ctypes.c_void_p)
+            self._handler_cb = handler_type(self._carbon_event)
+            specs = (_EventTypeSpec * 2)(
+                _EventTypeSpec(_kEventClassKeyboard, _kEventHotKeyPressed),
+                _EventTypeSpec(_kEventClassKeyboard, _kEventHotKeyReleased))
+            handler_ref = ctypes.c_void_p()
+            err = carbon.InstallEventHandler(
+                ctypes.c_void_p(target), self._handler_cb, 2, specs, None,
+                ctypes.byref(handler_ref))
+            if err != 0:
+                print(f"[GlobalHotkeys] Carbon: InstallEventHandler err={err}")
+                self._handler_cb = None
+                return False
+            self._carbon = carbon
+            self._target = target
+            self._handler_ref = handler_ref
+            return True
+        except Exception as e:                        # noqa: BLE001
+            print(f"[GlobalHotkeys] Carbon provider unavailable: {e}")
+            self._handler_cb = None
+            return False
+
+    def apply_bindings(self, bindings: dict) -> None:
+        """(Re)register every bound chord; previous registrations are
+        dropped first so a rebind never leaves a stale chord armed. GUI
+        thread only (Carbon target lives on the main loop)."""
+        if self._carbon is None:
+            return
+        import ctypes
+        from utils.hotkey_chords import parse_chord
+        from utils.macos_keycodes import cgkeycode_for_keysym
+
+        self._unregister_all()
+        failures: dict[str, str] = {}
+        seen: dict[tuple[int, int], str] = {}
+        next_id = 1
+        for action_id in sorted(bindings):
+            chord_text = bindings[action_id]
+            try:
+                chord = parse_chord(chord_text)
+            except Exception as e:                    # noqa: BLE001
+                failures[action_id] = str(e)
+                continue
+            if len(chord.keys) > 1:
+                # RegisterEventHotKey is single-key+modifiers; the tap-side
+                # fallback still fires these while a game window or the app
+                # is focused (capture scope) - global reach is what's lost.
+                failures[action_id] = ("two-key chord: works while a game "
+                                       "or this app is focused (no global "
+                                       "reach on macOS)")
+                continue
+            keysym = chord.key
+            vk = cgkeycode_for_keysym(keysym)
+            if vk is None:
+                failures[action_id] = f"no macOS keycode for {keysym!r}"
+                continue
+            mods = 0
+            for m in chord.mods:
+                mods |= CARBON_MOD_MASKS.get(m, 0)
+            if (vk, mods) in seen:
+                failures[action_id] = f"duplicate of {seen[(vk, mods)]}"
+                continue
+            class _EventHotKeyID(ctypes.Structure):
+                _fields_ = [("signature", ctypes.c_uint32),
+                            ("id", ctypes.c_uint32)]
+            hk_id = _EventHotKeyID(_HOTKEY_SIGNATURE, next_id)
+            ref = ctypes.c_void_p()
+            err = self._carbon.RegisterEventHotKey(
+                vk, mods, hk_id, ctypes.c_void_p(self._target), 0,
+                ctypes.byref(ref))
+            if err != 0:
+                failures[action_id] = f"RegisterEventHotKey err={err}"
+                continue
+            seen[(vk, mods)] = action_id
+            self._refs.append(ref)
+            self._id_to_action[next_id] = action_id
+            next_id += 1
+        self._failures = failures
+        self._print_stamp()
+
+    def failures(self) -> dict:
+        """action_id -> reason for bindings that could not be armed
+        globally (feeds the Settings hotkeys-card badges, X11 parity)."""
+        return dict(self._failures)
+
+    def stop(self) -> None:
+        """Unregister every chord and remove the Carbon handler. NOT
+        restartable: create a new provider to re-arm."""
+        self._unregister_all()
+        if self._carbon is not None and self._handler_ref is not None:
+            try:
+                self._carbon.RemoveEventHandler(self._handler_ref)
+            except Exception:                          # noqa: BLE001
+                pass
+        self._carbon = None
+        self._target = None
+        self._handler_ref = None
+        self._handler_cb = None
+
+    # -- Carbon event path (GUI thread: the dispatcher IS the Qt loop) --
+
+    def _carbon_event(self, _call_ref, event_ref, _user_data) -> int:
+        """ctypes shell: extract (kind, hotkey id) and hand off. Must never
+        raise into Carbon; always returns noErr (the hotkey event is ours -
+        RegisterEventHotKey already consumed the keystroke system-wide)."""
+        try:
+            import ctypes
+
+            class _EventHotKeyID(ctypes.Structure):
+                _fields_ = [("signature", ctypes.c_uint32),
+                            ("id", ctypes.c_uint32)]
+
+            kind = int(self._carbon.GetEventKind(ctypes.c_void_p(event_ref)))
+            hk = _EventHotKeyID()
+            err = self._carbon.GetEventParameter(
+                ctypes.c_void_p(event_ref),
+                ctypes.c_uint32(_kEventParamDirectObject),
+                ctypes.c_uint32(_typeEventHotKeyID),
+                None, ctypes.sizeof(hk), None, ctypes.byref(hk))
+            if err == 0 and int(hk.signature) == _HOTKEY_SIGNATURE:
+                self._dispatch(kind, int(hk.id))
+        except Exception:                              # noqa: BLE001
+            pass
+        return 0
+
+    def _dispatch(self, kind: int, hk_id: int) -> None:
+        """Pure dispatch (unit-testable): pressed fires the action once per
+        physical press; a repeated pressed without an intervening released
+        is OS auto-repeat and re-fires only repeat_ok actions (X11 parity)."""
+        action_id = self._id_to_action.get(hk_id)
+        if action_id is None:
+            return
+        if kind == _kEventHotKeyPressed:
+            repeat = hk_id in self._down_ids
+            self._down_ids.add(hk_id)
+            if not repeat or action_id in self._repeat_ok:
+                self.action_triggered.emit(action_id)
+        elif kind == _kEventHotKeyReleased:
+            self._down_ids.discard(hk_id)
+
+    # -- internals ------------------------------------------------------
+
+    def _unregister_all(self) -> None:
+        if self._carbon is not None:
+            for ref in self._refs:
+                try:
+                    self._carbon.UnregisterEventHotKey(ref)
+                except Exception:                      # noqa: BLE001
+                    pass
+        self._refs = []
+        self._id_to_action = {}
+        self._down_ids = set()
+
+    def _print_stamp(self) -> None:
+        """Running-code stamp (live validation starts by confirming it):
+        reports what is ACTUALLY registered with Carbon plus every refusal,
+        matching the X11 stamp shape."""
+        armed = sorted(self._id_to_action.values())
+        line = ("[GlobalHotkeys] armed (carbon): "
+                + (", ".join(armed) or "(none)"))
+        if self._failures:
+            line += f"; unavailable: {sorted(self._failures)}"
+        print(line)

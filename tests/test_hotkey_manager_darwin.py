@@ -441,3 +441,73 @@ class TestDarwinSelfFocusTapLifecycle:
         hk = self._mk(monkeypatch, "win32", capture=True, has_windows=False)
         hk._on_active_window_changed("")
         assert hk.calls == ["start"]
+
+
+class TestProviderModeTapFallback:
+    """CP9(b): with the Carbon provider armed, the tap fires ONLY what
+    Carbon can never see - chords whose key the intercept suppressed at the
+    OS (the session tap PRECEDES Carbon dispatch) and two-key chords
+    (RegisterEventHotKey is single-key+modifiers). Every other match is
+    still SKIPPED from the input queue (Carbon owns the fire)."""
+
+    def _mk(self, hook):
+        import queue as _queue
+        from unittest.mock import MagicMock
+        wm = MagicMock()
+        wm.should_capture_input.return_value = True
+        q = _queue.Queue(maxsize=10)
+        hm = HotkeyManager(wm, q, hotkey_hook=hook, fire_hotkeys=True)
+        hm.set_hotkey_provider_armed(True)
+        seen = []
+        hm.hotkey_triggered.connect(seen.append)
+        return hm, q, seen
+
+    def _key(self, char):
+        from unittest.mock import MagicMock
+        k = MagicMock()
+        k.char = char
+        k.name = None
+        k.vk = None
+        return k
+
+    def test_armed_flips_fire_and_fallback(self):
+        from unittest.mock import MagicMock
+        import queue as _queue
+        wm = MagicMock()
+        wm.should_capture_input.return_value = True
+        hm = HotkeyManager(wm, _queue.Queue(), fire_hotkeys=True)
+        assert hm._fire_hotkeys is True and hm._hotkey_tap_fallback is False
+        hm.set_hotkey_provider_armed(True)
+        assert hm._fire_hotkeys is False and hm._hotkey_tap_fallback is True
+        hm.set_hotkey_provider_armed(False)
+        assert hm._fire_hotkeys is True and hm._hotkey_tap_fallback is False
+
+    def test_visible_chord_skips_queue_but_does_not_fire(self):
+        # Carbon sees this chord (not suppressed, single-key): the tap must
+        # not double-fire it, but the match must still never enqueue.
+        hm, q, seen = self._mk(
+            lambda mods, keys: "act" if keys == frozenset({"h"}) else None)
+        hm.on_global_key_press(self._key("h"))
+        assert seen == []
+        assert q.empty()
+
+    def test_suppressed_chord_fires_tap_side(self):
+        # The intercept ate this key at the OS (route_all grab): Carbon can
+        # never see it, so the tap owns the dispatch.
+        hm, q, seen = self._mk(
+            lambda mods, keys: "act" if keys == frozenset({"h"}) else None)
+        hm._suppressed_down.add("h")
+        hm.on_global_key_press(self._key("h"))
+        assert seen == ["act"]
+        assert q.empty()
+
+    def test_two_key_chord_fires_tap_side(self):
+        # Not representable by RegisterEventHotKey: always tap-side.
+        hm, q, seen = self._mk(
+            lambda mods, keys: "pair" if keys == frozenset({"g", "h"})
+            else None)
+        hm.on_global_key_press(self._key("g"))   # first member: normal enqueue
+        assert q.qsize() == 1
+        hm.on_global_key_press(self._key("h"))   # full-set match
+        assert seen == ["pair"]
+        assert q.qsize() == 1                    # the match never enqueued

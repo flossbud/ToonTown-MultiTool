@@ -588,7 +588,8 @@ class MultiToonTool(QMainWindow):
         self.hotkey_manager.hotkey_triggered.connect(self._on_hotkey_action)
         self.hotkey_manager.start()
 
-        # Global hotkeys provider (X11 per-chord passive grabs).
+        # Global hotkeys provider (X11 per-chord passive grabs / darwin
+        # Carbon RegisterEventHotKey).
         self.global_hotkeys = None
         if sys.platform.startswith("linux"):
             from services.global_hotkeys import X11GlobalHotkeys
@@ -602,6 +603,23 @@ class MultiToonTool(QMainWindow):
                         effective_bindings(self.settings_manager))
                     if key == HOTKEY_BINDINGS else None)
                 self.global_hotkeys = provider
+        elif sys.platform == "darwin":
+            from services.global_hotkeys import MacOSCarbonHotkeys
+            provider = MacOSCarbonHotkeys(repeat_ok_ids=repeat_ok_ids)
+            if provider.start():
+                provider.action_triggered.connect(self._on_hotkey_action)
+                provider.apply_bindings(
+                    effective_bindings(self.settings_manager))
+                self.settings_manager.on_change(
+                    lambda key, _v: provider.apply_bindings(
+                        effective_bindings(self.settings_manager))
+                    if key == HOTKEY_BINDINGS else None)
+                self.global_hotkeys = provider
+                # CP9: the session tap PRECEDES Carbon dispatch, so the tap
+                # keeps ONLY what Carbon can never see (suppressed chords,
+                # two-key chords) and stops firing everything else - both
+                # firing would double-dispatch every visible chord.
+                self.hotkey_manager.set_hotkey_provider_armed(True)
 
         # Hotkeys card: saved accounts for the launch-slot pickers + provider
         # failure badges. The pushes are delayed so the provider's event
