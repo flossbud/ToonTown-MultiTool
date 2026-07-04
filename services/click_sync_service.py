@@ -117,6 +117,20 @@ class ClickSyncService(QObject):
         # Bumped on every _states mutation; slow-path emitters snapshot it
         # and drop superseded emissions (_emit_if_current).
         self._states_gen = 0
+        # Opt-in pipeline rate diagnostics (TTMT_CLICK_DIAG=1): once per
+        # second, print how many motions the capture DELIVERED, how long the
+        # locked handler held the tap thread, and what each send_motion
+        # injection cost. Built to answer "why do ghosts look 30fps":
+        # anything slow INSIDE the tap callback makes the window server
+        # coalesce mouse-moved events, throttling the whole display pipeline
+        # at the source.
+        self._diag_rates = None
+        if os.environ.get("TTMT_CLICK_DIAG"):
+            self._diag_rates = {
+                "t0": monotonic(), "motion": 0, "events": 0,
+                "handler_s": 0.0, "handler_max": 0.0,
+                "inject": 0, "send_s": 0.0, "send_max": 0.0,
+            }
 
     # ── public API (GUI thread) ────────────────────────────────────────
 
@@ -432,8 +446,33 @@ class ClickSyncService(QObject):
 
     def _on_capture_event(self, kind: str, root_x: int, root_y: int,
                           state: int, time: int) -> None:
+        d = self._diag_rates
+        if d is None:
+            with self._lock:
+                self._handle_event_locked(kind, root_x, root_y, state, time)
+            return
+        t0 = monotonic()
         with self._lock:
             self._handle_event_locked(kind, root_x, root_y, state, time)
+        dt = monotonic() - t0
+        d["events"] += 1
+        if kind == "motion":
+            d["motion"] += 1
+        d["handler_s"] += dt
+        if dt > d["handler_max"]:
+            d["handler_max"] = dt
+        elapsed = t0 - d["t0"]
+        if elapsed >= 1.0 and d["events"]:
+            handler_mean = d["handler_s"] / d["events"] * 1000
+            send_mean = (d["send_s"] / d["inject"] * 1000) if d["inject"] else 0.0
+            print(f"[click_diag] capture: {d['motion']/elapsed:.0f} motions/s "
+                  f"{d['events']/elapsed:.0f} events/s | handler "
+                  f"mean={handler_mean:.2f}ms max={d['handler_max']*1000:.1f}ms | "
+                  f"inject {d['inject']/elapsed:.0f}/s "
+                  f"send_motion mean={send_mean:.2f}ms "
+                  f"max={d['send_max']*1000:.1f}ms", flush=True)
+            d.update(t0=monotonic(), motion=0, events=0, handler_s=0.0,
+                     handler_max=0.0, inject=0, send_s=0.0, send_max=0.0)
 
     def _handle_event_locked(self, kind: str, root_x: int, root_y: int,
                              state: int, time: int) -> None:
@@ -445,6 +484,22 @@ class ClickSyncService(QObject):
             self._handle_motion_locked(root_x, root_y, state, time)
         elif kind == "release":
             self._handle_release_locked(root_x, root_y, state, time)
+
+    def _send_motion_timed(self, *args, **kwargs):
+        """send_motion with the TTMT_CLICK_DIAG stopwatch: injection runs
+        INSIDE the tap callback (lock held), so its cost directly throttles
+        how fast the window server delivers the next mouse event."""
+        d = self._diag_rates
+        if d is None:
+            return self._backend.send_motion(*args, **kwargs)
+        t0 = monotonic()
+        r = self._backend.send_motion(*args, **kwargs)
+        dt = monotonic() - t0
+        d["inject"] += 1
+        d["send_s"] += dt
+        if dt > d["send_max"]:
+            d["send_max"] = dt
+        return r
 
     def _member_wids_locked(self) -> dict[int, str]:
         out = {}
@@ -577,7 +632,7 @@ class ClickSyncService(QObject):
                 # Return value intentionally ignored (spec deviation, recorded
                 # there): a target dying mid-gesture is reclaimed by window
                 # re-detection and the next geometry tick within ~2s.
-                self._backend.send_motion(
+                self._send_motion_timed(
                     wid, tx, ty, geom[0] + tx, geom[1] + ty, state=state, time=time)
             ghosts.append((slot, geom[0] + tx, geom[1] + ty))
         if ghosts:
@@ -643,7 +698,7 @@ class ClickSyncService(QObject):
             if inject:
                 # Return value ignored (same as gesture motion): a dying target
                 # is reclaimed by window re-detection within ~2s.
-                self._backend.send_motion(
+                self._send_motion_timed(
                     wid, tx, ty, g[0] + tx, g[1] + ty, state=state, time=time)
             ghosts.append((s, g[0] + tx, g[1] + ty))
         if ghosts:

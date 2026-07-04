@@ -556,6 +556,16 @@ class GhostCursorController(QObject):
         # display); the driver stops itself when no samples arrive.
         self._pending_points: dict[int, tuple[int, int]] = {}
         self._frame_timer: QTimer | None = None
+        # Opt-in render-side rate diagnostics (TTMT_CLICK_DIAG=1, pairs with
+        # the click_sync_service capture-side print): emits/points arriving
+        # from the service vs frames actually rendered, plus the achieved
+        # inter-tick gap while streaming. Tells "is the source starving us
+        # (emits/s low) or is the GUI thread late (renders/s low, gaps big)".
+        self._diag = None
+        if os.environ.get("TTMT_CLICK_DIAG"):
+            self._diag = {"t0": time.monotonic(), "emits": 0, "points": 0,
+                          "renders": 0, "last_tick": 0.0,
+                          "gap_s": 0.0, "gap_max": 0.0, "gaps": 0}
         # Per-target (game_rect, occluders-above) derived from the CURRENT
         # z-order snapshot, keyed by snapshot identity: the TTL-cached darwin
         # snapshot is the same object across a cache window, so the scan of
@@ -638,6 +648,10 @@ class GhostCursorController(QObject):
         if self._disabled_reason is not None or not self._enabled:
             return
         _kind, points = payload
+        d = self._diag
+        if d is not None:
+            d["emits"] += 1
+            d["points"] += len(points)
         for slot, x, y in points:
             self._pending_points[slot] = (int(x), int(y))
         if self._pending_points:
@@ -659,11 +673,34 @@ class GhostCursorController(QObject):
 
     def _frame_tick(self) -> None:
         pending = self._pending_points
+        d = self._diag
         if not pending:
             if self._frame_timer is not None:
                 self._frame_timer.stop()
+            if d is not None:
+                d["last_tick"] = 0.0   # stream ended: next gap starts fresh
             return
         self._pending_points = {}
+        if d is not None:
+            now = time.monotonic()
+            if d["last_tick"]:
+                gap = now - d["last_tick"]
+                d["gap_s"] += gap
+                d["gaps"] += 1
+                if gap > d["gap_max"]:
+                    d["gap_max"] = gap
+            d["last_tick"] = now
+            d["renders"] += len(pending)
+            elapsed = now - d["t0"]
+            if elapsed >= 1.0:
+                gap_mean = (d["gap_s"] / d["gaps"] * 1000) if d["gaps"] else 0.0
+                print(f"[ghost_perf] emits={d['emits']/elapsed:.0f}/s "
+                      f"points={d['points']/elapsed:.0f}/s "
+                      f"renders={d['renders']/elapsed:.0f}/s | tick gap "
+                      f"mean={gap_mean:.1f}ms max={d['gap_max']*1000:.1f}ms",
+                      flush=True)
+                d.update(t0=now, emits=0, points=0, renders=0,
+                         gap_s=0.0, gap_max=0.0, gaps=0)
         for slot, (x, y) in pending.items():
             self._render_point(slot, x, y)
 
