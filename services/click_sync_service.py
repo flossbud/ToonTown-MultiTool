@@ -340,12 +340,42 @@ class ClickSyncService(QObject):
         holder = []
 
         def cb(kind, root_x, root_y, state, time):
+            d = self._diag_rates
+            t0 = monotonic() if d is not None else 0.0
             with self._lock:
                 if not holder or self._capture is not holder[0]:
                     return
                 self._handle_event_locked(kind, root_x, root_y, state, time)
+            if d is not None:
+                self._diag_note_event(kind, monotonic() - t0)
 
         return cb, holder
+
+    def _diag_note_event(self, kind: str, dt: float) -> None:
+        """TTMT_CLICK_DIAG bookkeeping for one capture event (capture
+        thread). The per-event handler cost is the number that matters:
+        anything slow here delays the NEXT tap delivery, so macOS coalesces
+        motion and the ghost feed turns bursty."""
+        d = self._diag_rates
+        d["events"] += 1
+        if kind == "motion":
+            d["motion"] += 1
+        d["handler_s"] += dt
+        if dt > d["handler_max"]:
+            d["handler_max"] = dt
+        now = monotonic()
+        elapsed = now - d["t0"]
+        if elapsed >= 1.0 and d["events"]:
+            handler_mean = d["handler_s"] / d["events"] * 1000
+            send_mean = (d["send_s"] / d["inject"] * 1000) if d["inject"] else 0.0
+            print(f"[click_diag] capture: {d['motion']/elapsed:.0f} motions/s "
+                  f"{d['events']/elapsed:.0f} events/s | handler "
+                  f"mean={handler_mean:.2f}ms max={d['handler_max']*1000:.1f}ms | "
+                  f"inject {d['inject']/elapsed:.0f}/s "
+                  f"send_motion mean={send_mean:.2f}ms "
+                  f"max={d['send_max']*1000:.1f}ms", flush=True)
+            d.update(t0=now, motion=0, events=0, handler_s=0.0,
+                     handler_max=0.0, inject=0, send_s=0.0, send_max=0.0)
 
     def _start_capture_outside_lock(self) -> None:
         """Build and start a capture with no locks held, then publish it
@@ -447,32 +477,11 @@ class ClickSyncService(QObject):
     def _on_capture_event(self, kind: str, root_x: int, root_y: int,
                           state: int, time: int) -> None:
         d = self._diag_rates
-        if d is None:
-            with self._lock:
-                self._handle_event_locked(kind, root_x, root_y, state, time)
-            return
-        t0 = monotonic()
+        t0 = monotonic() if d is not None else 0.0
         with self._lock:
             self._handle_event_locked(kind, root_x, root_y, state, time)
-        dt = monotonic() - t0
-        d["events"] += 1
-        if kind == "motion":
-            d["motion"] += 1
-        d["handler_s"] += dt
-        if dt > d["handler_max"]:
-            d["handler_max"] = dt
-        elapsed = t0 - d["t0"]
-        if elapsed >= 1.0 and d["events"]:
-            handler_mean = d["handler_s"] / d["events"] * 1000
-            send_mean = (d["send_s"] / d["inject"] * 1000) if d["inject"] else 0.0
-            print(f"[click_diag] capture: {d['motion']/elapsed:.0f} motions/s "
-                  f"{d['events']/elapsed:.0f} events/s | handler "
-                  f"mean={handler_mean:.2f}ms max={d['handler_max']*1000:.1f}ms | "
-                  f"inject {d['inject']/elapsed:.0f}/s "
-                  f"send_motion mean={send_mean:.2f}ms "
-                  f"max={d['send_max']*1000:.1f}ms", flush=True)
-            d.update(t0=monotonic(), motion=0, events=0, handler_s=0.0,
-                     handler_max=0.0, inject=0, send_s=0.0, send_max=0.0)
+        if d is not None:
+            self._diag_note_event(kind, monotonic() - t0)
 
     def _handle_event_locked(self, kind: str, root_x: int, root_y: int,
                              state: int, time: int) -> None:

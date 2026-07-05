@@ -73,6 +73,17 @@ class GhostRendererCore:
         # {target: (snapshot, inputs)} - multiple gloves alternate targets
         # every tick, so a single-entry cache would thrash.
         self._inputs_cache: dict[int, tuple] = {}
+        # Opt-in arrival diagnostics (TTMT_CLICK_DIAG, inherited from the
+        # app): the renderer draws within one 4ms tick of what it RECEIVES,
+        # so residual jank means the FEED is bursty - inter-arrival gaps of
+        # position batches (reader thread) are the discriminator. Gaps
+        # >500ms are stream restarts, not jitter, and reset the chain.
+        self._rdiag = None
+        if os.environ.get("TTMT_CLICK_DIAG"):
+            self._rdiag = {"t0": time.monotonic(), "batches": 0,
+                           "last_arr": 0.0, "arr_s": 0.0, "arr_max": 0.0,
+                           "arrs": 0, "renders": 0, "last_tick": 0.0,
+                           "tick_s": 0.0, "tick_max": 0.0, "ticks": 0}
         self._timer = QTimer()
         self._timer.setTimerType(Qt.PreciseTimer)
         self._timer.setInterval(FRAME_INTERVAL_MS)
@@ -88,6 +99,18 @@ class GhostRendererCore:
             _kind, slot, x, y, wid = msg
             self._latest[slot] = (x, y, wid)
             self._seq[slot] = self._seq.get(slot, 0) + 1
+            d = self._rdiag
+            if d is not None:
+                now = time.monotonic()
+                last = d["last_arr"]
+                if last and now - last < 0.5:
+                    gap = now - last
+                    d["arr_s"] += gap
+                    d["arrs"] += 1
+                    if gap > d["arr_max"]:
+                        d["arr_max"] = gap
+                d["last_arr"] = now
+                d["batches"] += 1
         else:
             self._controls.append(msg)
 
@@ -122,6 +145,7 @@ class GhostRendererCore:
                         ov = self._overlays.get(slot)
                         if ov is not None:
                             ov.hide_now()
+        rendered = 0
         for slot, seq in list(self._seq.items()):
             if self._rendered_seq.get(slot) == seq:
                 continue
@@ -129,6 +153,30 @@ class GhostRendererCore:
             x, y, wid = self._latest[slot]
             self._last_sample_t[slot] = now
             self._render(slot, x, y, wid)
+            rendered += 1
+        d = self._rdiag
+        if d is not None:
+            if rendered:
+                d["renders"] += rendered
+                last = d["last_tick"]
+                if last and now - last < 0.5:
+                    gap = now - last
+                    d["tick_s"] += gap
+                    d["ticks"] += 1
+                    if gap > d["tick_max"]:
+                        d["tick_max"] = gap
+                d["last_tick"] = now
+            elapsed = now - d["t0"]
+            if elapsed >= 1.0 and d["batches"]:
+                arr_mean = (d["arr_s"] / d["arrs"] * 1000) if d["arrs"] else 0.0
+                tick_mean = (d["tick_s"] / d["ticks"] * 1000) if d["ticks"] else 0.0
+                print(f"[renderer_perf] arrivals={d['batches']/elapsed:.0f}/s "
+                      f"gap mean={arr_mean:.1f}ms max={d['arr_max']*1000:.1f}ms | "
+                      f"renders={d['renders']/elapsed:.0f}/s render gap "
+                      f"mean={tick_mean:.1f}ms max={d['tick_max']*1000:.1f}ms",
+                      flush=True)
+                d.update(t0=now, batches=0, arr_s=0.0, arr_max=0.0, arrs=0,
+                         renders=0, tick_s=0.0, tick_max=0.0, ticks=0)
         if now - self._last_sweep >= SWEEP_INTERVAL_S:
             self._last_sweep = now
             self._sweep(now)
