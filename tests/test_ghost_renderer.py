@@ -301,3 +301,66 @@ def test_renderer_subprocess_round_trip(tmp_path):
         raise
     assert p.returncode == 0, out
     assert "[GhostRenderer] ready" in out
+
+
+# ── own-window exemption spans the TTMT process family (3-toon regression) ──
+
+def test_core_parent_pid_windows_never_occlude(core, monkeypatch):
+    """The live 3-toon regression: the APP's float cards sit above the game
+    windows, and with only the renderer's pid exempt they carved gloves to
+    nothing. Windows of ANY exempt pid (the renderer AND its parent app)
+    must never occlude; foreign windows still do."""
+    from tabs.multitoon import _ghost_cursors as gc
+    core._exempt_pids = frozenset({111111, 222222})
+    app_card = (555, (0, 0, 1600, 1200), 222222)      # parent-app window
+    snap = [app_card, (GAME, (0, 0, 1600, 1200), 777)]
+    monkeypatch.setattr(gc, "_darwin_zorder_snapshot", lambda: snap)
+    core.feed_line(proto.encode_position(0, 100, 100, str(GAME)))
+    core.tick()
+    assert core._overlays[0].isVisible()               # card exempt: visible
+    # A FOREIGN window in the same spot still hides the glove.
+    core._inputs_cache.clear()
+    snap2 = [(FOREIGN, (0, 0, 1600, 1200), 999),
+             (GAME, (0, 0, 1600, 1200), 777)]
+    monkeypatch.setattr(gc, "_darwin_zorder_snapshot", lambda: snap2)
+    core.feed_line(proto.encode_position(0, 120, 120, str(GAME)))
+    core.tick()
+    assert not core._overlays[0].isVisible()
+
+
+def test_core_default_exempt_pids_cover_self_and_parent():
+    c = GhostRendererCore()
+    assert os.getpid() in c._exempt_pids
+    assert os.getppid() in c._exempt_pids
+
+
+def test_scan_region_inputs_accepts_pid_container():
+    from tabs.multitoon._ghost_cursors import _scan_region_inputs
+    snap = [(555, (0, 0, 800, 600), 42),
+            (GAME, (0, 0, 800, 600), 777)]
+    ident = lambda a, b: (a, b)  # noqa: E731
+    # int form (in-process callers) and container form (renderer) agree.
+    as_int = _scan_region_inputs(GAME, snap, 42, ident)
+    as_set = _scan_region_inputs(GAME, snap, frozenset({42, 43}), ident)
+    assert as_int == as_set
+    assert as_int[1] == []      # pid-42 window exempt in both forms
+
+
+def test_core_inputs_cache_is_per_target(core, monkeypatch):
+    """Multiple gloves alternate targets every tick: the inputs cache must
+    hold one entry per target for a snapshot, not thrash on alternation."""
+    from tabs.multitoon import _ghost_cursors as gc
+    snap = [(GAME, (0, 0, 800, 600), 777),
+            (555, (800, 0, 1600, 600), 888)]
+    monkeypatch.setattr(gc, "_darwin_zorder_snapshot", lambda: snap)
+    scans = []
+    real = gc._scan_region_inputs
+    monkeypatch.setattr(gc, "_scan_region_inputs",
+                        lambda *a: scans.append(1) or real(*a))
+    core.feed_line(proto.encode_position(0, 100, 100, str(GAME)))
+    core.feed_line(proto.encode_position(1, 900, 100, "555"))
+    core.tick()
+    core.feed_line(proto.encode_position(0, 110, 100, str(GAME)))
+    core.feed_line(proto.encode_position(1, 910, 100, "555"))
+    core.tick()
+    assert len(scans) == 2      # one scan per target, reused across ticks

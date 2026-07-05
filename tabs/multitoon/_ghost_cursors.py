@@ -237,7 +237,16 @@ def _scan_region_inputs(target_wid, snapshot, own_pid, to_logical):
     logical coords, or None when the game is not on screen. Split out of
     _visible_glove_region so the per-frame path can reuse a scan per
     SNAPSHOT instead of re-walking every window per glove move (at 240Hz
-    frame cadence the full-snapshot walk was measurable Python work)."""
+    frame cadence the full-snapshot walk was measurable Python work).
+
+    ``own_pid``: an int or a CONTAINER of ints whose windows never occlude
+    (the float UI deliberately shows gloves over its own surfaces). The
+    container form exists for the helper-process renderer, where "own"
+    means the whole TTMT process family - the renderer AND the app that
+    spawned it (the app's float cards carved gloves to nothing when only
+    the renderer's pid was exempt: live 3-toon regression 2026-07-04)."""
+    own_pids = {own_pid} if isinstance(own_pid, int) else set(own_pid)
+
     def _logical_rect(raw):
         left, top = to_logical(raw[0], raw[1])
         right, bottom = to_logical(raw[2], raw[3])
@@ -248,7 +257,7 @@ def _scan_region_inputs(target_wid, snapshot, own_pid, to_logical):
     for hwnd, raw, pid in snapshot:
         if hwnd == target_wid:
             return _logical_rect(raw), occluders
-        if pid == own_pid:
+        if pid in own_pids:
             continue
         occluders.append(_logical_rect(raw))
     return None

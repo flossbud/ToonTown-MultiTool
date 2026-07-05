@@ -49,7 +49,7 @@ class GhostRendererCore:
     Constructed on the GUI thread of a live QApplication (offscreen in
     tests, cocoa in production)."""
 
-    def __init__(self):
+    def __init__(self, exempt_pids=None):
         from PySide6.QtCore import Qt, QTimer
 
         self._latest: dict[int, tuple[int, int, str | None]] = {}
@@ -61,6 +61,18 @@ class GhostRendererCore:
         self._last_sample_t: dict[int, float] = {}
         self._last_sweep = 0.0
         self._quit_requested = False
+        # "Own windows never occlude" spans the whole TTMT process FAMILY:
+        # this renderer AND the app that spawned it (the parent). With only
+        # the renderer's pid exempt, the app's float cards - which sit
+        # ABOVE the game windows - carved gloves to nothing wherever they
+        # overlapped (live 3-toon regression: toon 2's glove vanished).
+        self._exempt_pids = frozenset(
+            exempt_pids if exempt_pids is not None
+            else (os.getpid(), os.getppid()))
+        # Per-target region inputs, valid for one snapshot identity:
+        # {target: (snapshot, inputs)} - multiple gloves alternate targets
+        # every tick, so a single-entry cache would thrash.
+        self._inputs_cache: dict[int, tuple] = {}
         self._timer = QTimer()
         self._timer.setTimerType(Qt.PreciseTimer)
         self._timer.setInterval(FRAME_INTERVAL_MS)
@@ -158,13 +170,13 @@ class GhostRendererCore:
             return None
         glove = QRect(int(x) - HOTSPOT[0], int(y) - HOTSPOT[1],
                       CURSOR_SIZE, CURSOR_SIZE)
-        cached = getattr(self, "_inputs_cache", None)
-        if cached is not None and cached[0] is snapshot and cached[1] == target:
-            inputs = cached[2]
+        cached = self._inputs_cache.get(target)
+        if cached is not None and cached[0] is snapshot:
+            inputs = cached[1]
         else:
-            inputs = _scan_region_inputs(target, snapshot, os.getpid(),
+            inputs = _scan_region_inputs(target, snapshot, self._exempt_pids,
                                          lambda a, b: (a, b))
-            self._inputs_cache = (snapshot, target, inputs)
+            self._inputs_cache[target] = (snapshot, inputs)
         return _region_from_inputs(glove, inputs)
 
     def _sweep(self, now: float) -> None:
