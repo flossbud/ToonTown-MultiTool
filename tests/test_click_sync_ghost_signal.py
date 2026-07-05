@@ -197,3 +197,34 @@ def test_press_does_not_emit_ghost_clear(svc):
     clears.clear()
     s._on_capture_event("press", 500, 250, 0, 1000)
     assert clears == []
+
+
+@pytest.fixture(autouse=True)
+def _sync_motion_injection(monkeypatch):
+    """darwin routes motion injection through a worker thread (the capture
+    thread must never block on the ~3ms helper RPC while holding the
+    service lock - live ghost-hiccup fix). These tests assert backend
+    calls synchronously after driving events, so run the injector inline;
+    the real worker is pinned by tests/test_click_sync_motion_injector.py."""
+    from time import monotonic as _monotonic
+
+    from services import click_sync_service as _css
+
+    class _InlineInjector:
+        def __init__(self, backend, note_send=None):
+            self._backend = backend
+            self._note = note_send
+
+        def submit(self, args, kwargs):
+            t0 = _monotonic()
+            try:
+                self._backend.send_motion(*args, **kwargs)
+            except Exception:
+                pass
+            if self._note is not None:
+                self._note(_monotonic() - t0)
+
+        def stop(self):
+            pass
+
+    monkeypatch.setattr(_css, "_MotionInjector", _InlineInjector)

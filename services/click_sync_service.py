@@ -14,6 +14,7 @@ start()/stop() always runs with the lock released.
 from __future__ import annotations
 
 import os
+import sys
 import threading
 from time import monotonic
 
@@ -37,6 +38,64 @@ def _trace_enabled() -> bool:
 def _trace(msg: str) -> None:
     if _trace_enabled():
         print(f"[click] {msg}", flush=True)
+
+
+class _MotionInjector:
+    """Dedicated motion-injection thread (darwin; see _send_motion_timed).
+
+    Per-target NEWEST-WINS queue: motion is display-paced input - a stale
+    intermediate point is superseded the moment a newer one exists, so a
+    slow RPC drops intermediates instead of building a backlog (the same
+    sampling law the ghost renderer follows, CP16). The RPC's pipe I/O
+    releases the GIL, so this thread costs the app loop nothing while it
+    waits. Failures are swallowed exactly like the synchronous path did
+    (a dying target is reclaimed by window re-detection within ~2s)."""
+
+    def __init__(self, backend, note_send=None):
+        self._backend = backend
+        self._note_send = note_send    # TTMT_CLICK_DIAG stopwatch hook
+        self._lock = threading.Lock()
+        self._pending: dict[str, tuple] = {}   # wid -> (args, kwargs)
+        self._wake = threading.Event()
+        self._stopping = False
+        self._thread = threading.Thread(
+            target=self._run, name="click-sync-motion-injector", daemon=True)
+        self._thread.start()
+
+    def submit(self, args, kwargs) -> None:
+        """Any thread; never blocks. args[0] is the target wid."""
+        with self._lock:
+            self._pending[str(args[0])] = (args, kwargs)
+        self._wake.set()
+
+    def _run(self) -> None:
+        while True:
+            self._wake.wait()
+            self._wake.clear()
+            if self._stopping:
+                return
+            while True:
+                with self._lock:
+                    if not self._pending:
+                        break
+                    wid = next(iter(self._pending))
+                    args, kwargs = self._pending.pop(wid)
+                t0 = monotonic()
+                try:
+                    self._backend.send_motion(*args, **kwargs)
+                except Exception:                      # noqa: BLE001
+                    pass
+                if self._note_send is not None:
+                    try:
+                        self._note_send(monotonic() - t0)
+                    except Exception:                  # noqa: BLE001
+                        pass
+                if self._stopping:
+                    return
+
+    def stop(self) -> None:
+        self._stopping = True
+        self._wake.set()
 
 
 class ClickSyncService(QObject):
@@ -117,6 +176,9 @@ class ClickSyncService(QObject):
         # Bumped on every _states mutation; slow-path emitters snapshot it
         # and drop superseded emissions (_emit_if_current).
         self._states_gen = 0
+        # darwin motion injector (see _send_motion_timed): created lazily
+        # on the first motion so test-constructed services spawn no thread.
+        self._motion_injector = None
         # Opt-in pipeline rate diagnostics (TTMT_CLICK_DIAG=1): once per
         # second, print how many motions the capture DELIVERED, how long the
         # locked handler held the tap thread, and what each send_motion
@@ -424,8 +486,11 @@ class ClickSyncService(QObject):
             self._drain_locked("shutdown")
             self._clear_hover_locked()
             cap, self._capture = self._capture, None
+            inj, self._motion_injector = self._motion_injector, None
         if cap is not None:
             cap.stop()
+        if inj is not None:
+            inj.stop()
 
     def notify_capture_died(self, cap=None) -> None:
         """Hooked to XRecordCapture's on_died: a capture thread died
@@ -495,20 +560,44 @@ class ClickSyncService(QObject):
             self._handle_release_locked(root_x, root_y, state, time)
 
     def _send_motion_timed(self, *args, **kwargs):
-        """send_motion with the TTMT_CLICK_DIAG stopwatch: injection runs
-        INSIDE the tap callback (lock held), so its cost directly throttles
-        how fast the window server delivers the next mouse event."""
+        """Motion injection dispatch.
+
+        darwin: the RPC to the platform-binary helper costs ~3ms and ran
+        ~115x/s ON THE CAPTURE THREAD WITH THE SERVICE LOCK HELD (measured,
+        TTMT_CLICK_DIAG) - a third of the thread's budget spent blocked
+        mid-stream, delaying the next tap delivery AND convoying every
+        other lock user into multi-hundred-ms stalls (the live ghost
+        hiccups). Motion is fire-and-forget with per-target newest-wins
+        semantics, so it runs on a dedicated injector thread there.
+        press/release stay synchronous: they carry their own coordinates,
+        so ordering against queued motion cannot mis-click, and their
+        delivery results drive gesture decisions.
+
+        Other platforms keep the direct call (no RPC in the path)."""
+        if sys.platform == "darwin":
+            inj = self._motion_injector
+            if inj is None:
+                inj = self._motion_injector = _MotionInjector(
+                    self._backend, self._diag_note_send)
+            inj.submit(args, kwargs)
+            return True
         d = self._diag_rates
         if d is None:
             return self._backend.send_motion(*args, **kwargs)
         t0 = monotonic()
         r = self._backend.send_motion(*args, **kwargs)
-        dt = monotonic() - t0
+        self._diag_note_send(monotonic() - t0)
+        return r
+
+    def _diag_note_send(self, dt: float) -> None:
+        """TTMT_CLICK_DIAG stopwatch for one send_motion (any thread)."""
+        d = self._diag_rates
+        if d is None:
+            return
         d["inject"] += 1
         d["send_s"] += dt
         if dt > d["send_max"]:
             d["send_max"] = dt
-        return r
 
     def _member_wids_locked(self) -> dict[int, str]:
         out = {}
